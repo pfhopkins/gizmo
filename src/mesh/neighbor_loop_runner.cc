@@ -1068,6 +1068,7 @@ struct NlrPeerAnswerHostWalk {
 template <typename Spec>
 static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                                    const typename Spec::ActiveData *actives,
+                                   bool actives_are_device_visible,
                                    int n,
                                    unsigned int supply_mask,
                                    const GxDeviceTreeView& tree,
@@ -1075,6 +1076,37 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
 
 template <typename Spec>
 struct NlrPeerAnswerDeviceFused;
+
+/* Holds the queries when they are built where the particles already are.
+ *
+ * Host-visible as well as device-visible, which is what lets one buffer serve
+ * all three readers: the export walk wants each query's position and reach, the
+ * envelopes ship the objects to peers, and the walk kernel evaluates them. A
+ * plain vector could serve the first two and not the third; this serves all of
+ * them, so the queries are built once and not copied again afterwards.
+ *
+ * That is narrower than "nothing is staged", and deliberately so: the indices
+ * and radii the build reads are still staged, and the accumulators still are.
+ * What this removes is the host walking P and CellP to fill the queries. */
+template <typename Spec>
+struct NlrDeviceBuiltActives {
+    typename Spec::ActiveData *p = nullptr;
+    NlrDeviceBuiltActives() = default;
+    NlrDeviceBuiltActives(const NlrDeviceBuiltActives&) = delete;
+    NlrDeviceBuiltActives& operator=(const NlrDeviceBuiltActives&) = delete;
+    ~NlrDeviceBuiltActives() {
+        if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+    }
+};
+
+template <typename Spec, typename DeviceCtx>
+static typename Spec::ActiveData *
+nlr_build_self_actives_on_device(const neighbor_loop_args& args,
+                                 const DeviceCtx& ctx,
+                                 const double *radii,
+                                 const typename Spec::CallScalars& cs,
+                                 int n,
+                                 NlrDeviceBuiltActives<Spec>& owner);
 
 /* Which backend answers queries on this call.
  *
@@ -1138,13 +1170,41 @@ static void mode_b_remote_evaluate_into_buffer(
      *   - Non-iterative wrapper: locally-owned, populated + RAII-cleaned by wrapper.
      * Helper does NOT call populate_call_scalars or populate_device_context. */
 
-    /* Freeze actives host-side pre-drift (same snapshot used for self-pair
-     * AND for ship-to-peers; prevents self/remote epoch
-     * skew on the active rank). */
-    std::vector<ActiveData> actives(N);
+    /* The queries. One snapshot serves both this rank's own pairs and the copies
+     * shipped to peers, so neither can see a different epoch from the other.
+     *
+     * WHERE they are built is the difference between the backends. The host
+     * walker builds them here, one Spec::load_active per active, and each of
+     * those is a scattered read of P[i] and CellP[i] -- the canonical arrays
+     * surfacing on the host, once per active, on the calls that have the most
+     * actives. The fused backend has those same particles resident on the device
+     * already, so it builds them there instead, into a buffer the host can still
+     * read for the export walk and the envelopes.
+     *
+     * The objects are the same either way: same function, same inputs, same
+     * epoch. The epoch holds because on the fused path nothing drifts between
+     * this point and the evaluation -- the call's opening pass brought the whole
+     * rank current, and both drift sites below are compiled out for this backend.
+     *
+     * Falling back to the host build when the device buffer cannot be had is
+     * safe where declining would not be: it changes how the queries are filled,
+     * never which collectives this rank enters, so the peers cannot tell. */
+    std::vector<ActiveData> actives_host;
+    NlrDeviceBuiltActives<Spec> actives_device;
+    ActiveData *actives = nullptr;
+    bool actives_are_device_visible = false;
     if(N > 0) {
-        build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
-                                                  actives.data());
+        if constexpr (Backend == NlrEvalBackend::DeviceFused) {
+            actives = nlr_build_self_actives_on_device<Spec>(args, ctx, radii, cs, N,
+                                                             actives_device);
+            actives_are_device_visible = (actives != nullptr);
+        }
+        if(actives == nullptr) {
+            actives_host.resize(N);
+            build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
+                                                      actives_host.data());
+            actives = actives_host.data();
+        }
     }
 
     /* ---- SELF stages run ONCE, BEFORE the peer round loop. Self candidate
@@ -1417,13 +1477,13 @@ static void mode_b_remote_evaluate_into_buffer(
     if(N > 0) {
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         if constexpr (Backend == NlrEvalBackend::HostWalk) {
-            evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
+            evaluate_pairs_post_drift<Spec>(ctx, actives, N,
                                               cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
         } else {
             /* Reach comes from each query's own h_search, which is what the host
              * self walk at this site uses; radii is the same value by
              * construction and reading it from two places invites drift. */
-            nlr_mode_d_self_reduce<Spec>(ctx, actives.data(), N,
+            nlr_mode_d_self_reduce<Spec>(ctx, actives, actives_are_device_visible, N,
                                          neighbor_type_mask, *fused_tree, accums_out);
         }
     }
@@ -3846,6 +3906,72 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
     });
 }
 
+/* Build this rank's queries where its particles already are.
+ *
+ * The host form of this walks P[i] and CellP[i] once per active, scattered, to
+ * fill one ActiveData each. That is correct, and on the transport path it is
+ * also the canonical arrays surfacing on the host on exactly the calls with the
+ * most actives. The particles are resident on the device, so the same
+ * Spec::load_active runs there instead and writes into a buffer the host can
+ * still read -- the export walk and the envelope pack both need to.
+ *
+ * The index and radius arrays it reads from ARE staged host-side, and that is
+ * deliberate rather than overlooked: they are runner-owned, contiguous, and one
+ * int and one double per active, against the many scattered particle-field reads
+ * they replace. The remaining host touch is small and named, not absent.
+ *
+ * Returns the buffer, or nullptr if the device memory could not be had -- in
+ * which case the caller builds on the host and gets identical objects.
+ */
+template <typename Spec, typename DeviceCtx>
+static typename Spec::ActiveData *
+nlr_build_self_actives_on_device(const neighbor_loop_args& args,
+                                 const DeviceCtx& ctx,
+                                 const double *radii,
+                                 const typename Spec::CallScalars& cs,
+                                 int n,
+                                 NlrDeviceBuiltActives<Spec>& owner)
+{
+    using ActiveData = typename Spec::ActiveData;
+
+    if(n <= 0) {return nullptr;}
+
+    ActiveData *act_d = (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_actives");
+    int        *idx_d = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_idx");
+    double     *rad_d = (double *)     nlr_shared_alloc_bytes((size_t)n * sizeof(double),     "moded_self_radii");
+
+    if(!act_d || !idx_d || !rad_d) {
+        if(act_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(act_d);}
+        if(idx_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
+        if(rad_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
+        return nullptr;
+    }
+
+    for(int k = 0; k < n; k++) {
+        idx_d[k] = args.active_list[k];
+        rad_d[k] = radii[k];
+    }
+
+    /* load_active reads All.* through this unit's mirror; without the belt those
+     * read as zero on device, silently, and only on HIP. */
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    /* Named apart from the walk kernels this loop also launches: they run under
+     * the loop's own name, so sharing it would leave a device fault in the query
+     * build indistinguishable from one in the traversal. */
+    gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", n, KOKKOS_LAMBDA(int k) {
+        act_d[k] = Spec::load_active(ctx, k, idx_d[k], rad_d[k], cs);
+    });
+
+    /* The indices and radii were only ever the kernel's input. The queries
+     * themselves outlive this call and belong to the owner. */
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
+
+    owner.p = act_d;
+    return act_d;
+}
+
 /* Answer this rank's own queries from the root, when the queries already exist.
  *
  * The transport builds its actives up front and ships the same objects to peers,
@@ -3853,10 +3979,11 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
  * That is the one difference from nlr_mode_d_local_reduce, which has no
  * transport and constructs each query in the kernel from resident particles.
  *
- * ⚠ It is also a boundary: these queries were built on the HOST, one per active,
- * so the fused path still pays a host pass proportional to the active count on
- * any call that has peers.  Correct, and not what Mode D exists to remove --
- * recorded rather than hidden, because it is invisible from the results.
+ * Those queries normally already sit where a kernel can read them, because the
+ * transport builds them on the device. Then this walks them in place. When the
+ * device buffer could not be had the transport builds them on the host instead,
+ * and only then are they copied in -- which is why the caller says which it is
+ * rather than this guessing from a pointer it cannot interrogate.
  *
  * The reach comes from the query itself here, matching the host self walk at the
  * same site; the two must agree about what a query's radius is or they would
@@ -3864,6 +3991,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
 template <typename Spec>
 static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                                    const typename Spec::ActiveData *actives,
+                                   bool actives_are_device_visible,
                                    int n,
                                    unsigned int supply_mask,
                                    const GxDeviceTreeView& tree,
@@ -3889,12 +4017,17 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
 
     if(n <= 0) {return;}
 
-    ActiveData *q_d      = (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_q");
-    AccumData  *acc_d    = (AccumData *)  nlr_shared_alloc_bytes((size_t)n * sizeof(AccumData), "moded_self_accum");
-    int        *anomaly_d= (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_self_anomaly");
+    /* Only copied when the queries are not already somewhere the kernel can read
+     * them. On the ordinary path they are, so this allocates nothing and the
+     * walk reads the transport's own buffer. */
+    ActiveData *q_staged  = actives_are_device_visible
+                              ? nullptr
+                              : (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_q");
+    AccumData  *acc_d     = (AccumData *)  nlr_shared_alloc_bytes((size_t)n * sizeof(AccumData), "moded_self_accum");
+    int        *anomaly_d = (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_self_anomaly");
 
-    if(!q_d || !acc_d || !anomaly_d) {
-        if(q_d)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);}
+    if((!actives_are_device_visible && !q_staged) || !acc_d || !anomaly_d) {
+        if(q_staged)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_staged);}
         if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
         if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
         if(ThisTask == 0) {
@@ -3906,7 +4039,10 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
         return;
     }
 
-    for(int k = 0; k < n; k++) {q_d[k] = actives[k];}
+    if(q_staged) {
+        for(int k = 0; k < n; k++) {q_staged[k] = actives[k];}
+    }
+    const ActiveData *q_d = q_staged ? q_staged : actives;
     *anomaly_d = 0;
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -3923,7 +4059,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
     const int anomaly_seen = *anomaly_d;
     for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
 
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);
+    if(q_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_staged);}
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
 
@@ -4456,10 +4592,12 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
  * the queries never leave: they are built in the kernel from resident particles
  * rather than up front on the host.
  *
- * There is no ghost pool, no neighbour list and no staging buffer on either
- * shape, and their absence is the whole of the difference from Mode A: the same
- * Spec, the same pair kernel, the same accumulator, reached by walking rather
- * than by importing.
+ * There is no ghost pool and no neighbour list on either shape, and their
+ * absence is the whole of the difference from Mode A: the same Spec, the same
+ * pair kernel, the same accumulator, reached by walking rather than by
+ * importing. Staging is reduced rather than gone -- the queries are built where
+ * the particles live instead of on the host, but their indices and radii, and
+ * the accumulators coming back, are still staged.
  *
  * WHERE DECLINING IS DECIDED.  Whether this rank can answer on the device is
  * settled COLLECTIVELY before dispatch, when the path is chosen, because the
