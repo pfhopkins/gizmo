@@ -130,6 +130,10 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
     Vec3<MyGravFloat> *s_dm_soa    = soa->s_dm;
     Vec3<MyGravFloat> *vs_dm_soa   = soa->vs_dm;
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+    Vec3<MyGravFloat> *sink_pos_soa = soa->sink_pos;
+    Vec3<MyGravFloat> *sink_vel_soa = soa->sink_vel;
+#endif
 
     Kokkos::parallel_for("gpu_force_drift_nodes", n_nodes, KOKKOS_LAMBDA(int kk) {
         /* kk in [0, n_local_nodes) drives local nodes; kk in
@@ -190,12 +194,27 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
                 Extnodes_uvm[no].dp_dm[j] = 0;
 #endif
             }
+#ifdef SINK_NODE_MOTION_TRACKED
+            /* Mirrors the host fold (forcetree_update.cc): normalised by sink_mass, not mass, and
+               consumed before the kicked bitflag is cleared below. */
+            {
+                double sink_mass = (double) Nodes_uvm[no].sink_mass;
+                double fac_sink  = (sink_mass > 0) ? (1.0 / sink_mass) : 0.0;
+                for(int j = 0; j < 3; j++) {
+                    Nodes_uvm[no].sink_vel[j] = (MyFloat)((double)Nodes_uvm[no].sink_vel[j] + fac_sink * (double)Extnodes_uvm[no].sink_dp[j]);
+                    Extnodes_uvm[no].sink_dp[j] = 0;
+                }
+            }
+#endif
             Nodes_uvm[no].u.d.bitflags &= (~(1u << BITFLAG_NODEHASBEENKICKED));
         }
 
         /* Apply drift to s, len, hmax. */
         for(int j = 0; j < 3; j++) {
             Nodes_uvm[no].u.d.s[j] = (MyFloat)((double)Nodes_uvm[no].u.d.s[j] + (double)Extnodes_uvm[no].vs[j] * dt_drift);
+#ifdef SINK_NODE_MOTION_TRACKED
+            Nodes_uvm[no].sink_pos[j] = (MyFloat)((double)Nodes_uvm[no].sink_pos[j] + (double)Nodes_uvm[no].sink_vel[j] * dt_drift);
+#endif
 #ifdef DM_SCALARFIELD_SCREENING
             Nodes_uvm[no].s_dm[j]  = (MyFloat)((double)Nodes_uvm[no].s_dm[j]  + (double)Extnodes_uvm[no].vs_dm[j] * dt_drift);
 #endif
@@ -260,6 +279,16 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
         vs_dm_soa[k] = { (MyGravFloat)Extnodes_uvm[no].vs_dm[0],
                          (MyGravFloat)Extnodes_uvm[no].vs_dm[1],
                          (MyGravFloat)Extnodes_uvm[no].vs_dm[2] };
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        /* the device walk reads sink_pos/sink_vel from the SoA, not the AoS, so the fold and drift
+           above are invisible to it unless they are mirrored here with the other drifted moments */
+        sink_pos_soa[k] = { (MyGravFloat)Nodes_uvm[no].sink_pos[0],
+                            (MyGravFloat)Nodes_uvm[no].sink_pos[1],
+                            (MyGravFloat)Nodes_uvm[no].sink_pos[2] };
+        sink_vel_soa[k] = { (MyGravFloat)Nodes_uvm[no].sink_vel[0],
+                            (MyGravFloat)Nodes_uvm[no].sink_vel[1],
+                            (MyGravFloat)Nodes_uvm[no].sink_vel[2] };
 #endif
     });
     Kokkos::fence();

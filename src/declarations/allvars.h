@@ -870,6 +870,11 @@ extern struct extNODE
   Vec3<MyDouble> dp_dm;
   Vec3<MyFloat> vs_dm;
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  Vec3<MyDouble> sink_dp;   /*!< momentum given to this node's special-type particles since the last
+                                 drift, folded into Nodes[].sink_vel there. Mirrors dp/dp_dm; the
+                                 velocity itself lives in Nodes, beside sink_pos. */
+#endif
   Vec3<MyFloat> vs;
   MyFloat vmax;
   MyFloat hmax;			/*!< maximum gas kernel length in node. Legacy aggregate:

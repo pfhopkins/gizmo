@@ -117,6 +117,11 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 #ifdef DM_SCALARFIELD_SCREENING
     Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+    /* Same particle type the moment builders sum sink_mass/sink_pos over, so the momentum and the
+       mass it is divided by describe the same set. The type is configurable, hence the macro. */
+    Vec3<MyDouble> sink_dp = (P[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) ? dp : Vec3<MyDouble>{};
+#endif
 
     MyFloat vmax = 0;
     for(int j = 0; j < 3; j++) {MyFloat v = (MyFloat)fabs((double)P[i].Vel[j]); if(v > vmax) {vmax = v;}}
@@ -132,6 +137,9 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
         Extnodes[no].dp_dm += dp_dm;
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        Extnodes[no].sink_dp += sink_dp;
 #endif
         if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
         Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
@@ -173,6 +181,9 @@ struct TopNodeKick
 #ifdef DM_SCALARFIELD_SCREENING
   MyDouble dp_dm[3];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  MyDouble sink_dp[3];
+#endif
   MyFloat vmax;
 };
 
@@ -184,6 +195,9 @@ inline void kick_accumulate(struct TopNodeKick& into, const struct TopNodeKick& 
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
   for(int k = 0; k < 3; k++) {into.dp_dm[k] += from.dp_dm[k];}
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+  for(int k = 0; k < 3; k++) {into.sink_dp[k] += from.sink_dp[k];}
 #endif
   if(into.vmax < from.vmax) {into.vmax = from.vmax;}
 }
@@ -280,6 +294,9 @@ void force_finish_kick_nodes(void)
         rec_loc[i].kick.dp_dm[1] = Extnodes[no].dp_dm[1];
         rec_loc[i].kick.dp_dm[2] = Extnodes[no].dp_dm[2];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        for(int k = 0; k < 3; k++) {rec_loc[i].kick.sink_dp[k] = Extnodes[no].sink_dp[k];}
+#endif
         rec_loc[i].kick.vmax = Extnodes[no].vmax;
       }
     /* byte counts/offsets for the fixed-size records (reuse counts_dp/offset_dp;
@@ -365,6 +382,9 @@ void force_finish_kick_nodes(void)
         Extnodes[no].dp_dm[1] += acc[k].dp_dm[1];
         Extnodes[no].dp_dm[2] += acc[k].dp_dm[2];
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        for(int d = 0; d < 3; d++) {Extnodes[no].sink_dp[d] += acc[k].sink_dp[d];}
+#endif
         if(Extnodes[no].vmax < acc[k].vmax)
           Extnodes[no].vmax = acc[k].vmax;
         Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
@@ -431,6 +451,15 @@ void force_drift_node(int no, integertime time1)
       Extnodes[no].vs_dm += fac_dm * Extnodes[no].dp_dm;
       Extnodes[no].dp_dm = {};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+      /* sink_vel lives in Nodes, not Extnodes, but is updated exactly as vs is. Normalised by
+         sink_mass rather than mass: it is the mean velocity of the special-type particles alone. */
+      {
+          double fac_sink = (Nodes[no].sink_mass > 0) ? (1.0 / Nodes[no].sink_mass) : 0.0;
+          Nodes[no].sink_vel += fac_sink * Extnodes[no].sink_dp;
+          Extnodes[no].sink_dp = {};
+      }
+#endif
       Nodes[no].u.d.bitflags &= (~(1 << BITFLAG_NODEHASBEENKICKED));
     }
 
@@ -438,6 +467,12 @@ void force_drift_node(int no, integertime time1)
     
 
     Nodes[no].u.d.s += Extnodes[no].vs * dt_drift;
+#ifdef SINK_NODE_MOTION_TRACKED
+    /* Keep sink_pos on the same clock as u.d.s. Left undrifted it stays at its last-build value
+       while the particles move, and the nearest-sink distance it feeds -- and hence the sink
+       timestep criterion -- reads two node positions taken at different times. */
+    Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift;
+#endif
   Nodes[no].len += TREE_DRIFT_VELOCITY_PREFAC * Extnodes[no].vmax * dt_drift;
 
 #ifdef DM_SCALARFIELD_SCREENING

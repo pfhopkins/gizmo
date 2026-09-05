@@ -3438,6 +3438,9 @@ void force_refresh_node_moments(void)
 #ifdef DM_SCALARFIELD_SCREENING
             Extnodes[no].dp_dm = {};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+            Extnodes[no].sink_dp = {};   /* sink_pos/sink_vel are set fresh by the moment pass */
+#endif
         }
         /* Rank-local GPU refresh steps: on failure set a soft bad-stop and
          * fall through force_exchange_pseudodata (matched, topology-driven);
