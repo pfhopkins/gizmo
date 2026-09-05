@@ -80,35 +80,9 @@
 
 #include <Kokkos_Core.hpp>
 
-#include "neighbor_list.h"              /* gx_export_envelope_t */
+#include "neighbor_list.h"              /* gx_export_envelope_t, GxDeviceTreeView */
 #include "ghost_exchange_functions.h"   /* the canonical-wrap overlap predicate */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL */
-
-/* The tree as the device sees it: the mirrored node arrays plus the boundaries
- * that separate the three index classes a walk can encounter.
- *
- * An index below `local_particle_slots` is a particle this rank owns; one from
- * there up to `particle_slots` is an imported ghost, which the walk reaches but
- * never reports.  One at or above `node_base` and below `pseudo_start` is a
- * node, of which those at or above `foreign_base` are imported subtrees holding
- * no local particles.  One at or above `pseudo_start` is a pseudo-particle
- * standing for another rank's subtree.  Anything in the gap between the
- * particle slots and the node base belongs to no class at all and means the
- * tree is malformed. */
-struct GxDeviceTreeView {
-    const Vec3<MyFloat> *node_center;
-    const MyFloat       *node_len;
-    const int           *node_sibling;
-    const int           *node_nextnode;
-    const unsigned int  *node_bitflags;
-    const int           *nextnode_aux;
-    int                  node_base;
-    int                  particle_slots;
-    int                  local_particle_slots = -1;   /* owned locals; ghosts sit above this */
-    int                  node_capacity;
-    int                  foreign_base;
-    int                  pseudo_start;
-};
 
 /* Which entry point a walk is using.  See the entry discussion at the top of
  * this file; the two forms correspond to the host walker's start node and
@@ -223,6 +197,26 @@ void gx_device_tree_walk(const struct gx_export_envelope_t &env,
     gx_device_tree_walk_impl<GxWalkEntry::SubtreeResume>(
         env.pos[0], env.pos[1], env.pos[2], env.h,
         env.nodes, env.n_nodes, tree, leaf_policy, anomaly);
+}
+
+/* The same resumed walk, for a caller that holds the query and its start nodes
+ * as plain values rather than as an envelope.
+ *
+ * A receiver that has already unpacked its incoming batch has the position, the
+ * reach and the node list in hand; rebuilding an envelope around them so this
+ * function can take it apart again would be a copy per query to satisfy a
+ * signature.  Same entry form, same traversal, same rules -- only the argument
+ * shape differs, which is why it shares the name. */
+template <class LeafPolicy>
+KOKKOS_INLINE_FUNCTION
+void gx_device_tree_walk(double qx, double qy, double qz, double reach,
+                         const int *start_nodes, int n_start,
+                         const GxDeviceTreeView &tree,
+                         LeafPolicy &leaf_policy,
+                         int *anomaly)
+{
+    gx_device_tree_walk_impl<GxWalkEntry::SubtreeResume>(
+        qx, qy, qz, reach, start_nodes, n_start, tree, leaf_policy, anomaly);
 }
 
 /* Search this rank's whole tree for a query of its own.  There is no envelope

@@ -194,6 +194,7 @@
 #define NLR_INLINE_FUNCTION inline
 #endif
 #include "gpu_neighbor_list.h"    /* gpu_neighbor_list_t (NlrIterDriver Mode A fields) */
+#include "neighbor_list.h"        /* GxDeviceTreeView (plain data; NOT the device traversal header, which pulls in Kokkos and breaks host TUs) */
 
 /* ============================================================================
  * Reused enums:
@@ -1001,6 +1002,12 @@ struct NoAccum   {};
 enum class DispatchPath : int {
     ModeA_GPU_NGL    = 0,
     ModeB_HostWalker = 1,
+    /* Walk and evaluate in one device pass, moving the seeker to the particles
+     * instead of importing the particles to the seeker.  Available only to loops
+     * whose pair kernel reduces into the seeker's own accumulator and whose
+     * search uses the query's reach alone; both are declared Spec traits and are
+     * asserted where the kernel is launched, so no loop is named. */
+    ModeD_DeviceFused = 2,
 };
 
 /* ============================================================================
@@ -1712,6 +1719,18 @@ struct NlrIterDriver {
     typename Spec::DeviceContext ctx;
     bool                         ctx_initialized = false;
 
+    /* Mode D: this rank's tree as the device walk sees it, established ONCE per
+     * call before any discovery round and reused by every iteration.
+     *
+     * Once, not per iteration, because nothing it certifies can go stale within
+     * the call: no particles are imported on this path, and the loop's own
+     * writeback runs after the last iteration rather than between them.  Once
+     * also because it is the only honest place for it -- whether the device can
+     * answer decides WHICH PATH the call takes, every rank has to reach the same
+     * verdict, and by the time a subgroup is being dispatched that decision has
+     * already been acted on. */
+    GxDeviceTreeView mode_d_tree{};
+
     /* Per-subgroup state (DYNAMICALLY SIZED to args.num_subgroups).
      *
      * Each std::vector<...> is host-side, sized at construction to
@@ -1787,6 +1806,10 @@ struct NlrIterDriver {
      *      to arena-resident pointers + populates extended DeviceContext.
      * Driver destructor matches: if arena_acquired, mark_clean once on exit. */
     void acquire_arena_and_init_ctx_mode_a();
+    /* Mode D: same device-resident arrays, WITHOUT the collective ghost import.
+     * A fused walk never sees a ghost, so importing one is fetched-and-discarded
+     * work; skipping it is safe because the path decision was collective. */
+    void acquire_arena_and_init_ctx_mode_d();
 
     /* Self-sufficient rebuild
      * method. NO PARAMETERS. Driver builds the union from its own subgroup

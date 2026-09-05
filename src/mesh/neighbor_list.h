@@ -58,6 +58,43 @@ struct gx_export_envelope_t {
     int    _pad;
 };
 
+/* Lives here, in a header that pulls in no Kokkos, rather than beside the device
+ * traversal that consumes it.  It is plain data -- pointers and index bounds --
+ * and the runner declares one as a member, so the header carrying it is included
+ * by host translation units compiled without a device compiler.  The traversal
+ * header cannot serve that role: it includes <Kokkos_Core.hpp> deliberately and
+ * unconditionally, because the walk calls Kokkos itself, and a host unit that
+ * picks that up fails with the CUDA setup header's "__CUDACC__ not defined"
+ * error rather than anything that names the real cause.
+ *
+ */
+/* The tree as the device sees it: the mirrored node arrays plus the boundaries
+ * that separate the three index classes a walk can encounter.
+ *
+ * An index below `local_particle_slots` is a particle this rank owns; one from
+ * there up to `particle_slots` is an imported ghost, which the walk reaches but
+ * never reports.  One at or above `node_base` and below `pseudo_start` is a
+ * node, of which those at or above `foreign_base` are imported subtrees holding
+ * no local particles.  One at or above `pseudo_start` is a pseudo-particle
+ * standing for another rank's subtree.  Anything in the gap between the
+ * particle slots and the node base belongs to no class at all and means the
+ * tree is malformed. */
+struct GxDeviceTreeView {
+    const Vec3<MyFloat> *node_center;
+    const MyFloat       *node_len;
+    const int           *node_sibling;
+    const int           *node_nextnode;
+    const unsigned int  *node_bitflags;
+    const int           *nextnode_aux;
+    int                  node_base;
+    int                  particle_slots;
+    int                  local_particle_slots = -1;   /* owned locals; ghosts sit above this */
+    int                  node_capacity;
+    int                  foreign_base;
+    int                  pseudo_start;
+};
+
+
 /* Build a CSR neighbor list for the given active particles.
  *
  * P, CellP:         particle arrays (including ghosts at indices >= NumPart)

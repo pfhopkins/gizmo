@@ -194,6 +194,12 @@ int gpu_gravity_tree_valid(void);
  * stale-Ti_current node.  Mutates Nodes[]/Extnodes[] (UVM) and SoA mirrors
  * in a single kernel; no AoS->SoA reseed afterwards.  Returns 0 on success,
  * nonzero on internal error (SoA not ready). */
+/* Sweep node geometry current, also rewriting the SoA mirror of nodes that
+   are ALREADY at the target time. A host lazy drift advances a node without
+   touching its mirror, so those two can disagree; the ordinary sweep skips
+   such nodes and preserves the disagreement. Pass nonzero to pay for a full
+   mirror rewrite instead of declining. */
+int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_already_current);
 int gpu_force_drift_nodes(integertime time1);
 void gpu_force_drift_release(void);
 

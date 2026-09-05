@@ -55,7 +55,7 @@ static double *drift_kick_table_dev_ = NULL;   /* SharedSpace, 2 * DRIFT_TABLE_L
 
 /* --- dispatcher ---------------------------------------------------------- */
 
-extern "C" int gpu_force_drift_nodes(integertime time1)
+extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_already_current)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -68,7 +68,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
      * tree update runs on the host also walks on the host -- and this is the check that
      * the two never disagree. The caller treats a nonzero return as a controlled stop
      * taken by every rank at the next poll, so no rank exits a collective alone. */
-    if(force_host_lazy_drift_ti() == time1) {
+    if(force_host_lazy_drift_ti() == time1 && !refresh_mirrors_already_current) {
         printf("gpu_force_drift_nodes: task %d already drifted nodes on the host at this time; the device node mirror cannot be brought up to date by a sweep that skips them\n", ThisTask);
         return 1;
     }
@@ -110,6 +110,7 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 
 
     integertime ti_target   = time1;
+    const int   refresh_all = refresh_mirrors_already_current;   /* captured by value */
 
     /* Use the SHIFTED pointers (Nodes = Nodes_base - tree_base, Extnodes = Extnodes_base - tree_base)
      * so that Nodes_uvm[tree_base + k] == Nodes_base[k] for all k in [0, Numnodestree). */
@@ -148,7 +149,17 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
             k  = maxNodes_snap + slot;
             no = tree_base + maxNodes_snap + slot;
         }
-        if(Nodes_uvm[no].Ti_current == ti_target) {return;}
+        /* Already at the target time.  Normally there is nothing to do -- but a
+         * host lazy drift advances the node WITHOUT writing its mirror, so the
+         * mirror can be stale while the node is current, and skipping here is
+         * what leaves it that way.  When the caller asks, fall through with a
+         * zero drift: s, len and hmax are all advanced by dt, so a zero dt
+         * changes none of them, the kick fold is dt-independent and idempotent
+         * on an already-folded node, and the tail rewrites the mirror from the
+         * node's current values.  Cost is a full mirror rewrite; there is no
+         * other effect. */
+        const bool node_already_current = (Nodes_uvm[no].Ti_current == ti_target);
+        if(node_already_current && !refresh_all) {return;}
 
         /* Per-node dilation factor (host-pre-computed, see dispatcher above). */
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
@@ -158,8 +169,10 @@ extern "C" int gpu_force_drift_nodes(integertime time1)
 #endif
 
         /* Same value as the host get_drift_factor(.., .., no, 1): one interpolator, one view. */
-        double dt_drift = get_drift_factor_impl(Nodes_uvm[no].Ti_current, ti_target,
-                                                dilation, &table_view);
+        double dt_drift = node_already_current
+                            ? 0.0
+                            : get_drift_factor_impl(Nodes_uvm[no].Ti_current, ti_target,
+                                                    dilation, &table_view);
         double dt_drift_hmax = dt_drift;
 
         /* If node has been kicked, fold dp into vs and clear dp. */
@@ -282,4 +295,8 @@ extern "C" void gpu_force_drift_release(void)
     }
 }
 
-
+/* The ordinary sweep: advance whatever is behind, leave the rest alone. */
+extern "C" int gpu_force_drift_nodes(integertime time1)
+{
+    return gpu_force_drift_nodes_ex(time1, 0);
+}
