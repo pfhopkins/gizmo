@@ -841,6 +841,14 @@
 #endif
 #endif
 
+/* One name for "the tree carries sink velocity as well as sink position". Every site below is
+   already inside #ifdef SINK_CALC_DISTANCES, so that conjunct is what the name adds rather than
+   a narrowing. Tested here because this is past the last place SINK_CALC_DISTANCES can be set
+   (the GRAVITY_ANALYTIC block just above). */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION))
+#define SINK_NODE_MOTION_TRACKED
+#endif
+
 
 
 #if defined(GRAIN_FLUID) || defined(HYDRO_MULTIFLUID_DUST_DRAG) || defined(HYDRO_MULTIFLUID_IONNEUTRAL)

@@ -762,7 +762,7 @@ struct DomainNODE
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass;
         Vec3<MyFloat> sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
         int N_SINK;
         Vec3<MyFloat> sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -852,7 +852,7 @@ void force_exchange_pseudodata_issue(void)
 #ifdef SINK_CALC_DISTANCES
             DomainMoment[i].sink_mass = Nodes[no].sink_mass;
             DomainMoment[i].sink_pos = Nodes[no].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
             DomainMoment[i].sink_vel = Nodes[no].sink_vel;
             DomainMoment[i].N_SINK = Nodes[no].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -973,7 +973,7 @@ int force_exchange_pseudodata_complete(void)
 #ifdef SINK_CALC_DISTANCES
                     Nodes[no].sink_mass = DomainMoment[i].sink_mass;
                     Nodes[no].sink_pos = DomainMoment[i].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
                     Nodes[no].sink_vel = DomainMoment[i].sink_vel;
                     Nodes[no].N_SINK = DomainMoment[i].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -1052,7 +1052,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass=0;
     Vec3<MyFloat> sink_pos_times_mass = {};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     Vec3<MyFloat> sink_mom = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
@@ -1117,7 +1117,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
             sink_mass += Nodes[p].sink_mass;
             sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
             N_SINK += Nodes[p].N_SINK;
             sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -1234,13 +1234,13 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef SINK_CALC_DISTANCES
     Nodes[no].sink_mass = sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     Nodes[no].N_SINK = N_SINK;
 #endif
     if(sink_mass > 0)
     {
         Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
         Nodes[no].sink_vel = sink_mom / sink_mass;
 #if defined(SPECIAL_POINT_MOTION)
         Nodes[no].sink_acc = sink_force / sink_mass;

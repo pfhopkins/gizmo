@@ -124,13 +124,13 @@ static void free_arrays_(void)
 #ifdef SINK_CALC_DISTANCES
     if(soa_.sink_mass)      {gizmo_gpu_tree_soa_release(soa_.sink_mass);      soa_.sink_mass      = NULL;}
     if(soa_.sink_pos)       {gizmo_gpu_tree_soa_release(soa_.sink_pos);       soa_.sink_pos       = NULL;}
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     if(soa_.sink_vel)       {gizmo_gpu_tree_soa_release(soa_.sink_vel);       soa_.sink_vel       = NULL;}
 #endif
 #if defined(SPECIAL_POINT_MOTION)
     if(soa_.sink_acc)       {gizmo_gpu_tree_soa_release(soa_.sink_acc);       soa_.sink_acc       = NULL;}
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     if(soa_.N_SINK)         {gizmo_gpu_tree_soa_release(soa_.N_SINK);         soa_.N_SINK         = NULL;}
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
@@ -239,7 +239,7 @@ static int alloc_arrays_(int n)
     soa_.sink_mass = (MyGravFloat       *) tree_soa_alloc(n * sizeof(MyGravFloat));
     soa_.sink_pos  = (Vec3<MyGravFloat> *) tree_soa_alloc(n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_mass || !soa_.sink_pos) {printf("gpu_gravity_tree: sink_mass/pos alloc failed (%d)\n", n); return 0;}
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     soa_.sink_vel = (Vec3<MyGravFloat> *) tree_soa_alloc(n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_vel) {printf("gpu_gravity_tree: sink_vel alloc failed (%d)\n", n); return 0;}
 #endif
@@ -247,7 +247,7 @@ static int alloc_arrays_(int n)
     soa_.sink_acc = (Vec3<MyGravFloat> *) tree_soa_alloc(n * sizeof(Vec3<MyGravFloat>));
     if(!soa_.sink_acc) {printf("gpu_gravity_tree: sink_acc alloc failed (%d)\n", n); return 0;}
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     soa_.N_SINK = (int *) tree_soa_alloc(n * sizeof(int));
     if(!soa_.N_SINK) {printf("gpu_gravity_tree: N_SINK alloc failed (%d)\n", n); return 0;}
 #endif
@@ -438,13 +438,13 @@ extern "C" int gpu_gravity_tree_grow_foreign(int min_nodes)
 #ifdef SINK_CALC_DISTANCES
     GIZMO_SOA_COPY(sink_mass, n_old);
     GIZMO_SOA_COPY(sink_pos,  n_old);
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     GIZMO_SOA_COPY(sink_vel, n_old);
 #endif
 #if defined(SPECIAL_POINT_MOTION)
     GIZMO_SOA_COPY(sink_acc, n_old);
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     GIZMO_SOA_COPY(N_SINK, n_old);
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
