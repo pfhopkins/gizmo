@@ -1235,6 +1235,7 @@ void setup_smoothinglengths(void)
 #endif
         {
                 no = Father[i];
+                if(no < 0) {no = All.TreeNodeIndexBase;}
                 while(2 * All.DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;
@@ -1339,6 +1340,7 @@ void ags_setup_smoothinglengths(void)
                 if(P[i].Type > 0)
                 {
                     no = Father[i];
+                    if(no < 0) {no = All.TreeNodeIndexBase;}
                     while(10 * All.AGS_DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                     {
                         p = Nodes[no].u.d.father;
@@ -1378,6 +1380,7 @@ void disp_setup_smoothinglengths(void)
             if(P[i].Type == 0)
             {
                 no = Father[i];
+                if(no < 0) {no = All.TreeNodeIndexBase;}
                 while(10 * 2.0 * 64 * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;
@@ -1386,7 +1389,7 @@ void disp_setup_smoothinglengths(void)
                 }
                 CellP[i].KernelRadiusDM = pow(1.0/VOLUME_NORM_COEFF_FOR_NDIMS * 2.0 * 64 * P[i].Mass / Nodes[no].u.d.mass, 1.0/NUMDIMS) * Nodes[no].len;
                 double soft = All.ForceSoftening[P[i].Type];
-                if(soft != 0) {if((CellP[i].KernelRadiusDM >1000.*soft)||(P[i].KernelRadius<=0.01*soft)||(Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {CellP[i].KernelRadiusDM = soft;}}
+                if(soft != 0) {if((CellP[i].KernelRadiusDM >1000.*soft)||(CellP[i].KernelRadiusDM<=0.01*soft)||(Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {CellP[i].KernelRadiusDM = soft;}}
             }
         }
     }

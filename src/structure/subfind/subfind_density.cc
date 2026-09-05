@@ -71,6 +71,7 @@ void subfind_setup_smoothinglengths(int j)
 #endif
 	{
 	  no = Father[i];
+	  if(no < 0) {no = All.TreeNodeIndexBase;}
 
 	  /* Not a good guess for gas/stars component, need more thought ! */
 	  while(10 * All.DesLinkNgb * P[i].Mass > Nodes[no].u.d.mass)
