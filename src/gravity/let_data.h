@@ -360,7 +360,8 @@ int  let_exchange_payloads(const struct LETPerRankPayload *local,
  *  receiver_active_bitmap is consulted ONLY in the experimental active-receiver-
  *  cover mode (LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL); it is NULL on the default
  *  all-local path.  Returns the number of nodes packed; *out grown as needed. */
-int  let_pack_for_rank(int R,
+struct LETPackContext;   /* the packing scratch, private to let_pack.cc */
+int  let_pack_for_rank(struct LETPackContext *pk, int R,
                        const struct LETPerRankPayload *all_ranks,
                        struct LETNodeWire **out_buf,
                        int *out_capacity,

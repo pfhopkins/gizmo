@@ -286,7 +286,7 @@ static inline void let_cluster_push(const struct LETCoverLeaf *c)
  *   g_my_orphans      -- THIS rank's records for the current build (producer side).
  *   g_orphan_all      -- every rank's records, concatenated by rank (post-Allgatherv).
  *   g_orphan_off      -- prefix-sum offsets: rank R's records = g_orphan_all[off[R], off[R+1]).
- * Process-lifetime scratch (like g_topleaf_scalars / the g_cover* arrays); grow-only. */
+ * Process-lifetime scratch (like g_topleaf_scalars / the pack context's cover arrays); grow-only. */
 static struct LETOrphanRecord *g_my_orphans = NULL;
 static int g_my_orphans_n = 0, g_my_orphans_cap = 0;
 static struct LETOrphanRecord *g_orphan_all = NULL;
@@ -544,7 +544,7 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
  * predicate itself (gravtree_open_decision_cell) is untouched -- this only
  * refines which cover boxes feed it. Scratch is grown once and reused across
  * receivers/exchanges (no allocation in the pack recursion); the tree for the
- * receiver currently being packed is file-scope state (g_cover*), set by
+ * receiver currently being packed is held in the pack context, set by
  * let_pack_for_rank before its pack loop.
  * ========================================================================== */
 /* Cover-tree node carries BOTH geometry (box) AND the conservative per-cover scalar bounds,
@@ -588,21 +588,35 @@ static void let_refresh_open_constants(void)
     g_let_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
 }
 
-static struct LETCoverNode *g_cover      = NULL;  /* AABB-tree nodes, root at index 0 */
-static int                   g_cover_cap  = 0;
-static int                   g_cover_n    = 0;     /* nodes used by the current build */
-static struct LETCoverLeaf  *g_cover_leaves = NULL;/* R's cover leaves for the current build (clusters + orphans),
-                                              each an arbitrary AABB + its opening scalars BY VALUE (self-contained,
-                                              decoupled from any per-topleaf table). Partitioned in place by cover_build. */
-static int                   g_cover_leaf_cap = 0;
+/* Everything one pack of one destination rank mutates, held together rather than spread across
+ * file scope.  With a single pack running this only names the state; it is what lets a later pack
+ * give each worker its own, since the cover is rebuilt per destination and its leaf array is
+ * partitioned in place.  The buffers persist between packs so a destination reuses the previous
+ * one's storage instead of reallocating. */
+struct LETPackContext {
+    struct LETCoverNode *cover;          /* AABB-tree nodes, root at index 0 */
+    int                  cover_cap;
+    int                  cover_n;        /* nodes used by the current build */
+    struct LETCoverLeaf *cover_leaves;   /* this destination's cover leaves (clusters + orphans),
+                                          * each an arbitrary AABB plus its opening scalars by value;
+                                          * partitioned in place by cover_build */
+    int                  cover_leaf_cap;
+    /* what the pack has to report once it is finished */
+    long long malformed_singleton;
+    int       malformed_singleton_first;
+    long      realloc_fail_msgs;         /* rate-limits the realloc-failure message */
+    int       pack_oom;
+};
+
+static struct LETPackContext g_pack_ctx = {NULL, 0, 0, NULL, 0, 0, -1, 0, 0};
 
 /* Union box of the leaf range [lo,hi) into out[bmin/bmax] (cover leaves carry their own AABB). */
-static void cover_union_box(int lo, int hi, double bmin[3], double bmax[3])
+static void cover_union_box(struct LETPackContext *pk, int lo, int hi, double bmin[3], double bmax[3])
 {
     bmin[0]=bmin[1]=bmin[2]= DBL_MAX;
     bmax[0]=bmax[1]=bmax[2]=-DBL_MAX;
     for(int k = lo; k < hi; k++) {
-        const struct LETCoverLeaf *L = &g_cover_leaves[k];
+        const struct LETCoverLeaf *L = &pk->cover_leaves[k];
         for(int d = 0; d < 3; d++) {
             if(L->bmin[d] < bmin[d]) bmin[d] = L->bmin[d];
             if(L->bmax[d] > bmax[d]) bmax[d] = L->bmax[d];
@@ -611,23 +625,23 @@ static void cover_union_box(int lo, int hi, double bmin[3], double bmax[3])
 }
 
 /* BVH build over the leaf range [lo,hi): split at the SPATIAL MEDIAN of the range's longest axis (partition
- * g_cover_leaves in place by leaf-center along that axis), so aggregate boxes are tight and the walk prunes
- * early. Falls back to the index median for a degenerate partition (coincident centers). g_cover is pre-sized
- * to 2*nleaf so no realloc moves g_cover[idx] during the recursion. */
-static int cover_build(int lo, int hi)
+ * the context's cover leaves in place by leaf-center along that axis), so aggregate boxes are tight and the walk prunes
+ * early. Falls back to the index median for a degenerate partition (coincident centers). The node array is pre-sized
+ * to 2*nleaf so no realloc moves an entry during the recursion. */
+static int cover_build(struct LETPackContext *pk, int lo, int hi)
 {
-    int idx = g_cover_n++;
-    double *bmin = g_cover[idx].bmin, *bmax = g_cover[idx].bmax;
-    cover_union_box(lo, hi, bmin, bmax);
+    int idx = pk->cover_n++;
+    double *bmin = pk->cover[idx].bmin, *bmax = pk->cover[idx].bmax;
+    cover_union_box(pk, lo, hi, bmin, bmax);
     if(hi - lo <= 1) {
-        g_cover[idx].c0 = -1; g_cover[idx].c1 = -1;
+        pk->cover[idx].c0 = -1; pk->cover[idx].c1 = -1;
         /* leaf: this cover leaf's opening scalars (a rule-1 cluster, or an orphan record) */
-        const struct LETTopleafScalars *s = &g_cover_leaves[lo].s;
+        const struct LETTopleafScalars *s = &pk->cover_leaves[lo].s;
         {double m = 0.0; for(int t = 0; t < 6; t++) if(s->max_soft_by_type[t] > m) m = s->max_soft_by_type[t];
-         g_cover[idx].max_soft = m;}
-        g_cover[idx].aold_min = s->min_OldAcc * All.ErrTolForceAcc;
-        g_cover[idx].min_soft = s->min_soft;
-        g_cover[idx].has_sink = s->has_sink;
+         pk->cover[idx].max_soft = m;}
+        pk->cover[idx].aold_min = s->min_OldAcc * All.ErrTolForceAcc;
+        pk->cover[idx].min_soft = s->min_soft;
+        pk->cover[idx].has_sink = s->has_sink;
         return idx;
     }
 
@@ -637,31 +651,31 @@ static int cover_build(int lo, int hi)
     double split = 0.5 * (bmin[ax] + bmax[ax]);
     int i = lo, j = hi - 1;
     while(i <= j) {
-        while(i <= j && 0.5 * (g_cover_leaves[i].bmin[ax] + g_cover_leaves[i].bmax[ax]) <  split) i++;
-        while(i <= j && 0.5 * (g_cover_leaves[j].bmin[ax] + g_cover_leaves[j].bmax[ax]) >= split) j--;
-        if(i < j) { struct LETCoverLeaf sw = g_cover_leaves[i]; g_cover_leaves[i] = g_cover_leaves[j]; g_cover_leaves[j] = sw;
+        while(i <= j && 0.5 * (pk->cover_leaves[i].bmin[ax] + pk->cover_leaves[i].bmax[ax]) <  split) i++;
+        while(i <= j && 0.5 * (pk->cover_leaves[j].bmin[ax] + pk->cover_leaves[j].bmax[ax]) >= split) j--;
+        if(i < j) { struct LETCoverLeaf sw = pk->cover_leaves[i]; pk->cover_leaves[i] = pk->cover_leaves[j]; pk->cover_leaves[j] = sw;
                     i++; j--; }
     }
     int mid = i;
     if(mid <= lo || mid >= hi) mid = (lo + hi) / 2;   /* degenerate split -> index median */
 
-    int l = cover_build(lo, mid);
-    int r = cover_build(mid, hi);
-    g_cover[idx].c0 = l; g_cover[idx].c1 = r;
+    int l = cover_build(pk, lo, mid);
+    int r = cover_build(pk, mid, hi);
+    pk->cover[idx].c0 = l; pk->cover[idx].c1 = r;
     /* internal node: combine children conservatively (easiest-to-open per field) */
-    g_cover[idx].max_soft = (g_cover[l].max_soft > g_cover[r].max_soft) ? g_cover[l].max_soft : g_cover[r].max_soft;
-    g_cover[idx].aold_min = (g_cover[l].aold_min < g_cover[r].aold_min) ? g_cover[l].aold_min : g_cover[r].aold_min;
-    g_cover[idx].min_soft = (g_cover[l].min_soft < g_cover[r].min_soft) ? g_cover[l].min_soft : g_cover[r].min_soft;
-    g_cover[idx].has_sink = g_cover[l].has_sink | g_cover[r].has_sink;
+    pk->cover[idx].max_soft = (pk->cover[l].max_soft > pk->cover[r].max_soft) ? pk->cover[l].max_soft : pk->cover[r].max_soft;
+    pk->cover[idx].aold_min = (pk->cover[l].aold_min < pk->cover[r].aold_min) ? pk->cover[l].aold_min : pk->cover[r].aold_min;
+    pk->cover[idx].min_soft = (pk->cover[l].min_soft < pk->cover[r].min_soft) ? pk->cover[l].min_soft : pk->cover[r].min_soft;
+    pk->cover[idx].has_sink = pk->cover[l].has_sink | pk->cover[r].has_sink;
     return idx;
 }
 
-/* Build receiver R's cover tree into the scratch (g_cover* / root = index 0).
- * Leaves g_cover_n = 0 if R owns no topleaves (caller's has_cover guard already
+/* Build receiver R's cover tree into the pack context's scratch (root = index 0).
+ * Leaves cover_n = 0 if R owns no topleaves (caller's has_cover guard already
  * excludes that case). realloc failure -> loud controlled stop, never a segfault. */
-static void let_build_cover_tree(int R)
+static void let_build_cover_tree(struct LETPackContext *pk, int R)
 {
-    g_cover_n = 0;
+    pk->cover_n = 0;
     /* Cover leaves = R's rule-1 clusters (bbox + scalars, straight from the exchange) + R's drift-orphan
      * records (extra leaves at foreign-topleaf boxes). An empty owned topleaf produced no clusters, so it
      * contributes nothing -- the old populated=0 exclusion is now structural. */
@@ -669,16 +683,16 @@ static void let_build_cover_tree(int R)
     int n_orph = (g_orphan_off  ? g_orphan_off[R + 1]  - g_orphan_off[R]  : 0);
     int cap_need = ncl + n_orph;
     if(cap_need == 0) return;
-    if(g_cover_leaf_cap < cap_need) {
-        struct LETCoverLeaf *nl = (struct LETCoverLeaf *) realloc(g_cover_leaves, (size_t) cap_need * sizeof(struct LETCoverLeaf));
+    if(pk->cover_leaf_cap < cap_need) {
+        struct LETCoverLeaf *nl = (struct LETCoverLeaf *) realloc(pk->cover_leaves, (size_t) cap_need * sizeof(struct LETCoverLeaf));
         if(!nl) { printf("let_build_cover_tree: cover-leaf realloc failed (cap_need=%d, rank=%d). Stopping.\n",
                          cap_need, ThisTask); fflush(stdout); endrun(90000091); }
-        g_cover_leaves = nl; g_cover_leaf_cap = cap_need;
+        pk->cover_leaves = nl; pk->cover_leaf_cap = cap_need;
     }
     int nleaf = 0;
     /* R's clusters: bbox + scalars are self-contained in the exchanged record. */
     for(int k = (g_cluster_off ? g_cluster_off[R] : 0); k < (g_cluster_off ? g_cluster_off[R + 1] : 0); k++)
-        g_cover_leaves[nleaf++] = g_cluster_all[k];
+        pk->cover_leaves[nleaf++] = g_cluster_all[k];
     /* R's drift-orphans: geometry = the reached foreign topleaf's box (replicated top-tree geometry, valid on
      * every rank), scalars = the merged orphan record. Conservative completeness extension -- never drops coverage. */
     for(int k = (g_orphan_off ? g_orphan_off[R] : 0); k < (g_orphan_off ? g_orphan_off[R + 1] : 0); k++) {
@@ -686,19 +700,19 @@ static void let_build_cover_tree(int R)
         int no = (t >= 0 && t < NTopleaves) ? DomainNodeIndex[t] : -1;
         if(no < All.TreeNodeIndexBase || no >= All.TreeNodeIndexBase + MaxNodes) continue;
         double h = 0.5 * (double) Nodes[no].len;
-        struct LETCoverLeaf *L = &g_cover_leaves[nleaf++];
+        struct LETCoverLeaf *L = &pk->cover_leaves[nleaf++];
         for(int d = 0; d < 3; d++) { L->bmin[d] = (double) Nodes[no].center[d] - h; L->bmax[d] = (double) Nodes[no].center[d] + h; }
         L->s = g_orphan_all[k].s;
     }
     if(nleaf == 0) return;
     int need = 2 * nleaf;                  /* balanced tree over nleaf leaves has <= 2*nleaf-1 nodes */
-    if(g_cover_cap < need) {
-        struct LETCoverNode *nc = (struct LETCoverNode *) realloc(g_cover, (size_t) need * sizeof(struct LETCoverNode));
+    if(pk->cover_cap < need) {
+        struct LETCoverNode *nc = (struct LETCoverNode *) realloc(pk->cover, (size_t) need * sizeof(struct LETCoverNode));
         if(!nc) { printf("let_build_cover_tree: cover-node realloc failed (need=%d, rank=%d). Stopping.\n",
                          need, ThisTask); fflush(stdout); endrun(90000092); }
-        g_cover = nc; g_cover_cap = need;
+        pk->cover = nc; pk->cover_cap = need;
     }
-    cover_build(0, nleaf);                 /* root = node 0 */
+    cover_build(pk, 0, nleaf);                 /* root = node 0 */
 }
 
 /* Does ANY of R's per-topleaf covers OPEN this source node? Walk the cover tree
@@ -710,16 +724,16 @@ static void let_build_cover_tree(int R)
  * circuits at the first LEAF topleaf that opens. Iterative (balanced tree depth
  * <= ~log2(NTopleaves) < 40; the 64-slot stack cannot overflow for a balanced
  * build, and the guarded conservative return keeps it correct if it ever could). */
-static int let_cover_opens(double cx, double cy, double cz,
+static int let_cover_opens(struct LETPackContext *pk, double cx, double cy, double cz,
                            double sx, double sy, double sz,
                            double len, double mass, double maxsoft, int node_nsink,
                            double rcut, double rcut2, int is_first_step)
 {
-    if(g_cover_n <= 0) return 0;
+    if(pk->cover_n <= 0) return 0;
     int stack[64]; int sp = 0; stack[sp++] = 0;   /* root */
     while(sp > 0) {
         int ci = stack[--sp];
-        const struct LETCoverNode *cn = &g_cover[ci];
+        const struct LETCoverNode *cn = &pk->cover[ci];
         /* per-cover (target-local) scalar bounds -> the untouched predicate; the source node's own
          * maxsoft/n_sink stay the caller's node fields (msoft/n_sink), the cover carries the TARGET side. */
         gravtree_open_t d = gravtree_open_decision_cell(cx, cy, cz, sx, sy, sz, len, mass, maxsoft,
@@ -749,7 +763,7 @@ static int let_cover_opens(double cx, double cy, double cz,
  * ANY target in that cover would, but no longer inflated to the rank-wide worst
  * case.  The source node's own maxsoft + n_sink stay caller-supplied node fields.
  * ---------------------------------------------------------------------- */
-static int let_node_essential_for_rank(double cx, double cy, double cz,
+static int let_node_essential_for_rank(struct LETPackContext *pk, double cx, double cy, double cz,
                                        double sx, double sy, double sz,
                                        double len, double mass, double maxsoft,
                                        int n_sink)
@@ -758,7 +772,7 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
      * per-cover scalar bounds refine the whole-rank worst case (which spanned ~the whole
      * domain / rank-wide scalar extrema and so never let the PM/theta/relative cull prune);
      * the opening predicate itself is untouched. */
-    return let_cover_opens(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
+    return let_cover_opens(pk, cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
                            g_let_rcut, g_let_rcut2, g_let_is_first_step);
 }
 
@@ -969,10 +983,10 @@ static int g_let_pack_oom = 0;
    ledger; a few messages plus that total are enough. */
 static long g_let_realloc_fail_msgs = 0;
 #define LET_REALLOC_FAIL_MSG_CAP 5
-static int let_realloc_fail_should_print(void)
+static int let_realloc_fail_should_print(struct LETPackContext *pk)
 {
-    if(g_let_realloc_fail_msgs < LET_REALLOC_FAIL_MSG_CAP) {
-        if(++g_let_realloc_fail_msgs == LET_REALLOC_FAIL_MSG_CAP) {
+    if(pk->realloc_fail_msgs < LET_REALLOC_FAIL_MSG_CAP) {
+        if(++pk->realloc_fail_msgs == LET_REALLOC_FAIL_MSG_CAP) {
             printf("LET pack: further realloc-failure messages suppressed; see the memory ledger LET-wire 'failed' bytes.\n");
         }
         return 1;
@@ -988,7 +1002,7 @@ int     *ForeignLeafType = NULL;
 MyFloat *ForeignLeafZeta = NULL;
 MyFloat *ForeignLeafSoft = NULL;
 
-static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
+static void grow_wire_buf(struct LETPackContext *pk, struct LETNodeWire **buf, int needed, int *capacity)
 {
     if(needed <= *capacity) return;
     int new_cap = (*capacity == 0) ? 1024 : *capacity;
@@ -996,12 +1010,12 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
     struct LETNodeWire *nb = (struct LETNodeWire *) realloc(*buf, (size_t)new_cap * sizeof(struct LETNodeWire));
     if(!nb)
     {
-        if(let_realloc_fail_should_print())
+        if(let_realloc_fail_should_print(pk))
             printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
                    new_cap, sizeof(struct LETNodeWire),
                    (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
         gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
-        g_let_pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
+        pk->pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
@@ -1009,7 +1023,7 @@ static void grow_wire_buf(struct LETNodeWire **buf, int needed, int *capacity)
     *capacity = new_cap;
 }
 
-static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacity)
+static void grow_hdr_buf(struct LETPackContext *pk, struct LETSubtreeHeader **buf, int needed, int *capacity)
 {
     if(needed <= *capacity) return;
     int new_cap = (*capacity == 0) ? 16 : *capacity;
@@ -1017,10 +1031,10 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
     struct LETSubtreeHeader *nb = (struct LETSubtreeHeader *) realloc(*buf, (size_t)new_cap * sizeof(struct LETSubtreeHeader));
     if(!nb)
     {
-        if(let_realloc_fail_should_print())
+        if(let_realloc_fail_should_print(pk))
             printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
         gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
-        g_let_pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
+        pk->pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
@@ -1028,7 +1042,7 @@ static void grow_hdr_buf(struct LETSubtreeHeader **buf, int needed, int *capacit
     *capacity = new_cap;
 }
 
-static void pack_recurse(int no, int sib_terminator,
+static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
                           int subtree_root_topleaf_no,  /* unused; kept for future per-subtree edge encoding */
                           struct LETNodeWire **buf, int *count, int *capacity)
 {
@@ -1052,12 +1066,12 @@ static void pack_recurse(int no, int sib_terminator,
     node_nsink = Nodes[no].N_SINK;
 #endif
     double len_decide = let_node_len_over_tree_lifetime(no, len);
-    int is_essential = let_node_essential_for_rank(cx, cy, cz, sx, sy, sz, len_decide, mass, maxsoft, node_nsink);
+    int is_essential = let_node_essential_for_rank(pk, cx, cy, cz, sx, sy, sz, len_decide, mass, maxsoft, node_nsink);
 
     /* Always ship the node (parent expects it).  If not essential, ship as
      * multipole-only (no recursion).  If essential, ship + recurse to children. */
-    grow_wire_buf(buf, *count + 1, capacity);
-    if(g_let_pack_oom) return;   /* realloc failed: bail before the OOB write */
+    grow_wire_buf(pk, buf, *count + 1, capacity);
+    if(pk->pack_oom) return;   /* realloc failed: bail before the OOB write */
     int my_idx = (*count)++;
     struct LETNodeWire *w = &(*buf)[my_idx];
     w->remote_id = no;
@@ -1117,8 +1131,8 @@ static void pack_recurse(int no, int sib_terminator,
             printf("LET pack: single-particle node %d has non-particle nextnode %d (rank %d); the local tree "
                    "is malformed -- the exchange stops once every rank has packed.\n", no, p, ThisTask);
             fflush(stdout);
-            g_let_malformed_singleton++;
-            if(g_let_malformed_singleton_first < 0) {g_let_malformed_singleton_first = no;}
+            pk->malformed_singleton++;
+            if(pk->malformed_singleton_first < 0) {pk->malformed_singleton_first = no;}
             w->leaf_tag = LET_LEAF_TAG_UNSHIPPABLE_SUBTREE;   /* not a real leaf, and not descendable */
         }
         w->node.u.d.bitflags |= (1u << BITFLAG_MULTIPLEPARTICLES);
@@ -1156,8 +1170,8 @@ static void pack_recurse(int no, int sib_terminator,
         if(child < All.TreeParticleSlots)
         {
             /* Particle leaf -- synthesize */
-            grow_wire_buf(buf, *count + 1, capacity);
-            if(g_let_pack_oom) return;   /* realloc failed: bail before the OOB write */
+            grow_wire_buf(pk, buf, *count + 1, capacity);
+            if(pk->pack_oom) return;   /* realloc failed: bail before the OOB write */
             child_wire_idx = (*count)++;
             let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
             next_child = Nextnode[child];  /* particle's next walk target */
@@ -1168,7 +1182,7 @@ static void pack_recurse(int no, int sib_terminator,
              * malformed.  Stop before Nodes[child] is read at a negative offset. */
             printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
                    child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
-            g_let_pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
+            pk->pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
                                    * the callers already test, so no truncated subtree is shipped */
             return;
         }
@@ -1177,8 +1191,8 @@ static void pack_recurse(int no, int sib_terminator,
             /* Local internal node -- recurse */
             int child_sib = Nodes[child].u.d.sibling;
             child_wire_idx = *count;
-            pack_recurse(child, child_sib, subtree_root_topleaf_no, buf, count, capacity);
-            if(g_let_pack_oom) return;   /* recursion hit a realloc OOM: bail */
+            pack_recurse(pk, child, child_sib, subtree_root_topleaf_no, buf, count, capacity);
+            if(pk->pack_oom) return;   /* recursion hit a realloc OOM: bail */
             /* If pack_recurse added zero entries (skipped), child_wire_idx == old count;
              * we need to detect that and not link. */
             if(*count == child_wire_idx) child_wire_idx = -1;  /* nothing added */
@@ -1328,7 +1342,7 @@ static void let_relabel_subtree(struct LETNodeWire *buf, int lo_w, int hi_w,
     }
 }
 
-extern "C" int let_pack_for_rank(int R,
+extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                                   const struct LETPerRankPayload *all_ranks,
                                   struct LETNodeWire **out_buf,
                                   int *out_capacity,
@@ -1356,10 +1370,10 @@ extern "C" int let_pack_for_rank(int R,
         *out_hdr_count = 0;
         return 0;
     }
-    /* Build R's cluster cover tree (file-scope g_cover*, consumed by
+    /* Build R's cluster cover tree (file-scope pk->cover*, consumed by
      * let_node_essential_for_rank during this receiver's pack). R's clusters were
      * already active-restricted when R computed them, so no sender-side bitmap here. */
-    let_build_cover_tree(R);
+    let_build_cover_tree(pk, R);
     /* Pack each of OUR topleaves' subtrees independently, entering pack_recurse from the
      * topleaf with sib_terminator = topleaf.sibling (topleaves already in R's domain are R's
      * own data and are skipped -- shipping them would be a self-reference).  R sees each
@@ -1395,8 +1409,8 @@ extern "C" int let_pack_for_rank(int R,
             if(child < All.TreeParticleSlots)
             {
                 /* Particle directly under topleaf -- synthesize leaf */
-                grow_wire_buf(out_buf, count + 1, out_capacity);
-                if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
+                grow_wire_buf(pk, out_buf, count + 1, out_capacity);
+                if(pk->pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
                 child_wire_idx = count;
                 let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*out_buf)[count]);
                 count++;
@@ -1408,7 +1422,7 @@ extern "C" int let_pack_for_rank(int R,
                  * base.  Stop before Nodes[child] is read at a negative offset; ship nothing. */
                 printf("LET pack FATAL: child index %d falls between the particle slots (%d) and the node index base (%d) (rank %d).\n",
                        child, All.TreeParticleSlots, All.TreeNodeIndexBase, ThisTask); fflush(stdout); endrun(90001024);
-                g_let_pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
+                pk->pack_oom = 1;   /* endrun is a soft stop that returns: raise the pack-failure flag
                                        * the callers already test, so the empty payload below is not
                                        * mistaken for a successfully packed LET */
                 goto pack_oom_bail;
@@ -1417,8 +1431,8 @@ extern "C" int let_pack_for_rank(int R,
             {
                 int child_sib = Nodes[child].u.d.sibling;
                 child_wire_idx = count;
-                pack_recurse(child, child_sib, topleaf_no, out_buf, &count, out_capacity);
-                if(g_let_pack_oom) goto pack_oom_bail;   /* recursion hit a realloc OOM: ship nothing for R */
+                pack_recurse(pk, child, child_sib, topleaf_no, out_buf, &count, out_capacity);
+                if(pk->pack_oom) goto pack_oom_bail;   /* recursion hit a realloc OOM: ship nothing for R */
                 if(count == child_wire_idx) child_wire_idx = -1;  /* pack_recurse added nothing */
                 next_child = child_sib;
             }
@@ -1450,12 +1464,12 @@ extern "C" int let_pack_for_rank(int R,
              * terminator to a wire index (incl. synth-leaf particles) or LET_WIRE_EXIT.
              * After this, the wire graph is self-contained: install only rebases indices. */
             struct let_kw *map_scratch = (struct let_kw *) malloc((size_t)subtree_count * sizeof(struct let_kw));
-            if(!map_scratch) { g_let_pack_oom = 1; goto pack_oom_bail; }
+            if(!map_scratch) { pk->pack_oom = 1; goto pack_oom_bail; }
             let_relabel_subtree(*out_buf, wire_offset_before, count, sib_term, map_scratch);
             free(map_scratch);
 
-            grow_hdr_buf(out_hdr_buf, hdr_count + 1, out_hdr_capacity);
-            if(g_let_pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
+            grow_hdr_buf(pk, out_hdr_buf, hdr_count + 1, out_hdr_capacity);
+            if(pk->pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
             (*out_hdr_buf)[hdr_count].topleaf_idx = i;
             (*out_hdr_buf)[hdr_count].wire_offset = wire_offset_before;
             (*out_hdr_buf)[hdr_count].count       = subtree_count;
@@ -2009,6 +2023,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     if(MaxForeignNodes <= 0) return LET_OK;
 
     g_let_pack_oom = 0;   /* fresh status for this exchange */
+    g_pack_ctx.pack_oom = 0; g_pack_ctx.realloc_fail_msgs = 0;
 
     /* let_synthesize_particle_leaf and let_compute_local_payload read
      * P/CellP and may transitively invoke RT/sink/CR helpers that mutate
@@ -2019,6 +2034,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
     g_let_malformed_singleton = 0; g_let_malformed_singleton_first = -1;
+    g_pack_ctx.malformed_singleton = 0; g_pack_ctx.malformed_singleton_first = -1;
 
     /* One collective, once per build: the horizon the import is pruned against. */
     let_compute_tree_lifetime();
@@ -2181,18 +2197,23 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         int cap = 0, hcap = 0, hcnt = 0;
 #ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
         const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
-        send_count[r] = let_pack_for_rank(r, all_payloads,
+        send_count[r] = let_pack_for_rank(&g_pack_ctx, r, all_payloads,
                                            &send_per_rank[r], &cap,
                                            &send_hdr_per_rank[r], &hcap, &hcnt,
                                            r_bitmap, bitmap_n_words);
 #else
-        send_count[r] = let_pack_for_rank(r, all_payloads,
+        send_count[r] = let_pack_for_rank(&g_pack_ctx, r, all_payloads,
                                            &send_per_rank[r], &cap,
                                            &send_hdr_per_rank[r], &hcap, &hcnt,
                                            NULL, 0);
 #endif
         send_hdr_count[r] = hcnt;
     }
+
+    /* The pack keeps its own report while it runs; publish it here, where the checks below read it. */
+    g_let_malformed_singleton       = g_pack_ctx.malformed_singleton;
+    g_let_malformed_singleton_first = g_pack_ctx.malformed_singleton_first;
+    if(g_pack_ctx.pack_oom) {g_let_pack_oom = 1;}
 
     /* Exchange + install (let_exchange_nodes inlines let_unpack_and_install
      * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
