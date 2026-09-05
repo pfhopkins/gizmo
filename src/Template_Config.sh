@@ -537,7 +537,8 @@
 # ----- General De-Bugging and Special Behaviors
 #DEVELOPER_MODE                    # allows you to modify various numerical parameters (courant factor, etc) at run-time
 #FORCE_EQUAL_TIMESTEPS             # force the code to use a single universal timestep (can change in time, but all particles advance together). chosen as minimum of any particle that step.
-#STOP_WHEN_BELOW_MINTIMESTEP       # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile
+#STOP_WHEN_BELOW_MINTIMESTEP       # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile. this is ON BY DEFAULT: a run that hits the floor has almost always gone unstable, and continuing burns the whole allocation making no progress
+#CONTINUE_BELOW_MINTIMESTEP        # opts out of the above, clamping the stepsize to MinSizeTimestep and carrying on. only for a problem where reaching the floor is expected and survivable
 # --------------------
 # ----- Hydrodynamics (and MHD)
 #FREEZE_HYDRO                      # zeros all fluxes from RP and doesn't let particles move (for testing additional physics layers)
