@@ -92,13 +92,14 @@ def plot_density_slice(coords, rho, box_center, output_dir="."):
     [(default_mpi_ranks(), default_omp_threads())],
 )
 def load_snapshot_radial(snap_file):
-    """Load a snapshot and return (time, box_size, r, rho, vr)."""
+    """Load a snapshot and return (time, box_size, coords, r, rho, vr, T)."""
     with h5py.File(snap_file, "r") as F:
         time = float(F["Header"].attrs["Time"])
         box_size = float(F["Header"].attrs["BoxSize"])
         coords = F["PartType0/Coordinates"][:]
         rho = F["PartType0/Density"][:]
         vel = F["PartType0/Velocities"][:]
+        T = F["PartType0/Temperature"][:] if "PartType0/Temperature" in F else np.full(rho.shape, np.nan)
         if "PartType5" in F and "Coordinates" in F["PartType5"]:
             center = F["PartType5/Coordinates"][0]
         else:
@@ -106,7 +107,7 @@ def load_snapshot_radial(snap_file):
     dr = coords - center
     r = np.sqrt(np.sum(dr * dr, axis=1))
     vr = np.sum(vel * dr, axis=1) / (r + 1e-30)
-    return time, box_size, coords, r, rho, vr
+    return time, box_size, coords, r, rho, vr, T
 
 
 @pytest.mark.parametrize(
@@ -121,13 +122,13 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
     assert_final_time(final_snap, TEST_NAME)
 
     # --- Plot final snapshot density slice ---
-    time_final, box_size, coords_final, _, rho_final, _ = load_snapshot_radial(final_snap)
+    time_final, box_size, coords_final, _, rho_final, _, _ = load_snapshot_radial(final_snap)
     plot_density_slice(coords_final, rho_final, box_size / 2.0, output_dir=str(TEST_DIR))
 
     # --- Sedov check at early time (before radiative phase) ---
     sedov_snap = get_snapshot_nearest_time(TEST_NAME, T_SEDOV_CHECK)
     assert sedov_snap is not None, "No snapshots found"
-    time, box_size, coords, r_sim, rho_sim, vr_sim = load_snapshot_radial(sedov_snap)
+    time, box_size, coords, r_sim, rho_sim, vr_sim, T_sim = load_snapshot_radial(sedov_snap)
 
     R_shock = sedov_shock_radius(E_SN_CODE, RHO_AMBIENT_CODE, time)
 
@@ -138,8 +139,13 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
     rho_binned = binned_statistic(r_sim, rho_sim, "median", r_bins)[0]
     vr_binned = binned_statistic(r_sim, vr_sim, "median", r_bins)[0]
 
-    # Plots: density and radial velocity vs r, with the analytic shock location
-    for label, binned in [("Density", rho_binned), ("RadialVelocity", vr_binned)]:
+    # Plots: density, radial velocity and temperature vs r, with the analytic shock location
+    T_binned = binned_statistic(r_sim, T_sim, "median", r_bins)[0]
+    for label, binned, ylab, logy in [
+        ("Density", rho_binned, "Density", False),
+        ("RadialVelocity", vr_binned, "RadialVelocity", False),
+        ("Temperature", T_binned, "Temperature (K)", True),
+    ]:
         plt.figure()
         plt.plot(r_centers, binned, "o", markersize=3, label="GIZMO")
         plt.axvline(R_shock, color="red", linestyle="--", label="Sedov R_shock")
@@ -147,8 +153,10 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads):
             plt.axhline(RHO_AMBIENT_CODE, color="grey", linestyle=":", label=r"$\rho_{\rm amb}$")
             plt.axhline(4.0 * RHO_AMBIENT_CODE, color="green", linestyle=":",
                         label=r"$4\rho_{\rm amb}$ (strong-shock jump)")
+        if logy:
+            plt.yscale("log")
         plt.xlabel("r (pc)")
-        plt.ylabel(label)
+        plt.ylabel(ylab)
         plt.legend()
         plt.title(f"t = {time:.4f} (Sedov check)")
         plt.savefig(str(TEST_DIR / f"{label}.png"))
