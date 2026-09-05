@@ -1308,15 +1308,22 @@ static void mode_b_remote_evaluate_into_buffer(
                 if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
                 csr_rec_off.assign(N + 1, 0);
                 StageTimer t(tim ? &tim->dt_collect : nullptr);
-                /* Thread the fused self walk when producing candidates above the
-                 * work threshold. Each thread walks its actives into its OWN
-                 * export sink + its OWN CSR segment (no shared push, no lock); a
-                 * serial prefix-sum then assembles the active-ordered CSR
-                 * BYTE-IDENTICALLY to the serial build (per-active walk order
-                 * fixed; peers ascending within an active; node order = walk
-                 * append order). The export walk (want_cands
-                 * false) stays serial. */
-                const bool use_omp_self = want_cands && nlr_modeb_use_omp(N, modeb_nthreads);
+                /* Thread the fused self walk above the work threshold. Each thread
+                 * walks its actives into its OWN export sink + its OWN CSR segment
+                 * (no shared push, no lock); a serial prefix-sum then assembles the
+                 * active-ordered CSR BYTE-IDENTICALLY to the serial build
+                 * (per-active walk order fixed; peers ascending within an active;
+                 * node order = walk append order).
+                 *
+                 * The threshold is the only thing that decides this. Whether the
+                 * walk also collects candidates does not: it changes what the walk
+                 * records, not how its actives divide between threads, and the
+                 * per-active work is the traversal either way. This test once also
+                 * required candidates, back when a walk without them was a
+                 * validation pass whose speed was irrelevant; a walk without them
+                 * is now the production path that exports to peers, and it has the
+                 * most actives of any of them. */
+                const bool use_omp_self = nlr_modeb_use_omp(N, modeb_nthreads);
                 if(use_omp_self) {
                     diag_omp_self = modeb_nthreads;
                     nlr_note_threaded_walk();
@@ -1350,10 +1357,10 @@ static void mode_b_remote_evaluate_into_buffer(
                                              (double)actives[aa].pos[2]};
                         sink.clear_all();
                         /* No candidate sink when the backend will not walk one:
-                         * cand_self_tree is left empty in that case, so taking
-                         * its element address would be out of bounds.  The serial
-                         * branch below has always guarded this; here it never
-                         * mattered until the flag stopped being a constant. */
+                         * cand_self_tree is left empty in that case, so taking its
+                         * element address would be out of bounds. Both branches
+                         * guard it, and this one is now the branch that meets the
+                         * case, since a walk that collects nothing threads too. */
                         std::vector<int>* cand_ptr = nullptr;
                         if(want_cands) {
                             cand_ptr = &cand_self_tree[aa];
