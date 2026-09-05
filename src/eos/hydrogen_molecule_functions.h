@@ -32,7 +32,13 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
 
     int j = 2;
     double dzterm, d2zterm;
-    while (error > EPSILON) {
+    /* Bounded. EPSILON is DBL_EPSILON, so the exit test asks the series to converge to machine
+       precision; if the terms stagnate at FP granularity the loop never terminates. This body is
+       device-callable and reached from the offloaded cooling chain, where that hangs the kernel
+       rather than one rank. The series needs about 15 terms below 3000 K, above which H2 is
+       dissociated, so this cap cannot bind in normal operation. */
+    const int max_partition_terms = 200;
+    for (int iter = 0; error > EPSILON && iter < max_partition_terms; ++iter) {
         int s = j % 2;
         zterm[s] *= (2 * j + 1) * expterm / (2 * j - 3);
         int jjplusone = j * (j + 1);
