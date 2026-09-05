@@ -552,7 +552,11 @@ integertime get_timestep(int p,		/*!< particle index */
         if(dt_divv < dt) {dt = dt_divv;}
         double dt_cour = 2. * All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig); // can be generous here, really the signal velocity isn't that important in the collisionless case, but it is important with some of the physics above //
 #if defined(CBE_INTEGRATOR)
+#if defined(CBE_INTEGRATOR_RP_GAUSSIAN)
         if(need_cbe_agscfl) {dt_cour *= 0.25;} // stricter criterion for CBE moment fluxes (CBE particles only, not other AGS-CFL types) //
+#else
+        if(need_cbe_agscfl) {dt_cour *= 0.125;} // as above, tighter still: the top-hat face fluxes also transport second moment, through their gomega and pstress terms, and the compact-support signal speed |u|+c_x is not enough margin for those on its own //
+#endif
         if(need_cbe_agscfl)
         {   /* CBE mass-depletion criterion: cap the per-basis fractional mass change per step.
              * m_eff-floor: regularize the softened basis mass as m_eff = max(m_b,
