@@ -237,8 +237,10 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #if defined(MAGNETIC) && defined(MHD_BATTERY_MECHANISMS)
     {
         Vec3<double> dBdt_battery_total = {};
-        const double dBdt_phys_to_code =
-            UNIT_TIME_IN_CGS / UNIT_B_IN_GAUSS / DMAX(All.cf_a2inv, MIN_REAL_NUMBER);
+        /* The battery EMFs are built in physical cgs, and everything added to DtB is a physical
+           d(B*V)/dt, so only the unit system is converted here: the comoving factors are applied
+           once, on the field and the volume together, where the contribution is accumulated. */
+        const double dBdt_phys_to_code = UNIT_TIME_IN_CGS / UNIT_B_IN_GAUSS;
 #if (MHD_BATTERY_MECHANISMS & 1)
         {
             const double n_e_cgs = CellP[i].n_e();
@@ -286,7 +288,14 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
             const double scale = allowed / dEmag_cell;
             dBdt_battery_total *= scale;
         }
-        out->DtB += dBdt_battery_total * V_code;
+        /* The field rate the battery is imposing, kept for the timestep criterion. Recorded
+           after the energy limiter above has had its say, so it describes what is actually
+           applied, and before the volume factor, since the criterion compares it against the
+           field itself rather than against the volume-integrated quantity. */
+        CellP[i].DtB_battery_magnitude = (MyFloat) sqrt(dBdt_battery_total.norm_sq());
+        /* V_code is a comoving volume; the physical one the flux convention wants is larger by
+           a^3, which is what dividing by cf_a3inv supplies. The rate above is already physical. */
+        out->DtB += dBdt_battery_total * (V_code / DMAX(All.cf_a3inv, MIN_REAL_NUMBER));
     }
 #endif
 

@@ -321,6 +321,7 @@ extern struct gas_cell_data
 #endif
 
 #ifdef MHD_BATTERY_MECHANISMS
+    MyFloat DtB_battery_magnitude;              /*!< |dB/dt| from the battery EMFs alone [code B per code time], summed over the enabled mechanisms. The field rate, not the volume-integrated d(B*V)/dt the induction equation carries. Written each hydro pass where the sources are assembled; read by the timestep criterion, which resolves the time the battery takes to change the field it is building. */
 #if (MHD_BATTERY_MECHANISMS & (2|4|8))
     Vec3<MyDouble> E_battery_T2_cell;           /*!< Tier-2 battery EMF E' [statvolt/cm in physical cgs, multiplied by the same code-unit conversion the gradient pass expects]. Sum of radiative-ionization + dust contributions. Populated by per-cell builders in eos/cooling and solids/. The gradient pass then takes grad(E_battery_T2_cell), and hydro_toplevel.cc applies dB/dt|_T2 = -c * curl(grad). */
 #endif
