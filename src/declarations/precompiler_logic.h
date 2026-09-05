@@ -1620,7 +1620,9 @@
    naming the cell that failed scrolls past instead of ending the run. Define
    CONTINUE_BELOW_MINTIMESTEP to restore the clamp-and-continue behaviour for
    a problem where reaching the floor is expected and survivable. */
+#if defined(CONTINUE_BELOW_MINTIMESTEP) && defined(STOP_WHEN_BELOW_MINTIMESTEP)
+#error "CONTINUE_BELOW_MINTIMESTEP and STOP_WHEN_BELOW_MINTIMESTEP ask for opposite things at the timestep floor. Set at most one; stopping is the default with neither."
+#endif
 #if !defined(CONTINUE_BELOW_MINTIMESTEP)
-#undef STOP_WHEN_BELOW_MINTIMESTEP
 #define STOP_WHEN_BELOW_MINTIMESTEP
 #endif
