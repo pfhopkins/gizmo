@@ -154,9 +154,9 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
     Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
         int real = stp ? stp[i] : i;
-        double fx = (P_dev[real].Pos[0] - dc0) / dlen;
-        double fy = (P_dev[real].Pos[1] - dc1) / dlen;
-        double fz = (P_dev[real].Pos[2] - dc2) / dlen;
+        double fx = (dlen > 0.0) ? ((P_dev[real].Pos[0] - dc0) / dlen) : 0.0;
+        double fy = (dlen > 0.0) ? ((P_dev[real].Pos[1] - dc1) / dlen) : 0.0;
+        double fz = (dlen > 0.0) ? ((P_dev[real].Pos[2] - dc2) / dlen) : 0.0;
         if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
         if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
         if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
