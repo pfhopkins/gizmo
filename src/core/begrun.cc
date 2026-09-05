@@ -3036,9 +3036,9 @@ void read_parameter_file(char *fname)
         ChimesGlobalVars.reionisation_redshift = (ChimesFloat) z_reion_buf;
     }
     MPI_Bcast(&ChimesGlobalVars, sizeof(struct globalVariables), MPI_BYTE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&ChimesDataPath, 256 * sizeof(char), MPI_BYTE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&ChimesEqAbundanceTable, 196 * sizeof(char), MPI_BYTE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&ChimesPhotoIonTable, 196 * sizeof(char), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&ChimesDataPath, sizeof(ChimesDataPath), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&ChimesEqAbundanceTable, sizeof(ChimesEqAbundanceTable), MPI_BYTE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&ChimesPhotoIonTable, sizeof(ChimesPhotoIonTable), MPI_BYTE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&chimes_rad_field_norm_factor, sizeof(double), MPI_BYTE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&shielding_length_factor, sizeof(double), MPI_BYTE, 0, MPI_COMM_WORLD);
     MPI_Bcast(&cr_rate, sizeof(double), MPI_BYTE, 0, MPI_COMM_WORLD);
