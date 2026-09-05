@@ -51,7 +51,7 @@ HubbleParam             1.
 %----- Memory allocation
 
 %---- Rebuild domains when >this fraction of particles active
-TreeDomainUpdateFrequency   0.005
+DomainBuild_ActiveFraction   0.005
 
 %---- Initial hydro temperature & temperature floor (in Kelvin)
 InitGasTemp     1e2

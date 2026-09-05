@@ -292,24 +292,12 @@ void do_box_wrapping(void)
 
 
 
-/* Get_Particle_Expected_Area migrated to core/predict_functions.h as
- * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix — called from
- * KOKKOS_INLINE_FUNCTION compute_finitevol_faces template under
- * SLOPE_LIMITER_TOLERANCE==0). */
-
-
 /* evaluate_NH_from_GradRho: definition now in predict_functions.h (single source of truth).
    Include with non-inline linkage to provide externally-visible symbols. */
 #undef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION
 #include "predict_functions.h"
 
-/* The drift body itself lives in drift_particle_functions.h so that one copy serves the
- * host and, once the drift is offloaded, the device. It is included HERE, below the block
- * above, for two reasons: that block must stay the FIRST inclusion of predict_functions.h
- * or its external symbols silently vanish, and the headers below must NOT be taken with
- * the blanked macro or this file would emit strong copies of symbols core/timestep.cc
- * already owns. Undefining the macro lets each header fall back to plain inline. */
 #undef KOKKOS_INLINE_FUNCTION
 #include "drift_particle_functions.h"
 
@@ -320,8 +308,6 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
 
 void drift_particle(int i, integertime time1)
 {
-    /* Same view the cosmological table factors are built from elsewhere; on a
-       non-cosmological run the tables are never filled and never read. */
     /* The bounds are the cached ones init_drift_table() built the tables over; recomputing
        them here would put two libm calls on every drifted particle. */
     struct DriftKickTableView tables = drift_kick_table_view(DriftTable, GravKickTable,
@@ -397,15 +383,6 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id) { return G
     (cylindrical or spherical) based on assumed fixed initial velocities (if HYDRO_FIX_MESH_MOTION=2 or 3),
     in which case we have to convert back and forth. */
 void advect_mesh_point(int i, double dt) { advect_mesh_point_P(i, dt, P, CellP); }
-
-
-
-
-/* calculate_face_area_for_cartesian_mesh migrated to core/predict_functions.h
- * as KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix: was host-only,
- * called from KOKKOS_INLINE_FUNCTION compute_finitevol_faces template under
- * HYDRO_REGULAR_GRID Config). */
-
 #endif
 
 

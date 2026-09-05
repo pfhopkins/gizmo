@@ -271,6 +271,66 @@ endif
 endif
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Frontier_CPU")
+## Frontier (OLCF) with the Kokkos OpenMP backend: the same Kokkos source path as
+## "Frontier", dispatched to CPU threads instead of the MI250X. Host compiler, host
+## libraries and host flags are IDENTICAL to the "Frontier" block, so a Frontier vs
+## Frontier_CPU pair differs only in the Kokkos backend and in which compiler builds
+## GPU_OBJS -- that is the point of this systype, and it is why OPTIMIZE deliberately
+## does NOT add -march=znver3 even though this is a host-only build.
+## hipcc is not used, so __HIPCC__ (and therefore GIZMO_GPU_COMPILER) is undefined:
+## the per-TU AllDeviceMirror blocks are skipped and All stays the normal extern,
+## exactly as in Vista_CPU and Frontera_Kokkos.
+## Modules:
+##   module reset
+##   module load amd/6.4.2
+##   module load cray-mpich/9.0.1
+##   module load kokkos/4.6.01-omp
+##   module load cray-hdf5 cray-fftw
+##   module load hypre/3.0.0-mpi
+## i.e. the "Frontier" module set MINUS rocm and craype-accel-amd-gfx90a, with the
+## OpenMP-backend Kokkos module in place of kokkos/4.6.02-gpu. (hypre is only needed
+## for MHD_MODIFIED_GRADIENT; no gsl module -- nothing here consumes GSL_INCL/GSL_LIBS.)
+## Do NOT export HSA_XNACK=1 for this build; it has no device allocations.
+## To compare against the "Frontier" GPU build, run at the same rank and thread counts.
+CC       =  cc
+CXX      =  CC -std=c++17
+FC       =  ftn
+OPTIMIZE = -O2 -g   # matches the "Frontier" block exactly; see the note above
+## OpenMP is required by the Kokkos OpenMP backend itself, so it is unconditional here
+## rather than gated on the OPENMP config flag (same reasoning as Frontera_Kokkos).
+OPTIMIZE += -fopenmp
+KOKKOS_PATH     = $(OLCF_KOKKOS_ROOT)
+KOKKOS_CPPFLAGS = -I$(OLCF_KOKKOS_ROOT)/include
+KOKKOS_LDFLAGS  = -L$(OLCF_KOKKOS_ROOT)/lib64 -Wl,-rpath,$(OLCF_KOKKOS_ROOT)/lib64
+KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
+## GPU-ported TUs: the host compiler, plus the Kokkos includes. No offload arch.
+GPU_CXX     = CC -std=c++17
+GPU_CFLAGS  = $(KOKKOS_CPPFLAGS)
+GPU_LDFLAGS = $(KOKKOS_LDFLAGS)
+MKL_INCL =
+MKL_LIBS =
+HDF5INCL = -I$(HDF5_ROOT)/include -DH5_USE_16_API
+HDF5LIB  = -lhdf5 -lz
+FFTW_INCL=
+FFTW_LIBS=
+MPICHLIB = #
+OPT     += -DHDF5_DISABLE_VERSION_CHECK
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+ifdef OLCF_HYPRE_ROOT
+HYPRE_INCL = -I$(OLCF_HYPRE_ROOT)/include
+HYPRE_LIBS = -L$(OLCF_HYPRE_ROOT)/lib -L$(OLCF_HYPRE_ROOT)/lib64 -lHYPRE
+else ifdef HYPRE_ROOT
+HYPRE_INCL = -I$(HYPRE_ROOT)/include
+HYPRE_LIBS = -L$(HYPRE_ROOT)/lib -L$(HYPRE_ROOT)/lib64 -lHYPRE
+else ifdef HYPRE_DIR
+HYPRE_INCL = -I$(HYPRE_DIR)/include
+HYPRE_LIBS = -L$(HYPRE_DIR)/lib -L$(HYPRE_DIR)/lib64 -lHYPRE
+endif
+endif
+endif
+
+#----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Vista_CPU")
 ## Vista Grace ARM with Kokkos OpenMP backend (debug oracle for the GPU build).
 ## Same source code path as Vista (Kokkos kernels), just dispatched to OpenMP

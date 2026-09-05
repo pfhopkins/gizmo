@@ -5,7 +5,7 @@
  * and host walkers (Mode B). This translation unit holds
  * host-only hooks: is_active, per-active radius, per-call scalars capture
  * (NlrCommonScalars + host-precomputed unit factors via nlr_host_all_ptr),
- * populate/cleanup_device_context (Phase 4.A.0 UVM staging),
+ * populate/cleanup_device_context,
  * apply_active_writeback (source-side mass + momentum loss), merge_accum,
  * ghost-writeback manifest + lifecycle hooks, and thermal_fb_local_fill
  * (the per-source host pack — SSOT).

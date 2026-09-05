@@ -24,7 +24,7 @@
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"  /* KOKKOS_INLINE CR helpers */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-#include "../solids/ism_dust_chemistry_functions.h"  /* KOKKOS_INLINE ISMDustChem_Return_Mass_Where_Dust_Shocked (Phase D 2026-05-21 #20011-D fix) */
+#include "../solids/ism_dust_chemistry_functions.h"  /* KOKKOS_INLINE ISMDustChem_Return_Mass_Where_Dust_Shocked */
 #endif
 
 #ifdef GALSF_FB_MECHANICAL
@@ -51,8 +51,7 @@ struct MechFBCallScalars {
      * CR_DYNAMICAL_INJECTION_IN_SNE is defined whenever COSMIC_RAY_FLUID OR
      * COSMIC_RAY_SUBGRID_LEBRON is, and the upstream field is in the same
      * gate — the mirror must match (not be narrowed to COSMIC_RAY_FLUID only)
-     * or the LEBRON-subgrid + FIRE_BHS path fails to compile (Phase D
-     * 2026-05-21). */
+     * or the LEBRON-subgrid + FIRE_BHS path fails to compile. */
     double CosmicRay_SNeFraction;
 #endif
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(CRFLUID_EVOLVE_SPECTRUM)

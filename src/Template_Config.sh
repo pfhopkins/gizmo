@@ -163,7 +163,7 @@
 #GRAVITY_ANALYTIC               # specific analytic gravitational force to use instead of or with self-gravity. If set to a numerical value
                                 #  > 0 (e.g. =1), then SINK_CALC_DISTANCES will be enabled, and it will use the nearest BH particle as the center for analytic gravity computations
                                 #  (edit "gravity/analytic_gravity.h" to actually assign the analytic gravitational forces). 'ANALYTIC_GRAVITY' gives same functionality
-#GIZMO_MIXED_PRECISION_GRAVITY  # [infrastructural; Step 13 Phase 2] reserve mixed-precision gravity path: positions stay double, force-carrying fields become single. Default OFF. The typedef MyGravFloat=float is exposed when this flag is set; individual gravity fields will be migrated to MyGravFloat as the GPU tree walk is ported. Follows pkdgrav3/Bonsai conventions.
+#GIZMO_MIXED_PRECISION_GRAVITY  # reserve mixed-precision gravity path: positions stay double, force-carrying fields become single. Default OFF. The typedef MyGravFloat=float is exposed when this flag is set; individual gravity fields will be migrated to MyGravFloat as the GPU tree walk is ported. Follows pkdgrav3/Bonsai conventions.
 ## ----------------------------------------------------------------------------------------------------
 # -------------------------------------- Self-Interacting DM (Rocha et al. 2012) and Scalar-field DM and Fuzzy DM; users please cite Rocha et al., MNRAS 2013, 430, 81 and Robles et al, 2017 (arXiv:1706.07514)
 #DM_SIDM=2                      # self-interacting particle types (specify the particle types which are self-interacting DM with a bit mask, as for PM_PLACEHIGHRESREGION above (see description); previous "DMDISK_INTERACTIONS" is identical to setting DM_SIDM=2+4  [cite Rocha et al., MNRAS 2013, 430, 81 and Robles et al, 2017 (arXiv:1706.07514)]
@@ -476,6 +476,7 @@
 #OPENMP                         # top-level switch for explicit OpenMP implementation (can turn on here, or enable in Makefile for your machine)
 #MULTIPLEDOMAINS=16             # Multi-Domain option for the top-tree level (alters load-balancing)
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
+#DOMAIN_NO_LIGHTWEIGHT_REPARTITION # force a full domain decomposition every time one is triggered. By default the code instead rebalances the load while reusing the existing top-level tree whenever a full decomposition was not actually required, which is much cheaper. Only set this if a run needs the top tree rebuilt every time.
 ####################################################################################################
 
 

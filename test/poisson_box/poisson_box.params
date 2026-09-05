@@ -58,7 +58,7 @@ HubbleParam             1.0
 %----- Memory allocation
 
 %---- Domain decomposition
-TreeDomainUpdateFrequency   0.005
+DomainBuild_ActiveFraction   0.005
 
 %---- Initial temperature & floor
 InitGasTemp     1e4

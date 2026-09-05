@@ -567,7 +567,7 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
     }
 #endif
 
-    /* Commit delta j-writes atomically. Mirrors legacy
+    /* delta j-writes atomically. Mirrors legacy
      * sink_swallow_and_kick_functions.h:399-439. */
     if(Mass_j != Mass_j_0 ||
        Vel_j[0] != Vel_j_0[0] || Vel_j[1] != Vel_j_0[1] || Vel_j[2] != Vel_j_0[2] ||

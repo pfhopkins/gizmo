@@ -455,8 +455,10 @@ void fof_fof(int num)
      before returning in any case.
      TreeReconstructFlag says the tree is gone: the timestepper otherwise reuses it, updating it in
      place with the last step's kicks (run.cc) and skipping construction before the next walk
-     (gravtree.cc), both of which would read storage that no longer exists. */
-  if(num >= 0 && DumpFlag != 2) {force_treefree(); TreeReconstructFlag = 1;}
+     (gravtree.cc), both of which would read storage that no longer exists.  DomainReconstructFlag
+     says the same thing to the decomposition, which is what holds the tree's storage: a rebuild on
+     its own would build into arrays this just released. */
+  if(num >= 0 && DumpFlag != 2) {force_treefree(); TreeReconstructFlag = 1; DomainReconstructFlag = 1;}
 #endif
 
   FOF_PList =

@@ -67,7 +67,7 @@ ResubmitOn                         0
 ResubmitCommand                    none
 
 %---- Tree algorithm, force accuracy, domain update frequency
-TreeDomainUpdateFrequency   0.1	% 0.0005-0.05, dept on core+particle number
+DomainBuild_ActiveFraction   0.1	% 0.0005-0.05, dept on core+particle number
 
 %----- Memory allocation
 

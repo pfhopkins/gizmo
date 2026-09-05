@@ -54,7 +54,7 @@ void savepositions(int num)
 #endif
 
     rearrange_particle_sequence();
-    All.NumForcesSinceLastDomainDecomp = (long long) (1 + All.TreeDomainUpdateFrequency * All.TotNumPart);    /* ensures that new tree will be constructed */
+    All.NumForcesSinceLastTreeBuild = (long long) (1 + All.TreeRebuild_ActiveFraction * All.TotNumPart);    /* ensures that new tree will be constructed */
 
 
 

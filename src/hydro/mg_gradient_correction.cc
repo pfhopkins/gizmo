@@ -1168,14 +1168,14 @@ void mg_gradient_correction_calc(void)
     myfree(mg_active_indices);
 
 #if defined(MHD_MODIFIED_GRADIENT_USE_PARDISO)
-    /* Phase 2: solve via MKL PARDISO direct solver (gather to rank 0) */
+    /* solve via MKL PARDISO direct solver (gather to rank 0) */
     mg_solve_pardiso();
 #elif !defined(MHD_MODIFIED_GRADIENT_CG_ONLY)
-    /* Phase 2: solve via Hypre PCG + BoomerAMG (handles its own MPI communication) */
+    /* solve via Hypre PCG + BoomerAMG (handles its own MPI communication) */
     mg_solve_hypre();
 #else
-    mg_setup_ghost_exchange(); /* Phase 2: set up ghost exchange for CG */
-    mg_cg_solve(); /* Phase 3: solve R*c = b via SSOR-preconditioned CG */
+    mg_setup_ghost_exchange(); /* set up ghost exchange for CG */
+    mg_cg_solve(); /* solve R*c = b via SSOR-preconditioned CG */
     mg_cleanup_ghost_exchange(); /* Cleanup ghost exchange */
 #endif
 

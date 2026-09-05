@@ -231,9 +231,6 @@
 #if !defined(MULTIPLEDOMAINS)
 #define MULTIPLEDOMAINS 32                  /*! slightly closer to our usual default, but users should feel free to adjust */
 #endif
-#if !defined(DOMAIN_LIGHTWEIGHT_REPARTITION)
-#define DOMAIN_LIGHTWEIGHT_REPARTITION      /*! enable lightweight domain repartition that reuses the top tree between full decompositions */
-#endif
 #define GALSF_FB_MECHANICAL                 /*! top-level switch for mechanical feedback modules */
 #define GALSF_FB_FIRE_STELLAREVOLUTION (FIRE_PHYSICS_DEFAULTS) /*! turns on default FIRE processes+lookup tables including gas return, SNe, R-process, etc. this carries a number matching the defaults set you choose */
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
@@ -367,6 +364,18 @@
 
 #endif // FIRE_PHYSICS_DEFAULTS clauses
 
+/* Lightweight domain repartition rebalances the particle load while reusing the
+   existing top-level tree, and is used whenever a full decomposition was not
+   actually requested.  It is the default for every configuration: a full
+   decomposition rewrites the particle arrays wholesale, which is far more
+   expensive than the rebalance it performs, and on an accelerator it also
+   discards the residency of everything that reads those arrays afterwards.
+   Full decomposition still runs whenever one is required.  Set
+   DOMAIN_NO_LIGHTWEIGHT_REPARTITION to force a full decomposition every time. */
+#if !defined(DOMAIN_LIGHTWEIGHT_REPARTITION) && !defined(DOMAIN_NO_LIGHTWEIGHT_REPARTITION)
+#define DOMAIN_LIGHTWEIGHT_REPARTITION
+#endif
+
 /* SINK_COMPTON_HEATING shares the per-sink angle-weighted luminosity tree
  * infrastructure (mass_sinklumwt_forradfb, NODE::sink_lum / sink_lum_grad,
  * pseudo-node aggregation) with SINK_PHOTONMOMENTUM — the Compton incident
@@ -376,7 +385,7 @@
  * disable-able at runtime via the All.PhotonMomentum_Coupled_Fraction
  * parameter, so a Compton-only physics setup is still expressible. Placed
  * OUTSIDE the FIRE_PHYSICS_DEFAULTS clauses block so it fires for any Config
- * that explicitly enables SINK_COMPTON_HEATING. Phase D 2026-05-21. */
+ * that explicitly enables SINK_COMPTON_HEATING. */
 #if defined(SINK_COMPTON_HEATING) && !defined(SINK_PHOTONMOMENTUM)
 #define SINK_PHOTONMOMENTUM
 #endif

@@ -1,7 +1,7 @@
 #pragma once
 
 /* calculate_face_area_for_cartesian_mesh is KOKKOS_INLINE_FUNCTION-defined
- * here (Phase D 2026-05-21 #20011-D fix). Include early so all consumers see
+ * here. Include early so all consumers see
  * the device-callable definition before the compute_finitevol_faces template. */
 #include "../core/predict_functions.h"
 

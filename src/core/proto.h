@@ -208,7 +208,7 @@ void calc_shearing_box_pos_offset(void);
 #endif
 
 
-/* ngb_treefind_*_targeted decls retired with mesh/ngb.cc in Step 5 Phase D5. */
+/* ngb_treefind_*_targeted decls retired with mesh/ngb.cc */
 
 
 
@@ -409,9 +409,6 @@ void mymalloc_init(void);
 void dump_memory_table(void);
 void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, const char *label, const char *func, const char *file, int line);
 
-/* Get_Particle_Size is now a member function of particle_data — use P[i].Get_Particle_Size() or pp[i].Get_Particle_Size() */
-/* Get_Particle_Expected_Area moved to core/predict_functions.h as
- * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
 GIZMO_GPU_FUNCTION double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
 GIZMO_GPU_FUNCTION double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double gamma_minus_eCR_tmp, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1041,7 +1038,7 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
                                           const char *file, int line, const char *func);
 void        gizmo_collect_controlled_stop(void);
 int         gizmo_poll_controlled_stop(void);   /* collect + return global code; for top-level poll points */
-void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* Stage 2: collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
+void        gizmo_exit_bad_stop_if_requested(const char *poll_site);  /* collect + graceful finalize+exit if any rank flagged; barrier-equivalent sync */
 int         gizmo_controlled_stop_code(void);
 const char *gizmo_controlled_stop_local_reason(void);
 /* Asking the working memory pool whether something will fit, before trying to take it.
@@ -1202,8 +1199,6 @@ void AGSForce_calc(void);
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
 void advect_mesh_point(int i, double dt);
-/* calculate_face_area_for_cartesian_mesh moved to core/predict_functions.h as
- * KOKKOS_INLINE_FUNCTION (Phase D 2026-05-21 #20011-D fix). */
 #endif
 
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -1258,8 +1253,7 @@ void cbe_sync_pred_to_conserved(int i);
    (KOKKOS_INLINE_FUNCTION). The host entry points are
    cbe_drift_kick_evaluate_gpu / cbe_postgravity_evaluate_gpu
    (sidm/sidm_gpu_decls.h) and do_cbe_predict_drift (above). */
-/* Per-output-interval CBE diagnostic counter scaffold (Wave-CBE Commit 2,
- * 2026-05-24). Counters defined in sidm/cbe_integrator.cc; populated by
+/* Per-output-interval CBE diagnostic counter scaffold. Counters defined in sidm/cbe_integrator.cc; populated by
  * later commits; emitted to FdCbeDiagnostics (cbe_diagnostics.txt) when
  * the CBE_INTEGRATOR_OUTPUT_MOREINFO gate is set (or under the broader
  * OUTPUT_ADDITIONAL_RUNINFO gate). Gated entirely so production runs can

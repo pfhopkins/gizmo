@@ -176,7 +176,7 @@ void restart(int modus)
 
   /* Bad-stop poll BEFORE the per-rank restart file-IO loop. Drains the two
    * symmetric setup bad-stops above (7871 missing restart set, 2131 NTask <
-   * NumFilesWrittenInParallel) after the Stage-1d flip. All ranks reach here
+   * NumFilesWrittenInParallel) after the flip. All ranks reach here
    * (the MPI_Barrier above is unconditional); the intervening code is pure
    * arithmetic, so this is the first collective-symmetric drain point before
    * any restart data is touched. */

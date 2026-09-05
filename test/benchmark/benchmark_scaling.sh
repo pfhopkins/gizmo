@@ -68,7 +68,7 @@ Omega0                  0.
 OmegaLambda             0.
 OmegaBaryon             0.
 HubbleParam             1.
-TreeDomainUpdateFrequency   0.005
+DomainBuild_ActiveFraction   0.005
 InitGasTemp     1e4
 MinGasTemp      2.73
 DesNumNgb               32

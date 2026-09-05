@@ -73,7 +73,7 @@ static void let_compute_tree_lifetime(void)
     for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
     MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 
-    double rebuild_threshold = All.TreeDomainUpdateFrequency * (double) All.TotNumPart;
+    double rebuild_threshold = All.TreeRebuild_ActiveFraction * (double) All.TotNumPart;
     long long cumulative = 0, occupied_total = 0;
     int trigger_bin = -1, highest_occupied = -1;
     for(int bin = 0; bin < TIMEBINS; bin++)
@@ -2297,8 +2297,7 @@ extern "C" void let_finalize_unredirected_foreign_topleaves(void)
             printf("LET finalize FATAL: foreign topleaf t=%d owner_rank=%d node=%d still "
                    "unredirected (nextnode=%d in pseudo range) and NOT provably empty: "
                    "mass=%g N_part=%ld len=%g sibling=%d. The Locally Essential Tree failed "
-                   "to ship this subtree; Phase 9.4 retired the CPU gravity export path, so "
-                   "the LET must be complete. (rank=%d)\n",
+                   "to ship this subtree (rank=%d)\n",
                    t, DomainTask[t], no, (int)nn, mass, npart, (double)Nodes[no].len,
                    Nodes[no].u.d.sibling, ThisTask);
             fflush(stdout); endrun(90000064); continue; /* soft bad-stop: incomplete LET state drains at gravtree:after_treebuild before the GPU walk reads it */

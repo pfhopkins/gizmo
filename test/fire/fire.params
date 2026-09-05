@@ -32,7 +32,7 @@ SeedSinkPerUnitMass                 2e-6
 SinkEddingtonFactor                 1e3
 % -- platform/runtime options
 ParticleNumberMembalance_Limit      3.5
-TreeRebuild_ActiveFraction          0.002
+DomainBuild_ActiveFraction          0.002
 Effective_Kernel_NeighborNumber     32
 MaxSimulationWallTime_in_Seconds    1e9
 Output_Directory                    output

@@ -178,6 +178,7 @@ void gravity_tree(void)
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;
+        All.NumForcesSinceLastTreeBuild = 0;   /* the counter this build answers */
         PRINT_STATUS(" ..Tree construction done.");
     }
 
@@ -216,7 +217,7 @@ void gravity_tree(void)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
 #endif
 
-    if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)
+    if(GlobNumForceUpdate > All.TreeRebuild_ActiveFraction * All.TotNumPart)
     { /* we have a fresh tree and would like to measure gravity cost */
         /* find the closest level */
         for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - All.HighestActiveTimeBin); i < GRAVCOSTLEVELS; i++)
@@ -421,7 +422,7 @@ gravity_walk_attempt:
                            "%lld of %d ranks. The import is pruned when the tree is built, against where the particles "
                            "were then, and they have since moved far enough that the walk resolves structure it no "
                            "longer carries.%s%s Rebuilding the tree and redoing this evaluation against it. Frequent "
-                           "repairs mean the tree is being reused too long -- lower TreeDomainUpdateFrequency.\n",
+                           "repairs mean the tree is being reused too long -- lower TreeRebuild_ActiveFraction.\n",
                            total[0], total[1], NTask, example[0] ? " First case: " : "", example);
                 } else if(all_unrepairable) {
                     printf("The gravity walk needed to descend %lld imported node(s) that arrived without children, "
@@ -468,8 +469,7 @@ gravity_walk_attempt:
                  * re-sequencing: the particles are already at All.Ti_Current, and re-sequencing
                  * here would move indices under the active list this walk is iterating.  The
                  * rebuild flags are deliberately NOT cleared -- this repair does not satisfy
-                 * whatever else asked for a rebuild, and TreeReconstructFlag in particular buys a
-                 * full domain decomposition in run.cc that nothing here has asked for. */
+                 * whatever else asked for a rebuild, and the next step is entitled to see it. */
                 refresh_old_acceleration_for_tree_opening();
                 gizmo_exit_bad_stop_if_requested("gravtree:before_repair_treebuild");
                 force_treebuild(NumPart, NULL);

@@ -1,6 +1,5 @@
 /* sinks_gpu_decls.h — consolidated GPU dispatch declarations for sinks
- * kernels: sink_feed, sink_swallow_and_kick, sink_environment.  Step 5
- * Phase E1b (2026-04-30) — merges sink_feed_gpu.h / sink_swallow_and_kick_gpu.h
+ * kernels: sink_feed, sink_swallow_and_kick, sink_environment. merges sink_feed_gpu.h / sink_swallow_and_kick_gpu.h
  * / sink_environment_gpu.h.  All three share #ifdef SINK_PARTICLES, applied
  * once around the whole file.
  *
@@ -30,12 +29,12 @@
 
 
 /* ---- sink_environment ----
- * Stage E1 (the "first pass" sink-environment loop) runs through
+ * the "first pass" sink-environment loop runs through
  * mesh/neighbor_loop_runner.cc::run_neighbor_loop<SinkEnv1Spec>; the per-active
  * accumulator type is sink_env_gpu_out below, which is also SinkEnv1Spec::AccumData.
  * Results are scattered into SinkTempInfo on the host by the runner caller
- * (sink_environment.cc). Stage E2 (Bulge-Disk aggregator under
- * SINK_GRAVACCRETION==0) was ported to the runner template and now runs through
+ * (sink_environment.cc). the Bulge-Disk aggregator under
+ * SINK_GRAVACCRETION==0 was ported to the runner template and now runs through
  * run_neighbor_loop<SinkEnv2Spec> (sinks/sink_env2_loop.h); only the
  * AccumData struct (sink_env_second_gpu_out) remains here for the
  * caller-side scatter manifest to share with the Spec.
@@ -78,7 +77,7 @@ struct sink_env_gpu_out {
 #endif
 };
 
-/* Stage E2 — second environment pass: Bulge-Disk kinematic decomposition
+/* second environment pass: Bulge-Disk kinematic decomposition
  * (SINK_GRAVACCRETION==0). Pure aggregator, no j-writes. Ported to
  * runner template (sinks/sink_env2_loop.h). Output struct
  * remains here for the caller-side scatter manifest in

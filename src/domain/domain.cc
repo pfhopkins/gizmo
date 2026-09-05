@@ -459,7 +459,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     }
     
     TreeReconstructFlag = 1;	/* ensures that new tree will be constructed */
-    All.NumForcesSinceLastDomainDecomp = 0;
 
     /* we take the closest cost factor */
     if(UseAllParticles) {highest_bin_to_include = All.HighestOccupiedTimeBin;} else {highest_bin_to_include = All.HighestActiveTimeBin;}
@@ -643,9 +642,15 @@ void domain_Decomposition_light(int UseAllTimeBins)
      * t1, so without this the interval preceding t0 is charged to nobody. */
     CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_light = CPU_ChildCharged;
-    double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
-    rearrange_particle_sequence();
-    t_light_rearrange = timediff(t_light_start, my_second());
+    double t_light_start = my_second(), t_light_mergesplit=0, t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
+    if(All.Ti_Current > All.TimeBegin)
+    {
+        merge_and_split_particles(); /* do the particle split/merge operations */
+    }
+    t_light_mergesplit = timediff(t_light_start, my_second());
+    double t_tmp_light = my_second();
+    rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    t_light_rearrange = timediff(t_tmp_light, my_second());
     UseAllParticles = UseAllTimeBins;
 
     double t_tmp2 = my_second();
@@ -670,8 +675,40 @@ void domain_Decomposition_light(int UseAllTimeBins)
     CPU_Step[CPU_DRIFT] += t_light_total;
     cpu_chain_sync(t_light_end);
     if(ThisTask == 0) {
-        printf("  domain_light drift breakdown: rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
-               t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
+        printf("  domain_light drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
+               t_light_mergesplit, t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
+    }
+
+    /* The lightweight repartition reuses the extent the last full decomposition measured, and the
+       Peano key is only meaningful for a particle inside it: domain_double_to_int() reads the
+       mantissa of (Pos-DomainCorner)/DomainLen + 1.0, which encodes the position only while that
+       value stays in [1,2).  A particle outside the extent leaves that range, and the key it gets
+       is a valid-looking key for somewhere else -- the top tree spans every Peano cell, so nothing
+       downstream can notice.  Only a full decomposition re-measures the extent, so check it here,
+       after this step's drift and wrapping have settled the positions the keys will be built from,
+       and before anything has been freed or rebuilt.  The test is the exact validity condition
+       rather than a padded one, so it fires only when a key would actually be wrong; a NaN
+       coordinate fails both comparisons and escalates too. */
+    int extent_outgrown_local = 0;
+    for(i = 0; i < NumPart; i++)
+    {
+        for(int k = 0; k < 3; k++)
+        {
+            double frac = (P[i].Pos[k] - DomainCorner[k]) / DomainLen;
+            if(!(frac >= 0.0 && frac < 1.0)) {extent_outgrown_local = 1;}
+        }
+        if(extent_outgrown_local) {break;}
+    }
+    int extent_outgrown = 0;
+    MPI_Allreduce(&extent_outgrown_local, &extent_outgrown, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(extent_outgrown)
+    {
+        if(ThisTask == 0) {printf("Domain: the particles have moved outside the bounds the domain was built on, so the Peano keys the lightweight repartition reuses are no longer valid there; forcing a full decomposition. If this fires often, widen the margin domain_findExtent() puts around the particles.\n"); fflush(stdout);}
+        /* This call re-measures the extent and rebuilds the top tree from it.  Merging and
+           splitting is skipped: that pass already ran at the top of this routine, and running it
+           twice in one step would refine twice. */
+        domain_Decomposition(UseAllTimeBins, 0, 0);
+        return;
     }
 
     /* we take the closest cost factor */
@@ -687,9 +724,16 @@ void domain_Decomposition_light(int UseAllTimeBins)
     force_treefree();
 
     TreeReconstructFlag = 1;
-    All.NumForcesSinceLastDomainDecomp = 0;
 
     int multipledomains = MULTIPLEDOMAINS;
+
+    /* Only a full decomposition sizes this, but All.MaxPart can grow between two of them
+       (resize_particle_storage), and both key loops here write one entry per local particle. */
+    if(PersistentKeySize < All.MaxPart) {
+        if(PersistentKey) {free(PersistentKey);}
+        PersistentKey = (peanokey *) malloc(All.MaxPart * sizeof(peanokey));
+        PersistentKeySize = All.MaxPart;
+    }
 
     /* recompute keys for particles that may have drifted across cell boundaries */
     Key = PersistentKey; /* reuse persistent key storage directly */

@@ -123,7 +123,9 @@ extern struct global_data_all_processes All;
 /* These live in All so device code can read them: the boundary check runs inside
    the drift, which is moving to the GPU, and a free-standing global is not visible
    there. Aliased so every existing reader and the begrun initialization are
-   unchanged -- same treatment as Shearing_Box_*_Offset above. */
+   unchanged -- same treatment as Shearing_Box_*_Offset above. Use the bare name:
+   spelling out All.special_boundary_condition_xyz_def_reflect double-expands and
+   will not compile, exactly as for Shearing_Box_*_Offset. */
 #define special_boundary_condition_xyz_def_reflect (All.special_boundary_condition_xyz_def_reflect)
 #define special_boundary_condition_xyz_def_outflow (All.special_boundary_condition_xyz_def_outflow)
 #endif
@@ -216,6 +218,7 @@ extern size_t HighMark_run,  HighMark_domain, HighMark_gravtree, HighMark_pmperi
 extern size_t HighMark_turbpower;
 #endif
 extern int TreeReconstructFlag;
+extern int DomainReconstructFlag;   /*!< set when the domain decomposition itself must be redone, not merely the tree rebuilt */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 extern long long ForceAddElementToTree_CallsSinceBuild; /*!< diagnostic: force_add_element_to_tree calls accumulated since last full tree build.  Insertions stale the LET / pseudo-particle moments; auto-rebuild when this exceeds 1% of TotNumPart. */
 extern int GlobFlag;

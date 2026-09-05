@@ -88,7 +88,7 @@ void begrun(void)
     (!defined(TURB_DIFF_METALS) || !defined(TURB_DIFF_METALS_LOWORDER))
   /* Bad-stop poll for the CHIMES_TURB_DIFF_IONS config checks above, which run
    * BEFORE read_parameter_file() (so the post-read poll below cannot catch
-   * them). After the Stage-1d macro flip those all-rank endrun()s become
+   * them). After the macro flip those all-rank endrun()s become
    * bad-stop requests; this drains them to main()'s post-begrun finalize
    * before any parameter is consumed. No-op until the flip. Gated on exactly
    * the invalid compile combinations where those early bad-stops can fire, so
@@ -99,7 +99,7 @@ void begrun(void)
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
 
   /* Bad-stop poll: parameter/config validation (inside read_parameter_file)
-   * uses all-rank endrun -> bad-stop request after the Stage-1d macro flip.
+   * uses all-rank endrun -> bad-stop request after the macro flip.
    * Catch it here, before any setup consumes invalid parameters; the return
    * drains to main()'s post-begrun finalize. No-op until the flip activates
    * those bad-stops. */
@@ -147,7 +147,7 @@ void begrun(void)
 #endif
 
     /* boxSize / boxHalf / boxSize_[XYZ] / boxHalf_[XYZ] are macros into
-       All.BoxSize — no per-startup sync needed (Step 5 Phase E0). */
+       All.BoxSize — no per-startup sync needed. */
 
 #ifdef BOX_SHEARING
     double L_box_towrap = All.BoxSize;
@@ -157,8 +157,7 @@ void begrun(void)
     /* Shearing_Box_Vel_Offset is a macro (allvars.h:118) expanding to
        (All.Shearing_Box_Vel_Offset); use the bare macro name — `All.`
        prefix double-resolves and errors with "expected a member name"
-       under nvc++. Phase D fix 2026-05-21, same root cause as
-       timestep.cc:1414. */
+       under nvc++. same root cause as timestep.cc:1414. */
     Shearing_Box_Vel_Offset = BOX_SHEARING_Q * BOX_SHEARING_OMEGA_BOX_CENTER * L_box_towrap;
     calc_shearing_box_pos_offset();
 #endif
@@ -374,7 +373,8 @@ void begrun(void)
         All.ErrTolForceAcc = all.ErrTolForceAcc;
         All.NumFilesPerSnapshot = all.NumFilesPerSnapshot;
         All.NumFilesWrittenInParallel = all.NumFilesWrittenInParallel;
-        All.TreeDomainUpdateFrequency = all.TreeDomainUpdateFrequency;
+        All.TreeRebuild_ActiveFraction = all.TreeRebuild_ActiveFraction;
+        All.DomainBuild_ActiveFraction = all.DomainBuild_ActiveFraction;
 #ifdef MHD_MODIFIED_GRADIENT
         All.ActiveFractionForMGSweep = all.ActiveFractionForMGSweep;
         All.Flag_SkipMGSolve = 0; /* first timestep always runs the MG global solve */
@@ -880,9 +880,7 @@ void open_outputfiles(void)
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "energy.txt");
     if(!(FdEnergy = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
 #if defined(CBE_INTEGRATOR) && (defined(OUTPUT_ADDITIONAL_RUNINFO) || defined(CBE_INTEGRATOR_OUTPUT_MOREINFO))
-    /* CBE per-output-interval diagnostic counters log (Wave-CBE Commit 2,
-     * 2026-05-24). Counters populated by Wave-CBE Commits 3 (root-found
-     * v_F), 4 (gradient/reconstruction), 5 (SPD repair); columns
+    /* CBE per-output-interval diagnostic counters log. Counters populated by Wave-CBE ; columns
      * documented in the header line written below. Separate file rather
      * than tagged lines in energy.txt to keep energy.txt fixed-column. */
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "cbe_diagnostics.txt");
@@ -890,18 +888,18 @@ void open_outputfiles(void)
     else if(RestartFlag == 0 && ThisTask == 0) {
         fprintf(FdCbeDiagnostics, "%s CBE per-output-interval diagnostic counters. One line per energy_statistics() emit. Columns:\n", prefix_char);
         fprintf(FdCbeDiagnostics, "%s   (1) Simulation time [code units]\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations (Commit 3 populates; 0 otherwise)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations (Commit 3); note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count (Commit 3)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count (Commit 4 Phase 1 populates)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count (Commit 5 SPD repair populates; 0 in Commits 3/4)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair (Commit 5)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair (Commit 5)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (2) max |sum_basis F_m * A| over pair evaluations \n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (3) sum |sum_basis F_m * A| over pair evaluations; note each geometric face contributes once per active-side evaluation, so cosmology runs see ~2x the unique-face count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (4) root-find bracket-widening failure count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (5) Q-face rho-clamp count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (6) Q-face Sxx-clamp count\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (7) sum |dP| from repair\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (8) sum |dT| from repair\n", prefix_char);
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
-        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction (Commit 4 Phase 2 #5)\n", prefix_char);
-        fprintf(FdCbeDiagnostics, "%s   (10) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_grad_nonfinite_count: non-finite grad.dp events in CBE flux reconstruction\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (10) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing\n", prefix_char);
 #else
-        fprintf(FdCbeDiagnostics, "%s   (9) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing (Commit 6c)\n", prefix_char);
+        fprintf(FdCbeDiagnostics, "%s   (9) cbe_pairing_free_slot_count: free-slot fallback row transforms during flux pairing\n", prefix_char);
 #endif
     }
 #endif
@@ -1341,9 +1339,17 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
-      strcpy(tag[nt], "TreeDomainUpdateFrequency");
-      strcpy(alternate_tag[nt], "TreeRebuild_ActiveFraction");
-      addr[nt] = &All.TreeDomainUpdateFrequency;
+      /* Registered before the tree fraction below, because the tree fraction defaults to whatever
+         this one ends up being and the not-set-in-file loop resolves the tags in this order. */
+      strcpy(tag[nt], "DomainBuild_ActiveFraction");
+      strcpy(alternate_tag[nt], "TreeDomainUpdateFrequency");   /* the one parameter these two were split out of: a file
+                                                                    carrying only the old name keeps its old behaviour, since
+                                                                    the tree fraction below then inherits this value */
+      addr[nt] = &All.DomainBuild_ActiveFraction;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TreeRebuild_ActiveFraction");
+      addr[nt] = &All.TreeRebuild_ActiveFraction;
       id[nt++] = REAL;
 
 #ifdef MHD_MODIFIED_GRADIENT
@@ -2794,7 +2800,8 @@ void read_parameter_file(char *fname)
 #else
                 if(strcmp("MinGasKernelRadiusFractional",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to assume no mininum (=%g) \n",tag[i],alternate_tag[i],All.MinGasKernelRadiusFractional); continue;}
 #endif
-                if(strcmp("TreeDomainUpdateFrequency",tag[i])==0) {*((double *)addr[i])=0.005; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-build whenever 0.5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.TreeDomainUpdateFrequency); continue;}
+                if(strcmp("DomainBuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s (%s) not set in parameter file: defaulting to guess that we should re-decompose whenever 5 percent of the system is active. But this should be adjusted manually for performance and accuracy in most cases (=%g) \n",tag[i],alternate_tag[i],All.DomainBuild_ActiveFraction); continue;}
+                if(strcmp("TreeRebuild_ActiveFraction",tag[i])==0) {*((double *)addr[i])=All.DomainBuild_ActiveFraction; printf("Tag %s (%s) not set in parameter file: defaulting to rebuild the gravity tree on the same active fraction the domain is decomposed on (=%g). A decomposition always brings a new tree with it, so a larger value here has no effect; a smaller one rebuilds the tree on steps that keep the existing decomposition. \n",tag[i],alternate_tag[i],All.TreeRebuild_ActiveFraction); continue;}
 #ifdef MHD_MODIFIED_GRADIENT
                 if(strcmp("ActiveFractionForMGSweep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to run MG global solve when any gas is active (=%g) \n",tag[i],alternate_tag[i],All.ActiveFractionForMGSweep); continue;}
 #endif
