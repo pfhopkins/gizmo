@@ -238,7 +238,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     {
         Vec3<double> dBdt_battery_total = {};
         const double dBdt_phys_to_code =
-            UNIT_TIME_IN_CGS / All.UnitMagneticField_in_gauss / DMAX(All.cf_a2inv, MIN_REAL_NUMBER);
+            UNIT_TIME_IN_CGS / UNIT_B_IN_GAUSS / DMAX(All.cf_a2inv, MIN_REAL_NUMBER);
 #if (MHD_BATTERY_MECHANISMS & 1)
         {
             const double n_e_cgs = CellP[i].n_e();
@@ -286,7 +286,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
             const double scale = allowed / dEmag_cell;
             dBdt_battery_total *= scale;
         }
-        out->DtB += dBdt_battery_total;
+        out->DtB += dBdt_battery_total * V_code;
     }
 #endif
 
