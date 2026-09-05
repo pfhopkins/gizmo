@@ -2663,12 +2663,22 @@ void read_parameter_file(char *fname)
                 {
 
                     *buf = 0;
-                    fgets(buf, 200, fd);
+                    if(fgets(buf, sizeof(buf), fd) == NULL) {break;}   /* EOF, or a read error feof() will not report */
+                    int line_was_truncated = (strlen(buf) == sizeof(buf) - 1 && buf[sizeof(buf) - 2] != '\n' && !feof(fd));   /* !feof distinguishes a cut line from a final line that merely ends without a newline */
                     if(sscanf(buf, "%s%s%s", buf1, buf2, buf3) < 2)
                         continue;
 
                     if(buf1[0] == '%')
                         continue;
+                    /* Only now is this known to be a parameter line rather than a comment. A line
+                       that filled the buffer without its newline was cut mid-value, and the tail
+                       would be read as a line of its own -- a parameter set from a fragment. */
+                    if(line_was_truncated)
+                    {
+                        printf("PARAMETER FILE ERROR: line longer than %d characters in '%s':\n  %.60s...\n",
+                               (int) sizeof(buf) - 1, fname, buf);
+                        endrun(886601);
+                    }
 
                     for(i = 0, j = -1; i < nt; i++)
                         if((strcmp(buf1, tag[i]) == 0) || (strcmp(buf1, alternate_tag[i]) == 0))
