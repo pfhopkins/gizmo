@@ -906,16 +906,25 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     });
 
     /* ---------------- Kernel 4: bottom-up walk via father chain -------- */
+    /* The counter hands a node to whichever thread arrives last, and that thread then reads its
+     * children's accumulated payloads with plain loads. The payload adds are atomic, but Kokkos
+     * atomics are relaxed: the decrement orders nothing, so on a device whose caches are not
+     * coherent the winner can read values that predate the losers' contributions. x86 and OpenMP
+     * get the ordering for free from the hardware model, which is why only the device backend
+     * miscounts. Make it explicit: release before signalling a parent, acquire after winning one. */
     Kokkos::parallel_for("mr_walk_up", n, KOKKOS_LAMBDA(int k0) {
         if(Kokkos::atomic_fetch_sub(&scr.pending(k0), 1) != 1) {return;}
+        Kokkos::memory_fence();   /* acquire: this node's children are visible before we read them */
         int curr = k0;
         while(true) {
             int f = father_soa[curr];
             if(f < tree_base || f >= tree_base + n) {return;}
             int kp = f - tree_base;
             mr_propagate_to_parent_(scr, curr, kp);
+            Kokkos::memory_fence();   /* release: our contribution lands before the count can hand kp on */
             int prev = Kokkos::atomic_fetch_sub(&scr.pending(kp), 1);
             if(prev != 1) {return;}
+            Kokkos::memory_fence();   /* acquire: all of kp's children are visible before the next lap */
             curr = kp;
         }
     });
