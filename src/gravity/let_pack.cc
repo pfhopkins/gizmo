@@ -555,11 +555,39 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
 struct LETCoverNode {
     double bmin[3], bmax[3];
     int c0, c1;                     /* c0<0 => leaf topleaf */
-    double min_OldAcc;              /* relaccel: min over subtree */
-    double max_soft_by_type[6];     /* relsoft:  max per type over subtree */
+    /* The opening predicate wants the largest softening over the subtree whatever the type, and
+     * the relative-accuracy bound already scaled by the tolerance. Both are fixed once the cover is
+     * built and were being recomputed on every query -- a six-element reduction and a multiply per
+     * cover node visited, against a query per source node per destination rank. Reduced here
+     * instead; the per-type array is not read anywhere else, so it does not need to be carried. */
+    double max_soft;                /* relsoft:  max over subtree and over types */
+    double aold_min;                /* min_OldAcc scaled by the force-accuracy tolerance */
     double min_soft;                /* node-softening open: min over subtree */
     int    has_sink;                /* sink-direct: OR over subtree */
 };
+/* Opening-criterion terms that do not vary within a build: the mesh cutoff and whether this is the
+ * first step, both read from run-wide state. They were being recomputed for every source node the
+ * pack visited, for every destination rank; let_refresh_open_constants() sets them once per pack.
+ * They are WRITTEN ONLY by that refresh, before the pack begins, and are read-only for the whole of
+ * it -- so a pack that is later divided among threads shares them safely, but anything that would
+ * write them from inside the pack has to become part of a per-pack context instead. */
+static double g_let_rcut = 0.0, g_let_rcut2 = 0.0;
+static int    g_let_is_first_step = 0;
+
+static void let_refresh_open_constants(void)
+{
+    g_let_rcut = 0.0;
+#ifdef PMGRID
+    g_let_rcut = (double) All.Rcut[0];
+#ifdef PM_PLACEHIGHRESREGION
+    if((double) All.Rcut[1] > g_let_rcut) g_let_rcut = (double) All.Rcut[1];
+#endif
+#endif
+    g_let_rcut2 = g_let_rcut * g_let_rcut;
+    /* Same first-step value the walk uses (hybrid opening: relative suppressed on step 0). */
+    g_let_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
+}
+
 static struct LETCoverNode *g_cover      = NULL;  /* AABB-tree nodes, root at index 0 */
 static int                   g_cover_cap  = 0;
 static int                   g_cover_n    = 0;     /* nodes used by the current build */
@@ -595,8 +623,9 @@ static int cover_build(int lo, int hi)
         g_cover[idx].c0 = -1; g_cover[idx].c1 = -1;
         /* leaf: this cover leaf's opening scalars (a rule-1 cluster, or an orphan record) */
         const struct LETTopleafScalars *s = &g_cover_leaves[lo].s;
-        g_cover[idx].min_OldAcc = s->min_OldAcc;
-        for(int t = 0; t < 6; t++) g_cover[idx].max_soft_by_type[t] = s->max_soft_by_type[t];
+        {double m = 0.0; for(int t = 0; t < 6; t++) if(s->max_soft_by_type[t] > m) m = s->max_soft_by_type[t];
+         g_cover[idx].max_soft = m;}
+        g_cover[idx].aold_min = s->min_OldAcc * All.ErrTolForceAcc;
         g_cover[idx].min_soft = s->min_soft;
         g_cover[idx].has_sink = s->has_sink;
         return idx;
@@ -620,11 +649,8 @@ static int cover_build(int lo, int hi)
     int r = cover_build(mid, hi);
     g_cover[idx].c0 = l; g_cover[idx].c1 = r;
     /* internal node: combine children conservatively (easiest-to-open per field) */
-    g_cover[idx].min_OldAcc = (g_cover[l].min_OldAcc < g_cover[r].min_OldAcc) ? g_cover[l].min_OldAcc : g_cover[r].min_OldAcc;
-    for(int t = 0; t < 6; t++) {
-        double a = g_cover[l].max_soft_by_type[t], b = g_cover[r].max_soft_by_type[t];
-        g_cover[idx].max_soft_by_type[t] = (a > b) ? a : b;
-    }
+    g_cover[idx].max_soft = (g_cover[l].max_soft > g_cover[r].max_soft) ? g_cover[l].max_soft : g_cover[r].max_soft;
+    g_cover[idx].aold_min = (g_cover[l].aold_min < g_cover[r].aold_min) ? g_cover[l].aold_min : g_cover[r].aold_min;
     g_cover[idx].min_soft = (g_cover[l].min_soft < g_cover[r].min_soft) ? g_cover[l].min_soft : g_cover[r].min_soft;
     g_cover[idx].has_sink = g_cover[l].has_sink | g_cover[r].has_sink;
     return idx;
@@ -696,12 +722,9 @@ static int let_cover_opens(double cx, double cy, double cz,
         const struct LETCoverNode *cn = &g_cover[ci];
         /* per-cover (target-local) scalar bounds -> the untouched predicate; the source node's own
          * maxsoft/n_sink stay the caller's node fields (msoft/n_sink), the cover carries the TARGET side. */
-        double t_soft_max = 0.0;
-        for(int t = 0; t < 6; t++) if(cn->max_soft_by_type[t] > t_soft_max) t_soft_max = cn->max_soft_by_type[t];
-        double t_aold_min = cn->min_OldAcc * All.ErrTolForceAcc;
         gravtree_open_t d = gravtree_open_decision_cell(cx, cy, cz, sx, sy, sz, len, mass, maxsoft,
             node_nsink, cn->bmin, cn->bmax,
-            t_soft_max, cn->min_soft, t_aold_min, cn->has_sink, rcut, rcut2, is_first_step);
+            cn->max_soft, cn->min_soft, cn->aold_min, cn->has_sink, rcut, rcut2, is_first_step);
         if(d != GRAV_OPEN_NODE) continue;         /* aggregate doesn't open -> prune this subtree */
         if(cn->c0 < 0) return 1;                  /* a real topleaf opens -> essential */
         if(sp + 2 <= 64) { stack[sp++] = cn->c0; stack[sp++] = cn->c1; }
@@ -731,24 +754,12 @@ static int let_node_essential_for_rank(double cx, double cy, double cz,
                                        double len, double mass, double maxsoft,
                                        int n_sink)
 {
-    double rcut = 0.0, rcut2 = 0.0;
-#ifdef PMGRID
-    rcut = (double) All.Rcut[0];
-#ifdef PM_PLACEHIGHRESREGION
-    if((double) All.Rcut[1] > rcut) rcut = (double) All.Rcut[1];
-#endif
-    rcut2 = rcut * rcut;
-#endif
-
-    /* Same first-step value the walk uses (hybrid opening: relative suppressed on step 0). */
-    int is_first_step = (All.Ti_Current == 0 && RestartFlag != 1) ? 1 : 0;
-
     /* Essential iff ANY of R's per-topleaf covers opens this node.  Cover geometry AND
      * per-cover scalar bounds refine the whole-rank worst case (which spanned ~the whole
      * domain / rank-wide scalar extrema and so never let the PM/theta/relative cull prune);
      * the opening predicate itself is untouched. */
     return let_cover_opens(cx, cy, cz, sx, sy, sz, len, mass, maxsoft, n_sink,
-                           rcut, rcut2, is_first_step);
+                           g_let_rcut, g_let_rcut2, g_let_is_first_step);
 }
 
 /* ----------------------------------------------------------------------
@@ -2163,6 +2174,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         send_hdr_per_rank[r] = NULL; send_hdr_count[r] = 0;
     }
 
+    let_refresh_open_constants();
     for(int r = 0; r < NTask; r++)
     {
         if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
