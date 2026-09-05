@@ -39,6 +39,9 @@
 #include <string.h>
 #include <math.h>
 #include <float.h>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -603,12 +606,55 @@ struct LETPackContext {
     int                  cover_leaf_cap;
     /* what the pack has to report once it is finished */
     long long malformed_singleton;
-    int       malformed_singleton_first;
+    int       malformed_singleton_first;   /* lowest malformed node index this pack saw */
     long      realloc_fail_msgs;         /* rate-limits the realloc-failure message */
     int       pack_oom;
+    /* Wire-buffer growth this pack asked for.  The memory ledger keeps plain counters on the
+     * stated assumption that packing is serial, so the growth is tallied here and handed over
+     * once the packs are done rather than from inside them.  The running total only grows
+     * within an exchange, so one handover reaches the same peak as many small ones. */
+    long long wire_grow_bytes;
+    long long wire_failed_bytes;
 };
 
-static struct LETPackContext g_pack_ctx = {NULL, 0, 0, NULL, 0, 0, -1, 0, 0};
+/* One packing context per worker.  Sized once for the thread count and kept, so the cover
+ * buffers a destination grows are reused by the next destination that worker takes. */
+static struct LETPackContext *g_pack_ctx = NULL;
+static int                    g_pack_ctx_n = 0;
+
+static int let_pack_workers(void)
+{
+#ifdef _OPENMP
+    int n = omp_get_max_threads();
+    return (n > 0) ? n : 1;
+#else
+    return 1;
+#endif
+}
+
+/* Grow the pool to the requested worker count and clear what each pack reports; the buffers are
+ * left alone so they carry over between exchanges. */
+static int let_pack_contexts_prepare(int want)
+{
+    if(want < 1) {want = 1;}
+    if(want > g_pack_ctx_n)
+    {
+        struct LETPackContext *np = (struct LETPackContext *) realloc(g_pack_ctx, (size_t) want * sizeof(struct LETPackContext));
+        /* Refused: keep the pool we already have.  The pack then runs on that many workers --
+         * never more, because a worker without its own scratch would share another's. */
+        if(!np) {return g_pack_ctx_n;}
+        memset(np + g_pack_ctx_n, 0, (size_t)(want - g_pack_ctx_n) * sizeof(struct LETPackContext));
+        g_pack_ctx = np; g_pack_ctx_n = want;
+    }
+    for(int t = 0; t < g_pack_ctx_n; t++)
+    {
+        g_pack_ctx[t].cover_n = 0;
+        g_pack_ctx[t].malformed_singleton = 0; g_pack_ctx[t].malformed_singleton_first = -1;
+        g_pack_ctx[t].realloc_fail_msgs = 0;   g_pack_ctx[t].pack_oom = 0;
+        g_pack_ctx[t].wire_grow_bytes = 0;     g_pack_ctx[t].wire_failed_bytes = 0;
+    }
+    return g_pack_ctx_n;
+}
 
 /* Union box of the leaf range [lo,hi) into out[bmin/bmax] (cover leaves carry their own AABB). */
 static void cover_union_box(struct LETPackContext *pk, int lo, int hi, double bmin[3], double bmax[3])
@@ -1014,12 +1060,12 @@ static void grow_wire_buf(struct LETPackContext *pk, struct LETNodeWire **buf, i
             printf("LET pack: realloc failed (cap=%d, sizeof=%zu, total=%g MB)\n",
                    new_cap, sizeof(struct LETNodeWire),
                    (double)new_cap * sizeof(struct LETNodeWire) / (1024.0*1024.0));
-        gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
+        pk->wire_failed_bytes += (long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire);
         pk->pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
-    gizmo_let_wire_grow((long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire));
+    pk->wire_grow_bytes += (long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire);
     *capacity = new_cap;
 }
 
@@ -1033,12 +1079,12 @@ static void grow_hdr_buf(struct LETPackContext *pk, struct LETSubtreeHeader **bu
     {
         if(let_realloc_fail_should_print(pk))
             printf("LET pack: hdr realloc failed (cap=%d)\n", new_cap);
-        gizmo_let_wire_note_failed((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
+        pk->wire_failed_bytes += (long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader);
         pk->pack_oom = 1;   /* leave the buffer and capacity unchanged; caller bails before any OOB write */
         return;
     }
     *buf = nb;
-    gizmo_let_wire_grow((long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader));
+    pk->wire_grow_bytes += (long long)(new_cap - *capacity) * (long long) sizeof(struct LETSubtreeHeader);
     *capacity = new_cap;
 }
 
@@ -2023,7 +2069,6 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     if(MaxForeignNodes <= 0) return LET_OK;
 
     g_let_pack_oom = 0;   /* fresh status for this exchange */
-    g_pack_ctx.pack_oom = 0; g_pack_ctx.realloc_fail_msgs = 0;
 
     /* let_synthesize_particle_leaf and let_compute_local_payload read
      * P/CellP and may transitively invoke RT/sink/CR helpers that mutate
@@ -2034,7 +2079,6 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     /* Reset foreign count -- fresh LET each tree-build cycle */
     Numforeignnodes = 0;
     g_let_malformed_singleton = 0; g_let_malformed_singleton_first = -1;
-    g_pack_ctx.malformed_singleton = 0; g_pack_ctx.malformed_singleton_first = -1;
 
     /* One collective, once per build: the horizon the import is pruned against. */
     let_compute_tree_lifetime();
@@ -2191,29 +2235,68 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     }
 
     let_refresh_open_constants();
+    /* Two ranks means at most one destination to pack, so ask for a single worker rather than
+     * one per thread: a run that will never split the loop should not size a pool for it. */
+    const int n_workers = let_pack_contexts_prepare((NTask > 2) ? let_pack_workers() : 1);
+    /* Destinations are packed independently: each builds its own cover, walks the local topleaves
+     * against it, and fills the buffer belonging to that destination alone.  Nothing is shared but
+     * the tree being read, so the only thing a worker needs of its own is the scratch it packs
+     * into.  Dynamic, because how much a destination opens varies several-fold between the nearest
+     * and the farthest and a fixed split would leave workers idle.  The per-destination reports are
+     * combined after the loop, not from inside it. */
+    if(n_workers <= 0)
+    {
+        /* No scratch to pack into.  The send counts are already zero, so this rank ships nothing
+         * and reports the failure the same way a refused wire buffer does. */
+        g_let_pack_oom = 1;
+    }
+    else
+    {
+#ifdef _OPENMP
+    /* Exactly as many workers as there are contexts, so a worker's number indexes its own scratch
+     * and no two can land on the same one. */
+#pragma omp parallel for schedule(dynamic) num_threads(n_workers) if(n_workers > 1 && NTask > 2)
+#endif
     for(int r = 0; r < NTask; r++)
     {
         if(r == ThisTask) {send_count[r] = 0; send_hdr_count[r] = 0; continue;}
         int cap = 0, hcap = 0, hcnt = 0;
+#ifdef _OPENMP
+        struct LETPackContext *pk = &g_pack_ctx[omp_get_thread_num()];
+#else
+        struct LETPackContext *pk = &g_pack_ctx[0];
+#endif
 #ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
         const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
-        send_count[r] = let_pack_for_rank(&g_pack_ctx, r, all_payloads,
+        send_count[r] = let_pack_for_rank(pk, r, all_payloads,
                                            &send_per_rank[r], &cap,
                                            &send_hdr_per_rank[r], &hcap, &hcnt,
                                            r_bitmap, bitmap_n_words);
 #else
-        send_count[r] = let_pack_for_rank(&g_pack_ctx, r, all_payloads,
+        send_count[r] = let_pack_for_rank(pk, r, all_payloads,
                                            &send_per_rank[r], &cap,
                                            &send_hdr_per_rank[r], &hcap, &hcnt,
                                            NULL, 0);
 #endif
         send_hdr_count[r] = hcnt;
     }
+    }
 
-    /* The pack keeps its own report while it runs; publish it here, where the checks below read it. */
-    g_let_malformed_singleton       = g_pack_ctx.malformed_singleton;
-    g_let_malformed_singleton_first = g_pack_ctx.malformed_singleton_first;
-    if(g_pack_ctx.pack_oom) {g_let_pack_oom = 1;}
+    /* Combine what the packs reported.  The count is a total; the reported malformed node is the
+     * LOWEST INDEX any pack saw rather than the first one reached, so the message does not depend
+     * on which worker took which destination; the failure flag is a disjunction; the wire growth
+     * goes to the ledger once, now that no pack is running. */
+    for(int t = 0; t < g_pack_ctx_n; t++)
+    {
+        g_let_malformed_singleton += g_pack_ctx[t].malformed_singleton;
+        if(g_pack_ctx[t].malformed_singleton_first >= 0 &&
+           (g_let_malformed_singleton_first < 0 ||
+            g_pack_ctx[t].malformed_singleton_first < g_let_malformed_singleton_first))
+            {g_let_malformed_singleton_first = g_pack_ctx[t].malformed_singleton_first;}
+        if(g_pack_ctx[t].pack_oom) {g_let_pack_oom = 1;}
+        if(g_pack_ctx[t].wire_grow_bytes   > 0) {gizmo_let_wire_grow(g_pack_ctx[t].wire_grow_bytes);}
+        if(g_pack_ctx[t].wire_failed_bytes > 0) {gizmo_let_wire_note_failed(g_pack_ctx[t].wire_failed_bytes);}
+    }
 
     /* Exchange + install (let_exchange_nodes inlines let_unpack_and_install
      * to keep mymalloc LIFO discipline correct). Runs on ALL ranks even after a
@@ -2228,7 +2311,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
         if(malformed_max > 0)
         {
             if(g_let_malformed_singleton > 0)
-                printf("LET pack: rank=%d found %lld single-particle node(s) (first node index %d) whose "
+                printf("LET pack: rank=%d found %lld single-particle node(s) (lowest node index %d) whose "
                        "child is not a particle -- the local tree is malformed. Stopping.\n",
                        ThisTask, g_let_malformed_singleton, g_let_malformed_singleton_first);
             fflush(stdout);
