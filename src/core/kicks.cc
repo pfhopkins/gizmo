@@ -320,10 +320,16 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
-            if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro), decide if we need to split this particular cell on this particular timestep, since this un-split solver can lead to energy conservation problems if the mechanical heating is much larger than cooling */
+            if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro) */
+                CellP[i].CoolingIsOperatorSplitThisTimestep=0; /* default to assume un-split */
+#if 0 /* this is a more sophisticated check to see if we need to split the cooling from the hydro work term, but it is not currently used because it is less accurate for complicated non-trivial chemistry, which we now adopt, and the energy conservation issues were more related to older problems in the code that we have since fixed*/
+                /* decide if we need to split this particular cell on this particular timestep, since this un-split solver can lead to energy conservation problems if the mechanical heating is much larger than cooling; compare the effective heating rate from the hydro work term to a reference cooling time (which is set to a typical cooling time for the cell, based on its density and the current timestep) */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=1; /* default to assume split */
-                double DtInternalEnergyEffCGS = (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC) * (du_tot/dt_hydrokick), DtInternalEnergyReference = 1.e-23*CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS; /* define the effective work term in cgs and a reference typical cooling time */
-                if(DtInternalEnergyEffCGS < DtInternalEnergyReference) {CellP[i].CoolingIsOperatorSplitThisTimestep=0;} /* cooling is fast compared to the hydro work term, or the hydro term is negative [cooling], so un-split the operation */
+                double DtInternalEnergyEff = du_tot / dt_hydrokick; double DtInternalEnergyReference = 1.e-20*CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS / ((UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC)); /* define the effective work term and a reference typical cooling time (converted to code units) */
+                double DtInternalEnergyDyn = DMAX(2.*CellP[i].InternalEnergy / dt_hydrokick, CellP[i].InternalEnergy * fabs(P[i].Particle_DivVel)*All.cf_a2inv); /* define a dynamical time for the cell, based on either the timestep or the divergence of the velocity field */
+                DtInternalEnergyReference = DMAX(DtInternalEnergyReference, DtInternalEnergyDyn); /* use the larger of the two as the reference cooling time */
+                if(DtInternalEnergyEff < DtInternalEnergyReference) {CellP[i].CoolingIsOperatorSplitThisTimestep=0;} /* cooling is fast compared to the hydro work term, or the hydro term is negative [cooling], so un-split the operation */
+#endif
             }
             if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {du_tot=0;} /* cooling in unsplit, so zero contribution here */
 #endif
