@@ -224,9 +224,10 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+                    Vec3<double> pos_reported = gizmo_reported_position(P[pindex].Pos);
                     for(k = 0; k < 3; k++)
                     {
-                        fp_pos[k] = (MyOutputPosFloat) P[pindex].Pos[k];
+                        fp_pos[k] = (MyOutputPosFloat) pos_reported[k];
 #ifdef BOX_PERIODIC
                         double box_length_xyz;
                         if(k==0) {box_length_xyz = boxSize_X;}

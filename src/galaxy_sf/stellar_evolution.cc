@@ -849,7 +849,7 @@ void singlestar_subgrid_protostellar_evolution_update_track(int n, double dm, do
                 char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; FILE *FdSinkSNDetails;
                 snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "SN_details.txt");
                 FdSinkSNDetails = fopen(buf, "a");
-                if(FdSinkSNDetails) {fprintf(FdSinkSNDetails, "%.16g %llu %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[n].ID, P[n].Sink_Mass, P[n].Pos[0], P[n].Pos[1],P[n].Pos[2],P[n].Vel[0], P[n].Vel[1],P[n].Vel[2]); fflush(FdSinkSNDetails);
+                if(FdSinkSNDetails) {Vec3<double> pos_reported = gizmo_reported_position(P[n].Pos); fprintf(FdSinkSNDetails, "%.16g %llu %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[n].ID, P[n].Sink_Mass, pos_reported[0], pos_reported[1], pos_reported[2], P[n].Vel[0], P[n].Vel[1],P[n].Vel[2]); fflush(FdSinkSNDetails);
                 fclose(FdSinkSNDetails);}
             }
 #endif

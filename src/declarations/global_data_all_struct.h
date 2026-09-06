@@ -676,6 +676,10 @@ struct global_data_all_processes
     char AneosTableFiles[ANEOS_MAX_MATERIALS][256]; /* file paths for each material's SESAME table */
 #endif
 
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+    Vec3<double> RandomShift;   /*!< how far the coordinates presently sit from the frame the initial conditions were written in, kept in [0,box). Subtracted back out wherever a physical coordinate is reported. Lives here so a restart resumes in the frame it stopped in. */
+#endif
+
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     Vec3<double> SpecialParticle_Position_ForRefinement[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];
     double Mass_Accreted_By_SpecialParticle[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM];

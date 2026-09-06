@@ -64,15 +64,21 @@ void compute_global_quantities_of_system(void)
         sys.EnergyKinComp[P[i].Type] += 0.5 * P[i].Mass * vel.norm_sq() / a2;
         if(P[i].Type == 0) {egyspec = entr; sys.EnergyIntComp[0] += P[i].Mass * egyspec;}
         
+        /* Both of the quantities below are measured from the origin, so they are reported in the
+           frame the initial conditions were written in, as the snapshots are: otherwise the centre
+           of mass would move with the frame and the angular momentum would be taken about a
+           different point after every shift. */
+        Vec3<double> pos_reported = gizmo_reported_position(P[i].Pos);
+
         for(j = 0; j < 3; j++)
         {
             sys.MomentumComp[P[i].Type][j] += P[i].Mass * vel[j];
-            sys.CenterOfMassComp[P[i].Type][j] += P[i].Mass * P[i].Pos[j];
+            sys.CenterOfMassComp[P[i].Type][j] += P[i].Mass * pos_reported[j];
         }
-        
-        sys.AngMomentumComp[P[i].Type][0] += P[i].Mass * (P[i].Pos[1] * vel[2] - P[i].Pos[2] * vel[1]);
-        sys.AngMomentumComp[P[i].Type][1] += P[i].Mass * (P[i].Pos[2] * vel[0] - P[i].Pos[0] * vel[2]);
-        sys.AngMomentumComp[P[i].Type][2] += P[i].Mass * (P[i].Pos[0] * vel[1] - P[i].Pos[1] * vel[0]);
+
+        sys.AngMomentumComp[P[i].Type][0] += P[i].Mass * (pos_reported[1] * vel[2] - pos_reported[2] * vel[1]);
+        sys.AngMomentumComp[P[i].Type][1] += P[i].Mass * (pos_reported[2] * vel[0] - pos_reported[0] * vel[2]);
+        sys.AngMomentumComp[P[i].Type][2] += P[i].Mass * (pos_reported[0] * vel[1] - pos_reported[1] * vel[0]);
     }
   
   /* some the stuff over all processors */

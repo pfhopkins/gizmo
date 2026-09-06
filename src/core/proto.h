@@ -185,6 +185,30 @@ GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, i
 }
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 
+/* SSOT for reporting a coordinate: the one place that turns the position a particle is held at
+   into the position it is written out at.  Ordinarily they are the same.  Under
+   RANDOMIZE_GRAVTREE_PERIODIC the coordinates sit in a frame that moves at every decomposition,
+   so the frame offset comes back off here and the result is folded into the box, giving the frame
+   the initial conditions were written in.  Every output that reports a position -- snapshots, the
+   sink, formation and supernova detail files, the global centre-of-mass and angular-momentum
+   diagnostics -- goes through this, so that adding another one is a single call rather than a
+   subtraction that is easy to leave out. */
+static inline Vec3<double> gizmo_reported_position(const Vec3<MyDouble> &pos)
+{
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+    Vec3<double> out = Vec3<double>{(double)pos[0], (double)pos[1], (double)pos[2]} - All.RandomShift;
+    const double box[3] = {boxSize_X, boxSize_Y, boxSize_Z};
+    for(int k = 0; k < 3; k++)
+    {
+        while(out[k] < 0) {out[k] += box[k];}
+        while(out[k] >= box[k]) {out[k] -= box[k];}
+    }
+    return out;
+#else
+    return Vec3<double>{(double)pos[0], (double)pos[1], (double)pos[2]};
+#endif
+}
+
 /* SSOT for the gas-cell capacity: CellP[] is indexed by the PARTICLE index, so it must
    span the same index range as P[] whenever any gas exists. Imported ghosts are appended
    into that shared index space above the local particles and a gas ghost can land at any

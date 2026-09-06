@@ -861,6 +861,7 @@ void sink_final_operations(void)
 
         /* dump the results to the 'sink_details' files */
         mass_disk=0; mdot_disk=0; MgasBulge=0; MstarBulge=0; r0 = P[n].KernelRadius * All.cf_atime;
+        Vec3<double> pos_reported = gizmo_reported_position(P[n].Pos);
 #ifdef SINK_ALPHADISK_ACCRETION
         mass_disk = P[n].Sink_Mass_Reservoir;
         mdot_disk = SinkTempInfo[i].mdot_reservoir;
@@ -874,19 +875,19 @@ void sink_final_operations(void)
 #ifdef SINGLE_STAR_STARFORGE_DEFAULTS
         fprintf(FdSinksDetails, "time=%.16g ID=%llu mtot=%g msink=%g mdisk=%g sink_mdot=%g mdot_disk=%g  dtime=%g ngb_density=%g ngb_internalenergy=%g mgas_kernel=%g mstar_kernel=%g r_kernel=%g pos=%2.16g %2.16g %2.16g vel=%2.16g %2.16g %2.16g angmom_kernel=%g %g %g  sink_angmom=%g %g %g\n",
                 All.Time, (unsigned long long)P[n].ID,  P[n].Mass, P[n].Sink_Mass, mass_disk, P[n].Sink_Mdot, mdot_disk, dt, P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy,
-                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, r0, P[n].Pos[0], P[n].Pos[1], P[n].Pos[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
+                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, r0, pos_reported[0], pos_reported[1], pos_reported[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
                 SinkTempInfo[i].Jgas_in_Kernel[0], SinkTempInfo[i].Jgas_in_Kernel[1], SinkTempInfo[i].Jgas_in_Kernel[2], P[n].Sink_Specific_AngMom[0]*P[n].Mass, P[n].Sink_Specific_AngMom[1]*P[n].Mass, P[n].Sink_Specific_AngMom[2]*P[n].Mass ); fflush(FdSinksDetails);
 #else
         fprintf(FdSinksDetails, "time=%.16g ID=%llu  mtot=%g msink=%g mdisk=%g sink_mdot=%g mdot_disk=%g dtime=%g ngb_density=%g ngb_internalenergy=%g sfr_kernel=%g mgas_kernel=%g mstar_kernel=%g mgasbulge=%g mstarbulge=%g r_kernel=%g pos=%2.16g %2.16g %2.16g vel=%2.16g %2.16g %2.16g angmomgas_kernel=%g %g %g angmomstar_kernel=%g %g %g\n",
                 All.Time, (unsigned long long)P[n].ID,  P[n].Mass, P[n].Sink_Mass, mass_disk, P[n].Sink_Mdot, mdot_disk, dt, P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, SinkTempInfo[i].Sfr_in_Kernel,
-                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, MgasBulge, MstarBulge, r0, P[n].Pos[0], P[n].Pos[1], P[n].Pos[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
+                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, MgasBulge, MstarBulge, r0, pos_reported[0], pos_reported[1], pos_reported[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
                 SinkTempInfo[i].Jgas_in_Kernel[0], SinkTempInfo[i].Jgas_in_Kernel[1], SinkTempInfo[i].Jgas_in_Kernel[2], SinkTempInfo[i].Jstar_in_Kernel[0], SinkTempInfo[i].Jstar_in_Kernel[1], SinkTempInfo[i].Jstar_in_Kernel[2] ); fflush(FdSinksDetails);
 #endif
 #else
 
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
         fprintf(FdSinksDetails, "Timestep Summary: BH=%llu time=%.16g msink=%g mdisk=%g mtot=%g sink_mdot=%g mdot_disk=%g ngb_density=%g ngb_internalenergy=%g  pos=%2.16g %2.16g %2.16g\n", (unsigned long long)P[n].ID, All.Time, P[n].Sink_Mass, mass_disk, P[n].Mass, P[n].Sink_Mdot, mdot_disk,
-                P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, P[n].Pos[0], P[n].Pos[1], P[n].Pos[2]); fflush(FdSinksDetails);
+                P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, pos_reported[0], pos_reported[1], pos_reported[2]); fflush(FdSinksDetails);
 #endif
 #endif
 

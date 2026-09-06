@@ -1623,3 +1623,60 @@
  && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
+
+
+/* RANDOMIZE_GRAVTREE: pick the randomization method, and refuse the setups where the
+ * periodic one is not a symmetry.  Placed at the end of this file so every flag tested
+ * below has already been auto-defined above.
+ *
+ * Which method applies is decided by whether GRAVITY is periodic, not by whether the box is.
+ * Under GRAVITY_NOT_PERIODIC the tree works in bare separations, so translating coordinates
+ * mod box is not a symmetry -- wrapping a particle across a face would move it a whole box
+ * away gravitationally.  Those runs (STARFORGE setups, and shearing boxes, which define
+ * GRAVITY_NOT_PERIODIC themselves) keep the method that moves and enlarges the root node
+ * instead, and pay a bit of Peano resolution per dimension for it.  Where gravity is periodic
+ * that cost is not worth paying: translating every coordinate by a random vector decorrelates
+ * the tree the same way while the root node stays the size of the box, which matters most for
+ * a zoom, whose nested region and load balance the doubling would damage.
+ *
+ * A run carrying a nested high-resolution PM region keeps the root-node method as well.
+ * Translating coordinates would move that region across a box face, and pm_init_regionsize()
+ * measures its extent with a plain min/max over the wrapped coordinates, so a region lying across
+ * a face measures as box-sized: the nested mesh coarsens to the whole box and the resolution the
+ * zoom exists for is gone, with nothing to see.  Making that safe means teaching the region
+ * measurement and its membership test about wrapping, which is a piece of PM design rather than a
+ * detail of this feature, so until then those runs pay the root node's Peano resolution instead. */
+#if defined(RANDOMIZE_GRAVTREE) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PM_PLACEHIGHRESREGION)
+#define RANDOMIZE_GRAVTREE_PERIODIC
+
+/* The translation is a symmetry only for physics that reads separations.  Anything that reads
+ * a position against a fixed reference -- the origin, the box centre, a point written into the
+ * source, a stored anchor -- gives a different answer in the moved frame, and gives it quietly.
+ * Coordinate outputs are moved back before they are written, and the stored coordinate state
+ * that belongs to the frame is carried along with it, but a potential or a driving field
+ * anchored in space cannot be, so those combinations are refused here rather than left to
+ * produce wrong physics with nothing to see. */
+#if defined(GRAVITY_ANALYTIC)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and an analytic potential is anchored in space: the matter would move relative to it. Use one or the other."
+#endif
+#if defined(GRAVITY_SPHERICAL_SYMMETRY)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and GRAVITY_SPHERICAL_SYMMETRY measures radius from the box centre. Use one or the other."
+#endif
+#if defined(TURB_DRIVING)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and the turbulent driving field is defined in the box frame: the gas would sample a different phase of it after every shift. Use one or the other."
+#endif
+#if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, which a reflecting or outflow boundary is not invariant under. Use one or the other."
+#endif
+#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition. The nuclear-zoom refinement centre would travel with the frame, but the distance to it is measured without wrapping, so a zoom region sitting across a box face would be measured through the box instead of around it, changing both refinement and the timestep dilation. Use one or the other."
+#endif
+/* Group catalogues are written straight out rather than through the snapshot path, so their
+   positions would carry the moved frame with nothing recording the offset. Group finding itself is
+   translation-invariant, so the answer is to run it on the snapshots in postprocessing. Refused
+   here rather than where the catalogue is written, because a stop requested at that point returns
+   to a caller that goes on to exchange particles collectively before the stop is drained. */
+#if defined(FOF) || defined(SUBFIND)
+#error "RANDOMIZE_GRAVTREE with periodic gravity moves the coordinate frame at every decomposition, and the group catalogues FOF/SUBFIND write are not un-shifted back to the frame the snapshots report. Run group finding on the snapshots in postprocessing instead."
+#endif
+#endif
