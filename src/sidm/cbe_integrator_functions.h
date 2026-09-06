@@ -658,7 +658,16 @@ double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
                         const double Qb[CBE_INTEGRATOR_NMOMENTS],
                         double rho_fa, double rho_fb, const double vface[3], double rho_cell)
 {
-    const double eps = 1.0e-12;
+    /* Both denominators below are regularized by MIN_REAL_NUMBER, which is a
+     * pure divide-by-zero guard and carries no physical scale. A fixed additive
+     * constant cannot serve here: the two denominators have DIFFERENT dimensions
+     * (velocity^2 for C_c, density for C_rho), so one number cannot be small
+     * against both, and whichever scale it is tuned to, rescaling the unit
+     * changes the cost. Neither denominator needs a physical floor -- each
+     * numerator vanishes with its own denominator (du2 <= (|ua|+|ub|)^2;
+     * |rho_fa-rho_fb| <= |rho_fa|+|rho_fb|), so the guarded expression is 0/0
+     * only in the exactly-degenerate case and evaluates to 0 there. C_rho keeps
+     * its genuine relative regularizer 1e-3*rho_cell. */
     double inv_a = 1.0 / DMAX(Qa[0], MIN_REAL_NUMBER);
     double inv_b = 1.0 / DMAX(Qb[0], MIN_REAL_NUMBER);
     double du2 = 0, na = 0, nb = 0, dot = 0, trSa = 0, trSb = 0;
@@ -674,8 +683,8 @@ double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
         trSa += DMAX(Sa, 0.0); trSb += DMAX(Sb, 0.0);
 #endif
     }
-    double Cc   = du2 / (na + nb + 2.0*fabs(dot) + trSa + trSb + eps);
-    double Crho = fabs(rho_fa - rho_fb) / (fabs(rho_fa) + fabs(rho_fb) + 1.0e-3*rho_cell + eps);
+    double Cc   = du2 / (na + nb + 2.0*fabs(dot) + trSa + trSb + MIN_REAL_NUMBER);
+    double Crho = fabs(rho_fa - rho_fb) / (fabs(rho_fa) + fabs(rho_fb) + 1.0e-3*rho_cell + MIN_REAL_NUMBER);
     return Cc + CBE_CRHO_LAMBDA * Crho;
 }
 
@@ -685,7 +694,16 @@ double cbe_cost_cc_crho(const double Qa[CBE_INTEGRATOR_NMOMENTS],
 static const double CBE_FSGATE_TAU    = 0.04;    /* free-slot-open threshold on the continuation cost */
 static const double CBE_FSGATE_DELTA  = 0.02;    /* smoothstep half-width */
 static const double CBE_FSGATE_FFF    = 1.0e-2;  /* reliability mass scale f_FS (q_b = m_b/(m_b+f_FS*m_cell)) */
-static const double CBE_FSGATE_VFLOOR = 0.02;    /* velocity floor in C_cont = |dv|^2/(|dv|^2 + S_src + vfloor^2) */
+/* Continuation-velocity floor, as a DIMENSIONLESS fraction of a locally-derived
+ * velocity scale: v_floor = CBE_FSGATE_VFLOOR_FRAC * V_local, where V_local is the
+ * mass-weighted rms spread of the basis mean velocities about the pooled bulk
+ * velocity of the two cells (see cbe_apply_fs_gate). Keying the floor to the
+ * stream separation the pair of cells actually carries, rather than to a fixed
+ * velocity in code units, makes the gate invariant under a rescaling of the
+ * problem's velocity unit -- as every other constant in the pairing cost already
+ * is. Same construction as the BJ limiter's scale-aware tolerance
+ * (CBE_VOPPSIGN * scale_v_k). */
+static const double CBE_FSGATE_VFLOOR_FRAC = 0.02;
 
 /* Two-cost free-slot gate on an NBASIS x NBASIS cost matrix. Replaces the old
  * always-on psi reweight: the free-slot fallback fires ONLY when a source has
@@ -694,9 +712,21 @@ static const double CBE_FSGATE_VFLOOR = 0.02;    /* velocity floor in C_cont = |
  * (a same-stream like-match across a steep density edge has a small velocity
  * gap but large C_rho). So the trigger is velocity-based and independent of the
  * route cost:
- *   trigger (continuation): C_cont(a,b) = |dv|^2 / (|dv|^2 + S_src + vfloor^2)
+ *   trigger (continuation): C_cont(a,b) = |dv|^2 / (|dv|^2 + S_src + v_floor^2)
  *     velocity-center gap normalized by SOURCE dispersion S_src (a broad target
  *     cannot absorb a cold source's gap; same-center heating stays closed).
+ *     v_floor = CBE_FSGATE_VFLOOR_FRAC * V_local regularizes the cold-source
+ *     limit S_src -> 0, where the dispersion alone sets no scale. V_local^2 is
+ *     the mass-weighted variance of the basis mean velocities about the pooled
+ *     bulk velocity, taken over BOTH cells: dv is an inter-cell quantity, so a
+ *     cell that is internally single-stream must still be scaled against the
+ *     velocity gap to its neighbour. Both Q_src and Q_tgt reach here in the same
+ *     absolute frame (cbe_build_flux_frame_Q_from_stored_moments bakes each
+ *     cell's Vel in at every call site), so the pooled moment is well-defined.
+ *     Empty rows carry zero mass and so do not set the scale. In the fully
+ *     degenerate case -- every populated row in both cells at one velocity --
+ *     V_local and every dv vanish together, and C_cont -> 0 closes the gate,
+ *     which is the correct answer: a perfect continuation exists.
  *   reliability:  q_b = m_b / (m_b + f_FS * m_cell_tgt)   (no hard empty cutoff)
  *   C_fit(a) = min_b [ C_cont(a,b) + eta*(1-q_b) ];  eta = tau
  *   w_FS(a)  = smoothstep( (C_fit - (tau-Delta)) / (2 Delta) )  in [0,1]
@@ -721,10 +751,37 @@ void cbe_apply_fs_gate(
     const int N = CBE_INTEGRATOR_NBASIS;
     const double tau = CBE_FSGATE_TAU, Delta = DMAX(CBE_FSGATE_DELTA, 1.0e-6);
     const double eta = CBE_FSGATE_TAU, f_FS = CBE_FSGATE_FFF;
-    const double vfloor2 = CBE_FSGATE_VFLOOR * CBE_FSGATE_VFLOOR;
     double m_cell_tgt = 0.0, sum_rho = 0.0;
     for(int j=0; j<N; j++) { m_cell_tgt += target_masses[j]; sum_rho += src_masses[j] + target_masses[j]; }
     const double eps_rho = 1.0e-8 * sum_rho;
+
+    /* Local velocity scale V_local for the continuation floor: mass-weighted rms
+     * spread of the basis mean velocities about the pooled bulk velocity, over
+     * both cells. Two passes over the 2N rows; row mass is the same cell-centered
+     * Q[m][0] the caller passed as src_masses/target_masses. */
+    double vfloor2 = 0.0;
+    {
+        const double M_pool = DMAX(sum_rho, MIN_REAL_NUMBER);
+        double Vbar[3] = {0,0,0};
+        for(int r=0; r<2*N; r++) {
+            const double *Qr = (r < N) ? Q_src[r] : Q_tgt[r-N];
+            const double mr  = DMAX((r < N) ? src_masses[r] : target_masses[r-N], 0.0);
+            const double inv = 1.0 / DMAX(Qr[0], MIN_REAL_NUMBER);
+            for(int k=0; k<NUMDIMS; k++) Vbar[k] += mr * cbe_basis_p_r(Qr, k) * inv;
+        }
+        for(int k=0; k<NUMDIMS; k++) Vbar[k] /= M_pool;
+        double V2_local = 0.0;
+        for(int r=0; r<2*N; r++) {
+            const double *Qr = (r < N) ? Q_src[r] : Q_tgt[r-N];
+            const double mr  = DMAX((r < N) ? src_masses[r] : target_masses[r-N], 0.0);
+            const double inv = 1.0 / DMAX(Qr[0], MIN_REAL_NUMBER);
+            double d2 = 0.0;
+            for(int k=0; k<NUMDIMS; k++) { double d = cbe_basis_p_r(Qr, k)*inv - Vbar[k]; d2 += d*d; }
+            V2_local += mr * d2;
+        }
+        V2_local /= M_pool;
+        vfloor2 = CBE_FSGATE_VFLOOR_FRAC * CBE_FSGATE_VFLOOR_FRAC * DMAX(V2_local, 0.0);
+    }
     double q[CBE_INTEGRATOR_NBASIS];
     for(int j=0; j<N; j++) q[j] = target_masses[j] / (target_masses[j] + f_FS*m_cell_tgt + MIN_REAL_NUMBER);
     for(int m=0; m<N; m++) {
@@ -739,7 +796,11 @@ void cbe_apply_fs_gate(
         for(int b=0; b<N; b++) {
             double inv_b = 1.0 / DMAX(Q_tgt[b][0], MIN_REAL_NUMBER), dv2 = 0.0;
             for(int k=0; k<NUMDIMS; k++) { double vb = cbe_basis_p_r(Q_tgt[b], k) * inv_b; dv2 += (va[k]-vb)*(va[k]-vb); }
-            double Ccont = dv2 / (dv2 + S_src + vfloor2);
+            /* MIN_REAL_NUMBER guards the fully-degenerate case only: with the
+             * floor now scaled by V_local, all three denominator terms can
+             * vanish together (one velocity, no dispersion), and dv2 vanishes
+             * with them -- so this evaluates C_cont = 0, gate closed. */
+            double Ccont = dv2 / (dv2 + S_src + vfloor2 + MIN_REAL_NUMBER);
             double c = Ccont + eta*(1.0 - q[b]);
             if(c < Cfit) Cfit = c;
         }

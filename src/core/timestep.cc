@@ -552,7 +552,11 @@ integertime get_timestep(int p,		/*!< particle index */
         if(dt_divv < dt) {dt = dt_divv;}
         double dt_cour = 2. * All.CourantFac * (Get_Particle_Size_AGS(p)*All.cf_atime) / (MIN_REAL_NUMBER + 0.5*P[p].AGS_vsig); // can be generous here, really the signal velocity isn't that important in the collisionless case, but it is important with some of the physics above //
 #if defined(CBE_INTEGRATOR)
+#if defined(CBE_INTEGRATOR_RP_GAUSSIAN)
         if(need_cbe_agscfl) {dt_cour *= 0.25;} // stricter criterion for CBE moment fluxes (CBE particles only, not other AGS-CFL types) //
+#else
+        if(need_cbe_agscfl) {dt_cour *= 0.125;} // as above, tighter still: the top-hat face fluxes also transport second moment, through their gomega and pstress terms, and the compact-support signal speed |u|+c_x is not enough margin for those on its own //
+#endif
         if(need_cbe_agscfl)
         {   /* CBE mass-depletion criterion: cap the per-basis fractional mass change per step.
              * m_eff-floor: regularize the softened basis mass as m_eff = max(m_b,
@@ -641,6 +645,27 @@ integertime get_timestep(int p,		/*!< particle index */
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
             if(dt_courant < dt) dt = dt_courant;
+
+#ifdef MHD_BATTERY_MECHANISMS
+            /* The battery builds a field out of nothing, at a rate set by the thermodynamic
+               gradients rather than by anything the hydro timestep knows about, so the Courant
+               condition does not see it. Resolve the time the source takes to change the field
+               it is building. The floor on the numerator matters: while the field grows linearly
+               from zero, |B|/|dB/dt| IS the elapsed time, so the bare ratio would drive the step
+               to zero at the start of a run for a field far too weak to matter. Adding a small
+               dimensionless fraction of the thermal pressure stops that, and is negligible once
+               the field carries any dynamical weight. */
+            if(CellP[p].DtB_battery_magnitude > MIN_REAL_NUMBER)
+            {
+                const double eta_battery = 0.03;      /* fraction of the field-doubling time per step */
+                const double eps_battery = 1.0e-4;    /* dimensionless floor, in units of the thermal pressure */
+                const double b_sq = (CellP[p].Bfield() * All.cf_a2inv).norm_sq(); /* physical, matching the stored rate */
+                const double p_thermal = CellP[p].Pressure * All.cf_a3inv;
+                const double dt_battery = eta_battery * sqrt(b_sq + eps_battery * p_thermal)
+                                          / CellP[p].DtB_battery_magnitude;
+                if(dt_battery < dt) {dt = dt_battery;}
+            }
+#endif
 
             double dt_prefac_diffusion;
             dt_prefac_diffusion = 0.5;
@@ -1240,9 +1265,10 @@ integertime get_timestep(int p,		/*!< particle index */
 
     if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
     ti_step = (integertime) (dt / All.Timebase_interval);
-#ifndef STOP_WHEN_BELOW_MINTIMESTEP
+    /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
+       has asked for a controlled stop still has to reach the next phase boundary to take it, and a
+       zero-length step here would instead abort hard from inside a per-particle loop. */
     if(ti_step<=1) ti_step=2;
-#endif
 
     if(!(ti_step > 0 && ti_step < TIMEBASE))
     {

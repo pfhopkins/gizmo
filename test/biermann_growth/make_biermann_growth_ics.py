@@ -11,8 +11,8 @@ has a nonzero curl pointing along z-hat, producing
 which is what the test compares to.
 
 Code units: standard GIZMO kpc/1e10 Msun/km-s. We pick rho_0 such that n_H ~ 1
-cm^-3 in the unperturbed state and u_0 such that T ~ 10^4 K, both with small
-amplitudes a=b=1e-2 so the test is solidly in the linear regime.
+cm^-3 in the unperturbed state and u_0 such that T = 10^6 K, both with small
+amplitudes a=b=1e-4 so the test is solidly in the linear regime.
 """
 
 import numpy as np
@@ -37,7 +37,13 @@ T_target_K = 1.0e6
 
 rho_cgs = nH_target_cgs * PROTONMASS_CGS / HYDROGEN_MASSFRAC
 rho0_code = rho_cgs / UnitDensity_cgs
-u_cgs = T_target_K * BOLTZMANN_CGS / ((GAMMA - 1.0) * PROTONMASS_CGS)
+# Mean molecular weight of the fully-ionized primordial gas this IC represents.
+# The run solves no chemistry, so GIZMO reads back a temperature with its own
+# MEAN_MOLECULAR_WEIGHT_DEFAULT (constants.h); inverting u(T) with any other
+# value hands the test a T0 the simulation never had, and the predicted growth
+# rate is linear in T0.
+MEAN_MOLECULAR_WEIGHT = 0.59
+u_cgs = T_target_K * BOLTZMANN_CGS / ((GAMMA - 1.0) * MEAN_MOLECULAR_WEIGHT * PROTONMASS_CGS)
 u0_code = u_cgs / UnitEnergyPerMass_cgs
 
 # ---- IC layout -------------------------------------------------------------
