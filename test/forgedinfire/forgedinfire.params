@@ -23,7 +23,7 @@ Initial_Metallicity               0.35
 SinkMaxAccretionRadius             100
 Effective_Kernel_NeighborNumber   32
 Output_Directory                  output
-MaxSimulationWallTime_in_Seconds  1.72e9
+MaxSimulationWallTime_in_Seconds  7200
 CpuTimeBetRestartFile             3350
 % CONVENTION: on batch systems set TimeLimitCPU (seconds) <~ your SLURM wall-time
 %  so GIZMO self-stops gracefully (drains to a phase boundary, writes restart,
