@@ -91,15 +91,20 @@ extern "C" int gpu_morton_compute_global_keys(int npart)
         double fx = (dlen > 0.0) ? ((P_dev[i].Pos[0] - dc0) / dlen) : 0.0;
         double fy = (dlen > 0.0) ? ((P_dev[i].Pos[1] - dc1) / dlen) : 0.0;
         double fz = (dlen > 0.0) ? ((P_dev[i].Pos[2] - dc2) / dlen) : 0.0;
-        /* Clamp into [0, 1) so that (frac + 1.0) lies in [1.0, 2.0).
-         * Domain decomp pre-wraps periodic cases; this clamp protects
-         * against rare boundary FP drift. */
-        if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
-        if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
-        if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
-        uint64_t ix = gpu_morton_double_to_int42(fx + 1.0);
-        uint64_t iy = gpu_morton_double_to_int42(fy + 1.0);
-        uint64_t iz = gpu_morton_double_to_int42(fz + 1.0);
+        /* The key is the mantissa of (frac + 1.0), so the value that has to land in
+         * [1.0, 2.0) is that sum: clamping the fraction instead leaves the addition
+         * free to round the result up to 2.0, whose mantissa is zero, which keys the
+         * coordinate to the first cell rather than the last one.  Domain decomp
+         * pre-wraps periodic cases; this protects against rare boundary FP drift.
+         * The upper bound is the largest double below 2.0, and the tests are written
+         * so a NaN coordinate takes the lower one rather than passing through. */
+        double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
+        if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
+        if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
+        if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
+        uint64_t ix = gpu_morton_double_to_int42(sx);
+        uint64_t iy = gpu_morton_double_to_int42(sy);
+        uint64_t iz = gpu_morton_double_to_int42(sz);
         keys[i] = gpu_morton_encode128(ix, iy, iz);
     });
     Kokkos::fence();

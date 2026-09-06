@@ -157,12 +157,16 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
         double fx = (dlen > 0.0) ? ((P_dev[real].Pos[0] - dc0) / dlen) : 0.0;
         double fy = (dlen > 0.0) ? ((P_dev[real].Pos[1] - dc1) / dlen) : 0.0;
         double fz = (dlen > 0.0) ? ((P_dev[real].Pos[2] - dc2) / dlen) : 0.0;
-        if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
-        if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
-        if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
-        uint64_t ix = gpu_morton_double_to_int42(fx + 1.0);
-        uint64_t iy = gpu_morton_double_to_int42(fy + 1.0);
-        uint64_t iz = gpu_morton_double_to_int42(fz + 1.0);
+        /* Clamp the sum, not the fraction: the key is the mantissa of (frac + 1.0),
+         * and a fraction just under 1.0 can carry that sum up to 2.0, whose mantissa
+         * is zero -- the first cell instead of the last.  See gpu_morton.cc. */
+        double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
+        if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
+        if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
+        if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
+        uint64_t ix = gpu_morton_double_to_int42(sx);
+        uint64_t iy = gpu_morton_double_to_int42(sy);
+        uint64_t iz = gpu_morton_double_to_int42(sz);
 
         Morton128 m;
         peanokey  pkey = gpu_peano_and_morton_key(ix, iy, iz, bits, &m);

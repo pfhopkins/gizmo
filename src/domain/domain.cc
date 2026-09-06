@@ -688,14 +688,16 @@ void domain_Decomposition_light(int UseAllTimeBins)
        after this step's drift and wrapping have settled the positions the keys will be built from,
        and before anything has been freed or rebuilt.  The test is the exact validity condition
        rather than a padded one, so it fires only when a key would actually be wrong; a NaN
-       coordinate fails both comparisons and escalates too. */
+       coordinate fails both comparisons and escalates too.  It is put to the sum the key is read
+       from and not to the fraction, because a fraction below 1 can still carry that sum up to 2
+       when it is rounded, and 2 has the mantissa of the first cell rather than the last. */
     int extent_outgrown_local = 0;
     for(i = 0; i < NumPart; i++)
     {
         for(int k = 0; k < 3; k++)
         {
-            double frac = (P[i].Pos[k] - DomainCorner[k]) / DomainLen;
-            if(!(frac >= 0.0 && frac < 1.0)) {extent_outgrown_local = 1;}
+            double key_input = ((P[i].Pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
+            if(!(key_input >= 1.0 && key_input < 2.0)) {extent_outgrown_local = 1;}
         }
         if(extent_outgrown_local) {break;}
     }
