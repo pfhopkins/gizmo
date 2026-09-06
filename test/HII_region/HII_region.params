@@ -132,7 +132,7 @@ TimeBetOnTheFlyFoF           1.01
 BlackHoleAccretionFactor     1.0
 BlackHoleEddingtonFactor     1e100
 BlackHoleNgbFactor           1.0
-BlackHoleMaxAccretionRadius  1.00e+02
+SinkMaxAccretionRadius       1.00e+02
 BlackHoleRadiativeEfficiency 5e-7
 BlackHoleFeedbackFactor      1.0
 BH_FluxMomentumFactor        0.0

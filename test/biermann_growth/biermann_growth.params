@@ -17,9 +17,9 @@
 %
 InitCondFile                       biermann_growth_ics
 OutputDir                          output
-TimeMax                            0.01
+TimeMax                            0.002
 BoxSize                            1
-TimeBetSnapshot                    0.001
+TimeBetSnapshot                    0.0002
 MaxSizeTimestep                    0.001
 DesNumNgb                          20
 ErrTolIntAccuracy                  0.01

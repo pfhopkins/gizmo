@@ -576,6 +576,7 @@ void init(void)
         CellP[i].Eta_MHD_AmbiPolarDiffusion_Coeff = 0;
 #endif
 #ifdef MHD_BATTERY_MECHANISMS
+        CellP[i].DtB_battery_magnitude = 0; /* the hydro pass fills this before the timestep reads it; zero here means no constraint on the first pass */
 #if (MHD_BATTERY_MECHANISMS & (2|4|8))
         CellP[i].E_battery_T2_cell = {};
 #endif

@@ -26,6 +26,14 @@
 #define GIZMO_config_H
 #include "../../src/eos/aneos.h"
 
+/* aneos.cc puts the tables in memory the host and the device can both read.
+   The real entry points for that live in the GPU arena, which needs Kokkos,
+   MPI and the global state this test is built to run without, so they are
+   served here from the heap instead. The lookups under test do not depend on
+   where the table sits, and aneos.cc zeroes what it allocates itself. */
+extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label) { (void)label; return malloc(nbytes); }
+extern "C" void gpu_particles_uvm_free(void *ptr) { free(ptr); }
+
 /* ---- Test parameters ---- */
 static const double GAMMA = 5.0 / 3.0;
 static const double CV = 1.0e7;  /* erg/g/K — specific heat at constant volume */

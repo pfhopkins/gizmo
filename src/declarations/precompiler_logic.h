@@ -227,7 +227,6 @@
 #define METALS                              /*! follow metals as passive scalars, use in cooling, etc */
 #define TURB_DIFF_METALS                    /*! explicit sub-grid diffusivity for metals/passive scalars */
 #define TURB_DIFF_METALS_LOWORDER           /*! memory-saving custom mod */
-#define STOP_WHEN_BELOW_MINTIMESTEP         /*! this is general good practice */
 #if !defined(MULTIPLEDOMAINS)
 #define MULTIPLEDOMAINS 32                  /*! slightly closer to our usual default, but users should feel free to adjust */
 #endif
@@ -685,9 +684,6 @@
 #ifdef GRAVITY_ACCURATE_FEWBODY_INTEGRATION /* utility flag to enable a few different extra-conservative time-integration flags for gravity */
 #if !defined(GRAVITY_HYBRID_OPENING_CRIT)
 #define GRAVITY_HYBRID_OPENING_CRIT // use both Barnes-Hut + relative tree opening criterion
-#endif
-#if !defined(STOP_WHEN_BELOW_MINTIMESTEP)
-#define STOP_WHEN_BELOW_MINTIMESTEP // stop when below min timestep to prevent bad timestepping
 #endif
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion
 #endif
@@ -1614,4 +1610,19 @@
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
  && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
+#endif
+
+
+/* Stopping when a cell asks for a step below MinSizeTimestep is the safe
+   default. A run that reaches that point has almost always gone unstable, and
+   the alternative is to clamp the step and keep going: the code then spends
+   its entire wall-clock allocation making no progress, and the diagnostic
+   naming the cell that failed scrolls past instead of ending the run. Define
+   CONTINUE_BELOW_MINTIMESTEP to restore the clamp-and-continue behaviour for
+   a problem where reaching the floor is expected and survivable. */
+#if defined(CONTINUE_BELOW_MINTIMESTEP) && defined(STOP_WHEN_BELOW_MINTIMESTEP)
+#error "CONTINUE_BELOW_MINTIMESTEP and STOP_WHEN_BELOW_MINTIMESTEP ask for opposite things at the timestep floor. Set at most one; stopping is the default with neither."
+#endif
+#if !defined(CONTINUE_BELOW_MINTIMESTEP)
+#define STOP_WHEN_BELOW_MINTIMESTEP
 #endif
