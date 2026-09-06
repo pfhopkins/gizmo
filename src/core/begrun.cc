@@ -105,6 +105,23 @@ void begrun(void)
    * those bad-stops. */
   if(gizmo_poll_controlled_stop()) return;
 
+#ifdef RANDOMIZE_GRAVTREE
+  if(ThisTask == 0)
+    {
+      printf("RANDOMIZE_GRAVTREE is on: the domain frame is re-drawn at random for every tree\n"
+             "  rebuild the timestep loop schedules, so the tree-force errors decorrelate between\n"
+             "  rebuilds and the spurious centre-of-mass drift they otherwise accumulate is\n"
+             "  suppressed. The frame is what positions are keyed against, so each of those\n"
+             "  rebuilds now also costs a full domain decomposition: this run cannot reuse one\n"
+             "  decomposition across several rebuilds, and TreeRebuild_ActiveFraction (%g)\n"
+             "  therefore sets the decomposition rate as well as DomainBuild_ActiveFraction (%g).\n"
+             "  How much that costs depends on the problem, and it is worst on GPUs, where a\n"
+             "  decomposition re-stages the particle data. Leave it off unless the decorrelation is\n"
+             "  what you are after.\n",
+             All.TreeRebuild_ActiveFraction, All.DomainBuild_ActiveFraction);
+    }
+#endif
+
   /* Ensure the HDF5 deflate (gzip) filter is available before any IC /
    * snapshot read — registers a zlib-backed replacement only if the linked
    * HDF5 library was built without zlib (no-op otherwise). See

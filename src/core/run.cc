@@ -290,6 +290,19 @@ void run(void)
         if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
         MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everbody has to
         MPI_Allreduce(MPI_IN_PLACE, &DomainReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+#ifdef RANDOMIZE_GRAVTREE
+        /* The randomization is a change of the domain frame: it moves DomainCorner and DomainLen,
+         * and DomainFac with them, and those are what turn a position into a Peano key and place
+         * the top tree.  So a tree can only be built on a fresh random frame by a decomposition
+         * that re-keys the particles onto it, and asking for a tree here has to mean asking for a
+         * decomposition too -- which is what makes the decorrelation happen once per scheduled
+         * rebuild, as the feature is for.  The in-call repair build in gravity_tree() is the one
+         * exception, and deliberately so: it stays on the frame already in force.  Both flags are
+         * already reduced above, so every rank derives the
+         * same answer.  The cost is that these runs give up reusing one decomposition across
+         * several tree builds; the startup notice in begrun() says so. */
+        if(TreeReconstructFlag) {DomainReconstructFlag = 1;}
+#endif
         /* A decomposition always brings a new tree with it, but a new tree does not need a
          * decomposition: redistributing particles between tasks is a cost and balance question,
          * while how long a tree may be reused is an accuracy one.  The tree the rebuild below
