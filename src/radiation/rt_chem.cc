@@ -175,18 +175,23 @@ void rt_get_sigma(void)
     }
     double fac = 1.0 / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);
 
-#ifndef RT_PHOTOION_MULTIFREQUENCY
-    /* just the hydrogen ionization bin */
-    All.rt_ion_sigma_HI[RT_FREQ_BIN_H0] = 6.3e-18 * fac; // cross-section (blackbody-weighted) for photons
-    All.rt_ion_nu_min[RT_FREQ_BIN_H0] = 13.6; // minimum frequency [in eV] of photons of interest
-    All.rt_nu_eff_eV[RT_FREQ_BIN_H0] = 27.2; // typical blackbody-weighted frequency [in eV] of photons of interest: to convert energies to numbers
-    All.rt_ion_G_HI[RT_FREQ_BIN_H0] = (All.rt_nu_eff_eV[RT_FREQ_BIN_H0]-13.6)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS; // absorption cross-section weighted photon energy in code units
-#else
-
-    /* now we use the multi-bin spectral information */
+    /* Integrate a blackbody at the source effective temperature over each ionizing band, so the
+       single-band and multi-band treatments go through one piece of machinery. This separates two
+       quantities that are physically distinct and were previously forced to satisfy
+       G = nu_eff - 13.6 with a hard-coded nu_eff of 27.2 eV:
+         rt_nu_eff_eV  the number-weighted mean photon energy, for converting energy to photon number
+         rt_ion_G_*    the cross-section-weighted mean excess energy, i.e. the photoelectron energy
+       Tying them together over-heated the gas and mis-counted the photons. */
+#ifdef RT_CHEM_PHOTOION_HE
 #define N_BINS_FOR_IONIZATION 4
     double nu_vec[N_BINS_FOR_IONIZATION] = {13.6, 24.6, 54.4, 70.0};
     int i_vec[N_BINS_FOR_IONIZATION] = {RT_FREQ_BIN_H0, RT_FREQ_BIN_He0, RT_FREQ_BIN_He1, RT_FREQ_BIN_He2};
+#else
+#define N_BINS_FOR_IONIZATION 1
+    /* one hydrogen-ionizing band spanning 13.6 eV to the same upper limit the multi-band case uses */
+    double nu_vec[N_BINS_FOR_IONIZATION] = {13.6};
+    int i_vec[N_BINS_FOR_IONIZATION] = {RT_FREQ_BIN_H0};
+#endif
 
     int i, j, integral=10000;
     double e, d_nu, e_start, e_end, sum_HI_sigma=0, sum_HI_G=0, hc=C_LIGHT_CGS*6.6262e-27, I_nu, sig, f, fac_two, T_eff, sum_egy_allbands=0;
@@ -274,7 +279,6 @@ void rt_get_sigma(void)
     for(i = 0; i < N_RT_FREQ_BINS; i++) {All.rt_ion_precalc_stellar_luminosity_fraction[i] /= sum_egy_allbands;}
 
     if(ThisTask == 0) {for(i = 0; i < N_RT_FREQ_BINS; i++) {printf("%g %g | %g %g | %g %g\n",All.rt_ion_sigma_HI[i]/fac, All.rt_ion_G_HI[i]/fac_two,All.rt_ion_sigma_HeI[i]/fac, All.rt_ion_G_HeI[i]/fac_two,All.rt_ion_sigma_HeII[i]/fac, All.rt_ion_G_HeII[i]/fac_two);}}
-#endif
 #pragma pop_macro("All")
 }
 
