@@ -658,6 +658,22 @@ double single_star_jet_velocity(int n)
     return (All.Sink_outflow_jetlaunchvelscaling * sqrt(All.G * P[n].Sink_Mass / (10. / UNIT_LENGTH_IN_SOLAR))); // we use the flag as a multiplier times the Kepler velocity at the protostellar radius. Really we'd want v_kick = v_kep * m_accreted / m_kicked to get the right momentum; without a better guess, assume fiducial protostellar radius of 10*Rsun, as in Federrath 2014
 #endif
 }
+
+
+/* Rate at which accretion is diverted into the jet channel, in code units. This is the single definition
+   of that rate: sink.cc debits this*dt from the sink, and single_star_wind_mdot() weighs it against the
+   wind rate to decide which channel gets to spawn particles, so the two cannot pick different rates.
+   Returns zero before the jet is launched. Unclamped -- the caller applies any mass-availability limits. */
+double single_star_jet_mdot(int n)
+{
+    if(P[n].Type != 5) {return 0;}
+    if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || (P[n].Mass < 3.5*P[n].Sink_Formation_Mass)) {return 0;} // no jets launched yet if <0.01 msun or if we haven't accreted enough to get a reliable jet direction
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+    return DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.); // mass loss rate from the alpha disk
+#else
+    return (1.-All.Sink_accreted_fraction) / All.Sink_accreted_fraction * P[n].Sink_Mdot;
+#endif
+}
 #endif
 
 
@@ -954,11 +970,11 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
             P[n].wind_mode = 2; // we can't spawn enough particles per wind time, switching to FIRE wind module to reduce burstiness
         }
 #ifdef SINGLE_STAR_FB_JETS
-        double spawning_min_wind_jet_mom_ratio = 10.0; // if winds are much more powerful than jets ( (wind momentum injection/jet momentum injection) > this value) then we can safely spawn the winds and neglect the jets if we want to
-        if ( (P[n].wind_mode == 1) && (P[n].Sink_Mdot>0) ){ // we want to spawn winds but we have jets too
-            double jet_mom_inj = single_star_jet_velocity(n) * P[n].Sink_Mdot;
+        double spawning_min_wind_jet_mom_ratio = 10.0; // winds only keep the spawning channel if they beat the jets by this margin in momentum injection rate; below it we would rather spawn the jet and route the winds to continuous injection instead
+        if (P[n].wind_mode == 1) { // we want to spawn winds but we may have jets too
+            double jet_mom_inj = single_star_jet_velocity(n) * single_star_jet_mdot(n); // zero before the jet is launched, so an unlaunched jet cannot take the channel away from the winds
             double wind_mom_inj = v_wind * wind_mass_loss_rate;
-            if (spawning_min_wind_jet_mom_ratio < (spawning_min_wind_jet_mom_ratio * jet_mom_inj) ){ P[n].wind_mode = 2;} //w e switch back to the FIRE wind injection so that we can spawn the jet and have winds at the same time
+            if (wind_mom_inj < spawning_min_wind_jet_mom_ratio * jet_mom_inj) { P[n].wind_mode = 2;} // we switch back to the FIRE wind injection so that we can spawn the jet and have winds at the same time
         }
 #endif
         if (old_wind_mode != P[n].wind_mode){

@@ -806,7 +806,7 @@ void sink_final_operations(void)
         dm_wind = DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.) * dt; /* wind mass loss rate from the alpha disk */
 #endif
 #ifdef SINGLE_STAR_FB_JETS
-        if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || P[n].Mass < 3.5*P[n].Sink_Formation_Mass) {dm_wind = 0;} // no jets launched yet if <0.01 msun or if we haven't accreted enough to get a reliable jet direction
+        dm_wind = single_star_jet_mdot(n) * dt; // the unclamped jet rate, shared with the wind/jet channel comparison so the two cannot pick different rates; zero before the jet is launched. The clamps below still limit what is actually taken
 #endif
         if(dm_wind > P[n].Mass) {dm_wind = P[n].Mass;}
 #if defined(SINK_ALPHADISK_ACCRETION)
@@ -816,6 +816,12 @@ void sink_final_operations(void)
 #else
         if(dm_wind > P[n].Sink_Mass) {dm_wind = P[n].Sink_Mass;}
         P[n].Sink_Mass -= dm_wind;
+#endif
+#ifdef SINGLE_STAR_FB_JETS
+        /* SPIKE: bank the jet mass here, before the branches below can overwrite dm_wind, so it cannot be
+           debited from the sink without ever being ejected. TEARDOWN: delete when batch 7 piece 2 lands the
+           two-reservoir model, which banks this into unspawned_jet_mass instead. */
+        P[n].unspawned_wind_mass += dm_wind; dm_wind = 0;
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_WINDS)
