@@ -1550,8 +1550,7 @@ void process_wake_ups(void)
 
 	    if(bin != binold)
 	    {
-		integertime dt_0 = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
-		integertime tstart = P[i].Ti_begstep + dt_0;
+		integertime tstart = P[i].Ti_begstep + P[i].integertime_step(); /* the step this particle is actually on, which a previous demotion may have truncated below its bin length */
 		integertime t_2 = P[i].Ti_current;
 		if(t_2 > tstart) {tstart = t_2;}
 		integertime tend = All.Ti_Current;
@@ -1585,15 +1584,22 @@ void process_wake_ups(void)
         if(TimeBinActive[bin]) {NumForceUpdate++;}
 		n++;
 
-		/* reverse part of the last second-half kick this particle received
-		   (to correct it back to its new active time) */
-		if(tend < tstart)
+		/* The kick this particle already received covers past the time it is being woken to. Do NOT
+		   try to reverse it: re-deriving the increment with reversed bounds would only cancel the
+		   original if the acceleration and energy rate were unchanged since, and they are not, so it
+		   injects energy instead. Saitoh & Makino (2009) eq (3) avoids integrating the system backwards
+		   for exactly this reason and instead sets the new time consistent with the system time, which
+		   is what the truncation below does. */
+		if(tend < tstart) {set_predicted_quantities_for_extra_physics(i);}
+		/* End the step at the current system time, so the interval the applied kick already covered is
+		   not integrated twice. dt_step stays authoritative, but is no longer a power-of-two bin length
+		   and so deliberately disagrees with TimeBin: a step must be read from integertime_step(), never
+		   derived from the bin. */
 		{
-		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
-		    set_predicted_quantities_for_extra_physics(i);
+		    integertime dt_truncated = All.Ti_Current - P[i].Ti_current;
+		    if(dt_truncated > 0) {P[i].Ti_begstep = P[i].Ti_current; P[i].dt_step = dt_truncated;}
+		    else {P[i].Ti_begstep = All.Ti_Current; P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);}
 		}
-		P[i].Ti_begstep = All.Ti_Current;
-		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
         /* a wakeup starts a new step for this particle, so freeze its dilation factor at the
            position it now holds, as a normal timestep assignment would. This must follow the
