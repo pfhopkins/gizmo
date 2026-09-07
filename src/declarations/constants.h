@@ -46,10 +46,16 @@
 #define GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD 2000000000
 #endif
 
+/* The Saitoh & Makino (2009) timestep-limiter factor: a cell is woken when a neighbour's step is
+   this much shorter than its own. A run may set it in Config.sh -- their Table 1 gives f=2 a smaller
+   energy error than f=4 on Sedov, at roughly twice the cost -- and otherwise it follows the slope
+   limiter, which is the choice this code has always made. */
+#ifndef WAKEUP
 #if (SLOPE_LIMITER_TOLERANCE > 0)
 #define WAKEUP   4.1            /* allows 2 timestep bins within kernel */
 #else
 #define WAKEUP   2.1            /* allows only 1-separated timestep bins within kernel */
+#endif
 #endif
 
 #define ARENA_SHARE_OF_TASK_MEMORY          0.90 /* most of a task's memory share the working pool may take when the code has to bring its own size down to fit the machine; the rest is for the particle arrays and the tree, which are not allocated from the pool */
