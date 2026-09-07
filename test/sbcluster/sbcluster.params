@@ -19,7 +19,6 @@ HubbleParam                        0.5
 UnitLength_in_cm                   9.87417e+25
 UnitMass_in_g                      1.80886e+49
 UnitVelocity_in_cm_per_s           1.10567e+08
-UnitMagneticField_in_gauss         1
 MinGasKernelRadiusFractional       1
 SofteningGas                       0.0001
 Softening_Type1                    0.0005
@@ -35,9 +34,6 @@ Softening_Type4_MaxPhysLimit       0
 Softening_Type5_MaxPhysLimit       0
 InitGasTemp                        100
 MinGasTemp                         10
-BiniX                              0
-BiniY                              0
-BiniZ                              1e-08
 TimeOfFirstSnapshot                0.02
 ScaleFac_Between_Snapshots         2
 MaxSizeTimestep                    0.05

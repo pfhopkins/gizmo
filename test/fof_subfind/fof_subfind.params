@@ -32,7 +32,6 @@ UnitMass_in_g                      1.989e33
 UnitVelocity_in_cm_per_s           1.0e5
 GravityConstantInternal            1.0
 
-TreeAllocFactor                    2.0
 DomainBuild_ActiveFraction          0.005
 
 DesNumNgb                          32
@@ -52,8 +51,6 @@ SofteningDiskMaxPhys               0.02
 SofteningBulgeMaxPhys              0.02
 SofteningStarsMaxPhys              0.02
 SofteningBndryMaxPhys              0.02
-AGS_DesNumNgb                      32
-AGS_MaxNumNgbDeviation             0.10
 
 MaxSizeTimestep                    0.001
 MinSizeTimestep                    1.0e-15

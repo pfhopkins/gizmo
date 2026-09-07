@@ -20,12 +20,6 @@ TimeBetSnapshot                    0.5
 MaxSizeTimestep                    0.02
 DesNumNgb                          40
 % -- optional physics parameters
-BiniX                              0.07
-BiniY                              1.0e0
-BiniZ                              1.0e0
-ConductionCoeff                    0.0002
-ShearViscosityCoeff                0.0002
-BulkViscosityCoeff                 0.0
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.1
 MaxRMSDisplacementFac              0.1

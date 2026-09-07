@@ -41,7 +41,6 @@ ErrTolForceAcc                     0.001
 UnitLength_in_cm                   1.0
 UnitMass_in_g                      1.0
 UnitVelocity_in_cm_per_s           1.0
-UnitMagneticField_in_gauss         1.0
 GravityConstantInternal            0
 
 % ANEOS table parameters.
@@ -72,8 +71,5 @@ NumFilesWrittenInParallel          1
 CpuTimeBetRestartFile              7200
 TimeLimitCPU                       100000
 ICFormat                           3
-TypeOfTimestepCriterion            0
-TypeOfOpeningCriterion             1
 OutputListOn                       0
 OutputListFilename                 output_times.txt
-PeriodicBoundariesOn               1

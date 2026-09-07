@@ -37,5 +37,3 @@ TimeBetStatistics                  0.5
 ResubmitOn                         0
 ResubmitCommand                    none
 DomainBuild_ActiveFraction         0.005
-CoolingTablePath                   ../isodisk_thermalfb/TREECOOL
-SpeciesAbundPath                   ../isodisk_thermalfb/spcool_tables/spcool_

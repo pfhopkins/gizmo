@@ -17,9 +17,6 @@ ErrTolIntAccuracy                  0.001
 CourantFac                         0.1
 MaxRMSDisplacementFac              0.125
 MaxSizeTimestep                    1.0 
-ArtCondConstant                    0.25
-ViscosityAMin                      0.025
-ViscosityAMax                      2
 ResubmitOn                         0
 ResubmitCommand                    none
 ErrTolTheta                        0.7

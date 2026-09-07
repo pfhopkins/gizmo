@@ -54,12 +54,6 @@ MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 
-% Fuzzy dark matter: particle mass in eV. TEMPORARY KLUDGE — set to 1e-18
-% (not 1e-22, the canonical ultralight scale) purely to keep this uncalibrated
-% hernquist_sidm IC from crashing on a fuzzy-DM SPE timestep runaway before the
-% DMGrad code paths are exercised. NOT a calibrated value for this IC.
-FuzzyDM_Mass_in_eV                 1e-18
-
 % Misc
 ResubmitOn                         0
 ResubmitCommand                    none
