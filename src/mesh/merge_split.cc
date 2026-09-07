@@ -40,6 +40,31 @@
 
 #ifdef SINK_WIND_SPAWN
 #define MASS_THRESHOLD_FOR_WINDPROMO(i) (DMAX(5.*target_mass_for_wind_spawning(i),0.25*All.MaxMassForParticleSplit))
+#ifndef SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST
+#define SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST (1.0)
+#endif
+#ifndef MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION
+#define MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION (0.5)
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+/*! Fraction of the energy involved in a candidate merger which is kinetic, KE_com/(KE_com+E_light).
+    A merge conserves momentum but not energy: it thermalizes KE_com = (1/2)*mu*|dv|^2, which cooling
+    then radiates away, so where that dominates the merge acts as an unresolved shock. Normalized to
+    the thermal plus magnetic energy of the LIGHTER cell, the one destroyed; normalizing to the pair
+    total would let the heavier target dominate and weaken the test by the mass ratio. */
+static inline double merge_kinetic_dissipation_fraction(int i, int j)
+{
+    double mi = P[i].Mass, mj = P[j].Mass; if((mi <= 0) || (mj <= 0)) {return 0;}
+    Vec3<MyDouble> dvel = P[i].Vel; dvel -= P[j].Vel;
+    double ke_com = 0.5 * (mi*mj/(mi+mj)) * dvel.norm_sq() * All.cf_a2inv; /* physical; what the merge dissipates */
+    if(!(ke_com > 0)) {return 0;}
+    int l = (mi <= mj) ? i : j; double m_l = (mi <= mj) ? mi : mj; /* the lighter cell is the one destroyed */
+    double vA_l = CellP[l].Alfven_speed(); /* zero without MAGNETIC */
+    double e_light = m_l * (CellP[l].InternalEnergyPred + 0.5*vA_l*vA_l);
+    if(!(e_light > 0)) {return 1;} /* nothing to compare against: purely kinetic */
+    return ke_com / (ke_com + e_light);
+}
+#endif
 #endif /* define a mass threshold for this model above which a 'hyper-element' has accreted enough to be treated as 'normal' */
 
 
@@ -445,6 +470,29 @@ void merge_and_split_particles(void)
             if (ms_src_kind[aa] == 1) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
+#ifdef SINK_WIND_SPAWN
+                const int is_spawned_i = (P[i].ID==All.SpawnedWindCellID && P[i].Type==0);
+#ifdef SINK_SPAWN_MERGE_WHEN_AMBIENT
+                /* Judge retirement against the bulk flow the cell is joining rather than against
+                   whichever single neighbour happens to be picked as the merge target. Spawned cells are
+                   excluded from the average: a jet cell among jet cells is still resolving the outflow. */
+                Vec3<double> v_ambient = {0,0,0}; double m_ambient=0, cs_ambient=0, lnu_ambient=0;
+                if (is_spawned_i) {
+                    for (int64_t na = nl_start; na < nl_end; na++) {
+                        int j_amb = gnl_neighbors[na];
+                        if ((j_amb < 0) || (j_amb == i) || (j_amb >= local_count)) {continue;}
+                        if ((P[j_amb].Type != 0) || (P[j_amb].Mass <= 0)) {continue;}
+                        if (P[j_amb].ID == All.SpawnedWindCellID) {continue;} /* ambient means non-spawned gas */
+                        double w = P[j_amb].Mass;
+                        for (int kv = 0; kv < 3; kv++) {v_ambient[kv] += w * P[j_amb].Vel[kv];}
+                        cs_ambient += w * CellP[j_amb].effective_soundspeed();
+                        lnu_ambient += w * log(DMAX(CellP[j_amb].InternalEnergyPred, MIN_REAL_NUMBER));
+                        m_ambient += w;
+                    }
+                    if (m_ambient > 0) {for (int kv = 0; kv < 3; kv++) {v_ambient[kv] /= m_ambient;} cs_ambient /= m_ambient; lnu_ambient /= m_ambient;}
+                }
+#endif
+#endif
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
                     j = gnl_neighbors[nn];
                     if (j >= local_count) continue; /* skip ghosts (local-only merge) */
@@ -480,6 +528,37 @@ void merge_and_split_particles(void)
                         }}
 #endif
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
+#ifdef SINK_SPAWN_MERGE_WHEN_AMBIENT
+                    /* Retire a spawned cell only once it has actually joined the ambient medium, rather
+                       than as soon as its velocity relative to one neighbour drops below that neighbour's
+                       sound speed. The target must be normal gas, and the cell must be subsonic with
+                       respect to the ambient bulk flow AND thermally equilibrated with it. Subsonic alone
+                       is not enough: a contact discontinuity is in pressure equilibrium with no velocity
+                       jump, so outflow material sitting at the contact passes every kinematic test while
+                       remaining a distinct phase. The thermal test compares specific internal energy and
+                       not an entropic function, which is only a state function for a single-gamma ideal
+                       gas; here gamma varies with composition and temperature. */
+                    if (is_spawned_i && do_allow_merger) {
+                        if (P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;}
+                        else if (!(m_ambient > 0)) {do_allow_merger = 0;} /* still buried inside the outflow */
+                        else {
+                            Vec3<double> dv_amb; for (int kv = 0; kv < 3; kv++) {dv_amb[kv] = P[i].Vel[kv] - v_ambient[kv];}
+                            if (dv_amb.norm()*sqrt(All.cf_a2inv) > cs_ambient) {do_allow_merger = 0;}
+                            else if (fabs(log(DMAX(CellP[i].InternalEnergyPred, MIN_REAL_NUMBER)) - lnu_ambient) > SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST) {do_allow_merger = 0;}
+                        }
+                    }
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+                    /* Do not retire a spawned cell into a target if that would convert the majority of the
+                       energy involved from kinetic into heat, which cooling then radiates: such a merge is
+                       an artificial unresolved shock, and vetoing it lets the solver follow the shock.
+                       Deliberately confined to spawned cells. De-refinement elsewhere is a resolution
+                       policy, and applying a kinematic veto to it would suppress de-refinement wherever
+                       these feedback modules happen to be compiled in. */
+                    if (do_allow_merger && is_spawned_i && (P[j].Type == 0) && (P[j].Mass > 0)) {
+                        if (merge_kinetic_dissipation_fraction(i,j) > MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION) {do_allow_merger = 0;}
+                    }
+#endif
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
 #ifdef HYDRO_MULTIFLUID

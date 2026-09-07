@@ -634,6 +634,19 @@
 
 #if defined(SINGLE_STAR_FB_JETS) || ((defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE)) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION))
 #define SINK_WIND_SPAWN (2) // leverage the BHFB model already developed within the FIRE-BHs framework. gives accurate launching of arbitrarily-structured jets.
+/* Retirement criteria for spawned outflow cells, default-on for the STARFORGE protostellar spawning
+   model they were built and tested against. Both act ONLY on a spawned cell, never on ordinary
+   de-refinement. Keyed on the protostellar model rather than on the feature macros alone, so
+   black-hole and alpha-disk spawning, which share this machinery but have not been priced against
+   these criteria, keep the previous behaviour unless asked for explicitly. */
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+#if !defined(SINK_SPAWN_MERGE_ANY_NEIGHBOR) && !defined(SINK_SPAWN_NO_MERGE) && !defined(SINK_SPAWN_MERGE_WHEN_AMBIENT)
+#define SINK_SPAWN_MERGE_WHEN_AMBIENT
+#endif
+#if !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#endif
+#endif
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 #define MAINTAIN_TREE_IN_REARRANGE // don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed
 #endif
