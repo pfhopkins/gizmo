@@ -983,22 +983,23 @@ int merge_particles_ij(int i, int j)
     Vec3<double> dp = P[j].Pos - P[i].Pos;
     nearest_xyz(dp,-1);
     Vec3<double> pos_new = P[i].Pos + dp * wt_j;
-    Vec3<double> dr_j = (P[i].Pos + dp - pos_new) * All.cf_atime; // displacement of j relative to new pos (physical)
-    Vec3<double> dr_i = (P[i].Pos - pos_new) * All.cf_atime;       // displacement of i relative to new pos (physical)
 
     egy_old += mtot*wt_j * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (j) //
     egy_old += mtot*wt_i * 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (i) //
-    // gravitational energy terms need to be added (including work for moving particles 'together') //
-    // Egrav = m*g*h = m * (-grav_acc) * (position relative to zero point) //
-    egy_old -= mtot*wt_j * dot(dr_j, P[j].GravAccel) * All.cf_a2inv; // work (j) //
-    egy_old -= mtot*wt_i * dot(dr_i, P[i].GravAccel) * All.cf_a2inv; // work (i) //
-#ifdef PMGRID
-    egy_old -= mtot*wt_j * dot(dr_j, P[j].GravPM) * All.cf_a2inv; // work (j) [PMGRID] //
-    egy_old -= mtot*wt_i * dot(dr_i, P[i].GravPM) * All.cf_a2inv; // work (i) [PMGRID] //
-#endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    CellP[j].GravWorkTerm = {}; // since we're accounting for the work above and dont want to accidentally double-count //
-#endif
+    /* Internal + kinetic only. The work done relocating the pair to the merged position is deliberately
+       NOT included: it would be built from GravAccel, which is not purely gravitational -- depending on
+       the build it also carries radiation pressure and other forces -- so treating that dot product as
+       gravitational work and thermalizing it is wrong. The relocation is small in any case, and a merged
+       pair's mutual self-gravity is negligible by construction, since merging never applies to a bound
+       pair such as a binary. */
+
+    /* The same accounting for the PREDICTED state, which carries its own (VelPred, InternalEnergyPred)
+       pair and is mass-weighted separately below, so the true-state residual does not balance it. The
+       hydro builds its fluxes from the predicted state, so an error there propagates. Captured here,
+       before the assignments below overwrite VelPred/InternalEnergyPred. */
+    double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
+    egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_old_pred += mtot*wt_i * 0.5 * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
 
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
@@ -1047,11 +1048,17 @@ int merge_particles_ij(int i, int j)
 #endif
 #endif
 
-    /* correct our 'guess' for the internal energy with the residual from exact energy conservation */
+    /* correct our 'guess' for the internal energy with the residual from exact energy conservation.
+       The merge sets the new velocity momentum-conservingly, so the pair's COM-frame kinetic energy
+       (1/2)*mu*|dv|^2 leaves the kinetic budget; returning it here as heat is what makes the operation
+       energy-conserving. */
     double egy_new = mtot * CellP[j].InternalEnergy + mtot * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv;
     egy_new = (egy_old - egy_new) / mtot; /* this residual needs to be put into the thermal energy */
     if(egy_new < -0.5*CellP[j].InternalEnergy) egy_new = -0.5 * CellP[j].InternalEnergy;
-    //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
+    double egy_new_pred = mtot * CellP[j].InternalEnergyPred + mtot * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
+    if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
+    CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new_pred;
     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
 
 
