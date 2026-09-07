@@ -1,0 +1,20 @@
+% Minimal 3D gas box read from a GADGET-2 *binary* (ICFormat 1) IC that contains no
+% Temperature block -- see make_binary_ic.py and test_read_ic_binary.py.
+Initial_Conditions_File            read_ic_binary_ics
+ICFormat                          1
+SnapFormat                        3
+Output_Directory                  output
+Box_Size_In_Code_Units            1
+Final_Simulation_Time             0.02
+TimeBetSnapshot                   0.01
+TimeBetStatistics                 0.01
+Effective_Kernel_NeighborNumber   32
+MaxNumNgbDeviation                2
+Max_Memory_Per_MPI_Task_in_MB     1000
+ErrTolIntAccuracy                 0.01
+CourantFac                        0.2
+MaxRMSDisplacementFac             0.1
+ErrTolForceAcc                    0.001
+ErrTolTheta                       0.7
+ResubmitOn                        0
+ResubmitCommand                   none

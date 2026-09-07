@@ -1,0 +1,66 @@
+InitCondFile                       triple_ics
+OutputDir                          output
+
+% Equal-mass 4 AU inner binary + 1 Msun tertiary at 100 AU (M_tot = 2 Msun).
+% P_in = 8.181944e-06, P_out = 7.231889e-04 code time; ratio 88, ~6.5 timebins.
+%
+% 50 outer orbits = ~4400 inner orbits. Enough for a secular inner<->outer momentum leak to
+% separate from the flat noise band the source-prediction fix leaves (measured: base grows at
+% t^~0.7 from 3e-5, fix stays bounded ~1e-5), while keeping the runtime near the binary test's.
+% Snapshots at P_out/4: the diagnostics are envelope statistics per OUTER orbit.
+TimeMax                            3.615945e-02
+TimeBetSnapshot                    1.807972e-04
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  1.807972e-04
+BoxSize                            1
+
+% MaxSizeTimestep = P_out/20 so the outer orbit is always resolved; the inner stars' steps come
+% from their own tidal/2-body criteria ~6 bins below. Both orbits circular, so no pericentre
+% refinement: the bin structure is static by construction.
+MaxSizeTimestep                    3.615945e-05
+MinSizeTimestep                    1e-14
+% 0.00125, not the production 0.005: the operating point where the drifted-source defect is
+% CLEANLY secular (drift grows t^+0.95 without the source prediction) while the fixed code
+% stays sub-secular (t^+0.55). At 0.005 the defect's slope has not emerged from the noise band
+% by 50 orbits; at 3.125e-4 the fix's own 4th-order residual approaches the threshold. The
+% growth exponent, not the magnitude, is the discriminator -- band maxima differ by only ~3x
+% at any eta at this length.
+ErrTolIntAccuracy                  0.00125
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+
+% Inner separation is 1.939e-5 pc (4 AU, circular): softening sits 194x below it, so all three
+% interactions are Newtonian and the test measures the integrator, not the kernel.
+Softening_Type0                    1e-7
+Softening_Type1                    1e-7
+Softening_Type2                    1e-7
+Softening_Type3                    1e-7
+Softening_Type4                    1e-7
+Softening_Type5                    1e-7
+Softening_Type0_MaxPhysLimit       1e-7
+Softening_Type1_MaxPhysLimit       1e-7
+Softening_Type2_MaxPhysLimit       1e-7
+Softening_Type3_MaxPhysLimit       1e-7
+Softening_Type4_MaxPhysLimit       1e-7
+Softening_Type5_MaxPhysLimit       1e-7
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+
+% No gas in this test, so the default multi-pc accretion search is pure tree-walk overhead.
+SinkMaxAccretionRadius             1e-6

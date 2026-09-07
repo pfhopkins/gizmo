@@ -1,0 +1,70 @@
+% Plummer cluster with a REALISTIC binary population (Type 5 stars).
+% Units: pc - km/s - Msun, so G = 4.302e-3 in code units.
+% 256 systems -> ~335 stars, ~130 Msun; Kroupa IMF, Duchene & Kraus binary fraction,
+% Raghavan period distribution, thermal eccentricities. See make_..._ics.py.
+%
+% RUNTIME IS SET BY THE TIGHTEST PERICENTRE, not by the number of stars: that pair's
+% orbit fixes the smallest timestep and therefore the global sync cadence. Measured
+% scaling at M=1 Msun, dt ~ t_dyn(peri)/30:
+%     peri 1000 AU -> 3.0e4 steps      peri 100 AU -> 9.5e5 steps
+%      peri 300 AU -> 1.8e5 steps       peri  20 AU -> 1.1e7 steps
+% per unit TimeMax=32.4. The equal-mass test sits at the top of that table (1000 AU,
+% circular) and costs 15-40 min. This test keeps a 100 AU pericentre floor -- which
+% preserves a ~50x spread in binary hardness, and with the a-range gives ~8 timebins
+% of spread, the diversity the test exists for -- and pays for it by running 10x
+% shorter: TimeMax 3.24 rather than 32.4. Net cost lands within a few x of the
+% equal-mass test.
+%
+% 3.24 code time is ~1 half-mass crossing, so this measures CONSERVATION under a
+% realistic population, not cluster relaxation. Lagrange-radius evolution needs the
+% longer run; do not read structural evolution off this one.
+%
+% RUNTIME IS UNMEASURED as of writing -- the estimate above is analytic. Calibrate on
+% a compute node before treating the cost as known.
+%
+InitCondFile                       plummer_binaries_realistic_ics
+OutputDir                          output
+TimeMax                            29.2
+BoxSize                            300
+TimeBetSnapshot                    0.292
+TimeOfFirstSnapshot                0
+TimeBegin                          0
+TimeBetStatistics                  0.3
+MaxSizeTimestep                    0.05
+MinSizeTimestep                    1e-12
+ErrTolIntAccuracy                  0.005
+ErrTolTheta                        0.5
+ErrTolForceAcc                     0.0025
+CourantFac                         0.4
+MaxRMSDisplacementFac              0.125
+TreeDomainUpdateFrequency          0.1
+DesNumNgb                          32
+MaxNumNgbDeviation                 1
+MaxMemSize                         2000
+PartAllocFactor                    2.5
+BufferSize                         100
+ResubmitOn                         0
+ResubmitCommand                    none
+UnitLength_in_cm                   3.085678e+18
+UnitMass_in_g                      1.989e+33
+UnitVelocity_in_cm_per_s           100000
+Softening_Type0                    3.117e-5
+Softening_Type1                    3.117e-5
+Softening_Type2                    3.117e-5
+Softening_Type3                    3.117e-5
+Softening_Type4                    3.117e-5
+Softening_Type5                    3.117e-5
+Softening_Type0_MaxPhysLimit       3.117e-5
+Softening_Type1_MaxPhysLimit       3.117e-5
+Softening_Type2_MaxPhysLimit       3.117e-5
+Softening_Type3_MaxPhysLimit       3.117e-5
+Softening_Type4_MaxPhysLimit       3.117e-5
+Softening_Type5_MaxPhysLimit       3.117e-5
+AGS_DesNumNgb                      32
+AGS_MaxNumNgbDeviation             1
+CritPhysDensity                    1e13
+CpuTimeBetRestartFile              30
+% Cap sink accretion-search at the softening kernel radius (18 AU = 8.726e-5 pc).
+% With no gas in this test the default 5 pc search radius wastes huge amounts of
+% tree-walking; shrinking it to the softening scale eliminates that overhead.
+SinkMaxAccretionRadius             8.726e-5

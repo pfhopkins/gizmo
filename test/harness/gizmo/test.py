@@ -147,7 +147,7 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     system(f"chmod +x test/{test_name}/GIZMO")
 
 
-def download_test_files(test_name: str):
+def download_test_files(test_name: str, params_name: str = None):
     """Downloads the ICs and parameter files for a test of a given name"""
 
     website_path = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -161,7 +161,7 @@ def download_test_files(test_name: str):
     # Fall back to the convention when there is no params file or no InitCondFile in it.
     icfile = f"{test_name}_ics.hdf5"
     try:
-        ic_param = parse_params(f"{test_name}.params").get("InitCondFile")
+        ic_param = parse_params(f"{params_name or test_name}.params").get("InitCondFile")
         if ic_param:
             icfile = ic_param if path.splitext(ic_param)[1] else ic_param + ".hdf5"
     except OSError:
@@ -286,7 +286,7 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0,
              timeout: float = None, param_overrides: dict = None,
-             allow_nonzero_exit: bool = False):
+             allow_nonzero_exit: bool = False, params_name: str = None):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped via
     pytest.skip; the timeout defaults to GIZMO_TEST_TIMEOUT, or to no timeout at all.
@@ -307,7 +307,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     # results that get amplified by the divergence-cleaning feedback loop.
     environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     environ.setdefault("MKL_NUM_THREADS", "1")
-    paramsfile = f"{test_name}.params"
+    paramsfile = f"{params_name or test_name}.params"
     if param_overrides:
         paramsfile = write_params_with_overrides(paramsfile, param_overrides)
 
@@ -454,7 +454,7 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (),
                        timeout: float = None, param_overrides: dict = None,
-                       allow_nonzero_exit: bool = False):
+                       allow_nonzero_exit: bool = False, params_name: str = None):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
@@ -470,9 +470,10 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     stash_baseline_output(test_name, extra_config_flags)
     try:
         chdir(f"test/{test_name}/")
-        download_test_files(test_name)
+        download_test_files(test_name, params_name)
         run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout,
-                 param_overrides=param_overrides, allow_nonzero_exit=allow_nonzero_exit)
+                 param_overrides=param_overrides, allow_nonzero_exit=allow_nonzero_exit,
+                 params_name=params_name)
         chdir("../../")
     finally:
         finalize_variant_output(test_name, extra_config_flags)
