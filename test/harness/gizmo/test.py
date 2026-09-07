@@ -3,7 +3,8 @@
 import platform
 import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, makedirs
-from urllib.request import urlretrieve, HTTPError
+from urllib.error import HTTPError, URLError
+from urllib.request import urlretrieve
 from shutil import move, rmtree
 from glob import glob
 import pytest
@@ -181,10 +182,10 @@ def download_test_files(test_name: str, params_name: str = None):
             makedirs(dest_dir, exist_ok=True)
         try:
             urlretrieve(website_path + remote, f)
-        except HTTPError:
+        except (HTTPError, URLError):
             try:
                 urlretrieve(website_path2 + remote, f)
-            except HTTPError:
+            except (HTTPError, URLError):
                 print(f"Could not find {remote} at {website_path} or {website_path2}")
 
     if not path.isfile(icfile):
@@ -360,8 +361,13 @@ def get_cooling_tables(test_directory="."):
     spcool_dir = f"{test_directory}/spcool_tables"
     if not (path.isdir(spcool_dir) or path.islink(spcool_dir)):
         url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
-        urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
-        system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
+        tarball = f"{test_directory}/spcool_tables.tgz"
+        urlretrieve(url, tarball)
+        # Remove the tarball by its full path, not a bare name relative to whatever the
+        # caller's working directory happens to be, and only once tar has succeeded: a
+        # truncated download would otherwise leave a partial spcool_tables/ that the
+        # directory check above then accepts as complete on every later run.
+        system(f"tar -xf {tarball} -C {test_directory}/ && rm -f {tarball}")
     treecool_dst = f"{test_directory}/TREECOOL"
     if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
         # Resolve the TREECOOL source against the repo root, not the cwd: callers
