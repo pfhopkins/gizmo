@@ -986,6 +986,10 @@ int merge_particles_ij(int i, int j)
 
     egy_old += mtot*wt_j * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (j) //
     egy_old += mtot*wt_i * 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (i) //
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[j].GravWorkTerm = {}; /* this accumulates per-pair over a hydro pass, so once a merge changes the cell's mass and identity it describes neither parent. The split path zeroes it on both cells for the same reason; keeping only the survivor's while dropping the other's would be arbitrary */
+#endif
+
     /* Internal + kinetic only. The work done relocating the pair to the merged position is deliberately
        NOT included: it would be built from GravAccel, which is not purely gravitational -- depending on
        the build it also carries radiation pressure and other forces -- so treating that dot product as
