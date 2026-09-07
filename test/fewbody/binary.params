@@ -32,9 +32,7 @@ MaxRMSDisplacementFac              0.125
 TreeDomainUpdateFrequency          0.1
 DesNumNgb                          32
 MaxNumNgbDeviation                 1
-MaxMemSize                         2000
 PartAllocFactor                    2.5
-BufferSize                         100
 ResubmitOn                         0
 ResubmitCommand                    none
 UnitLength_in_cm                   3.085678e+18
@@ -56,8 +54,6 @@ Softening_Type2_MaxPhysLimit       1e-7
 Softening_Type3_MaxPhysLimit       1e-7
 Softening_Type4_MaxPhysLimit       1e-7
 Softening_Type5_MaxPhysLimit       1e-7
-AGS_DesNumNgb                      32
-AGS_MaxNumNgbDeviation             1
 CritPhysDensity                    1e13
 CpuTimeBetRestartFile              30
 

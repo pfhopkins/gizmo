@@ -43,7 +43,7 @@ def get_particle_masses(snapshot):
                 ## need to sum in float64 or roundoff can trigger failure below
                 m = F[grp]["Masses"][:].astype(np.float64) 
                 masses[pt] = np.float64(m.sum())
-                number[pt] = np.round(float((F[grp]["Masses"][:]*0.+1.).sum()))
+                number[pt] = F[grp]["Masses"].shape[0]
     return masses, number
 
 

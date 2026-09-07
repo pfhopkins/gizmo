@@ -23,9 +23,7 @@ MaxRMSDisplacementFac              0.125
 TreeDomainUpdateFrequency          0.05
 DesNumNgb                          32
 MaxNumNgbDeviation                 1
-MaxMemSize                         2000
 PartAllocFactor                    2.5
-BufferSize                         100
 ResubmitOn                         0
 ResubmitCommand                    none
 UnitLength_in_cm                   1

@@ -10,7 +10,6 @@ TimeBetSnapshot                   0.01
 TimeBetStatistics                 0.01
 Effective_Kernel_NeighborNumber   32
 MaxNumNgbDeviation                2
-Max_Memory_Per_MPI_Task_in_MB     1000
 ErrTolIntAccuracy                 0.01
 CourantFac                        0.2
 MaxRMSDisplacementFac             0.1

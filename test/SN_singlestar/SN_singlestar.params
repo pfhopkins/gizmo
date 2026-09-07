@@ -28,7 +28,7 @@ ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0.0
-TimeMax     0.15
+TimeMax     0.05
 
 %---- Maximum and minimum timesteps allowed
 MaxSizeTimestep         0.1
@@ -112,7 +112,7 @@ Sink_outflow_particlemass    1.00e-01
 ErrTolTheta                  0.5
 ErrTolForceAcc               0.0025
 ErrTolIntAccuracy        0.01
-CourantFac               0.2
+CourantFac               0.1
 MaxRMSDisplacementFac    0.125
 MaxNumNgbDeviation      0.05
 Sink_outflow_particlemass 1e-2

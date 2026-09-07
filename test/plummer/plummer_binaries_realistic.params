@@ -40,9 +40,7 @@ MaxRMSDisplacementFac              0.125
 TreeDomainUpdateFrequency          0.1
 DesNumNgb                          32
 MaxNumNgbDeviation                 1
-MaxMemSize                         2000
 PartAllocFactor                    2.5
-BufferSize                         100
 ResubmitOn                         0
 ResubmitCommand                    none
 UnitLength_in_cm                   3.085678e+18
@@ -62,9 +60,4 @@ Softening_Type4_MaxPhysLimit       3.117e-5
 Softening_Type5_MaxPhysLimit       3.117e-5
 AGS_DesNumNgb                      32
 AGS_MaxNumNgbDeviation             1
-CritPhysDensity                    1e13
 CpuTimeBetRestartFile              30
-% Cap sink accretion-search at the softening kernel radius (18 AU = 8.726e-5 pc).
-% With no gas in this test the default 5 pc search radius wastes huge amounts of
-% tree-walking; shrinking it to the softening scale eliminates that overhead.
-SinkMaxAccretionRadius             8.726e-5
