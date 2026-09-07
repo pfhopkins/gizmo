@@ -197,6 +197,9 @@ extern ALIGN(32) struct particle_data
     int IndexMapToTempStruc;   /*!< allows for mapping to SinkTempInfo struc */
 #ifdef SINK_WIND_SPAWN
     MyFloat unspawned_wind_mass;    /*!< tabulates the wind mass which has not yet been spawned */
+#ifdef SINGLE_STAR_FB_JETS
+    MyFloat unspawned_jet_mass;    /*!< separate reservoir for jet (accretion) mass not yet spawned; jets and main-sequence winds bank into their own reservoirs, and only whichever currently holds the discrete-spawn channel (wind_mode) drains, see sink.cc */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
     int Sink_CountProgs;
@@ -299,6 +302,7 @@ extern ALIGN(32) struct particle_data
 #ifdef SINGLE_STAR_FB_WINDS
     MyFloat Wind_direction[6]; // direction of wind launches, to reduce anisotropy launches go along a random axis then a random perpendicular one, then one perpendicular to both.
     int wind_mode; // tells what kind of wind model to use, 1 for particle spawning and 2 for using the FIRE wind module
+    double wind_mode_time; // time of the last wind mode change, used for hysteresis. Must be double: this holds All.Time, and at large code times a float quantum can exceed the interval between mode evaluations, so the elapsed time would read as zero and pin the mode permanently
 #endif
 #ifdef  SINGLE_STAR_FB_SNE
     MyFloat Mass_final; //final mass of the star before going SN (Since this is not saved to snapshots, hard restarts in the middle of spawning an SN will do weird things)

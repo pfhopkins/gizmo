@@ -629,6 +629,7 @@ enum iofields
   IO_HeI,
   IO_HeII,
   IO_UNSPMASS,
+  IO_UNSPJETMASS,
   IO_CRATE,
   IO_HRATE,
   IO_NHRATE,

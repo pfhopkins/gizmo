@@ -797,8 +797,14 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_UNSPMASS:
-#if defined(SINK_WIND_SPAWN) && defined(OUTPUT_UNSPAWNED_SINKMASS)
+#if defined(SINK_WIND_SPAWN)
              for(n = 0; n < pc; n++) {P[offset + n].unspawned_wind_mass = *fp++;}
+#endif
+            break;
+
+        case IO_UNSPJETMASS:
+#if defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_FB_JETS)
+             for(n = 0; n < pc; n++) {P[offset + n].unspawned_jet_mass = *fp++;}
 #endif
             break; 
             

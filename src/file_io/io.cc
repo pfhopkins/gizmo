@@ -379,7 +379,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             break;
                         
         case IO_UNSPMASS:
-#if defined(SINK_WIND_SPAWN) && defined(OUTPUT_UNSPAWNED_SINKMASS)
+#if defined(SINK_WIND_SPAWN)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -387,6 +387,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     n++;
                 }
 #endif           
+            break;
+
+        case IO_UNSPJETMASS:
+#if defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_FB_JETS)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) P[pindex].unspawned_jet_mass;
+                    n++;
+                }
+#endif
             break;
             
         case IO_CRATE:
@@ -1985,6 +1996,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_RAD_TEMP:
         case IO_DUST_TEMP:
         case IO_UNSPMASS:
+        case IO_UNSPJETMASS:
         case IO_CRATE:
         case IO_HRATE:
         case IO_NHRATE:
@@ -2362,6 +2374,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_RAD_TEMP:
         case IO_DUST_TEMP:
         case IO_UNSPMASS:
+        case IO_UNSPJETMASS:
         case IO_CRATE:
         case IO_HRATE:
         case IO_NHRATE:
@@ -2806,6 +2819,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_SINKMASSALPHA:
         case IO_SINK_ANGMOM:
         case IO_UNSPMASS:
+        case IO_UNSPJETMASS:
         case IO_ACRB:
         case IO_SINKRAD:
         case IO_SINK_FORM_MASS:
@@ -3069,9 +3083,15 @@ int blockpresent(enum iofields blocknr)
             break;
             
         case IO_UNSPMASS:
-#if defined(SINK_WIND_SPAWN) && defined(OUTPUT_UNSPAWNED_SINKMASS)
-            return 1;
+#if defined(SINK_WIND_SPAWN)
+            return 1; /* mass already removed from the sink and awaiting spawning: evolving state, so written unconditionally rather than as an optional diagnostic -- otherwise a snapshot restart silently loses it */
 #endif   
+            break;
+
+        case IO_UNSPJETMASS:
+#if defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_FB_JETS)
+            return 1;
+#endif
             break;
 
         case IO_CRATE:
@@ -3558,6 +3578,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_UNSPMASS:
             strncpy(label, "USPM", 4);
+            break;
+        case IO_UNSPJETMASS:
+            strncpy(label, "USPJ", 4);
             break;     
         case IO_CRATE:
             strncpy(label, "CRATE", 4);
@@ -4013,6 +4036,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_UNSPMASS:
             strcpy(buf, "Unspawned_Wind_Mass");
+            break;
+        case IO_UNSPJETMASS:
+            strcpy(buf, "Unspawned_Jet_Mass");
             break;     
         case IO_CRATE:
             strcpy(buf, "CoolingRate");
