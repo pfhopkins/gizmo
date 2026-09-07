@@ -31,7 +31,7 @@ double rt_photoion_chem_return_temperature(int i, double internal_energy, struct
 #ifdef RT_ILIEV_TEST1
     return 1e4; // use a fixed temp if this special flag for numerical testing is enabled
 #endif
-    return cell[i].gas_temperature_from_u(internal_energy); /* composition from the cooling solve, rather than a local estimate from Ne */
+    return cell[i].gas_temperature_at_u(internal_energy); /* composition from the cooling solve, rather than a local estimate from Ne */
 }
 
 

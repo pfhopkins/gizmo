@@ -583,6 +583,12 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
             cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+            cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and the molecular weight above were rescaled together precisely to hold the temperature fixed, so the anchor has to move with them, or the cached pair would report the change this branch exists to avoid */
+#endif
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+            cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and weight above were rescaled together to hold the temperature fixed, so the anchor has to move with them or the cached pair would report a temperature change this branch exists to avoid */
+#endif
             }
 #endif
 #endif
@@ -640,6 +646,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifndef COOL_GRACKLE
             cell[i].HI = 0; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_IONIZED; /* fully ionized, as assumed for the ionized-energy floor above */
             cell[i].Temperature = cell[i].gas_temperature_from_u(unew);
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+            cell[i].u_anchor = unew;
+#endif
 #endif
 #endif
         }
@@ -964,6 +973,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         cell[target].Ne = ne_final; cell[target].HI = nHI;
         cell[target].MeanMolecularWeight = mu_final; /* the composition half of the cache: it stays valid as the energy moves */
         cell[target].Temperature = temp_final;
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+        cell[target].u_anchor = u / UNIT_SPECEGY_IN_CGS; /* exact re-anchor at the converged state */
+#endif
         cell[target].Gamma = cell[target].gamma_eos_value(); /* the other half, so the pair describes this solve rather than the previous equation-of-state call */
 #ifdef RT_CHEM_PHOTOION
         cell[target].HII = nHII;

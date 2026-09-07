@@ -997,6 +997,12 @@ int merge_particles_ij(int i, int j)
        pair and is mass-weighted separately below, so the true-state residual does not balance it. The
        hydro builds its fluxes from the predicted state, so an error there propagates. Captured here,
        before the assignments below overwrite VelPred/InternalEnergyPred. */
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    /* the pair's temperature at the mass-mixed energy, taken from both parents' anchored states before
+       anything below overwrites them. Recomputing it from the energy instead would use the chord through
+       the origin, which is exactly the relation this cache exists to avoid. */
+    double T_mixed_for_anchor = wt_j*CellP[j].Temperature + wt_i*CellP[i].Temperature;
+#endif
     double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
     egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
     egy_old_pred += mtot*wt_i * 0.5 * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
@@ -1058,7 +1064,17 @@ int merge_particles_ij(int i, int j)
     double egy_new_pred = mtot * CellP[j].InternalEnergyPred + mtot * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
     egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
     if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    double u_mixed_for_anchor = CellP[j].InternalEnergyPred; /* the mass-mixed predicted energy, before the residual below moves it */
+#endif
     CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new_pred;
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    /* Anchor the merged cell at the mixed state, NOT at the post-residual energy: the residual is the
+       merge's thermalized kinetic energy, and leaving it outside the anchor is what lets the anchored
+       read report the temperature rise it causes. The next cooling or EOS solve replaces this local
+       estimate with an exact thermochemical state and re-anchors there. */
+    CellP[j].Temperature = T_mixed_for_anchor; CellP[j].u_anchor = u_mixed_for_anchor;
+#endif
     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
 
 

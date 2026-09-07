@@ -95,12 +95,12 @@ struct sh25_plasma_state build_plasma_state_for_battery(int i, struct gas_cell_d
     double zeta_cr = Get_CosmicRayIonizationRate_cgs(i, pp, cell);
 
     /* --- Temperature, mu, and electron fraction --- */
-    double T_K = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred); /* composition from the cooling solve, rather than the local estimate above */
+    double T_K = cell[i].gas_temperature_at_u(cell[i].InternalEnergyPred); /* composition from the cooling solve, rather than the local estimate above */
     double n_e_cgs = 0;
 #ifdef COOLING
     {
         mean_molecular_weight = cell[i].MeanMolecularWeight; /* the composition the cooling solve determined, rather than a local estimate from Ne */
-        T_K = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred);
+        T_K = cell[i].gas_temperature_at_u(cell[i].InternalEnergyPred);
         n_e_cgs = cell[i].Ne * HYDROGEN_MASSFRAC * mean_molecular_weight
                   * (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS);
     }

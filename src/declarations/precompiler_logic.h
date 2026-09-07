@@ -1689,3 +1689,20 @@
 #if !defined(CONTINUE_BELOW_MINTIMESTEP)
 #define STOP_WHEN_BELOW_MINTIMESTEP
 #endif
+
+
+/* Anchor the cached internal-energy -> temperature conversion at the last solve
+   (T = Temperature + (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor)) rather than extrapolating that same
+   slope through the origin. The chord form under-cools shocked gas through the helium-ionization
+   band and mislabels warm molecular shell gas at matched energy, because the energy is the integral
+   of the specific heat while Gamma carries only its local value. The cached pair is coherent only if
+   every writer of Temperature updates the anchor beside it. The equations of state below each set
+   Temperature from a solver this cache cannot follow, and the table dispatch is per-cell rather than
+   per-build, so a compile gate cannot separate them: refuse the combination instead of silently
+   reading a stale anchor. */
+#if defined(EOS_SUBSTELLAR_ISM) && defined(COOLING) && !defined(CHIMES)
+#if defined(CHIMES) || defined(COOL_GRACKLE) || defined(EOS_HELMHOLTZ) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#error "EOS_SUBSTELLAR_ISM anchors the cached energy-to-temperature conversion, which requires every writer of the cached temperature to update its anchor alongside. CHIMES, Grackle, Helmholtz, ANEOS, Tillotson, elastic and mixed gas/solid equations of state each set that temperature from a solver the cache cannot follow, and the table dispatch is per-cell, so the combination is refused rather than reading a stale anchor."
+#endif
+#define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+#endif

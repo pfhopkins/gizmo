@@ -130,7 +130,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
 #ifdef METALS
     f_dustgas = 0.5 * pp[i].Metallicity[0] * return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // appropriate dust-to-metals ratio
 #endif
-    double temperature = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred); // composition from the cooling solve, rather than the local estimate above
+    double temperature = cell[i].gas_temperature_at_u(cell[i].InternalEnergyPred); // composition from the cooling solve, rather than the local estimate above
     // now everything should be fully-determined (given the inputs above and the known properties of the gas) //
     double m_neutral = mean_molecular_weight; // in units of the proton mass
     double ag01 = a_grain_micron/0.1, m_grain = 7.51e9 * ag01*ag01*ag01; // grain mass [internal density =3 g/cm^3]

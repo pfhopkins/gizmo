@@ -238,6 +238,12 @@ extern struct gas_cell_data
 #ifndef CHIMES
     MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
     MyFloat HI;  /*!< neutral hydrogen fraction (neutral H nuclei per H nucleus), saved by the cooling solver so other modules can read it instead of re-solving the chemistry */
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    MyFloat u_anchor;  /*!< the internal energy Temperature was last computed at. The u->T read is
+                            anchored: T(u) = Temperature + (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor), so
+                            the cached pair is exact at the anchor and tangent for the excursion since.
+                            Every writer of Temperature must write this beside it. */
+#endif
 #endif
 #endif
 #ifdef GALSF
@@ -565,6 +571,19 @@ extern struct gas_cell_data
     GIZMO_GPU_FUNCTION inline double gas_temperature_from_u(double u) const {
         return (Gamma - 1.) * MeanMolecularWeight * U_TO_TEMP_UNITS * u;
     }
+
+    /*!< the temperature of THIS cell at energy u, which is what callers almost always want. Where the
+         cached pair is anchored this measures from it, so the result is exact at the anchor and correct
+         to first order for the excursion since; the bare relation above runs the same slope through the
+         origin, which charges any latent energy (dissociation, ionization) as heat. Without the anchor
+         the two are identical, so callers need not know which build they are in. */
+    GIZMO_GPU_FUNCTION inline double gas_temperature_at_u(double u) const {
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+        double t_anchored = Temperature + gas_temperature_from_u(u - u_anchor);
+        if(t_anchored > 0) {return t_anchored;}
+#endif
+        return gas_temperature_from_u(u);
+    }
 #ifdef GIZMO_TRACK_ELECTRON_STATE
     GIZMO_GPU_FUNCTION inline double T_e() const {return T_e_cell;} /*!< electron temperature [K]. Under battery-only it equals gas T (cached in eos.cc). Under TWO_TEMPERATURE_PLASMA it is the independently evolved value (derived from u_e_cell, cached after each cooling step). Consumers read through this accessor unchanged. */
     GIZMO_GPU_FUNCTION inline double n_e() const {return n_e_cell;} /*!< electron number density [physical cgs]; populated by the cooling pass. */
@@ -576,6 +595,14 @@ extern struct gas_cell_data
         double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.;
 #ifdef EOS_SUBSTELLAR_ISM
         gamma_di = hydrogen_molecule_gamma(Temperature); // declared in proto.h, defined in eos/hydrogen_molecule.cc
+#endif
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+        /* Metals (monatomic, and any per-particle X/Y drift from the constants above) are missing from
+           the number sums, though convert_temp_to_u and the cached MeanMolecularWeight both carry them
+           -- percent-level in Gamma for Z ~ 0.25 ejecta. The cached mu implies the full particle number,
+           so attribute the residual to monatomic species. That makes (Gamma-1)*mu*U_TO_TEMP consistent
+           with the ideal mixture this EOS represents, which is the slope the anchored read uses. */
+        if(MeanMolecularWeight > 0) {f_mono += 1./MeanMolecularWeight - (f_mono + f_di);} /* signed: the number sums use the primordial hydrogen fraction while mu carries the depleted one, so for enriched material the residual is negative and a positive-only test would leave it dead exactly where it has to act */
 #endif
         return 1. + (f_mono + f_di) / (f_mono/(gamma_mono-1.) + f_di/(gamma_di-1.));
 #endif

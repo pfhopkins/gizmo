@@ -643,7 +643,8 @@ void init(void)
             P[i].KernelRadius = 0;
 #endif
 #ifndef INPUT_READ_EOSTEMP
-            CellP[i].Temperature = (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy; /* initialize temperature guess for EOS (fully-ionized primordial monatomic gas); will be recomputed by set_eos_pressure but needed as initial guess for gamma_eos_value() when EOS_SUBSTELLAR_ISM is active */
+            CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; CellP[i].Gamma = GAMMA_DEFAULT; /* the composition half of the pair, set before the temperature that is derived from it */
+            CellP[i].Temperature = CellP[i].gas_temperature_from_u(CellP[i].InternalEnergy); /* initial temperature for the EOS, through the same relation the cache owns, so the cached quadruple is coherent from startup */
 #endif
             CellP[i].Gamma = GAMMA_DEFAULT;
             CellP[i].DtInternalEnergy = 0;
@@ -703,6 +704,13 @@ void init(void)
         /* the cached composition is not carried in snapshots, so seed it on any start that does not
            restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
         if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT;}
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+        /* Anchor whatever temperature this run starts from to the energy it belongs to. A binary restart
+           keeps the stored pair untouched; anything else has just loaded or seeded Temperature, and the
+           predicted energy is the one the anchored read is evaluated against. Without this a snapshot
+           restart would carry a loaded Temperature against a zero anchor and read roughly twice it. */
+        if(RestartFlag != 1) {CellP[i].u_anchor = CellP[i].InternalEnergyPred;}
+#endif
 #ifdef GALSF_SUBGRID_WINDS
         if(RestartFlag == 0) {CellP[i].DelayTime = 0;}
 #if (GALSF_SUBGRID_WIND_SCALING==1)
