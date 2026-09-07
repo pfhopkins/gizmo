@@ -325,11 +325,12 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
         environ["OMP_PLACES"] = "cores"
     else:
         cmd += ["--use-hwthread-cpus", "--bind-to", "none"]
-        # Silence Kokkos "OMP_PROC_BIND not set" warnings. `false` is the documented
-        # unit-testing value, and leaving placement to the OS is what lets concurrent
-        # runs share the machine.
-        environ.setdefault("OMP_PROC_BIND", "false")
-        environ.setdefault("OMP_PLACES", "threads")
+        # Assigned, not setdefault: the bind branch above sets these for its own run, and
+        # a later unbound run in the same pytest process would otherwise inherit them.
+        # `false` is the documented unit-testing value, and leaving placement to the OS is
+        # what lets concurrent runs share the machine.
+        environ["OMP_PROC_BIND"] = "false"
+        environ["OMP_PLACES"] = "threads"
     cmd += ["./GIZMO", paramsfile, "0"]
 
     effective_timeout = _resolve_test_timeout(timeout)
@@ -417,6 +418,15 @@ def _test_dir(test_name: str, caller: str):
     return d
 
 
+def problem_output_dir(test_name: str, params_name: str = None, extra_config_flags=()):
+    """Where a problem's run ends up. Several problems share a directory when they are
+    variants of one family, so the directory is keyed on the problem (its parameter file)
+    rather than on the family, and the flag suffix distinguishes Config variants of it."""
+    tdir = _test_dir(test_name, "problem_output_dir")
+    stem = "output" if not params_name or params_name == test_name else f"output_{params_name}"
+    return path.join(tdir, stem + variant_suffix(extra_config_flags))
+
+
 def stash_baseline_output(test_name: str, extra_config_flags=()):
     """If running a non-baseline variant, move an existing output/ aside so the variant
     run doesn't clobber it. Returns True if a stash was made."""
@@ -476,7 +486,17 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
                  params_name=params_name)
         chdir("../../")
     finally:
-        finalize_variant_output(test_name, extra_config_flags)
+        if params_name and params_name != test_name:
+            # GIZMO always writes OutputDir "output"; move it under this problem's own name
+            # so family members sharing the directory do not overwrite one another.
+            dst = problem_output_dir(test_name, params_name, extra_config_flags)
+            src = path.join(_test_dir(test_name, "build_and_run_test"), "output")
+            if path.isdir(src):
+                if path.isdir(dst):
+                    rmtree(dst)
+                move(src, dst)
+        else:
+            finalize_variant_output(test_name, extra_config_flags)
 
 
 def parse_params(params_file: str) -> dict:

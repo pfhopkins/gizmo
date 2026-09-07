@@ -33,6 +33,7 @@ from pytreegrav import Potential
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
+    problem_output_dir,
     variant_suffix,
     clean_test_outputs,
     default_mpi_ranks,
@@ -428,13 +429,13 @@ def _plot_variant_density_evolution(variant_id, snaps):
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
-    rmtree(f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags), ignore_errors=True)
+    rmtree(problem_output_dir(TEST_NAME, VARIANT, extra_config_flags), ignore_errors=True)
     time_max = float(parse_params(f"{TEST_DIR}/{VARIANT}.params")["TimeMax"])
     overrides = None
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
                        param_overrides=overrides, params_name=VARIANT)
 
-    outputdir = f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags)
+    outputdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 2:
         raise RuntimeError(f"GIZMO did not produce enough snapshots in {outputdir}")

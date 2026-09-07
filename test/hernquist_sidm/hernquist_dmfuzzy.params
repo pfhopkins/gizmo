@@ -57,3 +57,4 @@ ErrTolTheta                        0.7
 % Misc
 ResubmitOn                         0
 ResubmitCommand                    none
+FuzzyDM_Mass_in_eV                 1e-18

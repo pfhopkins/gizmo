@@ -43,6 +43,7 @@ from matplotlib import pyplot as plt
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
+    problem_output_dir,
     variant_suffix,
     clean_test_outputs,
     variant_output_dir,
@@ -219,10 +220,10 @@ def _plot(t, de, dr, variant_id):
 ])
 def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
-    rmtree(f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags), ignore_errors=True)
+    rmtree(problem_output_dir(TEST_NAME, VARIANT, extra_config_flags), ignore_errors=True)
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags, params_name=VARIANT)
 
-    outdir = f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags)
+    outdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
     snaps = sorted(glob.glob(outdir + "/snapshot_*.hdf5"),
                    key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
     assert len(snaps) >= 64, f"only {len(snaps)} snapshots -- the run died early"

@@ -52,6 +52,7 @@ from matplotlib import pyplot as plt
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
+    problem_output_dir,
     variant_suffix,
     clean_test_outputs,
     variant_output_dir,
@@ -297,7 +298,7 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     override mechanism -- so this costs runs, not rebuilds. Each point overwrites the previous
     one's snapshots, so each is analysed before the next starts.
     """
-    outdir = f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags)
+    outdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
     etas, errs, series = [], [], []
     for eta in SWEEP_ETAS:
         # run_test resolves <name>.params relative to the TEST directory and is normally called
@@ -354,10 +355,10 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
 ])
 def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     _ensure_ic()
-    rmtree(f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags), ignore_errors=True)
+    rmtree(problem_output_dir(TEST_NAME, VARIANT, extra_config_flags), ignore_errors=True)
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags, params_name=VARIANT)
 
-    outdir = f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags)
+    outdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
     # NUMERIC sort. glob + sorted() is lexical, so snapshot_1000 lands before snapshot_999 and
     # the array is scrambled: t[-1] then reports the lexically-last file rather than the last in
     # time. With 4000 snapshots that silently truncated a 1000-orbit run to the first 250.

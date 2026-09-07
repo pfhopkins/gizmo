@@ -47,6 +47,7 @@ import matplotlib.pyplot as plt
 
 from gizmo.test import (
     build_and_run_test,
+    problem_output_dir,
     variant_suffix,
     clean_test_outputs,
     default_mpi_ranks,
@@ -182,11 +183,11 @@ def test_hernquist_convergence(num_mpi_ranks, num_omp_threads, extra_config_flag
     criterion = "tidal" if extra_config_flags else "baseline"
     _ensure_ic()
 
-    rmtree(f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags), ignore_errors=True)
+    rmtree(problem_output_dir(TEST_NAME, VARIANT, extra_config_flags), ignore_errors=True)
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags,
         param_overrides={"ErrTolIntAccuracy": f"{eta:g}"}, params_name=VARIANT)
 
-    outputdir = f"{TEST_DIR}/output_{VARIANT}" + variant_suffix(extra_config_flags)
+    outputdir = problem_output_dir(TEST_NAME, VARIANT, extra_config_flags)
     snaps = sorted(glob.glob(f"{outputdir}/snapshot_*.hdf5"))
     assert len(snaps) >= 10, f"[{variant_id}] only {len(snaps)} snapshots; need a trajectory to fit"
     assert_final_time(snaps[-1], TEST_NAME)
