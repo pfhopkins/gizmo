@@ -42,6 +42,9 @@ static KOKKOS_INLINE_FUNCTION void set_dark_eos_pressure(int i, struct particle_
     cell[i].Temperature = (MyFloat)( cell[i].InternalEnergyPred * (gamma_eos_index - 1.0) * mu_dark
                                      * PROTONMASS_CGS / BOLTZMANN_CGS
                                      * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS );
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    cell[i].u_anchor = cell[i].InternalEnergyPred; /* pair the anchor with the temperature just written: consumers reach dark-fluid cells through the shared accessor, so this cannot rely on the dark-fluid short-circuit inside ThermalProperties */
+#endif
     cell[i].SoundSpeed = (MyFloat)sqrt(gamma_eos_index * press / cell[i].density_for_energy());
 }
 

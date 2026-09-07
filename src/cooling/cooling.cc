@@ -586,9 +586,6 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
             cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and the molecular weight above were rescaled together precisely to hold the temperature fixed, so the anchor has to move with them, or the cached pair would report the change this branch exists to avoid */
 #endif
-#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
-            cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and weight above were rescaled together to hold the temperature fixed, so the anchor has to move with them or the cached pair would report a temperature change this branch exists to avoid */
-#endif
             }
 #endif
 #endif

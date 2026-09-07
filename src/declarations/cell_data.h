@@ -581,6 +581,12 @@ extern struct gas_cell_data
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
         double t_anchored = Temperature + gas_temperature_from_u(u - u_anchor);
         if(t_anchored > 0) {return t_anchored;}
+        /* the cell has cooled past the point where this linearization stays positive, so fall back to the
+           relation through the origin -- but never let that fallback exceed the anchored temperature the
+           cell has cooled below, which would step the temperature UP at the crossing and then cache it. */
+        double t_floor = gas_temperature_from_u(u);
+        if(Temperature > 0 && t_floor > Temperature) {t_floor = Temperature;}
+        return t_floor;
 #endif
         return gas_temperature_from_u(u);
     }

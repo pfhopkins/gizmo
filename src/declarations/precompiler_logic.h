@@ -1701,8 +1701,8 @@
    per-build, so a compile gate cannot separate them: refuse the combination instead of silently
    reading a stale anchor. */
 #if defined(EOS_SUBSTELLAR_ISM) && defined(COOLING) && !defined(CHIMES)
-#if defined(CHIMES) || defined(COOL_GRACKLE) || defined(EOS_HELMHOLTZ) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
-#error "EOS_SUBSTELLAR_ISM anchors the cached energy-to-temperature conversion, which requires every writer of the cached temperature to update its anchor alongside. CHIMES, Grackle, Helmholtz, ANEOS, Tillotson, elastic and mixed gas/solid equations of state each set that temperature from a solver the cache cannot follow, and the table dispatch is per-cell, so the combination is refused rather than reading a stale anchor."
+#if defined(COOL_GRACKLE) || defined(EOS_HELMHOLTZ) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#error "EOS_SUBSTELLAR_ISM anchors the cached energy-to-temperature conversion, which requires every writer of the cached temperature to update its anchor alongside. Grackle, Helmholtz, ANEOS, Tillotson, elastic and mixed gas/solid equations of state each set that temperature from a solver the cache cannot follow, and the table dispatch is per-cell, so the combination is refused rather than reading a stale anchor. CHIMES is excluded by the gate above rather than here."
 #endif
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif

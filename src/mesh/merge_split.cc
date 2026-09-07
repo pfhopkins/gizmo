@@ -999,9 +999,11 @@ int merge_particles_ij(int i, int j)
        before the assignments below overwrite VelPred/InternalEnergyPred. */
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
     /* the pair's temperature at the mass-mixed energy, taken from both parents' anchored states before
-       anything below overwrites them. Recomputing it from the energy instead would use the chord through
-       the origin, which is exactly the relation this cache exists to avoid. */
-    double T_mixed_for_anchor = wt_j*CellP[j].Temperature + wt_i*CellP[i].Temperature;
+       anything below overwrites them. Each parent is evaluated at its OWN predicted energy rather than
+       read straight off .Temperature: the survivor can be inactive with a many-step-old anchor, and
+       reading the cached value alone would silently drop the excursion since it was set. */
+    double T_mixed_for_anchor = wt_j*CellP[j].gas_temperature_at_u(CellP[j].InternalEnergyPred)
+                              + wt_i*CellP[i].gas_temperature_at_u(CellP[i].InternalEnergyPred);
 #endif
     double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
     egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
