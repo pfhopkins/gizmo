@@ -116,3 +116,5 @@ MEMORY.md
 *_design.md
 *_handoff.md
 .claude_required_reading.txt
+# scratch parameter-file variants used when driving a test by hand
+test/*/_*.params
