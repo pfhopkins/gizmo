@@ -1539,6 +1539,9 @@ void fof_make_sink_particles(void)
 #ifdef SINGLE_STAR_FB_JETS
         P[import_indices[n]].unspawned_jet_mass = 0; /* slots are reused, so zeroing at allocation is not enough */
 #endif
+#ifdef SINGLE_STAR_FB_WINDS
+        P[import_indices[n]].wind_mode = 0;         P[import_indices[n]].wind_mode_time = All.Time; /* the mode is persistent state that the spawning hysteresis reads, so a recycled slot must not inherit the previous star's channel */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
         P[import_indices[n]].Sink_CountProgs = 1;

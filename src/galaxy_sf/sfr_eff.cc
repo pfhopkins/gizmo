@@ -494,6 +494,9 @@ void star_formation_parent_routine(void)
 #ifdef SINGLE_STAR_FB_JETS
                         P[i].unspawned_jet_mass = 0; /* slots are reused, so zeroing at allocation is not enough */
 #endif
+#ifdef SINGLE_STAR_FB_WINDS
+                        P[i].wind_mode = 0;                         P[i].wind_mode_time = All.Time; /* the mode is persistent state that the spawning hysteresis reads, so a recycled slot must not inherit the previous star's channel */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
                         P[i].Sink_CountProgs = 1;
@@ -584,6 +587,9 @@ void star_formation_parent_routine(void)
                         P[i_star].unspawned_wind_mass = 0;
 #ifdef SINGLE_STAR_FB_JETS
                         P[i_star].unspawned_jet_mass = 0; /* slots are reused, so zeroing at allocation is not enough */
+#endif
+#ifdef SINGLE_STAR_FB_WINDS
+                        P[i_star].wind_mode = 0;                         P[i_star].wind_mode_time = All.Time; /* the mode is persistent state that the spawning hysteresis reads, so a recycled slot must not inherit the previous star's channel */
 #endif
 #endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
