@@ -56,6 +56,11 @@ def plot_quantiles_vs_r(r, quantity, r_bins=R_BINS, label=None, marker=None, mar
     plt.fill_between(centers, quantiles[0], quantiles[2], alpha=0.15, **plotargs)
 
 
+# Photoionization equilibrium temperature window for an HII region at ~solar metallicity.
+T_HII_MIN = 7000.0
+T_HII_MAX = 11000.0
+
+
 def compute_profiles(snap_file):
     """Load snapshot and compute radial profiles of xe, urad_NUV, urad_ONIR."""
     from astropy import units as u
@@ -67,14 +72,15 @@ def compute_profiles(snap_file):
         r = np.linalg.norm(pos - star_pos, axis=1)
 
         xe = F["PartType0/ElectronAbundance"][:]
+        temperature = F["PartType0/Temperature"][:]
         rho = F["PartType0/Density"][:]
         mass = F["PartType0/Masses"][:]
         photon_energy = F["PartType0/PhotonEnergy"][:]
         urad_eV_cm3 = photon_energy * (rho / mass)[:, None] * code_to_evcm3
 
     # Band indices: 0=EUV, 1=FUV, 2=NUV, 3=ONIR, 4=FIR
-    stat_names = ["xe", "urad_NUV", "urad_ONIR"]
-    stat_data = [xe, urad_eV_cm3[:, 2], urad_eV_cm3[:, 3]]
+    stat_names = ["xe", "urad_NUV", "urad_ONIR", "T"]
+    stat_data = [xe, urad_eV_cm3[:, 2], urad_eV_cm3[:, 3], temperature]
     profiles = {
         name: binned_statistic(r, data, "median", R_BINS)[0]
         for name, data in zip(stat_names, stat_data)
@@ -195,6 +201,16 @@ def test_HII_region(num_mpi_ranks, num_omp_threads, extra_config_flags):
         assert "PartType5" in F, "Star particle missing from final snapshot"
 
     profiles = compute_profiles(final_snap)
+
+    # Photoionized gas must sit at a physical HII-region temperature. This is an absolute
+    # check rather than a comparison against another run, so it catches an over-hard
+    # ionizing spectrum or missing nebular cooling (either pushes the peak to tens of kK)
+    # as well as spurious over-cooling. The peak of the binned median T(r) is used, which
+    # is insensitive to single-cell spikes at the source and at the ionization front.
+    T_peak = np.nanmax(profiles["T"])
+    assert T_HII_MIN < T_peak < T_HII_MAX, (
+        f"HII-region peak temperature {T_peak:.0f} K outside the expected "
+        f"[{T_HII_MIN:.0f}, {T_HII_MAX:.0f}] K for photoionization equilibrium")
 
     # Label for plots and caching
     if extra_config_flags:
