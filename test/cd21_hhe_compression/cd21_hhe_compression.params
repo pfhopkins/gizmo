@@ -50,7 +50,7 @@ AneosTable0                        cd21_y0275.sesame
 
 InitGasTemp                        1000
 MinGasTemp                         10
-MinGasHsmlFractional               0
+MinGasKernelRadiusFractional       0
 SofteningGas                       0.05
 SofteningHalo                      0.05
 SofteningDisk                      0.05
