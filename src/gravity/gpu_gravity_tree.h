@@ -196,6 +196,9 @@ int gpu_gravity_tree_valid(void);
  * nonzero on internal error (SoA not ready). */
 int gpu_force_drift_nodes(integertime time1);
 void gpu_force_drift_release(void);
+#ifdef HERMITE_INTEGRATION
+void gpu_gravtree_hermite_release(void);   /* frees the drift/kick table mirror the Hermite source prediction reads */
+#endif
 
 /* Pure O(1) READ-ONLY query: is the SoA+AoS node geometry certified drifted to
  * `ti`?  Returns 1 iff the drift stamp matches (ti + current treebuild

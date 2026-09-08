@@ -12,6 +12,7 @@
 #include "gpu_gravtree.h"
 #include "gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../system/gpu_particles_arena.h"
+#include "../core/timestep_functions.h"   /* Hermite pass state, refreshed below */
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
@@ -144,6 +145,15 @@ void gravity_tree(void)
      * active -- inputs only mutate during active processing, so the cached
      * value is still correct. */
     compute_all_force_softening(0);
+
+#ifdef HERMITE_INTEGRATION
+    /* The pass state both walks read.  Refreshed once here, not per target: the active-bin mask
+       is a property of the pass, and rebuilding it per target would put a fixed 60-iteration scan
+       on every gravity interaction target.  The drift/kick view is only assembled on a Hermite
+       pass, since the predictor returns immediately when HermiteOnlyFlag is 0. */
+    HermiteWalk = hermite_walk_state_snapshot();
+    if(HermiteOnlyFlag) {HermiteWalkTables = drift_kick_table_view_host();}
+#endif
 
     /* construct tree if needed */
 #ifdef HERMITE_INTEGRATION
@@ -542,7 +552,7 @@ gravity_walk_attempt:
     {
         int i = ActiveParticleList[ii];
 #ifdef HERMITE_INTEGRATION
-        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
+        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i, P)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
 #endif      
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i, P);
@@ -925,7 +935,7 @@ int gravity_treewalk_candidate_prewalk(int i, int ii)
 {
     if(P[i].Mass <= 0) {return 0;}
 #ifdef HERMITE_INTEGRATION
-    if(HermiteOnlyFlag && !eligible_for_hermite(i)) {return 0;}
+    if(HermiteOnlyFlag && !eligible_for_hermite(i, P)) {return 0;}
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     if(!gravity_treeforce_candidate_frozen(ii)) {return 0;}

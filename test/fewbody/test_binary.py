@@ -92,6 +92,10 @@ P_ORB = 2.0 * np.pi * np.sqrt(A0 ** 3 / (G_CODE * MTOT))
 # machine and would make the test a floating-point-reproducibility check. 5e-4 still catches a
 # revert by 4x, which is the regression this bounds.
 MAX_DE_OVER_E = 1.5e-3
+# The KDK control is a 2nd-order scheme read off the mixed r(t_out)/v(t_kick) state, since no
+# synchronized pair exists without the integrator. It records how far leapfrog drifts, so it
+# gets a ceiling that catches gross breakage rather than the Hermite tolerance.
+MAX_DE_OVER_E_KDK = 1.0
 MAX_COM_DRIFT = 5e-4
 
 # A systematic (secular) error grows as t^1, a random walk as t^0.5. Anything at or above
@@ -334,6 +338,12 @@ def _order_sweep(extra_config_flags, n_ranks, n_omp, variant_id):
     print(f"  energy error ~ eta^{order:.2f}  (dt^{2*order:.1f});  "
           f"4th order is eta^2, 2nd order eta^1, threshold {MIN_ENERGY_ORDER}")
     _plot_convergence(etas, errs, order, variant_id, series)
+    if variant_id == "kdk":
+        # Leapfrog is 2nd order, i.e. eta^1, below a floor placed to catch a 4th-order scheme
+        # losing its order. Recorded, not asserted: this arm is the comparison Hermite exists
+        # to win, so its number is the point rather than a pass mark.
+        print(f"  KDK control: energy error ~ eta^{order:.2f}, no order floor applied")
+        return np.asarray(etas), np.asarray(errs), order, series
     assert order >= MIN_ENERGY_ORDER, (
         f"energy error converges as eta^{order:.2f} (dt^{2*order:.1f}), below the "
         f"eta^{MIN_ENERGY_ORDER} floor. The integrator has lost its order even though the "
@@ -371,8 +381,16 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     assert np.all(np.diff(t) >= 0), (
         "snapshot times are not monotonic -- the file ordering is wrong, so every per-orbit "
         "quantity below is being binned from a scrambled series")
-    assert synced, ("snapshots lack HermiteSyncCoordinates/HermiteSyncVelocities -- build with "
-                    "IO_HERMITE_SYNC. Without it every metric here mixes r(t_out) with v(t_kick).")
+    if "DISABLE_HERMITE_INTEGRATION" in extra_config_flags:
+        # No synchronized pair exists to write: the leapfrog keeps no start-of-step state to
+        # predict from, so GIZMO omits the datasets rather than labelling the ordinary mixed
+        # values as synchronized, and this arm necessarily measures that mixed state.
+        assert not synced, ("HermiteSync datasets present with the integrator disabled -- they "
+                            "cannot be synchronized in that build, so the name would be wrong")
+        print("\n  KDK control: no HermiteSync datasets, metrics below are the mixed r(t_out)/v(t_kick) state")
+    else:
+        assert synced, ("snapshots lack HermiteSyncCoordinates/HermiteSyncVelocities -- build with "
+                        "IO_HERMITE_SYNC. Without it every metric here mixes r(t_out) with v(t_kick).")
     variant_id = request.node.callspec.id.split("-")[0]
     _plot(t, energy, ecc, drift, variant_id)
     np.savez(f"{TEST_DIR}/summary_{variant_id}.npz",
@@ -394,10 +412,10 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     print(f"  pericentre  min separation {sep.min():.4e} pc "
           f"(softening 1e-7, so {sep.min() / 1e-7:.0f}x above it)")
 
-    assert de < MAX_DE_OVER_E, (
-        f"relative energy error {de:.3e} over {n_orbits:.1f} orbits (tol {MAX_DE_OVER_E}); "
-        f"E0={energy[0]:.6e}, E_final={energy[-1]:.6e}. Measured on the IO_HERMITE_SYNC state, "
-        f"so this is the integrator and not the output convention."
+    de_tol = MAX_DE_OVER_E_KDK if "DISABLE_HERMITE_INTEGRATION" in extra_config_flags else MAX_DE_OVER_E
+    assert de < de_tol, (
+        f"relative energy error {de:.3e} over {n_orbits:.1f} orbits (tol {de_tol}); "
+        f"E0={energy[0]:.6e}, E_final={energy[-1]:.6e}."
     )
     assert drift_env < MAX_COM_DRIFT, (
         f"spurious COM velocity {drift_env:.3e} in units of sqrt(GM/a) (tol {MAX_COM_DRIFT}). "

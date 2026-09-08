@@ -225,6 +225,14 @@ void init(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         P[i].time_since_last_treeforce = 0;
         P[i].tdyn_step_for_treeforce = 0;
+#endif
+#ifdef HERMITE_INTEGRATION /* the retained start-of-step state, written by the first half-step kick;
+                              set here so an output taken before that kick -- a snapshot conversion
+                              writes one straight after the ICs are read -- predicts from the actual
+                              state rather than from whatever the allocator left behind */
+        P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
+        P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
+        P[i].AccretedThisTimestep = 0;
 #endif        
         
 

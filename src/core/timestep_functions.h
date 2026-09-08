@@ -156,6 +156,14 @@ struct DriftKickTableView drift_kick_table_view(const double *drift, const doubl
     return view;
 }
 
+/* The host view, built from the live tables. Host code that needs a factor for an
+   arbitrary interval goes through here rather than naming the four globals again. */
+static inline struct DriftKickTableView drift_kick_table_view_host(void)
+{
+    return drift_kick_table_view(DriftTable, GravKickTable, DriftTable_logTimeBegin,
+                                 DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+}
+
 /* The one interpolator. Returns the time integral over [time0, time1] with no
    dilation applied; callers multiply in the factor for the particle or node
    they are drifting. */
@@ -215,3 +223,115 @@ double get_gravkick_factor_impl(integertime time0, integertime time1, double dil
 {
     return drift_kick_table_factor(view->gravkick, time0, time1, view) * dilation;
 }
+
+
+/* --- 4th-order Hermite integration -----------------------------------------
+ * Which particles the Hermite integrator advances, and how a source that is not
+ * itself being advanced this step is evaluated by a force walk.
+ *
+ * These live here rather than beside the Hermite kick routines in core/kicks.cc
+ * because both gravity walks -- the host walk in gravity/forcetree.cc and the
+ * device walk in gravity/gpu_gravtree.cc -- need them per interaction, and they
+ * are built on the drift/kick primitives above. A cross-translation-unit call
+ * per (target, source) pair costs about 16% of the walk, so the definitions are
+ * inline and the walks include this header. */
+
+#ifdef HERMITE_INTEGRATION
+
+/*! Is particle i one the Hermite integrator advances? The bitmask says which
+ *  types are eligible in principle; the tests after it drop particles whose
+ *  state the scheme cannot use, either because another integrator owns their
+ *  dynamics or because their history is too short or too disturbed to
+ *  extrapolate from. */
+KOKKOS_INLINE_FUNCTION
+int eligible_for_hermite(int i, struct particle_data *pp)
+{
+    if(!(HERMITE_INTEGRATION & (1 << pp[i].Type))) {return 0;} // hermite flag said to not include these types
+#if defined(CBE_INTEGRATOR)
+    if(CBE_INTEGRATOR_DOES_TYPE(pp[i].Type)) {return 0;} // CBE moment particles: not compatible with Hermite
+#elif defined(DM_FUZZY)
+    if(pp[i].Type==1) {return 0;} // fuzzy-DM: not compatible with Hermite
+#endif
+#if defined(GRAIN_FLUID)
+    if((1 << pp[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
+#endif
+#if defined(SINK_PARTICLES) || defined(GALSF)
+    if(pp[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
+    if(pp[i].AccretedThisTimestep) {return 0;}
+#endif
+#if (SINGLE_STAR_TIMESTEPPING > 0)
+    if(pp[i].SuperTimestepFlag >= 2) {return 0;}
+#endif
+    return 1;
+}
+
+/*! The per-pass state a gravity walk needs to evaluate Hermite sources, snapshotted
+ *  once by the caller. HermiteOnlyFlag and TimeBinActive[] are host globals, and the
+ *  active bins are carried as a bitmask so the whole thing is a few words that can be
+ *  passed by value into a device kernel: no allocation and no per-particle array. */
+struct HermiteWalkState
+{
+    integertime    ti_current;        /* All.Ti_Current at the walk */
+    unsigned long long active_bins;   /* bit b set iff TimeBinActive[b] (TIMEBINS is 60) */
+    int            hermite_only;      /* HermiteOnlyFlag: 0 on an ordinary leapfrog pass, 1 predictor, 2 corrector */
+};
+
+static_assert(TIMEBINS <= 64, "HermiteWalkState carries the active timebins as a 64-bit mask");
+
+/*! The pass state the gravity walks read, refreshed once per gravity pass in gravity_tree().
+ *  Host globals: the walks consume them on the host, and the device walk is handed a copy. */
+extern struct HermiteWalkState   HermiteWalk;
+extern struct DriftKickTableView HermiteWalkTables;   /*!< assembled only while HermiteOnlyFlag is set */
+
+/*! Take the snapshot. Host only: it reads the host globals the walks cannot see from
+ *  device code, which is the whole reason the snapshot exists. */
+static inline struct HermiteWalkState hermite_walk_state_snapshot(void)
+{
+    struct HermiteWalkState hw;
+    hw.ti_current = All.Ti_Current;
+    hw.hermite_only = HermiteOnlyFlag;
+    hw.active_bins = 0;
+    for(int bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {hw.active_bins |= (1ULL << bin);}}
+    return hw;
+}
+
+/*! Does source 'no' have to be re-predicted before it contributes a force?
+ *
+ *  Only on a Hermite pass, and only for a source the Hermite integrator owns that is
+ *  NOT being advanced this step. Such a source sits at its leapfrog-drifted position
+ *  and carries a whole-step-kicked velocity, both wrong at second order in the middle
+ *  of its step, which caps the accuracy of the fourth-order corrector reading it.
+ *
+ *  A source that IS being advanced keeps its live state. On the predictor pass that
+ *  state is already synchronous, and its Old* fields cannot be used anyway because
+ *  find_timesteps has moved Ti_begstep up to the present, so the interval below would
+ *  be empty and would return the start of its previous step. On the corrector pass
+ *  do_hermite_prediction has already written the predicted state into Pos and Vel.
+ *
+ *  The type test comes first because it is a mask compare, while the full predicate
+ *  below it reads several fields and computes a timestep. */
+KOKKOS_INLINE_FUNCTION
+int hermite_source_needs_prediction(int no, struct particle_data *pp, struct HermiteWalkState hw)
+{
+    if(!hw.hermite_only) {return 0;}
+    if(!(HERMITE_INTEGRATION & (1 << pp[no].Type))) {return 0;}
+    if(hw.active_bins & (1ULL << pp[no].TimeBin)) {return 0;}
+    return eligible_for_hermite(no, pp);
+}
+
+/*! Position and velocity of source 'no' at the present time, extrapolated from the state
+ *  it held at the start of its own step with the same third-order formula
+ *  do_hermite_prediction applies to the particles being advanced. Nothing is written
+ *  back: the predicted state exists only for the force evaluation asking for it. */
+KOKKOS_INLINE_FUNCTION
+void hermite_predict_source_state(int no, struct particle_data *pp, struct HermiteWalkState hw,
+                                  const struct DriftKickTableView *tables,
+                                  Vec3<double> &pos_pred, Vec3<double> &vel_pred)
+{
+    double dt_grav = get_gravkick_factor_impl(pp[no].Ti_begstep, hw.ti_current,
+                                              timestep_dilation_factor(no, pp), tables);
+    pos_pred = pp[no].OldPos + (pp[no].OldVel + (pp[no].Hermite_OldAcc + pp[no].OldJerk * (dt_grav/3)) * (dt_grav/2)) * dt_grav;
+    vel_pred = pp[no].OldVel + (pp[no].Hermite_OldAcc + pp[no].OldJerk * (dt_grav/2)) * dt_grav;
+}
+
+#endif /* HERMITE_INTEGRATION */

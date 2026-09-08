@@ -16,6 +16,7 @@
 #include "let_data.h"   /* LET wire format + per-rank payload structs */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
+#include "../core/timestep_functions.h" /* Hermite source eligibility + prediction, inline (a cross-TU call here costs ~16% of the walk) */
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
 #endif
@@ -1739,16 +1740,33 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                    here as well would double every such force */
                 if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
 #endif
-                dr = P[no].Pos - pos;
+                /* the source state this interaction is evaluated at, which is the drifted state
+                   except where the Hermite predictor below replaces it */
+                Vec3<double> src_pos = P[no].Pos;
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)   /* HERMITE_INTEGRATION defines the former, so src_vel exists whenever the predictor does */
+                Vec3<double> src_vel = P[no].Vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+                /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
+                   step is second-order wrong where it stands; evaluate it from its own start-of-step
+                   state instead. Single sources only: one absorbed into a node multipole still
+                   contributes from the node's drifted centre of mass. Under
+                   SINGLE_STAR_DIRECT_GRAVITY_RADIUS the close star pairs this matters most for are
+                   force-opened to singles and so do take this branch. Nothing is written back. */
+                if(hermite_source_needs_prediction(no, P, HermiteWalk)) {
+                    hermite_predict_source_state(no, P, HermiteWalk, &HermiteWalkTables, src_pos, src_vel);
+                }
+#endif
+                dr = src_pos - pos;
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 mass = P[no].Mass;
 
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-                r_source = grav_spherical_symmetry_r_from_center(P[no].Pos[0],P[no].Pos[1],P[no].Pos[2],center[0],center[1],center[2]);
+                r_source = grav_spherical_symmetry_r_from_center(src_pos[0],src_pos[1],src_pos[2],center[0],center[1],center[2]);
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                dv = P[no].Vel - vel;
+                dv = src_vel - vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
@@ -1773,7 +1791,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #if defined(SINGLE_STAR_TIMESTEPPING)
                     prox_target.vel = vel;
 #endif
-                    grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = P[no].Vel;
+                    grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
                     prox_src.motion.acc = P[no].Acc_Total_PrevStep;
 #endif

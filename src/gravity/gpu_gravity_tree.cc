@@ -484,6 +484,9 @@ extern "C" void gpu_gravity_tree_release(void)
     soa_valid_    = 0;
     gpu_force_drift_release();
     gpu_moment_refresh_release();
+#ifdef HERMITE_INTEGRATION
+    gpu_gravtree_hermite_release();
+#endif
 }
 
 /* Record node geometry drifted to `ti` (snapshot current treebuild gen). Set by

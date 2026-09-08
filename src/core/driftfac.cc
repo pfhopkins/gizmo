@@ -85,8 +85,7 @@ void init_drift_table(void)
 double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 {
     double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
-    struct DriftKickTableView view = drift_kick_table_view(DriftTable, GravKickTable,
-            DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+    struct DriftKickTableView view = drift_kick_table_view_host();
     return get_drift_factor_impl(time0, time1, dilation, &view);
 }
 
@@ -94,7 +93,6 @@ double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 double get_gravkick_factor(integertime time0, integertime time1, int i, int mode)
 {
     double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);
-    struct DriftKickTableView view = drift_kick_table_view(DriftTable, GravKickTable,
-            DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
+    struct DriftKickTableView view = drift_kick_table_view_host();
     return get_gravkick_factor_impl(time0, time1, dilation, &view);
 }

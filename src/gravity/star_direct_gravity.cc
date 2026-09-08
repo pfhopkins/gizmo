@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../core/timestep_functions.h"   /* Hermite source eligibility + prediction (shared with both gravity walks) */
 
 /*! \file star_direct_gravity.cc
  *  \brief exact direct-summation gravity between star (type-5) particles.
@@ -78,19 +79,12 @@ void star_direct_gravity_build_table(void)
         sendbuf[k].Pos = P[i].Pos;
         sendbuf[k].Vel = P[i].Vel;
 #ifdef HERMITE_INTEGRATION
-        /* Same correction the tree walk applies in its single-particle branch (forcetree.cc).
-         * Drifting to All.Ti_Current above puts an INACTIVE star on its KDK-drifted trajectory,
-         * which is O(dt^2) from where it actually is mid-step, and leaves Vel whole-step-kicked;
-         * feeding that to a 4th-order integrator caps its accuracy at 2nd order. During the
-         * Hermite-only passes, send the source's Old*-predicted state instead. Only the send
-         * buffer is touched -- P[i] is untouched, so the KDK path is unaffected. Active stars
-         * keep their live state: it is already correct, and at HermiteOnlyFlag==1 their Old* are
-         * stale because find_timesteps has already advanced Ti_begstep. */
-        if(HermiteOnlyFlag && !TimeBinActive[P[i].TimeBin] && eligible_for_hermite(i))
-        {
-            double hD = get_gravkick_factor(P[i].Ti_begstep, All.Ti_Current, i, 0);
-            sendbuf[k].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/3)) * (hD/2)) * hD;
-            sendbuf[k].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/2)) * hD;
+        /* The drift above puts an inactive star on its leapfrog trajectory, which is second-order
+         * wrong mid-step; on a Hermite pass send the predicted state instead, the same correction
+         * both tree walks apply to their single-particle sources. Only the send buffer is written,
+         * so P[i] and the leapfrog path are untouched. */
+        if(hermite_source_needs_prediction(i, P, HermiteWalk)) {
+            hermite_predict_source_state(i, P, HermiteWalk, &HermiteWalkTables, sendbuf[k].Pos, sendbuf[k].Vel);
         }
 #endif
         sendbuf[k].Mass = P[i].Mass;
@@ -137,7 +131,7 @@ void star_direct_gravity_compute(void)
         int i = ActiveParticleList[ii];
         if(P[i].Type != 5 || P[i].Mass <= 0) {continue;}
 #ifdef HERMITE_INTEGRATION
-        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) {continue;}}
+        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i, P)) {continue;}}
 #endif
         Vec3<double> pos = P[i].Pos, acc = {};
         double h_i = ForceSoftening_KernelRadius(i);

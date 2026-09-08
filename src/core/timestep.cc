@@ -487,7 +487,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef HERMITE_INTEGRATION
     /* divide out the second-order margin, as the two-body criterion below does. After the tree-update
        cadence above, which wants the unscaled dynamical estimate rather than the integrator's step. */
-    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+    if(eligible_for_hermite(p, P)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -501,7 +501,7 @@ integertime get_timestep(int p,		/*!< particle index */
     {
         double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
 #ifdef HERMITE_INTEGRATION
-        if(eligible_for_hermite(p)) dt_2body /= SINK_TIMESTEP_SAFETY_FACTOR;
+        if(eligible_for_hermite(p, P)) dt_2body /= SINK_TIMESTEP_SAFETY_FACTOR;
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     	if(P[p].is_in_a_binary && (P[p].SuperTimestepFlag >= 2)) //binary candidate or a confirmed binary
@@ -522,7 +522,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         dt = DMIN(dt, dt_2body);
 #ifdef HERMITE_INTEGRATION
-        if(eligible_for_hermite(p)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
+        if(eligible_for_hermite(p, P)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
 #endif
     }
 #if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(SELFGRAVITY_OFF)

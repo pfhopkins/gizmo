@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../core/timestep_functions.h"   /* the Hermite predicted state written by IO_HERMITE_SYNC */
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 /* get_ISMDustChemEvo_bin_mass is KOKKOS_INLINE_FUNCTION (Chunk 1, 2026-05-26). */
 #include "../solids/ism_dust_chemistry_functions.h"
@@ -870,6 +871,72 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     *fp++ = (MyOutputFloat) P[pindex].Potential;
                     n++;
                 }
+#endif
+            break;
+
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
+#if defined(IO_HERMITE_SYNC) && defined(HERMITE_INTEGRATION)
+            /* A mutually consistent position-velocity pair at the output time.
+             *
+             * The ordinary Coordinates/Velocities blocks are not such a pair: positions are
+             * drifted to the output time while velocities are whatever the last kick left
+             * (see the IO_VEL comment). Vis-viva, orbital elements and kinetic energy are all
+             * meaningless on that mixture -- in the e=0.9 binary test it makes |a/a0 - 1| swing
+             * by three orders of magnitude within a single orbit.
+             *
+             * For a particle the Hermite integrator owns, the start-of-step state is retained,
+             * so the consistent state at any time within the step is the same series the
+             * integrator predicts with. It is the predicted state, not the corrected one -- the
+             * corrector needs an end-of-step acceleration that does not exist at an arbitrary
+             * output time -- making it 4th order in position and 3rd in velocity, far above the
+             * error being diagnosed, and unlike the mixed state it is a state the system
+             * actually passes through. Anything else falls back to the ordinary values, so the
+             * datasets are always well defined. */
+            {
+                struct HermiteWalkState hermite_out = hermite_walk_state_snapshot();
+                struct DriftKickTableView hermite_out_tables = drift_kick_table_view_host();
+                for(n = 0; n < pc; pindex++)
+                    if(P[pindex].Type == type)
+                    {
+                        Vec3<double> r_out = P[pindex].Pos, v_out = P[pindex].Vel;
+                        /* the eligibility predicate, not the type bitmask alone: a star being
+                           super-timestepped, or one that just accreted, is advanced by something
+                           other than this series, so its retained base does not describe where it
+                           goes and the plain values are the honest answer for it */
+                        if((P[pindex].Mass > 0) && eligible_for_hermite(pindex, P)) {
+                            hermite_predict_source_state(pindex, P, hermite_out, &hermite_out_tables, r_out, v_out);
+                        }
+                        /* written exactly as IO_POS and IO_VEL write theirs: positions through the
+                           reported-frame un-shift, wrapped into the box, at position precision;
+                           velocities scaled to the conserved variable. A coordinate output that
+                           skipped the un-shift would sit in a different frame from Coordinates
+                           whenever the gravity solver has randomized the box. */
+                        if(blocknr == IO_HERMITE_POS)
+                        {
+                            Vec3<double> r_reported = gizmo_reported_position(r_out);
+                            for(k = 0; k < 3; k++)
+                            {
+                                fp_pos[k] = (MyOutputPosFloat) r_reported[k];
+#ifdef BOX_PERIODIC
+                                double box_length_xyz;
+                                if(k==0) {box_length_xyz = boxSize_X;}
+                                if(k==1) {box_length_xyz = boxSize_Y;}
+                                if(k==2) {box_length_xyz = boxSize_Z;}
+                                while(fp_pos[k] < 0) {fp_pos[k] += (MyOutputFloat) box_length_xyz;}
+                                while(fp_pos[k] >= box_length_xyz) {fp_pos[k] -= (MyOutputFloat) box_length_xyz;}
+#endif
+                            }
+                            fp_pos += 3;
+                        }
+                        else
+                        {
+                            for(k = 0; k < 3; k++) {fp[k] = (MyOutputFloat) (v_out[k] * sqrt(All.cf_a3inv));}
+                            fp += 3;
+                        }
+                        n++;
+                    }
+            }
 #endif
             break;
 
@@ -1931,6 +1998,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
     switch (blocknr)
     {
         case IO_POS:
+        case IO_HERMITE_POS:
             if(mode)
                 bytes_per_blockelement = 3 * sizeof(MyInputPosFloat);
             else
@@ -1939,6 +2007,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_VEL:
         case IO_PARTVEL:
+        case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
@@ -2298,6 +2367,7 @@ int get_datatype_in_block(enum iofields blocknr)
     {
 #if !defined(OUTPUT_IN_DOUBLEPRECISION) || (defined(INPUT_POSITIONS_IN_DOUBLE) && !defined(INPUT_IN_DOUBLEPRECISION))
         case IO_POS:
+        case IO_HERMITE_POS:
             typekey = 3; /* pos outputs in HDF5 are double automatically, to prevent overlaps */
             break;
 #endif
@@ -2347,6 +2417,8 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_POS:
         case IO_VEL:
         case IO_PARTVEL:
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
@@ -2664,6 +2736,25 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
                 if(All.MassTable[i] == 0 && header.npart[i] > 0) {typelist[i] = 1;}
             }
             return ntot_withmasses;
+            break;
+
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
+#if defined(IO_HERMITE_SYNC) && defined(HERMITE_INTEGRATION)
+            /* only the types the integrator owns, and only those: for anything else the values
+               would be a byte-for-byte duplicate of Coordinates and Velocities.  Both flags are
+               tested because they are independent -- the output flag can be set on a build whose
+               integrator is disabled, where the blocks are absent altogether. */
+            {
+                int n_hermite = 0;
+                for(i = 0; i < 6; i++)
+                {
+                    typelist[i] = ((1 << i) & (HERMITE_INTEGRATION)) ? 1 : 0;
+                    if(typelist[i]) {n_hermite += header.npart[i];}
+                }
+                return n_hermite;
+            }
+#endif
             break;
 
         case IO_PARTVEL:
@@ -3114,6 +3205,15 @@ int blockpresent(enum iofields blocknr)
         case IO_POT:
 #if defined(OUTPUT_POTENTIAL)
             return 1;
+#endif
+            break;
+
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
+#if defined(IO_HERMITE_SYNC) && defined(HERMITE_INTEGRATION)
+            return 1;   /* only where a synchronized pair can actually be built; with the integrator
+                           disabled the blocks are absent rather than carrying the ordinary mixed
+                           state under a name that promises otherwise */
 #endif
             break;
 
@@ -3696,6 +3796,12 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_POT:
             strncpy(label, "POT ", 4);
             break;
+        case IO_HERMITE_POS:
+            strncpy(label, "HPOS", 4);
+            break;
+        case IO_HERMITE_VEL:
+            strncpy(label, "HVEL", 4);
+            break;
         case IO_ACCEL:
             strncpy(label, "ACCE", 4);
             break;
@@ -4153,6 +4259,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_POT:
             strcpy(buf, "Potential");
+            break;
+        case IO_HERMITE_POS:
+            strcpy(buf, "HermiteSyncCoordinates");
+            break;
+        case IO_HERMITE_VEL:
+            strcpy(buf, "HermiteSyncVelocities");
             break;
         case IO_ACCEL:
             strcpy(buf, "Acceleration");

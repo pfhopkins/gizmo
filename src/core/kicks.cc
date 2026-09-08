@@ -161,27 +161,6 @@ void do_second_halfstep_kick(void)
 }
 
 #ifdef HERMITE_INTEGRATION
-int eligible_for_hermite(int i)
-{
-    if(!(HERMITE_INTEGRATION & (1<<P[i].Type))) {return 0;} // hermite flag said to not include these types
-#if defined(CBE_INTEGRATOR)
-    if(CBE_INTEGRATOR_DOES_TYPE(P[i].Type)) {return 0;} // CBE moment particles: not compatible with Hermite
-#elif defined(DM_FUZZY)
-    if(P[i].Type==1) {return 0;} // fuzzy-DM: not compatible with Hermite
-#endif
-#if defined(GRAIN_FLUID)
-    if((1 << P[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
-#endif
-#if defined(SINK_PARTICLES) || defined(GALSF)
-    if(P[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, P)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
-    if(P[i].AccretedThisTimestep) {return 0;}
-#endif
-#if (SINGLE_STAR_TIMESTEPPING > 0)
-    if(P[i].SuperTimestepFlag >= 2) {return 0;}
-#endif   
-    return 1;
-}
-
 // Initial "prediction" step of Hermite integration, performed after the initial force evaluation 
 // Note: the below routines only account for gravitational acceleration - only appropriate for stars or collisionless particles
 void do_hermite_prediction(void)
@@ -192,7 +171,7 @@ void do_hermite_prediction(void)
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
         int i = ActiveParticleList[_apl];
-	if(eligible_for_hermite(i)) { /* check if we're actually eligible */
+	if(eligible_for_hermite(i, P)) { /* check if we're actually eligible */
 	    if(P[i].Mass > 0) { /* skip massless particles scheduled for deletion */
 		ti_step = P[i].integertime_step();
 		tstart = P[i].Ti_begstep;    /* beginning of step */
@@ -219,7 +198,7 @@ void do_hermite_correction(void) // corrector step
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++) {
         int i = ActiveParticleList[_apl];
-	if(eligible_for_hermite(i)){
+	if(eligible_for_hermite(i, P)){
                 if(P[i].Mass > 0) {
                     ti_step = P[i].integertime_step();
                     tstart = P[i].Ti_begstep;    /* beginning of step */

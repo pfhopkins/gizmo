@@ -58,7 +58,7 @@ void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
 double matrix_invert_ndims(double T[3][3], double Tinv[3][3]);
 #ifdef HERMITE_INTEGRATION
-int eligible_for_hermite(int i);
+GIZMO_GPU_FUNCTION int eligible_for_hermite(int i, struct particle_data *pp); /* definition in core/timestep_functions.h (single source of truth) */
 void do_hermite_prediction(void);
 void do_hermite_correction(void);
 #endif
