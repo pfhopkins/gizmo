@@ -151,6 +151,16 @@ void gizmo_install_mpi_error_handler(void)
                                                  const char *file, int line,
                                                  const char *func)
 {
+    /* Callers print the diagnostic that identifies the failure to STDOUT before
+       calling here -- mymalloc's memory table and the line naming the variable,
+       size and call site of the allocation that could not be served. stdout is
+       block-buffered to a file, and the fast exit below does not return through
+       any handler that would drain it, so without this flush that diagnostic is
+       discarded and the failure is left unattributable. Flushing a stream is not
+       part of the cleanup this path deliberately skips: it touches no MPI, no
+       device, and no allocator. */
+    fflush(stdout);
+
     /* Normal context: a bounded diagnostic BEFORE the async-safe fail-fast. */
     fprintf(stderr,
             "GIZMO FATAL (reviewed hard-exit, NO cleanup) on task=%d, function '%s()', "
