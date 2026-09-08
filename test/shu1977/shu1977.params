@@ -96,12 +96,12 @@ SeedReservoirMass            0.0        % initial mass in the alpha disk (BH_ALP
 %----- (specific options for on-the-fly friends-of-friends based BH seeding: FOF on)
 %--- accretion
 SinkAccretionFactor          1.0	    % multiplier for mdot (relative to model)
-SinkEddingtonFactor          1e100	    % fraction of eddington to cap (can be >1) 
-SinkNgbFactor                1.0	    % multiplier for kernel neighbors for BH 
+SinkEddingtonFactor          1e100	    % fraction of eddington to cap (can be >1)
+SinkNgbFactor                1.0	    % multiplier for kernel neighbors for BH
 SinkMaxAccretionRadius       4.34	    % max radius for BH neighbor search/accretion (code units)
 SinkRadiativeEfficiency      5e-7        % radiative efficiency (for accretion and feedback)
 %--- feedback 
-SinkFeedbackFactor           1.0	    % generic feedback strength multiplier 
+SinkFeedbackFactor           1.0	    % generic feedback strength multiplier
 
 %--- Developer-Mode Parameters (usually hard-coded, but set manually if DEVELOPER_MODE is on) --------
 ErrTolTheta                  0.21    % 0.7=standard

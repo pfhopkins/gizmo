@@ -7,24 +7,24 @@ OutputDir     output
 ICFormat    3  % 1=unformatted (gadget) binary, 3=hdf5, 4=cluster
 SnapFormat  3  % 1=unformatted (gadget) binary, 3=hdf5
 
-%---- Output parameters 
-RestartFile                 restart 
-SnapshotFileBase            snapshot 
-OutputListOn                0  % =1 to use list in "OutputListFilename" 
+%---- Output parameters
+RestartFile                 restart
+SnapshotFileBase            snapshot
+OutputListOn                0  % =1 to use list in "OutputListFilename"
 OutputListFilename          output_times.txt  % list of times (in code units) for snaps
 NumFilesPerSnapshot         1
 NumFilesWrittenInParallel   1  % must be < N_processors & power of 2
 
-%---- Output frequency 
+%---- Output frequency
 TimeOfFirstSnapshot     0  % time (code units) of first snapshot
 TimeBetSnapshot         0.001 %7.656264097337446e-06  % time between (if OutputListOn=0), code units
 TimeBetStatistics       0.001 %7.656264097337446e-06 % time between additional statistics (e.g. energy)
 
 %---- CPU run-time and checkpointing time-limits
 TimeLimitCPU            172800  % in seconds
-CpuTimeBetRestartFile   7200  	% in seconds 
-ResubmitOn              0 
-ResubmitCommand         my-scriptfile 
+CpuTimeBetRestartFile   7200  	% in seconds
+ResubmitOn              0
+ResubmitCommand         my-scriptfile
 
 %---- Desired simulation beginning and end times (in code units) for run
 TimeBegin   0    % Beginning of the simulation
@@ -62,9 +62,9 @@ MinGasTemp      0	    % don't set <10 in explicit feedback runs, otherwise 0
 DesNumNgb               32      % domain-reconstruction kernel number: 32 standard, 60-114 for quintic
 MinGasKernelRadiusFractional 0       % minimum kernel length relative to gas force softening (<= 1)
 
-%---- Gravitational softening lengths 
-%----- Softening lengths per particle type. If ADAPTIVE_GRAVSOFT is set, these  
-%-------- are the minimum softening allowed for each type ------- 
+%---- Gravitational softening lengths
+%----- Softening lengths per particle type. If ADAPTIVE_GRAVSOFT is set, these
+%-------- are the minimum softening allowed for each type -------
 %-------- (units are co-moving for cosmological integrations)
 SofteningGas    1e-10   % gas (particle type=0) (in co-moving code units)
 SofteningHalo   0.020    % dark matter/collisionless particles (type=1)
@@ -78,44 +78,44 @@ SofteningBndry  3.66e-6       % black holes (if active), or collisionless (type=
 %------- (these are ignored, and *only* the above are used, for non-cosmo runs)
 SofteningGasMaxPhys     0.0005  % e.g. switch to 0.5pc physical below z=1
 SofteningHaloMaxPhys    0.010
-SofteningDiskMaxPhys    0.075 
-SofteningBulgeMaxPhys   0.250 
-SofteningStarsMaxPhys   0.0005 
-SofteningBndryMaxPhys   0.0005 
+SofteningDiskMaxPhys    0.075
+SofteningBulgeMaxPhys   0.250
+SofteningStarsMaxPhys   0.0005
+SofteningBndryMaxPhys   0.0005
 
 %---- Turbulent Diffusion Master Switch (TURB_DIFFUSION on)
 TurbDiffusionCoefficient 1.0    % Normalizes diffusion rates relative to Smagorinsky-Lilly theory [best calibration] (~0.5-2)
 
 %---- Star Formation parameters (GALSF on)
-CritPhysDensity     1461452800000.0    %  critical physical density for star formation (cm^(-3)) 
+CritPhysDensity     1461452800000.0    %  critical physical density for star formation (cm^(-3))
 SfEffPerFreeFall    1.0     %  SFR/(Mgas/tfreefall) for gas which meets SF criteria
 
 %-------------- FIRE (PFH) explicit star formation & feedback model (FIRE on)
-%--- initial metallicity of gas & stars in simulation 
+%--- initial metallicity of gas & stars in simulation
 InitMetallicity             1.0  % initial gas+stellar metallicity (in solar)
 InitStellarAge              0.0   % initial mean age (in Gyr; for stars in sim ICs)
-%--- local radiation-pressure driven winds (GALSF_FB_FIRE_RT_LOCALRP) 
-%--- SneII Heating Model (GALSF_FB_MECHANICAL) 
+%--- local radiation-pressure driven winds (GALSF_FB_FIRE_RT_LOCALRP)
+%--- SneII Heating Model (GALSF_FB_MECHANICAL)
 SNeIIEnergyFrac             1.0     % fraction of mechanical energy to couple
-%--- HII region photo-heating model (GALSF_FB_FIRE_RT_HIIHEATING)  
-%--- long-range radiation pressure acceleration (GALSF_FB_FIRE_RT_LONGRANGE) 
+%--- HII region photo-heating model (GALSF_FB_FIRE_RT_HIIHEATING)
+%--- long-range radiation pressure acceleration (GALSF_FB_FIRE_RT_LONGRANGE)
 %--- gas return/recycling
 GasReturnFraction           1.0     % fraction of gas mass returned (relative to ssp)
 GasReturnEnergy             1.0     % fraction of returned gas energy+momentum (relative to ssp)
 
 %-------------- Sink particle accretion, formation & feedback (SINGLE_STAR_SINK_DYNAMICS on)
-%--- formation/seeding  
+%--- formation/seeding
 SeedSinkMass                 7.8125e-07    % initial mass (on-the-fly or single galaxy)
 SeedReservoirMass            0.0        % initial mass in the alpha disk (BH_ALPHADISK_ACCRETION)
 %----- (specific options for on-the-fly friends-of-friends based BH seeding: FOF on)
 %--- accretion
 SinkAccretionFactor          1.0	    % multiplier for mdot (relative to model)
-SinkEddingtonFactor          1e100	    % fraction of eddington to cap (can be >1) 
-SinkNgbFactor                1.0	    % multiplier for kernel neighbors for BH 
+SinkEddingtonFactor          1e100	    % fraction of eddington to cap (can be >1)
+SinkNgbFactor                1.0	    % multiplier for kernel neighbors for BH
 SinkMaxAccretionRadius       4.34	    % max radius for BH neighbor search/accretion (code units)
 SinkRadiativeEfficiency      5e-7        % radiative efficiency (for accretion and feedback)
-%--- feedback 
-SinkFeedbackFactor           1.0	    % generic feedback strength multiplier 
+%--- feedback
+SinkFeedbackFactor           1.0	    % generic feedback strength multiplier
 Sink_accreted_fraction       0.7        % fraction of accreted gas retained by the sink; the rest goes into jets
 Sink_outflow_velocity        100	    % outflow velocity, code units (unused for jets: v_jet is set from the protostellar Kepler speed)
 Sink_outflow_temperature     10.      % internal temperature (K) of spawned jet cells

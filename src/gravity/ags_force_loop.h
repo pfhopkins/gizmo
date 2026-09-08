@@ -692,7 +692,7 @@ struct AgsForceSpec {
         ACCUM_ADD(cbe_bracket_fail_count)
         ACCUM_ADD(cbe_recon_rho_clamp_count)
         ACCUM_ADD(cbe_recon_S_clamp_count)
-        ACCUM_ADD(cbe_pairing_free_slot_count)   
+        ACCUM_ADD(cbe_pairing_free_slot_count)
 #if defined(CBE_INTEGRATOR_WITHGRADIENTS)
         ACCUM_ADD(cbe_grad_nonfinite_count)
 #endif

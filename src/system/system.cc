@@ -387,5 +387,3 @@ double mpi_report_comittable_memory(long long BaseMem, int verbose)
     double safe_memory_mb_per_mpitask_withbuffer = safe_memory_mb_per_mpitask_nobuffer - All.CommChunkSize;
     return safe_memory_mb_per_mpitask_withbuffer;
 }
-
-
