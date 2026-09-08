@@ -254,7 +254,7 @@ void restart(int modus)
 	      const int factor_was_raised = (save_PartAllocFactor > All.PartAllocFactor);
 	      All.PartAllocFactor = save_PartAllocFactor;
 
-	      long long cap_wanted = (long long) (All.PartAllocFactor * (All.TotNumPart / NTask));
+	      long long cap_wanted = (long long) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));
 	      if(cap_wanted < 1) {cap_wanted = 1;}
 
 	      /* The run's capacity ceiling was fixed when the ICs were read and travels in the restart

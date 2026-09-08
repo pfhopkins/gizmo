@@ -107,6 +107,17 @@ void make_list_of_active_particles(void);
 void output_extra_log_messages(void);
 
 
+/*! Particles per rank in a balanced split, ROUNDED UP.  A rank has to be able to hold the larger
+    side of a split that does not divide evenly, so the ceiling is the balanced count -- truncating
+    it throws away the remainder before PartAllocFactor is applied, which is invisible at large N
+    and is the whole budget at small N (3 particles on 2 ranks truncates to 1, and no split of 3
+    fits in 1).  Both places that derive the per-rank assignment cap call this. */
+static inline long long balanced_particles_per_rank(long long total, int ntask)
+{
+    if(ntask <= 0) {return total;}
+    return total / (long long) ntask + ((total % (long long) ntask) != 0);   /* not (total+ntask-1)/ntask, which can overflow */
+}
+
 static inline double WRAP_POSITION_UNIFORM_BOX(double x)
 {
     while(x >= All.BoxSize) {x -= All.BoxSize;}

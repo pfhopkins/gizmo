@@ -96,7 +96,7 @@ void read_ic(char *fname)
         }
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));	/* sets the maximum number of particles that may reside on a processor */
         /* The one place the gas COUNT decides whether gas storage exists: no storage exists yet to
            ask instead, and a run's initial conditions are what settle it for the rest of the run.
            Everywhere after this reads the storage, never the count -- see the helper. */
