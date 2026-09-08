@@ -478,6 +478,12 @@ void force_drift_node(int no, integertime time1)
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+    /* else the sink COM stays frozen at its last-treebuild value while the sinks move, and the
+       nearest-sink distance, sink timestep criteria, and (under SINGLE_STAR_DIRECT_GRAVITY) the
+       monopole subtraction all read a stale position on a different clock from u.d.s. */
+    Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift;
+#endif
 
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
