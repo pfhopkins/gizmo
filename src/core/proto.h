@@ -387,8 +387,18 @@ void drift_particle(int i, integertime time1);
 /* Drift a list of particles to time1, or the contiguous range [0, n_idx) when idx is
    null. Compacts to those not already there and runs them on the device when there
    are enough to be worth it, otherwise on the host; either way every particle in the
-   list is drifted. */
-void drift_particles_batch(const int *idx, int n_idx, integertime time1);
+   list is drifted.
+
+   Returns 0 when the drift completed AND no controlled stop is pending on this rank,
+   nonzero otherwise. Nonzero does NOT mean "some particle is still behind" -- a device
+   failure can be followed by a host fallback that advances every Ti_current while the
+   device error stands, and a body that trapped part-way through leaves some of the
+   fields it writes advanced and others not, which a re-run from the stale Ti_current
+   would advance twice. So the only thing a caller may conclude from 0 is that the
+   result is trustworthy; on nonzero the caller must not publish any claim about the
+   particle set, and the run is already draining toward its next stop poll. Callers
+   that publish no such claim may ignore it. */
+int drift_particles_batch(const int *idx, int n_idx, integertime time1);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);

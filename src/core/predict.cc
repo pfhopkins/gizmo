@@ -148,8 +148,14 @@ extern "C" integertime gizmo_full_drift_ti(void) { return g_last_full_drift_Ti; 
 void gizmo_full_drift_to(integertime time1)
 {
     if(time1 <= g_last_full_drift_Ti) return; /* already drifted — no h change */
-    drift_particles_batch(NULL, NumPart, time1);
-    g_last_full_drift_Ti = time1;
+    /* The stamp is a CLAIM that every local particle stands at time1, and readers act
+       on it by skipping work: the neighbour pool sweep treats the pool as uniform, and
+       a tree built at this time may be stamped current. So it is published only when
+       the drift reports that it completed with nothing pending. On a failure the stamp
+       stays where it was, which costs the callers below a repeat of work they would
+       otherwise skip and costs nothing else -- the alternative is a false claim that
+       suppresses the very scan that would notice it. */
+    if(drift_particles_batch(NULL, NumPart, time1) == 0) {g_last_full_drift_Ti = time1;}
     /* drift_particle just multiplied KernelRadius by exp(divv_fac/N) for every
      * particle (predict.cc:160,229). Mark the whole pool h-dirty so the next
      * NGL build / next ghost_exchange refreshes compact_xyzh.h from current P[].

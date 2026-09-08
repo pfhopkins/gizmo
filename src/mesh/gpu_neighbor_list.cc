@@ -1974,6 +1974,13 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
     /* The walk reads particle fields and cannot drift a stale one when it gets
      * there, so they are made current here, once, ahead of any discovery round. */
     gizmo_full_drift_to(All.Ti_Current);
+    /* The drift publishes its stamp only when it completed with nothing pending, so a
+       stamp short of this time says the pool is not uniform and the walk below cannot
+       assume it is. Declining here is the whole repair: the readiness Allreduce this
+       returns into is collective, so one rank's decline pulls every rank back to the
+       host path together, which drifts what it touches as it goes. No poll is placed
+       here -- the vote immediately downstream already is one. */
+    if(gizmo_full_drift_ti() != All.Ti_Current) {return 1;}
 
     if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
         /* A host lazy drift already advanced nodes at this time.  The sweep skips

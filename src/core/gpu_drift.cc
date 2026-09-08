@@ -67,12 +67,25 @@ static void drift_particles_host_(const int *idx, int n_idx, integertime time1)
     for(int k = 0; k < n_idx; k++) {drift_particle(idx[k], time1);}
 }
 
+/* The status every exit below reports. A controlled stop is first-set-wins and is
+   never cleared, so a request raised anywhere in this call -- a trapped or failed
+   kernel consumed by gizmo_gpu_check_last_error, a staging buffer or table mirror
+   that could not be served -- is still standing here, and so is one that was
+   already pending when the call began. Both mean the same thing to a caller: the
+   run is draining and nothing about this particle set may be published.
+   Deliberately conservative in the one harmless direction -- an unrelated pending
+   stop reports failure, which costs a fallback on a run that is already ending. */
+static int drift_batch_status_(void)
+{
+    return (gizmo_controlled_stop_local_reason() != NULL) ? 1 : 0;
+}
+
 /* A null idx means the contiguous range [0, n_idx), which is what the full-drift
    site hands over: materialising an identity array there would be an extra
    allocation and an extra pass to say nothing. */
-void drift_particles_batch(const int *idx, int n_idx, integertime time1)
+int drift_particles_batch(const int *idx, int n_idx, integertime time1)
 {
-    if(n_idx <= 0) {return;}
+    if(n_idx <= 0) {return drift_batch_status_();}
 
     /* Compact to the particles that are not already at time1. The drift body returns
        immediately for the rest, so staging them would be copying a whole struct each
@@ -118,12 +131,12 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
         }
     }
     const int n_need = (int) needs_drift.size();
-    if(n_need <= 0) {return;}
+    if(n_need <= 0) {return drift_batch_status_();}
 
     /* Tiny-N and everything below the offload threshold stays exactly as it was. */
     if(n_need < GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
-        return;
+        return drift_batch_status_();
     }
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -135,14 +148,14 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
     struct DriftKickTableView tables;
     if(drift_kick_table_mirror_refresh(&drift_kick_table_dev_, &tables) != 0) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
-        return;
+        return drift_batch_status_();
     }
 
     const int batch_cap = (n_need < GPU_DRIFT_BATCH_SIZE) ? n_need : GPU_DRIFT_BATCH_SIZE;
     struct ParticleStagingBatch batch = {};
     if(!particle_staging_acquire(&batch, batch_cap)) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
-        return;
+        return drift_batch_status_();
     }
 
     for(int batch_start = 0; batch_start < n_need; batch_start += GPU_DRIFT_BATCH_SIZE)
@@ -197,4 +210,5 @@ void drift_particles_batch(const int *idx, int n_idx, integertime time1)
 
     gpu_particles_arena_invalidate();   /* host P/CellP scattered; arena stale */
     particle_staging_release(&batch);
+    return drift_batch_status_();
 }
