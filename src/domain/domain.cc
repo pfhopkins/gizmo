@@ -157,6 +157,8 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+#define MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS 20 /*!< re-establish Peano-Hilbert order at most this far apart. The reorder moves nearly every element of P and CellP and is expensive, especially where those arrays are device-accessible, but particle exchange decays the ordering that the SFC tiles and the tree build rely on, so it cannot be dropped entirely */
+static int DomainCallsSincePeanoOrder = MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS; /*!< domain decompositions, full or lightweight, since the last ordering. Starts at the interval so the first decomposition of a run always orders, including after a restart, which does not take the startup one */
 
 /*! How much particle storage this rank should hold for the coming epoch.
  *
@@ -364,8 +366,10 @@ void domain_init_timebin_costs(void)
 #endif /* DOMAIN_TIMEBINS == 1 */
 
 /*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
- *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure. */
-void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key)
+ *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure.
+ *  With allow_peano_order_cadence set, the caller permits that final ordering to be taken on a cadence rather than on every call (see MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS);
+ *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
+void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
     int i, ret, retsum, diff, highest_bin_to_include; size_t bytes, all_bytes; double t0, t1;
     
@@ -606,7 +610,18 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 #ifdef SUBFIND
     if(GrNr < 0)			/* we don't do it when SUBFIND is executed for a certain group */
 #endif
-    {peano_hilbert_order();}
+    /* Order the particles, or let this call ride the cadence. Passing over the reorder is safe: every
+     * consumer of Key[] rebuilds it from P[].Pos before reading it, P/CellP/ChimesGasVars move together
+     * or not at all, and the domain assignment is key-to-leaf and so independent of the order the
+     * particles sit in. What the ordering buys is locality for the SFC tiles and the tree build, which
+     * decays with particle exchange rather than with any one decomposition, so it is re-established on
+     * a bounded interval of decompositions instead of on each one. */
+    {
+        if(!allow_peano_order_cadence || DomainCallsSincePeanoOrder >= MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS)
+          {peano_hilbert_order(); DomainCallsSincePeanoOrder = 0;}
+        else
+          {DomainCallsSincePeanoOrder++;}
+    }
     CPU_Step[CPU_PEANO] += measure_time();
 
   LightRepartitionCount = 0; /* reset counter: top tree is fresh */
@@ -644,8 +659,9 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     /* fall back to full decomposition if persistent state is not available, or if
        too many consecutive lightweight repartitions have occurred (top tree may be stale) */
-    if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1); return;}
+    if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1, 1); return;}
     LightRepartitionCount++;
+    DomainCallsSincePeanoOrder++; /* a repartition exchanges particles, so it decays the ordering just as a full decomposition does */
 
     /* Close the measure_time chain BEFORE this bracket's own t0. The
      * cpu_chain_sync at the end of the bracket advances the clock to its
@@ -719,7 +735,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
         /* This call re-measures the extent and rebuilds the top tree from it.  Merging and
            splitting is skipped: that pass already ran at the top of this routine, and running it
            twice in one step would refine twice. */
-        domain_Decomposition(UseAllTimeBins, 0, 0);
+        domain_Decomposition(UseAllTimeBins, 0, 0, 1);
         return;
     }
 

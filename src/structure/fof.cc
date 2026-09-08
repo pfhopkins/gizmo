@@ -1842,7 +1842,7 @@ void read_fof(int num)
   int nprocgroup, primaryTask, groupTask, nid_previous;
   int fof_compare_P_SubNr(const void *a, const void *b);
     PRINT_STATUS("Trying to read preexisting FoF group catalogues...  (presently allocated=%g MB)",AllocatedBytes / (1024.0 * 1024.0));
-  domain_Decomposition(1, 0, 0);
+  domain_Decomposition(1, 0, 0, 0);
 
   force_treefree();
 

@@ -430,7 +430,7 @@ void subfind(int num)
   if(ThisTask == 0)
     printf("subfind_exchange() (for return to original CPU)  took %g sec\n", timediff(t0, t1));
 
-  domain_Decomposition(1, 0, 0);
+  domain_Decomposition(1, 0, 0, 0);
 
   force_treebuild(NumPart, NULL);
 

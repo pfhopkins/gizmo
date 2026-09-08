@@ -168,7 +168,7 @@ void subfind_process_group_collectively(int num)
     /* distribute this halo among the processors */
     t0 = my_second();
     domain_free_trick();
-    domain_Decomposition(1, 0, 0);
+    domain_Decomposition(1, 0, 0, 0);
     /* drain a soft stop from the domain top-tree group-count invariant before any downstream SUBFIND
        use of the (possibly bad) domain/top-tree state. */
     gizmo_exit_bad_stop_if_requested("subfind_process_group_collectively:post_domain_decomposition");

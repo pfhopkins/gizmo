@@ -131,7 +131,7 @@ void run(void)
     {
         output_log_messages();
 
-        domain_Decomposition(0, 0, 0);
+        domain_Decomposition(0, 0, 0, 0);
 
         set_non_standard_physics_for_current_time();
 
@@ -329,7 +329,7 @@ void run(void)
             if(!DomainReconstructFlag) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
-            {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
+            {domain_Decomposition(0, 0, 1, 1);}  /* full decomposition needed */
             /* Cleared here rather than inside the decomposition, because the request is made to
                this loop: group finding raises it and then runs decompositions of its own, which
                would otherwise consume it and leave the tree storage it later frees unclaimed. */

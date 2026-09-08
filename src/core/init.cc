@@ -890,7 +890,7 @@ void init(void)
 #ifdef GALSF
     Stars_converted = 0;
 #endif
-    domain_Decomposition(0, 0, 0);	/* do initial domain decomposition (gives equal numbers of particles) */
+    domain_Decomposition(0, 0, 0, 0);	/* do initial domain decomposition (gives equal numbers of particles) */
 
     set_softenings();
 
