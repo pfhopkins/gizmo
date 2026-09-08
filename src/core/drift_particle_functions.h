@@ -128,12 +128,19 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
 #endif
 
     double divv_fac = pp[i].Particle_DivVel * dt_drift;
-    double divv_fac_max = 0.3; //1.5; // don't allow KernelRadius to change too much in predict-step //
+    /* How far the predicted kernel radius may move in one drift.  The two directions
+       are not the same risk: growing follows the flow and simply predicts a larger
+       search, while shrinking can empty a kernel of the neighbours the next density
+       solve needs.  So growth carries the looser bound, which also tracks the
+       divergence it is approximating more closely than the old tight one did.  Adaptive
+       softening has used the loose bound on both sides for the same reason. */
+    double divv_fac_max_grow   = 4.0; /* was 0.3, more conservative, in older versions of the code, to prevent large jumps, but this leads to lower order and failures of the density guess more often */
+    double divv_fac_max_shrink = 1.5; /* was 0.3, more conservative, in older versions of the code, to prevent large jumps, but this leads to lower order and failures of the density guess more often */
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if(ags_density_isactive_P(i, pp) && pp[i].Type>0) {divv_fac_max=4;} // can [should] allow larger changes when using adapting soft for all
+    if(ags_density_isactive_P(i, pp) && pp[i].Type>0) {divv_fac_max_grow = 4; divv_fac_max_shrink = 4;}
 #endif
-    if(divv_fac > +divv_fac_max) divv_fac = +divv_fac_max;
-    if(divv_fac < -divv_fac_max) divv_fac = -divv_fac_max;
+    if(divv_fac > +divv_fac_max_grow)   divv_fac = +divv_fac_max_grow;
+    if(divv_fac < -divv_fac_max_shrink) divv_fac = -divv_fac_max_shrink;
     
 #ifdef GRAIN_FLUID
     if((1 << pp[i].Type) & (GRAIN_PTYPES))

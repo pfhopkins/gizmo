@@ -40,6 +40,7 @@
 
 #include "neighbor_loop_runner.h"
 #include "gpu_neighbor_list.h"
+#include "device_tree_walk.h"          /* the one device traversal; Mode D enters it from the root */
 #include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
@@ -980,7 +981,144 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
  * in deterministic peer order. No re-derivation; line-for-line move from
  * the old impl.
  * ========================================================================== */
+/* ============================================================================
+ * Answering another rank's queries against this rank's particles.
+ *
+ * A rank that receives a batch of queries has to return one accumulator per
+ * query, and there is more than one way to arrive at them.  The host way walks
+ * the local tree per query into a candidate list, drifts whatever the walk
+ * touched, and then runs the pair kernel over the list.  A device way walks and
+ * evaluates in a single pass and never builds a list at all.
+ *
+ * The seam is drawn around ALL THREE steps rather than around the evaluation
+ * alone, and that is the whole point: an evaluation-only hook would take the
+ * candidate list as an argument, so any backend behind it would still have to
+ * build one -- which is precisely the cost a fused walk exists to avoid.  Drawn
+ * here, "how the neighbours are found" and "whether they are ever written down"
+ * are the backend's business rather than the transport's.
+ *
+ * The transport around this -- envelope exchange, provenance, reply exchange,
+ * the bounded round loop -- does not know which backend ran and must not learn.
+ * There is one body of MPI choreography for the peer wire and it stays that way.
+ * ========================================================================== */
 template <typename Spec>
+struct NlrPeerAnswerHostWalk {
+    using AccumData = typename Spec::AccumData;
+
+    /* The host path, unchanged: collect against the local pool, drift what the
+     * walk touched, evaluate. `diag_omp_recv_out` and `eval_peer_work_peak`
+     * belong to the caller's diagnostics and are updated through pointers rather
+     * than returned, so the call site reads exactly as it did before. */
+    static void answer(const typename Spec::DeviceContext& ctx,
+                       const std::vector<typename Spec::ActiveData>& peer_actives,
+                       const std::vector<int>& peer_nodelist_flat,
+                       const std::vector<int>& peer_nnodes,
+                       unsigned int neighbor_type_mask,
+                       ModeBDriftCounters *drift_sink,
+                       RunnerStageTimer *tim,
+                       int *threaded_walk_units_out,
+                       long long *eval_peer_work_peak,
+                       std::vector<AccumData>& peer_replies_out)
+    {
+        /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
+        std::vector<std::vector<int>> cand_peer_tree;
+        {
+            StageTimer t(tim ? &tim->dt_collect : nullptr);
+            int tu_recv = 0;
+            collect_candidates_for_remote_queries<Spec>(peer_actives,
+                                                         peer_nodelist_flat, peer_nnodes,
+                                                         neighbor_type_mask,
+                                                         DispatchPath::ModeB_HostWalker,
+                                                         cand_peer_tree, drift_sink, &tu_recv);
+            /* Reported rather than recorded here: the threaded-walk note is the
+             * transport's own diagnostic, and it lives in a lambda that closes
+             * over the transport's locals.  A backend that reached for it would
+             * be reaching out of its scope, which is what the first draft of
+             * this extraction did. */
+            if(threaded_walk_units_out) {*threaded_walk_units_out = tu_recv;}
+        }
+
+        /* Stage 7 (peer): drift THIS round's peer candidate sets (self candidates
+         * were drifted once before the round loop). Idempotent to All.Ti_Current. */
+        {
+            StageTimer t(tim ? &tim->dt_drift : nullptr);
+            lazy_drift_candidates<Spec>(cand_peer_tree);
+        }
+
+        /* Stage 9: evaluate PEER queries post-drift -> peer_replies, shipped back
+         * to the home rank. */
+        const int K = (int)peer_actives.size();
+        if(K > 0) {
+            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
+            if(eval_peer_work_peak && (long long)K > *eval_peer_work_peak) {*eval_peer_work_peak = (long long)K;}
+            evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
+                                              cand_peer_tree, peer_replies_out.data(), EvalOMPPolicy::AllowProduction);
+        }
+    }
+};
+
+/* Declared here, defined below beside the leaf policy they share.
+ *
+ * Both reach for the device allocator and for NlrModeDReduceLeaf, which are
+ * introduced further down this file, while the transport that calls them is
+ * written above them.  Templates are resolved where they are instantiated --
+ * in the dispatchers at the bottom -- so a declaration is all the transport
+ * needs, and the alternative would be hoisting the allocator and the leaf policy
+ * above a transport that has nothing to do with either. */
+template <typename Spec>
+static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
+                                   const typename Spec::ActiveData *actives,
+                                   bool actives_are_device_visible,
+                                   int n,
+                                   unsigned int supply_mask,
+                                   const GxDeviceTreeView& tree,
+                                   typename Spec::AccumData *accums_out);
+
+template <typename Spec>
+struct NlrPeerAnswerDeviceFused;
+
+/* Holds the queries when they are built where the particles already are.
+ *
+ * Host-visible as well as device-visible, which is what lets one buffer serve
+ * all three readers: the export walk wants each query's position and reach, the
+ * envelopes ship the objects to peers, and the walk kernel evaluates them. A
+ * plain vector could serve the first two and not the third; this serves all of
+ * them, so the queries are built once and not copied again afterwards.
+ *
+ * That is narrower than "nothing is staged", and deliberately so: the indices
+ * and radii the build reads are still staged, and the accumulators still are.
+ * What this removes is the host walking P and CellP to fill the queries. */
+template <typename Spec>
+struct NlrDeviceBuiltActives {
+    typename Spec::ActiveData *p = nullptr;
+    NlrDeviceBuiltActives() = default;
+    NlrDeviceBuiltActives(const NlrDeviceBuiltActives&) = delete;
+    NlrDeviceBuiltActives& operator=(const NlrDeviceBuiltActives&) = delete;
+    ~NlrDeviceBuiltActives() {
+        if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
+    }
+};
+
+template <typename Spec, typename DeviceCtx>
+static typename Spec::ActiveData *
+nlr_build_self_actives_on_device(const neighbor_loop_args& args,
+                                 const DeviceCtx& ctx,
+                                 const double *radii,
+                                 const typename Spec::CallScalars& cs,
+                                 int n,
+                                 NlrDeviceBuiltActives<Spec>& owner);
+
+/* Which backend answers queries on this call.
+ *
+ * HostWalk is what Mode B has always done and is the default, so a caller that
+ * says nothing gets exactly the path F1 proved unchanged.  DeviceFused is Mode D:
+ * the same transport, the same wire, the same reply merge -- a different way of
+ * turning a query into an accumulator.  The choice is the CALLER's because it is
+ * the same choice that selected the dispatch path, and it was made collectively
+ * there; the transport must not re-decide it per rank. */
+enum class NlrEvalBackend { HostWalk, DeviceFused };
+
+template <typename Spec, NlrEvalBackend Backend = NlrEvalBackend::HostWalk>
 static void mode_b_remote_evaluate_into_buffer(
     const neighbor_loop_args& args,
     const double *radii,
@@ -988,7 +1126,10 @@ static void mode_b_remote_evaluate_into_buffer(
     const typename Spec::DeviceContext& ctx,         /* caller-owned */
     unsigned int neighbor_type_mask,                  /* explicit caller param */
     typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
-    RunnerStageTimer *tim = nullptr)
+    RunnerStageTimer *tim = nullptr,
+    /* Only read on the DeviceFused backend, where it is the tree the collective
+     * readiness decision was made against.  Unused by HostWalk. */
+    const GxDeviceTreeView *fused_tree = nullptr)
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
@@ -1003,6 +1144,24 @@ static void mode_b_remote_evaluate_into_buffer(
     static_assert(std::is_trivially_copyable<ReplyEnvelope>::value,
         "NlrReplyEnvelope must be trivially-copyable for byte-level MPI transfer");
 
+    /* The fused backend reads the tree through this pointer, and a caller that
+     * forgot it would not fail here -- it would fail inside a device kernel,
+     * where the symptom is an unbounded read rather than a message.  The backend
+     * is a template seam, so the next caller is the one this protects. */
+    if constexpr (Backend == NlrEvalBackend::DeviceFused) {
+        if(fused_tree == nullptr) {
+            if(ThisTask == 0) {
+                fprintf(stderr,
+                    "[%s] FATAL: the fused evaluation backend was selected without the prepared "
+                    "tree it walks. The caller that chose this backend owns that tree.\n",
+                    Spec::loop_name);
+                fflush(stderr);
+            }
+            endrun(90001030);
+            return;
+        }
+    }
+
     const int N    = args.num_active;     /* may be 0 on this rank; collective entry */
     const int nt   = NTask;
     const int rank = ThisTask;
@@ -1011,13 +1170,41 @@ static void mode_b_remote_evaluate_into_buffer(
      *   - Non-iterative wrapper: locally-owned, populated + RAII-cleaned by wrapper.
      * Helper does NOT call populate_call_scalars or populate_device_context. */
 
-    /* Freeze actives host-side pre-drift (same snapshot used for self-pair
-     * AND for ship-to-peers; prevents self/remote epoch
-     * skew on the active rank). */
-    std::vector<ActiveData> actives(N);
+    /* The queries. One snapshot serves both this rank's own pairs and the copies
+     * shipped to peers, so neither can see a different epoch from the other.
+     *
+     * WHERE they are built is the difference between the backends. The host
+     * walker builds them here, one Spec::load_active per active, and each of
+     * those is a scattered read of P[i] and CellP[i] -- the canonical arrays
+     * surfacing on the host, once per active, on the calls that have the most
+     * actives. The fused backend has those same particles resident on the device
+     * already, so it builds them there instead, into a buffer the host can still
+     * read for the export walk and the envelopes.
+     *
+     * The objects are the same either way: same function, same inputs, same
+     * epoch. The epoch holds because on the fused path nothing drifts between
+     * this point and the evaluation -- the call's opening pass brought the whole
+     * rank current, and both drift sites below are compiled out for this backend.
+     *
+     * Falling back to the host build when the device buffer cannot be had is
+     * safe where declining would not be: it changes how the queries are filled,
+     * never which collectives this rank enters, so the peers cannot tell. */
+    std::vector<ActiveData> actives_host;
+    NlrDeviceBuiltActives<Spec> actives_device;
+    ActiveData *actives = nullptr;
+    bool actives_are_device_visible = false;
     if(N > 0) {
-        build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
-                                                  actives.data());
+        if constexpr (Backend == NlrEvalBackend::DeviceFused) {
+            actives = nlr_build_self_actives_on_device<Spec>(args, ctx, radii, cs, N,
+                                                             actives_device);
+            actives_are_device_visible = (actives != nullptr);
+        }
+        if(actives == nullptr) {
+            actives_host.resize(N);
+            build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
+                                                      actives_host.data());
+            actives = actives_host.data();
+        }
     }
 
     /* ---- SELF stages run ONCE, BEFORE the peer round loop. Self candidate
@@ -1113,19 +1300,30 @@ static void mode_b_remote_evaluate_into_buffer(
                 /* want_cands: the tree walk needs candidates; the export CSR
                  * for the round loop is built regardless,
                  * so the fused walk runs with cand_out=nullptr there. */
-                const bool want_cands = true;
+                /* The export CSR is built either way; the candidate list is
+                 * only wanted by a backend that will later walk it.  A fused
+                 * backend answers its own actives from the tree directly, so
+                 * collecting them here would be building a list to throw away. */
+                const bool want_cands = (Backend == NlrEvalBackend::HostWalk);
                 if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
                 csr_rec_off.assign(N + 1, 0);
                 StageTimer t(tim ? &tim->dt_collect : nullptr);
-                /* Thread the fused self walk when producing candidates above the
-                 * work threshold. Each thread walks its actives into its OWN
-                 * export sink + its OWN CSR segment (no shared push, no lock); a
-                 * serial prefix-sum then assembles the active-ordered CSR
-                 * BYTE-IDENTICALLY to the serial build (per-active walk order
-                 * fixed; peers ascending within an active; node order = walk
-                 * append order). The export walk (want_cands
-                 * false) stays serial. */
-                const bool use_omp_self = want_cands && nlr_modeb_use_omp(N, modeb_nthreads);
+                /* Thread the fused self walk above the work threshold. Each thread
+                 * walks its actives into its OWN export sink + its OWN CSR segment
+                 * (no shared push, no lock); a serial prefix-sum then assembles the
+                 * active-ordered CSR BYTE-IDENTICALLY to the serial build
+                 * (per-active walk order fixed; peers ascending within an active;
+                 * node order = walk append order).
+                 *
+                 * The threshold is the only thing that decides this. Whether the
+                 * walk also collects candidates does not: it changes what the walk
+                 * records, not how its actives divide between threads, and the
+                 * per-active work is the traversal either way. This test once also
+                 * required candidates, back when a walk without them was a
+                 * validation pass whose speed was irrelevant; a walk without them
+                 * is now the production path that exports to peers, and it has the
+                 * most actives of any of them. */
+                const bool use_omp_self = nlr_modeb_use_omp(N, modeb_nthreads);
                 if(use_omp_self) {
                     diag_omp_self = modeb_nthreads;
                     nlr_note_threaded_walk();
@@ -1158,8 +1356,16 @@ static void mode_b_remote_evaluate_into_buffer(
                                              (double)actives[aa].pos[1],
                                              (double)actives[aa].pos[2]};
                         sink.clear_all();
-                        std::vector<int>* cand_ptr = &cand_self_tree[aa];
-                        if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
+                        /* No candidate sink when the backend will not walk one:
+                         * cand_self_tree is left empty in that case, so taking its
+                         * element address would be out of bounds. Both branches
+                         * guard it, and this one is now the branch that meets the
+                         * case, since a walk that collects nothing threads too. */
+                        std::vector<int>* cand_ptr = nullptr;
+                        if(want_cands) {
+                            cand_ptr = &cand_self_tree[aa];
+                            if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
+                        }
                         mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                                 Spec::search_mode, Spec::radius_policy,
                                                 cand_ptr, topleaf_map, sink, jscale,
@@ -1264,16 +1470,29 @@ static void mode_b_remote_evaluate_into_buffer(
      * drift per-round below). drift_particle is idempotent to All.Ti_Current
      * (constant across the helper), so a j that is both a self- and peer-
      * candidate drifts once — identical to the old combined union drift. */
-    {
+    if constexpr (Backend == NlrEvalBackend::HostWalk) {
         StageTimer t(tim ? &tim->dt_drift : nullptr);
         if (N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
     }
 
-    /* Stage 8: evaluate SELF post-drift -> accums_out. */
+    /* Stage 8: answer THIS rank's own queries -> accums_out.
+     *
+     * The host backend evaluates the list it collected above.  The fused backend
+     * collected nothing and walks the tree from the root instead; it also skips
+     * the drift, because the call's opening pass already brought every local
+     * particle current and nothing since could have added a stale one. */
     if(N > 0) {
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N,
-                                          cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
+        if constexpr (Backend == NlrEvalBackend::HostWalk) {
+            evaluate_pairs_post_drift<Spec>(ctx, actives, N,
+                                              cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
+        } else {
+            /* Reach comes from each query's own h_search, which is what the host
+             * self walk at this site uses; radii is the same value by
+             * construction and reading it from two places invites drift. */
+            nlr_mode_d_self_reduce<Spec>(ctx, actives, actives_are_device_visible, N,
+                                         neighbor_type_mask, *fused_tree, accums_out);
+        }
     }
 
     /* ---- PEER round loop (streaming). Build a CommChunkSize-bounded batch of
@@ -1506,37 +1725,25 @@ static void mode_b_remote_evaluate_into_buffer(
      * per active per eval pass with the EXACT eval ctx. No standalone
      * post-flatten rebind needed here. */
 
-    /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
-    std::vector<std::vector<int>> cand_peer_tree;
-    {
-        StageTimer t(tim ? &tim->dt_collect : nullptr);
-        int tu_recv = 0;
-        collect_candidates_for_remote_queries<Spec>(peer_actives,
-                                                     peer_nodelist_flat, peer_nnodes,
-                                                     neighbor_type_mask,
-                                                     DispatchPath::ModeB_HostWalker,
-                                                     cand_peer_tree, drift_sink, &tu_recv);
-        if(tu_recv > 0) { diag_omp_recv = tu_recv; nlr_note_threaded_walk(); }
-    }
-
-    /* Stage 7 (peer): drift THIS round's peer candidate sets (self candidates
-     * were drifted once before the round loop). Idempotent to All.Ti_Current. */
-    {
-        StageTimer t(tim ? &tim->dt_drift : nullptr);
-        lazy_drift_candidates<Spec>(cand_peer_tree);
-    }
-
-    /* Stage 9: evaluate PEER queries post-drift -> peer_replies, shipped back
-     * to the home rank. */
+    /* Stages 6, 7 and 9 -- find this round's peer neighbours, bring them current,
+     * and evaluate -- are one backend operation.  See NlrPeerAnswerHostWalk. */
     const int K = (int)peer_actives.size();
     std::vector<AccumData> peer_replies(K);
-    if(K > 0) {
-        StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
-        if((long long)K > eval_peer_work_peak) eval_peer_work_peak = K;
-        evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                          cand_peer_tree, peer_replies.data(), EvalOMPPolicy::AllowProduction);
+    if constexpr (Backend == NlrEvalBackend::HostWalk) {
+        int tu_recv = 0;
+        NlrPeerAnswerHostWalk<Spec>::answer(ctx, peer_actives,
+                                            peer_nodelist_flat, peer_nnodes,
+                                            neighbor_type_mask, drift_sink, tim,
+                                            &tu_recv, &eval_peer_work_peak,
+                                            peer_replies);
+        if(tu_recv > 0) { diag_omp_recv = tu_recv; nlr_note_threaded_walk(); }
+    } else {
+        NlrPeerAnswerDeviceFused<Spec>::answer(ctx, *fused_tree, peer_actives,
+                                               peer_nodelist_flat, peer_nnodes,
+                                               neighbor_type_mask, tim,
+                                               &eval_peer_work_peak,
+                                               peer_replies);
     }
-
     /* Stage 10 (per group): build reply envelopes (origin_slot/rank copied from
      * each received query envelope), unflatten into per-peer arrays via the
      * provenance map, then send THIS group's replies — after which the group's
@@ -3327,6 +3534,31 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
     initialize_device_context_mode_a_after_arena();
 }
 
+/* Mode D's context: the same device-resident arrays, WITHOUT the ghost import.
+ *
+ * Mode A imports because it walks a pool that has to contain the neighbours
+ * living on other ranks.  A fused walk never sees a ghost -- the traversal stops
+ * at the owned count -- and the queries that need another rank's particles are
+ * shipped to that rank instead.  Calling the Mode A entry here would perform the
+ * whole collective import and then discard every ghost it fetched, which is the
+ * one cost this path exists to avoid.
+ *
+ * Skipping it is collective-safe because the decision that selected Mode D was
+ * itself collective and unanimous: either every rank takes this entry or none
+ * does, so no rank is left waiting in an import its peers skipped. */
+template <typename Spec>
+void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_d()
+{
+    if (arena_acquired) {return;}
+
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    gpu_particles_arena_set_site(Spec::loop_name);
+    gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
+    arena_acquired = true;
+
+    initialize_device_context_mode_a_after_arena();
+}
+
 /* ============================================================================
  * rebuild_mode_a_arena_and_ctx_for_current_active_union — self-sufficient
  * rebuild method (no parameters).
@@ -3562,6 +3794,425 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
         drv.accum_uvm[sg][slot] = accums_compacted[k];
     }
 }
+
+/* ============================================================================
+ * Mode D — the walk and the pair kernel in one device pass.
+ *
+ * Mode A brings the neighbours to the seeker: it imports the particles another
+ * rank owns, builds a neighbour list over them, and then evaluates.  Mode D
+ * sends the seeker to the neighbours instead, and evaluates where they already
+ * live, so the list is never built and the particles are never moved.  What that
+ * removes is not arithmetic -- the same pair kernel runs on the same pairs --
+ * but the import, the list, and the copies that surround them.
+ *
+ * The seeker cannot tell where it is.  A query that started on this rank and one
+ * that arrived from another are the same object to the walk and to the kernel;
+ * the only difference is which accumulator the result lands in, and that is the
+ * caller's business, not the kernel's.  This file's half is the local one.
+ *
+ * Availability is a property of the loop, not of the caller's name: the pair
+ * kernel has to be one that only reduces into the seeker's own accumulator, or
+ * evaluating it on a rank that does not own the seeker would need writes shipped
+ * back.  That is exactly what the eval tier already records, so it is what is
+ * asserted, and no loop is named here.
+ * ========================================================================== */
+
+/* What happens when the walk reaches a particle this rank owns.
+ *
+ * The traversal decides which indices are reachable and which are ghosts; this
+ * decides whether a reachable one is a neighbour, and it applies the same three
+ * tests the host walker applies in mesh/mode_b_local_walker.cc -- allowed type,
+ * positive mass, and the geometric accept -- through the same shared predicate,
+ * so the two cannot answer differently about the same pair.  The reach is the
+ * query's alone, which is what makes this the ONEWAY case: no neighbour supply
+ * radius is consulted, and none is mirrored to the device to consult. */
+template <typename Spec>
+struct NlrModeDReduceLeaf {
+    const typename Spec::DeviceContext *ctx;
+    const typename Spec::ActiveData    *active;
+    typename Spec::AccumData           *accum;
+    typename Spec::ScatterData         *scatter;
+    unsigned int                        supply_mask;
+
+    KOKKOS_INLINE_FUNCTION
+    void visit(int j, double qx, double qy, double qz, double reach)
+    {
+        const struct particle_data &Pj = ctx->P[j];
+        if(!(supply_mask & (1u << (unsigned int)Pj.Type))) {return;}
+        if(Pj.Mass <= 0) {return;}
+        if(!gx_pair_accept_wrap_and_test(qx - (double)Pj.Pos[0],
+                                         qy - (double)Pj.Pos[1],
+                                         qz - (double)Pj.Pos[2],
+                                         reach, 0.0, NGB_SEARCH_ONEWAY)) {return;}
+        IdentitySidecar id{};
+        typename Spec::NeighborData nb = Spec::load_neighbor(*ctx, j, id, *active);
+        Spec::pair_kernel(*active, nb, *accum, *scatter);
+    }
+};
+
+/* One work item per active: build its query, walk this rank's tree from the
+ * root, reduce into its own accumulator.
+ *
+ * The query is built HERE, on the device, from the resident particle arrays.
+ * The host-walker path builds the equivalent on the host, one active at a time,
+ * which is right where it runs -- a few actives -- and wrong here, where it
+ * would be a serial host pass over the canonical arrays proportional to the
+ * active count, on the steps that have the most actives.
+ *
+ * `radii` rather than the query's own stored radius: the search radius is the
+ * runner's, it is what the iteration mutates between passes, and it is what the
+ * host walk is given.  Reading it from anywhere else would let the two drift.
+ *
+ * Ownership is one accumulator per work item, so nothing is shared and nothing
+ * needs an atomic.  A traversal that gave several work items a share of one
+ * query -- one team per node pair, say -- would not have that property, which is
+ * why it is stated rather than assumed. */
+template <typename Spec>
+static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
+                                    const typename Spec::CallScalars &cs,
+                                    const int *active_idx,
+                                    const double *radii,
+                                    int n,
+                                    unsigned int supply_mask,
+                                    const GxDeviceTreeView &tree,
+                                    typename Spec::AccumData *accums_out,
+                                    int *anomaly)
+{
+    using ActiveData  = typename Spec::ActiveData;
+    using ScatterData = typename Spec::ScatterData;
+
+    static_assert(nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly,
+                  "Mode D evaluates a seeker's pairs on whichever rank owns the neighbours, so a "
+                  "loop whose pair kernel writes to the neighbour side would need those writes "
+                  "shipped back. Only the read-only eval tier is served here.");
+    static_assert(Spec::search_mode == MODE_B_SEARCH_ONEWAY,
+                  "Mode D prunes on the query's reach alone. A symmetric search also needs the "
+                  "per-type supply bands, which are not mirrored to the device.");
+    static_assert(!nlr_spec_has_bind_active_to_eval_context_v<Spec>,
+                  "This Spec rebinds each active to the evaluating context before its pair kernel "
+                  "runs, which the host backend does inside evaluate_pairs_post_drift. The fused "
+                  "backend evaluates in a device kernel and performs no such rebind, so a received "
+                  "active would still carry the sending rank's pointers. Port the rebind into the "
+                  "device path before serving this Spec.");
+
+    if(n <= 0) {return;}
+
+    /* The traversal reads All.BoxSize through the wrap macros, which resolve to
+     * this unit's mirror; without this the box reads as zero on device and
+     * periodic wrapping stops, silently and only on HIP. */
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+        Spec::zero_accum(accums_out[kk]);
+        const int i = active_idx[kk];
+        ActiveData  a = Spec::load_active(ctx, kk, i, radii[kk], cs);
+        ScatterData s{};
+        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask};
+        gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                      radii[kk], tree, leaf, anomaly);
+    });
+}
+
+/* Build this rank's queries where its particles already are.
+ *
+ * The host form of this walks P[i] and CellP[i] once per active, scattered, to
+ * fill one ActiveData each. That is correct, and on the transport path it is
+ * also the canonical arrays surfacing on the host on exactly the calls with the
+ * most actives. The particles are resident on the device, so the same
+ * Spec::load_active runs there instead and writes into a buffer the host can
+ * still read -- the export walk and the envelope pack both need to.
+ *
+ * The index and radius arrays it reads from ARE staged host-side, and that is
+ * deliberate rather than overlooked: they are runner-owned, contiguous, and one
+ * int and one double per active, against the many scattered particle-field reads
+ * they replace. The remaining host touch is small and named, not absent.
+ *
+ * Returns the buffer, or nullptr if the device memory could not be had -- in
+ * which case the caller builds on the host and gets identical objects.
+ */
+template <typename Spec, typename DeviceCtx>
+static typename Spec::ActiveData *
+nlr_build_self_actives_on_device(const neighbor_loop_args& args,
+                                 const DeviceCtx& ctx,
+                                 const double *radii,
+                                 const typename Spec::CallScalars& cs,
+                                 int n,
+                                 NlrDeviceBuiltActives<Spec>& owner)
+{
+    using ActiveData = typename Spec::ActiveData;
+
+    if(n <= 0) {return nullptr;}
+
+    ActiveData *act_d = (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_actives");
+    int        *idx_d = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_idx");
+    double     *rad_d = (double *)     nlr_shared_alloc_bytes((size_t)n * sizeof(double),     "moded_self_radii");
+
+    if(!act_d || !idx_d || !rad_d) {
+        if(act_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(act_d);}
+        if(idx_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
+        if(rad_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
+        return nullptr;
+    }
+
+    for(int k = 0; k < n; k++) {
+        idx_d[k] = args.active_list[k];
+        rad_d[k] = radii[k];
+    }
+
+    /* load_active reads All.* through this unit's mirror; without the belt those
+     * read as zero on device, silently, and only on HIP. */
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    /* Named apart from the walk kernels this loop also launches: they run under
+     * the loop's own name, so sharing it would leave a device fault in the query
+     * build indistinguishable from one in the traversal. */
+    gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", n, KOKKOS_LAMBDA(int k) {
+        act_d[k] = Spec::load_active(ctx, k, idx_d[k], rad_d[k], cs);
+    });
+
+    /* The indices and radii were only ever the kernel's input. The queries
+     * themselves outlive this call and belong to the owner. */
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
+
+    owner.p = act_d;
+    return act_d;
+}
+
+/* Answer this rank's own queries from the root, when the queries already exist.
+ *
+ * The transport builds its actives up front and ships the same objects to peers,
+ * so the self half on that path is handed them rather than building its own.
+ * That is the one difference from nlr_mode_d_local_reduce, which has no
+ * transport and constructs each query in the kernel from resident particles.
+ *
+ * Those queries normally already sit where a kernel can read them, because the
+ * transport builds them on the device. Then this walks them in place. When the
+ * device buffer could not be had the transport builds them on the host instead,
+ * and only then are they copied in -- which is why the caller says which it is
+ * rather than this guessing from a pointer it cannot interrogate.
+ *
+ * The reach comes from the query itself here, matching the host self walk at the
+ * same site; the two must agree about what a query's radius is or they would
+ * search different neighbourhoods for the same particle. */
+template <typename Spec>
+static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
+                                   const typename Spec::ActiveData *actives,
+                                   bool actives_are_device_visible,
+                                   int n,
+                                   unsigned int supply_mask,
+                                   const GxDeviceTreeView& tree,
+                                   typename Spec::AccumData *accums_out)
+{
+    using ActiveData  = typename Spec::ActiveData;
+    using AccumData   = typename Spec::AccumData;
+    using ScatterData = typename Spec::ScatterData;
+
+    static_assert(nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly,
+                  "Mode D evaluates a seeker's pairs on whichever rank owns the neighbours, so a "
+                  "loop whose pair kernel writes to the neighbour side would need those writes "
+                  "shipped back. Only the read-only eval tier is served here.");
+    static_assert(Spec::search_mode == MODE_B_SEARCH_ONEWAY,
+                  "Mode D prunes on the query's reach alone. A symmetric search also needs the "
+                  "per-type supply bands, which are not mirrored to the device.");
+    static_assert(!nlr_spec_has_bind_active_to_eval_context_v<Spec>,
+                  "This Spec rebinds each active to the evaluating context before its pair kernel "
+                  "runs, which the host backend does inside evaluate_pairs_post_drift. The fused "
+                  "backend evaluates in a device kernel and performs no such rebind, so a received "
+                  "active would still carry the sending rank's pointers. Port the rebind into the "
+                  "device path before serving this Spec.");
+
+    if(n <= 0) {return;}
+
+    /* Only copied when the queries are not already somewhere the kernel can read
+     * them. On the ordinary path they are, so this allocates nothing and the
+     * walk reads the transport's own buffer. */
+    ActiveData *q_staged  = actives_are_device_visible
+                              ? nullptr
+                              : (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_q");
+    AccumData  *acc_d     = (AccumData *)  nlr_shared_alloc_bytes((size_t)n * sizeof(AccumData), "moded_self_accum");
+    int        *anomaly_d = (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_self_anomaly");
+
+    if((!actives_are_device_visible && !q_staged) || !acc_d || !anomaly_d) {
+        if(q_staged)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_staged);}
+        if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
+        if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
+        if(ThisTask == 0) {
+            fprintf(stderr, "[%s] FATAL: no device memory for %d local queries on the fused path.\n",
+                    Spec::loop_name, n);
+            fflush(stderr);
+        }
+        endrun(90001028);
+        return;
+    }
+
+    if(q_staged) {
+        for(int k = 0; k < n; k++) {q_staged[k] = actives[k];}
+    }
+    const ActiveData *q_d = q_staged ? q_staged : actives;
+    *anomaly_d = 0;
+
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+        Spec::zero_accum(acc_d[kk]);
+        const ActiveData& a = q_d[kk];
+        ScatterData s{};
+        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, supply_mask};
+        gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                      (double)a.h_search, tree, leaf, anomaly_d);
+    });
+
+    const int anomaly_seen = *anomaly_d;
+    for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
+
+    if(q_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_staged);}
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
+
+    if(anomaly_seen != 0) {
+        if(ThisTask == 0) {
+            fprintf(stderr,
+                "[%s] FATAL: a local query walked into the index gap between the particle slots "
+                "and the node base; the tree is malformed.\n", Spec::loop_name);
+            fflush(stderr);
+        }
+        endrun(90001029);
+    }
+}
+
+/* Answering peers the other way: one device pass, no candidate list.
+ *
+ * Same contract as NlrPeerAnswerHostWalk -- received queries in, one accumulator
+ * each out -- reached by walking each query's exported subtrees on the device and
+ * evaluating the pair kernel where the walk lands.  Nothing is collected, so
+ * nothing is drifted here either: the call's opening pass already brought every
+ * local particle current, and no import since could have added a stale one.
+ *
+ * The query arrives already built.  The rank that owns it constructed its
+ * ActiveData before shipping it, so the receiver re-uses that rather than
+ * rebuilding one from particles it does not own -- and a query is the same
+ * object to this kernel whoever sent it, which is what lets one leaf policy
+ * serve both halves.
+ * ========================================================================== */
+template <typename Spec>
+struct NlrPeerAnswerDeviceFused {
+    using AccumData = typename Spec::AccumData;
+
+    static void answer(const typename Spec::DeviceContext& ctx,
+                       const GxDeviceTreeView& tree,
+                       const std::vector<typename Spec::ActiveData>& peer_actives,
+                       const std::vector<int>& peer_nodelist_flat,
+                       const std::vector<int>& peer_nnodes,
+                       unsigned int neighbor_type_mask,
+                       RunnerStageTimer *tim,
+                       long long *eval_peer_work_peak,
+                       std::vector<AccumData>& peer_replies_out)
+    {
+        using ActiveData  = typename Spec::ActiveData;
+        using ScatterData = typename Spec::ScatterData;
+
+        const int K = (int)peer_actives.size();
+        if(K <= 0) {return;}
+
+        StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
+        if(eval_peer_work_peak && (long long)K > *eval_peer_work_peak) {*eval_peer_work_peak = (long long)K;}
+
+        /* The queries and their start-node lists have to be where the kernel can
+         * read them.  This is a copy of the QUERIES, which is what Mode D ships
+         * anyway -- not of the particles, which is what it exists to avoid. */
+        ActiveData *q_d      = (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "moded_peer_q");
+        int        *nodes_d  = (int *)        nlr_shared_alloc_bytes((peer_nodelist_flat.empty() ? 1 : peer_nodelist_flat.size()) * sizeof(int), "moded_peer_nodes");
+        int        *nn_d     = (int *)        nlr_shared_alloc_bytes((size_t)K * sizeof(int), "moded_peer_nnodes");
+        AccumData  *acc_d    = (AccumData *)  nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData), "moded_peer_accum");
+        int        *anomaly_d= (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_peer_anomaly");
+
+        if(!q_d || !nodes_d || !nn_d || !acc_d || !anomaly_d) {
+            /* Answering short is not an option and neither is answering on the
+             * host from inside a path every rank agreed to take, so this is the
+             * controlled stop.  The agreement that selected this path is what
+             * removes the option of quietly doing something else here. */
+            if(q_d)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);}
+            if(nodes_d)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);}
+            if(nn_d)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);}
+            if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
+            if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
+            if(ThisTask == 0) {
+                fprintf(stderr, "[%s] FATAL: no device memory for %d received queries on the fused path.\n",
+                        Spec::loop_name, K);
+                fflush(stderr);
+            }
+            endrun(90001026);
+            return;
+        }
+
+        /* ⛔ THE NODE LIST IS STRIDED, NOT PACKED.  peer_nodelist_flat is
+         * K * NODELISTLENGTH with each query's start nodes at its own fixed
+         * offset, and peer_nnodes says how many of that query's slots are valid.
+         * Treating it as packed -- cumulative offsets from the counts -- gives
+         * every query after the first somebody else's start nodes, so it walks
+         * the wrong subtrees and answers short.  The host walker at the same
+         * data indexes [k * NODELISTLENGTH]; this has to agree with it. */
+        /* Both guards trust the same thing: that the flat list really is
+         * K * NODELISTLENGTH.  Clamp the per-query count to what the buffer can
+         * actually hold, so a short or ragged list truncates a query instead of
+         * walking off the end of nodes_d. */
+        const int nodes_stride = NODELISTLENGTH;
+        const size_t nodes_have = peer_nodelist_flat.size();
+        for(int k = 0; k < K; k++) {
+            q_d[k]  = peer_actives[k];
+            int nn  = (k < (int)peer_nnodes.size()) ? peer_nnodes[k] : 0;
+            if(nn > nodes_stride) {nn = nodes_stride;}
+            const size_t need = (size_t)(k + 1) * (size_t)nodes_stride;
+            if(need > nodes_have) {nn = 0;}
+            nn_d[k] = nn;
+        }
+        for(size_t i = 0; i < peer_nodelist_flat.size(); i++) {nodes_d[i] = peer_nodelist_flat[i];}
+        *anomaly_d = 0;
+
+        GIZMO_GPU_ENSURE_ALL_FRESH();
+
+        gizmo_gpu_kernel_launch(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
+            Spec::zero_accum(acc_d[kk]);
+            const ActiveData& a = q_d[kk];
+            ScatterData s{};
+            /* A query with no start nodes has nothing exported to it on this
+             * rank; the host walker skips it rather than walking from anywhere,
+             * and so does this. */
+            /* No start nodes: nothing on this rank was exported to this query.
+             * ⚠ This is only correct while every Mode-B-wire query is TARGETED.
+             * A broadcast query (n_nodes == 0) means "walk your whole tree", and
+             * the host receiver does exactly that -- so if the broadcast arms are
+             * ever revived this must become a root walk, not a zero accumulator.
+             * Unreachable today: targeted_export_ok is a constexpr true. */
+            if(nn_d[kk] <= 0) {return;}
+            NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask};
+            gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                (double)a.h_search,
+                                nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
+                                tree, leaf, anomaly_d);
+        });
+
+        const int anomaly_seen = *anomaly_d;
+        for(int k = 0; k < K; k++) {peer_replies_out[k] = acc_d[k];}
+
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
+
+        if(anomaly_seen != 0) {
+            if(ThisTask == 0) {
+                fprintf(stderr,
+                    "[%s] FATAL: a received query walked into the index gap between the particle "
+                    "slots and the node base; the tree is malformed.\n", Spec::loop_name);
+                fflush(stderr);
+            }
+            endrun(90001027);
+        }
+    }
+};
 
 /* ============================================================================
  * nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg).
@@ -3934,6 +4585,154 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
 }
 
 /* ============================================================================
+ * nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg) — one iteration, one subgroup.
+ *
+ * Two shapes, chosen by whether this rank has peers.
+ *
+ * With peers, the queries travel: this rank's own go out, other ranks' come in,
+ * and both halves are answered by walking the tree of whichever rank owns the
+ * particles.  That runs through the same transport Mode B uses -- same wire,
+ * same bounded rounds, same reply merge -- with the fused backend supplying the
+ * answers instead of a host walk over a collected list.
+ *
+ * Alone, there is nothing to exchange, so the transport is skipped entirely and
+ * the queries never leave: they are built in the kernel from resident particles
+ * rather than up front on the host.
+ *
+ * There is no ghost pool and no neighbour list on either shape, and their
+ * absence is the whole of the difference from Mode A: the same Spec, the same
+ * pair kernel, the same accumulator, reached by walking rather than by
+ * importing. Staging is reduced rather than gone -- the queries are built where
+ * the particles live instead of on the host, but their indices and radii, and
+ * the accumulators coming back, are still staged.
+ *
+ * WHERE DECLINING IS DECIDED.  Whether this rank can answer on the device is
+ * settled COLLECTIVELY before dispatch, when the path is chosen, because the
+ * three paths enter different collectives and a rank deciding alone would hang
+ * rather than answer differently.  The one rank-local fallback left in this
+ * function is for a device allocation that fails, and it is reachable only on
+ * the single-rank shape, which issues nothing collective -- with peers the
+ * function has already returned through the transport before that point.
+ * ========================================================================== */
+template <typename Spec>
+static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
+{
+    using AccumData = typename Spec::AccumData;
+
+    const NlrSubgroup& sgr = drv.args.subgroups[sg];
+    const int n_compacted  = drv.active_set_size[sg];
+
+    /* ⛔ NO EARLY RETURN ON AN EMPTY LOCAL SET WHEN THERE ARE PEERS.  The peer
+     * path below is collective: a rank with nothing of its own still has to
+     * enter it, because its peers are waiting to send it queries and to receive
+     * their replies.  The local-only path further down may return early, and
+     * does, because it issues nothing collective at all. */
+
+    /* The tree was described, and the rank made current, once for the whole
+     * call before any discovery round -- not here.  Re-preparing per subgroup
+     * per iteration would repeat a decision the path selection has already acted
+     * on, and there is nothing to re-establish: nothing this path touches can go
+     * stale within the call. */
+    const GxDeviceTreeView &tree = drv.mode_d_tree;
+
+    /* Compact the still-active slots, as every other per-iter dispatch does. */
+    std::vector<int>    active_particle_indices(n_compacted);
+    std::vector<double> radii_compacted(n_compacted);
+    for(int k = 0; k < n_compacted; k++) {
+        const int slot = drv.active_set_uvm[sg][k];
+        active_particle_indices[k] = sgr.active_indices[slot];
+        radii_compacted[k]         = drv.radii_uvm[sg][slot];
+    }
+    neighbor_loop_args sub = drv.args;
+    sub.active_list = active_particle_indices.data();
+    sub.num_active  = n_compacted;
+
+    /* With peers, the queries travel and the owners answer them: same wire, same
+     * reply merge, same bounded rounds as the host walker uses -- only the way a
+     * query becomes an accumulator differs, on both halves.  Entered on every
+     * rank, including one with no actives of its own. */
+    if(NTask > 1) {
+        std::vector<AccumData> accums_compacted(n_compacted);
+        for(int k = 0; k < n_compacted; k++) {Spec::zero_accum(accums_compacted[k]);}
+        mode_b_remote_evaluate_into_buffer<Spec, NlrEvalBackend::DeviceFused>(
+            sub, radii_compacted.data(), drv.cs, drv.ctx,
+            (unsigned int)sgr.j_type_bitmask,
+            (n_compacted > 0) ? accums_compacted.data() : nullptr,
+            /*tim=*/nullptr, &drv.mode_d_tree);
+        for(int k = 0; k < n_compacted; k++) {
+            drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = accums_compacted[k];
+        }
+        return;
+    }
+
+    /* Single rank: nothing to exchange, so the queries never leave and are built
+     * in the kernel from resident particles rather than up front on the host. */
+    if(n_compacted <= 0) {return;}
+
+    int       *idx_d     = (int *)    nlr_shared_alloc_bytes((size_t)n_compacted * sizeof(int),    "moded_idx");
+    double    *rad_d     = (double *) nlr_shared_alloc_bytes((size_t)n_compacted * sizeof(double), "moded_radii");
+    AccumData *acc_d     = (AccumData *) nlr_shared_alloc_bytes((size_t)n_compacted * sizeof(AccumData), "moded_accum");
+    int       *anomaly_d = (int *)    nlr_shared_alloc_bytes(sizeof(int), "moded_anomaly");
+
+    if(!idx_d || !rad_d || !acc_d || !anomaly_d) {
+        /* Out of device memory is a reason to answer differently, never a reason
+         * to answer less, so the host walker takes this iteration.
+         *
+         * Reachable on the single-rank shape only -- the peer shape returned
+         * above -- which is what keeps this legal: swapping backends mid-call is
+         * invisible to peers, and with peers it would be a hang rather than a
+         * different answer.  If this branch is ever given a path that has peers,
+         * the decision has to move to the collective site where readiness is
+         * already decided. */
+        if(idx_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
+        if(rad_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
+        if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
+        if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
+        nlr_iter_dispatch_subgroup_mode_b_local<Spec>(drv, sg);
+        return;
+    }
+
+    for(int k = 0; k < n_compacted; k++) {
+        idx_d[k] = active_particle_indices[k];
+        rad_d[k] = radii_compacted[k];
+    }
+    *anomaly_d = 0;
+
+    nlr_mode_d_local_reduce<Spec>(drv.ctx, drv.cs, idx_d, rad_d, n_compacted,
+                                  /* The SUBGROUP's mask, as the peer branch and every other
+                                   * per-subgroup dispatcher use.  A multi-subgroup Spec would
+                                   * otherwise see different neighbours on one rank than on many. */
+                                  (unsigned int)sgr.j_type_bitmask,
+                                  tree, acc_d, anomaly_d);
+
+    const int anomaly_seen = *anomaly_d;
+    for(int k = 0; k < n_compacted; k++) {
+        drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = acc_d[k];
+    }
+
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
+
+    /* The traversal reports the one state the host walk treats as fatal: an
+     * index belonging to none of the three classes, which means the tree is
+     * malformed.  The host stops the run there and so does this, rather than
+     * keep an answer short by an unknown amount.  Requested after the buffers
+     * are released, because the stop drains at the next phase boundary rather
+     * than here. */
+    if(anomaly_seen != 0) {
+        if(ThisTask == 0) {
+            fprintf(stderr,
+                "[%s] FATAL: the device walk reached an index in the gap between the particle "
+                "slots and the node base; the tree is malformed.\n", Spec::loop_name);
+            fflush(stderr);
+        }
+        endrun(90001025);
+    }
+}
+
+/* ============================================================================
  * run_neighbor_loop_iterative<Spec> — body (step 2b).
  * ========================================================================== */
 template <typename Spec>
@@ -4030,6 +4829,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * here for completeness and future use. */
     const NlrForceMode force_mode = args.dispatch_override;
     DispatchPath path;
+    /* Filled by the Mode D preparation below if that path is taken; handed to
+     * the driver so every iteration walks the tree the decision was made on. */
+    GxDeviceTreeView mode_d_tree{};
     int forced_modeb_global_active = -1;
     /* Global active-particle sum across all ranks (from the dispatch Allreduce);
      * -1 = not computed (force-A cheap path). Used for the globally-zero-active
@@ -4057,6 +4859,45 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         bool select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
         path = select_mode_b ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
+#ifdef NEIGHBOR_LOOP_MODE_D
+        /* Mode D takes the calls Mode A would have taken, when the loop is one
+         * it can serve and every rank can actually answer on the device.
+         *
+         * The verdict has to be UNANIMOUS, not merely identical-looking.  Two of
+         * the terms are compile-time Spec traits and one is a path already chosen
+         * from a collective, so those cannot differ -- but whether a rank's tree
+         * can be described to the device is a local fact that genuinely can
+         * differ between ranks, and the three paths enter different collectives.
+         * A rank deciding alone would not answer differently, it would hang.
+         *
+         * The preparation runs HERE, once, before any discovery round, and what
+         * it establishes holds for every iteration of the call: no particles are
+         * imported on this path and the writeback runs after the last iteration,
+         * so nothing it certifies can go stale in between.
+         *
+         * With the peer half in place this now runs at any task count, and the
+         * reduction above stops being a formality: a rank that cannot describe
+         * its tree to the device pulls the WHOLE call back to Mode A, because the
+         * alternative is one rank walking while its peers wait for queries that
+         * never arrive. */
+        /* sum_act > 0 FIRST, and it is not a shortcut: preparing drifts every
+         * particle on the rank, and a call with no actives anywhere has no work
+         * to justify that.  Without this test such a call reaches here because
+         * select_mode_b is false when sum_act == 0, takes the Mode-A label, and
+         * pays a full-rank drift on the way to the globally-zero-active no-op
+         * that was going to return without computing anything.  That is O(N) on
+         * a call that should cost nothing, appearing only in builds carrying the
+         * flag. */
+        if(sum_act > 0 &&
+           path == DispatchPath::ModeA_GPU_NGL &&
+           nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly &&
+           Spec::search_mode == MODE_B_SEARCH_ONEWAY) {
+            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
+            int ready = 0;
+            MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            if(ready) {path = DispatchPath::ModeD_DeviceFused;}
+        }
+#endif
     }
 
     /* Globally-zero-active call: do NO neighbor work. global_active_sum comes
@@ -4088,7 +4929,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     "[NLR ITER DISPATCH caller=%s path=%s (%s) NTask=%d "
                     "local_active=%d forced_modeb_global_active=%d]\n",
                     Spec::loop_name,
-                    path == DispatchPath::ModeA_GPU_NGL ? "gpu_ngl" : "mode_b",
+                    path == DispatchPath::ModeA_GPU_NGL ? "gpu_ngl"
+                        : (path == DispatchPath::ModeD_DeviceFused ? "mode_d" : "mode_b"),
                     src, NTask, args.num_active,
                     forced_modeb_global_active);
             fflush(stderr);
@@ -4125,7 +4967,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      *         then bind ctx to arena-resident P_gpu/CellP_gpu. */
     if (path == DispatchPath::ModeB_HostWalker) {
         drv.initialize_device_context_mode_b();
+    } else if (path == DispatchPath::ModeD_DeviceFused) {
+        drv.mode_d_tree = mode_d_tree;
+        drv.acquire_arena_and_init_ctx_mode_d();
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
+        /* Both read P/CellP from the device-resident arena; Mode D differs in
+         * how it finds the neighbours, not in where the particles live. */
         drv.acquire_arena_and_init_ctx_mode_a();
     } else {
         /* Future path — not currently reachable. */
@@ -4338,6 +5185,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     break;
                 case DispatchPath::ModeA_GPU_NGL:
                     nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg);
+                    break;
+                case DispatchPath::ModeD_DeviceFused:
+                    if constexpr (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly &&
+                                  Spec::search_mode == MODE_B_SEARCH_ONEWAY) {
+                        nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg);
+                    }
                     break;
             }
         }

@@ -22,6 +22,23 @@
  * pair kernel and accumulates.  The traversal itself never looks at particle
  * fields and never decides what a neighbour is.
  *
+ * Ownership is the traversal's business, not the policy's, because it is a
+ * question about index classes and those are decided here.  The particle slots
+ * run past the owned locals into the imported ghosts appended behind them, so
+ * the walk stops at `local_particle_slots` and a policy never sees a ghost.
+ * The host walker draws the same line in the same place.  A policy that had to
+ * remember this would eventually be written by someone who did not, and the
+ * result -- every ghost counted a second time -- is silent.
+ *
+ * Where the line falls is the caller's to choose, because it is a property of
+ * the tree it hands over, not of the traversal: a walk that answers for its own
+ * rank alone sets `local_particle_slots` to the owned count, while one that is
+ * meant to see imported copies too sets it to `particle_slots`.  A walk that
+ * searches locally and lets other ranks answer for their own particles wants
+ * the first, or it counts the far side twice.  Leaving the field unset is not a
+ * third option and does not quietly answer short: it is reported as the same
+ * fatal state as a malformed tree.
+ *
  * Node geometry comes from the gravity tree's device mirror rather than the
  * managed node arrays, because streaming those from a kernel is memory-bound
  * enough to erase the win.
@@ -42,12 +59,19 @@
  * this walk calls Kokkos itself: a unit that got the fallback would compile the
  * traversal as host code and then fail on the atomic anyway.
  *
- * WHAT THIS WALK CURRENTLY ASSUMES ABOUT ITS ENTRY POINTS.  It resumes from
- * start nodes another rank's walk reached in this tree, so re-entering the
- * top-level tree ends the branch: the querying rank owns everything above it.
- * A walk that instead started at the root would own those regions itself, and
- * ending the branch there would be wrong for it.  Give this walk an explicit
- * choice at that point before starting one from the root.
+ * HOW A WALK ENTERS THE TREE.  There are two entry points and they differ in
+ * two ways, so the caller names which one it is.
+ *
+ * A walk that resumes from start nodes another rank's walk reached begins at
+ * each exported node's children, and stops when it re-enters the top-level
+ * tree: the querying rank owns everything above that and has covered it
+ * already.  A walk that starts from the root begins at the root node itself,
+ * and must descend through the top-level tree, because those regions are its
+ * own to search.  Stopping there would end such a walk on its first node.
+ *
+ * Both forms mirror the host walker in mesh/mode_b_local_walker.cc, which
+ * takes the same pair of choices as a start node and a stop_at_toplevel flag.
+ * Keep them in step: that walker is the reference this one is checked against.
  *
  * Written by Philip F. Hopkins (phopkins@caltech.edu) for GIZMO. */
 
@@ -56,61 +80,62 @@
 
 #include <Kokkos_Core.hpp>
 
-#include "neighbor_list.h"              /* gx_export_envelope_t */
+#include "neighbor_list.h"              /* gx_export_envelope_t, GxDeviceTreeView */
 #include "ghost_exchange_functions.h"   /* the canonical-wrap overlap predicate */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL */
 
-/* The tree as the device sees it: the mirrored node arrays plus the boundaries
- * that separate the three index classes a walk can encounter.
- *
- * An index below `particle_slots` is a locally-owned particle.  One at or above
- * `node_base` and below `pseudo_start` is a node, of which those at or above
- * `foreign_base` are imported subtrees holding no local particles.  One at or
- * above `pseudo_start` is a pseudo-particle standing for another rank's
- * subtree.  Anything in the gap between the particle slots and the node base
- * belongs to no class at all and means the tree is malformed. */
-struct GxDeviceTreeView {
-    const Vec3<MyFloat> *node_center;
-    const MyFloat       *node_len;
-    const int           *node_sibling;
-    const int           *node_nextnode;
-    const unsigned int  *node_bitflags;
-    const int           *nextnode_aux;
-    int                  node_base;
-    int                  particle_slots;
-    int                  node_capacity;
-    int                  foreign_base;
-    int                  pseudo_start;
+/* Which entry point a walk is using.  See the entry discussion at the top of
+ * this file; the two forms correspond to the host walker's start node and
+ * stop_at_toplevel pair. */
+enum class GxWalkEntry {
+    SubtreeResume,   /* from another rank's start nodes; stop re-entering the top level */
+    LocalRoot        /* from this rank's own root; descend the top level */
 };
 
-/* Walk one query against the local tree, resuming from the start nodes the
- * querying rank's own walk reached in this tree.
+/* Walk one query against the local tree.
  *
  * `anomaly` reports the single state the host walk treats as fatal, an index in
  * the gap that belongs to no class.  The host stops the run there, so this walk
  * cannot simply stop stepping: that would truncate the query silently and
  * return a short answer that looks complete.  It records the state instead and
- * the caller reproduces the host's stop. */
-template <class LeafPolicy>
+ * the caller reproduces the host's stop.
+ *
+ * Callers use the two wrappers below rather than this directly.  `Entry` is a
+ * template argument so the entry tests resolve when the walk is compiled and
+ * cost nothing per node.  For a root walk `start_nodes` is unused and may be
+ * null: the root comes from the tree view. */
+template <GxWalkEntry Entry, class LeafPolicy>
 KOKKOS_INLINE_FUNCTION
-void gx_device_tree_walk(const struct gx_export_envelope_t &env,
-                         const GxDeviceTreeView &tree,
-                         LeafPolicy &leaf_policy,
-                         int *anomaly)
+void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
+                              const int *start_nodes, int n_start,
+                              const GxDeviceTreeView &tree,
+                              LeafPolicy &leaf_policy,
+                              int *anomaly)
 {
-    const double qx = env.pos[0], qy = env.pos[1], qz = env.pos[2];
-    const double reach = env.h;
+    /* An unfilled view would otherwise answer short in silence, which is the one
+     * way this walk can be wrong without anything looking wrong. */
+    if(tree.local_particle_slots < 0) {Kokkos::atomic_store(anomaly, 1); return;}
 
-    for(int k = 0; k < env.n_nodes; k++) {
-        const int start = env.nodes[k];
-        if(start < 0) {break;}                   /* -1 terminates the list */
-        /* The start list arrived over MPI, so it is validated rather than trusted. */
-        if(start < tree.node_base || start >= tree.pseudo_start) {continue;}
-        if(start - tree.node_base >= tree.node_capacity) {   /* precondition leaves this unreachable */
-            Kokkos::atomic_store(anomaly, 1);
-            break;
+    const int n_entries = (Entry == GxWalkEntry::LocalRoot) ? 1 : n_start;
+
+    for(int k = 0; k < n_entries; k++) {
+        int no;
+        if(Entry == GxWalkEntry::LocalRoot) {
+            /* Enter at the root node itself, so its own overlap test runs and
+             * the walk descends the top-level tree.  The host local walk enters
+             * the same way. */
+            no = tree.node_base;
+        } else {
+            const int start = start_nodes[k];
+            if(start < 0) {break;}                   /* -1 terminates the list */
+            /* The start list arrived over MPI, so it is validated rather than trusted. */
+            if(start < tree.node_base || start >= tree.pseudo_start) {continue;}
+            if(start - tree.node_base >= tree.node_capacity) {   /* precondition leaves this unreachable */
+                Kokkos::atomic_store(anomaly, 1);
+                break;
+            }
+            no = tree.node_nextnode[start - tree.node_base];   /* open the exported node */
         }
-        int no = tree.node_nextnode[start - tree.node_base];   /* open the exported node */
 
         while(no >= 0) {
             if(no >= tree.particle_slots && no < tree.node_base) {
@@ -118,7 +143,11 @@ void gx_device_tree_walk(const struct gx_export_envelope_t &env,
                 break;
             }
             if(no < tree.particle_slots) {
-                leaf_policy.visit(no, qx, qy, qz, reach);
+                /* Imported ghosts sit above the owned locals in the same slot
+                 * range; step over them rather than reporting them twice. */
+                if(no < tree.local_particle_slots) {
+                    leaf_policy.visit(no, qx, qy, qz, reach);
+                }
                 no = tree.nextnode_aux[no];
             } else if(no < tree.pseudo_start) {
                 const int kn = no - tree.node_base;
@@ -127,8 +156,11 @@ void gx_device_tree_walk(const struct gx_export_envelope_t &env,
                     break;
                 }
                 /* Re-entering the top-level tree means this exported branch is
-                 * exhausted (the querying rank owns everything above it). */
-                if(tree.node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
+                 * exhausted (the querying rank owns everything above it).  A
+                 * walk from the root owns those regions itself and descends. */
+                if(Entry == GxWalkEntry::SubtreeResume) {
+                    if(tree.node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
+                }
                 const double hw = 0.5 * (double)tree.node_len[kn];
                 const int do_open =
                     gx_extended_overlap_wrap_and_test((double)tree.node_center[kn][0] - qx,
@@ -151,6 +183,63 @@ void gx_device_tree_walk(const struct gx_export_envelope_t &env,
             }
         }
     }
+}
+
+/* Resume from the start nodes another rank's walk reached, carried in an
+ * export envelope. */
+template <class LeafPolicy>
+KOKKOS_INLINE_FUNCTION
+void gx_device_tree_walk(const struct gx_export_envelope_t &env,
+                         const GxDeviceTreeView &tree,
+                         LeafPolicy &leaf_policy,
+                         int *anomaly)
+{
+    gx_device_tree_walk_impl<GxWalkEntry::SubtreeResume>(
+        env.pos[0], env.pos[1], env.pos[2], env.h,
+        env.nodes, env.n_nodes, tree, leaf_policy, anomaly);
+}
+
+/* The same resumed walk, for a caller that holds the query and its start nodes
+ * as plain values rather than as an envelope.
+ *
+ * A receiver that has already unpacked its incoming batch has the position, the
+ * reach and the node list in hand; rebuilding an envelope around them so this
+ * function can take it apart again would be a copy per query to satisfy a
+ * signature.  Same entry form, same traversal, same rules -- only the argument
+ * shape differs, which is why it shares the name. */
+template <class LeafPolicy>
+KOKKOS_INLINE_FUNCTION
+void gx_device_tree_walk(double qx, double qy, double qz, double reach,
+                         const int *start_nodes, int n_start,
+                         const GxDeviceTreeView &tree,
+                         LeafPolicy &leaf_policy,
+                         int *anomaly)
+{
+    gx_device_tree_walk_impl<GxWalkEntry::SubtreeResume>(
+        qx, qy, qz, reach, start_nodes, n_start, tree, leaf_policy, anomaly);
+}
+
+/* Search this rank's whole tree for a query of its own.  There is no envelope
+ * and no start list: the query carries its own position and reach, and the
+ * walk begins at the root.
+ *
+ * A root walk carries the same preconditions as a resumed one and one more.
+ * The tree must have been certified current with no host lazy drift since, and
+ * the view must be populated and describe that tree.  In addition the root
+ * itself must be a real node -- `node_base` below `pseudo_start`, and a node
+ * capacity that covers it -- which holds whenever a tree exists at all, and
+ * fails only for an empty or half-built one.  Nothing is checked here: this
+ * runs per query on the device, and a caller that cannot honour the first
+ * precondition cannot honour this one either. */
+template <class LeafPolicy>
+KOKKOS_INLINE_FUNCTION
+void gx_device_tree_walk_from_root(double qx, double qy, double qz, double reach,
+                                   const GxDeviceTreeView &tree,
+                                   LeafPolicy &leaf_policy,
+                                   int *anomaly)
+{
+    gx_device_tree_walk_impl<GxWalkEntry::LocalRoot>(
+        qx, qy, qz, reach, nullptr, 0, tree, leaf_policy, anomaly);
 }
 
 #endif /* DEVICE_TREE_WALK_H */

@@ -376,4 +376,36 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                             const int *j_to_pool, int npart_bound,
                             int num_pool, char *matched);
 
+/* Describe this rank's tree to the device walk, or say why it cannot be
+   described.  Returns 0 with *out filled, 1 with *out untouched and a one-shot
+   line naming `caller`.  Every user of the device traversal asks the same two
+   questions -- is there a mirror, does it cover what a walk can reach -- and
+   derives the same three index-class boundaries, so that is written once here.
+
+   `local_particle_slots` is the caller's own choice and the walk's ownership
+   line: the owned count for a walk answering for this rank alone, the full slot
+   count for one meant to see imported ghosts.  See mesh/device_tree_walk.h.
+
+   This does NOT establish that the geometry is CURRENT.  Who is expected to
+   have drifted the nodes, and what to do when nobody has, differs by caller;
+   each settles it at its own site. */
+struct GxDeviceTreeView;
+int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_slots,
+                              const char *caller);
+
+/* Put this rank into the state a FUSED device walk needs -- one that evaluates a
+   pair kernel where it lands, so it reads particle fields and cannot drift a
+   stale one when it arrives -- and describe its tree.  Returns 0 with *out
+   filled and the rank current, or 1 with the walk declined and the host to
+   answer.  Call once, before any discovery round: after it, nothing on the rank
+   goes stale again within the call.
+
+   Drifts every local particle (batched to the device, skipping those already
+   current, and recorded so later calls in the step are a comparison), sweeps the
+   node geometry when nothing else has, sets the walk's ownership line to the
+   owned count, and refuses a tree with no built nodes -- which a walk from the
+   root would otherwise enter as an unbounded read rather than as an empty
+   answer. */
+int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *caller);
+
 #endif /* GPU_NEIGHBOR_LIST_H */

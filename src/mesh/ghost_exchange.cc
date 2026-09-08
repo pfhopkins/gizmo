@@ -826,9 +826,14 @@ integertime ghost_pool_current_ti(void) { return g_ghost_pool_current_ti; }
  * advance it twice. Establishing the distinct set first is what keeps the
  * parallel pass safe, at one stamp compare per slot; the stamp is
  * generation-counted so it never needs clearing between calls. */
-static void gx_certify_send_list_current(const int *home_idx, int n_slots, integertime t_now)
+/* Returns 0 when every exported slot stands at t_now, nonzero when the drift that
+ * would have advanced them did not complete -- see drift_particles_batch. The pool
+ * stamp the callers publish rests on this having succeeded on EVERY rank, so a
+ * caller that stamps regardless would assert a currency the pool does not have,
+ * and the scan that would notice is the one the stamp suppresses. */
+static int gx_certify_send_list_current(const int *home_idx, int n_slots, integertime t_now)
 {
-    if(!home_idx || n_slots <= 0) {return;}
+    if(!home_idx || n_slots <= 0) {return 0;}
 
     static std::vector<unsigned int> seen;
     static unsigned int seen_gen = 0;
@@ -849,13 +854,14 @@ static void gx_certify_send_list_current(const int *home_idx, int n_slots, integ
         seen[(size_t)j] = seen_gen;
         if(P[j].Ti_current != t_now) {behind.push_back(j);}
     }
-    if(behind.empty()) {return;}
+    if(behind.empty()) {return 0;}
 
     const int n_behind = (int)behind.size();
     const int *behind_idx = behind.data();
-    drift_particles_batch(behind_idx, n_behind, t_now);
+    const int drift_status = drift_particles_batch(behind_idx, n_behind, t_now);
 
     gizmo_mark_kernel_radius_dirty_indices(behind_idx, n_behind);
+    return drift_status;
 }
 
 /* SSOT for the forward particle+cell transport: the two typed Alltoallv calls
@@ -1299,7 +1305,7 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * early on its own guard leaves later slots at the -1 seeded before it, and
      * the pack below skips those exactly as the previously fused loop left them
      * untouched. */
-    gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
+    const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
     for(int off = 0; off < total_send; off++)
     {
         const int j = send_home_idx[off];
@@ -1350,8 +1356,8 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * cached ghost segment from a prior import (no stale-ghost survival). */
     /* Every rank advanced its outgoing slots to this same All.Ti_Current above,
        and the exchange is collective, so the pool just installed is current at
-       that time. */
-    g_ghost_pool_current_ti = All.Ti_Current;
+       that time -- but only if that advance actually happened. */
+    if(send_list_current == 0) {g_ghost_pool_current_ti = All.Ti_Current;}
     gpu_sidx_notify_ghost_imported(NumPart_before_ghost, NumGhostParticles);
 
     /* ================================================================
@@ -2562,7 +2568,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
     /* Advance the exported particles before copying them, so nothing goes on the
      * wire behind the time its receiver will read it at. */
-    gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
+    const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
     for(int off = 0; off < total_send; off++) {
         gx_pack_send_slot(P, CellP, send_home_idx[off], &send_P[off], &send_CellP[off]);
     }
@@ -2583,8 +2589,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* SIDX lifecycle notify: see comment in tile-overlap impl. Unconditional. */
     /* Every rank advanced its outgoing slots to this same All.Ti_Current above,
        and the exchange is collective, so the pool just installed is current at
-       that time. */
-    g_ghost_pool_current_ti = All.Ti_Current;
+       that time -- but only if that advance actually happened. */
+    if(send_list_current == 0) {g_ghost_pool_current_ti = All.Ti_Current;}
     gpu_sidx_notify_ghost_imported(NumPart_before_ghost, NumGhostParticles);
 
     /* Home-index exchange + provenance maps. */
@@ -2779,7 +2785,7 @@ int ghost_refresh_values(void)
     struct gas_cell_data *send_CellP = new struct gas_cell_data[(ns > 0 ? ns : 1)];
     /* Re-pack current owner values via the SAME slot helper import uses, in the
        SAME send order (ghost_send_home_idx) that produced this pool. */
-    gx_certify_send_list_current(ghost_send_home_idx, ns, All.Ti_Current);
+    const int send_list_current = gx_certify_send_list_current(ghost_send_home_idx, ns, All.Ti_Current);
     for(int k = 0; k < ns; k++) {
         gx_pack_send_slot(P, CellP, ghost_send_home_idx[k], &send_P[k], &send_CellP[k]);
     }
@@ -2790,8 +2796,9 @@ int ghost_refresh_values(void)
                                  &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
                                  ghost_wb_recv_count, ghost_wb_recv_disp);
     /* The refresh re-packed at the current time, so the pool is current to it --
-       re-stamp, or the guarantee would lag the pool it describes. */
-    g_ghost_pool_current_ti = All.Ti_Current;
+       re-stamp, or the guarantee would lag the pool it describes. Withheld when the
+       advance did not complete, for the same reason the import path withholds it. */
+    if(send_list_current == 0) {g_ghost_pool_current_ti = All.Ti_Current;}
     delete[] send_P; delete[] send_CellP;
     ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
     return GHOST_REFRESH_OK;

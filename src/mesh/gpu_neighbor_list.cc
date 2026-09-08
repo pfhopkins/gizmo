@@ -1732,7 +1732,6 @@ struct gx_recv_leaf_t {
 struct GxRecvEmitPairs {
     const struct gx_recv_leaf_t *leaves;
     unsigned int supply_mask;
-    int          num_local;
     int         *out;
     int          cap;
     int          n_found;
@@ -1740,7 +1739,6 @@ struct GxRecvEmitPairs {
     KOKKOS_INLINE_FUNCTION
     void visit(int j, double qx, double qy, double qz, double reach)
     {
-        if(j >= num_local) {return;}   /* appended ghosts are not local supply */
         const struct gx_recv_leaf_t &lf = leaves[j];
         if(lf.type < 0 || lf.pool < 0) {return;}
         if(!(supply_mask & (1u << lf.type))) {return;}
@@ -1775,6 +1773,7 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
     tree.nextnode_aux   = nextnode_aux;
     tree.node_base      = tree_base;
     tree.particle_slots = tree_slots;
+    tree.local_particle_slots = num_local;
     tree.node_capacity  = node_capacity;
     tree.foreign_base   = foreign_base;
     tree.pseudo_start   = pseudo_start;
@@ -1782,7 +1781,6 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
     GxRecvEmitPairs emit;
     emit.leaves      = leaves;
     emit.supply_mask = supply_mask;
-    emit.num_local   = num_local;
     emit.out         = out;
     emit.cap         = cap;
     emit.n_found     = 0;
@@ -1812,6 +1810,205 @@ static T *gx_recv_alloc(const char *label, size_t count)
     return (T *) gizmo_gpu_alloc_device(count * sizeof(T), label);
 }
 
+
+/* Describe this rank's tree to the device walk, or say why it cannot be
+ * described.  Returns 0 with `out` filled, or 1 with `out` untouched.
+ *
+ * Every caller of the device traversal needs the same answer to the same two
+ * questions -- is there a mirror, and does it cover everything a walk can reach
+ * -- and the index arithmetic that separates the three index classes is the same
+ * arithmetic in every case.  Written once, because a second copy would be a
+ * second place for the class boundaries to be got wrong, and a walk that reads
+ * one boundary wrong does not fail, it answers short.
+ *
+ * `local_particle_slots` is the CALLER's, and it is the one thing here that is
+ * genuinely per-caller: a walk answering for this rank alone passes the owned
+ * count, while one meant to see imported ghosts too passes the full slot count.
+ * See mesh/device_tree_walk.h.
+ *
+ * What this does NOT decide is whether the geometry is CURRENT.  That is a
+ * policy question -- who is expected to have drifted the nodes, and what to do
+ * when nobody has -- and the answer differs by caller, so each one settles it at
+ * its own site rather than inheriting a rule written for another. */
+int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_slots,
+                              const char *caller)
+{
+    /* A tree mirror is required, and it exists whenever a tree does: the build
+     * pipeline that fills it runs inside force_treebuild, which every
+     * configuration performs because neighbour search needs the tree. */
+    const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->center || !soa->len || !soa->sibling || !soa->nextnode ||
+       !soa->bitflags || !soa->nextnode_aux ||
+       All.TreeNodeIndexBase <= 0 || Numnodestree <= 0) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("%s: task %d has no usable tree mirror; answering on the host\n",
+                   caller, ThisTask);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    const int tree_base     = All.TreeNodeIndexBase;
+    const int tree_slots    = All.TreeParticleSlots;
+    const int node_capacity = gpu_gravity_tree_capacity();
+    const int foreign_base  = tree_base + MaxNodes;
+    const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
+    /* The walk may reach any foreign node that was installed, so the mirror has to
+     * cover the foreign slots that have storage behind them -- AllocatedForeignNodes,
+     * this rank's actual import, which is what the mirror is sized to.  NOT
+     * MaxForeignNodes: that is the shared INDEX ceiling used above to place the
+     * pseudo-particle region, it is the worst rank's import rather than this one's,
+     * and no node is ever installed in the gap between the two, so nothing points
+     * there.  Testing the ceiling would decline on every rank whose import is
+     * smaller than the largest, which is nearly all of them.  A short mirror is a
+     * precondition failure, not a malformed tree: decline, and the host answers --
+     * but say so, because a run that quietly answered everything on the host would
+     * otherwise look exactly like a run where the device did the work.  This says
+     * nothing about whether the geometry is current; that is the caller's. */
+    if(node_capacity < MaxNodes + AllocatedForeignNodes ||
+       soa->nextnode_aux_size < tree_slots + NTopleaves) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("%s: task %d tree mirror covers %d nodes and %d particle links, short of the %d nodes and %d links the walk can reach; answering on the host\n",
+                   caller, ThisTask, node_capacity, soa->nextnode_aux_size,
+                   MaxNodes + AllocatedForeignNodes, tree_slots + NTopleaves);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    out->node_center          = soa->center;
+    out->node_len             = soa->len;
+    out->node_sibling         = soa->sibling;
+    out->node_nextnode        = soa->nextnode;
+    out->node_bitflags        = soa->bitflags;
+    out->nextnode_aux         = soa->nextnode_aux;
+    out->node_base            = tree_base;
+    out->particle_slots       = tree_slots;
+    out->local_particle_slots = local_particle_slots;
+    out->node_capacity        = node_capacity;
+    out->foreign_base         = foreign_base;
+    out->pseudo_start         = pseudo_start;
+    return 0;
+}
+
+/* Put this rank into the state a fused device walk needs, and describe its tree.
+ * Returns 0 with `out` filled, or 1 with the walk declined and the host to answer.
+ *
+ * A fused walk evaluates the pair kernel at the leaf it just reached, so unlike
+ * a discovery walk it reads particle fields, and unlike the host walker it
+ * cannot drift a stale one when it gets there -- that needs a lock.  So both the
+ * particles and the node geometry have to be current BEFORE the launch, and this
+ * is where that is arranged, once, ahead of any discovery round.
+ *
+ * The particle half is a full-rank drift.  That sounds heavier than drifting
+ * only what the walk will touch, and it is not: the drift is itself batched onto
+ * the device, it skips everything already current, and it records that it ran,
+ * so the second and later calls in a step cost a comparison.  Drifting only the
+ * reached set would mean discovering the reached set first, which is the walk we
+ * are about to do -- and it would buy nothing, because after this pass nothing
+ * on the rank can go stale again within the call: no particles are imported, and
+ * the loop's own writeback happens after the last iteration, not between them.
+ *
+ * The node half sweeps the whole tree when nothing else has.  The receiver walk
+ * declines instead of sweeping when gravity is compiled in, because it would be
+ * drifting the entire tree on behalf of a walk that only touches the part it was
+ * sent -- but that reasoning does not carry here, where the caller has just
+ * drifted every particle on the rank and a whole-tree sweep is the same scale as
+ * the work already done.  The one state neither can repair is a host lazy drift
+ * that has already advanced nodes at this time: a sweep skips nodes that are
+ * current, so their mirrors stay behind, and the host has to answer. */
+int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *caller)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    const int num_local = ghost_get_num_local();
+    if(num_local <= 0) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("%s: task %d owns no local particles, so it cannot answer on the device; this call falls back for every rank\n",
+                   caller, ThisTask);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    if(gx_device_tree_view_build(out, num_local, caller) != 0) {return 1;}
+
+    /* A walk from the root dereferences the root node before it tests anything,
+     * so an empty or half-built tree is not a walk that returns nothing -- it is
+     * an unbounded read.  The node capacity cannot catch it, because that is the
+     * mirror's allocation rather than the number of nodes actually built, so a
+     * built count of zero passes every bound test in the traversal.  Test the
+     * built count itself, here, where declining is still free. */
+    if(Numnodestree <= 0 || out->node_base >= out->pseudo_start) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("%s: task %d has %d built tree nodes; a walk from the root has nothing to enter, answering on the host\n",
+                   caller, ThisTask, Numnodestree);
+            fflush(stdout);
+        }
+        return 1;
+    }
+
+    /* ---- Everything above is a CAPABILITY question, answered from state that
+     * already exists: does this rank own particles, is there a mirror, does it
+     * cover what a walk can reach, is there a root to enter.  Everything below
+     * REPAIRS state and is the expensive half.
+     *
+     * The order matters and is not incidental.  A rank that cannot describe its
+     * tree declines, and under the collective vote that decision pulls the WHOLE
+     * call back to Mode A -- so any repair performed before the checks is work
+     * paid for an answer that is then thrown away, on every rank.  Ask first,
+     * repair second.
+     *
+     * Nothing below invalidates the view built above: the drift neither creates
+     * nor destroys particles, and the node sweep writes through the mirror
+     * arrays the view already points at rather than reallocating them. */
+
+    /* The walk reads particle fields and cannot drift a stale one when it gets
+     * there, so they are made current here, once, ahead of any discovery round. */
+    gizmo_full_drift_to(All.Ti_Current);
+    /* The drift publishes its stamp only when it completed with nothing pending, so a
+       stamp short of this time says the pool is not uniform and the walk below cannot
+       assume it is. Declining here is the whole repair: the readiness Allreduce this
+       returns into is collective, so one rank's decline pulls every rank back to the
+       host path together, which drifts what it touches as it goes. No poll is placed
+       here -- the vote immediately downstream already is one. */
+    if(gizmo_full_drift_ti() != All.Ti_Current) {return 1;}
+
+    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
+        /* A host lazy drift already advanced nodes at this time.  The sweep skips
+         * nodes that are current, so their mirrors would stay behind it, and that
+         * state cannot be repaired here.  Expected on some calls rather than
+         * exceptional -- but reported, because the fallback is collective and an
+         * unexplained absence of the device path is indistinguishable from a
+         * device path that ran. */
+        /* A host lazy drift may have advanced nodes at this time without writing
+         * their mirrors.  The ordinary sweep skips such nodes and would leave the
+         * mirrors behind, so ask for the variant that rewrites every mirror.  It
+         * costs a full mirror pass on this call and changes nothing else; a
+         * fused walk is a large-N operation and can afford it, and declining
+         * instead would hand the whole call back to the host for every rank. */
+        if(gpu_force_drift_nodes_ex(All.Ti_Current, /*refresh_mirrors_already_current=*/1) != 0) {
+            static int reported = 0;
+            if(!reported) {
+                reported = 1;
+                printf("%s: task %d could not sweep the node geometry current; this call falls back for every rank\n",
+                       caller, ThisTask);
+                fflush(stdout);
+            }
+            return 1;
+        }
+    }
+
+    return 0;
+}
 
 int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
                             const int *envelope_peer,
@@ -1843,52 +2040,13 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     const long GX_RECV_LEAVES_PER_ENVELOPE = 32;
     if(n_env * GX_RECV_LEAVES_PER_ENVELOPE < (long)num_local) {return 1;}
 
-    /* A tree mirror is required, and it exists whenever a tree does: the build
-     * pipeline that fills it runs inside force_treebuild, which every
-     * configuration performs because neighbour search needs the tree. */
-    const struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-    if(!soa || !soa->center || !soa->len || !soa->sibling || !soa->nextnode ||
-       !soa->bitflags || !soa->nextnode_aux ||
-       All.TreeNodeIndexBase <= 0 || Numnodestree <= 0) {
-        static int reported = 0;
-        if(!reported) {
-            reported = 1;
-            printf("gx_device_receiver_walk: task %d has node geometry certified current but no usable tree mirror; answering on the host\n",
-                   ThisTask);
-            fflush(stdout);
-        }
-        return 1;
-    }
-
-    const int tree_base     = All.TreeNodeIndexBase;
-    const int tree_slots    = All.TreeParticleSlots;
-    const int node_capacity = gpu_gravity_tree_capacity();
-    const int foreign_base  = tree_base + MaxNodes;
-    const int pseudo_start  = tree_base + MaxNodes + MaxForeignNodes;
-    /* The walk may reach any foreign node that was installed, so the mirror has to
-     * cover the foreign slots that have storage behind them -- AllocatedForeignNodes,
-     * this rank's actual import, which is what the mirror is sized to.  NOT
-     * MaxForeignNodes: that is the shared INDEX ceiling used above to place the
-     * pseudo-particle region, it is the worst rank's import rather than this one's,
-     * and no node is ever installed in the gap between the two, so nothing points
-     * there.  Testing the ceiling would decline on every rank whose import is
-     * smaller than the largest, which is nearly all of them.  A short mirror is a
-     * precondition failure, not a malformed tree: decline, and the host answers --
-     * but say so, because a run that quietly answered everything on the host would
-     * otherwise look exactly like a run where the device did the work.  This says
-     * nothing about whether the geometry is current; that is established below. */
-    if(node_capacity < MaxNodes + AllocatedForeignNodes ||
-       soa->nextnode_aux_size < tree_slots + NTopleaves) {
-        static int reported = 0;
-        if(!reported) {
-            reported = 1;
-            printf("gx_device_receiver_walk: task %d tree mirror covers %d nodes and %d particle links, short of the %d nodes and %d links the walk can reach; answering on the host\n",
-                   ThisTask, node_capacity, soa->nextnode_aux_size,
-                   MaxNodes + AllocatedForeignNodes, tree_slots + NTopleaves);
-            fflush(stdout);
-        }
-        return 1;
-    }
+    struct GxDeviceTreeView tree_view;
+    if(gx_device_tree_view_build(&tree_view, num_local, "gx_device_receiver_walk") != 0) {return 1;}
+    const int tree_base     = tree_view.node_base;
+    const int tree_slots    = tree_view.particle_slots;
+    const int node_capacity = tree_view.node_capacity;
+    const int foreign_base  = tree_view.foreign_base;
+    const int pseudo_start  = tree_view.pseudo_start;
 
     /* The traversal reads node geometry, which drifts, so the nodes have to be
      * current before it runs -- the host walk achieves that by drifting each
@@ -2021,12 +2179,12 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         Kokkos::deep_copy(zd, zh);
     }
 
-    const Vec3<MyFloat>  *node_center   = soa->center;
-    const MyFloat        *node_len      = soa->len;
-    const int            *node_sibling  = soa->sibling;
-    const int            *node_nextnode = soa->nextnode;
-    const unsigned int   *node_bitflags = soa->bitflags;
-    const int            *nextnode_aux  = soa->nextnode_aux;
+    const Vec3<MyFloat>  *node_center   = tree_view.node_center;
+    const MyFloat        *node_len      = tree_view.node_len;
+    const int            *node_sibling  = tree_view.node_sibling;
+    const int            *node_nextnode = tree_view.node_nextnode;
+    const unsigned int   *node_bitflags = tree_view.node_bitflags;
+    const int            *nextnode_aux  = tree_view.nextnode_aux;
 
     int status = 0;
 
@@ -2173,7 +2331,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
      * same thing.  Falling back would only hide a malformed tree: the host walk
      * would meet it too. */
     if(anomaly) {
-        printf("gx_device_receiver_walk: task %d walked into the index gap between the particle slots and the node base; the tree is malformed\n",
+        printf("gx_device_receiver_walk: task %d walked into the index gap between the particle slots and the node base, or was handed an incompletely filled tree view; either way the walk cannot answer\n",
                ThisTask);
         fflush(stdout);
         endrun(90001024);
