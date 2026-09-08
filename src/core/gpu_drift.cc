@@ -18,6 +18,12 @@
  * every path that cannot reach the device -- no staging memory, no table mirror --
  * falls back to the host loop and still drifts every particle it was given.
  *
+ * There are two device routes.  In-place runs the body over the canonical arrays
+ * themselves and is used wherever those arrays are device-visible; the staged route
+ * copies compact batches across and answers where they are not.  Both run the same
+ * body on the same particles, and the choice is a property of the allocation model,
+ * not a tuning knob.
+ *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
@@ -148,6 +154,43 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1)
     struct DriftKickTableView tables;
     if(drift_kick_table_mirror_refresh(&drift_kick_table_dev_, &tables) != 0) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
+        return drift_batch_status_();
+    }
+
+    /* Drift the canonical arrays where they already live.  Same body, same particles,
+       same physics as the staged route below -- the difference is that nothing is
+       copied: the index list crosses at 4 bytes per particle instead of a full
+       particle_data + gas_cell_data round trip each way.  Measured on Frontier, the
+       staged round trip is dominated by the host-side gather and scatter of whole
+       structs, which this removes outright rather than making cheaper.
+
+       Legal only under the allocation model that makes the canonical arrays
+       device-visible: allocate.cc serves P and CellP from gpu_particles_uvm_alloc,
+       which allocates in GIZMO_KOKKOS_SHARED_SPACE, and the arena holds an alias of
+       them rather than a copy.  The test is on that model rather than on a pointer,
+       because a pointer carries no record of the space it came from.  Where the model
+       does not hold this block is not entered and the staged route answers, out of
+       buffers it owns. */
+    if(Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace,
+                                  GIZMO_KOKKOS_SHARED_SPACE>::accessible)
+    {
+        int *idx_dev = (int *) gizmo_gpu_alloc_shared((size_t)n_need * sizeof(int), "drift_inplace_idx");
+        if(!idx_dev) {   /* no shared memory for the index list: the particles still
+                            have to be drifted, so the host loop takes them. */
+            drift_particles_host_(needs_drift.data(), n_need, time1);
+            return drift_batch_status_();
+        }
+        memcpy(idx_dev, needs_drift.data(), (size_t)n_need * sizeof(int));
+        /* Captured by value: a lambda reaching for the P/CellP globals would read
+           host memory silently on device. */
+        struct particle_data *kp = P;
+        struct gas_cell_data *kc = CellP;
+        const int *kidx = idx_dev;
+        gizmo_gpu_kernel_launch("drift_particles_inplace", n_need, KOKKOS_LAMBDA(int k) {
+            drift_particle_impl(kidx[k], time1, kp, kc, &tables, &eos_tables);
+        });
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_dev);
+        gpu_particles_arena_invalidate();   /* P/CellP mutated in place; arena stale */
         return drift_batch_status_();
     }
 
