@@ -473,7 +473,7 @@ endif
 ifeq ($(SYSTYPE),"Expanse")
 CC       = mpicc
 CXX      = mpicxx
-OPTIMIZE = -Ofast
+OPTIMIZE = -O3   # not -Ofast: that implies -ffast-math, see the position->key contract in declarations/typedefs.h
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -qopenmp
 endif
@@ -498,7 +498,7 @@ endif
 ifeq ($(SYSTYPE),"MacBookCellar_Kokkos")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++20
-OPTIMIZE = -O3 -funroll-loops -ffast-math -march=native
+OPTIMIZE = -O3 -funroll-loops -march=native   # no -ffast-math: see the position->key contract in declarations/typedefs.h
 OPTIMIZE += -Wno-unused-command-line-argument
 ## OpenMP is required for Kokkos OpenMP backend
 OPTIMIZE += -Xpreprocessor -fopenmp -I/opt/homebrew/opt/libomp/include
@@ -572,7 +572,7 @@ CC       =   mpicc
 ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
 CC       =   mpicxx
 endif
-OPTIMIZE =  -O3 -ffast-math -funroll-loops -march=native -g -Wall
+OPTIMIZE =  -O3 -funroll-loops -march=native -g -Wall   # no -ffast-math: see the position->key contract in declarations/typedefs.h
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
 OPTIMIZE += -fopenmp
 endif
@@ -622,6 +622,7 @@ GRAVITY_OBJS  = gravity/forcetree.o \
                 gravity/pm_nonperiodic.o \
                 gravity/longrange.o \
                 gravity/ags_rkern.o \
+                gravity/star_direct_gravity.o \
                 gravity/let_pack.o
 
 HYDRO_OBJS = 	hydro/hydro_toplevel.o \

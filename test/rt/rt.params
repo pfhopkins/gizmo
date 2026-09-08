@@ -23,9 +23,6 @@ TimeBetSnapshot                    1
 MaxSizeTimestep                    0.1
 DesNumNgb                          20
 % - optional physics parameters (B-field strength)
-BiniX                              0.07
-BiniY                              0
-BiniZ                              0
 ErrTolIntAccuracy                  0.01
 CourantFac                         0.2
 MaxRMSDisplacementFac              0.1

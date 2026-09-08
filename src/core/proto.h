@@ -58,7 +58,7 @@ void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
 double matrix_invert_ndims(double T[3][3], double Tinv[3][3]);
 #ifdef HERMITE_INTEGRATION
-int eligible_for_hermite(int i);
+GIZMO_GPU_FUNCTION int eligible_for_hermite(int i, struct particle_data *pp); /* definition in core/timestep_functions.h (single source of truth) */
 void do_hermite_prediction(void);
 void do_hermite_correction(void);
 #endif
@@ -106,6 +106,17 @@ void execute_resubmit_command(void);
 void make_list_of_active_particles(void);
 void output_extra_log_messages(void);
 
+
+/*! Particles per rank in a balanced split, ROUNDED UP.  A rank has to be able to hold the larger
+    side of a split that does not divide evenly, so the ceiling is the balanced count -- truncating
+    it throws away the remainder before PartAllocFactor is applied, which is invisible at large N
+    and is the whole budget at small N (3 particles on 2 ranks truncates to 1, and no split of 3
+    fits in 1).  Both places that derive the per-rank assignment cap call this. */
+static inline long long balanced_particles_per_rank(long long total, int ntask)
+{
+    if(ntask <= 0) {return total;}
+    return total / (long long) ntask + ((total % (long long) ntask) != 0);   /* not (total+ntask-1)/ntask, which can overflow */
+}
 
 static inline double WRAP_POSITION_UNIFORM_BOX(double x)
 {
@@ -184,6 +195,30 @@ GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, i
     return 0;
 }
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
+
+/* SSOT for reporting a coordinate: the one place that turns the position a particle is held at
+   into the position it is written out at.  Ordinarily they are the same.  Under
+   RANDOMIZE_GRAVTREE_PERIODIC the coordinates sit in a frame that moves at every decomposition,
+   so the frame offset comes back off here and the result is folded into the box, giving the frame
+   the initial conditions were written in.  Every output that reports a position -- snapshots, the
+   sink, formation and supernova detail files, the global centre-of-mass and angular-momentum
+   diagnostics -- goes through this, so that adding another one is a single call rather than a
+   subtraction that is easy to leave out. */
+static inline Vec3<double> gizmo_reported_position(const Vec3<MyDouble> &pos)
+{
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+    Vec3<double> out = Vec3<double>{(double)pos[0], (double)pos[1], (double)pos[2]} - All.RandomShift;
+    const double box[3] = {boxSize_X, boxSize_Y, boxSize_Z};
+    for(int k = 0; k < 3; k++)
+    {
+        while(out[k] < 0) {out[k] += box[k];}
+        while(out[k] >= box[k]) {out[k] -= box[k];}
+    }
+    return out;
+#else
+    return Vec3<double>{(double)pos[0], (double)pos[1], (double)pos[2]};
+#endif
+}
 
 /* SSOT for the gas-cell capacity: CellP[] is indexed by the PARTICLE index, so it must
    span the same index range as P[] whenever any gas exists. Imported ghosts are appended
@@ -787,8 +822,15 @@ void ISMDustChemEvo_check_yields_before_update(double *bin_nums, double *bin_slo
 void update_stellarnumber_and_timedistribofstarformation(void);
 #endif
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+void star_direct_gravity_build_table(void);
+void star_direct_gravity_compute(void);
+void star_direct_gravity_free_table(void);
+#endif
+
 #ifdef SINGLE_STAR_FB_JETS
 double single_star_jet_velocity(int n);
+double single_star_jet_mdot(int n);
 #endif
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
 double single_star_feedback_velocity_fortimestep(int n);

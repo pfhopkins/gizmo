@@ -225,6 +225,14 @@ void init(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         P[i].time_since_last_treeforce = 0;
         P[i].tdyn_step_for_treeforce = 0;
+#endif
+#ifdef HERMITE_INTEGRATION /* the retained start-of-step state, written by the first half-step kick;
+                              set here so an output taken before that kick -- a snapshot conversion
+                              writes one straight after the ICs are read -- predicts from the actual
+                              state rather than from whatever the allocator left behind */
+        P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
+        P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
+        P[i].AccretedThisTimestep = 0;
 #endif        
         
 
@@ -283,6 +291,7 @@ void init(void)
 #endif
 #if defined(SINGLE_STAR_FB_WINDS)
             P[i].wind_mode = 0; // this will make single_star_wind_mdot reset it
+            P[i].wind_mode_time = All.Time; // mode is undefined above, so the hysteresis is skipped on the first evaluation and this only sets the clock for the one after it
             Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(P[i].ID,nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
@@ -642,7 +651,8 @@ void init(void)
             P[i].KernelRadius = 0;
 #endif
 #ifndef INPUT_READ_EOSTEMP
-            CellP[i].Temperature = (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy; /* initialize temperature guess for EOS (fully-ionized primordial monatomic gas); will be recomputed by set_eos_pressure but needed as initial guess for gamma_eos_value() when EOS_SUBSTELLAR_ISM is active */
+            CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; CellP[i].Gamma = GAMMA_DEFAULT; /* the composition half of the pair, set before the temperature that is derived from it */
+            CellP[i].Temperature = CellP[i].gas_temperature_from_u(CellP[i].InternalEnergy); /* initial temperature for the EOS, through the same relation the cache owns, so the cached quadruple is coherent from startup */
 #endif
             CellP[i].Gamma = GAMMA_DEFAULT;
             CellP[i].DtInternalEnergy = 0;
@@ -702,6 +712,13 @@ void init(void)
         /* the cached composition is not carried in snapshots, so seed it on any start that does not
            restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
         if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT;}
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+        /* Anchor whatever temperature this run starts from to the energy it belongs to. A binary restart
+           keeps the stored pair untouched; anything else has just loaded or seeded Temperature, and the
+           predicted energy is the one the anchored read is evaluated against. Without this a snapshot
+           restart would carry a loaded Temperature against a zero anchor and read roughly twice it. */
+        if(RestartFlag != 1) {CellP[i].u_anchor = CellP[i].InternalEnergyPred;}
+#endif
 #ifdef GALSF_SUBGRID_WINDS
         if(RestartFlag == 0) {CellP[i].DelayTime = 0;}
 #if (GALSF_SUBGRID_WIND_SCALING==1)
@@ -1236,6 +1253,7 @@ void setup_smoothinglengths(void)
 #endif
         {
                 no = Father[i];
+                if(no < 0) {no = All.TreeNodeIndexBase;}
                 while(2 * All.DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;
@@ -1340,6 +1358,7 @@ void ags_setup_smoothinglengths(void)
                 if(P[i].Type > 0)
                 {
                     no = Father[i];
+                    if(no < 0) {no = All.TreeNodeIndexBase;}
                     while(10 * All.AGS_DesNumNgb * P[i].Mass > Nodes[no].u.d.mass)
                     {
                         p = Nodes[no].u.d.father;
@@ -1379,6 +1398,7 @@ void disp_setup_smoothinglengths(void)
             if(P[i].Type == 0)
             {
                 no = Father[i];
+                if(no < 0) {no = All.TreeNodeIndexBase;}
                 while(10 * 2.0 * 64 * P[i].Mass > Nodes[no].u.d.mass)
                 {
                     p = Nodes[no].u.d.father;
@@ -1387,7 +1407,7 @@ void disp_setup_smoothinglengths(void)
                 }
                 CellP[i].KernelRadiusDM = pow(1.0/VOLUME_NORM_COEFF_FOR_NDIMS * 2.0 * 64 * P[i].Mass / Nodes[no].u.d.mass, 1.0/NUMDIMS) * Nodes[no].len;
                 double soft = All.ForceSoftening[P[i].Type];
-                if(soft != 0) {if((CellP[i].KernelRadiusDM >1000.*soft)||(P[i].KernelRadius<=0.01*soft)||(Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {CellP[i].KernelRadiusDM = soft;}}
+                if(soft != 0) {if((CellP[i].KernelRadiusDM >1000.*soft)||(CellP[i].KernelRadiusDM<=0.01*soft)||(Nodes[no].u.d.mass<=0)||(Nodes[no].len<=0)) {CellP[i].KernelRadiusDM = soft;}}
             }
         }
     }

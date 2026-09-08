@@ -137,7 +137,6 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const double dc1 = DomainCorner[1];
     const double dc2 = DomainCorner[2];
     const double dlen = DomainLen;
-    const double inv_dlen = (dlen > 0.0) ? (1.0 / dlen) : 0.0;
     const int    bits = BITS_PER_DIMENSION;
 
     /* Zero topleaf bucket counters. */
@@ -155,15 +154,19 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
     Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
         int real = stp ? stp[i] : i;
-        double fx = (P_dev[real].Pos[0] - dc0) * inv_dlen;
-        double fy = (P_dev[real].Pos[1] - dc1) * inv_dlen;
-        double fz = (P_dev[real].Pos[2] - dc2) * inv_dlen;
-        if(fx < 0.0) {fx = 0.0;} if(fx >= 1.0) {fx = 0.99999999999999988897;}
-        if(fy < 0.0) {fy = 0.0;} if(fy >= 1.0) {fy = 0.99999999999999988897;}
-        if(fz < 0.0) {fz = 0.0;} if(fz >= 1.0) {fz = 0.99999999999999988897;}
-        uint64_t ix = gpu_morton_double_to_int42(fx + 1.0);
-        uint64_t iy = gpu_morton_double_to_int42(fy + 1.0);
-        uint64_t iz = gpu_morton_double_to_int42(fz + 1.0);
+        double fx = (dlen > 0.0) ? ((P_dev[real].Pos[0] - dc0) / dlen) : 0.0;
+        double fy = (dlen > 0.0) ? ((P_dev[real].Pos[1] - dc1) / dlen) : 0.0;
+        double fz = (dlen > 0.0) ? ((P_dev[real].Pos[2] - dc2) / dlen) : 0.0;
+        /* Clamp the sum, not the fraction: the key is the mantissa of (frac + 1.0),
+         * and a fraction just under 1.0 can carry that sum up to 2.0, whose mantissa
+         * is zero -- the first cell instead of the last.  See gpu_morton.cc. */
+        double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
+        if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
+        if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
+        if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
+        uint64_t ix = gpu_morton_double_to_int42(sx);
+        uint64_t iy = gpu_morton_double_to_int42(sy);
+        uint64_t iz = gpu_morton_double_to_int42(sz);
 
         Morton128 m;
         peanokey  pkey = gpu_peano_and_morton_key(ix, iy, iz, bits, &m);

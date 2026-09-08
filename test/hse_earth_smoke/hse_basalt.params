@@ -32,7 +32,6 @@ SofteningBulge                     1.0e7
 SofteningStars                     1.0e7
 SofteningBndry                     1.0e7
 
-
 ResubmitOn                         0
 ResubmitCommand                    none
 
@@ -54,5 +53,3 @@ Tillotson_EOS_params_u_s           4.72e10
 Tillotson_EOS_params_u_s_prime     1.82e11
 Tillotson_EOS_params_alpha         5.0
 Tillotson_EOS_params_beta          5.0
-Tillotson_EOS_params_mu            2.27e11
-Tillotson_EOS_params_Y0            3.5e10

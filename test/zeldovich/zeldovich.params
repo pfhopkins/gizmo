@@ -38,10 +38,7 @@ Softening_Type4_MaxPhysLimit       0
 Softening_Type5_MaxPhysLimit       0
 MinGasTemp                         0.001
 CourantFac                         0.2
-ArtCondConstant                    0.25
-ViscosityAMin                      0.025
-ViscosityAMax                      2
-MinGasHsmlFractional               1
+MinGasKernelRadiusFractional       1
 ErrTolIntAccuracy                  0.01
 MaxRMSDisplacementFac              0.1
 ErrTolForceAcc                     0.001

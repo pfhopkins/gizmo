@@ -107,6 +107,9 @@ void sink_environment_second_loop(void);
 /* sink_swallow_and_kick.c */
 void sink_swallow_and_kick_loop(void);
 double target_mass_for_wind_spawning(int i);
+#ifdef SINK_WIND_SPAWN
+double* active_unspawned_mass_ptr(int i);
+#endif
 
 /* sink_feed.c */
 void sink_feed_loop(void);

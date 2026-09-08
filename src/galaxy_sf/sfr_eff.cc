@@ -491,6 +491,12 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef SINK_WIND_SPAWN
                         P[i].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+                        P[i].unspawned_jet_mass = 0; /* slots are reused, so zeroing at allocation is not enough */
+#endif
+#ifdef SINGLE_STAR_FB_WINDS
+                        P[i].wind_mode = 0;                         P[i].wind_mode_time = All.Time; /* the mode is persistent state that the spawning hysteresis reads, so a recycled slot must not inherit the previous star's channel */
+#endif
 #endif
 #ifdef SINK_COUNTPROGS
                         P[i].Sink_CountProgs = 1;
@@ -579,6 +585,12 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef SINK_WIND_SPAWN
                         P[i_star].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+                        P[i_star].unspawned_jet_mass = 0; /* slots are reused, so zeroing at allocation is not enough */
+#endif
+#ifdef SINGLE_STAR_FB_WINDS
+                        P[i_star].wind_mode = 0;                         P[i_star].wind_mode_time = All.Time; /* the mode is persistent state that the spawning hysteresis reads, so a recycled slot must not inherit the previous star's channel */
+#endif
 #endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
                         P[i_star].StarParticleEffectiveSize = DMIN(ForceSoftening_KernelRadius(i) , All.ForceSoftening[4]); // assign an initial effective size here, which corresponds to the minimum of the gas force softening or the stellar constant assignment //
@@ -659,7 +671,8 @@ void star_formation_parent_routine(void)
                                                 + (CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2])*(CellP[i].Gradients.Velocity[2][0]+CellP[i].Gradients.Velocity[0][2]) + (CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])*(CellP[i].Gradients.Velocity[2][1]+CellP[i].Gradients.Velocity[1][2])) +
                                        (2./3.)*((CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[0][0] + CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[2][2]*CellP[i].Gradients.Velocity[2][2]) - (CellP[i].Gradients.Velocity[1][1]*CellP[i].Gradients.Velocity[2][2] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[1][1] + CellP[i].Gradients.Velocity[0][0]*CellP[i].Gradients.Velocity[2][2]))) * All.cf_a2inv*All.cf_a2inv;
                             // saves at formation sink properties in a table: 0:Time 1:ID 2:Mass 3-5:Position 6-8:Velocity 9-11:Magnetic field 12:Internal energy 13:Density 14:cs_effective 15:particle size 16:local surface density 17:local velocity dispersion 18: distance to closest BH
-                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, P[i].Pos[0], P[i].Pos[1], P[i].Pos[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, CellP[i].effective_soundspeed() , P[i].Get_Particle_Size() * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
+                            Vec3<double> pos_reported = gizmo_reported_position(P[i].Pos);
+                            fprintf(FdSinkFormationDetails,"%.16g %llu %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g %g \n", All.Time, (unsigned long long)P[i].ID, P[i_star].Mass, pos_reported[0], pos_reported[1], pos_reported[2],  P[i].Vel[0], P[i].Vel[1],P[i].Vel[2], tempB[0], tempB[1], tempB[2], CellP[i].InternalEnergyPred, CellP[i].Density * All.cf_a3inv, CellP[i].effective_soundspeed() , P[i].Get_Particle_Size() * All.cf_atime, NH, dv2_abs, P[i].Min_Distance_to_Sink ); fflush(FdSinkFormationDetails);
 #endif
                         }
 #endif // SINGLE_STAR_SINK_DYNAMICS

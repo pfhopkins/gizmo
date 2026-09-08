@@ -41,8 +41,6 @@ SinkEddingtonFactor                 1e3
 % RT_SPEEDOFLIGHT_REDUCTION=0.001: aggressive RSOL to ensure field propagates
 % within a few steps; safe for short activation test (not a physical RT test).
 % -- platform/runtime options
-ParticleNumberMembalance_Limit      3.5
-TreeAllocFactor                     10.0
 DomainBuild_ActiveFraction          0.002
 Effective_Kernel_NeighborNumber     32
 MaxSimulationWallTime_in_Seconds    1e9

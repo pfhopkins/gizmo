@@ -254,7 +254,7 @@ void restart(int modus)
 	      const int factor_was_raised = (save_PartAllocFactor > All.PartAllocFactor);
 	      All.PartAllocFactor = save_PartAllocFactor;
 
-	      long long cap_wanted = (long long) (All.PartAllocFactor * (All.TotNumPart / NTask));
+	      long long cap_wanted = (long long) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));
 	      if(cap_wanted < 1) {cap_wanted = 1;}
 
 	      /* The run's capacity ceiling was fixed when the ICs were read and travels in the restart
@@ -552,6 +552,23 @@ void restart(int modus)
 	      byten(DomainCenter, 3 * sizeof(double), modus);
 	      byten(&DomainLen, sizeof(double), modus);
 	      byten(&DomainFac, sizeof(double), modus);
+
+	      if(modus)		/* read */
+		{
+		  /* Extnodes[].Flag is serialized just above; GlobFlag, the counter it is compared
+		     against, is a plain global and is not. A resume restarts the counter at 0 while the
+		     nodes still carry markers from the previous run, so a node whose stored Flag happens
+		     to equal an early counter value reads as already-visited and is skipped when
+		     force_update_tree() collects the top-level nodes it has to communicate.
+		     Flag is only ever a within-pass marker -- every use is
+		     `if(Flag != GlobFlag) {Flag = GlobFlag; ...}` straight after a GlobFlag++ -- so any
+		     state in which no Flag equals the current counter is valid, and clearing them is
+		     enough. Seeding GlobFlag from max(Flag) instead would read entries the build never
+		     wrote and can push the counter near INT_MAX, where ++ overflows within a few passes. */
+		  int ivm;
+		  for(ivm = 0; ivm < Numnodestree; ivm++) {Extnodes_base[ivm].Flag = 0;}
+		  GlobFlag = 0;
+		}
 	    }
 
 	finish_turn:

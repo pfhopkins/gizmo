@@ -40,6 +40,31 @@
 
 #ifdef SINK_WIND_SPAWN
 #define MASS_THRESHOLD_FOR_WINDPROMO(i) (DMAX(5.*target_mass_for_wind_spawning(i),0.25*All.MaxMassForParticleSplit))
+#ifndef SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST
+#define SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST (1.0)
+#endif
+#ifndef MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION
+#define MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION (0.5)
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+/*! Fraction of the energy involved in a candidate merger which is kinetic, KE_com/(KE_com+E_light).
+    A merge conserves momentum but not energy: it thermalizes KE_com = (1/2)*mu*|dv|^2, which cooling
+    then radiates away, so where that dominates the merge acts as an unresolved shock. Normalized to
+    the thermal plus magnetic energy of the LIGHTER cell, the one destroyed; normalizing to the pair
+    total would let the heavier target dominate and weaken the test by the mass ratio. */
+static inline double merge_kinetic_dissipation_fraction(int i, int j)
+{
+    double mi = P[i].Mass, mj = P[j].Mass; if((mi <= 0) || (mj <= 0)) {return 0;}
+    Vec3<MyDouble> dvel = P[i].Vel; dvel -= P[j].Vel;
+    double ke_com = 0.5 * (mi*mj/(mi+mj)) * dvel.norm_sq() * All.cf_a2inv; /* physical; what the merge dissipates */
+    if(!(ke_com > 0)) {return 0;}
+    int l = (mi <= mj) ? i : j; double m_l = (mi <= mj) ? mi : mj; /* the lighter cell is the one destroyed */
+    double vA_l = CellP[l].Alfven_speed(); /* zero without MAGNETIC */
+    double e_light = m_l * (CellP[l].InternalEnergyPred + 0.5*vA_l*vA_l);
+    if(!(e_light > 0)) {return 1;} /* nothing to compare against: purely kinetic */
+    return ke_com / (ke_com + e_light);
+}
+#endif
 #endif /* define a mass threshold for this model above which a 'hyper-element' has accreted enough to be treated as 'normal' */
 
 
@@ -445,6 +470,29 @@ void merge_and_split_particles(void)
             if (ms_src_kind[aa] == 1) {
                 target_for_merger = -1;
                 threshold_val = MAX_REAL_NUMBER;
+#ifdef SINK_WIND_SPAWN
+                const int is_spawned_i = (P[i].ID==All.SpawnedWindCellID && P[i].Type==0);
+#ifdef SINK_SPAWN_MERGE_WHEN_AMBIENT
+                /* Judge retirement against the bulk flow the cell is joining rather than against
+                   whichever single neighbour happens to be picked as the merge target. Spawned cells are
+                   excluded from the average: a jet cell among jet cells is still resolving the outflow. */
+                Vec3<double> v_ambient = {0,0,0}; double m_ambient=0, cs_ambient=0, lnu_ambient=0;
+                if (is_spawned_i) {
+                    for (int64_t na = nl_start; na < nl_end; na++) {
+                        int j_amb = gnl_neighbors[na];
+                        if ((j_amb < 0) || (j_amb == i) || (j_amb >= local_count)) {continue;}
+                        if ((P[j_amb].Type != 0) || (P[j_amb].Mass <= 0)) {continue;}
+                        if (P[j_amb].ID == All.SpawnedWindCellID) {continue;} /* ambient means non-spawned gas */
+                        double w = P[j_amb].Mass;
+                        for (int kv = 0; kv < 3; kv++) {v_ambient[kv] += w * P[j_amb].Vel[kv];}
+                        cs_ambient += w * CellP[j_amb].effective_soundspeed();
+                        lnu_ambient += w * log(DMAX(CellP[j_amb].InternalEnergyPred, MIN_REAL_NUMBER));
+                        m_ambient += w;
+                    }
+                    if (m_ambient > 0) {for (int kv = 0; kv < 3; kv++) {v_ambient[kv] /= m_ambient;} cs_ambient /= m_ambient; lnu_ambient /= m_ambient;}
+                }
+#endif
+#endif
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
                     j = gnl_neighbors[nn];
                     if (j >= local_count) continue; /* skip ghosts (local-only merge) */
@@ -480,6 +528,37 @@ void merge_and_split_particles(void)
                         }}
 #endif
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
+#ifdef SINK_SPAWN_MERGE_WHEN_AMBIENT
+                    /* Retire a spawned cell only once it has actually joined the ambient medium, rather
+                       than as soon as its velocity relative to one neighbour drops below that neighbour's
+                       sound speed. The target must be normal gas, and the cell must be subsonic with
+                       respect to the ambient bulk flow AND thermally equilibrated with it. Subsonic alone
+                       is not enough: a contact discontinuity is in pressure equilibrium with no velocity
+                       jump, so outflow material sitting at the contact passes every kinematic test while
+                       remaining a distinct phase. The thermal test compares specific internal energy and
+                       not an entropic function, which is only a state function for a single-gamma ideal
+                       gas; here gamma varies with composition and temperature. */
+                    if (is_spawned_i && do_allow_merger) {
+                        if (P[j].ID == All.SpawnedWindCellID) {do_allow_merger = 0;}
+                        else if (!(m_ambient > 0)) {do_allow_merger = 0;} /* still buried inside the outflow */
+                        else {
+                            Vec3<double> dv_amb; for (int kv = 0; kv < 3; kv++) {dv_amb[kv] = P[i].Vel[kv] - v_ambient[kv];}
+                            if (dv_amb.norm()*sqrt(All.cf_a2inv) > cs_ambient) {do_allow_merger = 0;}
+                            else if (fabs(log(DMAX(CellP[i].InternalEnergyPred, MIN_REAL_NUMBER)) - lnu_ambient) > SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST) {do_allow_merger = 0;}
+                        }
+                    }
+#endif
+#ifdef MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+                    /* Do not retire a spawned cell into a target if that would convert the majority of the
+                       energy involved from kinetic into heat, which cooling then radiates: such a merge is
+                       an artificial unresolved shock, and vetoing it lets the solver follow the shock.
+                       Deliberately confined to spawned cells. De-refinement elsewhere is a resolution
+                       policy, and applying a kinematic veto to it would suppress de-refinement wherever
+                       these feedback modules happen to be compiled in. */
+                    if (do_allow_merger && is_spawned_i && (P[j].Type == 0) && (P[j].Mass > 0)) {
+                        if (merge_kinetic_dissipation_fraction(i,j) > MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION) {do_allow_merger = 0;}
+                    }
+#endif
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
 #ifdef HYDRO_MULTIFLUID
@@ -983,22 +1062,35 @@ int merge_particles_ij(int i, int j)
     Vec3<double> dp = P[j].Pos - P[i].Pos;
     nearest_xyz(dp,-1);
     Vec3<double> pos_new = P[i].Pos + dp * wt_j;
-    Vec3<double> dr_j = (P[i].Pos + dp - pos_new) * All.cf_atime; // displacement of j relative to new pos (physical)
-    Vec3<double> dr_i = (P[i].Pos - pos_new) * All.cf_atime;       // displacement of i relative to new pos (physical)
 
     egy_old += mtot*wt_j * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (j) //
     egy_old += mtot*wt_i * 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (i) //
-    // gravitational energy terms need to be added (including work for moving particles 'together') //
-    // Egrav = m*g*h = m * (-grav_acc) * (position relative to zero point) //
-    egy_old -= mtot*wt_j * dot(dr_j, P[j].GravAccel) * All.cf_a2inv; // work (j) //
-    egy_old -= mtot*wt_i * dot(dr_i, P[i].GravAccel) * All.cf_a2inv; // work (i) //
-#ifdef PMGRID
-    egy_old -= mtot*wt_j * dot(dr_j, P[j].GravPM) * All.cf_a2inv; // work (j) [PMGRID] //
-    egy_old -= mtot*wt_i * dot(dr_i, P[i].GravPM) * All.cf_a2inv; // work (i) [PMGRID] //
-#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    CellP[j].GravWorkTerm = {}; // since we're accounting for the work above and dont want to accidentally double-count //
+    CellP[j].GravWorkTerm = {}; /* this accumulates per-pair over a hydro pass, so once a merge changes the cell's mass and identity it describes neither parent. The split path zeroes it on both cells for the same reason; keeping only the survivor's while dropping the other's would be arbitrary */
 #endif
+
+    /* Internal + kinetic only. The work done relocating the pair to the merged position is deliberately
+       NOT included: it would be built from GravAccel, which is not purely gravitational -- depending on
+       the build it also carries radiation pressure and other forces -- so treating that dot product as
+       gravitational work and thermalizing it is wrong. The relocation is small in any case, and a merged
+       pair's mutual self-gravity is negligible by construction, since merging never applies to a bound
+       pair such as a binary. */
+
+    /* The same accounting for the PREDICTED state, which carries its own (VelPred, InternalEnergyPred)
+       pair and is mass-weighted separately below, so the true-state residual does not balance it. The
+       hydro builds its fluxes from the predicted state, so an error there propagates. Captured here,
+       before the assignments below overwrite VelPred/InternalEnergyPred. */
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    /* the pair's temperature at the mass-mixed energy, taken from both parents' anchored states before
+       anything below overwrites them. Each parent is evaluated at its OWN predicted energy rather than
+       read straight off .Temperature: the survivor can be inactive with a many-step-old anchor, and
+       reading the cached value alone would silently drop the excursion since it was set. */
+    double T_mixed_for_anchor = wt_j*CellP[j].gas_temperature_at_u(CellP[j].InternalEnergyPred)
+                              + wt_i*CellP[i].gas_temperature_at_u(CellP[i].InternalEnergyPred);
+#endif
+    double egy_old_pred = mtot * (wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred);
+    egy_old_pred += mtot*wt_j * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_old_pred += mtot*wt_i * 0.5 * CellP[i].VelPred.norm_sq() * All.cf_a2inv;
 
 
     CellP[j].InternalEnergy = wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy;
@@ -1047,11 +1139,27 @@ int merge_particles_ij(int i, int j)
 #endif
 #endif
 
-    /* correct our 'guess' for the internal energy with the residual from exact energy conservation */
+    /* correct our 'guess' for the internal energy with the residual from exact energy conservation.
+       The merge sets the new velocity momentum-conservingly, so the pair's COM-frame kinetic energy
+       (1/2)*mu*|dv|^2 leaves the kinetic budget; returning it here as heat is what makes the operation
+       energy-conserving. */
     double egy_new = mtot * CellP[j].InternalEnergy + mtot * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv;
     egy_new = (egy_old - egy_new) / mtot; /* this residual needs to be put into the thermal energy */
     if(egy_new < -0.5*CellP[j].InternalEnergy) egy_new = -0.5 * CellP[j].InternalEnergy;
-    //CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new;//test during splits
+    double egy_new_pred = mtot * CellP[j].InternalEnergyPred + mtot * 0.5 * CellP[j].VelPred.norm_sq() * All.cf_a2inv;
+    egy_new_pred = (egy_old_pred - egy_new_pred) / mtot;
+    if(egy_new_pred < -0.5*CellP[j].InternalEnergyPred) egy_new_pred = -0.5 * CellP[j].InternalEnergyPred;
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    double u_mixed_for_anchor = CellP[j].InternalEnergyPred; /* the mass-mixed predicted energy, before the residual below moves it */
+#endif
+    CellP[j].InternalEnergy += egy_new; CellP[j].InternalEnergyPred += egy_new_pred;
+#ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
+    /* Anchor the merged cell at the mixed state, NOT at the post-residual energy: the residual is the
+       merge's thermalized kinetic energy, and leaving it outside the anchor is what lets the anchored
+       read report the temperature rise it causes. The next cooling or EOS solve replaces this local
+       estimate with an exact thermochemical state and re-anchors there. */
+    CellP[j].Temperature = T_mixed_for_anchor; CellP[j].u_anchor = u_mixed_for_anchor;
+#endif
     if(CellP[j].InternalEnergyPred<0.5*CellP[j].InternalEnergy) CellP[j].InternalEnergyPred=0.5*CellP[j].InternalEnergy;
 
 

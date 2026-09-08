@@ -22,11 +22,13 @@ M_PROTON_G = 1.6726e-24
 PC_IN_CM = 3.0857e18
 MSUN_IN_G = 1.989e33
 
+RES = 128
 
-def make_wind_singlestar_ics(output_file="wind_singlestar_ics.hdf5"):
+
+def make_wind_singlestar_ics(output_file="wind_singlestar_ics.hdf5", res=RES):
     # Download glass file for particle positions
-    glass_url = "https://users.flatironinstitute.org/~mgrudic/glass/glass_64.hdf5"
-    glass_file = os.path.join(os.path.dirname(output_file) or ".", "glass_64.hdf5")
+    glass_url = f"https://users.flatironinstitute.org/~mgrudic/glass/glass_{res}.hdf5"
+    glass_file = os.path.join(os.path.dirname(output_file) or ".", f"glass_{res}.hdf5")
     if not os.path.exists(glass_file):
         print(f"Downloading {glass_url}...")
         urllib.request.urlretrieve(glass_url, glass_file)
@@ -39,7 +41,7 @@ def make_wind_singlestar_ics(output_file="wind_singlestar_ics.hdf5"):
     M_gas_total = 50000.0  # Msun
     n_H = 100.0  # cm^-3
     rho_cgs = n_H * M_PROTON_G / X_H  # g/cm^3
-    rho_code = rho_cgs * (PC_IN_CM ** 3) / MSUN_IN_G  # Msun/pc^3
+    rho_code = rho_cgs * (PC_IN_CM**3) / MSUN_IN_G  # Msun/pc^3
     box_volume = M_gas_total / rho_code  # pc^3
     BoxSize = box_volume ** (1.0 / 3.0)  # pc
     m_gas = M_gas_total / Ngas

@@ -467,6 +467,12 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
 
 
+/* Safety factor on the two-body sink timestep. A Hermite-eligible particle divides it back out: the
+   4th-order integrator tolerates the longer step that these 2nd-order-calibrated coefficients shorten. */
+#ifndef SINK_TIMESTEP_SAFETY_FACTOR
+#define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
+#endif
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
     double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
@@ -478,6 +484,11 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     P[p].tdyn_step_for_treeforce = dt_tidal; // hang onto this to decide how frequently to update the treeforce
 #endif
+#ifdef HERMITE_INTEGRATION
+    /* divide out the second-order margin, as the two-body criterion below does. After the tree-update
+       cadence above, which wants the unscaled dynamical estimate rather than the integrator's step. */
+    if(eligible_for_hermite(p, P)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+#endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     if(P[p].SuperTimestepFlag>=2) {dt_tidal = sqrt(2*All.ErrTolIntAccuracy) * P[p].COM_dt_tidal;}
@@ -488,9 +499,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef SINGLE_STAR_TIMESTEPPING // this ensures that binaries advance in lock-step, which gives superior conservation
     if(P[p].Type == 5)
     {
-        double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * 0.3 / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
+        double dt_2body = sqrt(2*All.ErrTolIntAccuracy) * SINK_TIMESTEP_SAFETY_FACTOR / (1./P[p].Min_Sink_Approach_Time + 1./P[p].Min_Sink_Freefall_time); // timestep is harmonic mean of freefall and approach time
 #ifdef HERMITE_INTEGRATION
-        if(eligible_for_hermite(p)) dt_2body /= 0.3;
+        if(eligible_for_hermite(p, P)) dt_2body /= SINK_TIMESTEP_SAFETY_FACTOR;
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
     	if(P[p].is_in_a_binary && (P[p].SuperTimestepFlag >= 2)) //binary candidate or a confirmed binary
@@ -511,7 +522,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         dt = DMIN(dt, dt_2body);
 #ifdef HERMITE_INTEGRATION
-        if(eligible_for_hermite(p)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
+        if(eligible_for_hermite(p, P)) dt *= 1.4; // gives 10^-6 energy error per orbit for a 0.9 eccentricity binary
 #endif
     }
 #if defined(SINGLE_STAR_FB_TIMESTEPLIMIT) && !defined(SELFGRAVITY_OFF)
@@ -1486,9 +1497,9 @@ void process_wake_ups(void)
 	 * bin already in flight, preventing the multiplicative cascade while
 	 * preserving legitimate hydro-style subcycle wakeups in [floor, max]. */
 	int local_lowest_occupied_active_bin = TIMEBINS;
-	for(n = 0; n < TIMEBINS; n++) {
-	    if(TimeBinActive[n] && TimeBinCount[n] > 0) {
-	        local_lowest_occupied_active_bin = n;
+	for(int nb = 0; nb < TIMEBINS; nb++) {   /* own index: n is the woken-particle counter, zeroed above */
+	    if(TimeBinActive[nb] && TimeBinCount[nb] > 0) {
+	        local_lowest_occupied_active_bin = nb;
 	        break;
 	    }
 	}
@@ -1550,8 +1561,7 @@ void process_wake_ups(void)
 
 	    if(bin != binold)
 	    {
-		integertime dt_0 = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
-		integertime tstart = P[i].Ti_begstep + dt_0;
+		integertime tstart = P[i].Ti_begstep + P[i].integertime_step(); /* the step this particle is actually on, which a previous demotion may have truncated below its bin length */
 		integertime t_2 = P[i].Ti_current;
 		if(t_2 > tstart) {tstart = t_2;}
 		integertime tend = All.Ti_Current;
@@ -1585,15 +1595,22 @@ void process_wake_ups(void)
         if(TimeBinActive[bin]) {NumForceUpdate++;}
 		n++;
 
-		/* reverse part of the last second-half kick this particle received
-		   (to correct it back to its new active time) */
-		if(tend < tstart)
+		/* The kick this particle already received covers past the time it is being woken to. Do NOT
+		   try to reverse it: re-deriving the increment with reversed bounds would only cancel the
+		   original if the acceleration and energy rate were unchanged since, and they are not, so it
+		   injects energy instead. Saitoh & Makino (2009) eq (3) avoids integrating the system backwards
+		   for exactly this reason and instead sets the new time consistent with the system time, which
+		   is what the truncation below does. */
+		if(tend < tstart) {set_predicted_quantities_for_extra_physics(i);}
+		/* End the step at the current system time, so the interval the applied kick already covered is
+		   not integrated twice. dt_step stays authoritative, but is no longer a power-of-two bin length
+		   and so deliberately disagrees with TimeBin: a step must be read from integertime_step(), never
+		   derived from the bin. */
 		{
-		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
-		    set_predicted_quantities_for_extra_physics(i);
+		    integertime dt_truncated = All.Ti_Current - P[i].Ti_current;
+		    if(dt_truncated > 0) {P[i].Ti_begstep = P[i].Ti_current; P[i].dt_step = dt_truncated;}
+		    else {P[i].Ti_begstep = All.Ti_Current; P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);}
 		}
-		P[i].Ti_begstep = All.Ti_Current;
-		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
         /* a wakeup starts a new step for this particle, so freeze its dilation factor at the
            position it now holds, as a normal timestep assignment would. This must follow the

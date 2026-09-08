@@ -45,8 +45,12 @@ def _variant_label(extra_config_flags):
 
 
 def _load_shu_data(f):
-    code_to_evcm3 = (u.m**2 / u.s**2 * u.Msun / u.pc**3).to(u.eV / u.cm**3)
     with h5py.File(f, "r") as F:
+        # code energy density -> eV/cm^3. The velocity unit is read per file rather
+        # than hardcoded, so the reference solution (written when code velocities were
+        # m/s) stays comparable with runs in the current km/s units.
+        v_unit = float(F["Header"].attrs["UnitVelocity_In_CGS"]) * u.cm / u.s
+        code_to_evcm3 = (v_unit**2 * u.Msun / u.pc**3).to_value(u.eV / u.cm**3)
         rho = F["PartType0/Density"][:]
         d = {
             "xe": F["PartType0/ElectronAbundance"][:],

@@ -16,6 +16,7 @@
 #include "let_data.h"   /* LET wire format + per-rank payload structs */
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_indices */
 #include "../mesh/nlr_radius_policy.h" /* SSOT helper for force_hmax_per_type_particle_radius */
+#include "../core/timestep_functions.h" /* Hermite source eligibility + prediction, inline (a cross-TU call here costs ~16% of the walk) */
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
 #endif
@@ -395,13 +396,20 @@ let_build_attempt:
      * A LET_OVERFLOW_RETRYABLE on any rank triggers an arena grow + full rebuild.
      * Deciding globally keeps every rank on the same path (downstream + retry are
      * collective). */
-    int overflow_local = (let_status == LET_OVERFLOW_RETRYABLE);
-    int hardfail_local = (let_status == LET_PACK_OOM) || (let_status == LET_ARENA_SHORT) || (let_status == LET_FOREIGN_STORAGE_SHORT) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
-    int overflow_any = 0, hardfail_any = 0;
+    int flags_local[3], flags_any[3] = {0, 0, 0};
+    flags_local[0] = (let_status == LET_OVERFLOW_RETRYABLE);
+    flags_local[1] = (let_status == LET_PACK_OOM) || (let_status == LET_ARENA_SHORT) || (let_status == LET_FOREIGN_STORAGE_SHORT) || (let_status == LET_UNPACK_INTERNAL) || (pseudo_status != 0);
+    /* Whether this is a build over the whole particle set, for the integrity check at the end.
+       It rides here rather than in its own reduction, and must be reduced UNCONDITIONALLY: the
+       predicate is rank-local, and SUBFIND calls force_treebuild(NumPartGroup, NULL) after an
+       exchange that leaves NumPart unequal across ranks, so testing it before deciding to
+       communicate would have some ranks reduce while their peers did not, offsetting every later
+       collective. Any rank answering "not the whole set" vetoes, hence MAX of the negation. */
+    flags_local[2] = (mp == NULL && npart == NumPart) ? 0 : 1;
     long long need_max = 0;
-    MPI_Allreduce(&overflow_local, &overflow_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    MPI_Allreduce(&hardfail_local, &hardfail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    MPI_Allreduce(flags_local, flags_any, 3, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     MPI_Allreduce(&foreign_needed, &need_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    int overflow_any = flags_any[0], hardfail_any = flags_any[1], not_whole_tree_any = flags_any[2];
 
     if(hardfail_any)
     {
@@ -470,6 +478,27 @@ let_build_attempt:
         let_finalize_unredirected_foreign_topleaves();
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
     }
+    /* Tree-integrity invariant. The root node's count is re-accumulated across foreign domains
+       above, so after the resum it must equal the global particle number. A particle inserted
+       under a top node owned by another task is detached and then appears in NO rank's tree:
+       absent from every multipole moment, contributing to no force, and otherwise silent. The
+       test is on the count rather than the mass because node masses are MyFloat, so one particle
+       lost in a million falls below the accumulated summation error. Warn rather than abort, so a
+       false positive cannot kill a long run. Group finding builds over subsets, whose root
+       legitimately holds fewer, hence the veto reduced above. */
+    if(!not_whole_tree_any)
+    {
+        long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;
+        if(in_tree != (long long) All.TotNumPart && ThisTask == 0)
+        {
+            printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld. "
+                   "Particles missing from the tree contribute to no rank's multipole moments, so the "
+                   "forces on everything else are wrong by their mass.\n",
+                   in_tree, (long long) All.TotNumPart);
+            fflush(stdout);
+        }
+    }
+
     TimeOfLastTreeConstruction = All.Time;
     g_force_treebuild_generation++;   /* topology + Father[] + node structure changed */
     return Numnodestree;
@@ -762,7 +791,7 @@ struct DomainNODE
 #ifdef SINK_CALC_DISTANCES
         MyFloat sink_mass;
         Vec3<MyFloat> sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
         int N_SINK;
         Vec3<MyFloat> sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -852,7 +881,7 @@ void force_exchange_pseudodata_issue(void)
 #ifdef SINK_CALC_DISTANCES
             DomainMoment[i].sink_mass = Nodes[no].sink_mass;
             DomainMoment[i].sink_pos = Nodes[no].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
             DomainMoment[i].sink_vel = Nodes[no].sink_vel;
             DomainMoment[i].N_SINK = Nodes[no].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -973,7 +1002,7 @@ int force_exchange_pseudodata_complete(void)
 #ifdef SINK_CALC_DISTANCES
                     Nodes[no].sink_mass = DomainMoment[i].sink_mass;
                     Nodes[no].sink_pos = DomainMoment[i].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
                     Nodes[no].sink_vel = DomainMoment[i].sink_vel;
                     Nodes[no].N_SINK = DomainMoment[i].N_SINK;
 #ifdef SPECIAL_POINT_MOTION
@@ -1052,7 +1081,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
     MyFloat sink_mass=0;
     Vec3<MyFloat> sink_pos_times_mass = {};
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     Vec3<MyFloat> sink_mom = {};
     int N_SINK = 0;
 #ifdef SPECIAL_POINT_MOTION
@@ -1117,7 +1146,7 @@ void force_treeupdate_pseudos(int no)
 #ifdef SINK_CALC_DISTANCES
             sink_mass += Nodes[p].sink_mass;
             sink_pos_times_mass += Nodes[p].sink_mass * Nodes[p].sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
             N_SINK += Nodes[p].N_SINK;
             sink_mom += Nodes[p].sink_mass * Nodes[p].sink_vel;
 #ifdef SPECIAL_POINT_MOTION
@@ -1144,7 +1173,14 @@ void force_treeupdate_pseudos(int no)
             }
             if(Extnodes[p].vmax > vmax) {vmax = Extnodes[p].vmax;}
             if(Extnodes[p].divVmax > divVmax) {divVmax = Extnodes[p].divVmax;}
-            if(Nodes[p].u.d.mass > 0) {count_particles += Nodes[p].N_part;} // saved, so directly add
+            /* Count every particle, including those whose mass is zero (swallowed sinks awaiting
+               cleanup). The device moment kernel counts them unconditionally, so gating here made
+               the same tree report two different root counts depending on which path built it, and
+               with it two different BITFLAG_MULTIPLEPARTICLES: a zero-mass node holding two
+               particles read as single-particle, which the LET packer resolves by shipping one
+               particle's leaf identity for the pair. N_part also divides node mass for the
+               dynamical-friction effective mass, which diverged the same way. */
+            count_particles += Nodes[p].N_part;
             if(Nodes[p].maxsoft > maxsoft) {maxsoft = Nodes[p].maxsoft;}
         }
         else
@@ -1234,13 +1270,13 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef SINK_CALC_DISTANCES
     Nodes[no].sink_mass = sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     Nodes[no].N_SINK = N_SINK;
 #endif
     if(sink_mass > 0)
     {
         Nodes[no].sink_pos = sink_pos_times_mass / sink_mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
         Nodes[no].sink_vel = sink_mom / sink_mass;
 #if defined(SPECIAL_POINT_MOTION)
         Nodes[no].sink_acc = sink_force / sink_mass;
@@ -1699,16 +1735,38 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         }
                     }
                 }
-                dr = P[no].Pos - pos;
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+                   here as well would double every such force */
+                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+#endif
+                /* the source state this interaction is evaluated at, which is the drifted state
+                   except where the Hermite predictor below replaces it */
+                Vec3<double> src_pos = P[no].Pos;
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)   /* HERMITE_INTEGRATION defines the former, so src_vel exists whenever the predictor does */
+                Vec3<double> src_vel = P[no].Vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+                /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
+                   step is second-order wrong where it stands; evaluate it from its own start-of-step
+                   state instead. Single sources only: one absorbed into a node multipole still
+                   contributes from the node's drifted centre of mass. Under
+                   SINGLE_STAR_DIRECT_GRAVITY_RADIUS the close star pairs this matters most for are
+                   force-opened to singles and so do take this branch. Nothing is written back. */
+                if(hermite_source_needs_prediction(no, P, HermiteWalk)) {
+                    hermite_predict_source_state(no, P, HermiteWalk, &HermiteWalkTables, src_pos, src_vel);
+                }
+#endif
+                dr = src_pos - pos;
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 mass = P[no].Mass;
-                
+
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-                r_source = grav_spherical_symmetry_r_from_center(P[no].Pos[0],P[no].Pos[1],P[no].Pos[2],center[0],center[1],center[2]);
+                r_source = grav_spherical_symmetry_r_from_center(src_pos[0],src_pos[1],src_pos[2],center[0],center[1],center[2]);
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                dv = P[no].Vel - vel;
+                dv = src_vel - vel;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
@@ -1733,7 +1791,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #if defined(SINGLE_STAR_TIMESTEPPING)
                     prox_target.vel = vel;
 #endif
-                    grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = P[no].Vel;
+                    grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
                     prox_src.motion.acc = P[no].Acc_Total_PrevStep;
 #endif
@@ -1874,6 +1932,12 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * below and the acceptance predicate further down consult this one answer, so no
                  * path can follow nextnode on a node whose children the sender never sent. */
                 grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
+                   supplies every star-star pair exactly. Nodes made entirely of stars therefore have
+                   nothing left for us; skip them here, before the drift and the opening criteria below. */
+                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;}
+#endif
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
                 {
@@ -1901,7 +1965,28 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     }
                 }
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                /* Remove the sinks from this node for a star target: star-star pairs come exactly from
+                   star_direct_gravity_compute(), so taking them here too would double them. This tree
+                   carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
+                   so the subtraction is exact rather than approximate: drop the sink mass and move the
+                   center of mass to that of what remains. Both terms are on the same clock, since
+                   SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
+                   with vs -- which is also why this sits after force_drift_node above. Doing it this way
+                   means a star target keeps the ordinary O(log N) walk; the alternative, opening every
+                   node containing a star, costs an extra O(N_star log N) node visits per star target.
+                   mass is reduced before the opening criteria below, so they judge the node on the mass
+                   actually being used. Pure-star nodes were already skipped above. */
+                if((ptype == 5) && (nop->sink_mass > 0))
+                {
+                    double mass_nosink = mass - nop->sink_mass;
+                    dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                    mass = mass_nosink;
+                }
+                else {dr = nop->u.d.s - pos;}
+#else
                 dr = nop->u.d.s - pos;
+#endif
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
                 /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
@@ -3437,6 +3522,9 @@ void force_refresh_node_moments(void)
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
             Extnodes[no].dp_dm = {};
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+            Extnodes[no].sink_dp = {};   /* sink_pos/sink_vel are set fresh by the moment pass */
 #endif
         }
         /* Rank-local GPU refresh steps: on failure set a soft bad-stop and

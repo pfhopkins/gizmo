@@ -115,13 +115,13 @@ struct gpu_gravity_tree_soa_t {
 #ifdef SINK_CALC_DISTANCES
     MyGravFloat       *sink_mass;
     Vec3<MyGravFloat> *sink_pos;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     Vec3<MyGravFloat> *sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
     Vec3<MyGravFloat> *sink_acc;
 #endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION)
+#if defined(SINK_NODE_MOTION_TRACKED)
     int            *N_SINK;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
@@ -196,6 +196,9 @@ int gpu_gravity_tree_valid(void);
  * nonzero on internal error (SoA not ready). */
 int gpu_force_drift_nodes(integertime time1);
 void gpu_force_drift_release(void);
+#ifdef HERMITE_INTEGRATION
+void gpu_gravtree_hermite_release(void);   /* frees the drift/kick table mirror the Hermite source prediction reads */
+#endif
 
 /* Pure O(1) READ-ONLY query: is the SoA+AoS node geometry certified drifted to
  * `ti`?  Returns 1 iff the drift stamp matches (ti + current treebuild

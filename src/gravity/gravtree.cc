@@ -12,6 +12,7 @@
 #include "gpu_gravtree.h"
 #include "gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../system/gpu_particles_arena.h"
+#include "../core/timestep_functions.h"   /* Hermite pass state, refreshed below */
 #include "../mesh/kernel.h"
 #include "./analytic_gravity.h"
 
@@ -144,6 +145,15 @@ void gravity_tree(void)
      * active -- inputs only mutate during active processing, so the cached
      * value is still correct. */
     compute_all_force_softening(0);
+
+#ifdef HERMITE_INTEGRATION
+    /* The pass state both walks read.  Refreshed once here, not per target: the active-bin mask
+       is a property of the pass, and rebuilding it per target would put a fixed 60-iteration scan
+       on every gravity interaction target.  The drift/kick view is only assembled on a Hermite
+       pass, since the predictor returns immediately when HermiteOnlyFlag is 0. */
+    HermiteWalk = hermite_walk_state_snapshot();
+    if(HermiteOnlyFlag) {HermiteWalkTables = drift_kick_table_view_host();}
+#endif
 
     /* construct tree if needed */
 #ifdef HERMITE_INTEGRATION
@@ -469,7 +479,10 @@ gravity_walk_attempt:
                  * re-sequencing: the particles are already at All.Ti_Current, and re-sequencing
                  * here would move indices under the active list this walk is iterating.  The
                  * rebuild flags are deliberately NOT cleared -- this repair does not satisfy
-                 * whatever else asked for a rebuild, and the next step is entitled to see it. */
+                 * whatever else asked for a rebuild, and the next step is entitled to see it.
+                 * It also stands on the domain frame already in force, so under RANDOMIZE_GRAVTREE
+                 * it does not draw a new one: a repair is not a scheduled rebuild, and re-keying
+                 * the particles here would move them out from under the walk in progress. */
                 refresh_old_acceleration_for_tree_opening();
                 gizmo_exit_bad_stop_if_requested("gravtree:before_repair_treebuild");
                 force_treebuild(NumPart, NULL);
@@ -520,6 +533,18 @@ gravity_walk_attempt:
      * criterion and is not valid for the next walk. Rebuild the tree+LET before it is reused. */
     if(errtol_before != 0 && All.ErrTolTheta == 0) { TreeReconstructFlag = 1; }
 #endif
+
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+    /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
+       the tree's own contributions are complete (imports included) but not yet multiplied by All.G
+       in the loop below, and the direct sum is in those same G-free units. */
+    CPU_Step[CPU_TREEMISC] += measure_time();
+    star_direct_gravity_build_table();
+    star_direct_gravity_compute();
+    star_direct_gravity_free_table();
+    CPU_Step[CPU_TREEWALK1] += measure_time();
+#endif
+
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -527,7 +552,7 @@ gravity_walk_attempt:
     {
         int i = ActiveParticleList[ii];
 #ifdef HERMITE_INTEGRATION
-        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
+        if(HermiteOnlyFlag) {if(!eligible_for_hermite(i, P)) continue;} /* if we are completing an extra loop required for the Hermite integration, all of the below would be double-calculated, so skip it */
 #endif      
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i, P);
@@ -910,7 +935,7 @@ int gravity_treewalk_candidate_prewalk(int i, int ii)
 {
     if(P[i].Mass <= 0) {return 0;}
 #ifdef HERMITE_INTEGRATION
-    if(HermiteOnlyFlag && !eligible_for_hermite(i)) {return 0;}
+    if(HermiteOnlyFlag && !eligible_for_hermite(i, P)) {return 0;}
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     if(!gravity_treeforce_candidate_frozen(ii)) {return 0;}

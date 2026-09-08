@@ -806,7 +806,7 @@ void sink_final_operations(void)
         dm_wind = DMAX(P[n].Sink_Mdot_ROI - P[n].Sink_Mdot, 0.) * dt; /* wind mass loss rate from the alpha disk */
 #endif
 #ifdef SINGLE_STAR_FB_JETS
-        if((P[n].Sink_Mass * UNIT_MASS_IN_SOLAR < 0.01) || P[n].Mass < 3.5*P[n].Sink_Formation_Mass) {dm_wind = 0;} // no jets launched yet if <0.01 msun or if we haven't accreted enough to get a reliable jet direction
+        dm_wind = single_star_jet_mdot(n) * dt; // the unclamped jet rate, shared with the wind/jet channel comparison so the two cannot pick different rates; zero before the jet is launched. The clamps below still limit what is actually taken
 #endif
         if(dm_wind > P[n].Mass) {dm_wind = P[n].Mass;}
 #if defined(SINK_ALPHADISK_ACCRETION)
@@ -817,13 +817,22 @@ void sink_final_operations(void)
         if(dm_wind > P[n].Sink_Mass) {dm_wind = P[n].Sink_Mass;}
         P[n].Sink_Mass -= dm_wind;
 #endif
+#ifdef SINGLE_STAR_FB_JETS
+        /* accretion-tied jet mass always banks in its own reservoir, whether or not the jets currently hold
+           the discrete-spawn channel. If they do not, it simply waits here: unlike the winds below, jets get
+           no continuous-injection fallback. Zero dm_wind so the unconditional add at the bottom, which serves
+           the no-jets build and the SNe ejecta, cannot double-count this into unspawned_wind_mass. */
+        P[n].unspawned_jet_mass += dm_wind; dm_wind = 0;
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_WINDS)
        if(P[n].ProtoStellarStage == 5) {
-           if(P[n].wind_mode == 1) {
-                dm_wind = single_star_wind_mdot(n,0) * dt;
-                P[n].Sink_Mass -= dm_wind;
-            }
+           if(P[n].wind_mode == 1) { // the winds hold the discrete-spawn channel: compute and bank the main-sequence wind mass loss here
+                double dm_wind_star = single_star_wind_mdot(n,0) * dt;
+                P[n].Sink_Mass -= dm_wind_star;
+                P[n].unspawned_wind_mass += dm_wind_star;
+                dm_wind = 0; // the jet-formula value above is already banked in its own reservoir, so keep the add at the bottom from stacking on top of dm_wind_star
+            } // else: the jets hold the channel, so wind mass loss is handled entirely by the continuous mechanical_fb injection, which computes the same rate and debits Sink_Mass there (mechfb_loop.cc); doing nothing here avoids debiting the same mass twice
         } // wind loss rate previously calculated in stellar_evolution at the end of the previous timestep: remove mass lost via winds
 #endif
 #if defined(SINGLE_STAR_FB_SNE)
@@ -849,9 +858,18 @@ void sink_final_operations(void)
             }
         }
 #endif
+#if defined(SINGLE_STAR_FB_JETS)
+        /* past the jets/winds competition: fold whatever is still waiting in the jet reservoir into the wind
+           reservoir, which is what drains from here on. This covers stage 7 as well as 6, because a star can
+           collapse straight to a relic (white dwarf, or direct-collapse black hole) without ever passing
+           through the supernova stage, and that mass has already been debited from the sink. */
+        if(P[n].ProtoStellarStage >= 6) {P[n].unspawned_wind_mass += P[n].unspawned_jet_mass; P[n].unspawned_jet_mass = 0;}
+#endif
 #endif
         P[n].unspawned_wind_mass += dm_wind;
-        double n_unspawned = P[n].unspawned_wind_mass / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
+        /* the same pair of calls the eligibility test in spawn_sink_wind_feedback() makes, so the two cannot
+           disagree; pairing one reservoir with the other channel's cell mass would misjudge this by their ratio */
+        double n_unspawned = *active_unspawned_mass_ptr(n) / ((SINK_WIND_SPAWN)*target_mass_for_wind_spawning(n)); // number of spawned gas cells that can be made from the mass in the reservoir
         if(n_unspawned> Max_Unspawned_MassUnits_fromSink) {Max_Unspawned_MassUnits_fromSink = n_unspawned;} // track the maximum integer number of elements this sink could spawn
 #endif
 
@@ -861,6 +879,7 @@ void sink_final_operations(void)
 
         /* dump the results to the 'sink_details' files */
         mass_disk=0; mdot_disk=0; MgasBulge=0; MstarBulge=0; r0 = P[n].KernelRadius * All.cf_atime;
+        Vec3<double> pos_reported = gizmo_reported_position(P[n].Pos);
 #ifdef SINK_ALPHADISK_ACCRETION
         mass_disk = P[n].Sink_Mass_Reservoir;
         mdot_disk = SinkTempInfo[i].mdot_reservoir;
@@ -874,19 +893,19 @@ void sink_final_operations(void)
 #ifdef SINGLE_STAR_STARFORGE_DEFAULTS
         fprintf(FdSinksDetails, "time=%.16g ID=%llu mtot=%g msink=%g mdisk=%g sink_mdot=%g mdot_disk=%g  dtime=%g ngb_density=%g ngb_internalenergy=%g mgas_kernel=%g mstar_kernel=%g r_kernel=%g pos=%2.16g %2.16g %2.16g vel=%2.16g %2.16g %2.16g angmom_kernel=%g %g %g  sink_angmom=%g %g %g\n",
                 All.Time, (unsigned long long)P[n].ID,  P[n].Mass, P[n].Sink_Mass, mass_disk, P[n].Sink_Mdot, mdot_disk, dt, P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy,
-                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, r0, P[n].Pos[0], P[n].Pos[1], P[n].Pos[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
+                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, r0, pos_reported[0], pos_reported[1], pos_reported[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
                 SinkTempInfo[i].Jgas_in_Kernel[0], SinkTempInfo[i].Jgas_in_Kernel[1], SinkTempInfo[i].Jgas_in_Kernel[2], P[n].Sink_Specific_AngMom[0]*P[n].Mass, P[n].Sink_Specific_AngMom[1]*P[n].Mass, P[n].Sink_Specific_AngMom[2]*P[n].Mass ); fflush(FdSinksDetails);
 #else
         fprintf(FdSinksDetails, "time=%.16g ID=%llu  mtot=%g msink=%g mdisk=%g sink_mdot=%g mdot_disk=%g dtime=%g ngb_density=%g ngb_internalenergy=%g sfr_kernel=%g mgas_kernel=%g mstar_kernel=%g mgasbulge=%g mstarbulge=%g r_kernel=%g pos=%2.16g %2.16g %2.16g vel=%2.16g %2.16g %2.16g angmomgas_kernel=%g %g %g angmomstar_kernel=%g %g %g\n",
                 All.Time, (unsigned long long)P[n].ID,  P[n].Mass, P[n].Sink_Mass, mass_disk, P[n].Sink_Mdot, mdot_disk, dt, P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, SinkTempInfo[i].Sfr_in_Kernel,
-                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, MgasBulge, MstarBulge, r0, P[n].Pos[0], P[n].Pos[1], P[n].Pos[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
+                SinkTempInfo[i].Mgas_in_Kernel, SinkTempInfo[i].Mstar_in_Kernel, MgasBulge, MstarBulge, r0, pos_reported[0], pos_reported[1], pos_reported[2],  P[n].Vel[0], P[n].Vel[1], P[n].Vel[2],
                 SinkTempInfo[i].Jgas_in_Kernel[0], SinkTempInfo[i].Jgas_in_Kernel[1], SinkTempInfo[i].Jgas_in_Kernel[2], SinkTempInfo[i].Jstar_in_Kernel[0], SinkTempInfo[i].Jstar_in_Kernel[1], SinkTempInfo[i].Jstar_in_Kernel[2] ); fflush(FdSinksDetails);
 #endif
 #else
 
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
         fprintf(FdSinksDetails, "Timestep Summary: BH=%llu time=%.16g msink=%g mdisk=%g mtot=%g sink_mdot=%g mdot_disk=%g ngb_density=%g ngb_internalenergy=%g  pos=%2.16g %2.16g %2.16g\n", (unsigned long long)P[n].ID, All.Time, P[n].Sink_Mass, mass_disk, P[n].Mass, P[n].Sink_Mdot, mdot_disk,
-                P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, P[n].Pos[0], P[n].Pos[1], P[n].Pos[2]); fflush(FdSinksDetails);
+                P[n].DensityAroundParticle*All.cf_a3inv, SinkTempInfo[i].Sink_SurroudingGasInternalEnergy, pos_reported[0], pos_reported[1], pos_reported[2]); fflush(FdSinksDetails);
 #endif
 #endif
 

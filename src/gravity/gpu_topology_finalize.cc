@@ -229,6 +229,11 @@ extern "C" int gpu_node_reset_ephemeral(int n)
 #ifdef DM_SCALARFIELD_SCREENING
         Extnodes_uvm[k].dp_dm          = {};
 #endif
+#ifdef SINK_NODE_MOTION_TRACKED
+        /* the UVM arena is not zeroed at allocation, so without this the first fold divides
+           garbage into sink_vel and from there into the sink timestep criteria */
+        Extnodes_uvm[k].sink_dp        = {};
+#endif
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("node_reset_ephemeral", n);

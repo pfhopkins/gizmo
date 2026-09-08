@@ -96,7 +96,7 @@ void read_ic(char *fname)
         }
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));	/* sets the maximum number of particles that may reside on a processor */
         /* The one place the gas COUNT decides whether gas storage exists: no storage exists yet to
            ask instead, and a run's initial conditions are what settle it for the rest of the run.
            Everywhere after this reads the storage, never the count -- see the helper. */
@@ -797,8 +797,14 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_UNSPMASS:
-#if defined(SINK_WIND_SPAWN) && defined(OUTPUT_UNSPAWNED_SINKMASS)
+#if defined(SINK_WIND_SPAWN)
              for(n = 0; n < pc; n++) {P[offset + n].unspawned_wind_mass = *fp++;}
+#endif
+            break;
+
+        case IO_UNSPJETMASS:
+#if defined(SINK_WIND_SPAWN) && defined(SINGLE_STAR_FB_JETS)
+             for(n = 0; n < pc; n++) {P[offset + n].unspawned_jet_mass = *fp++;}
 #endif
             break; 
             

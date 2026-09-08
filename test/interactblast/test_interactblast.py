@@ -10,11 +10,16 @@ from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
 
-from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+from gizmo.test import build_and_run_test, assert_final_time, get_final_snapshot
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
-@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+# 2x1, not the node-scaled default. This is a 1D problem with 512 particles: on a 96-core node
+# default_mpi_ranks() gives 48, i.e. ~11 particles per rank, where a step is MPI latency rather
+# than work and the neighbour search imports almost everything. Measured that way it manages
+# 10% of the run in 90 minutes -- ~15 hours total, and it skipped the full-suite sweep twice on
+# the 5400s cap. Wider parallelism buys nothing here: there is no work to divide.
+@pytest.mark.parametrize("num_mpi_ranks", (2,))
+@pytest.mark.parametrize("num_omp_threads", (1,))
 def test_interactblast(num_mpi_ranks, num_omp_threads):
     test_name = "interactblast"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)

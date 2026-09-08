@@ -692,7 +692,7 @@ struct DensitySpec {
                 }
                 /* the temperature is what the dust modules want; a grain has no cell, so it cannot convert an
                    energy into one itself. the ionized fraction rides along for the same reason. */
-                accum.Gas_Temperature += mj_wk * (double)CellPj->gas_temperature_from_u(CellPj->InternalEnergyPred);
+                accum.Gas_Temperature += mj_wk * (double)CellPj->gas_temperature_at_u(CellPj->InternalEnergyPred);
 #if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
                 accum.Gas_fion += mj_wk * (double)DMAX(0., DMIN(1., 1. - CellPj->HI));
 #endif

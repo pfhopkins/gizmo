@@ -488,7 +488,7 @@
 #define IO_SINKS_ONLY_SNAPSHOT_FREQUENCY 0 /* Determines the number of snapshots with reduced data (stars only) per full snapshots (gas+stars), e.g., setting it to 2 means 2/3 of the snapshots will be reduced, 1/3 will have full data. Setting it to 0 disables it.  */
 #endif
 #define SINGLE_STAR_SINK_DYNAMICS
-#if !defined(PMGRID) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
+#if !defined(PMGRID) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && !defined(DISABLE_HERMITE_INTEGRATION)
 #define HERMITE_INTEGRATION 32 // bitflag for which particles to do 4th-order Hermite integration
 #endif
 #define ADAPTIVE_GRAVSOFT_FORGAS
@@ -507,6 +507,7 @@
 #endif
 #define OUTPUT_SINK_ACCRETION_HIST // save accretion histories
 #define OUTPUT_SINK_FORMATION_PROPS // save at-formation properties of sink particles
+#define INPUT_READ_SINKPROPS // read sink properties (ProtoStellarStage, ZAMS_Mass, ...) back from the IC or snapshot. Without this a star written as main-sequence comes back as a protostar and has to re-evolve, so everything gated on the main-sequence stage -- winds, and the channel the spawning uses -- is silently dead for the first part of the run
 #if ( defined(STARFORGE_GMC_TURBINIT) || defined(STARFORGE_FILAMENT_TURBINIT) ) // these flags should be given numerical values equal to the desired virial parameter
 #define TURB_DRIVING
 #define GRAVITY_ANALYTIC
@@ -528,6 +529,27 @@
 #define TURB_DIFF_METALS_LOWORDER
 #endif
 #ifdef SINGLE_STAR_FB_RAD
+#define SINGLE_STAR_RT_DEFAULTS
+#define RT_OPTICAL_NIR
+#define RT_NUV
+#define RT_PHOTOELECTRIC
+#ifndef RT_CHEM_PHOTOION
+#define RT_CHEM_PHOTOION 1
+#endif
+#define RT_INFRARED
+#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
+#define RT_ISRF_BACKGROUND
+#endif
+#if defined(RT_INFRARED)
+#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
+#endif
+#endif
+
+/* The RT transport settings shared by the STARFORGE radiative modules, named so a problem can
+   ask for the solver defaults without also pulling in the full radiative-feedback band set --
+   the HII_region tests do exactly that. SINGLE_STAR_FB_RAD defines it above, so what that flag
+   produces is unchanged. */
+#ifdef SINGLE_STAR_RT_DEFAULTS
 #define RT_M1
 #define RT_COMOVING
 #ifndef OUTPUT_RT_RAD_FLUX
@@ -544,20 +566,8 @@
 #endif
 #define RT_REPROCESS_INJECTED_PHOTONS
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-#define RT_OPTICAL_NIR
-#define RT_NUV
-#define RT_PHOTOELECTRIC
-#ifndef RT_CHEM_PHOTOION
-#define RT_CHEM_PHOTOION 1
-#endif
-#define RT_INFRARED
-#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
-#define RT_ISRF_BACKGROUND
-#endif
-#if defined(RT_INFRARED)
-#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
-#endif
-#endif
+#endif // closes SINGLE_STAR_RT_DEFAULTS
+
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
@@ -588,6 +598,16 @@
 #endif
 #endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+/* starforge names this INPUT_READ_TEMPERATURE; we already had the same capability as
+   INPUT_READ_EOSTEMP. Alias them rather than renaming either, so a Config.sh written against
+   either name works and no existing use changes. */
+#if defined(INPUT_READ_TEMPERATURE) && !defined(INPUT_READ_EOSTEMP)
+#define INPUT_READ_EOSTEMP
+#endif
+#if defined(INPUT_READ_EOSTEMP) && !defined(INPUT_READ_TEMPERATURE)
+#define INPUT_READ_TEMPERATURE
+#endif
 
 
 #ifdef SINGLE_STAR_SINK_DYNAMICS
@@ -634,6 +654,19 @@
 
 #if defined(SINGLE_STAR_FB_JETS) || ((defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE)) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION))
 #define SINK_WIND_SPAWN (2) // leverage the BHFB model already developed within the FIRE-BHs framework. gives accurate launching of arbitrarily-structured jets.
+/* Retirement criteria for spawned outflow cells, default-on for the STARFORGE protostellar spawning
+   model they were built and tested against. Both act ONLY on a spawned cell, never on ordinary
+   de-refinement. Keyed on the protostellar model rather than on the feature macros alone, so
+   black-hole and alpha-disk spawning, which share this machinery but have not been priced against
+   these criteria, keep the previous behaviour unless asked for explicitly. */
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+#if !defined(SINK_SPAWN_MERGE_ANY_NEIGHBOR) && !defined(SINK_SPAWN_NO_MERGE) && !defined(SINK_SPAWN_MERGE_WHEN_AMBIENT)
+#define SINK_SPAWN_MERGE_WHEN_AMBIENT
+#endif
+#if !defined(MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION) && !defined(MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION)
+#define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
+#endif
+#endif
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 #define MAINTAIN_TREE_IN_REARRANGE // don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed
 #endif
@@ -835,6 +868,38 @@
 #endif
 #endif
 #endif
+#endif
+
+/* One name for "the tree carries sink velocity as well as sink position". Every site below is
+   already inside #ifdef SINK_CALC_DISTANCES, so that conjunct is what the name adds rather than
+   a narrowing. Tested here because this is past the last place SINK_CALC_DISTANCES can be set
+   (the GRAVITY_ANALYTIC block just above). */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION))
+#define SINK_NODE_MOTION_TRACKED
+#endif
+
+
+#ifdef SINGLE_STAR_DIRECT_GRAVITY /* exact O(N_star^2) star-star gravity, replacing the tree for those pairs */
+#if !defined(SINK_CALC_DISTANCES)
+#define SINK_CALC_DISTANCES /* the tree's node-level sink_mass is what tells the walk which nodes to drop for star targets */
+#endif
+#if defined(SINGLE_STAR_FIND_BINARIES)
+/* SINGLE_STAR_FIND_BINARIES identifies a binary companion during the tree walk, from the very
+   star-star node interactions this flag removes, and the direct sum does not reconstruct it.
+   Silently losing binary detection would change the integration, so refuse the combination. */
+#error "SINGLE_STAR_DIRECT_GRAVITY is incompatible with SINGLE_STAR_FIND_BINARIES (and hence with SINGLE_STAR_TIMESTEPPING > 0): the binary search reads the star-star tree interactions that direct summation removes. Use one or the other."
+#endif
+#endif
+
+
+/* Drift and kick the sink node moments between rebuilds, as the main moments already are. Requires
+   sink_vel to exist to drift with, hence the condition below -- which must be tested here, after every
+   site that can turn SINK_CALC_DISTANCES on (the last is the GRAVITY_ANALYTIC block just above).
+   SINGLE_STAR_DIRECT_GRAVITY is in the list because it subtracts the sink monopole from mixed nodes and
+   so needs sink_pos on the same clock as u.d.s; it can be set without SINGLE_STAR_TIMESTEPPING, and
+   where it is, the sink_vel declaration and the moment sums that fill it widen to match this macro. */
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#define SINK_NODE_MOTION_TRACKED
 #endif
 
 
@@ -1613,6 +1678,61 @@
 #endif
 
 
+/* RANDOMIZE_GRAVTREE: pick the randomization method, and refuse the setups where the
+ * periodic one is not a symmetry.  Placed at the end of this file so every flag tested
+ * below has already been auto-defined above.
+ *
+ * Which method applies is decided by whether GRAVITY is periodic, not by whether the box is.
+ * Under GRAVITY_NOT_PERIODIC the tree works in bare separations, so translating coordinates
+ * mod box is not a symmetry -- wrapping a particle across a face would move it a whole box
+ * away gravitationally.  Those runs (STARFORGE setups, and shearing boxes, which define
+ * GRAVITY_NOT_PERIODIC themselves) keep the method that moves and enlarges the root node
+ * instead, and pay a bit of Peano resolution per dimension for it.  Where gravity is periodic
+ * that cost is not worth paying: translating every coordinate by a random vector decorrelates
+ * the tree the same way while the root node stays the size of the box, which matters most for
+ * a zoom, whose nested region and load balance the doubling would damage.
+ *
+ * A run carrying a nested high-resolution PM region keeps the root-node method as well.
+ * Translating coordinates would move that region across a box face, and pm_init_regionsize()
+ * measures its extent with a plain min/max over the wrapped coordinates, so a region lying across
+ * a face measures as box-sized: the nested mesh coarsens to the whole box and the resolution the
+ * zoom exists for is gone, with nothing to see.  Making that safe means teaching the region
+ * measurement and its membership test about wrapping, which is a piece of PM design rather than a
+ * detail of this feature, so until then those runs pay the root node's Peano resolution instead. */
+#if defined(RANDOMIZE_GRAVTREE) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PM_PLACEHIGHRESREGION)
+#define RANDOMIZE_GRAVTREE_PERIODIC
+
+/* The translation is a symmetry only for physics that reads separations.  Anything that reads
+ * a position against a fixed reference -- the origin, the box centre, a point written into the
+ * source, a stored anchor -- gives a different answer in the moved frame, and gives it quietly.
+ * Coordinate outputs are moved back before they are written, and the stored coordinate state
+ * that belongs to the frame is carried along with it, but a potential or a driving field
+ * anchored in space cannot be, so those combinations are refused here rather than left to
+ * produce wrong physics with nothing to see. */
+#if defined(GRAVITY_ANALYTIC)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and an analytic potential is anchored in space: the matter would move relative to it. Use one or the other."
+#endif
+#if defined(GRAVITY_SPHERICAL_SYMMETRY)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and GRAVITY_SPHERICAL_SYMMETRY measures radius from the box centre. Use one or the other."
+#endif
+#if defined(TURB_DRIVING)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, and the turbulent driving field is defined in the box frame: the gas would sample a different phase of it after every shift. Use one or the other."
+#endif
+#if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z) || defined(BOX_OUTFLOW_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_OUTFLOW_Z)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition, which a reflecting or outflow boundary is not invariant under. Use one or the other."
+#endif
+#if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "RANDOMIZE_GRAVTREE with periodic gravity translates every coordinate by a random vector each decomposition. The nuclear-zoom refinement centre would travel with the frame, but the distance to it is measured without wrapping, so a zoom region sitting across a box face would be measured through the box instead of around it, changing both refinement and the timestep dilation. Use one or the other."
+#endif
+/* Group catalogues are written straight out rather than through the snapshot path, so their
+   positions would carry the moved frame with nothing recording the offset. Group finding itself is
+   translation-invariant, so the answer is to run it on the snapshots in postprocessing. Refused
+   here rather than where the catalogue is written, because a stop requested at that point returns
+   to a caller that goes on to exchange particles collectively before the stop is drained. */
+#if defined(FOF) || defined(SUBFIND)
+#error "RANDOMIZE_GRAVTREE with periodic gravity moves the coordinate frame at every decomposition, and the group catalogues FOF/SUBFIND write are not un-shifted back to the frame the snapshots report. Run group finding on the snapshots in postprocessing instead."
+#endif
+#endif
 /* Stopping when a cell asks for a step below MinSizeTimestep is the safe
    default. A run that reaches that point has almost always gone unstable, and
    the alternative is to clamp the step and keep going: the code then spends
@@ -1625,4 +1745,21 @@
 #endif
 #if !defined(CONTINUE_BELOW_MINTIMESTEP)
 #define STOP_WHEN_BELOW_MINTIMESTEP
+#endif
+
+
+/* Anchor the cached internal-energy -> temperature conversion at the last solve
+   (T = Temperature + (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor)) rather than extrapolating that same
+   slope through the origin. The chord form under-cools shocked gas through the helium-ionization
+   band and mislabels warm molecular shell gas at matched energy, because the energy is the integral
+   of the specific heat while Gamma carries only its local value. The cached pair is coherent only if
+   every writer of Temperature updates the anchor beside it. The equations of state below each set
+   Temperature from a solver this cache cannot follow, and the table dispatch is per-cell rather than
+   per-build, so a compile gate cannot separate them: refuse the combination instead of silently
+   reading a stale anchor. */
+#if defined(EOS_SUBSTELLAR_ISM) && defined(COOLING) && !defined(CHIMES)
+#if defined(COOL_GRACKLE) || defined(EOS_HELMHOLTZ) || defined(EOS_ANEOS) || defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#error "EOS_SUBSTELLAR_ISM anchors the cached energy-to-temperature conversion, which requires every writer of the cached temperature to update its anchor alongside. Grackle, Helmholtz, ANEOS, Tillotson, elastic and mixed gas/solid equations of state each set that temperature from a solver the cache cannot follow, and the table dispatch is per-cell, so the combination is refused rather than reading a stale anchor. CHIMES is excluded by the gate above rather than here."
+#endif
+#define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif

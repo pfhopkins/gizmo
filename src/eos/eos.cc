@@ -130,7 +130,7 @@ void calculate_and_assign_nonideal_mhd_coefficients(int i, struct particle_data 
 #ifdef METALS
     f_dustgas = 0.5 * pp[i].Metallicity[0] * return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // appropriate dust-to-metals ratio
 #endif
-    double temperature = cell[i].gas_temperature_from_u(cell[i].InternalEnergyPred); // composition from the cooling solve, rather than the local estimate above
+    double temperature = cell[i].gas_temperature_at_u(cell[i].InternalEnergyPred); // composition from the cooling solve, rather than the local estimate above
     // now everything should be fully-determined (given the inputs above and the known properties of the gas) //
     double m_neutral = mean_molecular_weight; // in units of the proton mass
     double ag01 = a_grain_micron/0.1, m_grain = 7.51e9 * ag01*ag01*ag01; // grain mass [internal density =3 g/cm^3]
@@ -272,7 +272,8 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
     /* calculate the viscosity coefficients: use the Braginskii shear tensor formulation expanded to first order */
     cell[i].Eta_ShearViscosity *= ion_frac * pow(u_int, 2.5); cell[i].Zeta_BulkViscosity = 0;
     /* again need to account for possible saturation (when the mean free path of ions is large): estimate whether we're in that limit with the gradients */
-    double ion_free_path = All.ElectronFreePathFactor * u_int * u_int / rho; double dv_magnitude=0, v_magnitude=0;
+    double ion_free_path = All.ElectronFreePathFactor * u_int * u_int / rho; double dv_magnitude=0, v_magnitude=1.0e-33; /* seeded nonzero: an IC exactly at rest leaves both
+        sums zero and the ratio below is 0/0, which makes the velocity scale length NaN and poisons the timestep */
     /* need an estimate of the internal energy gradient scale length, which we get by d(P/rho) = P/rho * (dP/P - drho/rho) */
     for(k=0;k<3;k++) {int k1;
         for(k1=0;k1<3;k1++) {

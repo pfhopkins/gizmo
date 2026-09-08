@@ -34,6 +34,7 @@
 #define GRAVTREE_SOURCE_DEVICE_TU
 #endif
 #include "../system/gpu_particles_arena.h"
+#include "../core/timestep_functions.h"   /* Hermite source eligibility + prediction, shared verbatim with the host walk */
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_gravtree.h"
@@ -206,6 +207,33 @@ struct gpu_ewald_pot_data_t {
     int            active;    /* 1 iff potcorr is a valid acquired table */
 };
 
+/* Hermite pass state for the device walk. HermiteOnlyFlag and TimeBinActive[] are host
+ * globals, so the walk cannot read them; the host snapshots them into a few words and
+ * passes them by value, together with the drift/kick table mirror the prediction needs.
+ * No device allocation and no per-particle array -- this is the few-body regime, where a
+ * pass over the particles would cost more than the walk it serves. */
+#ifdef HERMITE_INTEGRATION
+struct gpu_hermite_walk_data_t {
+    struct HermiteWalkState   state;
+    struct DriftKickTableView tables;
+};
+#endif
+
+#ifdef HERMITE_INTEGRATION
+/* SharedSpace mirror of the drift/kick tables, allocated on first use and reused. Stays NULL
+   on a non-cosmological run, which every Hermite few-body problem is: the refresh below
+   returns an elapsed-time view that reads no table at all. */
+static double *hermite_drift_kick_table_dev = NULL;
+
+extern "C" void gpu_gravtree_hermite_release(void)
+{
+    if(hermite_drift_kick_table_dev) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(hermite_drift_kick_table_dev);
+        hermite_drift_kick_table_dev = NULL;
+    }
+}
+#endif
+
 /* Host: acquire the Ewald tables (idempotent) and fill the potential POD.
  * Returns 0 on success (out->active=1), nonzero if the tables are not ready
  * (out->active=0); the caller treats a nonzero return as a hard stop. */
@@ -339,6 +367,9 @@ gpu_gravtree_walk_one(int target,
                       const struct gpu_cr_walk_data_t *cr_data,
 #endif
                       bool use_lazy_source,   /* evaluate the source payload on-device at each local open (no dense eager arrays; d_src_lum/d_bh_lum/d_cr_inject are NULL) */
+#ifdef HERMITE_INTEGRATION
+                      struct gpu_hermite_walk_data_t hermite,   /* Hermite pass state, by value (a few words) */
+#endif
                       const struct gpu_ewald_pot_data_t *ewald_pot,  /* periodic-image potential correction (unconditional; read only under the pure-tree-periodic EVALPOTENTIAL gate) */
                       Vec3<double> &acc_out,
                       int &ninter_out,
@@ -533,7 +564,27 @@ gpu_gravtree_walk_one(int target,
         if(no >= treeParticleSlots && no < treeBase) {return 0;} /* gap: malformed tree -- defer; the CPU walk's guard stops loudly */
         if(no < treeParticleSlots) /* particle leaf */
         {
-            dr = P_dev[no].Pos - pos;
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+               here as well would double every such force. Mirrors the CPU walk in forcetree.cc. */
+            if((ptype == 5) && (P_dev[no].Type == 5)) {no = tree_soa->nextnode_aux[no]; continue;}
+#endif
+            /* the source state this interaction is evaluated at, which is the drifted state
+               except where the Hermite predictor below replaces it (mirrors forcetree.cc) */
+            Vec3<double> src_pos = P_dev[no].Pos;
+#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)   /* HERMITE_INTEGRATION defines the latter, so src_vel exists whenever the predictor does */
+            Vec3<double> src_vel = P_dev[no].Vel;
+#endif
+#ifdef HERMITE_INTEGRATION
+            /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
+               step is second-order wrong where it stands; evaluate it from its own start-of-step
+               state instead. Same helper and same conditions as the host walk, so the two agree
+               whichever one a step routes to. Single sources only; nothing is written back. */
+            if(hermite_source_needs_prediction(no, P_dev, hermite.state)) {
+                hermite_predict_source_state(no, P_dev, hermite.state, &hermite.tables, src_pos, src_vel);
+            }
+#endif
+            dr = src_pos - pos;
             gravity_box_nearest_image(dr[0], dr[1], dr[2], -1);
             r2 = dr.norm_sq();
             mass = P_dev[no].Mass;
@@ -552,7 +603,7 @@ gpu_gravtree_walk_one(int target,
             else { d_dm = Vec3<double>{0,0,0}; mass_dm_local = 0; }
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-            r_source = grav_spherical_symmetry_r_from_center(P_dev[no].Pos[0],P_dev[no].Pos[1],P_dev[no].Pos[2],sph_center[0],sph_center[1],sph_center[2]);
+            r_source = grav_spherical_symmetry_r_from_center(src_pos[0],src_pos[1],src_pos[2],sph_center[0],sph_center[1],sph_center[2]);
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
             /* Load secondary's previous-step tidal tensor (mirrors forcetree.cc:1945). */
@@ -562,7 +613,7 @@ gpu_gravtree_walk_one(int target,
             }
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-            dv = P_dev[no].Vel - vel;
+            dv = src_vel - vel;
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
             m_j_eff_for_df = mass;
@@ -650,7 +701,7 @@ gpu_gravtree_walk_one(int target,
 #if defined(SINGLE_STAR_TIMESTEPPING)
                 prox_target.vel = vel;
 #endif
-                grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P_dev[no].Type; prox_src.src_mass = P_dev[no].Mass; prox_src.motion.vel = P_dev[no].Vel;
+                grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P_dev[no].Type; prox_src.src_mass = P_dev[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, mirroring forcetree.cc, so (dr, vel) stays a consistent pair on a Hermite pass */
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
                 prox_src.motion.acc = P_dev[no].Acc_Total_PrevStep;
 #endif
@@ -674,6 +725,27 @@ gpu_gravtree_walk_one(int target,
             MyFloat mass_node = tree_soa->mass[idx];
             Vec3<MyFloat> center_node = tree_soa->center[idx];
 
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* A star target must take no star mass from the tree: star_direct_gravity_compute()
+               supplies every star-star pair exactly, so taking them here too would double them.
+               The tree carries monopoles only, so removing the sinks is exact -- drop their mass and
+               shift the node's center of mass to that of what is left. Both terms are on the same
+               clock, since SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as s is
+               drifted with vs. Pure-star nodes have nothing left and are skipped. Mirrors the CPU
+               walk in forcetree.cc; mass_node is reduced before the opening criteria below so they
+               judge the node on the mass actually being used. */
+            if((ptype == 5) && (tree_soa->sink_mass[idx] > 0))
+            {
+                MyFloat sm = (MyFloat) tree_soa->sink_mass[idx];
+                if(mass_node - sm <= 0) { no = tree_soa->sibling[idx]; continue; } /* pure-star node */
+                Vec3<MyFloat> sp = Vec3<MyFloat>{(MyFloat)tree_soa->sink_pos[idx][0],
+                                                 (MyFloat)tree_soa->sink_pos[idx][1],
+                                                 (MyFloat)tree_soa->sink_pos[idx][2]};
+                MyFloat mass_nosink = mass_node - sm;
+                for(int k = 0; k < 3; k++) {s_node[k] = (s_node[k]*mass_node - sp[k]*sm) / mass_nosink;}
+                mass_node = mass_nosink;
+            }
+#endif
             dr[0] = s_node[0] - pos[0];
             dr[1] = s_node[1] - pos[1];
             dr[2] = s_node[2] - pos[2];
@@ -1577,6 +1649,20 @@ extern "C" int gpu_gravtree_walk_primary(void)
 #endif
     const struct gpu_ewald_pot_data_t ewald_pot_dev = ewald_pot_snap;
 
+#ifdef HERMITE_INTEGRATION
+    struct gpu_hermite_walk_data_t hermite_dev;
+    hermite_dev.state = HermiteWalk;
+    hermite_dev.tables = drift_kick_table_view(NULL, NULL, 0.0, 0.0, All.Timebase_interval, 0);
+    /* the mirror is only built on a Hermite pass: the predictor returns immediately when
+       HermiteOnlyFlag is 0, so an ordinary pass would be copying a table nothing reads */
+    if(HermiteOnlyFlag && drift_kick_table_mirror_refresh(&hermite_drift_kick_table_dev, &hermite_dev.tables) != 0) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(scratch_block);
+        release_payload_buffers();
+        myfree(idx_host);   /* soft bad-stop already requested: no launch without the tables the prediction reads */
+        return 1;
+    }
+#endif
+
     /* Invariant guard: reset the per-walk counter. */
     g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
 
@@ -1601,6 +1687,9 @@ extern "C" int gpu_gravtree_walk_primary(void)
                                         &cr_data_dev,
 #endif
                                         use_lazy_source,
+#ifdef HERMITE_INTEGRATION
+                                        hermite_dev,
+#endif
                                         &ewald_pot_dev,
                                         acc, ninter, pot);
         if(ok) {

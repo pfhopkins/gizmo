@@ -437,6 +437,16 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
           {gizmo_reset_unmet_split_demand();}
     }
 
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+    /* Draw the frame this decomposition will key against.  Here because the tree is down and no
+       ghosts are imported, so nothing holds a coordinate that would be left behind, and because
+       the wrapping and the keys that follow are what the moved coordinates have to reach.  Group
+       finding runs decompositions of its own and passes UseAllTimeBins=1: those must not move the
+       frame, since their catalogues do not go through the un-shift on output.  Group finding is
+       translation-invariant anyway, so the frame in force serves it. */
+    if(UseAllTimeBins == 0) {domain_apply_random_shift();}
+#endif
+
 #ifdef BOX_PERIODIC
     t_tmp = my_second();
     do_box_wrapping();		/* map the particles back onto the box */
@@ -688,14 +698,16 @@ void domain_Decomposition_light(int UseAllTimeBins)
        after this step's drift and wrapping have settled the positions the keys will be built from,
        and before anything has been freed or rebuilt.  The test is the exact validity condition
        rather than a padded one, so it fires only when a key would actually be wrong; a NaN
-       coordinate fails both comparisons and escalates too. */
+       coordinate fails both comparisons and escalates too.  It is put to the sum the key is read
+       from and not to the fraction, because a fraction below 1 can still carry that sum up to 2
+       when it is rounded, and 2 has the mantissa of the first cell rather than the last. */
     int extent_outgrown_local = 0;
     for(i = 0; i < NumPart; i++)
     {
         for(int k = 0; k < 3; k++)
         {
-            double frac = (P[i].Pos[k] - DomainCorner[k]) / DomainLen;
-            if(!(frac >= 0.0 && frac < 1.0)) {extent_outgrown_local = 1;}
+            double key_input = ((P[i].Pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
+            if(!(key_input >= 1.0 && key_input < 2.0)) {extent_outgrown_local = 1;}
         }
         if(extent_outgrown_local) {break;}
     }
@@ -812,11 +824,6 @@ void domain_Decomposition_light(int UseAllTimeBins)
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
     domain_assign_load_or_work_balanced(1, multipledomains);
 
-#if (DOMAIN_TIMEBINS == 1)
-    if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
-    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
-#endif
-
     int status = domain_check_memory_bound(multipledomains);
     if(status != 0)
     {
@@ -825,6 +832,14 @@ void domain_Decomposition_light(int UseAllTimeBins)
         status = domain_check_memory_bound(multipledomains);
         if(status != 0) {if(ThisTask == 0) {printf("Lightweight repartition: memory bound violated.\n");}}
     }
+
+#if (DOMAIN_TIMEBINS == 1)
+    /* Freed only after the memory-bound retry above, which calls
+       domain_assign_load_or_work_balanced() a second time and reads these arrays. Freeing them
+       before it leaves that call dereferencing NULL. */
+    if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
+    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
+#endif
 
     /* flag particles that need to move */
     for(i = 0; i < NumPart; i++)
@@ -1121,11 +1136,6 @@ int domain_decompose(void)
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
     domain_assign_load_or_work_balanced(1,multipledomains);
 
-#if (DOMAIN_TIMEBINS == 1)
-    free(domainBinHydroCost); free(domainBinGravCost);
-    domainBinHydroCost = domainBinGravCost = NULL;
-#endif
-
     status = domain_check_memory_bound(multipledomains);
 
     if(status != 0)		/* the optimum balanced solution violates memory constraint, let's try something different */
@@ -1187,6 +1197,14 @@ int domain_decompose(void)
           gizmo_exit_bad_stop_if_requested("domain:memory_bound");
       }
     }
+
+#if (DOMAIN_TIMEBINS == 1)
+    /* Freed only after the memory-bound retry above, which calls
+       domain_assign_load_or_work_balanced() a second time and reads these arrays. Freeing them
+       before it leaves that call dereferencing NULL. */
+    if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
+    if(domainBinGravCost)  {free(domainBinGravCost);  domainBinGravCost  = NULL;}
+#endif
 
     if(ThisTask == 0)
     {
@@ -3149,8 +3167,8 @@ void domain_findExtent(void)
       DomainCenter[j] = 0.5 * (xmin_glob[j] + xmax_glob[j]);
       DomainCorner[j] = 0.5 * (xmin_glob[j] + xmax_glob[j]) - 0.5 * len;
     }
-#ifdef RANDOMIZE_GRAVTREE // double the size of the root node and pick a random offset for its center, so that forcetree errors get decorrelated each time the tree is rebuilt
-  double dx[3]; 
+#if defined(RANDOMIZE_GRAVTREE) && !defined(RANDOMIZE_GRAVTREE_PERIODIC) // double the size of the root node and pick a random offset for its center, so that forcetree errors get decorrelated each time the tree is rebuilt. Where gravity is periodic the coordinates are translated instead (domain_apply_random_shift), which leaves the root node the size of the box
+  double dx[3];
   if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType) (All.NumCurrentTiStep) + j) - 0.5);}}
   MPI_Bcast(dx, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   for(j=0; j<3; j++) {
@@ -3158,10 +3176,92 @@ void domain_findExtent(void)
       DomainCorner[j] = DomainCenter[j] - len;
   }
   len *= 2;
-#endif  
+#endif
   DomainLen = len;
   DomainFac = 1.0 / len * (((peanokey) 1) << (BITS_PER_DIMENSION));
 }
+
+
+#ifdef RANDOMIZE_GRAVTREE_PERIODIC
+/*! Move every coordinate by a fresh random vector, mod the box, so that the tree built next
+ *  divides the matter differently and its force errors do not repeat those of the last one.
+ *  Where gravity is periodic this is what randomization means: forces and velocities are
+ *  unchanged by a translation, the root node stays the size of the box, and a nested zoom
+ *  region keeps the balance it was decomposed for -- none of which is true of moving and
+ *  doubling the root node instead.
+ *
+ *  The coordinates stay in the moved frame until the next shift, so the offset from the frame
+ *  the initial conditions were written in is accumulated in All.RandomShift and taken back off
+ *  wherever a physical coordinate is reported. The stored coordinates that belong to the frame
+ *  rather than to a particle's history are carried along here; the setups whose physics is
+ *  anchored in space are refused at compile time (precompiler_logic.h), because there is no
+ *  frame in which both they and the shifted matter are right.
+ *
+ *  Drawn on rank 0 and broadcast, since every rank has to key against the same frame. Called
+ *  from the full decomposition only, with the tree already freed and no ghosts imported, and
+ *  before the box wrapping and the keys that follow it. */
+void domain_apply_random_shift(void)
+{
+    int i, j;
+    double box[3], delta[3], u[3] = {0,0,0};
+    box[0] = boxSize_X; box[1] = boxSize_Y; box[2] = boxSize_Z;
+    if(ThisTask == 0) {for(j = 0; j < 3; j++) {u[j] = get_random_number((MyIDType) All.NumCurrentTiStep);}}
+    MPI_Bcast(u, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+
+    for(j = 0; j < 3; j++)
+    {
+        delta[j] = box[j] * u[j] - All.RandomShift[j];   /* put the frame's origin anywhere in the box */
+    }
+
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 256)
+#endif
+    for(i = 0; i < NumPart; i++)
+    {
+        int k; for(k = 0; k < 3; k++) {P[i].Pos[k] += delta[k];}
+        /* The stored positions below are carried into the new frame with Pos, and are folded back
+           into the box exactly as do_box_wrapping() is about to fold Pos: they are positions in the
+           same frame, and left unwrapped they would walk a whole box further out at every
+           decomposition rather than staying where the box is. */
+#ifdef HERMITE_INTEGRATION
+        /* OldPos is the reference do_hermite_prediction() rebuilds Pos from every step, so a shift
+           that lands between a particle's Hermite seed and its next prediction would snap it back
+           to the frame before this one. Everything else integrates Pos forward from Vel and needs
+           no such carry. */
+        if((1 << P[i].Type) & HERMITE_INTEGRATION)
+        {
+            for(k = 0; k < 3; k++)
+            {
+                P[i].OldPos[k] += delta[k];
+                while(P[i].OldPos[k] < 0) {P[i].OldPos[k] += box[k];}
+                while(P[i].OldPos[k] >= box[k]) {P[i].OldPos[k] -= box[k];}
+            }
+        }
+#endif
+#ifdef SINK_REPOSITION_ON_POTMIN
+        /* the position a sink is being drawn toward, held from the pass that found it */
+        if(P[i].Type == 5)
+        {
+            for(k = 0; k < 3; k++)
+            {
+                P[i].Sink_PotentialMinimumOfNeighborsPos[k] += delta[k];
+                while(P[i].Sink_PotentialMinimumOfNeighborsPos[k] < 0) {P[i].Sink_PotentialMinimumOfNeighborsPos[k] += box[k];}
+                while(P[i].Sink_PotentialMinimumOfNeighborsPos[k] >= box[k]) {P[i].Sink_PotentialMinimumOfNeighborsPos[k] -= box[k];}
+            }
+        }
+#endif
+    }
+
+    /* keep the accumulated offset in [0,box) so it cannot grow without bound over a long run;
+       coordinates are only defined mod box, and the un-shift on output is followed by a wrap */
+    for(j = 0; j < 3; j++)
+    {
+        All.RandomShift[j] += delta[j];
+        while(All.RandomShift[j] < 0) {All.RandomShift[j] += box[j];}
+        while(All.RandomShift[j] >= box[j]) {All.RandomShift[j] -= box[j];}
+    }
+}
+#endif
 
 
 

@@ -24,6 +24,7 @@
  */
 
 #include "allvars.h"
+#include "../core/timestep_functions.h"   /* HermiteWalkState / DriftKickTableView, for the pass-state globals below */
 
 
 
@@ -143,6 +144,10 @@ unsigned char *WakeupDirty = NULL;
 int WakeupDirtyValid = 0;
 int GlobFlag;
 #ifdef HERMITE_INTEGRATION
+#ifdef HERMITE_INTEGRATION
+struct HermiteWalkState   HermiteWalk;
+struct DriftKickTableView HermiteWalkTables;
+#endif
 int HermiteOnlyFlag;            /*! Flag used to indicate whether to skip non-Hermite integrated particles in the force evaluation */
 #endif
 

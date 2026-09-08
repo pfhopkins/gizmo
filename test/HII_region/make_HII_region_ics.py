@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate initial conditions for HII_region test: 10 Msun ZAMS star in a uniform gas box with mean density 100 H/cc."""
+"""Generate initial conditions for HII_region test: 30 Msun ZAMS star in a uniform gas box with mean density 100 H/cc."""
 
 import numpy as np
 import h5py
@@ -35,8 +35,8 @@ def make_HII_region_ics(output_file="HII_region_ics.hdf5"):
     m_gas = M_gas_total / Ngas
     vel_gas = np.zeros((Ngas, 3), dtype=np.float32)
 
-    # Star properties: 10 Msun ZAMS star at box center
-    M_star = 10.0  # Msun
+    # Star properties: 30 Msun ZAMS star at box center
+    M_star = 30.0  # Msun
     pos_star = np.array([[BoxSize / 2, BoxSize / 2, BoxSize / 2]])
     vel_star = np.array([[0.0, 0.0, 0.0]], dtype=np.float32)
 
