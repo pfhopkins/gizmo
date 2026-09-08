@@ -1743,9 +1743,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                 /* the source state this interaction is evaluated at, which is the drifted state
                    except where the Hermite predictor below replaces it */
                 Vec3<double> src_pos = P[no].Pos;
-#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)   /* HERMITE_INTEGRATION defines the former, so src_vel exists whenever the predictor does */
-                Vec3<double> src_vel = P[no].Vel;
-#endif
+                Vec3<double> src_vel = P[no].Vel;   /* unconditional: the sink-proximity block below reads it under SINK_CALC_DISTANCES, which several flags reach without the jerk or dynamical-friction terms */
 #ifdef HERMITE_INTEGRATION
                 /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
                    step is second-order wrong where it stands; evaluate it from its own start-of-step

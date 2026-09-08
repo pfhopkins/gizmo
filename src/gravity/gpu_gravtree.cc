@@ -572,9 +572,7 @@ gpu_gravtree_walk_one(int target,
             /* the source state this interaction is evaluated at, which is the drifted state
                except where the Hermite predictor below replaces it (mirrors forcetree.cc) */
             Vec3<double> src_pos = P_dev[no].Pos;
-#if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)   /* HERMITE_INTEGRATION defines the latter, so src_vel exists whenever the predictor does */
-            Vec3<double> src_vel = P_dev[no].Vel;
-#endif
+            Vec3<double> src_vel = P_dev[no].Vel;   /* unconditional, mirroring forcetree.cc: the sink-proximity block reads it under SINK_CALC_DISTANCES, which several flags reach without the jerk or dynamical-friction terms */
 #ifdef HERMITE_INTEGRATION
             /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
                step is second-order wrong where it stands; evaluate it from its own start-of-step
