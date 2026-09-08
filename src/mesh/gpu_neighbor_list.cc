@@ -675,46 +675,6 @@ void gpu_spatial_index_free(gpu_spatial_index_t *idx)
 }
 
 
-
-/* ---- L4 Step-1a device neighbour-inclusion precision oracle (DIAGNOSTIC) ----
- * Gate GIZMO_NGB_PRECISION_ORACLE (SPIKE/test only; teardown ledger). Quantifies
- * device neighbour under/over-inclusion caused by the single-precision ABSOLUTE
- * compact positions (invalid for GIZMO's ~1e11 dynamic range) against a
- * double-precision physical-truth reference. NOT production; the real fix is the
- * Step-1b compact-DOUBLE device arrays. Report tag [NGL_PRECISION_ORACLE ...]. */
-
-/* SSOT predicted-double side buffers — built in ONE place, consumed by BOTH the
- * host double-truth loop AND the device double-leaf kernel (no second prediction
- * path). For each particle j:
- *   position = P[j].Pos + P[j].Vel * drift_factor(Ti_current -> time1)  (predicted-at-time1,
- *              matching the SIDX bbox/compact refresh convention above)
- *   reach    = nlr_particle_symmetric_radius(P[j], policy)              (PHYSICAL, no SIDX slack)
- * Buffers are SHARED_SPACE (managed) so host + device read the same memory. */
-static void ngl_precision_build_ref_buffers(struct particle_data *P_shared, int num_total,
-                                            mode_b_radius_policy_t radius_policy,
-                                            double **out_pos_dbl, double **out_h_dbl,
-                                            long *out_n_dt_nonzero)
-{
-    integertime time1 = gizmo_host_ti_current();
-    size_t nt = (size_t)(num_total > 0 ? num_total : 1);
-    double *pos_dbl = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_tilebuild_pos", nt * 3 * sizeof(double));
-    double *h_dbl   = (double *) Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>("ngl_tilebuild_h", nt * sizeof(double));
-    long n_dt_nonzero = 0;
-    #pragma omp parallel for reduction(+:n_dt_nonzero) schedule(static)
-    for(int j = 0; j < num_total; j++) {
-        double dt = get_drift_factor(P_shared[j].Ti_current, time1, j, 0);
-        if(dt != 0.0) n_dt_nonzero++;
-        pos_dbl[j*3+0] = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
-        pos_dbl[j*3+1] = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
-        pos_dbl[j*3+2] = P_shared[j].Pos[2] + P_shared[j].Vel[2] * dt;
-        h_dbl[j]       = nlr_particle_symmetric_radius(P_shared[j], radius_policy);
-    }
-    *out_pos_dbl = pos_dbl;
-    *out_h_dbl   = h_dbl;
-    *out_n_dt_nonzero = n_dt_nonzero;
-}
-
-
 /* Exhaustion is reported by returning NULL, so the checks below are live code and
  * the run stops cleanly instead of aborting mid-flight. A zero-byte request is
  * treated as nothing to allocate, which the callers here read as a refusal. */
@@ -1168,134 +1128,6 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         Kokkos::fence();
         gizmo_gpu_check_last_error("ngb_fused", num_active);
 
-        /* L4 Step-1b validation oracle (DIAGNOSTIC; gate GIZMO_NGB_PRECISION_ORACLE;
-         * SYMMETRIC + num_active>0). Validates the double-position substrate: the
-         * PRODUCTION device CSR must contain every host DOUBLE physical-truth
-         * neighbour — MISSING = under-inclusion RED-ALERT (must be 0). EXTRA = the
-         * SIDX_H_SLACK candidate margin, acceptable ONLY for consumers that re-gate
-         * the exact predicate (verified density_loop.h / gradient_functions.h; NOT
-         * assumed universal). Per-rank, no MPI collective. Sample cap
-         * GIZMO_NGB_PRECISION_ORACLE_NMAX (default 128; brute is O(sampled x pool)).
-         * Report tag [NGL_PRECISION_ORACLE]. Teardown ledger §39. */
-        if(const char *prec_env = getenv("GIZMO_NGB_PRECISION_ORACLE");
-           prec_env && atoi(prec_env) != 0 && smode == NGB_SEARCH_SYMMETRIC && num_active > 0) {
-            const char *lbl = caller_label ? caller_label : "?";
-            if(idx->num_pool <= 0 || !idx->h_pool) {
-                if(ThisTask == 0)
-                    printf("[NGL_PRECISION_ORACLE] caller=%s mode=SYMM UNAVAILABLE (empty supply pool)\n", lbl);
-            } else {
-                int num_pool = idx->num_pool;
-                const int *h_pool = idx->h_pool;
-
-                /* SSOT predicted-double physical truth: pos = Pos+Vel*drift(->time1),
-                 * reach = nlr_particle_symmetric_radius (physical, NO slack). Used for
-                 * BOTH the query (when src_pos absent) and the supply. */
-                double *j_pos_dbl = NULL, *j_h_dbl = NULL; long n_dt_nonzero = 0;
-                ngl_precision_build_ref_buffers(P_shared, num_total, radius_policy,
-                                                &j_pos_dbl, &j_h_dbl, &n_dt_nonzero);
-                if(!j_pos_dbl || !j_h_dbl) endrun(919231);
-
-                /* Pull production CSR + compact pool to host. */
-                using UV = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
-                std::vector<int> h_prod_sc((size_t)num_active * NGL_SCRATCH_STRIDE), h_prod_ct(num_active);
-                std::vector<double> h_compact(4 * (size_t)num_total);
-                Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, UV>(h_prod_sc.data(), (size_t)num_active*NGL_SCRATCH_STRIDE),
-                                  Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, UV>(scratch, (size_t)num_active*NGL_SCRATCH_STRIDE));
-                Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, UV>(h_prod_ct.data(), num_active),
-                                  Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, UV>(counts, num_active));
-                Kokkos::deep_copy(Kokkos::View<double*, Kokkos::HostSpace, UV>(h_compact.data(), 4*(size_t)num_total),
-                                  Kokkos::View<const double*, GIZMO_KOKKOS_DEVICE_SPACE, UV>(compact_xyzh, 4*(size_t)num_total));
-
-                const char *nmax_env = getenv("GIZMO_NGB_PRECISION_ORACLE_NMAX");
-                int n_max = nmax_env ? atoi(nmax_env) : 128;   /* brute truth is O(n_max x pool); raise for tiny synthetics */
-                if(n_max < 1) n_max = 1;
-                int n_cap = (num_active < n_max) ? num_active : n_max;
-
-                /* SET-compare per sampled active: production CSR vs host double truth.
-                 * r via the SAME NGB_PERIODIC_BOX_LONG convention as the device leaf. */
-                long tot_truth=0, tot_prod=0, miss=0, extra=0, ovf_rows=0;
-                #pragma omp parallel for schedule(dynamic) reduction(+:tot_truth,tot_prod,miss,extra,ovf_rows)
-                for(int aa = 0; aa < n_cap; aa++) {
-                    /* Overflow guard: search_neighbors_sfc_gpu counts ALL matches but only
-                     * writes the first NGL_SCRATCH_STRIDE. A truncated device row would
-                     * report FALSE missing (oracle runs BEFORE production's overflow
-                     * re-walk into the final CSR). Skip + count LOUD. */
-                    if(h_prod_ct[aa] > NGL_SCRATCH_STRIDE) { ovf_rows++; continue; }
-                    MyDouble xtmp = 0;
-                    int i = active[aa];
-                    /* query: production's own double query where present, else the physical
-                     * double for particle i (the double version of the SAME P[i] query the
-                     * production kernel reads from the double compact substrate). */
-                    double pos_i[3];
-                    if(src_pos) { pos_i[0]=src_pos[aa*3+0]; pos_i[1]=src_pos[aa*3+1]; pos_i[2]=src_pos[aa*3+2]; }
-                    else        { pos_i[0]=j_pos_dbl[i*3+0]; pos_i[1]=j_pos_dbl[i*3+1]; pos_i[2]=j_pos_dbl[i*3+2]; }
-                    double h_i = (radii ? radii[aa] : j_h_dbl[i]) * sr_fac;
-                    std::vector<int> truth;
-                    for(int p = 0; p < num_pool; p++) {
-                        int j = h_pool[p];
-                        double dxr = pos_i[0]-j_pos_dbl[j*3+0], dyr = pos_i[1]-j_pos_dbl[j*3+1], dzr = pos_i[2]-j_pos_dbl[j*3+2];
-                        double adx = NGB_PERIODIC_BOX_LONG_X(dxr,dyr,dzr,1), ady = NGB_PERIODIC_BOX_LONG_Y(dxr,dyr,dzr,1), adz = NGB_PERIODIC_BOX_LONG_Z(dxr,dyr,dzr,1);
-                        double r2 = adx*adx + ady*ady + adz*adz;
-                        double h_j = j_h_dbl[j] * j_rad_scale;
-                        double cut = (h_i > h_j) ? h_i : h_j;
-                        if(r2 < cut*cut) truth.push_back(j);
-                    }
-                    std::sort(truth.begin(), truth.end());
-                    int pc = h_prod_ct[aa];
-                    std::vector<int> prod(h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE, h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE+pc);
-                    std::sort(prod.begin(), prod.end());
-                    tot_truth += (long)truth.size(); tot_prod += (long)prod.size();
-                    std::vector<int> t;
-                    std::set_difference(truth.begin(),truth.end(), prod.begin(),prod.end(), std::back_inserter(t)); miss  += (long)t.size();
-                    t.clear(); std::set_difference(prod.begin(),prod.end(), truth.begin(),truth.end(), std::back_inserter(t)); extra += (long)t.size();
-                }
-
-                /* First-few production-missing examples (single-threaded rescan; detail). */
-                const int KMISS = 8; int nmiss = 0;
-                for(int aa = 0; aa < n_cap && nmiss < KMISS; aa++) {
-                    if(h_prod_ct[aa] > NGL_SCRATCH_STRIDE) continue;
-                    MyDouble xtmp = 0;
-                    int i = active_indices_host[aa];   /* host source list — human-readable identity */
-                    double pos_i[3];
-                    if(src_pos) { pos_i[0]=src_pos[aa*3+0]; pos_i[1]=src_pos[aa*3+1]; pos_i[2]=src_pos[aa*3+2]; }
-                    else        { pos_i[0]=j_pos_dbl[i*3+0]; pos_i[1]=j_pos_dbl[i*3+1]; pos_i[2]=j_pos_dbl[i*3+2]; }
-                    double h_i = (radii ? radii[aa] : j_h_dbl[i]) * sr_fac;
-                    int pc = h_prod_ct[aa];
-                    std::vector<int> prod(h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE, h_prod_sc.begin()+(size_t)aa*NGL_SCRATCH_STRIDE+pc);
-                    std::sort(prod.begin(), prod.end());
-                    for(int p = 0; p < num_pool && nmiss < KMISS; p++) {
-                        int j = h_pool[p];
-                        double dxr = pos_i[0]-j_pos_dbl[j*3+0], dyr = pos_i[1]-j_pos_dbl[j*3+1], dzr = pos_i[2]-j_pos_dbl[j*3+2];
-                        double adx = NGB_PERIODIC_BOX_LONG_X(dxr,dyr,dzr,1), ady = NGB_PERIODIC_BOX_LONG_Y(dxr,dyr,dzr,1), adz = NGB_PERIODIC_BOX_LONG_Z(dxr,dyr,dzr,1);
-                        double r = sqrt(adx*adx + ady*ady + adz*adz);
-                        double h_j = j_h_dbl[j] * j_rad_scale;
-                        double cut = (h_i > h_j) ? h_i : h_j;
-                        if(r < cut && !std::binary_search(prod.begin(), prod.end(), j)) {   /* physical neighbour, production missed */
-                            double dtj = get_drift_factor(P_shared[j].Ti_current, gizmo_host_ti_current(), j, 0);
-                            printf("  [NGL_PRECISION_ORACLE rank=%d] miss caller=%s i.ID=%lld j.ID=%lld r=%.10g cutoff=%.10g margin=%.3g dt_j=%.3g "
-                                   "compact_xyzh=(%.10g,%.10g,%.10g;%.6g) truth_xyzh=(%.10g,%.10g,%.10g;%.6g)\n",
-                                   ThisTask, lbl, (long long)P_shared[i].ID, (long long)P_shared[j].ID, r, cut, r-cut, dtj,
-                                   h_compact[j*4+0],h_compact[j*4+1],h_compact[j*4+2],h_compact[j*4+3],
-                                   j_pos_dbl[j*3+0],j_pos_dbl[j*3+1],j_pos_dbl[j*3+2],j_h_dbl[j]);
-                            nmiss++;
-                        }
-                    }
-                }
-
-                /* Per-rank LOCAL report (NO MPI collective — inside the per-rank
-                 * num_active>0 gate; a collective would deadlock 0-active ranks). */
-                printf("[NGL_PRECISION_ORACLE rank=%d] caller=%s mode=SYMM sampled=%d/%d%s pool=%d overflow_rows_skipped=%ld\n"
-                       "  truth=%ld prod=%ld  MISSING(truth\\prod)=%ld EXTRA(prod\\truth)=%ld\n"
-                       "  [MISSING=under-inclusion RED-ALERT (must be 0); EXTRA=SIDX_H_SLACK candidate margin, consumers re-gate exact predicate]\n"
-                       "  dt_j!=0: %ld/%d (%.4f)  [stale-vs-predicted regime; slack must cover raw-vs-predicted when >0]\n",
-                       ThisTask, lbl, n_cap, num_active, (num_active > n_cap) ? " CAPPED" : "", num_pool, ovf_rows,
-                       tot_truth, tot_prod, miss, extra,
-                       n_dt_nonzero, num_total, num_total > 0 ? (double)n_dt_nonzero/(double)num_total : 0.0);
-                fflush(stdout);
-                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(j_pos_dbl);
-                Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(j_h_dbl);
-            }
-        }
     }
 
     /* Count overflow particles (count > stride: they need a re-walk in compact phase) */
@@ -2342,7 +2174,6 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
      * a no-op. */
     return status;
 }
-
 
 
 /* Per-TU init function: sets this TU's All_ptr to the shared UVM allocation */
