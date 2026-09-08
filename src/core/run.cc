@@ -131,7 +131,7 @@ void run(void)
     {
         output_log_messages();
 
-        domain_Decomposition(0, 0, 0);
+        domain_Decomposition(0, 0, 0, 0);
 
         set_non_standard_physics_for_current_time();
 
@@ -301,10 +301,10 @@ void run(void)
             if(!NeedFullDomainDecomp) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
-            {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
+            {domain_Decomposition(0, 0, 1, 1);}  /* full decomposition needed */
             reconstructed_tree = 1;
         }
-        else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag) {gizmo_full_drift_to(All.Ti_Current); domain_Decomposition(0, 0, 1, 1); reconstructed_tree = 1;}
         else
         {
             /* update tree dynamically with kicks of last step so that it can be

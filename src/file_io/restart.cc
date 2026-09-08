@@ -587,7 +587,7 @@ void restart(int modus)
     {
         if(ThisTask == 0) {printf("Doing extra domain decomposition because you changed MULTIPLEDOMAINS\n"); fflush(stdout);}
 
-      domain_Decomposition(0, 0, 0);
+      domain_Decomposition(0, 0, 0, 0);
     }
 }
 
