@@ -628,6 +628,11 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 
     // based on the mode we're in, let's pick a fixed orthonormal basis that all spawned elements are aware of
     Vec3<double> jz={0,0,1},jy={0,1,0},jx={1,0,0};  /* set up a coordinate system [xyz if we don't have any other information */
+#ifndef JET_DIRECTION_FIXED_Z  /* TESTING ONLY: pin the launch axis to +/-z by keeping the default
+                                  basis, skipping the angular-momentum reorientation and the
+                                  precession below, so a launch geometry can be checked against a
+                                  known axis. Real jets follow the disk/spin axis, so this is not
+                                  physical for production. */
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM  /* use local angular momentum to estimate preferred directions/coordinates for spawning */
     if(mode==1){ // set up so that the z axis is the angular momentum vector
 #ifdef JET_DIRECTION_FROM_KERNEL_AND_SINK // Jgas stores total angmom in COM frame of sink-gas system; use this for direction
@@ -655,6 +660,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     new_dir[0]= jz[0]*cos(degree/180.*M_PI)-jz[2]*sin(degree/180.*M_PI); new_dir[1]= 1.0*jz[1]; new_dir[2]= jz[0]*sin(degree/180.*M_PI)+jz[2]*cos(degree/180.*M_PI);
     jz[0]= new_dir[0]*cos(2.*M_PI/period*All.Time)-new_dir[1]*sin(2.*M_PI/period*All.Time); jz[1]= new_dir[0]*sin(2.*M_PI/period*All.Time)+new_dir[1]*cos(2.*M_PI/period*All.Time); jz[2]= new_dir[2];
 #endif    
+#endif  /* closes !JET_DIRECTION_FIXED_Z */
 
     /* create the  new particles to be added to the end of the particle list :
         i is the sink particle tag, j is the new "spawed" particle's location, dummy_cell_i_to_clone is a dummy gas cell's tag to be used to init the wind particle */

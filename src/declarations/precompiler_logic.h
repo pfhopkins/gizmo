@@ -529,6 +529,27 @@
 #define TURB_DIFF_METALS_LOWORDER
 #endif
 #ifdef SINGLE_STAR_FB_RAD
+#define SINGLE_STAR_RT_DEFAULTS
+#define RT_OPTICAL_NIR
+#define RT_NUV
+#define RT_PHOTOELECTRIC
+#ifndef RT_CHEM_PHOTOION
+#define RT_CHEM_PHOTOION 1
+#endif
+#define RT_INFRARED
+#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
+#define RT_ISRF_BACKGROUND
+#endif
+#if defined(RT_INFRARED)
+#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
+#endif
+#endif
+
+/* The RT transport settings shared by the STARFORGE radiative modules, named so a problem can
+   ask for the solver defaults without also pulling in the full radiative-feedback band set --
+   the HII_region tests do exactly that. SINGLE_STAR_FB_RAD defines it above, so what that flag
+   produces is unchanged. */
+#ifdef SINGLE_STAR_RT_DEFAULTS
 #define RT_M1
 #define RT_COMOVING
 #ifndef OUTPUT_RT_RAD_FLUX
@@ -545,20 +566,8 @@
 #endif
 #define RT_REPROCESS_INJECTED_PHOTONS
 #define RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION
-#define RT_OPTICAL_NIR
-#define RT_NUV
-#define RT_PHOTOELECTRIC
-#ifndef RT_CHEM_PHOTOION
-#define RT_CHEM_PHOTOION 1
-#endif
-#define RT_INFRARED
-#if !defined(RT_ISRF_BACKGROUND) && !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
-#define RT_ISRF_BACKGROUND
-#endif
-#if defined(RT_INFRARED)
-#define RT_REINJECT_ACCRETED_PHOTONS // need to reinject any photons that are removed from the simulation by the accretion algorithm; particularly important at small RSOL and high optical depths
-#endif
-#endif
+#endif // closes SINGLE_STAR_RT_DEFAULTS
+
 #if (defined(COOLING) && !defined(COOL_LOWTEMP_THIN_ONLY) && !defined(RT_INFRARED) && !defined(NOGRAVITY))
 #define RT_USE_TREECOL_FOR_NH 6 /* This gives a better approximation for column density than the usual scale-length estimator, but is overkill for typical 1e-3msun-resolving simulations that only marginally resolve the opacity limit. Enable for high (<1e-5msun) resolution sims */
 #endif
@@ -589,6 +598,16 @@
 #endif
 #endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+/* starforge names this INPUT_READ_TEMPERATURE; we already had the same capability as
+   INPUT_READ_EOSTEMP. Alias them rather than renaming either, so a Config.sh written against
+   either name works and no existing use changes. */
+#if defined(INPUT_READ_TEMPERATURE) && !defined(INPUT_READ_EOSTEMP)
+#define INPUT_READ_EOSTEMP
+#endif
+#if defined(INPUT_READ_EOSTEMP) && !defined(INPUT_READ_TEMPERATURE)
+#define INPUT_READ_TEMPERATURE
+#endif
 
 
 #ifdef SINGLE_STAR_SINK_DYNAMICS

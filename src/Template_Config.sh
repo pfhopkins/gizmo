@@ -278,6 +278,10 @@
 #SINGLE_STAR_TIMESTEPPING=1     # use additional timestep criteria to ensure resolved binaries/multiples dont dissolve in close encounters. 0=most conservative. 1=super-timestep hard binaries by operator-splitting the binary orbit. 2=more aggressive super-timestep. cite Grudic et al., arXiv:2010.11254, for the methods here.
 #HERMITE_INTEGRATION=32         # Instead of the usual 2nd order DKD Leapfrog timestep, do 4th order Hermite integration for particles matching the bitflag. Allows longer timesteps and higher accuracy collisional dynamics. cite Grudic et al., arXiv:2010.11254, for the methods here.
 #DISABLE_HERMITE_INTEGRATION    # negate the HERMITE_INTEGRATION that SINGLE_STAR_STARFORGE_DEFAULTS would otherwise switch on, leaving sinks on plain KDK leapfrog. Useful as a convergence control, leapfrog being 2nd order.
+#SINGLE_STAR_RT_DEFAULTS        # the RT transport settings the STARFORGE radiative modules share (M1 solver, comoving frame, reduced speed of light, sink photon injection), without the radiative-feedback band set. SINGLE_STAR_FB_RAD switches this on for you.
+#JET_DIRECTION_FIXED_Z          # TESTING ONLY: launch spawned jets along +/-z instead of the accreted angular-momentum axis, so a launch geometry can be checked against a known direction. Not physical for production.
+#WIND_MDOT=1e-7                 # TESTING ONLY: hard-code the stellar wind mass-loss rate [Msun/yr] instead of taking it from the stellar evolution model, for controlled wind tests.
+#WIND_LUMINOSITY=1e36           # TESTING ONLY: hard-code the wind luminosity [erg/s]; with WIND_MDOT this sets the wind speed via L_w=(1/2) Mdot v_w^2.
 #IO_HERMITE_SYNC                # write HermiteSyncCoordinates/HermiteSyncVelocities: a mutually consistent position-velocity pair at the output time, unlike the ordinary drift-time positions against kick-time velocities. Needed for orbital elements, vis-viva or kinetic energy from a snapshot.
 ## ----------------------------------------------------------------------------------------------------
 # ----- sink creation and accretion/growth/merger modules
