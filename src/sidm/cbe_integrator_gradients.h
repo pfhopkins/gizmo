@@ -148,7 +148,6 @@ struct CBEGradActiveState {
     double             h_search;
     CBEGradLocalIn     local;
     short int          TimeBin;
-    CBEGradCallScalars scalars;
     int                origin_local_idx;
     int                origin_rank;
 };
@@ -162,6 +161,7 @@ struct CBEGradActiveState {
 template <typename NeighborT>
 KOKKOS_INLINE_FUNCTION
 static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
+                                           const CBEGradCallScalars& scalars,
                                            const NeighborT&          neighbor,
                                            CBEGradOut&               accum)
 {
@@ -214,8 +214,8 @@ static void cbe_grad_lsq_pair_kernel_body(const CBEGradActiveState& active,
     }
 
     /* Build Q_i, Q_j with the SSOT helper used by the flux body. */
-    const double cf_a3inv = active.scalars.common.cf_a3inv;
-    const double cf_atime = active.scalars.common.cf_atime;
+    const double cf_a3inv = scalars.common.cf_a3inv;
+    const double cf_atime = scalars.common.cf_atime;
 
     double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
@@ -404,6 +404,7 @@ static double cbe_S_psd_phi_bisect(const double S_i[3][3],
 template <typename NeighborT>
 KOKKOS_INLINE_FUNCTION
 static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
+                                          const CBEGradCallScalars& scalars,
                                           const NeighborT&          neighbor,
                                           CBEGradOut&               accum)
 {
@@ -447,8 +448,8 @@ static void cbe_grad_bj_pair_kernel_body(const CBEGradActiveState& active,
 
     /* Build Q_i and Q_j with the SSOT helper — same matching keeps the
      * limiter consistent with the LSQ pass and the flux body. */
-    const double cf_a3inv = active.scalars.common.cf_a3inv;
-    const double cf_atime = active.scalars.common.cf_atime;
+    const double cf_a3inv = scalars.common.cf_a3inv;
+    const double cf_atime = scalars.common.cf_atime;
 
     double Q_i[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
     double Q_j[CBE_INTEGRATOR_NBASIS][CBE_INTEGRATOR_NMOMENTS];
@@ -788,7 +789,7 @@ struct CBEGradSpec {
         a.pos[2]           = (double)dctx.P[i].Pos[2];
         a.h_search         = h_search;
         a.TimeBin          = dctx.P[i].TimeBin;
-        a.scalars          = scalars;
+        (void)scalars;
         a.origin_local_idx = i;
         a.origin_rank      = -1;
 
@@ -841,12 +842,13 @@ struct CBEGradSpec {
     static void pair_kernel(const ActiveData&   active,
                              const NeighborData& neighbor,
                              AccumData&          accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& cs)
     {
-        if(active.scalars.loop_iteration <= 0) {
-            cbe_grad_lsq_pair_kernel_body(active, neighbor, accum);
+        if(cs.loop_iteration <= 0) {
+            cbe_grad_lsq_pair_kernel_body(active, cs, neighbor, accum);
         } else {
-            cbe_grad_bj_pair_kernel_body (active, neighbor, accum);
+            cbe_grad_bj_pair_kernel_body (active, cs, neighbor, accum);
         }
     }
 };

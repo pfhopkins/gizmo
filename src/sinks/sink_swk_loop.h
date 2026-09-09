@@ -142,8 +142,8 @@ struct SinkSwallowOut {
  * ========================================================================== */
 
 /* Per-call cosmology + sink globals captured once from All.* on the host
- * by populate_call_scalars. Routed through ActiveData::scalars to the
- * inline pair body so the body never reads All.* directly (TRAP 1).
+ * by populate_call_scalars. Passed to the inline pair body as its own
+ * argument, once per call, so the body never reads All.* directly (TRAP 1).
  *
  * No rng_step — sink_swk has no RNG sites in the pair body (audit
  * confirmed via grep: no gizmo_gpu_rand* in sink_swallow_and_kick_functions.h
@@ -176,18 +176,18 @@ struct SinkSwkCallScalars {
 /* Active-particle state passed into the pair body. Same shape as
  * SinkFeedActiveState — `pos` and `h_search` top-level (Mode B walker
  * reads them); `local: SinkSwallowLocalIn` carries the host-fill struct;
- * `scalars` carries per-call cosmology+globals; origin_* carries
- * Mode-B-remote requester identity.
+ * origin_* carries Mode-B-remote requester identity. Per-call scalars are
+ * NOT here -- they are one value for the whole call and are passed alongside
+ * this record.
  *
  * mom_budget / J_dir / sink_mass_withdisk are precomputed in load_active
- * from the host-staged local + scalars and reused by the pair body
+ * from the host-staged local and the call scalars, and reused by the pair body
  * across all j (mirrors the per-active precomputation block in legacy
  * sink_swallow_and_kick_gpu.cc:265-285). */
 struct SinkSwkActiveState {
     Vec3<double>           pos;
     double                 h_search;
     SinkSwallowLocalIn     local;
-    SinkSwkCallScalars     scalars;
     int                    origin_local_idx;
     int                    origin_rank;
     /* Per-active precomputations. */
@@ -228,12 +228,12 @@ struct SinkSwkDeviceContext : NeighborLoopDeviceContextBase {
 
 KOKKOS_INLINE_FUNCTION
 static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
+                                  const SinkSwkCallScalars& scalars,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
                                   SinkSwallowOut& out)
 {
     const SinkSwallowLocalIn& local      = active.local;
-    const SinkSwkCallScalars& scalars    = active.scalars;
     const double              h_i        = (double)local.KernelRadius;
 
     if(neighbor_particle.Mass <= 0) return;
@@ -691,7 +691,7 @@ struct SinkSwkSpec {
         active.pos[1] = (double)active.local.Pos[1];
         active.pos[2] = (double)active.local.Pos[2];
         active.h_search         = h_search;
-        active.scalars          = scalars;
+        (void)scalars;
         active.origin_local_idx = active_slot;
         active.origin_rank      = -1;
 
@@ -747,9 +747,10 @@ struct SinkSwkSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                             const CallScalars& cs)
     {
-        sink_swk_pair_kernel(active, *neighbor.neighbor_particle,
+        sink_swk_pair_kernel(active, cs, *neighbor.neighbor_particle,
                               neighbor.neighbor_cell, accum);
     }
 

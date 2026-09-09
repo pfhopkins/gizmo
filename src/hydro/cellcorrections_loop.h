@@ -235,7 +235,8 @@ struct CellcorrectionsSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/)
     {
         cellcorrections_pair_kernel(active, neighbor, accum);
     }

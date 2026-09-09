@@ -74,7 +74,6 @@ struct DMDispIterScratch {
 struct DMDispActiveState {
     Vec3<MyDouble>    pos;
     MyFloat           h_search;
-    DMDispCallScalars scalars;
 };
 
 /* ============================================================================
@@ -207,7 +206,7 @@ struct DMDispersionSpec {
         a.pos[1]   = (MyDouble)ctx.P[i].Pos[1];
         a.pos[2]   = (MyDouble)ctx.P[i].Pos[2];
         a.h_search = (MyFloat)h_search;
-        a.scalars  = scalars;
+        (void)scalars;
         (void)active_slot;
         return a;
     }
@@ -238,7 +237,8 @@ struct DMDispersionSpec {
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
-                            AccumData& accum, NoScatter& /*scatter*/) {
+                            AccumData& accum, NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         struct particle_data& Pj = *neighbor.neighbor_particle;
         if (Pj.Mass <= 0) return;
 

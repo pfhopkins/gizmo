@@ -5,9 +5,9 @@
  * driver and retired density_evaluate_gpu path.
  *
  * Contract notes:
- *   - pair_kernel signature matches runner contract verbatim: 4 args
- *     (active, neighbor, accum, scalars). NO `int j` — runner doesn't
- *     pass it; if a body needs j it lives in NeighborData.
+ *   - pair_kernel signature matches runner contract verbatim: 5 args
+ *     (active, neighbor, accum, scatter, call scalars). NO `int j` — runner
+ *     doesn't pass it; if a body needs j it lives in NeighborData.
  *   - AccumData fields LITERALLY match density_functions.h:50-104
  *     density_evaluate_data_out_ (literal field-by-field port):
  *     NV_T_face_weights/ParticleVel/GradH_numer = Vec3<MyDouble>;
@@ -208,8 +208,10 @@ struct DensityIterScratch {
  * Types match legacy verbatim where the kernel needs legacy data. Fields
  * owned by the runner, such as origin rank/index, stay out of ActiveData.
  *
- * scalars carries the CallScalars snapshot per AGS pattern so
- * pair_kernel doesn't double-thread the args. ============================ */
+ * The per-call CallScalars snapshot is NOT carried here. It is one value for
+ * the whole call, identical on every rank at a sync point, so it is passed to
+ * pair_kernel as its own argument rather than replicated once per active.
+ * ========================================================================= */
 struct DensityActiveState {
     /* pos is lowercase to match the runner's walker which reads
      * `active.pos[k]` (mesh/neighbor_loop_runner.cc:793). All other
@@ -227,7 +229,6 @@ struct DensityActiveState {
 #ifdef HYDRO_MULTIFLUID
     unsigned char      FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
 #endif
-    DensityCallScalars scalars;
 };
 
 /* NeighborData — j-side per-pair sidecar. Density has NO j-side writes
@@ -590,8 +591,8 @@ struct DensitySpec {
         a.FluidType = ctx.P[i].FluidType;
 #endif
 
-        a.scalars = scalars;
         (void)active_slot;
+        (void)scalars;
         return a;
     }
 
@@ -630,11 +631,9 @@ struct DensitySpec {
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
-                            AccumData& accum, NoScatter& /*scatter*/) {
+                            AccumData& accum, NoScatter& /*scatter*/,
+                            const CallScalars& cs) {
 
-        /* CallScalars are carried by the active snapshot, matching the AGS
-         * runner pattern and avoiding device-side global reads. */
-        const CallScalars& cs = i_active.scalars;
         struct particle_data       &Pj    = *neighbor.neighbor_particle;
         struct gas_cell_data * const CellPj = neighbor.neighbor_cell;
         /* j is always gas under neighbor_type_mask = (1u<<0); CellPj is

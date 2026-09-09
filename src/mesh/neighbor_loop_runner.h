@@ -84,8 +84,10 @@
  *     static void pair_kernel(const ActiveData& a,
  *                             const NeighborData& nb,
  *                             AccumData&  active_out,
- *                             ScatterData& nb_out);
- *   Both outputs ALWAYS in the signature. ScatterData=NoScatter for
+ *                             ScatterData& nb_out,
+ *                             const CallScalars& cs);
+ *   Both outputs ALWAYS in the signature. `cs` is the per-call snapshot,
+ *   passed once rather than carried on every active (see TRAP 1). ScatterData=NoScatter for
  *   ActiveReduceOnly compiles to zero-cost. Kernel writes both sides of
  *   any pair interaction in ONE place — never split into "active-side
  *   kernel" + "neighbor-side kernel" (the duplicate-logic trap this
@@ -653,7 +655,8 @@ inline const char *nlr_modeb_eval_omp_label(ModeBEvalOMP tier, bool is_explicit)
  *     snapshotted: the snapshot carries the OLD context's rank-local fields,
  *     so without per-eval-pass binding the pair kernel reads stale values.
  *
- * Specs whose ActiveData is purely physical (pos/vel/mass/scalars only) do
+ * Specs whose ActiveData is purely physical (pos/vel/mass and similar
+ * per-particle values only) do
  * NOT need this hook; the trait returns false and the runner skips the call.
  *
  * Incident: MechFBActiveState (galaxy_sf/mechfb_loop.h:54) embeds P_base,
@@ -1045,7 +1048,7 @@ enum class DispatchPath : int {
  *
  *     // (5) Per-pair physics types (all trivially copyable; see TRAP 5)
  *     struct CallScalars   { NlrCommonScalars common; ... };
- *     struct ActiveData    { ...; CallScalars scalars; };
+ *     struct ActiveData    { ... };   // per-PARTICLE state only; see TRAP 1
  *     struct NeighborData  { const struct particle_data* neighbor_particle; ... };
  *     using  AccumData     = my_loop_accum_t;
  *     using  ScatterData   = NoScatter;        // or your scatter type
@@ -1079,7 +1082,8 @@ enum class DispatchPath : int {
  *     //     (Mode B walker). See TRAP 3.
  *     KOKKOS_INLINE_FUNCTION
  *     static void pair_kernel(const ActiveData& active, const NeighborData& neighbor,
- *                             AccumData& accum, ScatterData& scatter);
+ *                             AccumData& accum, ScatterData& scatter,
+ *                             const CallScalars& cs);
  *
  *     // (8) Per-active and per-call hooks
  *     static double      search_radius(const neighbor_loop_args& args,
@@ -1176,9 +1180,29 @@ enum class DispatchPath : int {
  *
  *   TRAP 1: populate_call_scalars is host->device VALUE CAPTURE, not
  *           inter-rank sync. Globals enter the kernel via this function only
- *           — the pair_kernel must NEVER read All.* directly. Threading
- *           CallScalars through ActiveData is what makes Mode A and Mode B
- *           bit-identical (single source of truth for per-call state).
+ *           — the pair_kernel must NEVER read All.* directly. ONE snapshot
+ *           per call, taken on the host and passed to every hook that needs
+ *           it, is what makes Mode A and Mode B bit-identical (single source
+ *           of truth for per-call state).
+ *
+ *           It is passed as its OWN argument, not carried on ActiveData.
+ *           ActiveData is per-particle state and is also the record shipped
+ *           to peers, so a per-call constant living there was replicated once
+ *           per active particle in the query buffer and once more on the
+ *           wire. The invariant is the single snapshot, never its carriage.
+ *
+ *           REQUIREMENT ON THE SPEC AUTHOR, load-bearing on the peer path:
+ *           CallScalars must hold ONLY state that is identical on every rank
+ *           at a sync point -- global integration state, parameterfile
+ *           values, compile-time constants, and quantities derived from
+ *           those. A receiver answering a peer's query evaluates it with its
+ *           OWN snapshot, so a rank-local value here does not travel with the
+ *           query and the two ranks would compute different physics for the
+ *           same pair. Rank-local per-active state belongs in ActiveData,
+ *           which IS shipped. Anything derived from a collective (Ti_Current
+ *           and everything downstream of it) satisfies this by construction;
+ *           anything read from a rank's own particle pool, task id, or local
+ *           counts does not.
  *
  *   TRAP 2: load_active runs on the device. KOKKOS_INLINE_FUNCTION is the
  *           contract: no std::, no host-only helpers. Same for load_neighbor,

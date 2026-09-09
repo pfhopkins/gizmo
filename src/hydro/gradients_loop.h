@@ -395,7 +395,8 @@ struct GradientsSpec
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/)
     {
         if(!active.enabled) return;   /* dead row (Mass<=0 mid-corridor): zero contribution */
 #if defined(HYDRO_MULTIFLUID)
@@ -642,7 +643,8 @@ struct GradientsIterSpec
     /* Slim pair body — forwards to gradient_accumulate_neighbor_iter. */
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& active, const NeighborData& neighbor,
-                             AccumData& accum, NoScatter& /*scatter*/)
+                             AccumData& accum, NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/)
     {
         if(!active.enabled) return;
 #if defined(HYDRO_MULTIFLUID)

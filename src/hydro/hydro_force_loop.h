@@ -437,7 +437,8 @@ struct HydroForceSpec
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/)
     {
         if(!active.enabled) return;   /* dead row (Mass<=0 mid-corridor): no fluxes, zero contribution */
 #if defined(HYDRO_MULTIFLUID)

@@ -212,8 +212,8 @@ struct AgsForceOut {
 };
 
 /* Per-call cosmology / globals captured once from All.* on the host by
- * populate_call_scalars. Routed through ActiveData::scalars to the inline
- * pair body so the body never reads All.* directly. */
+ * populate_call_scalars. Passed to the inline pair body as its own argument,
+ * once per call, so the body never reads All.* directly. */
 struct AgsForceCallScalars {
     NlrCommonScalars common;                 /* cf_atime, cf_a2inv, cf_hubble_a, ... */
     int              TimeBinActive[TIMEBINS];/* SIDM/CBE wakeup tests */
@@ -232,7 +232,6 @@ struct AgsForceActiveState {
     double              h_search;          /* SIDM 3x-inflated when DM_SIDM */
     AgsForceLocalIn     local;
     short int           TimeBin;           /* for hydro-convention wakeup write */
-    AgsForceCallScalars scalars;
     int                 origin_local_idx;
     int                 origin_rank;
 };
@@ -263,6 +262,7 @@ struct AgsForceIterScratch { };
 template <typename NeighborT>
 KOKKOS_INLINE_FUNCTION
 static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
+                                        const AgsForceCallScalars& scalars,
                                         const NeighborT&           neighbor,
                                         AgsForceOut&               accum)
 {
@@ -309,16 +309,16 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     for(int k = 0; k < 3; k++) {
         double Vel_j_k = Kokkos::atomic_load(&Pj.Vel[k]);
         kernel.dv[k] = local.Vel[k] - Vel_j_k;
-        if(active.scalars.common.comoving_integration_on) {
-            kernel.dv[k] += active.scalars.common.cf_hubble_a * kernel.dp[k]
-                            / active.scalars.common.cf_a2inv;
+        if(scalars.common.comoving_integration_on) {
+            kernel.dv[k] += scalars.common.cf_hubble_a * kernel.dp[k]
+                            / scalars.common.cf_a2inv;
         }
     }
 
 #if defined(CBE_INTEGRATOR)
     {
         CbeFluxResult cbe_r = cbe_integrator_flux_compute_pair(
-            local, j, P_base, kernel, accum, active.scalars.TimeBinActive);
+            local, j, P_base, kernel, accum, scalars.TimeBinActive);
         if(cbe_r.set_wakeup_j) {
             /* Hydro-convention wakeup: active.TimeBin+1 (positive), MAX
              * reverse-comm safe (legacy -1 sentinel silently dropped). */
@@ -338,8 +338,8 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     if(neighbor.geofactor) {
         SidmScatterResult sidm_r = sidm_core_flux_compute_pair(
             local, j, P_base, kernel, accum,
-            neighbor.geofactor, active.scalars.TimeBinActive,
-            active.scalars.rng_salt);
+            neighbor.geofactor, scalars.TimeBinActive,
+            scalars.rng_salt);
         if(sidm_r.scattered) {
             if(sidm_r.set_wakeup_j) {
                 short int wakeup_val = (short int)(active.TimeBin + 1);
@@ -519,7 +519,7 @@ struct AgsForceSpec {
         a.pos[2] = (double)dctx.P[i].Pos[2];
         a.h_search = h_search;
         a.TimeBin  = dctx.P[i].TimeBin;
-        a.scalars  = scalars;
+        (void)scalars;
         a.origin_local_idx = i;
         a.origin_rank      = -1;
 
@@ -637,9 +637,10 @@ struct AgsForceSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& cs)
     {
-        ags_force_pair_kernel_body(active, neighbor, accum);
+        ags_force_pair_kernel_body(active, cs, neighbor, accum);
     }
 
     /* after_iter — single-pass shape: always Converged at iter 0. */

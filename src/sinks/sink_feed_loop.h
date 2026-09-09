@@ -54,8 +54,8 @@ int  sink_feed_is_active(int i);
  * ========================================================================== */
 
 /* Per-call cosmology + sink globals captured once from All.* on the host
- * by populate_call_scalars. Routed through ActiveData::scalars to the inline
- * pair body so the body never reads All.* directly (TRAP 1).
+ * by populate_call_scalars. Passed to the inline pair body as its own
+ * argument, once per call, so the body never reads All.* directly (TRAP 1).
  *
  * rng_step uses a sink_feed-unique constant XOR shift on top of
  * NumCurrentTiStep. This is load-bearing: if multiple sink loops in the
@@ -143,14 +143,14 @@ struct SinkFeedOut {
  * SinkEnv1ActiveState — `pos` and `h_search` are top-level (the runner's
  * Mode B walker reads them directly: see neighbor_loop_runner.cc:748,753).
  * `local` carries the host-fill struct for the rest of the per-active
- * physics; `scalars` carries per-call cosmology+globals; origin_* fields
- * carry the requester identity for Mode B remote replies. Trivially
+ * physics; origin_* fields carry the requester identity for Mode B remote
+ * replies. Per-call scalars are NOT here -- they are one value for the whole
+ * call and are passed alongside this record. Trivially
  * copyable for byte-level MPI transfer. */
 struct SinkFeedActiveState {
     Vec3<double>         pos;             /* P[i].Pos — runner reads directly */
     double               h_search;        /* runner-supplied search radius */
     SinkFeedLocalIn      local;
-    SinkFeedCallScalars  scalars;
     int                  origin_local_idx;
     int                  origin_rank;
 };
@@ -230,6 +230,7 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
 
 KOKKOS_INLINE_FUNCTION
 static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
+                                  const SinkFeedCallScalars& scalars,
                                   struct particle_data& neighbor_particle,
                                   struct gas_cell_data* neighbor_cell,
                                   SinkFeedOut& out
@@ -239,7 +240,6 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                   )
 {
     const SinkFeedLocalIn& local       = active.local;
-    const SinkFeedCallScalars& scalars = active.scalars;
 
     if(neighbor_particle.Mass <= 0) return;
 
@@ -592,7 +592,7 @@ struct SinkFeedSpec {
         active.pos[1] = (double)active.local.Pos[1];
         active.pos[2] = (double)active.local.Pos[2];
         active.h_search         = h_search;
-        active.scalars          = scalars;
+        (void)scalars;
         active.origin_local_idx = active_slot;
         active.origin_rank      = -1;
         return active;
@@ -640,9 +640,10 @@ struct SinkFeedSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                             const CallScalars& cs)
     {
-        sink_feed_pair_kernel(active, *neighbor.neighbor_particle,
+        sink_feed_pair_kernel(active, cs, *neighbor.neighbor_particle,
                               neighbor.neighbor_cell, accum
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
                               , neighbor.binary_merge_eligible

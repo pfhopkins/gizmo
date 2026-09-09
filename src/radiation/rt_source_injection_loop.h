@@ -106,7 +106,6 @@ struct RtSrcInjActiveState {
     Vec3<double>           pos;
     double                 h_search;
     RtSrcLocalIn           local;
-    RtSrcInjCallScalars    scalars;
 };
 
 /* DeviceContext extension: UVM-resident per-active host-fill array.
@@ -388,7 +387,7 @@ struct RtSrcInjectionSpec {
             a.pos[2] = (double)dctx.P[i].Pos[2];
             a.h_search = h_search;
         }
-        a.scalars = scalars;
+        (void)scalars;
         return a;
     }
 
@@ -407,7 +406,8 @@ struct RtSrcInjectionSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& /*accum*/,
-                             NoScatter& /*scatter*/) {
+                             NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         /* Source-level early-outs — mirror the legacy lambda guard at
          * rt_source_injection_gpu.cc:193. wk = (1 - r2/h2) / KernelSum_Around_RT_Source
          * would divide by zero on degenerate sources. */

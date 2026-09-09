@@ -57,9 +57,10 @@ double ags_return_maxsoft(int i);
  * ========================================================================== */
 
 /* Per-call cosmology + AGS scalars captured once from All.* on the host by
- * populate_call_scalars. Routed through ActiveData::scalars to the inline
- * pair body so the body never reads All.* directly (TRAP 1). TimeBinActive
- * is captured by value (TIMEBINS=60 ints, ~240 bytes — small enough). */
+ * populate_call_scalars. Passed to the inline pair body as its own argument,
+ * once per call, so the body never reads All.* directly (TRAP 1). TimeBinActive
+ * is captured by value (TIMEBINS=60 ints, ~240 bytes) — which is affordable
+ * precisely because this is per CALL, not per active particle. */
 struct AgsDensityCallScalars {
     NlrCommonScalars common;
     int              TimeBinActive[TIMEBINS];
@@ -163,7 +164,6 @@ struct AgsDensityActiveState {
     double                 h_search;
     Vec3<double>           Vel;
     short int              TimeBin;
-    AgsDensityCallScalars  scalars;
     int                    origin_local_idx;
     int                    origin_rank;
 };
@@ -199,6 +199,7 @@ struct AgsDensityActiveState {
  * ========================================================================== */
 KOKKOS_INLINE_FUNCTION
 static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
+                                          const AgsDensityCallScalars& scalars,
                                           struct particle_data&        neighbor_particle,
                                           struct gas_cell_data*        neighbor_cell,
                                           AgsDensityAccumData&         accum,
@@ -210,8 +211,6 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
      * neighbor_particle.Type == 0 gate below. */
 
     if(neighbor_particle.Mass <= 0) return;
-
-    const AgsDensityCallScalars& scalars = active.scalars;
 
     const double h_i  = active.h_search;          /* runner-provided per-iter radius */
     const double h_i2 = h_i * h_i;
@@ -502,7 +501,7 @@ struct AgsDensitySpec {
         active.Vel[2]           = (double)dctx.P[i].Vel[2];
         active.TimeBin          = dctx.P[i].TimeBin;
         active.h_search         = h_search;
-        active.scalars          = scalars;
+        (void)scalars;
         active.origin_local_idx = active_slot;
         active.origin_rank      = -1;
         return active;
@@ -538,9 +537,10 @@ struct AgsDensitySpec {
     static void pair_kernel(const ActiveData&   active,
                              const NeighborData& neighbor,
                              AccumData&          accum,
-                             NoScatter&          /*scatter*/)
+                             NoScatter&          /*scatter*/,
+                            const CallScalars& cs)
     {
-        ags_density_pair_kernel_body(active,
+        ags_density_pair_kernel_body(active, cs,
                                       *neighbor.neighbor_particle,
                                       neighbor.neighbor_cell,
                                       accum,
