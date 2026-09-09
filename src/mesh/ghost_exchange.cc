@@ -864,27 +864,222 @@ static int gx_certify_send_list_current(const int *home_idx, int n_slots, intege
     return drift_status;
 }
 
-/* SSOT for the forward particle+cell transport: the two typed Alltoallv calls
-   (P always; CellP only when gas exists globally) with element-unit counts.
-   Used by BOTH import impls (materialising ghosts at &P[NumPart]) and
-   ghost_refresh_values() (overwriting existing ghost slots at
-   &P[NumPart_before_ghost]). Verbose per-impl diagnostics stay at the call
-   sites; only the transport is factored here. */
-static void gx_forward_particle_exchange(const struct particle_data *send_P,
-                                         const struct gas_cell_data *send_CellP,
-                                         const int *send_count, const int *send_disp,
-                                         struct particle_data *dst_P,
-                                         struct gas_cell_data *dst_CellP,
-                                         const int *recv_count, const int *recv_disp)
+/* SSOT for the forward particle+cell transport: pack the exported slots and carry
+   them with two typed Alltoallv calls (P always; CellP only when gas exists
+   globally) with element-unit counts. Used by BOTH import impls (materialising
+   ghosts at &P[NumPart]) and ghost_refresh_values() (overwriting existing ghost
+   slots at &P[NumPart_before_ghost]). Verbose per-impl diagnostics stay at the call
+   sites; only the pack and the transport are factored here.
+
+   The payload is carried in rounds rather than staged whole. A crowded step exports
+   a large multiple of a rank's own particles -- a near-all-active FIF step asked for
+   1110 MB of particle_data + gas_cell_data at once, more than the whole working pool
+   -- and staging that in one piece made this transport something that has to fit,
+   which is exactly what the pool is not sized for: it counts only what cannot be
+   broken up, and expects everything else to take more rounds when there is less room
+   (see arena_megabytes_from_tenants). Rounds put this transport back under that rule,
+   so a bigger pool buys fewer rounds and never decides whether the step works.
+
+   A round carries, for every peer, the next slice of that peer's run. Both ends
+   apply the same rule to the same per-peer counts, which were exchanged before this
+   is called, so each rank already knows what it will receive in each round and no
+   further count exchange is needed. Slices land at their final offsets, so the
+   delivered pool is identical to what a single round produced. */
+static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
+                                                  const int *send_count, const int *send_disp,
+                                                  struct particle_data *dst_P,
+                                                  struct gas_cell_data *dst_CellP,
+                                                  const int *recv_count, const int *recv_disp)
 {
-    gizmo_mpi_alltoallv_typed((void *)send_P, (int *)send_count, (int *)send_disp,
-                              dst_P, (int *)recv_count, (int *)recv_disp,
-                              sizeof(struct particle_data), MPI_COMM_WORLD);
-    if(All.TotN_gas > 0) {
-        gizmo_mpi_alltoallv_typed((void *)send_CellP, (int *)send_count, (int *)send_disp,
-                                  dst_CellP, (int *)recv_count, (int *)recv_disp,
-                                  sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+    const size_t slot_bytes = sizeof(struct particle_data) + sizeof(struct gas_cell_data);
+
+    /* How many slots per peer a round may carry. Sized from the room this rank has
+       now, shared out over the peers a round touches, and reduced to what the
+       tightest rank can manage so every rank cuts its runs at the same place. At
+       least one slot per peer: a round that cannot be afforded is reported below
+       rather than skipped, or the transport would never finish.
+
+       Half the free room, not all of it: the two staging buffers are taken while
+       the callers still hold their own working arrays, and a round sized to the
+       last free byte would be refused by the check below and turn a run that fits
+       into a stop. */
+    int slots_per_peer = 1;
+    long long tightest_free = 0;
+    {
+        const size_t per_peer = slot_bytes * (size_t) ((NTask > 0) ? NTask : 1);
+        long long affordable = (per_peer > 0) ? (long long) (((size_t) FreeBytes / 2) / per_peer) : 1;
+        if(affordable < 1) {affordable = 1;}
+        if(affordable > INT_MAX) {affordable = INT_MAX;}
+        /* The room left on the tightest rank rides along with the agreement, so
+           reporting it costs no collective of its own. */
+        long long want[2] = {affordable, (long long) FreeBytes}, least[2] = {1, 0};
+        MPI_Allreduce(want, least, 2, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+        slots_per_peer = (least[0] > 0) ? (int) least[0] : 1;
+        tightest_free  = least[1];
     }
+
+    /* How many rounds cover the longest run anywhere. A rank with nothing to send
+       still has to enter every round its peers send in, so the longest run in either
+       direction on any rank sets the count for all of them.
+
+       The first round is the largest -- every peer contributes a full slice, and a
+       later round's slice can only be shorter -- and each round gives its buffers
+       back before the next takes any, so asking once whether the first round fits
+       answers the question for all of them. */
+    int rounds = 1;
+    long long heaviest_rank_bytes = 0;
+    size_t staging_bytes = 0;
+    int short_local = 0, short_any = 0;
+    {
+        long long longest_run = 0, carried = 0, first_round = 0;
+        for(int t = 0; t < NTask; t++) {
+            if(send_count[t] > longest_run) {longest_run = send_count[t];}
+            if(recv_count[t] > longest_run) {longest_run = recv_count[t];}
+            carried += send_count[t];
+            first_round += (send_count[t] < slots_per_peer) ? send_count[t] : slots_per_peer;
+        }
+        const size_t first_slots = (size_t) (first_round > 0 ? first_round : 1);
+        staging_bytes = gizmo_mymalloc_rounded_size(first_slots * sizeof(struct particle_data))
+                      + gizmo_mymalloc_rounded_size(first_slots * sizeof(struct gas_cell_data));
+        short_local = gizmo_alloc_fits_this_rank(staging_bytes, 2) ? 0 : 1;
+        /* What this rank puts on the wire, and whether it can afford a round, travel
+           with the same agreement: the figure worth reporting belongs to whichever
+           rank carries most, and that is not reliably rank 0. One rank short stops
+           them all, together, before a byte is taken. */
+        long long mine[3] = {longest_run, carried * (long long) slot_bytes, short_local};
+        long long most[3] = {0, 0, 0};
+        MPI_Allreduce(mine, most, 3, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        rounds = (int) ((most[0] + slots_per_peer - 1) / slots_per_peer);
+        if(rounds < 1) {rounds = 1;}
+        heaviest_rank_bytes = most[1];
+        short_any = (most[2] != 0);
+    }
+
+    if(short_any)
+    {
+        if(short_local) {
+            /* Two different shortages reach here: not enough bytes free, or no room
+               left in the arena's table of live blocks. Say which, because raising
+               the pool answers the first and does nothing at all for the second. */
+            if((long long) staging_bytes > (long long) FreeBytes) {
+                printf("Ghost exchange: rank %d needs %g MB to carry one round of exported particles but "
+                       "has %g MB of working memory left. Raise Working_Mem_Pool_Per_Task_in_MB, or spread "
+                       "the run over more ranks. Stopping.\n",
+                       ThisTask, (double) staging_bytes / (1024.0 * 1024.0),
+                       (double) FreeBytes / (1024.0 * 1024.0));
+            } else {
+                printf("Ghost exchange: rank %d cannot take the 2 staging buffers for one round: the "
+                       "working memory has %g MB free, so this is not a shortage of memory but of its "
+                       "table of live blocks. Something above is holding an unusual number of "
+                       "allocations. Stopping.\n",
+                       ThisTask, (double) FreeBytes / (1024.0 * 1024.0));
+            }
+            fflush(stdout);
+        }
+        gizmo_request_controlled_stop(7727,
+            "ghost_exchange: not enough working memory to carry one round of the exported particles",
+            __FILE__, __LINE__, __FUNCTION__);
+        gizmo_exit_bad_stop_if_requested("ghost_exchange:forward_round");
+        return;
+    }
+
+    /* Say how the exchange was split, on a change of round count or once the load
+       has grown by a quarter since the last word -- the same gating the tree's own
+       transport report uses, so a run that never needs a second round says this once
+       and a run growing toward one shows it coming. */
+    if(ThisTask == 0)
+    {
+        static int last_rounds_reported = -1;
+        static long long last_heaviest_reported = 0;
+        if(rounds != last_rounds_reported ||
+           heaviest_rank_bytes > last_heaviest_reported + last_heaviest_reported / 4)
+        {
+            last_rounds_reported    = rounds;
+            last_heaviest_reported  = heaviest_rank_bytes;
+            printf("Ghost exchange: %d round(s); heaviest rank carries %g MB, working memory free on the "
+                   "tightest rank %g MB\n",
+                   rounds, (double) heaviest_rank_bytes / (1024.0 * 1024.0),
+                   (double) tightest_free / (1024.0 * 1024.0));
+            fflush(stdout);
+        }
+    }
+
+    int *round_send_count = (int *) mymalloc("gx_fwd_sc", NTask * sizeof(int));
+    int *round_send_disp  = (int *) mymalloc("gx_fwd_sd", NTask * sizeof(int));
+    int *round_recv_count = (int *) mymalloc("gx_fwd_rc", NTask * sizeof(int));
+    int *round_recv_disp  = (int *) mymalloc("gx_fwd_rd", NTask * sizeof(int));
+
+    for(int r = 0; r < rounds; r++)
+    {
+        const int taken = r * slots_per_peer;
+        int staged = 0;
+        for(int t = 0; t < NTask; t++)
+        {
+            int s = send_count[t] - taken; if(s < 0) {s = 0;} if(s > slots_per_peer) {s = slots_per_peer;}
+            int v = recv_count[t] - taken; if(v < 0) {v = 0;} if(v > slots_per_peer) {v = slots_per_peer;}
+            round_send_count[t] = s;
+            round_send_disp[t]  = staged;
+            staged += s;
+            round_recv_count[t] = v;
+            /* Straight into the slot this peer's run occupies in the delivered pool,
+               so nothing has to be moved afterwards and the result does not depend
+               on which round carried it. A peer whose run is already finished keeps
+               its run's own start, which is always a real offset: an empty slice must
+               still name somewhere inside the buffer, because the transport may form
+               the address before it notices the count is zero. */
+            round_recv_disp[t]  = (v > 0) ? (recv_disp[t] + taken) : recv_disp[t];
+        }
+
+        const size_t staging_slots = (size_t) (staged > 0 ? staged : 1);
+        struct particle_data *send_P = (struct particle_data *) mymalloc("gx_fwd_sP",
+            staging_slots * sizeof(struct particle_data));
+        struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_fwd_sC",
+            staging_slots * sizeof(struct gas_cell_data));
+
+        for(int t = 0; t < NTask; t++)
+        {
+            /* Only step into the list for a peer this round still has slots for:
+               a run that finished in an earlier round would address past its end. */
+            if(round_send_count[t] <= 0) {continue;}
+            const int *home = send_home_idx + send_disp[t] + taken;
+            for(int k = 0; k < round_send_count[t]; k++)
+            {
+                const int j = home[k];
+                const int off = round_send_disp[t] + k;
+                /* A run that stopped early on its own guard leaves its remaining slots
+                   unclaimed. Send them as zeros: the receiver counts them but no home
+                   particle stands behind them, and staging is reused between rounds,
+                   so carrying them as they lie would put stale bytes on the wire. */
+                if(j < 0) {
+                    memset(&send_P[off], 0, sizeof(struct particle_data));
+                    memset(&send_CellP[off], 0, sizeof(struct gas_cell_data));
+                    continue;
+                }
+                gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
+            }
+        }
+
+        gizmo_mpi_alltoallv_typed(send_P, round_send_count, round_send_disp,
+                                  dst_P, round_recv_count, round_recv_disp,
+                                  sizeof(struct particle_data), MPI_COMM_WORLD);
+        /* Only meaningful when the simulation has any gas particles globally. With
+           TotN_gas==0 (N-body / DM-only runs) CellP is allocated to size 0, so writing
+           to dst_CellP would dereference out of bounds -- and no gas ghost can exist
+           if no gas exists anywhere. */
+        if(All.TotN_gas > 0) {
+            gizmo_mpi_alltoallv_typed(send_CellP, round_send_count, round_send_disp,
+                                      dst_CellP, round_recv_count, round_recv_disp,
+                                      sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+        }
+
+        myfree(send_CellP);
+        myfree(send_P);
+    }
+
+    myfree(round_recv_disp);
+    myfree(round_recv_count);
+    myfree(round_send_disp);
+    myfree(round_send_count);
 }
 
 static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec)
@@ -1274,10 +1469,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     /* ================================================================
        Step 5: Pack particles from tiles needed by each task.
        ================================================================ */
-    struct particle_data *send_P = (struct particle_data *) mymalloc("ghost_sP",
-        (total_send > 0 ? total_send : 1) * sizeof(struct particle_data));
-    struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("ghost_sC",
-        (total_send > 0 ? total_send : 1) * sizeof(struct gas_cell_data));
     /* Record home index of each sent particle for ghost writeback */
     int *send_home_idx = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
 
@@ -1302,38 +1493,20 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
     }
     /* Advance the exported particles before copying them. The walk above only
      * records which particle lands in each slot; a destination whose run stops
-     * early on its own guard leaves later slots at the -1 seeded before it, and
-     * the pack below skips those exactly as the previously fused loop left them
-     * untouched. */
+     * early on its own guard leaves later slots at the -1 seeded before it, which
+     * the transport carries as they stand. */
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
-    for(int off = 0; off < total_send; off++)
-    {
-        const int j = send_home_idx[off];
-        if(j < 0) {continue;}
-        gx_pack_send_slot(P, CellP, j, &send_P[off], &send_CellP[off]);
-    }
 
     /* ================================================================
-       Step 6: Exchange via MPI_Alltoallv.
+       Step 6: Pack and exchange, in rounds the working memory can hold.
        ================================================================ */
-    /* Per-particle exchange: send_count/recv_count/send_disp/recv_disp are
-     * already in element units. gizmo_mpi_alltoallv_typed builds a contiguous
-     * MPI_Datatype per call so element-count int*'s drive the wire — dodging
-     * the 2.1 GB per-peer int-overflow that bites fire_m11i at >~6M parts/rank. */
-    gizmo_mpi_alltoallv_typed(send_P, send_count, send_disp,
-                              &P[NumPart], recv_count, recv_disp,
-                              sizeof(struct particle_data), MPI_COMM_WORLD);
-
-    /* CellP exchange: only meaningful when the simulation has any gas
-       particles globally. With TotN_gas==0 (N-body / DM-only runs), CellP
-       is allocated to size 0, so writing to &CellP[NumPart] would dereference
-       an out-of-bounds pointer. Skip the CellP alltoallv in that case —
-       no gas ghosts can exist if no gas exists anywhere. */
-    if(All.TotN_gas > 0) {
-        gizmo_mpi_alltoallv_typed(send_CellP, send_count, send_disp,
-                                  &CellP[NumPart], recv_count, recv_disp,
-                                  sizeof(struct gas_cell_data), MPI_COMM_WORLD);
-    }
+    /* send_count/recv_count/send_disp/recv_disp are already in element units.
+     * gizmo_mpi_alltoallv_typed builds a contiguous MPI_Datatype per call so
+     * element-count int*'s drive the wire — dodging the 2.1 GB per-peer
+     * int-overflow that bites fire_m11i at >~6M parts/rank. */
+    gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
+                                          &P[NumPart], &CellP[NumPart],
+                                          recv_count, recv_disp);
 
     /* Update counts */
     NumGhostParticles = total_recv;
@@ -1429,7 +1602,6 @@ static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost
      * preflight cleanup frees the discovery scratch (same free list the Stage-0A
      * fallback bail uses). */
     myfree(task_offset);
-    myfree(send_CellP); myfree(send_P);
     free(send_home_idx);
     tile_preflight_cleanup();
     return GHOST_EXCHANGE_COMPLETED;
@@ -2532,11 +2704,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * collective pack/exchange. Every rank reaches this unconditionally. */
     gizmo_exit_bad_stop_if_requested("ghost_exchange:capacity_rd");
 
-    /* === Step 5: pack particle data + cell data + home_idx === */
-    struct particle_data *send_P = (struct particle_data *) mymalloc("gx_rd_sP",
-        (total_send > 0 ? total_send : 1) * sizeof(struct particle_data));
-    struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_rd_sC",
-        (total_send > 0 ? total_send : 1) * sizeof(struct gas_cell_data));
+    /* === Step 5: work out which local slot fills each send position === */
     int *send_home_idx = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
     /* Two integer-only streams over the match bitmap instead of one that also
      * carries the payload copy.  Packing while streaming meant every particle_data
@@ -2569,14 +2737,11 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Advance the exported particles before copying them, so nothing goes on the
      * wire behind the time its receiver will read it at. */
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
-    for(int off = 0; off < total_send; off++) {
-        gx_pack_send_slot(P, CellP, send_home_idx[off], &send_P[off], &send_CellP[off]);
-    }
     free(send_pool_slot);
 
-    /* === Step 6: Alltoallv particles + cells + home_idx === */
-    gx_forward_particle_exchange(send_P, send_CellP, send_count, send_disp,
-                                 &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
+    /* === Step 6: pack and Alltoallv particles + cells, then home_idx === */
+    gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
+                                          &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
 
     /* Update counts now so home_idx receive can land at &P[NumPart_before_ghost+...] */
     NumGhostParticles = total_recv;
@@ -2643,8 +2808,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * compact_xyzh/pool_types are now owned by g_glt_cache (malloc-backed)
      * and outlive this frame; do NOT free them here. They're freed at
      * cache invalidation (drift / domain_decomp hooks) via glt_cache_free. */
-    myfree(send_CellP);
-    myfree(send_P);
     myfree(recv_disp);
     myfree(send_disp);
     myfree(recv_count);
@@ -2778,28 +2941,20 @@ int ghost_refresh_values(void)
     if(send_tot != (long long)ghost_send_home_count)        return GHOST_REFRESH_FAIL_POOL_MUTATED;
 
     int ns = ghost_send_home_count;
-    /* new[], not malloc: particle_data is over-aligned (32 bytes), and the C
-     * allocator has no type information so it cannot honour that. new[] selects
-     * the aligned form automatically for an over-aligned type. */
-    struct particle_data *send_P = new struct particle_data[(ns > 0 ? ns : 1)];
-    struct gas_cell_data *send_CellP = new struct gas_cell_data[(ns > 0 ? ns : 1)];
-    /* Re-pack current owner values via the SAME slot helper import uses, in the
-       SAME send order (ghost_send_home_idx) that produced this pool. */
+    /* Re-pack current owner values via the SAME transport import uses, in the SAME
+       send order (ghost_send_home_idx) that produced this pool. */
     const int send_list_current = gx_certify_send_list_current(ghost_send_home_idx, ns, All.Ti_Current);
-    for(int k = 0; k < ns; k++) {
-        gx_pack_send_slot(P, CellP, ghost_send_home_idx[k], &send_P[k], &send_CellP[k]);
-    }
     /* Replay ONLY the forward transport, overwriting the EXISTING ghost slots at
        [NumPart_before_ghost, NumPart). Slots land at identical offsets by
        construction, so ghost_home_rank/index maps + any built CSR stay valid. */
-    gx_forward_particle_exchange(send_P, send_CellP, ghost_wb_send_count, ghost_wb_send_disp,
-                                 &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
-                                 ghost_wb_recv_count, ghost_wb_recv_disp);
+    gx_pack_and_forward_particle_exchange(ghost_send_home_idx,
+                                          ghost_wb_send_count, ghost_wb_send_disp,
+                                          &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
+                                          ghost_wb_recv_count, ghost_wb_recv_disp);
     /* The refresh re-packed at the current time, so the pool is current to it --
        re-stamp, or the guarantee would lag the pool it describes. Withheld when the
        advance did not complete, for the same reason the import path withholds it. */
     if(send_list_current == 0) {g_ghost_pool_current_ti = All.Ti_Current;}
-    delete[] send_P; delete[] send_CellP;
     ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
     return GHOST_REFRESH_OK;
 }
