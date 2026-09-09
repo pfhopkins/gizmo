@@ -401,7 +401,7 @@ double comm_chunk_megabytes_default(void)
    says so, and the parameter file is there to give it more.
 
    Returns megabytes, matching the units the arena and the parameter file use. */
-static int arena_megabytes_from_tenants(long long total_particles)
+static int arena_megabytes_from_tenants(long long total_particles, const char **largest_tenant)
 {
     /* What a rank may be asked to hold. The same expression the particle storage itself uses, so
        the working space that scales with it is sized against the same number. */
@@ -414,6 +414,7 @@ static int arena_megabytes_from_tenants(long long total_particles)
     /* The largest that any one thing which must fit whole ever gets. These do not overlap: each is
        taken and given back before the next begins. */
     long long must_fit = 0;
+    const char *largest = "nothing that has to fit whole";
 
 #ifdef PMGRID
     {
@@ -422,19 +423,26 @@ static int arena_megabytes_from_tenants(long long total_particles)
         size_t mesh_always = 0, mesh_per_force = 0;
         long_range_estimated_arena_bytes(maxpart, &mesh_always, &mesh_per_force);
         always_held += (long long) mesh_always;
-        if((long long) mesh_per_force > must_fit) {must_fit = (long long) mesh_per_force;}
+        if((long long) mesh_per_force > must_fit) {must_fit = (long long) mesh_per_force; largest = "the long-range mesh";}
     }
 #endif
 
     /* A step: the communication buffer, the gravity walk's record of anything the local tree
        could not supply, and a per-particle array or two. The buffer belongs to reading and
        writing files and so is never held at the same time as the walk's tables, but the tables
-       are small enough now that counting both costs nothing and saves an argument. */
+       are small enough now that counting both costs nothing and saves an argument.
+
+       Note that the communication buffer is usually the largest of these, so asking for a bigger
+       one enlarges the pool by rather more than the buffer itself -- it is a size the run must
+       find room for whole, and the quarter added at the end applies to it too. That is a real
+       coupling between a communication setting and the run's memory footprint, and the report at
+       the end of this file names whichever tenant set the figure so it is visible rather than
+       surprising. */
     long long step = (long long) All.CommChunkSize * 1024 * 1024
                    + (long long) GRAVITY_LET_DETECTOR_ENTRIES
                      * (long long) (sizeof(struct data_index) + sizeof(struct data_nodelist))
                    + maxpart * (long long) (2 * sizeof(MyFloat));
-    if(step > must_fit) {must_fit = step;}
+    if(step > must_fit) {must_fit = step; largest = "a step, mostly its communication buffer";}
 
     /* Sorting particles into their new owners: a key and a sort record for each, two cost arrays,
        and per-rank bookkeeping. The buffers that then carry them across are not counted here --
@@ -443,14 +451,14 @@ static int arena_megabytes_from_tenants(long long total_particles)
                                                      + sizeof(peanokey) + sizeof(int)
                                                      + 2 * sizeof(float))
                             + 16LL * (long long) NTask * (long long) sizeof(long long);
-    if(decomposition > must_fit) {must_fit = decomposition;}
+    if(decomposition > must_fit) {must_fit = decomposition; largest = "sorting particles into their new owners";}
 
 #if defined(FOF)
     /* Finding groups, where that is compiled in. Half a dozen lists the length of the particle
        count are held together while groups are assembled, and there is no smaller way to do it.
        Modest per particle, and only present in runs that look for groups at all. */
     long long group_finding = maxpart * (long long) (3 * sizeof(MyIDType) + 10 * sizeof(int));
-    if(group_finding > must_fit) {must_fit = group_finding;}
+    if(group_finding > must_fit) {must_fit = group_finding; largest = "finding groups";}
 #endif
 
     /* Room for everything that works in rounds, so that it can use long ones. This is the whole
@@ -469,6 +477,8 @@ static int arena_megabytes_from_tenants(long long total_particles)
     /* And a margin for the many small things not worth naming. */
     long long total = always_held + must_fit + room_to_work_in;
     total += total / 4;
+
+    if(largest_tenant) {*largest_tenant = largest;}
 
     long long mb = total / (1024 * 1024);
     if(mb < 256) {mb = 256;}   /* never so small that ordinary working space cannot be served */
@@ -514,11 +524,13 @@ void gizmo_size_memory_arena(void)
 
         if(total_particles > 0)
         {
-            All.WorkingMemoryPoolSize = arena_megabytes_from_tenants(total_particles);
+            const char *largest_tenant = NULL;
+            All.WorkingMemoryPoolSize = arena_megabytes_from_tenants(total_particles, &largest_tenant);
             if(ThisTask == 0)
             {
                 printf("Memory: sized the working memory pool at %d MB per task, for %lld particles "
-                       "over %d tasks.\n", All.WorkingMemoryPoolSize, total_particles, NTask);
+                       "over %d tasks; the largest thing that has to fit whole is %s.\n",
+                       All.WorkingMemoryPoolSize, total_particles, NTask, largest_tenant);
                 fflush(stdout);
             }
         }
