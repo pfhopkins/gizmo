@@ -67,8 +67,8 @@ static void subfind_modern_select_neighbors(const group_search_import_pool_t &po
       int j = nl.neighbors[n];
       if(j < 0 || j >= (int)pool.particles.size())
         {
-          printf("modern SUBFIND neighbor list returned invalid neighbor index=%d pool_size=%d row=%d offset=%d/%d task=%d\n",
-                 j, (int)pool.particles.size(), list_pos, n, nl.offsets[list_pos + 1], ThisTask);
+          printf("modern SUBFIND neighbor list returned invalid neighbor index=%d pool_size=%d row=%d offset=%d/%lld task=%d\n",
+                 j, (int)pool.particles.size(), list_pos, n, (long long)nl.offsets[list_pos + 1], ThisTask);
           fflush(stdout);
           endrun(990509);
           continue;	/* invalid neighbor index: skip it (avoids out-of-bounds pool access); drains downstream */

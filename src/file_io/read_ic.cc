@@ -994,6 +994,18 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_SHOCKMACHNUM:
             break;
 
+        case IO_HERMITE_POS:
+        case IO_HERMITE_VEL:
+            /* Output only, and discarded if a file carries them. These are not stored state: they
+               are the position and velocity the Hermite integrator predicts for the output time,
+               derived from a particle's retained start-of-step state, and no field holds them. The
+               state they are derived from is not written to a snapshot at all, so there is nothing
+               here to restore and writing these back into Pos/Vel would replace the actual state
+               with a prediction. Listed rather than left to fall through the switch, so the choice
+               is visible; reading fresh initial conditions skips them earlier anyway, with every
+               other block above IO_U. */
+            break;
+
         case IO_LASTENTRY:
             /* Internal "can't happen": unknown iofield. Pure-local void function (no MPI),
              * and every rank unpacking a given block hits the identical iofield, so a soft
