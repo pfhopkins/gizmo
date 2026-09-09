@@ -455,8 +455,16 @@ static int arena_megabytes_from_tenants(long long total_particles)
 
     /* Room for everything that works in rounds, so that it can use long ones. This is the whole
        performance side of the number: more would mean fewer rounds, less would mean more of them,
-       and neither is a question of the run working. */
-    const long long room_to_work_in = 512LL * 1024 * 1024;
+       and neither is a question of the run working.
+
+       What these transports carry grows with the particles a rank holds -- the tree nodes it ships,
+       the particles a decomposition hands over, the ghosts its neighbours ask for -- so the room to
+       work in is counted per particle rather than fixed. A fixed figure is generous on a small run
+       and cramped on a large one, which is the wrong way round: it was 512 MB, and a large run's
+       ghost exchange alone wanted twice that for one step, so it paid in rounds on exactly the runs
+       that could least afford them. The floor keeps small runs where they were. */
+    long long room_to_work_in = maxpart * 512LL;
+    if(room_to_work_in < 512LL * 1024 * 1024) {room_to_work_in = 512LL * 1024 * 1024;}
 
     /* And a margin for the many small things not worth naming. */
     long long total = always_held + must_fit + room_to_work_in;
