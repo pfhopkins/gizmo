@@ -2,7 +2,8 @@
 
 import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, getcwd, makedirs
-from urllib.request import urlretrieve, HTTPError
+from urllib.request import urlretrieve
+from urllib.error import HTTPError, URLError
 import fcntl
 from shutil import move, rmtree, copyfile
 from glob import glob
@@ -244,10 +245,12 @@ def download_test_files(test_name: str):
             continue
         try:
             urlretrieve(website_path + f, f)
-        except HTTPError as err:
+        except (HTTPError, URLError):
+            # URLError too: DNS failure / unreachable host / timeout is exactly the case the
+            # mirror exists for, and catching only HTTPError skipped it
             try:
                 urlretrieve(website_path2 + f, f)
-            except HTTPError as err:
+            except (HTTPError, URLError):
                 print(f"Could not find {f} at {website_path} or {website_path2}")
 
     if not path.isfile(icfile):
@@ -332,10 +335,9 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    if num_openmp_threads > 0:
-        environ["OMP_NUM_THREADS"] = str(num_openmp_threads)
-    else:
-        environ.setdefault("OMP_NUM_THREADS", "1")
+    # assign unconditionally: setdefault let a threaded run's value leak into a later
+    # unthreaded run in the same pytest session
+    environ["OMP_NUM_THREADS"] = str(num_openmp_threads if num_openmp_threads > 0 else 1)
     # Pin BLAS to single-threaded so transitive uses (e.g. via Hypre's BoomerAMG
     # in MHD_MODIFIED_GRADIENT) don't introduce nondeterministic/non-reproducible
     # results that get amplified by the divergence-cleaning feedback loop.
@@ -373,11 +375,15 @@ def get_cooling_tables(test_directory="."):
     spcool_dir = f"{test_directory}/spcool_tables"
     if not (path.isdir(spcool_dir) or path.islink(spcool_dir)):
         url = "https://users.flatironinstitute.org/~mgrudic/gizmo_tests/spcool_tables.tgz"
-        urlretrieve(url, f"{test_directory}/spcool_tables.tgz")
-        system(f"tar -xvf {test_directory}/spcool_tables.tgz -C {test_directory}/; rm spcool_tables.tgz")
+        tarball = f"{test_directory}/spcool_tables.tgz"
+        urlretrieve(url, tarball)
+        # && so a failed extraction keeps the tarball for inspection instead of leaving a
+        # partial spcool_tables/ that the isdir check above accepts forever; rm by full path
+        # (the old cwd-relative rm missed whenever the caller ran from the repo root)
+        system(f"tar -xf {tarball} -C {test_directory}/ && rm -f {tarball}")
     treecool_dst = f"{test_directory}/TREECOOL"
     if not (path.isfile(treecool_dst) or path.islink(treecool_dst)):
-        system(f"cp cooling/TREECOOL {test_directory}")
+        system(f"cp {_REPO_ROOT}/cooling/TREECOOL {test_directory}")
 
 
 def write_params_with_overrides(paramsfile: str, overrides: dict) -> str:

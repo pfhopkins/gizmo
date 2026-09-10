@@ -51,7 +51,7 @@ MinGasTemp      2.73
 
 DesNumNgb               32
 MaxHsml                 1.0e10
-MinGasHsmlFractional    0
+MinGasKernelRadiusFractional    0
 
 SofteningGas    1e-10
 SofteningHalo   0.020

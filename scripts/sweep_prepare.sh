@@ -36,7 +36,7 @@ rsync -a --delete \
       --exclude='.git/' --exclude='__pycache__/' \
       --exclude='*.o' --exclude='GIZMO' --exclude='GIZMO_*' \
       --exclude='*.out' --exclude='*.err' --exclude='*.log' \
-      --exclude='slurm-*' \
+      --exclude='slurm-*' --exclude='sink_val/' \
       "$TREE/" "$SWEEP/seed/" || exit 1
 # Makefile:65 does `$(shell cat GIZMO_config.h)` while parsing, so the file must exist before
 # any make runs. Sources are at the tree root here -- there is no src/ subdirectory.

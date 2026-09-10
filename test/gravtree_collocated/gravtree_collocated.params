@@ -72,7 +72,7 @@ MinGasTemp      2.73
 %---- Hydro reconstruction (kernel) parameters
 DesNumNgb               32
 MaxHsml                 1.0e10
-MinGasHsmlFractional    0
+MinGasKernelRadiusFractional    0
 
 %---- Gravitational softening lengths
 SofteningGas    1e-10
