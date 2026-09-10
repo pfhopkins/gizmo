@@ -490,6 +490,7 @@
 #MULTIPLEDOMAINS=16             # Multi-Domain option for the top-tree level (alters load-balancing)
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
 #DOMAIN_NO_LIGHTWEIGHT_REPARTITION # force a full domain decomposition every time one is triggered. By default the code instead rebalances the load while reusing the existing top-level tree whenever a full decomposition was not actually required, which is much cheaper. Only set this if a run needs the top tree rebuilt every time.
+#GPU_PARTICLE_STORAGE_PLACEMENT=1 # override where the particle storage prefers to live on an AMD/HIP GPU. The particle arrays are demand-paged between host and device, and by default the code picks a placement from the per-rank size of that storage: above roughly a gigabyte it asks for the pages to stay on the host with the device mapped in as an accessor, which is worth a factor of several on the largest runs, and below it leaves the pages to settle wherever they are used, which is worth a few percent on small ones. Set to 1 to force the host-preferred placement or 0 to force the default, e.g. to measure the difference on a problem near the crossover. No effect on NVIDIA GPUs or on CPU-only builds.
 ####################################################################################################
 
 

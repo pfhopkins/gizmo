@@ -12,6 +12,9 @@
 
 #include <Kokkos_Core.hpp>
 #include <exception>
+#if defined(KOKKOS_ENABLE_HIP)
+#include <hip/hip_runtime.h>   /* hipMemAdvise, for the particle-storage placement policy below */
+#endif
 
 /* GPU All mirror: must precede allvars.h so nvc++ sees `All` (=All_dev) when it
  * eagerly parses templates in declarations/allvars.h that reference it. Matches
@@ -232,7 +235,120 @@ extern "C" void gpu_particles_arena_release(void)
     arena_valid_    = 0;
 }
 
-extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label)
+/* ---------------------------------------------------------------------------------------
+ * Placement policy for the bulk managed particle arrays (P and CellP).
+ *
+ * On AMD GPUs these arrays live in HIP managed memory and are demand-paged: a page moves
+ * to whichever side touched it last. Every timestep both sides sweep them -- the host in
+ * domain exchange, Peano-Hilbert ordering, ghost writeback and merge/split, the device in
+ * the tree data path, the neighbour walks and the physics kernels -- so the traffic
+ * pattern decides whether the pages settle anywhere at all.
+ *
+ * Which way that falls depends on how much reuse each page gets, and measurement on
+ * Frontier shows the two regimes cleanly. On a SMALL footprint the device's repeated walks
+ * give each page enough reuse that it settles device-resident, and biasing the pages toward
+ * the host merely turns those reads into permanent Infinity-Fabric traffic: a 1e7-particle
+ * run loses 2-5%. On a LARGE footprint no page gets that reuse, every cycle re-migrates the
+ * array wholesale, and the migration never converges: a 4e7-particle run gains ~10% from a
+ * stable host placement, and a 291.8-million-particle restart on 16 nodes gains a factor of
+ * 4.2 on the first density pass -- without it that job spent its entire 30-minute wall on
+ * startup and reached one sync-point, against 78 with it. Adding nodes does not help,
+ * because the page count is set by the problem size and not by the rank count.
+ *
+ * So the policy is chosen from the per-rank footprint rather than applied unconditionally,
+ * and it is applied only to P and CellP. It must NOT be extended to the tree's device
+ * mirror, which is read tens of thousands of times per build and is unambiguously
+ * device-owned; the same advice applied there costs ~43 s in the gravity walk alone.
+ *
+ * What the advice does is set a PREFERRED location and map the other side in as an
+ * accessor. It is a placement bias, not a prohibition on migrating, and it does not change
+ * what any code may read or write. Correctness never depends on it: if the runtime declines
+ * the hint the run is slower, and nothing else changes.
+ * -------------------------------------------------------------------------------------- */
+
+/*! Footprint above which host-preferred placement is chosen, as total per-rank bytes of P
+ *  plus CellP. Empirical, from the three Frontier workloads above, at 64 to 128 ranks: the
+ *  4e7-particle case measures ~2.3 GB per rank and wins, the 3e8-particle case ~9 GB per rank
+ *  and wins outright, and the 1e7-particle case -- several times smaller again, and with a
+ *  much smaller gas fraction -- loses. That leaves a wide window rather than a boundary, so
+ *  the exact value is not delicate; it is a first cut to be revisited as production-size
+ *  measurements accumulate, and a run can be forced either way to measure it.
+ *
+ *  Note that this is ALLOCATED CAPACITY, not the count of live particles, so it carries
+ *  PartAllocFactor with it -- as do the three figures above, which were read from the
+ *  allocations themselves, so the cutoff and the calibration are in the same units. Live
+ *  particles are the better predictor of how many pages actually move, and the two part
+ *  company on a run with an unusually generous allocation factor; a run near the cutoff
+ *  should be measured both ways rather than reasoned about. */
+#define PARTICLE_STORAGE_HOST_PREFERRED_MIN_BYTES ((size_t) 1024 * 1024 * 1024)
+
+/*! Does this rank's particle storage want host-preferred placement? `particle_arena_bytes` is
+ *  the total for P plus CellP, so the two arrays always decide together and a gas-free run is
+ *  judged on P alone. GPU_PARTICLE_STORAGE_PLACEMENT overrides the decision for validation
+ *  and tuning; leaving it unset is the production path. */
+static int particle_storage_prefers_host_memory(size_t particle_arena_bytes)
+{
+#if defined(GPU_PARTICLE_STORAGE_PLACEMENT)
+    (void) particle_arena_bytes;
+    return (GPU_PARTICLE_STORAGE_PLACEMENT != 0) ? 1 : 0;
+#else
+    return (particle_arena_bytes >= PARTICLE_STORAGE_HOST_PREFERRED_MIN_BYTES) ? 1 : 0;
+#endif
+}
+
+
+/*! Apply the placement policy to one freshly allocated buffer, before anything touches it, so
+ *  that the first write already lands where the policy wants it. `particle_arena_bytes` is
+ *  zero for buffers that are not one of the bulk particle record arrays, which is how
+ *  everything else served by this allocator is left alone. */
+static void particle_storage_apply_placement(void *p, size_t nbytes, size_t particle_arena_bytes)
+{
+    if(!p || nbytes == 0 || particle_arena_bytes == 0) {return;}
+    if(!particle_storage_prefers_host_memory(particle_arena_bytes)) {return;}
+#if defined(KOKKOS_ENABLE_HIP)
+    int dev = 0;
+    if(hipGetDevice(&dev) != hipSuccess) {return;}
+    hipError_t rc_pref = hipMemAdvise(p, nbytes, hipMemAdviseSetPreferredLocation, hipCpuDeviceId);
+    hipError_t rc_acc  = hipMemAdvise(p, nbytes, hipMemAdviseSetAccessedBy, dev);
+    if(rc_pref != hipSuccess || rc_acc != hipSuccess)
+    {
+        /* The two calls are independent, so one of them can be refused on its own and leave
+         * the other standing. Name which, rather than claim the default placement is back:
+         * a later measurement made against a half-applied hint is otherwise read as a
+         * measurement of the default. Said once; the run continues either way. */
+        static int reported = 0;
+        if(!reported && ThisTask == 0)
+        {
+            reported = 1;
+            printf("Particle storage: the host-preferred placement hint was not fully applied "
+                   "(preferred location: %s; device access: %s). Whatever part of it was accepted "
+                   "stands, and the run continues at whatever speed that gives.\n",
+                   hipGetErrorString(rc_pref), hipGetErrorString(rc_acc));
+            fflush(stdout);
+        }
+        return;
+    }
+    /* Deliberately not latched: the capacity can change while the run is going, and each
+     * change reallocates and re-applies. One line per application is what shows that it did,
+     * and capacity changes are rare enough to be worth a line of their own anyway. */
+    if(ThisTask == 0)
+    {
+        printf("Particle storage: host-preferred placement applied to %g MByte "
+               "(particle arrays total %g MByte on this rank).\n",
+               (double) nbytes / (1024.0 * 1024.0),
+               (double) particle_arena_bytes / (1024.0 * 1024.0));
+        fflush(stdout);
+    }
+#else
+    /* CUDA and the host-only backends apply nothing. The measurements behind this policy come
+     * from HIP managed memory; the corresponding cudaMemAdvise calls have never been run
+     * against a GH200, so there is no result to act on and a symmetry port would be a guess.
+     * The decision above is still compiled and evaluated here, so turning CUDA on later is one
+     * measurement and one branch rather than a rewrite. */
+#endif
+}
+
+extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_t particle_arena_bytes)
 {
     if(nbytes == 0) {return NULL;}
     /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
@@ -241,7 +357,7 @@ extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label)
     void *p = NULL;
     try { p = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "particle_soa_unlabeled", nbytes); }
     catch(const std::exception &) { return NULL; }
-    if(p) {memset(p, 0, nbytes);}
+    if(p) {particle_storage_apply_placement(p, nbytes, particle_arena_bytes); memset(p, 0, nbytes);}
     return p;
 }
 

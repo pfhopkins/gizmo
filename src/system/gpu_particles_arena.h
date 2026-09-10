@@ -204,8 +204,14 @@ void gpu_particles_arena_release(void);
  * Called once at startup from system/allocate.cc; the returned pointer
  * persists until process exit.  This wrapper exists so allocate.cc — which
  * is compiled as a host (non-CUDA) TU — does not have to include
- * <Kokkos_Core.hpp> directly. */
-void *gpu_particles_uvm_alloc(size_t nbytes, const char *label);
+ * <Kokkos_Core.hpp> directly.
+ *
+ * `particle_arena_bytes` is the total per-rank size of the bulk particle record arrays
+ * (P plus CellP) that this buffer belongs to, or 0 for a buffer that is not one of them.
+ * It selects the placement policy for the managed pages; see the policy block in
+ * gpu_particles_arena.cc for what is chosen and why. Passing 0 leaves the allocation with
+ * whatever placement the runtime would give it. */
+void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_t particle_arena_bytes);
 
 /* Release a buffer from gpu_particles_uvm_alloc. Paired with it so a capacity change can hold
  * the old and the new buffer at once and roll back cleanly. NULL is a no-op. */

@@ -38,6 +38,15 @@
  * (phopkins@caltech.edu) for GIZMO.
  */
 
+/*! Total per-rank bytes of the bulk particle record arrays at a given capacity. The placement
+ *  policy for their managed pages is chosen from this, so P and CellP are always judged together
+ *  and always at the capacity they are being allocated for. */
+static size_t particle_arena_bytes_at(int maxpart, int maxpartgas)
+{
+  return (size_t) maxpart * sizeof(struct particle_data)
+       + (size_t) maxpartgas * sizeof(struct gas_cell_data);
+}
+
 int allocate_memory(int do_collective_preflight)
 {
   size_t bytes;
@@ -132,7 +141,7 @@ int allocate_memory(int do_collective_preflight)
   if(All.MaxPart > 0 && !alloc_fail_local)
     {
       bytes = All.MaxPart * sizeof(struct particle_data);
-      P = (struct particle_data *) gpu_particles_uvm_alloc(bytes, "particle_soa_P");
+      P = (struct particle_data *) gpu_particles_uvm_alloc(bytes, "particle_soa_P", particle_arena_bytes_at(All.MaxPart, All.MaxPartGas));
       if(P == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for particle data storage structure `P' (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
       else { bytes_tot += bytes; gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); if(ThisTask == 0) {printf("Allocated %g MByte for particle data storage (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 
@@ -143,7 +152,7 @@ int allocate_memory(int do_collective_preflight)
       if(!alloc_fail_local)
         {
           bytes = All.MaxPart * sizeof(unsigned char);
-          WakeupDirty = (unsigned char *) gpu_particles_uvm_alloc(bytes, "particle_soa_wakeupdirty");
+          WakeupDirty = (unsigned char *) gpu_particles_uvm_alloc(bytes, "particle_soa_wakeupdirty", 0);
           if(WakeupDirty == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for WakeupDirty sidecar (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
           else { gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); }
           WakeupDirtyValid = 0;
@@ -155,7 +164,7 @@ int allocate_memory(int do_collective_preflight)
       bytes_tot = 0;
 
       bytes = All.MaxPartGas * sizeof(struct gas_cell_data);
-      CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes, "particle_soa_CellP");
+      CellP = (struct gas_cell_data *) gpu_particles_uvm_alloc(bytes, "particle_soa_CellP", particle_arena_bytes_at(All.MaxPart, All.MaxPartGas));
       if(CellP == NULL) { alloc_fail_local = 1; printf("failed to allocate memory for gas cell data storage structure (%g MB).\n", bytes / (1024.0 * 1024.0)); fflush(stdout); }
       else { bytes_tot += bytes; gizmo_mem_account_add(GIZMO_MEM_PARTICLE_SOA, (long long) bytes); if(ThisTask == 0) {printf("Allocated %g MByte for storage of hydro data (UVM canonical, SharedSpace).\n", bytes_tot / (1024.0 * 1024.0));} }
 
@@ -223,9 +232,10 @@ int allocate_memory(int do_collective_preflight)
  *  Zero new_bytes is a legitimate request (the array does not exist at the new capacity) and
  *  leaves the slot NULL. Returns nonzero only on a real allocation failure, in which case the
  *  slot still holds the old buffer. */
-static int resize_migrate_uvm(void **slot, size_t new_bytes, size_t copy_bytes, const char *label)
+static int resize_migrate_uvm(void **slot, size_t new_bytes, size_t copy_bytes, const char *label,
+                              size_t particle_arena_bytes)
 {
-  void *fresh = (new_bytes > 0) ? gpu_particles_uvm_alloc(new_bytes, label) : NULL;
+  void *fresh = (new_bytes > 0) ? gpu_particles_uvm_alloc(new_bytes, label, particle_arena_bytes) : NULL;
   if(new_bytes > 0 && fresh == NULL) {return 1;}
   if(fresh && *slot && copy_bytes > 0) {memcpy(fresh, *slot, copy_bytes);}
   if(*slot) {gpu_particles_uvm_free(*slot);}
@@ -371,7 +381,8 @@ int resize_particle_storage(int new_maxpart)
         case SLOT_P:
           {
             void *slot = P;
-            bad = resize_migrate_uvm(&slot, (size_t) new_bytes[s], copy_particles * sizeof(struct particle_data), "particle_soa_P");
+            bad = resize_migrate_uvm(&slot, (size_t) new_bytes[s], copy_particles * sizeof(struct particle_data), "particle_soa_P",
+                                     particle_arena_bytes_at(new_maxpart, new_maxpartgas));
             P = (struct particle_data *) slot;
             failed_what = "P";
           }
@@ -381,7 +392,8 @@ int resize_particle_storage(int new_maxpart)
            * present a gas record can sit at any index P[] can reach, above the local gas cells. */
           {
             void *slot = CellP;
-            bad = resize_migrate_uvm(&slot, (size_t) new_bytes[s], copy_particles * sizeof(struct gas_cell_data), "particle_soa_CellP");
+            bad = resize_migrate_uvm(&slot, (size_t) new_bytes[s], copy_particles * sizeof(struct gas_cell_data), "particle_soa_CellP",
+                                     particle_arena_bytes_at(new_maxpart, new_maxpartgas));
             CellP = (struct gas_cell_data *) slot;
             failed_what = "CellP";
           }
@@ -389,7 +401,7 @@ int resize_particle_storage(int new_maxpart)
         case SLOT_WAKEUPDIRTY:
           {
             void *slot = WakeupDirty;
-            bad = resize_migrate_uvm(&slot, (size_t) new_bytes[s], copy_particles * sizeof(unsigned char), "particle_soa_wakeupdirty");
+            bad = resize_migrate_uvm(&slot, (size_t) new_bytes[s], copy_particles * sizeof(unsigned char), "particle_soa_wakeupdirty", 0);
             WakeupDirty = (unsigned char *) slot;
             failed_what = "WakeupDirty";
           }
