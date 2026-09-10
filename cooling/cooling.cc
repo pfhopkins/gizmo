@@ -309,7 +309,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-        update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001, pp, cell);
+        update_dust_processes(i, dtime*UNIT_TIME_IN_MYR*0.001);
 #endif
 
 #ifdef COOL_MOLECFRAC_NONEQM
@@ -1129,7 +1129,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
 
 #if defined(GALSF_ISMDUSTCHEM_HIGHTEMPDUSTCOOLING)
-        LambdaDust = Lambda_Dust_HighTemperature_Gas_ISM(target,T,n_elec, pp, cell);
+        LambdaDust = Lambda_Dust_HighTemperature_Gas_ISM(target,T,n_elec);
         Lambda += LambdaDust;
 #if defined(OUTPUT_COOLRATE_DETAIL)
         if(target >= 0) {cell[target].DustCoolingRate = LambdaDust;}

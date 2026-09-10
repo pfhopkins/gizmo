@@ -822,9 +822,9 @@ void hydro_final_operations_and_cleanup(void)
                 double new_bin_mass, new_bin_number, old_bin_mass;
                 for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
                     new_bin_number = DMAX(CellP[i].ISMDustChem_Dust_NumberInBin[k][l] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)], 0.01*CellP[i].ISMDustChem_Dust_NumberInBin[k][l]);
-                    old_bin_mass = get_ISMDustChemEvo_bin_mass(i,k,l, CellP);
+                    old_bin_mass = get_ISMDustChemEvo_bin_mass(i,k,l);
                     new_bin_mass = DMAX(old_bin_mass + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+NUM_ISMDUSTCHEM_SPECIES+(NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS)+(k*NUM_ISMDUSTCHEM_SIZE_BINS+l)] * UNIT_MASS_IN_CGS, 0.01*old_bin_mass);
-                    update_ISMDustChemEvo_bin_number_and_slope(i,k,l,new_bin_number,new_bin_mass, CellP);
+                    update_ISMDustChemEvo_bin_number_and_slope(i,k,l,new_bin_number,new_bin_mass);
                 }
             }
 #endif

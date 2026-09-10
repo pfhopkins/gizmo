@@ -844,7 +844,7 @@ extern struct global_data_all_processes
 #if (GALSF_ISMDUSTCHEM_MODEL & 2)
     double ISMDustChem_SpeciesBulkDens[4]; /* condensed bulk density for silicates, carbonaceous, SiC, and metallic iron */
     int ISMDustChem_TrackedSpeciesIDTable[NUM_ISMDUSTCHEM_SPECIES]; /* contains unique ID numbers for each tracked dust species which correspond to their location in ISMDustChem_SpeciesFieldIndexTable. Returns -1 for untracked species  */
-    int ISMDustChem_SpeciesFieldIndexTable[6]; /* index in dust species field for given dust species. Length should be equal to the number of unique indices listed below. */
+    int ISMDustChem_SpeciesFieldIndexTable[NUM_ISMDUSTCHEM_SPECIES_IDS]; /* index in dust species field for given dust species. Sparse table indexed by fixed species ID (0..NUM_ISMDUSTCHEM_SPECIES_IDS-1), returns the packed field slot or -1 if untracked. */
     int ISMDustChem_Sil_Index;
     int ISMDustChem_Carb_Index;
     int ISMDustChem_SiC_Index;
@@ -868,6 +868,10 @@ extern struct global_data_all_processes
     double ISMDustChem_GrainBinSize; /* bin width of logarithmically spaced grain sizes */
     double ISMDustChem_GrainBinEdges[NUM_ISMDUSTCHEM_SIZE_BINS+1]; /* edges of each grain size bin */
     double ISMDustChem_GrainBinCenters[NUM_ISMDUSTCHEM_SIZE_BINS]; /* centers of each grain size bin in log space */
+    double ISMDustChem_C_NiNj[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS]; /* pre-computed coefficients for coagulation/shattering polynomial */
+    double ISMDustChem_C_Njsi[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
+    double ISMDustChem_C_Nisj[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
+    double ISMDustChem_C_sisj[NUM_ISMDUSTCHEM_SIZE_BINS][NUM_ISMDUSTCHEM_SIZE_BINS];
 #endif
 #endif
 
