@@ -97,6 +97,12 @@ def make_binary_ics(m1, q, a_au, ecc, boxsize, outfile):
         g.create_dataset("Velocities", data=vel)
         g.create_dataset("Masses", data=mass)
         g.create_dataset("ParticleIDs", data=np.array([1, 2], dtype=np.uint32))
+        # Mature stars, formed before t=0: eligible_for_hermite() KDK-integrates a star for a
+        # ~2*dt settling window after its formation time, so an unset (zero) age would mix
+        # KDK into the early orbits for an eta-DEPENDENT duration and corrupt the convergence
+        # order this test measures. Written explicitly because the reader zero-fills absent
+        # datasets; the stale-buffer values it previously inherited made this accidental.
+        g.create_dataset("StellarFormationTime", data=np.array([-1.0, -1.0]))
 
 
 if __name__ == "__main__":

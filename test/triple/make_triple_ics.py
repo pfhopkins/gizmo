@@ -179,6 +179,11 @@ def make_triple_ics(m1, m2, m3, a_in_au, a_out_au, e_in, e_out, i_mut, seed, box
         g.create_dataset("Velocities", data=vel)
         g.create_dataset("Masses", data=mass)
         g.create_dataset("ParticleIDs", data=np.array([1, 2, 3], dtype=np.uint32))
+        # Mature stars, formed before t=0: an unset (zero) formation time puts the stars in
+        # eligible_for_hermite()'s post-formation KDK settling window for an eta-dependent
+        # duration, corrupting measured convergence. Explicit because the reader zero-fills
+        # absent datasets (previously inherited stale buffer bytes by accident).
+        g.create_dataset("StellarFormationTime", data=np.array([-1.0, -1.0, -1.0]))
 
 
 if __name__ == "__main__":

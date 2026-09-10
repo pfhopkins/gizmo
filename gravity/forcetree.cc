@@ -1705,6 +1705,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                 dv = P[no].Vel - vel;
 #endif
+#ifdef SINGLE_STAR_TIMESTEPPING
+                /* the source velocity this interaction is evaluated at; the Hermite predictor below
+                   replaces it, so the (dr, dv) pair feeding Min_Sink_Approach_Time and the binary
+                   pairing stays mutually consistent on a Hermite pass instead of mixing a predicted
+                   dr with the whole-step-kicked stored Vel */
+                Vec3<double> src_vel_asused = P[no].Vel;
+#endif
 #ifdef HERMITE_INTEGRATION
                 /* Hermite-only passes: an inactive Hermite-integrated source sits at its
                  * KDK-drifted position -- and its stored Vel is whole-step-kicked (see
@@ -1737,6 +1744,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     r2 = dr.norm_sq();
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
                     dv = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD - vel;
+#endif
+#ifdef SINGLE_STAR_TIMESTEPPING
+                    src_vel_asused = P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/2)) * hD;
 #endif
                 }
 #endif
@@ -1783,7 +1793,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                             }
 #ifdef SINGLE_STAR_TIMESTEPPING
-                        Vec3<double> sink_dv=P[no].Vel-vel; double vSqr=sink_dv.norm_sq(), M_total=P[no].Mass+pmass, r2soft=SinkParticle_GravityKernelRadius;
+                        Vec3<double> sink_dv=src_vel_asused-vel; double vSqr=sink_dv.norm_sq(), M_total=P[no].Mass+pmass, r2soft=SinkParticle_GravityKernelRadius;
                         r2soft = DMAX(r2soft, soft);
                         r2soft *= KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER;
                         r2soft = r2 + r2soft*r2soft;

@@ -933,7 +933,13 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                        datasets simply carry the ordinary Pos/Vel via the fallback below. */
                     int _herm = 0;
 #ifdef HERMITE_INTEGRATION
-                    _herm = ((1 << P[pindex].Type) & HERMITE_INTEGRATION) && (P[pindex].Mass > 0);
+                    /* the full eligibility predicate, not the type bitmask alone: a star being
+                       super-timestepped or in its born-yesterday settling window is advanced by
+                       KDK, so its retained base does not describe where it goes and the plain
+                       drifted values are the honest answer for it. NB the reference snapshot of
+                       an energy diagnostic must come from ELIGIBLE stars -- IC-read sinks carry
+                       an explicit (negative) StellarFormationTime for exactly this reason */
+                    _herm = (P[pindex].Mass > 0) && eligible_for_hermite(pindex);
                     if(_herm)
                     {
                         double _d = get_gravkick_factor(P[pindex].Ti_begstep, All.Ti_Current, pindex, 0);

@@ -278,15 +278,26 @@ void init(void)
             P[i].GradRho[2]=1;
 #endif
 #ifdef SINK_WIND_SPAWN
-            /* spawn reservoirs for sinks read from an IC/snapshot rather than formed in-run, which would
-               otherwise hold whatever was in the malloc slot. read_ic() has already run, so only zero what
-               it cannot have assigned. */
-#ifndef OUTPUT_UNSPAWNED_SINKMASS
-            P[i].unspawned_wind_mass = 0; // IO_UNSPMASS is only read back when that flag is set, so this cannot clobber a restored value
-#endif
+            /* spawn reservoirs for sinks read from a fresh IC rather than formed in-run, which would
+               otherwise hold whatever was in the malloc slot: fresh-IC reads skip every block above
+               IO_U, so nothing has assigned these. Any snapshot-reading mode (RestartFlag >= 2) reads
+               both reservoirs back -- or zero-fills when the datasets are absent -- so zeroing there
+               would clobber restored mass already debited from the sink. */
+            if(RestartFlag == 0)
+            {
+                P[i].unspawned_wind_mass = 0;
 #ifdef SINGLE_STAR_FB_JETS
-            P[i].unspawned_jet_mass = 0; // never written to snapshots, so always safe to zero
+                P[i].unspawned_jet_mass = 0;
 #endif
+            }
+#endif
+#ifdef HERMITE_INTEGRATION
+            /* the retained start-of-step state, normally written by the first half-step kick; seed it
+               here so anything that reads it before that kick -- the IO_HERMITE_SYNC output blocks of a
+               snapshot written straight after the ICs are read -- predicts from the actual state rather
+               than from whatever the allocator left behind */
+            P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
+            P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
 #endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
 #if defined(SINGLE_STAR_FB_SNE)
