@@ -1069,7 +1069,10 @@ double single_star_wind_mdot(int n, int set_mode) { //if set_mode is zero then t
         int desired_wind_mode = 2; // default: jets (or nothing) hold the discrete-spawn channel, winds go continuous
         if((wind_mom_inj > jet_mom_inj) && (N_wind >= n_particles_for_discrete_wind_spawn)) {desired_wind_mode = 1;} // winds dominate AND are resolvable: winds take the discrete channel, jets go continuous instead
         /* hysteresis: only switch mode after at least 8 spawn events have elapsed since the last change */
-        double N_spawn_since_change = (wind_mass_loss_rate > 0) ? (All.Time - P[n].wind_mode_time) * wind_mass_loss_rate / target_mass_for_wind_spawning(n) : 0;
+        /* All.Time is a scale factor under comoving integration, so the elapsed time comes from the
+           same helper the stellar ages use rather than from differencing it directly */
+        double dt_since_mode_change = evaluate_time_since_t_initial_in_Gyr(P[n].wind_mode_time) / UNIT_TIME_IN_GYR; // physical elapsed time, code units
+        double N_spawn_since_change = (wind_mass_loss_rate > 0) ? dt_since_mode_change * wind_mass_loss_rate / target_mass_for_wind_spawning(n) : 0;
         if((desired_wind_mode != old_wind_mode) && (old_wind_mode != 0) && (N_spawn_since_change < 8)) {desired_wind_mode = old_wind_mode;} // not enough time has elapsed; keep current mode
         P[n].wind_mode = desired_wind_mode;
 #endif

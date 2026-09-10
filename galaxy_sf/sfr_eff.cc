@@ -503,6 +503,9 @@ void star_formation_parent_routine(void)
                         P[i].unspawned_jet_mass = 0;
 #endif
 #endif
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(SINGLE_STAR_FB_WINDS) /* both guard the wind_mode fields */
+                        P[i].wind_mode = 0; P[i].wind_mode_time = All.Time; /* persistent state the spawning hysteresis reads: a recycled slot must not inherit the previous star's channel */
+#endif
 #ifdef SINK_COUNTPROGS
                         P[i].Sink_CountProgs = 1;
 #endif
@@ -581,6 +584,9 @@ void star_formation_parent_routine(void)
 #ifdef SINGLE_STAR_FB_JETS
                         P[i_star].unspawned_jet_mass = 0;
 #endif
+#endif
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(SINGLE_STAR_FB_WINDS) /* both guard the wind_mode fields */
+                        P[i_star].wind_mode = 0; P[i_star].wind_mode_time = All.Time; /* persistent state the spawning hysteresis reads: a recycled slot must not inherit the previous star's channel */
 #endif
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
                         P[i_star].StarParticleEffectiveSize = DMIN(ForceSoftening_KernelRadius(i) , All.ForceSoftening[4]); // assign an initial effective size here, which corresponds to the minimum of the gas force softening or the stellar constant assignment //

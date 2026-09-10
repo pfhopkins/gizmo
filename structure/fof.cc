@@ -1862,6 +1862,9 @@ void fof_make_sink_particles(void)
         P[import_indices[n]].unspawned_jet_mass = 0;
 #endif
 #endif
+#if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(SINGLE_STAR_FB_WINDS) /* both guard the wind_mode fields */
+        P[import_indices[n]].wind_mode = 0; P[import_indices[n]].wind_mode_time = All.Time; /* persistent state the spawning hysteresis reads: a recycled slot must not inherit the previous star's channel */
+#endif
 #ifdef SINK_COUNTPROGS
         P[import_indices[n]].Sink_CountProgs = 1;
 #endif
