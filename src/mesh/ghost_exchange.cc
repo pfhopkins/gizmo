@@ -2792,12 +2792,26 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
 
     if(ThisTask == 0) {
-        PRINT_STATUS("Ghost exchange (request-driven, %s, %s, qdist=%s): %d local + %d ghost  queries=%d total_queries=%d num_pool=%d  [%.4f s]",
+        /* Every count below belongs to rank 0 alone. There is no global total to hand at this
+           point and reducing one for a log line would cost a collective on a hot path, so the
+           line says whose numbers these are: a quiet line means rank 0 asked for nothing, NOT
+           that the exchange did no work. The discovery walk and its per-peer bookkeeping run
+           over the supply pool whatever any one rank asked for.
+           The all-rank query total exists only on the broadcast path, where the queries are
+           gathered; it is reported when it is real and omitted when it is not, rather than
+           printed as a placeholder. */
+        char all_rank_queries[64];
+        all_rank_queries[0] = '\0';
+        if(!used_routed) {
+            snprintf(all_rank_queries, sizeof(all_rank_queries), ", %d across all ranks", total_queries);
+        }
+        PRINT_STATUS("Ghost exchange (request-driven, %s, %s, qdist=%s): rank 0 holds %d local + %d ghost "
+                     "from %d queries%s; supply pool %d  [%.4f s]",
                      (spec->caller_name ? spec->caller_name : "?"),
                      (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
                      (used_routed ? "routed" : "bcast"),
                      NumPart_before_ghost, NumGhostParticles,
-                     n_local_queries, (used_routed ? -1 : total_queries), num_pool, t_ghost_total);
+                     n_local_queries, all_rank_queries, num_pool, t_ghost_total);
     }
 
     /* Diagnostic: ghost composition + import-waste ratio (should be ~0% for
