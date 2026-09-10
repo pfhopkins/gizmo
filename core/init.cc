@@ -560,6 +560,16 @@ void init(void)
         P[i].Particle_DivVel = 0;
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
+        if(RestartFlag == 0)
+        {
+            /* first-guess temperature: gamma_eos_value() -- and through it the H2 partition series --
+               reads this before the first EOS solve has written it, and a fresh IC read leaves it as
+               malloc garbage (a binary IC cannot even probe for the block). A huge garbage value is
+               exactly what lets the rotational series run away. Neutral-atomic ideal-gas estimate;
+               the first set_eos_pressure() replaces it with the solved value. Snapshot restarts read
+               the written Temperature back, so they are left alone. */
+            CellP[i].Temperature = 1.22 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy;
+        }
         CellP[i].FaceClosureError = 0;
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
