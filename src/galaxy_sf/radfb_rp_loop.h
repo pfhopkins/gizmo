@@ -5,7 +5,8 @@
  * cosmo-aware (+ Types 2/3 non-cosmo) — scatter UV / IR / jet radiation-
  * pressure momentum kicks into surrounding gas neighbors.
  *
- *   iter 0  — accumulate wt_sum = Σ h_j² over valid neighbors into
+ *   iter 0  — accumulate the kick weight (wt_sum) and the plain area sum
+ *             (wt_area) over valid neighbors into
  *             AccumData; no j-side writes; ghost-writeback hooks no-op
  *             (gated by Aux::iter_index).
  *   iter 1  — apply kicks using staged wt_sum (copied from IterScratch
@@ -136,14 +137,22 @@ struct RadFBRPCallScalars {
 struct RadFBRPLocalIn {
     Vec3<MyDouble> Pos;
     MyFloat        KernelRadius;          /* RtauMax — neighbor-search radius */
+    MyFloat        SourceKernelRadius;    /* the star's own kernel radius, used to soften
+                                           * the centre of the weight below. Nothing inside
+                                           * the star's own kernel is resolved, so weighting
+                                           * by separation there is meaningless. */
     MyFloat        dE_over_c;             /* total photon momentum budget this step */
     MyFloat        f_lum_ion;             /* ionizing luminosity fraction */
     MyIDType       ID;                    /* source particle ID, for RNG */
-    /* Staged Σ h_j². Iter 0 = 0 at populate; written by after_iter_global
+    /* Staged kick-weight denominator. Iter 0 = 0 at populate; written by after_iter_global
      * from drv.scratch_uvm[sg][slot].wt_sum before iter 1 dispatch. DOUBLE,
      * not MyFloat — legacy computes the denominator in double and narrowing
      * here would be a silent precision downgrade (directive 5). */
     double         wt_sum;
+    /* Staged sum of h_j^2, same path as wt_sum. Feeds the absorbed-fraction
+     * estimate, which needs how many cells share the sightline, not how much of
+     * the sky each one covers. */
+    double         wt_area;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     MyFloat        delta_v_imparted_rp;   /* per-kick target velocity (stochastic threshold) */
 #endif
@@ -154,18 +163,32 @@ struct RadFBRPLocalIn {
 
 /* AccumData — iter-0 and iter-1 share the same struct, but only one slot
  * is meaningful per iter:
- *   iter 0: wt_sum used (Σ h_j²); jet_momentum_used = 0.
+ *   iter 0: wt_sum + wt_area used; jet_momentum_used = 0.
  *   iter 1: jet_momentum_used used; wt_sum field is incidentally zero
  *           since iter 1's pair_kernel does not touch it.
  * Zeroed per outer iter by zero_accum. */
 struct RadFBRPAccum {
     double   wt_sum;             /* iter 0 output */
     MyDouble jet_momentum_used;  /* iter 1 output (jet branch only) */
+    /* Iter-1 tallies for the MomWinds.txt log. Summed per source here, then
+     * reduced across ranks by the caller. */
+    double   wt_area;            /* iter 0 output: plain sum of h_j^2 over the same
+                                  * neighbours. Held apart from wt_sum because the kick
+                                  * weight is a covering factor and carries distance, while
+                                  * the absorbed-fraction estimate needs a bare cell count. */
+    double   n_touched;          /* gas cells actually kicked */
+    double   mom_coupled;        /* Sum of mass * |dv| given to those cells */
+    double   sum_v_kick;         /* Sum of |dv|, for the mean kick velocity */
+    double   sum_taufac;         /* momentum-weighted CANDIDATE multiple-scattering boost:
+                                  * the IR kick offered, not necessarily the one applied
+                                  * (the stochastic branch applies a discretized kick
+                                  * instead), weighted by the momentum actually given.
+                                  * Same construction the legacy log used. */
 };
 
 /* IterScratch — host-only per-active state, carries iter-0's accumulated
  * wt_sum into the iter-0→iter-1 staging bridge. Flow:
- *   iter 0 device kernel:   accum.wt_sum += h_j² (per pair).
+ *   iter 0 device kernel:   accum.wt_sum += covering-factor weight (per pair).
  *   iter 0 after_iter (per active):
  *                            ctx.scratch.wt_sum = accum.wt_sum  (status-only
  *                            otherwise — no P/CellP writes).
@@ -180,6 +203,7 @@ struct RadFBRPAccum {
  * zeros/repurposes accum between hooks. */
 struct RadFBRPIterScratch {
     double wt_sum;
+    double wt_area;
 };
 
 /* DeviceContext extension. Holds the UVM pointer to per-active RadFBRPLocalIn
@@ -216,6 +240,28 @@ struct RadFBRPActiveState {
  *
  * Called by RadFBRPSpec::pair_kernel ONLY on iter 1 (iter 0 path accumulates
  * ========================================================================== */
+/* Share of the star's photon momentum assigned to one neighbouring cell.
+ *
+ * What decides how much of the light a cell intercepts is the fraction of the
+ * star's sky it covers, ~(h_j/r)^2, not its absolute cross-section: a cell
+ * twice as far away catches a quarter as much. The centre is softened by the
+ * star's own kernel radius, inside which nothing is resolved and a bare 1/r^2
+ * would diverge on a cell that happens to sit almost on top of the source.
+ * The taper carries the weight smoothly to zero at the edge of the search, so
+ * a cell drifting across that boundary does not step the answer.
+ *
+ * Both passes MUST weight with this one function: the first sums it to build
+ * the denominator and the second divides by that sum, so if they ever
+ * disagree the momentum budget silently stops adding up. All arguments are
+ * squared lengths, which is what the caller already has in hand. */
+KOKKOS_INLINE_FUNCTION
+static double radfb_rp_kernel_weight(double h_j, double r2, double rkern2, double eps2)
+{
+    if(rkern2 <= 0 || r2 >= rkern2) {return 0;}
+    double taper = 1.0 - r2 / rkern2;
+    return (h_j * h_j) / (eps2 + r2) * sqrt(taper);
+}
+
 KOKKOS_INLINE_FUNCTION
 static void radfb_rp_pair_kick(
     const RadFBRPLocalIn& loc,
@@ -234,8 +280,11 @@ static void radfb_rp_pair_kick(
     if (Mass_j <= 0 || r2 <= 0) return;
     if (loc.wt_sum <= 0) return;
 
-    double h_j = Pj.Get_Particle_Size();
-    double wk  = (h_j * h_j) / (double)loc.wt_sum;
+    double h_j   = Pj.Get_Particle_Size();
+    double rkern = (double)loc.KernelRadius;
+    double eps   = (double)loc.SourceKernelRadius;
+    double wk    = radfb_rp_kernel_weight(h_j, r2, rkern * rkern, eps * eps)
+                 / (double)loc.wt_sum;
     if (wk <= 0) return;
 
     double dE = (double)loc.dE_over_c;
@@ -254,7 +303,12 @@ static void radfb_rp_pair_kick(
      * per-cell cache. */
     double cf_a   = scalars.common.cf_atime;
     double h_phys = h_j * cf_a;
-    double sigma_cell = ((double)loc.wt_sum / (h_j * h_j))
+    /* Column seen along the sightline: this cell's own surface density scaled up
+     * by how many cells share that sightline. That count comes from the plain area
+     * sum, NOT from the kick weight -- the weight is a covering factor and falls
+     * off with distance, so dividing by it would leave a cell near the edge of the
+     * search looking optically thick for no reason but its distance. */
+    double sigma_cell = ((double)loc.wt_area / (h_j * h_j))
                       * (Mass_j / (h_phys * h_phys));
     double tau_uv = rt_kappa(0, RT_FREQ_BIN_FIRE_UV, &Pj, &Cj) * sigma_cell;
     double tau_op = rt_kappa(0, RT_FREQ_BIN_FIRE_OPT, &Pj, &Cj) * sigma_cell;
@@ -358,6 +412,20 @@ static void radfb_rp_pair_kick(
         dv_kick[2] = sir * dir_ir[2] + suv * dir_uv[2];
     }
 #endif
+
+    /* Tally what this cell actually received, for the MomWinds.txt log. The
+     * kick is stored comoving, so divide it back out to report a peculiar
+     * velocity. The boost column is the multiple-scattering kick measured
+     * against the bare single-scattering momentum per unit mass, weighted by
+     * the momentum each cell got. */
+    {
+        double dv_mag = sqrt(dv_kick.norm_sq()) / scalars.common.cf_atime;
+        double dv_single = (double)loc.dE_over_c / Mass_j;
+        out.n_touched   += 1.0;
+        out.mom_coupled += Mass_j * dv_mag;
+        out.sum_v_kick  += dv_mag;
+        out.sum_taufac  += (Mass_j * dv_mag) * (dv_ms / (dv_single + MIN_REAL_NUMBER));
+    }
 
     for (int k = 0; k < 3; k++) {
         Kokkos::atomic_add(&Pj.Vel[k],     (MyDouble)dv_kick[k]);
@@ -480,6 +548,11 @@ struct RadFBRPSpec {
 #define ACCUM_ADD(field)  local_accum.field += peer_accum.field;
         ACCUM_ADD(wt_sum)
         ACCUM_ADD(jet_momentum_used)
+        ACCUM_ADD(wt_area)
+        ACCUM_ADD(n_touched)
+        ACCUM_ADD(mom_coupled)
+        ACCUM_ADD(sum_v_kick)
+        ACCUM_ADD(sum_taufac)
 #undef ACCUM_ADD
     }
 
@@ -511,6 +584,11 @@ struct RadFBRPSpec {
     static void zero_accum(AccumData& accum) {
         accum.wt_sum            = 0;
         accum.jet_momentum_used = 0;
+        accum.wt_area           = 0;
+        accum.n_touched         = 0;
+        accum.mom_coupled       = 0;
+        accum.sum_v_kick        = 0;
+        accum.sum_taufac        = 0;
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -583,7 +661,9 @@ struct RadFBRPSpec {
         if (r2 >= h2 || r2 <= 0) return;
 
         if (active.iter_index == 0) {
-            /* iter 0 : accumulate wt_sum = Σ h_j²
+            /* iter 0 : accumulate the kick-weight denominator (a covering
+             * factor, so it carries distance) and, separately, the plain
+             * Σ h_j² the absorbed-fraction estimate needs
              *
              * Plain accumulation, not an atomic: the accumulator is private to
              * whoever is walking this row on every path -- one work item per
@@ -592,8 +672,10 @@ struct RadFBRPSpec {
              * within-row lane division. Nothing else can reach it, and taking
              * its address for an atomic is only defined while it lives in
              * global memory, which the lane-private partial does not. */
-            double h_j = Pj.Get_Particle_Size();
-            accum.wt_sum += h_j * h_j;
+            double h_j   = Pj.Get_Particle_Size();
+            double eps   = (double)active.local.SourceKernelRadius;
+            accum.wt_sum  += radfb_rp_kernel_weight(h_j, r2, h2, eps * eps);
+            accum.wt_area += h_j * h_j;
         } else {
             /* iter 1 : apply kicks using staged active.local.wt_sum */
             radfb_rp_pair_kick(active.local, cs, Pj, Cj,

@@ -13,7 +13,7 @@
  * after_iter (iter-0 writes ctx.scratch.wt_sum = accum.wt_sum, returns
  * Converged/NeedsMore; iter-1 always Converged — no P/CellP writes), and
  * after_iter_global (post-iter staging hook, NO physics-side writes;
- * bridges drv.scratch_uvm[sg][slot].wt_sum into
+ * bridges drv.scratch_uvm[sg][slot].wt_sum/wt_area into
  * drv.ctx.per_active_local[slot].wt_sum, then Kokkos::fence(),
  * so iter-1's device kernels read the staged denominator).
  *
@@ -215,7 +215,8 @@ IterResult RadFBRPSpec::after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
                                     const AccumData& accum)
 {
     if (ctx.iter_index == 0) {
-        ctx.scratch.wt_sum = accum.wt_sum;
+        ctx.scratch.wt_sum  = accum.wt_sum;
+        ctx.scratch.wt_area = accum.wt_area;
         if (accum.wt_sum <= 0) {
             return IterResult{IterStatus::Converged, ctx.h_search_current};
         }
@@ -275,6 +276,8 @@ void RadFBRPSpec::after_iter_global(const neighbor_loop_args& args,
         for (int slot = 0; slot < N; slot++) {
             drv.ctx.per_active_local[slot].wt_sum =
                 drv.scratch_uvm[sg][slot].wt_sum;
+            drv.ctx.per_active_local[slot].wt_area =
+                drv.scratch_uvm[sg][slot].wt_area;
         }
         wrote_any = true;
     }
@@ -298,10 +301,29 @@ void RadFBRPSpec::after_iter_global(const neighbor_loop_args& args,
  * canonical target). active_slot unused.
  * ========================================================================== */
 
+/* Running totals for the MomWinds.txt log, gathered over one call. The
+ * per-source half is filled by the gate loop in
+ * radiation_pressure_winds_consolidated; the per-cell half is drained out of
+ * each source's accumulator in apply_active_writeback below, which the runner
+ * calls once per active source after the kicks have landed. Reset at the top
+ * of every call. */
+static double radfb_rp_log_n_checked   = 0;
+static double radfb_rp_log_mom_supply  = 0;
+static double radfb_rp_log_sum_radius  = 0;
+static double radfb_rp_log_n_touched   = 0;
+static double radfb_rp_log_mom_coupled = 0;
+static double radfb_rp_log_sum_v_kick  = 0;
+static double radfb_rp_log_sum_taufac  = 0;
+
 void RadFBRPSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
                                           int /*active_slot*/, int i,
                                           const AccumData& accum)
 {
+    radfb_rp_log_n_touched   += accum.n_touched;
+    radfb_rp_log_mom_coupled += accum.mom_coupled;
+    radfb_rp_log_sum_v_kick  += accum.sum_v_kick;
+    radfb_rp_log_sum_taufac  += accum.sum_taufac;
+
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
     if (P[i].NewStar_Momentum_For_JetFeedback > 0
         && accum.jet_momentum_used > 0) {
@@ -382,14 +404,33 @@ int radfb_rp_local_fill(int i,
                      * (dt * unit_time_in_cgs) / C_LIGHT_CGS;
     dE_over_c /= (unit_mass_in_cgs * unit_vel_in_cgs);
 
-    /* search radius */
+    /* Radius over which this star hands its momentum to the gas around it.
+     *
+     * This is a local pass only: whatever is not absorbed here is carried by
+     * the long-range radiation pressure terms in the gravity tree, so erring
+     * small costs little, while erring large costs a great deal of work for
+     * momentum that would have been delivered anyway.
+     *
+     * The base of two kernel radii holds of order two hundred gas cells at the
+     * usual neighbour number, which is about as much as a crude sub-grid
+     * estimate can justify. It opens out only where the gas is thick enough to
+     * its own infrared re-radiation for multiple scattering to reach further,
+     * which at these resolutions is rare. The ceiling stops a runaway; the
+     * floor only guards against a star whose kernel radius is degenerate.
+     *
+     * Historical note, since it caused real trouble: this radius was once the
+     * LIMIT on an iterative search that started at the star's own kernel and
+     * grew until it bracketed ten to a few hundred cells. It was padded
+     * heavily on purpose so it would not throttle that search. It is now the
+     * search radius itself, so the padding is no longer free and the old
+     * values are not appropriate to it. */
     double rho_phys = P_host[i].DensityAroundParticle * HostAll->cf_a3inv;
     double h_phys   = P_host[i].KernelRadius * HostAll->cf_atime;
-    double RtauMax  = P_host[i].KernelRadius
-                    * (5.0 + 2.0 * rt_kappa(i, RT_FREQ_BIN_FIRE_UV, P_host, CellP_host)
-                       * P_host[i].KernelRadius * P_host[i].DensityAroundParticle * HostAll->cf_a2inv);
-    RtauMax = DMAX(1.0 / (unit_length_in_kpc * HostAll->cf_atime),
-                   DMIN(10.0 / (unit_length_in_kpc * HostAll->cf_atime), RtauMax));
+    double tau_IR   = rt_kappa(i, RT_FREQ_BIN_FIRE_IR, P_host, CellP_host)
+                    * rho_phys * h_phys;
+    double RtauMax  = P_host[i].KernelRadius * (2.0 + tau_IR);
+    RtauMax = DMAX(1.0e-3 / (unit_length_in_kpc * HostAll->cf_atime),
+                   DMIN(1.0 / (unit_length_in_kpc * HostAll->cf_atime), RtauMax));
 
     /* stochastic gate */
     double v_wind_threshold = 15.0 / unit_vel_in_kms;
@@ -397,8 +438,6 @@ int radfb_rp_local_fill(int i,
     v_wind_threshold = 0.2 / unit_vel_in_kms;
 #endif
     double delta_v = v_wind_threshold;
-    double tau_IR  = rt_kappa(i, RT_FREQ_BIN_FIRE_IR, P_host, CellP_host)
-                   * rho_phys * h_phys;
     double dv_guess = (dE_over_c / P_host[i].Mass) * (1.0 + tau_IR);
     double prob = dv_guess / delta_v * 2000.0;
 
@@ -425,10 +464,12 @@ int radfb_rp_local_fill(int i,
     /* fill struct */
     loc->Pos          = P_host[i].Pos;
     loc->KernelRadius = (MyFloat)RtauMax;
+    loc->SourceKernelRadius = (MyFloat)P_host[i].KernelRadius;
     loc->dE_over_c    = (MyFloat)dE_over_c;
     loc->f_lum_ion    = (MyFloat)f_lum_ion;
     loc->ID           = P_host[i].ID;
-    loc->wt_sum       = 0;                /* zero at iter-0 entry; filled by
+    loc->wt_sum       = 0;
+    loc->wt_area      = 0;                /* zero at iter-0 entry; filled by
                                            * after_iter_global before iter 1 */
 #if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     loc->delta_v_imparted_rp = (MyFloat)delta_v;
@@ -524,7 +565,8 @@ void RadFBRPSpec::ghost_writeback_end(const neighbor_loop_args& args,
  * Replaces the legacy `radfb_local.cc::radiation_pressure_winds_gpu` thin
  * wrapper. Active Type-4 (cosmo-aware: + Types 2/3 non-cosmo) stars scatter
  * UV / IR / jet radiation-pressure kicks into surrounding gas neighbors.
- * Iterative 2-pass inside the runner: iter 0 accumulates Σ h_j² (the kick-
+ * Iterative 2-pass inside the runner: iter 0 accumulates the covering-factor
+ * weight (the kick-
  * normalization denominator) into AccumData; iter 1 applies kicks with the
  * staged denominator. Ghost-writeback bundle (generic Vec3 ops, gated to
  * iter 1 by Aux::iter_index) propagates j-side Vel / VelPred / dp deltas
@@ -540,6 +582,43 @@ void RadFBRPSpec::ghost_writeback_end(const neighbor_loop_args& args,
  * RadFBRPSpec::is_active (above) is a defensive Type re-check only.
  * ========================================================================== */
 
+/* MomWinds.txt — what this call actually did. Restores the log the legacy routine
+ * wrote and the column key in begrun.cc still describes; the write itself was lost
+ * in the port to the runner, so the file has been created and left empty ever since.
+ * The first columns are new: how many stars were examined against how many fired
+ * says whether the stochastic pre-check is doing its job, and the mean search radius
+ * is the number that sets what this loop costs.
+ *
+ * Called on EVERY step, including those where nothing fired: a step with sources
+ * available and none emitting is exactly what columns (2) and (3) exist to show, and
+ * skipping it would leave the log silent on the case it was added to expose. Every
+ * rank must reach the reduce, so both call sites are on paths every rank takes. */
+static void radfb_rp_write_momwinds_log(int num_firing_local)
+{
+    double loc_tot[8] = {radfb_rp_log_n_checked,   (double) num_firing_local,
+                         radfb_rp_log_sum_radius,  radfb_rp_log_mom_supply,
+                         radfb_rp_log_n_touched,   radfb_rp_log_mom_coupled,
+                         radfb_rp_log_sum_v_kick,  radfb_rp_log_sum_taufac};
+    double glob_tot[8] = {0,0,0,0,0,0,0,0};
+    MPI_Reduce(loc_tot, glob_tot, 8, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if (ThisTask != 0) {return;}
+
+    const double n_checked  = glob_tot[0], n_firing    = glob_tot[1];
+    const double sum_radius = glob_tot[2], mom_supply  = glob_tot[3];
+    const double n_touched  = glob_tot[4], mom_coupled = glob_tot[5];
+    const double sum_v      = glob_tot[6];
+    const double avg_radius = sum_radius  / (MIN_REAL_NUMBER + n_firing);
+    const double avg_v      = sum_v       / (MIN_REAL_NUMBER + n_touched);
+    const double avg_taufac = glob_tot[7] / (MIN_REAL_NUMBER + mom_coupled);
+    fprintf(FdMomWinds, "%.16g %g %g %g %g %g %g %g %g \n",
+            All.Time, n_checked, n_firing, n_touched, avg_radius,
+            mom_supply, mom_coupled, avg_v, avg_taufac);
+    fflush(FdMomWinds);
+    PRINT_STATUS(" ..Nstars_checked=%g Nstars_firing=%g Ncells_pushed=%g <R_search>=%g (L/c)dt=%g dP_coupled=%g <dv_cell>=%g <dP_IR_offered/dP_single>=%g",
+                 n_checked, n_firing, n_touched, avg_radius,
+                 mom_supply, mom_coupled, avg_v, avg_taufac);
+}
+
 void radiation_pressure_winds_consolidated(void)
 {
     /* Build the gated active list with per-source LocalIn. Mirrors legacy
@@ -550,6 +629,11 @@ void radiation_pressure_winds_consolidated(void)
      * vector. radfb_rp_local_fill's `src_radius_out` parameter is retained
      * for API symmetry with the legacy entry point but its return slot is
      * discarded. */
+    radfb_rp_log_n_checked   = 0; radfb_rp_log_mom_supply  = 0;
+    radfb_rp_log_sum_radius  = 0; radfb_rp_log_n_touched   = 0;
+    radfb_rp_log_mom_coupled = 0; radfb_rp_log_sum_v_kick  = 0;
+    radfb_rp_log_sum_taufac  = 0;
+
     std::vector<int>             active_src;
     std::vector<RadFBRPLocalIn>  host_locals;
     {
@@ -564,10 +648,18 @@ void radiation_pressure_winds_consolidated(void)
             for (int a = 0; a < num_active_global_in; a++) {
                 int i = ActiveParticleList[a];
                 RadFBRPLocalIn loc;
-                double radius_discard;
-                if (radfb_rp_local_fill(i, P, CellP, &loc, &radius_discard)) {
+                double radius_out;
+                if (is_galsf_stellar_candidate_type(P[i].Type, HostAll->ComovingIntegrationOn)) {
+                    radfb_rp_log_n_checked += 1.0;
+                }
+                if (radfb_rp_local_fill(i, P, CellP, &loc, &radius_out)) {
                     active_src.push_back(i);
                     host_locals.push_back(loc);
+                    radfb_rp_log_mom_supply += (double)loc.dE_over_c;
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
+                    radfb_rp_log_mom_supply += (double)loc.jet_momentum_tocouple;
+#endif
+                    radfb_rp_log_sum_radius += radius_out;
                 }
             }
         }
@@ -580,7 +672,7 @@ void radiation_pressure_winds_consolidated(void)
      * Short-circuit ONLY if globally zero firing sources. */
     int global_num_active = 0;
     MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if (global_num_active == 0) return;
+    if (global_num_active == 0) {radfb_rp_write_momwinds_log(num_active); return;}
 
     /* Aux carries non-owning pointers to the toplevel-owned active arrays.
      * iter_index is set by reset_per_iter_device_context on every iter.
@@ -613,6 +705,8 @@ void radiation_pressure_winds_consolidated(void)
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
 
     run_neighbor_loop_iterative<RadFBRPSpec>(args);
+
+    radfb_rp_write_momwinds_log(num_active);
 
     /* host_locals + active_src are stack-local std::vectors; their lifetime
      * extends through the runner call. apply_active_writeback reads

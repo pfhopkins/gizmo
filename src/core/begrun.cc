@@ -996,11 +996,14 @@ void open_outputfiles(void)
     else if(RestartFlag == 0) {
         fprintf(FdMomWinds,"%s Local Photon-momentum model log-file [GALSF_FB_FIRE_RT_LOCALRP]. See User Guide for details. Columns represent: \n",prefix_char);
         fprintf(FdMomWinds,"%s   (1) Simulation time [code units] \n",prefix_char);
-        fprintf(FdMomWinds,"%s   (2) Number of cells affected by short-range radiation pressure \n",prefix_char);
-        fprintf(FdMomWinds,"%s   (3) Total photon momentum (L/c x dt) for which this is being calculated (code units) in timestep \n",prefix_char);
-        fprintf(FdMomWinds,"%s   (4) Total momentum actually coupled to gas [code units] \n",prefix_char);
-        fprintf(FdMomWinds,"%s   (5) Average velocity of the discretized kicks assigned to gas cells from photon momentum \n",prefix_char);
-        fprintf(FdMomWinds,"%s   (6) Mean infrared optical depth of incident gas being illuminated \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (2) Number of star particles checked against the emission criterion this timestep \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (3) Number of those actually emitting, after the stochastic pre-check \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (4) Number of cells affected by short-range radiation pressure \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (5) Mean radius searched around each emitting star [code units] \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (6) Total photon momentum (L/c x dt) for which this is being calculated (code units) in timestep \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (7) Total momentum actually coupled to gas [code units] \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (8) Average velocity of the discretized kicks assigned to gas cells from photon momentum \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (9) Candidate infrared multiple-scattering boost, as the IR kick a cell was offered relative to the bare single-scattering momentum per unit mass, averaged over cells weighting by the momentum each was actually given \n",prefix_char);
     }
 #endif
 
