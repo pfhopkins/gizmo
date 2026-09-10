@@ -1084,7 +1084,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
 
-#if defined(RT_CHEM_PHOTOION)
+#if defined(RT_CHEM_PHOTOION) && defined(METALS)   /* reads Metallicity[], which only exists under METALS */
         /* nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+ : Kim, Gong, Kim & Ostriker 2023 (ApJS 264, 10), Eq. 47.
            GIZMO's tabulated metal-line cooling below assumes collisional (CIE) ionization, which under-predicts the forbidden-line cooling of
            -photoionized- gas; this fit supplies the missing coolant that sets the ~1e4 K equilibrium of HII regions. Lambda_neb is a per-nH^2

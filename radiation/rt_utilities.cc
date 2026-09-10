@@ -722,6 +722,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     
                     cell[i].Radiation_Temperature = (e0 + dE_fac) / (MIN_REAL_NUMBER + DMAX(0., e0 / cell[i].Radiation_Temperature + dTE_fac));
                     cell[i].Radiation_Temperature = DMIN(cell[i].Radiation_Temperature, T_max);
+                    cell[i].Radiation_Temperature = DMAX(cell[i].Radiation_Temperature, DMAX(T_min, MIN_REAL_NUMBER)); // numerator above can go non-positive in extreme dynamic-range regimes (e.g. e0 -> 0); floor before use so log10(<=0)=NaN cannot propagate into the opacity table lookup
                     a0_abs = -rt_absorption_rate(i,kf, pp, cell); // update absorption rate using the new radiation temperature //
                 }
                 double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0; // add the summed absorption and equate to dust emission //
@@ -1375,33 +1376,44 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
     if(fabs(dE1) < fabs(dE)){Tdust = Tdust_fixedpoint_1; dE=dE_guess=dE1;}
     if(fabs(dE2) < fabs(dE)){Tdust = Tdust_fixedpoint_2; dE=dE_guess=dE2;}
     
-    /* bracketing the dust temperature */
+    /* bracketing the dust temperature. Both directions are bounded: unbounded, the cooling-side
+       loop underflows Tdust to zero and spins forever when dE never crosses zero -- a hung rank.
+       The floor is also physical: dust cannot radiatively cool below the ambient radiation bath. */
     int n_iter = 0;
+    double Tdust_floor = get_min_allowed_dustIRrad_temperature();
     if(dE < 0)
     {
         double scalefac = DMAX(0.9, 1-fixedpoint_error);
         T_upper = Tdust;
-        dE_upper = dE_guess; 
-        while(dE < 0) {
-            Tdust *= scalefac; 
+        dE_upper = dE_guess;
+        while(dE < 0 && Tdust > Tdust_floor && n_iter < MAXITER) {
+            Tdust *= scalefac; Tdust = DMAX(Tdust,Tdust_floor);
             dE = ROOTFIND_FUNCTION_INNER(Tdust-T);
             if(dE==0){break;}
-            scalefac *= 0.9; 
+            scalefac *= 0.9;
             n_iter++;
+        }
+        if(dE < 0) { /* could not bracket downward: equilibrium is at/below the radiation-bath floor, or the cap was hit. Warn only on the cap -- the floor is a physical outcome */
+            if(n_iter >= MAXITER) {PRINT_WARNING("Dust temperature bracketing (cooling side) failed to converge: i=%d iter=%d T=%g Tdust=%g Tfloor=%g dE=%g\n",i,n_iter,T,Tdust,Tdust_floor,dE);}
+            cell[i].Dust_Temperature = DMAX(Tdust,Tdust_floor); return 0;
         }
         T_lower = Tdust, dE_lower = dE;
     } else {
         T_lower = Tdust, dE_lower = dE_guess;
         double scalefac = DMIN(1.1, 1+fixedpoint_error);
-        while(dE > 0 && Tdust < MAX_DUST_TEMP) {
+        while(dE > 0 && Tdust < MAX_DUST_TEMP && n_iter < MAXITER) {
             Tdust *= scalefac; Tdust = DMIN(Tdust,MAX_DUST_TEMP);
-            dE = ROOTFIND_FUNCTION_INNER(Tdust-T); 
+            dE = ROOTFIND_FUNCTION_INNER(Tdust-T);
             if(dE==0){break;}
-            scalefac *= 1.1; 
+            scalefac *= 1.1;
             n_iter++;
         }
+        if(dE > 0 && n_iter >= MAXITER && Tdust < MAX_DUST_TEMP) {
+            PRINT_WARNING("Dust temperature bracketing (heating side) failed to converge: i=%d iter=%d T=%g Tdust=%g dE=%g\n",i,n_iter,T,Tdust,dE);
+            cell[i].Dust_Temperature = DMIN(Tdust,MAX_DUST_TEMP); return 0;
+        }
         T_upper = Tdust, dE_upper = dE;
-    }     
+    }
     if(T_upper>=MAX_DUST_TEMP && dE_upper > 0) {cell[i].Dust_Temperature = MAX_DUST_TEMP; return 0;}
 
     if(dE_lower * dE_upper > 0) {PRINT_WARNING("Failed to bracket Tdust solution for ID=%lld T=%g T_lower=%g T_upper=%g dE_lower=%g dE_upper=%g\n", (long long)(long long)i /* particle index */, T, T_lower,T_upper, dE_lower, dE_upper);}
@@ -1675,6 +1687,7 @@ int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes
 double rt_kappa_adaptive_IR_band(int i, double T_dust, double Trad, int do_emission_absorption_scattering_opacity, int dust_or_gas_opacity_only_flag, struct particle_data *pp, struct gas_cell_data *cell)
 {
     if(do_emission_absorption_scattering_opacity==1) {Trad = T_dust;} // if we want the emissivity then we assume radiation emitted at T_dust
+    Trad = DMAX(Trad, MIN_REAL_NUMBER); // guard against non-positive Trad reaching the log10 below: negative values make it NaN, which propagates into an unguarded table-index cast (rt_dust_opacity.cc) and segfaults
     double fac=UNIT_SURFDEN_IN_CGS, x = 4.*log10(Trad) - 8., kappa=0, T_dust_opacitytable = T_dust; // needed for fitting functions to opacities (may come up with cheaper function later)
     double dx_excess=0; if(x > 7.) {dx_excess=x-7.; x=7.;} // cap for maximum temperatures at which fit-functions should be used //
     //if(x < -4.) {x=-4.;} // cap for minimum temperatures at which fit functions below should be used //
