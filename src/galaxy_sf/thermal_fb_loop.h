@@ -57,8 +57,8 @@ ThermalFBCallScalars thermal_fb_build_call_scalars(void);
  * Per-pair physics types.
  *
  * ThermalFBCallScalars carries the cosmology + run-invariant unit conversion
- * factors needed by the inline pair kernel. Routed through ActiveState::scalars
- * (TRAP 1 compliance — pair kernel reads NO All.* / UNIT_* macros).
+ * factors needed by the inline pair kernel. Passed to it as its own argument,
+ * once per call (TRAP 1 compliance — pair kernel reads NO All.* / UNIT_* macros).
  *
  * thermalfb does not use RNG (legacy kernel uses no random numbers); no
  * per-loop XOR shift on NumCurrentTiStep needed. Documented for future
@@ -120,7 +120,6 @@ struct ThermalFBActiveState {
     Vec3<double>         pos;             /* P[i].Pos in double — runner reads directly */
     double               h_search;        /* runner-supplied per-active radius */
     ThermalFBLocalIn     local;
-    ThermalFBCallScalars scalars;
 };
 
 /* DeviceContext extension: UVM-resident per-active host-fill array.
@@ -371,7 +370,7 @@ struct ThermalFBSpec {
             a.pos[2] = (double)dctx.P[i].Pos[2];
             a.h_search = h_search;
         }
-        a.scalars = scalars;
+        (void)scalars;
         return a;
     }
 
@@ -391,7 +390,8 @@ struct ThermalFBSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/) {
+                             NoScatter& /*scatter*/,
+                            const CallScalars& cs) {
         /* Source-level early-out — mirrors the legacy thermal_fb_gpu.cc:183
          * `if(loc.KernelRadius<=0 || loc.wt_sum<=0 || loc.Msne<=0) return;`
          * which short-circuited the ENTIRE neighbor loop for the source.
@@ -424,7 +424,7 @@ struct ThermalFBSpec {
                         * (double)active.local.KernelRadius;
         if (r2 >= h2) return;
 
-        thermal_fb_pair_kernel(active.local, active.scalars, Pj, Cj,
+        thermal_fb_pair_kernel(active.local, cs, Pj, Cj,
                                 r2, neighbor.wakeup_dirty_slot, accum);
     }
 };

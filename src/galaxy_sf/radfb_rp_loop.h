@@ -204,7 +204,6 @@ struct RadFBRPActiveState {
     double               h_search;
     int                  iter_index;     /* set in load_active from ctx.iter_index */
     RadFBRPLocalIn       local;
-    RadFBRPCallScalars   scalars;
 };
 
 /* ============================================================================
@@ -536,7 +535,7 @@ struct RadFBRPSpec {
         /* iter_index: snapshot from runner-tracked iter (see ActiveData
          * comment in pair_kernel below — used to branch iter 0 / iter 1). */
         a.iter_index = dctx.iter_index_snapshot;   /* dctx field, mirrored from Aux per iter */
-        a.scalars = scalars;
+        (void)scalars;
         return a;
     }
 
@@ -555,7 +554,8 @@ struct RadFBRPSpec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/) {
+                             NoScatter& /*scatter*/,
+                            const CallScalars& cs) {
         if (neighbor.neighbor_particle == nullptr) return;
         if (neighbor.neighbor_cell     == nullptr) return;  /* gas-only safety */
         struct particle_data &Pj = *neighbor.neighbor_particle;
@@ -567,7 +567,7 @@ struct RadFBRPSpec {
 #endif
         if (Pj.Mass <= 0) return;
 #ifdef SINK_WIND_SPAWN
-        if (Pj.ID == active.scalars.spawned_wind_cell_id) return;
+        if (Pj.ID == cs.spawned_wind_cell_id) return;
 #endif
 
         if (active.local.KernelRadius <= 0) return;
@@ -596,7 +596,7 @@ struct RadFBRPSpec {
             accum.wt_sum += h_j * h_j;
         } else {
             /* iter 1 : apply kicks using staged active.local.wt_sum */
-            radfb_rp_pair_kick(active.local, active.scalars, Pj, Cj,
+            radfb_rp_pair_kick(active.local, cs, Pj, Cj,
                                 r2, dp, accum);
         }
     }

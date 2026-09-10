@@ -65,7 +65,6 @@ struct SinkEnv2ActiveState {
     Vec3<double>      vel;
     Vec3<double>      Jgas;
     Vec3<double>      Jstar;
-    NlrCommonScalars  scalars;
     int               origin_local_idx;
     int               origin_rank;
 };
@@ -91,6 +90,7 @@ struct SinkEnv2DeviceContext : NeighborLoopDeviceContextBase {
 
 KOKKOS_INLINE_FUNCTION
 static void sink_env2_pair_kernel(const SinkEnv2ActiveState& active,
+                                  const NlrCommonScalars& scalars,
                                    const struct particle_data& neighbor_particle,
                                    struct sink_env_second_gpu_out& accum)
 {
@@ -116,7 +116,7 @@ static void sink_env2_pair_kernel(const SinkEnv2ActiveState& active,
             accum.MgasBulge_in_Kernel += (MyFloat)(2 * neighbor_particle.Mass);
         }
     }
-    if(is_galsf_stellar_candidate_type(neighbor_particle.Type, active.scalars.comoving_integration_on)) {
+    if(is_galsf_stellar_candidate_type(neighbor_particle.Type, scalars.comoving_integration_on)) {
         if(dot(J_tmp, active.Jstar) < 0) {
             accum.MstarBulge_in_Kernel += (MyFloat)(2 * neighbor_particle.Mass);
         }
@@ -227,7 +227,7 @@ struct SinkEnv2Spec {
         active.Jstar[0] = (double)src.Jstar[0];
         active.Jstar[1] = (double)src.Jstar[1];
         active.Jstar[2] = (double)src.Jstar[2];
-        active.scalars  = scalars;
+        (void)scalars;
         active.origin_local_idx = active_slot;
         active.origin_rank      = -1;
         return active;
@@ -256,9 +256,10 @@ struct SinkEnv2Spec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& cs)
     {
-        sink_env2_pair_kernel(active, *neighbor.neighbor_particle, accum);
+        sink_env2_pair_kernel(active, cs, *neighbor.neighbor_particle, accum);
     }
 
     static void apply_active_writeback(const neighbor_loop_args& args,

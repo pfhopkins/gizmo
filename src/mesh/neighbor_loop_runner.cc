@@ -738,6 +738,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                                        int N,
                                        const std::vector<std::vector<int>>& per_active_cands,
                                        typename Spec::AccumData *accums,
+                                       const typename Spec::CallScalars& cs,
                                        EvalOMPPolicy eval_policy)
 {
     using NeighborData = typename Spec::NeighborData;
@@ -763,7 +764,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                 int j = cands[kk];
                 IdentitySidecar id{};                 /* NoIdentity */
                 NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
-                Spec::pair_kernel(a, nb, accums[aa], s);
+                Spec::pair_kernel(a, nb, accums[aa], s, cs);
             }
         } else {
             /* No bind hook: walk by const-ref, no copy. */
@@ -772,7 +773,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                 int j = cands[kk];
                 IdentitySidecar id{};                 /* NoIdentity */
                 NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
-                Spec::pair_kernel(a, nb, accums[aa], s);
+                Spec::pair_kernel(a, nb, accums[aa], s, cs);
             }
         }
     };
@@ -905,7 +906,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     std::vector<AccumData> accums(N);
     {
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
-        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data(), EvalOMPPolicy::AllowProduction);
+        evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data(), cs, EvalOMPPolicy::AllowProduction);
     }
 
     /* Host writeback — same code path as Mode A's writeback. */
@@ -1010,6 +1011,7 @@ struct NlrPeerAnswerHostWalk {
      * belong to the caller's diagnostics and are updated through pointers rather
      * than returned, so the call site reads exactly as it did before. */
     static void answer(const typename Spec::DeviceContext& ctx,
+                       const typename Spec::CallScalars& cs,
                        const std::vector<typename Spec::ActiveData>& peer_actives,
                        const std::vector<int>& peer_nodelist_flat,
                        const std::vector<int>& peer_nnodes,
@@ -1052,7 +1054,7 @@ struct NlrPeerAnswerHostWalk {
             StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
             if(eval_peer_work_peak && (long long)K > *eval_peer_work_peak) {*eval_peer_work_peak = (long long)K;}
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
-                                              cand_peer_tree, peer_replies_out.data(), EvalOMPPolicy::AllowProduction);
+                                              cand_peer_tree, peer_replies_out.data(), cs, EvalOMPPolicy::AllowProduction);
         }
     }
 };
@@ -1072,6 +1074,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                                    int n,
                                    unsigned int supply_mask,
                                    const GxDeviceTreeView& tree,
+                                   const typename Spec::CallScalars& cs,
                                    typename Spec::AccumData *accums_out);
 
 template <typename Spec>
@@ -1485,13 +1488,13 @@ static void mode_b_remote_evaluate_into_buffer(
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         if constexpr (Backend == NlrEvalBackend::HostWalk) {
             evaluate_pairs_post_drift<Spec>(ctx, actives, N,
-                                              cand_self_tree, accums_out, EvalOMPPolicy::AllowProduction);
+                                              cand_self_tree, accums_out, cs, EvalOMPPolicy::AllowProduction);
         } else {
             /* Reach comes from each query's own h_search, which is what the host
              * self walk at this site uses; radii is the same value by
              * construction and reading it from two places invites drift. */
             nlr_mode_d_self_reduce<Spec>(ctx, actives, actives_are_device_visible, N,
-                                         neighbor_type_mask, *fused_tree, accums_out);
+                                         neighbor_type_mask, *fused_tree, cs, accums_out);
         }
     }
 
@@ -1731,14 +1734,14 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<AccumData> peer_replies(K);
     if constexpr (Backend == NlrEvalBackend::HostWalk) {
         int tu_recv = 0;
-        NlrPeerAnswerHostWalk<Spec>::answer(ctx, peer_actives,
+        NlrPeerAnswerHostWalk<Spec>::answer(ctx, cs, peer_actives,
                                             peer_nodelist_flat, peer_nnodes,
                                             neighbor_type_mask, drift_sink, tim,
                                             &tu_recv, &eval_peer_work_peak,
                                             peer_replies);
         if(tu_recv > 0) { diag_omp_recv = tu_recv; nlr_note_threaded_walk(); }
     } else {
-        NlrPeerAnswerDeviceFused<Spec>::answer(ctx, *fused_tree, peer_actives,
+        NlrPeerAnswerDeviceFused<Spec>::answer(ctx, cs, *fused_tree, peer_actives,
                                                peer_nodelist_flat, peer_nnodes,
                                                neighbor_type_mask, tim,
                                                &eval_peer_work_peak,
@@ -2232,6 +2235,9 @@ struct NlrModeATeamPairKernel {
     const int     *active_set;   /* nullptr on the single-pass site */
     const int     *csr_lookup;   /* used only when active_set != nullptr */
     int            chunk_base;   /* used only when active_set == nullptr */
+    /* One snapshot for the whole call, held by value so the device functor
+     * carries it without reaching for a global. */
+    typename Spec::CallScalars cs;
 
     KOKKOS_INLINE_FUNCTION void operator()(const TeamMember& team) const {
         const int i   = team.league_rank();
@@ -2259,7 +2265,7 @@ struct NlrModeATeamPairKernel {
                 ScatterData     s{};
                 IdentitySidecar id{};
                 NeighborData    nb = Spec::load_neighbor(ctx, neighbors[start + nn], id, a);
-                Spec::pair_kernel(a, nb, lane_accum, s);
+                Spec::pair_kernel(a, nb, lane_accum, s, cs);
             },
             NlrAccumReducer<Spec>(row_accum));
 
@@ -2554,7 +2560,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
     using TeamKernel = NlrModeATeamPairKernel<Spec, DeviceCtx>;
     int team_width = 1;
     if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
-        TeamKernel probe{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, 0};
+        TeamKernel probe{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, 0, cs};
         team_width = nlr_mode_a_team_width<Spec>(probe);
     }
 
@@ -2592,13 +2598,13 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
                     int j = neighbors[nn];
                     IdentitySidecar id{};            /* NoIdentity */
                     NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
-                    Spec::pair_kernel(a, nb, d_accums[kk], s);
+                    Spec::pair_kernel(a, nb, d_accums[kk], s, cs);
                 }
             };
 
             if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
                 if(team_width > 1) {
-                    TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0};
+                    TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0, cs};
                     gizmo_gpu_team_kernel_launch(Spec::loop_name, n, team_width, fn);
                 } else {
                     gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
@@ -3833,6 +3839,14 @@ struct NlrModeDReduceLeaf {
     typename Spec::AccumData           *accum;
     typename Spec::ScatterData         *scatter;
     unsigned int                        supply_mask;
+    /* By pointer, not by value: the leaf is built per work item inside the
+     * kernel, and a CallScalars is 120-200 B, so copying it into every leaf
+     * would put that much in local memory per item for a value every item
+     * shares. The pointee is the launching lambda's OWN by-value capture --
+     * device-resident -- which is why the leaf must keep being constructed
+     * INSIDE the kernel. Hoisting that construction out would leave this
+     * pointing at a host stack object and fault on device. */
+    const typename Spec::CallScalars   *cs;
 
     KOKKOS_INLINE_FUNCTION
     void visit(int j, double qx, double qy, double qz, double reach)
@@ -3846,7 +3860,7 @@ struct NlrModeDReduceLeaf {
                                          reach, 0.0, NGB_SEARCH_ONEWAY)) {return;}
         IdentitySidecar id{};
         typename Spec::NeighborData nb = Spec::load_neighbor(*ctx, j, id, *active);
-        Spec::pair_kernel(*active, nb, *accum, *scatter);
+        Spec::pair_kernel(*active, nb, *accum, *scatter, *cs);
     }
 };
 
@@ -3907,7 +3921,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
         const int i = active_idx[kk];
         ActiveData  a = Spec::load_active(ctx, kk, i, radii[kk], cs);
         ScatterData s{};
-        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask};
+        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask, &cs};
         gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                       radii[kk], tree, leaf, anomaly);
     });
@@ -4002,6 +4016,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                                    int n,
                                    unsigned int supply_mask,
                                    const GxDeviceTreeView& tree,
+                                   const typename Spec::CallScalars& cs,
                                    typename Spec::AccumData *accums_out)
 {
     using ActiveData  = typename Spec::ActiveData;
@@ -4058,7 +4073,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
         Spec::zero_accum(acc_d[kk]);
         const ActiveData& a = q_d[kk];
         ScatterData s{};
-        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, supply_mask};
+        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, supply_mask, &cs};
         gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                       (double)a.h_search, tree, leaf, anomaly_d);
     });
@@ -4100,6 +4115,7 @@ struct NlrPeerAnswerDeviceFused {
     using AccumData = typename Spec::AccumData;
 
     static void answer(const typename Spec::DeviceContext& ctx,
+                       const typename Spec::CallScalars& cs,
                        const GxDeviceTreeView& tree,
                        const std::vector<typename Spec::ActiveData>& peer_actives,
                        const std::vector<int>& peer_nodelist_flat,
@@ -4186,7 +4202,7 @@ struct NlrPeerAnswerDeviceFused {
              * ever revived this must become a root walk, not a zero accumulator.
              * Unreachable today: targeted_export_ok is a constexpr true. */
             if(nn_d[kk] <= 0) {return;}
-            NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask};
+            NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
             gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                 (double)a.h_search,
                                 nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
@@ -4464,14 +4480,14 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                     int j = neighbors[nn];
                     IdentitySidecar id{};
                     NeighborData nb = Spec::load_neighbor(dctx_local, j, id, a);
-                    Spec::pair_kernel(a, nb, d_accums[k], s);
+                    Spec::pair_kernel(a, nb, d_accums[k], s, cs_ref);
                 }
             };
 
             if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
                 using TeamKernel = NlrModeATeamPairKernel<Spec, typename Spec::DeviceContext>;
                 TeamKernel fn{dctx_local, d_actives, d_accums, offsets, neighbors,
-                              active_set_arr, csr_lookup, 0};
+                              active_set_arr, csr_lookup, 0, cs_ref};
                 const int team_width = nlr_mode_a_team_width<Spec>(fn);
                 if (team_width > 1) {
                     gizmo_gpu_team_kernel_launch(Spec::loop_name, n_compacted, team_width, fn);
@@ -4550,7 +4566,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, in
                                          DispatchPath::ModeB_HostWalker, cand_modeB);
     lazy_drift_candidates<Spec>(cand_modeB);
     evaluate_pairs_post_drift<Spec>(drv.ctx, actives_compacted.data(), n_compacted,
-                                      cand_modeB, accums_compacted.data(), EvalOMPPolicy::AllowProduction);
+                                      cand_modeB, accums_compacted.data(), drv.cs, EvalOMPPolicy::AllowProduction);
 
     /* Scatter compacted accums back into driver-owned per-slot accum_uvm.
      * Slots NOT in active_set_uvm keep their stale values (will not be

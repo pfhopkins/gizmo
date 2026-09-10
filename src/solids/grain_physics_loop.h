@@ -173,7 +173,8 @@ struct GrainBackrxSpec {
     static void pair_kernel(const ActiveData& active,
                             const NeighborData& nb,
                             AccumData& /*accum*/,
-                            NoScatter& /*scatter*/) {
+                            NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr || nb.CellP_arr == nullptr) return;
 #ifdef HYDRO_MULTIFLUID
@@ -343,7 +344,8 @@ struct GrainRTGasSpec {
     static void pair_kernel(const ActiveData& active,
                             const NeighborData& nb,
                             AccumData& accum,
-                            NoScatter& /*scatter*/) {
+                            NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr) return;
         Vec3<double> dp;
@@ -479,7 +481,8 @@ struct GrainRTGrainSpec {
     static void pair_kernel(const ActiveData& active,
                             const NeighborData& nb,
                             AccumData& accum,
-                            NoScatter& /*scatter*/) {
+                            NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         if(active.h_search <= 0) return;
         if(nb.P_arr == nullptr) return;
         Vec3<double> dp;

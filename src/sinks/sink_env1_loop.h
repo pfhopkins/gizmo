@@ -87,7 +87,6 @@ struct SinkEnv1ActiveState {
 #endif
     int           origin_local_idx;     /* index into requester's per_active_accum */
     int           origin_rank;          /* requester's MPI rank (Mode B remote) */
-    SinkEnv1CallScalars scalars;        /* per-call cosmology + gravity */
 };
 
 /* DeviceContext extension. It adds no fields of its own today, but it stays a
@@ -118,6 +117,7 @@ struct SinkEnv1DeviceContext : NeighborLoopDeviceContextBase {
 
 KOKKOS_INLINE_FUNCTION
 static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
+                                  const SinkEnv1CallScalars& scalars,
                                   struct particle_data& neighbor_particle,
                                   const struct gas_cell_data* neighbor_cell,
                                   struct sink_env_gpu_out& accum)
@@ -147,7 +147,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
 #ifdef SINK_REPOSITION_ON_POTMIN
     if(neighbor_particle.Type != 0 && neighbor_particle.Type != 5) {
         double rfac  = dP.norm_sq() * (10.0 / (h_i * h_i)
-                                     + 0.1 / (active.scalars.sink_radius_grav * active.scalars.sink_radius_grav));
+                                     + 0.1 / (scalars.sink_radius_grav * scalars.sink_radius_grav));
         double wtfac = wt / (1.0 + rfac);
         if((MyFloat)neighbor_particle.Mass > accum.DF_mmax_particles) accum.DF_mmax_particles = (MyFloat)neighbor_particle.Mass;
         for(int kv = 0; kv < 3; kv++) accum.DF_mean_vel[kv] += wtfac * dv[kv];
@@ -193,14 +193,14 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
             double u_h = dP.norm() / h_i;
             double wk_h = 0, dwk_h = 0;
             if(u_h < 1) { kernel_main(u_h, hinv3, hinv3 * hinv, &wk_h, &dwk_h, -1); }
-            double rj = u_h * h_i * active.scalars.common.cf_atime;
+            double rj = u_h * h_i * scalars.common.cf_atime;
             double csj = neighbor_cell->effective_soundspeed();
             double vdotrj = -dot(dP, dv);
-            double vr_mdot = 4 * M_PI * wt * (wk_h * active.scalars.common.cf_a3inv) * rj * vdotrj;
-            if(rj < active.scalars.sink_radius_grav * active.scalars.common.cf_atime) {
-                double bondi_mdot = 4 * M_PI * active.scalars.common.newton_G * active.scalars.common.newton_G * active.mass * active.mass
-                    / pow(csj * csj + dv.norm_sq() * active.scalars.common.cf_a2inv, 1.5)
-                    * wt * (wk_h * active.scalars.common.cf_a3inv);
+            double vr_mdot = 4 * M_PI * wt * (wk_h * scalars.common.cf_a3inv) * rj * vdotrj;
+            if(rj < scalars.sink_radius_grav * scalars.common.cf_atime) {
+                double bondi_mdot = 4 * M_PI * scalars.common.newton_G * scalars.common.newton_G * active.mass * active.mass
+                    / pow(csj * csj + dv.norm_sq() * scalars.common.cf_a2inv, 1.5)
+                    * wt * (wk_h * scalars.common.cf_a3inv);
                 vr_mdot = DMAX(vr_mdot, bondi_mdot);
                 accum.hubber_mdot_bondi_limiter += bondi_mdot;
             }
@@ -208,7 +208,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
             accum.hubber_mdot_disk_estimator  += wt * wk_h * sqrt(rj) / (neighbor_cell->Density * csj * csj);
         }
 #endif
-    } else if(is_galsf_stellar_candidate_type(neighbor_particle.Type, active.scalars.common.comoving_integration_on)) {
+    } else if(is_galsf_stellar_candidate_type(neighbor_particle.Type, scalars.common.comoving_integration_on)) {
         accum.Mstar_in_Kernel += wt;
         Vec3<double> J_star = cross(dP, dv);
         for(int kv = 0; kv < 3; kv++) accum.Jstar_in_Kernel[kv] += wt * J_star[kv];
@@ -231,12 +231,12 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
 #endif
     {
         double dr_code = dP.norm();
-        double vrel = dv.norm() / active.scalars.common.cf_atime;
+        double vrel = dv.norm() / scalars.common.cf_atime;
 #if defined(MAGNETIC) && defined(GRAIN_LORENTZFORCE)
         if((1<<neighbor_particle.Type) & GRAIN_PTYPES) {
             Vec3<double> B_vec; for(int kv = 0; kv < 3; kv++) B_vec[kv] = neighbor_particle.Gas_B[kv];
             double vrel_dot = dot(dv, B_vec), bmag2 = B_vec.norm_sq();
-            vrel = (fabs(vrel_dot) / sqrt(bmag2)) / active.scalars.common.cf_atime;
+            vrel = (fabs(vrel_dot) / sqrt(bmag2)) / scalars.common.cf_atime;
         }
 #endif
         struct gas_cell_data neighbor_cell_local;
@@ -248,13 +248,13 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
         }
         double vbound = sink_vesc_gpu(neighbor_particle, neighbor_cell_local, active.mass, dr_code, ags_h_i);
         if(vrel < vbound) {
-            double local_sink_radius = active.scalars.sink_radius_grav;
+            double local_sink_radius = scalars.sink_radius_grav;
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
             local_sink_radius = active.sink_radius;
             double spec_mom = dot(dv, dP);
             double r2 = dP.norm_sq();
-            spec_mom = r2*vrel*vrel - spec_mom*spec_mom*active.scalars.common.cf_a2inv;
-            if(spec_mom >= active.scalars.common.newton_G * (active.mass + (double)neighbor_particle.Mass) * local_sink_radius) { return; }
+            spec_mom = r2*vrel*vrel - spec_mom*spec_mom*scalars.common.cf_a2inv;
+            if(spec_mom >= scalars.common.newton_G * (active.mass + (double)neighbor_particle.Mass) * local_sink_radius) { return; }
 #endif
             if(sink_check_boundedness_gpu(neighbor_particle, neighbor_cell_local, vrel, vbound, dr_code, local_sink_radius) == 1) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
@@ -421,7 +421,7 @@ struct SinkEnv1Spec {
 #endif
         active.origin_local_idx = active_slot;
         active.origin_rank      = -1;          /* device — rank N/A in lambda */
-        active.scalars          = scalars;
+        (void)scalars;
         return active;
     }
 
@@ -451,9 +451,10 @@ struct SinkEnv1Spec {
     static void pair_kernel(const ActiveData& active,
                              const NeighborData& neighbor,
                              AccumData& accum,
-                             NoScatter& /*scatter*/)
+                             NoScatter& /*scatter*/,
+                            const CallScalars& cs)
     {
-        sink_env1_pair_kernel(active, *neighbor.neighbor_particle,
+        sink_env1_pair_kernel(active, cs, *neighbor.neighbor_particle,
                               neighbor.neighbor_cell, accum);
     }
 

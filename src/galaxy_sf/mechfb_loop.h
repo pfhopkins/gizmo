@@ -74,12 +74,6 @@ struct MechFBActiveState {
      * write for inactive entries. */
     bool                   is_active_this_mode;
 
-    /* Per-call cosmology + physics + unit factors. Carried
-     * per-active so the pair kernel reads scalars.* instead of bare All.* —
-     * follows the density-port pattern (DensitySpec::ActiveData also stores
-     * a CallScalars copy). Cost ~200 B per active; trivially copyable. */
-    MechFBCallScalars      scalars;
-
     /* DeviceContext snapshots routed through ActiveData because pair_kernel
      * has no ctx parameter. Trivially copyable; cost is a few pointers + ints
      * per active per iter. */
@@ -344,12 +338,12 @@ struct MechFBSpec {
             a.pos[2]   = (MyDouble)dctx.P[i].Pos[2];
             a.h_search = (MyFloat) h_search;
         }
-        /* Carry the per-call scalars on the ActiveData so pair_kernel + the
-         * refactored mechanical_fb_pair_kernel / inject_cosmic_rays_into_delta
-         * read scalars.* (precomputed unit factors, cf_atime/etc., CR rigidity
-         * arrays) without touching bare All.*. Follows the density-port
+        /* The per-call scalars reach pair_kernel + the refactored
+         * mechanical_fb_pair_kernel / inject_cosmic_rays_into_delta as their
+         * own argument (precomputed unit factors, cf_atime/etc., CR rigidity
+         * arrays), so those bodies never touch bare All.*. Follows the
          * pattern. */
-        a.scalars = scalars;
+
 
         /* Per-mode active mask — mirrors the retired legacy
          * evaluator's per-mode active guard. ctx.P points at the runner-managed
@@ -363,7 +357,7 @@ struct MechFBSpec {
          * Computed ONCE per active per iter here; pair_kernel reads via
          * active.source_mode. Takes scalars for All.cf_atime / All.cf_a3inv /
          * All.CosmicRay_SNeFraction / UNIT_*_IN_* reads. */
-        mechanical_fb_per_source_setup(a.local, a.loop_iteration, a.scalars, a.source_mode);
+        mechanical_fb_per_source_setup(a.local, a.loop_iteration, scalars, a.source_mode);
 
         /* Snapshot DeviceContext fields the pair kernel needs but cannot read
          * directly (pair_kernel has no ctx parameter).
@@ -395,9 +389,16 @@ struct MechFBSpec {
      * mechanical_fb_pair_kernel where rank 0 was using rank 1's P_base etc).
      *
      * Source-owned physics fields (pos, h_search, local, source_mode,
-     * loop_iteration, is_active_this_mode, scalars) are preserved here — they
-     * describe the sender's star / per-call physics and are stable across
-     * ranks and eval passes. */
+     * loop_iteration, is_active_this_mode) are preserved here — they describe
+     * the sender's star and travel with the query over the envelope.
+     *
+     * Per-call scalars are NOT among them and must not be added: they are one
+     * value for the whole call, passed as their own argument, and the receiver
+     * uses its OWN snapshot. That is sound only because CallScalars is
+     * required to be rank-invariant (neighbor_loop_runner.h TRAP 1). A
+     * rank-local value put there would NOT travel with the query and the two
+     * ranks would compute different physics for the same pair; such a field
+     * belongs in ActiveData, which does travel. */
     static void bind_active_to_eval_context(const DeviceContext& eval_ctx,
                                              ActiveData& active) {
         active.LocalGasMechFBInfoTemp = eval_ctx.LocalGasMechFBInfoTemp;
@@ -434,7 +435,8 @@ struct MechFBSpec {
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& i_active,
                             const NeighborData& neighbor,
-                            AccumData& accum, NoScatter& /*scatter*/) {
+                            AccumData& accum, NoScatter& /*scatter*/,
+                            const CallScalars& cs) {
         /* Per-mode active mask — equivalent of the retired
          * legacy evaluator's per-mode active guard. Sources in the toplevel superset
          * that are NOT active for THIS specific mode short-circuit the entire
@@ -482,7 +484,7 @@ struct MechFBSpec {
             i_active.local, i_active.source_mode, i_active.loop_iteration,
             neighbor.neighbor_index,
             i_active.P_base, i_active.CellP_base,
-            i_active.scalars,
+            cs,
             /*home_gas_delta      */ i_active.LocalGasMechFBInfoTemp,
             /*ghost_gas_delta     */ i_active.d_gas_iter,
             /*num_local_gas       */ i_active.num_local_gas,

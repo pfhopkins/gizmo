@@ -173,7 +173,8 @@ struct DiffFilterSpec {
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& a,
                             const NeighborData& nb,
-                            AccumData& accum, NoScatter& /*scatter*/) {
+                            AccumData& accum, NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         if (!a.valid) return;
         if (nb.neighbor_particle == nullptr || nb.neighbor_cell == nullptr) return;
         struct particle_data& Pj = *nb.neighbor_particle;
@@ -440,7 +441,8 @@ struct DynDiffSpec {
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& a,
                             const NeighborData& nb,
-                            AccumData& accum, NoScatter& /*scatter*/) {
+                            AccumData& accum, NoScatter& /*scatter*/,
+                            const CallScalars& /*cs*/) {
         if (!a.valid) return;
         if (nb.neighbor_particle == nullptr || nb.neighbor_cell == nullptr) return;
         struct particle_data& Pj = *nb.neighbor_particle;
