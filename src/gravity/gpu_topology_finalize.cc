@@ -23,6 +23,35 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
 #include "gpu_gravity_tree.h"
+
+/* Two of the passes that finish a tree build write only the canonical node arrays and do no
+ * arithmetic at all -- one clears a handful of ephemeral fields on every node, the other fills the
+ * particle-level Father[] array with -1.  They are memsets with a stride.  Running them on the
+ * accelerator is the wrong side of the machine for that: measured on Frontier at 64 ranks against
+ * the identical Kokkos code on the OpenMP backend, the node reset costs 974 microseconds per call
+ * on the device and 84 on the host, and the Father fill 1263 against 157.  Both numbers are set by
+ * how much memory the pass walks, not by how much it computes -- the moment kernel, which does the
+ * real arithmetic over the same arrays, costs about the same 950 microseconds on the device while
+ * doing eight times the work of the reset.
+ *
+ * So they run on the host.  Doing that removed 12.09 seconds of wall from a 15-minute run and took
+ * the tree build from 1.45 to 1.32 times the cost of the same run with no GPU at all, with the work
+ * matched exactly and every other phase unmoved.  Nearly a third of that saving was not the passes
+ * themselves but the collective that follows them: it had been absorbing the imbalance they left
+ * behind, and it fell with them.
+ *
+ * ⚠ MEASURED ON AMD ONLY.  On a CPU-only build this is what already happened -- the host execution
+ * space IS the default one -- so nothing changes there.  On NVIDIA it has never been run.  The
+ * argument for it is not AMD-specific (a memset has no use for an accelerator), but the arrays are
+ * managed memory, and on hardware where the host and device caches are coherent the balance between
+ * "run it where the data is" and "run it where the parallelism is" may land differently.  If you are
+ * tuning on NVIDIA, this is a fair thing to measure and change; it is not a setting anyone has
+ * proven right there.
+ *
+ * The fences are required, not decorative: the device work ahead of these passes has to land before
+ * the host touches the same managed pages, and the host's writes have to be visible to the device
+ * passes that follow. */
+using GxTreeHostRange = Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>;
 #include "gpu_topology_finalize.h"
 #include "forcetree.h"
 
@@ -71,10 +100,11 @@ extern "C" int gpu_topology_finalize_father(int n)
         father_soa[k]   = -1;
         bitflags_soa[k] = 0u;
     });
-    Kokkos::parallel_for("topo_father_init_parts", tree_slots, KOKKOS_LAMBDA(int i) {
+    Kokkos::fence();
+    Kokkos::parallel_for("topo_father_init_parts", GxTreeHostRange(0, tree_slots), KOKKOS_LAMBDA(int i) {
         Father_uvm[i] = -1;
     });
-    Kokkos::fence();
+    Kokkos::fence();   /* the device passes below must see the host writes */
     gizmo_gpu_check_last_error("topo_father_init", n);
 
     /* Main pass: one thread per internal node.  For each occupied child slot,
@@ -214,7 +244,8 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     struct NODE    *Nodes_uvm    = Nodes_base;     /* UVM */
     struct extNODE *Extnodes_uvm = Extnodes_base;
 
-    Kokkos::parallel_for("node_reset_ephemeral", n, KOKKOS_LAMBDA(int k) {
+    Kokkos::fence();
+    Kokkos::parallel_for("node_reset_ephemeral", GxTreeHostRange(0, n), KOKKOS_LAMBDA(int k) {
         /* k is the SoA index; absolute Nodes[] index is All.TreeNodeIndexBase + k.
          * Nodes_base/Extnodes_base are the unshifted arrays (Nodes ==
          * Nodes_base - All.TreeNodeIndexBase), so we index directly with k. */
