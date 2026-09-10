@@ -174,8 +174,8 @@ void restart(int modus)
 			   All.PartAllocFactor, save_PartAllocFactor);
 
 		  All.PartAllocFactor = save_PartAllocFactor;
-		  All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-		  All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));
+		  All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));
+		  All.MaxPartGas = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotN_gas, NTask));
 #ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
           All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
 #endif

@@ -820,8 +820,8 @@ void read_file(char *fname, int readTask, int lastTask)
 
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
-        All.MaxPart = (int) (All.PartAllocFactor * (All.TotNumPart / NTask));
-        All.MaxPartGas = (int) (All.PartAllocFactor * (All.TotN_gas / NTask));	/* sets the maximum number of particles that may reside on a processor */
+        All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));
+        All.MaxPartGas = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotN_gas, NTask));	/* sets the maximum number of particles that may reside on a processor */
 #ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
         All.MaxPartGas = All.MaxPart; // PFH: increasing All.MaxPartGas according to this line can allow better load-balancing in some cases. however it leads to more memory problems
         // (PFH: needed to revert the change -- i.e. INCLUDE the line above: commenting it out, while it improved memory useage, causes some instability in the domain decomposition for
@@ -1215,6 +1215,15 @@ void read_file(char *fname, int readTask, int lastTask)
                                         H5Sclose(hdf5_dataspace_in_memory);
                                         H5Sclose(hdf5_dataspace_in_file);
                                         H5Dclose(hdf5_dataset);
+                                      }
+                                      else
+                                      {
+                                          /* Optional dataset absent from this file. Without this the fill below
+                                             would read the PREVIOUS block's bytes still sitting in CommBuffer --
+                                             stale-buffer garbage into whatever field this block feeds. Zero it so
+                                             an absent block deterministically reads as zero (e.g. reservoirs added
+                                             after a snapshot was written restart at zero, not at garbage). */
+                                          memset(CommBuffer, 0, ((size_t) bytes_per_blockelement) * pc);
                                       }
                                     }
 

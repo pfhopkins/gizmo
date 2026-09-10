@@ -151,11 +151,19 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * be able to kill a long production run, and a warning is enough to stop this being silent. */
     if(mp == NULL)
     {
-        int i; long long n_zero_loc = 0, n_zero_tot = 0;
-        for(i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {n_zero_loc++;}}
-        MPI_Allreduce(&n_zero_loc, &n_zero_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        int i; long long red_loc[2] = {0, 0}, red_tot[2] = {0, 0};
+        for(i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {red_loc[0]++;}}
+        /* whole-set veto, reduced with (not gated on) the zero-mass count: collective SUBFIND builds
+           pass mp == NULL with npart = NumPartGroup != NumPart, whose root legitimately holds fewer
+           than TotNumPart -- comparing there is a false alarm, not a detached particle. The predicate
+           is rank-local, so it rides this reduction (SUM of 0/1 flags is an OR) rather than gating it,
+           which would let ranks disagree about entering the collective. */
+        red_loc[1] = (npart != NumPart) ? 1 : 0;
+        MPI_Allreduce(red_loc, red_tot, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        long long n_zero_tot = red_tot[0], not_whole_any = red_tot[1];
         long long in_tree = (long long) Nodes[All.MaxPart].N_part;
         long long deficit = (long long) All.TotNumPart - in_tree;
+        if(not_whole_any) {deficit = 0;} /* subset build: the count comparison is meaningless */
         if(deficit > n_zero_tot || deficit < 0)
         {
             if(ThisTask == 0)

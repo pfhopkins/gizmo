@@ -124,6 +124,16 @@ void make_list_of_active_particles(void);
 void output_extra_log_messages(void);
 
 
+/* Per-rank share of a balanced particle assignment, rounded UP. Plain TotNumPart/NTask throws
+   away the remainder before PartAllocFactor is applied, which is invisible at large N and is the
+   whole budget at small N (3 particles on 4 ranks truncates to 0, and nothing fits in 0). Every
+   place that derives the per-rank assignment cap calls this. */
+static inline long long balanced_particles_per_rank(long long total, int ntask)
+{
+    if(ntask <= 0) {return total;}
+    return total / (long long) ntask + ((total % (long long) ntask) != 0);   /* not (total+ntask-1)/ntask, which can overflow */
+}
+
 static inline double WRAP_POSITION_UNIFORM_BOX(double x)
 {
     while(x >= All.BoxSize) {x -= All.BoxSize;}

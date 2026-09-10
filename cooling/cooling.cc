@@ -45,7 +45,7 @@ static double J_UV = 0, gJH0 = 0, gJHep = 0, gJHe0 = 0, epsH0 = 0, epsHep = 0, e
 #if defined(CHIMES)
 int ChimesEqmMode, ChimesUVBMode, ChimesInitIonState, N_chimes_full_output_freq, Chimes_incl_full_output = 1;
 double chimes_rad_field_norm_factor, shielding_length_factor, cr_rate;
-char ChimesDataPath[256], ChimesEqAbundanceTable[196], ChimesPhotoIonTable[196];
+char ChimesDataPath[DEFAULT_PATH_BUFFERSIZE_TOUSE], ChimesEqAbundanceTable[DEFAULT_PATH_BUFFERSIZE_TOUSE], ChimesPhotoIonTable[DEFAULT_PATH_BUFFERSIZE_TOUSE]; /* sized to the parameter reader's value buffer: the reader strcpy's a token of up to that size into these, and the Bcasts take sizeof() */
 struct gasVariables *ChimesGasVars;
 struct globalVariables ChimesGlobalVars;
 #ifdef CHIMES_METAL_DEPLETION

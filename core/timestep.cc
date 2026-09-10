@@ -1389,8 +1389,7 @@ void process_wake_ups(void)
 
 	    if(bin != binold)
 	    {
-		integertime dt_0 = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
-		integertime tstart = P[i].Ti_begstep + dt_0;
+		integertime tstart = P[i].Ti_begstep + P[i].integertime_step(); /* the particle's ACTUAL step end: for one already truncated below, dt_step is shorter than the bin length, so deriving from the bin over-reports (cf. the same fix in density.cc) */
 		integertime t_2 = P[i].Ti_current;
 		if(t_2 > tstart) {tstart = t_2;}
 		integertime tend = All.Ti_Current;

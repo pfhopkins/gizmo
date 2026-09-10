@@ -451,6 +451,34 @@ void domain_Decomposition_light(int UseAllTimeBins)
                t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
     }
 
+    /* The light path rekeys against the extent measured at the LAST full decomposition, and
+       domain_double_to_int() is a bare mantissa mask with no clamp: a coordinate at or beyond the
+       upper edge sums to >= 2.0 and keys to the FIRST cell (mantissa wraps), one below the corner
+       lands in the [0.5,1) binade -- either way a spatially wrong top node, silently. The full
+       decomposition is safe only because domain_findExtent() pads by 0.1%, which a fast-moving
+       particle (a sink ejection) can outrun between full decompositions. So validate the sum the
+       key is actually built from, and escalate to the full decomposition -- which remeasures the
+       extent -- when any particle has left it. Negated comparisons so a NaN position also trips. */
+    int extent_bad_loc = 0, extent_bad_glob = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(||:extent_bad_loc)
+#endif
+    for(i = 0; i < NumPart; i++)
+    {
+        int k; for(k = 0; k < 3; k++)
+        {
+            double s = ((P[i].Pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
+            if(!(s >= 1.0 && s < 2.0)) {extent_bad_loc = 1;}
+        }
+    }
+    MPI_Allreduce(&extent_bad_loc, &extent_bad_glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(extent_bad_glob)
+    {
+        if(ThisTask == 0) {printf("  domain_light: a particle has left the stored domain extent; falling back to a full decomposition\n");}
+        domain_Decomposition(UseAllTimeBins, 0, 1);
+        return;
+    }
+
     /* we take the closest cost factor */
     int diff, highest_bin_to_include;
     if(UseAllParticles) {highest_bin_to_include = All.HighestOccupiedTimeBin;} else {highest_bin_to_include = All.HighestActiveTimeBin;}
