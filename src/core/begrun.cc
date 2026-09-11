@@ -1003,7 +1003,7 @@ void open_outputfiles(void)
         fprintf(FdMomWinds,"%s   (6) Total photon momentum (L/c x dt) for which this is being calculated (code units) in timestep \n",prefix_char);
         fprintf(FdMomWinds,"%s   (7) Total momentum actually coupled to gas [code units] \n",prefix_char);
         fprintf(FdMomWinds,"%s   (8) Average velocity of the discretized kicks assigned to gas cells from photon momentum \n",prefix_char);
-        fprintf(FdMomWinds,"%s   (9) Candidate infrared multiple-scattering boost, as the IR kick a cell was offered relative to the bare single-scattering momentum per unit mass, averaged over cells weighting by the momentum each was actually given \n",prefix_char);
+        fprintf(FdMomWinds,"%s   (9) Mean infrared multiple-scattering boost PER COUPLED CELL: for each cell, the infrared kick it was offered against the bare single-scattering momentum per unit mass, averaged over cells and weighted by the momentum each one received. This is a per-cell mean and not the total boost to the coupled momentum in column (7); the momentum weighting pulls it toward the cells nearest the source, so it runs well above the median cell \n",prefix_char);
     }
 #endif
 

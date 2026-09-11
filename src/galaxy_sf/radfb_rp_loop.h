@@ -179,11 +179,11 @@ struct RadFBRPAccum {
     double   n_touched;          /* gas cells actually kicked */
     double   mom_coupled;        /* Sum of mass * |dv| given to those cells */
     double   sum_v_kick;         /* Sum of |dv|, for the mean kick velocity */
-    double   sum_taufac;         /* momentum-weighted CANDIDATE multiple-scattering boost:
-                                  * the IR kick offered, not necessarily the one applied
-                                  * (the stochastic branch applies a discretized kick
-                                  * instead), weighted by the momentum actually given.
-                                  * Same construction the legacy log used. */
+    double   sum_taufac;         /* per-cell multiple-scattering boost, summed for a
+                                  * momentum-weighted MEAN -- not the total boost to the
+                                  * coupled momentum. It is the infrared kick a cell was
+                                  * offered, which in the stochastic branch is not the kick
+                                  * finally applied. Same construction the legacy log used. */
 };
 
 /* IterScratch — host-only per-active state, carries iter-0's accumulated
