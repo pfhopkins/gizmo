@@ -1185,9 +1185,19 @@ static void mode_b_remote_evaluate_into_buffer(
      * read for the export walk and the envelopes.
      *
      * The objects are the same either way: same function, same inputs, same
-     * epoch. The epoch holds because on the fused path nothing drifts between
-     * this point and the evaluation -- the call's opening pass brought the whole
-     * rank current, and both drift sites below are compiled out for this backend.
+     * epoch. The epoch holds because the queries are built from the ACTIVES, and
+     * an active is already current when a neighbour loop is entered: the sync
+     * point drifts every particle in every active time bin to All.Ti_Current
+     * (core/run.cc), ActiveParticleList is built from those same bins, and every
+     * Spec that can reach this backend draws its active list from that list.
+     * Nothing advances All.Ti_Current again inside the step.
+     *
+     * That is the invariant the discovery pass below also rests on, so it is
+     * worth naming rather than leaving implied: the record pass and the
+     * evaluation pass must build the same query from the same particle, and they
+     * would not if a drift between them could move an active. The touched-set
+     * drift only advances particles that are behind, so an active that is
+     * already current cannot be moved by it.
      *
      * Falling back to the host build when the device buffer cannot be had is
      * safe where declining would not be: it changes how the queries are filled,
@@ -1481,9 +1491,11 @@ static void mode_b_remote_evaluate_into_buffer(
     /* Stage 8: answer THIS rank's own queries -> accums_out.
      *
      * The host backend evaluates the list it collected above.  The fused backend
-     * collected nothing and walks the tree from the root instead; it also skips
-     * the drift, because the call's opening pass already brought every local
-     * particle current and nothing since could have added a stale one. */
+     * collected nothing and walks the tree from the root instead, and brings
+     * current the particles that walk will reach -- discovering them with a
+     * recording pass of its own rather than drifting the whole rank up front.
+     * So this site skips the collected-candidate drift because it collected no
+     * candidates, not because everything is already current. */
     if(N > 0) {
         StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         if constexpr (Backend == NlrEvalBackend::HostWalk) {
@@ -3864,6 +3876,165 @@ struct NlrModeDReduceLeaf {
     }
 };
 
+/* What a walk's anomaly report means, for the three sites that stop the run on
+ * one.  The states are distinct and so are their causes, so a single message
+ * naming only the tree would send the reader looking in the wrong place. */
+static const char *nlr_walk_anomaly_text(int code)
+{
+    switch(code) {
+    case GX_WALK_ANOMALY_MALFORMED_TREE:
+        return "a query reached an index in the gap between the particle slots and the node base; the tree is malformed";
+    case GX_WALK_ANOMALY_TOUCHED_SET_FULL:
+        return "the touched-set list was shorter than the distinct set the recording walk put in it";
+    default:
+        return "an unrecognised walk anomaly";
+    }
+}
+
+/* What happens when a RECORDING walk reaches a particle this rank owns.
+ *
+ * The same traversal as the evaluating leaf above, with the evaluation removed:
+ * this one only writes down which local particles the walk touches, so that just
+ * those can be brought current before the walk runs again and evaluates them.
+ *
+ * It records BEFORE the geometric accept, and that is the whole correctness
+ * argument rather than an efficiency choice.  The accept test compares positions,
+ * and the positions are exactly what has not been brought current yet; a particle
+ * that will move into range is rejected here and would then be evaluated on its
+ * undrifted position in the second pass, which is worse than not de-fusing at
+ * all.  The type and mass tests are safe to apply because a drift changes
+ * neither, so they narrow the set without being able to drop anything the second
+ * pass can accept.
+ *
+ * The traversal reads node geometry and the particle-slot links, none of which a
+ * drift writes, so the pass that evaluates reaches exactly the set this pass
+ * recorded.  That is what makes this complete rather than approximate.
+ *
+ * It reads no Spec member, so one policy serves every loop the fused backend can
+ * take rather than one per Spec. */
+struct NlrRecordLeaf {
+    const struct particle_data *P;
+    struct GxTouchedSet         ts;
+    unsigned int                supply_mask;
+    int                        *anomaly;
+
+    KOKKOS_INLINE_FUNCTION
+    void visit(int j, double, double, double, double) const
+    {
+        const struct particle_data &Pj = P[j];
+        if(!(supply_mask & (1u << (unsigned int)Pj.Type))) {return;}
+        if(Pj.Mass <= 0) {return;}
+        /* Claim the slot for this generation.  The exchange returns what was
+         * there, so exactly one work item sees a value other than the current
+         * generation and exactly one item appends -- several actives reaching the
+         * same particle is the ordinary case, not the exception. */
+        if(Kokkos::atomic_exchange(&ts.seen[j], ts.gen) == ts.gen) {return;}
+        const int slot = Kokkos::atomic_fetch_add(ts.counter, 1);
+        if(slot < ts.capacity) {
+            ts.list[slot] = j;
+        } else {
+            /* Unreachable: the stamp admits each owned slot once per generation
+             * and the list is as long as there are owned slots.  Reported rather
+             * than dropped, because a dropped index is a particle silently
+             * evaluated at a stale position -- the one failure this design must
+             * not be able to have quietly. */
+            Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);
+        }
+    }
+};
+
+/* Bring current exactly the local particles a fused walk is about to reach.
+ *
+ * Runs the traversal once with the recording policy, waits for it, advances the
+ * distinct set it recorded, and leaves the cursor ready for the next pass.  The
+ * evaluation that follows then walks the same tree with the same queries and
+ * reaches the same leaves, now current.
+ *
+ * Called immediately before each evaluation rather than once per call, because
+ * the search radius is what the iteration changes: a later pass can reach
+ * further than an earlier one.  It costs little to repeat -- a particle advanced
+ * for an earlier pass stays current for the rest of the call, and the generation
+ * is per call, so the second and later passes record only what is new.
+ *
+ * `query` is device-callable and yields this work item's position and reach.
+ * Two entries exist for the two ways a walk starts, matching the traversal's own
+ * pair: from this rank's root, or resumed from the start nodes a peer sent. */
+template <class QueryFn>
+static void nlr_record_and_drift_from_root(const struct particle_data *P,
+                                           unsigned int supply_mask,
+                                           const GxDeviceTreeView &tree,
+                                           int n, int *anomaly,
+                                           const char *label,
+                                           QueryFn query)
+{
+    if(n <= 0) {return;}
+    /* Nothing to discover when the whole rank is already uniform: something else
+     * in the step -- a tree build, a decomposition, an output -- has published
+     * the full-drift certificate, and every leaf this walk can reach is current
+     * by that proof.  Recording them would be a traversal spent to learn that
+     * there is no work, which on an all-active call is the largest traversal of
+     * the step.  This is the same early-out the neighbour-list hook applies for
+     * the same reason.
+     *
+     * The local certificate alone is the right test here, unlike there: this
+     * path imports no ghosts, and the traversal stops at the owned slots, so
+     * there is no imported segment to vouch for.
+     *
+     * Rank-local, and safe to be: neither this test nor the drift it guards
+     * enters a collective, so a rank that skips and a rank that does not still
+     * meet at the same place. */
+    if(gizmo_full_drift_ti() == All.Ti_Current) {return;}
+    const struct GxTouchedSet ts = gx_touched_set_view();
+    /* The preparation declines collectively when it cannot hold this, so an
+     * absent workspace here is not a state to recover from -- but it must not be
+     * walked past either, because the drift that would not happen is a particle
+     * evaluated at a stale position.  Reported through the channel the caller
+     * already treats as fatal, rather than returned, so this adds no path out of
+     * an exchange that a peer is waiting on. */
+    if(!ts.seen || !ts.list || !ts.counter) {
+        Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);
+        return;
+    }
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    gizmo_gpu_kernel_launch(label, n, KOKKOS_LAMBDA(int kk) {
+        double qx = 0, qy = 0, qz = 0, reach = 0;
+        query(kk, qx, qy, qz, reach);
+        NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
+        gx_device_tree_walk_from_root(qx, qy, qz, reach, tree, leaf, anomaly);
+    });
+    gx_touched_set_drift_and_mark(All.Ti_Current);
+}
+
+/* The resumed form: each query walks the subtrees a peer exported to it. */
+template <typename ActiveDataT>
+static void nlr_record_and_drift_from_envelopes(const struct particle_data *P,
+                                                unsigned int supply_mask,
+                                                const GxDeviceTreeView &tree,
+                                                const ActiveDataT *q_d,
+                                                const int *nodes_d, const int *nn_d,
+                                                int K, int *anomaly,
+                                                const char *label)
+{
+    if(K <= 0) {return;}
+    if(gizmo_full_drift_ti() == All.Ti_Current) {return;}
+    const struct GxTouchedSet ts = gx_touched_set_view();
+    if(!ts.seen || !ts.list || !ts.counter) {
+        Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);
+        return;
+    }
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    gizmo_gpu_kernel_launch(label, K, KOKKOS_LAMBDA(int kk) {
+        if(nn_d[kk] <= 0) {return;}
+        const ActiveDataT& a = q_d[kk];
+        NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
+        gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                            (double)a.h_search,
+                            nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
+                            tree, leaf, anomaly);
+    });
+    gx_touched_set_drift_and_mark(All.Ti_Current);
+}
+
 /* One work item per active: build its query, walk this rank's tree from the
  * root, reduce into its own accumulator.
  *
@@ -3909,12 +4080,47 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
                   "active would still carry the sending rank's pointers. Port the rebind into the "
                   "device path before serving this Spec.");
 
+    /* ADMISSION INVARIANT, not checkable here: EVERY ACTIVE THIS BACKEND IS GIVEN
+     * IS ALREADY CURRENT AT All.Ti_Current.
+     *
+     * The three tests above are compile-time properties of the Spec.  This fourth
+     * requirement is a property of the LIST the Spec hands in, so it cannot be
+     * asserted -- but it is load-bearing in the same way, and this is where a new
+     * Spec is admitted, so it is stated here rather than only where the queries
+     * get built.
+     *
+     * It holds today by construction: core/run.cc's sync point drifts every
+     * particle in every active time bin to All.Ti_Current, ActiveParticleList is
+     * built from those same bins, nlr_build_active_list filters that list, and
+     * nothing advances All.Ti_Current again inside the step.
+     *
+     * What breaks if a future Spec supplies an independent active list: this
+     * backend snapshots its queries BEFORE the recording pass -- frozen ActiveData
+     * on the transport path, packed envelopes on the peer path -- so a stale
+     * active is baked into a snapshot no later drift can repair.  Drifting at the
+     * record site would patch only the one site that re-derives its query, and
+     * would leave the other two silently wrong while looking defended.  The only
+     * correct remedy is to establish currentness BEFORE the first query snapshot
+     * or transport packing, as part of admitting that Spec -- a change to this
+     * backend's admission, not a defensive line inside the record loop. */
+
+
     if(n <= 0) {return;}
 
     /* The traversal reads All.BoxSize through the wrap macros, which resolve to
      * this unit's mirror; without this the box reads as zero on device and
      * periodic wrapping stops, silently and only on HIP. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    /* Record what this walk will reach and bring just those current, before it
+     * runs for real.  Same tree, same queries, so the same leaves. */
+    nlr_record_and_drift_from_root(
+        ctx.P, supply_mask, tree, n, anomaly, "nlr_mode_d_self_record",
+        KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
+            const ActiveData a_rec = Spec::load_active(ctx, kk, active_idx[kk], radii[kk], cs);
+            qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
+            reach = radii[kk];
+        });
 
     gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(accums_out[kk]);
@@ -4037,6 +4243,11 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                   "active would still carry the sending rank's pointers. Port the rebind into the "
                   "device path before serving this Spec.");
 
+    /* Plus the fourth, uncheckable one: every active handed to this backend is
+     * already current at All.Ti_Current.  Stated in full at nlr_mode_d_local_reduce,
+     * which carries the same three assertions. */
+
+
     if(n <= 0) {return;}
 
     /* Only copied when the queries are not already somewhere the kernel can read
@@ -4069,6 +4280,16 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
+    /* Record-then-drift, as in the single-rank shape: the reach here is each
+     * query's own h_search, which is what the evaluation below walks with. */
+    nlr_record_and_drift_from_root(
+        ctx.P, supply_mask, tree, n, anomaly_d, "nlr_mode_d_self_record",
+        KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
+            const ActiveData& a_rec = q_d[kk];
+            qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
+            reach = (double)a_rec.h_search;
+        });
+
     gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(acc_d[kk]);
         const ActiveData& a = q_d[kk];
@@ -4088,8 +4309,8 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
     if(anomaly_seen != 0) {
         if(ThisTask == 0) {
             fprintf(stderr,
-                "[%s] FATAL: a local query walked into the index gap between the particle slots "
-                "and the node base; the tree is malformed.\n", Spec::loop_name);
+                "[%s] FATAL: local query walk: %s.\n", Spec::loop_name,
+                nlr_walk_anomaly_text(anomaly_seen));
             fflush(stderr);
         }
         endrun(90001029);
@@ -4100,9 +4321,12 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
  *
  * Same contract as NlrPeerAnswerHostWalk -- received queries in, one accumulator
  * each out -- reached by walking each query's exported subtrees on the device and
- * evaluating the pair kernel where the walk lands.  Nothing is collected, so
- * nothing is drifted here either: the call's opening pass already brought every
- * local particle current, and no import since could have added a stale one.
+ * evaluating the pair kernel where the walk lands.  Nothing is COLLECTED, so
+ * there is no candidate list to drift -- but the locals this walk lands on are
+ * this rank's, and they are brought current the same way the self walk brings
+ * its own: a recording pass over the same envelopes, then a drift of exactly
+ * what it recorded.  A peer round can reach locals the self walk never did,
+ * which is why it discovers rather than relying on what an earlier pass found.
  *
  * The query arrives already built.  The rank that owns it constructed its
  * ActiveData before shipping it, so the receiver re-uses that rather than
@@ -4188,6 +4412,13 @@ struct NlrPeerAnswerDeviceFused {
 
         GIZMO_GPU_ENSURE_ALL_FRESH();
 
+        /* The received queries reach this rank's particles too, and they are no
+         * more current than the ones the self walk reaches.  Same record-then-
+         * drift, entered the resumed way because that is how these walk. */
+        nlr_record_and_drift_from_envelopes<ActiveData>(
+            ctx.P, neighbor_type_mask, tree, q_d, nodes_d, nn_d, K, anomaly_d,
+            "nlr_mode_d_peer_record");
+
         gizmo_gpu_kernel_launch(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
             Spec::zero_accum(acc_d[kk]);
             const ActiveData& a = q_d[kk];
@@ -4221,8 +4452,8 @@ struct NlrPeerAnswerDeviceFused {
         if(anomaly_seen != 0) {
             if(ThisTask == 0) {
                 fprintf(stderr,
-                    "[%s] FATAL: a received query walked into the index gap between the particle "
-                    "slots and the node base; the tree is malformed.\n", Spec::loop_name);
+                    "[%s] FATAL: received query walk: %s.\n", Spec::loop_name,
+                    nlr_walk_anomaly_text(anomaly_seen));
                 fflush(stderr);
             }
             endrun(90001027);
@@ -4740,8 +4971,8 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
     if(anomaly_seen != 0) {
         if(ThisTask == 0) {
             fprintf(stderr,
-                "[%s] FATAL: the device walk reached an index in the gap between the particle "
-                "slots and the node base; the tree is malformed.\n", Spec::loop_name);
+                "[%s] FATAL: device walk: %s.\n", Spec::loop_name,
+                nlr_walk_anomaly_text(anomaly_seen));
             fflush(stderr);
         }
         endrun(90001025);
@@ -4896,14 +5127,16 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * its tree to the device pulls the WHOLE call back to Mode A, because the
          * alternative is one rank walking while its peers wait for queries that
          * never arrive. */
-        /* sum_act > 0 FIRST, and it is not a shortcut: preparing drifts every
-         * particle on the rank, and a call with no actives anywhere has no work
+        /* sum_act > 0 FIRST, and it is not a shortcut: preparing mirrors and
+         * sweeps the whole tree, and a call with no actives anywhere has no work
          * to justify that.  Without this test such a call reaches here because
          * select_mode_b is false when sum_act == 0, takes the Mode-A label, and
-         * pays a full-rank drift on the way to the globally-zero-active no-op
-         * that was going to return without computing anything.  That is O(N) on
-         * a call that should cost nothing, appearing only in builds carrying the
-         * flag. */
+         * pays that sweep on the way to the globally-zero-active no-op that was
+         * going to return without computing anything.  That is O(Nnodes) on a
+         * call that should cost nothing, appearing only in builds carrying the
+         * flag.  It used to also pay a full-rank particle drift here; that is
+         * what the touched-set discovery removed, and the node half is what
+         * still justifies the gate. */
         if(sum_act > 0 &&
            path == DispatchPath::ModeA_GPU_NGL &&
            nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly &&

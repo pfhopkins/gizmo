@@ -400,12 +400,42 @@ int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_s
    answer.  Call once, before any discovery round: after it, nothing on the rank
    goes stale again within the call.
 
-   Drifts every local particle (batched to the device, skipping those already
-   current, and recorded so later calls in the step are a comparison), sweeps the
-   node geometry when nothing else has, sets the walk's ownership line to the
-   owned count, and refuses a tree with no built nodes -- which a walk from the
-   root would otherwise enter as an unbounded read rather than as an empty
-   answer. */
+   Sweeps the node geometry when nothing else has, holds the touched-set
+   workspace the discovery passes record into, sets the walk's ownership line to
+   the owned count, and refuses a tree with no built nodes -- which a walk from
+   the root would otherwise enter as an unbounded read rather than as an empty
+   answer. It does NOT drift the particles: which ones the walk needs is decided
+   by discovering them, per pass, at the evaluation sites. */
 int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *caller);
+
+
+/* The touched-set workspace a fused walk records into.  See GxTouchedSet.
+ *
+ * Allocation is a CAPABILITY, not a repair: it is arranged in the preparation
+ * above, where a rank that cannot have it declines and the collective readiness
+ * vote pulls every rank to the host path together.  Doing it later, inside a
+ * discovery round, would let one rank answer differently from its peers in the
+ * middle of an exchange.
+ *
+ * `begin_call` opens a generation and is called once per fused call, not once
+ * per pass: a particle drifted for the first pass is still current for the
+ * later ones, so a generation per call is what stops the round loop re-examining
+ * it.  `view` hands back a copy for a kernel to capture by value.
+ *
+ * `drift_and_mark` closes one pass: it waits for the recording kernel, advances
+ * the particles it recorded, marks their kernel radii dirty, and reopens the
+ * cursor for the next pass.  The three belong together because the fence is the
+ * step that is invisible when it is missing.  It returns nothing deliberately --
+ * the drift reports only whether a controlled stop is already pending, which is
+ * a property of the run rather than of these particles, and a caller that
+ * branched on it would take a different path through a collective exchange than
+ * its peers. */
+int  gx_touched_set_ensure(int local_particle_slots);
+void gx_touched_set_begin_call(void);
+struct GxTouchedSet gx_touched_set_view(void);
+void gx_touched_set_drift_and_mark(integertime time1);
+/* Released once at shutdown, before Kokkos is finalized. Not on the tree or
+   domain epoch: the storage is persistent by design. */
+void gx_touched_set_release(void);
 
 #endif /* GPU_NEIGHBOR_LIST_H */

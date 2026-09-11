@@ -59,6 +59,9 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
  * any other consumer in the same TU. */
 #include "../mesh/kernel.h"
 #endif
+/* Outside the conditional above: the shutdown release is needed in every build,
+   not only the ones that pull kernel.h. */
+#include "../mesh/gpu_neighbor_list.h"   /* gx_touched_set_release at shutdown */
 #include "../eos/eos_functions.h"
 #include "../eos/hydrogen_molecule_functions.h"
 #include "../core/timestep_functions.h"
@@ -2818,7 +2821,14 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
      else {printf("[GPU] HIP thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
 #endif
 }
-void gizmo_kokkos_finalize(void) { Kokkos::finalize(); }
+void gizmo_kokkos_finalize(void)
+{
+    /* Persistent device-side state is handed back before Kokkos is torn down;
+       finalizing with allocations still tracked is what this ordering avoids.
+       This is the single chokepoint every shutdown path already routes through. */
+    gx_touched_set_release();
+    Kokkos::finalize();
+}
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort
  * path (core/run.cc) to quiesce the GPU before MPI_Abort, reducing (not
  * eliminating) the Vista CG-stuck wedge risk. Guarded so it is safe to call

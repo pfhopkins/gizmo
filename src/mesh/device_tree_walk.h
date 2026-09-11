@@ -84,6 +84,14 @@
 #include "ghost_exchange_functions.h"   /* the canonical-wrap overlap predicate */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL */
 
+/* What a walk reports through `anomaly`.  Distinct values because the states are
+ * distinct: one says the tree cannot be walked, the other says a caller's own
+ * bookkeeping broke.  Both are fatal to the caller, so the value is for whoever
+ * reads the report, not for deciding whether to stop.  Zero means nothing was
+ * reported; callers test against it and must not assume 1. */
+#define GX_WALK_ANOMALY_MALFORMED_TREE     1  /* index in no class, or an unfilled view */
+#define GX_WALK_ANOMALY_TOUCHED_SET_FULL   2  /* touched-set list shorter than the set it recorded */
+
 /* Which entry point a walk is using.  See the entry discussion at the top of
  * this file; the two forms correspond to the host walker's start node and
  * stop_at_toplevel pair. */
@@ -114,7 +122,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
 {
     /* An unfilled view would otherwise answer short in silence, which is the one
      * way this walk can be wrong without anything looking wrong. */
-    if(tree.local_particle_slots < 0) {Kokkos::atomic_store(anomaly, 1); return;}
+    if(tree.local_particle_slots < 0) {Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE); return;}
 
     const int n_entries = (Entry == GxWalkEntry::LocalRoot) ? 1 : n_start;
 
@@ -131,7 +139,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
             /* The start list arrived over MPI, so it is validated rather than trusted. */
             if(start < tree.node_base || start >= tree.pseudo_start) {continue;}
             if(start - tree.node_base >= tree.node_capacity) {   /* precondition leaves this unreachable */
-                Kokkos::atomic_store(anomaly, 1);
+                Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
                 break;
             }
             no = tree.node_nextnode[start - tree.node_base];   /* open the exported node */
@@ -139,7 +147,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
 
         while(no >= 0) {
             if(no >= tree.particle_slots && no < tree.node_base) {
-                Kokkos::atomic_store(anomaly, 1);   /* malformed tree; caller stops the run */
+                Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);   /* caller stops the run */
                 break;
             }
             if(no < tree.particle_slots) {
@@ -152,7 +160,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
             } else if(no < tree.pseudo_start) {
                 const int kn = no - tree.node_base;
                 if(kn < 0 || kn >= tree.node_capacity) {
-                    Kokkos::atomic_store(anomaly, 1);
+                    Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
                     break;
                 }
                 /* Re-entering the top-level tree means this exported branch is

@@ -1727,6 +1727,139 @@ int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_s
     return 0;
 }
 
+/* ---- The touched-set workspace ------------------------------------------
+ *
+ * Rank-local and persistent, so a call that reaches a thousand leaves pays for a
+ * thousand rather than for the whole rank.  The contract is in the header; what
+ * follows is the storage and the three operations that use it.
+ *
+ * The generation stamp is the same one the Mode A neighbour-list hook uses a few
+ * hundred lines above (`pool_seen` / `pool_seen_gen`) -- allocated once, never
+ * cleared, a wrap re-zeroing it -- moved onto the device because the recorder is
+ * a kernel.  Nothing scans it: entries are touched only for leaves a walk
+ * actually reaches, which is what keeps this inside the rule that a step with a
+ * handful of active particles does no work proportional to the rank. */
+static struct GxTouchedSet g_touched_set;
+
+int gx_touched_set_ensure(int local_particle_slots)
+{
+    if(local_particle_slots <= 0) {return 1;}
+    if(g_touched_set.capacity >= local_particle_slots && g_touched_set.seen) {return 0;}
+
+    /* Grown, not resized in place: the stamps say which slots a PREVIOUS
+     * generation claimed, and the slots have been re-indexed underneath them by
+     * whatever grew the rank.  Re-zeroing and restarting the generation is the
+     * honest response; carrying stamps across would let a stale one suppress a
+     * particle that genuinely needs drifting. */
+    /* Ordering, not cleanup -- the same rule gpu_spatial_index_free states above:
+       kokkos_free does not synchronize, so releasing storage a kernel may still
+       be reading is a use-after-free. The recording kernels are fenced by
+       drift_and_mark before this is ever reached, but the fence belongs WITH the
+       release so no future caller has to know that. Skipped when there is
+       nothing to release. */
+    if(g_touched_set.seen || g_touched_set.list || g_touched_set.counter) {Kokkos::fence();}
+    if(g_touched_set.seen)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_touched_set.seen);}
+    if(g_touched_set.list)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_touched_set.list);}
+    if(g_touched_set.counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_touched_set.counter);}
+    g_touched_set = GxTouchedSet{};
+
+    unsigned int *seen    = (unsigned int *) ngl_alloc_shared((size_t)local_particle_slots * sizeof(unsigned int), "touched_set_seen");
+    int          *list    = (int *)          ngl_alloc_shared((size_t)local_particle_slots * sizeof(int),          "touched_set_list");
+    int          *counter = (int *)          ngl_alloc_shared(sizeof(int),                                         "touched_set_counter");
+    if(!seen || !list || !counter) {
+        if(seen)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(seen);}
+        if(list)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(list);}
+        if(counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(counter);}
+        return 1;
+    }
+    for(int k = 0; k < local_particle_slots; k++) {seen[k] = 0u;}
+    *counter = 0;
+
+    g_touched_set.seen     = seen;
+    g_touched_set.list     = list;
+    g_touched_set.counter  = counter;
+    g_touched_set.capacity = local_particle_slots;
+    g_touched_set.gen      = 0u;
+    return 0;
+}
+
+void gx_touched_set_begin_call(void)
+{
+    /* Zero is the never-claimed value, so a wrap has to skip it AND clear the
+     * stamps -- otherwise a slot still carrying the old maximum would read as
+     * claimed by the new generation and its particle would silently go
+     * undrifted. */
+    if(++g_touched_set.gen == 0u) {
+        for(int k = 0; k < g_touched_set.capacity; k++) {g_touched_set.seen[k] = 0u;}
+        g_touched_set.gen = 1u;
+    }
+    if(g_touched_set.counter) {*g_touched_set.counter = 0;}
+}
+
+struct GxTouchedSet gx_touched_set_view(void) {return g_touched_set;}
+
+/* Give the workspace back.  Called once, at shutdown, before Kokkos is
+ * finalized -- Kokkos must not be torn down while an allocation it is tracking
+ * is still owned.  Deliberately NOT hung off the tree epoch or the domain
+ * decomposition: this storage is persistent on purpose, and freeing it there
+ * would turn a once-per-run allocation into per-rebuild churn, which is the
+ * cost the generation stamp exists to avoid. */
+void gx_touched_set_release(void)
+{
+    /* Ordering, not cleanup (gpu_spatial_index_free states the rule): kokkos_free
+       does not synchronize. This runs on the controlled-stop path as well as the
+       normal one, where a kernel may well still be in flight, so incidental
+       completion is not an ownership contract. Fence once if anything is held. */
+    if(g_touched_set.seen || g_touched_set.list || g_touched_set.counter) {Kokkos::fence();}
+    if(g_touched_set.seen)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_touched_set.seen);}
+    if(g_touched_set.list)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_touched_set.list);}
+    if(g_touched_set.counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_touched_set.counter);}
+    g_touched_set = GxTouchedSet{};
+}
+
+void gx_touched_set_drift_and_mark(integertime time1)
+{
+    if(!g_touched_set.counter || !g_touched_set.list) {return;}
+
+    /* The recorder is a device kernel writing into shared space, so its writes
+     * are not visible to the loop below until it has finished.  Without this the
+     * count reads as whatever was there when the launch returned. */
+    Kokkos::fence();
+
+    /* The cursor counts every claim, including any the list had no room for, so
+     * it is what the append attempted rather than what the list holds.  The two
+     * agree unless the generation stamp and the list disagree about how many
+     * owned slots there are, which the ensure makes impossible -- but the
+     * consequence of trusting the cursor if they ever did is a read past the
+     * allocation, here, several kernel launches before the anomaly that records
+     * the overflow is ever looked at.  So the allocation bounds the read, and the
+     * anomaly stays the thing that reports it. */
+    const int claimed = *g_touched_set.counter;
+    const int n = (claimed < g_touched_set.capacity) ? claimed : g_touched_set.capacity;
+    if(n <= 0) {return;}
+
+    /* Which of these are actually behind is drift_particles_batch's question and
+     * it already answers it -- deciding it here as well would be a second place
+     * owning the same test.  So it is asked to hand its compaction back, in
+     * place: the recorded list becomes the advanced list, and `n_drifted` is how
+     * much of it is live.  The status it returns says only that a controlled stop
+     * is pending somewhere, so nothing branches on it. */
+    int n_drifted = 0;
+    (void) drift_particles_batch(g_touched_set.list, n, time1,
+                                 g_touched_set.list, &n_drifted);
+
+    /* drift_particle rescales KernelRadius, so a particle it ADVANCED owes a
+     * dirty mark -- and only those.  Marking everything the walk recorded would
+     * mark the already-current majority too: measured on a mixed-timebin vehicle,
+     * only 19.3% of recorded particles were behind, so that is several times the
+     * cache invalidation the work actually justifies, and it can push the dirty
+     * tracker over its promote-to-all threshold for nothing. */
+    if(n_drifted > 0) {gizmo_mark_kernel_radius_dirty_indices(g_touched_set.list, n_drifted);}
+
+    *g_touched_set.counter = 0;
+}
+
+
 /* Put this rank into the state a fused device walk needs, and describe its tree.
  * Returns 0 with `out` filled, or 1 with the walk declined and the host to answer.
  *
@@ -1736,23 +1869,27 @@ int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_s
  * particles and the node geometry have to be current BEFORE the launch, and this
  * is where that is arranged, once, ahead of any discovery round.
  *
- * The particle half is a full-rank drift.  That sounds heavier than drifting
- * only what the walk will touch, and it is not: the drift is itself batched onto
- * the device, it skips everything already current, and it records that it ran,
- * so the second and later calls in a step cost a comparison.  Drifting only the
- * reached set would mean discovering the reached set first, which is the walk we
- * are about to do -- and it would buy nothing, because after this pass nothing
- * on the rank can go stale again within the call: no particles are imported, and
- * the loop's own writeback happens after the last iteration, not between them.
+ * The particle half is NOT arranged here.  It used to be a full-rank drift, on
+ * the argument that discovering the reached set first would mean doing the walk
+ * twice and buy nothing.  Both halves of that were wrong at small active counts:
+ * a call below ten thousand actives reaches on the order of a thousand leaves
+ * while the drift advanced essentially the entire local pool, and the second
+ * traversal costs a small fraction of the drift it removes.  Discovery is now
+ * what decides which particles are brought current, per pass, at the three
+ * evaluation sites in mesh/neighbor_loop_runner.cc -- the two shapes this rank's
+ * own self walk takes, and the queries its peers sent.
  *
- * The node half sweeps the whole tree when nothing else has.  The receiver walk
- * declines instead of sweeping when gravity is compiled in, because it would be
- * drifting the entire tree on behalf of a walk that only touches the part it was
- * sent -- but that reasoning does not carry here, where the caller has just
- * drifted every particle on the rank and a whole-tree sweep is the same scale as
- * the work already done.  The one state neither can repair is a host lazy drift
- * that has already advanced nodes at this time: a sweep skips nodes that are
- * current, so their mirrors stay behind, and the host has to answer. */
+ * What this preparation still owes the walk is everything that cannot be
+ * discovered: the node geometry, which decides where the walk goes and so cannot
+ * be repaired from what it reached.  It sweeps the whole tree when nothing else
+ * has.  The receiver walk declines instead of sweeping when gravity is compiled
+ * in, on the ground that it would drift the entire tree on behalf of a walk that
+ * touches part of it; that reasoning applies here too, and the only thing
+ * standing against it is that a fused walk cannot take the lock a host walk uses
+ * to drift a node when it arrives.  Closing that gap is a separate piece of
+ * work.  The one state a sweep cannot repair is a host lazy drift that has
+ * already advanced nodes at this time: a sweep skips nodes that are current, so
+ * their mirrors stay behind, and the host has to answer. */
 int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *caller)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -1804,15 +1941,35 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
      * arrays the view already points at rather than reallocating them. */
 
     /* The walk reads particle fields and cannot drift a stale one when it gets
-     * there, so they are made current here, once, ahead of any discovery round. */
-    gizmo_full_drift_to(All.Ti_Current);
-    /* The drift publishes its stamp only when it completed with nothing pending, so a
-       stamp short of this time says the pool is not uniform and the walk below cannot
-       assume it is. Declining here is the whole repair: the readiness Allreduce this
-       returns into is collective, so one rank's decline pulls every rank back to the
-       host path together, which drifts what it touches as it goes. No poll is placed
-       here -- the vote immediately downstream already is one. */
-    if(gizmo_full_drift_ti() != All.Ti_Current) {return 1;}
+     * there.  It does NOT follow that the whole rank has to be current: what the
+     * walk reads is the leaves it reaches, and a call below ten thousand actives
+     * reaches on the order of a thousand of them out of half a million.  So the
+     * particles are brought current per discovery pass, against the set that pass
+     * actually recorded, at mesh/neighbor_loop_runner.cc's three evaluation sites --
+     * which is the same three-stage shape the host backend at those sites has
+     * always had, and the same one move_particles, the neighbour-list hook, the
+     * Mode B walker and the ghost send-list certify already use.
+     *
+     * Nothing is voted on here for the particles, and that is deliberate.  Every
+     * rank carries the same obligation and discharges it the same way; the drift
+     * enters no collective and its only failure report is that a controlled stop
+     * is already pending, which is a property of the run rather than of this
+     * rank.  A vote would create the divergence it was meant to prevent.
+     *
+     * The workspace the recording writes into IS a capability, and is arranged
+     * here for exactly that reason: it can fail rank-locally, so it belongs where
+     * declining is still collective. */
+    if(gx_touched_set_ensure(out->local_particle_slots) != 0) {
+        static int reported = 0;
+        if(!reported) {
+            reported = 1;
+            printf("%s: task %d could not hold the touched-set workspace for %d local particles; this call falls back for every rank\n",
+                   caller, ThisTask, out->local_particle_slots);
+            fflush(stdout);
+        }
+        return 1;
+    }
+    gx_touched_set_begin_call();
 
     if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
         /* A host lazy drift already advanced nodes at this time.  The sweep skips
@@ -1823,9 +1980,14 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
          * device path that ran. */
         /* A host lazy drift may have advanced nodes at this time without writing
          * their mirrors.  The ordinary sweep skips such nodes and would leave the
-         * mirrors behind, so ask for the variant that rewrites every mirror.  It
-         * costs a full mirror pass on this call and changes nothing else; a
-         * fused walk is a large-N operation and can afford it, and declining
+         * mirrors behind, so ask for the variant that rewrites every mirror.
+         *
+         * It costs a full mirror pass on this call.  That was once justified by
+         * the full-rank drift this preparation also performed -- same scale, so
+         * no worse -- and that justification is gone with the drift.  What keeps
+         * it here is narrower and worth stating plainly: the walk decides which
+         * nodes to open from their geometry, so unlike the particles it reaches,
+         * the nodes it needs cannot be discovered by reaching them.  Declining
          * instead would hand the whole call back to the host for every rank. */
         if(gpu_force_drift_nodes_ex(All.Ti_Current, /*refresh_mirrors_already_current=*/1) != 0) {
             static int reported = 0;

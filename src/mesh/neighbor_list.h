@@ -95,6 +95,43 @@ struct GxDeviceTreeView {
 };
 
 
+/* The distinct set of local particles a fused walk reaches, so that only those
+ * have to be brought current rather than the whole rank.
+ *
+ * A fused walk evaluates the pair kernel at the leaf it reaches and cannot drift
+ * a stale particle when it gets there -- that needs a lock.  The way out is to
+ * reach the leaves twice: once to record which ones the walk touches, then a
+ * drift of just those, then the evaluation.  Both passes traverse the same tree
+ * with the same queries, and drifting a particle changes nothing the traversal
+ * reads, so the second pass reaches exactly the set the first recorded.
+ *
+ * `seen` is a generation stamp rather than a set of flags, which is what keeps
+ * the cost proportional to what the walk touches: it is allocated once, and the
+ * generation is bumped instead of the array being cleared.  Clearing it per call
+ * is the one thing that would put this back at O(local particles).
+ *
+ * The generation advances once per CALL, not once per pass, and the distinction
+ * is load-bearing: a particle advanced for an earlier pass is still current for
+ * the later ones, so carrying its claim across them is what stops the self walk
+ * and every peer round re-examining the same particle.  Only the append cursor
+ * is reset between passes.
+ *
+ * The stamp is indexed by the same local-particle slot the traversal reports, so
+ * a slot can be claimed at most once per generation and the compacted list can
+ * never be longer than the number of slots.  That is what removes the overflow
+ * case rather than handling it.
+ *
+ * Lives in this header, not beside the traversal, for the reason the tree view
+ * does: plain data, read by host units that no device compiler ever sees. */
+struct GxTouchedSet {
+    unsigned int *seen     = nullptr;  /* [capacity] generation stamps, never cleared */
+    int          *list     = nullptr;  /* [capacity] compacted distinct local indices */
+    int          *counter  = nullptr;  /* [1] append cursor for the current pass */
+    int           capacity = 0;        /* owned local particle slots at the last ensure */
+    unsigned int  gen      = 0;        /* this call's generation */
+};
+
+
 /* Build a CSR neighbor list for the given active particles.
  *
  * P, CellP:         particle arrays (including ghosts at indices >= NumPart)
