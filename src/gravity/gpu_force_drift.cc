@@ -119,6 +119,7 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
 
     /* SoA mirror handles. */
     MyFloat           *len_soa     = soa->len;
+    integertime       *ti_soa      = soa->node_ti;
     Vec3<MyGravFloat> *s_soa       = soa->s;
     Vec3<MyGravFloat> *vs_soa      = soa->node_vs;
     MyGravFloat       *hmax_soa    = soa->hmax;
@@ -269,6 +270,8 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
         /* SoA mirror update: only the fields the walk reads.  Vec3 narrowing
          * cast for mixed-precision builds (MyGravFloat=float, MyFloat=double). */
         len_soa[k]  = Nodes_uvm[no].len;
+        /* The time this length was written at: widen-on-open reads the pair. */
+        if(ti_soa) {ti_soa[k] = Nodes_uvm[no].Ti_current;}
         s_soa[k]    = { (MyGravFloat)Nodes_uvm[no].u.d.s[0],
                         (MyGravFloat)Nodes_uvm[no].u.d.s[1],
                         (MyGravFloat)Nodes_uvm[no].u.d.s[2] };
@@ -313,6 +316,12 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
      * certification so a consumer can confirm the tree is current at time1
      * without re-sweeping. */
     gpu_gravity_soa_mark_drift_certified(time1);
+    /* ⛔ ONLY the full-refresh variant answers the claims. The ordinary sweep
+       (refresh_mirrors_already_current == 0) SKIPS precisely the advanced-but-
+       unmirrored nodes the claims describe, so retiring the epoch there would
+       discard them without the repair they were recorded for -- and the mirror
+       would stay behind with nothing left to say so. */
+    if(refresh_mirrors_already_current) {gpu_node_dirty_begin_epoch();}
     return 0;
 }
 

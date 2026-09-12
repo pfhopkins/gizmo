@@ -83,6 +83,17 @@
 #include "neighbor_list.h"              /* gx_export_envelope_t, GxDeviceTreeView */
 #include "ghost_exchange_functions.h"   /* the canonical-wrap overlap predicate */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL */
+#include "../core/timestep_functions.h" /* get_drift_factor_impl, DriftKickTableView:
+                                       * the SAME interpolator the node sweep uses
+                                       * (gpu_force_drift.cc:184), not a second one */
+
+/* What a walk reports through `anomaly`.  Distinct values because the states are
+ * distinct: one says the tree cannot be walked, the other says a caller's own
+ * bookkeeping broke.  Both are fatal to the caller, so the value is for whoever
+ * reads the report, not for deciding whether to stop.  Zero means nothing was
+ * reported; callers test against it and must not assume 1. */
+#define GX_WALK_ANOMALY_MALFORMED_TREE     1  /* index in no class, or an unfilled view */
+#define GX_WALK_ANOMALY_TOUCHED_SET_FULL   2  /* touched-set list shorter than the set it recorded */
 
 /* Which entry point a walk is using.  See the entry discussion at the top of
  * this file; the two forms correspond to the host walker's start node and
@@ -114,7 +125,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
 {
     /* An unfilled view would otherwise answer short in silence, which is the one
      * way this walk can be wrong without anything looking wrong. */
-    if(tree.local_particle_slots < 0) {Kokkos::atomic_store(anomaly, 1); return;}
+    if(tree.local_particle_slots < 0) {Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE); return;}
 
     const int n_entries = (Entry == GxWalkEntry::LocalRoot) ? 1 : n_start;
 
@@ -131,7 +142,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
             /* The start list arrived over MPI, so it is validated rather than trusted. */
             if(start < tree.node_base || start >= tree.pseudo_start) {continue;}
             if(start - tree.node_base >= tree.node_capacity) {   /* precondition leaves this unreachable */
-                Kokkos::atomic_store(anomaly, 1);
+                Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
                 break;
             }
             no = tree.node_nextnode[start - tree.node_base];   /* open the exported node */
@@ -139,7 +150,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
 
         while(no >= 0) {
             if(no >= tree.particle_slots && no < tree.node_base) {
-                Kokkos::atomic_store(anomaly, 1);   /* malformed tree; caller stops the run */
+                Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);   /* caller stops the run */
                 break;
             }
             if(no < tree.particle_slots) {
@@ -152,7 +163,7 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
             } else if(no < tree.pseudo_start) {
                 const int kn = no - tree.node_base;
                 if(kn < 0 || kn >= tree.node_capacity) {
-                    Kokkos::atomic_store(anomaly, 1);
+                    Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
                     break;
                 }
                 /* Re-entering the top-level tree means this exported branch is
@@ -161,7 +172,45 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                 if(Entry == GxWalkEntry::SubtreeResume) {
                     if(tree.node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
                 }
-                const double hw = 0.5 * (double)tree.node_len[kn];
+                /* WIDEN-ON-OPEN: the sweep's own expression, evaluated lazily.
+                 *
+                 * `len` is what the mirror last recorded and `node_ti` is WHEN it
+                 * recorded it, so a node that has moved since is re-bounded here
+                 * rather than eagerly advanced by a whole-tree sweep. Over-widening
+                 * only over-includes and the pair kernel re-gates; under-widening
+                 * would drop neighbours silently, so the widening is never allowed
+                 * to be negative and a non-finite term is refused outright. */
+                double len_eff = (double)tree.node_len[kn];
+                if(tree.node_vmax && tree.node_ti && tree.node_s && tree.drift_tables_ok) {
+                    const integertime ti_node = tree.node_ti[kn];
+                    /* ⛔ `>= 0`, not `> 0`: zero is a VALID timestamp (the start of a
+                     * run), and excluding it would silently skip widening on exactly
+                     * the nodes a fresh tree has not advanced yet. */
+                    if(ti_node >= 0 && ti_node < tree.ti_now) {
+                        /* The REAL per-node dilation, from the mirrored centre of
+                         * mass. Hardcoding 1.0 is safe (1/a <= 1 over-widens) but in
+                         * a nuclear-zoom config `a` reaches 1e6, and over-widening by
+                         * that near the refinement centre is a severe regression. */
+                        const Vec3<MyGravFloat> sc = tree.node_s[kn];
+                        const double dil = node_timestep_dilation_factor_at(
+                                               Vec3<double>{(double)sc[0], (double)sc[1], (double)sc[2]});
+                        const double dtw = get_drift_factor_impl(ti_node, tree.ti_now, dil,
+                                                                 &tree.drift_tables);
+                        const double dl = TREE_DRIFT_VELOCITY_PREFAC
+                                          * (double)tree.node_vmax[kn] * dtw;
+                        /* A non-finite or absurd widening is a DEFECT, not a big
+                         * number -- and falling back to the NARROW bound would be
+                         * silent under-inclusion, so say so through the channel the
+                         * caller already treats as fatal. NaN fails every comparison,
+                         * hence the explicit test rather than a range check alone. */
+                        if(!(dl >= 0.0) || dl >= 1.0e30) {
+                            Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
+                        } else {
+                            len_eff += dl;
+                        }
+                    }
+                }
+                const double hw = 0.5 * len_eff;
                 const int do_open =
                     gx_extended_overlap_wrap_and_test((double)tree.node_center[kn][0] - qx,
                                                       (double)tree.node_center[kn][1] - qy,

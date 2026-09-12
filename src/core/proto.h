@@ -433,7 +433,17 @@ void drift_particle(int i, integertime time1);
    result is trustworthy; on nonzero the caller must not publish any claim about the
    particle set, and the run is already draining toward its next stop poll. Callers
    that publish no such claim may ignore it. */
-int drift_particles_batch(const int *idx, int n_idx, integertime time1);
+/* Advance idx[0..n_idx) to time1, or the contiguous range [0,n_idx) when idx is
+   NULL. Optionally reports which of them were behind and were therefore handed
+   to the drift: pass a buffer of at least n_idx ints, an int for the count, or
+   either one alone -- the count is written whenever it is asked for. The
+   caller wants this when it owes follow-up work per advanced particle -- a
+   kernel-radius dirty mark, say -- because this routine already computes that
+   compaction and a caller repeating the test would be a second place deciding
+   the same thing. out_drifted MAY alias idx: the compaction only ever moves
+   entries leftward and preserves their order. */
+int drift_particles_batch(const int *idx, int n_idx, integertime time1,
+                          int *out_drifted = NULL, int *out_n_drifted = NULL);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);

@@ -89,8 +89,10 @@ static int drift_batch_status_(void)
 /* A null idx means the contiguous range [0, n_idx), which is what the full-drift
    site hands over: materialising an identity array there would be an extra
    allocation and an extra pass to say nothing. */
-int drift_particles_batch(const int *idx, int n_idx, integertime time1)
+int drift_particles_batch(const int *idx, int n_idx, integertime time1,
+                          int *out_drifted, int *out_n_drifted)
 {
+    if(out_n_drifted) {*out_n_drifted = 0;}
     if(n_idx <= 0) {return drift_batch_status_();}
 
     /* Compact to the particles that are not already at time1. The drift body returns
@@ -137,6 +139,14 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1)
         }
     }
     const int n_need = (int) needs_drift.size();
+    /* Hand back the compaction this routine already had to perform, so a caller
+       with per-advanced-particle follow-up does not recompute it. memmove, not
+       memcpy: the caller is allowed to point this at its own input array, and the
+       compaction is a leftward move within it. */
+    if(out_n_drifted) {*out_n_drifted = n_need;}
+    if(out_drifted && n_need > 0) {
+        memmove(out_drifted, needs_drift.data(), (size_t) n_need * sizeof(int));
+    }
     if(n_need <= 0) {return drift_batch_status_();}
 
     /* Tiny-N and everything below the offload threshold stays exactly as it was. */

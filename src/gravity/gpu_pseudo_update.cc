@@ -719,6 +719,7 @@ extern "C" int gpu_scatter_foreign_to_soa(int slot_base_abs, int count)
         soa->hmax[k]    = (MyGravFloat) Extnodes[no].hmax;
         soa->vmax[k]    = (MyGravFloat) Extnodes[no].vmax;
         soa->divVmax[k] = (MyGravFloat) Extnodes[no].divVmax;
+        if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}
         soa->bitflags[k] = Nodes[no].u.d.bitflags;
 
         /* Moment vectors */
