@@ -22,6 +22,26 @@
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
 #include "../system/gpu_particles_arena.h"
+#include "../core/timestep_functions.h"   /* DriftKickTableView for the walk widening */
+
+/* The drift-factor interpolator the walk's widening uses.
+ *
+ * Refreshed once per call rather than per node: it is the same table the node
+ * sweep mirrors (gpu_force_drift.cc), and a walk that built its own would be a
+ * second interpolator answering the same question. Null on failure, which simply
+ * disables widening -- the walk then opens on the stored length, and the caller's
+ * certification is what makes that legal. */
+static struct DriftKickTableView g_walk_drift_tables;
+static double *g_walk_drift_storage = NULL;
+static int g_walk_drift_tables_ok = 0;
+
+/* Refresh once per preparation. Shares drift_kick_table_mirror_refresh with the
+   particle drift and the node sweep -- same table, same units, one owner. */
+static void gx_walk_drift_tables_refresh(void)
+{
+    g_walk_drift_tables_ok =
+        (drift_kick_table_mirror_refresh(&g_walk_drift_storage, &g_walk_drift_tables) == 0);
+}
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
 
@@ -1712,6 +1732,17 @@ int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_s
         return 1;
     }
 
+    /* WIDEN-ON-OPEN inputs (landing 4). The walk re-bounds each node it opens from
+       the pair (len, node_ti) plus vmax, instead of requiring a sweep to have
+       advanced every node first. Left null if the mirror does not carry them, in
+       which case the walk opens on the stored length alone. */
+    out->node_s               = soa->s;
+    out->node_vmax            = soa->vmax;
+    out->node_ti              = soa->node_ti;
+    out->ti_now               = All.Ti_Current;
+    gx_walk_drift_tables_refresh();
+    out->drift_tables_ok      = g_walk_drift_tables_ok;
+    if(g_walk_drift_tables_ok) {out->drift_tables = g_walk_drift_tables;}
     out->node_center          = soa->center;
     out->node_len             = soa->len;
     out->node_sibling         = soa->sibling;
@@ -1836,6 +1867,9 @@ void gx_touched_set_drift_and_mark(integertime time1)
      * anomaly stays the thing that reports it. */
     const int claimed = *g_touched_set.counter;
     const int n = (claimed < g_touched_set.capacity) ? claimed : g_touched_set.capacity;
+    /* First claims for THIS pass. Reported separately from the pass and call
+       counts so a reduction factor is read rather than inferred from a quotient
+       whose denominator has to be guessed. */
     if(n <= 0) {return;}
 
     /* Which of these are actually behind is drift_particles_batch's question and
@@ -1971,7 +2005,9 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
     }
     gx_touched_set_begin_call();
 
-    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
+    const int nodes_already_current = gpu_gravity_tree_nodes_current_at(All.Ti_Current) ? 1 : 0;
+    /* Nothing dirtied them, so the span the census measures starts here. */
+    if(!nodes_already_current) {
         /* A host lazy drift already advanced nodes at this time.  The sweep skips
          * nodes that are current, so their mirrors would stay behind it, and that
          * state cannot be repaired here.  Expected on some calls rather than
@@ -1979,25 +2015,61 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
          * unexplained absence of the device path is indistinguishable from a
          * device path that ran. */
         /* A host lazy drift may have advanced nodes at this time without writing
-         * their mirrors.  The ordinary sweep skips such nodes and would leave the
-         * mirrors behind, so ask for the variant that rewrites every mirror.
+         * their mirrors, and the ordinary sweep skips exactly those.  Mode-D used
+         * to answer that by forcing the variant that rewrites EVERY mirror --
+         * ~1.99M of them, to serve a walk that opens a few thousand nodes.
          *
-         * It costs a full mirror pass on this call.  That was once justified by
-         * the full-rank drift this preparation also performed -- same scale, so
-         * no worse -- and that justification is gone with the drift.  What keeps
-         * it here is narrower and worth stating plainly: the walk decides which
-         * nodes to open from their geometry, so unlike the particles it reaches,
-         * the nodes it needs cannot be discovered by reaching them.  Declining
-         * instead would hand the whole call back to the host for every rank. */
-        if(gpu_force_drift_nodes_ex(All.Ti_Current, /*refresh_mirrors_already_current=*/1) != 0) {
-            static int reported = 0;
-            if(!reported) {
-                reported = 1;
-                printf("%s: task %d could not sweep the node geometry current; this call falls back for every rank\n",
-                       caller, ThisTask);
-                fflush(stdout);
+         * It no longer needs to, because the walk now carries its own answer to
+         * both classes of staleness:
+         *   (a) advanced-but-unmirrored -- the node dirty set recorded exactly
+         *       which nodes those are, and repairing them is O(Ndirty), measured
+         *       at ~9,200 per rank per span against ~1.99M mirrors;
+         *   (b) never-advanced -- widen-on-open re-bounds the node from
+         *       (len, node_ti, vmax), so it needs no advancement at all.
+         * The two are one design: (b) is what makes (a) sufficient.
+         *
+         * ⛔ This is NOT "delete the sweep".  Mode-D stops FORCING one; the sweep
+         * survives for its other three callers, and the sibling device receiver
+         * walk already declines for this exact reason and says so in code
+         * (gpu_neighbor_list.cc, "Gravity owns the sweep").  Mode-D is adopting
+         * the policy its sibling already has.
+         *
+         * Any doubt falls back to the old behaviour: an unsafe or overflowed
+         * dirty epoch, or a mirror that cannot carry the widening inputs, makes
+         * gpu_node_dirty_repair() return nonzero and the full sweep runs. */
+        int sweep_rc = 0;
+        int _sweep_needed  = 1;
+        /* ⛔ Widening needs its inputs. Without them the walk would open on the
+         * stored length alone, which is only legal when something else certified
+         * the geometry -- so a missing table or mirror DECLINES to the old sweep
+         * rather than quietly narrowing the bound. */
+        const int widen_armed = (out->drift_tables_ok && out->node_ti && out->node_vmax && out->node_s);
+        if(gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
+            _sweep_needed = 0;                       /* fully certified: widening not needed */
+        } else if(!widen_armed) {
+            _sweep_needed = 1;                       /* cannot widen -> must sweep */
+        } else if(gpu_gravity_tree_oneway_safe_at(All.Ti_Current)) {
+            _sweep_needed = 0;                       /* already safe to walk */
+        } else if(gpu_node_dirty_repair(All.Ti_Current) == 0) {
+            _sweep_needed = 0;                       /* O(Ndirty) repair sufficed */
+        }
+        if(_sweep_needed) {
+            { sweep_rc = gpu_force_drift_nodes_ex(All.Ti_Current, /*refresh_mirrors_already_current=*/1); }
+
+            if(sweep_rc != 0) {
+                static int reported = 0;
+                if(!reported) {
+                    reported = 1;
+                    printf("%s: task %d could not sweep the node geometry current; this call falls back for every rank\n",
+                           caller, ThisTask);
+                    fflush(stdout);
+                }
+                return 1;
             }
-            return 1;
+            /* The sweep has just rewritten every mirror, so whatever the lazy drift
+             * had accumulated is answered and the census span restarts. ⛔ Only on
+             * the path that actually swept: the repair path leaves the span alone,
+             * because it answered the dirty set rather than the whole tree. */
         }
     }
 

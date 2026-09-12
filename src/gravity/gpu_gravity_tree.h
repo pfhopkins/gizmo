@@ -137,6 +137,15 @@ struct gpu_gravity_tree_soa_t {
     MyGravFloat       *hmax;          /* Extnodes[].hmax — gas kernel extent */
     MyGravFloat       *vmax;          /* Extnodes[].vmax */
     MyGravFloat       *divVmax;       /* Extnodes[].divVmax */
+    /* Per-node Ti_current, mirrored for the device.
+     *
+     * A ONEWAY device walk cannot take a lock, so it cannot drift a node it
+     * reaches; instead it widens the node's own bound by how far that node could
+     * have moved since it was last advanced -- and that needs the node's time,
+     * which no other mirrored field carries.  integertime, not a float: it is
+     * compared for equality against All.Ti_Current and fed to get_drift_factor,
+     * and a rounded copy of either would be a different node's answer. */
+    integertime       *node_ti;       /* mirror of Nodes[].Ti_current */
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     /* 6-component symmetric tensor moment: [xx,yy,zz,xy,xz,yz]. Flat layout
      * [nnodes * 6]. Accumulated by GPU moment kernel; walk consumption not
@@ -243,6 +252,48 @@ void gpu_gravity_tree_invalidate_currency(void);
  * by GravityHostWalkBelowActive, or ADAPTIVE_TREEFORCE_UPDATE shrinking the
  * candidate count that routing tests. */
 int gpu_gravity_tree_nodes_current_at(integertime ti);
+
+/* ============================================================================
+ * THE NODE DIRTY SET (landing 4) — class-(a) mirror repair, O(Ndirty).
+ *
+ * `force_drift_node` advances a node's AoS geometry WITHOUT writing its device
+ * mirror, so every such call leaves one node whose mirror is behind its own AoS.
+ * Repairing that by sweeping the whole tree costs O(Nnodes) to fix a set measured
+ * at ~9,200 nodes per rank per span -- 0.46% of the ~1.99M mirrors a sweep
+ * rewrites. This records exactly which nodes are behind, so only those are redone.
+ *
+ * SAME ALGORITHM AS THE PARTICLE TOUCHED SET (mesh/neighbor_list.h), for the same
+ * reason: a generation STAMP that is never cleared, a COMPACTED list that makes
+ * the set enumerable in O(Ndirty), and an ATOMIC append cursor. A plain dirty BYTE
+ * array cannot be enumerated without an O(Nnodes) scan -- which reintroduces the
+ * cost being removed -- and an unsynchronised append list is a data race.
+ * It is a separate INSTANCE, not shared storage: this one is owned by gravity
+ * (force_drift_node has seven callers, six of them outside Mode-D) and its epoch
+ * runs from a host advance until that node's mirror repair completes, a different
+ * lifetime from the particle set's one-call span.
+ *
+ * CAPACITY is MaxNodes + AllocatedForeignNodes -- this rank's LIVE installed
+ * range, the same bound the device walk tests, and NOT the run-wide ceiling
+ * MaxForeignNodes (the worst rank's import, deliberately generous). Foreign nodes
+ * ARE dirtied in practice: 274 per rank per span, present in 91.5% of spans.
+ * ========================================================================== */
+void gpu_node_dirty_begin_epoch(void);
+void gpu_node_dirty_claim(int no);
+int  gpu_node_dirty_repair(integertime ti);   /* 0 = repaired; 1 = caller must sweep */
+void gpu_node_dirty_release(void);
+void gpu_node_dirty_invalidate(void);   /* force the next Mode-D call to sweep */
+long long gpu_node_dirty_unsafe_events(void);   /* fail-safe firings; a silent permanent
+                                                   revert to sweeping must be visible */
+
+/* Is the device-visible geometry safe for a ONEWAY walk that WIDENS ON OPEN?
+ *
+ * Deliberately NOT gpu_gravity_tree_nodes_current_at(): that certifies "every
+ * mirror is current", which widen-on-open does not need and cannot achieve --
+ * reusing it would either keep forcing the sweep or silently weaken its meaning
+ * for gravity and the other sweep callers, none of which widen. This is an
+ * ADDITIONAL predicate, never a redefinition. */
+int  gpu_gravity_tree_oneway_safe_at(integertime ti);
+
 
 /* GPU moment-refresh kernel. Computes local-tree node moments
  * (mass, COM, vs, hmax, vmax, divVmax, maxsoft, bitflags + all conditional

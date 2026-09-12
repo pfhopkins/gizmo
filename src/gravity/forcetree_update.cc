@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "force_node_drift_sync.h"
+#include "gpu_gravity_tree.h"        /* SoA mirror: vmax coherence for widen-on-open */
 
 /* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
@@ -108,6 +109,35 @@ void force_update_tree(void)
  *  device kick kernel in gpu_force_update.cc field for field; the difference is that the
  *  device version relies on the preceding all-node drift sweep and therefore uses atomics
  *  where this accumulates directly. */
+
+/* Raise the SoA mirror of a node's vmax to match the AoS.
+ *
+ * vmax is a RUNNING MAX, and the ONEWAY device walk widens its opening bound by
+ * `PREFAC * vmax * dt`.  A mirror left behind the AoS is therefore SMALLER, the
+ * bound is UNDER-widened, and the walk silently under-includes neighbours -- the
+ * one failure this contract exists to prevent.  Raising (never lowering) keeps the
+ * mirror conservative even if a writer is missed: too large only over-widens, and
+ * the pair kernel re-gates.
+ *
+ * Indexing follows forcetree.cc:1441: slot k = no - All.TreeNodeIndexBase, valid
+ * for local nodes (k < MaxNodes) and installed foreign ones, bounded by the mirror
+ * that exists rather than by the index range it sits in. */
+static inline void force_soa_raise_vmax(int no, MyFloat vmax_aos)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->vmax) {return;}
+    const int k = no - All.TreeNodeIndexBase;
+    /* ⛔ Bound by the mirror that EXISTS. MaxNodes + AllocatedForeignNodes is the
+       INDEX range; the allocation can be smaller (gpu_neighbor_list.cc declines a
+       walk precisely when capacity < that sum), and writing past it corrupts the
+       neighbouring SoA arrays -- which surfaces as the LET walk resolving
+       structure the import does not carry, nowhere near this line. */
+    const int cap = gpu_gravity_tree_capacity();
+    if(k < 0 || k >= cap) {return;}
+    const MyGravFloat v = (MyGravFloat) vmax_aos;
+    if(soa->vmax[k] < v) {soa->vmax[k] = v;}
+}
+
 void force_kick_node(int i, Vec3<MyDouble>& dp)
 {
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
@@ -142,6 +172,7 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
         Extnodes[no].sink_dp += sink_dp;
 #endif
         if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
+        force_soa_raise_vmax(no, Extnodes[no].vmax);   /* keep the walk's mirror conservative */
         Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
         Extnodes[no].Ti_lastkicked = All.Ti_Current;
 
@@ -387,6 +418,10 @@ void force_finish_kick_nodes(void)
 #endif
         if(Extnodes[no].vmax < acc[k].vmax)
           Extnodes[no].vmax = acc[k].vmax;
+        /* The MERGED cross-rank value, not this rank's contribution: this site runs on
+           BOTH kick routes (gpu_force_update.cc:279 calls it too), so it is where the
+           top-level set gets its final answer. */
+        force_soa_raise_vmax(no, Extnodes[no].vmax);
         Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
         Extnodes[no].Ti_lastkicked = All.Ti_Current;
 
@@ -517,6 +552,18 @@ void force_drift_node(int no, integertime time1)
     /* Release store: publishes Ti_current after all geometry/Extnodes writes so a
      * threaded walk's acquire-load fast path sees fresh Ti => fresh geometry. */
     force_drift_node_publish_current(no, time1);
+
+    /* This call ADVANCED this node without writing its device mirror -- reaching
+     * here means exactly that, because the acquire-load at the top returns early
+     * for a node already at time1. Record it so the mirror can be repaired for the
+     * O(Ndirty) set instead of by sweeping the whole tree.
+     *
+     * Claimed AFTER the release publish above, so the geometry this claim refers
+     * to is already published when a repair observes it. One site, not seven: all
+     * seven callers funnel through here, and a future eighth is covered without
+     * anyone remembering. */
+    gpu_node_dirty_claim(no);
+
 }
 
 

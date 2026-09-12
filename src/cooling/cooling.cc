@@ -62,6 +62,7 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
 /* Outside the conditional above: the shutdown release is needed in every build,
    not only the ones that pull kernel.h. */
 #include "../mesh/gpu_neighbor_list.h"   /* gx_touched_set_release at shutdown */
+#include "../gravity/gpu_gravity_tree.h" /* gpu_node_dirty_release at shutdown */
 #include "../eos/eos_functions.h"
 #include "../eos/hydrogen_molecule_functions.h"
 #include "../core/timestep_functions.h"
@@ -2827,6 +2828,7 @@ void gizmo_kokkos_finalize(void)
        finalizing with allocations still tracked is what this ordering avoids.
        This is the single chokepoint every shutdown path already routes through. */
     gx_touched_set_release();
+    gpu_node_dirty_release();
     Kokkos::finalize();
 }
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort

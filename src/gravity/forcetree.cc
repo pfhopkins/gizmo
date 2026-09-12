@@ -1438,6 +1438,11 @@ void force_add_element_to_tree(int iparent, int ichild)
         if(soa && k_soa >= 0 && k_soa < MaxNodes + AllocatedForeignNodes) {
             if(soa->hmax) {soa->hmax[k_soa] = (MyGravFloat) new_hmax;}
             if(soa->vmax) {soa->vmax[k_soa] = (MyGravFloat) new_vmax;}
+            /* ⛔ node_ti is deliberately NOT written here. It must pair with the
+               LENGTH it describes, and this site does not write soa->len: stamping a
+               newer time onto an older length makes the walk widen by too little --
+               silent under-inclusion. A fresher vmax is safe (running max, so it can
+               only over-widen); a fresher time is not. */
         }
     }
 
@@ -3529,6 +3534,9 @@ void force_refresh_node_moments(void)
          * fall through force_exchange_pseudodata (matched, topology-driven);
          * the gravtree:after_refresh_moments poll drains before the walk. */
         if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
+        /* This recomputed vmax against an unchanged (len, node_ti) pair, so the
+           widening inputs no longer agree: make the next Mode-D call sweep. */
+        gpu_node_dirty_invalidate();
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker

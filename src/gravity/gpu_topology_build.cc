@@ -271,6 +271,8 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
 
     /* Capture SoA pointers for kernel use. */
     Vec3<MyFloat> *soa_center  = soa->center;
+    integertime   *soa_ti      = soa->node_ti;
+    const integertime ti_build = All.Ti_Current;   /* the build stamps every node here */
     MyFloat       *soa_len     = soa->len;
     int           *soa_father  = soa->father;
     int           *soa_suns    = soa->suns_backup;
@@ -449,6 +451,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                     cc[2] = pc[2] + ((k & 4) ? lh : -lh);
                     soa_center[new_soa] = cc;
                     soa_len[new_soa]    = cl;
+                    if(soa_ti) {soa_ti[new_soa] = ti_build;}   /* pairs with the length */
                     soa_father[new_soa] = w.parent_soa + tree_base;
                     long sb = (long)new_soa * 8;
                     for(int s = 0; s < 8; s++) {soa_suns[sb + s] = -1;}

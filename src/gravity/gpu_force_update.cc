@@ -51,6 +51,29 @@
 /* Atomic max for MyFloat via 64-bit CAS (MyFloat = double in GIZMO typedefs). */
 static_assert(sizeof(MyFloat) == sizeof(uint64_t),
               "gpu_atomic_max_float: MyFloat must be 64-bit");
+/* Atomic max for MyGravFloat, the SoA mirror's type.
+ *
+ * ⛔ gpu_atomic_max_myfloat below CANNOT be reused on soa->vmax: it static_asserts
+ * MyFloat is 64-bit and does a 64-bit CAS, while MyGravFloat is `float` under
+ * GIZMO_MIXED_PRECISION_GRAVITY (typedefs.h:46) and `double` otherwise. The
+ * mismatch is invisible in the default build and breaks only in that config, which
+ * is exactly the kind of trap a single-config test never finds.
+ *
+ * Kokkos::atomic_max is used where it exists for the type; the CAS loop is the
+ * portable fallback and is correct for both widths because it compares in the
+ * VALUE domain, not the bit domain (vmax >= 0 always -- it is a running max of
+ * |velocity| -- so no negative-float ordering hazard arises). */
+KOKKOS_INLINE_FUNCTION static void
+gpu_atomic_max_gravfloat(MyGravFloat* addr, MyGravFloat val)
+{
+    MyGravFloat old = *addr;
+    while(val > old) {
+        const MyGravFloat prev = Kokkos::atomic_compare_exchange(addr, old, val);
+        if(prev == old) {break;}
+        old = prev;
+    }
+}
+
 KOKKOS_INLINE_FUNCTION static void
 gpu_atomic_max_myfloat(MyFloat* addr, MyFloat val)
 {
@@ -160,6 +183,13 @@ extern "C" void gpu_force_update_tree(void)
         int                  *Fa   = Father;    /* UVM pointer */
         struct NODE          *No   = Nodes;     /* UVM shifted pointer */
         struct extNODE       *Ex   = Extnodes;  /* UVM pointer */
+        /* The walk's vmax mirror, captured by value for the kernel. Bounded by the
+           mirror that EXISTS (MaxNodes + this rank's installed foreign range), not
+           by the run-wide index ceiling. */
+        struct gpu_gravity_tree_soa_t *soa_u = gpu_gravity_tree_soa();
+        MyGravFloat          *soa_vmax   = (soa_u ? soa_u->vmax : NULL);
+        const int             tree_base_soa = All.TreeNodeIndexBase;
+        const int             soa_vmax_n    = gpu_gravity_tree_capacity();   /* the ALLOCATION, not the index range */
         int                   gflag = GlobFlag;
         /* Out-of-line host accessor, called host-side here and captured
          * by value into the device lambda. */
@@ -232,6 +262,16 @@ extern "C" void gpu_force_update_tree(void)
                     }
 #endif
                     gpu_atomic_max_myfloat(&Ex[no].vmax, vmax);
+                    /* The walk's mirror, raised with the AoS. This is the DEVICE kick
+                       route; the host route raises it in force_kick_node. Both then
+                       reach force_finish_kick_nodes, which raises the merged
+                       top-level value. */
+                    if(soa_vmax) {
+                        const int kk_soa = no - tree_base_soa;
+                        if(kk_soa >= 0 && kk_soa < soa_vmax_n) {
+                            gpu_atomic_max_gravfloat(&soa_vmax[kk_soa], (MyGravFloat) vmax);
+                        }
+                    }
                     Kokkos::atomic_fetch_or(&No[no].u.d.bitflags,
                                             (unsigned int)(1 << BITFLAG_NODEHASBEENKICKED));
                     Ex[no].Ti_lastkicked = ti_cur;

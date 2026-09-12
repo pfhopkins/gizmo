@@ -24,6 +24,7 @@
 
 #include <stdint.h>
 #include "../declarations/constants.h"   /* NODELISTLENGTH */
+#include "../core/timestep_functions.h" /* DriftKickTableView, held by value below */
 
 /* CSR-format neighbor list.
  * offsets / total_pairs are 64-bit: a large symmetric search (e.g. m11i +
@@ -92,6 +93,31 @@ struct GxDeviceTreeView {
     int                  node_capacity;
     int                  foreign_base;
     int                  pseudo_start;
+
+    /* WIDEN-ON-OPEN (landing 4).  A device walk cannot take a lock, so it cannot
+     * drift a node it reaches.  Instead it widens the node's own opening bound by
+     * how far that node could have moved since the mirror was written:
+     *     len_effective = len + TREE_DRIFT_VELOCITY_PREFAC * vmax * dt(node_ti -> now)
+     * which is the SAME expression the sweep and force_drift_node apply -- the walk
+     * just evaluates it lazily, for the ~4k nodes it visits, instead of eagerly for
+     * ~1.4M.  Over-widening is harmless (over-inclusion, re-gated by the pair
+     * kernel); UNDER-widening is silent under-inclusion, which is why `node_vmax`
+     * must never be staler than `node_len` (a running max only grows) and
+     * `node_ti` must never be FRESHER than `node_len`.
+     *
+     * Null disables widening and the walk opens on the stored length alone -- the
+     * pre-landing-4 behaviour, which is correct only when something else has
+     * certified the geometry current. */
+    const Vec3<MyGravFloat> *node_s    = nullptr;   /* centre of mass: the dilation factor's only input */
+    const MyGravFloat   *node_vmax = nullptr;
+    const integertime   *node_ti   = nullptr;
+    integertime          ti_now    = 0;
+    /* BY VALUE, not by pointer. The view is captured into the device walk, and the
+     * struct itself lives in host .bss -- only the table ARRAYS it names are in
+     * shared space. A pointer to it would be dereferenced on device and is illegal
+     * on CUDA/HIP. `drift_tables_ok` says whether it was filled. */
+    struct DriftKickTableView drift_tables{};
+    int                       drift_tables_ok = 0;
 };
 
 
