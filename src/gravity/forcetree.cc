@@ -301,6 +301,35 @@ static int g_force_global_topology_valid = 0;
 int  force_tree_global_topology_valid(void) {return g_force_global_topology_valid;}
 void force_tree_invalidate_global_topology(void) {g_force_global_topology_valid = 0;}
 
+/*! Let a particle keep its parent when it changes slots.  Re-sequencing moves particles between
+ *  slots without moving what the tree says about them, so without this the record stops describing
+ *  the particles and the next rebuild has to fall back to restoring ownership instead -- which is a
+ *  domain repartition, the very thing the tree's own cadence exists to avoid.  Only the parent moves:
+ *  the walk's own links are not repaired, because repairing them means a full tree traversal per
+ *  swap.  What makes that safe is that a re-sequencing which moved slots asks for a rebuild, and
+ *  until that rebuild happens nothing may combine the carried parents with the old walk links --
+ *  force_add_element_to_tree declines to, which is the one operation that reads both together.
+ *
+ *  The standing contract for creation: a particle that is CREATED must either be inserted into the
+ *  live tree by force_add_element_to_tree, or the record must be dropped.  Every creation path
+ *  satisfies one or the other -- the wind spawn and star formation insert, and the refinement pass
+ *  runs only inside a decomposition, which frees the tree.  A future creation path that does neither
+ *  would leave a parent belonging to some other particle, and the rebuild would attach this one
+ *  wherever that parent happens to be. */
+void force_tree_swap_attachment_slots(int i, int j)
+{
+    if(!g_force_global_topology_valid) {return;}
+    if(i < 0 || j < 0 || i >= All.TreeParticleSlots || j >= All.TreeParticleSlots || !Father)
+    {
+        /* The attachment could not be moved, so the record no longer describes the particles.
+           Saying so is the whole job: returning quietly would leave it advertised as valid and the
+           next rebuild would trust it. */
+        force_tree_invalidate_global_topology();
+        return;
+    }
+    const int no = Father[i]; Father[i] = Father[j]; Father[j] = no;
+}
+
 /* How much the foreign-node index ceiling is padded above measured demand when it grows.  It is
  * a large fraction because the ceiling is cheap: it buys index range and its Nextnode ints, not
  * the nodes, which are allocated to the exact import.  The pad is what stops a build that grows
@@ -1502,6 +1531,27 @@ void force_add_element_to_tree(int iparent, int ichild)
         gizmo_request_controlled_stop(90000101, "force_add_element_to_tree: particle index outside the live tree's particle slots", __FILE__, __LINE__, __FUNCTION__);
         return;
     }
+#ifndef MAINTAIN_TREE_IN_REARRANGE
+    /* A rebuild is already required, so this tree will not be walked again.  Keep only what that
+     * rebuild needs -- the new element belongs with its parent -- and leave the walk links alone: a
+     * re-sequencing may have moved Father[] with the particles without moving them, and combining
+     * the two would link this element into one node's traversal while growing another node's
+     * bounds, which a neighbour search pruning on the first bound would then miss.
+     *
+     * This is a guard for a configuration rather than a repair of an observed fault.  Of the two
+     * callers, the wind spawn inserts before its own routine asks for the rebuild, and star
+     * formation reaches here only when GALSF_GENERATIONS exceeds one, since a single generation
+     * converts the gas element in place instead of creating one.  So the case below arises for a
+     * multi-generation star formation model running alongside spawned winds, and costs nothing to
+     * carry until then.  The element is left for the rebuild to place, so when there is no record
+     * to inherit the parent is set to the value a slot outside the tree carries, which every reader
+     * of the whole array already skips. */
+    if(TreeReconstructFlag)
+    {
+        Father[ichild] = g_force_global_topology_valid ? Father[iparent] : -1;
+        return;
+    }
+#endif
     int father = Father[iparent];
     int no = Nextnode[iparent];
     Nextnode[iparent] = ichild; // insert new particle into linked list

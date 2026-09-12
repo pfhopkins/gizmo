@@ -722,6 +722,9 @@
 #endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
+#if defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
+#define MAINTAIN_TREE_IN_REARRANGE /* spawning winds is the one thing that re-sequences the particles while the tree is still standing, and the Hermite pass walks that tree after the source terms have run, deliberately skipping the rebuild they asked for.  Together they need a tree whose links are repaired as particles move rather than one waiting to be rebuilt.  Every other caller re-sequences either inside a decomposition or immediately before a build, so this asks nothing of a run that does not spawn. */
+#endif
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion -- otherwise won't effectively leverage the Hermite integrator timesteps
 #endif
