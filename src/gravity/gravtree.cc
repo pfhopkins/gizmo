@@ -167,7 +167,18 @@ void gravity_tree(void)
         rearrange_particle_sequence();
         refresh_old_acceleration_for_tree_opening();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
-        force_treebuild(NumPart, NULL);
+        if(force_treebuild(NumPart, NULL) == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE)
+        {
+            /* Particles have drifted into top-leaves other ranks own, and the standing tree cannot
+             * say where they were attached -- either because there is none, or because it could not
+             * place them -- so the decomposition in place cannot carry this build.  A repartition
+             * hands each particle back to the rank whose top-leaf it now sits in, after which the
+             * ordinary build has nothing to retain.  The refinement pass is suppressed: this is a
+             * recovery, not the step's merge/split, and running it here would refine twice. */
+            if(ThisTask == 0) {printf("Tree build: restoring geometric particle ownership before rebuilding.\n"); fflush(stdout);}
+            domain_Decomposition_light(0, 0);
+            if(force_treebuild(NumPart, NULL) == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE) {endrun(91566);}
+        }
         /* The tree just built is current by construction: the build set every
          * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
          * local and foreign, from those nodes.  Record that here, at the call
@@ -485,7 +496,9 @@ gravity_walk_attempt:
                  * the particles here would move them out from under the walk in progress. */
                 refresh_old_acceleration_for_tree_opening();
                 gizmo_exit_bad_stop_if_requested("gravtree:before_repair_treebuild");
-                force_treebuild(NumPart, NULL);
+                /* This rebuild stands on the tree just built here, whose attachments are intact, so it
+                 * cannot ask for ownership to be restored -- and must not, with a walk in progress. */
+                if(force_treebuild(NumPart, NULL) < 0) {endrun(91567);}
                 gizmo_exit_bad_stop_if_requested("gravtree:after_repair_treebuild");
                 if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
                 TreeMomentsStaleFlag = 0;   /* the build just refreshed every moment */

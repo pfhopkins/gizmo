@@ -28,6 +28,7 @@
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 #include "../gravity/gpu_pseudo_update.h" /* gpu_set_soa_nextnode / gpu_set_soa_sibling: keep SoA node thread coherent with the rearrange pointer fixups */
+#include "../gravity/forcetree.h"         /* force_tree_invalidate_global_topology: the standing tree's attachment record */
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
     If more complicated routines, etc. are to be added to determine when (and how) splitting/merging occurs, they should also be
@@ -1561,6 +1562,11 @@ void rearrange_particle_sequence(void)
      * deadlock risk. The consumer decides what to rebuild; nothing is freed from
      * here. */
     if(identity_changed) {ghost_exchange_supply_identity_changed("rearrange_particle_sequence"); gpu_sidx_notify_pool_changed();}
+#ifndef MAINTAIN_TREE_IN_REARRANGE
+    /* Without the pointer fixups above, a particle that moved slots did not take its Father[] link
+       with it, so the standing tree no longer says which top-leaf any given particle hung from. */
+    if(flag || identity_changed) {force_tree_invalidate_global_topology();}
+#endif
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}

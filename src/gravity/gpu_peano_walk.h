@@ -42,6 +42,7 @@ void gpu_peano_walk_release(void);
 /* Accessors -- returns NULL if not yet acquired. */
 const struct topnode_data *gpu_peano_walk_topnodes(void);
 const int                 *gpu_peano_walk_domain_node_index(void);
+const int                 *gpu_peano_walk_domain_task(void);
 
 #ifdef __cplusplus
 }

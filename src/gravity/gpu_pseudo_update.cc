@@ -174,6 +174,9 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
                     i <= DomainEndList[ta * MULTIPLEDOMAINS + m]; i++) {
                 int no = DomainNodeIndex[i];
                 int k  = no - tree_base;
+                /* Geometry: the owner may have grown this leaf to cover a particle it kept there, and
+                 * force_exchange_pseudodata_complete has just applied that length to the AoS node. */
+                soa->len[k]     = Nodes[no].len;
                 /* Scalar moment fields */
                 soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
                 soa->N_part[k]  = Nodes[no].N_part;
@@ -338,9 +341,19 @@ static moment_node_accum<MyFloat> topnode_child_accum_(const struct gpu_gravity_
  * Called only for INTERNAL_TOPLEVEL nodes (the caller checks the bit
  * before descending).  Topleaf topnodes are never passed here; their
  * moments are read directly by the caller and accumulated. */
-static void topnode_resum_node_(int no_abs,
-                                struct gpu_gravity_tree_soa_t *soa,
-                                int tree_base, int MaxNodes_)
+/* nominal_len is this node's sidelength in the top tree as force_create_empty_nodes built it: the
+ * root spans DomainLen and every child is exactly half its parent.  It is carried down rather than
+ * read back because the node's own length may already have been grown.
+ *
+ * Returns how much this node's subtree needs beyond its nominal cube.  A top-leaf that was grown to
+ * cover a particle kept there needs its ancestors grown by the same amount: a child of half-width
+ * h_nominal + g sits at offset len/4 inside a parent of nominal half-width len/2, so the parent needs
+ * half-width len/2 + g -- the excess passes upward unchanged, and a node takes the largest of its
+ * children's.  Every rank runs this over the same exchanged lengths, so the replicated top tree comes
+ * out the same on all of them. */
+static double topnode_resum_node_(int no_abs,
+                                  struct gpu_gravity_tree_soa_t *soa,
+                                  int tree_base, int MaxNodes_, double nominal_len)
 {
     int no_k = no_abs - tree_base;   /* 0-based SoA index of `no_abs` */
 
@@ -453,15 +466,22 @@ static void topnode_resum_node_(int no_abs,
     acc_ref.vs_dm   = &vs_dm;
 #endif
 
+    const double child_nominal_len = 0.5 * nominal_len;
+    double excess = 0;
+
     int p = soa->nextnode[no_k];   /* first child (absolute index) */
     for(int j = 0; j < 8; j++) {
-        if(p < tree_base || p >= tree_base + MaxNodes_) {endrun(6767); return;}  /* soft bad-stop: skip OOB SoA read; partial resum drains at next poll */
+        if(p < tree_base || p >= tree_base + MaxNodes_) {endrun(6767); return excess;}  /* soft bad-stop: skip OOB SoA read; partial resum drains at next poll */
         int pk = p - tree_base;
 
         /* Recurse if this child is also an internal topnode. */
+        double child_excess;
         if(soa->bitflags[pk] & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {
-            topnode_resum_node_(p, soa, tree_base, MaxNodes_);
+            child_excess = topnode_resum_node_(p, soa, tree_base, MaxNodes_, child_nominal_len);
+        } else {
+            child_excess = (double) soa->len[pk] - child_nominal_len;
         }
+        if(child_excess > excess) {excess = child_excess;}
 
         /* Accumulate this (now-finalized) child's re-weighted moments. */
         moment_node_accum<MyFloat> child = topnode_child_accum_(soa, pk);
@@ -487,9 +507,22 @@ static void topnode_resum_node_(int no_abs,
                                                     (MyFloat)Nodes[no_abs].center[1],
                                                     (MyFloat)Nodes[no_abs].center[2]});
 
+    {   /* Carry this node's own length into what it reports upward: on a reused tree it may already
+           exceed nominal, and a parent that did not hear about it would bound less than its contents. */
+        const double own_excess = (double) soa->len[no_k] - nominal_len;
+        if(own_excess > excess) {excess = own_excess;}
+    }
+
     if(count_particles > 1) {multiple_flag = (1 << BITFLAG_MULTIPLEPARTICLES);}
 
     /* --- write SoA -------------------------------------------------- */
+    /* Only ever upward.  This routine also runs on a tree that is being reused, whose lengths already
+       carry the growth force_drift_node applied for how far the contents can have moved since the
+       build; assigning here would throw that away. */
+    {
+        const MyFloat wanted = (MyFloat)(nominal_len + excess);
+        if(wanted > soa->len[no_k]) {soa->len[no_k] = wanted;}
+    }
     soa->mass[no_k]    = (MyGravFloat) mass;
     soa->s[no_k]       = {(MyGravFloat)s[0], (MyGravFloat)s[1], (MyGravFloat)s[2]};
     soa->node_vs[no_k] = {(MyGravFloat)vs[0], (MyGravFloat)vs[1], (MyGravFloat)vs[2]};
@@ -557,6 +590,7 @@ static void topnode_resum_node_(int no_abs,
 #endif
 
     /* --- AoS writeback (mirrors gpu_moment_writeback_to_aos for topnodes) */
+    if((MyFloat)(nominal_len + excess) > Nodes[no_abs].len) {Nodes[no_abs].len = (MyFloat)(nominal_len + excess);}
     Nodes[no_abs].u.d.mass     = mass;
     Nodes[no_abs].u.d.s        = s;
     Nodes[no_abs].N_part       = count_particles;
@@ -619,6 +653,7 @@ static void topnode_resum_node_(int no_abs,
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     Nodes[no_abs].tidal_tensorps_prevstep = tidal_tensorps_prevstep;
 #endif
+    return excess;
 }
 
 extern "C" int gpu_topnode_moment_resum(void)
@@ -641,7 +676,7 @@ extern "C" int gpu_topnode_moment_resum(void)
     int root_abs = All.TreeNodeIndexBase;
     int root_k   = 0;
     if(soa->bitflags[root_k] & (1u << BITFLAG_INTERNAL_TOPLEVEL)) {
-        topnode_resum_node_(root_abs, soa, tree_base, MaxNodes_);
+        topnode_resum_node_(root_abs, soa, tree_base, MaxNodes_, DomainLen);
     }
 
     return 0;

@@ -124,7 +124,7 @@ void subfind(int num)
 
 	      CPU_Step[CPU_FOF] += measure_time();
 
-	      force_treebuild(NumPart, NULL);
+	      if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
 
 	      t1 = my_second();
 	      if(ThisTask == 0)
@@ -225,7 +225,7 @@ void subfind(int num)
 
   CPU_Step[CPU_FOF] += measure_time();
 
-  force_treebuild(NumPart, NULL);
+  if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
 
   t1 = my_second();
   if(ThisTask == 0)
@@ -432,7 +432,7 @@ void subfind(int num)
 
   domain_Decomposition(1, 0, 0, 0);
 
-  force_treebuild(NumPart, NULL);
+  if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
 
 
   /* compute spherical overdensities for FOF groups */

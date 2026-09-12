@@ -153,7 +153,16 @@ void run(void)
          * drifted to the sync point. */
         set_softenings();
         gizmo_full_drift_to(All.Ti_Current);
-        force_treebuild(NumPart, NULL);
+        if(force_treebuild(NumPart, NULL) == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE)
+        {
+            /* The restart restored the domain assignment but not the tree, so there is no usable
+             * attachment record for any particle that has since crossed a top-leaf boundary.  Hand
+             * those back to the ranks whose top-leaves they now sit in, without a refinement pass,
+             * and rebuild. */
+            if(ThisTask == 0) {printf("Restart tree build: restoring geometric particle ownership first.\n"); fflush(stdout);}
+            domain_Decomposition_light(0, 0);
+            if(force_treebuild(NumPart, NULL) == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE) {endrun(91568);}
+        }
         /* Same proof as the main-step build in gravtree.cc: a full drift ran
          * immediately above, so this tree's node geometry describes this time and
          * its mirror was filled from it.  Record it, or the first post-restart
@@ -326,7 +335,7 @@ void run(void)
              * TreeReconstructFlag, so anything that merely wanted a fresh tree also suppressed the
              * lightweight repartition and bought the full decomposition; a tree request says
              * nothing about whether the top tree and the keys still describe the particles. */
-            if(!DomainReconstructFlag) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
+            if(!DomainReconstructFlag) {domain_Decomposition_light(0, 1);}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
             {domain_Decomposition(0, 0, 1, 1);}  /* full decomposition needed */

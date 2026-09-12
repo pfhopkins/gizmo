@@ -292,6 +292,15 @@ long force_treebuild_generation(void)        { return g_force_treebuild_generati
 long force_hmax_refresh_generation(void)      { return g_force_hmax_refresh_generation; }
 void force_bump_hmax_refresh_generation(void) { g_force_hmax_refresh_generation++; }
 
+/* Whether the standing tree's Father[] links still describe the particles they were built for.  A
+ * whole-tree rebuild that happens without a domain decomposition on the same step needs them: a
+ * particle that has drifted into a top-leaf owned by another rank is kept under the leaf it hung from
+ * here, and these links are the only record of that.  Set by a successful whole-tree build, dropped
+ * when the tree goes away or when the particle array is reordered underneath it. */
+static int g_force_global_topology_valid = 0;
+int  force_tree_global_topology_valid(void) {return g_force_global_topology_valid;}
+void force_tree_invalidate_global_topology(void) {g_force_global_topology_valid = 0;}
+
 /* How much the foreign-node index ceiling is padded above measured demand when it grows.  It is
  * a large fraction because the ceiling is cheap: it buys index range and its Nextnode ints, not
  * the nodes, which are allocated to the exact import.  The pad is what stops a build that grows
@@ -309,6 +318,75 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * LET needs the same capacity and the pad covers it); the bound is a backstop. */
     int let_retry = 0;
     const int LET_MAX_RETRY = 3;
+
+    /* Retained attachment.  Particles drift across top-leaf boundaries between decompositions, so a
+     * whole-tree rebuild that happens without one finds some of this rank's particles falling
+     * geometrically in top-leaves another rank owns.  Bucketing them there detaches them: the
+     * pseudo-particle exchange below overwrites those nodes, and the subtree holding them is left
+     * unreachable from the root, so their mass enters no rank's multipole moments and the forces on
+     * everything else are wrong by it.  They are kept under the top-leaf they hung from in the
+     * standing tree instead.
+     *
+     * This runs here, before the loop, because it is the last point at which the standing tree still
+     * exists: a retry frees the tree, taking Father[] and DomainNodeIndex with it.  Its result is
+     * reused by every attempt -- positions, the top tree and the retained attachment do not change
+     * while the build retries for a larger arena. */
+    long crossed_local = 0, unrecovered_local = 0;
+    /* Whether THIS rank is building its whole local tree.  The test is rank-local -- a group tree the
+       halo finder builds can happen to hold as many members as a rank has particles -- so the
+       reduction below carries it too, and a build that is not the whole tree everywhere keeps nothing
+       from this stage. */
+    const int whole_tree_local = (mp == NULL && npart == NumPart) ? 1 : 0;
+    if(whole_tree_local)
+    {
+        if(gpu_topology_prepare_retained_attachment(npart, force_tree_global_topology_valid(),
+                                                    &crossed_local, &unrecovered_local) != 0)
+        {
+            printf("force_treebuild: task %d could not prepare retained top-leaf attachments\n", ThisTask);
+            endrun(91564);
+        }
+    }
+    else {gpu_topology_forget_prepared();}
+
+    /* Three globally-reduced answers, in one collective every rank reaches.  "Restore ownership" is a
+       request the caller can honour with a repartition, and is raised only when there is something to
+       restore: a build with no crossers needs nothing from the standing tree, which is why an ordinary
+       build after a decomposition is unaffected.  "Unrecovered" is a valid standing tree that
+       nevertheless cannot place a particle -- the tree and the particles disagree, and there is nothing
+       to fall back to. */
+    long counts_local[3], counts_any[3];
+    counts_local[0] = (crossed_local > 0 && !force_tree_global_topology_valid()) ? 1 : 0;
+    counts_local[1] = unrecovered_local;
+    counts_local[2] = whole_tree_local ? 0 : 1;
+    MPI_Allreduce(counts_local, counts_any, 3, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+    if(counts_any[2] > 0)
+    {
+        gpu_topology_forget_prepared();   /* not the whole tree somewhere: this build keeps nothing */
+    }
+    else
+    {
+        if(counts_any[1] > 0 && unrecovered_local > 0)
+        {
+            /* Said only by the ranks that actually hold one; the others would print zeros and bury it.
+               This one is worth reporting on its own: the standing tree was declared usable and then
+               could not place a particle, so something about that declaration is wrong even though the
+               state itself is repairable below. */
+            printf("force_treebuild: task %d holds %ld particles whose standing-tree attachment names "
+                   "no top-leaf this rank owns, from %ld that have crossed a top-leaf boundary. The "
+                   "tree and the particles disagree.\n", ThisTask, unrecovered_local, crossed_local);
+        }
+        if(counts_any[0] > 0 || counts_any[1] > 0)
+        {
+            /* Both states have the same repair and it already exists: recomputing ownership from the
+               particles' actual positions leaves every particle in a top-leaf its own rank owns, after
+               which the build needs nothing from the standing tree at all.  Nothing has been freed or
+               rebuilt yet, so the caller can do that and ask again; it stops only if the repair itself
+               does not take. */
+            gpu_topology_forget_prepared();
+            return FORCE_TREE_NEEDS_OWNERSHIP_RESTORE;
+        }
+    }
+
 let_build_attempt:
     /* reset force_add_element insertion counter at each full build. */
     ForceAddElementToTree_CallsSinceBuild = 0;
@@ -358,6 +436,10 @@ let_build_attempt:
      * before the GPU gravity walk reads any moments. */
     if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(90000065);}
     if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(90000066);}
+    /* Cover the retained particles' true positions.  gpu_topology_finalize_father above is what
+     * establishes the particle Father[] links this walks, and the pseudo-particle exchange further
+     * down is what carries a grown top-leaf length to the other ranks, so it belongs between them. */
+    if(gpu_topology_grow_retained_paths() != 0) {endrun(90000090);}
     /* GPU kernel resets GravCost + ephemeral fields for all
      * nodes.  On the CPU path FUNR does this work inline; on the GPU path
      * FUNR is retired so the kernel takes its place.  Replaces a
@@ -501,6 +583,12 @@ let_build_attempt:
 
     TimeOfLastTreeConstruction = All.Time;
     g_force_treebuild_generation++;   /* topology + Father[] + node structure changed */
+    /* Only a whole-tree build leaves Father[] describing every local particle; a subset build writes
+       links for its own members and leaves the rest at -1, which is no use as an attachment record.
+       A whole-tree build whose retained stage was vetoed because some other rank was building a subset
+       does not qualify either: its crossers went under foreign top-leaves, so its Father[] would send
+       the next build's recovery to a leaf this rank does not own. */
+    g_force_global_topology_valid = (whole_tree_local && counts_any[2] == 0) ? 1 : 0;
     return Numnodestree;
 }
 
@@ -767,6 +855,12 @@ struct DomainNODE
 #endif
         MyFloat hmax;
         MyFloat hmax_per_type[6];   /* cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
+        /* The owner's sidelength for this top-leaf.  Every rank builds the top tree to the same
+           nominal geometry, but the owner may have grown this leaf to cover a particle it kept there
+           after the particle drifted out of the leaf's nominal cube.  That growth is not a function of
+           anything else on the wire -- unlike the drift growth, which every rank reproduces from vmax
+           by the same rule -- so without it a remote walk can accept the nominal box and be wrong. */
+        MyFloat len;
         MyFloat vmax;
         MyFloat divVmax;
         long N_part;
@@ -852,6 +946,7 @@ void force_exchange_pseudodata_issue(void)
 #endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
             for(int t = 0; t < 6; t++) DomainMoment[i].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
+            DomainMoment[i].len = Nodes[no].len;
             DomainMoment[i].vmax = Extnodes[no].vmax;
             DomainMoment[i].divVmax = Extnodes[no].divVmax;
             DomainMoment[i].bitflags = Nodes[no].u.d.bitflags;
@@ -973,6 +1068,10 @@ int force_exchange_pseudodata_complete(void)
 #endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
                     for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = DomainMoment[i].hmax_per_type[t];
+                    /* The receiver's own copy is the nominal cube, so the maximum is the owner's value;
+                       taken as a maximum rather than an assignment so the node can only ever bound more
+                       of its contents, never less. */
+                    if(DomainMoment[i].len > Nodes[no].len) {Nodes[no].len = DomainMoment[i].len;}
                     Extnodes[no].vmax = DomainMoment[i].vmax;
                     Extnodes[no].divVmax = DomainMoment[i].divVmax;
                     Nodes[no].N_part = DomainMoment[i].N_part;
@@ -3250,6 +3349,8 @@ void force_treefree(void)
         gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */
         AllocatedForeignNodes = 0;   /* the foreign storage went with the arrays above */
         tree_allocated_flag = 0;
+        /* Father[] went with the tree, so there is no attachment record left to consult. */
+        g_force_global_topology_valid = 0;
     }
 }
 

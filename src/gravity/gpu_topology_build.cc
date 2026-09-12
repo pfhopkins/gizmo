@@ -54,6 +54,21 @@ static int *g_slot_to_particle    = NULL;  /* [npart]; real index per build slot
 static int  g_slot_cap            = 0;     /* own capacity: lazily grown only for subset builds */
 static int  g_slot_map_active     = 0;     /* 1 iff this build is a non-identity subset */
 
+/* Retained attachment.  A particle whose CURRENT geometric topleaf belongs to another rank cannot be
+ * bucketed there: the pseudo-particle exchange overwrites that node afterwards, and the subtree
+ * holding the particle is left unreachable from the root, so its mass enters no rank's multipole
+ * moments.  Such a particle is instead kept under the topleaf it hung from in the standing tree,
+ * which this rank does own.  These record which slots needed that, so the two later stages -- clamping
+ * the key into the retained leaf, and growing that leaf's path to cover the true position -- touch
+ * only those particles rather than rescanning every particle. */
+static int *g_retained_slots      = NULL;  /* [g_retained_n] re-attached particle slots */
+static int  g_retained_cap        = 0;
+static int  g_retained_n          = 0;
+/* npart whose keys and leaves are already computed and whose retained attachments are already
+ * applied, or -1.  Positions, TopNodes and the retained attachment do not change while a build
+ * retries for a larger arena, so the work is done once and every attempt reuses it. */
+static int  g_prepared_npart      = -1;
+
 /* Allocate/grow a SharedSpace int buffer. `label` is a stable string literal
    (the memory ledger classifies allocations by label; a stack buffer must not be
    relied on to survive into the free callback). */
@@ -67,32 +82,62 @@ static int *grow_int_buffer(int *buf, int old_cap, int new_cap, const char *labe
     return buf;
 }
 
-}  /* anonymous namespace */
+/* The one place a position becomes a (Peano, Morton) key pair.  Used by the bucketing kernel, by the
+ * retained-attachment recovery, and by the clamp, so the three cannot drift apart. */
+KOKKOS_INLINE_FUNCTION peanokey topo_key_of_position_(double x, double y, double z,
+                                                      double dc0, double dc1, double dc2,
+                                                      double dlen, int bits, Morton128 *morton_out)
+{
+    double fx = (dlen > 0.0) ? ((x - dc0) / dlen) : 0.0;
+    double fy = (dlen > 0.0) ? ((y - dc1) / dlen) : 0.0;
+    double fz = (dlen > 0.0) ? ((z - dc2) / dlen) : 0.0;
+    /* Clamp the sum, not the fraction: the key is the mantissa of (frac + 1.0), and a fraction just
+     * under 1.0 can carry that sum up to 2.0, whose mantissa is zero -- the first cell instead of the
+     * last.  See gpu_morton.cc. */
+    double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
+    if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
+    if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
+    if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
+    Morton128 m;
+    peanokey pkey = gpu_peano_and_morton_key(gpu_morton_double_to_int42(sx),
+                                             gpu_morton_double_to_int42(sy),
+                                             gpu_morton_double_to_int42(sz), bits, &m);
+    *morton_out = m;
+    return pkey;
+}
 
-extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data *mp)
+/* Everything the bucketing and the pre-build retained-attachment stage both need: the device mirrors,
+ * the particle arena, the Morton key buffer, and the scratch sized to this build.  Factored out so the
+ * two entry points acquire identically rather than by two copies of the same sequence. */
+struct topo_build_ctx {
+    Morton128                 *keys;
+    struct particle_data      *P_dev;
+    const struct topnode_data *tn;
+    const int                 *dni;
+};
+
+static int topo_acquire_(int npart, const struct unbind_data *mp, const char *site, struct topo_build_ctx *ctx)
 {
     /* Reset the subset map state first: any early-return failure below then
      * leaves an identity (safe) build, never a stale subset map from a prior
      * build that gpu_topology_emit_bfs could consume. */
     g_slot_map_active = 0;
-    if(npart <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Acquire dependencies. */
     int rc = gpu_peano_walk_acquire();
     if(rc) {printf("gpu_topology_build: gpu_peano_walk_acquire failed\n"); return rc;}
-    Morton128 *keys = gpu_morton_keys_acquire(npart);
-    if(!keys) {return 1;}
+    ctx->keys = gpu_morton_keys_acquire(npart);
+    if(!ctx->keys) {return 1;}
 
-    gpu_particles_arena_set_site("gpu_topology_build_data_path");
+    gpu_particles_arena_set_site(site);
     gpu_particles_arena_acquire(NumPart, P, CellP);
-    struct particle_data *P_dev = gpu_particles_arena_P();
-    if(!P_dev) {printf("gpu_topology_build: P_dev null\n"); return 1;}
+    ctx->P_dev = gpu_particles_arena_P();
+    if(!ctx->P_dev) {printf("gpu_topology_build: P_dev null\n"); return 1;}
 
-    const struct topnode_data *tn  = gpu_peano_walk_topnodes();
-    const int                 *dni = gpu_peano_walk_domain_node_index();
-    if(!tn || !dni) {printf("gpu_topology_build: peano-walk mirrors null\n"); return 1;}
-    (void)dni;  /* used by 6.5c3 topology emission to map topleaf -> Nodes[] slot */
+    ctx->tn  = gpu_peano_walk_topnodes();
+    ctx->dni = gpu_peano_walk_domain_node_index();
+    if(!ctx->tn || !ctx->dni) {printf("gpu_topology_build: peano-walk mirrors null\n"); return 1;}
 
     /* Grow per-particle scratch. */
     if(g_npart_cap < npart) {
@@ -124,6 +169,20 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
         if(!g_topleaf_start || !g_topleaf_count || !g_topleaf_cursor) {g_topleaf_cap = 0; return 1;}
         g_topleaf_cap = newcap;
     }
+    return 0;
+}
+
+}  /* anonymous namespace */
+
+extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data *mp)
+{
+    if(npart <= 0) {g_slot_map_active = 0; return 0;}
+    struct topo_build_ctx ctx;
+    int rc = topo_acquire_(npart, mp, "gpu_topology_build_data_path", &ctx);
+    if(rc) {return rc;}
+    Morton128                 *keys  = ctx.keys;
+    struct particle_data      *P_dev = ctx.P_dev;
+    const struct topnode_data *tn    = ctx.tn;
 
     int  ntl  = NTopleaves;
     int *pt   = g_particle_topleaf;
@@ -139,7 +198,86 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     const double dlen = DomainLen;
     const int    bits = BITS_PER_DIMENSION;
 
-    /* Zero topleaf bucket counters. */
+    /* Kernel 1: per-particle Peano + Morton key compute, TopNodes walk to
+     * topleaf id, write Morton key + topleaf id.  Geometry is read from the real
+     * particle (slot->particle map for subset builds); keys[]/pt[] stay slot-indexed.
+     * Skipped when the pre-build stage already computed these for the same particles:
+     * it also applied the retained attachments, which cannot be recomputed here because
+     * the standing tree they were recovered from no longer exists. */
+    const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
+    if(!(mp == NULL && g_prepared_npart == npart)) {
+        Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
+            int real = stp ? stp[i] : i;
+            Morton128 m;
+            peanokey pkey = topo_key_of_position_(P_dev[real].Pos[0], P_dev[real].Pos[1], P_dev[real].Pos[2],
+                                                  dc0, dc1, dc2, dlen, bits, &m);
+            keys[i] = m;
+            pt[i] = gpu_topleaf_for_key(tn, pkey);
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
+    }
+
+    /* Retained attachment: a particle kept under the topleaf it hung from in the standing tree takes
+     * its key from the point where its true position is clamped into that leaf's cube.  The cube is
+     * the nominal one here -- force_create_empty_nodes has just rebuilt the top tree and nothing has
+     * grown it yet -- and clamping rather than regenerating keeps the whole Morton/BFS path untouched:
+     * the particle sorts and descends exactly as one that really sat at that point would.  The true
+     * position is what the moments and the node bounds use; only the key is taken from the clamped
+     * point.  Idempotent, so a build that retries for a larger arena simply redoes it. */
+    if(mp == NULL && g_prepared_npart == npart && g_retained_n > 0) {
+        const int *dni = ctx.dni;
+        const int *ret = g_retained_slots;
+        const int  nret = g_retained_n;
+        struct NODE *Nodes_uvm = Nodes;
+        /* How far inside the face the clamped point has to land.  A key keeps the top 42 bits of the
+         * mantissa (gpu_morton_double_to_int42), so one cell of key space is DomainLen * 2^-42 of
+         * position, and a point merely a rounding step below the upper face still encodes into the
+         * NEXT cell -- i.e. into the neighbouring top-leaf.  Two cells of margin puts it clear of that
+         * and of the rounding in forming the fraction, while being geometrically nothing: a top-leaf
+         * is many orders of magnitude wider than a key cell. */
+        const double clamp_backoff = 2.0 * dlen / 4398046511104.0;   /* 2^42 */
+        int *bad = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+        if(!bad) {printf("gpu_topology_build: retained clamp counter alloc failed\n"); return 1;}
+        *bad = 0;
+        Kokkos::parallel_for("topo_retained_clamp", nret, KOKKOS_LAMBDA(int j) {
+            int i = ret[j];
+            int leaf = pt[i];
+            int nd = dni[leaf];
+            Vec3<double> sep = {(double)P_dev[i].Pos[0] - (double)Nodes_uvm[nd].center[0],
+                                (double)P_dev[i].Pos[1] - (double)Nodes_uvm[nd].center[1],
+                                (double)P_dev[i].Pos[2] - (double)Nodes_uvm[nd].center[2]};
+            nearest_xyz(sep, -1);
+            double inner = 0.5 * (double)Nodes_uvm[nd].len - clamp_backoff;
+            if(!(inner > 0.0)) {inner = 0.0;}   /* a leaf narrower than the margin: the centre is inside */
+            for(int d = 0; d < 3; d++) {
+                if(sep[d] >  inner) {sep[d] =  inner;}
+                if(sep[d] < -inner) {sep[d] = -inner;}
+            }
+            Morton128 m;
+            peanokey pkey = topo_key_of_position_((double)Nodes_uvm[nd].center[0] + sep[0],
+                                                  (double)Nodes_uvm[nd].center[1] + sep[1],
+                                                  (double)Nodes_uvm[nd].center[2] + sep[2],
+                                                  dc0, dc1, dc2, dlen, bits, &m);
+            keys[i] = m;
+            if(gpu_topleaf_for_key(tn, pkey) != leaf) {Kokkos::atomic_fetch_add(bad, 1);}
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("topo_retained_clamp", nret);
+        int nbad = *bad;
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(bad);
+        if(nbad) {
+            printf("gpu_topology_build: task %d clamped %d of %d retained particles outside the top-leaf "
+                   "they were clamped into; the key and the top-tree geometry disagree.\n",
+                   ThisTask, nbad, nret);
+            endrun(91563);
+            return 1;
+        }
+    }
+
+    /* Bucket counts, taken from the final topleaf assignment rather than fused into the
+     * kernel above: a retained attachment changes which bucket a particle belongs to
+     * after its key has been computed. */
     Kokkos::parallel_for("topo_zero_counts", ntl, KOKKOS_LAMBDA(int t) {
         tcnt[t] = 0;
         tcur[t] = 0;
@@ -147,38 +285,11 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_zero_counts", ntl);
 
-    /* Kernel 1: per-particle Peano + Morton key compute, TopNodes walk to
-     * topleaf id, write Morton key + topleaf id, increment bucket count.
-     * Geometry is read from the real particle (slot->particle map for subset
-     * builds); keys[]/pt[] stay slot-indexed. */
-    const int *stp = g_slot_map_active ? g_slot_to_particle : NULL;
-    Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
-        int real = stp ? stp[i] : i;
-        double fx = (dlen > 0.0) ? ((P_dev[real].Pos[0] - dc0) / dlen) : 0.0;
-        double fy = (dlen > 0.0) ? ((P_dev[real].Pos[1] - dc1) / dlen) : 0.0;
-        double fz = (dlen > 0.0) ? ((P_dev[real].Pos[2] - dc2) / dlen) : 0.0;
-        /* Clamp the sum, not the fraction: the key is the mantissa of (frac + 1.0),
-         * and a fraction just under 1.0 can carry that sum up to 2.0, whose mantissa
-         * is zero -- the first cell instead of the last.  See gpu_morton.cc. */
-        double sx = fx + 1.0, sy = fy + 1.0, sz = fz + 1.0;
-        if(!(sx >= 1.0)) {sx = 1.0;} if(!(sx < 2.0)) {sx = 0x1.fffffffffffffp0;}
-        if(!(sy >= 1.0)) {sy = 1.0;} if(!(sy < 2.0)) {sy = 0x1.fffffffffffffp0;}
-        if(!(sz >= 1.0)) {sz = 1.0;} if(!(sz < 2.0)) {sz = 0x1.fffffffffffffp0;}
-        uint64_t ix = gpu_morton_double_to_int42(sx);
-        uint64_t iy = gpu_morton_double_to_int42(sy);
-        uint64_t iz = gpu_morton_double_to_int42(sz);
-
-        Morton128 m;
-        peanokey  pkey = gpu_peano_and_morton_key(ix, iy, iz, bits, &m);
-        keys[i] = m;
-
-        int leaf = gpu_topleaf_for_key(tn, pkey);
-        pt[i] = leaf;
-
-        Kokkos::atomic_fetch_add(&tcnt[leaf], 1);
+    Kokkos::parallel_for("topo_count_buckets", npart, KOKKOS_LAMBDA(int i) {
+        Kokkos::atomic_fetch_add(&tcnt[pt[i]], 1);
     });
     Kokkos::fence();
-    gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
+    gizmo_gpu_check_last_error("topo_count_buckets", npart);
 
     /* Kernel 2: exclusive prefix scan to compute topleaf_start[]. */
     Kokkos::parallel_scan("topo_scan", ntl,
@@ -220,6 +331,188 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
         }
     }
 
+    return 0;
+}
+
+/* Pre-build stage, run while the standing tree is still intact.  For every particle it computes the
+ * key and the topleaf its CURRENT position falls in; for those whose topleaf belongs to another rank
+ * it recovers the topleaf they hung from in the standing tree and records them, so the rest of the
+ * build keeps them local.
+ *
+ * topology_valid says whether the standing tree's Father[] links still describe these particles.  When
+ * it is false the links are not consulted at all and the caller is told how many crossers there are, so
+ * it can restore geometric ownership before building.
+ *
+ * The recovery needs no chain walk and no reverse map: node centres are fixed by the octree
+ * subdivision and never move (only node lengths grow), so the node a particle hung under lies inside
+ * its top leaf, and that leaf is simply the one the node's own centre keys into.
+ *
+ * Leaves the keys and leaves prepared for the following gpu_topology_build_data_path().  Returns 0 on
+ * success; *n_crossed_out and *n_unrecovered_out are this rank's counts. */
+extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_valid,
+                                                        long *n_crossed_out, long *n_unrecovered_out)
+{
+    if(n_crossed_out)     {*n_crossed_out = 0;}
+    if(n_unrecovered_out) {*n_unrecovered_out = 0;}
+    g_prepared_npart = -1;
+    g_retained_n     = 0;
+    if(npart <= 0) {return 0;}
+
+    struct topo_build_ctx ctx;
+    int rc = topo_acquire_(npart, NULL, "gpu_topology_prepare_retained_attachment", &ctx);
+    if(rc) {return rc;}
+
+    const int *dtask = gpu_peano_walk_domain_task();
+    if(!dtask) {printf("gpu_topology_build: DomainTask mirror null\n"); return 1;}
+
+    Morton128                 *keys  = ctx.keys;
+    struct particle_data      *P_dev = ctx.P_dev;
+    const struct topnode_data *tn    = ctx.tn;
+    int *pt    = g_particle_topleaf;
+    int *stage = g_sorted_idx;   /* free until the bucket scatter runs, and large enough by construction */
+
+    const double dc0 = DomainCorner[0], dc1 = DomainCorner[1], dc2 = DomainCorner[2];
+    const double dlen = DomainLen;
+    const int    bits = BITS_PER_DIMENSION;
+    const int    ntl  = NTopleaves;
+    const int    me   = ThisTask;
+    const int    tbase = All.TreeNodeIndexBase, maxn = MaxNodes;
+    const int    use_standing_tree = (topology_valid && Father && Nodes_base) ? 1 : 0;
+    struct NODE *Nodes_uvm = Nodes;
+    const int   *father    = Father;
+
+    int *ctr = (int *) gizmo_gpu_alloc_shared(2 * sizeof(int), "treescratch_build_ctr");
+    if(!ctr) {printf("gpu_topology_build: retained counter alloc failed\n"); return 1;}
+    ctr[0] = 0; ctr[1] = 0;
+
+    Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
+        Morton128 m;
+        peanokey pkey = topo_key_of_position_(P_dev[i].Pos[0], P_dev[i].Pos[1], P_dev[i].Pos[2],
+                                              dc0, dc1, dc2, dlen, bits, &m);
+        keys[i] = m;
+        int leaf = gpu_topleaf_for_key(tn, pkey);
+        pt[i] = leaf;
+        if(leaf < 0 || leaf >= ntl || dtask[leaf] == me) {return;}   /* the fast path: this rank owns it */
+        stage[Kokkos::atomic_fetch_add(&ctr[0], 1)] = i;
+        if(!use_standing_tree) {return;}
+        int f = father[i];
+        if(f < tbase || f >= tbase + maxn) {Kokkos::atomic_fetch_add(&ctr[1], 1); return;}
+        Morton128 mf;
+        peanokey fkey = topo_key_of_position_((double)Nodes_uvm[f].center[0],
+                                              (double)Nodes_uvm[f].center[1],
+                                              (double)Nodes_uvm[f].center[2],
+                                              dc0, dc1, dc2, dlen, bits, &mf);
+        int retained = gpu_topleaf_for_key(tn, fkey);
+        if(retained < 0 || retained >= ntl || dtask[retained] != me) {Kokkos::atomic_fetch_add(&ctr[1], 1); return;}
+        pt[i] = retained;
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
+
+    int n_crossed = ctr[0], n_unrecovered = ctr[1];
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctr);
+    if(n_crossed_out)     {*n_crossed_out = (long) n_crossed;}
+    if(n_unrecovered_out) {*n_unrecovered_out = (long) n_unrecovered;}
+
+    if(n_crossed > 0 && use_standing_tree && n_unrecovered == 0) {
+        if(g_retained_cap < n_crossed) {
+            g_retained_slots = grow_int_buffer(g_retained_slots, g_retained_cap, n_crossed, "treescratch_build_retained_slots");
+            if(!g_retained_slots) {g_retained_cap = 0; return 1;}
+            g_retained_cap = n_crossed;
+        }
+        memcpy(g_retained_slots, stage, (size_t) n_crossed * sizeof(int));
+        g_retained_n = n_crossed;
+    }
+    g_prepared_npart = npart;
+    return 0;
+}
+
+/* Drop a prepared plan.  Called for any build the pre-build stage does not cover, so a later build
+ * cannot consume keys and attachments computed for a different particle set. */
+extern "C" void gpu_topology_forget_prepared(void)
+{
+    g_prepared_npart = -1;
+    g_retained_n     = 0;
+}
+
+/* Grow the nodes holding a retained particle so their cubes cover where it actually is.  A retained
+ * particle sits outside the nominal cube of the leaf it was kept in, and a node whose stated length
+ * does not bound its contents can be accepted by an opening test that should have opened it.  This is
+ * the same tolerance the tree already carries between rebuilds, where force_drift_node grows len by
+ * the distance the node's contents can have moved.
+ *
+ * Runs after gpu_topology_finalize_father, which is what establishes the particle Father[] links, and
+ * before the moments and the pseudo-particle exchange, which is what carries the grown top-leaf length
+ * to the other ranks.  Walks the node's own SoA father links, because the AoS union still holds the
+ * build-time suns layout at this point. */
+extern "C" int gpu_topology_grow_retained_paths(void)
+{
+    if(g_retained_n <= 0) {return 0;}
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->len || !soa->father) {printf("gpu_topology_grow_retained_paths: SoA not ready\n"); return 1;}
+    const int *dni = gpu_peano_walk_domain_node_index();
+    if(!dni) {printf("gpu_topology_grow_retained_paths: peano-walk mirror null\n"); return 1;}
+
+    gpu_particles_arena_set_site("gpu_topology_grow_retained_paths");
+    gpu_particles_arena_acquire(NumPart, P, CellP);
+    struct particle_data *P_dev = gpu_particles_arena_P();
+    if(!P_dev) {printf("gpu_topology_grow_retained_paths: P_dev null\n"); return 1;}
+
+    const int *ret = g_retained_slots;
+    const int  nret = g_retained_n;
+    const int  tbase = All.TreeNodeIndexBase, maxn = MaxNodes;
+    struct NODE *Nodes_uvm = Nodes;
+    const int   *father    = Father;
+    int         *pt        = g_particle_topleaf;
+    MyFloat     *soa_len   = soa->len;
+    const int   *soa_father = soa->father;
+
+    int *unreached = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    if(!unreached) {printf("gpu_topology_grow_retained_paths: counter alloc failed\n"); return 1;}
+    *unreached = 0;
+
+    Kokkos::parallel_for("topo_retained_grow", nret, KOKKOS_LAMBDA(int j) {
+        int i = ret[j];
+        int leaf_node = dni[pt[i]];
+        int no = father[i];
+        volatile int reached_leaf = 0;
+        for(int guard = 0; guard < GIZMO_GPU_MORTON_MAX_DEPTH + 8; guard++) {
+            if(no < tbase || no >= tbase + maxn) {break;}
+            Vec3<double> sep = {(double)P_dev[i].Pos[0] - (double)Nodes_uvm[no].center[0],
+                                (double)P_dev[i].Pos[1] - (double)Nodes_uvm[no].center[1],
+                                (double)P_dev[i].Pos[2] - (double)Nodes_uvm[no].center[2]};
+            nearest_xyz(sep, -1);
+            double reach = fabs(sep[0]);
+            if(fabs(sep[1]) > reach) {reach = fabs(sep[1]);}
+            if(fabs(sep[2]) > reach) {reach = fabs(sep[2]);}
+            /* Unconditional: several retained particles can share a node, so reading the length
+             * first to decide whether to raise it would be a plain load racing with their atomic
+             * writes.  The maximum is already a no-op when the node is wide enough, and this path
+             * only runs for particles that crossed a top-leaf boundary. */
+            const MyFloat need = (MyFloat)(2.0 * reach);
+            Kokkos::atomic_max(&Nodes_uvm[no].len,   need);
+            Kokkos::atomic_max(&soa_len[no - tbase], need);
+            if(no == leaf_node) {reached_leaf = 1; break;}
+            no = soa_father[no - tbase];
+        }
+        /* The retained top-leaf is an ancestor of this particle's node by construction, so failing to
+         * arrive at it means the node chain is not what the build just emitted.  It matters because
+         * that leaf is the one whose length is exchanged: left ungrown, every other rank would bound
+         * it by its nominal cube while it holds a particle outside. */
+        if(!reached_leaf) {Kokkos::atomic_fetch_add(unreached, 1);}
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_retained_grow", nret);
+    const int n_unreached = *unreached;
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(unreached);
+    if(n_unreached) {
+        printf("gpu_topology_grow_retained_paths: task %d failed to reach the retained top-leaf for %d of "
+               "%d particles; their leaves would be published at a length that does not bound them.\n",
+               ThisTask, n_unreached, nret);
+        return 1;
+    }
     return 0;
 }
 
@@ -545,8 +838,12 @@ extern "C" void gpu_topology_build_release(void)
     if(g_topleaf_count)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_count);    g_topleaf_count    = NULL;}
     if(g_topleaf_cursor)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_cursor);   g_topleaf_cursor   = NULL;}
     if(g_slot_to_particle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_slot_to_particle); g_slot_to_particle = NULL;}
+    if(g_retained_slots)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_retained_slots);   g_retained_slots   = NULL;}
     g_slot_map_active = 0;
     g_slot_cap = 0;
+    g_retained_cap = 0;
+    g_retained_n = 0;
+    g_prepared_npart = -1;
     g_npart_cap = 0;
     g_topleaf_cap = 0;
 }

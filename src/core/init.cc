@@ -895,7 +895,7 @@ void init(void)
     set_softenings();
 
     /* will build tree */
-    force_treebuild(NumPart, NULL);
+    if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
 
     All.Ti_Current = 0;
 
@@ -1135,7 +1135,7 @@ void init(void)
         calculate_power_spectra(RestartSnapNum, ntot_type_all);
 #endif
 #endif
-        force_treebuild(NumPart, NULL);
+        if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
         twopoint();
         endrun(0);
     }

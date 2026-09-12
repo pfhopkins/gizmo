@@ -184,7 +184,7 @@ void subfind_process_group_collectively(int num)
     
     /* construct a tree for the halo */
     t0 = my_second();
-    force_treebuild(NumPartGroup, NULL);
+    if(force_treebuild(NumPartGroup, NULL) < 0) {endrun(91569);}
     t1 = my_second();
     if(ThisTask == 0) {printf("force_treebuild() took %g sec (presently allocated=%g MB)\n", timediff(t0, t1), AllocatedBytes / (1024.0 * 1024.0));}
     
@@ -428,7 +428,7 @@ void subfind_process_group_collectively(int num)
     }
     while(tot_count_leaves > 0);
     
-    force_treebuild(NumPartGroup, NULL);    /* re construct the tree for the collective part */
+    if(force_treebuild(NumPartGroup, NULL) < 0) {endrun(91569);}    /* re construct the tree for the collective part */
     
     /**** now we do the collective unbinding of the subhalo candidates that contain other subhalo candidates ****/
     ud = (struct unbind_data *)mymalloc("ud", NumPartGroup * sizeof(struct unbind_data));
