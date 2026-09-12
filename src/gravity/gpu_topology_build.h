@@ -50,7 +50,9 @@ int gpu_topology_build_data_path(int npart, const struct unbind_data *mp);
 const int *gpu_topology_build_sorted_idx(void);
 const int *gpu_topology_build_topleaf_start(void);   /* [NTopleaves + 1] */
 const int *gpu_topology_build_topleaf_count(void);   /* [NTopleaves]     */
-const int *gpu_topology_build_particle_topleaf(void);/* [npart] -- inverse */
+/* [npart] -- the top-leaf each particle was bucketed under.  That is the leaf its position falls in,
+ * except for a particle kept under the leaf it hung from in the standing tree (see below). */
+const int *gpu_topology_build_particle_topleaf(void);
 
 /* BFS topology emission: take the Morton-sorted-per-topleaf
  * data laid out by gpu_topology_build_data_path and emit internal-node
@@ -93,6 +95,40 @@ int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out);
  *
  * Returns 0 on success. */
 int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx);
+
+/* Retained attachment, for a whole-tree rebuild that happens without a domain decomposition on the
+ * same step.  Particles drift across top-leaf boundaries between decompositions, so by the time such a
+ * build runs some of this rank's particles fall geometrically in top-leaves another rank owns.  They
+ * cannot be bucketed there -- the pseudo-particle exchange overwrites that node afterwards and the
+ * subtree holding them is left unreachable from the root, absent from every rank's multipole moments.
+ *
+ * gpu_topology_prepare_retained_attachment() runs BEFORE the build, while the standing tree is still
+ * intact, and keeps each such particle under the top-leaf it hung from there.  It also computes the
+ * keys and leaves the following gpu_topology_build_data_path() would otherwise compute, so the
+ * classification costs no extra pass over the particles.
+ *
+ * topology_valid: whether the standing tree's Father[] links still describe these particles.  When it
+ * is false they are not consulted; the caller is told how many crossers there are so it can restore
+ * geometric ownership (a repartition) before building.
+ *
+ * *n_crossed_out     -- particles whose current top-leaf belongs to another rank.
+ * *n_unrecovered_out -- of those, how many no owned top-leaf could be recovered for.  Nonzero with a
+ *                       valid standing tree means the tree and the particles disagree; it is a stop,
+ *                       not a recoverable state.
+ *
+ * Returns 0 on success. */
+int gpu_topology_prepare_retained_attachment(int npart, int topology_valid,
+                                             long *n_crossed_out, long *n_unrecovered_out);
+
+/* Drop a prepared plan, so a build the stage above does not cover cannot consume keys and attachments
+ * computed for a different set of particles. */
+void gpu_topology_forget_prepared(void);
+
+/* Grow the nodes holding a retained particle so their cubes cover where it actually is.  Call after
+ * gpu_topology_finalize_father (which establishes the particle Father[] links) and before the moments
+ * and the pseudo-particle exchange (which carries the grown top-leaf length to the other ranks).
+ * Returns 0 on success; a no-op when nothing was retained. */
+int gpu_topology_grow_retained_paths(void);
 
 /* Free internal SharedSpace scratch.  Idempotent. */
 void gpu_topology_build_release(void);

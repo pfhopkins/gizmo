@@ -106,7 +106,29 @@ long   force_treebuild_generation(void);
 long   force_hmax_refresh_generation(void);
 void   force_bump_hmax_refresh_generation(void);   /* called by force_update_hmax (separate TU) */
 
+/* Returned by force_treebuild() instead of a node count when the build cannot go ahead on the
+   decomposition in place: particles have drifted into top-leaves other ranks own, and the standing
+   tree cannot say where they were attached -- either because there is none, or because it could not
+   place them.  Nothing has been freed or rebuilt at that point, so the caller restores geometric
+   ownership (domain_Decomposition_light with the refinement pass suppressed) and asks again, which
+   leaves every particle in a top-leaf its own rank owns and so needs nothing retained.  Raised only
+   for whole-tree builds. */
+#define FORCE_TREE_NEEDS_OWNERSHIP_RESTORE (-2)
+
 int    force_treebuild(int npart, struct unbind_data *mp);
+
+/* Whether the standing tree's Father[] links still describe the particles they were built for, which
+   is what a whole-tree rebuild without a decomposition needs in order to keep a drifted particle under
+   a top-leaf this rank owns.  Dropped when the tree is freed, and by any reordering of the particle
+   array the tree does not follow. */
+int    force_tree_global_topology_valid(void);
+void   force_tree_invalidate_global_topology(void);
+
+/* Let a particle keep its parent when re-sequencing moves it between slots, so the record still
+   describes the particles at the next rebuild.  Swaps only Father[]; drops the record if either slot
+   is outside the tree's particle slots, and does nothing when there is no record to keep.  Not called
+   where MAINTAIN_TREE_IN_REARRANGE is doing the full pointer repair, which already swaps Father. */
+void   force_tree_swap_attachment_slots(int i, int j);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);

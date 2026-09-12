@@ -653,13 +653,18 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
  *  only recomputing particle costs, re-splitting, and exchanging particles that changed domain.
  *  Skips: key computation, sorting, top-tree building/combining, and PH reorder.
  *  This is O(N) instead of O(N log N) and avoids expensive MPI tree combination. */
-void domain_Decomposition_light(int UseAllTimeBins)
+/*! do_particle_mergesplit_key carries the same meaning as in domain_Decomposition: whether this call
+    is also the step's refinement pass.  It is 0 when the repartition is being used only to restore
+    geometric particle ownership -- a tree rebuild whose particles have drifted into top-leaves owned
+    by other tasks needs their ownership back, but must not refine the fluid a second time in the
+    same step. */
+void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key)
 {
     int i, no; size_t bytes; double t0, t1;
 
     /* fall back to full decomposition if persistent state is not available, or if
        too many consecutive lightweight repartitions have occurred (top tree may be stale) */
-    if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, 1, 1); return;}
+    if(!PersistentKey || !domain_allocated_flag || LightRepartitionCount >= MAX_LIGHT_REPARTITIONS) {domain_Decomposition(UseAllTimeBins, 0, do_particle_mergesplit_key, 1); return;}
     LightRepartitionCount++;
     DomainCallsSincePeanoOrder++; /* a repartition exchanges particles, so it decays the ordering just as a full decomposition does */
 
@@ -669,7 +674,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     CPU_Step[CPU_DOMAIN] += measure_time();
     const double child0_light = CPU_ChildCharged;
     double t_light_start = my_second(), t_light_mergesplit=0, t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
-    if(All.Ti_Current > All.TimeBegin)
+    if((All.Ti_Current > All.TimeBegin) && (do_particle_mergesplit_key == 1))
     {
         merge_and_split_particles(); /* do the particle split/merge operations */
     }
@@ -733,8 +738,9 @@ void domain_Decomposition_light(int UseAllTimeBins)
     {
         if(ThisTask == 0) {printf("Domain: the particles have moved outside the bounds the domain was built on, so the Peano keys the lightweight repartition reuses are no longer valid there; forcing a full decomposition. If this fires often, widen the margin domain_findExtent() puts around the particles.\n"); fflush(stdout);}
         /* This call re-measures the extent and rebuilds the top tree from it.  Merging and
-           splitting is skipped: that pass already ran at the top of this routine, and running it
-           twice in one step would refine twice. */
+           splitting is skipped either way: if this call was asked for it, that pass already ran at
+           the top of this routine and running it twice in one step would refine twice; if it was
+           not, the caller does not want it at all. */
         domain_Decomposition(UseAllTimeBins, 0, 0, 1);
         return;
     }

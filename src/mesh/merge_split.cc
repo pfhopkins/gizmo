@@ -28,6 +28,7 @@
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"
 #include "../gravity/gpu_pseudo_update.h" /* gpu_set_soa_nextnode / gpu_set_soa_sibling: keep SoA node thread coherent with the rearrange pointer fixups */
+#include "../gravity/forcetree.h"         /* force_tree_swap_attachment_slots: the standing tree's attachment record */
 
 /*! This file contains the operations needed for merging/splitting gas particles/cells on-the-fly in the simulations.
     If more complicated routines, etc. are to be added to determine when (and how) splitting/merging occurs, they should also be
@@ -1473,6 +1474,8 @@ void rearrange_particle_sequence(void)
                 CellP[j] = gascellsave;  /* have the gas particle take its gas/fluid cell pointer with it */
 #ifdef MAINTAIN_TREE_IN_REARRANGE
                 swap_treewalk_pointers(i,j);
+#else
+                force_tree_swap_attachment_slots(i,j);   /* the parent follows the particle */
 #endif
 #ifdef CHIMES /* swap chimes-specific 'gasvars' structure which is separate from the default code gas cell structure */
                 gasVarsSave = ChimesGasVars[i]; ChimesGasVars[i] = ChimesGasVars[j]; ChimesGasVars[j] = gasVarsSave;
@@ -1507,6 +1510,8 @@ void rearrange_particle_sequence(void)
                 CellP[i] = CellP[ngas_local - 1];
 #ifdef MAINTAIN_TREE_IN_REARRANGE
                 swap_treewalk_pointers(i, ngas_local-1);
+#else
+                force_tree_swap_attachment_slots(i, ngas_local-1);
 #endif
                 /* swap with properties of last gas particle (i-- below will force a check of this so its ok) */
 #ifdef CHIMES
@@ -1519,6 +1524,8 @@ void rearrange_particle_sequence(void)
 #ifdef MAINTAIN_TREE_IN_REARRANGE
                 swap_treewalk_pointers(ngas_local - 1, numpart_local-1);
                 remove_particle_from_treewalk(numpart_local - 1);
+#else
+                force_tree_swap_attachment_slots(ngas_local - 1, numpart_local-1);
 #endif
                 ngas_local--; /* shorten the total N_gas count */
                 count_gaselim++; /* record that a BH was eliminated */
@@ -1532,6 +1539,8 @@ void rearrange_particle_sequence(void)
 #ifdef MAINTAIN_TREE_IN_REARRANGE
                 swap_treewalk_pointers(i, numpart_local - 1);
                 remove_particle_from_treewalk(numpart_local - 1);
+#else
+                force_tree_swap_attachment_slots(i, numpart_local - 1);
 #endif
             }
 
@@ -1564,6 +1573,15 @@ void rearrange_particle_sequence(void)
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}
+#ifndef MAINTAIN_TREE_IN_REARRANGE
+    /* Slots moved and the walk links were not repaired with them, so this tree must not be walked
+       again.  The sink spawn already asks for a rebuild on its own account; every other caller that
+       re-sequences a live tree needs the same thing, and the one that does not ask for it today is
+       the case where the spawn reservoir was over threshold but nothing was actually spawned.  The
+       reduced count is what is tested, so every rank reaches the same decision and none of them is
+       left walking a tree the others rebuilt. */
+    if(flag_sum) {TreeReconstructFlag = 1;}
+#endif
     wakeup_sidecar_invalidate();   /* particle indices compacted/reordered → rebuild WakeupDirty from P[] next scan */
 }
 

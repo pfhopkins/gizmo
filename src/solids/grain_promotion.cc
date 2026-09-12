@@ -1,5 +1,7 @@
 /* grain_promotion.cc — grain super-particle → solid body promotion.
- * Called from core/run.cc just before rearrange_particle_sequence().
+ * Called from core/run.cc alongside the other source terms. What it promotes is counted in
+ * Grains_promoted and folded into the gas block by the next rearrange_particle_sequence(), which
+ * is not part of this call.
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 
 #include "../declarations/allvars.h"

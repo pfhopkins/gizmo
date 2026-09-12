@@ -35,8 +35,10 @@ namespace {
 
 static struct topnode_data *g_topnodes_dev      = NULL;  /* SharedSpace mirror */
 static int                 *g_domain_idx_dev    = NULL;  /* SharedSpace mirror */
+static int                 *g_domain_task_dev   = NULL;  /* SharedSpace mirror */
 static int                  g_topnodes_cap      = 0;     /* allocated entries */
 static int                  g_domain_idx_cap    = 0;
+static int                  g_domain_task_cap   = 0;
 
 }  /* anonymous namespace */
 
@@ -78,6 +80,25 @@ extern "C" int gpu_peano_walk_acquire(void)
         g_domain_idx_cap = NTopleaves;
     }
 
+    /* Grow the DomainTask mirror if needed.  Same shape and lifetime as the DomainNodeIndex mirror
+     * beside it: a device kernel that has mapped a particle to a topleaf also needs to know whether
+     * this rank owns that topleaf. */
+    if(g_domain_task_cap < NTopleaves) {
+        if(g_domain_task_dev) {
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_domain_task_dev);
+            g_domain_task_dev = NULL;
+        }
+        long bytes = (long)NTopleaves * (long)sizeof(int);
+        g_domain_task_dev = (int *) gizmo_gpu_alloc_shared(bytes, "treescratch_build_domaintask");
+        if(!g_domain_task_dev) {
+            printf("gpu_peano_walk: DomainTask mirror alloc failed (NTopleaves=%d, %ld B)\n",
+                   NTopleaves, bytes);
+            g_domain_task_cap = 0;
+            return 1;
+        }
+        g_domain_task_cap = NTopleaves;
+    }
+
     /* Copy host -> SharedSpace.  SharedSpace (UVM) makes the data visible
      * on device automatically. */
     if(NTopnodes > 0 && TopNodes) {
@@ -85,6 +106,9 @@ extern "C" int gpu_peano_walk_acquire(void)
     }
     if(NTopleaves > 0 && DomainNodeIndex) {
         memcpy(g_domain_idx_dev, DomainNodeIndex, (size_t)NTopleaves * sizeof(int));
+    }
+    if(NTopleaves > 0 && DomainTask) {
+        memcpy(g_domain_task_dev, DomainTask, (size_t)NTopleaves * sizeof(int));
     }
     return 0;
 }
@@ -101,6 +125,11 @@ extern "C" void gpu_peano_walk_release(void)
         g_domain_idx_dev = NULL;
         g_domain_idx_cap = 0;
     }
+    if(g_domain_task_dev) {
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_domain_task_dev);
+        g_domain_task_dev = NULL;
+        g_domain_task_cap = 0;
+    }
 }
 
 extern "C" const struct topnode_data *gpu_peano_walk_topnodes(void)
@@ -111,6 +140,11 @@ extern "C" const struct topnode_data *gpu_peano_walk_topnodes(void)
 extern "C" const int *gpu_peano_walk_domain_node_index(void)
 {
     return g_domain_idx_dev;
+}
+
+extern "C" const int *gpu_peano_walk_domain_task(void)
+{
+    return g_domain_task_dev;
 }
 
 
