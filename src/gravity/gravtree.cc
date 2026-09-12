@@ -333,8 +333,19 @@ gravity_walk_attempt:
          * CPU loop + MPI export machinery to handle unchanged. Ewald_iter
          * splits primary (==0) vs Ewald-correction (==1) walks; both are
          * active on all Kokkos builds. */
+        /* Time the device walk.  It is the primary work of this routine and it sat outside every
+         * timer: the published work-load balance reduces timetree1, which brackets only the CPU
+         * leftover loop below, so on an accelerated build it reported milliseconds for a walk
+         * costing seconds -- and, far worse, a reassuring balance figure for the most imbalanced
+         * phase in the run.  The two accumulators already mean "primary walk" and "Ewald-correction
+         * walk"; this gives them their real contents, so work-load balance and rel1to2 describe the
+         * walk that actually happened on both accelerated and host-only builds. */
+        tstart = my_second();
         if(Ewald_iter == 0) {gpu_gravtree_walk_primary();}
         else                {gpu_ewald_walk_primary();}
+        tend = my_second();
+        if(Ewald_iter == 0) {timetree1 += timediff(tstart, tend);}
+        else                {timetree2 += timediff(tstart, tend);}
 
         do /* primary point-element loop */
         {
