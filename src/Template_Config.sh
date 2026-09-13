@@ -407,6 +407,21 @@
 #CHIMES_REDUCED_OUTPUT          # full CHIMES abundance array only output in some snapshots
 #CHIMES_NH_OUTPUT               # write out column densities of gas particles to snapshots
 #CHIMES_INITIALISE_IN_EQM       # initialise CHIMES abundances in equilibrium at the start of the simulation
+## ----------------------------------------------------------------------------------------------------
+# ----  ISM Dust Chemical Evolution Models (follow growth, destruction, and size evolution of different grain species)
+# ----    Users of any of these modules should cite Choban et al., 2022/25 for the methods/implementation in GIZMO and FIRE
+## ----------------------------------------------------------------------------------------------------
+#GALSF_ISMDUSTCHEM_MODEL=(1+2)              # enable live dust evolution model (value deteremines the dust species tracked). Use GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION to set the silicate composition.
+                                            # model = 1: Track silicates and carbonaceous dust.
+                                            # model = 2: Track metallic iron dust.
+                                            # model = 4: Track oxygen bearing dust species which is a simple match to observations of MW oxygen depletion.
+                                            # model = 8: Track metallic iron nanoparticles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018). Requires GALSF_ISMDUSTCHEM_MODEL=2.
+#GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=(1+2+8)   # set the silicate dust chemical composition. This changes the production, growth, and destruction rates of silicate dust, and the max depletions of Mg, Fe, Si, and O in the gas phase.
+                                            # model = 1 (default): olivine-pyroxene mix [(Fe_0.571 Mg_1.06) Si O_3.63]
+                                            # model = 2: add 2 extra O atoms to better match O depletions.
+                                            # model = 4: add 1 extra Fe atom to better match Fe depletions.
+                                            # model = 8: remove all Fe. Use with additional metallic iron species to avoid Fe limiting silicate growth.
+#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16          # enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 1 or (1 + 2) only and GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION)
 ####################################################################################################
 
 
@@ -527,6 +542,7 @@
 #OUTPUT_RT_RAD_FLUX             # save flux vector for radiation methods that explictly evolve the flux (e.g. M1)
 #OUTPUT_RT_RAD_OPACITY          # save opacities for the different bands for explicit radiation-hydro methods
 #OUTPUT_UNSPAWNED_SINKMASS      # save the unspawned mass variable used for sink cell-spawning modules
+#OUTPUT_SHOCK_MACH_NUMBER       # compute and output the shock Mach number for each gas cell, using the information in the Riemann problem and reconstruction, plus additional converging flow and spurious compression checks.
 #INPUT_READ_KERNELRADIUS        # force reading rkern from IC file (instead of re-computing them; in general this is redundant but useful if special guesses needed)
 #INPUT_READ_SINKPROPS           # force reading sink properties including sink radius, zams mass, luminosity, age, etc, from ICs file if it includes sink particles and the IC is designed for use with the single-star modules
 #OUTPUT_TWOPOINT_ENABLED        # allows user to calculate mass 2-point function by enabling and setting restartflag=5
@@ -673,22 +689,5 @@
 #USE_TIMESTEP_DILATION_FOR_ZOOMS            #- enable time dilation modules, need to customize for applications, cannot be simply generically turned on without coding how they will work
 #DILATION_FOR_STELLAR_KINEMATICS_ONLY       #- special version of time dilation designed for stellar kinematics in e.g. dense star clusters or galaxy centers
 #SINK_RIAF_SUBEDDINGTON_MODEL=(0.01)        #- enable an arbitrary modular variation in the radiative efficiency of BHs as a function of eddington ratio or other particle properties, with the critical transition to the jet mode at this eddington ratio (defined in terms of mdot/mdot_crit)
-#OUTPUT_SHOCK_MACH_NUMBER                   #- compute and output the shock Mach number for each gas cell, using the information in the Riemann problem and reconstruction, plus additional converging flow and spurious compression checks.
 ####################################################################################################-
 
-############################################################################################################################-
-#------------------ ISM Dust Chemical Evolution Models (follow growth, destruction, and size evolution of different grain species)
-#----------------- Users of any of these modules should cite Choban et al., 2022/25 for the methods/implementation in GIZMO and FIRE
-############################################################################################################################-
-#GALSF_ISMDUSTCHEM_MODEL=(1+2)              #- enable live dust evolution model (value deteremines the dust species tracked). Use GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION to set the silicate composition.
-                                            #- model = 1: Track silicates and carbonaceous dust.
-                                            #- model = 2: Track metallic iron dust.
-                                            #- model = 4: Track oxygen bearing dust species which is a simple match to observations of MW oxygen depletion.
-                                            #- model = 8: Track metallic iron nanoparticles with set fraction assumed to be locked in silicate dust as inclusions based on Zhukovska+(2018). Requires GALSF_ISMDUSTCHEM_MODEL=2.
-#GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION=(1+2+8)   #- set the silicate dust chemical composition. This changes the production, growth, and destruction rates of silicate dust, and the max depletions of Mg, Fe, Si, and O in the gas phase.
-                                            #- model = 1 (default): olivine-pyroxene mix [(Fe_0.571 Mg_1.06) Si O_3.63]
-                                            #- model = 2: add 2 extra O atoms to better match O depletions.
-                                            #- model = 4: add 1 extra Fe atom to better match Fe depletions.
-                                            #- model = 8: remove all Fe. Use with additional metallic iron species to avoid Fe limiting silicate growth.
-#GALSF_ISMDUSTCHEM_GRAINSIZEEVO=16          #- enable grain size evolution model w/ N number of logarithmically spaced bins (must also turn on GALSF_ISMDUSTCHEM_MODEL= 1 or (1 + 2) only and GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION)
-############################################################################################################################-
