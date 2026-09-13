@@ -270,8 +270,9 @@ void gizmo_mark_kernel_radius_dirty_range(int start, int end);
      compact positions only for pool members, so a NON-pool active (e.g. a Type-5
      sink in a gas-only pool) reads a STALE/unrefreshed position → wrong/
      non-deterministic neighbor set. If active sources may be non-pool, pass
-     explicit source_positions_host. (A debug guard in gpu_ngb_list_build warns
-     when a cached call has actives whose type is outside type_bitmask.)
+     explicit source_positions_host. Nothing checks this at runtime: a caller
+     that reuses a cache and omits source positions is asserting that every
+     active is a pool member.
      Override mode (source_positions_host != NULL): these are caller-defined
      opaque IDs; pass any sentinel (e.g. 0..num_active-1) since the kernel
      reads positions from source_positions_host instead.
