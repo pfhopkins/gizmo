@@ -777,6 +777,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
 
     int rc = (*fail == 0) ? 0 : *fail;
     int new_total = *ncount;
+    int work_left = *sz_curr;   /* read here: the depth-guard test below runs after these are freed */
     if(new_node_count_out) {*new_node_count_out = new_total;}
 
     /* After ping-pong swaps, sz_curr / sz_next still refer to the two
@@ -786,8 +787,12 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
 
-    if(level_guard >= GIZMO_GPU_MORTON_MAX_DEPTH + 4 && rc == 0) {
-        printf("gpu_topology_emit_bfs: BFS exceeded depth guard (level=%d) -- possible infinite recursion\n", level_guard);
+    /* Ask whether work was LEFT, not whether the last allowed level was used: a breadth-first walk
+     * that finishes exactly on that level leaves an empty worklist and has not exceeded anything.
+     * Testing the level alone reported a completed build as a failure, which the caller now treats
+     * as fatal rather than retrying, so the distinction has to be right. */
+    if(work_left > 0 && level_guard >= GIZMO_GPU_MORTON_MAX_DEPTH + 4 && rc == 0) {
+        printf("gpu_topology_emit_bfs: BFS exceeded depth guard (level=%d) with work still pending -- a node is not subdividing\n", level_guard);
         return 4;
     }
     return rc;

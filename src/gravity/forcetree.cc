@@ -336,6 +336,21 @@ void force_tree_swap_attachment_slots(int i, int j)
  * slightly from forcing another full rebuild. */
 static const double LET_FOREIGN_PAD_FRACTION = 0.5;
 
+/* Why a tree build failed, as seen by the retry in force_treebuild.  A non-negative return is
+ * the node count.  Only OUT_OF_NODES may be answered by growing the node arena: every other
+ * cause is indifferent to how many nodes are reserved, so retrying it larger cannot succeed and
+ * instead ratchets MaxNodes -- and MaxForeignNodes with it, since that is derived from it --
+ * until the arena itself cannot be allocated.  That is how one build failure became a 409x
+ * growth and a dead run.  The outer loop reduces this with MPI_Allreduce(MIN), so HARD_FAILURE
+ * on any rank outranks OUT_OF_NODES everywhere and all ranks stop together. */
+#define FORCE_TREEBUILD_OUT_OF_NODES  (-1)
+/* NOT -2: that is FORCE_TREE_NEEDS_OWNERSHIP_RESTORE, which force_treebuild returns to its own
+ * callers and which asks them to restore ownership and build again.  The two are consumed in
+ * different places today, but sharing a value would let a later refactor answer a fatal
+ * allocation failure with a decomposition and a retry. */
+#define FORCE_TREEBUILD_HARD_FAILURE  (-3)
+
+
 int force_treebuild(int npart, struct unbind_data *mp)
 {
     int flag;
@@ -419,12 +434,52 @@ int force_treebuild(int npart, struct unbind_data *mp)
 let_build_attempt:
     /* reset force_add_element insertion counter at each full build. */
     ForceAddElementToTree_CallsSinceBuild = 0;
+    /* How many times the node arena may be GROWN for one build; the build that fails after the
+     * last of those stops instead of growing again.  Each growth multiplies the arena by 1.15, so
+     * this allows 5.4x, far more than a genuine shortfall has needed, while keeping the loop
+     * finite.  Without a bound, a cause the arena cannot fix ratchets until the arena itself
+     * cannot be allocated: 43 growths once took MaxNodes from 2.1e6 to 8.6e8, a 2.1 TB request. */
+    const int TREEBUILD_MAX_NODE_RETRY = 12;
+    int treebuild_node_retry = 0;
     do
     {
         Numnodestree = force_treebuild_single(npart, mp);
         MPI_Allreduce(&Numnodestree, &flag, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        if(flag == -1)
+        if(flag < 0 && flag != FORCE_TREEBUILD_OUT_OF_NODES)
         {
+            /* A cause that reserving more nodes cannot address.  The rank that hit it has already
+             * said which one; stop here rather than growing the arena against it.  Symmetric:
+             * flag comes from the Allreduce, so every rank takes this branch together. */
+            if(ThisTask == 0)
+            {
+                printf("The tree could not be built, for a reason that more tree nodes would not fix (see the failure\n"
+                       "reported above). Not growing the node arena. Stopping.\n");
+                fflush(stdout);
+            }
+            endrun(90000060);
+            /* endrun only REQUESTS a stop; drain it here, because the finalize stages below index
+             * the node array with Numnodestree, which is negative on a failed build.  Symmetric:
+             * flag is the reduced value, so every rank reaches this branch with the same verdict. */
+            gizmo_exit_bad_stop_if_requested("gravtree:treebuild");
+            break;
+        }
+        if(flag == FORCE_TREEBUILD_OUT_OF_NODES && treebuild_node_retry >= TREEBUILD_MAX_NODE_RETRY)
+        {
+            if(ThisTask == 0)
+            {
+                printf("The tree still ran out of nodes after %d successive growths of the node arena, each 1.15x the\n"
+                       "last (MaxNodes=%d now). The demand is outrunning the growth, so this is not a shortfall that a\n"
+                       "further retry settles; running on more ranks or nodes reduces what each one has to hold. Stopping.\n",
+                       treebuild_node_retry, MaxNodes);
+                fflush(stdout);
+            }
+            endrun(90000061);
+            gizmo_exit_bad_stop_if_requested("gravtree:treebuild");   /* as above: stop before the finalize stages read a negative node count */
+            break;
+        }
+        if(flag == FORCE_TREEBUILD_OUT_OF_NODES)
+        {
+            treebuild_node_retry++;
             /* Grow the node arena by the same factor the ratchet applies, measured from the
                current allocation rather than re-derived from All.MaxPart: that keeps the retry
                on whatever basis this tree was sized from (the domain's local-particle cap for
@@ -442,7 +497,7 @@ let_build_attempt:
             gizmo_exit_bad_stop_if_requested("gravtree:treeallocate");
         }
     }
-    while(flag == -1);
+    while(flag == FORCE_TREEBUILD_OUT_OF_NODES);
     /* GPU finalize stage replaces force_update_node_recursive's
      * sibling/father/Father[] outputs.  Order matters:
      *   1. finalize_father: writes soa->father for all internal nodes
@@ -640,6 +695,19 @@ let_build_attempt:
  *  size of the nodes also for gravity would result, which would reduce
  *  cache utilization slightly.
  */
+/* What gpu_topology_emit_bfs's nonzero codes mean, so a failure says which one happened instead
+ * of printing a bare number the reader has to go and look up. */
+static const char *force_emit_bfs_reason(int rc)
+{
+    switch(rc)
+    {
+        case 1:  return "the node arena overflowed";
+        case 3:  return "a tree-SoA or scratch allocation had already failed, so the topology had nothing to write into";
+        case 4:  return "the breadth-first emit hit its depth guard, so some node would not subdivide";
+        default: return "an unrecognised failure";
+    }
+}
+
 int force_treebuild_single(int npart, struct unbind_data *mp)
 {
     int i, j, k, subnode = 0, shift, parent, numnodes, rep, nfree, th, nn, no;
@@ -669,7 +737,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
          * complete + consistent. */
         DomainNodeIndex[TopNodes[0].Leaf] = All.TreeNodeIndexBase;
     }
-    if(force_create_empty_nodes(All.TreeNodeIndexBase, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return -1;}
+    if(force_create_empty_nodes(All.TreeNodeIndexBase, 0, 1, 0, 0, 0, &numnodes, &nfree) < 0) {return FORCE_TREEBUILD_OUT_OF_NODES;}
     /* H0 post-build validation: every topnode must map to a valid Nodes[] slot. */
     {
         const int node_lo = All.TreeNodeIndexBase, node_hi = All.TreeNodeIndexBase + MaxNodes;
@@ -707,25 +775,46 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
          * to copy AoS topnode center/len into SoA before BFS.  That seeding now
          * happens inside gpu_nextnode_backup_suns below (single GPU kernel reads
          * UVM AoS, writes SoA suns_backup + center + len for [0..numnodes)). */
-        if(gpu_peano_walk_acquire() != 0) {return -1;}
+        if(gpu_peano_walk_acquire() != 0)
+        {
+            printf("force_treebuild_single: rank %d could not acquire the peano-walk mirrors. That is an allocation\n"
+                   "failure, not a shortage of tree nodes, so the build is not retried with a larger node arena.\n", ThisTask);
+            fflush(stdout);
+            return FORCE_TREEBUILD_HARD_FAILURE;
+        }
         /* Snapshot topnode u.suns -> SoA suns_backup.  At this point u.suns
          * for intermediate topnodes is populated by force_create_empty_nodes;
          * force_insert_pseudo_particles set u.suns[0] for foreign topleafs;
          * local topleaf u.suns are uninitialized (BFS will overwrite their
          * suns_backup entries with the local particle subtree topology). */
         gpu_nextnode_backup_suns(numnodes);
+        /* It reports an allocation failure by invalidating the SoA and requesting a stop, and it returns
+         * void.  Reading that here names the real site: otherwise the first symptom is the topology emit
+         * finding a null SoA, which reads as a topology fault rather than as running out of memory. */
+        if(!gpu_gravity_tree_valid())
+        {
+            printf("force_treebuild_single: rank %d could not allocate the tree SoA for %d nodes. That is an\n"
+                   "allocation failure, not a shortage of tree nodes, so the build is not retried larger.\n", ThisTask, numnodes);
+            fflush(stdout);
+            return FORCE_TREEBUILD_HARD_FAILURE;
+        }
 
-        if(gpu_topology_build_data_path(npart, mp) != 0) {return -1;}
+        if(gpu_topology_build_data_path(npart, mp) != 0)
+        {
+            printf("force_treebuild_single: rank %d could not build the topology data path -- an allocation failure,\n"
+                   "a key/top-tree disagreement, or a missing DomainTask mirror; the site above says which. None of\n"
+                   "them is a shortage of tree nodes, so the build is not retried with a larger node arena.\n", ThisTask);
+            fflush(stdout);
+            return FORCE_TREEBUILD_HARD_FAILURE;
+        }
         int new_numnodes = numnodes;
         int rc = gpu_topology_emit_bfs(numnodes, &new_numnodes);
-        if(rc == 1) {
-            /* MaxNodes overflow -- bail out, force_treebuild retries with
-             * larger TreeAllocFactor (line 149-151 of this file). */
-            return -1;
-        }
+        if(rc == 1) {return FORCE_TREEBUILD_OUT_OF_NODES;}   /* the one cause a larger node arena fixes */
         if(rc != 0) {
-            printf("force_treebuild_single: gpu_topology_emit_bfs failed rc=%d\n", rc);
-            return -1;
+            printf("force_treebuild_single: the topology emit failed on rank %d (rc=%d): %s. A larger node arena\n"
+                   "does not address that, so the build is not retried.\n", ThisTask, rc, force_emit_bfs_reason(rc));
+            fflush(stdout);
+            return FORCE_TREEBUILD_HARD_FAILURE;
         }
         int topnode_end = numnodes;
         numnodes = new_numnodes;
@@ -738,7 +827,13 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
          * the stale (uninitialized) topleaf suns, never reaches local particles,
          * and Father[i] is never set -- causing an infinite loop in
          * setup_smoothinglengths which walks Nodes[Father[i]].u.d.father. */
-        if(gpu_topology_writeback_to_aos(0, numnodes) != 0) {return -1;}
+        if(gpu_topology_writeback_to_aos(0, numnodes) != 0)
+        {
+            printf("force_treebuild_single: rank %d could not write the built topology back to the node array.\n"
+                   "That is not a shortage of tree nodes, so the build is not retried larger.\n", ThisTask);
+            fflush(stdout);
+            return FORCE_TREEBUILD_HARD_FAILURE;
+        }
     }
 
     /* now compute the multipole moments recursively */
