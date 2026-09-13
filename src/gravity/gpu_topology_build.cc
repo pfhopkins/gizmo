@@ -703,15 +703,9 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 auto id_of = [P_dev, stp] (int idx) -> uint64_t {
                     return (uint64_t) P_dev[stp ? stp[idx] : idx].ID;
                 };
-                int rrc = gpu_morton_split_8way_random_inplace(
+                gpu_morton_split_8way_random_inplace(
                     sidx + w.range_first, range_count, id_of,
                     (uint64_t) w.parent_depth, child_starts);
-                if(rrc < 0) {
-                    /* Range too large for thread-local scratch (rare).
-                     * Signal failure; would need a global-scratch path. */
-                    Kokkos::atomic_fetch_max(fail, 5);
-                    return;
-                }
             } else {
                 gpu_morton_split_8way(sidx, keys, w.range_first, w.range_last,
                                       w.parent_depth, child_starts);
