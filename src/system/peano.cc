@@ -108,19 +108,26 @@ static double coordinate_resolution_floor(int i)
 
 static double local_separation_scale(int i, int blk_lo, int blk_hi)
 {
-    double best = 0; int lo = i - COINCIDENT_NEIGHBOUR_WINDOW, hi = i + COINCIDENT_NEIGHBOUR_WINDOW;
+    double best = 0; int nsampled = 0;
     double floor2 = coordinate_resolution_floor(i); floor2 *= floor2;
-    if(lo < blk_lo) {lo = blk_lo;}
-    if(hi > blk_hi) {hi = blk_hi;}
-    for(int j = lo; j < hi; j++)
+    /* The window counts usable partners, not slots. Particles at one position are adjacent in this
+     * ordering, so a group filling the window leaves every slot skipped below and the scale comes
+     * back zero for the one case this exists to handle. Walking outward instead leaves the group and
+     * stops, so the cost is the group size plus the window rather than the block. */
+    for(int step = 1; step < blk_hi - blk_lo && nsampled < COINCIDENT_NEIGHBOUR_WINDOW; step++)
     {
-        if(j == i) {continue;}
-        double dx = P[j].Pos[0] - P[i].Pos[0], dy = P[j].Pos[1] - P[i].Pos[1], dz = P[j].Pos[2] - P[i].Pos[2];
-        double r2 = dx*dx + dy*dy + dz*dz;
-        if(r2 <= floor2) {continue;}                   /* the coincident partners themselves: a partner
+        for(int side = 0; side < 2; side++)
+        {
+            int j = (side == 0) ? (i - step) : (i + step);
+            if(j < blk_lo || j >= blk_hi) {continue;}
+            double dx = P[j].Pos[0] - P[i].Pos[0], dy = P[j].Pos[1] - P[i].Pos[1], dz = P[j].Pos[2] - P[i].Pos[2];
+            double r2 = dx*dx + dy*dy + dz*dz;
+            if(r2 <= floor2) {continue;}               /* the coincident partners themselves: a partner
                                                           a few ulp away is as uninformative as one at
                                                           exactly zero, and must not become the scale */
-        if(best == 0 || r2 < best) {best = r2;}
+            nsampled++;
+            if(best == 0 || r2 < best) {best = r2;}
+        }
     }
     return (best > 0) ? sqrt(best) : 0;
 }
