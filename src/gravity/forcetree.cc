@@ -415,9 +415,10 @@ int force_treebuild(int npart, struct unbind_data *mp)
                This one is worth reporting on its own: the standing tree was declared usable and then
                could not place a particle, so something about that declaration is wrong even though the
                state itself is repairable below. */
-            printf("force_treebuild: task %d holds %ld particles whose standing-tree attachment names "
-                   "no top-leaf this rank owns, from %ld that have crossed a top-leaf boundary. The "
-                   "tree and the particles disagree.\n", ThisTask, unrecovered_local, crossed_local);
+            printf("force_treebuild: task %d holds %ld particles whose standing-tree attachment cannot be "
+                   "used -- it names no top-leaf this rank owns, or a top-leaf whose node lies outside the "
+                   "tree -- from %ld that have crossed a top-leaf boundary. The tree and the particles "
+                   "disagree.\n", ThisTask, unrecovered_local, crossed_local);
         }
         if(counts_any[0] > 0 || counts_any[1] > 0)
         {

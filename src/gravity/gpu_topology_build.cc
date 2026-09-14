@@ -369,6 +369,7 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
     struct particle_data      *P_dev = ctx.P_dev;
     const struct topnode_data *tn    = ctx.tn;
     int *pt    = g_particle_topleaf;
+    const int *dni = ctx.dni;
     int *stage = g_sorted_idx;   /* free until the bucket scatter runs, and large enough by construction */
 
     const double dc0 = DomainCorner[0], dc1 = DomainCorner[1], dc2 = DomainCorner[2];
@@ -404,6 +405,12 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
                                               dc0, dc1, dc2, dlen, bits, &mf);
         int retained = gpu_topleaf_for_key(tn, fkey);
         if(retained < 0 || retained >= ntl || dtask[retained] != me) {Kokkos::atomic_fetch_add(&ctr[1], 1); return;}
+        /* The leaf has to have a node in this tree before anything is attached to it: the clamp that
+         * follows, and the growth pass after the build, both index Nodes[] with exactly this value.
+         * An attachment naming a leaf whose node lies outside the tree is not usable, so it is
+         * reported with the others that cannot be recovered rather than retained. */
+        const int retained_node = dni[retained];
+        if(retained_node < tbase || retained_node >= tbase + maxn) {Kokkos::atomic_fetch_add(&ctr[1], 1); return;}
         pt[i] = retained;
     });
     Kokkos::fence();
