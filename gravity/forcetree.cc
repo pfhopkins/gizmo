@@ -1445,7 +1445,11 @@ void force_flag_localnodes(void)
 /*! When a new additional resolution element is created, we can put it into the
  *  tree at the position of the spawning element. This is possible
  *  because the Nextnode[] array essentially describes the full tree walk as a
- *  link list. Multipole moments of tree nodes need not be changed.
+ *  link list. Multipole moments of tree nodes need not be changed -- but ONLY
+ *  because every caller debits the child's mass from a co-located parent, so
+ *  node total mass and COM are conserved. Type-conditioned moments (gasmass,
+ *  stellar_lum, sink_*) are NOT updated here and go stale until the next
+ *  refresh/rebuild, and hmax/vmax are bumped on the immediate parent only.
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {

@@ -40,8 +40,11 @@ void ngb_treebuild(void)
 /*! This routine finds all neighbours `j' that can interact with the particle `i' in the communication buffer.
  *  Note that an interaction can take place if: \f$ r_{ij} < h_i \f$  OR if  \f$ r_{ij} < h_j \f$.
  *
- *  In the range-search this is taken into account, i.e. it is guaranteed that all particles are found that fulfill this condition, 
+ *  In the range-search this is taken into account, i.e. it is guaranteed that all particles are found that fulfill this condition,
  *  including the (more difficult) second part of it. For this purpose, each node knows the maximum h occuring among the particles it represents.
+ *  NB that guarantee holds only while node hmax values are CURRENT: between a force_add_element_to_tree()
+ *  insertion (which bumps only the immediate parent) and the next force_update_hmax()/rebuild/refresh,
+ *  ancestor nodes can under-report hmax and prune a search that should have descended.
  */
 int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int target, int *startnode,
                                int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist)

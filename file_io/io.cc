@@ -50,7 +50,9 @@ void savepositions(int num)
 #endif
 
     rearrange_particle_sequence();
-    /* ensures that new tree will be constructed */
+    /* push the cadence counter over threshold so the next step's ladder decomposes+rebuilds.
+       NB the counter's reader is compiled only under SINGLE_STAR_SINK_DYNAMICS, so in other
+       builds this line ensures nothing -- those rely on the big-step branch of the ladder */
     All.NumForcesSinceLastDomainDecomp = (long long) (1 + All.TreeDomainUpdateFrequency * All.TotNumPart);
 
 

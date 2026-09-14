@@ -217,7 +217,13 @@ extern size_t HighMark_run,  HighMark_domain, HighMark_gravtree, HighMark_pmperi
 #ifdef TURB_DRIVING
 extern size_t HighMark_turbpower;
 #endif
-extern int TreeReconstructFlag;
+extern int TreeReconstructFlag; /*!< request a FULL domain decomposition + tree rebuild. Consumed at the
+    step-start ladder (core/run.cc) as a domain_Decomposition, or mid-step by gravity_tree()/
+    compute_potential() as a rearrange+treebuild; both decomposition paths self-raise it to defer the
+    actual build to the next tree consumer. Distinct from TreeMomentsStaleFlag below: this one means
+    the tree's STORAGE/TOPOLOGY must be replaced, not merely its moments re-derived. Zero-initialized;
+    a raise pending when a restartfile is written would be lost on resume (the resume-time
+    decomposition at file_io/restart.cc is conditional on MULTIPLEDOMAINS changing only). */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 extern int GlobFlag;
 extern char DumpFlag;

@@ -524,10 +524,10 @@ void merge_and_split_particles(void)
     if(failed_splits) {printf ("On Task=%d with NumPart=%d we tried and failed to split %d elements, after running out of space (REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart=%d, REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas=%d ).\n We did split %d total (%d gas) elements. Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, failed_splits, (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart), (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas), n_particles_split, n_particles_gas_split); fflush(stdout);}
 
 #ifdef BOX_PERIODIC
-    /* map the particles back onto the box (make sure they get wrapped if they go off the edges). this is redundant here,
-     because we only do splits in the beginning of a domain decomposition step, where this will be called as soon as
-     the particle re-order is completed. but it is still useful to keep here in case this changes (and to note what needs
-     to be done for any more complicated splitting operations */
+    /* map the particles back onto the box (make sure they get wrapped if they go off the edges). Redundant
+     when this runs at the start of a domain decomposition (which wraps after the re-order anyway), but NOT
+     redundant under PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP, where merge/split runs mid-step with no
+     decomposition following. */
     do_box_wrapping();
 #endif
     myfree(Ptmp);
@@ -804,14 +804,16 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     P[i].Time_Of_Last_MergeSplit = All.Time; P[j].Time_Of_Last_MergeSplit = All.Time;
 #endif
     
-    /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
-#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP    
+    /* Under PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP the daughter must be spliced into the live tree and the
+       timebin lists, since no decomposition follows this call. In the default configuration these are
+       deliberately skipped: merge/split then runs only at the start of a domain decomposition, which
+       frees and rebuilds the tree before anything walks it, so the daughter needs no insertion. */
+#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP
     long bin = P[i].TimeBin;
     if(FirstInTimeBin[bin] < 0) {FirstInTimeBin[bin]=j; LastInTimeBin[bin]=j; NextInTimeBin[j]=-1; PrevInTimeBin[j]=-1;} /* only particle in this time bin on this task */
     else {NextInTimeBin[j]=FirstInTimeBin[bin]; PrevInTimeBin[j]=-1; PrevInTimeBin[FirstInTimeBin[bin]]=j; FirstInTimeBin[bin]=j;} /* there is already at least one particle; add this one "to the front" of the list */
     force_add_element_to_tree(i, j);
-#endif    
-    /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
+#endif
     
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
     /* flag cells as having just undergone refinement/derefinement for other subroutines to be aware */
@@ -1157,27 +1159,30 @@ int merge_particles_ij(int i, int j)
 /*!
   This routine swaps the location of two pointers/indices (either to a node or to a particle) in the treewalk needed for neighbor searches and gravity.
   This should be run if you are messing around with the indices of things but don't intend to do a whole treebuild after. - MYG
+  CAVEAT: both slots must currently be IN the tree. If one is not (e.g. a freshly split daughter that
+  was never spliced in), the swap silently orphans the real particle: it becomes unreachable from the
+  walk and its Father[] is garbage. Cost is O(all tree nodes) per call -- the price of not rebuilding.
  */
 
 void swap_treewalk_pointers(int i, int j){
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
-    int no, next, pre_sibling_i=-1, pre_sibling_j=-1, previous_node_i, previous_node_j;
+    int no, next;
     no = All.MaxPart;
 
     while(no >= 0){ // walk the whole tree, starting from the root node (=All.MaxPart)
         if(no < All.MaxPart) { // we got a particle
             next=Nextnode[no];
             if(no != i && no != j){ // don't mess with Nextnodes if looking at i or j - handle that separately
-                if(next == i) {Nextnode[no] = j; previous_node_i = no;}
-                else if(next == j) { Nextnode[no] = i; previous_node_j = no;}
+                if(next == i) {Nextnode[no] = j;}
+                else if(next == j) {Nextnode[no] = i;}
             }
             no = next;
         } else if(no < All.MaxPart+MaxNodes)  { // we have a node
             next = Nodes[no].u.d.nextnode;
-            if(next == i) { previous_node_i = no; Nodes[no].u.d.nextnode = j;}
-            else if(next == j) { previous_node_j = no; Nodes[no].u.d.nextnode = i;}
-            if(Nodes[no].u.d.sibling == i) {Nodes[no].u.d.sibling = j; pre_sibling_i = no;}
-            else if(Nodes[no].u.d.sibling == j) { Nodes[no].u.d.sibling = i; pre_sibling_j = no;}
+            if(next == i) {Nodes[no].u.d.nextnode = j;}
+            else if(next == j) {Nodes[no].u.d.nextnode = i;}
+            if(Nodes[no].u.d.sibling == i) {Nodes[no].u.d.sibling = j;}
+            else if(Nodes[no].u.d.sibling == j) {Nodes[no].u.d.sibling = i;}
             no = next;
         } else { // pseudoparticle
             next = Nextnode[no - MaxNodes];
@@ -1205,7 +1210,12 @@ void swap_treewalk_pointers(int i, int j){
 
 
 /*!
-  This routine deletes a particle from the linked list for the treewalk, preserving the lists's integrity. This must be run if you are deleting particles but don't want to do a while treebuild after. - MYG
+  This routine deletes a particle from the linked list for the treewalk, preserving the LIST's integrity
+  (Nextnode/sibling threading only). It does NOT touch Father[] of anything, and it does NOT remove the
+  particle's contribution from any ancestor node moment (mass, N_part, hmax, ...) -- those stay stale
+  until the next rebuild or moments refresh. Callers rely on the removed slot always being NumPart-1
+  immediately before NumPart--, so its stale Father/Nextnode fall out of every i<NumPart loop and are
+  overwritten on slot reuse. - MYG
 */
 void remove_particle_from_treewalk(int i){
     int no, next;

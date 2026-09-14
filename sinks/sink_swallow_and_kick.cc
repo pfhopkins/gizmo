@@ -597,7 +597,8 @@ void spawn_sink_wind_feedback(void)
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(MPI_n_particles_split>0) {
 #ifdef MAINTAIN_TREE_IN_REARRANGE
-        All.NumForcesSinceLastDomainDecomp +=  0.0001 * All.TreeDomainUpdateFrequency * All.TotNumPart; // we can insert spawned particles in the tree, but still a good idea to rebuild the tree every now and then, so we make the next domain+treebuild come a bit sooner; additional cost should be small
+        All.NumForcesSinceLastDomainDecomp +=  0.0001 * All.TreeDomainUpdateFrequency * All.TotNumPart; /* nudge the next domain+treebuild slightly closer per spawn EVENT (~1e4 events to force one alone).
+            NB the counter's only reader and its resets are compiled under SINGLE_STAR_SINK_DYNAMICS, so under the FIRE_BHS umbrella this nudge is currently inert -- the maintained tree is then rebuilt only on the ordinary decomposition cadence */
 #else
         TreeReconstructFlag = 1; // otherwise just wipe and rebuild the tree next chance you get - more expensive but more accurate
 #endif
@@ -868,7 +869,10 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             if(P[i].Sink_Mass <= m_relic) { // last batch to be spawned
                 n_particles_split = SINGLE_STAR_FB_SNE_N_EJECTA; // we are going to spawn a bunch of low mass particles to take the last bit of mass away
                 printf("Spawning last SN ejecta of star %llu with %g mass and %d particles \n",(unsigned long long) P[i].ID,total_mass_in_winds,n_particles_split);
-                P[i].Mass = DMAX(0, m_relic); // set mass to zero so that this sink will get cleaned up (TreeReconstructFlag = 1 should be already set in sink.c) if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+                P[i].Mass = DMAX(0, m_relic); /* a zero-mass relic is removed by the next rearrange_particle_sequence()
+                    elimination pass. NB nothing here requests a tree rebuild: the old claim that sink.c sets
+                    TreeReconstructFlag has been false since the moments-refresh split -- sink_final_operations sets
+                    only TreeMomentsStaleFlag. Until the elimination runs, the slot stays linked in the tree. */
 #ifdef SINK_ALPHADISK_ACCRETION
                 P[i].Sink_Mass_Reservoir = 0; // just to be safe
 #endif
@@ -1202,8 +1206,12 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data, CellP); /* inject directly */
 #endif
 #endif
-        /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
-        force_add_element_to_tree(i0, j);// (buggy) /* we solve this by only calling the merge/split algorithm when we're doing the new domain decomposition */
+        /* Splice the spawned cell into the live tree. This maintains list connectivity and total node
+           mass (the mass was debited from the co-located sink), but NOT the type-conditioned moments
+           (gasmass, stellar_lum, ...) nor ancestor hmax beyond the immediate parent -- those are healed
+           by the next moments refresh / force_update_hmax pass. Runs on ordinary steps (the spawn gate
+           in run.cc), not only at decomposition. */
+        force_add_element_to_tree(i0, j);
     }
     if(*unspawned_mass_ptr < 0) {*unspawned_mass_ptr=0;}
     return n_particles_split;
