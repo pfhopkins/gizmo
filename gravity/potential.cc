@@ -33,7 +33,10 @@ void compute_potential(void)
     PRINT_STATUS("Start computation of potential for all particles...");
     CPU_Step[CPU_MISC] += measure_time();
     
-    if(TreeReconstructFlag)
+    int TreeReconstructFlag_global; /* reduced read: rank-uniform by convention today, but the build
+        below is collective, so a future rank-local raiser must not be able to desynchronize it */
+    MPI_Allreduce(&TreeReconstructFlag, &TreeReconstructFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(TreeReconstructFlag_global)
     {
         PRINT_STATUS("Tree construction");
         CPU_Step[CPU_MISC] += measure_time();
@@ -41,7 +44,11 @@ void compute_potential(void)
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
         force_treebuild(NumPart, NULL);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time();
-        TreeReconstructFlag = 0;
+        /* Do NOT clear TreeReconstructFlag here: the raise also encodes "a full domain
+           decomposition is owed", and this statistics-path build satisfies only the tree half.
+           Clearing it silently cancelled the decomposition the raiser asked for -- the step-start
+           ladder then never fired. The cost of leaving it set is at most one redundant build
+           before the ladder consumes it next step. The rebuild does make the moments fresh. */
         TreeMomentsStaleFlag = 0;
         PRINT_STATUS(" ..Tree construction done");
     }

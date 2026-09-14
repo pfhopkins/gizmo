@@ -163,8 +163,16 @@ void run(void)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
         if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
 #endif
-        MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everbody has to
-        MPI_Allreduce(MPI_IN_PLACE, &NeedFullDomainDecomp, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        /* Re-read before reducing: TreeReconstructFlag_local was snapshotted at the top of the step,
+           and anything raised since -- the drift/output window contains snapshot-time rearranges and
+           an OUTPUT_POTENTIAL decomposition -- would otherwise be overwritten by the reduce below
+           with that stale copy, leaving the reuse branch updating a tree that is no longer there. */
+        if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
+        {
+            int rflags_local[2] = {TreeReconstructFlag_local, NeedFullDomainDecomp}, rflags_glob[2];
+            MPI_Allreduce(rflags_local, rflags_glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everybody has to
+            TreeReconstructFlag = rflags_glob[0]; NeedFullDomainDecomp = rflags_glob[1];
+        }
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
         {
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
@@ -534,6 +542,31 @@ void execute_resubmit_command(void)
  * function will drift to this moment, generate an output, and then
  * resume the drift.
  */
+#ifdef SINK_TRIGGERED_FINE_OUTPUT
+/* Diagnostic branch runs: once the first sink exists, re-anchor the snapshot grid to that moment
+   and refine it by SINK_TRIGGERED_FINE_OUTPUT, then stop after SINK_TRIGGERED_FINE_OUTPUT_COUNT
+   snapshots. Output scheduling never feeds back into ti_next_kick_global -- the loop below only
+   drifts to the output time and writes -- so this changes what is written, not what is integrated.
+
+   State is file-scope rather than in All: restart files are a raw byte dump of that struct with no
+   version guard (file_io/restart.cc:155), so a field added there would make restart files written
+   by an unpatched build unreadable. The cost is that the counter resets if this run is itself
+   restarted; acceptable for a one-shot diagnostic. */
+#if !defined(SINK_TRIGGERED_FINE_OUTPUT_COUNT)
+#define SINK_TRIGGERED_FINE_OUTPUT_COUNT (300)
+#endif
+static int FineOutputActive = 0, FineOutputCount = 0;
+
+static int fine_output_sink_exists(void)
+{
+    int i, n_local = 0, n_global = 0;
+    for(i = 0; i < NumPart; i++) {if(P[i].Type == 5) {n_local++;}}
+    MPI_Allreduce(&n_local, &n_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    return n_global > 0;
+}
+#endif
+
+
 void find_next_sync_point_and_drift(void)
 {
   int n, i, prev;
@@ -569,6 +602,24 @@ void find_next_sync_point_and_drift(void)
 
   MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
 
+#ifdef SINK_TRIGGERED_FINE_OUTPUT
+  if(!FineOutputActive && fine_output_sink_exists())
+    {
+      All.TimeBetSnapshot /= (double) SINK_TRIGGERED_FINE_OUTPUT;
+      All.TimeOfFirstSnapshot = All.Time;  /* anchor the fine grid at formation, so the first fine
+                                              snapshot is written at this sync point */
+      All.Ti_nextoutput = find_next_outputtime(All.Ti_Current);
+      FineOutputActive = 1;
+      if(ThisTask == 0)
+        {
+          printf("SINK_TRIGGERED_FINE_OUTPUT: first sink present at Time=%g. TimeBetSnapshot -> %g; "
+                 "stopping after %d snapshots.\n", All.Time, All.TimeBetSnapshot,
+                 (int) SINK_TRIGGERED_FINE_OUTPUT_COUNT);
+          fflush(stdout);
+        }
+    }
+#endif
+
   while(ti_next_kick_global >= All.Ti_nextoutput && All.Ti_nextoutput >= 0)
     {
         All.Ti_Current = All.Ti_nextoutput;
@@ -589,6 +640,19 @@ void find_next_sync_point_and_drift(void)
 #endif
 
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef SINK_TRIGGERED_FINE_OUTPUT
+        if(FineOutputActive && ++FineOutputCount >= SINK_TRIGGERED_FINE_OUTPUT_COUNT)
+          {
+            if(ThisTask == 0)
+              {
+                printf("SINK_TRIGGERED_FINE_OUTPUT: wrote %d post-formation snapshots at Time=%g. "
+                       "Stopping.\n", FineOutputCount, All.Time);
+                fflush(stdout);
+              }
+            /* every rank is inside this loop together, so the collective finalize is safe */
+            endrun(0);
+          }
+#endif
         All.Ti_nextoutput = find_next_outputtime(All.Ti_nextoutput + 1);
     }
 

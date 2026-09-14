@@ -45,8 +45,11 @@ void compute_grav_accelerations(void)
 
   gravity_tree();		/* computes gravity accel. */
 
-  /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy */
-  if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {gravity_tree();}
+  /* For the first timestep, we redo it to allow usage of relative opening criterion for consistent accuracy.
+     Raise the rebuild flag so the second pass runs on a freshly built tree rather than reusing the first
+     pass's: the BH->relative switch changes which node data the opening test consumes (cf. gizmo-cpp
+     5b490b93). One extra build at t=0 only. */
+  if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {TreeReconstructFlag = 1; gravity_tree();}
 
   PRINT_STATUS(" ..gravity force computation done");
 }

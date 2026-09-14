@@ -118,13 +118,27 @@ static double fac_intp;
  */
 int force_treebuild(int npart, struct unbind_data *mp)
 {
-    int flag;
+    int flag, treebuild_retries = 0;
     do
     {
         Numnodestree = force_treebuild_single(npart, mp);
+        /* -1 from the build is a genuine node-arena capacity failure (both return sites are
+           out-of-nodes); values -2 and -3 are RESERVED for a future needs-ownership-restore
+           signal and a hard (non-capacity) failure respectively -- cf. gizmo-cpp 98949019 for
+           the taxonomy; the MIN reduce below already gives a more-negative code precedence. */
         MPI_Allreduce(&Numnodestree, &flag, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         if(flag == -1)
         {
+            /* Bound and abort decided HERE, from the reduced flag and the shared TreeAllocFactor,
+               so every rank takes the same branch. Growing past 5.0 (or ~18 growths from the 0.45
+               default) means something other than capacity is wrong -- a particle pileup or
+               corrupted positions -- and more nodes cannot fix it. */
+            if(All.TreeAllocFactor > 5.0 || ++treebuild_retries > 24)
+            {
+                printf("task %d: force_treebuild: node arena still insufficient at TreeAllocFactor=%g after %d growths -- not a capacity problem. Dumping particles and aborting.\n", ThisTask, All.TreeAllocFactor, treebuild_retries);
+                dump_particles();
+                endrun(1);
+            }
             force_treefree();
             if(ThisTask == 0) {printf("Increasing TreeAllocFactor=%g", All.TreeAllocFactor);}
             All.TreeAllocFactor *= 1.15;
@@ -338,18 +352,12 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                 if((numnodes) >= MaxNodes)
                 {
                     printf("task %d: maximum number %d of tree-nodes reached for particle %d.\n", ThisTask, MaxNodes, i);
-                    
-                    if(All.TreeAllocFactor > 5.0)
-                    {
-                        printf("task %d: looks like a serious problem for particle %d, stopping with particle dump.\n", ThisTask, i);
-                        dump_particles();
-                        endrun(1);
-                    }
-                    else
-                    {
-                        myfree(morton_list);
-                        return -1;
-                    }
+                    /* always report capacity to the caller: the abort decision lives in the
+                       force_treebuild driver, taken from the REDUCED flag so every rank agrees --
+                       the old rank-local >5.0 endrun here could leave ranks divergent on whether
+                       to abort */
+                    myfree(morton_list);
+                    return -1;
                 }
             }
         }
@@ -435,12 +443,7 @@ int force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z,
                                "MaxTopNodes=%d NTopnodes=%d NTopleaves=%d nodecount=%d\n",
                                ThisTask, MaxNodes, MaxTopNodes, NTopnodes, NTopleaves, *nodecount);
                         printf("in create empty nodes\n");
-                        if(All.TreeAllocFactor > 5.0)
-                        {
-                            dump_particles();
-                            endrun(11);
-                        }
-                        return -1; /* signal to caller to retry with larger TreeAllocFactor */
+                        return -1; /* capacity signal; the collective abort decision lives in the force_treebuild driver */
                     }
 
                     if(force_create_empty_nodes(*nextfree - 1, TopNodes[topnode].Daughter + sub,

@@ -335,7 +335,11 @@ void fof_fof(int num)
     printf("Tree construction.\n");
   force_treebuild(NumPart, NULL);
 
-  TreeReconstructFlag = 0;
+  /* Raise, don't clear: fof's tree is scratch for group-finding -- it may have been built with
+     conversions (fof_make_sink_particles) still pending in the gas block, and clearing here also
+     discarded any decomposition request that was pending when fof ran. The next tree consumer
+     rebuilds deterministically. */
+  TreeReconstructFlag = 1;
 }
 
 

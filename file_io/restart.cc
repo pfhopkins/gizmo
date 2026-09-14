@@ -280,6 +280,15 @@ void restart(int modus)
 #endif
 #endif
 
+	  /* Cross-step tree-rebuild-request state. These are plain globals (not inside All), so
+	     without serializing them a raise pending at dump time vanished on resume: the
+	     resume-time decomposition below is conditional on MULTIPLEDOMAINS having changed, so
+	     nothing repaired the loss and the resumed run kept walking a condemned/stale tree.
+	     NB THIS EXTENDS THE RESTARTFILE FORMAT: files written before this change cannot be
+	     resumed by this build (and vice versa). */
+	  byten(&TreeReconstructFlag, sizeof(TreeReconstructFlag), modus);
+	  byten(&TreeMomentsStaleFlag, sizeof(TreeMomentsStaleFlag), modus);
+
 	  /* write flags for active timebins */
 	  byten(TimeBinActive, TIMEBINS * sizeof(int), modus);
 
