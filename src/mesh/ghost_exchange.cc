@@ -45,12 +45,6 @@
 #include <omp.h>                 /* threaded sender export + receiver walk below */
 #endif
 
-/* Defined in neighbor_loop_runner.cc. Declared here rather than including the
- * runner header, which is a heavy template TU. Lets this file's diagnostic output
- * share ONE gate with PHASE0_NLR, so Mode-A and Mode-B runs are collectable in the
- * same configuration and remain comparable. */
-bool gizmo_nlr_phase0_diag_enabled(void);
-
 /*
  * ============================================================================
  * COMPACT GHOST STRUCT FIELD REQUIREMENTS (for future optimization)
@@ -1936,7 +1930,7 @@ static char *compute_matched_walk_export(
             sink.clear_all();
             mode_b_walk_and_export(local_queries[qi].pos, local_queries[qi].h,
                                    supply_mask, search_mode, spec->radius_policy,
-                                   /*cand_out=*/NULL, map, sink, walker_j_reach_scale, /*drift_ctr=*/NULL);
+                                   /*cand_out=*/NULL, map, sink, walker_j_reach_scale);
             for(int t = 0; t < NTask; t++) {
                 if(t == ThisTask) continue;
                 long nn = (long)sink.nodes_per_peer[t].size();
@@ -2074,7 +2068,7 @@ static char *compute_matched_walk_export(
             cvk.clear();
             mode_b_walk_from_start_nodes(e->pos, e->h, supply_mask, search_mode,
                                          spec->radius_policy, e->nodes, e->n_nodes,
-                                         cvk, walker_j_reach_scale, NULL);
+                                         cvk, walker_j_reach_scale);
         }
         for(int t = 0; t < NTask; t++) {
             if(t == ThisTask) continue;
@@ -2258,12 +2252,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * authority the geometry would be built and never read.  Structural, keyed on
      * the same predicate as producer selection — no caller names. */
     /* ONE predicate drives BOTH what the cache holds and which producers may run
-     * below: geometry is skipped exactly when no consumer of it can execute.  The
-     * diag path is part of that condition — it re-enables the broadcast walk, which
-     * reads this geometry — so a second, weaker copy of this test here would let a
-     * diag run walk NULL tiles.  Keep this as the single definition. */
-    const int walk_export_only    = gx_walk_export_eligible(spec)
-                           && !gizmo_nlr_phase0_diag_enabled();
+     * below: geometry is skipped exactly when no consumer of it can execute.
+     * Keep this as the single definition — a second, weaker copy of the test
+     * here would let a run that does reach the broadcast walk walk NULL tiles. */
+    const int walk_export_only    = gx_walk_export_eligible(spec);
     const unsigned int wanted_caps = GX_POOL_IDENTITY | (walk_export_only ? 0u : GX_POOL_GEOMETRY);
     /* TWO validities, because the cache holds two payloads with different
      * dependencies.  IDENTITY (pool, j_to_pool, num_pool) is membership and order:
@@ -2545,8 +2537,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * tile/BVH geometry runs on this call, so the broadcast walk is skipped and the
      * geometry was never built.  On producer failure there is no geometry-based
      * fallback left, which is why that case is a controlled stop rather than a
-     * silent switch to a walk whose inputs are absent.  Rank-uniform (spec constants
-     * + diag), so ranks never split across the collectives below. */
+     * silent switch to a walk whose inputs are absent.  Rank-uniform (spec
+     * constants), so ranks never split across the collectives below. */
     if(!walk_export_only) {
         /* Collective broadcast gather + walk.  (walk_export_only SKIPS this
          * — that path installs at the producer below and its failure is caught by the controlled

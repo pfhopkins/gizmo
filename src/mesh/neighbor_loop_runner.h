@@ -1515,11 +1515,10 @@ struct NeighborLoopPlan {
 
     /* Global active-particle count after MPI_Allreduce. Sentinel: -1 means
      * "not populated" — happens on dispatch-override paths
-     * (args.dispatch_override != None) when GIZMO_NLR_DIAG is OFF, since the
-     * runner skips the Allreduce in that case to avoid an extra collective.
-     * Hooks/consumers MUST check for -1 before assuming this field reflects
-     * a real global count. Threshold-dispatch paths always populate it, as
-     * does any force path when GIZMO_NLR_DIAG>=1. */
+     * (args.dispatch_override != None), where the runner has no reason to pay
+     * the collective. Hooks/consumers MUST check for -1 before assuming this
+     * field reflects a real global count. Threshold dispatch populates it, and
+     * so does forced Mode B, whose size guard needs it. */
     int  num_active_global;
 };
 
@@ -2073,29 +2072,9 @@ constexpr bool nlr_spec_has_reset_per_iter_device_context_v =
 int  gizmo_nlr_modeb_threshold_sum_for(const char *loop_name, int spec_default);
 int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
 
-/* ============================================================================
- * NLR env config — unified surface for diagnostic, control, and spike vars.
- *
- * Canonical:
- *   GIZMO_NLR_DIAG=<0|1|2|3>          0=off, 1=PHASE0 timing line per call,
- *                                     2=+dispatch trace, 3=reserved (today
- *                                     equivalent to level 2; rank-0 note)
- *
- * Conflict policy (collective; all ranks endrun):
- *   GIZMO_NLR_DIAG invalid (non-integer, <0, or >3)             -> endrun
- *
- * Warnings: rank-0 only, cached one-shot per env-var key.
- * ========================================================================== */
-
 /* NlrForceMode is defined above struct neighbor_loop_args because its
  * in-class default initializer for the dispatch_override field needs
  * the enum to be fully visible. See declaration above near line 1030. */
-
-int          gizmo_nlr_diag_level(void);              /* 0..3 (3 == 2 today) */
-
-/* Convenience adapters — preserved for existing callers, all delegating
- * to the unified API above. */
-bool gizmo_nlr_dispatch_trace_enabled(void);
 
 
 /* ============================================================================
@@ -2148,49 +2127,6 @@ struct NlrReplyEnvelope {
     AccumData accum;
 };
 
-
-/* Cached env-gate adapter. Read-once-per-process; mid-run env changes do
- * not take effect. Delegates to gizmo_nlr_diag_level() >= 1. */
-bool gizmo_nlr_phase0_diag_enabled(void);
-
-/* ============================================================================
- * RunnerStageTimer — timing accumulator populated when GIZMO_NLR_DIAG>=1
- *
- * Each path function (run_mode_a / run_mode_b_local / run_mode_b_remote)
- * receives a pointer; nullptr means "phase0 off, skip all timing." Path
- * fills only the fields that apply to its dispatch:
- *
- *   path=gpu_ngl         dt_collect (NGL build) + dt_walk_self (pair kernel)
- *                          + dt_writeback. Others = 0.
- *   path=mode_b_local    dt_collect + dt_drift + dt_walk_self + dt_writeback.
- *                          Others = 0.
- *   path=mode_b_remote   all 8 fields. dt_collect = self+peer pre-drift
- *                          collection; dt_walk_self = self_tree evaluate;
- *                          dt_walk_peer = peer_tree evaluate; dt_exchange_q,
- *                          dt_exchange_r = peer-to-peer comm; dt_reduce = reply merge;
- *                          dt_writeback = writeback loop; dt_drift = lazy
- *                          drift on union.
- *
- * dt_total measured wall-clock from runner entry to runner exit. Now
- * includes the runner-owned prep step (dt_prep_import); the caller has
- * been simplified and no longer runs prep before the runner.
- *
- * dt_prep_import is the wall around gizmo_request_filtered_ghost_import_fresh
- * on Mode A paths; 0 on Mode B paths (genuine 0 — the API isn't called).
- * ========================================================================== */
-
-struct RunnerStageTimer {
-    double dt_prep_import;   /* Mode A only; 0 on Mode B paths. */
-    double dt_collect;
-    double dt_drift;
-    double dt_walk_self;
-    double dt_walk_peer;
-    double dt_exchange_q;
-    double dt_exchange_r;
-    double dt_reduce;
-    double dt_writeback;
-    double dt_total;
-};
 
 /* ============================================================================
  * nlr_build_active_list inline definition.

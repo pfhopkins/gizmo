@@ -502,12 +502,6 @@ extern "C" void gpu_gravity_soa_mark_drift_certified(integertime ti)
     g_soa_drift_gen = force_treebuild_generation();
 }
 
-/* Pure O(1) read-only certification query (no drift, no node loop). */
-extern "C" int gpu_gravity_soa_drift_certified(integertime ti)
-{
-    return (g_soa_drift_ti == ti && g_soa_drift_gen == force_treebuild_generation()) ? 1 : 0;
-}
-
 /* Record that this tree was built current at `ti`. Sole writer of the born
  * record; called by force_treebuild after the mirror and the foreign range are
  * finalized and after the generation has been bumped, so it captures the

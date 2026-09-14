@@ -431,8 +431,7 @@ void drift_particle(int i, integertime time1);
    fields it writes advanced and others not, which a re-run from the stale Ti_current
    would advance twice. So the only thing a caller may conclude from 0 is that the
    result is trustworthy; on nonzero the caller must not publish any claim about the
-   particle set, and the run is already draining toward its next stop poll. Callers
-   that publish no such claim may ignore it. */
+   particle set, and the run is already draining toward its next stop poll. */
 /* Advance idx[0..n_idx) to time1, or the contiguous range [0,n_idx) when idx is
    NULL. Optionally reports which of them were behind and were therefore handed
    to the drift: pass a buffer of at least n_idx ints, an int for the count, or

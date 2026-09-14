@@ -205,8 +205,7 @@ static void mode_b_walk_impl(const double pos[3],
                              bool stop_at_toplevel,
                              std::vector<int>* cand_out,
                              const ModeBTopleafMap* topleaf_map,
-                             ModeBExportSink* export_out,
-                             ModeBDriftCounters* drift_ctr)
+                             ModeBExportSink* export_out)
 {
     if(All.TreeNodeIndexBase <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int num_local = ghost_get_num_local();
@@ -239,19 +238,14 @@ static void mode_b_walk_impl(const double pos[3],
              * walk that sees it fresh also sees the drifter's fresh geometry
              * (paired with the release store in force_drift_node). */
             if(modeb_node_ti_current_acquire(no) != All.Ti_Current) {
-                if(drift_ctr) drift_ctr->stale_node_hits++;
 #ifdef _OPENMP
 #pragma omp critical(_modebdrift_)
 #endif
                 {
                     /* Re-check inside the lock: another thread may have drifted
-                     * this node between the fast-path load and here. drift_ctr
-                     * is a per-thread instance, so these increments never race. */
+                     * this node between the fast-path load and here. */
                     if(modeb_node_ti_current_acquire(no) != All.Ti_Current) {
                         force_drift_node(no, All.Ti_Current);
-                        if(drift_ctr) drift_ctr->lazy_drift_performed++;
-                    } else {
-                        if(drift_ctr) drift_ctr->lazy_drift_raced++;
                     }
                 }
             }
@@ -339,12 +333,11 @@ void mode_b_local_neighbor_walk(const double pos[3],
                                 int search_mode,
                                 mode_b_radius_policy_t radius_policy,
                                 std::vector<int>& out,
-                                double j_reach_scale,
-                                ModeBDriftCounters* drift_ctr)
+                                double j_reach_scale)
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                      /*start_no=*/All.TreeNodeIndexBase, /*stop_at_toplevel=*/false,
-                     &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr, drift_ctr);
+                     &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr);
 }
 
 /* SENDER walk: from root, record targeted exports at reached remote topleaves
@@ -361,12 +354,11 @@ void mode_b_walk_and_export(const double pos[3],
                             std::vector<int>* cand_out,
                             const ModeBTopleafMap& topleaf_map,
                             ModeBExportSink& sink,
-                            double j_reach_scale,
-                            ModeBDriftCounters* drift_ctr)
+                            double j_reach_scale)
 {
     mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                      /*start_no=*/All.TreeNodeIndexBase, /*stop_at_toplevel=*/false,
-                     cand_out, &topleaf_map, &sink, drift_ctr);
+                     cand_out, &topleaf_map, &sink);
 }
 
 /* RECEIVER walk: resume from each exported start-node (open its children like
@@ -380,8 +372,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
                                   const int *node_list,
                                   int n_nodes,
                                   std::vector<int>& out,
-                                  double j_reach_scale,
-                                  ModeBDriftCounters* drift_ctr)
+                                  double j_reach_scale)
 {
     if(All.TreeNodeIndexBase <= 0 || Nodes == NULL || Nextnode == NULL) return;
     const int tree_base      = All.TreeNodeIndexBase;
@@ -395,7 +386,7 @@ void mode_b_walk_from_start_nodes(const double pos[3],
         const int start = Nodes[nl].u.d.nextnode;   /* open the exported node */
         mode_b_walk_impl(pos, h_q, type_mask, search_mode, radius_policy, j_reach_scale,
                          start, /*stop_at_toplevel=*/true,
-                         &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr, drift_ctr);
+                         &out, /*topleaf_map=*/nullptr, /*export_out=*/nullptr);
     }
 }
 

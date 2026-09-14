@@ -282,17 +282,41 @@ extern "C" void gpu_particles_arena_release(void)
  *  should be measured both ways rather than reasoned about. */
 #define PARTICLE_STORAGE_HOST_PREFERRED_MIN_BYTES ((size_t) 1024 * 1024 * 1024)
 
-/*! Does this rank's particle storage want host-preferred placement? `particle_arena_bytes` is
- *  the total for P plus CellP, so the two arrays always decide together and a gas-free run is
- *  judged on P alone. GPU_PARTICLE_STORAGE_PLACEMENT overrides the decision for validation
- *  and tuning; leaving it unset is the production path. */
-static int particle_storage_prefers_host_memory(size_t particle_arena_bytes)
+/*! ⚠ THE HOST-PREFERRED PLACEMENT IS A STOPGAP, NOT A DESIGN. It is here because the largest
+ *  runs would otherwise not complete, and it is accepted on those terms alone. Keeping the bulk
+ *  particle storage on the host is the opposite of what this port is for: every routine moved
+ *  onto the device has to reach across the fabric for it, so the hint buys a large win today by
+ *  making a larger one harder to reach. It is a debt to be repaid by putting enough of the
+ *  consumers on the device that the storage can follow them, not a setting to tune around.
+ *
+ *  ⛔ THEREFORE: a single device flip measured against this placement is NOT a verdict on that
+ *  flip. Priced one at a time against host-resident storage, every one of them loses, because
+ *  each pays the fabric crossing alone while the saving only appears once enough of them move
+ *  together. Any such measurement must be paired with an arm that moves the placement too --
+ *  which is what the DEVICE setting below exists for.
+ *
+ *  Where this rank's particle storage should prefer to live. `particle_arena_bytes` is the total
+ *  for P plus CellP, so the two arrays always decide together and a gas-free run is judged on P
+ *  alone. GPU_PARTICLE_STORAGE_PLACEMENT overrides the decision for validation and tuning;
+ *  leaving it unset is the production path. */
+#define PARTICLE_STORAGE_PLACEMENT_NONE   0   /* no hint: pages settle wherever they are used */
+#define PARTICLE_STORAGE_PLACEMENT_HOST   1   /* prefer host, map the device in as an accessor */
+#define PARTICLE_STORAGE_PLACEMENT_DEVICE 2   /* prefer device, map the host in as an accessor */
+
+static int particle_storage_placement(size_t particle_arena_bytes)
 {
 #if defined(GPU_PARTICLE_STORAGE_PLACEMENT)
     (void) particle_arena_bytes;
-    return (GPU_PARTICLE_STORAGE_PLACEMENT != 0) ? 1 : 0;
+    /* Anything outside the three named values keeps the original meaning of a nonzero setting,
+     * so a Config carrying an older value still selects what it always selected. */
+    return (GPU_PARTICLE_STORAGE_PLACEMENT == PARTICLE_STORAGE_PLACEMENT_NONE)
+             ? PARTICLE_STORAGE_PLACEMENT_NONE
+         : (GPU_PARTICLE_STORAGE_PLACEMENT == PARTICLE_STORAGE_PLACEMENT_DEVICE)
+             ? PARTICLE_STORAGE_PLACEMENT_DEVICE
+             : PARTICLE_STORAGE_PLACEMENT_HOST;
 #else
-    return (particle_arena_bytes >= PARTICLE_STORAGE_HOST_PREFERRED_MIN_BYTES) ? 1 : 0;
+    return (particle_arena_bytes >= PARTICLE_STORAGE_HOST_PREFERRED_MIN_BYTES)
+             ? PARTICLE_STORAGE_PLACEMENT_HOST : PARTICLE_STORAGE_PLACEMENT_NONE;
 #endif
 }
 
@@ -304,12 +328,19 @@ static int particle_storage_prefers_host_memory(size_t particle_arena_bytes)
 static void particle_storage_apply_placement(void *p, size_t nbytes, size_t particle_arena_bytes)
 {
     if(!p || nbytes == 0 || particle_arena_bytes == 0) {return;}
-    if(!particle_storage_prefers_host_memory(particle_arena_bytes)) {return;}
+    const int placement = particle_storage_placement(particle_arena_bytes);
+    if(placement == PARTICLE_STORAGE_PLACEMENT_NONE) {return;}
 #if defined(KOKKOS_ENABLE_HIP)
     int dev = 0;
     if(hipGetDevice(&dev) != hipSuccess) {return;}
-    hipError_t rc_pref = hipMemAdvise(p, nbytes, hipMemAdviseSetPreferredLocation, hipCpuDeviceId);
-    hipError_t rc_acc  = hipMemAdvise(p, nbytes, hipMemAdviseSetAccessedBy, dev);
+    /* One pair of calls serves both directions: whichever side is preferred, the other is
+     * mapped in as an accessor so it reaches the pages without moving them. */
+    const int on_device   = (placement == PARTICLE_STORAGE_PLACEMENT_DEVICE);
+    const int prefer_id   = on_device ? dev : hipCpuDeviceId;
+    const int accessor_id = on_device ? hipCpuDeviceId : dev;
+    const char *where     = on_device ? "device" : "host";
+    hipError_t rc_pref = hipMemAdvise(p, nbytes, hipMemAdviseSetPreferredLocation, prefer_id);
+    hipError_t rc_acc  = hipMemAdvise(p, nbytes, hipMemAdviseSetAccessedBy, accessor_id);
     if(rc_pref != hipSuccess || rc_acc != hipSuccess)
     {
         /* The two calls are independent, so one of them can be refused on its own and leave
@@ -320,10 +351,10 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
         if(!reported && ThisTask == 0)
         {
             reported = 1;
-            printf("Particle storage: the host-preferred placement hint was not fully applied "
-                   "(preferred location: %s; device access: %s). Whatever part of it was accepted "
+            printf("Particle storage: the %s-preferred placement hint was not fully applied "
+                   "(preferred location: %s; other-side access: %s). Whatever part of it was accepted "
                    "stands, and the run continues at whatever speed that gives.\n",
-                   hipGetErrorString(rc_pref), hipGetErrorString(rc_acc));
+                   where, hipGetErrorString(rc_pref), hipGetErrorString(rc_acc));
             fflush(stdout);
         }
         return;
@@ -333,8 +364,9 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
      * and capacity changes are rare enough to be worth a line of their own anyway. */
     if(ThisTask == 0)
     {
-        printf("Particle storage: host-preferred placement applied to %g MByte "
+        printf("Particle storage: %s-preferred placement applied to %g MByte "
                "(particle arrays total %g MByte on this rank).\n",
+               where,
                (double) nbytes / (1024.0 * 1024.0),
                (double) particle_arena_bytes / (1024.0 * 1024.0));
         fflush(stdout);

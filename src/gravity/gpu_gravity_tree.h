@@ -215,20 +215,11 @@ void gpu_force_drift_release(void);
 void gpu_gravtree_hermite_release(void);   /* frees the drift/kick table mirror the Hermite source prediction reads */
 #endif
 
-/* Pure O(1) READ-ONLY query: is the SoA+AoS node geometry certified drifted to
- * `ti`?  Returns 1 iff the drift stamp matches (ti + current treebuild
- * generation), else 0.  Never launches a drift kernel and never loops over nodes
- * (two integer compares), so it is cheap to call on any step.  The stamp is set
- * by the drift sweep on success (gpu_force_drift_nodes, via
- * gpu_gravity_soa_mark_drift_certified) and invalidated on SoA realloc/free/rebuild.
- * A caller that has not run the sweep this step (before the first gravity walk,
- * or SELFGRAVITY_OFF) reads 0 and must drift any stale node it uses itself. */
-int gpu_gravity_soa_drift_certified(integertime time1);
-
 /* Record that the SoA+AoS node geometry is drifted to `ti` (snapshots the
  * current treebuild generation).  Called by the drift sweep on success so every
- * sweep caller records certification; it is the sole writer of the stamp that
- * gpu_gravity_soa_drift_certified reads. */
+ * sweep caller records certification.  The stamp is read by
+ * gpu_gravity_tree_nodes_current_at below, and is invalidated on SoA
+ * realloc/free/rebuild. */
 void gpu_gravity_soa_mark_drift_certified(integertime time1);
 
 /* Record that the tree was BUILT current at `ti` (snapshots the treebuild
@@ -246,7 +237,7 @@ void gpu_gravity_tree_invalidate_currency(void);
 /* THE question a device consumer of node geometry should ask: is that geometry
  * current at `ti`?  True if the drift sweep certified it OR the tree was built
  * current at it, AND the mirror those records describe still exists.  Asking
- * gpu_gravity_soa_drift_certified() instead asks whether the GRAVITY WALK
+ * only whether the drift sweep ran would instead ask whether the GRAVITY WALK
  * happened to sweep this step, which is false in many configurations where the
  * geometry is perfectly current -- SELFGRAVITY_OFF, gravity routed to the host
  * by GravityHostWalkBelowActive, or ADAPTIVE_TREEFORCE_UPDATE shrinking the

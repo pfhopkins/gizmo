@@ -44,8 +44,7 @@
 #include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
 #include "ghost_symlist_lifecycle.h"     /* gizmo_request_filtered_ghost_import_fresh, ghost_exchange_cleanup */
-#include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute, lazy_drift */
-#include "../gravity/gpu_gravity_tree.h" /* gpu_gravity_tree_nodes_current_at (node-currency diagnostic) */
+#include "mode_b_local_walker.h"         /* mode_b_local_neighbor_walk, brute */
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -243,69 +242,6 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
     return spec_default;
 }
 
-/* ============================================================================
- * NLR env config (Pass B.i unified API).
- *
- * Single canonical surface for diagnostic, control, and spike (cross-
- * validation) env vars. Old names are accepted as aliases for one cycle
- * with rank-0 deprecation warnings; explicit retire queued for the next
- * cleanup pass after Pass B.
- *
- * Conflict policy and alias precedence: see the comment block on the
- * declarations at the top of mesh/neighbor_loop_runner.h.
- *
- * All accessors are first-use cached and lock-free (single load per call).
- * Initialization may call endrun on a hard conflict; endrun is collective,
- * and TACC env vars are uniform across ranks, so all ranks reach the same
- * decision and abort together.
- * ========================================================================== */
-
-namespace {
-
-/* nlr_warn_once_rank0 is defined at file scope above (near the includes). */
-
-/* Initialize diag level. */
-static int nlr_init_diag_level(void)
-{
-    const char *raw = getenv("GIZMO_NLR_DIAG");
-    int level = 0;
-    if(raw && raw[0]) {
-        char *endp = nullptr;
-        long v = strtol(raw, &endp, 10);
-        if(!endp || *endp != '\0' || v < 0 || v > 3) {
-            if(ThisTask == 0) {
-                fprintf(stderr, "[NLR env] FATAL: GIZMO_NLR_DIAG=\"%s\" must be in {0,1,2,3}.\n",
-                        raw);
-                fflush(stderr);
-            }
-            endrun(81100);
-        }
-        level = (int)v;
-    }
-
-    if(level == 3) {
-        nlr_warn_once_rank0("level_3_reserved",
-            "GIZMO_NLR_DIAG=3: level 3 currently has no extra diagnostics; "
-            "reserved for future scalar-only extensions. Behaving as level 2.");
-    }
-
-    return level;
-}
-
-
-
-} /* anonymous namespace */
-
-int gizmo_nlr_diag_level(void)
-{
-    static int cached = -1;
-    if(cached < 0) cached = nlr_init_diag_level();
-    return cached;
-}
-
-/* Adapters — preserve existing call-site names. */
-bool gizmo_nlr_phase0_diag_enabled(void)    { return gizmo_nlr_diag_level() >= 1; }
-bool gizmo_nlr_dispatch_trace_enabled(void) { return gizmo_nlr_diag_level() >= 2; }
 
 /* ============================================================================
  * NeighborLoopPlan path predicates — single source of truth keyed on path.
@@ -374,32 +310,6 @@ const char *nlr_path_label(NeighborLoopPlan::Path path)
     return "unknown";
 }
 
-/* ============================================================================
- * StageTimer — internal RAII helper for PHASE0 timing
- *
- * `target == nullptr` means phase0 is off: ctor and dtor do nothing except
- * a single predictable nullptr branch. NO MPI_Wtime call when off — "MPI_Wtime is not zero overhead" is
- * addressed at the call site, not just at the gating env var.
- *
- * Targets are accumulators: multiple StageTimer scopes can target the same
- * field (e.g. Mode B remote's dt_collect spans BOTH self and peer pre-drift
- * collection — two scopes accumulate). dt_total spans the whole runner call
- * and is set explicitly at top-level, not via this helper.
- * ========================================================================== */
-namespace {
-struct StageTimer {
-    double *target;
-    double t0;
-    explicit StageTimer(double *tgt) : target(tgt), t0(0.0) {
-        if(target) t0 = MPI_Wtime();
-    }
-    ~StageTimer() {
-        if(target) *target += MPI_Wtime() - t0;
-    }
-    StageTimer(const StageTimer&) = delete;
-    StageTimer& operator=(const StageTimer&) = delete;
-};
-} /* anonymous namespace */
 
 
 /* ============================================================================
@@ -493,25 +403,6 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
  * reference eval is greppable and can never be silently mis-gated. */
 enum class EvalOMPPolicy { AllowProduction, ForceSerialReference };
 
-/* GX_MODEB_EXPORT omp_eval= field: the eval-threading decision, mirroring the
- * evaluate_pairs_post_drift gate exactly (same nlr_modeb_use_omp threshold) so
- * the diagnostic can never disagree with the code path taken. Reports the
- * production self-eval decision (EvalOMPPolicy::AllowProduction at the emit). */
-static inline void nlr_modeb_eval_decision_label(char *buf, size_t n,
-                                                 ModeBEvalOMP tier, bool is_explicit,
-                                                 EvalOMPPolicy policy,
-                                                 int nthreads, long long work)
-{
-    if(!is_explicit)                                  { std::snprintf(buf, n, "serial(missing_trait)"); return; }
-    if(policy == EvalOMPPolicy::ForceSerialReference) { std::snprintf(buf, n, "serial(reference)"); return; }
-    if(tier == ModeBEvalOMP::SerialOnly)              { std::snprintf(buf, n, "serial(trait_serialonly)"); return; }
-    /* tier is BitwiseReadonly or EpsilonAtomic (both thread the production eval) */
-    if(nthreads <= 1)                                 { std::snprintf(buf, n, "serial(1thread)"); return; }
-    if(nlr_modeb_use_omp(work, nthreads)) {
-        if(tier == ModeBEvalOMP::BitwiseReadonly)       std::snprintf(buf, n, "bitwise_readonly(%d)", nthreads);
-        else                                            std::snprintf(buf, n, "epsilon_atomic(%d)", nthreads);
-    } else                                              std::snprintf(buf, n, "serial(below_threshold)");
-}
 
 /* WALK-ONLY. Does NOT mutate P[].Pos/Vel — drift_particle must not be
  * called from inside this helper. (Audited 2026-05-08: walker calls only
@@ -525,11 +416,8 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
                                           const double *radii,
                                           unsigned int neighbor_type_mask,
                                           DispatchPath backend,
-                                          std::vector<std::vector<int>>& per_active_cands,
-                                          ModeBDriftCounters* drift_ctr_out = nullptr,
-                                          int* threads_used_out = nullptr)
+                                          std::vector<std::vector<int>>& per_active_cands)
 {
-    if(threads_used_out) *threads_used_out = 0;   /* 0 until threading is decided */
     /* neighbor_type_mask is an explicit caller parameter (mask-threading
      * refactor). Non-iter callers pass Spec::neighbor_type_mask (unchanged
      * behavior); iter dispatch passes sg.j_type_bitmask for per-subgroup walks. */
@@ -556,13 +444,10 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
     const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
                          nlr_modeb_use_omp(N, nthreads);
-    if(threads_used_out) *threads_used_out = use_omp ? nthreads : 0;
     if(use_omp) {
         /* Each thread mutates only its own per_active_cands[aa] (outer vector
          * pre-sized; no shared push) and its own drift counter (diagnostic
          * only — allocated iff a counter sink was requested). */
-        std::vector<ModeBDriftCounters> tctr;
-        if(drift_ctr_out) tctr.resize(nthreads);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
 #endif
@@ -576,17 +461,10 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
             double pos_arr[3] = {(double)args.P[i].Pos[0],
                                   (double)args.P[i].Pos[1],
                                   (double)args.P[i].Pos[2]};
-#ifdef _OPENMP
-            const int tid = omp_get_thread_num();
-#else
-            const int tid = 0;
-#endif
-            ModeBDriftCounters* ctr = drift_ctr_out ? &tctr[tid] : nullptr;
             mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
                                        Spec::search_mode, Spec::radius_policy,
-                                       cands, jscale, ctr);
+                                       cands, jscale);
         }
-        if(drift_ctr_out) for(const auto& c : tctr) drift_ctr_out->add(c);
         return;
     }
     for(int aa = 0; aa < N; aa++) {
@@ -622,11 +500,8 @@ static void collect_candidates_for_remote_queries(
     const std::vector<int>& peer_nnodes,          /* K; valid entries per query's NodeList */
     unsigned int neighbor_type_mask,
     DispatchPath backend,
-    std::vector<std::vector<int>>& per_query_cands,
-    ModeBDriftCounters* drift_ctr_out = nullptr,
-    int* threads_used_out = nullptr)
+    std::vector<std::vector<int>>& per_query_cands)
 {
-    if(threads_used_out) *threads_used_out = 0;   /* 0 until threading is decided */
     /* neighbor_type_mask is an explicit caller parameter (mask-threading
      * refactor). Non-iter callers pass Spec::neighbor_type_mask; iter
      * dispatch passes sg.j_type_bitmask.
@@ -650,10 +525,7 @@ static void collect_candidates_for_remote_queries(
     const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
                          nlr_modeb_use_omp(K, nthreads);
-    if(threads_used_out) *threads_used_out = use_omp ? nthreads : 0;
     if(use_omp) {
-        std::vector<ModeBDriftCounters> tctr;   /* diagnostic only */
-        if(drift_ctr_out) tctr.resize(nthreads);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_RECV)
 #endif
@@ -665,24 +537,17 @@ static void collect_candidates_for_remote_queries(
             cands.clear();
             if(cands.capacity() == 0) cands.reserve(64);
             double pos_arr[3] = {(double)active.pos[0], (double)active.pos[1], (double)active.pos[2]};
-#ifdef _OPENMP
-            const int tid = omp_get_thread_num();
-#else
-            const int tid = 0;
-#endif
-            ModeBDriftCounters* ctr = drift_ctr_out ? &tctr[tid] : nullptr;
             if(peer_nnodes[k] > 0) {
                 mode_b_walk_from_start_nodes(pos_arr, h_q, neighbor_type_mask,
                                              Spec::search_mode, Spec::radius_policy,
                                              &peer_nodelist_flat[(size_t)k * NODELISTLENGTH],
-                                             peer_nnodes[k], cands, jscale, ctr);
+                                             peer_nnodes[k], cands, jscale);
             } else {
                 mode_b_local_neighbor_walk(pos_arr, h_q, neighbor_type_mask,
                                             Spec::search_mode, Spec::radius_policy,
-                                            cands, jscale, ctr);
+                                            cands, jscale);
             }
         }
-        if(drift_ctr_out) for(const auto& c : tctr) drift_ctr_out->add(c);
         return;
     }
     for(int k = 0; k < K; k++) {
@@ -849,8 +714,7 @@ static void build_self_actives_host_pre_drift(
 }
 
 template <typename Spec>
-static void run_mode_b_local(const neighbor_loop_args& args, const double *radii,
-                             RunnerStageTimer *tim = nullptr)
+static void run_mode_b_local(const neighbor_loop_args& args, const double *radii)
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
@@ -893,25 +757,21 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     /* Helper layout: collect → drift → evaluate. */
     std::vector<std::vector<int>> cand_modeB;
     {
-        StageTimer t(tim ? &tim->dt_collect : nullptr);
         collect_candidates_pre_drift<Spec>(args, radii,
                                             nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                                             DispatchPath::ModeB_HostWalker, cand_modeB);
     }
     {
-        StageTimer t(tim ? &tim->dt_drift : nullptr);
         lazy_drift_candidates<Spec>(cand_modeB);
     }
 
     std::vector<AccumData> accums(N);
     {
-        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         evaluate_pairs_post_drift<Spec>(ctx, actives.data(), N, cand_modeB, accums.data(), cs, EvalOMPPolicy::AllowProduction);
     }
 
     /* Host writeback — same code path as Mode A's writeback. */
     {
-        StageTimer t(tim ? &tim->dt_writeback : nullptr);
         for(int aa = 0; aa < N; aa++) {
             Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
         }
@@ -1007,43 +867,33 @@ struct NlrPeerAnswerHostWalk {
     using AccumData = typename Spec::AccumData;
 
     /* The host path, unchanged: collect against the local pool, drift what the
-     * walk touched, evaluate. `diag_omp_recv_out` and `eval_peer_work_peak`
-     * belong to the caller's diagnostics and are updated through pointers rather
-     * than returned, so the call site reads exactly as it did before. */
+     * walk touched, evaluate. */
     static void answer(const typename Spec::DeviceContext& ctx,
                        const typename Spec::CallScalars& cs,
                        const std::vector<typename Spec::ActiveData>& peer_actives,
                        const std::vector<int>& peer_nodelist_flat,
                        const std::vector<int>& peer_nnodes,
                        unsigned int neighbor_type_mask,
-                       ModeBDriftCounters *drift_sink,
-                       RunnerStageTimer *tim,
-                       int *threaded_walk_units_out,
-                       long long *eval_peer_work_peak,
                        std::vector<AccumData>& peer_replies_out)
     {
         /* Stage 6: collect PEER candidate sets PRE-DRIFT (against MY local pool). */
         std::vector<std::vector<int>> cand_peer_tree;
         {
-            StageTimer t(tim ? &tim->dt_collect : nullptr);
-            int tu_recv = 0;
             collect_candidates_for_remote_queries<Spec>(peer_actives,
                                                          peer_nodelist_flat, peer_nnodes,
                                                          neighbor_type_mask,
                                                          DispatchPath::ModeB_HostWalker,
-                                                         cand_peer_tree, drift_sink, &tu_recv);
+                                                         cand_peer_tree);
             /* Reported rather than recorded here: the threaded-walk note is the
              * transport's own diagnostic, and it lives in a lambda that closes
              * over the transport's locals.  A backend that reached for it would
              * be reaching out of its scope, which is what the first draft of
              * this extraction did. */
-            if(threaded_walk_units_out) {*threaded_walk_units_out = tu_recv;}
         }
 
         /* Stage 7 (peer): drift THIS round's peer candidate sets (self candidates
          * were drifted once before the round loop). Idempotent to All.Ti_Current. */
         {
-            StageTimer t(tim ? &tim->dt_drift : nullptr);
             lazy_drift_candidates<Spec>(cand_peer_tree);
         }
 
@@ -1051,8 +901,6 @@ struct NlrPeerAnswerHostWalk {
          * to the home rank. */
         const int K = (int)peer_actives.size();
         if(K > 0) {
-            StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
-            if(eval_peer_work_peak && (long long)K > *eval_peer_work_peak) {*eval_peer_work_peak = (long long)K;}
             evaluate_pairs_post_drift<Spec>(ctx, peer_actives.data(), K,
                                               cand_peer_tree, peer_replies_out.data(), cs, EvalOMPPolicy::AllowProduction);
         }
@@ -1129,7 +977,6 @@ static void mode_b_remote_evaluate_into_buffer(
     const typename Spec::DeviceContext& ctx,         /* caller-owned */
     unsigned int neighbor_type_mask,                  /* explicit caller param */
     typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
-    RunnerStageTimer *tim = nullptr,
     /* Only read on the DeviceFused backend, where it is the tree the collective
      * readiness decision was made against.  Unused by HostWalk. */
     const GxDeviceTreeView *fused_tree = nullptr)
@@ -1257,17 +1104,6 @@ static void mode_b_remote_evaluate_into_buffer(
     ModeBExportSink export_sink;   /* per-query export sink (write-only during the walk) */
     if constexpr (targeted_export_ok) {
         if(N > 0 && nt > 1) { export_sink.ensure_size(nt); topleaf_map.build(); }
-    } else {
-        if(rank == 0 && gizmo_nlr_dispatch_trace_enabled()) {
-            static bool s_announced = false;
-            if(!s_announced) {
-                s_announced = true;
-                fprintf(stdout, "GX_MODEB_EXPORT rank=0 caller=%s BROADCAST "
-                        "(radius_policy not scalar-hmax-dominated; broadcast retained)\n",
-                        Spec::loop_name);
-                fflush(stdout);
-            }
-        }
     }
 
     /* Fused-walk export CSR (targeted specs): per active, its per-peer export
@@ -1279,27 +1115,8 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<int> csr_rec_off;                    /* size N+1: active aa -> [off[aa],off[aa+1]) recs */
     std::vector<FusedExportRec> csr_recs;
     std::vector<int> csr_nodes;
-    long long diag_csr_bytes = 0; int diag_max_env_per_active = 0;
 
-    /* Discovery-walk threading diagnostics (GX_MODEB_EXPORT, NLR_DIAG>=2 only).
-     * The threading itself always runs above the work threshold; only the
-     * per-thread drift accounting is diagnostic, so it is fully OFF when the
-     * dispatch trace is off (drift_sink == nullptr => walker skips every counter
-     * increment, no per-thread tctr allocated) — zero production overhead.
-     * drift_certified is the O(1) SoA drift-cert query, read LAZILY the first
-     * time a walk actually threads (below-threshold tiny-N calls never touch the
-     * stamp); it reports whether the lazy per-node drift branch is provably dead
-     * (stale_node_hits MUST be 0 when drift_certified==1). */
     const int modeb_nthreads = nlr_modeb_omp_nthreads();
-    const bool nlr_diag_on = gizmo_nlr_dispatch_trace_enabled();
-    ModeBDriftCounters drift_ctr_total{};
-    ModeBDriftCounters* const drift_sink = nlr_diag_on ? &drift_ctr_total : nullptr;
-    int drift_certified = -1;   /* -1 = no threaded walk ran (or diag off) */
-    long long diag_omp_self = 0, diag_omp_recv = 0;   /* actual threads used per stage; 0 = serial */
-    auto nlr_note_threaded_walk = [&]() {
-        if(nlr_diag_on && drift_certified < 0)
-            drift_certified = gpu_gravity_tree_nodes_current_at(All.Ti_Current) ? 1 : 0;
-    };
 
     /* Stage 3: collect SELF candidates PRE-DRIFT. For targeted specs this is the
      * FUSED legacy-mode==0 walk — candidates + export CSR in ONE traversal, keyed
@@ -1320,7 +1137,6 @@ static void mode_b_remote_evaluate_into_buffer(
                 const bool want_cands = (Backend == NlrEvalBackend::HostWalk);
                 if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
                 csr_rec_off.assign(N + 1, 0);
-                StageTimer t(tim ? &tim->dt_collect : nullptr);
                 /* Thread the fused self walk above the work threshold. Each thread
                  * walks its actives into its OWN export sink + its OWN CSR segment
                  * (no shared push, no lock); a serial prefix-sum then assembles the
@@ -1338,16 +1154,12 @@ static void mode_b_remote_evaluate_into_buffer(
                  * most actives of any of them. */
                 const bool use_omp_self = nlr_modeb_use_omp(N, modeb_nthreads);
                 if(use_omp_self) {
-                    diag_omp_self = modeb_nthreads;
-                    nlr_note_threaded_walk();
-                    struct AaMeta { int tid; int rec_off; int n_recs; int node_off; int n_nodes; long long env_count; };
+                    struct AaMeta { int tid; int rec_off; int n_recs; int node_off; int n_nodes; };
                     std::vector<AaMeta> meta(N);
                     std::vector<ModeBExportSink> tsink(modeb_nthreads);
                     for(auto& s : tsink) s.ensure_size(nt);
                     std::vector<std::vector<FusedExportRec>> trecs(modeb_nthreads);
                     std::vector<std::vector<int>> tnodes(modeb_nthreads);
-                    std::vector<ModeBDriftCounters> tctr;   /* diagnostic only */
-                    if(drift_sink) tctr.resize(modeb_nthreads);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
 #endif
@@ -1362,7 +1174,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         std::vector<int>& lnodes = tnodes[tid];
                         AaMeta& m = meta[aa];
                         m.tid = tid; m.rec_off = (int)lrecs.size(); m.node_off = (int)lnodes.size();
-                        m.n_recs = 0; m.n_nodes = 0; m.env_count = 0;
+                        m.n_recs = 0; m.n_nodes = 0;
                         const double h_q = (double)actives[aa].h_search;
                         if(h_q <= 0) continue;
                         double pos_arr[3] = {(double)actives[aa].pos[0],
@@ -1381,8 +1193,7 @@ static void mode_b_remote_evaluate_into_buffer(
                         }
                         mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                                 Spec::search_mode, Spec::radius_policy,
-                                                cand_ptr, topleaf_map, sink, jscale,
-                                                drift_sink ? &tctr[tid] : nullptr);
+                                                cand_ptr, topleaf_map, sink, jscale);
                         for(int p = 0; p < nt; p++) {
                             if(p == rank) continue;
                             const std::vector<int>& nodes = sink.nodes_per_peer[p];
@@ -1394,7 +1205,6 @@ static void mode_b_remote_evaluate_into_buffer(
                             lnodes.insert(lnodes.end(), nodes.begin(), nodes.end());
                             m.n_recs++;
                             m.n_nodes += nn;
-                            m.env_count += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
                         }
                     }
                     /* Deterministic active-ordered merge. */
@@ -1416,11 +1226,8 @@ static void mode_b_remote_evaluate_into_buffer(
                                 csr_nodes[node_cursor++] = lnodes[local_node_off + q];
                             csr_recs[rec_cursor++] = rec;
                         }
-                        if(m.env_count > diag_max_env_per_active)
-                            diag_max_env_per_active = (int)m.env_count;
                     }
                     csr_rec_off[N] = rec_cursor;
-                    if(drift_sink) for(const auto& c : tctr) drift_ctr_total.add(c);
                 } else {
                     for(int aa = 0; aa < N; aa++) {
                         csr_rec_off[aa] = (int)csr_recs.size();
@@ -1439,7 +1246,6 @@ static void mode_b_remote_evaluate_into_buffer(
                                                 Spec::search_mode, Spec::radius_policy,
                                                 cand_ptr, topleaf_map, export_sink, jscale);
                         /* stage this active's per-peer exports into the CSR */
-                        long long env_this_active = 0;
                         for(int p = 0; p < nt; p++) {
                             if(p == rank) continue;
                             const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
@@ -1449,33 +1255,22 @@ static void mode_b_remote_evaluate_into_buffer(
                             rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
                             csr_recs.push_back(rec);
                             csr_nodes.insert(csr_nodes.end(), nodes.begin(), nodes.end());
-                            env_this_active += (nn + NODELISTLENGTH - 1) / NODELISTLENGTH;
                         }
-                        if(env_this_active > diag_max_env_per_active)
-                            diag_max_env_per_active = (int)env_this_active;
                     }
                     csr_rec_off[N] = (int)csr_recs.size();
                 }
-                diag_csr_bytes = (long long)csr_recs.size() * (long long)sizeof(FusedExportRec)
-                               + (long long)csr_nodes.size() * (long long)sizeof(int);
             } else {
                 /* single rank: no peers to export to → plain candidate walk. */
-                StageTimer t(tim ? &tim->dt_collect : nullptr);
-                int tu_self = 0;
                 collect_candidates_pre_drift<Spec>(args, radii,
                                                     neighbor_type_mask,
                                                     DispatchPath::ModeB_HostWalker,
-                                                    cand_self_tree, drift_sink, &tu_self);
-                if(tu_self > 0) { diag_omp_self = tu_self; nlr_note_threaded_walk(); }
+                                                    cand_self_tree);
             }
         } else {
-            StageTimer t(tim ? &tim->dt_collect : nullptr);
-            int tu_self = 0;
             collect_candidates_pre_drift<Spec>(args, radii,
                                                 neighbor_type_mask,
                                                 DispatchPath::ModeB_HostWalker,
-                                                cand_self_tree, drift_sink, &tu_self);
-            if(tu_self > 0) { diag_omp_self = tu_self; nlr_note_threaded_walk(); }
+                                                cand_self_tree);
         }
     }
 
@@ -1484,7 +1279,6 @@ static void mode_b_remote_evaluate_into_buffer(
      * (constant across the helper), so a j that is both a self- and peer-
      * candidate drifts once — identical to the old combined union drift. */
     if constexpr (Backend == NlrEvalBackend::HostWalk) {
-        StageTimer t(tim ? &tim->dt_drift : nullptr);
         if (N > 0) lazy_drift_candidates<Spec>(cand_self_tree);
     }
 
@@ -1497,7 +1291,6 @@ static void mode_b_remote_evaluate_into_buffer(
      * So this site skips the collected-candidate drift because it collected no
      * candidates, not because everything is already current. */
     if(N > 0) {
-        StageTimer t(tim ? &tim->dt_walk_self : nullptr);
         if constexpr (Backend == NlrEvalBackend::HostWalk) {
             evaluate_pairs_post_drift<Spec>(ctx, actives, N,
                                               cand_self_tree, accums_out, cs, EvalOMPPolicy::AllowProduction);
@@ -1539,9 +1332,6 @@ static void mode_b_remote_evaluate_into_buffer(
     if(bunch < 1) bunch = 1;
 
     long long diag_export_qr = 0, diag_node_appends = 0;   /* scalar export volume (NLR diag) */
-    long long diag_rounds = 0, diag_peak_sent = 0;
-    long long diag_recv_groups = 0, diag_peak_recv_env = 0, diag_peak_recv_bytes = 0;
-    long long eval_peer_work_peak = 0;   /* max per-round peer-eval work K (feeds omp_eval_peer diag) */
     int cursor = 0;
     int ndone  = 0;
 
@@ -1641,9 +1431,6 @@ static void mode_b_remote_evaluate_into_buffer(
             cursor = N;   /* nothing to export (N==0 or single rank) */
         }
 
-        diag_rounds++;
-        if(round_env_count > diag_peak_sent) diag_peak_sent = round_env_count;
-
         /* Stage 4: exchange queries. Every rank participates even if it queued
          * 0 this round (peers may target this rank's pool); the Allreduce(ndone)
          * at the round's end keeps every rank's round count equal, so the
@@ -1661,7 +1448,6 @@ static void mode_b_remote_evaluate_into_buffer(
         using XReply = ReplyEnvelope;
         ModeBBoundedExchange<Envelope, XReply> xch;
         {
-            StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
             xch.begin(queries_per_peer);
         }
         const size_t group_budget_bytes =
@@ -1672,11 +1458,9 @@ static void mode_b_remote_evaluate_into_buffer(
         while(true) {
             bool have_group;
             {
-                StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
                 have_group = xch.next_group(group_budget_bytes, group_peers, group_queries);
             }
             if(!have_group) break;
-            diag_recv_groups++;
 
     /* Stage 5: flatten THIS GROUP's envelopes and build the provenance map.
      * provenance[k] carries:
@@ -1703,8 +1487,6 @@ static void mode_b_remote_evaluate_into_buffer(
         total_recv += group_queries[gi].size();
         total_recv_bytes += group_queries[gi].size() * (sizeof(Envelope) + sizeof(XReply));
     }
-    if((long long)total_recv > diag_peak_recv_env) diag_peak_recv_env = (long long)total_recv;
-    if((long long)total_recv_bytes > diag_peak_recv_bytes) diag_peak_recv_bytes = (long long)total_recv_bytes;
     peer_actives.reserve(total_recv);
     peer_provenance.reserve(total_recv);
     peer_nodelist_flat.reserve(total_recv * NODELISTLENGTH);
@@ -1745,18 +1527,14 @@ static void mode_b_remote_evaluate_into_buffer(
     const int K = (int)peer_actives.size();
     std::vector<AccumData> peer_replies(K);
     if constexpr (Backend == NlrEvalBackend::HostWalk) {
-        int tu_recv = 0;
         NlrPeerAnswerHostWalk<Spec>::answer(ctx, cs, peer_actives,
                                             peer_nodelist_flat, peer_nnodes,
-                                            neighbor_type_mask, drift_sink, tim,
-                                            &tu_recv, &eval_peer_work_peak,
+                                            neighbor_type_mask,
                                             peer_replies);
-        if(tu_recv > 0) { diag_omp_recv = tu_recv; nlr_note_threaded_walk(); }
     } else {
         NlrPeerAnswerDeviceFused<Spec>::answer(ctx, cs, *fused_tree, peer_actives,
                                                peer_nodelist_flat, peer_nnodes,
-                                               neighbor_type_mask, tim,
-                                               &eval_peer_work_peak,
+                                               neighbor_type_mask,
                                                peer_replies);
     }
     /* Stage 10 (per group): build reply envelopes (origin_slot/rank copied from
@@ -1777,7 +1555,6 @@ static void mode_b_remote_evaluate_into_buffer(
             re.origin_rank = pv.origin_rank;
             re.accum = peer_replies[k];
         }
-        StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
         /* send_group_replies posts the reply Isends and waits them in finish();
          * move the group's reply buffers into the exchange so they outlive the Isend. */
         xch.send_group_replies(group_peers, std::move(replies_for_group));
@@ -1792,10 +1569,8 @@ static void mode_b_remote_evaluate_into_buffer(
          * stage 8). Asserts each reply envelope's origin_rank == ThisTask. */
         {
             auto recv_replies = [&]{
-                StageTimer t(tim ? &tim->dt_exchange_r : nullptr);
                 return xch.finish();
             }();
-            StageTimer t(tim ? &tim->dt_reduce : nullptr);
             for (int p = 0; p < nt; p++) {
                 if (p == rank) continue;
                 const int q_to_p = xch.sent_counts[p];
@@ -1831,58 +1606,10 @@ static void mode_b_remote_evaluate_into_buffer(
          * draining. */
         int ndone_flag = (cursor >= N) ? 1 : 0;
         {
-            StageTimer t(tim ? &tim->dt_exchange_q : nullptr);
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         }
     } while(ndone < NTask);
 
-    if(gizmo_nlr_dispatch_trace_enabled()) {
-        /* peak_recv_env/bytes bound TRANSPORT payloads only (envelopes+replies
-         * staged per group) — not candidate vectors or kernel scratch.
-         * export_csr_bytes/max_env_per_active bound the fused walk's materialized
-         * export CSR (recs+nodes) built once in Stage 3 (targeted specs).
-         * nthr = OpenMP threads available; omp_self/omp_recv = threads used for
-         * the self / receiver discovery walks (0 = ran serial, below the work
-         * threshold). drift_certified = O(1) SoA drift-cert query (1 = the lazy
-         * per-node drift branch is provably dead; -1 = not queried on a serial
-         * call). The three drift counts are lazy per-node drifts under threading:
-         * stale_node_hits = fast-path saw a stale node; lazy_drift_performed =
-         * this thread drifted it; lazy_drift_raced = a peer drifted it first.
-         * stale_node_hits MUST be 0 on a drift_certified=1 run.
-         * omp_eval_self / omp_eval_peer = the production self / peer eval
-         * threading decisions, each mirroring the evaluate_pairs_post_drift
-         * eval-threading (non-SerialOnly) gate on its OWN work count (N self; peak per-round K
-         * peer). Reported separately so peer-eval threading is never hidden
-         * behind the self-eval decision (a call can be self-serial/peer-threaded
-         * or vice versa). */
-        char eval_self_label[40], eval_peer_label[40];
-        nlr_modeb_eval_decision_label(eval_self_label, sizeof(eval_self_label),
-                                      nlr_spec_modeb_eval_omp<Spec>(),
-                                      nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
-                                      EvalOMPPolicy::AllowProduction,
-                                      modeb_nthreads, (long long)N);
-        nlr_modeb_eval_decision_label(eval_peer_label, sizeof(eval_peer_label),
-                                      nlr_spec_modeb_eval_omp<Spec>(),
-                                      nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
-                                      EvalOMPPolicy::AllowProduction,
-                                      modeb_nthreads, eval_peer_work_peak);
-        fprintf(stdout, "GX_MODEB_EXPORT rank=%d caller=%s N=%d export_qr=%lld node_appends=%lld "
-                "bunch=%lld env_bytes=%zu reply_bytes=%zu rounds=%lld peak_sent_env=%lld "
-                "recv_groups=%lld peak_recv_env=%lld peak_recv_bytes=%lld "
-                "export_csr_bytes=%lld max_env_per_active=%d "
-                "nthr=%d omp_self=%lld omp_recv=%lld omp_eval_self=%s omp_eval_peer=%s drift_certified=%d "
-                "stale_node_hits=%lld lazy_drift_performed=%lld lazy_drift_raced=%lld\n",
-                rank, Spec::loop_name, N, diag_export_qr, diag_node_appends,
-                bunch, sizeof(Envelope), kReplyBytes, diag_rounds, diag_peak_sent,
-                diag_recv_groups, diag_peak_recv_env, diag_peak_recv_bytes,
-                diag_csr_bytes, diag_max_env_per_active,
-                modeb_nthreads, diag_omp_self, diag_omp_recv,
-                eval_self_label, eval_peer_label,
-                drift_certified,
-                drift_ctr_total.stale_node_hits, drift_ctr_total.lazy_drift_performed,
-                drift_ctr_total.lazy_drift_raced);
-        fflush(stdout);
-    }
 
 
     /* End of helper. Caller decides whether to call apply_active_writeback
@@ -1899,8 +1626,7 @@ static void mode_b_remote_evaluate_into_buffer(
  * writeback per active as the earlier monolithic impl.
  * ========================================================================== */
 template <typename Spec>
-static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double *radii,
-                                   RunnerStageTimer *tim = nullptr)
+static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double *radii)
 {
     using AccumData    = typename Spec::AccumData;
     using DeviceCtx    = typename Spec::DeviceContext;
@@ -1954,12 +1680,10 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
      * (preserves the earlier timing). */
     mode_b_remote_evaluate_into_buffer<Spec>(args, radii, cs, ctx,
                                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                                                       (N > 0) ? accums_self.data() : nullptr,
-                                                       tim);
+                                                       (N > 0) ? accums_self.data() : nullptr);
 
     /* Stage 12 final: writeback per active. */
     {
-        StageTimer t(tim ? &tim->dt_writeback : nullptr);
         for(int aa = 0; aa < N; aa++) {
             Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_self[aa]);
         }
@@ -1968,9 +1692,8 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
 }
 
 template <typename Spec>
-static void run_mode_b_remote(const neighbor_loop_args& args, const double *radii,
-                              RunnerStageTimer *tim = nullptr) {
-    run_mode_b_remote_impl<Spec>(args, radii, tim);
+static void run_mode_b_remote(const neighbor_loop_args& args, const double *radii) {
+    run_mode_b_remote_impl<Spec>(args, radii);
 }
 
 /* ============================================================================
@@ -2337,8 +2060,7 @@ static int nlr_mode_a_team_width(const Functor& f)
 }
 
 template <typename Spec>
-static void run_mode_a(const neighbor_loop_args& args, const double *radii,
-                       RunnerStageTimer *tim = nullptr)
+static void run_mode_a(const neighbor_loop_args& args, const double *radii)
 {
     using ActiveData   = typename Spec::ActiveData;
     using AccumData    = typename Spec::AccumData;
@@ -2439,7 +2161,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
             Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
             return;
         }
-        StageTimer t(tim ? &tim->dt_collect : nullptr);
         if(!nlr_stage_external_csr_into_gnl(ec, &gnl, Spec::loop_name)) {
             nlr_free_external_csr_gnl(&gnl);
             Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
@@ -2447,7 +2168,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
             return;
         }
     } else {
-        StageTimer t(tim ? &tim->dt_collect : nullptr);
         /* Active-source-in-pool contract: stage explicit P[active_i].Pos for specs
          * whose active sources may be non-pool (else nullptr keeps the compact
          * fast-path). See neighbor_loop_runner.h. Radii are already explicit. */
@@ -2597,7 +2317,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
          * width-1 Spec compiles to exactly the kernel it compiled to before
          * teams existed rather than to a one-lane imitation of a team. */
         {
-            StageTimer t(tim ? &tim->dt_walk_self : nullptr);
             const double t_pair_kernel_start = my_second();
 
             auto flat_kernel = KOKKOS_LAMBDA(int kk) {
@@ -2631,7 +2350,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii,
 
         /* (4) host writeback for [c0, c0+n) before the next chunk reuses arrays. */
         {
-            StageTimer t(tim ? &tim->dt_writeback : nullptr);
             for(int kk = 0; kk < n; kk++) {
                 Spec::apply_active_writeback(args, c0 + kk, args.active_list[c0 + kk], d_accums[kk]);
             }
@@ -2918,60 +2636,44 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     const bool force_a   = (force_mode == NlrForceMode::A);
     const bool force_b   = (force_mode == NlrForceMode::B);
 
-    /* PHASE0 timing scaffolding. Cached env-gate; mid-run env
-     * changes do not take effect. When on, ALL MPI_Wtime calls inside the
-     * runner are gated; off-path overhead is one branch per StageTimer
-     * scope, no MPI_Wtime call. PHASE0_NLR measures only RUNNER-OWNED time:
-     * caller-side ghost prep / detector / SinkTempInfo scatter are NOT
-     * included. */
-    const bool phase0_on = gizmo_nlr_phase0_diag_enabled();
-    RunnerStageTimer tim = {};
-    RunnerStageTimer *tim_ptr = phase0_on ? &tim : nullptr;
-    const double t_runner_start = phase0_on ? MPI_Wtime() : 0.0;
-
     /* Threshold dispatch. Allreduce sum + max of args.num_active.
-     * Skipped when the caller supplied a dispatch override (cheap path).
-     * PHASE0 num_active_global is captured here when the threshold path
-     * already did the Allreduce; on force paths an extra Allreduce is done
-     * ONLY when phase0_on. */
+     * Skipped when the caller supplied a dispatch override (cheap path), which
+     * is why the global count is not available on every path: it is computed
+     * only where something needs it — the threshold decision itself, and the
+     * forced-Mode-B size guard. It is never computed merely to report it. */
     bool select_mode_b = force_b;
-    int phase0_sum_active = -1;       /* -1 = not yet computed */
+    int global_num_active = -1;       /* -1 = not computed on this path */
     if(!force_a && !force_b) {
         int local_act = args.num_active;
         int sum_act = 0, max_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        phase0_sum_active = sum_act;
+        global_num_active = sum_act;
         /* Spec::modeb_threshold_{sum,max} via SFINAE; default 64/64. */
         const int spec_default_sum = nlr_spec_threshold_sum<Spec>(64);
         const int spec_default_max = nlr_spec_threshold_max<Spec>(64);
         const int TS = gizmo_nlr_modeb_threshold_sum_for(Spec::loop_name, spec_default_sum);
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
-    } else if(phase0_on || force_b) {
-        /* Force path: dispatch logic skipped the Allreduce. Do it here for
-         * phase0 num_active_global and for the forced-Mode-B size guard. */
+    } else if(force_b) {
+        /* Forced Mode B skipped the dispatch Allreduce, but its size guard
+         * needs the global count, so it is done here. */
         int local_act = args.num_active;
         int sum_act = 0;
         MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        phase0_sum_active = sum_act;
+        global_num_active = sum_act;
     }
-    /* Globally-zero-active call: do NO neighbor work. phase0_sum_active is the
+    /* Globally-zero-active call: do NO neighbor work. global_num_active is the
      * dispatch Allreduce of active particles (set on the threshold + force-B
      * paths), so it is identical on every rank -> this return is collective-
      * symmetric (all ranks return together, skipping the Mode-A ghost import /
      * writeback / cleanup as a matched set). NOT the banned local num_active==0
      * early return: the condition is GLOBAL. Without it, a zero-active call
      * falls to Mode A and fires a spurious ghost import with nothing to compute.
-     * Not fired on the force-A path (phase0_sum_active stays -1 there). The
-     * normal PHASE0/dispatch summary is intentionally skipped for such calls; a
-     * distinct rank-0 marker (diag-gated) keeps them observable. */
-    if(phase0_sum_active == 0) {
-        if(phase0_on && ThisTask == 0) {
-            std::printf("NLR_ZERO_ACTIVE_NOOP sp=%d caller=%s\n",
-                        (int)All.NumCurrentTiStep, Spec::loop_name);
-            std::fflush(stdout);
-        }
+     * The forced-Mode-A path does not compute the count, so it does not reach
+     * this and still pays that import; giving it the saving means giving it a
+     * collective it does not otherwise need, which is a separate decision. */
+    if(global_num_active == 0) {
         return;
     }
 
@@ -2986,22 +2688,8 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     } else {
         plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
     }
-    plan.num_active_global = phase0_sum_active;   /* may be -1 when phase0_on=false */
+    plan.num_active_global = global_num_active;   /* -1 on dispatch-override paths */
 
-    /* Optional dispatch trace. Rank-0 only to avoid spam. */
-    if(gizmo_nlr_dispatch_trace_enabled()) {
-        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        if(rank == 0) {
-            const char *src =
-                force_a       ? "force" :
-                force_b       ? "force" :
-                                "threshold";
-            fprintf(stderr, "[NLR DISPATCH caller=%s path=%s (%s) NTask=%d local_active=%d]\n",
-                    Spec::loop_name, nlr_path_label(plan.path), src,
-                    NTask, args.num_active);
-            fflush(stderr);
-        }
-    }
 
     /* ---- Stage radii once ---- */
     /* Computed via Spec::search_radius. Used for any path-conditional
@@ -3066,7 +2754,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
                 }
             }
         } else {
-            StageTimer t_prep(tim_ptr ? &tim_ptr->dt_prep_import : nullptr);
             gizmo_request_filtered_ghost_import_fresh(Spec::loop_name,
                                                        Spec::search_mode,
                                                        nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
@@ -3108,13 +2795,13 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     /* ---- Path dispatch ---- */
     switch(plan.path) {
         case NeighborLoopPlan::Path::ModeA_GpuNgl:
-            run_mode_a<Spec>(args, radii.data(), tim_ptr);
+            run_mode_a<Spec>(args, radii.data());
             break;
         case NeighborLoopPlan::Path::ModeB_Local:
-            run_mode_b_local<Spec>(args, radii.data(), tim_ptr);
+            run_mode_b_local<Spec>(args, radii.data());
             break;
         case NeighborLoopPlan::Path::ModeB_Remote:
-            run_mode_b_remote<Spec>(args, radii.data(), tim_ptr);
+            run_mode_b_remote<Spec>(args, radii.data());
             break;
     }
 
@@ -3160,31 +2847,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
         }
     }
 
-    /* ---- PHASE0_NLR emit ---- */
-    /* Stable prefix `PHASE0_NLR`. `caller=` is a field, not part of the
-     * token, so future Specs keep the parser regex stable. The new
-     * dt_prep_import field measures the runner-internal prep wall (Mode A
-     * only; 0 on Mode B paths). Other fields per the path-specific
-     * documentation in neighbor_loop_runner.h. */
-    if(phase0_on) {
-        tim.dt_total = MPI_Wtime() - t_runner_start;
-        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        static long long s_call_id = 0;
-        ++s_call_id;
-        std::printf("PHASE0_NLR rank=%d caller=%s path=%s call_id=%lld "
-                    "num_active_local=%d num_active_global=%d "
-                    "dt_prep_import=%.6g "
-                    "dt_collect=%.6g dt_drift=%.6g dt_walk_self=%.6g "
-                    "dt_walk_peer=%.6g dt_exchange_q=%.6g dt_exchange_r=%.6g "
-                    "dt_reduce=%.6g dt_writeback=%.6g dt_total=%.6g\n",
-                    rank, Spec::loop_name, nlr_path_label(plan.path), s_call_id,
-                    args.num_active, phase0_sum_active,
-                    tim.dt_prep_import,
-                    tim.dt_collect, tim.dt_drift, tim.dt_walk_self,
-                    tim.dt_walk_peer, tim.dt_exchange_q, tim.dt_exchange_r,
-                    tim.dt_reduce, tim.dt_writeback, tim.dt_total);
-        std::fflush(stdout);
-    }
 }
 
 /* ============================================================================
@@ -3800,8 +3462,7 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
         drv.cs,                          /* driver-owned CallScalars */
         drv.ctx,                         /* driver-owned DeviceContext */
         (unsigned int)sgr.j_type_bitmask, /* per-subgroup mask */
-        (n_compacted > 0) ? accums_compacted.data() : nullptr,
-        /*tim=*/nullptr);
+        (n_compacted > 0) ? accums_compacted.data() : nullptr);
 
     /* Scatter compacted accums back into driver-owned per-slot accum_uvm.
      * Slots NOT in active_set_uvm keep their last-evaluated value (the
@@ -4345,8 +4006,6 @@ struct NlrPeerAnswerDeviceFused {
                        const std::vector<int>& peer_nodelist_flat,
                        const std::vector<int>& peer_nnodes,
                        unsigned int neighbor_type_mask,
-                       RunnerStageTimer *tim,
-                       long long *eval_peer_work_peak,
                        std::vector<AccumData>& peer_replies_out)
     {
         using ActiveData  = typename Spec::ActiveData;
@@ -4354,9 +4013,6 @@ struct NlrPeerAnswerDeviceFused {
 
         const int K = (int)peer_actives.size();
         if(K <= 0) {return;}
-
-        StageTimer t(tim ? &tim->dt_walk_peer : nullptr);
-        if(eval_peer_work_peak && (long long)K > *eval_peer_work_peak) {*eval_peer_work_peak = (long long)K;}
 
         /* The queries and their start-node lists have to be where the kernel can
          * read them.  This is a copy of the QUERIES, which is what Mode D ships
@@ -4905,7 +4561,7 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
             sub, radii_compacted.data(), drv.cs, drv.ctx,
             (unsigned int)sgr.j_type_bitmask,
             (n_compacted > 0) ? accums_compacted.data() : nullptr,
-            /*tim=*/nullptr, &drv.mode_d_tree);
+            &drv.mode_d_tree);
         for(int k = 0; k < n_compacted; k++) {
             drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = accums_compacted[k];
         }
@@ -5160,31 +4816,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * PHASE0/dispatch summary is intentionally skipped for such calls; a distinct
      * rank-0 marker (diag-gated) keeps them observable. */
     if (global_active_sum == 0) {
-        if (gizmo_nlr_phase0_diag_enabled() && ThisTask == 0) {
-            std::printf("NLR_ZERO_ACTIVE_NOOP sp=%d caller=%s\n",
-                        (int)All.NumCurrentTiStep, Spec::loop_name);
-            std::fflush(stdout);
-        }
         return;
     }
 
-    if(gizmo_nlr_dispatch_trace_enabled()) {
-        int rank = 0; MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-        if(rank == 0) {
-            const char *src =
-                (force_mode == NlrForceMode::A || force_mode == NlrForceMode::B)
-                ? "force" : "threshold";
-            fprintf(stderr,
-                    "[NLR ITER DISPATCH caller=%s path=%s (%s) NTask=%d "
-                    "local_active=%d forced_modeb_global_active=%d]\n",
-                    Spec::loop_name,
-                    path == DispatchPath::ModeA_GPU_NGL ? "gpu_ngl"
-                        : (path == DispatchPath::ModeD_DeviceFused ? "mode_d" : "mode_b"),
-                    src, NTask, args.num_active,
-                    forced_modeb_global_active);
-            fflush(stderr);
-        }
-    }
 
     /* ===== CallScalars captured ONCE for whole call ===== */
     typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
