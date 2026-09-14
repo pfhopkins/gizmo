@@ -4,6 +4,11 @@ import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, getcwd, makedirs
 from urllib.request import urlretrieve
 from urllib.error import HTTPError, URLError
+import socket
+# A stalled connection (server accepts, then never sends) hangs urlretrieve FOREVER by default --
+# a sweep task wedged 2+ hours this way on a file mid-regeneration upstream. A timeout turns the
+# stall into the URLError the mirror-fallback path already handles.
+socket.setdefaulttimeout(300)
 import fcntl
 from shutil import move, rmtree, copyfile
 from glob import glob
