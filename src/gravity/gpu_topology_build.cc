@@ -369,6 +369,7 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
     struct particle_data      *P_dev = ctx.P_dev;
     const struct topnode_data *tn    = ctx.tn;
     int *pt    = g_particle_topleaf;
+    const int *dni = ctx.dni;
     int *stage = g_sorted_idx;   /* free until the bucket scatter runs, and large enough by construction */
 
     const double dc0 = DomainCorner[0], dc1 = DomainCorner[1], dc2 = DomainCorner[2];
@@ -404,6 +405,12 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
                                               dc0, dc1, dc2, dlen, bits, &mf);
         int retained = gpu_topleaf_for_key(tn, fkey);
         if(retained < 0 || retained >= ntl || dtask[retained] != me) {Kokkos::atomic_fetch_add(&ctr[1], 1); return;}
+        /* The leaf has to have a node in this tree before anything is attached to it: the clamp that
+         * follows, and the growth pass after the build, both index Nodes[] with exactly this value.
+         * An attachment naming a leaf whose node lies outside the tree is not usable, so it is
+         * reported with the others that cannot be recovered rather than retained. */
+        const int retained_node = dni[retained];
+        if(retained_node < tbase || retained_node >= tbase + maxn) {Kokkos::atomic_fetch_add(&ctr[1], 1); return;}
         pt[i] = retained;
     });
     Kokkos::fence();
@@ -703,15 +710,9 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 auto id_of = [P_dev, stp] (int idx) -> uint64_t {
                     return (uint64_t) P_dev[stp ? stp[idx] : idx].ID;
                 };
-                int rrc = gpu_morton_split_8way_random_inplace(
+                gpu_morton_split_8way_random_inplace(
                     sidx + w.range_first, range_count, id_of,
                     (uint64_t) w.parent_depth, child_starts);
-                if(rrc < 0) {
-                    /* Range too large for thread-local scratch (rare).
-                     * Signal failure; would need a global-scratch path. */
-                    Kokkos::atomic_fetch_max(fail, 5);
-                    return;
-                }
             } else {
                 gpu_morton_split_8way(sidx, keys, w.range_first, w.range_last,
                                       w.parent_depth, child_starts);
@@ -777,6 +778,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
 
     int rc = (*fail == 0) ? 0 : *fail;
     int new_total = *ncount;
+    int work_left = *sz_curr;   /* read here: the depth-guard test below runs after these are freed */
     if(new_node_count_out) {*new_node_count_out = new_total;}
 
     /* After ping-pong swaps, sz_curr / sz_next still refer to the two
@@ -786,8 +788,12 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
 
-    if(level_guard >= GIZMO_GPU_MORTON_MAX_DEPTH + 4 && rc == 0) {
-        printf("gpu_topology_emit_bfs: BFS exceeded depth guard (level=%d) -- possible infinite recursion\n", level_guard);
+    /* Ask whether work was LEFT, not whether the last allowed level was used: a breadth-first walk
+     * that finishes exactly on that level leaves an empty worklist and has not exceeded anything.
+     * Testing the level alone reported a completed build as a failure, which the caller now treats
+     * as fatal rather than retrying, so the distinction has to be right. */
+    if(work_left > 0 && level_guard >= GIZMO_GPU_MORTON_MAX_DEPTH + 4 && rc == 0) {
+        printf("gpu_topology_emit_bfs: BFS exceeded depth guard (level=%d) with work still pending -- a node is not subdividing\n", level_guard);
         return 4;
     }
     return rc;

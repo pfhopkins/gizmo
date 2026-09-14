@@ -246,13 +246,69 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
  *                                 BFS level samples an independent stream.
  *   child_starts[0..8]         -- output octant boundaries.
  *
- * Uses a thread-local scratch of fixed size MAX_COLLOC_RANGE.  If the range
- * exceeds this, returns -1 (caller signals failure; user must use a different
- * IC or upgrade scratch budget).  On success returns 0. */
+ * A range up to GIZMO_GPU_MORTON_COLLOC_SCRATCH is handled with a thread-local scratch of that
+ * fixed size.  A larger range goes to the linear, buffer-free rare path below rather than failing:
+ * a group of collocated particles big enough to exceed the scratch used to abort the build, and the
+ * outer retry read that as a node shortage and grew the arena against a limit that is not the node
+ * count.  There is no range this cannot split, so there is no failure to report. */
 #define GIZMO_GPU_MORTON_COLLOC_SCRATCH 512
 
+/* The octant a collocated particle is assigned to.  Deterministic in (ID, counter), which is what
+ * lets the large-range path below recompute it instead of remembering it.  Both paths call this,
+ * so the assignment policy has one home and cannot drift between them. */
 template <class IDFunc>
-KOKKOS_INLINE_FUNCTION int gpu_morton_split_8way_random_inplace(
+KOKKOS_INLINE_FUNCTION int gpu_morton_colloc_octant(IDFunc id_of, int idx, uint64_t counter)
+{
+    const double r = gizmo_gpu_rand_double((uint64_t) id_of(idx), counter);
+    int o = (int)(8.0 * r);
+    if(o < 0) {o = 0;}
+    if(o > 7) {o = 7;}
+    return o;
+}
+
+/* Same assignment, for a range too large for the thread-local scratch.  Carries no buffer: it
+ * counts the octants, then permutes the range in place with eight cursors, recomputing each
+ * particle's octant as it goes.  Linear in the range and dearer per element than the buffered
+ * path, which is why that one is kept for the ordinary case; the point here is only that an
+ * exceptionally large collocated group stops being fatal.  Order within an octant is not the
+ * buffered path's, which costs nothing: this range previously could not be built at all.
+ *
+ * The permutation is correct because octants below k are already complete when k is processed, so
+ * every element found in k's span belongs to an octant >= k and its cursor is still inside its own
+ * span. */
+template <class IDFunc>
+KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way_random_inplace_large(
+    int           *sorted_idx_range,
+    int            count,
+    IDFunc         id_of,
+    uint64_t       counter,
+    int            child_starts[9])
+{
+    int counts[8] = {0,0,0,0,0,0,0,0};
+    for(int j = 0; j < count; j++) {counts[gpu_morton_colloc_octant(id_of, sorted_idx_range[j], counter)]++;}
+
+    int sum = 0;
+    for(int k = 0; k < 8; k++) {child_starts[k] = sum; sum += counts[k];}
+    child_starts[8] = sum;
+
+    int cursor[8];
+    for(int k = 0; k < 8; k++) {cursor[k] = child_starts[k];}
+    for(int k = 0; k < 8; k++)
+    {
+        while(cursor[k] < child_starts[k + 1])
+        {
+            const int idx = sorted_idx_range[cursor[k]];
+            const int o   = gpu_morton_colloc_octant(id_of, idx, counter);
+            if(o == k) {cursor[k]++; continue;}
+            const int dst = cursor[o]++;
+            sorted_idx_range[cursor[k]] = sorted_idx_range[dst];
+            sorted_idx_range[dst]       = idx;
+        }
+    }
+}
+
+template <class IDFunc>
+KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way_random_inplace(
     int           *sorted_idx_range,
     int            count,
     IDFunc         id_of,
@@ -261,9 +317,13 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_split_8way_random_inplace(
 {
     if(count <= 0) {
         for(int k = 0; k < 9; k++) {child_starts[k] = 0;}
-        return 0;
+        return;
     }
-    if(count > GIZMO_GPU_MORTON_COLLOC_SCRATCH) {return -1;}
+    if(count > GIZMO_GPU_MORTON_COLLOC_SCRATCH)
+    {
+        gpu_morton_split_8way_random_inplace_large(sorted_idx_range, count, id_of, counter, child_starts);
+        return;
+    }
 
     int      idx_buf[GIZMO_GPU_MORTON_COLLOC_SCRATCH];
     unsigned char oct_buf[GIZMO_GPU_MORTON_COLLOC_SCRATCH];
@@ -273,11 +333,7 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_split_8way_random_inplace(
     for(int j = 0; j < count; j++) {
         int idx = sorted_idx_range[j];
         idx_buf[j] = idx;
-        uint64_t pid = (uint64_t) id_of(idx);
-        double   r   = gizmo_gpu_rand_double(pid, counter);
-        int      o   = (int)(8.0 * r);
-        if(o < 0) {o = 0;}
-        if(o > 7) {o = 7;}
+        int      o   = gpu_morton_colloc_octant(id_of, idx, counter);
         oct_buf[j] = (unsigned char)o;
         counts[o]++;
     }
@@ -298,7 +354,6 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_split_8way_random_inplace(
         sorted_idx_range[cursors[o]] = idx_buf[j];
         cursors[o]++;
     }
-    return 0;
 }
 
 
