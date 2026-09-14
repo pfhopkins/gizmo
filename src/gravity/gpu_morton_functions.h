@@ -246,16 +246,17 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
  *                                 BFS level samples an independent stream.
  *   child_starts[0..8]         -- output octant boundaries.
  *
- * A range up to GIZMO_GPU_MORTON_COLLOC_SCRATCH is handled with a thread-local scratch of that
- * fixed size.  A larger range goes to the linear, buffer-free rare path below rather than failing:
- * a group of collocated particles big enough to exceed the scratch used to abort the build, and the
- * outer retry read that as a node shortage and grew the arena against a limit that is not the node
- * count.  There is no range this cannot split, so there is no failure to report. */
+ * Every range, of any size, goes through one buffer-free counting sort.  There was a second
+ * implementation that snapshotted ranges up to GIZMO_GPU_MORTON_COLLOC_SCRATCH into two automatic
+ * arrays of that fixed size; it reserved the frame for that snapshot in every work item of every
+ * kernel instantiating this, taken or not, and the counting sort needs no snapshot at all.  The
+ * size below now only labels what counts as a large range for reporting.  There is no range this
+ * cannot split, so there is no failure to report. */
 #define GIZMO_GPU_MORTON_COLLOC_SCRATCH 512
 
 /* The octant a collocated particle is assigned to.  Deterministic in (ID, counter), which is what
- * lets the large-range path below recompute it instead of remembering it.  Both paths call this,
- * so the assignment policy has one home and cannot drift between them. */
+ * lets the placement pass recompute it instead of remembering it -- the property that removes the
+ * need for any per-thread buffer. */
 template <class IDFunc>
 KOKKOS_INLINE_FUNCTION int gpu_morton_colloc_octant(IDFunc id_of, int idx, uint64_t counter)
 {
@@ -266,48 +267,71 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_colloc_octant(IDFunc id_of, int idx, uint6
     return o;
 }
 
-/* Same assignment, for a range too large for the thread-local scratch.  Carries no buffer: it
- * counts the octants, then permutes the range in place with eight cursors, recomputing each
- * particle's octant as it goes.  Linear in the range and dearer per element than the buffered
- * path, which is why that one is kept for the ordinary case; the point here is only that an
- * exceptionally large collocated group stops being fatal.  Order within an octant is not the
- * buffered path's, which costs nothing: this range previously could not be built at all.
+/* Particle IDs are not unique -- wind-spawned cells all carry one stamped ID, and an initial
+ * condition can carry duplicates of its own -- so the assignment above can hand every member of a
+ * range the SAME octant.  The split is then a no-op, the node does not subdivide, and the walk
+ * recurses on an unchanged set until it hits its depth guard.  Measured on the forged initial
+ * condition: 531 particles sharing one ID all land in octant 2.
  *
- * The permutation is correct because octants below k are already complete when k is processed, so
- * every element found in k's span belongs to an octant >= k and its cursor is still inside its own
- * span. */
-template <class IDFunc>
-KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way_random_inplace_large(
-    int           *sorted_idx_range,
-    int            count,
-    IDFunc         id_of,
-    uint64_t       counter,
-    int            child_starts[9])
+ * The recovery splits on the build slots instead, which are distinct by construction.  Taking the
+ * three bits at and below the first bit where the range's lowest and highest slot differ puts those
+ * two in different octants, so the split is always at least two ways and the range strictly shrinks;
+ * a range of N is down to singletons in about log2(N) levels, well inside the depth guard.  Only a
+ * range the ID could not separate reaches this, so an ordinary range is unaffected.
+ *
+ * Returns the shift to apply, or -1 if the slots are identical too, which cannot happen for a
+ * well-formed build and leaves the caller no worse off than before. */
+KOKKOS_INLINE_FUNCTION int gpu_morton_slot_radix_shift(const int *range, int count)
 {
-    int counts[8] = {0,0,0,0,0,0,0,0};
-    for(int j = 0; j < count; j++) {counts[gpu_morton_colloc_octant(id_of, sorted_idx_range[j], counter)]++;}
-
-    int sum = 0;
-    for(int k = 0; k < 8; k++) {child_starts[k] = sum; sum += counts[k];}
-    child_starts[8] = sum;
-
-    int cursor[8];
-    for(int k = 0; k < 8; k++) {cursor[k] = child_starts[k];}
-    for(int k = 0; k < 8; k++)
-    {
-        while(cursor[k] < child_starts[k + 1])
-        {
-            const int idx = sorted_idx_range[cursor[k]];
-            const int o   = gpu_morton_colloc_octant(id_of, idx, counter);
-            if(o == k) {cursor[k]++; continue;}
-            const int dst = cursor[o]++;
-            sorted_idx_range[cursor[k]] = sorted_idx_range[dst];
-            sorted_idx_range[dst]       = idx;
-        }
+    if(count <= 1) {return -1;}
+    unsigned int smin = (unsigned int) range[0], smax = smin;
+    for(int j = 1; j < count; j++) {
+        const unsigned int v = (unsigned int) range[j];
+        if(v < smin) {smin = v;}
+        if(v > smax) {smax = v;}
     }
+    unsigned int diff = smin ^ smax;
+    if(diff == 0u) {return -1;}
+    int hb = 0;
+    while(diff >>= 1u) {hb++;}
+    return (hb >= 2) ? (hb - 2) : 0;   /* clamp: near bit 0 this is a two- or four-way split */
 }
 
-template <class IDFunc>
+KOKKOS_INLINE_FUNCTION int gpu_morton_slot_octant(int slot, int shift)
+{
+    return (int)((((unsigned int) slot) >> shift) & 7u);
+}
+
+/* Whether a completed count left every member in one octant, i.e. the assignment separated nothing. */
+KOKKOS_INLINE_FUNCTION int gpu_morton_counts_are_degenerate(const int counts[8], int count)
+{
+    if(count <= 1) {return 0;}
+    for(int k = 0; k < 8; k++) {if(counts[k] == count) {return 1;}}
+    return 0;
+}
+
+/* Split a collocated range eight ways in place, without any fixed thread-local buffer.
+ *
+ * Two counting passes and a cycle placement, so nothing is snapshotted and the device frame stays
+ * small.  The earlier form kept two GIZMO_GPU_MORTON_COLLOC_SCRATCH-sized automatic arrays -- about
+ * 2.5 KiB of private memory reserved per work item in every kernel that instantiates this, whether
+ * or not the branch was ever taken.  A counting sort needs no such snapshot, so the arrays are gone
+ * and with them the frame; the cost is recomputing each element's octant during placement, which is
+ * a hash of an integer and is nothing beside the memory it replaces.
+ *
+ * Identifiers are not unique -- wind-spawned cells share one stamped ID, and an initial condition
+ * can carry duplicates -- so an ID-keyed assignment can hand every member of a range the same
+ * octant and split nothing.  When the count says that happened, the assignment is redone from the
+ * build slots, which are distinct by construction. */
+template <typename IDFunc>
+KOKKOS_INLINE_FUNCTION int gpu_morton_colloc_octant_or_slot(IDFunc id_of, int idx, uint64_t counter,
+                                                            int slot_shift)
+{
+    return (slot_shift >= 0) ? gpu_morton_slot_octant(idx, slot_shift)
+                             : gpu_morton_colloc_octant(id_of, idx, counter);
+}
+
+template <typename IDFunc>
 KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way_random_inplace(
     int           *sorted_idx_range,
     int            count,
@@ -319,40 +343,44 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way_random_inplace(
         for(int k = 0; k < 9; k++) {child_starts[k] = 0;}
         return;
     }
-    if(count > GIZMO_GPU_MORTON_COLLOC_SCRATCH)
-    {
-        gpu_morton_split_8way_random_inplace_large(sorted_idx_range, count, id_of, counter, child_starts);
-        return;
-    }
 
-    int      idx_buf[GIZMO_GPU_MORTON_COLLOC_SCRATCH];
-    unsigned char oct_buf[GIZMO_GPU_MORTON_COLLOC_SCRATCH];
-    int      counts[8] = {0,0,0,0,0,0,0,0};
-
-    /* 1. Snapshot input + assign random octant per particle, count occupants. */
+    int counts[8] = {0,0,0,0,0,0,0,0};
     for(int j = 0; j < count; j++) {
-        int idx = sorted_idx_range[j];
-        idx_buf[j] = idx;
-        int      o   = gpu_morton_colloc_octant(id_of, idx, counter);
-        oct_buf[j] = (unsigned char)o;
-        counts[o]++;
+        counts[gpu_morton_colloc_octant(id_of, sorted_idx_range[j], counter)]++;
     }
 
-    /* 2. Exclusive scan -> child_starts. */
-    int sum = 0;
-    for(int k = 0; k < 8; k++) {
-        child_starts[k] = sum;
-        sum += counts[k];
+    /* If the identifiers separated nothing, redo the assignment from the slots. */
+    int slot_shift = -1;
+    if(gpu_morton_counts_are_degenerate(counts, count)) {
+        const int shift = gpu_morton_slot_radix_shift(sorted_idx_range, count);
+        if(shift >= 0) {
+            slot_shift = shift;
+            for(int k = 0; k < 8; k++) {counts[k] = 0;}
+            for(int j = 0; j < count; j++) {
+                counts[gpu_morton_slot_octant(sorted_idx_range[j], slot_shift)]++;
+            }
+        }
     }
+
+    int sum = 0;
+    for(int k = 0; k < 8; k++) {child_starts[k] = sum; sum += counts[k];}
     child_starts[8] = sum;
 
-    /* 3. Scatter back into sorted_idx_range using cursors per octant. */
-    int cursors[8];
-    for(int k = 0; k < 8; k++) {cursors[k] = child_starts[k];}
-    for(int j = 0; j < count; j++) {
-        int o = (int)oct_buf[j];
-        sorted_idx_range[cursors[o]] = idx_buf[j];
-        cursors[o]++;
+    /* Cycle placement: each increment of cursor[o] finalises one element of octant o, and there are
+     * exactly counts[o] of them, so no cursor can pass its slice. */
+    int cursor[8];
+    for(int k = 0; k < 8; k++) {cursor[k] = child_starts[k];}
+    for(int k = 0; k < 8; k++)
+    {
+        while(cursor[k] < child_starts[k + 1])
+        {
+            const int idx = sorted_idx_range[cursor[k]];
+            const int o   = gpu_morton_colloc_octant_or_slot(id_of, idx, counter, slot_shift);
+            if(o == k) {cursor[k]++; continue;}
+            const int dst = cursor[o]++;
+            sorted_idx_range[cursor[k]] = sorted_idx_range[dst];
+            sorted_idx_range[dst]       = idx;
+        }
     }
 }
 

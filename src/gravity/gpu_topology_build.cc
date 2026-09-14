@@ -250,9 +250,27 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
             nearest_xyz(sep, -1);
             double inner = 0.5 * (double)Nodes_uvm[nd].len - clamp_backoff;
             if(!(inner > 0.0)) {inner = 0.0;}   /* a leaf narrower than the margin: the centre is inside */
-            for(int d = 0; d < 3; d++) {
-                if(sep[d] >  inner) {sep[d] =  inner;}
-                if(sep[d] < -inner) {sep[d] = -inner;}
+            /* Clamping each axis on its own sends every particle that lies outside ALL THREE faces
+             * to the same interior corner (+-inner, +-inner, +-inner), so an arbitrary number of
+             * them collapse onto one point and take an IDENTICAL key.  The range then looks
+             * perfectly collocated to the builder when the particles are nowhere near each other:
+             * the split finds one occupied child, the node cannot subdivide, and the chain descends
+             * a level at a time burning a node per level until the softening floor hands it to the
+             * randomized path.  Scaling the whole separation instead keeps the direction, so those
+             * particles land on distinct points of the face and sort apart as they should.
+             * Only the all-three case is treated: it is the sole population that corner-collapses,
+             * and rescaling a particle that is outside on one or two axes would move coordinates
+             * that were exact, degrading the key for the common crossing. */
+            const double ax = fabs(sep[0]), ay = fabs(sep[1]), az = fabs(sep[2]);
+            if(ax > inner && ay > inner && az > inner) {
+                double mx = ax; if(ay > mx) {mx = ay;} if(az > mx) {mx = az;}
+                const double scale = (mx > 0.0) ? (inner / mx) : 0.0;
+                sep[0] *= scale; sep[1] *= scale; sep[2] *= scale;
+            } else {
+                for(int d = 0; d < 3; d++) {
+                    if(sep[d] >  inner) {sep[d] =  inner;}
+                    if(sep[d] < -inner) {sep[d] = -inner;}
+                }
             }
             Morton128 m;
             peanokey pkey = topo_key_of_position_((double)Nodes_uvm[nd].center[0] + sep[0],
