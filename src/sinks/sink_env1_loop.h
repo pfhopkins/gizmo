@@ -59,6 +59,7 @@ int sink_isactive(int i);
 struct SinkEnv1CallScalars {
     NlrCommonScalars common;            /* cf_atime, cf_a2inv, cf_a3inv, G, ... */
     double           sink_radius_grav;  /* SinkParticle_GravityKernelRadius */
+    int              owner_task;        /* rank owning the actives this call builds; see load_active */
 };
 
 /* Active-particle state passed into the pair body. Trivially copyable for
@@ -73,7 +74,8 @@ struct SinkEnv1CallScalars {
 struct SinkEnv1ActiveState {
     Vec3<double>  pos;                  /* P[i].Pos */
     Vec3<double>  vel;                  /* P[i].Vel */
-    MyIDType      id;                   /* P[i].ID — for self-skip predicate */
+    MyIDType      id;                   /* P[i].ID — physics identity, not a self-skip */
+    MyIDType      claim_token;          /* sink ownership token; see gizmo_sink_claim_token */
     double        h_search;             /* per-active radius */
     double        ags_h;                /* AGS_KernelRadius if defined, else sink_radius_grav */
 #if defined(SINK_GRAVCAPTURE_GAS) || (SINK_GRAVACCRETION == 8)
@@ -269,7 +271,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
                                         / ((double)active.mass + (double)neighbor_particle.Mass);
                 Kokkos::atomic_min(&neighbor_particle.SwallowTime, (MyFloat)tff_pair);
 #endif
-                if(neighbor_particle.SwallowID < active.id) { accum.mass_to_swallow_edd += (MyFloat)neighbor_particle.Mass; }
+                if(neighbor_particle.SwallowID < active.claim_token) { accum.mass_to_swallow_edd += (MyFloat)neighbor_particle.Mass; }
             }
         }
     }
@@ -408,6 +410,10 @@ struct SinkEnv1Spec {
         active.pos      = ctx.P[i].Pos;
         active.vel      = ctx.P[i].Vel;
         active.id       = ctx.P[i].ID;
+        /* The rank comes from the per-call scalar, not from the global: this body is compiled into
+         * the device kernel, where a host global has no value.  populate_call_scalars runs on the
+         * rank whose local particles this call loads, so the scalar IS that owner's rank. */
+        active.claim_token = gizmo_sink_claim_token(scalars.owner_task, i);
         active.h_search = h_search;
 #if (ADAPTIVE_GRAVSOFT_FORALL & 32)
         active.ags_h    = (double)ctx.P[i].AGS_KernelRadius;

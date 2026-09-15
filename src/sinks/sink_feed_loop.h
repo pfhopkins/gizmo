@@ -44,6 +44,26 @@
  * accessors; misordered includes must compile-fail loudly, not silently
  * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
+/*! Pair key for the sink stochastic draws.
+ *
+ *  The claim token is unique per sink, so it separates the draws of DIFFERENT sinks. It cannot
+ *  separate one sink's own neighbours, and the identifier cannot either: every wind-spawned cell
+ *  carries one stamped value, so a key of (token, identifier) is CONSTANT across all of them and
+ *  they draw the same number -- the whole group is then accreted or skipped together, which is the
+ *  correlation this key exists to remove. The neighbour's position is what distinguishes them.
+ *
+ *  One-sided, unlike the SIDM pair key: only the sink evaluates this draw, so the key does not need
+ *  to be symmetric under exchange and the two ends are composed in a fixed order. */
+KOKKOS_INLINE_FUNCTION uint64_t sink_pair_rng_key(MyIDType claim_token, MyIDType neighbor_id,
+                                                  double nx, double ny, double nz)
+{
+    uint64_t h = (uint64_t)claim_token * 0x9E3779B97F4A7C15ULL;
+    h ^= ((uint64_t)neighbor_id + 0xBF58476D1CE4E5B9ULL + (h << 6) + (h >> 2));
+    h ^= (gizmo_position_mix(nx, ny, nz) + 0x94D049BB133111EBULL + (h << 6) + (h >> 2));
+    h ^= h >> 31;
+    return h;
+}
+
 /* Forward decls. */
 int  sink_isactive(int i);
 int  sink_feed_is_active(int i);
@@ -90,6 +110,7 @@ struct SinkFeedLocalIn {
     MyFloat Mdot;
     MyFloat Dt;
     MyIDType ID;
+    MyIDType claim_token;   /* sink ownership for the claim protocol; see gizmo_sink_claim_token */
 #ifdef SINK_GRAVCAPTURE_GAS
     MyFloat mass_to_swallow_edd;
 #endif
@@ -325,8 +346,16 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
             if(neighbor_particle.Mass > local.Mass)                    allow_sink_merger = 0;
-            if((neighbor_particle.Mass == local.Mass) &&
-               (neighbor_particle.ID > local.ID))                      allow_sink_merger = 0;
+            /* Two sinks of exactly equal mass need one of them picked, the same way on both sides.
+             * Ordering on the identifier cannot do that when identifiers repeat -- it left this
+             * gate OPEN on both, so each swallowed the other.  The wrapped separation is
+             * antisymmetric, so the first axis on which it is nonzero is positive for exactly one
+             * of the pair; all three zero is r2 == 0, already excluded above. */
+            if(neighbor_particle.Mass == local.Mass) {
+                if(dpos[0] != 0)      {if(dpos[0] > 0) {allow_sink_merger = 0;}}
+                else if(dpos[1] != 0) {if(dpos[1] > 0) {allow_sink_merger = 0;}}
+                else if(dpos[2] > 0)  {allow_sink_merger = 0;}
+            }
             double max_rmerge = 1.0 * sink_radius;
             double max_mmerge = 10. * neighbor_particle.Sink_Formation_Mass;
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
@@ -356,14 +385,14 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             if(allow_sink_merger == 1)
 #endif
             {
-                if(vrel < vesc) { SwallowID_j = local.ID; }
+                if(vrel < vesc) { SwallowID_j = local.claim_token; }
             }
         }
     }
 
     /* ---- grav-capture check (non-Type5) ---- */
 #if defined(SINK_GRAVCAPTURE_GAS) || defined(SINK_GRAVCAPTURE_NONGAS)
-    if(neighbor_particle.Type != 5 && SwallowID_j < local.ID) {
+    if(neighbor_particle.Type != 5 && SwallowID_j < local.claim_token) {
         volatile int do_gravcap = 1;
 #ifdef SINGLE_STAR_SINK_DYNAMICS
         {
@@ -389,7 +418,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             if(do_gravcap && sink_check_boundedness_gpu(neighbor_particle, cell_ref,
                                                         vrel, vesc, r, sink_radius)) {
 #ifdef SINK_GRAVCAPTURE_NONGAS
-                if(neighbor_particle.Type != 0) { SwallowID_j = local.ID; }
+                if(neighbor_particle.Type != 0) { SwallowID_j = local.claim_token; }
 #endif
 #ifdef SINK_GRAVCAPTURE_GAS
                 if(neighbor_particle.Type == 0) {
@@ -399,14 +428,19 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                     if(scalars.sink_accreted_fraction > 0)
                         p /= scalars.sink_accreted_fraction;
 #endif
-                    /* RNG site 1: keys on local.ID XOR neighbor.ID + per-loop-
-                     * unique rng_step (0xfeed5117ULL shift in populate_call_scalars). */
-                    double w = gizmo_gpu_rand_double((uint64_t)neighbor_particle.ID
-                                                     ^ (uint64_t)local.ID,
+                    /* RNG site 1: per-loop-unique rng_step (0xfeed5117ULL shift in
+                     * populate_call_scalars).  Key = claim token + neighbour identifier + neighbour
+                     * position; the position is what separates a sink's own same-identifier
+                     * neighbours, which the first two cannot. */
+                    double w = gizmo_gpu_rand_double(sink_pair_rng_key(local.claim_token,
+                                                                       neighbor_particle.ID,
+                                                                       (double)neighbor_particle.Pos[0],
+                                                                       (double)neighbor_particle.Pos[1],
+                                                                       (double)neighbor_particle.Pos[2]),
                                                      scalars.rng_step);
-                    if(w < p) { SwallowID_j = local.ID; }
+                    if(w < p) { SwallowID_j = local.claim_token; }
 #else
-                    SwallowID_j = local.ID;
+                    SwallowID_j = local.claim_token;
 #endif
                 }
 #endif
@@ -422,7 +456,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
         if(u < 1) { kernel_main(u, hinv3, hinv * hinv3, &wk, &dwk, -1); }
 
 #if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
-        if(SwallowID_j < local.ID) {
+        if(SwallowID_j < local.claim_token) {
             double dm_toacc = (double)local.Sink_AccretionDeficit
                               - out.mass_markedswallow_scratch;
             double f_accreted = 1.;
@@ -447,11 +481,14 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             }
 #endif
             /* RNG site 2: same pairwise key + +1 counter offset to separate from site 1. */
-            double w = gizmo_gpu_rand_double((uint64_t)neighbor_particle.ID
-                                             ^ (uint64_t)local.ID,
+            double w = gizmo_gpu_rand_double(sink_pair_rng_key(local.claim_token,
+                                                               neighbor_particle.ID,
+                                                               (double)neighbor_particle.Pos[0],
+                                                               (double)neighbor_particle.Pos[1],
+                                                               (double)neighbor_particle.Pos[2]),
                                              scalars.rng_step + 1);
             if(w < p) {
-                SwallowID_j = local.ID;
+                SwallowID_j = local.claim_token;
                 out.mass_markedswallow_scratch += (double)neighbor_particle.Mass * f_accreted;
             }
         }

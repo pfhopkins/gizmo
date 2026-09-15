@@ -141,8 +141,21 @@ const ghost_writeback_callback ParticleMinOp<FieldT, MemPtr>::callback = {
 };
 
 /* ParticleMaxOp — symmetric MAX variant of ParticleMinOp. Home keeps the
- * larger of (home, ghost) per delta record. Used by sink_feed for
- * P[j].SwallowID (D1/S-SYNC max-ID-wins tiebreak across ranks). */
+ * larger of (home, ghost) per delta record. Used by sink_feed for P[j].SwallowID: when two sinks on
+ * different ranks claim the same cell, the larger claim token wins.
+ *
+ * What that field holds is a TRANSIENT OWNERSHIP KEY, not an identity -- see gizmo_sink_claim_token.
+ * It is exact and unique for a given particle layout, which is the property the claim protocol needs
+ * (the swallow pass matches it for equality against the sink that wrote it), and it is nonzero, so 0
+ * still means unclaimed.
+ *
+ * Which of two competing sinks wins is deliberately ARBITRARY -- the physics does not specify a
+ * winner, only that exactly one claimant survives. Note what kind of arbitrary it is: the token
+ * packs the owning rank above the slot, so MAX resolves contention rank-major, and the winner
+ * therefore moves with the rank count and with each decomposition. The identifier it replaced was
+ * decomposition-invariant but could not select at all once identifiers repeated, which is why it
+ * was replaced. Anything wanting a decomposition-invariant winner would have to give up the
+ * exactness, and no physics asks for one. */
 template <typename FieldT, FieldT particle_data::*MemPtr>
 struct ParticleMaxOp {
     static_assert(std::is_arithmetic<FieldT>::value || std::is_integral<FieldT>::value,

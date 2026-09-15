@@ -54,6 +54,7 @@ static void sink_swk_fill_local(int i, struct SinkSwallowLocalIn *loc)
     loc->Mass            = P[i].Mass;
     loc->Sink_Mass       = P[i].Sink_Mass;
     loc->ID              = P[i].ID;
+    loc->claim_token     = gizmo_sink_claim_token(ThisTask, i);
     loc->ID_child_number = P[i].ID_child_number;
     loc->ID_generation   = P[i].ID_generation;
     loc->Mdot            = P[i].Sink_Mdot;

@@ -10,8 +10,9 @@
  * SidmScatterResult and applied by the caller via Kokkos::atomic_add on
  * P[j].Vel / P[j].dp (and atomic_max on P[j].wakeup).
  *
- * RNG: counter-based gizmo_gpu_rand_double keyed on (local.ID ^ P[j].ID),
- * with a per-loop salt XOR-mixed into the counter (see gpu_rng.h
+ * RNG: counter-based gizmo_gpu_rand_double keyed symmetrically on the pair -- the identifiers XORed
+ * plus a mix of each end's position, since identifiers repeat and a same-ID pair would otherwise key
+ * every such pair to zero -- with a per-loop salt XOR-mixed into the counter (see gpu_rng.h
  * gizmo_loop_rng_salt). Identical statistics and identical streams on CPU
  * and GPU; no GSL.
  *
@@ -74,8 +75,16 @@ SidmScatterResult sidm_core_flux_compute_pair(
           && (kernel.r > 0) && (local.dtime <= Pj_dtime) )) {
         return r;
     }
-    /* ensure each pair is computed only once */
-    if((local.dtime == Pj_dtime) && (local.ID > P[j].ID)) { return r; }
+    /* Ensure each pair is computed only once.  The separation is antisymmetric, so the first axis on
+     * which it is nonzero is positive for exactly one of the two evaluations -- which is the whole
+     * requirement.  Ordering on the identifier cannot do this when identifiers repeat: it returned
+     * for neither side, and the pair scattered twice. All three axes zero is a separation of zero,
+     * already rejected above. */
+    if(local.dtime == Pj_dtime) {
+        if(kernel.dp[0] != 0)      {if(kernel.dp[0] > 0) {return r;}}
+        else if(kernel.dp[1] != 0) {if(kernel.dp[1] > 0) {return r;}}
+        else if(kernel.dp[2] > 0)  {return r;}
+    }
 
     double h_si = 0.5 * (kernel.h_i + kernel.h_j);
     double m_si = 0.5 * (local.Mass + P[j].Mass);
@@ -93,7 +102,19 @@ SidmScatterResult sidm_core_flux_compute_pair(
        (0 = threshold, 1 = scatter direction). Ti_Current is left-shifted
        to keep timestep in the high half of the counter; the salt and tag
        occupy the rest. */
-    uint64_t rng_key = (uint64_t)local.ID ^ (uint64_t)P[j].ID;
+    /* The pair key must be SYMMETRIC (both evaluations of a pair draw the same stream) and DISTINCT
+     * between pairs.  Identifiers alone give neither once they repeat: a same-ID pair XORs to zero,
+     * so every such pair in the run shared one stream and made the identical scatter decision in the
+     * identical direction.  Adding a mix of each end's position restores distinctness -- positions
+     * are unique at any one moment, a pair at zero separation is already rejected above -- while a
+     * SUM over the two ends keeps it symmetric under exchange. */
+    uint64_t mix_i = gizmo_position_mix(local.Pos[0], local.Pos[1], local.Pos[2]);
+    uint64_t mix_j = gizmo_position_mix(P[j].Pos[0],   P[j].Pos[1],   P[j].Pos[2]);
+    uint64_t mix_lo = (mix_i < mix_j) ? mix_i : mix_j;   /* order the two ends so the key is the */
+    uint64_t mix_hi = (mix_i < mix_j) ? mix_j : mix_i;   /* same from either side of the pair     */
+    uint64_t rng_key = ((uint64_t)local.ID ^ (uint64_t)P[j].ID) + mix_lo * 0x9E3779B97F4A7C15ULL;
+    rng_key ^= (mix_hi + 0xBF58476D1CE4E5B9ULL + (rng_key << 6) + (rng_key >> 2));
+    rng_key ^= rng_key >> 31;
     uint64_t ti      = ((uint64_t)All.Ti_Current) << 32;
     uint64_t rng_ctr_threshold = ti ^ rng_salt ^ UINT64_C(0);
     uint64_t rng_ctr_direction = ti ^ rng_salt ^ UINT64_C(1);

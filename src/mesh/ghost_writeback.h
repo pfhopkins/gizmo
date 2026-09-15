@@ -128,7 +128,8 @@ void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
 
 
 /* sinkfeed retired: replaced by the bundle scaffold in
- * sinks/sink_feed_loop.cc (PARTICLE_MAX(SwallowID) +
+ * sinks/sink_feed_loop.cc (PARTICLE_MAX(SwallowID) -- a claim token, not an ID, so the max picks
+ * one claimant even when two sinks share an identifier +
  * GAS_ADD(Injected_Sink_Energy) ops). */
 
 /* MechFB variant retired: the ghost_writeback_mechfb compatibility wrapper

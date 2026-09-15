@@ -128,6 +128,29 @@ constexpr uint64_t gizmo_loop_rng_salt(const char *s)
 }
 
 
+/*! Mix one position into 64 bits, for keying a draw where identifiers cannot.
+ *
+ * Identifiers are not unique -- every spawned wind cell carries one stamped value and an input can
+ * hold duplicates of its own -- so a key built only from identifiers hands every member of a
+ * degenerate group the same stream, and they all draw the same number and act together. A position
+ * separates them, because distinct particles occupy distinct points.
+ *
+ * It only needs to separate distinct positions, not to be a good hash of the geometry: it feeds a
+ * counter-based RNG whose own mixing does that work. Bit-casting the doubles keeps it exact, so two
+ * evaluations reading the same coordinates agree bit for bit -- which is what lets a symmetric pair
+ * draw agree on both sides. */
+GIZMO_RNG_INLINE uint64_t gizmo_position_mix(double x, double y, double z)
+{
+    union { double d; uint64_t u; } cx, cy, cz;
+    cx.d = x; cy.d = y; cz.d = z;
+    uint64_t h = cx.u * 0x9E3779B97F4A7C15ULL;
+    h ^= (cy.u + 0xBF58476D1CE4E5B9ULL + (h << 6) + (h >> 2));
+    h ^= (cz.u + 0x94D049BB133111EBULL + (h << 6) + (h >> 2));
+    h ^= h >> 31;
+    return h;
+}
+
+
 /* Poisson draw with mean lambda.
  *   lambda < 30: Knuth's exact algorithm — draws uniforms at counter+1, +2, ...
  *                Callers must reserve counter..counter+~3*lambda+1 in their

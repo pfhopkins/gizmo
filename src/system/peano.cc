@@ -166,12 +166,21 @@ static int positions_are_coincident(int iu, int iv, int blk_lo, int blk_hi)
 }
 
 #ifdef IO_REPAIR_COINCIDENT_POSITIONS
-/*! Deterministic unit vector from a particle ID, so a repair reproduces regardless of rank count
- *  or particle ordering. Restricted to the active dimensions: displacing out of the plane of a
- *  2D setup would be a physics change, not a repair. */
-static void coincident_repair_direction(MyIDType id, double n[3])
+/*! Deterministic unit vector for separating one coincident pair. Restricted to the active
+ *  dimensions: displacing out of the plane of a 2D setup would be a physics change, not a repair.
+ *
+ *  Seeded from the pair's identifier AND an ordinal, because the identifier alone is not distinct:
+ *  every spawned wind cell carries one stamped ID and an input can hold duplicates of its own, so a
+ *  whole coincident group hashed to ONE direction and was displaced as a rigid body -- it never
+ *  separated, which is the only thing this routine exists to do. The ordinal is distinct by
+ *  construction, so each pair of a group is pushed a different way.
+ *  The cost is that the direction is no longer reproducible across a change of rank count, since
+ *  the ordinal follows this rank's ordering. That is an arbitrary tie-break, not physics, and it is
+ *  worth the exchange: the alternative reproduces a direction that does not work. */
+static void coincident_repair_direction(MyIDType id, unsigned long long ordinal, double n[3])
 {
-    unsigned long long h = (unsigned long long) id * 0x9E3779B97F4A7C15ULL;   /* splitmix-style mix */
+    unsigned long long h = ((unsigned long long) id ^ (ordinal * 0xD1B54A32D192ED03ULL))
+                           * 0x9E3779B97F4A7C15ULL;   /* splitmix-style mix */
     h ^= h >> 30; h *= 0xBF58476D1CE4E5B9ULL; h ^= h >> 27; h *= 0x94D049BB133111EBULL; h ^= h >> 31;
     double u = (double)((h >> 11) & 0x1FFFFFFFFFFFFFULL) / 9007199254740992.0;      /* [0,1) */
     double v = (double)((h >> 40) & 0xFFFFFFULL) / 16777216.0;                      /* [0,1) */
@@ -199,7 +208,12 @@ static int repair_coincident_pair(int iu, int iv, int blk_lo, int blk_hi)
     if(delta < coordinate_resolution_floor(iu)) {return 2;}   /* would be lost in the mantissa */
     if(delta > 0.1 * s) {return 3;}                        /* must not reorder against the neighbours */
 
-    double n[3]; coincident_repair_direction((P[iu].ID < P[iv].ID) ? P[iu].ID : P[iv].ID, n);
+    /* One ordinal per repair on this rank, so the members of a single degenerate group -- which
+     * share an identifier and therefore hashed identically -- are pushed apart rather than
+     * translated together. */
+    static unsigned long long coincident_repair_ordinal = 0;
+    double n[3]; coincident_repair_direction((P[iu].ID < P[iv].ID) ? P[iu].ID : P[iv].ID,
+                                             coincident_repair_ordinal++, n);
     double mu = P[iu].Mass, mv = P[iv].Mass, mtot = mu + mv;
     double wu = (mtot > 0) ? (mv / mtot) : 0.5, wv = (mtot > 0) ? (mu / mtot) : 0.5;
     double old0 = P[iu].Pos[0], old1 = P[iu].Pos[1], old2 = P[iu].Pos[2];
