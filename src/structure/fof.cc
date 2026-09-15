@@ -2340,6 +2340,13 @@ void read_fof(int num)
 
 	      for(i = 0, j = 0; i < list_of_nids[recvTask]; i++)
 		{
+		  /* Matching is by identifier alone, so FOF/SUBFIND REQUIRES UNIQUE PARTICLE IDs.
+		     Where IDs repeat this scan stops at the first particle carrying the identifier and
+		     hands it the group number, so duplicates are assigned arbitrarily. Carrying the child
+		     number and generation here would fix the match but not the problem: the group_ids
+		     catalog on disk stores bare IDs, so a full-identity key cannot survive a write/read
+		     round trip without a versioned format change. Configurations that stamp duplicate IDs
+		     (SINK_WIND_SPAWN) are therefore not supported with group catalogs. */
 		  while(j < NumPart - 1 && P[j].ID < recv_ID_list[i].ID)
 		    j++;
 
