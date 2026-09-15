@@ -189,6 +189,7 @@ void run(void)
             /* condemned tree, no decomposition owed: skip force_update_tree (it would walk the
                condemned structure) and let gravity_tree below do the cheap rearrange+rebuild.
                This branch is what makes a physics-event raise cost a rebuild, not a decomposition. */
+            TreeOpsCount[TREEOPS_DEFER]++;
             make_list_of_active_particles();
         }
         else
@@ -1055,6 +1056,7 @@ void write_cpu_log(void)
     {
       fprintf(FdCPU, "Step %lld, Time: %.16g, CPUs: %d\n",(long long) All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU, "Nactive=%lld, Imbal(Max/Mean)=%g \n", (long long) GlobNumForceUpdate, (max_CPU_Step[0]/(MIN_REAL_NUMBER + avg_CPU_Step[0])-1.)*NTask+1.);
+      fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld rearrange=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_REARRANGE]);
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"
 	      "tree+gravity  %10.2f  %5.1f%%\n"

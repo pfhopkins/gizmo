@@ -151,6 +151,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
+    if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++;} /* whole-tree builds only; subset builds are fof-internal */
 #ifdef TREE_INTEGRITY_AUDITS
     if(mp == NULL && npart == NumPart) {force_tree_full_audit(1, "build");} /* whole-tree builds only: subset builds legitimately leave particles unreached */
 #endif
@@ -3926,6 +3927,7 @@ void ewald_force(int iii, int jjj, int kkk, double x[3], double force[3])
  *  moved, e.g. after star formation or sink SN events. */
 void force_refresh_node_moments(void)
 {
+    TreeOpsCount[TREEOPS_REFRESH]++;
     int i, k, no;
     PRINT_STATUS("Refreshing tree node moments (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
 

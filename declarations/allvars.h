@@ -232,6 +232,8 @@ extern int DomainReconstructFlag; /*!< a full domain decomposition (particle own
     restartfiles. */
 extern int NtotSwallowedThisStep; /*!< global (Allreduce'd) count of particles swallowed in this step's sink pass; gates the cleanup rearrange in run.cc. Rank-uniform by construction. */
 extern int TreeWalkValidatePending; /*!< set (rank-local) when a maintained rearrange changed the walk threading; the next tree consumer runs force_validate_tree_links() and clears it. Cleared by force_treebuild (fresh tree). */
+enum TreeOpsIndex {TREEOPS_BUILD=0, TREEOPS_REFRESH, TREEOPS_DECOMP, TREEOPS_DECOMP_LIGHT, TREEOPS_DEFER, TREEOPS_REARRANGE, TREEOPS_N};
+extern long long TreeOpsCount[TREEOPS_N]; /*!< running counts of whole-tree builds, moment refreshes, full/light decompositions, deferred-rebuild ladder steps, and rearranges. All are collective events, so every rank agrees; reported in cpu.txt. Diagnostic only: not serialized, resets on resume. */
 extern int TreeAuditMomentsPending; /*!< set when a rearrange edited the list; the next moments refresh gets a FULL audit regardless of the sampling stride (TREE_INTEGRITY_AUDITS builds) */
 extern int GlobFlag;
 extern char DumpFlag;
