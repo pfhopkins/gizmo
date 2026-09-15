@@ -318,9 +318,12 @@ void subfind_find_nearesttwo_modern(void)
           if(pj.Mass <= 0) continue;
           if(!((1 << pj.Type) & FOF_PRIMARY_LINK_TYPES)) continue;
           if(pj.GrNr != GrNr) continue;
-          if(pj.ID == P[i].ID) continue;
           if(pj.u.DM_Density <= P[i].u.DM_Density) continue;
           double r2 = group_search_distance2_particles(pool.particles[i], pj);
+          /* Identity is a separation of zero, not a matching identifier: IDs are not unique (every
+           * spawned wind cell shares one, and an input can hold duplicates), so excluding on the ID
+           * discarded genuine distinct neighbours that happened to share it. */
+          if(!(r2 > 0)) continue;
           if(r2 >= h2) continue;
 
           int slot = -1;

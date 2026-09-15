@@ -313,7 +313,9 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 
     /* ---- sink-sink merger check ---- */
     if(neighbor_particle.Type == 5) {
-        if(((local.ID != neighbor_particle.ID) || (r2 > 0)) &&
+        /* Identity is a separation of zero: IDs are not unique, so the identifier half of this test
+         * did nothing the distance does not already do, and could only mis-fire. */
+        if((r2 > 0) &&
            (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
             /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda

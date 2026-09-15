@@ -65,8 +65,13 @@ SidmScatterResult sidm_core_flux_compute_pair(
     r.set_wakeup_j = 0;
 #ifdef DM_SIDM
     double Pj_dtime = get_particle_timestep_in_physical(j, P);
+    /* Identity is a separation of zero, not an identifier: particle IDs are not unique -- every
+     * spawned wind cell carries one stamped ID and an input can hold duplicates of its own -- so
+     * testing them here excluded genuine distinct partners that happened to share an ID, and those
+     * pairs silently never scattered.  A pair at zero separation is either the same particle or a
+     * degenerate one the pair terms cannot evaluate anyway. */
     if(!( ((1 << local.Type) & (DM_SIDM)) && ((1 << P[j].Type) & (DM_SIDM))
-          && (local.ID != P[j].ID) && (local.dtime <= Pj_dtime) )) {
+          && (kernel.r > 0) && (local.dtime <= Pj_dtime) )) {
         return r;
     }
     /* ensure each pair is computed only once */

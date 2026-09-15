@@ -123,7 +123,10 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
                                   struct sink_env_gpu_out& accum)
 {
     /* Self-skip / mass / type-5 filter. */
-    if(neighbor_particle.Mass <= 0 || neighbor_particle.Type == 5 || neighbor_particle.ID == active.id) return;
+    /* Identity is a separation of zero, not a matching identifier: IDs repeat, so the identifier
+     * form of this skip discarded genuine distinct neighbours that happened to share one -- they
+     * were dropped from the sink environment entirely. The separation is computed just below. */
+    if(neighbor_particle.Mass <= 0 || neighbor_particle.Type == 5) return;
 
     const double h_i      = active.h_search;
     const double hinv     = 1.0 / h_i;
@@ -141,6 +144,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
     dv[2] = (double)neighbor_particle.Vel[2] - active.vel[2];
     nearest_xyz(dP, -1);
     NGB_SHEARBOX_BOUNDARY_VELCORR_(active.pos, neighbor_particle.Pos, dv, -1);
+    if(!(dP.norm_sq() > 0)) return;   /* the active sink itself, or a degenerate coincident pair */
 
     const double wt = (double)neighbor_particle.Mass;
 
