@@ -269,14 +269,30 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
              * a level at a time burning a node per level until the softening floor hands it to the
              * randomized path.  Scaling the whole separation instead keeps the direction, so those
              * particles land on distinct points of the face and sort apart as they should.
-             * Only the all-three case is treated: it is the sole population that corner-collapses,
-             * and rescaling a particle that is outside on one or two axes would move coordinates
-             * that were exact, degrading the key for the common crossing. */
+             *
+             * Two saturated axes collapse the same way whenever the third coordinate is shared --
+             * the pair goes to (+-inner, +-inner) and only the unshared axis could have told them
+             * apart.  So the projection runs whenever at least two axes saturate, over just those
+             * axes: the saturated components are scaled by the largest of themselves, which lands
+             * that one on the face and the rest inside, while every unsaturated component is left
+             * exactly as it was.  With three saturated axes this is the same arithmetic as before.
+             *
+             * One saturated axis is NOT covered and cannot be by this means: with a single
+             * component to scale, every particle on that side of the face still maps to +-inner,
+             * and a population sharing the other two coordinates -- a line -- still collapses.
+             * That case needs the other two coordinates to differ, which is what the common
+             * crossing has. */
             const double ax = fabs(sep[0]), ay = fabs(sep[1]), az = fabs(sep[2]);
-            if(ax > inner && ay > inner && az > inner) {
-                double mx = ax; if(ay > mx) {mx = ay;} if(az > mx) {mx = az;}
+            const int sat0 = (ax > inner), sat1 = (ay > inner), sat2 = (az > inner);
+            if(sat0 + sat1 + sat2 >= 2) {
+                double mx = 0.0;
+                if(sat0 && ax > mx) {mx = ax;}
+                if(sat1 && ay > mx) {mx = ay;}
+                if(sat2 && az > mx) {mx = az;}
                 const double scale = (mx > 0.0) ? (inner / mx) : 0.0;
-                sep[0] *= scale; sep[1] *= scale; sep[2] *= scale;
+                if(sat0) {sep[0] *= scale;}
+                if(sat1) {sep[1] *= scale;}
+                if(sat2) {sep[2] *= scale;}
             } else {
                 for(int d = 0; d < 3; d++) {
                     if(sep[d] >  inner) {sep[d] =  inner;}
