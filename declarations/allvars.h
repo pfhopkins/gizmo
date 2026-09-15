@@ -226,6 +226,8 @@ extern int TreeReconstructFlag; /*!< request a FULL domain decomposition + tree 
     decomposition at file_io/restart.cc is conditional on MULTIPLEDOMAINS changing only). */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
 extern int NtotSwallowedThisStep; /*!< global (Allreduce'd) count of particles swallowed in this step's sink pass; gates the cleanup rearrange in run.cc. Rank-uniform by construction. */
+extern int TreeWalkValidatePending; /*!< set (rank-local) when a maintained rearrange changed the walk threading; the next tree consumer runs force_validate_tree_links() and clears it. Cleared by force_treebuild (fresh tree). */
+extern int TreeAuditMomentsPending; /*!< set when a rearrange edited the list; the next moments refresh gets a FULL audit regardless of the sampling stride (TREE_INTEGRITY_AUDITS builds) */
 extern int GlobFlag;
 extern char DumpFlag;
 #ifdef WAKEUP

@@ -376,6 +376,9 @@ void calculate_non_standard_physics(void)
            in freshly spawned cells. Runs on spawn OR swallow (both rank-uniform triggers); the
            tree consequences are decided inside rearrange itself (stage-2 protocol). */
         if(need_cleanup_rearrange) {rearrange_particle_sequence();}
+#if defined(TREE_INTEGRITY_AUDITS) && defined(MAINTAIN_TREE_IN_REARRANGE)
+        if(need_cleanup_rearrange) {force_tree_full_audit(0, "sink_cleanup");}
+#endif
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SINKS] += measure_time();
     }
 #endif

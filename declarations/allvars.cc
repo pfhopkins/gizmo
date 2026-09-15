@@ -162,6 +162,8 @@ int Flag_FullStep;		/*!< Flag used to signal that the current step involves all 
 int TreeReconstructFlag;
 int TreeMomentsStaleFlag;
 int NtotSwallowedThisStep;
+int TreeWalkValidatePending;
+int TreeAuditMomentsPending;
 #ifdef WAKEUP
 int NeedToWakeupParticles;      /*!< Flags used to signal that wakeups need to be processed at the beginning of the next timestep */
 int NeedToWakeupParticles_local;

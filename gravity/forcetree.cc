@@ -150,6 +150,10 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_flag_localnodes();
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
+    TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
+#ifdef TREE_INTEGRITY_AUDITS
+    if(mp == NULL && npart == NumPart) {force_tree_full_audit(1, "build");} /* whole-tree builds only: subset builds legitimately leave particles unreached */
+#endif
 
     /* Tree-integrity invariant. N_part is exchanged with the pseudo-particle data and re-accumulated
      * across foreign domains just above, so the root node now counts every particle globally and must
@@ -165,7 +169,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
      * be able to kill a long production run, and a warning is enough to stop this being silent. */
     if(mp == NULL)
     {
-        int i; long long red_loc[2] = {0, 0}, red_tot[2] = {0, 0};
+        int i; long long red_loc[3] = {0, 0, 0}, red_tot[3] = {0, 0, 0};
         for(i = 0; i < NumPart; i++) {if(P[i].Mass <= 0) {red_loc[0]++;}}
         /* whole-set veto, reduced with (not gated on) the zero-mass count: collective SUBFIND builds
            pass mp == NULL with npart = NumPartGroup != NumPart, whose root legitimately holds fewer
@@ -173,8 +177,15 @@ int force_treebuild(int npart, struct unbind_data *mp)
            is rank-local, so it rides this reduction (SUM of 0/1 flags is an OR) rather than gating it,
            which would let ranks disagree about entering the collective. */
         red_loc[1] = (npart != NumPart) ? 1 : 0;
-        MPI_Allreduce(red_loc, red_tot, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        red_loc[2] = NumPart; /* bookkeeping cross-check: sum vs All.TotNumPart, which is hand-maintained at ~6 mutation sites */
+        MPI_Allreduce(red_loc, red_tot, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         long long n_zero_tot = red_tot[0], not_whole_any = red_tot[1];
+        if(!not_whole_any && red_tot[2] != (long long) All.TotNumPart && ThisTask == 0)
+        {
+            printf("WARNING: particle bookkeeping drift: sum(NumPart)=%lld but All.TotNumPart=%lld. "
+                   "One of the creation/destruction sites mis-updated the global count.\n", red_tot[2], (long long) All.TotNumPart);
+            fflush(stdout);
+        }
         long long in_tree = (long long) Nodes[All.MaxPart].N_part;
         long long deficit = (long long) All.TotNumPart - in_tree;
         if(not_whole_any) {deficit = 0;} /* subset build: the count comparison is meaningless */
@@ -4185,4 +4196,176 @@ void force_refresh_node_moments(void)
     force_treeupdate_pseudos(All.MaxPart);
 
     PRINT_STATUS(" ..tree node moments refreshed.");
+#ifdef TREE_INTEGRITY_AUDITS
+    /* STARFORGE-type runs refresh near-every step and the moments re-derivation costs about one
+       extra refresh, so sample it -- EXCEPT on the first refresh after a particle-list mutation,
+       which must always be audited: a corrupted Father[] shows up as a moment mismatch right
+       here, and a pure count-stride can let the corruption reach the dynamics first. The cheap
+       exactly-once topology walk runs every time. Builds (rarer) always audit fully. */
+    {
+        static int refresh_audit_counter = 0;
+        int audit_moments_now = ((++refresh_audit_counter % 8) == 0) || TreeAuditMomentsPending;
+        TreeAuditMomentsPending = 0;
+        force_tree_full_audit(audit_moments_now, "refresh");
+    }
+#endif
 }
+
+
+/*! Tier-0 (always-on) walk-threading validator. Runs only when a maintained rearrange noted a
+ *  change (TreeWalkValidatePending); costs nothing otherwise. Walks the Nextnode threading from
+ *  the root exactly as the gravity/neighbour walks will, counts the local particles it can reach,
+ *  and bounds the iteration so a cycle cannot hang it. On failure it WARNS and condemns the tree
+ *  (TreeReconstructFlag -- self-healing at the next ladder, whose reduce uniformizes the local
+ *  raise); the current step's walk still proceeds, matching the warn-don't-abort philosophy of
+ *  the root-count check. Under TREE_INTEGRITY_AUDITS a failure is fatal instead. */
+void force_validate_tree_links(const char *tag)
+{
+    if(!TreeWalkValidatePending) {return;}
+    TreeWalkValidatePending = 0;
+    if(Numnodestree <= 0) {return;} /* no standing tree */
+    long long nvisit = 0, iter = 0, bound = (long long) NumPart + Numnodestree + NTopleaves + 64;
+    /* parent stack: cross-check Father[]/u.d.father against the threading. The walk links and the
+       Father pointers are maintained by the same mutation code but are independent structures --
+       divergence is the signature of a partial update, and everything downstream that climbs
+       Father (moment refresh included) silently follows the wrong pointer. */
+    int *nstack = (int *) mymalloc("tree_validate_nstack", 2 * ((size_t) Numnodestree + 2) * sizeof(int));
+    int *sstack = nstack + Numnodestree + 2, ntop = 0, diverged = 0;
+    int no = All.MaxPart;
+    while(no >= 0 && iter < bound)
+    {
+        iter++;
+        while(ntop > 0 && no == sstack[ntop - 1]) {ntop--;} /* walk left the top subtree(s) */
+        if(no < All.MaxPart)
+        {
+            if(ntop > 0 && Father[no] != nstack[ntop - 1]) {diverged = 1; break;}
+            nvisit++; no = Nextnode[no];
+        }
+        else if(no < All.MaxPart + MaxNodes)
+        {
+            if(Nodes[no].u.d.father != ((ntop > 0) ? nstack[ntop - 1] : -1)) {diverged = 1; break;}
+            if(ntop >= Numnodestree + 2) {diverged = 1; break;}
+            nstack[ntop] = no; sstack[ntop] = Nodes[no].u.d.sibling; ntop++;
+            no = Nodes[no].u.d.nextnode;
+        }
+        else {no = Nextnode[no - MaxNodes];}
+    }
+    myfree(nstack);
+    if(iter >= bound || diverged || nvisit != (long long) NumPart)
+    {
+        printf("WARNING task %d [%s]: tree-link validation failed: reached %lld of NumPart=%d local particles%s%s. Condemning the tree for rebuild.\n",
+               ThisTask, tag, nvisit, NumPart, (iter >= bound) ? " (iteration bound hit: cycle in the threading?)" : "",
+               diverged ? " (Father pointers diverge from the walk threading)" : "");
+        fflush(stdout);
+        TreeReconstructFlag = 1;
+#ifdef TREE_INTEGRITY_AUDITS
+        endrun(91570);
+#endif
+    }
+}
+
+
+#ifdef TREE_INTEGRITY_AUDITS
+/*! Tier-1 deep audit (DEVELOPER_MODE builds without DISABLE_TREE_AUDITS). Verifies:
+ *  (a) every local particle is reachable from the root exactly once via the Nextnode threading,
+ *      with in-range indices and no cycle;
+ *  (b) every Father[] entry is -1 or a valid node index;
+ *  (c) with audit_moments (valid only immediately after a build or refresh, when moments are
+ *      freshly derived): per-node mass and N_part re-derived from the particle arrays via the
+ *      Father chains match the stored values -- restricted to nodes below the top level, whose
+ *      stored moments carry no cross-rank pseudo contributions -- and every gas particle's kernel
+ *      is covered by its parent's hmax. A wrong Father shows up here as a node-mass mismatch, so
+ *      this doubles as the Father-consistency check. Failures are fatal with a tagged report. */
+void force_tree_full_audit(int audit_moments, const char *tag)
+{
+    if(Numnodestree <= 0) {return;}
+    int i, fail = 0;
+    char *visited = (char *) mymalloc("tree_audit_visited", (size_t) NumPart * sizeof(char));
+    memset(visited, 0, (size_t) NumPart * sizeof(char));
+    long long iter = 0, bound = (long long) NumPart + Numnodestree + NTopleaves + 64;
+    /* parent stack: verify Father[]/u.d.father against the walk threading itself. Without this the
+       moments re-derivation below is circular -- it climbs the same Father chain the refresh does,
+       so a corrupted Father gives stored and re-derived moments the same wrong answer. */
+    int *nstack = (int *) mymalloc("tree_audit_nstack", 2 * ((size_t) Numnodestree + 2) * sizeof(int));
+    int *sstack = nstack + Numnodestree + 2, ntop = 0;
+    int no = All.MaxPart;
+    while(no >= 0 && iter < bound)
+    {
+        iter++;
+        while(ntop > 0 && no == sstack[ntop - 1]) {ntop--;} /* walk left the top subtree(s) */
+        if(no < All.MaxPart)
+        {
+            if(no >= NumPart) {printf("TREE-AUDIT task %d [%s]: walk reached particle index %d >= NumPart=%d\n", ThisTask, tag, no, NumPart); fail = 1; break;}
+            if(visited[no]) {printf("TREE-AUDIT task %d [%s]: particle %d visited twice (threading loop)\n", ThisTask, tag, no); fail = 1; break;}
+            if(ntop > 0 && Father[no] != nstack[ntop - 1])
+            {printf("TREE-AUDIT task %d [%s]: particle %d chained under node %d but Father=%d (threading/Father divergence)\n", ThisTask, tag, no, nstack[ntop - 1], Father[no]); fail = 1; break;}
+            visited[no] = 1; no = Nextnode[no];
+        }
+        else if(no < All.MaxPart + MaxNodes)
+        {
+            int fwant = (ntop > 0) ? nstack[ntop - 1] : -1;
+            if(Nodes[no].u.d.father != fwant)
+            {printf("TREE-AUDIT task %d [%s]: node %d threaded under %d but u.d.father=%d\n", ThisTask, tag, no, fwant, Nodes[no].u.d.father); fail = 1; break;}
+            if(ntop >= Numnodestree + 2) {printf("TREE-AUDIT task %d [%s]: parent stack overflow at node %d\n", ThisTask, tag, no); fail = 1; break;}
+            nstack[ntop] = no; sstack[ntop] = Nodes[no].u.d.sibling; ntop++;
+            no = Nodes[no].u.d.nextnode;
+        }
+        else {no = Nextnode[no - MaxNodes];}
+    }
+    if(iter >= bound) {printf("TREE-AUDIT task %d [%s]: iteration bound hit -- cycle in the walk threading\n", ThisTask, tag); fail = 1;}
+    if(!fail)
+    {
+        long long nmiss = 0;
+        for(i = 0; i < NumPart; i++)
+        {
+            if(!visited[i]) {if(nmiss < 8) {printf("TREE-AUDIT task %d [%s]: particle %d (Type=%d Mass=%g Father=%d) unreachable from root\n", ThisTask, tag, i, P[i].Type, P[i].Mass, Father[i]);} nmiss++;}
+            int f = Father[i];
+            if(f != -1 && (f < All.MaxPart || f >= All.MaxPart + Numnodestree)) {printf("TREE-AUDIT task %d [%s]: particle %d has invalid Father=%d\n", ThisTask, tag, i, f); fail = 1;}
+        }
+        if(nmiss) {printf("TREE-AUDIT task %d [%s]: %lld particles unreachable\n", ThisTask, tag, nmiss); fail = 1;}
+    }
+    if(!fail && audit_moments)
+    {
+        double *m_scr = (double *) mymalloc("tree_audit_mscr", (size_t) Numnodestree * sizeof(double));
+        long long *np_scr = (long long *) mymalloc("tree_audit_npscr", (size_t) Numnodestree * sizeof(long long));
+        memset(m_scr, 0, (size_t) Numnodestree * sizeof(double)); memset(np_scr, 0, (size_t) Numnodestree * sizeof(long long));
+        for(i = 0; i < NumPart; i++)
+        {
+            int f = Father[i];
+            while(f >= All.MaxPart && f < All.MaxPart + Numnodestree)
+            {
+                m_scr[f - All.MaxPart] += P[i].Mass;
+                np_scr[f - All.MaxPart]++; /* unconditional, mirroring force_refresh_node_moments -- zero-mass locals are normally gone by audit time (rearrange precedes build/refresh) */
+                f = Nodes[f].u.d.father;
+            }
+            if(P[i].Type == 0 && Father[i] >= All.MaxPart && Father[i] < All.MaxPart + Numnodestree)
+            {
+                double hneed = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
+                if(Extnodes[Father[i]].hmax < 0.999999 * hneed)
+                {printf("TREE-AUDIT task %d [%s]: gas particle %d kernel %g exceeds parent node hmax %g\n", ThisTask, tag, i, hneed, Extnodes[Father[i]].hmax); fail = 1;}
+            }
+        }
+        long long nbad = 0;
+        for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
+        {
+            unsigned int bf = Nodes[no].u.d.bitflags;
+            if(bf & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) {continue;} /* stored moments include cross-rank pseudo mass here */
+            double ms = m_scr[no - All.MaxPart], m0 = Nodes[no].u.d.mass;
+            /* mass tolerance 1e-4 relative: stored moments are MyFloat accumulated bottom-up, the
+               re-derivation is double accumulated per-particle -- summation-order noise alone
+               reaches ~depth*eps_float. N_part is integer-exact. */
+            if(np_scr[no - All.MaxPart] != (long long) Nodes[no].N_part || fabs(ms - m0) > 1.e-4 * (fabs(m0) + 1.e-300))
+            {
+                if(nbad < 8) {printf("TREE-AUDIT task %d [%s]: node %d moments mismatch: N_part stored=%lld rederived=%lld, mass stored=%g rederived=%g\n",
+                                     ThisTask, tag, no, (long long) Nodes[no].N_part, np_scr[no - All.MaxPart], m0, ms);}
+                nbad++; fail = 1;
+            }
+        }
+        if(nbad) {printf("TREE-AUDIT task %d [%s]: %lld nodes with mismatched moments\n", ThisTask, tag, nbad);}
+        myfree(np_scr); myfree(m_scr);
+    }
+    myfree(nstack);
+    myfree(visited);
+    if(fail) {endrun(91571);}
+}
+#endif

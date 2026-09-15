@@ -720,6 +720,9 @@ void star_formation_parent_routine(void)
            Rank-uniform via the reduces above. Covers the in-place conversions (incl. the MFV mass
            adjustment) and the GENERATIONS>1 spawn inserts alike. */
         TreeMomentsStaleFlag = 1;
+#if defined(TREE_INTEGRITY_AUDITS) && defined(MAINTAIN_TREE_IN_REARRANGE)
+        force_tree_full_audit(0, "star_formation");
+#endif
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)

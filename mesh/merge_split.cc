@@ -1395,6 +1395,11 @@ void rearrange_particle_sequence(void)
        evaluation -- tot_elim is Allreduce'd above, so this is rank-uniform. Safety net: this fires
        even if the site that zeroed the mass forgot to raise the moments flag itself. */
     if(tot_elim > 0) {TreeMomentsStaleFlag = 1;}
+    if(flag) {TreeWalkValidatePending = 1;} /* rank-local note: this rank's threading was edited; the next tree consumer validates it (tier-0) */
+    if(flag || count_elim) {TreeAuditMomentsPending = 1;} /* the next refresh audits moments un-strided: post-mutation is exactly when a wrong Father shows as a moment mismatch */
+#ifdef TREE_INTEGRITY_AUDITS
+    if(flag) {force_tree_full_audit(0, "rearrange");}
+#endif
 #endif
 }
 

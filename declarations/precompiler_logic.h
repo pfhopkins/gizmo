@@ -548,6 +548,10 @@
 #endif
 #endif
 
+#if defined(DEVELOPER_MODE) && !defined(DISABLE_TREE_AUDITS)
+#define TREE_INTEGRITY_AUDITS /* deep tree audits (exactly-once walk, Father validity, moment re-derivation) at build/refresh/mutation points; failures are fatal. DEVELOPER_MODE historically means runtime-tunable parameters -- this extends it to debug instrumentation; opt out with DISABLE_TREE_AUDITS */
+#endif
+
 #if defined(HERMITE_INTEGRATION) && defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
 /* Hermite is the one consumer that walks the STANDING tree while deliberately skipping the rebuild
    it was asked for (the HermiteOnlyFlag gate in gravtree.cc), so a spawning Hermite run must have

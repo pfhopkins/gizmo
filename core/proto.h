@@ -866,6 +866,10 @@ int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
 void rearrange_particle_sequence(void);
 void swap_treewalk_pointers(int i, int j);
+void force_validate_tree_links(const char *tag);
+#ifdef TREE_INTEGRITY_AUDITS
+void force_tree_full_audit(int audit_moments, const char *tag);
+#endif
 void remove_particle_from_tree(int i);
 void reorder_gas(void);
 void reorder_particles(void);

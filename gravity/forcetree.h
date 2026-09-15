@@ -30,6 +30,10 @@
 
 void force_update_tree(void);
 void force_refresh_node_moments(void);
+void force_validate_tree_links(const char *tag);
+#ifdef TREE_INTEGRITY_AUDITS
+void force_tree_full_audit(int audit_moments, const char *tag);
+#endif
 
 void force_flag_localnodes(void);
 

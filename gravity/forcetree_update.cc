@@ -38,6 +38,7 @@ static_assert(sizeof(double) == sizeof(uint64_t), "double must be 64-bit for ato
 
 void force_update_tree(void)
 {
+    force_validate_tree_links("update_tree"); /* tier-0: no-op unless a maintained rearrange changed the threading */
     PRINT_STATUS("Kick-subroutine will prepare for dynamic update of tree");
     int i, j; GlobFlag++; DomainNumChanged = 0; DomainList = (int *) mymalloc("DomainList", NTopleaves * sizeof(int));
     /* note: the current list of active particles still refers to that synchronized at the previous time. */

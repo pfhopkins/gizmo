@@ -72,6 +72,8 @@ void gravity_tree(void)
         PRINT_STATUS(" ..Tree construction done.");
     }
 
+    force_validate_tree_links("gravtree"); /* tier-0: no-op unless a maintained rearrange changed the threading since the last build */
+
     /* refresh tree moments if stale (e.g. after star formation or sink mass change).
        This must run before ANY gravity evaluation including Hermite calls, since
        stale moments produce wrong forces. Much cheaper than a full treebuild. */
