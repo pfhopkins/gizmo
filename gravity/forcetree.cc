@@ -1456,6 +1456,13 @@ void force_flag_localnodes(void)
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
+#ifndef MAINTAIN_TREE_IN_REARRANGE
+    /* A pending rebuild means the walk links are (or are about to be) condemned. Splicing into
+       them would let a neighbour search prune on one node's bounds while the traversal delivers
+       the child through another. Keep only what the rebuild needs -- the child belongs with its
+       parent -- and touch nothing else. (cf. gizmo-cpp a06e0073) */
+    if(TreeReconstructFlag) {Father[ichild] = Father[iparent]; return;}
+#endif
     int no;
     no = Nextnode[iparent];
     Nextnode[iparent] = ichild; // insert new particle into linked list
@@ -1466,8 +1473,12 @@ void force_add_element_to_tree(int iparent, int ichild)
      * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
      * alone; the child inherits the same -1 and is skipped by the other consumers too. */
     if(Father[iparent] < 0) {return;}
-    // update parent node properties [maximum softening, speed] for opening criteria
-    Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[iparent].KernelRadius, All.MaxKernelRadius));
+    /* update parent node properties [maximum softening, speed] for opening criteria.
+       The hmax bound must cover the CHILD's kernel: for a sink-spawn call the parent is the sink,
+       whose kernel radius is the wrong particle's -- it both misses a larger gas child and
+       pollutes the gas-hmax bound with sink kernels (the unsafe direction for neighbour
+       completeness is the miss). */
+    if(P[ichild].Type == 0) {Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[ichild].KernelRadius, All.MaxKernelRadius));}
     double vmax = Extnodes[Father[iparent]].vmax;
     int k; for(k=0; k<3; k++) {if(fabs(P[ichild].Vel[k]) > vmax) {vmax = fabs(P[ichild].Vel[k]);}}
     Extnodes[Father[iparent]].vmax = vmax;

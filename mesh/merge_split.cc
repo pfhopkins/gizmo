@@ -790,7 +790,10 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         }
 #endif
 #ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
-        P[i].wakeup = -2; P[j].wakeup = -2; NeedToWakeupParticles_local = 1; /* -2 = split; only the sign is semantic, the value is for attribution */
+        P[i].wakeup = -2; P[j].wakeup = -2; NeedToWakeupParticles_local = 1; /* -2 = split; only the sign is semantic, the value is for attribution.
+            NB the daughter needs no ActiveParticleList push: the timebin splice below puts it on the
+            parent's cadence, so force_update_hmax covers it from the next step; within the remainder of
+            THIS step its own leaf is covered by the child-kernel hmax bump in force_add_element_to_tree */
 #endif
 
     } // closes special operations required only of gas particles
@@ -1379,6 +1382,20 @@ void rearrange_particle_sequence(void)
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}
+#ifndef MAINTAIN_TREE_IN_REARRANGE
+    /* Slots moved and nothing above repaired the tree's walk links: the standing tree no longer
+       describes the particle list. Condemn it deterministically -- flag_sum is the SUM every rank
+       just reduced, so all ranks agree, and no walk may run before the rebuild. Covers every
+       elimination path (swallow victims, outflow BCs, excision, mergers) and every reorder in one
+       place; the old code was safe only when a rebuild happened to follow. (cf. gizmo-cpp a06e0073) */
+    if(flag_sum) {TreeReconstructFlag = 1;}
+#else
+    /* Topology was maintained per-swap above, but an eliminated particle's mass and type-conditioned
+       contributions are still in every ancestor moment. Re-derive them before the next force
+       evaluation -- tot_elim is Allreduce'd above, so this is rank-uniform. Safety net: this fires
+       even if the site that zeroed the mass forgot to raise the moments flag itself. */
+    if(tot_elim > 0) {TreeMomentsStaleFlag = 1;}
+#endif
 }
 
 

@@ -548,6 +548,15 @@
 #endif
 #endif
 
+#if defined(HERMITE_INTEGRATION) && defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
+/* Hermite is the one consumer that walks the STANDING tree while deliberately skipping the rebuild
+   it was asked for (the HermiteOnlyFlag gate in gravtree.cc), so a spawning Hermite run must have
+   the full per-swap maintenance -- the parent-only carry is not enough for a tree that keeps being
+   walked. This deliberately OVERRIDES the nuclear-zoom exclusion above: a zoom run with Hermite and
+   spawning gets the maintenance despite the exclusion. (cf. gizmo-cpp a06e0073) */
+#define MAINTAIN_TREE_IN_REARRANGE
+#endif
+
 #if defined(SINGLE_STAR_FB_LOCAL_RP) // use standard angle-weighted local coupling to impart photon momentum from stars
 #if !defined(SINK_PHOTONMOMENTUM)
 #define SINK_PHOTONMOMENTUM
