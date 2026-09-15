@@ -50,9 +50,10 @@ void savepositions(int num)
 #endif
 
     rearrange_particle_sequence();
-    /* push the cadence counter over threshold so the next step's ladder decomposes+rebuilds.
-       NB the counter's reader is compiled only under SINGLE_STAR_SINK_DYNAMICS, so in other
-       builds this line ensures nothing -- those rely on the big-step branch of the ladder */
+    /* push the tree-age counter over threshold so the next ladder condemns and rebuilds the
+       tree. Largely redundant with the rearrange-side protocol (a changed list raises the flag
+       itself), but harmless: the rebuild is cheap and this also covers the unchanged-list case
+       where only positions moved during the output drift. */
     All.NumForcesSinceLastDomainDecomp = (long long) (1 + All.TreeDomainUpdateFrequency * All.TotNumPart);
 
 

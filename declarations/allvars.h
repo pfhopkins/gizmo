@@ -232,7 +232,8 @@ extern int DomainReconstructFlag; /*!< a full domain decomposition (particle own
     restartfiles. */
 extern int NtotSwallowedThisStep; /*!< global (Allreduce'd) count of particles swallowed in this step's sink pass; gates the cleanup rearrange in run.cc. Rank-uniform by construction. */
 extern int TreeWalkValidatePending; /*!< set (rank-local) when a maintained rearrange changed the walk threading; the next tree consumer runs force_validate_tree_links() and clears it. Cleared by force_treebuild (fresh tree). */
-enum TreeOpsIndex {TREEOPS_BUILD=0, TREEOPS_REFRESH, TREEOPS_DECOMP, TREEOPS_DECOMP_LIGHT, TREEOPS_DEFER, TREEOPS_REARRANGE, TREEOPS_N};
+enum TreeOpsIndex {TREEOPS_BUILD=0, TREEOPS_REFRESH, TREEOPS_DECOMP, TREEOPS_DECOMP_LIGHT, TREEOPS_DEFER, TREEOPS_ESCALATE, TREEOPS_REARRANGE, TREEOPS_N};
+extern long long ForceAddElementToTree_CallsSinceBuild; /*!< rank-local insertions accepted by the standing tree since its build; the ladder SUM-reduces this and condemns the tree past a fixed fraction of TotNumPart (insertions attach at existing nodes, so tree quality degrades with their count) */
 extern long long TreeOpsCount[TREEOPS_N]; /*!< running counts of whole-tree builds, moment refreshes, full/light decompositions, deferred-rebuild ladder steps, and rearranges. All are collective events, so every rank agrees; reported in cpu.txt. Diagnostic only: not serialized, resets on resume. */
 extern int TreeAuditMomentsPending; /*!< set when a rearrange edited the list; the next moments refresh gets a FULL audit regardless of the sampling stride (TREE_INTEGRITY_AUDITS builds) */
 extern int GlobFlag;
@@ -504,7 +505,7 @@ extern struct global_data_all_processes
 
   /* some force counters  */
   long long TotNumOfForces;	/*!< counts total number of force computations  */
-  long long NumForcesSinceLastDomainDecomp;	/*!< count particle updates since last domain decomposition */
+  long long NumForcesSinceLastDomainDecomp;	/*!< force updates since the last whole-tree BUILD (reset there -- historically at the decomposition, but the cadence it drives now requests a rebuild, so age-since-build is the meaningful quantity; name kept for restartfile layout). Past TreeDomainUpdateFrequency*TotNumPart the ladder condemns the tree. */
 
   /* various cosmological factors that are only a function of the current scale factor, and in Newtonian runs are set to 1 */
   double cf_atime, cf_a2inv, cf_a3inv, cf_hubble_a, cf_hubble_a2;

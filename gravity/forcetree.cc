@@ -151,7 +151,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
-    if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++;} /* whole-tree builds only; subset builds are fof-internal */
+    if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++; ForceAddElementToTree_CallsSinceBuild = 0; All.NumForcesSinceLastDomainDecomp = 0;} /* whole-tree builds only; subset builds are fof-internal. Both cadence counters measure tree age, so they reset HERE, not at decomposition (every decomposition is followed by a build anyway) */
 #ifdef TREE_INTEGRITY_AUDITS
     if(mp == NULL && npart == NumPart) {force_tree_full_audit(1, "build");} /* whole-tree builds only: subset builds legitimately leave particles unreached */
 #endif
@@ -192,11 +192,16 @@ int force_treebuild(int npart, struct unbind_data *mp)
         if(not_whole_any) {deficit = 0;} /* subset build: the count comparison is meaningless */
         if(deficit > n_zero_tot || deficit < 0)
         {
+            DomainReconstructFlag = 1; /* self-heal: a deficit at a whole-tree build means ownership has
+                drifted from geometry (escaped particles' subtrees are destroyed by the pseudo exchange).
+                Rank-uniform: computed from the reduced totals. The next ladder decomposes, and the build
+                after it re-covers the missing mass. Audited builds die at the audit instead. */
             if(ThisTask == 0)
             {
                 printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
                        "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
-                       "contribute to no rank's multipole moments, so forces are wrong by their mass.\n",
+                       "contribute to no rank's multipole moments, so forces are wrong by their mass. "
+                       "Requesting a domain decomposition to restore ownership.\n",
                        in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
                 fflush(stdout);
             }
@@ -1468,6 +1473,7 @@ void force_flag_localnodes(void)
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
+    ForceAddElementToTree_CallsSinceBuild++;
 #ifndef MAINTAIN_TREE_IN_REARRANGE
     /* A pending rebuild means the walk links are (or are about to be) condemned. Splicing into
        them would let a neighbour search prune on one node's bounds while the traversal delivers

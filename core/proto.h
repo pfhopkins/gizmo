@@ -867,6 +867,7 @@ void read_parameter_file(char *fname);
 void rearrange_particle_sequence(void);
 void swap_treewalk_pointers(int i, int j);
 void force_validate_tree_links(const char *tag);
+int domain_any_local_particle_escaped(void);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
 #endif

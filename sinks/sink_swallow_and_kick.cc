@@ -603,8 +603,7 @@ void spawn_sink_wind_feedback(void)
     MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(MPI_n_particles_split>0) {
 #ifdef MAINTAIN_TREE_IN_REARRANGE
-        All.NumForcesSinceLastDomainDecomp +=  0.0001 * All.TreeDomainUpdateFrequency * All.TotNumPart; /* nudge the next domain+treebuild slightly closer per spawn EVENT (~1e4 events to force one alone).
-            NB the counter's only reader and its resets are compiled under SINGLE_STAR_SINK_DYNAMICS, so under the FIRE_BHS umbrella this nudge is currently inert -- the maintained tree is then rebuilt only on the ordinary decomposition cadence */
+        All.NumForcesSinceLastDomainDecomp +=  0.0001 * All.TreeDomainUpdateFrequency * All.TotNumPart; /* nudge the next tree rebuild slightly closer per spawn EVENT (~1e4 events to force one alone); the insertion counter is the primary guard, this ages the tree a little per event on top */
         TreeMomentsStaleFlag = 1; /* the spawned cells' mass and the debited sink mass enter the node moments at the next refresh; rank-uniform (inside the reduced MPI_n_particles_split>0 gate) */
 #else
         TreeReconstructFlag = 1; // otherwise just wipe and rebuild the tree next chance you get - more expensive but more accurate

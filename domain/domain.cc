@@ -274,9 +274,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     TreeReconstructFlag = 1;	/* ensures that new tree will be constructed */
     DomainReconstructFlag = 0;	/* the decomposition just happened; only the tree half remains owed */
     TreeOpsCount[TREEOPS_DECOMP]++;
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    All.NumForcesSinceLastDomainDecomp = 0;
-#endif
     
     /* we take the closest cost factor */
     if(UseAllParticles) {highest_bin_to_include = All.HighestOccupiedTimeBin;} else {highest_bin_to_include = All.HighestActiveTimeBin;}
@@ -496,9 +493,6 @@ void domain_Decomposition_light(int UseAllTimeBins)
     TreeReconstructFlag = 1;
     DomainReconstructFlag = 0;
     TreeOpsCount[TREEOPS_DECOMP_LIGHT]++;
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-    All.NumForcesSinceLastDomainDecomp = 0;
-#endif
 
     int multipledomains = MULTIPLEDOMAINS;
 
@@ -2733,6 +2727,26 @@ __attribute__((noinline)) peanokey domain_peano_key(int i, peanokey *morton)
     return peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
 }
 
+
+/*! Returns 1 if any LOCAL particle's current position keys into a top-leaf owned by another task.
+ *  A whole-tree rebuild without a preceding decomposition buckets every particle by position; one
+ *  sitting in a foreign top-leaf lands under a node the pseudo-particle exchange will overwrite
+ *  (u.d aliases u.suns), detaching its subtree -- its mass then enters no rank's moments. Until the
+ *  kokkos retained-attachment machinery (068b4f33) is ported, the only safe answer to an escape is
+ *  to restore ownership, i.e. decompose. Rank-local; callers reduce. Uses the same key mapping the
+ *  decomposition assigned ownership with (domain_peano_key). */
+int domain_any_local_particle_escaped(void)
+{
+    int i;
+    for(i = 0; i < NumPart; i++)
+    {
+        peanokey key = domain_peano_key(i, NULL);
+        int no = 0;
+        while(TopNodes[no].Daughter >= 0) {no = TopNodes[no].Daughter + (int) ((key - TopNodes[no].StartKey) / (TopNodes[no].Size / 8));}
+        if(DomainTask[TopNodes[no].Leaf] != ThisTask) {return 1;}
+    }
+    return 0;
+}
 
 /*! Coordinate conversion to integer. d is coordinate in double precision. returns coordinate in integer of type peano1D. written as part of arepo code dev, from public arepo code by V Springel. */
 peano1D domain_double_to_int(double d)

@@ -166,6 +166,7 @@ int NtotSwallowedThisStep;
 int TreeWalkValidatePending;
 int TreeAuditMomentsPending;
 long long TreeOpsCount[TREEOPS_N];
+long long ForceAddElementToTree_CallsSinceBuild;
 #ifdef WAKEUP
 int NeedToWakeupParticles;      /*!< Flags used to signal that wakeups need to be processed at the beginning of the next timestep */
 int NeedToWakeupParticles_local;

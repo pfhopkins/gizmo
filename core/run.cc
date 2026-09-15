@@ -164,16 +164,22 @@ void run(void)
                                     (gravity_tree/compute_potential rebuild it and clear).
            Both are read HERE rather than snapshotted at step top: nothing clears Domain except
            the decomposition below, and a Tree raise/consume inside the drift+statistics window
-           resolves itself before this reduce. The cadence counter (SINGLE_STAR builds) requests
-           the decomposition tier but, like the big-step test, never forces the FULL variant
-           when lightweight repartition is available. */
-        int rflags_local[3] = {TreeReconstructFlag, DomainReconstructFlag, 0}, rflags_glob[3];
-#if defined(SINGLE_STAR_SINK_DYNAMICS)
-        if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {rflags_local[2] = 1;}
+           resolves itself before this reduce. Two cadence checks feed the TREE tier: force
+           updates since the last whole-tree build (walk quality decays as the tree ages), and
+           insertions accepted by the standing tree (each attaches at an existing node, so depth
+           and opening quality degrade with their count). Decomposition cadence is the big-step
+           test alone. The reduce is a SUM so the insertion count aggregates; for the flags a
+           rank-count is as good as a max. */
+        long long rflags_local[3] = {TreeReconstructFlag, DomainReconstructFlag, ForceAddElementToTree_CallsSinceBuild}, rflags_glob[3];
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GRAVITY_ACCURATE_FEWBODY_INTEGRATION) || defined(HERMITE_INTEGRATION)
+        /* cadence: the periodic rebuild is a tree ACCURACY measure, so it belongs to every
+           configuration that integrates close encounters (gate widened per kokkos f7213a89) --
+           and only to those: for everything else the big-step decomposition cadence suffices. */
+        if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {rflags_local[0] = 1;}
 #endif
-        MPI_Allreduce(rflags_local, rflags_glob, 3, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs then everybody has to
-        TreeReconstructFlag = rflags_glob[0]; DomainReconstructFlag = rflags_glob[1];
-        int cadence_decomp_due = rflags_glob[2];
+        MPI_Allreduce(rflags_local, rflags_glob, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD); // if one process reconstructs then everybody has to
+        if(rflags_glob[2] > 0.01 * All.TotNumPart) {rflags_glob[0] = 1;} /* fixed threshold by design: a tunable would grow All (restartfile layout) for a knob nobody should turn */
+        TreeReconstructFlag = (rflags_glob[0] != 0); DomainReconstructFlag = (rflags_glob[1] != 0);
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
         {
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
@@ -183,14 +189,38 @@ void run(void)
             {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
             reconstructed_tree = 1;
         }
-        else if(DomainReconstructFlag || cadence_decomp_due) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(DomainReconstructFlag) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
         else if(TreeReconstructFlag)
         {
-            /* condemned tree, no decomposition owed: skip force_update_tree (it would walk the
-               condemned structure) and let gravity_tree below do the cheap rearrange+rebuild.
-               This branch is what makes a physics-event raise cost a rebuild, not a decomposition. */
-            TreeOpsCount[TREEOPS_DEFER]++;
-            make_list_of_active_particles();
+            /* Condemned tree, no decomposition owed. The cheap answer -- skip force_update_tree,
+               let gravity_tree below do the rearrange+rebuild -- is only safe while every local
+               particle still keys into a top-leaf this rank owns: a rebuild buckets by position,
+               and an escaped particle's subtree is destroyed by the pseudo exchange (its mass then
+               enters no rank's moments; found by the stage-4 auditor, mechanism confirmed against
+               kokkos 068b4f33). Ownership drift therefore escalates to the decomposition tier;
+               benign steps keep the cheap rebuild. */
+            move_particles(All.Ti_Current); /* the build (gravity_tree) drifts everyone to now anyway;
+                doing it first lets the escape check below see the positions the build will actually
+                bucket -- checking pre-drift positions misses boundary crossings inside this step,
+                which is exactly how the auditor caught the first version of this branch. Idempotent:
+                the later calls are no-ops. */
+            int esc_loc = domain_any_local_particle_escaped(), esc_any = 0;
+            MPI_Allreduce(&esc_loc, &esc_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            if(esc_any)
+            {
+                TreeOpsCount[TREEOPS_ESCALATE]++;
+#ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
+                domain_Decomposition_light(0);
+#else
+                domain_Decomposition(0, 0, 1);
+#endif
+                reconstructed_tree = 1;
+            }
+            else
+            {
+                TreeOpsCount[TREEOPS_DEFER]++;
+                make_list_of_active_particles();
+            }
         }
         else
         {
@@ -1056,7 +1086,7 @@ void write_cpu_log(void)
     {
       fprintf(FdCPU, "Step %lld, Time: %.16g, CPUs: %d\n",(long long) All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU, "Nactive=%lld, Imbal(Max/Mean)=%g \n", (long long) GlobNumForceUpdate, (max_CPU_Step[0]/(MIN_REAL_NUMBER + avg_CPU_Step[0])-1.)*NTask+1.);
-      fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld rearrange=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_REARRANGE]);
+      fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE]);
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"
 	      "tree+gravity  %10.2f  %5.1f%%\n"
