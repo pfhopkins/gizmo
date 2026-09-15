@@ -246,13 +246,8 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
  *                                 BFS level samples an independent stream.
  *   child_starts[0..8]         -- output octant boundaries.
  *
- * Every range, of any size, goes through one buffer-free counting sort.  There was a second
- * implementation that snapshotted ranges up to GIZMO_GPU_MORTON_COLLOC_SCRATCH into two automatic
- * arrays of that fixed size; it reserved the frame for that snapshot in every work item of every
- * kernel instantiating this, taken or not, and the counting sort needs no snapshot at all.  The
- * size below now only labels what counts as a large range for reporting.  There is no range this
- * cannot split, so there is no failure to report. */
-#define GIZMO_GPU_MORTON_COLLOC_SCRATCH 512
+ * Every range, of any size, goes through one buffer-free counting sort, so there is no range this
+ * cannot split and no failure to report. */
 
 /* The octant a collocated particle is assigned to.  Deterministic in (ID, counter), which is what
  * lets the placement pass recompute it instead of remembering it -- the property that removes the
@@ -313,11 +308,11 @@ KOKKOS_INLINE_FUNCTION int gpu_morton_counts_are_degenerate(const int counts[8],
 /* Split a collocated range eight ways in place, without any fixed thread-local buffer.
  *
  * Two counting passes and a cycle placement, so nothing is snapshotted and the device frame stays
- * small.  The earlier form kept two GIZMO_GPU_MORTON_COLLOC_SCRATCH-sized automatic arrays -- about
- * 2.5 KiB of private memory reserved per work item in every kernel that instantiates this, whether
- * or not the branch was ever taken.  A counting sort needs no such snapshot, so the arrays are gone
- * and with them the frame; the cost is recomputing each element's octant during placement, which is
- * a hash of an integer and is nothing beside the memory it replaces.
+ * small.  The earlier form kept two fixed-size automatic arrays -- about 2.5 KiB of private memory
+ * reserved per work item in every kernel that instantiates this, whether or not the branch was ever
+ * taken.  A counting sort needs no such snapshot, so the arrays are gone and with them the frame;
+ * the cost is recomputing each element's octant during placement, which is a hash of an integer and
+ * is nothing beside the memory it replaces.
  *
  * Identifiers are not unique -- wind-spawned cells share one stamped ID, and an initial condition
  * can carry duplicates -- so an ID-keyed assignment can hand every member of a range the same
