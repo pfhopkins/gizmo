@@ -18,7 +18,7 @@ case "$STAGE" in
     stage2) TESTS="shu_jets wind_singlestar SN_singlestar binary triple compile_suite";;
     stage3) TESTS="SN_singlestar shu_jets wind_singlestar isodisk_mechfb_sinks HII_region gmc_cooling_rt fire fire_rtsources binary triple compile_suite";;
     stage4) TESTS="shu_jets SN_singlestar binary gmc_cooling compile_suite";;
-    stage5) TESTS="shu_jets wind_singlestar SN_singlestar binary triple hernquist gmc_cooling fire isodisk_mechfb_sinks compile_suite";;
+    stage5) TESTS="shu_jets wind_singlestar SN_singlestar binary triple hernquist gmc_cooling fire isodisk_mechfb_sinks fire_gravtree_rt isodisk_thermalfb compile_suite";; # the last two are non-MAINTAIN GALSF: the only configs where the stage-5 deferred-rebuild ladder branch runs
     *) echo "unknown stage '$STAGE'"; exit 1;;
 esac
 

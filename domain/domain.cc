@@ -272,6 +272,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     }
     
     TreeReconstructFlag = 1;	/* ensures that new tree will be constructed */
+    DomainReconstructFlag = 0;	/* the decomposition just happened; only the tree half remains owed */
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     All.NumForcesSinceLastDomainDecomp = 0;
 #endif
@@ -492,6 +493,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     force_treefree();
 
     TreeReconstructFlag = 1;
+    DomainReconstructFlag = 0;
 #ifdef SINGLE_STAR_SINK_DYNAMICS
     All.NumForcesSinceLastDomainDecomp = 0;
 #endif

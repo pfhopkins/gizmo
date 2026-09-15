@@ -217,14 +217,19 @@ extern size_t HighMark_run,  HighMark_domain, HighMark_gravtree, HighMark_pmperi
 #ifdef TURB_DRIVING
 extern size_t HighMark_turbpower;
 #endif
-extern int TreeReconstructFlag; /*!< request a FULL domain decomposition + tree rebuild. Consumed at the
-    step-start ladder (core/run.cc) as a domain_Decomposition, or mid-step by gravity_tree()/
-    compute_potential() as a rearrange+treebuild; both decomposition paths self-raise it to defer the
-    actual build to the next tree consumer. Distinct from TreeMomentsStaleFlag below: this one means
-    the tree's STORAGE/TOPOLOGY must be replaced, not merely its moments re-derived. Zero-initialized;
-    a raise pending when a restartfile is written would be lost on resume (the resume-time
-    decomposition at file_io/restart.cc is conditional on MULTIPLEDOMAINS changing only). */
+extern int TreeReconstructFlag; /*!< the standing tree is CONDEMNED: its storage/topology must be
+    replaced by a rearrange+treebuild before the next walk. Consumed at the step-start ladder
+    (core/run.cc) or mid-step by gravity_tree()/compute_potential(); both decomposition paths
+    self-raise it to defer the actual build to the next tree consumer. Distinct from
+    DomainReconstructFlag (ownership/balance decomposition owed -- strictly more expensive) and from
+    TreeMomentsStaleFlag below (moments re-derivation on intact topology -- strictly cheaper).
+    Serialized in restartfiles. */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
+extern int DomainReconstructFlag; /*!< a full domain decomposition (particle ownership/balance) is owed.
+    Consumed ONLY by the step-start ladder in run.cc; cleared by the decomposition itself, which
+    self-raises TreeReconstructFlag for the tree half. Physics events that merely condemn the tree
+    raise TreeReconstructFlag instead and cost a rebuild, not a decomposition. Serialized in
+    restartfiles. */
 extern int NtotSwallowedThisStep; /*!< global (Allreduce'd) count of particles swallowed in this step's sink pass; gates the cleanup rearrange in run.cc. Rank-uniform by construction. */
 extern int TreeWalkValidatePending; /*!< set (rank-local) when a maintained rearrange changed the walk threading; the next tree consumer runs force_validate_tree_links() and clears it. Cleared by force_treebuild (fresh tree). */
 extern int TreeAuditMomentsPending; /*!< set when a rearrange edited the list; the next moments refresh gets a FULL audit regardless of the sampling stride (TREE_INTEGRITY_AUDITS builds) */

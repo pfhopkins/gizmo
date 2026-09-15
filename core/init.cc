@@ -805,6 +805,7 @@ void init(void)
 
     Flag_FullStep = 1;		/* to ensure that Peano-Hilbert order is done */
     TreeReconstructFlag = 1;
+    DomainReconstructFlag = 1;	/* fresh start: both the decomposition and the build are owed */
 
 #ifdef SINK_WIND_SPAWN
     Max_Unspawned_MassUnits_fromSink = 0;

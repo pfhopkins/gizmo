@@ -161,6 +161,7 @@ int Flag_FullStep;		/*!< Flag used to signal that the current step involves all 
 
 int TreeReconstructFlag;
 int TreeMomentsStaleFlag;
+int DomainReconstructFlag;
 int NtotSwallowedThisStep;
 int TreeWalkValidatePending;
 int TreeAuditMomentsPending;

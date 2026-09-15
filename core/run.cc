@@ -141,7 +141,6 @@ void run(void)
             break;
         }
         find_timesteps();		/* find-timesteps */
-        int TreeReconstructFlag_local = TreeReconstructFlag;
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
@@ -159,30 +158,39 @@ void run(void)
         set_non_standard_physics_for_current_time();	/* update auxiliary physics for current time */
 
         int reconstructed_tree = 0;
-        int NeedFullDomainDecomp = TreeReconstructFlag; /* save whether a full rebuild was requested before the SINGLE_STAR counter check */
+        /* The rebuild ladder. Two requests with different price tags, reduced together:
+           DomainReconstructFlag -- ownership/balance decomposition owed; consumed ONLY here.
+           TreeReconstructFlag   -- the standing tree is condemned; also consumable mid-step
+                                    (gravity_tree/compute_potential rebuild it and clear).
+           Both are read HERE rather than snapshotted at step top: nothing clears Domain except
+           the decomposition below, and a Tree raise/consume inside the drift+statistics window
+           resolves itself before this reduce. The cadence counter (SINGLE_STAR builds) requests
+           the decomposition tier but, like the big-step test, never forces the FULL variant
+           when lightweight repartition is available. */
+        int rflags_local[3] = {TreeReconstructFlag, DomainReconstructFlag, 0}, rflags_glob[3];
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
-        if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {TreeReconstructFlag_local = 1;}
+        if(All.NumForcesSinceLastDomainDecomp > All.TreeDomainUpdateFrequency * All.TotNumPart) {rflags_local[2] = 1;}
 #endif
-        /* Re-read before reducing: TreeReconstructFlag_local was snapshotted at the top of the step,
-           and anything raised since -- the drift/output window contains snapshot-time rearranges and
-           an OUTPUT_POTENTIAL decomposition -- would otherwise be overwritten by the reduce below
-           with that stale copy, leaving the reuse branch updating a tree that is no longer there. */
-        if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
-        {
-            int rflags_local[2] = {TreeReconstructFlag_local, NeedFullDomainDecomp}, rflags_glob[2];
-            MPI_Allreduce(rflags_local, rflags_glob, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everybody has to
-            TreeReconstructFlag = rflags_glob[0]; NeedFullDomainDecomp = rflags_glob[1];
-        }
+        MPI_Allreduce(rflags_local, rflags_glob, 3, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs then everybody has to
+        TreeReconstructFlag = rflags_glob[0]; DomainReconstructFlag = rflags_glob[1];
+        int cadence_decomp_due = rflags_glob[2];
         if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)	/* check whether we have a big step */
         {
 #ifdef DOMAIN_LIGHTWEIGHT_REPARTITION
-            if(!NeedFullDomainDecomp) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
+            if(!DomainReconstructFlag) {domain_Decomposition_light(0);}  /* lightweight repartition: reuse top tree, just rebalance */
             else
 #endif
             {domain_Decomposition(0, 0, 1);}  /* full decomposition needed */
             reconstructed_tree = 1;
         }
-        else if(TreeReconstructFlag) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(DomainReconstructFlag || cadence_decomp_due) {domain_Decomposition(0, 0, 1); reconstructed_tree = 1;}
+        else if(TreeReconstructFlag)
+        {
+            /* condemned tree, no decomposition owed: skip force_update_tree (it would walk the
+               condemned structure) and let gravity_tree below do the cheap rearrange+rebuild.
+               This branch is what makes a physics-event raise cost a rebuild, not a decomposition. */
+            make_list_of_active_particles();
+        }
         else
         {
             force_update_tree();	/* update tree dynamically with kicks of last step so that it can be reused */

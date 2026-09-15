@@ -44,11 +44,9 @@ void compute_potential(void)
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
         force_treebuild(NumPart, NULL);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time();
-        /* Do NOT clear TreeReconstructFlag here: the raise also encodes "a full domain
-           decomposition is owed", and this statistics-path build satisfies only the tree half.
-           Clearing it silently cancelled the decomposition the raiser asked for -- the step-start
-           ladder then never fired. The cost of leaving it set is at most one redundant build
-           before the ladder consumes it next step. The rebuild does make the moments fresh. */
+        TreeReconstructFlag = 0; /* satisfied: this build replaced the condemned tree. Safe to clear
+           since the split -- a pending domain decomposition lives in DomainReconstructFlag, which
+           only the step-start ladder consumes. (Pre-split, clearing here cancelled that intent.) */
         TreeMomentsStaleFlag = 0;
         PRINT_STATUS(" ..Tree construction done");
     }

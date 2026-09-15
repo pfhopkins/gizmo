@@ -288,6 +288,7 @@ void restart(int modus)
 	     resumed by this build (and vice versa). */
 	  byten(&TreeReconstructFlag, sizeof(TreeReconstructFlag), modus);
 	  byten(&TreeMomentsStaleFlag, sizeof(TreeMomentsStaleFlag), modus);
+	  byten(&DomainReconstructFlag, sizeof(DomainReconstructFlag), modus);
 
 	  /* write flags for active timebins */
 	  byten(TimeBinActive, TIMEBINS * sizeof(int), modus);
