@@ -523,12 +523,18 @@ void sink_swallow_and_kick_loop(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
-    /* collect and print results on any swallow operations in this pass */
+    /* collect results on any swallow operations in this pass. Allreduce (not Reduce): every rank
+       needs the global count -- it raises the moments flag, and it gates the cleanup rearrange in
+       run.cc, both of which must be rank-uniform decisions. */
     int Ntot_gas_swallowed=0, Ntot_star_swallowed=0, Ntot_dm_swallowed=0, Ntot_sink_swallowed=0;
-    MPI_Reduce(&N_gas_swallowed, &Ntot_gas_swallowed, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&N_sink_swallowed, &Ntot_sink_swallowed, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&N_star_swallowed, &Ntot_star_swallowed, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&N_dm_swallowed, &Ntot_dm_swallowed, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_gas_swallowed, &Ntot_gas_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_sink_swallowed, &Ntot_sink_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_star_swallowed, &Ntot_star_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(&N_dm_swallowed, &Ntot_dm_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    NtotSwallowedThisStep = Ntot_gas_swallowed + Ntot_star_swallowed + Ntot_dm_swallowed + Ntot_sink_swallowed;
+    /* a swallowed particle's mass (and its momentum bookkeeping) must leave the node moments before
+       the next force evaluation; the victims themselves are eliminated by the cleanup rearrange */
+    if(NtotSwallowedThisStep > 0) {TreeMomentsStaleFlag = 1;}
     if((ThisTask == 0)&&(Ntot_gas_swallowed+Ntot_star_swallowed+Ntot_dm_swallowed+Ntot_sink_swallowed>0))
     {
         printf("Accretion done: swallowed %d gas, %d star, %d dm, and %d sink particles\n",
@@ -599,6 +605,7 @@ void spawn_sink_wind_feedback(void)
 #ifdef MAINTAIN_TREE_IN_REARRANGE
         All.NumForcesSinceLastDomainDecomp +=  0.0001 * All.TreeDomainUpdateFrequency * All.TotNumPart; /* nudge the next domain+treebuild slightly closer per spawn EVENT (~1e4 events to force one alone).
             NB the counter's only reader and its resets are compiled under SINGLE_STAR_SINK_DYNAMICS, so under the FIRE_BHS umbrella this nudge is currently inert -- the maintained tree is then rebuilt only on the ordinary decomposition cadence */
+        TreeMomentsStaleFlag = 1; /* the spawned cells' mass and the debited sink mass enter the node moments at the next refresh; rank-uniform (inside the reduced MPI_n_particles_split>0 gate) */
 #else
         TreeReconstructFlag = 1; // otherwise just wipe and rebuild the tree next chance you get - more expensive but more accurate
 #endif

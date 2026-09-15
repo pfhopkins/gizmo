@@ -352,13 +352,17 @@ void calculate_non_standard_physics(void)
 #endif
     {
         sink_accretion();
+        /* rank-uniform: Allreduce'd in the swallow tally. Swallow victims sit at Mass=0, still
+           linked in the tree, until a rearrange eliminates them -- previously that only happened
+           if the SPAWN gate below chanced to open, so zero-mass slots could linger indefinitely. */
+        int need_cleanup_rearrange = (NtotSwallowedThisStep > 0);
 #ifdef SINK_WIND_SPAWN
         double Max_Unspawned_MassUnits_fromSink_global;
         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
         if(Max_Unspawned_MassUnits_fromSink_global > 1)
         {
             spawn_sink_wind_feedback();
-            rearrange_particle_sequence();
+            need_cleanup_rearrange = 1;
             Max_Unspawned_MassUnits_fromSink=Max_Unspawned_MassUnits_fromSink_global=0.;
         }
 #if defined(SNE_NONSINK_SPAWN)
@@ -368,6 +372,10 @@ void calculate_non_standard_physics(void)
         }}
 #endif
 #endif
+        /* one deterministic cleanup for the whole sink pass: eliminates swallow victims and folds
+           in freshly spawned cells. Runs on spawn OR swallow (both rank-uniform triggers); the
+           tree consequences are decided inside rearrange itself (stage-2 protocol). */
+        if(need_cleanup_rearrange) {rearrange_particle_sequence();}
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SINKS] += measure_time();
     }
 #endif

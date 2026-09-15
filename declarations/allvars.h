@@ -225,6 +225,7 @@ extern int TreeReconstructFlag; /*!< request a FULL domain decomposition + tree 
     a raise pending when a restartfile is written would be lost on resume (the resume-time
     decomposition at file_io/restart.cc is conditional on MULTIPLEDOMAINS changing only). */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
+extern int NtotSwallowedThisStep; /*!< global (Allreduce'd) count of particles swallowed in this step's sink pass; gates the cleanup rearrange in run.cc. Rank-uniform by construction. */
 extern int GlobFlag;
 extern char DumpFlag;
 #ifdef WAKEUP

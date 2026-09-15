@@ -703,6 +703,7 @@ void star_formation_parent_routine(void)
         printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
         All.TotSinks += tot_sink_formed;
     } // if(tot_sink_formed > 0)
+    if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
 #endif
     
     MPI_Allreduce(&stars_spawned, &tot_spawned, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -713,6 +714,12 @@ void star_formation_parent_routine(void)
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;
+        /* New stars must enter the type-conditioned node moments (stellar_lum for the RT/LEBRON
+           tree, gasmass for opening decisions) before the next force evaluation -- previously a
+           plain-GALSF star stayed invisible to the luminosity tree until the next full rebuild.
+           Rank-uniform via the reduces above. Covers the in-place conversions (incl. the MFV mass
+           adjustment) and the GENERATIONS>1 spawn inserts alike. */
+        TreeMomentsStaleFlag = 1;
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)
