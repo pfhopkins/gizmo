@@ -237,13 +237,24 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
          * and of the rounding in forming the fraction, while being geometrically nothing: a top-leaf
          * is many orders of magnitude wider than a key cell. */
         const double clamp_backoff = 2.0 * dlen / 4398046511104.0;   /* 2^42 */
-        int *bad = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+        /* Bounds for the leaf's node in THIS tree.  The attachment was checked against the standing
+         * tree's DomainNodeIndex before the build; that array has since been refilled by
+         * force_create_empty_nodes, and TreeNodeIndexBase and MaxNodes can both have moved with it,
+         * so the earlier check says nothing about the index dereferenced here. */
+        const int tbase = All.TreeNodeIndexBase, maxn = MaxNodes;
+        /* [0] clamped outside their leaf, [1] leaf with no usable node here, [2]/[3] the first such
+         * leaf and index, so the report names a case instead of only counting them. */
+        int *bad = (int *) gizmo_gpu_alloc_shared(4 * sizeof(int), "treescratch_build_ctr");
         if(!bad) {printf("gpu_topology_build: retained clamp counter alloc failed\n"); return 1;}
-        *bad = 0;
+        bad[0] = 0; bad[1] = 0; bad[2] = -1; bad[3] = -1;
         Kokkos::parallel_for("topo_retained_clamp", nret, KOKKOS_LAMBDA(int j) {
             int i = ret[j];
             int leaf = pt[i];
-            int nd = dni[leaf];
+            int nd = (leaf >= 0 && leaf < ntl) ? dni[leaf] : -1;
+            if(nd < tbase || nd >= tbase + maxn) {
+                if(Kokkos::atomic_fetch_add(&bad[1], 1) == 0) {bad[2] = leaf; bad[3] = nd;}
+                return;
+            }
             Vec3<double> sep = {(double)P_dev[i].Pos[0] - (double)Nodes_uvm[nd].center[0],
                                 (double)P_dev[i].Pos[1] - (double)Nodes_uvm[nd].center[1],
                                 (double)P_dev[i].Pos[2] - (double)Nodes_uvm[nd].center[2]};
@@ -278,12 +289,21 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
                                                   (double)Nodes_uvm[nd].center[2] + sep[2],
                                                   dc0, dc1, dc2, dlen, bits, &m);
             keys[i] = m;
-            if(gpu_topleaf_for_key(tn, pkey) != leaf) {Kokkos::atomic_fetch_add(bad, 1);}
+            if(gpu_topleaf_for_key(tn, pkey) != leaf) {Kokkos::atomic_fetch_add(&bad[0], 1);}
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("topo_retained_clamp", nret);
-        int nbad = *bad;
+        int nbad = bad[0], nbadnode = bad[1], badleaf = bad[2], badnode = bad[3];
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(bad);
+        if(nbadnode) {
+            printf("gpu_topology_build: task %d holds %d of %d retained particles whose top-leaf has no "
+                   "node in the tree just built (first: leaf %d -> node %d, valid range [%d,%d)); the "
+                   "attachment was checked against the standing tree, whose DomainNodeIndex this build "
+                   "has already replaced.\n",
+                   ThisTask, nbadnode, nret, badleaf, badnode, tbase, tbase + maxn);
+            endrun(91570);
+            return 1;
+        }
         if(nbad) {
             printf("gpu_topology_build: task %d clamped %d of %d retained particles outside the top-leaf "
                    "they were clamped into; the key and the top-tree geometry disagree.\n",
@@ -488,6 +508,7 @@ extern "C" int gpu_topology_grow_retained_paths(void)
     const int *ret = g_retained_slots;
     const int  nret = g_retained_n;
     const int  tbase = All.TreeNodeIndexBase, maxn = MaxNodes;
+    const int  ntl = NTopleaves;
     struct NODE *Nodes_uvm = Nodes;
     const int   *father    = Father;
     int         *pt        = g_particle_topleaf;
@@ -500,7 +521,9 @@ extern "C" int gpu_topology_grow_retained_paths(void)
 
     Kokkos::parallel_for("topo_retained_grow", nret, KOKKOS_LAMBDA(int j) {
         int i = ret[j];
-        int leaf_node = dni[pt[i]];
+        /* Same index, same reason as the clamp: bound the leaf before reading the map. */
+        const int lf = pt[i];
+        int leaf_node = (lf >= 0 && lf < ntl) ? dni[lf] : -1;
         int no = father[i];
         volatile int reached_leaf = 0;
         for(int guard = 0; guard < GIZMO_GPU_MORTON_MAX_DEPTH + 8; guard++) {
