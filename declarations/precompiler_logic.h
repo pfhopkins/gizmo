@@ -41,7 +41,7 @@
 #define PREVENT_PARTICLE_MERGE_SPLIT  /* particle merging/splitting doesn't make sense with frozen grids */
 #endif
 
-#ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP
+#if defined(PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP) && !defined(DISABLE_MAINTAIN_TREE_IN_REARRANGE)
 #define MAINTAIN_TREE_IN_REARRANGE
 #endif
 
@@ -258,7 +258,9 @@
 #endif
 #define SINK_FB_COLLIMATED            /* BHFB directed along collimated axis following BH ang. mom */
 #define SINK_WIND_SPAWN (2)           /* spawn module: N=min num spawned/step */
+#if !defined(DISABLE_MAINTAIN_TREE_IN_REARRANGE)
 #define MAINTAIN_TREE_IN_REARRANGE    /* avoid constant domain decompositions in bottom timebin each time a spawn occurs */
+#endif
 #if defined(COSMIC_RAY_FLUID) || defined(COSMIC_RAY_SUBGRID_LEBRON)
 #define SINK_COSMIC_RAYS              /* allow CR injection from AGN */
 #endif
@@ -543,7 +545,7 @@
 
 #if defined(SINGLE_STAR_FB_JETS) || ((defined(SINGLE_STAR_FB_WINDS) || defined(SINGLE_STAR_FB_SNE)) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION))
 #define SINK_WIND_SPAWN (2) // leverage the BHFB model already developed within the FIRE-BHs framework. gives accurate launching of arbitrarily-structured jets.
-#if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(DISABLE_MAINTAIN_TREE_IN_REARRANGE)
 #define MAINTAIN_TREE_IN_REARRANGE // don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed
 #endif
 #endif
@@ -558,6 +560,9 @@
    the full per-swap maintenance -- the parent-only carry is not enough for a tree that keeps being
    walked. This deliberately OVERRIDES the nuclear-zoom exclusion above: a zoom run with Hermite and
    spawning gets the maintenance despite the exclusion. (cf. gizmo-cpp a06e0073) */
+#ifdef DISABLE_MAINTAIN_TREE_IN_REARRANGE
+#warning "DISABLE_MAINTAIN_TREE_IN_REARRANGE overridden: HERMITE_INTEGRATION + SINK_WIND_SPAWN requires tree maintenance (this config cannot serve as the no-MAINTAIN A/B arm)"
+#endif
 #define MAINTAIN_TREE_IN_REARRANGE
 #endif
 

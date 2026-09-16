@@ -235,6 +235,9 @@ extern int TreeWalkValidatePending; /*!< set (rank-local) when a maintained rear
 enum TreeOpsIndex {TREEOPS_BUILD=0, TREEOPS_REFRESH, TREEOPS_DECOMP, TREEOPS_DECOMP_LIGHT, TREEOPS_DEFER, TREEOPS_ESCALATE, TREEOPS_REARRANGE, TREEOPS_N};
 extern long long ForceAddElementToTree_CallsSinceBuild; /*!< rank-local insertions accepted by the standing tree since its build; the ladder SUM-reduces this and condemns the tree past a fixed fraction of TotNumPart (insertions attach at existing nodes, so tree quality degrades with their count) */
 extern long long TreeOpsCount[TREEOPS_N]; /*!< running counts of whole-tree builds, moment refreshes, full/light decompositions, deferred-rebuild ladder steps, and rearranges. All are collective events, so every rank agrees; reported in cpu.txt. Diagnostic only: not serialized, resets on resume. */
+extern double TreeMaintTime_SwapPointers; /*!< rank-local cumulative seconds in swap_treewalk_pointers (the per-swap O(tree) pointer surgery MAINTAIN_TREE_IN_REARRANGE pays); MAX across ranks in cpu.txt */
+extern double TreeMaintTime_Rearrange; /*!< rank-local cumulative seconds in rearrange_particle_sequence; MAX across ranks in cpu.txt */
+extern long long TreeMaintCount_SwapPointers; /*!< rank-local count of swap_treewalk_pointers calls */
 extern int TreeAuditMomentsPending; /*!< set when a rearrange edited the list; the next moments refresh gets a FULL audit regardless of the sampling stride (TREE_INTEGRITY_AUDITS builds) */
 extern int GlobFlag;
 extern char DumpFlag;

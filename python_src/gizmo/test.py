@@ -213,6 +213,15 @@ def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_fl
         with open("Config.sh", "a") as f:
             for flag in extra_config_flags:
                 f.write(f"\n{flag}\n")
+    # Sweep-wide A/B hook: GIZMO_EXTRA_CONFIG_FLAGS (space-separated) appends to every build
+    # WITHOUT entering the variant identity -- output dirs, test ids, and reference comparisons
+    # keep their names, which is the point: an A/B arm compares like-for-like against the same
+    # references. e.g. GIZMO_EXTRA_CONFIG_FLAGS="DISABLE_MAINTAIN_TREE_IN_REARRANGE".
+    env_flags = tuple(environ.get("GIZMO_EXTRA_CONFIG_FLAGS", "").split())
+    if env_flags:
+        with open("Config.sh", "a") as f:
+            for flag in env_flags:
+                f.write(f"\n{flag}\n")
     if _current_systype() in _KOKKOS_SYSTYPES:
         with open("Config.sh") as f:
             cfg = f.read()

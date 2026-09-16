@@ -1169,6 +1169,7 @@ int merge_particles_ij(int i, int j)
 
 void swap_treewalk_pointers(int i, int j){
     // walk the tree and any time we see a nextnode or sibling set to i, swap it to j and vice versa
+    double _t0 = my_second(); TreeMaintCount_SwapPointers++;
     int no, next;
     no = All.MaxPart;
 
@@ -1209,6 +1210,7 @@ void swap_treewalk_pointers(int i, int j){
     no = Father[i];
     Father[i] = Father[j];
     Father[j] = no;
+    TreeMaintTime_SwapPointers += my_second() - _t0;
 }
 
 
@@ -1253,6 +1255,7 @@ void remove_particle_from_treewalk(int i){
 void rearrange_particle_sequence(void)
 {
     TreeOpsCount[TREEOPS_REARRANGE]++;
+    double _t0_rearr = my_second();
     int i, j, flag = 0, flag_sum, j_next;
     int count_elim, count_gaselim, count_sink_elim, tot_elim, tot_gaselim, tot_sink_elim;
     struct particle_data psave;
@@ -1402,6 +1405,7 @@ void rearrange_particle_sequence(void)
     if(flag) {force_tree_full_audit(0, "rearrange");}
 #endif
 #endif
+    TreeMaintTime_Rearrange += my_second() - _t0_rearr;
 }
 
 
