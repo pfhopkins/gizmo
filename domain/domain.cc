@@ -223,6 +223,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     // Actually we shouldn't because there are tree-walks in merge_and_split_particles().
     //rearrange_particle_sequence();
     double t_drift_start = my_second(), t_mergesplit=0, t_rearrange=0, t_drift_loop=0, t_treefree=0, t_boxwrap=0, t_barrier=0;
+    TreeDiscardImminent = 1; /* the standing tree dies at the force_treefree below: the prelude's split daughters are deliberately not inserted */
     if((All.Ti_Current > All.TimeBegin)&&(do_particle_mergesplit_key==1))
     {
         merge_and_split_particles(); /* do the particle split/merge operations: only do this on tree-building super-steps */
@@ -273,6 +274,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     
     TreeReconstructFlag = 1;	/* ensures that new tree will be constructed */
     DomainReconstructFlag = 0;	/* the decomposition just happened; only the tree half remains owed */
+    TreeDiscardImminent = 0;
     TreeOpsCount[TREEOPS_DECOMP]++;
     
     /* we take the closest cost factor */
@@ -423,6 +425,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     LightRepartitionCount++;
 
     double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
+    TreeDiscardImminent = 1; /* as in the full decomposition: the tree dies before the next walk */
     rearrange_particle_sequence();
     t_light_rearrange = timediff(t_light_start, my_second());
     UseAllParticles = UseAllTimeBins;
@@ -492,6 +495,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     TreeReconstructFlag = 1;
     DomainReconstructFlag = 0;
+    TreeDiscardImminent = 0;
     TreeOpsCount[TREEOPS_DECOMP_LIGHT]++;
 
     int multipledomains = MULTIPLEDOMAINS;

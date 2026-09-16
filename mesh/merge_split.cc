@@ -1402,7 +1402,10 @@ void rearrange_particle_sequence(void)
     if(flag) {TreeWalkValidatePending = 1;} /* rank-local note: this rank's threading was edited; the next tree consumer validates it (tier-0) */
     if(flag || count_elim) {TreeAuditMomentsPending = 1;} /* the next refresh audits moments un-strided: post-mutation is exactly when a wrong Father shows as a moment mismatch */
 #ifdef TREE_INTEGRITY_AUDITS
-    if(flag) {force_tree_full_audit(0, "rearrange");}
+    /* not when the tree is about to be freed (decomposition prelude): splits there deliberately
+       leave daughters uninserted, which the audit would misread as orphans (and the audit work
+       would be spent on a structure nothing will walk) */
+    if(flag && !TreeDiscardImminent) {force_tree_full_audit(0, "rearrange");}
 #endif
 #endif
     TreeMaintTime_Rearrange += my_second() - _t0_rearr;

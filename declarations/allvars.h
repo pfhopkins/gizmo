@@ -239,6 +239,7 @@ extern double TreeMaintTime_SwapPointers; /*!< rank-local cumulative seconds in 
 extern double TreeMaintTime_Rearrange; /*!< rank-local cumulative seconds in rearrange_particle_sequence; MAX across ranks in cpu.txt */
 extern long long TreeMaintCount_SwapPointers; /*!< rank-local count of swap_treewalk_pointers calls */
 extern int TreeAuditMomentsPending; /*!< set when a rearrange edited the list; the next moments refresh gets a FULL audit regardless of the sampling stride (TREE_INTEGRITY_AUDITS builds) */
+extern int TreeDiscardImminent; /*!< held by the decomposition paths across their merge/split+rearrange prelude: the standing tree dies before the next walk, so split daughters are deliberately not inserted and the rearrange-time audit must not treat them as orphans */
 extern int GlobFlag;
 extern char DumpFlag;
 #ifdef WAKEUP

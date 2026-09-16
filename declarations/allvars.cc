@@ -165,6 +165,7 @@ int DomainReconstructFlag;
 int NtotSwallowedThisStep;
 int TreeWalkValidatePending;
 int TreeAuditMomentsPending;
+int TreeDiscardImminent;
 long long TreeOpsCount[TREEOPS_N];
 double TreeMaintTime_SwapPointers;
 double TreeMaintTime_Rearrange;
