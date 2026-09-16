@@ -24,7 +24,7 @@ static MPI_Datatype MPI_TYPE_TIME = MPI_LONG_LONG;
  *
  * So the contract is enforced here rather than defended at each site. */
 #ifdef __FAST_MATH__
-#error "-ffast-math breaks the position->key contract: it licenses reciprocal and fused-multiply-add rewrites, so the domain exchange and the tree build can compute different keys for the same particle and silently detach it from every rank's tree. Remove it from this systype's OPTIMIZE in the Makefile."
+#error "A fast floating-point model breaks the position->key contract: it licenses reciprocal and fused-multiply-add rewrites, so the domain exchange and the tree build can compute different keys for the same particle and silently detach it from every rank's tree. Check this systype's OPTIMIZE in the Makefile for -ffast-math or -Ofast -- and note that the Intel compilers select a fast model BY DEFAULT, with no such flag present, in which case add -fp-model=precise -no-fma."
 #endif
 
 #define  BITS_PER_DIMENSION 42    /* for Peano-Hilbert order. Note: Maximum is 10 to fit in 32-bit integer, 21 for 64-bit integer, 42 for 128-bit integer */
