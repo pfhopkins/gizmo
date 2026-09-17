@@ -120,6 +120,32 @@
 
 #define  GRAVITY_LET_DETECTOR_ENTRIES  4096  /* how many targets the gravity walk can record as not covered by the locally-built tree. Recording even one stops the run, so this only has to be large enough to report what happened, with room for every thread to record at once */
 
+/* Maximum number of particles a tree node may hold without being subdivided further: a node at or
+ * below this count becomes a terminal "bucket" leaf whose particles are visited directly, instead of
+ * being split down to one particle per leaf. Trading a few extra direct particle tests for a much
+ * shallower tree is standard (GADGET-4 TREE_NUM_BEFORE_NODESPLIT, ChaNGa bucketSize, SPH-EXA/SWIFT
+ * leaf sizes, and our own SFC tile size), and it also bounds the depth that near-coincident
+ * particles can force.
+ *
+ * There is no universally good value: the best choice depends on the problem, on how aggressively
+ * the opening criterion descends, and on the machine, and useful values range from 1 to several
+ * thousand. 1 reproduces the historical one-particle-per-leaf tree exactly, and compiles the
+ * multi-particle leaf code out entirely. Override in Config.sh. */
+#ifndef TREE_LEAF_BUCKET_SIZE
+#define TREE_LEAF_BUCKET_SIZE 1
+#endif
+#if TREE_LEAF_BUCKET_SIZE < 1
+/* Below one, no child count satisfies the terminal-leaf test, so a single particle would be neither
+ * stored in a leaf slot nor given a node of its own: it would drop out of the tree silently. */
+#error "TREE_LEAF_BUCKET_SIZE must be at least 1 (1 = one particle per leaf, the historical tree)"
+#endif
+
+/* Marks the last particle of a multi-particle leaf while the tree is being built: the threading
+ * pass replaces it with the leaf's post-subtree successor. Negative and distinct from -1 (which
+ * legitimately terminates a chain) so an unreplaced marker is detectable rather than silently
+ * ending a walk early. Unused at a leaf size of 1, where nothing is threaded. */
+#define TREE_LEAF_BUCKET_CHAIN_END (-7)
+
 #define  EPSILON_FOR_TREERND_SUBNODE_SPLITTING (1.0e-4) /* define some number << 1; particles with less than this separation will trigger randomized sub-node splitting in the tree. we set it to a global value here so that other sub-routines will know not to force particle separations below this */
 
 #if !defined(EOS_GAMMA)

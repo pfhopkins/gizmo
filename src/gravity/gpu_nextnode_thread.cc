@@ -102,6 +102,16 @@ extern "C" int gpu_nextnode_thread(void)
     int          *nextnode_soa= soa->nextnode;
     int          *aux_soa     = soa->nextnode_aux;
 
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* Where the first malformed leaf chain was found: count, node slot, head particle, the member
+     * the chain broke at, and what that member held.  Allocated only when leaves can hold more
+     * than one particle, since that is the only case with a chain to malform. */
+    enum {CHAIN_FAULT_FIELDS = 5};
+    int *chain_fault = (int *) gizmo_gpu_alloc_shared(CHAIN_FAULT_FIELDS * sizeof(int), "treescratch_build_ctr");
+    if(!chain_fault) {printf("gpu_nextnode_thread: could not allocate the chain-fault record\n"); return 1;}
+    for(int q = 0; q < CHAIN_FAULT_FIELDS; q++) {chain_fault[q] = 0;}
+#endif
+
     Kokkos::parallel_for("nx_thread", n, KOKKOS_LAMBDA(int k) {
         /* k is the SoA index (0..n).  Internal-node id = tree_base + k. */
         long base = (long)k * 8;
@@ -134,8 +144,39 @@ extern "C" int gpu_nextnode_thread(void)
             int succ = (next >= 0) ? next : sibling_soa[k];
             /* Write successor for prev_id based on its type. */
             if(prev_id < part_slots) {
+#if TREE_LEAF_BUCKET_SIZE == 1
                 /* particle */
                 aux_soa[prev_id] = succ;
+#else
+                /* A particle slot heads a leaf that may hold several particles: a run the build
+                 * threaded together and ended with TREE_LEAF_BUCKET_CHAIN_END.  The successor
+                 * belongs on the LAST member, and the interior links must be left alone.
+                 *
+                 * A chain that does not end in the sentinel means the build and this pass disagree
+                 * about the tree.  Threading from a truncated chain would leave the successor on an
+                 * interior member, silently shortening every walk that enters the leaf, so the
+                 * first thread that sees one records where it happened and the build fails. */
+                int last = prev_id, guard = 0, reached_end = 1;
+                for(;;) {
+                    const int nxt = aux_soa[last];
+                    if(nxt == TREE_LEAF_BUCKET_CHAIN_END) {break;}
+                    if(nxt < 0 || nxt >= part_slots || ++guard > part_slots) {
+                        reached_end = 0;
+                        if(Kokkos::atomic_fetch_add(&chain_fault[0], 1) == 0) {
+                            chain_fault[1] = k; chain_fault[2] = prev_id;
+                            chain_fault[3] = last; chain_fault[4] = nxt;
+                        }
+                        break;
+                    }
+                    last = nxt;
+                }
+                /* Only when the end of the chain was actually found.  `last` is otherwise an
+                 * INTERIOR member, and writing the successor there is precisely the truncation
+                 * this guard exists to prevent -- the request to stop is drained at a later phase
+                 * boundary, so the tree would be walked in that state first.  Leave it untouched
+                 * and let the failure above stop the run. */
+                if(reached_end) {aux_soa[last] = succ;}
+#endif
             } else if(prev_id >= tree_base + MaxNodes_ + MaxForeignNodes_) {
                 /* pseudo-particle (the foreign-node range sits below pseudos in the index
                  * space but occupies no slots): the pseudo segment starts after the
@@ -158,6 +199,25 @@ extern "C" int gpu_nextnode_thread(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("nx_thread", n);
+
+#if TREE_LEAF_BUCKET_SIZE > 1
+    {
+        const int nfault = chain_fault[0], f_slot = chain_fault[1], f_head = chain_fault[2];
+        const int f_at = chain_fault[3], f_held = chain_fault[4];
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(chain_fault);
+        if(nfault > 0) {
+            printf("gpu_nextnode_thread: rank %d found %d malformed leaf chain(s) at a leaf size of %d.\n"
+                   "The first was under node %d (slot %d), head particle %d: the chain reached particle %d,\n"
+                   "which holds %d instead of a particle below %d or the end marker %d. The build threads\n"
+                   "every member of a multi-particle leaf, so a chain that does not end there means the\n"
+                   "topology emit and this pass disagree, and the tree is not usable.\n",
+                   ThisTask, nfault, (int) TREE_LEAF_BUCKET_SIZE, tree_base + f_slot, f_slot,
+                   f_head, f_at, f_held, part_slots, (int) TREE_LEAF_BUCKET_CHAIN_END);
+            fflush(stdout);
+            return 1;
+        }
+    }
+#endif
 
     /* Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
      * Internal-node Nodes[].u.d.nextnode writeback runs on the

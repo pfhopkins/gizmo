@@ -594,6 +594,7 @@ struct BfsItem {
 
 }  /* anonymous namespace */
 
+
 extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -637,6 +638,17 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         printf("gpu_topology_emit_bfs: SoA core fields not allocated\n");
         return 3;
     }
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* Aliases the tree's Nextnode[]: a leaf holding several particles threads them together here,
+     * at the one point in the build that knows which particles share the leaf. */
+    int *aux_out = soa->nextnode_aux;
+    if(!aux_out || soa->nextnode_aux_size < All.TreeParticleSlots) {
+        printf("gpu_topology_emit_bfs: the particle successor array is missing or too small "
+               "(have=%d, need=%d), so multi-particle leaves cannot be threaded\n",
+               soa->nextnode_aux_size, All.TreeParticleSlots);
+        return 3;
+    }
+#endif
 
     int ntl       = NTopleaves;
     int max_nodes = MaxNodes;
@@ -703,6 +715,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         printf("gpu_topology_emit_bfs: worklist overflow at init\n");
         return rc;
     }
+
 
     /* BFS loop: each iteration processes wl_curr, populates wl_next. */
     Kokkos::View<BfsItem*, MemSpace> wl_curr = wl_a;
@@ -781,10 +794,32 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 int cnt = rl - rf;
                 int slot_value = -1;
 
+#if TREE_LEAF_BUCKET_SIZE == 1
                 if(cnt == 1) {
-                    /* Single particle: store its REAL P[] index directly as a leaf
-                     * (subset builds map slot->particle; identity: slot==real). */
+#else
+                if(cnt >= 1 && cnt <= TREE_LEAF_BUCKET_SIZE) {
+#endif
+                    /* Terminal leaf: this child holds few enough particles that subdividing it
+                     * further costs more tree than it saves work, so it is not split at all.  The
+                     * slot carries the FIRST particle; at a leaf size above one the rest are
+                     * threaded behind it, so a walk reaches them exactly as it reaches any run of
+                     * particles and no walker learns a new node kind.  The last member is marked
+                     * with TREE_LEAF_BUCKET_CHAIN_END, which gpu_nextnode_thread replaces with the leaf's
+                     * post-subtree successor; the member count is NOT stored anywhere, because
+                     * particles are inserted into a live tree without a rebuild and any cached
+                     * count would go stale.
+                     *
+                     * At TREE_LEAF_BUCKET_SIZE == 1 the test above is `cnt == 1` and nothing but
+                     * the slot is written: the historical single-particle leaf, exactly. */
                     slot_value = stp ? stp[sidx[rf]] : sidx[rf];
+#if TREE_LEAF_BUCKET_SIZE > 1
+                    for(int q = rf; q < rl; q++) {
+                        const int pq   = stp ? stp[sidx[q]] : sidx[q];
+                        const int next = (q + 1 < rl) ? (stp ? stp[sidx[q+1]] : sidx[q+1])
+                                                      : TREE_LEAF_BUCKET_CHAIN_END;
+                        aux_out[pq] = next;
+                    }
+#endif
                 } else if(cnt > 1) {
                     /* Allocate a new internal node from the device counter.
                      * Collocation in the sub-range is OK -- the next BFS
@@ -832,6 +867,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         int *tmpp = sz_curr; sz_curr = sz_next; sz_next = tmpp;
         level_guard++;
     }
+
 
     int rc = (*fail == 0) ? 0 : *fail;
     int new_total = *ncount;
