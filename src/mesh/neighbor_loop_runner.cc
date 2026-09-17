@@ -397,6 +397,53 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
     return n_items >= thresh;
 }
 
+/* WHERE one batch of fused-walk sources runs: device, host threads, or one host
+ * core. The single place that decision is made, so every converted fused walk gets
+ * the same policy rather than each launch site carrying its own.
+ *
+ * Nothing about the traversal, the leaf policy, the drift, the exchange or the
+ * reply protocol varies with the choice -- only the execution space. The body is a
+ * `KOKKOS_LAMBDA`, which both device compilers expand to `[=] __host__ __device__`,
+ * so one body serves all three arms unchanged.
+ *
+ * The count is the batch's OWN source count, never a step-level or global one: a
+ * rank walking ten sources of its own is a different question from the same rank
+ * answering ten thousand imported ones, and on a clustered run those differ by
+ * three orders of magnitude within a single call.
+ *
+ * CAPTURE RESIDENCE -- the one way this can go silently wrong. The body captures by
+ * value, so a CallScalars, a device context or a tree view it captures lives INSIDE
+ * the closure: on the host stack when called here, device-resident when copied to a
+ * launch. A leaf built inside the body therefore points into whichever space is
+ * executing, which is what makes all three arms correct. Every other pointer a leaf
+ * holds -- particles, accumulators, the touched set, the anomaly word -- is
+ * SharedSpace and valid in both. Capturing any of the first group BY REFERENCE
+ * would leave a leaf pointing at a host stack object on the device arm, which is a
+ * fault or a wrong answer rather than a compile error. Those captures must also
+ * stay unmodified for the whole batch, and no pointer into the closure may outlive
+ * the call.
+ *
+ * Two preconditions, both true at present call sites: any device work this batch
+ * reads from has already completed (each producer fences at its own launch), and no
+ * caller is already inside a parallel region. */
+template <class F>
+static inline void nlr_walk_for_sources(const char *tag, int n, F &&body)
+{
+    if(n <= 0) {return;}
+    if(n >= NLR_WALK_MIN_SOURCES_FOR_DEVICE) {
+        gizmo_gpu_kernel_launch(tag, n, std::forward<F>(body));
+        return;
+    }
+    if(nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads())) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
+#endif
+        for(int kk = 0; kk < n; kk++) {body(kk);}
+        return;
+    }
+    for(int kk = 0; kk < n; kk++) {body(kk);}
+}
+
 /* Eval-threading policy for evaluate_pairs_post_drift. The production tree eval
  * may thread (BitwiseReadonly or EpsilonAtomic specs, i.e. any non-SerialOnly tier).
  * Passed explicitly at every call site (no default) so production vs
@@ -3657,7 +3704,7 @@ static void nlr_record_and_drift_from_root(const struct particle_data *P,
         return;
     }
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    gizmo_gpu_kernel_launch(label, n, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(label, n, KOKKOS_LAMBDA(int kk) {
         double qx = 0, qy = 0, qz = 0, reach = 0;
         query(kk, qx, qy, qz, reach);
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
@@ -3951,7 +3998,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
             reach = (double)a_rec.h_search;
         });
 
-    gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(acc_d[kk]);
         const ActiveData& a = q_d[kk];
         ScatterData s{};

@@ -46,6 +46,30 @@
 #define GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD 2000000000
 #endif
 
+/* Minimum number of sources in ONE batch for a fused neighbour walk to run on the
+ * device. Below it the batch runs on the host, threaded above the neighbour-loop
+ * runner's own OpenMP work floor and serial below that.
+ *
+ * The walk is pointer-chasing down a dependent chain per source, so a batch of a
+ * few sources leaves the device with almost nothing to overlap while still paying
+ * a launch and a fence, where a host core pays neither. Per leaf visit the device
+ * measures far worse than a host core at a handful of sources and better at
+ * millions of them. That small-batch cost is a defect in the walk itself, to be
+ * removed rather than routed around, so this is a narrow floor under a known
+ * pathology: it belongs low, and it is not a licence to send substantial batches
+ * to the host.
+ *
+ * Decided per batch and per rank, from that batch's own source count: a rank's own
+ * actives for a walk from the root, a group's received queries for a resumed one.
+ * On a clustered run those two differ by three orders of magnitude inside a single
+ * call, so no step-level or global property can stand in for either.
+ *
+ * At 1 every non-empty batch goes to the device, which is the behaviour this
+ * replaced; raising it selects the host arms for batches below it. */
+#ifndef NLR_WALK_MIN_SOURCES_FOR_DEVICE
+#define NLR_WALK_MIN_SOURCES_FOR_DEVICE 1
+#endif
+
 /* The Saitoh & Makino (2009) timestep-limiter factor: a cell is woken when a neighbour's step is
    this much shorter than its own. A run may set it in Config.sh -- their Table 1 gives f=2 a smaller
    energy error than f=4 on Sedov, at roughly twice the cost -- and otherwise it follows the slope
