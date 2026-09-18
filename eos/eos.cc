@@ -53,11 +53,13 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #ifdef COOLING
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
     temp = ThermalProperties(u0, rho_fortemp, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); // get thermodynamic properties
-    cell[i].Gamma = cell[i].gamma_eos_value(); // cache the adiabatic index; this will reuse the pre-computed cell[i].Temperature assigned above
 #else
     temp = cell[i].InternalEnergyPred * (gamma_eos_index-1.) * PROTONMASS_CGS / (BOLTZMANN_CGS) * UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS; // convert to temperature for caching
 #endif
-    cell[i].Temperature = temp; // cache the temperature
+    cell[i].Temperature = temp; // cache the temperature; must precede the gamma update below, which reads Temperature under EOS_SUBSTELLAR_ISM
+#ifdef COOLING
+    cell[i].Gamma = cell[i].gamma_eos_value(); // cache the adiabatic index, reusing the temperature just cached
+#endif
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
