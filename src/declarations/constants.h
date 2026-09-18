@@ -47,27 +47,64 @@
 #endif
 
 /* Minimum number of sources in ONE batch for a fused neighbour walk to run on the
- * device. Below it the batch runs on the host, threaded above the neighbour-loop
- * runner's own OpenMP work floor and serial below that.
+ * device -- the upper of the two boundaries in a three-way choice, matching what
+ * cooling and the other batched loops already do:
+ *
+ *     sources <  max(64, 4*threads)                  one host core
+ *     sources >= max(64, 4*threads), < this constant host threads
+ *     sources >= this constant                       the device
+ *
+ * The lower boundary is not a second constant; it is the neighbour-loop runner's
+ * existing OpenMP work floor, which scales with the thread count. ⚠ Setting this
+ * constant down to that floor would leave the threaded tier ZERO WIDTH and quietly
+ * reduce the choice to two ways, so it belongs well above it.
  *
  * The walk is pointer-chasing down a dependent chain per source, so a batch of a
  * few sources leaves the device with almost nothing to overlap while still paying
  * a launch and a fence, where a host core pays neither. Per leaf visit the device
- * measures far worse than a host core at a handful of sources and better at
- * millions of them. That small-batch cost is a defect in the walk itself, to be
- * removed rather than routed around, so this is a narrow floor under a known
- * pathology: it belongs low, and it is not a licence to send substantial batches
- * to the host.
+ * measures far worse than a host core at small and intermediate batch sizes and
+ * reaches parity only at the largest. That deficit is a defect in this walk, to be
+ * removed rather than routed around permanently, and the boundary below is set
+ * where it currently pays rather than where it ought to end up.
  *
  * Decided per batch and per rank, from that batch's own source count: a rank's own
  * actives for a walk from the root, a group's received queries for a resumed one.
  * On a clustered run those two differ by three orders of magnitude inside a single
  * call, so no step-level or global property can stand in for either.
  *
- * At 1 every non-empty batch goes to the device, which is the behaviour this
- * replaced; raising it selects the host arms for batches below it. */
+ * At 1 every non-empty batch goes to the device; raising it sends batches below it
+ * to the host instead.
+ *
+ * ⚠ THIS VALUE IS TEMPORARY AND MUST BE RE-PRICED, NOT INHERITED.
+ *
+ * Measured on a 128-rank cosmological zoom at matched simulation time, with the work
+ * matched to 0.002% and every other cost row flat to within a second: against sending
+ * every batch to the device, this saves 231 s of a 685 s wall, 236 s of it on the
+ * density row alone. Replicate spread on that vehicle is ~0.3%, about 2 s, so the move
+ * is a hundred times the noise; a boundary of 64 instead was measured at 133 s. On a
+ * gas-only galaxy the same change is worth only 14 s, because that problem spends its
+ * neighbour time in large batches where the two paths are within a few percent of each
+ * other; the gain here comes from small and intermediate batches, which is where the
+ * zoom spends nearly all of its.
+ *
+ * ⚠ What that measures is a DEFICIT IN THIS WALK'S DEVICE PATH, not a verdict that the
+ * host is the right home for neighbour finding. The tile-and-BVH search on the same
+ * hardware does not show it, so the work belongs on the device and the number above is
+ * the size of the bill currently being paid. Sending EVERY batch to the host was also
+ * measured and buys only about 4 s beyond this, so nothing material is left on the
+ * table by stopping here -- and going further would be the wrong direction anyway: it
+ * would concede the device for a widening share of the code, could cancel the gain
+ * from moving the particle drift back onto the device, and would make the host look
+ * like the better home for work -- memory placement especially -- when it is not.
+ *
+ * ⇒ RE-PRICE AND LOWER OR REMOVE THIS when any of the following lands: supply-type
+ * pruning of the walk, bounded-occupancy terminal leaves, neighbour discovery through
+ * an index built for the search rather than the gravity tree, the device drift, or the
+ * next pricing of the three neighbour-search paths against each other. Each of those
+ * attacks the deficit this compensates for; a threshold left in place afterwards hides
+ * its own obsolescence. */
 #ifndef GPU_MIN_SOURCES_FOR_WALK_OFFLOAD
-#define GPU_MIN_SOURCES_FOR_WALK_OFFLOAD 1
+#define GPU_MIN_SOURCES_FOR_WALK_OFFLOAD 4096
 #endif
 
 /* The Saitoh & Makino (2009) timestep-limiter factor: a cell is woken when a neighbour's step is
