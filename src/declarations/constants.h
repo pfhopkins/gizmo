@@ -128,11 +128,13 @@
  * particles can force.
  *
  * There is no universally good value: the best choice depends on the problem, on how aggressively
- * the opening criterion descends, and on the machine, and useful values range from 1 to several
- * thousand. 1 reproduces the historical one-particle-per-leaf tree exactly, and compiles the
- * multi-particle leaf code out entirely. Override in Config.sh. */
+ * the opening criterion descends, and on the machine. Measured across a clustered cosmological zoom
+ * and a shallower-tree galaxy problem, 4 is a win on the first and neutral on the second, so it is
+ * the default; larger values suit strongly clustered problems and are limited in practice by the
+ * memory needed to export the tree between ranks. 1 reproduces the historical one-particle-per-leaf
+ * tree exactly, and compiles the multi-particle leaf code out entirely. Override in Config.sh. */
 #ifndef TREE_LEAF_BUCKET_SIZE
-#define TREE_LEAF_BUCKET_SIZE 1
+#define TREE_LEAF_BUCKET_SIZE 4
 #endif
 #if TREE_LEAF_BUCKET_SIZE < 1
 /* Below one, no child count satisfies the terminal-leaf test, so a single particle would be neither
