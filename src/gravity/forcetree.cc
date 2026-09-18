@@ -520,6 +520,9 @@ let_build_attempt:
      * LET collectives, which drain at the gravtree:after_treebuild poll
      * before the GPU gravity walk reads any moments. */
     if(gpu_topology_finalize_father(Numnodestree)  != 0) {endrun(90000065);}
+    /* Every further member of a multi-particle leaf takes the same father as its head. Must precede
+     * the moment pass, which accumulates through Father[] one particle at a time. */
+    if(gpu_leaf_chain_assign_fathers() != 0) {endrun(90000081);}
     if(gpu_topology_finalize_sibling(Numnodestree) != 0) {endrun(90000066);}
     /* Cover the retained particles' true positions.  gpu_topology_finalize_father above is what
      * establishes the particle Father[] links this walks, and the pseudo-particle exchange further
@@ -532,6 +535,10 @@ let_build_attempt:
     if(gpu_node_reset_ephemeral(Numnodestree) != 0) {endrun(90000067);}
     if(gpu_moment_refresh(-1) != 0) {endrun(90000068);}
     if(gpu_nextnode_thread() != 0) {endrun(90000069);}
+    /* Link each multi-particle leaf's members now that its successor is known. ⛔ Must run BEFORE the
+     * writeback and the tree export below: the export enumerates a leaf by following these links, so
+     * exporting an unlinked leaf would ship its first particle and silently omit the rest. */
+    if(gpu_leaf_chain_materialize() != 0) {endrun(90000079);}
     if(gpu_topology_writeback_d_to_aos(Numnodestree) != 0) {endrun(90000070);}
     /* Mode B: GPU moment refresh writes scalar hmax but not per-type bands;
      * re-seed those host-side now. MUST run AFTER gpu_topology_writeback_d_to_aos
@@ -703,7 +710,7 @@ static const char *force_emit_bfs_reason(int rc)
     switch(rc)
     {
         case 1:  return "the node arena overflowed";
-        case 3:  return "a tree-SoA or scratch allocation had already failed, so the topology had nothing to write into";
+        case 3: return "a build allocation had already failed, or the leaves needing a member list did not fit the room reserved for them";
         case 4:  return "the breadth-first emit hit its depth guard, so some node would not subdivide";
         default: return "an unrecognised failure";
     }

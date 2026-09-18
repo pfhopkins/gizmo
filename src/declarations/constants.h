@@ -142,11 +142,6 @@
 #error "TREE_LEAF_BUCKET_SIZE must be at least 1 (1 = one particle per leaf, the historical tree)"
 #endif
 
-/* Marks the last particle of a multi-particle leaf while the tree is being built: the threading
- * pass replaces it with the leaf's post-subtree successor. Negative and distinct from -1 (which
- * legitimately terminates a chain) so an unreplaced marker is detectable rather than silently
- * ending a walk early. Unused at a leaf size of 1, where nothing is threaded. */
-#define TREE_LEAF_BUCKET_CHAIN_END (-7)
 
 #define  EPSILON_FOR_TREERND_SUBNODE_SPLITTING (1.0e-4) /* define some number << 1; particles with less than this separation will trigger randomized sub-node splitting in the tree. we set it to a global value here so that other sub-routines will know not to force particle separations below this */
 

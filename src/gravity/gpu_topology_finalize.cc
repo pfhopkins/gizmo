@@ -114,24 +114,6 @@ extern "C" int gpu_topology_finalize_father(int n)
      * Pseudo-particle children (>= tree_base + MaxNodes) carry no per-particle
      * Father[] entry; Father[] is written only for real particle slots (no < tree_slots). */
     int MaxNodes_ = MaxNodes;
-#if TREE_LEAF_BUCKET_SIZE > 1
-    /* The leaf chain, as the build left it: needed to reach every member of a multi-particle leaf,
-     * not just the head the suns slot names.  Must be read BEFORE gpu_nextnode_thread, which
-     * replaces the end marker with the leaf's successor. */
-    const int *aux_leaf = soa->nextnode_aux;
-    if(!aux_leaf || soa->nextnode_aux_size < tree_slots) {
-        printf("gpu_topology_finalize_father: the particle successor array is missing or too small "
-               "(have=%d, need=%d), so multi-particle leaves cannot be walked\n",
-               soa->nextnode_aux_size, tree_slots);
-        return 1;
-    }
-    /* Where the first malformed leaf chain was found: count, node slot, head particle, the member
-     * the chain broke at, and what that member held. */
-    enum {CHAIN_FAULT_FIELDS = 5};
-    int *chain_fault = (int *) gizmo_gpu_alloc_shared(CHAIN_FAULT_FIELDS * sizeof(int), "treescratch_build_ctr");
-    if(!chain_fault) {printf("gpu_topology_finalize_father: could not allocate the chain-fault record\n"); return 1;}
-    for(int q = 0; q < CHAIN_FAULT_FIELDS; q++) {chain_fault[q] = 0;}
-#endif
     Kokkos::parallel_for("topo_father_main", n, KOKKOS_LAMBDA(int k) {
         int parent_abs = tree_base + k;
         long base = (long)k * 8;
@@ -139,32 +121,10 @@ extern "C" int gpu_topology_finalize_father(int n)
             int c = suns_backup[base + s];
             if(c < 0) {continue;}
             if(c < tree_slots) {
-#if TREE_LEAF_BUCKET_SIZE == 1
-                /* particle */
+                /* particle: the head of its leaf.  Any further members of a multi-particle leaf are
+                 * given the same father by gpu_leaf_chain_assign_fathers, which divides each leaf
+                 * across threads rather than walking it here in one. */
                 Father_uvm[c] = parent_abs;
-#else
-                /* Particle child, the head of a leaf that may hold several particles.  Every member
-                 * hangs off THIS node, so every member needs Father set: the moment pass is
-                 * particle-driven (mr_part_accum reads Father[i] per particle), so a member with a
-                 * stale Father would silently contribute its mass to the wrong node.  A chain that
-                 * does not end in TREE_LEAF_BUCKET_CHAIN_END would leave part of the leaf pointing at
-                 * whatever node it hung off last, which is a wrong answer with no symptom, so the
-                 * first thread that sees one records it and the build fails. */
-                int q = c, guard = 0;
-                for(;;) {
-                    Father_uvm[q] = parent_abs;
-                    const int nxt = aux_leaf[q];
-                    if(nxt == TREE_LEAF_BUCKET_CHAIN_END) {break;}
-                    if(nxt < 0 || nxt >= tree_slots || ++guard > tree_slots) {
-                        if(Kokkos::atomic_fetch_add(&chain_fault[0], 1) == 0) {
-                            chain_fault[1] = k; chain_fault[2] = c;
-                            chain_fault[3] = q; chain_fault[4] = nxt;
-                        }
-                        break;
-                    }
-                    q = nxt;
-                }
-#endif
             } else if(c >= tree_base && c < tree_base + MaxNodes_) {
                 /* internal node */
                 father_soa[c - tree_base] = parent_abs;
@@ -175,24 +135,6 @@ extern "C" int gpu_topology_finalize_father(int n)
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_father_main", n);
 
-#if TREE_LEAF_BUCKET_SIZE > 1
-    {
-        const int nfault = chain_fault[0], f_slot = chain_fault[1], f_head = chain_fault[2];
-        const int f_at = chain_fault[3], f_held = chain_fault[4];
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(chain_fault);
-        if(nfault > 0) {
-            printf("gpu_topology_finalize_father: rank %d found %d malformed leaf chain(s) at a leaf size\n"
-                   "of %d. The first was under node %d (slot %d), head particle %d: the chain reached\n"
-                   "particle %d, which holds %d instead of a particle below %d or the end marker %d. The\n"
-                   "remaining members of that leaf would keep a stale parent and feed their mass into the\n"
-                   "wrong node, so the tree is not built.\n",
-                   ThisTask, nfault, (int) TREE_LEAF_BUCKET_SIZE, tree_base + f_slot, f_slot,
-                   f_head, f_at, f_held, tree_slots, (int) TREE_LEAF_BUCKET_CHAIN_END);
-            fflush(stdout);
-            return 1;
-        }
-    }
-#endif
 
     return 0;
 }
