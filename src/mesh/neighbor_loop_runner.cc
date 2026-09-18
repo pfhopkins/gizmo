@@ -398,8 +398,11 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
 }
 
 /* WHERE one batch of fused-walk sources runs: device, host threads, or one host
- * core. The single place that decision is made, so every converted fused walk gets
- * the same policy rather than each launch site carrying its own.
+ * core. Every fused walk goes through here -- the source loop and the placement
+ * decision exist once, and the five walks that use it (record and evaluate, from
+ * the root and resumed from a peer's start nodes, plus the single-rank evaluator)
+ * keep their own surrounding protocol and share nothing else. Adding a sixth walk
+ * means calling this, not writing another loop.
  *
  * Nothing about the traversal, the leaf policy, the drift, the exchange or the
  * reply protocol varies with the choice -- only the execution space. The body is a
@@ -3731,7 +3734,7 @@ static void nlr_record_and_drift_from_envelopes(const struct particle_data *P,
         return;
     }
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    gizmo_gpu_kernel_launch(label, K, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(label, K, KOKKOS_LAMBDA(int kk) {
         if(nn_d[kk] <= 0) {return;}
         const ActiveDataT& a = q_d[kk];
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
@@ -3830,7 +3833,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
             reach = radii[kk];
         });
 
-    gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(accums_out[kk]);
         const int i = active_idx[kk];
         ActiveData  a = Spec::load_active(ctx, kk, i, radii[kk], cs);
@@ -4122,7 +4125,7 @@ struct NlrPeerAnswerDeviceFused {
             ctx.P, neighbor_type_mask, tree, q_d, nodes_d, nn_d, K, anomaly_d,
             "nlr_mode_d_peer_record");
 
-        gizmo_gpu_kernel_launch(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
+        nlr_walk_for_sources(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
             Spec::zero_accum(acc_d[kk]);
             const ActiveData& a = q_d[kk];
             ScatterData s{};
