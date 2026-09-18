@@ -550,9 +550,14 @@
 #endif
 #endif
 
-#if defined(DEVELOPER_MODE) && !defined(DISABLE_TREE_AUDITS)
-#define TREE_INTEGRITY_AUDITS /* deep tree audits (exactly-once walk, Father validity, moment re-derivation) at build/refresh/mutation points; failures are fatal. DEVELOPER_MODE historically means runtime-tunable parameters -- this extends it to debug instrumentation; opt out with DISABLE_TREE_AUDITS */
-#endif
+/* TREE_INTEGRITY_AUDITS is set DIRECTLY in a Config file -- deliberately NOT implied by any other
+   flag. It enables the deep tree audits (exactly-once walk, Father/threading cross-check, moment
+   re-derivation) at build/refresh/mutation points, and its failures are FATAL. It was briefly
+   derived from DEVELOPER_MODE, which was wrong: DEVELOPER_MODE only promotes accuracy parameters
+   to runtime parameter-file tags, it is set for convenience by most test configs and by anyone
+   who wants to tune ErrTolTheta, and none of that should buy fatal instrumentation plus a
+   re-derivation of every node moment. The always-on tier-0 checks (force_validate_tree_links and
+   the treebuild root-count/bookkeeping reduce) are what production runs carry. */
 
 #if defined(HERMITE_INTEGRATION) && defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
 /* Hermite is the one consumer that walks the STANDING tree while deliberately skipping the rebuild

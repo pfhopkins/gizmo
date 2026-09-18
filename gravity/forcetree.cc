@@ -4274,7 +4274,7 @@ void force_validate_tree_links(const char *tag)
 
 
 #ifdef TREE_INTEGRITY_AUDITS
-/*! Tier-1 deep audit (DEVELOPER_MODE builds without DISABLE_TREE_AUDITS). Verifies:
+/*! Tier-1 deep audit (TREE_INTEGRITY_AUDITS builds only; fatal). Verifies:
  *  (a) every local particle is reachable from the root exactly once via the Nextnode threading,
  *      with in-range indices and no cycle;
  *  (b) every Father[] entry is -1 or a valid node index;
