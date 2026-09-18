@@ -66,8 +66,8 @@
  *
  * At 1 every non-empty batch goes to the device, which is the behaviour this
  * replaced; raising it selects the host arms for batches below it. */
-#ifndef NLR_WALK_MIN_SOURCES_FOR_DEVICE
-#define NLR_WALK_MIN_SOURCES_FOR_DEVICE 1
+#ifndef GPU_MIN_SOURCES_FOR_WALK_OFFLOAD
+#define GPU_MIN_SOURCES_FOR_WALK_OFFLOAD 1
 #endif
 
 /* The Saitoh & Makino (2009) timestep-limiter factor: a cell is woken when a neighbour's step is

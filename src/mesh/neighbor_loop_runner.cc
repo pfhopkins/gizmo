@@ -433,7 +433,7 @@ template <class F>
 static inline void nlr_walk_for_sources(const char *tag, int n, F &&body)
 {
     if(n <= 0) {return;}
-    if(n >= NLR_WALK_MIN_SOURCES_FOR_DEVICE) {
+    if(n >= GPU_MIN_SOURCES_FOR_WALK_OFFLOAD) {
         gizmo_gpu_kernel_launch(tag, n, std::forward<F>(body));
         return;
     }
