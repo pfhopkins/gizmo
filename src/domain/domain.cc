@@ -504,10 +504,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - highest_bin_to_include); i < GRAVCOSTLEVELS; i++)
         {if(diff > abs(All.LevelToTimeBin[i] - highest_bin_to_include)) {TakeLevel = i; diff = abs(All.LevelToTimeBin[i] - highest_bin_to_include);}}
     
-    /* Re-derive the segment count here, where the old domain arrays are already freed and the new
-     * ones have not yet been allocated.  A run whose particle number has grown wants more segments
-     * than it did at startup; the lightweight repartition reuses these arrays and so must never
-     * change it. */
     /* The particle load moves during a run, so revisit the granularity here -- the only point
      * where the old domain arrays are already freed and the new ones are not yet allocated, so the
      * count and the arrays it sizes can never disagree.  Suspended while a layout is parked, and

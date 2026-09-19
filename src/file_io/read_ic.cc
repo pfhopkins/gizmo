@@ -99,6 +99,8 @@ void read_ic(char *fname)
            at which that load is known -- before any storage is sized from it.  Settled here once
            for the run; a restart from restart-files carries the value it was given. */
         All.DomainSegmentsPerRank = domain_segments_per_rank_for_particles(All.TotNumPart);
+        PRINT_STATUS("Domain segments per rank: %d (%lld particles over %d ranks)",
+                     All.DomainSegmentsPerRank, (long long) All.TotNumPart, NTask);
 
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
