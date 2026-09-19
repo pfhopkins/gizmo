@@ -188,6 +188,12 @@ static int topo_acquire_(int npart, const struct unbind_data *mp, const char *si
         if(!g_sorted_idx || !g_particle_topleaf) {g_npart_cap = 0; return 1;}
         g_npart_cap = npart;
     }
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* The particle count THIS build sorts.  Set here, where the sorted order is established, so it
+     * is right for a subset build too: the retained-attachment prepass runs only for a whole-tree
+     * build, so a bound taken from there is absent exactly when a group or subset tree is built. */
+    g_sorted_npart = npart;
+#endif
 
     /* Subset build ONLY: lazily allocate (own capacity) + stage the real-particle
      * index per slot. Identity/full builds (mp==NULL) keep g_slot_to_particle NULL
@@ -527,9 +533,6 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
         g_retained_n = n_crossed;
     }
     g_prepared_npart = npart;
-#if TREE_LEAF_BUCKET_SIZE > 1
-    g_sorted_npart   = npart;
-#endif
     return 0;
 }
 
@@ -538,9 +541,6 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
 extern "C" void gpu_topology_forget_prepared(void)
 {
     g_prepared_npart = -1;
-#if TREE_LEAF_BUCKET_SIZE > 1
-    g_sorted_npart   = 0;
-#endif
     g_retained_n     = 0;
 }
 
@@ -966,7 +966,14 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         const int  slots_chk = All.TreeParticleSlots;
         const int  node_lo   = tree_base, node_hi = tree_base + max_nodes;
         int *badrec = (int *) gizmo_gpu_alloc_shared(2 * sizeof(int), "treescratch_build_ctr");
-        if(!badrec) {printf("gpu_topology_emit_bfs: could not allocate the record check\n"); return 3;}
+        if(!badrec) {
+            printf("gpu_topology_emit_bfs: could not allocate the record check\n");
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+            return 3;
+        }
         badrec[0] = -1; badrec[1] = 0;
         Kokkos::parallel_for("leaf_chain_check", nrec_chk, KOKKOS_LAMBDA(int r) {
             const struct LeafChainRecord d = chk[r];
@@ -986,7 +993,10 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("leaf_chain_check", nrec_chk);
-        const int nbad = badrec[1], first = badrec[0];
+        const int nbad = badrec[1];
+        /* Whichever thread won the counter writes this, so a nonzero count should always carry a
+         * record; clamp anyway, because the alternative is indexing the reason table at -1. */
+        const int first = (badrec[0] >= 0) ? badrec[0] : 0;
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(badrec);
         if(nbad > 0) {
             static const char *why_text[6] = {"", "fewer than two members", "a range outside the particles this build covers",
