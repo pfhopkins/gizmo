@@ -168,9 +168,12 @@
    stops paying for those costs. */
 #define  DOMAIN_TARGET_PARTICLES_PER_SEGMENT   10000
 #define  DOMAIN_MIN_SEGMENTS_PER_RANK          1
-#define  DOMAIN_MAX_SEGMENTS_PER_RANK          256   /* every segment posts its own pseudo-particle
-                                                        all-gather, so this bounds the message count
-                                                        on a large problem spread over few ranks */
+/* Every segment posts its own pseudo-particle all-gather, so this bounds the message count.  It
+   binds only for a large problem on few ranks, since the automatic choice already falls as ranks are
+   added; and it sits at the largest value measured to help -- on a three-hundred-million-particle
+   run across a hundred and twenty-eight ranks, doubling past it cost more than it saved, with the
+   load balance it buys already flat by this point. */
+#define  DOMAIN_MAX_SEGMENTS_PER_RANK          256
 /* A small problem gets a single segment per rank, which on its own would leave the decomposition
    almost nothing to balance with.  This is the floor on how many top-tree leaves each rank is
    refined towards regardless -- a feasibility floor, not a tuned optimum; it sits below every
