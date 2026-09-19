@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../domain/domain.h"
 
 /*! This function reads initial conditions that are in the default file format
  * of Gadget, i.e. snapshot files can be used as input files.  However, when a
@@ -94,6 +95,11 @@ void read_ic(char *fname)
             All.TotNumPart += header.npartTotal[i];
             All.TotNumPart += (((long long) header.npartTotalHighWord[i]) << 32);
         }
+        /* The decomposition's granularity follows the particle load, and this is the first point
+           at which that load is known -- before any storage is sized from it.  Settled here once
+           for the run; a restart from restart-files carries the value it was given. */
+        All.DomainSegmentsPerRank = domain_segments_per_rank_for_particles(All.TotNumPart);
+
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
         All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));	/* sets the maximum number of particles that may reside on a processor */

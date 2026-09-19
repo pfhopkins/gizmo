@@ -402,7 +402,8 @@ void subfind(int num)
 
   /* now determine the remaining spherical overdensity values for the non-local groups */
 
-  domain_free_trick();
+  /* GrNr is -1 here, so this is whole-system work and keeps the outer sizing. */
+  domain_free_trick(All.DomainSegmentsPerRank);
 
   CPU_Step[CPU_FOF] += measure_time();
 

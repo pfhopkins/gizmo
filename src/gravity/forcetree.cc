@@ -283,6 +283,8 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
     }
 }
 
+
+
 /* Gravity-tree freshness generations (see forcetree.h). Plain host counters,
  * SSOT in this TU; force_update_hmax (forcetree_update.cc) bumps the hmax one
  * via force_bump_hmax_refresh_generation(). */
@@ -1056,9 +1058,9 @@ void force_exchange_pseudodata_issue(void)
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
 
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
-        for(i = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-            i <= DomainEndList[ThisTask * MULTIPLEDOMAINS + m]; i++)
+    for(m = 0; m < All.DomainSegmentsPerRank; m++)
+        for(i = DomainStartList[ThisTask * All.DomainSegmentsPerRank + m];
+            i <= DomainEndList[ThisTask * All.DomainSegmentsPerRank + m]; i++)
         {
             no = DomainNodeIndex[i];
             
@@ -1122,29 +1124,46 @@ void force_exchange_pseudodata_issue(void)
 #endif
         }
 
-    /* Post one MPI_Iallgatherv per MULTIPLEDOMAINS slice; the requests
+    /* Post one MPI_Iallgatherv per All.DomainSegmentsPerRank slice; the requests
      * are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
-    pseudo_n_requests_pending = MULTIPLEDOMAINS;
+    pseudo_n_requests_pending = All.DomainSegmentsPerRank;
     pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
-                                  MULTIPLEDOMAINS * sizeof(MPI_Request));
+                                  All.DomainSegmentsPerRank * sizeof(MPI_Request));
     pseudo_recvcounts_pending = (int *) mymalloc("pseudo_recvcounts",
-                                  MULTIPLEDOMAINS * NTask * sizeof(int));
+                                  All.DomainSegmentsPerRank * NTask * sizeof(int));
     pseudo_recvoffset_pending = (int *) mymalloc("pseudo_recvoffset",
-                                  MULTIPLEDOMAINS * NTask * sizeof(int));
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
+                                  All.DomainSegmentsPerRank * NTask * sizeof(int));
+    for(m = 0; m < All.DomainSegmentsPerRank; m++)
     {
         int *rc = pseudo_recvcounts_pending + m * NTask;
         int *ro = pseudo_recvoffset_pending + m * NTask;
         for(int recvTask = 0; recvTask < NTask; recvTask++)
         {
             rc[recvTask] =
-                (DomainEndList[recvTask * MULTIPLEDOMAINS + m] -
-                 DomainStartList[recvTask * MULTIPLEDOMAINS + m] + 1)
+                (DomainEndList[recvTask * All.DomainSegmentsPerRank + m] -
+                 DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1)
                 * sizeof(struct DomainNODE);
-            ro[recvTask] = DomainStartList[recvTask * MULTIPLEDOMAINS + m]
-                           * sizeof(struct DomainNODE);
+            /* MPI_Iallgatherv takes int byte counts and displacements, so the whole pseudodata
+             * block has to stay under 2 GB.  That ceiling is a property of this exchange, not of
+             * the caller, and silently wrapping it would hand MPI a negative displacement -- so
+             * check it here, where the number is formed. */
+            const long long offset_bytes =
+                (long long) DomainStartList[recvTask * All.DomainSegmentsPerRank + m]
+                * (long long) sizeof(struct DomainNODE);
+            if(offset_bytes > (long long) INT_MAX)
+              {
+                if(ThisTask == 0)
+                  {
+                    printf("Pseudo-particle exchange needs a %lld byte offset, beyond what MPI's int displacements can carry.\n", offset_bytes);
+                    printf("There are %d top-tree leaves; lower DOMAIN_SEGMENTS_SCALE or run on fewer ranks.\n", NTopleaves);
+                    fflush(stdout);
+                  }
+                endrun(90000025);
+                return;
+              }
+            ro[recvTask] = (int) offset_bytes;
         }
         MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
                         &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
@@ -1166,6 +1185,7 @@ int force_exchange_pseudodata_complete(void)
     if(DomainMoment_pending == NULL) {endrun(90000076); return 1;}
     struct DomainNODE *DomainMoment = DomainMoment_pending;
 
+    const int n_requests_issued = pseudo_n_requests_pending;
     MPI_Waitall(pseudo_n_requests_pending, pseudo_requests_pending, MPI_STATUSES_IGNORE);
 
     /* Free request/count buffers (LIFO order: ro, rc, requests). */
@@ -1178,10 +1198,13 @@ int force_exchange_pseudodata_complete(void)
     pseudo_n_requests_pending = 0;
 
     int i, no, m, ta;
+    /* The segment count this exchange was posted with, not whatever it is now: the domain lists
+     * being walked here are the ones that were current at issue time. */
+    const int segments = n_requests_issued;
     for(ta = 0; ta < NTask; ta++)
         if(ta != ThisTask)
-            for(m = 0; m < MULTIPLEDOMAINS; m++)
-                for(i = DomainStartList[ta * MULTIPLEDOMAINS + m]; i <= DomainEndList[ta * MULTIPLEDOMAINS + m]; i++)
+            for(m = 0; m < segments; m++)
+                for(i = DomainStartList[ta * segments + m]; i <= DomainEndList[ta * segments + m]; i++)
                 {
                     no = DomainNodeIndex[i];
 
@@ -1577,9 +1600,9 @@ void force_flag_localnodes(void)
     
     /* mark top-level nodes that contain local particles */
     
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
-        for(i = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-            i <= DomainEndList[ThisTask * MULTIPLEDOMAINS + m]; i++)
+    for(m = 0; m < All.DomainSegmentsPerRank; m++)
+        for(i = DomainStartList[ThisTask * All.DomainSegmentsPerRank + m];
+            i <= DomainEndList[ThisTask * All.DomainSegmentsPerRank + m]; i++)
         {
             no = DomainNodeIndex[i];
             

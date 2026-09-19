@@ -19,6 +19,7 @@ int domain_countToGo(size_t nlimit);
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence);
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key);
 int domain_decompose(void);
+int domain_segments_per_rank_for_particles(long long total_particles);
 int domain_determineTopTree(void);
 void domain_findExtent(void);
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
@@ -39,7 +40,7 @@ int domain_topsplit_local(int node, peanokey startkey, int mode);
 int domain_topsplit_special(void);
 int domain_compare_key(const void *a, const void *b);
 int domain_check_for_local_refine(int i, double countlimit, double costlimit);
-void domain_free_trick(void);
+void domain_free_trick(int segments_per_rank_while_parked);
 void domain_allocate_trick(void);
 int domain_recursively_combine_topTree(int start, int ncpu);
 void domain_walktoptree(int no);

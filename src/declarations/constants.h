@@ -159,15 +159,39 @@
 #define MHD_CONSTRAINED_GRADIENT_FAC_MAX_PM 0.125
 #endif
 
-#ifndef  MULTIPLEDOMAINS
-#define  MULTIPLEDOMAINS     8    /* fallback only: precompiler_logic.h is included before this header and already sets the effective default to 32; this 8 takes effect only if that define is removed or the user sets MULTIPLEDOMAINS in Config.sh */
-#endif
+/* Domain-decomposition granularity.  Each rank's share of the Peano-Hilbert curve is handed to it
+   as All.DomainSegmentsPerRank separate contiguous segments rather than one.  More segments let the
+   decomposition balance work more finely, because the assignment has more and smaller pieces to
+   distribute; they cost more top-tree refinement, one more pseudo-particle all-gather each, and a
+   more spatially fragmented rank territory.  The segment count is therefore chosen automatically at
+   every full decomposition to hold roughly this many particles, which is where the balance gain
+   stops paying for those costs. */
+#define  DOMAIN_TARGET_PARTICLES_PER_SEGMENT   10000
+#define  DOMAIN_MIN_SEGMENTS_PER_RANK          1
+#define  DOMAIN_MAX_SEGMENTS_PER_RANK          256   /* every segment posts its own pseudo-particle
+                                                        all-gather, so this bounds the message count
+                                                        on a large problem spread over few ranks */
+/* A small problem gets a single segment per rank, which on its own would leave the decomposition
+   almost nothing to balance with.  This is the floor on how many top-tree leaves each rank is
+   refined towards regardless -- a feasibility floor, not a tuned optimum; it sits below every
+   measured landing point, so it binds only in the small-problem regime it exists for. */
+#define  DOMAIN_MIN_TOPLEAVES_PER_RANK         16
 
-#ifndef  TOPNODEFACTOR
+/* Change the segment count by this factor relative to the automatic choice above.  The result is
+   still held to DOMAIN_MAX_SEGMENTS_PER_RANK, so raising this has no effect once the automatic
+   choice has already reached that ceiling. */
+#ifndef  DOMAIN_SEGMENTS_SCALE
+#define  DOMAIN_SEGMENTS_SCALE                 1
+#endif
+/* How finely the top tree is refined, relative to the number of domain segments it has to fill.
+   Refinement splits eight ways at a time, so the leaf count achieved overshoots the number
+   requested here; both are reported at each decomposition.  Must be at least 1, or the top tree
+   can end up with fewer leaves than there are segments to assign them to. */
+#ifndef  DOMAIN_TOPTREE_REFINEMENT_SCALE
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
-#define  TOPNODEFACTOR       8.0
+#define  DOMAIN_TOPTREE_REFINEMENT_SCALE       4
 #else
-#define  TOPNODEFACTOR       4.0
+#define  DOMAIN_TOPTREE_REFINEMENT_SCALE       1
 #endif
 #endif
 
