@@ -3778,8 +3778,17 @@ void force_refresh_node_moments(void)
     {
         /* Reset GravCost/Ti_current/Flag/Ti_lastkicked/dp/dp_dm/dp_stellarlum
          * fields that the GPU kernel does not own. These mirror the
-         * non-moment lines in CPU step 1 (forcetree.cc:3837..3848). */
+         * non-moment lines in CPU step 1 (forcetree.cc:3837..3848).
+         *
+         * A node that is behind the current time is drifted to it FIRST, by the one
+         * routine that owns the lazy node drift: its length widens for the interval
+         * since it was last drifted, its pending kick is applied.  Stamping it current
+         * without that would erase the only record of that interval, and every later
+         * widening would start from a length that no longer encloses the particles that
+         * moved in it.  A build is preceded by a full drift, so there this is a no-op;
+         * a refresh runs mid-step, where inactive particles and their nodes are behind. */
         for(no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
+            if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
             Nodes[no].GravCost = 0;
             Nodes[no].Ti_current = All.Ti_Current;
             Extnodes[no].dp = {};
