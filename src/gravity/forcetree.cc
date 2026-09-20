@@ -1810,45 +1810,40 @@ void gravity_clear_incomplete_import(void)
     IncompleteImportHaveExample = 0;
 }
 
+/* How many accepted elements a walk holds between traversal and evaluation. The run lives
+ * on the stack of the thread walking one target and is evaluated whenever it fills, so its
+ * size bounds memory, never the number of interactions; a small run only evaluates sooner. */
+#define GRAVTREE_WALK_RECORD_CHUNK 256
+
 int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int no, ptype, ninteractions=0, nexp, task, treeBase = All.TreeNodeIndexBase, treeSlots = All.TreeParticleSlots;
+    int no, ptype, nexp, task, treeBase = All.TreeNodeIndexBase, treeSlots = All.TreeParticleSlots;
     long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* maxForeignNodes shifts pseudo-particle range above the foreign-node range */
-    double soft, r2, mass, r, fac_accel, h=0, h_p=0, xtmp, aold; xtmp=0; soft=0;
-    Vec3<double> pos, dr; Vec3<MyDouble> acc = {};
+    double soft, h=0, aold; soft=0;
+    Vec3<double> pos;
     double pmass;
-    double zeta=0, zeta_sec=0; int ptype_sec=-1;
+    double zeta=0;
 #ifdef RT_USE_TREECOL_FOR_NH
     double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[RT_USE_TREECOL_FOR_NH] = {0};
 #endif
-#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-    Vec3<double> dv;
-#endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     double gasmass;
-#endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-    Vec3<double> jerk = {};
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<double> vel;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-    double r_source, r_target, center[3]={0};
+    double center[3]={0};
 #ifdef BOX_PERIODIC
     center[0] = 0.5 * boxSize_X; center[1] = 0.5 * boxSize_Y; center[2] = 0.5 * boxSize_Z;
 #endif
 #endif
-    int tabindex = 0;   /* unconditional; computed + consumed only under PMGRID */
 #ifdef PMGRID
     double rcut, asmth, asmthfac, rcut2; rcut = All.Rcut[0]; asmth = All.Asmth[0];
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat tree_mass = 0;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    int i1, i2; double fac2_tidal, fac_tidal; SymmetricTensor2<MyDouble> tidal_tensorps;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     double cr_injection = 0;
@@ -1888,20 +1883,16 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
     Vec3<double> d_dm = {}; double mass_dm = 0;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
-    double sink_mass = 0, m_j_eff_for_df = 0;
+    double sink_mass = 0;
 #endif
-    double fac_pot = 0;   /* unconditional; a dead 0 when !EVALPOTENTIAL (consumed only under that gate) */
-#ifdef EVALPOTENTIAL
-    MyDouble pot; pot = 0;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    tidal_tensorps = {};
+    /* the accumulators the shared pair evaluation writes (acceleration, potential, interaction
+       count, and the tidal / jerk / tidal-zeta terms where compiled) */
+    grav_pair_acc_t out; grav_pair_acc_init(out);
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    double tidal_zeta=0; SymmetricTensor2<MyFloat> i_zeta_tidal_tensorps_prevstep, j_zeta_tidal_tensorps_prevstep;
+    SymmetricTensor2<MyFloat> i_zeta_tidal_tensorps_prevstep;
     i_zeta_tidal_tensorps_prevstep=P[target].tidal_tensorps_prevstep;
 #endif
-#endif
-    
+
     pos = P[target].Pos;
     ptype = P[target].Type;
     soft = ForceSoftening_KernelRadius(target);
@@ -1938,6 +1929,18 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
     pm.shortrange_tidal_tab = shortrange_table_tidal;
 #endif
 #endif
+    /* the target's inputs to the shared pair evaluation, fixed for this walk */
+    h = soft;
+    grav_pair_tgt_t tgt{}; tgt.ptype = ptype; tgt.pmass = pmass; tgt.h = h; tgt.zeta = zeta; tgt.ags_bitflag = AGS_kernel_shared_BITFLAG; tgt.pm = pm;
+#ifdef SINK_DYNFRICTION_FROMTREE
+    tgt.sink_mass = sink_mass;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    tgt.i_zeta_tidal_tensorps_prevstep = i_zeta_tidal_tensorps_prevstep;
+#endif
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+    tgt.pos = pos; tgt.center[0] = center[0]; tgt.center[1] = center[1]; tgt.center[2] = center[2];
+#endif
 #ifdef RT_USE_GRAVTREE
     valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass);
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
@@ -1957,15 +1960,36 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
     int cr_active_gate = (All.Time > All.TimeBegin) ? 1 : 0; double cr_t_max = 0;
     if(cr_active_gate) {cr_t_max = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/UNIT_TIME_IN_GYR;}
 #endif
-    
-    
-    no = treeBase;        /* root node */
 
-    while(no >= 0)   /* outer loop runs once: the mode-1 imported-NodeList iteration is retired */
+
+    /* Evaluate a run of accepted elements, in the order they were accepted. Each element is
+       loaded again from the tree here, from its index alone: a particle leaf from P[], a node
+       from Nodes[]/Extnodes[] and the foreign-leaf sidecars. Every source drift happened during
+       the traversal that accepted the element, and drifting is idempotent within a step, so
+       the state read here is the state the element had when it was accepted; a Hermite-owned
+       source is predicted from that state, as it was before the traversal and the evaluation
+       were separated. A source found not drifted, or a node whose classification no longer
+       matches its record, is a broken invariant and stops the run. */
+    auto evaluate_records = [&](const grav_walk_record_t *rec, int n_rec)
     {
-        while(no >= 0)
+        for(int irec = 0; irec < n_rec; irec++)
         {
-            h=soft; h_p=-1; /* initialize h and h_p, for use below: make sure to do so at the top of each iteration */
+            const int no = rec[irec].no;
+            grav_pair_src_t src;   /* dr, r2, mass are assigned on every path that reaches the evaluation */
+            Vec3<double> &dr = src.dr; double &r2 = src.r2, &mass = src.mass, &h_p = src.h_p, &zeta_sec = src.zeta_sec; int &ptype_sec = src.ptype_sec;
+            h_p = -1; ptype_sec = -1; zeta_sec = 0;
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+            Vec3<double> &dv = src.dv;
+#endif
+#if defined(SINK_DYNFRICTION_FROMTREE)
+            double &m_j_eff_for_df = src.m_j_eff_for_df;
+#endif
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+            double &r_source = src.r_source;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+            SymmetricTensor2<double> &j_zeta_tidal_tensorps_prevstep = src.j_zeta_tidal_tensorps_prevstep;
+#endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass=0; /* reset per interaction: non-gas leaf sources carry NO gas mass. Without this, a
                         * non-gas leaf inherits the stale gasmass of an earlier source (or garbage before the
@@ -1973,30 +1997,9 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         * dark-matter/star particles. Nodes assign unconditionally below; only gas leaves
                         * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
 #endif
-            
-            if(no >= treeSlots && no < treeBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
-             * malformed; stop rather than read a side array or Nodes[] out of bounds. */
-                endrun(90001024); no = -1; continue;}
             if(no < treeSlots) /* this is a particle, we will use it */
             {
-                /* the index of the node is the index of the particle */
-                if(P[no].Ti_current != ti_Current)
-                {
-#ifdef _OPENMP
-#pragma omp critical(_particledriftforce_)
-#endif
-                    {
-                        if(P[no].Ti_current != ti_Current) {
-                            drift_particle(no, ti_Current);
-                            gizmo_mark_kernel_radius_dirty_indices(&no, 1);
-                        }
-                    }
-                }
-#ifdef SINGLE_STAR_DIRECT_GRAVITY
-                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
-                   here as well would double every such force */
-                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
-#endif
+                if(P[no].Ti_current != ti_Current) {endrun(90001051);}   /* accepted during traversal, which drifted it */
                 /* the source state this interaction is evaluated at, which is the drifted state
                    except where the Hermite predictor below replaces it */
                 Vec3<double> src_pos = P[no].Pos;
@@ -2035,11 +2038,11 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
                 j_zeta_tidal_tensorps_prevstep=P[no].tidal_tensorps_prevstep;
 #endif
-                
+
                 /* only proceed if the mass is positive and there is separation! */
                 if((r2 > 0) && (mass > 0))
                 {
-                    
+
 #ifdef SINK_CALC_DISTANCES
                     /* nearest-sink + single-star timestep/binary tracking via the shared helper (gravtree_force_kernel.h) */
                     grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
@@ -2092,11 +2095,11 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif
                     }
 #endif // RT_USE_GRAVTREE
-                    
+
 #ifdef DM_SCALARFIELD_SCREENING
                     if(ptype != 0) {if(P[no].Type == 1) {d_dm = dr; mass_dm = mass;} else {d_dm = {}; mass_dm = 0;}} /* we have a dark matter particle as target */
 #endif
-                    
+
                     h_p = ForceSoftening_KernelRadius(no);
                     ptype_sec=P[no].Type; zeta_sec=0; /* set secondary softening and zeta term */
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
@@ -2105,62 +2108,12 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     zeta_sec=P[no].AGS_zeta;
 #endif
                 } // closes (if((r2 > 0) && (mass > 0))) check
-                
+
             }
-            else /* we have an  internal node */
+            else /* we have an internal node the traversal accepted */
             {
-                if(no >= treeBase + maxNodes + maxForeignNodes) /* pseudo particle (foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
-                {
-                    /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
-                     * retired). Reaching a non-empty pseudo means this target's gravity is not
-                     * covered by the local LET; record it so Nexport>0 and gravity_tree() can
-                     * raise a graceful controlled-stop. The DataIndexTable/DataNodeList entries
-                     * are never shipped -- they only count. */
-                    if(exportflag[task = DomainTask[no - (treeBase + maxNodes + maxForeignNodes)]] != target)
-                    {
-                        exportflag[task] = target;
-                        exportnodecount[task] = NODELISTLENGTH;
-                    }
-                    if(exportnodecount[task] == NODELISTLENGTH)
-                    {
-                        int exitFlag = 0;
-#ifdef _OPENMP
-#pragma omp critical(_nexportforce_)
-#endif
-                        {
-                            if(Nexport >= bunchSize)
-                            {
-                                /* The table is full, so this target cannot even be recorded. That is the
-                                 * same failure as recording it -- its gravity is not covered by the local
-                                 * tree -- so ask for the same controlled stop here. Without this the walk
-                                 * would return below having silently dropped the targets it had already
-                                 * taken from the active list, since there is no longer a retry pass to
-                                 * pick them up again. */
-                                BufferFullFlag = 1;
-                                exitFlag = 1;
-                                gizmo_request_controlled_stop(914040, "gravtree: the locally essential tree did not cover these targets' gravity, and there were too many of them to record", __FILE__, __LINE__, __FUNCTION__);
-                            }
-                            else
-                            {
-                                nexp = Nexport;
-                                Nexport++;
-                            }
-                        }
-                        if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine */
-                        exportnodecount[task] = 0;
-                        exportindex[task] = nexp;
-                        DataIndexTable[nexp].Task = task;
-                        DataIndexTable[nexp].Index = target;
-                        DataIndexTable[nexp].IndexGet = nexp;
-                    }
-                    DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
-                    DomainNodeIndex[no - (treeBase + maxNodes + maxForeignNodes)];
-                    if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
-                    no = Nextnode[treeSlots + (no - treeBase - maxNodes - maxForeignNodes)];
-                    continue;
-                }
-                /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
-                nop = &Nodes[no];
+                struct NODE *nop = &Nodes[no];
+                if(nop->Ti_current != ti_Current) {endrun(90001052);}   /* accepted during traversal, which drifted it */
                 int in_foreign = (no >= treeBase + maxNodes && no < treeBase + maxNodes + maxForeignNodes);
                 /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(treeBase+maxNodes),
                  * EXPLICIT and bounds-checked -- not the node index no-treeBase). */
@@ -2175,50 +2128,8 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                         fl_soft = (double) ForeignLeafSoft[fs];
                     }
                 }
-
+                if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode) != rec[irec].kind) {endrun(90001053);}
                 mass = nop->u.d.mass;
-                if(mass <= 0) /* nothing in the node */
-                {
-                    no = nop->u.d.sibling;
-                    continue;
-                }
-                /* Classify BEFORE anything that could descend.  The wire tag is the authority on
-                 * whether this node's children were shipped; both the single-particle branch just
-                 * below and the acceptance predicate further down consult this one answer, so no
-                 * path can follow nextnode on a node whose children the sender never sent. */
-                grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
-#ifdef SINGLE_STAR_DIRECT_GRAVITY
-                /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
-                   supplies every star-star pair exactly. Nodes made entirely of stars therefore have
-                   nothing left for us; skip them here, before the drift and the opening criteria below. */
-                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;}
-#endif
-                //if(nop->N_part <= 1)
-                if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
-                {
-                    if(mass) /* open cell: descend to the particle this node holds */
-                    {
-                        /* Only a local node, or a foreign node shipped WITH its children, has
-                         * anything below it here.  A foreign node that reaches this branch with the
-                         * multi-particle bit clear was shipped multipole-only (the packer sets that
-                         * bit on every leaf it does ship), so its nextnode is the continuation past
-                         * the subtree, not a child -- following it would skip the node's mass. */
-                        if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE)
-                        {
-                            no = nop->u.d.nextnode;
-                            continue;
-                        }
-                    }
-                }
-                if(nop->Ti_current != ti_Current) // add this so that threads arriving here after the the node has been drifted do not have to enter critical at all!
-                {
-#ifdef _OPENMP
-#pragma omp critical(_nodedriftforce_)
-#endif
-                    {
-                        if(nop->Ti_current != ti_Current) {force_drift_node(no, ti_Current);}
-                    }
-                }
 
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
                 /* Remove the sinks from this node for a star target: star-star pairs come exactly from
@@ -2227,11 +2138,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                    so the subtraction is exact rather than approximate: drop the sink mass and move the
                    center of mass to that of what remains. Both terms are on the same clock, since
                    SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
-                   with vs -- which is also why this sits after force_drift_node above. Doing it this way
-                   means a star target keeps the ordinary O(log N) walk; the alternative, opening every
-                   node containing a star, costs an extra O(N_star log N) node visits per star target.
-                   mass is reduced before the opening criteria below, so they judge the node on the mass
-                   actually being used. Pure-star nodes were already skipped above. */
+                   with vs. The traversal judged the opening criteria on this reduced mass too. */
                 if((ptype == 5) && (nop->sink_mass > 0))
                 {
                     double mass_nosink = mass - nop->sink_mass;
@@ -2244,58 +2151,6 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif
                 GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
                 r2 = dr.norm_sq();
-                /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
-                 * for the node opening decision. The caller owns the wrapped dr/r2 (also used below
-                 * for the accepted-node force) and the foreign-multipole policy; the predicate is
-                 * foreign-blind geometry. PM short-range cull, neighbour sphere-box / softening-open,
-                 * the angular and relative opening criteria, and the sink-direct gate all live in the
-                 * predicate. */
-                {
-                    double cen0 = nop->center[0] - pos[0];
-                    double cen1 = nop->center[1] - pos[1];
-                    double cen2 = nop->center[2] - pos[2];
-#ifdef PMGRID
-                    double pred_rcut = rcut, pred_rcut2 = rcut2;
-#else
-                    double pred_rcut = 0.0, pred_rcut2 = 0.0;
-#endif
-#ifdef GRAVITY_HYBRID_OPENING_CRIT
-                    int pred_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1);
-#else
-                    int pred_is_first_step = 0;
-#endif
-#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
-                    int pred_n_sink = (int)nop->N_SINK;
-#else
-                    int pred_n_sink = 0;
-#endif
-                    gravtree_open_t pred = gravtree_open_decision_from_distances(
-                        r2, cen0, cen1, cen2, soft, h, aold, ptype,
-                        nop->len, mass, nop->maxsoft,
-                        pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
-                    /* Foreign LET policy (mirrors the GPU walk exactly).  A terminal foreign node --
-                     * a tagged single-particle leaf, or an aggregate the sender shipped multipole-only --
-                     * has no children here: its nextnode is the continuation PAST the subtree, not a
-                     * child.  So a predicate OPEN on one cannot mean "descend"; for a leaf it means
-                     * "accept this already-leaf source with leaf semantics" (restored below), and for a
-                     * truncated aggregate it means the import no longer covers what this walk asks of
-                     * it.  Only a node shipped WITH its children takes nextnode. */
-                    if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
-                    if(pred == GRAV_OPEN_NODE && !grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}
-                    /* Import-completeness guard.  Accepting this multipole would drop the sub-node
-                     * structure the target resolves, silently and asymmetrically between ranks, so the
-                     * walk records it instead.  Counted rather than printed: this can fire per opened
-                     * node per target from inside the threaded walk, and endrun() only REQUESTS a stop
-                     * and returns, so printing here would bury the run in interleaved lines.  The count
-                     * is reported once and drained after the walk (gravtree.cc). */
-                    if(pred == GRAV_OPEN_NODE && (node_kind == GRAV_NODE_FOREIGN_TRUNCATED
-                                                  || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE))
-                    {
-                        gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, ptype,
-                                                       (double) nop->len, (double) nop->u.d.mass);
-                        if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {gravity_note_unshippable_import(1);}
-                    }
-                }
 
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
@@ -2316,7 +2171,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                 cr_injection = nop->cr_injection;
 #endif
-                
+
 #ifdef RT_USE_GRAVTREE
                 if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
                 {
@@ -2339,7 +2194,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif
                 }
 #endif // RT_USE_GRAVTREE
-                
+
 #ifdef DM_SCALARFIELD_SCREENING
                 if(ptype != 0) {d_dm = nop->s_dm - pos; mass_dm = nop->mass_dm;} else {d_dm = {}; mass_dm = 0;} /* we have a dark matter particle as target */
 #endif
@@ -2349,7 +2204,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
                 j_zeta_tidal_tensorps_prevstep=nop->tidal_tensorps_prevstep;
 #endif
-                
+
 #ifdef SINK_CALC_DISTANCES // NOTE: moved this to AFTER the checks for node opening, because we only want to record BH positions from the nodes that actually get used for the force calculation - MYG
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
                 grav_sink_prox_node_specialweighted(r2, Extnodes[no].vs, ptype, sink_prox);
@@ -2378,78 +2233,26 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
                 }
 #endif // SINK_CALC_DISTANCES
-                
-            } /* ok we've completed all the opening criteria -- we will keep this node or particle as-is */
-            
-            
-            
-            
+
+            } /* the node's inputs are loaded */
+
+
             if((r2 > 0) && (mass > 0)) // only go forward if mass positive and there is separation -- this is check for the whole block below, which should no include 'self' terms
             {
-                r = sqrt(r2);
-                /* pair-wise gravity terms (Newtonian/softened selection, softening symmetrization,
-                 * AGS zeta corrections) via the shared contribution kernel (gravtree_force_kernel.h),
-                 * the single home for the pair physics on both walks. */
-                {
-                    grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass,
-                                                                 zeta, zeta_sec, AGS_kernel_shared_BITFLAG);
-                    fac_accel = pair_out.fac_accel;
-#ifdef EVALPOTENTIAL
-                    fac_pot = pair_out.fac_pot;
+#if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+                /* periodic-image potential correction, from the separation before the shared
+                   evaluation's spherical-symmetry override; added right after the pair potential */
+                double pot_periodic_image = mass * ewald_pot_corr(dr[0], dr[1], dr[2]);
 #endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                    fac_tidal = pair_out.fac_tidal; fac2_tidal = pair_out.fac2_tidal;
-#endif
-                }
-                
-                
-#ifdef PMGRID
-                tabindex = grav_pm_shortrange_tabindex(asmthfac, r);
-                if(grav_pm_shortrange_in_range(tabindex))
-#endif // PMGRID //
-                {
-#ifdef PMGRID
-                    grav_force_apply_pm_truncation(pm, tabindex, fac_pot, fac_accel);
-#endif
-#ifdef EVALPOTENTIAL
-                    pot += (fac_pot);
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-                    pot += (mass * ewald_pot_corr(dr[0], dr[1], dr[2]));
-#endif
-#endif
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-                    r_target = grav_spherical_symmetry_r_from_center(pos[0],pos[1],pos[2],center[0],center[1],center[2]); // distance of target point from box center
-                    grav_spherical_symmetry_force_override(r_source, r_target, h, mass, center[0],center[1],center[2], pos[0],pos[1],pos[2], dr, fac_accel);
+                /* pair-wise gravity, PM truncation, and the accumulations inside the PM short-range
+                 * gate, via the shared evaluation (gravtree_force_kernel.h), the single home for the
+                 * pair physics on both walks */
+                grav_pair_result_t res = grav_pair_evaluate_core(tgt, src, out);
+                const double r = res.r, fac_accel = res.fac_accel;
+#if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
+                out.pot += pot_periodic_image;
 #endif
 
-                    /* actually add the accelerations, now that we've corrected for the ewald and other terms */
-                    acc += fac_accel * dr;
-                    
-                    
-#if defined(SINK_DYNFRICTION_FROMTREE)
-                    grav_sink_dynfriction_accumulate(dr, dv, fac_accel, mass, sink_mass, m_j_eff_for_df, ptype, acc);
-#endif
-                    
-                    
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION /* 'correction' terms for variable smoothing lengths (analogous to the ags-zeta terms); shared helper */
-                    grav_ags_tidal_criterion_accumulate(r, r2, dr, mass, h, h_p, ptype, ptype_sec, fac_tidal, fac2_tidal,
-                                                        i_zeta_tidal_tensorps_prevstep, j_zeta_tidal_tensorps_prevstep, tidal_zeta, acc);
-#endif
-
-
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-                    fac2_tidal = grav_spherical_symmetry_fac2_tidal_override(r_source, r_target, h, mass);
-#endif
-                    grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal, pm, tabindex, tidal_tensorps);
-#endif // COMPUTE_TIDAL_TENSOR_IN_GRAVTREE //
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-                    grav_jerk_accumulate(dv, dr, fac_accel, fac2_tidal, ptype, jerk);
-#endif
-                } // closes TABINDEX<NTAB
-                
-                ninteractions++;
-                
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
                 if(r < r_for_total_menclosed) {m_enc_in_rcrit += mass;}
 #endif
@@ -2494,7 +2297,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
                     rt_accum.Rad_Flux = Rad_Flux;
 #endif
-                    grav_rt_payload_accumulate(rt_src, rt_accum, acc);
+                    grav_rt_payload_accumulate(rt_src, rt_accum, out.acc);
                 } // closes if(valid_gas_particle_for_rt)
 
 #endif // RT_USE_GRAVTREE
@@ -2503,27 +2306,248 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #ifdef DM_SCALARFIELD_SCREENING
                 if(ptype != 0)    /* we have a dark matter particle as target */
                 {
-                    grav_dm_scalarfield_accumulate(d_dm, mass_dm, h, pm, acc);
+                    grav_dm_scalarfield_accumulate(d_dm, mass_dm, h, pm, out.acc);
                 } // closes if(ptype != 0)
 #endif // DM_SCALARFIELD_SCREENING //
-                
+
             } // closes (if((r2 > 0) && (mass > 0))) check
-            
-            
-            /* advance for used nodes: note this used to be above, now handled down here so we can use the 'no/nop' structures above */
-            if(no < treeSlots) {
-                no = Nextnode[no];
-            } else {
-                no = nop->u.d.sibling;
+        }
+    };
+
+
+    /* Traverse the tree for this target, recording each accepted element into a bounded run
+       that is evaluated in acceptance order whenever it fills and once more when the traversal
+       ends. The run is private to this call; nothing about it outlives the walk of one target. */
+    grav_walk_record_t records[GRAVTREE_WALK_RECORD_CHUNK]; int n_records = 0;
+    no = treeBase;        /* root node */
+
+    while(1)
+    {
+        /* one place evaluates the run: when it is full, and once more when the traversal ends */
+        if(no < 0 || n_records == GRAVTREE_WALK_RECORD_CHUNK) {evaluate_records(records, n_records); n_records = 0; if(no < 0) {break;}}
+        h=soft; /* the target's interaction radius for the opening predicate */
+
+        if(no >= treeSlots && no < treeBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
+         * malformed; stop rather than read a side array or Nodes[] out of bounds. */
+            endrun(90001024); no = -1; continue;}
+        if(no < treeSlots) /* this is a particle, we will use it */
+        {
+            /* the index of the node is the index of the particle */
+            if(P[no].Ti_current != ti_Current)
+            {
+#ifdef _OPENMP
+#pragma omp critical(_particledriftforce_)
+#endif
+                {
+                    if(P[no].Ti_current != ti_Current) {
+                        drift_particle(no, ti_Current);
+                        gizmo_mark_kernel_radius_dirty_indices(&no, 1);
+                    }
+                }
             }
-            
-        } // closes inner (while(no>=0)) check
-    } // closes outer (while(no>=0)) check
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+               here as well would double every such force */
+            if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+#endif
+            records[n_records].no = no; records[n_records].kind = GRAV_NODE_LOCAL; records[n_records].leaf_tag = LET_LEAF_TAG_NODE; n_records++;
+        }
+        else /* we have an  internal node */
+        {
+            if(no >= treeBase + maxNodes + maxForeignNodes) /* pseudo particle (foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
+            {
+                /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
+                 * retired). Reaching a non-empty pseudo means this target's gravity is not
+                 * covered by the local LET; record it so Nexport>0 and gravity_tree() can
+                 * raise a graceful controlled-stop. The DataIndexTable/DataNodeList entries
+                 * are never shipped -- they only count. */
+                if(exportflag[task = DomainTask[no - (treeBase + maxNodes + maxForeignNodes)]] != target)
+                {
+                    exportflag[task] = target;
+                    exportnodecount[task] = NODELISTLENGTH;
+                }
+                if(exportnodecount[task] == NODELISTLENGTH)
+                {
+                    int exitFlag = 0;
+#ifdef _OPENMP
+#pragma omp critical(_nexportforce_)
+#endif
+                    {
+                        if(Nexport >= bunchSize)
+                        {
+                            /* The table is full, so this target cannot even be recorded. That is the
+                             * same failure as recording it -- its gravity is not covered by the local
+                             * tree -- so ask for the same controlled stop here. Without this the walk
+                             * would return below having silently dropped the targets it had already
+                             * taken from the active list, since there is no longer a retry pass to
+                             * pick them up again. */
+                            BufferFullFlag = 1;
+                            exitFlag = 1;
+                            gizmo_request_controlled_stop(914040, "gravtree: the locally essential tree did not cover these targets' gravity, and there were too many of them to record", __FILE__, __LINE__, __FUNCTION__);
+                        }
+                        else
+                        {
+                            nexp = Nexport;
+                            Nexport++;
+                        }
+                    }
+                    if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine. The walk is abandoned: nothing accumulated for this target is written, whether already evaluated or still recorded. */
+                    exportnodecount[task] = 0;
+                    exportindex[task] = nexp;
+                    DataIndexTable[nexp].Task = task;
+                    DataIndexTable[nexp].Index = target;
+                    DataIndexTable[nexp].IndexGet = nexp;
+                }
+                DataNodeList[exportindex[task]].NodeList[exportnodecount[task]++] =
+                DomainNodeIndex[no - (treeBase + maxNodes + maxForeignNodes)];
+                if(exportnodecount[task] < NODELISTLENGTH) {DataNodeList[exportindex[task]].NodeList[exportnodecount[task]] = -1;}
+                no = Nextnode[treeSlots + (no - treeBase - maxNodes - maxForeignNodes)];
+                continue;
+            }
+            /* ok we have an internal node on the local processor, need to decide if we open it and go further or keep it */
+            nop = &Nodes[no];
+            int in_foreign = (no >= treeBase + maxNodes && no < treeBase + maxNodes + maxForeignNodes);
+            /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(treeBase+maxNodes),
+             * EXPLICIT and bounds-checked -- not the node index no-treeBase). Only the tag is
+             * needed here; the evaluation reads the identity fields again. */
+            int fl_tag = 0;
+            if(in_foreign && ForeignLeafTag) {
+                int fs = no - (treeBase + maxNodes);
+                if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
+            }
+
+            double mass = nop->u.d.mass;
+            if(mass <= 0) /* nothing in the node */
+            {
+                no = nop->u.d.sibling;
+                continue;
+            }
+            /* Classify BEFORE anything that could descend.  The wire tag is the authority on
+             * whether this node's children were shipped; both the single-particle branch just
+             * below and the acceptance predicate further down consult this one answer, so no
+             * path can follow nextnode on a node whose children the sender never sent. */
+            grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
+               supplies every star-star pair exactly. Nodes made entirely of stars therefore have
+               nothing left for us; skip them here, before the drift and the opening criteria below. */
+            if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;}
+#endif
+            //if(nop->N_part <= 1)
+            if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
+            {
+                if(mass) /* open cell: descend to the particle this node holds */
+                {
+                    /* Only a local node, or a foreign node shipped WITH its children, has
+                     * anything below it here.  A foreign node that reaches this branch with the
+                     * multi-particle bit clear was shipped multipole-only (the packer sets that
+                     * bit on every leaf it does ship), so its nextnode is the continuation past
+                     * the subtree, not a child -- following it would skip the node's mass. */
+                    if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE)
+                    {
+                        no = nop->u.d.nextnode;
+                        continue;
+                    }
+                }
+            }
+            if(nop->Ti_current != ti_Current) // add this so that threads arriving here after the the node has been drifted do not have to enter critical at all!
+            {
+#ifdef _OPENMP
+#pragma omp critical(_nodedriftforce_)
+#endif
+                {
+                    if(nop->Ti_current != ti_Current) {force_drift_node(no, ti_Current);}
+                }
+            }
+
+            /* the node's centre of mass and mass as the opening criteria judge them; the
+               evaluation loads both again the same way */
+            Vec3<double> dr;
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+            /* Remove the sinks from this node for a star target (see the evaluation above for why
+               the subtraction is exact); this sits after force_drift_node so both terms are on the
+               same clock, and mass is reduced before the opening criteria below so they judge the
+               node on the mass actually being used. Pure-star nodes were already skipped above. */
+            if((ptype == 5) && (nop->sink_mass > 0))
+            {
+                double mass_nosink = mass - nop->sink_mass;
+                dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                mass = mass_nosink;
+            }
+            else {dr = nop->u.d.s - pos;}
+#else
+            dr = nop->u.d.s - pos;
+#endif
+            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+            double r2 = dr.norm_sq();
+            /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
+             * for the node opening decision. The caller owns the wrapped dr/r2 and the
+             * foreign-multipole policy; the predicate is foreign-blind geometry. PM short-range
+             * cull, neighbour sphere-box / softening-open, the angular and relative opening
+             * criteria, and the sink-direct gate all live in the predicate. */
+            {
+                double cen0 = nop->center[0] - pos[0];
+                double cen1 = nop->center[1] - pos[1];
+                double cen2 = nop->center[2] - pos[2];
+#ifdef PMGRID
+                double pred_rcut = rcut, pred_rcut2 = rcut2;
+#else
+                double pred_rcut = 0.0, pred_rcut2 = 0.0;
+#endif
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+                int pred_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1);
+#else
+                int pred_is_first_step = 0;
+#endif
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+                int pred_n_sink = (int)nop->N_SINK;
+#else
+                int pred_n_sink = 0;
+#endif
+                gravtree_open_t pred = gravtree_open_decision_from_distances(
+                    r2, cen0, cen1, cen2, soft, h, aold, ptype,
+                    nop->len, mass, nop->maxsoft,
+                    pred_rcut, pred_rcut2, pred_n_sink, pred_is_first_step);
+                /* Foreign LET policy (mirrors the GPU walk exactly).  A terminal foreign node --
+                 * a tagged single-particle leaf, or an aggregate the sender shipped multipole-only --
+                 * has no children here: its nextnode is the continuation PAST the subtree, not a
+                 * child.  So a predicate OPEN on one cannot mean "descend"; for a leaf it means
+                 * "accept this already-leaf source with leaf semantics" (restored at evaluation), and for a
+                 * truncated aggregate it means the import no longer covers what this walk asks of
+                 * it.  Only a node shipped WITH its children takes nextnode. */
+                if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
+                if(pred == GRAV_OPEN_NODE && !grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}
+                /* Import-completeness guard.  Accepting this multipole would drop the sub-node
+                 * structure the target resolves, silently and asymmetrically between ranks, so the
+                 * walk records it instead.  Counted rather than printed: this can fire per opened
+                 * node per target from inside the threaded walk, and endrun() only REQUESTS a stop
+                 * and returns, so printing here would bury the run in interleaved lines.  The count
+                 * is reported once and drained after the walk (gravtree.cc). */
+                if(pred == GRAV_OPEN_NODE && (node_kind == GRAV_NODE_FOREIGN_TRUNCATED
+                                              || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE))
+                {
+                    gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, ptype,
+                                                   (double) nop->len, (double) nop->u.d.mass);
+                    if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {gravity_note_unshippable_import(1);}
+                }
+            }
+            /* ok we will be using this node */
+            records[n_records].no = no; records[n_records].kind = node_kind; records[n_records].leaf_tag = fl_tag; n_records++;
+        } /* ok we've completed all the opening criteria -- we will keep this node or particle as-is */
+
+        /* advance for used nodes: note this used to be above, now handled down here so we can use the 'no/nop' structures above */
+        if(no < treeSlots) {
+            no = Nextnode[no];
+        } else {
+            no = nop->u.d.sibling;
+        }
+
+    } // closes the traversal
 
 
     /* store result at the proper place (local target only; the imported-particle export path is retired) */
     {
-        P[target].GravAccel = acc;
+        P[target].GravAccel = out.acc;
 #ifdef RT_USE_TREECOL_FOR_NH
         int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target].ColumnDensityBins[k] = treecol_angular_bins[k];
 #endif
@@ -2559,16 +2583,16 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
         if(valid_gas_particle_for_rt) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[target].Rad_Flux[kf] = Rad_Flux[kf];}}
 #endif
 #ifdef EVALPOTENTIAL
-        P[target].Potential = pot;
+        P[target].Potential = out.pot;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        P[target].tidal_tensorps = tidal_tensorps;
+        P[target].tidal_tensorps = out.tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        P[target].tidal_zeta = tidal_zeta;
+        P[target].tidal_zeta = out.tidal_zeta;
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        P[target].GravJerk = jerk;
+        P[target].GravJerk = out.jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
         P[target].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
@@ -2600,7 +2624,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
 #endif // SINK_CALC_DISTANCES
     }
 
-    return ninteractions;
+    return out.ninter;
 }
 
 
