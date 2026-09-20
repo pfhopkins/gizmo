@@ -1044,6 +1044,14 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
 
     for(int k = 0; k < n; k++) {
         int no = tree_base + k;
+        /* The host stamped every node current before this refresh (forcetree.cc, the reset
+         * that mirrors the build's moment pass), and the kernel above just recomputed vmax.
+         * The device walk widens a node's stored length from the time that length describes,
+         * using vmax; so the length and its time go to the mirror together with the new
+         * moments, or the mirror is left pairing a fresh vmax and an old time with whatever
+         * length it last saw, and a walk on it can open too little. */
+        soa->len[k] = Nodes[no].len;
+        if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}
         Nodes[no].u.d.mass     = (MyFloat) soa->mass[k];
         Nodes[no].u.d.s        = Vec3<MyFloat>{(MyFloat) soa->s[k][0],
                                                 (MyFloat) soa->s[k][1],

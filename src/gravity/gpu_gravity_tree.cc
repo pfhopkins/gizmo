@@ -749,20 +749,6 @@ void gpu_node_dirty_release(void)
  * swept tree usable without any of this machinery. */
 /* How often the fail-safe fired. A permanent silent revert to full sweeping is
    otherwise indistinguishable from the optimisation working. */
-/* Force the next Mode-D call onto the full sweep.
- *
- * Used where something rewrites a mirrored field the widening depends on WITHOUT
- * rewriting the (len, node_ti) pair it must agree with -- a mid-step
- * force_refresh_node_moments() being the case in hand: it recomputes vmax and
- * copies it back to the AoS, so the mirrored vmax may end up SMALLER than the one
- * that governed motion since node_ti, which would under-widen.
- *
- * ⛔ Deliberately NOT "make vmax raise-only": gpu_moment_refresh.cc:1080 copies the
- * SoA back into Extnodes[], so a monotonically raised mirror inflates the AoS vmax
- * too, force_drift_node then grows Nodes[].len without bound, and the GRAVITY walk
- * starts resolving structure the LET import never shipped. That was tried and it
- * broke the evrard arm with 'let_repair_exhausted'. */
-void gpu_node_dirty_invalidate(void) {nd_mark_unsafe_();}
 
 long long gpu_node_dirty_unsafe_events(void) {return __atomic_load_n(&nd_unsafe_events_, __ATOMIC_RELAXED);}
 

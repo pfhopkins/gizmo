@@ -177,6 +177,7 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
                 /* Geometry: the owner may have grown this leaf to cover a particle it kept there, and
                  * force_exchange_pseudodata_complete has just applied that length to the AoS node. */
                 soa->len[k]     = Nodes[no].len;
+                if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}   /* the time that length describes */
                 /* Scalar moment fields */
                 soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
                 soa->N_part[k]  = Nodes[no].N_part;
