@@ -271,6 +271,7 @@ int gpu_gravity_tree_nodes_current_at(integertime ti);
 void gpu_node_dirty_begin_epoch(void);
 void gpu_node_dirty_claim(int no);
 int  gpu_node_dirty_repair(integertime ti);   /* 0 = repaired; 1 = caller must sweep */
+void gpu_node_dirty_grow_to(int cap);   /* keep the set as large as the mirror when foreign storage grows */
 void gpu_node_dirty_release(void);
 long long gpu_node_dirty_unsafe_events(void);   /* fail-safe firings; a silent permanent
                                                    revert to sweeping must be visible */

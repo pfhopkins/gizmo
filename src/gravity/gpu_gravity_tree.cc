@@ -735,6 +735,31 @@ int gpu_node_dirty_repair(integertime ti)
     return 0;
 }
 
+/* The foreign storage grows between phases whenever an import needs more room, and the
+ * host walk then drifts -- and claims -- nodes in the new slots.  The set is sized when an
+ * epoch begins, so without this those claims land past its end and trip the fail-safe, and
+ * the fused walk that follows sweeps the whole tree to recover from a set that was merely
+ * too short.  Growing keeps every claim: foreign slots are appended, so the indices already
+ * recorded still name the same nodes.  Runs between phases, like the growth it follows. */
+void gpu_node_dirty_grow_to(int cap)
+{
+    if(!nd_seen_ || !nd_list_ || cap <= nd_cap_) {return;}
+    unsigned int *seen = (unsigned int *) tree_soa_alloc((size_t) cap * sizeof(unsigned int));
+    int          *list = (int *)          tree_soa_alloc((size_t) cap * sizeof(int));
+    if(!seen || !list) {
+        if(seen) {gizmo_gpu_tree_soa_release(seen);}
+        if(list) {gizmo_gpu_tree_soa_release(list);}
+        nd_mark_unsafe_();   /* the next prepare sweeps, as before; nothing is lost silently */
+        return;
+    }
+    for(int k = 0; k < nd_cap_; k++) {seen[k] = nd_seen_[k];}
+    for(int k = nd_cap_; k < cap; k++) {seen[k] = 0u;}
+    const int n = (nd_count_ < nd_cap_) ? nd_count_ : nd_cap_;
+    for(int k = 0; k < n; k++) {list[k] = nd_list_[k];}
+    gizmo_gpu_tree_soa_release(nd_seen_); gizmo_gpu_tree_soa_release(nd_list_);
+    nd_seen_ = seen; nd_list_ = list; nd_cap_ = cap;
+}
+
 void gpu_node_dirty_release(void)
 {
     if(nd_seen_) {gizmo_gpu_tree_soa_release(nd_seen_); nd_seen_ = NULL;}

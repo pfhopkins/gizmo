@@ -3406,6 +3406,9 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
         AllocatedForeignNodes = n_foreign;
         mirror_grown = gpu_gravity_tree_grow_foreign((int) new_slots);
         if(!mirror_grown) {AllocatedForeignNodes = old_foreign;}
+        /* The dirty set is bounded by the mirror it repairs; grow it with the mirror, or the
+         * claims the walk makes on the new foreign slots fall outside it. */
+        if(mirror_grown) {gpu_node_dirty_grow_to((int) new_slots);}
     }
     if(!mirror_grown)
     {
