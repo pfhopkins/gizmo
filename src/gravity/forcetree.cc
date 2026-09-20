@@ -11,6 +11,7 @@
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
+#include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates (SSOT) */
 #include "gravtree_ewald.h"          /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
 #include "let_data.h"   /* LET wire format + per-rank payload structs */
@@ -2059,38 +2060,41 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     grav_sink_prox_leaf_accumulate(r2, dr, prox_target, prox_src, sink_prox);
 #endif // SINK_CALC_DISTANCES
 
+#if defined(RT_USE_GRAVTREE) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+                    /* the source's RT / sink / CR payload through the shared gates (gravtree_moment_sources.h),
+                       from the drifted state; read only where this target consumes it, so a target that is
+                       not a valid RT receiver does no luminosity work it never did */
+                    struct gravtree_source_inputs_t source_payload;
+                    int need_source_payload = 0;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                    cr_injection = cr_get_source_injection_rate(no, P, CellP);
+                    need_source_payload = 1;
+#else
+                    need_source_payload = valid_gas_particle_for_rt;
+#endif
+                    if(need_source_payload) {gravtree_fill_particle_source_inputs(no, P, CellP, &source_payload);}
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+                    cr_injection = source_payload.cr_inject;
 #endif
 
 #ifdef RT_USE_GRAVTREE
                     if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
                     {
                         d_stellarlum=dr;
-                        double lum[N_RT_FREQ_BINS];
-#ifdef CHIMES_STELLAR_FLUXES
-                        double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
-                        int active_check = rt_get_source_luminosity_chimes(no,1,lum, chimes_lum_G0, chimes_lum_ion, P, CellP);
-#else
-                        int active_check = rt_get_source_luminosity(no,1,lum, P, CellP);
-#endif
-                        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(active_check) {mass_stellarlum[kf]=lum[kf];} else {mass_stellarlum[kf]=0;}}
+                        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(source_payload.rt_active) {mass_stellarlum[kf]=source_payload.src_lum[kf];} else {mass_stellarlum[kf]=0;}}
 #ifdef CHIMES_STELLAR_FLUXES
                         for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++)
                         {
-                            if(active_check) {chimes_mass_stellarlum_G0[kf] = chimes_lum_G0[kf]; chimes_mass_stellarlum_ion[kf] = chimes_lum_ion[kf];} else {chimes_mass_stellarlum_G0[kf] = 0; chimes_mass_stellarlum_ion[kf] = 0;}
+                            if(source_payload.rt_active) {chimes_mass_stellarlum_G0[kf] = source_payload.src_lum_G0[kf]; chimes_mass_stellarlum_ion[kf] = source_payload.src_lum_ion[kf];} else {chimes_mass_stellarlum_G0[kf] = 0; chimes_mass_stellarlum_ion[kf] = 0;}
                         }
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                         mass_sinklumwt_forradfb=0;
                         if(P[no].Type == 5)
                         {
-                            double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
-#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].Sink_Specific_AngMom, dr[0],dr[1],dr[2]);
-#else
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].GradRho, dr[0],dr[1],dr[2]);
-#endif
+                            double bhlum_t = source_payload.bh_active ? (double) source_payload.bh_lum : 0.0;
+                            Vec3<double> bh_angle = source_payload.bh_active ? Vec3<double>{(double) source_payload.bh_angle[0], (double) source_payload.bh_angle[1], (double) source_payload.bh_angle[2]} : Vec3<double>{0,0,0};
+                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, bh_angle, dr[0],dr[1],dr[2]);
                         }
 #endif
                     }
