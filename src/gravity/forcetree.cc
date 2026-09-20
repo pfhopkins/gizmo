@@ -1128,16 +1128,6 @@ void force_exchange_pseudodata_issue(void)
      * are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
-    /* One DomainNODE as an MPI type, so the exchange below can count in nodes.  Built once: its
-     * size is a compile-time property, and MPI_Type_contiguous/commit are local operations, so
-     * every rank ends up with the same type without a collective. */
-    static MPI_Datatype domain_node_mpi_type = MPI_DATATYPE_NULL;
-    if(domain_node_mpi_type == MPI_DATATYPE_NULL)
-      {
-        MPI_Type_contiguous((int) sizeof(struct DomainNODE), MPI_BYTE, &domain_node_mpi_type);
-        MPI_Type_commit(&domain_node_mpi_type);
-      }
-
     pseudo_n_requests_pending = All.DomainSegmentsPerRank;
     pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
                                   All.DomainSegmentsPerRank * sizeof(MPI_Request));
@@ -1151,17 +1141,32 @@ void force_exchange_pseudodata_issue(void)
         int *ro = pseudo_recvoffset_pending + m * NTask;
         for(int recvTask = 0; recvTask < NTask; recvTask++)
         {
-            /* Counts and displacements are in NODES, not bytes.  MPI carries both as ints, and a
-             * byte offset into the moment block overflows one once the top tree passes two
-             * gigabytes of moments -- reachable on a large problem spread over many ranks, where
-             * it would hand MPI a negative displacement rather than fail.  A node index cannot:
-             * it is bounded by NTopleaves, which is an int itself. */
-            rc[recvTask] = DomainEndList[recvTask * All.DomainSegmentsPerRank + m]
-                           - DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1;
-            ro[recvTask] = DomainStartList[recvTask * All.DomainSegmentsPerRank + m];
+            rc[recvTask] =
+                (DomainEndList[recvTask * All.DomainSegmentsPerRank + m] -
+                 DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1)
+                * sizeof(struct DomainNODE);
+            /* MPI_Iallgatherv takes int byte counts and displacements, so the whole pseudodata
+             * block has to stay under 2 GB.  That ceiling is a property of this exchange, not of
+             * the caller, and silently wrapping it would hand MPI a negative displacement -- so
+             * check it here, where the number is formed. */
+            const long long offset_bytes =
+                (long long) DomainStartList[recvTask * All.DomainSegmentsPerRank + m]
+                * (long long) sizeof(struct DomainNODE);
+            if(offset_bytes > (long long) INT_MAX)
+              {
+                if(ThisTask == 0)
+                  {
+                    printf("Pseudo-particle exchange needs a %lld byte offset, beyond what MPI's int displacements can carry.\n", offset_bytes);
+                    printf("There are %d top-tree leaves; lower DOMAIN_SEGMENTS_SCALE or run on fewer ranks.\n", NTopleaves);
+                    fflush(stdout);
+                  }
+                endrun(90000025);
+                return;
+              }
+            ro[recvTask] = (int) offset_bytes;
         }
-        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], domain_node_mpi_type,
-                        &DomainMoment[0], rc, ro, domain_node_mpi_type, MPI_COMM_WORLD,
+        MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
+                        &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
                         &pseudo_requests_pending[m]);
     }
 }
