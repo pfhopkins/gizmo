@@ -181,20 +181,18 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                  * would drop neighbours silently, so the widening is never allowed
                  * to be negative and a non-finite term is refused outright. */
                 double len_eff = (double)tree.node_len[kn];
-                if(tree.node_vmax && tree.node_ti && tree.node_s && tree.drift_tables_ok) {
+                if(tree.node_vmax && tree.node_ti && tree.drift_tables_ok) {
                     const integertime ti_node = tree.node_ti[kn];
                     /* ⛔ `>= 0`, not `> 0`: zero is a VALID timestamp (the start of a
                      * run), and excluding it would silently skip widening on exactly
                      * the nodes a fresh tree has not advanced yet. */
                     if(ti_node >= 0 && ti_node < tree.ti_now) {
-                        /* The REAL per-node dilation, from the mirrored centre of
-                         * mass. Hardcoding 1.0 is safe (1/a <= 1 over-widens) but in
-                         * a nuclear-zoom config `a` reaches 1e6, and over-widening by
-                         * that near the refinement centre is a severe regression. */
-                        const Vec3<MyGravFloat> sc = tree.node_s[kn];
-                        const double dil = node_timestep_dilation_factor_at(
-                                               Vec3<double>{(double)sc[0], (double)sc[1], (double)sc[2]});
-                        const double dtw = get_drift_factor_impl(ti_node, tree.ti_now, dil,
+                        /* The undilated interval, as in force_drift_node: node_vmax
+                         * bounds each member's motion per unit undilated interval and
+                         * already carries that member's own dilation, so this stays
+                         * tight near a refinement centre without reading the node's
+                         * centre of mass. */
+                        const double dtw = get_drift_factor_impl(ti_node, tree.ti_now, 1.0,
                                                                  &tree.drift_tables);
                         const double dl = TREE_DRIFT_VELOCITY_PREFAC
                                           * (double)tree.node_vmax[kn] * dtw;

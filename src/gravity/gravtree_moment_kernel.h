@@ -219,18 +219,6 @@ KOKKOS_INLINE_FUNCTION static double moment_gas_hmax_from_kernelradius(double ke
     return (max_kernel_radius < kernel_radius) ? max_kernel_radius : kernel_radius;
 }
 
-/* Running per-component max |velocity| (vmax bound), folding one leaf's velocity into a start value. */
-KOKKOS_INLINE_FUNCTION static double moment_vmax_running_max(double vmax_start, double vx, double vy, double vz)
-{
-    double vmax = vmax_start;
-    double a;
-    a = (vx < 0) ? -vx : vx; if(a > vmax) { vmax = a; }
-    a = (vy < 0) ? -vy : vy; if(a > vmax) { vmax = a; }
-    a = (vz < 0) ? -vz : vz; if(a > vmax) { vmax = a; }
-    return vmax;
-}
-
-
 /* ==========================================================================================
  * Source builders. Each fills a moment_node_accum with one source's Σ-weighted contribution. Fields
  * the source does not touch are left 0 (neutral for + and, since every max field is >= 0, for fmax).
@@ -268,7 +256,8 @@ template <class AccT>
 struct moment_particle_src {
     double        mass;
     double        pos[3];    /* position (already in node/box frame) */
-    double        vel[3];
+    double        vel[3];    /* the velocity that enters the node's mass-weighted mean */
+    double        motion_bound;  /* particle_motion_speed_bound: how fast it can move, per unit undilated interval */
     int           type;
     double        kernel_radius;
     double        max_kernel_radius;
@@ -312,7 +301,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
     a.vs    = moment_weighted_vec3<AccT>(p.mass, p.vel[0], p.vel[1], p.vel[2]);
     a.Npart = (long) 1;
 
-    a.vmax = (AccT) moment_vmax_running_max(0.0, p.vel[0], p.vel[1], p.vel[2]);
+    a.vmax = (AccT) p.motion_bound;
 
     a.maxsoft = (AccT) p.force_softening;
 #ifdef SINGLE_STAR_SINK_DYNAMICS

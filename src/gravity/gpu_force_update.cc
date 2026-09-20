@@ -46,6 +46,9 @@
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
+#include "../core/timestep_functions.h"   /* dilation, for the motion bound */
+#include "binary_functions.h"             /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h"    /* particle_motion_speed_bound */
 
 
 /* Atomic max for MyFloat via 64-bit CAS (MyFloat = double in GIZMO typedefs). */
@@ -180,6 +183,7 @@ extern "C" void gpu_force_update_tree(void)
         memcpy(active_dev, ActiveParticleList.data(), num_active * sizeof(int));
 
         struct particle_data *Pp   = gpu_particles_arena_P();
+        struct gas_cell_data *Cp   = gpu_particles_arena_CellP();
         int                  *Fa   = Father;    /* UVM pointer */
         struct NODE          *No   = Nodes;     /* UVM shifted pointer */
         struct extNODE       *Ex   = Extnodes;  /* UVM pointer */
@@ -218,12 +222,8 @@ extern "C" void gpu_force_update_tree(void)
                 Vec3<MyDouble> dp = Pp[i].dp;
                 Pp[i].dp = Vec3<MyDouble>{};
 
-                /* Compute velocity magnitude for vmax update. */
-                MyFloat vmax = 0;
-                for(int k = 0; k < 3; k++) {
-                    MyFloat v = (MyFloat)fabs((double)Pp[i].Vel[k]);
-                    if(v > vmax) vmax = v;
-                }
+                /* How fast this particle can now move, for the ancestors' widening bound. */
+                const MyFloat vmax = (MyFloat) particle_motion_speed_bound(i, Pp, Cp);
 
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                 Vec3<MyDouble> rt_dp = { rt_lum_dp_dev[idx*3+0],

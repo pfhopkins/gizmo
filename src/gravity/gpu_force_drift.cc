@@ -179,6 +179,16 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
                             : get_drift_factor_impl(Nodes_uvm[no].Ti_current, ti_target,
                                                     dilation, &table_view);
         double dt_drift_hmax = dt_drift;
+        /* The widening runs on the undilated clock (see force_drift_node): vmax carries each
+           member's own dilation.  One interpolation when the two clocks coincide. */
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+        double dt_widen = node_already_current
+                            ? 0.0
+                            : get_drift_factor_impl(Nodes_uvm[no].Ti_current, ti_target,
+                                                    1.0, &table_view);
+#else
+        double dt_widen = dt_drift;
+#endif
 
         /* If node has been kicked, fold dp into vs and clear dp. */
         if(Nodes_uvm[no].u.d.bitflags & (1u << BITFLAG_NODEHASBEENKICKED)) {
@@ -238,7 +248,7 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
 #endif
         }
         Nodes_uvm[no].len = (MyFloat)((double)Nodes_uvm[no].len
-                                      + TREE_DRIFT_VELOCITY_PREFAC * (double)Extnodes_uvm[no].vmax * dt_drift);
+                                      + TREE_DRIFT_VELOCITY_PREFAC * (double)Extnodes_uvm[no].vmax * dt_widen);
 
         {
             double exp_arg = (double)Extnodes_uvm[no].divVmax * dt_drift_hmax / (double)NUMDIMS;

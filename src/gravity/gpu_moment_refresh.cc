@@ -67,6 +67,9 @@
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
 #include "forcetree.h"
+#include "../core/timestep_functions.h"   /* dilation, for the motion bound */
+#include "binary_functions.h"             /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h"    /* particle_motion_speed_bound */
 #include "gravtree_moment_kernel.h"
 #include "gravtree_moment_sources.h" /* shared host-only per-particle source-input physics gates (SSOT) */
 
@@ -793,6 +796,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     gpu_particles_arena_set_site("gpu_moment_refresh(pre-precompute)");
     gpu_particles_arena_acquire(N, P, CellP);
     struct particle_data *P_dev = gpu_particles_arena_P();
+    struct gas_cell_data *CellP_dev = gpu_particles_arena_CellP();
     if(!P_dev) {printf("gpu_moment_refresh: arena P_dev null\n"); return 1;}
 
     /* Tree SoA storage must already be allocated; the GPU build pipeline
@@ -868,6 +872,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
         moment_particle_src<MyGravFloat> ps = {};
         ps.mass = pa->Mass;
         for(int kk = 0; kk < 3; kk++) {ps.pos[kk] = pa->Pos[kk]; ps.vel[kk] = pa->Vel[kk];}
+        ps.motion_bound      = particle_motion_speed_bound(i, P_dev, CellP_dev);
         ps.type              = (int) pa->Type;
         ps.kernel_radius     = pa->KernelRadius;
         ps.max_kernel_radius = maxKR;

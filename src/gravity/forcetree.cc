@@ -10,6 +10,8 @@
 #include "../mesh/kernel.h"
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
+#include "binary_functions.h"          /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h" /* particle_motion_speed_bound */
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
 #include "gravtree_ewald.h"          /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
 #include "pm_highres_region.h"       /* pmforce_is_particle_high_res SSOT (device-callable) */
@@ -1690,7 +1692,7 @@ void force_add_element_to_tree(int iparent, int ichild)
             Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
         }
     }
-    double new_vmax = moment_vmax_running_max(Extnodes[father].vmax, P[ichild].Vel[0], P[ichild].Vel[1], P[ichild].Vel[2]);
+    double new_vmax = DMAX((double) Extnodes[father].vmax, particle_motion_speed_bound(ichild, P, CellP));
     Extnodes[father].vmax = (MyFloat) new_vmax;
 
     /* Keep SoA walk-mirror coherent with the AoS Extnodes

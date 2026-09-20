@@ -22,9 +22,9 @@
 #endif
 
 #include "timestep_functions.h"      /* DriftKickTableView, get_{drift,gravkick}_factor_impl, dilation */
-#include "predict_functions.h"       /* advect_mesh_point_P, apply_special_boundary_conditions_P, ... */
+#include "../gravity/binary_functions.h" /* odeint_super_timestep, binary_relative_speed_bound (before predict_functions.h, which uses it) */
+#include "predict_functions.h"       /* advect_mesh_point_P, apply_special_boundary_conditions_P, particle_motion_speed_bound */
 #include "../gravity/ags_functions.h"    /* ags_density_isactive_P, ags_return_{min,max}soft_P, dm_fuzzy */
-#include "../gravity/binary_functions.h" /* odeint_super_timestep */
 #include "../eos/eos_functions.h"        /* set_eos_pressure_impl */
 #ifdef COSMIC_RAY_FLUID
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
@@ -89,12 +89,19 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
     
     dt_drift = get_drift_factor_impl(time0, time1, timestep_dilation_factor(i, pp), tables);
         
+#if (SINGLE_STAR_TIMESTEPPING > 0)
+    /* A super-timestepped sink: the drift below moves its binary's centre of mass, and the
+       internal orbit is advanced on top of that.  Also consumed by the velocity prediction
+       further down, so declared outside the position update. */
+    Vec3<double> fewbody_drift_dx = {}, fewbody_kick_dv = {};
+    volatile int super_timestepped_sink = ((pp[i].Type == 5) && (pp[i].SuperTimestepFlag >= 2)) ? 1 : 0;
+#endif
 #if !defined(FREEZE_HYDRO)
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    if(pp[i].Type==0) {advect_mesh_point_P(i,dt_drift,pp,cell);} else {pp[i].Pos += pp[i].Vel * dt_drift;}
-#elif (SINGLE_STAR_TIMESTEPPING > 0)
-    Vec3<double> fewbody_drift_dx, fewbody_kick_dv; // if super-timestepping, the updates above account for COM motion of the binary; now we account for the internal motion
-    if( (pp[i].Type == 5) && (pp[i].SuperTimestepFlag>=2) )
+    /* A finite-volume gas cell moves with its mesh-generating point, a super-timestepped sink
+       with its binary, everything else with its own velocity.  The two special cases are
+       different particle types, so both must be live in a build that has both. */
+#if (SINGLE_STAR_TIMESTEPPING > 0)
+    if(super_timestepped_sink)
     {
         Vec3<double> COM_Vel = pp[i].Vel + pp[i].comp_dv * (pp[i].comp_Mass/(pp[i].Mass+pp[i].comp_Mass)); //center of mass velocity
         pp[i].Pos += COM_Vel * dt_drift; //center of mass drift
@@ -102,12 +109,14 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
         pp[i].GravAccel = pp[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
         pp[i].Pos += fewbody_drift_dx; //Keplerian evolution
         pp[i].Vel += fewbody_kick_dv; //move on binary.orbit
-    } else {
-       pp[i].Pos += pp[i].Vel * dt_drift;
     }
-#else
-    pp[i].Pos += pp[i].Vel * dt_drift;
+    else
 #endif
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    if(pp[i].Type==0) {advect_mesh_point_P(i,dt_drift,pp,cell);}
+    else
+#endif
+    {pp[i].Pos += pp[i].Vel * dt_drift;}
 #endif // FREEZE_HYDRO clause
 #if (NUMDIMS==1)
     pp[i].Pos[1]=pp[i].Pos[2]=0; // force zero-ing
@@ -187,7 +196,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             cell[i].VelPred += pp[i].GravAccel * dt_gravkick + cell[i].HydroAccel * (dt_hydrokick*All.cf_atime); /* make sure v is in code units */
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)
-	        if((pp[i].Type == 5) && (pp[i].SuperTimestepFlag>=2)) {cell[i].VelPred += fewbody_kick_dv;}
+	        if(super_timestepped_sink) {cell[i].VelPred += fewbody_kick_dv;}
 #endif	    
             
 #if defined(TURB_DRIVING)

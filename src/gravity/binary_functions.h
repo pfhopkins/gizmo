@@ -57,6 +57,34 @@ mode 0 - Just fill out the particle's kick and drift for the timestep, without d
 mode 1 - Actually update the binary separation and relative velocity. This should be done on the full-step drift.
 */
 
+/* The fastest the relative motion of binary member i and its companion can become, from the
+   separation and relative velocity it carries.  The super-timestep drift integrates the softened
+   two-body problem (odeint_super_timestep -> hermite_step, softening gravfac), which conserves the
+   relative energy and angular momentum; from those two, without assuming a Kepler orbit or a
+   bound one:
+     - the speed at any separation r is capped by energy, and the softened potential is nowhere
+       deeper than the point-mass one, so v^2 <= dv^2 + 2 G M / r;
+     - angular momentum keeps the pair outside r_* = (-GM + sqrt(G^2 M^2 + dv^2 h^2)) / dv^2, the
+       separation at which that speed cap is all tangential;
+     - and the softened potential is finite at zero separation, so v^2 <= dv^2 + 2 |phi(0)|
+       whatever the angular momentum -- the radial-collision case.
+   The integrator's energy error is at the percent level over 1e5 orbits; the small margin below
+   covers it, since the box this feeds grows by exactly this speed times the interval. */
+KOKKOS_INLINE_FUNCTION double binary_relative_speed_bound(int i, const struct particle_data *pp)
+{
+    const double GM = All.G * (pp[i].Mass + pp[i].comp_Mass);
+    const double dv2 = pp[i].comp_dv.norm_sq();
+    const double h2  = cross(pp[i].comp_dx, pp[i].comp_dv).norm_sq();
+    /* 1/r_*, written to stay finite as dv -> 0 (then r_* -> h^2 / 2GM) and as h -> 0 (then 1/r_* -> inf). */
+    const double s = sqrt(GM*GM + dv2*h2);
+    double inv_rstar = (h2 > 0) ? (s + GM) / h2 : MAX_REAL_NUMBER;   /* 1/r_* = (GM + s)/h^2, rationalised */
+    const double h_inv = 1. / SinkParticle_GravityKernelRadius;
+    const double inv_r_soft = -kernel_gravity(0, h_inv, h_inv*h_inv*h_inv, -1);   /* |phi(0)| / GM */
+    if(inv_r_soft < inv_rstar) {inv_rstar = inv_r_soft;}
+    const double margin = 1.05;
+    return margin * sqrt(dv2 + 2. * GM * inv_rstar);
+}
+
 KOKKOS_INLINE_FUNCTION void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode, struct particle_data *pp){
     double dr = pp[i].comp_dx.norm();
     double dv = pp[i].comp_dv.norm();

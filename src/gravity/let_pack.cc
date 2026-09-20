@@ -48,6 +48,9 @@
 #include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "let_data.h"
+#include "../core/timestep_functions.h"   /* dilation, for the motion bound */
+#include "binary_functions.h"             /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h"    /* particle_motion_speed_bound */
 
 #include "gravtree_opening.h"   /* shared opening predicate (cell/AABB variant) */
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
@@ -105,14 +108,13 @@ static void let_compute_tree_lifetime(void)
 }
 
 /* The node size the walk may reach before this tree is rebuilt.  The growth rule is the walk's own
- * (TREE_DRIFT_VELOCITY_PREFAC * vmax * drift factor), evaluated over the tree's expected lifetime,
- * and the drift factor is taken per node because it carries that node's timestep dilation.  Used
- * ONLY to decide essentiality: the node itself ships at its true build-time size, and the receiver
- * widens it the ordinary way. */
+ * (TREE_DRIFT_VELOCITY_PREFAC * vmax * undilated drift factor), evaluated over the tree's expected
+ * lifetime; vmax already carries each member's own dilation.  Used ONLY to decide essentiality: the
+ * node itself ships at its true build-time size, and the receiver widens it the ordinary way. */
 static double let_node_len_over_tree_lifetime(int no, double len)
 {
     if(g_let_tree_lifetime_dti <= 0) {return len;}
-    double dt_lifetime = get_drift_factor(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti, no, 1);
+    double dt_lifetime = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);
     return len + TREE_DRIFT_VELOCITY_PREFAC * (double) Extnodes[no].vmax * dt_lifetime;
 }
 
@@ -876,6 +878,7 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     src.mass              = (double) pa->Mass;
     src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
     src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
+    src.motion_bound      = particle_motion_speed_bound(p_idx, P, CellP);
     src.type              = pa->Type;
     src.kernel_radius     = (double) pa->KernelRadius;
     src.max_kernel_radius = (double) All.MaxKernelRadius;
