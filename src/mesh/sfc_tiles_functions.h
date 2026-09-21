@@ -138,9 +138,115 @@ int check_tile_particles_gpu(const double *compact_xyzh, const double pos_i[3], 
 }
 
 
+/* Walk the tile BVH for one query and hand every overlapping tile to a visitor.
+ *
+ * This is the one traversal of the tile index.  It decides which tiles a query
+ * reaches -- opening nodes on the query reach (widened by the node's supply
+ * reach in SYMMETRIC mode), wrapping through the canonical box macros, stepping
+ * an explicit stack so it runs on the device -- and nothing else.  What happens
+ * at a tile is the visitor's business: the neighbour-list build stores candidate
+ * indices, a fused loop evaluates its pair kernel on the tile's particles.
+ * Keeping those apart lets a new consumer reuse the opener instead of copying
+ * it, and a copied opener is where the wrap convention and the opening rule
+ * silently diverge.
+ *
+ * `visit(tile_index)` is called once per overlapping tile, in traversal order.
+ * A negative root is an EMPTY index (no tiles) and walks nothing: a query into
+ * an empty pool has no neighbours, and must not read a node that was never
+ * built. */
+template <class TileVisitor>
+KOKKOS_INLINE_FUNCTION
+void bvh_walk_tiles(const double pos_i[3], double h_i, double j_radius_scale,
+                    int search_mode,
+                    const tile_bvh_node_t *bvh, int bvh_root,
+                    const struct particle_data *P_gpu, unsigned int supply_mask,
+                    int *cnt_nodes_visited, int *cnt_tiles_visited,
+                    TileVisitor &visit)
+{
+    if(bvh_root < 0) {return;}
+
+    int stack[TILE_BVH_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = bvh_root;
+
+    while(sp > 0)
+    {
+        int node_idx = stack[--sp];
+        const tile_bvh_node_t *node = &bvh[node_idx];
+        if(cnt_nodes_visited) (*cnt_nodes_visited)++;
+
+        /* Compute search radius for this node. Per-type hmax filter when P_gpu given;
+         * else scalar hmax (legacy behavior). For supply_mask = 0x3f the per-type
+         * branch evaluates max over all 6 types == scalar hmax → identical result. */
+        double node_hmax_eff;
+        if(P_gpu) {
+            node_hmax_eff = 0;
+            for(int t = 0; t < 6; t++) {
+                if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
+                if(node->hmax_by_type[t] > node_hmax_eff) node_hmax_eff = node->hmax_by_type[t];
+            }
+        } else {
+            node_hmax_eff = node->hmax;
+        }
+        /* Scale the j-side node radius in SYMMETRIC mode (no-op when
+         * j_radius_scale == 1.0; constant-propagated for default callers). */
+        node_hmax_eff *= j_radius_scale;
+        double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node_hmax_eff) ? h_i : node_hmax_eff);
+        double search_r2 = search_r * search_r;
+
+        /* Check if node's bbox (expanded by search_r) overlaps particle i */
+        if(!bbox_overlaps_sphere_gpu(node->lo, node->hi, pos_i, search_r, search_r2)) continue;
+
+        if(node->left < 0)
+        {
+            /* Leaf node: the visitor takes the tile */
+            int tile_idx = -(node->left + 1);
+            if(cnt_tiles_visited) (*cnt_tiles_visited)++;
+            visit(tile_idx);
+        }
+        else
+        {
+            /* Internal node: push children onto stack */
+            if(sp + 2 > TILE_BVH_STACK_SIZE) {
+                /* Stack overflow — should not happen with STACK_SIZE=64 */
+                break;
+            }
+            stack[sp++] = node->left;
+            stack[sp++] = node->right;
+        }
+    }
+}
+
+/* The neighbour-list visitor: test every particle of an overlapping tile against
+ * the query and store the indices that pass, bounded by max_store.  This is the
+ * candidate-list form the CSR build consumes. */
+struct TileCandidateStore {
+    const double *compact_xyzh;
+    const double *pos_i;
+    double h_i, h2_i, j_radius_scale;
+    sfc_tile_t *tiles;
+    int *pool;
+    int search_mode;
+    int *store_neighbors;
+    int max_store;
+    int *cnt_candidates_tested;
+    int *cnt_candidates_accepted;
+    const struct particle_data *P_gpu;
+    unsigned int supply_mask;
+    int count;
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(int tile_idx)
+    {
+        count = check_tile_particles_gpu(compact_xyzh, pos_i, h_i, h2_i, j_radius_scale, &tiles[tile_idx], pool, search_mode,
+                                         store_neighbors, count, max_store,
+                                         cnt_candidates_tested, cnt_candidates_accepted,
+                                         P_gpu, supply_mask);
+    }
+};
+
 /* Search for neighbors of an arbitrary source position pos_i using BVH
- * traversal over tiles. Iterative stack-based traversal (GPU-friendly,
- * no recursion). Returns count; if store_neighbors != NULL, writes indices
+ * traversal over tiles. Returns count; if store_neighbors != NULL, writes indices
  * there. Decoupled from any specific P[] index so the same routine serves
  * particle-based sources (gpu_ngb_list_build's default mode) and
  * arbitrary-position sources (e.g. TURB_DRIVING_SPECTRUMGRID grid cells). */
@@ -170,65 +276,13 @@ int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], 
                              unsigned int supply_mask = ((1u << 6) - 1u))
 {
     (void)ntiles;
-    double h2_i = h_i * h_i;
-    int count = 0;
-
-    /* Stack-based iterative BVH traversal */
-    int stack[TILE_BVH_STACK_SIZE];
-    int sp = 0;
-    stack[sp++] = bvh_root;
-
-    while(sp > 0)
-    {
-        int node_idx = stack[--sp];
-        tile_bvh_node_t *node = &bvh[node_idx];
-        if(cnt_nodes_visited) (*cnt_nodes_visited)++;
-
-        /* Compute search radius for this node. Per-type hmax filter when P_gpu given;
-         * else scalar hmax (legacy behavior). For supply_mask = 0x3f the per-type
-         * branch evaluates max over all 6 types == scalar hmax → identical result. */
-        double node_hmax_eff;
-        if(P_gpu) {
-            node_hmax_eff = 0;
-            for(int t = 0; t < 6; t++) {
-                if((supply_mask & (1u << (unsigned)t)) == 0u) continue;
-                if(node->hmax_by_type[t] > node_hmax_eff) node_hmax_eff = node->hmax_by_type[t];
-            }
-        } else {
-            node_hmax_eff = node->hmax;
-        }
-        /* Scale the j-side node radius in SYMMETRIC mode (no-op when
-         * j_radius_scale == 1.0; constant-propagated for default callers). */
-        node_hmax_eff *= j_radius_scale;
-        double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node_hmax_eff) ? h_i : node_hmax_eff);
-        double search_r2 = search_r * search_r;
-
-        /* Check if node's bbox (expanded by search_r) overlaps particle i */
-        if(!bbox_overlaps_sphere_gpu(node->lo, node->hi, pos_i, search_r, search_r2)) continue;
-
-        /* Check if leaf */
-        if(node->left < 0)
-        {
-            /* Leaf node: process the tile's particles */
-            int tile_idx = -(node->left + 1);
-            if(cnt_tiles_visited) (*cnt_tiles_visited)++;
-            count = check_tile_particles_gpu(compact_xyzh, pos_i, h_i, h2_i, j_radius_scale, &tiles[tile_idx], pool, search_mode,
-                                             store_neighbors, count, max_store,
-                                             cnt_candidates_tested, cnt_candidates_accepted,
-                                             P_gpu, supply_mask);
-        }
-        else
-        {
-            /* Internal node: push children onto stack */
-            if(sp + 2 > TILE_BVH_STACK_SIZE) {
-                /* Stack overflow — should not happen with STACK_SIZE=64 */
-                break;
-            }
-            stack[sp++] = node->left;
-            stack[sp++] = node->right;
-        }
-    }
-    return count;
+    TileCandidateStore store{compact_xyzh, pos_i, h_i, h_i * h_i, j_radius_scale,
+                             tiles, pool, search_mode, store_neighbors, max_store,
+                             cnt_candidates_tested, cnt_candidates_accepted,
+                             P_gpu, supply_mask, 0};
+    bvh_walk_tiles(pos_i, h_i, j_radius_scale, search_mode, bvh, bvh_root,
+                   P_gpu, supply_mask, cnt_nodes_visited, cnt_tiles_visited, store);
+    return store.count;
 }
 
 #endif /* SFC_TILES_FUNCTIONS_H */
