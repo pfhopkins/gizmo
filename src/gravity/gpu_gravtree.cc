@@ -1262,12 +1262,14 @@ grav_walk_scratch_plan_for(int num_targets, int with_potential_and_interactions)
     return plan;
 }
 
-extern "C" int gpu_gravtree_walk_primary(void)
+extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    if(Ewald_iter > 0) {return 0;}
-
     int num_active_total = (int) ActiveParticleList.size();
+    /* How many candidates this walk leaves to the host loop: every active until this walk has
+     * selected and taken some. The host loop sizes its per-thread packet workspace from it. */
+    if(host_candidates_left) {*host_candidates_left = (num_active_total > 0) ? num_active_total : 0;}
+    if(Ewald_iter > 0) {return 0;}
     if(num_active_total <= 0) {return 0;}
 
     /* The CPU walk (forcetree.cc) JIT-drifts particles and nodes whose
@@ -1310,6 +1312,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         if(!gravity_treewalk_candidate_prewalk(i, a)) {continue;}
         idx_host[num_active++] = i;
     }
+    if(host_candidates_left) {*host_candidates_left = num_active;}
     if(num_active <= 0) {myfree(idx_host); return 0;}
 
     /* Few enough candidates that the host walk, which drifts nodes only as it opens
@@ -1781,6 +1784,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     release_payload_buffers();
     myfree(idx_host);
 
+    if(host_candidates_left) {*host_candidates_left = num_active - nsucceeded;}
     return nsucceeded;
 }
 

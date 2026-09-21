@@ -142,6 +142,21 @@
 #error "TREE_LEAF_BUCKET_SIZE must be at least 1 (1 = one particle per leaf, the historical tree)"
 #endif
 
+/* How many targets the host gravity walk takes through the tree together. Targets adjacent in the
+ * active list are usually close in space (the list follows the particle order, which follows the
+ * space-filling curve), so their walks visit nearly the same nodes; a packet traverses the tree
+ * once for all of them, every member judges each node by its own opening criterion, and each
+ * member then evaluates the elements it accepted, so its force is exactly what its own walk would
+ * produce. What is shared is the traversal, which is most of the cost where a few targets descend
+ * a locally very deep tree. 1 walks every target alone, the historical walk. No single value suits
+ * every problem or machine; override in Config.sh. */
+#ifndef TREE_QUERY_PACKET_SIZE
+#define TREE_QUERY_PACKET_SIZE 1
+#endif
+#if TREE_QUERY_PACKET_SIZE < 1
+#error "TREE_QUERY_PACKET_SIZE must be at least 1 (1 = every target walks the tree alone)"
+#endif
+
 
 #define  EPSILON_FOR_TREERND_SUBNODE_SPLITTING (1.0e-4) /* define some number << 1; particles with less than this separation will trigger randomized sub-node splitting in the tree. we set it to a global value here so that other sub-routines will know not to force particle separations below this */
 

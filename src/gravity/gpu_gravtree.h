@@ -36,8 +36,10 @@ extern "C" {
  *
  * Returns the number of particles that completed successfully on GPU. When
  * the build lacks Kokkos, this is an unconditional no-op
- * (returns 0) so callers in gravity_tree() stay simple. */
-int gpu_gravtree_walk_primary(void);
+ * (returns 0) so callers in gravity_tree() stay simple.
+ * host_candidates_left (may be NULL) receives how many walk candidates this
+ * pass leaves to the host loop -- an upper bound on any early return. */
+int gpu_gravtree_walk_primary(int *host_candidates_left);
 
 /* GPU Ewald-correction walk. Called from gravity_tree() when Ewald_iter==1
  * (pure-tree periodic, BOX_PERIODIC && !GRAVITY_NOT_PERIODIC && !PMGRID).

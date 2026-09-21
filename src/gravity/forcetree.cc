@@ -1260,7 +1260,7 @@ int force_exchange_pseudodata_complete(void)
     return 0;
 }
 
-/*! Synchronous wrapper preserving the pre-Phase-10.3 API for the CPU and
+/*! Synchronous wrapper (begin + complete in one call) for the CPU and
  *  refresh code paths (which do not have a LET round to overlap with).
  *  Returns the complete() status (nonzero = unmatched; caller skips dependent
  *  pseudo-update work and drains at its poll). */
@@ -1812,27 +1812,132 @@ void gravity_clear_incomplete_import(void)
 }
 
 /* How many accepted elements a walk holds between traversal and evaluation. The run lives
- * on the stack of the thread walking one target and is evaluated whenever it fills, so its
- * size bounds memory, never the number of interactions; a small run only evaluates sooner. */
+ * in the walking thread's workspace and is evaluated whenever it fills, so its size bounds
+ * memory, never the number of interactions; a small run only evaluates sooner. */
 #define GRAVTREE_WALK_RECORD_CHUNK 256
 
-int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex)
+/* One target of a packet walk: its inputs to the opening decision and to the pair evaluation,
+ * fixed for the walk, and everything the walk accumulates for it. The packet's members share
+ * one traversal of the tree; each member keeps its own opening decisions, so its accepted
+ * elements are exactly those its own walk would accept, in the same order. */
+struct grav_walk_open_inputs_t {
+    Vec3<double> pos; int ptype; double soft, aold;
+#ifdef PMGRID
+    double rcut, rcut2;
+#endif
+};
+struct grav_walk_member_t {
+    int target;                 /* particle index */
+    int resume_at;              /* GRAV_WALK_MEMBER_IN_PLAY; the index at which this member re-joins the traversal; or GRAV_WALK_MEMBER_NEVER for a massless target that takes part in nothing and writes nothing */
+    struct grav_walk_open_inputs_t open;   /* what the opening decision reads at every node */
+    double pmass, zeta;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+    Vec3<double> vel;
+#endif
+    grav_pair_tgt_t tgt;
+#ifdef RT_USE_GRAVTREE
+    int valid_gas_particle_for_rt;
+#if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+    double fac_stellum[N_RT_FREQ_BINS];
+#endif
+#endif
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+    double r_for_total_menclosed, m_enc_in_rcrit;
+#endif
+    /* accumulators */
+    grav_pair_acc_t out;
+#ifdef RT_USE_TREECOL_FOR_NH
+    double treecol_angular_bins[RT_USE_TREECOL_FOR_NH];
+#endif
+#ifdef COUNT_MASS_IN_GRAVTREE
+    MyFloat tree_mass;
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+    double chimes_flux_G0[CHIMES_LOCAL_UV_NBINS], chimes_flux_ion[CHIMES_LOCAL_UV_NBINS];
+#endif
+#ifdef RT_OTVET
+    SymmetricTensor2<double> RT_ET[N_RT_FREQ_BINS];
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+    double incident_flux_uv, incident_flux_euv;
+#endif
+#ifdef SINK_COMPTON_HEATING
+    double incident_flux_agn;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+    double SubGrid_CosmicRayEnergyDensity;
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+    double Rad_E_gamma[N_RT_FREQ_BINS];
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+    Vec3<double> Rad_Flux[N_RT_FREQ_BINS];
+#endif
+#ifdef SINK_CALC_DISTANCES
+    grav_sink_prox_accum_t sink_prox;
+#endif
+};
+#define GRAV_WALK_MEMBER_IN_PLAY (-2)   /* resume_at value of a member taking part in the traversal (-1 is a valid tree index meaning "end of walk") */
+#define GRAV_WALK_MEMBER_NEVER   (-3)   /* resume_at value of a member that never takes part */
+
+/* Per-thread workspace of a packet walk: the members, the run of accepted records, and one
+ * mask word set per record naming the members that accepted it. Members and masks are sized
+ * from the packet capacity the caller chose, so a large configured packet size costs nothing
+ * on a rank with one host target. */
+#define GRAV_WALK_MASK_BITS 64
+static inline int grav_walk_mask_words(int cap) {return (cap + GRAV_WALK_MASK_BITS - 1) / GRAV_WALK_MASK_BITS;}   /* per record: one bit per member the workspace can hold */
+static inline size_t grav_walk_round64(size_t n) {return (n + 63) & ~((size_t) 63);}
+size_t force_treewalk_workspace_bytes_per_thread(int cap)
+{
+    if(cap < 1) {cap = 1;}
+    return grav_walk_round64(cap * sizeof(struct grav_walk_member_t))
+         + grav_walk_round64(GRAVTREE_WALK_RECORD_CHUNK * sizeof(grav_walk_record_t))
+         + grav_walk_round64((size_t) GRAVTREE_WALK_RECORD_CHUNK * grav_walk_mask_words(cap) * sizeof(unsigned long long))
+         + grav_walk_round64(2 * grav_walk_mask_words(cap) * sizeof(unsigned long long))
+#if defined(RT_USE_GRAVTREE) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+         + grav_walk_round64(GRAVTREE_WALK_RECORD_CHUNK * sizeof(struct gravtree_source_inputs_t))
+         + grav_walk_round64(GRAVTREE_WALK_RECORD_CHUNK)
+#endif
+         ;
+}
+
+/* Walk the tree once for a packet of targets and accumulate every target's tree force.
+ *
+ * The traversal is shared: a node is descended when any member needs it opened. The
+ * decisions are not shared: at every node each member still taking part applies its own
+ * opening criterion (its own separation, softening, acceleration and type), and a member
+ * that accepts or passes a node the packet then descends sits out until the traversal
+ * reaches that node's sibling, which in this tree's depth-first order is the first index
+ * visited after the node's subtree. Each member therefore judges exactly the nodes its
+ * own walk would visit, in the same order, and its accepted elements are the same sequence
+ * its own walk would accumulate. Terminal elements (particles, imported leaves, imported
+ * aggregates that arrived without children) never descend and are judged per member as
+ * before.
+ *
+ * Every source is drifted during the traversal, once, before any record naming it is
+ * appended, and drifting is idempotent within a step, so the state an element is evaluated
+ * at is the state it had when it was accepted, whichever member accepted it.
+ *
+ * Nothing a packet of several targets produces reaches the particles, the cost counters or
+ * the import diagnostics until the whole packet has completed. A packet that meets a
+ * pseudo-particle returns 0 having written nothing, and the caller walks each of its
+ * members alone: a packet of one records the pseudo-particle as before and returns 1, or -1
+ * when the detector table is full (then, as before, nothing is written for that target but
+ * the diagnostics it noted stand). On 1, ninter_out[m] holds each member's interaction count.
+ * workspace is this thread's block of force_treewalk_workspace_bytes_per_thread(cap) bytes;
+ * n_targets <= cap. */
+int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_out, void *workspace,
+                       int *exportflag, int *exportnodecount, int *exportindex)
 {
     struct NODE *nop = 0;
-    int no, ptype, nexp, task, treeBase = All.TreeNodeIndexBase, treeSlots = All.TreeParticleSlots;
+    int no, nexp, task, treeBase = All.TreeNodeIndexBase, treeSlots = All.TreeParticleSlots;
     long bunchSize = All.BunchSize; int maxNodes = MaxNodes; int maxForeignNodes = MaxForeignNodes; integertime ti_Current = All.Ti_Current;    /* maxForeignNodes shifts pseudo-particle range above the foreign-node range */
-    double soft, h=0, aold; soft=0;
-    Vec3<double> pos;
-    double pmass;
-    double zeta=0;
+    const int target = targets[0];   /* the target the import detector records for a packet of one (n_targets == 1 is the only case that reaches it) */
 #ifdef RT_USE_TREECOL_FOR_NH
-    double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[RT_USE_TREECOL_FOR_NH] = {0};
+    double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH;
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     double gasmass;
-#endif
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-    Vec3<double> vel;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
     double center[3]={0};
@@ -1840,496 +1945,622 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
     center[0] = 0.5 * boxSize_X; center[1] = 0.5 * boxSize_Y; center[2] = 0.5 * boxSize_Z;
 #endif
 #endif
-#ifdef PMGRID
-    double rcut, asmth, asmthfac, rcut2; rcut = All.Rcut[0]; asmth = All.Asmth[0];
-#endif
-#ifdef COUNT_MASS_IN_GRAVTREE
-    MyFloat tree_mass = 0;
-#endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     double cr_injection = 0;
+    /* per-call CR gate + max stream time, hoisted from the accumulation (the time helper is host-only; value is interaction-independent) */
+    int cr_active_gate = (All.Time > All.TimeBegin) ? 1 : 0; double cr_t_max = 0;
+    if(cr_active_gate) {cr_t_max = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/UNIT_TIME_IN_GYR;}
 #endif
 #ifdef RT_USE_GRAVTREE
     double mass_stellarlum[N_RT_FREQ_BINS]; int k_freq; for(k_freq=0;k_freq<N_RT_FREQ_BINS;k_freq++) {mass_stellarlum[k_freq]=0;}
 #ifdef CHIMES_STELLAR_FLUXES
-    double chimes_mass_stellarlum_G0[CHIMES_LOCAL_UV_NBINS]={0}, chimes_mass_stellarlum_ion[CHIMES_LOCAL_UV_NBINS]={0}, chimes_flux_G0[CHIMES_LOCAL_UV_NBINS]={0}, chimes_flux_ion[CHIMES_LOCAL_UV_NBINS]={0};
+    double chimes_mass_stellarlum_G0[CHIMES_LOCAL_UV_NBINS]={0}, chimes_mass_stellarlum_ion[CHIMES_LOCAL_UV_NBINS]={0};
 #endif
-    Vec3<double> d_stellarlum = {}; int valid_gas_particle_for_rt = 0;
-#ifdef RT_OTVET
-    SymmetricTensor2<double> RT_ET[N_RT_FREQ_BINS]={};
-#endif
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-    double mass_sinklumwt_forradfb=0; // convert bh luminosity to our tree units
-#endif
-#ifdef GALSF_FB_FIRE_RT_LONGRANGE
-    double incident_flux_uv=0, incident_flux_euv=0;
-#endif
-#ifdef SINK_COMPTON_HEATING
-    double incident_flux_agn=0;
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-    double SubGrid_CosmicRayEnergyDensity = 0;
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-    double Rad_E_gamma[N_RT_FREQ_BINS]={0};
-#endif
-#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-    Vec3<double> Rad_Flux[N_RT_FREQ_BINS]; {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {Rad_Flux[kf] = {};}}
-#endif
-#ifdef SINK_CALC_DISTANCES
-    grav_sink_prox_accum_t sink_prox; grav_sink_prox_accum_init(sink_prox); /* nearest-sink + single-star timestep/binary accumulators (gravtree_force_kernel.h) */
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-    Vec3<double> d_dm = {}; double mass_dm = 0;
-#endif
-#if defined(SINK_DYNFRICTION_FROMTREE)
-    double sink_mass = 0;
-#endif
-    /* the accumulators the shared pair evaluation writes (acceleration, potential, interaction
-       count, and the tidal / jerk / tidal-zeta terms where compiled) */
-    grav_pair_acc_t out; grav_pair_acc_init(out);
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    SymmetricTensor2<MyFloat> i_zeta_tidal_tensorps_prevstep;
-    i_zeta_tidal_tensorps_prevstep=P[target].tidal_tensorps_prevstep;
 #endif
 
-    pos = P[target].Pos;
-    ptype = P[target].Type;
-    soft = ForceSoftening_KernelRadius(target);
-    aold = All.ErrTolForceAcc * P[target].OldAcc;
-    pmass = P[target].Mass;
-#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-    vel = P[target].Vel;
+    /* the workspace: the members, the run of records and their masks, and where compiled the
+       per-run payload cache */
+    if(cap < 1) {cap = 1;}
+    if(n_targets < 1 || n_targets > cap || cap > TREE_QUERY_PACKET_SIZE) {endrun(90001054); return -1;}
+    /* the members taking part; with a packet size of one this is the constant 1, so every loop
+       over members below collapses to its single iteration, and the per-record bookkeeping that
+       only several members need (which members accepted a record; whether a leaf's payload has
+       already been derived for another member) is left out at compile time */
+    constexpr int packet_of_one = (TREE_QUERY_PACKET_SIZE == 1);
+    const int n_members = packet_of_one ? 1 : n_targets;
+    const int mask_words = packet_of_one ? 1 : grav_walk_mask_words(cap);   /* sized by what this call's workspace holds, not by the configured packet size */
+    char *ws = (char *) workspace;
+    struct grav_walk_member_t *members = (struct grav_walk_member_t *) ws; ws += grav_walk_round64(cap * sizeof(struct grav_walk_member_t));
+    grav_walk_record_t *records = (grav_walk_record_t *) ws; ws += grav_walk_round64(GRAVTREE_WALK_RECORD_CHUNK * sizeof(grav_walk_record_t));
+    unsigned long long *masks = (unsigned long long *) ws; ws += grav_walk_round64((size_t) GRAVTREE_WALK_RECORD_CHUNK * mask_words * sizeof(unsigned long long));
+    /* the node's scratch masks: one word each for a packet of one (a register), otherwise a word per
+       64 members the workspace holds, kept in the workspace */
+    unsigned long long single_accept_mask[1], single_opened_mask[1];
+    unsigned long long *accept_mask = packet_of_one ? single_accept_mask : (unsigned long long *) ws;
+    unsigned long long *opened_mask = packet_of_one ? single_opened_mask : (unsigned long long *) ws + mask_words;
+    ws += grav_walk_round64(2 * mask_words * sizeof(unsigned long long));
+#if defined(RT_USE_GRAVTREE) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+    /* a leaf's RT / sink / CR payload, derived once per run of records for the members that consume it */
+    struct gravtree_source_inputs_t *payloads = (struct gravtree_source_inputs_t *) ws; ws += grav_walk_round64(GRAVTREE_WALK_RECORD_CHUNK * sizeof(struct gravtree_source_inputs_t));
+    unsigned char *payload_loaded = (unsigned char *) ws;
 #endif
+    int n_records = 0;
+#define GRAV_WALK_MASK_SET(mask, m)  ((mask)[(m) / GRAV_WALK_MASK_BITS] |= (1ULL << ((m) % GRAV_WALK_MASK_BITS)))
+#define GRAV_WALK_MASK_TEST(mask, m) (((mask)[(m) / GRAV_WALK_MASK_BITS] >> ((m) % GRAV_WALK_MASK_BITS)) & 1ULL)
+
+    /* Import-completeness notes are held here until the packet completes (a packet of several
+     * that is abandoned for a pseudo-particle must leave no trace of the walk it did not
+     * finish), then handed to the shared counters through the same calls as before. */
+    struct { long long count, unshippable; int have_example, node, ptype; unsigned long long id; double len, mass; } notes = {0, 0, 0, 0, 0, 0ULL, 0.0, 0.0};
+    auto commit_notes = [&]()
+    {
+        if(notes.have_example) {gravity_note_incomplete_import(notes.node, notes.id, notes.ptype, notes.len, notes.mass);}
+        gravity_note_incomplete_import_count(notes.count - (notes.have_example ? 1 : 0));
+        gravity_note_unshippable_import(notes.unshippable);
+    };
+
+    /* the members: each target's inputs to the walk, and zeroed accumulators */
+    for(int m = 0; m < n_members; m++)
+    {
+        struct grav_walk_member_t &mem = members[m];
+        const int tm = targets[m];
+        mem.target = tm; mem.resume_at = GRAV_WALK_MEMBER_IN_PLAY;
+        mem.zeta = 0;
+        mem.open.pos = P[tm].Pos;
+        mem.open.ptype = P[tm].Type;
+        mem.open.soft = ForceSoftening_KernelRadius(tm);
+        mem.open.aold = All.ErrTolForceAcc * P[tm].OldAcc;
+        mem.pmass = P[tm].Mass;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+        mem.vel = P[tm].Vel;
+#endif
+        double sink_mass = 0; (void) sink_mass;
 #if defined(SINK_DYNFRICTION_FROMTREE)
-    if(ptype == 5) {sink_mass = P[target].Sink_Mass;}
+        if(mem.open.ptype == 5) {sink_mass = P[tm].Sink_Mass;}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
-    grav_target_select_soft_and_zeta(ptype, P[target].AGS_zeta, soft, zeta);
+        grav_target_select_soft_and_zeta(mem.open.ptype, P[tm].AGS_zeta, mem.open.soft, mem.zeta);
 #endif
-#if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
-    if(pmforce_is_particle_high_res(ptype, P[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
-#endif
-
-
-    if(pmass<=0) {return 0;} /* quick check if particle has mass: if not, we won't deal with it */
-    int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(ptype); // determine allowed particle types for correction terms for adaptive gravitational softening terms
 #ifdef PMGRID
-    rcut2 = rcut * rcut; asmthfac = grav_pm_asmthfac(asmth);
+        double rcut = All.Rcut[0], asmth = All.Asmth[0];
+#if defined(PM_PLACEHIGHRESREGION)
+        if(pmforce_is_particle_high_res(mem.open.ptype, P[tm].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
 #endif
-    /* read-only PM short-range config for the shared force helpers (empty when !PMGRID;
-     * built once per target after the PM_PLACEHIGHRESREGION rcut/asmth override above). */
-    grav_pm_shortrange_t pm{};
+        mem.open.rcut = rcut; mem.open.rcut2 = rcut * rcut;
+#endif
+        if(mem.pmass <= 0) {mem.resume_at = GRAV_WALK_MEMBER_NEVER;} /* a massless target: nothing to compute, nothing to write */
+        int AGS_kernel_shared_BITFLAG = ags_gravity_kernel_shared_BITFLAG(mem.open.ptype); // determine allowed particle types for correction terms for adaptive gravitational softening terms
+        /* read-only PM short-range config for the shared force helpers (empty when !PMGRID;
+         * built once per target after the PM_PLACEHIGHRESREGION rcut/asmth override above). */
+        grav_pm_shortrange_t pm{};
 #ifdef PMGRID
-    pm.rcut = rcut; pm.rcut2 = rcut2; pm.asmthfac = asmthfac; pm.shortrange_tab = shortrange_table;
+        pm.rcut = rcut; pm.rcut2 = mem.open.rcut2; pm.asmthfac = grav_pm_asmthfac(asmth); pm.shortrange_tab = shortrange_table;
 #ifdef EVALPOTENTIAL
-    pm.shortrange_pot_tab = shortrange_table_potential;
+        pm.shortrange_pot_tab = shortrange_table_potential;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    pm.shortrange_tidal_tab = shortrange_table_tidal;
+        pm.shortrange_tidal_tab = shortrange_table_tidal;
 #endif
 #endif
-    /* the target's inputs to the shared pair evaluation, fixed for this walk */
-    h = soft;
-    grav_pair_tgt_t tgt{}; tgt.ptype = ptype; tgt.pmass = pmass; tgt.h = h; tgt.zeta = zeta; tgt.ags_bitflag = AGS_kernel_shared_BITFLAG; tgt.pm = pm;
+        /* the target's inputs to the shared pair evaluation, fixed for this walk */
+        grav_pair_tgt_t tgt{}; tgt.ptype = mem.open.ptype; tgt.pmass = mem.pmass; tgt.h = mem.open.soft; tgt.zeta = mem.zeta; tgt.ags_bitflag = AGS_kernel_shared_BITFLAG; tgt.pm = pm;
 #ifdef SINK_DYNFRICTION_FROMTREE
-    tgt.sink_mass = sink_mass;
+        tgt.sink_mass = sink_mass;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    tgt.i_zeta_tidal_tensorps_prevstep = i_zeta_tidal_tensorps_prevstep;
+        tgt.i_zeta_tidal_tensorps_prevstep = P[tm].tidal_tensorps_prevstep;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
-    tgt.pos = pos; tgt.center[0] = center[0]; tgt.center[1] = center[1]; tgt.center[2] = center[2];
+        tgt.pos = mem.open.pos; tgt.center[0] = center[0]; tgt.center[1] = center[1]; tgt.center[2] = center[2];
 #endif
+        mem.tgt = tgt;
 #ifdef RT_USE_GRAVTREE
-    valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(ptype, soft, pmass);
+        mem.valid_gas_particle_for_rt = grav_target_valid_gas_for_rt(mem.open.ptype, mem.open.soft, mem.pmass);
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-    double fac_stellum[N_RT_FREQ_BINS];
-    if(valid_gas_particle_for_rt)
-    {
-        double kappa_eff[N_RT_FREQ_BINS]; int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {kappa_eff[kf] = rt_kappa(-1,kf, P, CellP);} // rt_kappa is in physical code units (needs the walk's particle pointers, so evaluated here)
-        grav_target_rt_fac_stellum(soft, pmass, kappa_eff, fac_stellum);
-    }
+        if(mem.valid_gas_particle_for_rt)
+        {
+            double kappa_eff[N_RT_FREQ_BINS]; int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {kappa_eff[kf] = rt_kappa(-1,kf, P, CellP);} // rt_kappa is in physical code units (needs the walk's particle pointers, so evaluated here)
+            grav_target_rt_fac_stellum(mem.open.soft, mem.pmass, kappa_eff, mem.fac_stellum);
+        }
 #endif
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-    double m_enc_in_rcrit = 0, r_for_total_menclosed = grav_target_menc_radius(soft); /* baseline Rcrit_min applied in the helper, otherwise we get statistics that are very noisy */
+        mem.m_enc_in_rcrit = 0; mem.r_for_total_menclosed = grav_target_menc_radius(mem.open.soft); /* baseline Rcrit_min applied in the helper, otherwise we get statistics that are very noisy */
+#endif
+        /* the accumulators the shared pair evaluation writes (acceleration, potential, interaction
+           count, and the tidal / jerk / tidal-zeta terms where compiled), and the walker's own */
+        grav_pair_acc_init(mem.out);
+#ifdef RT_USE_TREECOL_FOR_NH
+        {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {mem.treecol_angular_bins[k] = 0;}}
+#endif
+#ifdef COUNT_MASS_IN_GRAVTREE
+        mem.tree_mass = 0;
+#endif
+#ifdef CHIMES_STELLAR_FLUXES
+        {int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {mem.chimes_flux_G0[kc] = 0; mem.chimes_flux_ion[kc] = 0;}}
+#endif
+#ifdef RT_OTVET
+        {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {mem.RT_ET[kf] = {};}}
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+        mem.incident_flux_uv = 0; mem.incident_flux_euv = 0;
+#endif
+#ifdef SINK_COMPTON_HEATING
+        mem.incident_flux_agn = 0;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    /* per-target CR gate + max stream time, hoisted from the accumulation (the time helper is host-only; value is interaction-independent) */
-    int cr_active_gate = (All.Time > All.TimeBegin) ? 1 : 0; double cr_t_max = 0;
-    if(cr_active_gate) {cr_t_max = DMIN(1., evaluate_time_since_t_initial_in_Gyr(All.TimeBegin))/UNIT_TIME_IN_GYR;}
+        mem.SubGrid_CosmicRayEnergyDensity = 0;
 #endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
+        {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {mem.Rad_E_gamma[kf] = 0;}}
+#endif
+#if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
+        {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {mem.Rad_Flux[kf] = {};}}
+#endif
+#ifdef SINK_CALC_DISTANCES
+        grav_sink_prox_accum_init(mem.sink_prox); /* nearest-sink + single-star timestep/binary accumulators (gravtree_force_kernel.h) */
+#endif
+    }
 
 
-    /* Evaluate a run of accepted elements, in the order they were accepted. Each element is
-       loaded again from the tree here, from its index alone: a particle leaf from P[], a node
-       from Nodes[]/Extnodes[] and the foreign-leaf sidecars. Every source drift happened during
-       the traversal that accepted the element, and drifting is idempotent within a step, so
-       the state read here is the state the element had when it was accepted; a Hermite-owned
-       source is predicted from that state, as it was before the traversal and the evaluation
-       were separated. A source found not drifted, or a node whose classification no longer
-       matches its record, is a broken invariant and stops the run. */
-    auto evaluate_records = [&](const grav_walk_record_t *rec, int n_rec)
+    /* Evaluate a run of accepted elements for every member that accepted each, member by member:
+       a member's inputs and accumulators are held in locals for the whole run (the compiler keeps
+       them in registers, which is what the pair evaluation's cost depends on), and each element
+       it accepted is loaded again from the tree, from its index alone, in acceptance order: a
+       particle leaf from P[], a node from Nodes[]/Extnodes[] and the foreign-leaf sidecars. A
+       leaf's luminosity / cosmic-ray payload is derived once per run and shared by the members
+       that consume it. Every source drift happened during the traversal that accepted the
+       element, and drifting is idempotent within a step, so the state read here is the state
+       the element had when it was accepted; a Hermite-owned source is predicted from that state,
+       as it was before the traversal and the evaluation were separated. A source found not
+       drifted, or a node whose classification no longer matches its record, is a broken
+       invariant and stops the run. */
+    auto evaluate_records = [&](const grav_walk_record_t *rec, const unsigned long long *rec_masks, int n_rec)
     {
-        for(int irec = 0; irec < n_rec; irec++)
+#if defined(RT_USE_GRAVTREE) || defined(COSMIC_RAY_SUBGRID_LEBRON)
+        if(!packet_of_one) {for(int irec = 0; irec < n_rec; irec++) {payload_loaded[irec] = 0;}}
+#endif
+        for(int m = 0; m < n_members; m++)
         {
-            const int no = rec[irec].no;
-            grav_pair_src_t src;   /* dr, r2, mass are assigned on every path that reaches the evaluation */
-            Vec3<double> &dr = src.dr; double &r2 = src.r2, &mass = src.mass, &h_p = src.h_p, &zeta_sec = src.zeta_sec; int &ptype_sec = src.ptype_sec;
-            h_p = -1; ptype_sec = -1; zeta_sec = 0;
-#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-            Vec3<double> &dv = src.dv;
+            struct grav_walk_member_t &mem = members[m];
+            if(mem.resume_at == GRAV_WALK_MEMBER_NEVER) {continue;}
+            if(!packet_of_one)
+            {   /* nothing in this run for a member that accepted none of it */
+                unsigned long long any = 0;
+                for(int irec = 0; irec < n_rec; irec++) {any |= rec_masks[(size_t) irec * mask_words + m / GRAV_WALK_MASK_BITS] & (1ULL << (m % GRAV_WALK_MASK_BITS));}
+                if(!any) {continue;}
+            }
+            /* the member's inputs, fixed for the walk */
+            const Vec3<double> pos = mem.open.pos; const int ptype = mem.open.ptype; const double soft = mem.open.soft, pmass = mem.pmass; (void) soft; (void) pmass;
+#if defined(SINGLE_STAR_TIMESTEPPING) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+            const Vec3<double> vel = mem.vel;
 #endif
-#if defined(SINK_DYNFRICTION_FROMTREE)
-            double &m_j_eff_for_df = src.m_j_eff_for_df;
+            const grav_pair_tgt_t tgt = mem.tgt;
+#ifdef RT_USE_GRAVTREE
+            const int valid_gas_particle_for_rt = mem.valid_gas_particle_for_rt;
+            Vec3<double> d_stellarlum = {};
+#ifdef SINK_PHOTONMOMENTUM
+            double mass_sinklumwt_forradfb=0; // convert bh luminosity to our tree units
 #endif
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-            double &r_source = src.r_source;
 #endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-            SymmetricTensor2<double> &j_zeta_tidal_tensorps_prevstep = src.j_zeta_tidal_tensorps_prevstep;
+#ifdef DM_SCALARFIELD_SCREENING
+            Vec3<double> d_dm = {}; double mass_dm = 0;
 #endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            gasmass=0; /* reset per interaction: non-gas leaf sources carry NO gas mass. Without this, a
-                        * non-gas leaf inherits the stale gasmass of an earlier source (or garbage before the
-                        * first assignment) and the TREECOL column estimate fabricates contributions through
-                        * dark-matter/star particles. Nodes assign unconditionally below; only gas leaves
-                        * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
+            /* the member's accumulators, taken up for this run and put back after it */
+            grav_pair_acc_t out = mem.out;
+#ifdef COUNT_MASS_IN_GRAVTREE
+            MyFloat tree_mass = mem.tree_mass;
 #endif
-            if(no < treeSlots) /* this is a particle, we will use it */
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+            double m_enc_in_rcrit = mem.m_enc_in_rcrit; const double r_for_total_menclosed = mem.r_for_total_menclosed;
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+            double incident_flux_uv = mem.incident_flux_uv, incident_flux_euv = mem.incident_flux_euv;
+#endif
+#ifdef SINK_COMPTON_HEATING
+            double incident_flux_agn = mem.incident_flux_agn;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            double SubGrid_CosmicRayEnergyDensity = mem.SubGrid_CosmicRayEnergyDensity;
+#endif
+#ifdef SINK_CALC_DISTANCES
+            grav_sink_prox_accum_t sink_prox = mem.sink_prox;
+#endif
+
+            for(int irec = 0; irec < n_rec; irec++)
             {
-                if(P[no].Ti_current != ti_Current) {endrun(90001051);}   /* accepted during traversal, which drifted it */
-                /* the source state this interaction is evaluated at, which is the drifted state
-                   except where the Hermite predictor below replaces it */
-                Vec3<double> src_pos = P[no].Pos;
-                Vec3<double> src_vel = P[no].Vel;   /* unconditional: the sink-proximity block below reads it under SINK_CALC_DISTANCES, which several flags reach without the jerk or dynamical-friction terms */
-#ifdef HERMITE_INTEGRATION
-                /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
-                   step is second-order wrong where it stands; evaluate it from its own start-of-step
-                   state instead. Single sources only: one absorbed into a node multipole still
-                   contributes from the node's drifted centre of mass. Under
-                   SINGLE_STAR_DIRECT_GRAVITY_RADIUS the close star pairs this matters most for are
-                   force-opened to singles and so do take this branch. Nothing is written back. */
-                if(hermite_source_needs_prediction(no, P, HermiteWalk)) {
-                    hermite_predict_source_state(no, P, HermiteWalk, &HermiteWalkTables, src_pos, src_vel);
-                }
-#endif
-                dr = src_pos - pos;
-                GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
-                r2 = dr.norm_sq();
-                mass = P[no].Mass;
-
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-                r_source = grav_spherical_symmetry_r_from_center(src_pos[0],src_pos[1],src_pos[2],center[0],center[1],center[2]);
-#endif
+                if(!packet_of_one && !GRAV_WALK_MASK_TEST(rec_masks + (size_t) irec * mask_words, m)) {continue;}
+                const int no = rec[irec].no;
+                grav_pair_src_t src;   /* dr, r2, mass are assigned on every path that reaches the evaluation */
+                Vec3<double> &dr = src.dr; double &r2 = src.r2, &mass = src.mass, &h_p = src.h_p, &zeta_sec = src.zeta_sec; int &ptype_sec = src.ptype_sec;
+                h_p = -1; ptype_sec = -1; zeta_sec = 0;
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                dv = src_vel - vel;
+                Vec3<double> &dv = src.dv;
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
-                m_j_eff_for_df = mass;
+                double &m_j_eff_for_df = src.m_j_eff_for_df;
+#endif
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+                double &r_source = src.r_source;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+                SymmetricTensor2<double> &j_zeta_tidal_tensorps_prevstep = src.j_zeta_tidal_tensorps_prevstep;
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                if(P[no].Type == 0) {gasmass = P[no].Mass;}
+                gasmass=0; /* reset per interaction: non-gas leaf sources carry NO gas mass. Without this, a
+                            * non-gas leaf inherits the stale gasmass of an earlier source (or garbage before the
+                            * first assignment) and the TREECOL column estimate fabricates contributions through
+                            * dark-matter/star particles. Nodes assign unconditionally below; only gas leaves
+                            * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
+#endif
+                if(no < treeSlots) /* this is a particle, we will use it */
+                {
+                    if(P[no].Ti_current != ti_Current) {endrun(90001051);}   /* accepted during traversal, which drifted it */
+                    /* the source state this interaction is evaluated at, which is the drifted state
+                       except where the Hermite predictor below replaces it */
+                    Vec3<double> src_pos = P[no].Pos;
+                    Vec3<double> src_vel = P[no].Vel;   /* unconditional: the sink-proximity block below reads it under SINK_CALC_DISTANCES, which several flags reach without the jerk or dynamical-friction terms */
+#ifdef HERMITE_INTEGRATION
+                    /* On a Hermite pass a source the Hermite integrator owns but is not advancing this
+                       step is second-order wrong where it stands; evaluate it from its own start-of-step
+                       state instead. Single sources only: one absorbed into a node multipole still
+                       contributes from the node's drifted centre of mass. Under
+                       SINGLE_STAR_DIRECT_GRAVITY_RADIUS the close star pairs this matters most for are
+                       force-opened to singles and so do take this branch. Nothing is written back. */
+                    if(hermite_source_needs_prediction(no, P, HermiteWalk)) {
+                        hermite_predict_source_state(no, P, HermiteWalk, &HermiteWalkTables, src_pos, src_vel);
+                    }
+#endif
+                    dr = src_pos - pos;
+                    GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                    r2 = dr.norm_sq();
+                    mass = P[no].Mass;
+
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+                    r_source = grav_spherical_symmetry_r_from_center(src_pos[0],src_pos[1],src_pos[2],center[0],center[1],center[2]);
+#endif
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                    dv = src_vel - vel;
+#endif
+#if defined(SINK_DYNFRICTION_FROMTREE)
+                    m_j_eff_for_df = mass;
+#endif
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+                    if(P[no].Type == 0) {gasmass = P[no].Mass;}
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-                if(P[no].Type == 5) {gasmass = P[no].Sink_Mass_Reservoir;} // gas at the inner edge of a disk should not see a hole due to the sink
+                    if(P[no].Type == 5) {gasmass = P[no].Sink_Mass_Reservoir;} // gas at the inner edge of a disk should not see a hole due to the sink
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-                j_zeta_tidal_tensorps_prevstep=P[no].tidal_tensorps_prevstep;
+                    j_zeta_tidal_tensorps_prevstep=P[no].tidal_tensorps_prevstep;
 #endif
 
-                /* only proceed if the mass is positive and there is separation! */
-                if((r2 > 0) && (mass > 0))
-                {
+                    /* only proceed if the mass is positive and there is separation! */
+                    if((r2 > 0) && (mass > 0))
+                    {
 
 #ifdef SINK_CALC_DISTANCES
-                    /* nearest-sink + single-star timestep/binary tracking via the shared helper (gravtree_force_kernel.h) */
-                    grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
+                        /* nearest-sink + single-star timestep/binary tracking via the shared helper (gravtree_force_kernel.h) */
+                        grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
-                    prox_target.vel = vel;
+                        prox_target.vel = vel;
 #endif
-                    grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
+                        grav_sink_prox_leaf_src_t prox_src = {}; prox_src.src_type = P[no].Type; prox_src.src_mass = P[no].Mass; prox_src.motion.vel = src_vel;   /* the state this interaction was evaluated at, so the pair (dr, vel) feeding Min_Sink_Approach_Time stays mutually consistent on a Hermite pass */
 #if defined(SPECIAL_POINT_MOTION) || defined(SPECIAL_POINT_WEIGHTED_MOTION)
-                    prox_src.motion.acc = P[no].Acc_Total_PrevStep;
+                        prox_src.motion.acc = P[no].Acc_Total_PrevStep;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-                    prox_src.motion.max_feedback_vel = P[no].MaxFeedbackVel;
+                        prox_src.motion.max_feedback_vel = P[no].MaxFeedbackVel;
 #endif
-                    grav_sink_prox_leaf_accumulate(r2, dr, prox_target, prox_src, sink_prox);
+                        grav_sink_prox_leaf_accumulate(r2, dr, prox_target, prox_src, sink_prox);
 #endif // SINK_CALC_DISTANCES
 
 #if defined(RT_USE_GRAVTREE) || defined(COSMIC_RAY_SUBGRID_LEBRON)
-                    /* the source's RT / sink / CR payload through the shared gates (gravtree_moment_sources.h),
-                       from the drifted state; read only where this target consumes it, so a target that is
-                       not a valid RT receiver does no luminosity work it never did */
-                    struct gravtree_source_inputs_t source_payload;
-                    int need_source_payload = 0;
+                        /* the source's RT / sink / CR payload through the shared gates (gravtree_moment_sources.h),
+                           from the drifted state; derived once per run for the members that consume it, so a
+                           target that is not a valid RT receiver does no luminosity work it never did */
+                        int need_source_payload = 0;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                    need_source_payload = 1;
+                        need_source_payload = 1;
 #else
-                    need_source_payload = valid_gas_particle_for_rt;
+                        need_source_payload = valid_gas_particle_for_rt;
 #endif
-                    if(need_source_payload) {gravtree_fill_particle_source_inputs(no, P, CellP, &source_payload);}
+                        const struct gravtree_source_inputs_t &source_payload = payloads[irec];
+                        if(need_source_payload && (packet_of_one || !payload_loaded[irec])) {gravtree_fill_particle_source_inputs(no, P, CellP, &payloads[irec]); if(!packet_of_one) {payload_loaded[irec] = 1;}}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                    cr_injection = source_payload.cr_inject;
+                        cr_injection = source_payload.cr_inject;
+#endif
+
+#ifdef RT_USE_GRAVTREE
+                        if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
+                        {
+                            d_stellarlum=dr;
+                            int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(source_payload.rt_active) {mass_stellarlum[kf]=source_payload.src_lum[kf];} else {mass_stellarlum[kf]=0;}}
+#ifdef CHIMES_STELLAR_FLUXES
+                            for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++)
+                            {
+                                if(source_payload.rt_active) {chimes_mass_stellarlum_G0[kf] = source_payload.src_lum_G0[kf]; chimes_mass_stellarlum_ion[kf] = source_payload.src_lum_ion[kf];} else {chimes_mass_stellarlum_G0[kf] = 0; chimes_mass_stellarlum_ion[kf] = 0;}
+                            }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+                            mass_sinklumwt_forradfb=0;
+                            if(P[no].Type == 5)
+                            {
+                                double bhlum_t = source_payload.bh_active ? (double) source_payload.bh_lum : 0.0;
+                                Vec3<double> bh_angle = source_payload.bh_active ? Vec3<double>{(double) source_payload.bh_angle[0], (double) source_payload.bh_angle[1], (double) source_payload.bh_angle[2]} : Vec3<double>{0,0,0};
+                                mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, bh_angle, dr[0],dr[1],dr[2]);
+                            }
+#endif
+                        }
+#endif // RT_USE_GRAVTREE
+
+#ifdef DM_SCALARFIELD_SCREENING
+                        if(ptype != 0) {if(P[no].Type == 1) {d_dm = dr; mass_dm = mass;} else {d_dm = {}; mass_dm = 0;}} /* we have a dark matter particle as target */
+#endif
+
+                        h_p = ForceSoftening_KernelRadius(no);
+                        ptype_sec=P[no].Type; zeta_sec=0; /* set secondary softening and zeta term */
+#ifdef ADAPTIVE_GRAVSOFT_FORGAS
+                        if(ptype_sec==0) {zeta_sec=P[no].AGS_zeta;}
+#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
+                        zeta_sec=P[no].AGS_zeta;
+#endif
+                    } // closes (if((r2 > 0) && (mass > 0))) check
+
+                }
+                else /* we have an internal node the traversal accepted */
+                {
+                    struct NODE *nop = &Nodes[no];
+                    if(nop->Ti_current != ti_Current) {endrun(90001052);}   /* accepted during traversal, which drifted it */
+                    int in_foreign = (no >= treeBase + maxNodes && no < treeBase + maxNodes + maxForeignNodes);
+                    /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(treeBase+maxNodes),
+                     * EXPLICIT and bounds-checked -- not the node index no-treeBase). */
+                    int    fl_tag = 0, fl_type = -1;
+                    double fl_zeta = 0.0, fl_soft = 0.0;
+                    if(in_foreign && ForeignLeafTag) {
+                        int fs = no - (treeBase + maxNodes);
+                        if(fs >= 0 && fs < AllocatedForeignNodes) {
+                            fl_tag  = ForeignLeafTag[fs];
+                            fl_type = ForeignLeafType[fs];
+                            fl_zeta = (double) ForeignLeafZeta[fs];
+                            fl_soft = (double) ForeignLeafSoft[fs];
+                        }
+                    }
+                    if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode) != rec[irec].kind) {endrun(90001053);}
+                    mass = nop->u.d.mass;
+
+#ifdef SINGLE_STAR_DIRECT_GRAVITY
+                    /* Remove the sinks from this node for a star target: star-star pairs come exactly from
+                       star_direct_gravity_compute(), so taking them here too would double them. This tree
+                       carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
+                       so the subtraction is exact rather than approximate: drop the sink mass and move the
+                       center of mass to that of what remains. Both terms are on the same clock, since
+                       SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
+                       with vs. The traversal judged the opening criteria on this reduced mass too. */
+                    if((ptype == 5) && (nop->sink_mass > 0))
+                    {
+                        double mass_nosink = mass - nop->sink_mass;
+                        dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                        mass = mass_nosink;
+                    }
+                    else {dr = nop->u.d.s - pos;}
+#else
+                    dr = nop->u.d.s - pos;
+#endif
+                    GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                    r2 = dr.norm_sq();
+
+                    /* ok we will be using this node, can now set variables that depend on it */
+                    h_p = nop->maxsoft;
+                    zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
+                    /* A tagged real foreign single-particle leaf is consumed with particle-leaf
+                     * secondary semantics -- restore the Type + AGS_zeta the node moment cannot carry,
+                     * via the shared seam (identical to the GPU walk). */
+                    if(fl_tag == 1) { grav_apply_foreign_leaf_identity(fl_tag, fl_type, fl_zeta, fl_soft, &ptype_sec, &zeta_sec, &h_p); }
+#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+                    gasmass = nop->gasmass;
+#endif
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+                    r_source = grav_spherical_symmetry_r_from_center(nop->u.d.s[0],nop->u.d.s[1],nop->u.d.s[2],center[0],center[1],center[2]);
+#endif
+#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
+                    dv = Extnodes[no].vs - vel;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+                    cr_injection = nop->cr_injection;
 #endif
 
 #ifdef RT_USE_GRAVTREE
                     if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
                     {
-                        d_stellarlum=dr;
-                        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(source_payload.rt_active) {mass_stellarlum[kf]=source_payload.src_lum[kf];} else {mass_stellarlum[kf]=0;}}
+                        int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {mass_stellarlum[kf] = nop->stellar_lum[kf];}
 #ifdef CHIMES_STELLAR_FLUXES
                         for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++)
                         {
-                            if(source_payload.rt_active) {chimes_mass_stellarlum_G0[kf] = source_payload.src_lum_G0[kf]; chimes_mass_stellarlum_ion[kf] = source_payload.src_lum_ion[kf];} else {chimes_mass_stellarlum_G0[kf] = 0; chimes_mass_stellarlum_ion[kf] = 0;}
+                            chimes_mass_stellarlum_G0[kf] = nop->chimes_stellar_lum_G0[kf];
+                            chimes_mass_stellarlum_ion[kf] = nop->chimes_stellar_lum_ion[kf];
                         }
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-                        mass_sinklumwt_forradfb=0;
-                        if(P[no].Type == 5)
-                        {
-                            double bhlum_t = source_payload.bh_active ? (double) source_payload.bh_lum : 0.0;
-                            Vec3<double> bh_angle = source_payload.bh_active ? Vec3<double>{(double) source_payload.bh_angle[0], (double) source_payload.bh_angle[1], (double) source_payload.bh_angle[2]} : Vec3<double>{0,0,0};
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, bh_angle, dr[0],dr[1],dr[2]);
-                        }
-#endif
-                    }
-#endif // RT_USE_GRAVTREE
-
-#ifdef DM_SCALARFIELD_SCREENING
-                    if(ptype != 0) {if(P[no].Type == 1) {d_dm = dr; mass_dm = mass;} else {d_dm = {}; mass_dm = 0;}} /* we have a dark matter particle as target */
-#endif
-
-                    h_p = ForceSoftening_KernelRadius(no);
-                    ptype_sec=P[no].Type; zeta_sec=0; /* set secondary softening and zeta term */
-#ifdef ADAPTIVE_GRAVSOFT_FORGAS
-                    if(ptype_sec==0) {zeta_sec=P[no].AGS_zeta;}
-#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
-                    zeta_sec=P[no].AGS_zeta;
-#endif
-                } // closes (if((r2 > 0) && (mass > 0))) check
-
-            }
-            else /* we have an internal node the traversal accepted */
-            {
-                struct NODE *nop = &Nodes[no];
-                if(nop->Ti_current != ti_Current) {endrun(90001052);}   /* accepted during traversal, which drifted it */
-                int in_foreign = (no >= treeBase + maxNodes && no < treeBase + maxNodes + maxForeignNodes);
-                /* Foreign-leaf identity lookup (host sidecar; foreign_slot = no-(treeBase+maxNodes),
-                 * EXPLICIT and bounds-checked -- not the node index no-treeBase). */
-                int    fl_tag = 0, fl_type = -1;
-                double fl_zeta = 0.0, fl_soft = 0.0;
-                if(in_foreign && ForeignLeafTag) {
-                    int fs = no - (treeBase + maxNodes);
-                    if(fs >= 0 && fs < AllocatedForeignNodes) {
-                        fl_tag  = ForeignLeafTag[fs];
-                        fl_type = ForeignLeafType[fs];
-                        fl_zeta = (double) ForeignLeafZeta[fs];
-                        fl_soft = (double) ForeignLeafSoft[fs];
-                    }
-                }
-                if(fl_tag != rec[irec].leaf_tag || grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode) != rec[irec].kind) {endrun(90001053);}
-                mass = nop->u.d.mass;
-
-#ifdef SINGLE_STAR_DIRECT_GRAVITY
-                /* Remove the sinks from this node for a star target: star-star pairs come exactly from
-                   star_direct_gravity_compute(), so taking them here too would double them. This tree
-                   carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
-                   so the subtraction is exact rather than approximate: drop the sink mass and move the
-                   center of mass to that of what remains. Both terms are on the same clock, since
-                   SINK_NODE_MOTION_TRACKED drifts sink_pos with sink_vel exactly as u.d.s is drifted
-                   with vs. The traversal judged the opening criteria on this reduced mass too. */
-                if((ptype == 5) && (nop->sink_mass > 0))
-                {
-                    double mass_nosink = mass - nop->sink_mass;
-                    dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
-                    mass = mass_nosink;
-                }
-                else {dr = nop->u.d.s - pos;}
-#else
-                dr = nop->u.d.s - pos;
-#endif
-                GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
-                r2 = dr.norm_sq();
-
-                /* ok we will be using this node, can now set variables that depend on it */
-                h_p = nop->maxsoft;
-                zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
-                /* A tagged real foreign single-particle leaf is consumed with particle-leaf
-                 * secondary semantics -- restore the Type + AGS_zeta the node moment cannot carry,
-                 * via the shared seam (identical to the GPU walk). */
-                if(fl_tag == 1) { grav_apply_foreign_leaf_identity(fl_tag, fl_type, fl_zeta, fl_soft, &ptype_sec, &zeta_sec, &h_p); }
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                gasmass = nop->gasmass;
-#endif
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-                r_source = grav_spherical_symmetry_r_from_center(nop->u.d.s[0],nop->u.d.s[1],nop->u.d.s[2],center[0],center[1],center[2]);
-#endif
-#if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
-                dv = Extnodes[no].vs - vel;
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-                cr_injection = nop->cr_injection;
-#endif
-
-#ifdef RT_USE_GRAVTREE
-                if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
-                {
-                    int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {mass_stellarlum[kf] = nop->stellar_lum[kf];}
-#ifdef CHIMES_STELLAR_FLUXES
-                    for(kf = 0; kf < CHIMES_LOCAL_UV_NBINS; kf++)
-                    {
-                        chimes_mass_stellarlum_G0[kf] = nop->chimes_stellar_lum_G0[kf];
-                        chimes_mass_stellarlum_ion[kf] = nop->chimes_stellar_lum_ion[kf];
-                    }
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-                    d_stellarlum = nop->rt_source_lum_s - pos;
-                    GRAVITY_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
+                        d_stellarlum = nop->rt_source_lum_s - pos;
+                        GRAVITY_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
 #else
-                    d_stellarlum = dr;
+                        d_stellarlum = dr;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-                    mass_sinklumwt_forradfb = sink_fb_angleweight(nop->sink_lum, nop->sink_lum_grad, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
+                        mass_sinklumwt_forradfb = sink_fb_angleweight(nop->sink_lum, nop->sink_lum_grad, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
 #endif
-                }
+                    }
 #endif // RT_USE_GRAVTREE
 
 #ifdef DM_SCALARFIELD_SCREENING
-                if(ptype != 0) {d_dm = nop->s_dm - pos; mass_dm = nop->mass_dm;} else {d_dm = {}; mass_dm = 0;} /* we have a dark matter particle as target */
+                    if(ptype != 0) {d_dm = nop->s_dm - pos; mass_dm = nop->mass_dm;} else {d_dm = {}; mass_dm = 0;} /* we have a dark matter particle as target */
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
-                m_j_eff_for_df = (nop->u.d.mass) / (nop->N_part);
+                    m_j_eff_for_df = (nop->u.d.mass) / (nop->N_part);
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-                j_zeta_tidal_tensorps_prevstep=nop->tidal_tensorps_prevstep;
+                    j_zeta_tidal_tensorps_prevstep=nop->tidal_tensorps_prevstep;
 #endif
 
 #ifdef SINK_CALC_DISTANCES // NOTE: moved this to AFTER the checks for node opening, because we only want to record BH positions from the nodes that actually get used for the force calculation - MYG
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-                grav_sink_prox_node_specialweighted(r2, Extnodes[no].vs, ptype, sink_prox);
+                    grav_sink_prox_node_specialweighted(r2, Extnodes[no].vs, ptype, sink_prox);
 #endif
-                if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
-                {
-                    Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
-                    GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
-                    grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
+                    if(nop->sink_mass > 0)        /* found a node with non-zero BH mass */
+                    {
+                        Vec3<double> sink_dr = nop->sink_pos - pos;  /* SHEA:  now using sink_pos instead of center */
+                        GRAVITY_NEAREST_XYZ(sink_dr[0],sink_dr[1],sink_dr[2],-1);
+                        grav_sink_prox_target_t prox_target = {}; prox_target.ptype = ptype; prox_target.pmass = pmass; prox_target.soft = soft;
 #if defined(SINGLE_STAR_TIMESTEPPING)
-                    prox_target.vel = vel;
+                        prox_target.vel = vel;
 #endif
-                    grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = nop->sink_mass;
+                        grav_sink_prox_node_src_t prox_src = {}; prox_src.sink_mass = nop->sink_mass;
 #if defined(SINGLE_STAR_FIND_BINARIES)
-                    prox_src.n_sink = (int)nop->N_SINK;
+                        prox_src.n_sink = (int)nop->N_SINK;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SPECIAL_POINT_MOTION)
-                    prox_src.motion.vel = nop->sink_vel;
+                        prox_src.motion.vel = nop->sink_vel;
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-                    prox_src.motion.acc = nop->sink_acc;
+                        prox_src.motion.acc = nop->sink_acc;
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-                    prox_src.motion.max_feedback_vel = nop->MaxFeedbackVel;
+                        prox_src.motion.max_feedback_vel = nop->MaxFeedbackVel;
 #endif
-                    grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
-                }
+                        grav_sink_prox_node_accumulate(r2, sink_dr, prox_src, prox_target, sink_prox);
+                    }
 #endif // SINK_CALC_DISTANCES
 
-            } /* the node's inputs are loaded */
+                } /* the node's inputs are loaded */
 
 
-            if((r2 > 0) && (mass > 0)) // only go forward if mass positive and there is separation -- this is check for the whole block below, which should no include 'self' terms
-            {
+                if((r2 > 0) && (mass > 0)) // only go forward if mass positive and there is separation -- this is check for the whole block below, which should no include 'self' terms
+                {
 #if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-                /* periodic-image potential correction, from the separation before the shared
-                   evaluation's spherical-symmetry override; added right after the pair potential */
-                double pot_periodic_image = mass * ewald_pot_corr(dr[0], dr[1], dr[2]);
+                    /* periodic-image potential correction, from the separation before the shared
+                       evaluation's spherical-symmetry override; added right after the pair potential */
+                    double pot_periodic_image = mass * ewald_pot_corr(dr[0], dr[1], dr[2]);
 #endif
-                /* pair-wise gravity, PM truncation, and the accumulations inside the PM short-range
-                 * gate, via the shared evaluation (gravtree_force_kernel.h), the single home for the
-                 * pair physics on both walks */
-                grav_pair_result_t res = grav_pair_evaluate_core(tgt, src, out);
-                const double r = res.r, fac_accel = res.fac_accel;
+                    /* pair-wise gravity, PM truncation, and the accumulations inside the PM short-range
+                     * gate, via the shared evaluation (gravtree_force_kernel.h), the single home for the
+                     * pair physics on both walks */
+                    grav_pair_result_t res = grav_pair_evaluate_core(tgt, src, out);
+                    const double r = res.r, fac_accel = res.fac_accel; (void) r; (void) fac_accel;
 #if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-                out.pot += pot_periodic_image;
+                    out.pot += pot_periodic_image;
 #endif
 
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-                if(r < r_for_total_menclosed) {m_enc_in_rcrit += mass;}
+                    if(r < r_for_total_menclosed) {m_enc_in_rcrit += mass;}
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
-                tree_mass += mass;
+                    tree_mass += mass;
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
-                grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, treecol_angular_bins);
+                    grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, mem.treecol_angular_bins);
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-                grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max, pm, SubGrid_CosmicRayEnergyDensity);
+                    grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max, tgt.pm, SubGrid_CosmicRayEnergyDensity);
 #endif
 #ifdef RT_USE_GRAVTREE
-                if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target; payload formulas in the shared helper */
-                {
-                    grav_rt_src_t rt_src = {}; rt_src.d_stellarlum = d_stellarlum; rt_src.soft = soft; rt_src.mass_stellarlum = mass_stellarlum;
+                    if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target; payload formulas in the shared helper */
+                    {
+                        grav_rt_src_t rt_src = {}; rt_src.d_stellarlum = d_stellarlum; rt_src.soft = soft; rt_src.mass_stellarlum = mass_stellarlum;
 #ifdef CHIMES_STELLAR_FLUXES
-                    rt_src.chimes_mass_stellarlum_G0 = chimes_mass_stellarlum_G0; rt_src.chimes_mass_stellarlum_ion = chimes_mass_stellarlum_ion;
+                        rt_src.chimes_mass_stellarlum_G0 = chimes_mass_stellarlum_G0; rt_src.chimes_mass_stellarlum_ion = chimes_mass_stellarlum_ion;
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-                    rt_src.mass_sinklumwt_forradfb = mass_sinklumwt_forradfb;
+                        rt_src.mass_sinklumwt_forradfb = mass_sinklumwt_forradfb;
 #endif
 #if defined(RT_LEBRON) && !defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                    rt_src.fac_stellum = fac_stellum;
+                        rt_src.fac_stellum = mem.fac_stellum;
 #endif
-                    grav_rt_accum_t rt_accum = {};
+                        grav_rt_accum_t rt_accum = {};
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-                    rt_accum.Rad_E_gamma = Rad_E_gamma;
+                        rt_accum.Rad_E_gamma = mem.Rad_E_gamma;
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
-                    rt_accum.chimes_flux_G0 = chimes_flux_G0; rt_accum.chimes_flux_ion = chimes_flux_ion;
+                        rt_accum.chimes_flux_G0 = mem.chimes_flux_G0; rt_accum.chimes_flux_ion = mem.chimes_flux_ion;
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-                    rt_accum.incident_flux_uv = &incident_flux_uv; rt_accum.incident_flux_euv = &incident_flux_euv;
+                        rt_accum.incident_flux_uv = &incident_flux_uv; rt_accum.incident_flux_euv = &incident_flux_euv;
 #endif
 #ifdef SINK_COMPTON_HEATING
-                    rt_accum.incident_flux_agn = &incident_flux_agn;
+                        rt_accum.incident_flux_agn = &incident_flux_agn;
 #endif
 #ifdef RT_OTVET
-                    rt_accum.RT_ET = RT_ET;
+                        rt_accum.RT_ET = mem.RT_ET;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-                    rt_accum.Rad_Flux = Rad_Flux;
+                        rt_accum.Rad_Flux = mem.Rad_Flux;
 #endif
-                    grav_rt_payload_accumulate(rt_src, rt_accum, out.acc);
-                } // closes if(valid_gas_particle_for_rt)
+                        grav_rt_payload_accumulate(rt_src, rt_accum, out.acc);
+                    } // closes if(valid_gas_particle_for_rt)
 
 #endif // RT_USE_GRAVTREE
 
 
 #ifdef DM_SCALARFIELD_SCREENING
-                if(ptype != 0)    /* we have a dark matter particle as target */
-                {
-                    grav_dm_scalarfield_accumulate(d_dm, mass_dm, h, pm, out.acc);
-                } // closes if(ptype != 0)
+                    if(ptype != 0)    /* we have a dark matter particle as target */
+                    {
+                        grav_dm_scalarfield_accumulate(d_dm, mass_dm, tgt.h, tgt.pm, out.acc);
+                    } // closes if(ptype != 0)
 #endif // DM_SCALARFIELD_SCREENING //
 
-            } // closes (if((r2 > 0) && (mass > 0))) check
-        }
+                } // closes (if((r2 > 0) && (mass > 0))) check
+            } // closes the record loop
+
+            /* put the member's accumulators back */
+            mem.out = out;
+#ifdef COUNT_MASS_IN_GRAVTREE
+            mem.tree_mass = tree_mass;
+#endif
+#ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
+            mem.m_enc_in_rcrit = m_enc_in_rcrit;
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+            mem.incident_flux_uv = incident_flux_uv; mem.incident_flux_euv = incident_flux_euv;
+#endif
+#ifdef SINK_COMPTON_HEATING
+            mem.incident_flux_agn = incident_flux_agn;
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+            mem.SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;
+#endif
+#ifdef SINK_CALC_DISTANCES
+            mem.sink_prox = sink_prox;
+#endif
+        } // closes the member loop
     };
 
 
-    /* Traverse the tree for this target, recording each accepted element into a bounded run
-       that is evaluated in acceptance order whenever it fills and once more when the traversal
-       ends. The run is private to this call; nothing about it outlives the walk of one target. */
-    grav_walk_record_t records[GRAVTREE_WALK_RECORD_CHUNK]; int n_records = 0;
+    /* Traverse the tree once for the packet, recording each accepted element and the members
+       that accepted it into a bounded run that is evaluated in acceptance order whenever it
+       fills and once more when the traversal ends. The run is private to this call; nothing
+       about it outlives the walk of one packet. */
     no = treeBase;        /* root node */
+    /* A packet of one holds its member's opening inputs in a local for the whole traversal, so
+       they stay in registers across the loop's calls; a packet of several reads each member's at
+       the node. One loop body serves both: open_of(m) names whichever applies. */
+    const struct grav_walk_open_inputs_t single_open = members[0].open;
+    auto open_of = [&](int m) -> const struct grav_walk_open_inputs_t & {return (TREE_QUERY_PACKET_SIZE == 1) ? single_open : members[m].open;};
+    int single_resume_at = members[0].resume_at;   /* likewise the member's standing in the traversal */
+    auto resume_of = [&](int m) -> int & {return (TREE_QUERY_PACKET_SIZE == 1) ? single_resume_at : members[m].resume_at;};
+#ifdef GRAVITY_HYBRID_OPENING_CRIT
+    const int pred_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1);
+#else
+    const int pred_is_first_step = 0;
+#endif
 
     while(1)
     {
         /* one place evaluates the run: when it is full, and once more when the traversal ends */
-        if(no < 0 || n_records == GRAVTREE_WALK_RECORD_CHUNK) {evaluate_records(records, n_records); n_records = 0; if(no < 0) {break;}}
-        h=soft; /* the target's interaction radius for the opening predicate */
+        if(no < 0 || n_records == GRAVTREE_WALK_RECORD_CHUNK) {evaluate_records(records, masks, n_records); n_records = 0; if(no < 0) {break;}}
+        /* a member that sat out a subtree re-joins the traversal at the index it named, before
+           anything is decided about that index */
+        for(int m = 0; m < n_members; m++) {int &resume_at = resume_of(m); if(resume_at == no) {resume_at = GRAV_WALK_MEMBER_IN_PLAY;}}
 
         if(no >= treeSlots && no < treeBase) {/* An index between the particle slots and the node base belongs to neither, so the tree is
          * malformed; stop rather than read a side array or Nodes[] out of bounds. */
@@ -2349,17 +2580,32 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                     }
                 }
             }
+            for(int w = 0; w < mask_words; w++) {accept_mask[w] = 0;}
+            int any_accept = 0;
+            for(int m = 0; m < n_members; m++)
+            {
+                if(resume_of(m) != GRAV_WALK_MEMBER_IN_PLAY) {continue;}
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
-            /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
-               here as well would double every such force */
-            if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
+                   here as well would double every such force */
+                if((open_of(m).ptype == 5) && (P[no].Type == 5)) {continue;}
 #endif
-            records[n_records].no = no; records[n_records].kind = GRAV_NODE_LOCAL; records[n_records].leaf_tag = LET_LEAF_TAG_NODE; n_records++;
+                GRAV_WALK_MASK_SET(accept_mask, m); any_accept = 1;
+            }
+            if(any_accept)
+            {
+                records[n_records].no = no; records[n_records].kind = GRAV_NODE_LOCAL; records[n_records].leaf_tag = LET_LEAF_TAG_NODE;
+                if(!packet_of_one) {for(int w = 0; w < mask_words; w++) {masks[(size_t) n_records * mask_words + w] = accept_mask[w];}}
+                n_records++;
+            }
         }
         else /* we have an  internal node */
         {
             if(no >= treeBase + maxNodes + maxForeignNodes) /* pseudo particle (foreign-node range below pseudos) -- this will not be used for calculations below, but needs to be parsed here */
             {
+                /* A packet of several targets cannot record this per target; it stops here with
+                 * nothing written, and the caller walks each member alone. */
+                if(n_targets > 1) {return 0;}
                 /* LET-incompleteness DETECTOR (not an export system: the MPI round-trip is
                  * retired). Reaching a non-empty pseudo means this target's gravity is not
                  * covered by the local LET; record it so Nexport>0 and gravity_tree() can
@@ -2395,7 +2641,7 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                             Nexport++;
                         }
                     }
-                    if(exitFlag) {return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine. The walk is abandoned: nothing accumulated for this target is written, whether already evaluated or still recorded. */
+                    if(exitFlag) {commit_notes(); return -1;} /* buffer has filled -- important that only this and other buffer-full conditions return the negative condition for the routine. The walk is abandoned: nothing accumulated for this target is written, whether already evaluated or still recorded. */
                     exportnodecount[task] = 0;
                     exportindex[task] = nexp;
                     DataIndexTable[nexp].Task = task;
@@ -2420,8 +2666,8 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                 if(fs >= 0 && fs < AllocatedForeignNodes) {fl_tag = ForeignLeafTag[fs];}
             }
 
-            double mass = nop->u.d.mass;
-            if(mass <= 0) /* nothing in the node */
+            const double node_mass = nop->u.d.mass;
+            if(node_mass <= 0) /* nothing in the node */
             {
                 no = nop->u.d.sibling;
                 continue;
@@ -2431,16 +2677,23 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
              * below and the acceptance predicate further down consult this one answer, so no
              * path can follow nextnode on a node whose children the sender never sent. */
             grav_node_kind_t node_kind = grav_classify_node(in_foreign, fl_tag, nop->u.d.nextnode);
+            const int node_is_terminal = grav_node_is_terminal(node_kind);
+            const int node_sibling = nop->u.d.sibling;
+            for(int w = 0; w < mask_words; w++) {accept_mask[w] = 0; opened_mask[w] = 0;}
+            int any_accept = 0, any_open = 0;
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
             /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
                supplies every star-star pair exactly. Nodes made entirely of stars therefore have
-               nothing left for us; skip them here, before the drift and the opening criteria below. */
-            if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;}
+               nothing left for such a target; it is done with this node before the drift and the
+               opening criteria below, whatever the packet's other members do with it. */
+            const int node_is_pure_star = ((nop->sink_mass > 0) && (node_mass - nop->sink_mass <= 0));
+#else
+            const int node_is_pure_star = 0;
 #endif
             //if(nop->N_part <= 1)
             if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
             {
-                if(mass) /* open cell: descend to the particle this node holds */
+                if(node_mass) /* open cell: descend to the particle this node holds */
                 {
                     /* Only a local node, or a foreign node shipped WITH its children, has
                      * anything below it here.  A foreign node that reaches this branch with the
@@ -2449,6 +2702,17 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                      * the subtree, not a child -- following it would skip the node's mass. */
                     if(node_kind == GRAV_NODE_LOCAL || node_kind == GRAV_NODE_FOREIGN_OPENABLE)
                     {
+                        /* descend only for a member that is not done with this node; a star member
+                           looking at a pure-star node sits out the descent, and if no one else is
+                           taking part the node is passed over as a single walk passes it */
+                        int n_descending = 0;
+                        for(int m = 0; m < n_members; m++)
+                        {
+                            int &resume_at = resume_of(m);
+                            if(resume_at != GRAV_WALK_MEMBER_IN_PLAY) {continue;}
+                            if(node_is_pure_star && open_of(m).ptype == 5) {resume_at = node_sibling;} else {n_descending++;}
+                        }
+                        if(n_descending == 0) {no = node_sibling; continue;}   /* the members sat out re-join there, at the loop head */
                         no = nop->u.d.nextnode;
                         continue;
                     }
@@ -2464,44 +2728,45 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                 }
             }
 
-            /* the node's centre of mass and mass as the opening criteria judge them; the
-               evaluation loads both again the same way */
-            Vec3<double> dr;
+            for(int m = 0; m < n_members; m++)
+            {
+                if(resume_of(m) != GRAV_WALK_MEMBER_IN_PLAY) {continue;}
+                const struct grav_walk_open_inputs_t &open = open_of(m);
+                if(node_is_pure_star && open.ptype == 5) {continue;} /* done with this node (see above) */
+                const int ptype = open.ptype; const Vec3<double> &pos = open.pos; const double soft = open.soft, h = open.soft, aold = open.aold;
+                double mass = node_mass;
+                /* the node's centre of mass and mass as the opening criteria judge them; the
+                   evaluation loads both again the same way */
+                Vec3<double> dr;
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
-            /* Remove the sinks from this node for a star target (see the evaluation above for why
-               the subtraction is exact); this sits after force_drift_node so both terms are on the
-               same clock, and mass is reduced before the opening criteria below so they judge the
-               node on the mass actually being used. Pure-star nodes were already skipped above. */
-            if((ptype == 5) && (nop->sink_mass > 0))
-            {
-                double mass_nosink = mass - nop->sink_mass;
-                dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
-                mass = mass_nosink;
-            }
-            else {dr = nop->u.d.s - pos;}
+                /* Remove the sinks from this node for a star target (see the evaluation above for why
+                   the subtraction is exact); this sits after force_drift_node so both terms are on the
+                   same clock, and mass is reduced before the opening criteria below so they judge the
+                   node on the mass actually being used. Pure-star nodes were already skipped above. */
+                if((ptype == 5) && (nop->sink_mass > 0))
+                {
+                    double mass_nosink = mass - nop->sink_mass;
+                    dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
+                    mass = mass_nosink;
+                }
+                else {dr = nop->u.d.s - pos;}
 #else
-            dr = nop->u.d.s - pos;
+                dr = nop->u.d.s - pos;
 #endif
-            GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
-            double r2 = dr.norm_sq();
-            /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
-             * for the node opening decision. The caller owns the wrapped dr/r2 and the
-             * foreign-multipole policy; the predicate is foreign-blind geometry. PM short-range
-             * cull, neighbour sphere-box / softening-open, the angular and relative opening
-             * criteria, and the sink-direct gate all live in the predicate. */
-            {
+                GRAVITY_NEAREST_XYZ(dr[0],dr[1],dr[2],-1);
+                double r2 = dr.norm_sq();
+                /* Acceptance geometry via the shared predicate (gravtree_opening.h), the single home
+                 * for the node opening decision. The caller owns the wrapped dr/r2 and the
+                 * foreign-multipole policy; the predicate is foreign-blind geometry. PM short-range
+                 * cull, neighbour sphere-box / softening-open, the angular and relative opening
+                 * criteria, and the sink-direct gate all live in the predicate. */
                 double cen0 = nop->center[0] - pos[0];
                 double cen1 = nop->center[1] - pos[1];
                 double cen2 = nop->center[2] - pos[2];
 #ifdef PMGRID
-                double pred_rcut = rcut, pred_rcut2 = rcut2;
+                double pred_rcut = open.rcut, pred_rcut2 = open.rcut2;
 #else
                 double pred_rcut = 0.0, pred_rcut2 = 0.0;
-#endif
-#ifdef GRAVITY_HYBRID_OPENING_CRIT
-                int pred_is_first_step = (All.Ti_Current == 0 && RestartFlag != 1);
-#else
-                int pred_is_first_step = 0;
 #endif
 #if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
                 int pred_n_sink = (int)nop->N_SINK;
@@ -2519,24 +2784,43 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
                  * "accept this already-leaf source with leaf semantics" (restored at evaluation), and for a
                  * truncated aggregate it means the import no longer covers what this walk asks of
                  * it.  Only a node shipped WITH its children takes nextnode. */
-                if(pred == GRAV_SKIP_NODE) {no = nop->u.d.sibling; continue;}
-                if(pred == GRAV_OPEN_NODE && !grav_node_is_terminal(node_kind)) {no = nop->u.d.nextnode; continue;}
+                if(pred == GRAV_SKIP_NODE) {continue;}
+                if(pred == GRAV_OPEN_NODE && !node_is_terminal) {GRAV_WALK_MASK_SET(opened_mask, m); any_open = 1; continue;}
                 /* Import-completeness guard.  Accepting this multipole would drop the sub-node
                  * structure the target resolves, silently and asymmetrically between ranks, so the
-                 * walk records it instead.  Counted rather than printed: this can fire per opened
+                 * walk notes it instead.  Counted rather than printed: this can fire per opened
                  * node per target from inside the threaded walk, and endrun() only REQUESTS a stop
                  * and returns, so printing here would bury the run in interleaved lines.  The count
                  * is reported once and drained after the walk (gravtree.cc). */
                 if(pred == GRAV_OPEN_NODE && (node_kind == GRAV_NODE_FOREIGN_TRUNCATED
                                               || node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE))
                 {
-                    gravity_note_incomplete_import(no, (unsigned long long) P[target].ID, ptype,
-                                                   (double) nop->len, (double) nop->u.d.mass);
-                    if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {gravity_note_unshippable_import(1);}
+                    notes.count++;
+                    if(!notes.have_example) {notes.have_example = 1; notes.node = no; notes.id = (unsigned long long) P[members[m].target].ID; notes.ptype = ptype; notes.len = (double) nop->len; notes.mass = (double) nop->u.d.mass;}
+                    if(node_kind == GRAV_NODE_FOREIGN_UNSHIPPABLE) {notes.unshippable++;}
                 }
+                /* ok this member will be using this node */
+                GRAV_WALK_MASK_SET(accept_mask, m); any_accept = 1;
             }
-            /* ok we will be using this node */
-            records[n_records].no = no; records[n_records].kind = node_kind; records[n_records].leaf_tag = fl_tag; n_records++;
+            if(any_accept)
+            {
+                records[n_records].no = no; records[n_records].kind = node_kind; records[n_records].leaf_tag = fl_tag;
+                if(!packet_of_one) {for(int w = 0; w < mask_words; w++) {masks[(size_t) n_records * mask_words + w] = accept_mask[w];}}
+                n_records++;
+            }
+            if(any_open)
+            {
+                /* the packet descends for the members that opened; everyone else still taking part
+                   is done with this node and sits out its subtree */
+                for(int m = 0; m < n_members; m++)
+                {
+                    int &resume_at = resume_of(m);
+                    if(resume_at != GRAV_WALK_MEMBER_IN_PLAY || GRAV_WALK_MASK_TEST(opened_mask, m)) {continue;}
+                    resume_at = node_sibling;
+                }
+                no = nop->u.d.nextnode;
+                continue;
+            }
         } /* ok we've completed all the opening criteria -- we will keep this node or particle as-is */
 
         /* advance for used nodes: note this used to be above, now handled down here so we can use the 'no/nop' structures above */
@@ -2547,88 +2831,105 @@ int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *e
         }
 
     } // closes the traversal
+#undef GRAV_WALK_MASK_SET
+#undef GRAV_WALK_MASK_TEST
 
-
-    /* store result at the proper place (local target only; the imported-particle export path is retired) */
+    /* the packet completed: its import notes and every member's results are committed now */
+    if(TREE_QUERY_PACKET_SIZE == 1) {members[0].resume_at = single_resume_at;}
+    commit_notes();
+    for(int m = 0; m < n_members; m++)
     {
-        P[target].GravAccel = out.acc;
+        const struct grav_walk_member_t &mem = members[m];
+        const int target_m = mem.target;
+        ninter_out[m] = 0;
+        if(mem.resume_at == GRAV_WALK_MEMBER_NEVER) {continue;} /* nothing was computed, nothing is written */
+        const grav_pair_acc_t &out = mem.out;
+#ifdef SINK_CALC_DISTANCES
+        const grav_sink_prox_accum_t &sink_prox = mem.sink_prox;
+#endif
+#ifdef RT_USE_GRAVTREE
+        const int valid_gas_particle_for_rt = mem.valid_gas_particle_for_rt;
+#endif
+        /* store result at the proper place (local target only; the imported-particle export path is retired) */
+        P[target_m].GravAccel = out.acc;
 #ifdef RT_USE_TREECOL_FOR_NH
-        int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target].ColumnDensityBins[k] = treecol_angular_bins[k];
+        int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target_m].ColumnDensityBins[k] = mem.treecol_angular_bins[k];
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
-        P[target].TreeMass = tree_mass;
+        P[target_m].TreeMass = mem.tree_mass;
 #endif
 #ifdef RT_OTVET
-        if(valid_gas_particle_for_rt) {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[target].ET[k] = RT_ET[k];}} else {if(P[target].Type==0) {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[target].ET[k] = {};}}}
+        if(valid_gas_particle_for_rt) {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[target_m].ET[k] = mem.RT_ET[k];}} else {if(P[target_m].Type==0) {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[target_m].ET[k] = {};}}}
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-        if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_UV = incident_flux_uv;}
-        if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_EUV = incident_flux_euv;}
+        if(valid_gas_particle_for_rt) {CellP[target_m].Rad_Flux_UV = mem.incident_flux_uv;}
+        if(valid_gas_particle_for_rt) {CellP[target_m].Rad_Flux_EUV = mem.incident_flux_euv;}
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
         if(valid_gas_particle_for_rt)
         {
-            int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[target].Chimes_G0[kc] = chimes_flux_G0[kc]; CellP[target].Chimes_fluxPhotIon[kc] = chimes_flux_ion[kc];}
+            int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[target_m].Chimes_G0[kc] = mem.chimes_flux_G0[kc]; CellP[target_m].Chimes_fluxPhotIon[kc] = mem.chimes_flux_ion[kc];}
         }
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-        P[target].MencInRcrit = m_enc_in_rcrit;
+        P[target_m].MencInRcrit = mem.m_enc_in_rcrit;
 #endif
 #ifdef SINK_COMPTON_HEATING
-        if(valid_gas_particle_for_rt) {CellP[target].Rad_Flux_AGN = incident_flux_agn;}
+        if(valid_gas_particle_for_rt) {CellP[target_m].Rad_Flux_AGN = mem.incident_flux_agn;}
 #endif
 #if defined(COSMIC_RAY_SUBGRID_LEBRON)
-        if(P[target].Type==0) {CellP[target].SubGrid_CosmicRayEnergyDensity = SubGrid_CosmicRayEnergyDensity;}
+        if(P[target_m].Type==0) {CellP[target_m].SubGrid_CosmicRayEnergyDensity = mem.SubGrid_CosmicRayEnergyDensity;}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-        if(valid_gas_particle_for_rt) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[target].Rad_E_gamma[kf] = Rad_E_gamma[kf];}}
+        if(valid_gas_particle_for_rt) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[target_m].Rad_E_gamma[kf] = mem.Rad_E_gamma[kf];}}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-        if(valid_gas_particle_for_rt) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[target].Rad_Flux[kf] = Rad_Flux[kf];}}
+        if(valid_gas_particle_for_rt) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[target_m].Rad_Flux[kf] = mem.Rad_Flux[kf];}}
 #endif
 #ifdef EVALPOTENTIAL
-        P[target].Potential = out.pot;
+        P[target_m].Potential = out.pot;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        P[target].tidal_tensorps = out.tidal_tensorps;
+        P[target_m].tidal_tensorps = out.tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        P[target].tidal_zeta = out.tidal_zeta;
+        P[target_m].tidal_zeta = out.tidal_zeta;
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        P[target].GravJerk = out.jerk;
+        P[target_m].GravJerk = out.jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
-        P[target].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
-        P[target].Min_xyz_to_Sink = sink_prox.Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
+        P[target_m].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
+        P[target_m].Min_xyz_to_Sink = sink_prox.Min_xyz_to_Sink;   /* remember, dr = x_SINK - myx */
 #ifdef SPECIAL_POINT_MOTION
         {
-            P[target].vel_of_nearest_special = sink_prox.vel_of_nearest_special;
-            P[target].acc_of_nearest_special = sink_prox.acc_of_nearest_special;
+            P[target_m].vel_of_nearest_special = sink_prox.vel_of_nearest_special;
+            P[target_m].acc_of_nearest_special = sink_prox.acc_of_nearest_special;
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-            P[target].weight_sum_for_special_point_smoothing = sink_prox.weight_sum_for_special_point_smoothing; /* weighted sum needed */
+            P[target_m].weight_sum_for_special_point_smoothing = sink_prox.weight_sum_for_special_point_smoothing; /* weighted sum needed */
 #endif
         }
 #endif
 #ifdef SINGLE_STAR_FIND_BINARIES
-        P[target].is_in_a_binary=0; P[target].Min_Sink_OrbitalTime=sink_prox.Min_Sink_OrbitalTime; //orbital time for binary
+        P[target_m].is_in_a_binary=0; P[target_m].Min_Sink_OrbitalTime=sink_prox.Min_Sink_OrbitalTime; //orbital time for binary
         if (sink_prox.Min_Sink_OrbitalTime<MAX_REAL_NUMBER)
         {
-            P[target].is_in_a_binary=1; P[target].comp_Mass=sink_prox.comp_Mass; //mass of binary companion
-            P[target].comp_dx = sink_prox.comp_dx; P[target].comp_dv = sink_prox.comp_dv;
+            P[target_m].is_in_a_binary=1; P[target_m].comp_Mass=sink_prox.comp_Mass; //mass of binary companion
+            P[target_m].comp_dx = sink_prox.comp_dx; P[target_m].comp_dv = sink_prox.comp_dv;
         }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
-        P[target].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
-        P[target].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time)/All.G);
+        P[target_m].Min_Sink_Approach_Time = sqrt(sink_prox.Min_Sink_Approach_Time);
+        P[target_m].Min_Sink_Freefall_time = sqrt(sqrt(sink_prox.Min_Sink_Freefall_time)/All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        P[target].Min_Sink_FeedbackTime = sqrt(sink_prox.Min_Sink_FeedbackTime);
+        P[target_m].Min_Sink_FeedbackTime = sqrt(sink_prox.Min_Sink_FeedbackTime);
 #endif
 #endif
 #endif // SINK_CALC_DISTANCES
+        ninter_out[m] = out.ninter;
     }
 
-    return out.ninter;
+    return 1;
 }
 
 

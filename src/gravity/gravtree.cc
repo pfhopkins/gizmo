@@ -67,6 +67,27 @@ double Ewaldcount, Costtotal;
 long long N_nodesinlist;
 int Ewald_iter;			/* global in file scope, for simplicity */
 
+/* Per-thread workspace of the host walk loop, allocated once per walk pass: the batch of
+ * active-list entries a thread takes at a time, the interaction counts it gets back, and -- only
+ * when the primary host walk has candidates -- the walk's own packet workspace. Sized from how
+ * many candidates the device pre-pass left to the host, never from the configured packet size
+ * alone, so a rank with one host target pays for one and a rank with none pays for the batch. */
+#ifndef GRAVITY_PRIMARY_LOOP_BATCH_SIZE
+#define GRAVITY_PRIMARY_LOOP_BATCH_SIZE 8
+#endif
+static char *GravWalkWorkspace = NULL;
+static int GravWalkPacketCap = 1, GravWalkBatchCap = GRAVITY_PRIMARY_LOOP_BATCH_SIZE;
+static size_t GravWalkThreadBytes = 0, GravWalkBatchBytes = 0;
+static void gravity_walk_workspace_allocate(int host_candidates)
+{
+    GravWalkPacketCap = (host_candidates < TREE_QUERY_PACKET_SIZE) ? host_candidates : TREE_QUERY_PACKET_SIZE;
+    GravWalkBatchCap = (GravWalkPacketCap > GRAVITY_PRIMARY_LOOP_BATCH_SIZE) ? GravWalkPacketCap : GRAVITY_PRIMARY_LOOP_BATCH_SIZE;
+    GravWalkBatchBytes = ((3 * GravWalkBatchCap * sizeof(int)) + 63) & ~((size_t) 63);   /* indices, list positions, interaction counts */
+    GravWalkThreadBytes = GravWalkBatchBytes + ((GravWalkPacketCap > 0) ? force_treewalk_workspace_bytes_per_thread(GravWalkPacketCap) : 0);
+    GravWalkWorkspace = (char *) mymalloc("GravWalkWorkspace", (size_t) maxThreads * GravWalkThreadBytes);
+}
+static void gravity_walk_workspace_free(void) {myfree(GravWalkWorkspace); GravWalkWorkspace = NULL;}
+
 
 /*! This function computes the gravitational forces for all active elements. If needed, a new tree is constructed, otherwise the dynamically updated
  *  tree is used.  Elements are only exported to other processors when needed. */
@@ -341,11 +362,13 @@ gravity_walk_attempt:
          * walk"; this gives them their real contents, so work-load balance and rel1to2 describe the
          * walk that actually happened on both accelerated and host-only builds. */
         tstart = my_second();
-        if(Ewald_iter == 0) {gpu_gravtree_walk_primary();}
+        int host_candidates = 0;   /* the Ewald-correction walk takes every target alone, so its host loop needs no packets */
+        if(Ewald_iter == 0) {gpu_gravtree_walk_primary(&host_candidates);}
         else                {gpu_ewald_walk_primary();}
         tend = my_second();
         if(Ewald_iter == 0) {timetree1 += timediff(tstart, tend);}
         else                {timetree2 += timediff(tstart, tend);}
+        gravity_walk_workspace_allocate(host_candidates);
 
         do /* primary point-element loop */
         {
@@ -416,6 +439,7 @@ gravity_walk_attempt:
             gizmo_exit_bad_stop_if_requested("gravtree:tree_export_loop"); /* drain a buffer-too-small bad-stop here instead of retrying the export with zero progress */
         }
         while(ndone < NTask);
+        gravity_walk_workspace_free();
     } /* Ewald_iter */
 
     /* Resolve this pass's import completeness.  Every rank left the loop above only once all of
@@ -799,25 +823,41 @@ gravity_walk_attempt:
 
 void *gravity_primary_loop(void *p)
 {
-    int i, j, ret, thread_id = *(int *) p, *exportflag, *exportnodecount, *exportindex;
+    int i, j, thread_id = *(int *) p, *exportflag, *exportnodecount, *exportindex;
     exportflag = Exportflag + thread_id * NTask; exportnodecount = Exportnodecount + thread_id * NTask; exportindex = Exportindex + thread_id * NTask;
     for(j = 0; j < NTask; j++) {exportflag[j] = -1;} /* Note: exportflag is local to each thread */
 #ifdef _OPENMP
     if(BufferCollisionFlag && thread_id) {return NULL;} /* force to serial for this subloop if threads simultaneously cross the Nexport bunchsize threshold */
 #endif
-#ifndef GRAVITY_PRIMARY_LOOP_BATCH_SIZE
-#define GRAVITY_PRIMARY_LOOP_BATCH_SIZE 8
+    /* this thread's workspace (see gravity_walk_workspace_allocate) */
+    char *thread_ws = GravWalkWorkspace + (size_t) thread_id * GravWalkThreadBytes;
+    int *batch = (int *) thread_ws, *batch_pos = batch + GravWalkBatchCap, *ninter = batch + 2 * GravWalkBatchCap;
+    void *walk_ws = thread_ws + GravWalkBatchBytes;   /* present only when packet_cap > 0, i.e. when the primary walk has host candidates */
+    const int packet_cap = GravWalkPacketCap;
+    /* what a completed walk hands to the rest of the step: the interaction count is the work
+     * weight for the next domain decomposition (the device walk records the same quantity,
+     * gpu_gravtree.cc, so a step whose walks are split between the two paths feeds one
+     * consistent measure to domain_particle_costfactor()); each thread writes only its own
+     * targets, so no synchronization is needed beyond the shared total */
+    auto commit_target = [&](int target, int n_interactions)
+    {
+        if(TakeLevel >= 0) {P[target].GravCost[TakeLevel] = n_interactions;}
+#ifdef _OPENMP
+#pragma omp atomic
 #endif
+        Costtotal += n_interactions;
+        ProcessedFlag[target] = 1;
+    };
     while(1)
     {
         /* The active-list position travels with the particle: the frozen candidacy this call
          * decided is keyed by it, and the batch would otherwise carry only the particle index. */
-        int batch[GRAVITY_PRIMARY_LOOP_BATCH_SIZE], batch_pos[GRAVITY_PRIMARY_LOOP_BATCH_SIZE], batch_count = 0;
+        int batch_count = 0;
 #ifdef _OPENMP
 #pragma omp critical(_nextlistgravprim_)
 #endif
         {
-            while(batch_count < GRAVITY_PRIMARY_LOOP_BATCH_SIZE && BufferFullFlag == 0 && NextParticle < (int)ActiveParticleList.size())
+            while(batch_count < GravWalkBatchCap && BufferFullFlag == 0 && NextParticle < (int)ActiveParticleList.size())
             {
                 int pos = NextParticle, idx = ActiveParticleList[NextParticle]; NextParticle++;
                 if(!ProcessedFlag[idx]) {batch_pos[batch_count] = pos; batch[batch_count++] = idx;}
@@ -825,42 +865,55 @@ void *gravity_primary_loop(void *p)
         }
         if(batch_count == 0) {break;}
         int buffer_full = 0;
+        /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce);
+         * non-candidates are marked done so the finalization loop skips them, and the
+         * candidates close up in place so consecutive ones form a packet below. */
+        int n_candidates = 0;
         for(int b = 0; b < batch_count; b++)
         {
             i = batch[b];
-            /* SSOT pre-walk candidacy (Mass>0 + Hermite eligibility + needs_new_treeforce);
-             * non-candidates are marked done so the finalization loop skips them. */
             if(!gravity_treewalk_candidate_prewalk(i, batch_pos[b])) {ProcessedFlag[i]=1; continue;}
+            batch[n_candidates++] = i;
+        }
 
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-            if(Ewald_iter)
+        if(Ewald_iter)
+        {
+            for(int b = 0; b < n_candidates; b++)
             {
-                ret = force_treeevaluate_ewald_correction(i, exportflag, exportnodecount, exportindex);
+                i = batch[b];
+                int ret = force_treeevaluate_ewald_correction(i, exportflag, exportnodecount, exportindex);
                 if(ret >= 0) {
 #ifdef _OPENMP
 #pragma omp atomic
 #endif
                     Ewaldcount += ret;
                 } else {buffer_full = 1; break;}
+                ProcessedFlag[i] = 1;
             }
-            else
+        }
+        else
 #endif
+        {
+            /* consecutive candidates walk the tree together, up to the packet capacity at a time; a
+             * candidate the pre-pass did not count cannot exist, so a zero capacity means none */
+            if(n_candidates > 0 && packet_cap <= 0) {endrun(90001055); break;}
+            for(int start = 0; start < n_candidates && !buffer_full; start += packet_cap)
             {
-                ret = force_treeevaluate(i, exportflag, exportnodecount, exportindex);
+                const int *packet = batch + start;
+                int n_packet = n_candidates - start; if(n_packet > packet_cap) {n_packet = packet_cap;}
+                int ret = force_treeevaluate(packet, n_packet, packet_cap, ninter, walk_ws, exportflag, exportnodecount, exportindex);
+                if(ret > 0) {for(int m = 0; m < n_packet; m++) {commit_target(packet[m], ninter[m]);} continue;}
                 if(ret < 0) {buffer_full = 1; break;}
-                /* Work weight for the next domain decomposition: the count of
-                 * interactions this target performed. The device walk records the
-                 * same quantity (gpu_gravtree.cc), so a step whose walks are split
-                 * between the two paths feeds one consistent measure to
-                 * domain_particle_costfactor(). Each thread writes only its own
-                 * target, so no synchronization is needed. */
-                if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = ret;}
-#ifdef _OPENMP
-#pragma omp atomic
-#endif
-                Costtotal += ret;
+                /* the packet met a pseudo-particle and wrote nothing: each member walks alone,
+                 * which records the pseudo-particle for that member as a single walk always has */
+                for(int m = 0; m < n_packet; m++)
+                {
+                    ret = force_treeevaluate(packet + m, 1, packet_cap, ninter, walk_ws, exportflag, exportnodecount, exportindex);
+                    if(ret < 0) {buffer_full = 1; break;}
+                    commit_target(packet[m], ninter[0]);
+                }
             }
-            ProcessedFlag[i] = 1;
         }
         if(buffer_full) {break;}
     } // while loop
