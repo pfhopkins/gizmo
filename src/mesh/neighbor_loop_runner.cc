@@ -979,9 +979,20 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                                    bool actives_are_device_visible,
                                    int n,
                                    unsigned int supply_mask,
-                                   const GxDeviceTreeView& tree,
+                                   const NlrModeDDiscovery& disc,
                                    const typename Spec::CallScalars& cs,
                                    typename Spec::AccumData *accums_out);
+
+/* Which structure a fused walk discovers neighbours in (defined with the walk
+ * helpers below): the gravity tree, or the owned tile index.  Decided once, at
+ * compile time; the transport reads it to shape the envelopes it sends. */
+enum class NlrDiscoveryBackend { Octree, Bvh };
+#ifdef GX_MD_BVH
+static constexpr NlrDiscoveryBackend kNlrDiscoveryBackend = NlrDiscoveryBackend::Bvh;
+#else
+static constexpr NlrDiscoveryBackend kNlrDiscoveryBackend = NlrDiscoveryBackend::Octree;
+#endif
+static int nlr_mode_d_prepare(NlrModeDDiscovery *out, int n_masks, const unsigned int *masks, const char *caller);
 
 template <typename Spec>
 struct NlrPeerAnswerDeviceFused;
@@ -997,7 +1008,7 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
                                             const double *radii_host,
                                             int n,
                                             unsigned int supply_mask,
-                                            const GxDeviceTreeView& tree,
+                                            const NlrModeDDiscovery& disc,
                                             typename Spec::AccumData *accums_out);
 
 /* Holds the queries when they are built where the particles already are.
@@ -1049,9 +1060,9 @@ static void mode_b_remote_evaluate_into_buffer(
     const typename Spec::DeviceContext& ctx,         /* caller-owned */
     unsigned int neighbor_type_mask,                  /* explicit caller param */
     typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
-    /* Only read on the DeviceFused backend, where it is the tree the collective
-     * readiness decision was made against.  Unused by HostWalk. */
-    const GxDeviceTreeView *fused_tree = nullptr)
+    /* Only read on the DeviceFused backend, where it is the discovery structure
+     * the collective readiness decision was made against.  Unused by HostWalk. */
+    const NlrModeDDiscovery *fused_tree = nullptr)
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
@@ -1426,8 +1437,12 @@ static void mode_b_remote_evaluate_into_buffer(
                     const int r0 = csr_rec_off[aa], r1 = csr_rec_off[aa + 1];
                     /* envelopes this active would add across all peers */
                     long long add = 0;
-                    for(int r = r0; r < r1; r++)
-                        add += (csr_recs[r].n_nodes + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                    for(int r = r0; r < r1; r++) {
+                        /* One envelope per (query, rank) when the receiver walks its
+                         * whole index; otherwise one per NODELISTLENGTH start nodes. */
+                        if(Backend == NlrEvalBackend::DeviceFused && kNlrDiscoveryBackend == NlrDiscoveryBackend::Bvh) {add += 1;}
+                        else {add += (csr_recs[r].n_nodes + NODELISTLENGTH - 1) / NODELISTLENGTH;}
+                    }
                     if(round_env_count > 0 && round_env_count + add > bunch) break; /* defer to next round */
                     if(round_env_count == 0 && add > bunch) {
                         nlr_warn_once_rank0("modeb_oversize_active",
@@ -1451,13 +1466,23 @@ static void mode_b_remote_evaluate_into_buffer(
                              * partial results without double counting. All chunks of a
                              * (query,peer) group land in THIS round (all-or-nothing
                              * above), so each group stays contiguous. */
-                            for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                            /* A receiver that walks its whole owned index from the
+                             * root needs the query ONCE per rank and no start nodes:
+                             * a second envelope for the same (query, rank) would be
+                             * answered twice and summed. The start nodes the export
+                             * walk collected still decided WHICH ranks receive it. */
+                            const bool one_per_rank = (Backend == NlrEvalBackend::DeviceFused) &&
+                                                      (kNlrDiscoveryBackend == NlrDiscoveryBackend::Bvh);
+                            const int n_chunks_src = one_per_rank ? 1 : nn;
+                            for(int c = 0; c < n_chunks_src; c += NODELISTLENGTH) {
                                 Envelope env;
                                 env.origin_slot = aa;
                                 env.origin_rank = rank;
                                 int cnt = 0;
-                                for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
-                                    env.NodeList[cnt] = nd[c + cnt];
+                                if(!one_per_rank) {
+                                    for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                                        env.NodeList[cnt] = nd[c + cnt];
+                                    }
                                 }
                                 env.n_nodes = cnt;
                                 env.reserved_wire_padding = 0;
@@ -1786,7 +1811,7 @@ constexpr bool nlr_spec_mode_d_eligible_v =
  * the dispatch site, once, before this is entered. */
 template <typename Spec>
 static void run_mode_d(const neighbor_loop_args& args, const double *radii,
-                       const GxDeviceTreeView& tree)
+                       const NlrModeDDiscovery& disc)
 {
     using AccumData = typename Spec::AccumData;
     using DeviceCtx = typename Spec::DeviceContext;
@@ -1831,7 +1856,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
             mode_b_remote_evaluate_into_buffer<Spec, NlrEvalBackend::DeviceFused>(
                 args, radii, cs, ctx,
                 nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                (N > 0) ? accums.data() : nullptr, &tree);
+                (N > 0) ? accums.data() : nullptr, &disc);
         } else if(N > 0) {
             /* Each entry's slot into the call-level staging: carried by a
              * narrowed list, its position otherwise. */
@@ -1840,7 +1865,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
             evaluated = nlr_mode_d_evaluate_single_rank<Spec>(
                 ctx, cs, args.active_list, slots.data(), radii, N,
                 nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                tree, accums.data());
+                disc, accums.data());
         }
         if(evaluated) {
             for(int aa = 0; aa < N; aa++) {
@@ -1849,6 +1874,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
         }
     }
     gpu_particles_arena_mark_clean_after_scatter(Spec::loop_name);
+    gx_owned_tile_index_end_call();
 
     /* Out of device memory is a reason to answer differently, never to answer
      * less: the host walker takes the call.  Only the single-rank shape can get
@@ -2848,7 +2874,7 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     }
     plan.num_active_global = global_num_active;   /* -1 on dispatch-override paths */
 
-    GxDeviceTreeView mode_d_tree{};
+    NlrModeDDiscovery mode_d_discovery{};
     /* A loop whose kernel reads neighbour state it is itself changing needs the
      * live particle, which a ghost copy is not (nlr_spec_needs_live_neighbours).
      * It is answered where its neighbours live: on the device below when the
@@ -2870,10 +2896,12 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
         if((plan.path == NeighborLoopPlan::Path::ModeA_GpuNgl ||
             (nlr_spec_needs_live_neighbours_v<Spec> && !select_mode_b)) && !force_a &&
            args.external_csr == nullptr) {
-            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
+            const unsigned int one_mask = nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask);
+            const int ready_local = (nlr_mode_d_prepare(&mode_d_discovery, 1, &one_mask, Spec::loop_name) == 0) ? 1 : 0;
             int ready = 0;
             MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
             if(ready) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+            else {gx_owned_tile_index_end_call();}
         }
     }
 #endif
@@ -2994,7 +3022,7 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
         case NeighborLoopPlan::Path::ModeD_DeviceFused:
 #ifdef NEIGHBOR_LOOP_MODE_D
             if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-                run_mode_d<Spec>(args, radii.data(), mode_d_tree);
+                run_mode_d<Spec>(args, radii.data(), mode_d_discovery);
                 break;
             }
 #endif
@@ -3175,6 +3203,8 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
 template <typename Spec>
 NlrIterDriver<Spec>::~NlrIterDriver()
 {
+    /* The indexes a fused call held are free to be replaced once it ends. */
+    gx_owned_tile_index_end_call();
     /* DeviceContext cleanup: only fire if init actually
      * completed. Stubbed/aborted init paths leave ctx_initialized=false →
      * cleanup_device_context is NOT called, preventing free of unallocated
@@ -3727,6 +3757,94 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
  * asserted, and no loop is named here.
  * ========================================================================== */
 
+/* The two ways a fused walk discovers neighbours (kNlrDiscoveryBackend): the
+ * gravity tree, walked from the root or resumed from the start nodes a peer
+ * exported, or the owned tile index, always walked from the root.  Every fused
+ * walk goes through the two functions below, so the choice is made in one
+ * place and the leaf policies never learn which it was. */
+
+/* Hands every particle of an overlapping tile to the leaf policy, the way the
+ * tree walk hands it each particle it reaches: the policy applies the type,
+ * mass and geometric tests itself, so a tile's members need no test here. */
+template <class LeafPolicy>
+struct NlrTileLeafVisitor {
+    const GxOwnedTileView *view;
+    LeafPolicy            *leaf;
+    double qx, qy, qz, reach;
+
+    KOKKOS_INLINE_FUNCTION
+    void operator()(int tile_idx)
+    {
+        const sfc_tile_t &tile = view->tiles[tile_idx];
+        for(int s = 0; s < tile.count; s++) {
+            const int j = view->pool[tile.first + s];
+            if(j < view->local_particle_slots) {leaf->visit(j, qx, qy, qz, reach);}
+        }
+    }
+};
+
+/* One query, walked from this rank's root. */
+template <class LeafPolicy>
+KOKKOS_INLINE_FUNCTION
+void nlr_discovery_walk_root(const NlrModeDDiscovery &disc, double qx, double qy, double qz, double reach,
+                             LeafPolicy &leaf, int *anomaly)
+{
+    if constexpr (kNlrDiscoveryBackend == NlrDiscoveryBackend::Bvh) {
+        NlrTileLeafVisitor<LeafPolicy> visit{&disc.tiles, &leaf, qx, qy, qz, reach};
+        const double pos[3] = {qx, qy, qz};
+        bvh_walk_tiles(pos, reach, 1.0, NGB_SEARCH_ONEWAY, disc.tiles.bvh, disc.tiles.bvh_root,
+                       nullptr, ((1u << 6) - 1u), nullptr, nullptr, visit,
+                       &disc.tiles.drift_tables, disc.tiles.ti_now, anomaly);
+    } else {
+        gx_device_tree_walk_from_root(qx, qy, qz, reach, disc.tree, leaf, anomaly);
+    }
+}
+
+/* One query a peer sent, with the start nodes its export walk reached here.
+ * The tree resumes from those nodes and a query with none has nothing on this
+ * rank; the tile index knows no start nodes and walks from the root for every
+ * query it is sent -- the sender ships each query to a rank exactly once. */
+template <class LeafPolicy>
+KOKKOS_INLINE_FUNCTION
+void nlr_discovery_walk_received(const NlrModeDDiscovery &disc, double qx, double qy, double qz, double reach,
+                                 const int *start_nodes, int n_start,
+                                 LeafPolicy &leaf, int *anomaly)
+{
+    if constexpr (kNlrDiscoveryBackend == NlrDiscoveryBackend::Bvh) {
+        (void)start_nodes; (void)n_start;
+        nlr_discovery_walk_root(disc, qx, qy, qz, reach, leaf, anomaly);
+    } else {
+        if(n_start <= 0) {return;}
+        gx_device_tree_walk(qx, qy, qz, reach, start_nodes, n_start, disc.tree, leaf, anomaly);
+    }
+}
+
+/* Put this rank into the state a fused walk needs and describe its discovery
+ * structure, once per call, for each supply mask the call walks with.  Returns
+ * 0 with every entry of `out` filled, or 1 with the walk declined; the caller
+ * folds that into the collective vote.  The touched-set workspace is arranged
+ * here for both backends, for the reason gx_device_fused_walk_prepare gives:
+ * it can fail rank-locally, so it belongs where declining is still collective. */
+static int nlr_mode_d_prepare(NlrModeDDiscovery *out, int n_masks, const unsigned int *masks, const char *caller)
+{
+    if constexpr (kNlrDiscoveryBackend == NlrDiscoveryBackend::Bvh) {
+        const int num_local = ghost_get_num_local();
+        if(gx_touched_set_ensure(num_local) != 0) {return 1;}
+        gx_touched_set_begin_call();
+        for(int m = 0; m < n_masks; m++) {
+            out[m] = NlrModeDDiscovery{};
+            if(gx_owned_tile_index_prepare(masks[m], &out[m].tiles, caller) != 0) {return 1;}
+        }
+        return 0;
+    } else {
+        (void)masks;
+        GxDeviceTreeView tree{};
+        if(gx_device_fused_walk_prepare(&tree, caller) != 0) {return 1;}
+        for(int m = 0; m < n_masks; m++) {out[m] = NlrModeDDiscovery{}; out[m].tree = tree;}
+        return 0;
+    }
+}
+
 /* What happens when the walk reaches a particle this rank owns.
  *
  * The traversal decides which indices are reachable and which are ghosts; this
@@ -3856,7 +3974,7 @@ struct NlrRecordLeaf {
 template <class QueryFn>
 static void nlr_record_and_drift_from_root(const struct particle_data *P,
                                            unsigned int supply_mask,
-                                           const GxDeviceTreeView &tree,
+                                           const NlrModeDDiscovery &disc,
                                            int n, int *anomaly,
                                            const char *label,
                                            QueryFn query)
@@ -3894,7 +4012,7 @@ static void nlr_record_and_drift_from_root(const struct particle_data *P,
         double qx = 0, qy = 0, qz = 0, reach = 0;
         query(kk, qx, qy, qz, reach);
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
-        gx_device_tree_walk_from_root(qx, qy, qz, reach, tree, leaf, anomaly);
+        nlr_discovery_walk_root(disc, qx, qy, qz, reach, leaf, anomaly);
     });
     gx_touched_set_drift_and_mark(All.Ti_Current);
 }
@@ -3903,7 +4021,7 @@ static void nlr_record_and_drift_from_root(const struct particle_data *P,
 template <typename ActiveDataT>
 static void nlr_record_and_drift_from_envelopes(const struct particle_data *P,
                                                 unsigned int supply_mask,
-                                                const GxDeviceTreeView &tree,
+                                                const NlrModeDDiscovery &disc,
                                                 const ActiveDataT *q_d,
                                                 const int *nodes_d, const int *nn_d,
                                                 int K, int *anomaly,
@@ -3918,13 +4036,12 @@ static void nlr_record_and_drift_from_envelopes(const struct particle_data *P,
     }
     GIZMO_GPU_ENSURE_ALL_FRESH();
     nlr_walk_for_sources(label, K, KOKKOS_LAMBDA(int kk) {
-        if(nn_d[kk] <= 0) {return;}
         const ActiveDataT& a = q_d[kk];
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
-        gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                            (double)a.h_search,
-                            nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
-                            tree, leaf, anomaly);
+        nlr_discovery_walk_received(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                    (double)a.h_search,
+                                    nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
+                                    leaf, anomaly);
     });
     gx_touched_set_drift_and_mark(All.Ti_Current);
 }
@@ -3954,7 +4071,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
                                     const double *radii,
                                     int n,
                                     unsigned int supply_mask,
-                                    const GxDeviceTreeView &tree,
+                                    const NlrModeDDiscovery &disc,
                                     typename Spec::AccumData *accums_out,
                                     int *anomaly)
 {
@@ -4011,7 +4128,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
     /* Record what this walk will reach and bring just those current, before it
      * runs for real.  Same tree, same queries, so the same leaves. */
     nlr_record_and_drift_from_root(
-        ctx.P, supply_mask, tree, n, anomaly, "nlr_mode_d_self_record",
+        ctx.P, supply_mask, disc, n, anomaly, "nlr_mode_d_self_record",
         KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
             const ActiveData a_rec = Spec::load_active(ctx, active_slot[kk], active_idx[kk], radii[kk], cs);
             qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
@@ -4024,8 +4141,8 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
         ActiveData  a = Spec::load_active(ctx, active_slot[kk], i, radii[kk], cs);
         ScatterData s{};
         NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask, &cs};
-        gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                                      radii[kk], tree, leaf, anomaly);
+        nlr_discovery_walk_root(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                radii[kk], leaf, anomaly);
     });
 }
 
@@ -4121,7 +4238,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
                                    bool actives_are_device_visible,
                                    int n,
                                    unsigned int supply_mask,
-                                   const GxDeviceTreeView& tree,
+                                   const NlrModeDDiscovery& disc,
                                    const typename Spec::CallScalars& cs,
                                    typename Spec::AccumData *accums_out)
 {
@@ -4184,7 +4301,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
     /* Record-then-drift, as in the single-rank shape: the reach here is each
      * query's own h_search, which is what the evaluation below walks with. */
     nlr_record_and_drift_from_root(
-        ctx.P, supply_mask, tree, n, anomaly_d, "nlr_mode_d_self_record",
+        ctx.P, supply_mask, disc, n, anomaly_d, "nlr_mode_d_self_record",
         KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
             const ActiveData& a_rec = q_d[kk];
             qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
@@ -4196,8 +4313,8 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
         const ActiveData& a = q_d[kk];
         ScatterData s{};
         NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, supply_mask, &cs};
-        gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                                      (double)a.h_search, tree, leaf, anomaly_d);
+        nlr_discovery_walk_root(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                (double)a.h_search, leaf, anomaly_d);
     });
 
     const int anomaly_seen = *anomaly_d;
@@ -4241,7 +4358,7 @@ struct NlrPeerAnswerDeviceFused {
 
     static void answer(const typename Spec::DeviceContext& ctx,
                        const typename Spec::CallScalars& cs,
-                       const GxDeviceTreeView& tree,
+                       const NlrModeDDiscovery& disc,
                        const std::vector<typename Spec::ActiveData>& peer_actives,
                        const std::vector<int>& peer_nodelist_flat,
                        const std::vector<int>& peer_nnodes,
@@ -4312,28 +4429,21 @@ struct NlrPeerAnswerDeviceFused {
          * more current than the ones the self walk reaches.  Same record-then-
          * drift, entered the resumed way because that is how these walk. */
         nlr_record_and_drift_from_envelopes<ActiveData>(
-            ctx.P, neighbor_type_mask, tree, q_d, nodes_d, nn_d, K, anomaly_d,
+            ctx.P, neighbor_type_mask, disc, q_d, nodes_d, nn_d, K, anomaly_d,
             "nlr_mode_d_peer_record");
 
         nlr_walk_for_sources(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
             Spec::zero_accum(acc_d[kk]);
             const ActiveData& a = q_d[kk];
             ScatterData s{};
-            /* A query with no start nodes has nothing exported to it on this
-             * rank; the host walker skips it rather than walking from anywhere,
-             * and so does this. */
-            /* No start nodes: nothing on this rank was exported to this query.
-             * ⚠ This is only correct while every Mode-B-wire query is TARGETED.
-             * A broadcast query (n_nodes == 0) means "walk your whole tree", and
-             * the host receiver does exactly that -- so if the broadcast arms are
-             * ever revived this must become a root walk, not a zero accumulator.
-             * Unreachable today: targeted_export_ok is a constexpr true. */
-            if(nn_d[kk] <= 0) {return;}
+            /* What a query with no start nodes means is the discovery
+             * structure's to say (nlr_discovery_walk_received): nothing exported
+             * to it on this rank for the tree, a full walk for the tile index. */
             NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
-            gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                                (double)a.h_search,
-                                nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
-                                tree, leaf, anomaly_d);
+            nlr_discovery_walk_received(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                        (double)a.h_search,
+                                        nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
+                                        leaf, anomaly_d);
         });
 
         const int anomaly_seen = *anomaly_d;
@@ -4381,14 +4491,18 @@ void nlr_mode_d_note_active_motion(void)
     const int n_targets = gx_owned_tile_index_raise_targets(targets, GX_OWNED_TILE_INDEX_MAX_RESIDENT);
     const int n = (int)ActiveParticleList.size();
     if(n_targets <= 0 || n <= 0) {return;}
-    const struct particle_data *P_res = gpu_particles_arena_P();
-    const struct gas_cell_data *C_res = gpu_particles_arena_CellP();
-    if(!P_res) {return;}
+    /* The canonical arrays themselves, which the arena aliases: the arena
+     * binding may be released between calls (a resize does so), and the bounds
+     * must be raised regardless. Both are shared-space storage, readable from
+     * either tier. */
+    const struct particle_data *P_res = P;
+    const struct gas_cell_data *C_res = CellP;
+    if(!P_res) {gx_owned_tile_index_release_all(); return;}   /* no particles to read: nothing an index could describe */
     int *active = (int *)nlr_shared_alloc_bytes((size_t)n * sizeof(int), "moded_motion_active");
     if(!active) {
         /* Without the list the bounds cannot be raised, and a bound that is
-         * not raised under-includes silently. The stop is already requested by
-         * the allocator; say what it costs here. */
+         * not raised under-includes silently -- so the indexes are released
+         * instead and rebuilt at their next use, which is a complete remedy. */
         if(ThisTask == 0) {
             fprintf(stderr, "nlr_mode_d_note_active_motion: no memory for %d active indices; owned tile indexes released\n", n);
             fflush(stderr);
@@ -4831,7 +4945,7 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
      * per iteration would repeat a decision the path selection has already acted
      * on, and there is nothing to re-establish: nothing this path touches can go
      * stale within the call. */
-    const GxDeviceTreeView &tree = drv.mode_d_tree;
+    const NlrModeDDiscovery &disc = drv.mode_d_discovery[sg];
 
     /* Compact the still-active slots, as every other per-iter dispatch does. */
     std::vector<int>    active_particle_indices(n_compacted);
@@ -4859,7 +4973,7 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
             sub, radii_compacted.data(), drv.cs, drv.ctx,
             (unsigned int)sgr.j_type_bitmask,
             (n_compacted > 0) ? accums_compacted.data() : nullptr,
-            &drv.mode_d_tree);
+            &disc);
         for(int k = 0; k < n_compacted; k++) {
             drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = accums_compacted[k];
         }
@@ -4878,7 +4992,7 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
          * dispatcher use.  A multi-subgroup Spec would otherwise see different
          * neighbours on one rank than on many. */
         (unsigned int)sgr.j_type_bitmask,
-        tree, accums_compacted.data());
+        disc, accums_compacted.data());
     if(!evaluated) {
         /* Out of device memory is a reason to answer differently, never a reason
          * to answer less, so the host walker takes this iteration.
@@ -4905,7 +5019,7 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
                                             const double *radii_host,
                                             int n,
                                             unsigned int supply_mask,
-                                            const GxDeviceTreeView& tree,
+                                            const NlrModeDDiscovery& disc,
                                             typename Spec::AccumData *accums_out)
 {
     using AccumData = typename Spec::AccumData;
@@ -4933,7 +5047,7 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
     }
     *anomaly_d = 0;
 
-    nlr_mode_d_local_reduce<Spec>(ctx, cs, idx_d, slot_d, rad_d, n, supply_mask, tree, acc_d, anomaly_d);
+    nlr_mode_d_local_reduce<Spec>(ctx, cs, idx_d, slot_d, rad_d, n, supply_mask, disc, acc_d, anomaly_d);
 
     const int anomaly_seen = *anomaly_d;
     for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
@@ -5061,7 +5175,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     DispatchPath path;
     /* Filled by the Mode D preparation below if that path is taken; handed to
      * the driver so every iteration walks the tree the decision was made on. */
-    GxDeviceTreeView mode_d_tree{};
+    std::vector<NlrModeDDiscovery> mode_d_discovery;
     int forced_modeb_global_active = -1;
     /* Global active-particle sum across all ranks (from the dispatch Allreduce);
      * -1 = not computed (force-A cheap path). Used for the globally-zero-active
@@ -5134,10 +5248,14 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             (nlr_spec_needs_live_neighbours_v<Spec> && !select_mode_b)) &&
            nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly &&
            Spec::search_mode == MODE_B_SEARCH_ONEWAY) {
-            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
+            std::vector<unsigned int> masks(args.num_subgroups);
+            for(int sg = 0; sg < args.num_subgroups; sg++) {masks[sg] = (unsigned int)args.subgroups[sg].j_type_bitmask;}
+            mode_d_discovery.assign(args.num_subgroups, NlrModeDDiscovery{});
+            const int ready_local = (nlr_mode_d_prepare(mode_d_discovery.data(), args.num_subgroups, masks.data(), Spec::loop_name) == 0) ? 1 : 0;
             int ready = 0;
             MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
             if(ready) {path = DispatchPath::ModeD_DeviceFused;}
+            else {gx_owned_tile_index_end_call();}
         }
 #endif
     }
@@ -5188,7 +5306,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     if (path == DispatchPath::ModeB_HostWalker) {
         drv.initialize_device_context_mode_b();
     } else if (path == DispatchPath::ModeD_DeviceFused) {
-        drv.mode_d_tree = mode_d_tree;
+        drv.mode_d_discovery = mode_d_discovery;
         drv.acquire_arena_and_init_ctx_mode_d();
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
         /* Both read P/CellP from the device-resident arena; Mode D differs in
