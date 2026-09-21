@@ -352,9 +352,10 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
              * not incidental: SIDM scatter is a discrete Monte-Carlo collision
              * operator, and evaluating successive collisions against a snapshot
              * of the initial velocities would violate energy and momentum
-             * conservation nonlinearly. It is also why this loop is
-             * ModeBEvalOMP::SerialOnly (see modeb_eval_omp below) — the
-             * read-then-write of Pj.Vel is order-dependent by construction.
+             * conservation nonlinearly. The read-then-write of Pj.Vel is
+             * therefore order-dependent by construction, which the
+             * EpsilonAtomic tier below accepts; the read is an atomic load so
+             * a concurrent kick from another lane is seen whole or not at all.
              * SIDM is validated by conservation and statistical checks (scatter
              * event count, wakeup activations, momentum/energy, snapshot vs IC),
              * never by per-field agreement against a suppressed-write pass. */
