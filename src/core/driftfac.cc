@@ -90,6 +90,13 @@ double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 }
 
 
+/* The interval on the global clock, with no dilation: what a node's widening bound runs on. */
+double get_drift_factor_undilated(integertime time0, integertime time1)
+{
+    struct DriftKickTableView view = drift_kick_table_view_host();
+    return get_drift_factor_impl(time0, time1, 1.0, &view);
+}
+
 double get_gravkick_factor(integertime time0, integertime time1, int i, int mode)
 {
     double dilation = mode ? return_node_timestep_dilation_factor(i) : timestep_dilation_factor(i, P);

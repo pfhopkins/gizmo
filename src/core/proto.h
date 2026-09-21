@@ -1018,7 +1018,7 @@ integertime find_next_outputtime(integertime time);
 integertime get_timestep(int p, double *a, int flag);
 double return_timestep_dilation_factor(int i, struct particle_data *pp);      /* live, host-only: particle */
 double return_node_timestep_dilation_factor(int no);                          /* live, host-only: tree node */
-GIZMO_GPU_FUNCTION double timestep_dilation_factor(int i, struct particle_data *pp); /* value frozen at timestep assignment */
+GIZMO_GPU_FUNCTION double timestep_dilation_factor(int i, const struct particle_data *pp); /* value frozen at timestep assignment */
 GIZMO_GPU_FUNCTION double unit_integertime_in_physical(int i, struct particle_data *pp);
 GIZMO_GPU_FUNCTION double get_physical_timestep_from_timebin(int bin, int i, struct particle_data *pp);
 GIZMO_GPU_FUNCTION double get_particle_timestep_in_physical(int i, struct particle_data *pp);
@@ -1164,6 +1164,7 @@ double gravkick_integ(double a, void *param);
 double growthfactor_integ(double a, void *param);
 void init_drift_table(void);
 double get_drift_factor(integertime time0, integertime time1, int i, int mode);
+double get_drift_factor_undilated(integertime time0, integertime time1);
 double measure_time(void);
 void cpu_charge_child(int bucket, double dt);
 double cpu_minus_children(double elapsed, double child0);

@@ -379,6 +379,13 @@ ifeq ($(SYSTYPE),"Frontera_Kokkos")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
 OPTIMIZE = -ggdb -O2 -xCORE-AVX2 -Wno-unknown-pragmas -Wall -Wno-format-security
+## The Intel compilers default to a FAST floating-point model, unlike gcc and clang.
+## That default alone breaks the position->key contract in declarations/typedefs.h, which is
+## why no -ffast-math appears above and the build still refused to compile: the contract needs
+## reciprocal substitution AND fused multiply-add both held off, and the two are separate
+## switches.  Correctness before speed here -- a key that disagrees between the domain
+## exchange and the tree build detaches a particle from every rank's tree, silently.
+OPTIMIZE += -fp-model=precise -no-fma
 ## OpenMP required for the Kokkos OpenMP backend (unconditional, not gated on OPENMP config)
 OPTIMIZE += -qopenmp
 ifeq (CHIMES,$(findstring CHIMES,$(CONFIGVARS)))

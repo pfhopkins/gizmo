@@ -144,6 +144,12 @@ static float *domainWorkGas;	/*!< a table that gives the total "work" due to the
 static int *domainCount;	/*!< a table that gives the total number of particles held by each processor */
 static int *domainCountGas;	/*!< a table that gives the total number of gas cells held by each processor */
 static int domain_allocated_flag = 0;
+/* domain_free_trick parks the outer layout and hands its arrays back untouched later, so the count
+ * those arrays were sized with is parked with them and the automatic choice is suspended until they
+ * are restored.  Without that, a nested decomposition could leave the run holding pointers of one
+ * size and a count of another. */
+static int domain_layout_parked = 0;
+static int domain_parked_segments_per_rank = 0;
 static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle assignment caps (all-type P, and gas): All.MaxPartAssignable*REDUC_FAC, the all-type one then reduced by predicted ghost headroom (prev-epoch ghost high-water * 1.3), never below half.  Rank-identical, and every consumer depends on that: domain_assign_load_or_work_balanced runs on every rank over globally-reduced inputs and would otherwise build DIFFERENT DomainTask[] maps on different ranks. */
 /* What the most recent bound check found short, so the caller that gives up can explain itself.
  * The check reads counts that domain_sumCost has already reduced across all ranks, so these end up
@@ -369,6 +375,24 @@ void domain_init_timebin_costs(void)
  *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure.
  *  With allow_peano_order_cadence set, the caller permits that final ordering to be taken on a cadence rather than on every call (see MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS);
  *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
+/*! Choose how many contiguous Peano-Hilbert segments each rank is given.  The decomposition
+ *  balances work by distributing these, so more of them balance more finely while costing extra
+ *  top-tree refinement, an extra pseudo-particle all-gather apiece, and more spatially fragmented
+ *  rank territory.  Holding a roughly fixed number of particles per segment is what keeps those in
+ *  balance across problem sizes.  Settled once, from the particle count in the initial conditions.
+ */
+int domain_segments_per_rank_for_particles(long long total_particles)
+{
+  const double ideal = (double) total_particles / ((double) DOMAIN_TARGET_PARTICLES_PER_SEGMENT * (double) NTask);
+  int segments = 1;
+  while(segments < DOMAIN_MAX_SEGMENTS_PER_RANK && (double) segments * 1.5 < ideal) {segments *= 2;}
+  segments *= DOMAIN_SEGMENTS_SCALE;
+  if(segments < DOMAIN_MIN_SEGMENTS_PER_RANK) {segments = DOMAIN_MIN_SEGMENTS_PER_RANK;}
+  if(segments > DOMAIN_MAX_SEGMENTS_PER_RANK) {segments = DOMAIN_MAX_SEGMENTS_PER_RANK;}
+  return segments;
+}
+
+
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
     int i, ret, retsum, diff, highest_bin_to_include; size_t bytes, all_bytes; double t0, t1;
@@ -480,6 +504,21 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - highest_bin_to_include); i < GRAVCOSTLEVELS; i++)
         {if(diff > abs(All.LevelToTimeBin[i] - highest_bin_to_include)) {TakeLevel = i; diff = abs(All.LevelToTimeBin[i] - highest_bin_to_include);}}
     
+    /* The particle load moves during a run, so revisit the granularity here -- the only point
+     * where the old domain arrays are already freed and the new ones are not yet allocated, so the
+     * count and the arrays it sizes can never disagree.  Suspended while a layout is parked, and
+     * never reached by the lightweight repartition, which reuses the existing arrays. */
+    if(!domain_layout_parked)
+      {
+        const int segments_wanted = domain_segments_per_rank_for_particles(All.TotNumPart);
+        if(segments_wanted != All.DomainSegmentsPerRank)
+          {
+            PRINT_STATUS(" ..domain segments per rank: %d -> %d (%lld particles over %d ranks)",
+                         All.DomainSegmentsPerRank, segments_wanted, (long long) All.TotNumPart, NTask);
+            All.DomainSegmentsPerRank = segments_wanted;
+          }
+      }
+
     PRINT_STATUS("Domain decomposition building... LevelToTimeBin[TakeLevel=%d]=%d  (presently allocated=%g MB)", TakeLevel, All.LevelToTimeBin[TakeLevel], AllocatedBytes / (1024.0 * 1024.0));
     t0 = my_second();
 
@@ -759,7 +798,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 
     TreeReconstructFlag = 1;
 
-    int multipledomains = MULTIPLEDOMAINS;
+    int multipledomains = All.DomainSegmentsPerRank;
 
     /* Only a full decomposition sizes this, but All.MaxPart can grow between two of them
        (resize_particle_storage), and both key loops here write one entry per local particle. */
@@ -948,10 +987,10 @@ void domain_allocate(void)
    * is read off that tree. */
   MaxTopNodes = (int) (All.TopNodeAllocFactor * All.MaxPartAssignable + 1);
 
-  DomainStartList = (int *) mymalloc("DomainStartList", bytes = (NTask * MULTIPLEDOMAINS * sizeof(int)));
+  DomainStartList = (int *) mymalloc("DomainStartList", bytes = (NTask * All.DomainSegmentsPerRank * sizeof(int)));
   all_bytes += bytes;
 
-  DomainEndList = (int *) mymalloc("DomainEndList", bytes = (NTask * MULTIPLEDOMAINS * sizeof(int)));
+  DomainEndList = (int *) mymalloc("DomainEndList", bytes = (NTask * All.DomainSegmentsPerRank * sizeof(int)));
   all_bytes += bytes;
 
   TopNodes = (struct topnode_data *) mymalloc("TopNodes", bytes = (MaxTopNodes * sizeof(struct topnode_data) + MaxTopNodes * sizeof(int)));
@@ -978,7 +1017,7 @@ void domain_free(void)
 static struct topnode_data *save_TopNodes;
 static int *save_DomainStartList, *save_DomainEndList;
 
-void domain_free_trick(void)
+void domain_free_trick(int segments_per_rank_while_parked)
 {
   if(domain_allocated_flag)
     {
@@ -986,6 +1025,11 @@ void domain_free_trick(void)
       save_DomainEndList = DomainEndList;
       save_DomainStartList = DomainStartList;
       domain_allocated_flag = 0;
+      domain_layout_parked = 1;
+      domain_parked_segments_per_rank = All.DomainSegmentsPerRank;
+      /* What the nested decomposition builds is sized for the population the caller is about to
+       * decompose -- for one group of a group-finding pass, far smaller than the whole run. */
+      All.DomainSegmentsPerRank = segments_per_rank_while_parked;
     }
   else
     {endrun(90000013); return;} /* not allocated: soft bad-stop + return (void fn, MPI-free, symmetric invariant); drains at the next domain poll */
@@ -997,6 +1041,14 @@ void domain_allocate_trick(void)
   TopNodes = save_TopNodes;
   DomainEndList = save_DomainEndList;
   DomainStartList = save_DomainStartList;
+  /* The count goes back with the arrays it sized; restoring one without the other is what would
+   * corrupt them.  Only a count that was really parked: domain_free_trick leaves the saved value
+   * alone when it finds nothing allocated, and installing that would zero the live count. */
+  if(domain_layout_parked)
+    {
+      All.DomainSegmentsPerRank = domain_parked_segments_per_rank;
+      domain_layout_parked = 0;
+    }
 }
 
 
@@ -1113,7 +1165,7 @@ int domain_decompose(void)
 {
     int i, no, status;
     long long sumtogo, sumload, sumloadgas;
-    int maxload, maxloadgas, multipledomains = MULTIPLEDOMAINS;
+    int maxload, maxloadgas, multipledomains = All.DomainSegmentsPerRank;
     double sumwork, maxwork, sumworkgas, maxworkgas;
 
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
@@ -1151,7 +1203,8 @@ int domain_decompose(void)
 
     /* determine global dimensions of domain grid */
     domain_findExtent();
-    if(domain_determineTopTree()) {myfree(particle_costfactor); myfree(particle_total_cost); return 1;}
+    {int toptree_status = domain_determineTopTree();
+     if(toptree_status) {myfree(particle_costfactor); myfree(particle_total_cost); return toptree_status;}}
     myfree(particle_costfactor); myfree(particle_total_cost);
 
     /* find the split of the domain grid */
@@ -2773,7 +2826,7 @@ int domain_determineTopTree(void)
   struct local_topnode_data *topNodes_import, *topNodes_temp;
   double costlimit, countlimit;
   MPI_Status status;
-  int multipledomains = MULTIPLEDOMAINS;
+  int multipledomains = All.DomainSegmentsPerRank;
 
   mp = (struct peano_hilbert_data *) mymalloc("mp", sizeof(struct peano_hilbert_data) * NumPart);
 
@@ -2829,8 +2882,17 @@ int domain_determineTopTree(void)
   topNodes[0].Count = count;
   topNodes[0].Cost = gravcost;
 
-  costlimit = totgravcost / (TOPNODEFACTOR * multipledomains * NTask);
-  countlimit = totpartcount / (TOPNODEFACTOR * multipledomains * NTask);
+  /* Refine the top tree until no leaf holds more than this share of the particles or of the cost.
+   * Expressed per domain segment, because the segments are what the leaves get distributed between.
+   * The floor is a feasibility bound for small problems, where a rank holds a single segment and
+   * would otherwise have almost nothing to balance with. */
+  double refinement_scale = (double) DOMAIN_TOPTREE_REFINEMENT_SCALE;
+  if(refinement_scale < 1.0) {refinement_scale = 1.0;}
+  double leaves_per_rank = refinement_scale * (double) multipledomains;
+  if(leaves_per_rank < (double) DOMAIN_MIN_TOPLEAVES_PER_RANK) {leaves_per_rank = DOMAIN_MIN_TOPLEAVES_PER_RANK;}
+  const double target_top_leaves = leaves_per_rank * (double) NTask;
+  costlimit = totgravcost / target_top_leaves;
+  countlimit = totpartcount / target_top_leaves;
 
   g_domain_cost_suppressed = 0; g_domain_cost_suppressed_maxratio = 0;
   errflag = domain_check_for_local_refine(0, countlimit, costlimit);
@@ -2842,6 +2904,8 @@ int domain_determineTopTree(void)
 
   myfree(mp);
 
+  /* errsum COUNTS FAILING RANKS -- it is a tally, never a status code.  Handing it back
+   * directly leaves a two-rank capacity failure indistinguishable from a refinement one. */
   MPI_Allreduce(&errflag, &errsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
   if(errsum)
     {
@@ -2961,10 +3025,22 @@ int domain_determineTopTree(void)
   /* count toplevel leaves */
   domain_sumCost();
 
-  /* Symmetric (NTopleaves is identical on every rank after the replicated
-   * tree-combine + domain_sumCost). Soft bad-stop + status-return feeds the
-   * existing nonzero-return -> TopNodeAllocFactor retry path in domain_decompose. */
-  if(NTopleaves < multipledomains * NTask) {endrun(90000021); return 1;}
+  PRINT_STATUS(" ..top-tree leaves: %d achieved against %.0f the refinement limit asked for", NTopleaves, target_top_leaves);
+  /* A top tree with fewer leaves than there are domain segments cannot be assigned at all.  The
+   * refinement scale is held at one or above so this is not normally reachable; if a distribution
+   * still lands short, say which knob moves it rather than leaving the caller to infer it from the
+   * top-node retry that follows. */
+  if(NTopleaves < multipledomains * NTask)
+    {
+      if(ThisTask == 0)
+        {
+          printf("The top tree refined to %d leaves, fewer than the %d domain segments to assign them to.\n", NTopleaves, multipledomains * NTask);
+          printf("Raise DOMAIN_TOPTREE_REFINEMENT_SCALE (currently %g) or lower DOMAIN_SEGMENTS_SCALE (currently %g).\n",
+                 (double) DOMAIN_TOPTREE_REFINEMENT_SCALE, (double) DOMAIN_SEGMENTS_SCALE);
+          fflush(stdout);
+        }
+      endrun(90000021); return 1;
+    }
 
   return 0;
 }

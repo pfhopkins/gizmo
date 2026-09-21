@@ -99,7 +99,8 @@ void restart(int modus)
     int nprocgroup, primaryTask, groupTask;
     struct global_data_all_processes all_task0 = {};   /* zero-init so the required groupTask==0 Bcast is safe even if rank 0 failed its header read */
     int rekeyed_MaxPartAssignable = 0;   /* worked out during the read, put in force at the end of it */
-    int nmulti = MULTIPLEDOMAINS, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
+    int nmulti = All.DomainSegmentsPerRank, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
+    int layout_rejected_here = 0;   /* this rank could not use its own serialized domain layout */
     
 
 #ifdef CHIMES 
@@ -493,14 +494,17 @@ void restart(int modus)
              * Skip this rank's payload, drain at the per-turn poll. */
             endrun(90001026); restart_status = 90001026; goto finish_turn;
           }
-	  if(modus != 0 && nmulti != MULTIPLEDOMAINS)
+	  /* Local, and deliberately so: this decides whether THIS rank deserializes its own domain
+	     lists, which are sized from All.DomainSegmentsPerRank.  A file whose two records of the
+	     layout disagree would be read at the wrong length, so the guard has to stay here. */
+	  if(modus != 0 && nmulti != All.DomainSegmentsPerRank)
 	    {
 	      if(ThisTask == 0)
 		printf
-		  ("Looks like you changed MULTIPLEDOMAINS from %d to %d.\nWe will need to discard tree stored in restart files and construct a new one.\n",
-		   nmulti, (int) MULTIPLEDOMAINS);
+		  ("The restart files record %d domain segments per rank where this run has %d.\nWe will need to discard the tree stored in the restart files and construct a new one.\n",
+		   nmulti, All.DomainSegmentsPerRank);
 
-	      /* In this case we must do a new domain decomposition! */
+	      layout_rejected_here = 1;   /* the rebuild this implies is collective; agreed below */
 	    }
 	  else
 	    {
@@ -542,8 +546,8 @@ void restart(int modus)
 	      byten(Nextnode, NumPart * sizeof(int), modus);
 	      byten(Nextnode + All.TreeParticleSlots, NTopnodes * sizeof(int), modus);
 
-	      byten(DomainStartList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
-	      byten(DomainEndList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
+	      byten(DomainStartList, NTask * All.DomainSegmentsPerRank * sizeof(int), modus);
+	      byten(DomainEndList, NTask * All.DomainSegmentsPerRank * sizeof(int), modus);
 	      byten(TopNodes, NTopnodes * sizeof(struct topnode_data), modus);
 	      byten(DomainTask, NTopnodes * sizeof(int), modus);
 	      byten(DomainNodeIndex, NTopleaves * sizeof(int), modus);
@@ -600,12 +604,18 @@ void restart(int modus)
   if(modus != 0 && rekeyed_MaxPartAssignable) {All.MaxPartAssignable = rekeyed_MaxPartAssignable;}
   if(modus != 0 && old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}
 
-  if(modus != 0 && nmulti != MULTIPLEDOMAINS)	/* in this case we must force a domain decomposition */
-    {
-        if(ThisTask == 0) {printf("Doing extra domain decomposition because you changed MULTIPLEDOMAINS\n"); fflush(stdout);}
-
-      domain_Decomposition(0, 0, 0, 0);
-    }
+  /* One rank refusing its payload leaves the run without a consistent tree, so every rank has to
+     rebuild -- and domain_Decomposition is collective, so the ranks that were happy with their own
+     files must take it too, or they hang waiting for the ones that did. */
+  {
+    int layout_rejected_anywhere = 0;
+    MPI_Allreduce(&layout_rejected_here, &layout_rejected_anywhere, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(modus != 0 && layout_rejected_anywhere)
+      {
+        if(ThisTask == 0) {printf("Doing an extra domain decomposition because a restart file could not supply its domain layout\n"); fflush(stdout);}
+        domain_Decomposition(0, 0, 0, 0);
+      }
+  }
 }
 
 

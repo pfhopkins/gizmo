@@ -9,6 +9,9 @@
 #include <algorithm>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../core/timestep_functions.h"   /* dilation, for the motion bound */
+#include "binary_functions.h"             /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h"    /* particle_motion_speed_bound */
 #include "force_node_drift_sync.h"
 #include "gpu_gravity_tree.h"        /* SoA mirror: vmax coherence for widen-on-open */
 
@@ -153,8 +156,7 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
     Vec3<MyDouble> sink_dp = (P[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) ? dp : Vec3<MyDouble>{};
 #endif
 
-    MyFloat vmax = 0;
-    for(int j = 0; j < 3; j++) {MyFloat v = (MyFloat)fabs((double)P[i].Vel[j]); if(v > vmax) {vmax = v;}}
+    const MyFloat vmax = (MyFloat) particle_motion_speed_bound(i, P, CellP);
 
     int no = Father[i];
     while(no >= 0)
@@ -499,6 +501,11 @@ void force_drift_node(int no, integertime time1)
     }
 
     dt_drift = dt_drift_hmax = get_drift_factor(Nodes[no].Ti_current, time1, no, 1);
+    /* The widening runs on the undilated clock: vmax bounds each member's motion per unit
+       undilated interval, carrying that member's own dilation, so the node's dilated clock
+       (right for its centre of mass) would under-grow it for a member less dilated than the
+       node.  The same interval when no dilation is active. */
+    const double dt_widen = get_drift_factor_undilated(Nodes[no].Ti_current, time1);
     
 
     Nodes[no].u.d.s += Extnodes[no].vs * dt_drift;
@@ -509,7 +516,7 @@ void force_drift_node(int no, integertime time1)
        position on a different clock from u.d.s. The device drift kernel does the same. */
     Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift;
 #endif
-  Nodes[no].len += TREE_DRIFT_VELOCITY_PREFAC * Extnodes[no].vmax * dt_drift;
+  Nodes[no].len += TREE_DRIFT_VELOCITY_PREFAC * Extnodes[no].vmax * dt_widen;
 
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;

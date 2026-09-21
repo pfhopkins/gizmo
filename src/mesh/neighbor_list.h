@@ -108,7 +108,6 @@ struct GxDeviceTreeView {
      * Null disables widening and the walk opens on the stored length alone -- the
      * pre-landing-4 behaviour, which is correct only when something else has
      * certified the geometry current. */
-    const Vec3<MyGravFloat> *node_s    = nullptr;   /* centre of mass: the dilation factor's only input */
     const MyGravFloat   *node_vmax = nullptr;
     const integertime   *node_ti   = nullptr;
     integertime          ti_now    = 0;

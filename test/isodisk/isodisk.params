@@ -7,7 +7,6 @@
 %
 %        HYDRO_MESHLESS_FINITE_MASS
 %        COOLING
-%        MULTIPLEDOMAINS=64
 %        ADAPTIVE_GRAVSOFT_FORGAS
 %        METALS
 %        GALSF

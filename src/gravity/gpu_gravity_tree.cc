@@ -735,6 +735,31 @@ int gpu_node_dirty_repair(integertime ti)
     return 0;
 }
 
+/* The foreign storage grows between phases whenever an import needs more room, and the
+ * host walk then drifts -- and claims -- nodes in the new slots.  The set is sized when an
+ * epoch begins, so without this those claims land past its end and trip the fail-safe, and
+ * the fused walk that follows sweeps the whole tree to recover from a set that was merely
+ * too short.  Growing keeps every claim: foreign slots are appended, so the indices already
+ * recorded still name the same nodes.  Runs between phases, like the growth it follows. */
+void gpu_node_dirty_grow_to(int cap)
+{
+    if(!nd_seen_ || !nd_list_ || cap <= nd_cap_) {return;}
+    unsigned int *seen = (unsigned int *) tree_soa_alloc((size_t) cap * sizeof(unsigned int));
+    int          *list = (int *)          tree_soa_alloc((size_t) cap * sizeof(int));
+    if(!seen || !list) {
+        if(seen) {gizmo_gpu_tree_soa_release(seen);}
+        if(list) {gizmo_gpu_tree_soa_release(list);}
+        nd_mark_unsafe_();   /* the next prepare sweeps, as before; nothing is lost silently */
+        return;
+    }
+    for(int k = 0; k < nd_cap_; k++) {seen[k] = nd_seen_[k];}
+    for(int k = nd_cap_; k < cap; k++) {seen[k] = 0u;}
+    const int n = (nd_count_ < nd_cap_) ? nd_count_ : nd_cap_;
+    for(int k = 0; k < n; k++) {list[k] = nd_list_[k];}
+    gizmo_gpu_tree_soa_release(nd_seen_); gizmo_gpu_tree_soa_release(nd_list_);
+    nd_seen_ = seen; nd_list_ = list; nd_cap_ = cap;
+}
+
 void gpu_node_dirty_release(void)
 {
     if(nd_seen_) {gizmo_gpu_tree_soa_release(nd_seen_); nd_seen_ = NULL;}
@@ -749,20 +774,6 @@ void gpu_node_dirty_release(void)
  * swept tree usable without any of this machinery. */
 /* How often the fail-safe fired. A permanent silent revert to full sweeping is
    otherwise indistinguishable from the optimisation working. */
-/* Force the next Mode-D call onto the full sweep.
- *
- * Used where something rewrites a mirrored field the widening depends on WITHOUT
- * rewriting the (len, node_ti) pair it must agree with -- a mid-step
- * force_refresh_node_moments() being the case in hand: it recomputes vmax and
- * copies it back to the AoS, so the mirrored vmax may end up SMALLER than the one
- * that governed motion since node_ti, which would under-widen.
- *
- * ⛔ Deliberately NOT "make vmax raise-only": gpu_moment_refresh.cc:1080 copies the
- * SoA back into Extnodes[], so a monotonically raised mirror inflates the AoS vmax
- * too, force_drift_node then grows Nodes[].len without bound, and the GRAVITY walk
- * starts resolving structure the LET import never shipped. That was tried and it
- * broke the evrard arm with 'let_repair_exhausted'. */
-void gpu_node_dirty_invalidate(void) {nd_mark_unsafe_();}
 
 long long gpu_node_dirty_unsafe_events(void) {return __atomic_load_n(&nd_unsafe_events_, __ATOMIC_RELAXED);}
 

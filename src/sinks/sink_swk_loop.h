@@ -251,17 +251,20 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
     nearest_xyz(dpos, -1);
     double r2 = dpos.norm_sq();
 
-    /* Re-bind locals for clarity (legacy used these names). */
+    /* Re-bind locals for clarity (legacy used these names). The mass, velocity
+     * and internal energy are read atomically: another sink's lane may be
+     * kicking this same unswallowed cell through the atomic adds below at this
+     * moment, and a plain read beside them is a torn value, not an old one. */
     MyIDType OriginallyMarkedSwallowID = neighbor_particle.SwallowID;
-    double Mass_j = (double)neighbor_particle.Mass;
+    double Mass_j = (double)Kokkos::atomic_load(&neighbor_particle.Mass);
     double Mass_j_0 = Mass_j;
     double InternalEnergy_j = 0, InternalEnergy_j_0 = 0;
     if(neighbor_particle.Type == 0 && neighbor_cell) {
-        InternalEnergy_j   = (double)neighbor_cell->InternalEnergy;
+        InternalEnergy_j   = (double)Kokkos::atomic_load(&neighbor_cell->InternalEnergy);
         InternalEnergy_j_0 = InternalEnergy_j;
     }
     double Vel_j[3], Vel_j_0[3];
-    for(int k = 0; k < 3; k++) { Vel_j[k] = (double)neighbor_particle.Vel[k]; Vel_j_0[k] = Vel_j[k]; }
+    for(int k = 0; k < 3; k++) { Vel_j[k] = (double)Kokkos::atomic_load(&neighbor_particle.Vel[k]); Vel_j_0[k] = Vel_j[k]; }
 
     Vec3<double> dvel{Vel_j[0] - (double)local.Vel[0],
                       Vel_j[1] - (double)local.Vel[1],
@@ -621,7 +624,7 @@ struct SinkSwkSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "sink_swk";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads live Pj.Mass then atomic_add(&Pj.Mass) (read-then-add accretion drain); promotable to EpsilonAtomic only via a dedicated single-drainer-invariant audit */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* a cell is drained only by the one sink whose ID it carries in SwallowID, so the read-then-add on its mass has a single writer; the kicks to unswallowed neighbours are order-independent atomics */
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;

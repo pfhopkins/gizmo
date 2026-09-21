@@ -207,11 +207,9 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
  * (Mode A GPU lambda, Mode B local host walker, Mode B remote peer-to-peer).
  *
  * SwallowID semantics (D1/S-SYNC):
- *   - kernel-local (this body): atomic_exchange writes the active sink's ID
- *     into neighbor_particle.SwallowID under predicate. Multiple contending
- *     writers on the same rank resolve to one ID non-deterministically;
- *     this is legacy-equivalent (the CPU tree-walk also doesn't enforce a
- *     tiebreak within a rank).
+ *   - kernel-local (this body): atomic_max writes the active sink's ID into
+ *     neighbor_particle.SwallowID under predicate, so contending writers on
+ *     the same rank resolve to the largest ID in any order.
  *   - cross-rank: the home-rank merge in the ghost-writeback bundle uses
  *     PARTICLE_MAX (largest ID wins), making the cross-rank outcome
  *     deterministic. See ghost_writeback_ops.h::ParticleMaxOp.
@@ -516,9 +514,10 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 #endif
     }
 
-    /* ---- commit SwallowID if set ---- */
+    /* ---- commit SwallowID if set: the largest claiming sink wins, whatever the
+       order the claims arrive in, which is the same rule the cross-rank merge applies ---- */
     if(SwallowID_j > 0) {
-        Kokkos::atomic_exchange(&neighbor_particle.SwallowID, SwallowID_j);
+        Kokkos::atomic_max(&neighbor_particle.SwallowID, SwallowID_j);
     }
 }
 
@@ -533,7 +532,16 @@ struct SinkFeedSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "sink_feed";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads Pj.SwallowID at kernel entry then atomic_exchange(&SwallowID) at commit -> cross-active claim resolution is order-dependent (read-then-write of the live swallow flag) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* the claim commits by atomic_max, so contending claims resolve to the largest sink ID whatever order they arrive in; the sink-sink branch still tests the SwallowID it read at entry, so a claim already committed by a smaller sink can cause a larger one to decline -- accepted, at the level of which of two eligible sinks wins a merger this step; the other j-writes are order-independent atomics */
+#if defined(SINK_SWALLOWGAS) && !defined(SINK_GRAVCAPTURE_GAS)
+    /* One lane walks a sink's whole row: in this configuration the pair body
+       keeps a running swallow budget in the accumulator
+       (mass_markedswallow_scratch), and each decision depends on the sum so far.
+       Lanes sharing a row would each own a copy of that budget and could together
+       claim the deficit once per lane. Splitting the row needs the budget turned
+       into a single atomically drained quantity first. */
+    static constexpr ModeAPairAssignment mode_a_pair_assignment = ModeAPairAssignment::RowSerial;
+#endif
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;
@@ -569,8 +577,8 @@ struct SinkFeedSpec {
     using DeviceContext = SinkFeedDeviceContext;
 
     /* NeighborData carries NON-CONST pointers — sink_feed's pair_kernel
-     * does atomic_exchange + atomic_add into neighbor_particle.SwallowID
-     * and neighbor_cell->Injected_Sink_Energy. sink_env1's NeighborData
+     * does atomic_max on neighbor_particle.SwallowID and atomic_add into
+     * neighbor_cell->Injected_Sink_Energy. sink_env1's NeighborData
      * uses const pointers because its pair body is read-only. */
     struct NeighborData {
         struct particle_data *neighbor_particle;

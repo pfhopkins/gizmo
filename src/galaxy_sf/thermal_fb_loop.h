@@ -154,7 +154,11 @@ static void thermal_fb_pair_kernel(
 #ifdef HYDRO_MULTIFLUID_DM
     if (Pj.FluidType == FLUID_DM) return; /* skip dark-fluid neighbors */
 #endif
-    double Mass_j = (double)Pj.Mass;
+    /* Other sources may be depositing into this cell at the same time, through
+     * the atomic adds below, so its mass, density and metallicity are read
+     * atomically: the value seen is one of the deposits' results, never a torn
+     * mixture. Which one is seen is the accepted order dependence. */
+    double Mass_j = (double)Kokkos::atomic_load(&Pj.Mass);
     if (Mass_j <= 0) return;
     /* Belt-and-suspenders guards — Spec::pair_kernel already short-circuits
      * the source if any of (KernelRadius, wt_sum, Msne) is non-positive, but
@@ -175,7 +179,7 @@ static void thermal_fb_pair_kernel(
     if (u < 1) { kernel_main(u, hinv3, hinv4, &wk, &dwk, 0); } else { wk = dwk = 0; }
     if (wk <= 0 || wk != wk) return;
 
-    double rho_j_0 = (double)Cj.Density;
+    double rho_j_0 = (double)Kokkos::atomic_load(&Cj.Density);
 
     /* Number-weighted fraction of this neighbor's claim on the ejecta:
      * W_j / Sum_k W_k. Mass-invariant, so robust to the gas-mass growth the
@@ -230,7 +234,7 @@ static void thermal_fb_pair_kernel(
 #ifdef METALS
     for (int k = 0; k < NUM_METAL_SPECIES; k++) {
         double dMet = (dM / Mass_j)
-                    * ((double)local.yields[k] - (double)Pj.Metallicity[k]);
+                    * ((double)local.yields[k] - (double)Kokkos::atomic_load(&Pj.Metallicity[k]));
         Kokkos::atomic_add(&Pj.Metallicity[k], (MyFloat)dMet);
     }
 #endif
@@ -258,7 +262,14 @@ struct ThermalFBSpec {
     /* Identity. loop_name labels this loop in runner diagnostics and the
      * generic _end_bundle print. */
     static constexpr const char *loop_name = "thermalfb";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads live Pj.Mass (divisor of dIE/delta_rho/dMet) then atomic_add(&Pj.Mass); same for Cj.Density, Pj.Metallicity -> multi-source order-dependent physics (read-then-atomic-add) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* several sources may deposit into one cell; each reads the live mass, density and metallicity before its atomic add, so the result depends on their order -- small where a cell takes O(1) small deposits per step, and accepted at that level */
+    /* Each deposit's specific energy is the source's share of its energy over the
+       cell's mass at that moment, so the cell's live mass is what the kernel must
+       see. On a ghost copy that mass lags the owner's -- it misses every other
+       rank's deposits -- and the shipped-home delta then lands on a heavier cell
+       and injects more than the share. So this loop is never evaluated on ghost
+       copies: the host walker or Mode D answer it where the cell lives. */
+    static constexpr bool needs_live_neighbours = true;
 
     /* Search policy. Legacy thermal_fb_gpu.cc:166 used NGB_SEARCH_ONEWAY +
      * j_type_bitmask=1 (gas only). */

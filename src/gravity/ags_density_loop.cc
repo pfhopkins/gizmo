@@ -37,7 +37,7 @@
 #include "../mesh/kernel.h"               /* MUST precede ags_density_loop.h */
 #include "../mesh/ghost_writeback.h"
 #include "../mesh/ghost_writeback_ops.h"
-#include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_ghost_safety_factor, gizmo_density_prep_ghosts */
+#include "../mesh/ghost_symlist_lifecycle.h"  /* gizmo_ghost_safety_factor */
 #include "ags_density_loop.h"
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
@@ -662,11 +662,10 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  *      ranks see the same subgroup ordering (empty-on-this-rank subgroups
  *      get nullptr active_indices + num_active_local=0).
  *
- *   3. Ghost lifecycle (kept verbatim caller-side):
- *      ghost_exchange_cleanup() + gizmo_density_prep_ghosts(). The runner's
- *      internal `rebuild_mode_a_arena_and_ctx_for_current_active_union`
- *      handles per-iter ghost regrow on Mode A; Mode B P2P doesn't need
- *      ghosts, so no outer re-exchange loop is needed around the call.
+ *   3. Ghost lifecycle is the runner's: its Mode A import is request-driven
+ *      for this loop's own sources and types, with per-iter regrow inside
+ *      `rebuild_mode_a_arena_and_ctx_for_current_active_union`; Mode B and
+ *      Mode D import nothing.
  *
  *   4. run_neighbor_loop_iterative<AgsDensitySpec>(args) — owns the iter
  *      loop, per-iter pair_kernel dispatch, per-iter after_iter call which
@@ -796,10 +795,10 @@ void ags_density(void)
         for(int i : sg_actives) active_list_concat.push_back(i);
     }
 
-    /* (3) Ghost lifecycle. Mirrors legacy rkern.cc:104-108. */
+    /* (3) The runner owns the ghost lifecycle: on a path that imports, it imports
+       exactly this loop's neighbours for exactly these sources, and the other paths
+       import nothing.  An all-types import here would only be torn down again. */
     double ags_ghost_safety = gizmo_ghost_safety_factor();
-    if(NTask > 1) ghost_exchange_cleanup();
-    gizmo_density_prep_ghosts(ags_ghost_safety);
 
     /* (4) Build iterative args + drive the runner. */
     AgsDensitySpec::Aux aux{};                    /* empty per design v0.4.3 */

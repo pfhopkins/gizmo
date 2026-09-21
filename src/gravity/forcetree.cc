@@ -10,6 +10,8 @@
 #include "../mesh/kernel.h"
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
+#include "binary_functions.h"          /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h" /* particle_motion_speed_bound */
 #include "gravtree_moment_kernel.h"  /* shared node moment/payload construction physics (SSOT); plain primitives only here */
 #include "gravtree_moment_sources.h" /* shared per-particle RT/sink/CR source-input gates (SSOT) */
 #include "gravtree_ewald.h"          /* shared CPU/GPU Ewald image-correction trilinear interp (SSOT) */
@@ -283,6 +285,8 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
         }
     }
 }
+
+
 
 /* Gravity-tree freshness generations (see forcetree.h). Plain host counters,
  * SSOT in this TU; force_update_hmax (forcetree_update.cc) bumps the hmax one
@@ -1064,9 +1068,9 @@ void force_exchange_pseudodata_issue(void)
     DomainMoment_pending = (struct DomainNODE *) mymalloc("DomainMoment", NTopleaves * sizeof(struct DomainNODE));
     struct DomainNODE *DomainMoment = DomainMoment_pending;
 
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
-        for(i = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-            i <= DomainEndList[ThisTask * MULTIPLEDOMAINS + m]; i++)
+    for(m = 0; m < All.DomainSegmentsPerRank; m++)
+        for(i = DomainStartList[ThisTask * All.DomainSegmentsPerRank + m];
+            i <= DomainEndList[ThisTask * All.DomainSegmentsPerRank + m]; i++)
         {
             no = DomainNodeIndex[i];
             
@@ -1130,29 +1134,46 @@ void force_exchange_pseudodata_issue(void)
 #endif
         }
 
-    /* Post one MPI_Iallgatherv per MULTIPLEDOMAINS slice; the requests
+    /* Post one MPI_Iallgatherv per All.DomainSegmentsPerRank slice; the requests
      * are stored in static pseudo_requests_pending and waited on in _complete().
      * Per-slice recvcounts/recvoffset arrays must remain valid until Wait, so
      * we allocate one set per slice and free them all in _complete(). */
-    pseudo_n_requests_pending = MULTIPLEDOMAINS;
+    pseudo_n_requests_pending = All.DomainSegmentsPerRank;
     pseudo_requests_pending = (MPI_Request *) mymalloc("pseudo_requests",
-                                  MULTIPLEDOMAINS * sizeof(MPI_Request));
+                                  All.DomainSegmentsPerRank * sizeof(MPI_Request));
     pseudo_recvcounts_pending = (int *) mymalloc("pseudo_recvcounts",
-                                  MULTIPLEDOMAINS * NTask * sizeof(int));
+                                  All.DomainSegmentsPerRank * NTask * sizeof(int));
     pseudo_recvoffset_pending = (int *) mymalloc("pseudo_recvoffset",
-                                  MULTIPLEDOMAINS * NTask * sizeof(int));
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
+                                  All.DomainSegmentsPerRank * NTask * sizeof(int));
+    for(m = 0; m < All.DomainSegmentsPerRank; m++)
     {
         int *rc = pseudo_recvcounts_pending + m * NTask;
         int *ro = pseudo_recvoffset_pending + m * NTask;
         for(int recvTask = 0; recvTask < NTask; recvTask++)
         {
             rc[recvTask] =
-                (DomainEndList[recvTask * MULTIPLEDOMAINS + m] -
-                 DomainStartList[recvTask * MULTIPLEDOMAINS + m] + 1)
+                (DomainEndList[recvTask * All.DomainSegmentsPerRank + m] -
+                 DomainStartList[recvTask * All.DomainSegmentsPerRank + m] + 1)
                 * sizeof(struct DomainNODE);
-            ro[recvTask] = DomainStartList[recvTask * MULTIPLEDOMAINS + m]
-                           * sizeof(struct DomainNODE);
+            /* MPI_Iallgatherv takes int byte counts and displacements, so the whole pseudodata
+             * block has to stay under 2 GB.  That ceiling is a property of this exchange, not of
+             * the caller, and silently wrapping it would hand MPI a negative displacement -- so
+             * check it here, where the number is formed. */
+            const long long offset_bytes =
+                (long long) DomainStartList[recvTask * All.DomainSegmentsPerRank + m]
+                * (long long) sizeof(struct DomainNODE);
+            if(offset_bytes > (long long) INT_MAX)
+              {
+                if(ThisTask == 0)
+                  {
+                    printf("Pseudo-particle exchange needs a %lld byte offset, beyond what MPI's int displacements can carry.\n", offset_bytes);
+                    printf("There are %d top-tree leaves; lower DOMAIN_SEGMENTS_SCALE or run on fewer ranks.\n", NTopleaves);
+                    fflush(stdout);
+                  }
+                endrun(90000025);
+                return;
+              }
+            ro[recvTask] = (int) offset_bytes;
         }
         MPI_Iallgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
                         &DomainMoment[0], rc, ro, MPI_BYTE, MPI_COMM_WORLD,
@@ -1174,6 +1195,7 @@ int force_exchange_pseudodata_complete(void)
     if(DomainMoment_pending == NULL) {endrun(90000076); return 1;}
     struct DomainNODE *DomainMoment = DomainMoment_pending;
 
+    const int n_requests_issued = pseudo_n_requests_pending;
     MPI_Waitall(pseudo_n_requests_pending, pseudo_requests_pending, MPI_STATUSES_IGNORE);
 
     /* Free request/count buffers (LIFO order: ro, rc, requests). */
@@ -1186,10 +1208,13 @@ int force_exchange_pseudodata_complete(void)
     pseudo_n_requests_pending = 0;
 
     int i, no, m, ta;
+    /* The segment count this exchange was posted with, not whatever it is now: the domain lists
+     * being walked here are the ones that were current at issue time. */
+    const int segments = n_requests_issued;
     for(ta = 0; ta < NTask; ta++)
         if(ta != ThisTask)
-            for(m = 0; m < MULTIPLEDOMAINS; m++)
-                for(i = DomainStartList[ta * MULTIPLEDOMAINS + m]; i <= DomainEndList[ta * MULTIPLEDOMAINS + m]; i++)
+            for(m = 0; m < segments; m++)
+                for(i = DomainStartList[ta * segments + m]; i <= DomainEndList[ta * segments + m]; i++)
                 {
                     no = DomainNodeIndex[i];
 
@@ -1585,9 +1610,9 @@ void force_flag_localnodes(void)
     
     /* mark top-level nodes that contain local particles */
     
-    for(m = 0; m < MULTIPLEDOMAINS; m++)
-        for(i = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-            i <= DomainEndList[ThisTask * MULTIPLEDOMAINS + m]; i++)
+    for(m = 0; m < All.DomainSegmentsPerRank; m++)
+        for(i = DomainStartList[ThisTask * All.DomainSegmentsPerRank + m];
+            i <= DomainEndList[ThisTask * All.DomainSegmentsPerRank + m]; i++)
         {
             no = DomainNodeIndex[i];
             
@@ -1675,7 +1700,7 @@ void force_add_element_to_tree(int iparent, int ichild)
             Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
         }
     }
-    double new_vmax = moment_vmax_running_max(Extnodes[father].vmax, P[ichild].Vel[0], P[ichild].Vel[1], P[ichild].Vel[2]);
+    double new_vmax = DMAX((double) Extnodes[father].vmax, particle_motion_speed_bound(ichild, P, CellP));
     Extnodes[father].vmax = (MyFloat) new_vmax;
 
     /* Keep SoA walk-mirror coherent with the AoS Extnodes
@@ -3719,6 +3744,9 @@ int force_tree_grow_foreign_storage(long long foreign_needed)
         AllocatedForeignNodes = n_foreign;
         mirror_grown = gpu_gravity_tree_grow_foreign((int) new_slots);
         if(!mirror_grown) {AllocatedForeignNodes = old_foreign;}
+        /* The dirty set is bounded by the mirror it repairs; grow it with the mirror, or the
+         * claims the walk makes on the new foreign slots fall outside it. */
+        if(mirror_grown) {gpu_node_dirty_grow_to((int) new_slots);}
     }
     if(!mirror_grown)
     {
@@ -4096,8 +4124,17 @@ void force_refresh_node_moments(void)
     {
         /* Reset GravCost/Ti_current/Flag/Ti_lastkicked/dp/dp_dm/dp_stellarlum
          * fields that the GPU kernel does not own. These mirror the
-         * non-moment lines in CPU step 1 (forcetree.cc:3837..3848). */
+         * non-moment lines in CPU step 1 (forcetree.cc:3837..3848).
+         *
+         * A node that is behind the current time is drifted to it FIRST, by the one
+         * routine that owns the lazy node drift: its length widens for the interval
+         * since it was last drifted, its pending kick is applied.  Stamping it current
+         * without that would erase the only record of that interval, and every later
+         * widening would start from a length that no longer encloses the particles that
+         * moved in it.  A build is preceded by a full drift, so there this is a no-op;
+         * a refresh runs mid-step, where inactive particles and their nodes are behind. */
         for(no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
+            if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
             Nodes[no].GravCost = 0;
             Nodes[no].Ti_current = All.Ti_Current;
             Extnodes[no].dp = {};
@@ -4117,9 +4154,6 @@ void force_refresh_node_moments(void)
          * fall through force_exchange_pseudodata (matched, topology-driven);
          * the gravtree:after_refresh_moments poll drains before the walk. */
         if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
-        /* This recomputed vmax against an unchanged (len, node_ti) pair, so the
-           widening inputs no longer agree: make the next Mode-D call sweep. */
-        gpu_node_dirty_invalidate();
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
          * left at zero by the GPU bypass and Mode B's SYMMETRIC walker

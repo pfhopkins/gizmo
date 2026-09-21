@@ -61,9 +61,9 @@ extern "C" int gpu_force_flag_localnodes(void)
      * These are exactly the leaves over which the DEPENDS_ON_LOCAL_ELEMENT
      * walk should start. */
     int n_local = 0;
-    for(int m = 0; m < MULTIPLEDOMAINS; m++) {
-        int s = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-        int e = DomainEndList[ThisTask * MULTIPLEDOMAINS + m];
+    for(int m = 0; m < All.DomainSegmentsPerRank; m++) {
+        int s = DomainStartList[ThisTask * All.DomainSegmentsPerRank + m];
+        int e = DomainEndList[ThisTask * All.DomainSegmentsPerRank + m];
         if(e >= s) {n_local += e - s + 1;}
     }
     Kokkos::View<int*, MemSp> local_d;
@@ -71,9 +71,9 @@ extern "C" int gpu_force_flag_localnodes(void)
         Kokkos::View<int*, Kokkos::HostSpace> local_h(
             Kokkos::ViewAllocateWithoutInitializing("ps_local_h"), n_local);
         int idx = 0;
-        for(int m = 0; m < MULTIPLEDOMAINS; m++) {
-            for(int i = DomainStartList[ThisTask * MULTIPLEDOMAINS + m];
-                    i <= DomainEndList[ThisTask * MULTIPLEDOMAINS + m]; i++) {
+        for(int m = 0; m < All.DomainSegmentsPerRank; m++) {
+            for(int i = DomainStartList[ThisTask * All.DomainSegmentsPerRank + m];
+                    i <= DomainEndList[ThisTask * All.DomainSegmentsPerRank + m]; i++) {
                 local_h[idx++] = DomainNodeIndex[i];
             }
         }
@@ -169,14 +169,15 @@ extern "C" int gpu_scatter_pseudo_to_soa(void)
      * gpu_moment_refresh; we skip them here. */
     for(int ta = 0; ta < NTask; ta++) {
         if(ta == ThisTask) {continue;}
-        for(int m = 0; m < MULTIPLEDOMAINS; m++) {
-            for(int i = DomainStartList[ta * MULTIPLEDOMAINS + m];
-                    i <= DomainEndList[ta * MULTIPLEDOMAINS + m]; i++) {
+        for(int m = 0; m < All.DomainSegmentsPerRank; m++) {
+            for(int i = DomainStartList[ta * All.DomainSegmentsPerRank + m];
+                    i <= DomainEndList[ta * All.DomainSegmentsPerRank + m]; i++) {
                 int no = DomainNodeIndex[i];
                 int k  = no - tree_base;
                 /* Geometry: the owner may have grown this leaf to cover a particle it kept there, and
                  * force_exchange_pseudodata_complete has just applied that length to the AoS node. */
                 soa->len[k]     = Nodes[no].len;
+                if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}   /* the time that length describes */
                 /* Scalar moment fields */
                 soa->mass[k]    = (MyGravFloat) Nodes[no].u.d.mass;
                 soa->N_part[k]  = Nodes[no].N_part;

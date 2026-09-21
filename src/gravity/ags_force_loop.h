@@ -352,9 +352,10 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
              * not incidental: SIDM scatter is a discrete Monte-Carlo collision
              * operator, and evaluating successive collisions against a snapshot
              * of the initial velocities would violate energy and momentum
-             * conservation nonlinearly. It is also why this loop is
-             * ModeBEvalOMP::SerialOnly (see modeb_eval_omp below) — the
-             * read-then-write of Pj.Vel is order-dependent by construction.
+             * conservation nonlinearly. The read-then-write of Pj.Vel is
+             * therefore order-dependent by construction, which the
+             * EpsilonAtomic tier below accepts; the read is an atomic load so
+             * a concurrent kick from another lane is seen whole or not at all.
              * SIDM is validated by conservation and statistical checks (scatter
              * event count, wakeup activations, momentum/energy, snapshot vs IC),
              * never by per-field agreement against a suppressed-write pass. */
@@ -380,7 +381,7 @@ struct AgsForceSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "ags_force";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): DM_SIDM reads Pj.Vel then atomic_add(&Pj.Vel) in the same loop; that velocity feeds both scatter probability and kick -> order-dependent (RNG is counter-based/order-indep; the read-then-write is the blocker) */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* DM_SIDM reads the live Pj.Vel before its atomic kick, so scatters into one particle depend on their order at the level of the integration error, which is accepted; the RNG is counter-based and order-independent */
 
     /* SIDM pair-filter is r <= h_i+h_j; non-SIDM is r <= max(h_i,h_j). Both
      * are symmetric pair predicates — neighbor pool must include j with

@@ -1698,7 +1698,6 @@ int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_s
        the pair (len, node_ti) plus vmax, instead of requiring a sweep to have
        advanced every node first. Left null if the mirror does not carry them, in
        which case the walk opens on the stored length alone. */
-    out->node_s               = soa->s;
     out->node_vmax            = soa->vmax;
     out->node_ti              = soa->node_ti;
     out->ti_now               = All.Ti_Current;
@@ -2005,7 +2004,7 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
          * stored length alone, which is only legal when something else certified
          * the geometry -- so a missing table or mirror DECLINES to the old sweep
          * rather than quietly narrowing the bound. */
-        const int widen_armed = (out->drift_tables_ok && out->node_ti && out->node_vmax && out->node_s);
+        const int widen_armed = (out->drift_tables_ok && out->node_ti && out->node_vmax);
         if(gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
             _sweep_needed = 0;                       /* fully certified: widening not needed */
         } else if(!widen_armed) {

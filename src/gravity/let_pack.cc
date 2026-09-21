@@ -48,6 +48,9 @@
 #include "../system/gpu_particles_arena.h"  /* gpu_particles_arena_invalidate */
 #include "../system/mpi_alltoallv_typed.h"   /* int-overflow-safe MPI_Alltoallv wrapper */
 #include "let_data.h"
+#include "../core/timestep_functions.h"   /* dilation, for the motion bound */
+#include "binary_functions.h"             /* the binary speed cap, for the motion bound */
+#include "../core/predict_functions.h"    /* particle_motion_speed_bound */
 
 #include "gravtree_opening.h"   /* shared opening predicate (cell/AABB variant) */
 #include "gravtree_moment_kernel.h"  /* shared node-moment CONSTRUCTION SSOT (add_particle/finalize) */
@@ -57,7 +60,6 @@
 #include "forcetree.h"          /* force_tree_grow_foreign_storage */
 #if TREE_LEAF_BUCKET_SIZE > 1
 #include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots */
-#include "../core/timestep_functions.h"  /* node_timestep_dilation_factor_at, get_drift_factor_impl */
 #endif
 
 
@@ -110,14 +112,13 @@ static void let_compute_tree_lifetime(void)
 }
 
 /* The node size the walk may reach before this tree is rebuilt.  The growth rule is the walk's own
- * (TREE_DRIFT_VELOCITY_PREFAC * vmax * drift factor), evaluated over the tree's expected lifetime,
- * and the drift factor is taken per node because it carries that node's timestep dilation.  Used
- * ONLY to decide essentiality: the node itself ships at its true build-time size, and the receiver
- * widens it the ordinary way. */
+ * (TREE_DRIFT_VELOCITY_PREFAC * vmax * undilated drift factor), evaluated over the tree's expected
+ * lifetime; vmax already carries each member's own dilation.  Used ONLY to decide essentiality: the
+ * node itself ships at its true build-time size, and the receiver widens it the ordinary way. */
 static double let_node_len_over_tree_lifetime(int no, double len)
 {
     if(g_let_tree_lifetime_dti <= 0) {return len;}
-    double dt_lifetime = get_drift_factor(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti, no, 1);
+    double dt_lifetime = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);
     return len + TREE_DRIFT_VELOCITY_PREFAC * (double) Extnodes[no].vmax * dt_lifetime;
 }
 
@@ -947,6 +948,7 @@ static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_o
     src.mass              = (double) pa->Mass;
     src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
     src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
+    src.motion_bound      = particle_motion_speed_bound(p_idx, P, CellP);
     src.type              = pa->Type;
     src.kernel_radius     = (double) pa->KernelRadius;
     src.max_kernel_radius = (double) All.MaxKernelRadius;
@@ -1170,16 +1172,12 @@ static void let_bucket_cube(int no, int slot, const int *members, int n,
 
 /* The leaf aggregate's own drift allowance over the tree's life -- the widening a real node gets
  * from let_node_len_over_tree_lifetime, for the same reason (the tree stands while its particles
- * move), but taken from the aggregate's OWN centre of mass.  A parent's centre of mass is not a
- * bound on it: the dilation varies with position, so borrowing one can widen too little. */
+ * move).  The aggregate's vmax was accumulated from its members' own motion bounds, so it already
+ * carries each member's dilation, and the interval is the undilated one, as for a real node. */
 static double let_aggregate_len_over_tree_lifetime(const struct LETNodeWire *w, double len)
 {
     if(g_let_tree_lifetime_dti <= 0) {return len;}
-    Vec3<double> com = {(double) w->node.u.d.s[0], (double) w->node.u.d.s[1], (double) w->node.u.d.s[2]};
-    const double dilation = node_timestep_dilation_factor_at(com);
-    struct DriftKickTableView view = drift_kick_table_view_host();
-    const double dt_lifetime = get_drift_factor_impl(All.Ti_Current,
-                                   All.Ti_Current + g_let_tree_lifetime_dti, dilation, &view);
+    const double dt_lifetime = get_drift_factor_undilated(All.Ti_Current, All.Ti_Current + g_let_tree_lifetime_dti);
     return len + TREE_DRIFT_VELOCITY_PREFAC * (double) w->extnode.vmax * dt_lifetime;
 }
 

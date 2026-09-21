@@ -196,6 +196,7 @@ neighbor_loop_args nlr_default_args(void)
     args.num_total           = NumPart;
     args.active_list         = nullptr;       /* caller fills */
     args.num_active          = 0;             /* caller fills */
+    args.active_call_slot    = nullptr;       /* the caller's list is the call's list */
     args.aux                 = nullptr;       /* caller fills */
     args.ghost_safety_factor = gizmo_ghost_safety_factor();
     args.neighbor_type_mask_override = 0;      /* 0 => use Spec::neighbor_type_mask */
@@ -255,6 +256,7 @@ bool nlr_path_uses_imported_ghosts(NeighborLoopPlan::Path path)
         case NeighborLoopPlan::Path::ModeA_GpuNgl: return true;
         case NeighborLoopPlan::Path::ModeB_Local:  return false;
         case NeighborLoopPlan::Path::ModeB_Remote: return false;
+        case NeighborLoopPlan::Path::ModeD_DeviceFused: return false;
     }
     return false;
 }
@@ -276,6 +278,7 @@ bool nlr_path_uses_gpu_arena(NeighborLoopPlan::Path path)
         case NeighborLoopPlan::Path::ModeA_GpuNgl: return true;
         case NeighborLoopPlan::Path::ModeB_Local:  return false;
         case NeighborLoopPlan::Path::ModeB_Remote: return false;
+        case NeighborLoopPlan::Path::ModeD_DeviceFused: return true;
     }
     return false;
 }
@@ -286,6 +289,7 @@ bool nlr_path_permits_global_numpart_mutation(NeighborLoopPlan::Path path)
         case NeighborLoopPlan::Path::ModeA_GpuNgl: return true;
         case NeighborLoopPlan::Path::ModeB_Local:  return false;
         case NeighborLoopPlan::Path::ModeB_Remote: return false;
+        case NeighborLoopPlan::Path::ModeD_DeviceFused: return false;
     }
     return false;
 }
@@ -296,6 +300,7 @@ bool nlr_path_uses_lazy_drift(NeighborLoopPlan::Path path)
         case NeighborLoopPlan::Path::ModeA_GpuNgl: return false;
         case NeighborLoopPlan::Path::ModeB_Local:  return true;
         case NeighborLoopPlan::Path::ModeB_Remote: return true;
+        case NeighborLoopPlan::Path::ModeD_DeviceFused: return true;
     }
     return false;
 }
@@ -306,6 +311,7 @@ const char *nlr_path_label(NeighborLoopPlan::Path path)
         case NeighborLoopPlan::Path::ModeA_GpuNgl: return "gpu_ngl";
         case NeighborLoopPlan::Path::ModeB_Local:  return "mode_b_local";
         case NeighborLoopPlan::Path::ModeB_Remote: return "mode_b_remote";
+        case NeighborLoopPlan::Path::ModeD_DeviceFused: return "mode_d_fused";
     }
     return "unknown";
 }
@@ -395,6 +401,56 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
     const long long floor_work = (long long)MODEB_OMP_MIN_PER_THREAD * nthreads;
     const long long thresh = (floor_work > 64) ? floor_work : 64;
     return n_items >= thresh;
+}
+
+/* WHERE one batch of fused-walk sources runs: device, host threads, or one host
+ * core. Every fused walk goes through here -- the source loop and the placement
+ * decision exist once, and the five walks that use it (record and evaluate, from
+ * the root and resumed from a peer's start nodes, plus the single-rank evaluator)
+ * keep their own surrounding protocol and share nothing else. Adding a sixth walk
+ * means calling this, not writing another loop.
+ *
+ * Nothing about the traversal, the leaf policy, the drift, the exchange or the
+ * reply protocol varies with the choice -- only the execution space. The body is a
+ * `KOKKOS_LAMBDA`, which both device compilers expand to `[=] __host__ __device__`,
+ * so one body serves all three arms unchanged.
+ *
+ * The count is the batch's OWN source count, never a step-level or global one: a
+ * rank walking ten sources of its own is a different question from the same rank
+ * answering ten thousand imported ones, and on a clustered run those differ by
+ * three orders of magnitude within a single call.
+ *
+ * CAPTURE RESIDENCE -- the one way this can go silently wrong. The body captures by
+ * value, so a CallScalars, a device context or a tree view it captures lives INSIDE
+ * the closure: on the host stack when called here, device-resident when copied to a
+ * launch. A leaf built inside the body therefore points into whichever space is
+ * executing, which is what makes all three arms correct. Every other pointer a leaf
+ * holds -- particles, accumulators, the touched set, the anomaly word -- is
+ * SharedSpace and valid in both. Capturing any of the first group BY REFERENCE
+ * would leave a leaf pointing at a host stack object on the device arm, which is a
+ * fault or a wrong answer rather than a compile error. Those captures must also
+ * stay unmodified for the whole batch, and no pointer into the closure may outlive
+ * the call.
+ *
+ * Two preconditions, both true at present call sites: any device work this batch
+ * reads from has already completed (each producer fences at its own launch), and no
+ * caller is already inside a parallel region. */
+template <class F>
+static inline void nlr_walk_for_sources(const char *tag, int n, F &&body)
+{
+    if(n <= 0) {return;}
+    if(n >= GPU_MIN_SOURCES_FOR_WALK_OFFLOAD) {
+        gizmo_gpu_kernel_launch(tag, n, std::forward<F>(body));
+        return;
+    }
+    if(nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads())) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
+#endif
+        for(int kk = 0; kk < n; kk++) {body(kk);}
+        return;
+    }
+    for(int kk = 0; kk < n; kk++) {body(kk);}
 }
 
 /* Eval-threading policy for evaluate_pairs_post_drift. The production tree eval
@@ -708,7 +764,8 @@ static void build_self_actives_host_pre_drift(
 {
     const int N = args.num_active;
     for(int aa = 0; aa < N; aa++) {
-        actives_out[aa] = Spec::load_active(ctx, aa, args.active_list[aa],
+        const int slot = args.active_call_slot ? args.active_call_slot[aa] : aa;
+        actives_out[aa] = Spec::load_active(ctx, slot, args.active_list[aa],
                                              radii[aa], cs);
     }
 }
@@ -927,6 +984,20 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
 
 template <typename Spec>
 struct NlrPeerAnswerDeviceFused;
+
+/* One rank's queries answered from its own tree, device-resident end to end.
+ * Returns false only when the device buffers could not be had, in which case
+ * nothing was evaluated and the caller answers on the host instead. */
+template <typename Spec>
+static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& ctx,
+                                            const typename Spec::CallScalars& cs,
+                                            const int *active_idx_host,
+                                            const int *active_slot_host,
+                                            const double *radii_host,
+                                            int n,
+                                            unsigned int supply_mask,
+                                            const GxDeviceTreeView& tree,
+                                            typename Spec::AccumData *accums_out);
 
 /* Holds the queries when they are built where the particles already are.
  *
@@ -1696,6 +1767,96 @@ static void run_mode_b_remote(const neighbor_loop_args& args, const double *radi
     run_mode_b_remote_impl<Spec>(args, radii);
 }
 
+#ifdef NEIGHBOR_LOOP_MODE_D
+/* Whether a loop can be answered by the fused device walk at all: a one-way
+ * search whose pair kernel may run concurrently, and whose active rebinding
+ * the device evaluation does not perform.  Compile-time, so the machinery is
+ * instantiated only for loops that can reach it. */
+template <typename Spec>
+constexpr bool nlr_spec_mode_d_eligible_v =
+    (Spec::search_mode == MODE_B_SEARCH_ONEWAY) &&
+    (nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly) &&
+    !nlr_spec_has_bind_active_to_eval_context_v<Spec>;
+
+/* Mode D for a single-pass loop: the same transport and the same device walk
+ * the iterative driver uses, without the per-iteration compaction.  The
+ * particles are read from the device-resident arena, as on Mode A, because
+ * that is where the walk evaluates them; the tree was prepared and voted on at
+ * the dispatch site, once, before this is entered. */
+template <typename Spec>
+static void run_mode_d(const neighbor_loop_args& args, const double *radii,
+                       const GxDeviceTreeView& tree)
+{
+    using AccumData = typename Spec::AccumData;
+    using DeviceCtx = typename Spec::DeviceContext;
+
+    const int N = args.num_active;
+
+    typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
+
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    gpu_particles_arena_set_site(Spec::loop_name);
+    gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
+
+    DeviceCtx ctx;
+    ctx.P         = gpu_particles_arena_P();
+    ctx.CellP     = (args.CellP != nullptr) ? gpu_particles_arena_CellP() : nullptr;
+    ctx.num_total = args.num_total;
+    if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
+        Spec::populate_device_context(args, ctx);
+    }
+
+    std::vector<AccumData> accums(N);
+    for(int aa = 0; aa < N; aa++) {Spec::zero_accum(accums[aa]);}
+
+    bool evaluated = true;
+    {
+        /* The guard releases the Spec's context after the writeback below, the
+         * order the other wrappers keep. */
+        NlrDeviceContextCleanupGuard<Spec> _nlr_dctx_cleanup_guard(args, ctx);
+        /* A hook that could not stage its buffers has already asked for the
+         * stop. Alone, this rank enters no collective, so it returns here as
+         * Mode A does and the request drains at the caller's next poll. With
+         * peers it proceeds, for the reason the host transport states at its
+         * own population site: returning would desync the query/reply exchange
+         * the peers enter, and every reader of a hook-owned buffer tests for
+         * its absence first. */
+        if(ctx.populate_failed && NTask == 1) {
+            gpu_particles_arena_mark_clean_after_scatter(Spec::loop_name);
+            return;
+        }
+        if(NTask > 1) {
+            /* Every rank enters the transport, with or without actives of its own. */
+            mode_b_remote_evaluate_into_buffer<Spec, NlrEvalBackend::DeviceFused>(
+                args, radii, cs, ctx,
+                nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
+                (N > 0) ? accums.data() : nullptr, &tree);
+        } else if(N > 0) {
+            /* Each entry's slot into the call-level staging: carried by a
+             * narrowed list, its position otherwise. */
+            std::vector<int> slots(N);
+            for(int aa = 0; aa < N; aa++) {slots[aa] = args.active_call_slot ? args.active_call_slot[aa] : aa;}
+            evaluated = nlr_mode_d_evaluate_single_rank<Spec>(
+                ctx, cs, args.active_list, slots.data(), radii, N,
+                nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
+                tree, accums.data());
+        }
+        if(evaluated) {
+            for(int aa = 0; aa < N; aa++) {
+                Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
+            }
+        }
+    }
+    gpu_particles_arena_mark_clean_after_scatter(Spec::loop_name);
+
+    /* Out of device memory is a reason to answer differently, never to answer
+     * less: the host walker takes the call.  Only the single-rank shape can get
+     * here -- with peers the transport above has already been entered -- so
+     * the change of backend is invisible to every other rank. */
+    if(!evaluated) {run_mode_b_local<Spec>(args, radii);}
+}
+#endif
+
 /* ============================================================================
  * External-CSR staging helpers (hydro corridor support).
  *
@@ -2253,10 +2414,6 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
                   "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
     static_assert(std::is_trivially_copyable<DeviceCtx>::value,
                   "Spec::DeviceContext must be trivially copyable; the runner captures it by value into Kokkos device lambdas");
-    static_assert(nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
-                  "Spec::modeb_eval_omp must be declared explicitly: it is the default source of "
-                  "Spec::mode_a_pair_assignment, so an unaudited Spec would silently inherit a "
-                  "within-row lane division its pair kernel has never been checked for");
     if constexpr (nlr_spec_has_extended_device_context_v<Spec>) {
         Spec::populate_device_context(args, ctx);
     }
@@ -2690,6 +2847,36 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     }
     plan.num_active_global = global_num_active;   /* -1 on dispatch-override paths */
 
+    GxDeviceTreeView mode_d_tree{};
+    /* A loop whose kernel reads neighbour state it is itself changing needs the
+     * live particle, which a ghost copy is not (nlr_spec_needs_live_neighbours).
+     * It is answered where its neighbours live: on the device below when the
+     * tree can be described there, by the host walker otherwise. */
+    if constexpr (nlr_spec_needs_live_neighbours_v<Spec>) {
+        if(plan.path == NeighborLoopPlan::Path::ModeA_GpuNgl) {
+            plan.path = (NTask > 1) ? NeighborLoopPlan::Path::ModeB_Remote
+                                    : NeighborLoopPlan::Path::ModeB_Local;
+        }
+    }
+#ifdef NEIGHBOR_LOOP_MODE_D
+    /* Mode D takes the calls Mode A would have taken, for every loop it can
+     * serve, when every rank can describe its tree to the device -- the same
+     * decision the iterative driver makes, and for the same reasons (stated
+     * there).  A caller-owned neighbour list is Mode A by construction, and an
+     * explicit override is honoured as given.  The vote is collective; the
+     * label was chosen from a collective too, so every rank reaches it. */
+    if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
+        if((plan.path == NeighborLoopPlan::Path::ModeA_GpuNgl ||
+            (nlr_spec_needs_live_neighbours_v<Spec> && !select_mode_b)) && !force_a &&
+           args.external_csr == nullptr) {
+            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
+            int ready = 0;
+            MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+            if(ready) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+        }
+    }
+#endif
+
 
     /* ---- Stage radii once ---- */
     /* Computed via Spec::search_radius. Used for any path-conditional
@@ -2803,6 +2990,16 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
         case NeighborLoopPlan::Path::ModeB_Remote:
             run_mode_b_remote<Spec>(args, radii.data());
             break;
+        case NeighborLoopPlan::Path::ModeD_DeviceFused:
+#ifdef NEIGHBOR_LOOP_MODE_D
+            if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
+                run_mode_d<Spec>(args, radii.data(), mode_d_tree);
+                break;
+            }
+#endif
+            /* Never chosen without the build flag and the eligibility above. */
+            endrun(90001032);
+            break;
     }
 
     /* ---- Spec lifecycle hooks (end, reverse order) ---- */
@@ -2886,6 +3083,7 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
       radii_uvm  (a.num_subgroups, nullptr),
       active_set_uvm  (a.num_subgroups, nullptr),
       active_set_size (a.num_subgroups, 0),
+      call_slot_base  (a.num_subgroups, 0),
       /* Mode A iterative cached-CSR state: zero-init per subgroup;
        * UVM allocations land lazily on first Mode A iter dispatch. */
       mode_a_cached_gnl       (a.num_subgroups, gpu_neighbor_list_t{}),
@@ -2899,6 +3097,35 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
     /* Build a base neighbor_loop_args view per subgroup so we can call
      * Spec::search_radius for each (subgroup, slot, particle index) tuple.
      * search_radius is host-only and predates any drift / arena work. */
+    /* Where each subgroup's entries sit in the call's active_list, which is the
+     * layout a Spec's call-level per-active staging is in (NlrSubgroup). A
+     * caller that hands in a list which is not the ordered concatenation of its
+     * subgroups would have every Spec that stages per-active state read another
+     * particle's record, so the identity is checked here rather than assumed. */
+    {
+        int base = 0;
+        for (int sg = 0; sg < args.num_subgroups; sg++) {
+            const NlrSubgroup& sgr = args.subgroups[sg];
+            call_slot_base[sg] = base;
+            base += (sgr.num_active_local > 0) ? sgr.num_active_local : 0;
+        }
+        bool consistent = (base == args.num_active);
+        for (int sg = 0; consistent && sg < args.num_subgroups; sg++) {
+            const NlrSubgroup& sgr = args.subgroups[sg];
+            for (int k = 0; k < sgr.num_active_local; k++) {
+                if (args.active_list[call_slot_base[sg] + k] != sgr.active_indices[k]) {consistent = false; break;}
+            }
+        }
+        if (!consistent) {
+            fprintf(stderr, "[NlrIterDriver<%s>] FATAL: active_list (%d entries) is not the ordered "
+                            "concatenation of the %d subgroups' active_indices; per-active staging "
+                            "would be read against the wrong particles.\n",
+                    Spec::loop_name, args.num_active, args.num_subgroups);
+            fflush(stderr);
+            endrun(90001031);
+        }
+    }
+
     for (int sg = 0; sg < args.num_subgroups; sg++) {
         const NlrSubgroup& sgr = args.subgroups[sg];
         const int n = sgr.num_active_local;
@@ -3434,16 +3661,19 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
 
     /* Compact active particle indices + radii for the still-active slots. */
     std::vector<int>    active_particle_indices(n_compacted);
+    std::vector<int>    call_slots(n_compacted);
     std::vector<double> radii_compacted(n_compacted);
     for (int k = 0; k < n_compacted; k++) {
         int slot = drv.active_set_uvm[sg][k];
         active_particle_indices[k] = sgr.active_indices[slot];
+        call_slots[k]              = drv.call_slot_base[sg] + slot;
         radii_compacted[k]         = drv.radii_uvm[sg][slot];
     }
 
     neighbor_loop_args sub = drv.args;
-    sub.active_list = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
-    sub.num_active  = n_compacted;
+    sub.active_list      = (n_compacted > 0) ? active_particle_indices.data() : nullptr;
+    sub.active_call_slot = (n_compacted > 0) ? call_slots.data() : nullptr;
+    sub.num_active       = n_compacted;
 
     /* Driver-owned compacted AccumData buffer. Helper writes into this;
      * we scatter back into driver.accum_uvm[sg][slot] for active slots
@@ -3526,7 +3756,9 @@ struct NlrModeDReduceLeaf {
     {
         const struct particle_data &Pj = ctx->P[j];
         if(!(supply_mask & (1u << (unsigned int)Pj.Type))) {return;}
-        if(Pj.Mass <= 0) {return;}
+        /* Read atomically: a pair kernel that deposits mass into its neighbours
+         * may be adding to this one from another lane at this moment. */
+        if(Kokkos::atomic_load(&Pj.Mass) <= 0) {return;}
         if(!gx_pair_accept_wrap_and_test(qx - (double)Pj.Pos[0],
                                          qy - (double)Pj.Pos[1],
                                          qz - (double)Pj.Pos[2],
@@ -3657,7 +3889,7 @@ static void nlr_record_and_drift_from_root(const struct particle_data *P,
         return;
     }
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    gizmo_gpu_kernel_launch(label, n, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(label, n, KOKKOS_LAMBDA(int kk) {
         double qx = 0, qy = 0, qz = 0, reach = 0;
         query(kk, qx, qy, qz, reach);
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
@@ -3684,7 +3916,7 @@ static void nlr_record_and_drift_from_envelopes(const struct particle_data *P,
         return;
     }
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    gizmo_gpu_kernel_launch(label, K, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(label, K, KOKKOS_LAMBDA(int kk) {
         if(nn_d[kk] <= 0) {return;}
         const ActiveDataT& a = q_d[kk];
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
@@ -3717,6 +3949,7 @@ template <typename Spec>
 static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
                                     const typename Spec::CallScalars &cs,
                                     const int *active_idx,
+                                    const int *active_slot,
                                     const double *radii,
                                     int n,
                                     unsigned int supply_mask,
@@ -3727,10 +3960,11 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
     using ActiveData  = typename Spec::ActiveData;
     using ScatterData = typename Spec::ScatterData;
 
-    static_assert(nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly,
-                  "Mode D evaluates a seeker's pairs on whichever rank owns the neighbours, so a "
-                  "loop whose pair kernel writes to the neighbour side would need those writes "
-                  "shipped back. Only the read-only eval tier is served here.");
+    static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
+                  "Mode D evaluates a seeker's pairs on the rank that owns the neighbours, so a "
+                  "pair kernel's neighbour-side writes land on the owner's own particles and need "
+                  "no writeback -- but they land from many device lanes at once, so a kernel that "
+                  "must run serially (a read-then-write of live neighbour state) cannot be served.");
     static_assert(Spec::search_mode == MODE_B_SEARCH_ONEWAY,
                   "Mode D prunes on the query's reach alone. A symmetric search also needs the "
                   "per-type supply bands, which are not mirrored to the device.");
@@ -3778,15 +4012,15 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
     nlr_record_and_drift_from_root(
         ctx.P, supply_mask, tree, n, anomaly, "nlr_mode_d_self_record",
         KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
-            const ActiveData a_rec = Spec::load_active(ctx, kk, active_idx[kk], radii[kk], cs);
+            const ActiveData a_rec = Spec::load_active(ctx, active_slot[kk], active_idx[kk], radii[kk], cs);
             qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
             reach = radii[kk];
         });
 
-    gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(accums_out[kk]);
         const int i = active_idx[kk];
-        ActiveData  a = Spec::load_active(ctx, kk, i, radii[kk], cs);
+        ActiveData  a = Spec::load_active(ctx, active_slot[kk], i, radii[kk], cs);
         ScatterData s{};
         NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask, &cs};
         gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
@@ -3824,20 +4058,23 @@ nlr_build_self_actives_on_device(const neighbor_loop_args& args,
 
     if(n <= 0) {return nullptr;}
 
-    ActiveData *act_d = (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_actives");
-    int        *idx_d = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_idx");
-    double     *rad_d = (double *)     nlr_shared_alloc_bytes((size_t)n * sizeof(double),     "moded_self_radii");
+    ActiveData *act_d  = (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_actives");
+    int        *idx_d  = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_idx");
+    double     *rad_d  = (double *)     nlr_shared_alloc_bytes((size_t)n * sizeof(double),     "moded_self_radii");
+    int        *slot_d = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_slot");
 
-    if(!act_d || !idx_d || !rad_d) {
-        if(act_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(act_d);}
-        if(idx_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
-        if(rad_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
+    if(!act_d || !idx_d || !rad_d || !slot_d) {
+        if(act_d)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(act_d);}
+        if(idx_d)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
+        if(rad_d)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
+        if(slot_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);}
         return nullptr;
     }
 
     for(int k = 0; k < n; k++) {
-        idx_d[k] = args.active_list[k];
-        rad_d[k] = radii[k];
+        idx_d[k]  = args.active_list[k];
+        rad_d[k]  = radii[k];
+        slot_d[k] = args.active_call_slot ? args.active_call_slot[k] : k;
     }
 
     /* load_active reads All.* through this unit's mirror; without the belt those
@@ -3848,13 +4085,14 @@ nlr_build_self_actives_on_device(const neighbor_loop_args& args,
      * the loop's own name, so sharing it would leave a device fault in the query
      * build indistinguishable from one in the traversal. */
     gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", n, KOKKOS_LAMBDA(int k) {
-        act_d[k] = Spec::load_active(ctx, k, idx_d[k], rad_d[k], cs);
+        act_d[k] = Spec::load_active(ctx, slot_d[k], idx_d[k], rad_d[k], cs);
     });
 
-    /* The indices and radii were only ever the kernel's input. The queries
-     * themselves outlive this call and belong to the owner. */
+    /* The indices, slots and radii were only ever the kernel's input. The
+     * queries themselves outlive this call and belong to the owner. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);
 
     owner.p = act_d;
     return act_d;
@@ -3890,10 +4128,11 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
     using AccumData   = typename Spec::AccumData;
     using ScatterData = typename Spec::ScatterData;
 
-    static_assert(nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly,
-                  "Mode D evaluates a seeker's pairs on whichever rank owns the neighbours, so a "
-                  "loop whose pair kernel writes to the neighbour side would need those writes "
-                  "shipped back. Only the read-only eval tier is served here.");
+    static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
+                  "Mode D evaluates a seeker's pairs on the rank that owns the neighbours, so a "
+                  "pair kernel's neighbour-side writes land on the owner's own particles and need "
+                  "no writeback -- but they land from many device lanes at once, so a kernel that "
+                  "must run serially (a read-then-write of live neighbour state) cannot be served.");
     static_assert(Spec::search_mode == MODE_B_SEARCH_ONEWAY,
                   "Mode D prunes on the query's reach alone. A symmetric search also needs the "
                   "per-type supply bands, which are not mirrored to the device.");
@@ -3951,7 +4190,7 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
             reach = (double)a_rec.h_search;
         });
 
-    gizmo_gpu_kernel_launch(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
+    nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(acc_d[kk]);
         const ActiveData& a = q_d[kk];
         ScatterData s{};
@@ -4075,7 +4314,7 @@ struct NlrPeerAnswerDeviceFused {
             ctx.P, neighbor_type_mask, tree, q_d, nodes_d, nn_d, K, anomaly_d,
             "nlr_mode_d_peer_record");
 
-        gizmo_gpu_kernel_launch(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
+        nlr_walk_for_sources(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
             Spec::zero_accum(acc_d[kk]);
             const ActiveData& a = q_d[kk];
             ScatterData s{};
@@ -4161,10 +4400,6 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     using ScatterData  = typename Spec::ScatterData;
     using NeighborData = typename Spec::NeighborData;
 
-    static_assert(nlr_spec_modeb_eval_omp_is_explicit_v<Spec>,
-                  "Spec::modeb_eval_omp must be declared explicitly: it is the default source of "
-                  "Spec::mode_a_pair_assignment, so an unaudited Spec would silently inherit a "
-                  "within-row lane division its pair kernel has never been checked for");
 
     const NlrSubgroup& sgr = drv.args.subgroups[sg];
     const int n_compacted  = drv.active_set_size[sg];
@@ -4343,12 +4578,13 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             int64_t *offsets       = drv.mode_a_cached_gnl[sg].offsets;
             int     *neighbors     = drv.mode_a_cached_gnl[sg].neighbors;
 
+            const int call_slot_base = drv.call_slot_base[sg];
             gizmo_gpu_kernel_launch("nlr_iter_stage_active", n_compacted, KOKKOS_LAMBDA(int k) {
                 int slot = active_set_arr[k];
                 int row  = csr_lookup[slot];
                 int i    = d_active_arr[row];
                 double h = radii_arr[slot];
-                d_actives[k] = Spec::load_active(dctx_local, slot, i, h, cs_ref);
+                d_actives[k] = Spec::load_active(dctx_local, call_slot_base + slot, i, h, cs_ref);
             });
 
             const double t_pair_kernel_start = my_second();
@@ -4416,13 +4652,16 @@ static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, in
      * This is per-iter — the active_list/num_active reflect the COMPACTED set
      * after Converged compaction from prior iters. */
     std::vector<int> active_particle_indices(n_compacted);
+    std::vector<int> call_slots(n_compacted);
     for (int k = 0; k < n_compacted; k++) {
         int slot = drv.active_set_uvm[sg][k];
         active_particle_indices[k] = sgr.active_indices[slot];
+        call_slots[k]              = drv.call_slot_base[sg] + slot;
     }
     neighbor_loop_args sub = drv.args;
-    sub.active_list = active_particle_indices.data();
-    sub.num_active  = n_compacted;
+    sub.active_list      = active_particle_indices.data();
+    sub.active_call_slot = call_slots.data();
+    sub.num_active       = n_compacted;
 
     /* Per-active radii in compacted order (helpers expect contiguous radii array). */
     std::vector<double> radii_compacted(n_compacted);
@@ -4540,15 +4779,18 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
 
     /* Compact the still-active slots, as every other per-iter dispatch does. */
     std::vector<int>    active_particle_indices(n_compacted);
+    std::vector<int>    call_slots(n_compacted);
     std::vector<double> radii_compacted(n_compacted);
     for(int k = 0; k < n_compacted; k++) {
         const int slot = drv.active_set_uvm[sg][k];
         active_particle_indices[k] = sgr.active_indices[slot];
+        call_slots[k]              = drv.call_slot_base[sg] + slot;
         radii_compacted[k]         = drv.radii_uvm[sg][slot];
     }
     neighbor_loop_args sub = drv.args;
-    sub.active_list = active_particle_indices.data();
-    sub.num_active  = n_compacted;
+    sub.active_list      = active_particle_indices.data();
+    sub.active_call_slot = call_slots.data();
+    sub.num_active       = n_compacted;
 
     /* With peers, the queries travel and the owners answer them: same wire, same
      * reply merge, same bounded rounds as the host walker uses -- only the way a
@@ -4572,12 +4814,16 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
      * in the kernel from resident particles rather than up front on the host. */
     if(n_compacted <= 0) {return;}
 
-    int       *idx_d     = (int *)    nlr_shared_alloc_bytes((size_t)n_compacted * sizeof(int),    "moded_idx");
-    double    *rad_d     = (double *) nlr_shared_alloc_bytes((size_t)n_compacted * sizeof(double), "moded_radii");
-    AccumData *acc_d     = (AccumData *) nlr_shared_alloc_bytes((size_t)n_compacted * sizeof(AccumData), "moded_accum");
-    int       *anomaly_d = (int *)    nlr_shared_alloc_bytes(sizeof(int), "moded_anomaly");
-
-    if(!idx_d || !rad_d || !acc_d || !anomaly_d) {
+    std::vector<AccumData> accums_compacted(n_compacted);
+    const bool evaluated = nlr_mode_d_evaluate_single_rank<Spec>(
+        drv.ctx, drv.cs, active_particle_indices.data(), call_slots.data(),
+        radii_compacted.data(), n_compacted,
+        /* The SUBGROUP's mask, as the peer branch and every other per-subgroup
+         * dispatcher use.  A multi-subgroup Spec would otherwise see different
+         * neighbours on one rank than on many. */
+        (unsigned int)sgr.j_type_bitmask,
+        tree, accums_compacted.data());
+    if(!evaluated) {
         /* Out of device memory is a reason to answer differently, never a reason
          * to answer less, so the host walker takes this iteration.
          *
@@ -4587,33 +4833,57 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
          * different answer.  If this branch is ever given a path that has peers,
          * the decision has to move to the collective site where readiness is
          * already decided. */
-        if(idx_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
-        if(rad_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
-        if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
-        if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
         nlr_iter_dispatch_subgroup_mode_b_local<Spec>(drv, sg);
         return;
     }
-
     for(int k = 0; k < n_compacted; k++) {
-        idx_d[k] = active_particle_indices[k];
-        rad_d[k] = radii_compacted[k];
+        drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = accums_compacted[k];
+    }
+}
+
+template <typename Spec>
+static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& ctx,
+                                            const typename Spec::CallScalars& cs,
+                                            const int *active_idx_host,
+                                            const int *active_slot_host,
+                                            const double *radii_host,
+                                            int n,
+                                            unsigned int supply_mask,
+                                            const GxDeviceTreeView& tree,
+                                            typename Spec::AccumData *accums_out)
+{
+    using AccumData = typename Spec::AccumData;
+    if(n <= 0) {return true;}
+
+    int       *idx_d     = (int *)    nlr_shared_alloc_bytes((size_t)n * sizeof(int),    "moded_idx");
+    int       *slot_d    = (int *)    nlr_shared_alloc_bytes((size_t)n * sizeof(int),    "moded_slot");
+    double    *rad_d     = (double *) nlr_shared_alloc_bytes((size_t)n * sizeof(double), "moded_radii");
+    AccumData *acc_d     = (AccumData *) nlr_shared_alloc_bytes((size_t)n * sizeof(AccumData), "moded_accum");
+    int       *anomaly_d = (int *)    nlr_shared_alloc_bytes(sizeof(int), "moded_anomaly");
+
+    if(!idx_d || !slot_d || !rad_d || !acc_d || !anomaly_d) {
+        if(idx_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
+        if(slot_d)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);}
+        if(rad_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
+        if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
+        if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
+        return false;
+    }
+
+    for(int k = 0; k < n; k++) {
+        idx_d[k]  = active_idx_host[k];
+        slot_d[k] = active_slot_host[k];
+        rad_d[k]  = radii_host[k];
     }
     *anomaly_d = 0;
 
-    nlr_mode_d_local_reduce<Spec>(drv.ctx, drv.cs, idx_d, rad_d, n_compacted,
-                                  /* The SUBGROUP's mask, as the peer branch and every other
-                                   * per-subgroup dispatcher use.  A multi-subgroup Spec would
-                                   * otherwise see different neighbours on one rank than on many. */
-                                  (unsigned int)sgr.j_type_bitmask,
-                                  tree, acc_d, anomaly_d);
+    nlr_mode_d_local_reduce<Spec>(ctx, cs, idx_d, slot_d, rad_d, n, supply_mask, tree, acc_d, anomaly_d);
 
     const int anomaly_seen = *anomaly_d;
-    for(int k = 0; k < n_compacted; k++) {
-        drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = acc_d[k];
-    }
+    for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
@@ -4633,6 +4903,7 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
         }
         endrun(90001025);
     }
+    return true;
 }
 
 /* ============================================================================
@@ -4762,9 +5033,18 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         const int TM = gizmo_nlr_modeb_threshold_max_for(Spec::loop_name, spec_default_max);
         bool select_mode_b = (sum_act > 0) && (sum_act <= TS) && (max_act <= TM);
         path = select_mode_b ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
+        /* Answered where its neighbours live, never on ghost copies (stated at
+         * the single-pass entry, nlr_spec_needs_live_neighbours). */
+        if constexpr (nlr_spec_needs_live_neighbours_v<Spec>) {
+            path = DispatchPath::ModeB_HostWalker;
+        }
 #ifdef NEIGHBOR_LOOP_MODE_D
         /* Mode D takes the calls Mode A would have taken, when the loop is one
-         * it can serve and every rank can actually answer on the device.
+         * it can serve and every rank can actually answer on the device.  It
+         * serves every one-way search whose pair kernel may run concurrently:
+         * the neighbours are always the evaluating rank's own particles, so a
+         * kernel's neighbour-side writes are local atomics, exactly as they are
+         * on the host walker's remote protocol, which this is the device form of.
          *
          * The verdict has to be UNANIMOUS, not merely identical-looking.  Two of
          * the terms are compile-time Spec traits and one is a path already chosen
@@ -4794,8 +5074,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * what the touched-set discovery removed, and the node half is what
          * still justifies the gate. */
         if(sum_act > 0 &&
-           path == DispatchPath::ModeA_GPU_NGL &&
-           nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly &&
+           (path == DispatchPath::ModeA_GPU_NGL ||
+            (nlr_spec_needs_live_neighbours_v<Spec> && !select_mode_b)) &&
+           nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly &&
            Spec::search_mode == MODE_B_SEARCH_ONEWAY) {
             const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
             int ready = 0;
@@ -5070,7 +5351,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg);
                     break;
                 case DispatchPath::ModeD_DeviceFused:
-                    if constexpr (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly &&
+                    if constexpr (nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly &&
                                   Spec::search_mode == MODE_B_SEARCH_ONEWAY) {
                         nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg);
                     }
