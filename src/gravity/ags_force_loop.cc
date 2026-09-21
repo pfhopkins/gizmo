@@ -389,9 +389,8 @@ void AGSForce_calc(void)
         for(int i : sg_actives) active_list_concat.push_back(i);
     }
 
-    /* Ghost lifecycle. Mirrors legacy gravity/ags_rkern.cc:221-222. */
+    /* The runner owns the ghost lifecycle (see ags_density). */
     double ags_ghost_safety = gizmo_ghost_safety_factor();
-    gizmo_density_prep_ghosts(ags_ghost_safety);
 
     /* CBE gradients (when CBE_INTEGRATOR_WITHGRADIENTS is on) are refreshed
      * pre-force by CBEGrad_gradient_calc() (called from core/accel.cc

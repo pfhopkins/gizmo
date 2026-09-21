@@ -43,6 +43,10 @@
  *         load_active(ctx, slot, i, h_search, cs) -> ActiveData
  *       Reads ctx.P[i] / ctx.CellP[i] (UVM-resident, post-arena/drift)
  *       and combines with the host-staged h_search and CallScalars.
+ *       `slot` is the position of particle i in the CALLER's active_list --
+ *       the layout populate_device_context staged per-active state in -- on
+ *       every path and every iteration, whatever compaction or subgroup the
+ *       runner is working through (neighbor_loop_args::active_call_slot).
  *       Runner launches a tiny Kokkos parallel_for that fills
  *       ActiveData[num_active]. Mode A's pair-kernel launch reads this
  *       array; the Mode B walker calls the SAME function host-side per
@@ -310,20 +314,25 @@ enum class SidxCacheKind : int {
  *                     reorders the same atomic updates -> ulp-class
  *                     nondeterminism (the class Mode-A Kokkos kernels already
  *                     exhibit). Validated by ID-sort epsilon, not bitwise.
- *   SerialOnly      — evaluated on one thread. A justified final SerialOnly
- *                     carries a stated STRUCTURAL reason (order-sensitive
- *                     j-writes, RNG-order dependence, non-atomic scatter). A
- *                     spec whose tier is not yet audited is conservatively
- *                     SerialOnly with a note until its pair-kernel is verified.
+ *   SerialOnly      — evaluated on one thread and withheld from lane division
+ *                     and from Mode D. No loop carries it; see the enum for
+ *                     what it would take to justify one.
  *
- * A Spec that omits the trait resolves to SerialOnly (compile-safe fallback);
- * nlr_modeb_eval_omp_label() reports an explicit SerialOnly distinctly from a
- * missing trait so an unaudited spec is never mistaken for a justified one.
+ * Every Spec declares its tier; omitting it does not compile.
  * ========================================================================== */
 
 enum class ModeBEvalOMP : int {
     BitwiseReadonly = 0,
     EpsilonAtomic   = 1,
+    /* No loop in the code is SerialOnly, and none may become one without a
+       demonstrated physical necessity that Phil has approved: a serial tier
+       withholds a loop from the threaded host walker, from lane division on the
+       device and from Mode D, while the device kernel already evaluates every
+       row concurrently, so it protects nothing a device path does not already
+       do. Order dependence of neighbour-side writes at the level of the
+       integration error is accepted; a genuine read-then-write hazard is
+       resolved with the right atomic (a max for a claim, a clamped subtraction
+       for a drain), not by serialising the loop. */
     SerialOnly      = 2,
 };
 
@@ -495,12 +504,8 @@ template <typename Spec>
 constexpr bool nlr_spec_has_cleanup_device_context_v =
     nlr_spec_has_cleanup_device_context<Spec>::value;
 
-/* SFINAE detection + resolution of the optional per-Spec eval-threading tier
- * Spec::modeb_eval_omp (ModeBEvalOMP). A Spec that omits it resolves to
- * SerialOnly; the *_is_explicit_v trait lets diagnostics report a missing trait
- * separately from a declared SerialOnly (a missing trait is an unaudited spec,
- * not a justified serial one — the Mode-B eval-threading audit closes only when
- * every spec carries an explicit, structurally-justified tier). */
+/* Detection + resolution of the per-Spec eval tier Spec::modeb_eval_omp
+ * (ModeBEvalOMP). Omitting it is a compile error. */
 template <typename Spec, typename = void>
 struct nlr_spec_has_modeb_eval_omp : std::false_type {};
 
@@ -509,16 +514,10 @@ struct nlr_spec_has_modeb_eval_omp<
     Spec, std::void_t<decltype(Spec::modeb_eval_omp)>> : std::true_type {};
 
 template <typename Spec>
-constexpr bool nlr_spec_modeb_eval_omp_is_explicit_v =
-    nlr_spec_has_modeb_eval_omp<Spec>::value;
-
-template <typename Spec>
 constexpr ModeBEvalOMP nlr_spec_modeb_eval_omp() {
-    if constexpr (nlr_spec_has_modeb_eval_omp<Spec>::value) {
-        return Spec::modeb_eval_omp;
-    } else {
-        return ModeBEvalOMP::SerialOnly;
-    }
+    static_assert(nlr_spec_has_modeb_eval_omp<Spec>::value,
+                  "every Spec declares its eval tier; a loop is never serialised by omission");
+    return Spec::modeb_eval_omp;
 }
 
 /* ============================================================================
@@ -620,18 +619,22 @@ constexpr ModeAPairAssignment nlr_mode_a_pair_policy() {
  * and no reason to run a team wider than the work. */
 #define NLR_TEAM_WIDTH_LOWDIM         2
 
-/* Human-readable tier label for the GX_MODEB_EXPORT eval-threading audit field.
- * A resolved SerialOnly prints "(explicit)" vs "(missing_trait)" so justified
- * serial rows are distinguishable from unaudited specs that forgot the trait. */
-inline const char *nlr_modeb_eval_omp_label(ModeBEvalOMP tier, bool is_explicit) {
-    switch(tier) {
-        case ModeBEvalOMP::BitwiseReadonly: return "BitwiseReadonly";
-        case ModeBEvalOMP::EpsilonAtomic:   return "EpsilonAtomic";
-        case ModeBEvalOMP::SerialOnly:
-            return is_explicit ? "SerialOnly(explicit)" : "SerialOnly(missing_trait)";
-    }
-    return "SerialOnly(missing_trait)";
-}
+/* Optional Spec::needs_live_neighbours (bool). A kernel that reads a
+ * neighbour's state -- its mass, density, composition -- while it and other
+ * sources are changing that state needs the owner's live particle: evaluated
+ * on an imported ghost copy, the reads lag whatever the owner and the other
+ * ranks have deposited since the copy was taken, and the deltas shipped home
+ * are then applied to a particle in a different state from the one they were
+ * computed for. Such a loop is never routed to Mode A; it is answered by the
+ * host walker or by Mode D, both of which evaluate where the neighbour lives.
+ * Absent means false. */
+template <typename Spec, typename = void>
+struct nlr_spec_needs_live_neighbours : std::false_type {};
+template <typename Spec>
+struct nlr_spec_needs_live_neighbours<Spec, std::void_t<decltype(Spec::needs_live_neighbours)>>
+    : std::integral_constant<bool, Spec::needs_live_neighbours> {};
+template <typename Spec>
+constexpr bool nlr_spec_needs_live_neighbours_v = nlr_spec_needs_live_neighbours<Spec>::value;
 
 /* SFINAE detection of optional Spec::bind_active_to_eval_context.
  *
@@ -985,6 +988,12 @@ struct NlrSubgroup {
     unsigned int j_type_bitmask;       /* per-subgroup neighbor type mask */
     int         *active_indices;       /* host-staged; sub_actives for this bm */
     int          num_active_local;     /* may be 0 on this rank */
+    /* args.active_list is the ordered concatenation of the subgroups'
+     * active_indices: entry k of subgroup sg is entry (sum of the earlier
+     * subgroups' num_active_local) + k of the call's list. That is the slot a
+     * Spec's call-level staging (populate_device_context, after_iter_global)
+     * is laid out by and the one load_active receives. The driver checks the
+     * identity at construction and stops the run if a caller breaks it. */
     /* Runner-derived per call (filled by NlrIterDriver, NOT by the caller):
      *   per-sub_active radii UVM, active_set UVM, per-subgroup CSR cache
      *   on Mode A. Out-of-band from this struct. */
@@ -1086,6 +1095,11 @@ enum class DispatchPath : int {
  *                             const CallScalars& cs);
  *
  *     // (8) Per-active and per-call hooks
+ *     // Two slot namespaces. The host hooks that take an args view
+ *     // (search_radius, apply_active_writeback) receive a slot into THAT
+ *     // view's active_list, which for an iterative Spec is one subgroup's
+ *     // list; the view does not rebase the Spec's aux arrays. load_active
+ *     // has no args view: its slot indexes the call-level staging.
  *     static double      search_radius(const neighbor_loop_args& args,
  *                                      int active_slot, int i);
  *     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
@@ -1365,8 +1379,16 @@ struct neighbor_loop_args {
     struct particle_data *P;
     struct gas_cell_data *CellP;
     int    num_total;
-    int   *active_list;          /* args.active_list[slot] = particle index */
+    int   *active_list;          /* args.active_list[k] = particle index */
     int    num_active;
+    /* Which entry of the CALLER's active_list each entry of this list is.
+     * The per-active state a Spec stages in populate_device_context and reads
+     * back in load_active is laid out in the caller's order, so a list that
+     * is a compaction or a subgroup of the caller's carries its entries'
+     * original positions here; load_active is handed active_call_slot[k], never
+     * k. nullptr means this list IS the caller's list and position k is slot k.
+     * Set by the runner when it narrows a list; a caller leaves it null. */
+    const int *active_call_slot;
     void  *aux;                  /* spec-defined POD for per-active side arrays;
                                   * recover the typed pointer with nlr_aux<Spec>(args). */
     double ghost_safety_factor;  /* caller fills via gizmo_ghost_safety_factor()
@@ -1508,7 +1530,11 @@ struct NeighborLoopPlan {
                           * — future work may swap helpers without changing
                           * the path. Do not equate Mode A with "global drift". */
         ModeB_Local,     /* Host walker on local pool; no global mutation. */
-        ModeB_Remote     /* peer-to-peer request/reply; no global mutation. */
+        ModeB_Remote,    /* peer-to-peer request/reply; no global mutation. */
+        ModeD_DeviceFused /* the request/reply transport with the owner's walk
+                          * and evaluation fused on the device; reads the
+                          * arena, drifts only what the walk touches, imports
+                          * nothing. Chosen only in builds with NEIGHBOR_LOOP_MODE_D. */
         /* Future paths: add cases here AND to nlr_path_*() predicates below. */
     };
     Path path;
@@ -1771,6 +1797,8 @@ struct NlrIterDriver {
     std::vector<double *>                     radii_uvm;       /* [num_subgroups][num_active_local] */
     std::vector<int    *>                     active_set_uvm;  /* [num_subgroups][num_active_local], compacted */
     std::vector<int>                          active_set_size; /* [num_subgroups], shrinks on Converged compaction */
+    std::vector<int>                          call_slot_base;  /* [num_subgroups]: position of the subgroup's
+                                                                 * entry 0 in the call's active_list (NlrSubgroup) */
 
     /* Mode A iterative cached CSR/session state.
      * Allocated lazily on first Mode A iter dispatch; left empty on Mode B paths.

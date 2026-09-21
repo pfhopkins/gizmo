@@ -620,7 +620,7 @@ struct SinkSwkSpec {
      * ==================================================================== */
 
     static constexpr const char *loop_name = "sink_swk";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::SerialOnly; /* SerialOnly (structural): reads live Pj.Mass then atomic_add(&Pj.Mass) (read-then-add accretion drain); promotable to EpsilonAtomic only via a dedicated single-drainer-invariant audit */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* a cell is drained only by the one sink whose ID it carries in SwallowID, so the read-then-add on its mass has a single writer; the kicks to unswallowed neighbours are order-independent atomics */
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;
     static constexpr unsigned int            neighbor_type_mask = (unsigned int)SINK_NEIGHBOR_BITFLAG;

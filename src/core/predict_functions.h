@@ -183,11 +183,12 @@ void advect_mesh_point_P(int i, double dt, struct particle_data *pp, struct gas_
         const double vt = v_t.norm();
         const double r_new = r + v_r * dt;
         Vec3<double> e_r_new = e_r, e_t_new = {};
-        if(vt > 0 && r_new > 0)
+        if(r_new <= 0) {pp[i].Pos += v * dt; return;}    /* carried through the axis in one step: the turn is undefined, so advance straight */
+        if(vt > 0)
         {
             /* The angle is the tangential distance over the radius the point ends up at, so the
-               step is exactly the radial advance beside a chord no longer than v_t dt: a
-               displacement of at most |v| dt, which is what the tree's motion bound assumes. */
+               chord it turns through is no longer than v_t dt, beside a radial advance of
+               |v_r| dt: a displacement of at most (|v_r| + |v_t|) dt (particle_motion_speed_bound). */
             const Vec3<double> e_t = v_t / vt;
             const double angle = vt * dt / r_new, c = cos(angle), s = sin(angle);
             e_r_new = c * e_r + s * e_t;      // the direction turned through the swept angle
@@ -246,11 +247,10 @@ double particle_motion_speed_bound(int i, const struct particle_data *pp, const 
     double ax = fabs(vx), ay = fabs(vy), az = fabs(vz);
     double bound = ax; if(ay > bound) {bound = ay;} if(az > bound) {bound = az;}
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3))
-    /* The curvilinear mesh motion (advect_mesh_point_P) advances the radius at the radial speed and
-       turns the point through the angle its tangential speed sweeps at the NEW radius, so the step
-       is a radial |v_r| dt beside an orthogonal chord no longer than |v_t| dt: within |v| dt along
-       every axis. */
-    if(pp[i].Type == 0) {bound = sqrt(vx*vx + vy*vy + vz*vz);}
+    /* The curvilinear mesh motion (advect_mesh_point_P) advances the radius by |v_r| dt and turns
+       the point through a chord no longer than |v_t| dt; the two are not orthogonal, so the step is
+       within (|v_r| + |v_t|) dt <= sqrt(2) |v| dt along every axis. */
+    if(pp[i].Type == 0) {bound = 1.4142135623730951 * sqrt(vx*vx + vy*vy + vz*vz);}
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0) && !defined(FREEZE_HYDRO)
     if((pp[i].Type == 5) && (pp[i].SuperTimestepFlag >= 2))
