@@ -148,10 +148,15 @@
  * once for all of them, every member judges each node by its own opening criterion, and each
  * member then evaluates the elements it accepted, so its force is exactly what its own walk would
  * produce. What is shared is the traversal, which is most of the cost where a few targets descend
- * a locally very deep tree. 1 walks every target alone, the historical walk. No single value suits
- * every problem or machine; override in Config.sh. */
+ * a locally very deep tree. 1 walks every target alone, the historical walk.
+ *
+ * No single value suits every problem or machine. Measured on a clustered cosmological zoom at 128
+ * ranks, 8 cut the host walk by 14% and was never slower than 1 on any class of step, while 64 gave
+ * the same gain on the steps that matter most but cost more on the many tiny steps, where a large
+ * packet does far more opening-criterion work than the node loads it shares; so 8 is the default.
+ * Override in Config.sh. */
 #ifndef TREE_QUERY_PACKET_SIZE
-#define TREE_QUERY_PACKET_SIZE 1
+#define TREE_QUERY_PACKET_SIZE 8
 #endif
 #if TREE_QUERY_PACKET_SIZE < 1
 #error "TREE_QUERY_PACKET_SIZE must be at least 1 (1 = every target walks the tree alone)"
