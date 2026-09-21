@@ -369,6 +369,10 @@ void run(void)
                 const double t_tree_update_start = my_second();
                 const double child0_tree_update = CPU_ChildCharged;
                 force_update_tree();
+                /* The neighbour indexes a fused loop discovers in carry the same
+                 * kind of motion bound as the tree's nodes, raised from the same
+                 * closed-out active list. */
+                nlr_mode_d_note_active_motion();
                 cpu_charge_child(CPU_FORCE_UPDATE_TREE,
                                  cpu_minus_children(timediff(t_tree_update_start, my_second()), child0_tree_update));
             }

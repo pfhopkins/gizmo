@@ -40,6 +40,7 @@
 
 #include "neighbor_loop_runner.h"
 #include "gpu_neighbor_list.h"
+#include "sfc_tiles_functions.h"       /* GxOwnedTileRaise, for the active-motion pass */
 #include "device_tree_walk.h"          /* the one device traversal; Mode D enters it from the root */
 #include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
@@ -4355,6 +4356,61 @@ struct NlrPeerAnswerDeviceFused {
         }
     }
 };
+
+/* The kick a particle received this step can raise the speed its tile's box
+ * is bounded by.  Every owned tile index resident on this rank is raised here,
+ * for every particle in the closed-out active list, in one pass tiered like
+ * the fused walks.  Reads only the particles that were kicked and the chain of
+ * nodes above each, so a step with a handful of actives costs a handful of
+ * raises.  The list is copied to shared space for the device tier; that copy
+ * is the pass's own and is freed with it. */
+#ifdef NEIGHBOR_LOOP_MODE_D
+/* Every resident index's raise object, as one plain value a kernel captures.
+ * Named at file scope: a device lambda may not capture a type local to the
+ * function it appears in. */
+struct NlrOwnedTileRaiseSet {
+    struct GxOwnedTileRaise t[GX_OWNED_TILE_INDEX_MAX_RESIDENT];
+    int n;
+};
+#endif
+
+void nlr_mode_d_note_active_motion(void)
+{
+#ifdef NEIGHBOR_LOOP_MODE_D
+    struct GxOwnedTileRaise targets[GX_OWNED_TILE_INDEX_MAX_RESIDENT];
+    const int n_targets = gx_owned_tile_index_raise_targets(targets, GX_OWNED_TILE_INDEX_MAX_RESIDENT);
+    const int n = (int)ActiveParticleList.size();
+    if(n_targets <= 0 || n <= 0) {return;}
+    const struct particle_data *P_res = gpu_particles_arena_P();
+    const struct gas_cell_data *C_res = gpu_particles_arena_CellP();
+    if(!P_res) {return;}
+    int *active = (int *)nlr_shared_alloc_bytes((size_t)n * sizeof(int), "moded_motion_active");
+    if(!active) {
+        /* Without the list the bounds cannot be raised, and a bound that is
+         * not raised under-includes silently. The stop is already requested by
+         * the allocator; say what it costs here. */
+        if(ThisTask == 0) {
+            fprintf(stderr, "nlr_mode_d_note_active_motion: no memory for %d active indices; owned tile indexes released\n", n);
+            fflush(stderr);
+        }
+        gx_owned_tile_index_release_all();
+        return;
+    }
+    for(int k = 0; k < n; k++) {active[k] = ActiveParticleList[k];}
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    /* Captured by value: a small array of plain pointers and counts. */
+    NlrOwnedTileRaiseSet tg;
+    for(int k = 0; k < GX_OWNED_TILE_INDEX_MAX_RESIDENT; k++) {tg.t[k] = (k < n_targets) ? targets[k] : GxOwnedTileRaise{};}
+    tg.n = n_targets;
+    nlr_walk_for_sources("nlr_mode_d_note_active_motion", n, KOKKOS_LAMBDA(int k) {
+        const int i = active[k];
+        const double vmax = particle_motion_speed_bound(i, P_res, C_res);
+        for(int m = 0; m < tg.n; m++) {tg.t[m].raise(i, vmax);}
+    });
+    Kokkos::fence();
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(active);
+#endif
+}
 
 /* ============================================================================
  * nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg).

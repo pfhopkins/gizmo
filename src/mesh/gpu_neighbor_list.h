@@ -439,4 +439,76 @@ void gx_touched_set_drift_and_mark(integertime time1);
    domain epoch: the storage is persistent by design. */
 void gx_touched_set_release(void);
 
+/* ============================================================================
+ * The owned-particle tile index a fused walk discovers neighbours in.
+ *
+ * A fused loop (Mode D) evaluates each seeker's pair kernel on the rank that
+ * OWNS the neighbours, reading them live.  What it needs from an index is only
+ * which owned particles a query can reach: no ghost segment (the peers answer
+ * for their own particles), no candidate list, no cached positions or reaches
+ * (the leaf reads P[j] itself, and a one-way walk opens on the query's reach
+ * alone).  So this is a different object from the step's neighbour-list index
+ * above, which carries ghosts, compact positions and per-type reaches for the
+ * list build and is refreshed with a pass over the whole pool at every reuse.
+ *
+ * It is built from the same tiles and BVH (sfc_tiles.h), by the same builders,
+ * and walked by the same traversal (sfc_tiles_functions.h) -- so there is one
+ * tiling rule, one opener and one wrap convention -- but it is kept for as
+ * long as its MEMBERSHIP holds and never refreshed: its boxes are read as
+ * motion bounds (vmax, t_ref on every tile and node, widened at visit), which
+ * is what lets a step with a handful of active particles touch nothing
+ * proportional to the rank.  The bound is raised for every particle that is
+ * kicked (nlr_mode_d_note_active_motion, once per step) and rebuilt when the
+ * membership changes or a full drift has made every position current again --
+ * both of which are events that already cost a pass over the rank.
+ *
+ * One index per supply mask in use, a few resident at once; the runner holds
+ * its index for the length of a call, so nothing in use is ever released.  The
+ * arrays are in shared space: the host builds them, the kick pass raises the
+ * bounds from whichever tier runs it, and both tiers of the walk read them --
+ * one residence, as the gravity tree's mirror is kept.
+ * ========================================================================== */
+
+/* What a walk needs.  Plain data, captured by value into a kernel. */
+struct GxOwnedTileView {
+    const sfc_tile_t      *tiles    = nullptr;
+    const tile_bvh_node_t *bvh      = nullptr;
+    const int             *pool     = nullptr;
+    int                    bvh_root = -1;    /* -1: an empty index, walks nothing */
+    int                    local_particle_slots = -1;
+    struct DriftKickTableView drift_tables{};
+    int                    drift_tables_ok = 0;
+    integertime            ti_now = 0;
+};
+
+/* Ready the index for `mask` on this rank and describe it.  Returns 0 with
+ * `out` filled, or 1 with the index unavailable (out of memory, reported), in
+ * which case the caller declines the device walk for the call.  An index with
+ * no members is a valid, empty one.  Called once per fused call, before any
+ * discovery round; the index is then held until the call ends. */
+int  gx_owned_tile_index_prepare(unsigned int mask, struct GxOwnedTileView *out, const char *caller);
+void gx_owned_tile_index_end_call(void);
+
+/* The raise object (GxOwnedTileRaise) is defined in sfc_tiles_functions.h: it
+ * uses device atomics, and that header is included only by units that carry
+ * Kokkos. */
+struct GxOwnedTileRaise;
+/* The raise objects of every resident index (none of them may be mid-build).
+ * `n` says how many; a zero means nothing is live and the kick pass is a no-op. */
+#define GX_OWNED_TILE_INDEX_MAX_RESIDENT 3
+int  gx_owned_tile_index_raise_targets(struct GxOwnedTileRaise *out, int max_out);
+
+/* Released at shutdown before Kokkos is finalized, and by the full invalidate
+ * when the particle layout changes. */
+void gx_owned_tile_index_release_all(void);
+
+/* Raise every resident index's motion bounds for the particles whose kick has
+ * just been closed out.  Called once per step from the run loop, right after
+ * the tree's own kick update and before the active list is rebuilt, so it sees
+ * the list the tree update saw.  A no-op when no index is live; defined with
+ * the fused walks (mesh/neighbor_loop_runner.cc), whose tiering it shares, and
+ * compiled to nothing without NEIGHBOR_LOOP_MODE_D. */
+void nlr_mode_d_note_active_motion(void);
+
+
 #endif /* GPU_NEIGHBOR_LIST_H */
