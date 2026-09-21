@@ -63,6 +63,7 @@ struct SinkSwallowLocalIn {
     MyFloat Dt;
     MyFloat Mdot;
     MyIDType ID;
+    MyIDType claim_token;   /* must match what sink_feed wrote into SwallowID */
     MyIDType ID_child_number;
     MyIDType ID_generation;
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS) || defined(SINK_WIND_KICK)
@@ -308,7 +309,7 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
 
     double f_accreted = 0;
 
-    if(neighbor_particle.SwallowID == local.ID && Mass_j > 0 && r2 > 0) {
+    if(neighbor_particle.SwallowID == local.claim_token && Mass_j > 0 && r2 > 0) {
         f_accreted = 1;
 #ifdef SINK_WIND_KICK
         if(neighbor_particle.Type == 0) {

@@ -192,24 +192,33 @@ KOKKOS_INLINE_FUNCTION peanokey gpu_peano_and_morton_key(uint64_t  x,
 }
 
 /* Walk the TopNodes tree using the Peano-Hilbert key and return the
- * topleaf id (0..NTopleaves).  Mirrors gravity/forcetree.cc lines 243-249.
+ * topleaf id (0..NTopleaves).
  *
  *   tn         -- device-accessible TopNodes mirror
  *   key        -- particle's Peano-Hilbert key
  *
  * Returns leaf id; caller can index DomainNodeIndex[leaf] for the absolute
  * Nodes[] slot if needed.  Invariant: tn[no].Daughter < 0 marks a leaf
- * in the topnode tree. */
+ * in the topnode tree.
+ *
+ * The child index is the three key bits for this level, taken as a field.  Read that way it is
+ * 0..7 for ANY key whatsoever, so the descent stays inside the daughter block by construction and
+ * cannot run off tn[].  Deriving it arithmetically instead -- (key - StartKey) / (Size/8) -- agrees
+ * on a well-formed top tree, where Size is a power of eight and StartKey is aligned, but it is only
+ * as bounded as its inputs: peanokey is signed, so a key below StartKey yields a negative index and
+ * one past the node's span yields 8 or more.  The two host copies of this descent
+ * (domain_toptree_leaf, ghost_toptree_leaf) have always used the field form; this is the same
+ * algorithm, and it drops a 128-bit division from a per-particle device path. */
 KOKKOS_INLINE_FUNCTION int gpu_topleaf_for_key(const struct topnode_data *tn,
                                                peanokey                   key)
 {
-    int no = 0;
+    int      no    = 0;
+    peanokey mask  = ((peanokey)7) << (3 * (BITS_PER_DIMENSION - 1));
+    int      shift = 3 * (BITS_PER_DIMENSION - 1);
     while(tn[no].Daughter >= 0) {
-        peanokey rel  = (peanokey)(key - tn[no].StartKey);
-        peanokey size = tn[no].Size;
-        peanokey step = (peanokey)(size / 8);
-        int      child= (int)(rel / step);
-        no = tn[no].Daughter + child;
+        no = tn[no].Daughter + (int)((key & mask) >> shift);
+        mask >>= 3;
+        shift -= 3;
     }
     return tn[no].Leaf;
 }

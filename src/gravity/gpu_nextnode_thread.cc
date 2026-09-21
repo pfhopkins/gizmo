@@ -102,6 +102,7 @@ extern "C" int gpu_nextnode_thread(void)
     int          *nextnode_soa= soa->nextnode;
     int          *aux_soa     = soa->nextnode_aux;
 
+
     Kokkos::parallel_for("nx_thread", n, KOKKOS_LAMBDA(int k) {
         /* k is the SoA index (0..n).  Internal-node id = tree_base + k. */
         long base = (long)k * 8;
@@ -134,7 +135,9 @@ extern "C" int gpu_nextnode_thread(void)
             int succ = (next >= 0) ? next : sibling_soa[k];
             /* Write successor for prev_id based on its type. */
             if(prev_id < part_slots) {
-                /* particle */
+                /* Particle child.  A leaf holding several particles is represented here by its head
+                 * alone: the successor written now is moved onto the leaf's last member, and the
+                 * members are linked, by gpu_leaf_chain_materialize once this pass has run. */
                 aux_soa[prev_id] = succ;
             } else if(prev_id >= tree_base + MaxNodes_ + MaxForeignNodes_) {
                 /* pseudo-particle (the foreign-node range sits below pseudos in the index
@@ -158,6 +161,7 @@ extern "C" int gpu_nextnode_thread(void)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("nx_thread", n);
+
 
     /* Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
      * Internal-node Nodes[].u.d.nextnode writeback runs on the

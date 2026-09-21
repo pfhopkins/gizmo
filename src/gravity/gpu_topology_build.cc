@@ -22,6 +22,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_morton.h"
 #include "gpu_morton_functions.h"
@@ -50,6 +51,40 @@ static int  g_topleaf_cap         = 0;
  * Scratch-owned + reset per build: set definitively in gpu_topology_build_data_path
  * before it can be consumed, stays valid through gpu_topology_emit_bfs (incl.
  * overflow/retry), freed in gpu_topology_build_release. */
+/* One record per tree leaf holding more than one particle, produced while the tree is emitted and
+ * consumed by the three passes that finish the build: the members' Father[] entries, the capture of
+ * the leaf's traversal successor, and the write of the member chain itself.  Holding the leaf's
+ * range rather than its particles keeps this to four integers per leaf, and the head and tail are
+ * recovered from the range when they are needed.
+ *
+ * Scratch, not tree state: it is reset at the start of every emit (a build that is retried must not
+ * see the previous attempt's records) and released once the chain has been written, before anything
+ * can insert into the tree.  A leaf's membership is therefore never described anywhere that could go
+ * stale, which is the same reason no member count is kept on the node.
+ *
+ * A leaf recorded here holds at least two particles, so there can be no more than half as many
+ * records as there are particle slots. */
+#if TREE_LEAF_BUCKET_SIZE > 1
+struct LeafChainRecord {
+    int range_first;   /* first member, as an index into the build's sorted order */
+    int count;         /* members, always >= 2 */
+    int parent_abs;    /* the node they hang from, as an absolute tree index */
+    int successor;     /* where the walk goes after this leaf; filled in after threading */
+};
+static struct LeafChainRecord *g_leaf_chain = NULL;
+static int  *g_leaf_chain_n   = NULL;   /* device-visible count, reset per emit */
+static int   g_leaf_chain_cap = 0;
+#endif
+
+#if TREE_LEAF_BUCKET_SIZE > 1
+static inline bool leaf_members_run_flat(void)
+{
+    /* Below this many members a team per leaf costs more in idle lanes than the division saves. */
+    const int lanes_worth_dividing = 16;
+    return gizmo_gpu_default_space_is_host() || (TREE_LEAF_BUCKET_SIZE < lanes_worth_dividing);
+}
+#endif
+
 static int *g_slot_to_particle    = NULL;  /* [npart]; real index per build slot */
 static int  g_slot_cap            = 0;     /* own capacity: lazily grown only for subset builds */
 static int  g_slot_map_active     = 0;     /* 1 iff this build is a non-identity subset */
@@ -68,6 +103,13 @@ static int  g_retained_n          = 0;
  * applied, or -1.  Positions, TopNodes and the retained attachment do not change while a build
  * retries for a larger arena, so the work is done once and every attempt reuses it. */
 static int  g_prepared_npart      = -1;
+#if TREE_LEAF_BUCKET_SIZE > 1
+/* How many particles the sorted order above currently describes.  A build may cover an arbitrary
+ * subset of the particles, so this is not the tree's capacity and not the scratch's capacity: it is
+ * the extent that leaf records are checked against.  Only leaves holding several particles are
+ * described by range, so this is not kept when they cannot occur. */
+static int  g_sorted_npart        = 0;
+#endif
 
 /* Allocate/grow a SharedSpace int buffer. `label` is a stable string literal
    (the memory ledger classifies allocations by label; a stack buffer must not be
@@ -146,6 +188,12 @@ static int topo_acquire_(int npart, const struct unbind_data *mp, const char *si
         if(!g_sorted_idx || !g_particle_topleaf) {g_npart_cap = 0; return 1;}
         g_npart_cap = npart;
     }
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* The particle count THIS build sorts.  Set here, where the sorted order is established, so it
+     * is right for a subset build too: the retained-attachment prepass runs only for a whole-tree
+     * build, so a bound taken from there is absent exactly when a group or subset tree is built. */
+    g_sorted_npart = npart;
+#endif
 
     /* Subset build ONLY: lazily allocate (own capacity) + stage the real-particle
      * index per slot. Identity/full builds (mp==NULL) keep g_slot_to_particle NULL
@@ -237,13 +285,24 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
          * and of the rounding in forming the fraction, while being geometrically nothing: a top-leaf
          * is many orders of magnitude wider than a key cell. */
         const double clamp_backoff = 2.0 * dlen / 4398046511104.0;   /* 2^42 */
-        int *bad = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+        /* Bounds for the leaf's node in THIS tree.  The attachment was checked against the standing
+         * tree's DomainNodeIndex before the build; that array has since been refilled by
+         * force_create_empty_nodes, and TreeNodeIndexBase and MaxNodes can both have moved with it,
+         * so the earlier check says nothing about the index dereferenced here. */
+        const int tbase = All.TreeNodeIndexBase, maxn = MaxNodes;
+        /* [0] clamped outside their leaf, [1] leaf with no usable node here, [2]/[3] the first such
+         * leaf and index, so the report names a case instead of only counting them. */
+        int *bad = (int *) gizmo_gpu_alloc_shared(4 * sizeof(int), "treescratch_build_ctr");
         if(!bad) {printf("gpu_topology_build: retained clamp counter alloc failed\n"); return 1;}
-        *bad = 0;
+        bad[0] = 0; bad[1] = 0; bad[2] = -1; bad[3] = -1;
         Kokkos::parallel_for("topo_retained_clamp", nret, KOKKOS_LAMBDA(int j) {
             int i = ret[j];
             int leaf = pt[i];
-            int nd = dni[leaf];
+            int nd = (leaf >= 0 && leaf < ntl) ? dni[leaf] : -1;
+            if(nd < tbase || nd >= tbase + maxn) {
+                if(Kokkos::atomic_fetch_add(&bad[1], 1) == 0) {bad[2] = leaf; bad[3] = nd;}
+                return;
+            }
             Vec3<double> sep = {(double)P_dev[i].Pos[0] - (double)Nodes_uvm[nd].center[0],
                                 (double)P_dev[i].Pos[1] - (double)Nodes_uvm[nd].center[1],
                                 (double)P_dev[i].Pos[2] - (double)Nodes_uvm[nd].center[2]};
@@ -258,14 +317,30 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
              * a level at a time burning a node per level until the softening floor hands it to the
              * randomized path.  Scaling the whole separation instead keeps the direction, so those
              * particles land on distinct points of the face and sort apart as they should.
-             * Only the all-three case is treated: it is the sole population that corner-collapses,
-             * and rescaling a particle that is outside on one or two axes would move coordinates
-             * that were exact, degrading the key for the common crossing. */
+             *
+             * Two saturated axes collapse the same way whenever the third coordinate is shared --
+             * the pair goes to (+-inner, +-inner) and only the unshared axis could have told them
+             * apart.  So the projection runs whenever at least two axes saturate, over just those
+             * axes: the saturated components are scaled by the largest of themselves, which lands
+             * that one on the face and the rest inside, while every unsaturated component is left
+             * exactly as it was.  With three saturated axes this is the same arithmetic as before.
+             *
+             * One saturated axis is NOT covered and cannot be by this means: with a single
+             * component to scale, every particle on that side of the face still maps to +-inner,
+             * and a population sharing the other two coordinates -- a line -- still collapses.
+             * That case needs the other two coordinates to differ, which is what the common
+             * crossing has. */
             const double ax = fabs(sep[0]), ay = fabs(sep[1]), az = fabs(sep[2]);
-            if(ax > inner && ay > inner && az > inner) {
-                double mx = ax; if(ay > mx) {mx = ay;} if(az > mx) {mx = az;}
+            const int sat0 = (ax > inner), sat1 = (ay > inner), sat2 = (az > inner);
+            if(sat0 + sat1 + sat2 >= 2) {
+                double mx = 0.0;
+                if(sat0 && ax > mx) {mx = ax;}
+                if(sat1 && ay > mx) {mx = ay;}
+                if(sat2 && az > mx) {mx = az;}
                 const double scale = (mx > 0.0) ? (inner / mx) : 0.0;
-                sep[0] *= scale; sep[1] *= scale; sep[2] *= scale;
+                if(sat0) {sep[0] *= scale;}
+                if(sat1) {sep[1] *= scale;}
+                if(sat2) {sep[2] *= scale;}
             } else {
                 for(int d = 0; d < 3; d++) {
                     if(sep[d] >  inner) {sep[d] =  inner;}
@@ -278,12 +353,21 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
                                                   (double)Nodes_uvm[nd].center[2] + sep[2],
                                                   dc0, dc1, dc2, dlen, bits, &m);
             keys[i] = m;
-            if(gpu_topleaf_for_key(tn, pkey) != leaf) {Kokkos::atomic_fetch_add(bad, 1);}
+            if(gpu_topleaf_for_key(tn, pkey) != leaf) {Kokkos::atomic_fetch_add(&bad[0], 1);}
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("topo_retained_clamp", nret);
-        int nbad = *bad;
+        int nbad = bad[0], nbadnode = bad[1], badleaf = bad[2], badnode = bad[3];
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(bad);
+        if(nbadnode) {
+            printf("gpu_topology_build: task %d holds %d of %d retained particles whose top-leaf has no "
+                   "node in the tree just built (first: leaf %d -> node %d, valid range [%d,%d)); the "
+                   "attachment was checked against the standing tree, whose DomainNodeIndex this build "
+                   "has already replaced.\n",
+                   ThisTask, nbadnode, nret, badleaf, badnode, tbase, tbase + maxn);
+            endrun(91570);
+            return 1;
+        }
         if(nbad) {
             printf("gpu_topology_build: task %d clamped %d of %d retained particles outside the top-leaf "
                    "they were clamped into; the key and the top-tree geometry disagree.\n",
@@ -488,6 +572,7 @@ extern "C" int gpu_topology_grow_retained_paths(void)
     const int *ret = g_retained_slots;
     const int  nret = g_retained_n;
     const int  tbase = All.TreeNodeIndexBase, maxn = MaxNodes;
+    const int  ntl = NTopleaves;
     struct NODE *Nodes_uvm = Nodes;
     const int   *father    = Father;
     int         *pt        = g_particle_topleaf;
@@ -500,7 +585,9 @@ extern "C" int gpu_topology_grow_retained_paths(void)
 
     Kokkos::parallel_for("topo_retained_grow", nret, KOKKOS_LAMBDA(int j) {
         int i = ret[j];
-        int leaf_node = dni[pt[i]];
+        /* Same index, same reason as the clamp: bound the leaf before reading the map. */
+        const int lf = pt[i];
+        int leaf_node = (lf >= 0 && lf < ntl) ? dni[lf] : -1;
         int no = father[i];
         volatile int reached_leaf = 0;
         for(int guard = 0; guard < GIZMO_GPU_MORTON_MAX_DEPTH + 8; guard++) {
@@ -555,6 +642,7 @@ struct BfsItem {
 
 }  /* anonymous namespace */
 
+
 extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_out)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -598,6 +686,43 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         printf("gpu_topology_emit_bfs: SoA core fields not allocated\n");
         return 3;
     }
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* Records for the leaves that hold more than one particle.  A recorded leaf has at least two
+     * members, so half the particle slots is an exact bound and the allocation never has to grow
+     * mid-build.  The count is reset here rather than where the memory is taken, so that a build
+     * which is retried after an overflow starts from an empty list instead of appending to the
+     * abandoned attempt's records. */
+    {
+        /* Sized to the particles THIS build covers, which for a subset build is far fewer than the
+         * tree's capacity; a recorded leaf holds at least two of them, so half is an exact bound. */
+        if(g_sorted_npart <= 0) {
+            printf("gpu_topology_emit_bfs: rank %d has no sorted order to describe leaves against\n", ThisTask);
+            fflush(stdout);
+            return 3;
+        }
+        const int cap_needed = g_sorted_npart / 2 + 1;
+        if(g_leaf_chain_cap < cap_needed) {
+            if(g_leaf_chain) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);}
+            g_leaf_chain = (struct LeafChainRecord *) gizmo_gpu_alloc_shared(
+                (long) cap_needed * sizeof(struct LeafChainRecord), "treescratch_build_leaf_chain");
+            g_leaf_chain_cap = g_leaf_chain ? cap_needed : 0;
+        }
+        if(!g_leaf_chain_n) {
+            g_leaf_chain_n = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+        }
+        if(!g_leaf_chain || !g_leaf_chain_n) {
+            printf("gpu_topology_emit_bfs: rank %d could not reserve %d leaf records; the tree is not\n"
+                   "built rather than retried, because this is an allocation failure and not a shortage\n"
+                   "of tree nodes.\n", ThisTask, cap_needed);
+            fflush(stdout);
+            return 3;
+        }
+        *g_leaf_chain_n = 0;
+    }
+    struct LeafChainRecord *chain_out = g_leaf_chain;
+    int *chain_n   = g_leaf_chain_n;
+    int  chain_cap = g_leaf_chain_cap;
+#endif
 
     int ntl       = NTopleaves;
     int max_nodes = MaxNodes;
@@ -664,6 +789,7 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         printf("gpu_topology_emit_bfs: worklist overflow at init\n");
         return rc;
     }
+
 
     /* BFS loop: each iteration processes wl_curr, populates wl_next. */
     Kokkos::View<BfsItem*, MemSpace> wl_curr = wl_a;
@@ -742,10 +868,39 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 int cnt = rl - rf;
                 int slot_value = -1;
 
+#if TREE_LEAF_BUCKET_SIZE == 1
                 if(cnt == 1) {
-                    /* Single particle: store its REAL P[] index directly as a leaf
-                     * (subset builds map slot->particle; identity: slot==real). */
+#else
+                if(cnt >= 1 && cnt <= TREE_LEAF_BUCKET_SIZE) {
+#endif
+                    /* Terminal leaf: this child holds few enough particles that subdividing it
+                     * further costs more tree than it saves work, so it is not split at all.  The
+                     * slot carries the FIRST particle; at a leaf size above one the rest are
+                     * linked behind it once the leaf's successor is known, so a walk reaches them
+                     * exactly as it reaches any run of particles and no walker learns a new node
+                     * kind.  The member count is NOT stored on the tree, because particles are
+                     * inserted into a live tree without a rebuild and any cached count would go
+                     * stale; the record written below describes this build only and is retired
+                     * before anything can insert.
+                     *
+                     * At TREE_LEAF_BUCKET_SIZE == 1 the test above is `cnt == 1` and nothing but
+                     * the slot is written: the historical single-particle leaf, exactly. */
                     slot_value = stp ? stp[sidx[rf]] : sidx[rf];
+#if TREE_LEAF_BUCKET_SIZE > 1
+                    if(cnt > 1) {
+                        /* Record the leaf and move on.  Linking the members here would make one
+                         * thread walk the whole leaf while its neighbours handle one particle each,
+                         * which is the imbalance this tree is being changed to avoid; the links are
+                         * written later, one thread per member. */
+                        const int slot = Kokkos::atomic_fetch_add(chain_n, 1);
+                        if(slot < chain_cap) {
+                            chain_out[slot].range_first = rf;
+                            chain_out[slot].count       = cnt;
+                            chain_out[slot].parent_abs  = tree_base + w.parent_soa;
+                            chain_out[slot].successor   = -1;
+                        }
+                    }
+#endif
                 } else if(cnt > 1) {
                     /* Allocate a new internal node from the device counter.
                      * Collocation in the sub-range is OK -- the next BFS
@@ -794,6 +949,83 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         level_guard++;
     }
 
+
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* Check every record before anything indexes through one.  These replaced the chain guards that
+     * used to sit in the passes themselves, so they are now the only thing standing between a
+     * miswritten range and a device read at an arbitrary offset; checking here means neither
+     * consumer has to, and neither is the first place a bad range would be noticed.  Reported with
+     * the offending record rather than as a count, because one bad range is a build fault and the
+     * rest tell you nothing further. */
+    if(*g_leaf_chain_n >= 0 && *g_leaf_chain_n <= g_leaf_chain_cap) {
+        const int nrec_chk = *g_leaf_chain_n;
+        const struct LeafChainRecord *chk = g_leaf_chain;
+        const int *sidx_chk  = g_sorted_idx;
+        const int *stp_chk   = g_slot_map_active ? g_slot_to_particle : NULL;
+        const int  np_chk    = g_sorted_npart;
+        const int  slots_chk = All.TreeParticleSlots;
+        const int  node_lo   = tree_base, node_hi = tree_base + max_nodes;
+        int *badrec = (int *) gizmo_gpu_alloc_shared(2 * sizeof(int), "treescratch_build_ctr");
+        if(!badrec) {
+            printf("gpu_topology_emit_bfs: could not allocate the record check\n");
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+            return 3;
+        }
+        badrec[0] = -1; badrec[1] = 0;
+        Kokkos::parallel_for("leaf_chain_check", nrec_chk, KOKKOS_LAMBDA(int r) {
+            const struct LeafChainRecord d = chk[r];
+            int why = 0;
+            if(d.count < 2)                                   {why = 1;}
+            else if(d.range_first < 0 || d.range_first + d.count > np_chk) {why = 2;}
+            else if(d.parent_abs < node_lo || d.parent_abs >= node_hi)     {why = 3;}
+            else {
+                for(int m = 0; m < d.count && !why; m++) {
+                    const int s = sidx_chk[d.range_first + m];
+                    if(s < 0 || s >= np_chk) {why = 4; break;}
+                    const int pp = stp_chk ? stp_chk[s] : s;
+                    if(pp < 0 || pp >= slots_chk) {why = 5; break;}
+                }
+            }
+            if(why) {if(Kokkos::atomic_fetch_add(&badrec[1], 1) == 0) {badrec[0] = r * 8 + why;}}
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("leaf_chain_check", nrec_chk);
+        const int nbad = badrec[1];
+        /* Whichever thread won the counter writes this, so a nonzero count should always carry a
+         * record; clamp anyway, because the alternative is indexing the reason table at -1. */
+        const int first = (badrec[0] >= 0) ? badrec[0] : 0;
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(badrec);
+        if(nbad > 0) {
+            static const char *why_text[6] = {"", "fewer than two members", "a range outside the particles this build covers",
+                                              "a parent outside the local nodes", "a sorted-order entry out of range",
+                                              "a member outside the tree's particle slots"};
+            printf("gpu_topology_emit_bfs: rank %d wrote %d unusable leaf record(s); the first is record %d,\n"
+                   "which has %s. Nothing is indexed through these, so the tree is not built.\n",
+                   ThisTask, nbad, first / 8, why_text[first % 8]);
+            fflush(stdout);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+            return 3;
+        }
+    }
+    if(*g_leaf_chain_n > g_leaf_chain_cap) {
+        printf("gpu_topology_emit_bfs: rank %d found %d multi-particle leaves but reserved room for %d.\n"
+               "Each holds at least two particles, so this cannot happen for a well-formed tree; the\n"
+               "build stops rather than leaving part of the tree unthreaded.\n",
+               ThisTask, *g_leaf_chain_n, g_leaf_chain_cap);
+        fflush(stdout);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+        return 3;
+    }
+#endif
     int rc = (*fail == 0) ? 0 : *fail;
     int new_total = *ncount;
     int work_left = *sz_curr;   /* read here: the depth-guard test below runs after these are freed */
@@ -857,6 +1089,179 @@ extern "C" const int *gpu_topology_build_topleaf_start(void)     { return g_topl
 extern "C" const int *gpu_topology_build_topleaf_count(void)     { return g_topleaf_count;    }
 extern "C" const int *gpu_topology_build_particle_topleaf(void)  { return g_particle_topleaf; }
 
+/* The two passes below finish a multi-particle leaf, and both divide a leaf across threads rather
+ * than giving one thread the whole leaf.  That division is the point: a leaf may hold anything from
+ * two particles to several thousand, and walking a long one in a single thread while its neighbours
+ * handle one particle each reproduces, inside the build, the same imbalance the leaves exist to
+ * remove.
+ *
+ * Whether that division is worth making depends on how long a leaf can be, which the leaf size fixes
+ * at compile time.  At a small cap a leaf holds a handful of particles and a flat loop over the
+ * leaves is both simpler and faster than giving each one a team of idle lanes; past that the team is
+ * what keeps a long leaf off a single thread.  A host backend always takes the flat form: its leaves
+ * are already spread across threads and there are no lanes to divide them among.
+ *
+ * Neither pass may run at a leaf size of one: there is nothing to divide, and the ordinary passes
+ * already do the work. */
+
+/* Give every particle in a multi-particle leaf the node it hangs from.  The moment pass reads
+ * Father[] per particle, so a member left pointing at an older node would contribute its mass to the
+ * wrong node with nothing visible in the output.  Runs after Father[] is cleared and before the
+ * moments are accumulated. */
+extern "C" int gpu_leaf_chain_assign_fathers(void)
+{
+#if TREE_LEAF_BUCKET_SIZE == 1
+    return 0;
+#else
+    if(Numnodestree <= 0) {return 0;}
+    if(!g_leaf_chain || !g_leaf_chain_n) {return 0;}
+    const int nrec = *g_leaf_chain_n;
+    if(nrec <= 0) {return 0;}
+    if(!Father)     {printf("gpu_leaf_chain_assign_fathers: Father[] null\n");     return 1;}
+    if(!g_sorted_idx) {printf("gpu_leaf_chain_assign_fathers: sorted order gone\n"); return 1;}
+
+    const struct LeafChainRecord *rec = g_leaf_chain;
+    const int *sidx  = g_sorted_idx;
+    const int *stp   = g_slot_map_active ? g_slot_to_particle : NULL;
+    const int  slots = All.TreeParticleSlots;
+    int *Father_uvm  = Father;
+    int *bad = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    if(!bad) {printf("gpu_leaf_chain_assign_fathers: could not allocate the fault flag\n"); return 1;}
+    *bad = 0;
+
+    if(leaf_members_run_flat()) {
+        Kokkos::parallel_for("leaf_chain_fathers", nrec, KOKKOS_LAMBDA(int r) {
+            const struct LeafChainRecord d = rec[r];
+            for(int m = 0; m < d.count; m++) {
+                const int s = sidx[d.range_first + m];
+                const int p = stp ? stp[s] : s;
+                if(p < 0 || p >= slots) {Kokkos::atomic_fetch_max(bad, 1);}
+                else {Father_uvm[p] = d.parent_abs;}
+            }
+        });
+    } else {
+        Kokkos::TeamPolicy<> policy(nrec, Kokkos::AUTO, 1);
+        Kokkos::parallel_for("leaf_chain_fathers", policy,
+            KOKKOS_LAMBDA(const Kokkos::TeamPolicy<>::member_type &team) {
+                const struct LeafChainRecord d = rec[team.league_rank()];
+                Kokkos::parallel_for(Kokkos::TeamThreadRange(team, d.count), [&](const int m) {
+                    const int s = sidx[d.range_first + m];
+                    const int p = stp ? stp[s] : s;
+                    if(p < 0 || p >= slots) {Kokkos::atomic_fetch_max(bad, 1);}
+                    else {Father_uvm[p] = d.parent_abs;}
+                });
+            });
+    }
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("leaf_chain_fathers", nrec);
+
+    const int fault = *bad;
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(bad);
+    if(fault) {
+        printf("gpu_leaf_chain_assign_fathers: rank %d recorded a leaf member outside the tree's\n"
+               "particle slots (0..%d), so the range written for that leaf does not describe\n"
+               "particles and the tree is not built.\n", ThisTask, slots - 1);
+        fflush(stdout);
+        return 1;
+    }
+    return 0;
+#endif
+}
+
+/* Link the members of every multi-particle leaf, once each leaf's traversal successor is known.
+ *
+ * The threading pass treats a leaf as the single particle its slot names, and writes that leaf's
+ * successor onto it, exactly as it did before leaves could hold more than one particle.  So the
+ * successor is read back off the head here BEFORE any link is written, and only then are the members
+ * joined and the successor moved to the last of them.  Doing both in one pass would race: the thread
+ * writing the head's link destroys the value the thread handling the tail still has to read.
+ *
+ * This must run before the tree is exported.  The export routine enumerates a leaf by following
+ * these same links, so exporting an unlinked leaf would ship its first particle and silently leave
+ * out the rest. */
+extern "C" int gpu_leaf_chain_materialize(void)
+{
+#if TREE_LEAF_BUCKET_SIZE == 1
+    return 0;
+#else
+    if(Numnodestree <= 0) {return 0;}
+    if(!g_leaf_chain || !g_leaf_chain_n) {return 0;}
+    const int nrec = *g_leaf_chain_n;
+    if(nrec <= 0) {return 0;}
+    if(!g_sorted_idx) {printf("gpu_leaf_chain_materialize: sorted order gone\n"); return 1;}
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    const int slots = All.TreeParticleSlots;
+    if(!soa || !soa->nextnode_aux || soa->nextnode_aux_size < slots) {
+        printf("gpu_leaf_chain_materialize: the particle successor array is missing or too small\n");
+        return 1;
+    }
+    struct LeafChainRecord *rec = g_leaf_chain;
+    int *aux = soa->nextnode_aux;
+    const int *sidx = g_sorted_idx;
+    const int *stp  = g_slot_map_active ? g_slot_to_particle : NULL;
+
+    /* 1. take each leaf's successor off its head, before anything overwrites it */
+    Kokkos::parallel_for("leaf_chain_capture", nrec, KOKKOS_LAMBDA(int r) {
+        const int s = sidx[rec[r].range_first];
+        rec[r].successor = aux[stp ? stp[s] : s];
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("leaf_chain_capture", nrec);
+
+    /* 2. join the members, successor onto the last */
+    int *bad = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
+    if(!bad) {printf("gpu_leaf_chain_materialize: could not allocate the fault flag\n"); return 1;}
+    *bad = 0;
+    if(leaf_members_run_flat()) {
+        Kokkos::parallel_for("leaf_chain_link", nrec, KOKKOS_LAMBDA(int r) {
+            const struct LeafChainRecord d = rec[r];
+            for(int m = 0; m < d.count; m++) {
+                const int s = sidx[d.range_first + m];
+                const int p = stp ? stp[s] : s;
+                if(p < 0 || p >= slots) {Kokkos::atomic_fetch_max(bad, 1); continue;}
+                if(m + 1 < d.count) {const int sn = sidx[d.range_first + m + 1]; aux[p] = stp ? stp[sn] : sn;}
+                else {aux[p] = d.successor;}
+            }
+        });
+    } else {
+        Kokkos::TeamPolicy<> policy(nrec, Kokkos::AUTO, 1);
+        Kokkos::parallel_for("leaf_chain_link", policy,
+            KOKKOS_LAMBDA(const Kokkos::TeamPolicy<>::member_type &team) {
+                const struct LeafChainRecord d = rec[team.league_rank()];
+                Kokkos::parallel_for(Kokkos::TeamThreadRange(team, d.count), [&](const int m) {
+                    const int s = sidx[d.range_first + m];
+                    const int p = stp ? stp[s] : s;
+                    if(p < 0 || p >= slots) {Kokkos::atomic_fetch_max(bad, 1); return;}
+                    if(m + 1 < d.count) {const int sn = sidx[d.range_first + m + 1]; aux[p] = stp ? stp[sn] : sn;}
+                    else {aux[p] = d.successor;}
+                });
+            });
+    }
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("leaf_chain_link", nrec);
+
+    const int fault = *bad;
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(bad);
+    if(fault) {
+        printf("gpu_leaf_chain_materialize: rank %d recorded a leaf member outside the tree's particle\n"
+               "slots (0..%d); the tree is not built.\n", ThisTask, slots - 1);
+        fflush(stdout);
+        return 1;
+    }
+
+    /* These records describe this build only, and they are released here rather than kept for the
+     * next one: nothing downstream can then consult a leaf's membership, which is what keeps a later
+     * insertion into the live tree correct, and the memory does not sit held for the rest of the run
+     * on a code whose tree is already the thing competing for it. */
+    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);
+    g_leaf_chain     = NULL;
+    g_leaf_chain_cap = 0;
+    *g_leaf_chain_n  = 0;
+    return 0;
+#endif
+}
+
 extern "C" void gpu_topology_build_release(void)
 {
     if(g_sorted_idx)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_sorted_idx);       g_sorted_idx       = NULL;}
@@ -866,6 +1271,11 @@ extern "C" void gpu_topology_build_release(void)
     if(g_topleaf_cursor)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_cursor);   g_topleaf_cursor   = NULL;}
     if(g_slot_to_particle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_slot_to_particle); g_slot_to_particle = NULL;}
     if(g_retained_slots)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_retained_slots);   g_retained_slots   = NULL;}
+#if TREE_LEAF_BUCKET_SIZE > 1
+    if(g_leaf_chain)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);       g_leaf_chain       = NULL;}
+    if(g_leaf_chain_n)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain_n);     g_leaf_chain_n     = NULL;}
+    g_leaf_chain_cap = 0;
+#endif
     g_slot_map_active = 0;
     g_slot_cap = 0;
     g_retained_cap = 0;

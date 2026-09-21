@@ -121,7 +121,9 @@ extern "C" int gpu_topology_finalize_father(int n)
             int c = suns_backup[base + s];
             if(c < 0) {continue;}
             if(c < tree_slots) {
-                /* particle */
+                /* particle: the head of its leaf.  Any further members of a multi-particle leaf are
+                 * given the same father by gpu_leaf_chain_assign_fathers, which divides each leaf
+                 * across threads rather than walking it here in one. */
                 Father_uvm[c] = parent_abs;
             } else if(c >= tree_base && c < tree_base + MaxNodes_) {
                 /* internal node */
@@ -132,6 +134,7 @@ extern "C" int gpu_topology_finalize_father(int n)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_father_main", n);
+
 
     return 0;
 }

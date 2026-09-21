@@ -503,9 +503,10 @@ void force_drift_node(int no, integertime time1)
 
     Nodes[no].u.d.s += Extnodes[no].vs * dt_drift;
 #ifdef SINK_NODE_MOTION_TRACKED
-    /* Keep sink_pos on the same clock as u.d.s. Left undrifted it stays at its last-build value
-       while the particles move, and the nearest-sink distance it feeds -- and hence the sink
-       timestep criterion -- reads two node positions taken at different times. */
+    /* Keep sink_pos on the same clock as u.d.s, exactly once. Left undrifted it stays at its
+       last-build value while the sinks move, and the nearest-sink distance, the sink timestep
+       criteria and (under SINGLE_STAR_DIRECT_GRAVITY) the monopole subtraction all read a stale
+       position on a different clock from u.d.s. The device drift kernel does the same. */
     Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift;
 #endif
   Nodes[no].len += TREE_DRIFT_VELOCITY_PREFAC * Extnodes[no].vmax * dt_drift;
@@ -513,14 +514,6 @@ void force_drift_node(int no, integertime time1)
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;
 #endif
-#ifdef SINK_NODE_MOTION_TRACKED
-    /* else the sink COM stays frozen at its last-treebuild value while the sinks move, and the
-       nearest-sink distance, sink timestep criteria, and (under SINGLE_STAR_DIRECT_GRAVITY) the
-       monopole subtraction all read a stale position on a different clock from u.d.s. */
-    Nodes[no].sink_pos += Nodes[no].sink_vel * dt_drift;
-#endif
-
-
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     Nodes[no].rt_source_lum_s += Extnodes[no].rt_source_lum_vs * dt_drift;
 #endif

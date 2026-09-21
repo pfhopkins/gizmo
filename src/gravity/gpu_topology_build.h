@@ -131,6 +131,12 @@ void gpu_topology_forget_prepared(void);
 int gpu_topology_grow_retained_paths(void);
 
 /* Free internal SharedSpace scratch.  Idempotent. */
+/* Finish the leaves that hold more than one particle.  Both are no-ops at a leaf size of one.
+ * _assign_fathers runs after Father[] is cleared and before the moments; _materialize runs after the
+ * successor threading and before the tree is written back or exported. */
+int gpu_leaf_chain_assign_fathers(void);
+int gpu_leaf_chain_materialize(void);
+
 void gpu_topology_build_release(void);
 
 #ifdef __cplusplus

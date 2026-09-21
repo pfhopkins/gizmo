@@ -59,6 +59,7 @@ int sink_isactive(int i);
 struct SinkEnv1CallScalars {
     NlrCommonScalars common;            /* cf_atime, cf_a2inv, cf_a3inv, G, ... */
     double           sink_radius_grav;  /* SinkParticle_GravityKernelRadius */
+    int              owner_task;        /* rank owning the actives this call builds; see load_active */
 };
 
 /* Active-particle state passed into the pair body. Trivially copyable for
@@ -73,7 +74,8 @@ struct SinkEnv1CallScalars {
 struct SinkEnv1ActiveState {
     Vec3<double>  pos;                  /* P[i].Pos */
     Vec3<double>  vel;                  /* P[i].Vel */
-    MyIDType      id;                   /* P[i].ID — for self-skip predicate */
+    MyIDType      id;                   /* P[i].ID — physics identity, not a self-skip */
+    MyIDType      claim_token;          /* sink ownership token; see gizmo_sink_claim_token */
     double        h_search;             /* per-active radius */
     double        ags_h;                /* AGS_KernelRadius if defined, else sink_radius_grav */
 #if defined(SINK_GRAVCAPTURE_GAS) || (SINK_GRAVACCRETION == 8)
@@ -123,7 +125,10 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
                                   struct sink_env_gpu_out& accum)
 {
     /* Self-skip / mass / type-5 filter. */
-    if(neighbor_particle.Mass <= 0 || neighbor_particle.Type == 5 || neighbor_particle.ID == active.id) return;
+    /* Identity is a separation of zero, not a matching identifier: IDs repeat, so the identifier
+     * form of this skip discarded genuine distinct neighbours that happened to share one -- they
+     * were dropped from the sink environment entirely. The separation is computed just below. */
+    if(neighbor_particle.Mass <= 0 || neighbor_particle.Type == 5) return;
 
     const double h_i      = active.h_search;
     const double hinv     = 1.0 / h_i;
@@ -141,6 +146,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
     dv[2] = (double)neighbor_particle.Vel[2] - active.vel[2];
     nearest_xyz(dP, -1);
     NGB_SHEARBOX_BOUNDARY_VELCORR_(active.pos, neighbor_particle.Pos, dv, -1);
+    if(!(dP.norm_sq() > 0)) return;   /* the active sink itself, or a degenerate coincident pair */
 
     const double wt = (double)neighbor_particle.Mass;
 
@@ -265,7 +271,7 @@ static void sink_env1_pair_kernel(const SinkEnv1ActiveState& active,
                                         / ((double)active.mass + (double)neighbor_particle.Mass);
                 Kokkos::atomic_min(&neighbor_particle.SwallowTime, (MyFloat)tff_pair);
 #endif
-                if(neighbor_particle.SwallowID < active.id) { accum.mass_to_swallow_edd += (MyFloat)neighbor_particle.Mass; }
+                if(neighbor_particle.SwallowID < active.claim_token) { accum.mass_to_swallow_edd += (MyFloat)neighbor_particle.Mass; }
             }
         }
     }
@@ -404,6 +410,10 @@ struct SinkEnv1Spec {
         active.pos      = ctx.P[i].Pos;
         active.vel      = ctx.P[i].Vel;
         active.id       = ctx.P[i].ID;
+        /* The rank comes from the per-call scalar, not from the global: this body is compiled into
+         * the device kernel, where a host global has no value.  populate_call_scalars runs on the
+         * rank whose local particles this call loads, so the scalar IS that owner's rank. */
+        active.claim_token = gizmo_sink_claim_token(scalars.owner_task, i);
         active.h_search = h_search;
 #if (ADAPTIVE_GRAVSOFT_FORALL & 32)
         active.ags_h    = (double)ctx.P[i].AGS_KernelRadius;

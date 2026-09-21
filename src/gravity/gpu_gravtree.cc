@@ -341,8 +341,12 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * gpu_gravtree_walk_one — device-side walk for a single target particle.
  *
  * Returns 1 on success (acc written), 0 on failure (pseudo-particle hit;
- * host must run CPU walk for this target).  Mirrors force_treeevaluate()
- * mode=0 with SINK/CR/DM/tidal payload branches stripped (gated above).
+ * host must run CPU walk for this target).  Mirrors force_treeevaluate():
+ * the opening decisions and the payload loads are written here against the
+ * SoA / P_dev storage, and each accepted element is then evaluated by the
+ * same grav_pair_evaluate_core (gravtree_force_kernel.h) the CPU walk uses.
+ * The entries in the ledger above that place a term "in the force kernel"
+ * refer to that shared evaluation.
  * RT payloads (RT_USE_GRAVTREE, treecol, CHIMES, FIRE longrange)
  * are included here; they accumulate into CellP_dev[target] which the host
  * scatter loop copies back to CellP[].
@@ -410,12 +414,6 @@ gpu_gravtree_walk_one(int target,
 #if defined(SINGLE_STAR_TIMESTEPPING) || defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
     Vec3<double> vel = P_dev[target].Vel;
 #endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-    Vec3<double> jerk_acc = {0,0,0};
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    SymmetricTensor2<double> tidal_acc = {};
-#endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     /* Diagnostic: total mass seen by this target during the walk, summed only
      * over accepted interactions (mirrors forcetree.cc). The walk excludes the
@@ -431,20 +429,6 @@ gpu_gravtree_walk_one(int target,
     Vec3<double> d_dm = {0,0,0};
     double mass_dm_local = 0.0;
 #endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    /* Walk-side accumulators for the tidal-criterion adaptive softening
-     * correction (mirrors forcetree.cc:1822 + 2491 + 2519-2524). tidal_zeta is a
-     * scalar accumulator analogous to AGS zeta; the per-pair acc_corr_zeta gets
-     * folded directly into acc as we go. The primary's previous-step tidal
-     * tensor is loaded once from P_dev[target] for use in the per-pair sum. */
-    double tidal_zeta = 0.0;
-    SymmetricTensor2<double> i_zeta_tidal_tt;
-    SymmetricTensor2<double> j_zeta_tidal_tt; /* set per-interaction in leaf/node branches */
-    {
-        SymmetricTensor2<MyFloat> tmp = P_dev[target].tidal_tensorps_prevstep;
-        for(int kk = 0; kk < 6; kk++) i_zeta_tidal_tt.data[kk] = (double) tmp.data[kk];
-    }
-#endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
     /* Shell-theorem gravity: forces from any source at r_source > r_target
      * vanish; forces from r_source < r_target use a 1/r^3 enclosed-mass formula
@@ -455,11 +439,6 @@ gpu_gravtree_walk_one(int target,
     sph_center[1] = 0.5 * boxSize_Y;
     sph_center[2] = 0.5 * boxSize_Z;
 #endif
-    double r_target = 0.0; /* set per-interaction inside the PM short-range gate (mirrors the CPU walk) */
-    double r_source = 0.0; /* set per-interaction in leaf/node branches */
-#endif
-#ifdef SINK_DYNFRICTION_FROMTREE
-    double target_sink_mass = (ptype == 5) ? P_dev[target].Sink_Mass : 0.0;
 #endif
 #ifdef SINK_COMPTON_HEATING
     double incident_flux_agn = 0.0;
@@ -538,25 +517,45 @@ gpu_gravtree_walk_one(int target,
     }
 #endif
 
-    Vec3<double> acc = {0,0,0};
-    int ninter = 0;
-    double pot = 0.0;
+    /* the target's inputs to the shared pair evaluation, fixed for this walk, and the
+     * accumulators it writes (acceleration, potential, interaction count, and the tidal /
+     * jerk / tidal-zeta terms where compiled) */
+    grav_pair_tgt_t tgt{}; tgt.ptype = ptype; tgt.pmass = pmass; tgt.h = soft; tgt.zeta = zeta; tgt.ags_bitflag = ags_bitflag_primary; tgt.pm = pm;
+#ifdef SINK_DYNFRICTION_FROMTREE
+    tgt.sink_mass = (ptype == 5) ? P_dev[target].Sink_Mass : 0.0;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    {
+        SymmetricTensor2<MyFloat> tmp = P_dev[target].tidal_tensorps_prevstep;
+        for(int kk = 0; kk < 6; kk++) tgt.i_zeta_tidal_tensorps_prevstep.data[kk] = (double) tmp.data[kk];
+    }
+#endif
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+    tgt.pos = pos; tgt.center[0] = sph_center[0]; tgt.center[1] = sph_center[1]; tgt.center[2] = sph_center[2];
+#endif
+    grav_pair_acc_t out; grav_pair_acc_init(out);
 
     int no = treeBase;   /* root */
 
     while(no >= 0)
     {
-        double h = soft, h_p = -1.0;
-        Vec3<double> dr;
-        double r2, mass;
+        double h = soft;
+        /* this element's inputs to the shared pair evaluation, loaded below from the SoA / P_dev */
+        grav_pair_src_t src;   /* dr, r2, mass are assigned on every path that reaches the evaluation */
+        Vec3<double> &dr = src.dr; double &r2 = src.r2, &mass = src.mass, &h_p = src.h_p, &zeta_sec = src.zeta_sec; int &ptype_sec = src.ptype_sec;
+        h_p = -1.0; ptype_sec = -1; zeta_sec = 0.0;   /* unconditional, matching the CPU walk: consumed by the shared pair kernel */
 #if defined(SINK_DYNFRICTION_FROMTREE) || defined(COMPUTE_JERK_IN_GRAVTREE)
-        Vec3<double> dv = {0,0,0};
+        Vec3<double> &dv = src.dv; dv = Vec3<double>{0,0,0};
 #endif
 #ifdef SINK_DYNFRICTION_FROMTREE
-        double m_j_eff_for_df = 0.0;
+        double &m_j_eff_for_df = src.m_j_eff_for_df; m_j_eff_for_df = 0.0;
 #endif
-        int ptype_sec = -1;   /* unconditional, matching the CPU walk: consumed by the shared pair kernel */
-        double zeta_sec = 0.0;   /* unconditional (matches CPU walk); assigned below only under #if AGS */
+#ifdef GRAVITY_SPHERICAL_SYMMETRY
+        double &r_source = src.r_source; r_source = 0.0;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+        SymmetricTensor2<double> &j_zeta_tidal_tt = src.j_zeta_tidal_tensorps_prevstep;
+#endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         double gasmass = 0.0;
 #endif
@@ -858,7 +857,7 @@ gpu_gravtree_walk_one(int target,
             r_source = grav_spherical_symmetry_r_from_center(s_node[0],s_node[1],s_node[2],sph_center[0],sph_center[1],sph_center[2]);
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-            /* Load node's previous-step tidal tensor from SoA (mirrors forcetree.cc:2278). */
+            /* Load node's previous-step tidal tensor from SoA (mirrors forcetree.cc). */
             for(int kk = 0; kk < 6; kk++) {
                 j_zeta_tidal_tt.data[kk] = (double) tree_soa->tidal_tensorps[(long)idx * 6 + kk];
             }
@@ -952,87 +951,24 @@ gpu_gravtree_walk_one(int target,
 #endif /* SINK_CALC_DISTANCES */
         }
 
-        /* Force kernel — common path for accepted particles and closed nodes. */
+        /* Evaluate this accepted element for the target. */
         if((r2 > 0.0) && (mass > 0.0))
         {
-            double r = sqrt(r2);
-            double fac_accel;
-            double fac_pot = 0;   /* unconditional; a dead 0 when !EVALPOTENTIAL (consumed only under that gate) */
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-            double fac_tidal = 0.0, fac2_tidal = 0.0; /* mirrors forcetree.cc:1489; populated in branches below */
-#endif
-            /* pair-wise gravity terms (Newtonian/softened selection, softening symmetrization,
-             * AGS zeta corrections) via the shared contribution kernel (gravtree_force_kernel.h),
-             * the single home for the pair physics on both walks. */
-            {
-                grav_force_pair_t pair_out = grav_force_pair(r, r2, mass, h, h_p, ptype, ptype_sec, pmass,
-                                                             zeta, zeta_sec, ags_bitflag_primary);
-                fac_accel = pair_out.fac_accel;
-#ifdef EVALPOTENTIAL
-                fac_pot = pair_out.fac_pot;
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-                fac_tidal = pair_out.fac_tidal; fac2_tidal = pair_out.fac2_tidal;
-#endif
-            }
-            int tabindex = 0;   /* unconditional; computed + consumed only under PMGRID */
-#ifdef PMGRID
-            tabindex = grav_pm_shortrange_tabindex(pm.asmthfac, r);
-            /* PM short-range gate (mirrors forcetree.cc): wraps the acceleration,
-             * potential, dynamical-friction, adaptive-tidal-correction, tidal-tensor
-             * and jerk contributions ONLY. A source beyond the table range contributes
-             * nothing to those, but fac_accel stays UN-truncated for the payload blocks
-             * below the gate (TREECOL column estimate) -- there is no PM-side completion
-             * for those integrals, so truncating or zeroing them would be wrong. */
-            if(grav_pm_shortrange_in_range(tabindex))
-#endif
-            {
-#ifdef PMGRID
-            grav_force_apply_pm_truncation(pm, tabindex, fac_pot, fac_accel);
-#endif
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-            /* Shell-theorem override via the shared helper; pot above is unmodified, matching CPU sequencing. */
-            r_target = grav_spherical_symmetry_r_from_center(pos[0],pos[1],pos[2],sph_center[0],sph_center[1],sph_center[2]);
-            grav_spherical_symmetry_force_override(r_source, r_target, h, mass, sph_center[0],sph_center[1],sph_center[2], pos[0],pos[1],pos[2], dr, fac_accel);
-#endif
-            acc += fac_accel * dr;
-#ifdef EVALPOTENTIAL
-            pot    += fac_pot;
+            /* pair-wise gravity, PM truncation, and the accumulations inside the PM short-range
+             * gate, via the shared evaluation (gravtree_force_kernel.h), the single home for the
+             * pair physics on both walks */
+            grav_pair_result_t res = grav_pair_evaluate_core(tgt, src, out);
+            const double r = res.r, fac_accel = res.fac_accel;
 #ifdef GIZMO_GPU_EWALD_POT_CORRECTION
-            /* Ewald periodic-image potential correction (mirrors forcetree.cc:2300).
-             * Pure-tree periodic only; under PMGRID the long-range potential comes
-             * from the PM solver.  active is 1 in a healthy run (acquire failure
-             * hard-stops the caller); the guard only covers the post-endrun drain. */
+            /* Ewald periodic-image potential correction (mirrors forcetree.cc), from dr as the
+             * evaluation left it. Pure-tree periodic only; under PMGRID the long-range potential
+             * comes from the PM solver.  active is 1 in a healthy run (acquire failure hard-stops
+             * the caller); the guard only covers the post-endrun drain. */
             if(ewald_pot->active) {
                 grav_ewald_interp_weights ew = grav_ewald_interp_setup(dr[0], dr[1], dr[2], ewald_pot->fac_intp);
-                pot += mass * grav_ewald_interp_apply(ewald_pot->potcorr, ew);
+                out.pot += mass * grav_ewald_interp_apply(ewald_pot->potcorr, ew);
             }
 #endif
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-            /* Adaptive softening 'tidal' correction terms via the shared helper
-             * (gravtree_force_kernel.h); GRAVITY_SPHERICAL_SYMMETRY override of
-             * fac2_tidal happens later, in the tidal accumulation block. */
-            grav_ags_tidal_criterion_accumulate(r, r2, dr, mass, h, h_p, ptype, ptype_sec, fac_tidal, fac2_tidal,
-                                                i_zeta_tidal_tt, j_zeta_tidal_tt, tidal_zeta, acc);
-#endif
-#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-#ifdef GRAVITY_SPHERICAL_SYMMETRY
-            fac2_tidal = grav_spherical_symmetry_fac2_tidal_override(r_source, r_target, h, mass);
-#endif
-            /* tidal-tensor accumulation via the shared helper (PM-truncated or bare;
-             * tabindex is in range here -- this call sits inside the PM short-range gate) */
-            grav_tidal_tensor_accumulate(dr, fac_tidal, fac2_tidal, pm, tabindex, tidal_acc);
-#endif
-#ifdef COMPUTE_JERK_IN_GRAVTREE
-            grav_jerk_accumulate(dv, dr, fac_accel, fac2_tidal, ptype, jerk_acc);
-#endif
-#ifdef SINK_DYNFRICTION_FROMTREE
-            /* dynamical-friction deflection for type-5 sink targets (shared helper) */
-            grav_sink_dynfriction_accumulate(dr, dv, fac_accel, mass, target_sink_mass, m_j_eff_for_df, ptype, acc);
-#endif /* SINK_DYNFRICTION_FROMTREE */
-            } /* closes the PM short-range gate (tabindex in range; mirrors forcetree.cc) */
-            ninter++;
 #ifdef COUNT_MASS_IN_GRAVTREE
             /* counted only for accepted interactions (r2>0, mass>0), mirroring
              * forcetree.cc -- the walk excludes the target's own (r2==0) leaf;
@@ -1096,7 +1032,7 @@ gpu_gravtree_walk_one(int target,
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
                 rt_accum.Rad_Flux = Rad_Flux;
 #endif
-                grav_rt_payload_accumulate(rt_src, rt_accum, acc);
+                grav_rt_payload_accumulate(rt_src, rt_accum, out.acc);
             } /* if(valid_gas_particle_for_rt) */
 #endif /* RT_USE_GRAVTREE */
 
@@ -1105,7 +1041,7 @@ gpu_gravtree_walk_one(int target,
              * own table gate keyed on the dm-center distance, outside the main PM gate) */
             if(ptype != 0)
             {
-                grav_dm_scalarfield_accumulate(d_dm, mass_dm_local, h, pm, acc);
+                grav_dm_scalarfield_accumulate(d_dm, mass_dm_local, h, pm, out.acc);
             }
 #endif /* DM_SCALARFIELD_SCREENING */
 
@@ -1199,16 +1135,16 @@ gpu_gravtree_walk_one(int target,
 #endif /* SINK_CALC_DISTANCES */
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    P_dev[target].tidal_tensorps = tidal_acc;
+    P_dev[target].tidal_tensorps = out.tidal_tensorps;
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-    P_dev[target].GravJerk = jerk_acc;
+    P_dev[target].GravJerk = out.jerk;
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     P_dev[target].TreeMass = tree_mass;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    P_dev[target].tidal_zeta = (MyFloat) tidal_zeta;
+    P_dev[target].tidal_zeta = (MyFloat) out.tidal_zeta;
 #endif
 #ifdef SPECIAL_POINT_MOTION
     P_dev[target].vel_of_nearest_special = Vec3<MyFloat>{(MyFloat)sink_prox.vel_of_nearest_special[0],
@@ -1222,9 +1158,9 @@ gpu_gravtree_walk_one(int target,
 #endif
 #endif
 
-    acc_out = acc;
-    ninter_out = ninter;
-    pot_out = pot;
+    acc_out = out.acc;
+    ninter_out = out.ninter;
+    pot_out = out.pot;
     return 1;
 }
 
@@ -1326,12 +1262,14 @@ grav_walk_scratch_plan_for(int num_targets, int with_potential_and_interactions)
     return plan;
 }
 
-extern "C" int gpu_gravtree_walk_primary(void)
+extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    if(Ewald_iter > 0) {return 0;}
-
     int num_active_total = (int) ActiveParticleList.size();
+    /* How many candidates this walk leaves to the host loop: every active until this walk has
+     * selected and taken some. The host loop sizes its per-thread packet workspace from it. */
+    if(host_candidates_left) {*host_candidates_left = (num_active_total > 0) ? num_active_total : 0;}
+    if(Ewald_iter > 0) {return 0;}
     if(num_active_total <= 0) {return 0;}
 
     /* The CPU walk (forcetree.cc) JIT-drifts particles and nodes whose
@@ -1374,6 +1312,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
         if(!gravity_treewalk_candidate_prewalk(i, a)) {continue;}
         idx_host[num_active++] = i;
     }
+    if(host_candidates_left) {*host_candidates_left = num_active;}
     if(num_active <= 0) {myfree(idx_host); return 0;}
 
     /* Few enough candidates that the host walk, which drifts nodes only as it opens
@@ -1845,6 +1784,7 @@ extern "C" int gpu_gravtree_walk_primary(void)
     release_payload_buffers();
     myfree(idx_host);
 
+    if(host_candidates_left) {*host_candidates_left = num_active - nsucceeded;}
     return nsucceeded;
 }
 

@@ -55,6 +55,11 @@
 
 #include "gpu_pseudo_update.h"  /* gpu_scatter_foreign_to_soa */
 #include "forcetree.h"          /* force_tree_grow_foreign_storage */
+#if TREE_LEAF_BUCKET_SIZE > 1
+#include "gpu_gravity_tree.h"            /* suns_backup: the tree's own direct-child slots */
+#include "../core/timestep_functions.h"  /* node_timestep_dilation_factor_at, get_drift_factor_impl */
+#endif
+
 
 /* How long the tree being built here is expected to stand, as an INTEGER time interval.
  *
@@ -615,6 +620,15 @@ struct LETPackContext {
      * within an exchange, so one handover reaches the same peak as many small ones. */
     long long wire_grow_bytes;
     long long wire_failed_bytes;
+#if TREE_LEAF_BUCKET_SIZE > 1
+    /* One multi-particle leaf's members, gathered once and then used EITHER to accumulate that
+     * leaf's aggregate OR to emit the members' own wires -- never gathered twice.  Grown once to
+     * the leaf size and reused by every leaf this worker packs, for every destination, because the
+     * leaf size is a user parameter that may run to thousands. */
+    moment_particle_src<MyFloat> *member_src;
+    int                          *member_idx;
+    int                           member_cap;
+#endif
 };
 
 /* One packing context per worker.  Sized once for the thread count and kept, so the cover
@@ -855,76 +869,13 @@ static int let_node_essential_for_rank(struct LETPackContext *pk, double cx, dou
  * surrounding pack_recurse caller updates them based on the position of
  * this leaf in the iteration chain.
  * ---------------------------------------------------------------------- */
-static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
-                                          struct LETNodeWire *w)
+/* Point a moment_node_ref at a wire's own payload storage.  Shared by the single-particle leaf
+ * and by the multi-particle leaf's aggregate so both accumulate through the same field wiring;
+ * the zeroed wire is the fresh accumulator in either case. */
+static void let_wire_moment_ref(struct LETNodeWire *w, moment_node_ref<MyFloat> *ref_out)
 {
-    memset(w, 0, sizeof(struct LETNodeWire));
-
-    w->remote_id = -1 - p_idx;  /* negative encoding distinguishes synthesized particle leaves
-                                  * from real internal nodes (whose remote_id >= TreeNodeIndexBase).  Unpack
-                                  * uses remote_id < 0 to recognize synthesized leaves -- they
-                                  * still get a foreign slot and remap entry, but their pointer
-                                  * fields are simpler (no inbound references except from parent). */
-
-    struct particle_data *pa = &P[p_idx];
-    Vec3<MyFloat> pos = {(MyFloat) pa->Pos[0], (MyFloat) pa->Pos[1], (MyFloat) pa->Pos[2]};
-
-    /* Build the per-particle source POD for the moment kernel.  Geometry/bounds
-     * are venue-owned; RT/sink/CR source inputs come from the shared host gate
-     * helper (the same gates the GPU precompute venues apply). */
-    moment_particle_src<MyFloat> src = {};
-    src.mass              = (double) pa->Mass;
-    src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
-    src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
-    src.type              = pa->Type;
-    src.kernel_radius     = (double) pa->KernelRadius;
-    src.max_kernel_radius = (double) All.MaxKernelRadius;
-    src.force_softening   = ForceSoftening_KernelRadius(p_idx);
-    src.particle_divvel   = (double) pa->Particle_DivVel;
-#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-    src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
-#endif
-#if defined(SPECIAL_POINT_MOTION)
-    src.acc_prevstep[0] = (double) pa->Acc_Total_PrevStep[0];
-    src.acc_prevstep[1] = (double) pa->Acc_Total_PrevStep[1];
-    src.acc_prevstep[2] = (double) pa->Acc_Total_PrevStep[2];
-#endif
-#if defined(SINK_CALC_DISTANCES) && defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-    src.max_feedback_vel = (double) pa->MaxFeedbackVel;
-#endif
-#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    for(int k = 0; k < 6; k++) { src.tidal_prevstep[k] = (double) pa->tidal_tensorps_prevstep.data[k]; }
-#endif
-    {
-        struct gravtree_source_inputs_t in;
-        gravtree_fill_particle_source_inputs(p_idx, P, CellP, &in);
-#ifdef RT_USE_GRAVTREE
-        if(in.rt_active) {
-            for(int k = 0; k < N_RT_FREQ_BINS; k++) { src.src_lum[k] = (double) in.src_lum[k]; }
-#ifdef CHIMES_STELLAR_FLUXES
-            for(int k = 0; k < CHIMES_LOCAL_UV_NBINS; k++) {
-                src.src_lum_G0[k]  = in.src_lum_G0[k];
-                src.src_lum_ion[k] = in.src_lum_ion[k];
-            }
-#endif
-        }
-#endif
-#ifdef SINK_PHOTONMOMENTUM
-        if(in.bh_active) {
-            src.bh_lum      = (double) in.bh_lum;
-            src.bh_angle[0] = (double) in.bh_angle[0];
-            src.bh_angle[1] = (double) in.bh_angle[1];
-            src.bh_angle[2] = (double) in.bh_angle[2];
-        }
-#endif
-#ifdef COSMIC_RAY_SUBGRID_LEBRON
-        src.cr_inject = (double) in.cr_inject;
-#endif
-    }
-
-    /* Point a moment_node_ref at the wire's payload storage and run the shared
-     * add_particle + finalize (zero == the memset above for a fresh leaf). */
-    moment_node_ref<MyFloat> ref = {};
+    moment_node_ref<MyFloat> &ref = *ref_out;
+    ref = moment_node_ref<MyFloat>();
     ref.mass     = &w->node.u.d.mass;
     ref.s        = &w->node.u.d.s;
     ref.vs       = &w->extnode.vs;
@@ -978,6 +929,94 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     ref.vs_dm   = &w->extnode.vs_dm;
 #endif
 
+}
+
+/* Gather ONE particle's source POD.  Split from the emit half below so a multi-particle leaf can
+ * gather each member once and then either accumulate the leaf's aggregate or emit that member's
+ * own wire from the same gathered copy.  What the two halves together produce for a single
+ * particle is what the one function produced before. */
+static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_out)
+{
+    struct particle_data *pa = &P[p_idx];
+
+    /* Build the per-particle source POD for the moment kernel.  Geometry/bounds
+     * are venue-owned; RT/sink/CR source inputs come from the shared host gate
+     * helper (the same gates the GPU precompute venues apply). */
+    memset(src_out, 0, sizeof(*src_out));
+    moment_particle_src<MyFloat> &src = *src_out;
+    src.mass              = (double) pa->Mass;
+    src.pos[0] = (double) pa->Pos[0]; src.pos[1] = (double) pa->Pos[1]; src.pos[2] = (double) pa->Pos[2];
+    src.vel[0] = (double) pa->Vel[0]; src.vel[1] = (double) pa->Vel[1]; src.vel[2] = (double) pa->Vel[2];
+    src.type              = pa->Type;
+    src.kernel_radius     = (double) pa->KernelRadius;
+    src.max_kernel_radius = (double) All.MaxKernelRadius;
+    src.force_softening   = ForceSoftening_KernelRadius(p_idx);
+    src.particle_divvel   = (double) pa->Particle_DivVel;
+#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
+    src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
+#endif
+#if defined(SPECIAL_POINT_MOTION)
+    src.acc_prevstep[0] = (double) pa->Acc_Total_PrevStep[0];
+    src.acc_prevstep[1] = (double) pa->Acc_Total_PrevStep[1];
+    src.acc_prevstep[2] = (double) pa->Acc_Total_PrevStep[2];
+#endif
+#if defined(SINK_CALC_DISTANCES) && defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    src.max_feedback_vel = (double) pa->MaxFeedbackVel;
+#endif
+#ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
+    for(int k = 0; k < 6; k++) { src.tidal_prevstep[k] = (double) pa->tidal_tensorps_prevstep.data[k]; }
+#endif
+    {
+        struct gravtree_source_inputs_t in;
+        gravtree_fill_particle_source_inputs(p_idx, P, CellP, &in);
+#ifdef RT_USE_GRAVTREE
+        if(in.rt_active) {
+            for(int k = 0; k < N_RT_FREQ_BINS; k++) { src.src_lum[k] = (double) in.src_lum[k]; }
+#ifdef CHIMES_STELLAR_FLUXES
+            for(int k = 0; k < CHIMES_LOCAL_UV_NBINS; k++) {
+                src.src_lum_G0[k]  = in.src_lum_G0[k];
+                src.src_lum_ion[k] = in.src_lum_ion[k];
+            }
+#endif
+        }
+#endif
+#ifdef SINK_PHOTONMOMENTUM
+        if(in.bh_active) {
+            src.bh_lum      = (double) in.bh_lum;
+            src.bh_angle[0] = (double) in.bh_angle[0];
+            src.bh_angle[1] = (double) in.bh_angle[1];
+            src.bh_angle[2] = (double) in.bh_angle[2];
+        }
+#endif
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+        src.cr_inject = (double) in.cr_inject;
+#endif
+    }
+
+}
+
+/* Emit ONE particle's leaf wire from an already-gathered source POD. */
+static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src<MyFloat> *src_in,
+                                            int sib_terminator_sentinel, struct LETNodeWire *w)
+{
+    const moment_particle_src<MyFloat> &src = *src_in;
+    struct particle_data *pa = &P[p_idx];
+    Vec3<MyFloat> pos = {(MyFloat) pa->Pos[0], (MyFloat) pa->Pos[1], (MyFloat) pa->Pos[2]};
+
+    memset(w, 0, sizeof(struct LETNodeWire));
+
+    w->remote_id = -1 - p_idx;  /* Negative encoding: this wire stands for a PARTICLE, so RELABEL
+                                  * keys it by that particle's index (-1 - rid) and a sibling
+                                  * continuation naming the particle resolves to this wire.  Real
+                                  * internal nodes carry their own index instead.  What the wire IS
+                                  * -- leaf, aggregate, truncated -- is carried by leaf_tag alone;
+                                  * the receiver does not reconstruct sender indices and never
+                                  * branches on this sign. */
+
+    /* Point a moment_node_ref at the wire's payload storage and run the shared
+     * add_particle + finalize (zero == the memset above for a fresh leaf). */
+    moment_node_ref<MyFloat> ref;
+    let_wire_moment_ref(w, &ref);
     moment_accum_add_particle<moment_plain_ops, MyFloat>(ref, src);
     moment_finalize<MyFloat>(ref, pos);
 
@@ -1011,6 +1050,177 @@ static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
     w->leaf_ags_zeta = (MyFloat) pa->AGS_zeta;
 #endif
 }
+
+/* The single-particle leaf, composed from the two halves above. */
+static void let_synthesize_particle_leaf(int p_idx, int sib_terminator_sentinel,
+                                          struct LETNodeWire *w)
+{
+    moment_particle_src<MyFloat> src;
+    let_fill_particle_src(p_idx, &src);
+    let_emit_particle_leaf_from_src(p_idx, &src, sib_terminator_sentinel, w);
+}
+
+#if TREE_LEAF_BUCKET_SIZE > 1
+/* ----------------------------------------------------------------------
+ * Multi-particle leaf export.
+ *
+ * A leaf holding several particles has no node of its own: the parent's child slot names the first
+ * particle and the rest are chained behind it.  Enumerated as it stands, such a leaf therefore
+ * ships one wire per member, and the import a receiver must hold grows with the leaf size.  Below,
+ * the leaf is offered as ONE aggregate whenever no target on the receiving rank can open it; when
+ * one can, its members ship exactly as they always have.
+ * ---------------------------------------------------------------------- */
+
+/* Grow this worker's member scratch to the leaf size, once.  Returns 0 if it cannot be had, in
+ * which case the caller simply ships the members one at a time as before. */
+static int let_bucket_scratch_ready(struct LETPackContext *pk)
+{
+    if(pk->member_cap >= TREE_LEAF_BUCKET_SIZE) {return 1;}
+    moment_particle_src<MyFloat> *ns = (moment_particle_src<MyFloat> *) realloc(
+        pk->member_src, (size_t) TREE_LEAF_BUCKET_SIZE * sizeof(moment_particle_src<MyFloat>));
+    if(!ns) {return 0;}
+    pk->member_src = ns;
+    int *ni = (int *) realloc(pk->member_idx, (size_t) TREE_LEAF_BUCKET_SIZE * sizeof(int));
+    if(!ni) {return 0;}
+    pk->member_idx = ni;
+    pk->member_cap = TREE_LEAF_BUCKET_SIZE;
+    return 1;
+}
+
+/* The members of the leaf that starts at `head`, as the tree itself defines them: the run of
+ * particles from one of the parent's child slots up to the next occupied slot, or -- for the last
+ * occupied slot -- up to the parent's own continuation.  The slot array is the build's, not an
+ * inference from the walk chain, so the boundary is exact even where two leaves sit side by side.
+ *
+ * Returns the member count and fills `slot_out`/`boundary_out`/`members_out`; 0 if this particle
+ * is not a child slot of `no` (nothing to aggregate); -1 if the chain does not close on the
+ * boundary within a leaf's worth of members, which is a malformed local tree. */
+static int let_bucket_members(int no, int head, int sib_terminator,
+                              int *slot_out, int *boundary_out, int *members_out)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || !soa->suns_backup) {return 0;}
+    const int psoa = no - All.TreeNodeIndexBase;
+    if(psoa < 0 || psoa >= Numnodestree) {return 0;}
+    const int *suns = soa->suns_backup + (long) psoa * 8;
+
+    int slot = -1;
+    for(int k = 0; k < 8; k++) {if(suns[k] == head) {slot = k; break;}}
+    if(slot < 0) {return 0;}   /* not a direct child of this node */
+
+    int boundary = sib_terminator;
+    for(int k = slot + 1; k < 8; k++) {if(suns[k] >= 0) {boundary = suns[k]; break;}}
+
+    int n = 0, p = head;
+    while(p != boundary)
+    {
+        if(p < 0 || p >= All.TreeParticleSlots) {return -1;}  /* a member has to be a particle */
+        if(n >= TREE_LEAF_BUCKET_SIZE) {return -1;}           /* longer than a leaf can be */
+        members_out[n++] = p;
+        p = Nextnode[p];
+    }
+    if(n < 1) {return -1;}
+    *slot_out = slot; *boundary_out = boundary;
+    return n;
+}
+
+/* A CANDIDATE cube for this leaf, derived from the parent's CURRENT geometry: the octant offset and
+ * half-length the build's own expression uses, but evaluated on Nodes[no].len as it stands at pack
+ * time.
+ *
+ * That is NOT necessarily the cube the build emitted.  Growing the retained paths widens every
+ * ancestor of a particle kept under a top-leaf it no longer falls in, and that runs before this
+ * export, so after any retention the parent is longer than it was when its children were placed --
+ * and the octant of a longer parent is a different cube.
+ *
+ * The candidate is therefore validated rather than trusted: every member is tested against it,
+ * wrapping the separation first, and if any falls outside, the parent's own cube is used instead.
+ * That one does bound every child, precisely because the growth walked the whole ancestor chain.
+ * Either way the caller tests and ships the SAME cube, which is what keeps this decision consistent
+ * with the one the receiver will make.  The fallback is containment, not compression: a
+ * parent-sized candidate will usually be opened, and then the members ship as before. */
+static void let_bucket_cube(int no, int slot, const int *members, int n,
+                            double *cen_out, double *len_out)
+{
+    const double plen = (double) Nodes[no].len;
+    const double off  = 0.25 * plen;
+    double cen[3];
+    cen[0] = (double) Nodes[no].center[0] + ((slot & 1) ? off : -off);
+    cen[1] = (double) Nodes[no].center[1] + ((slot & 2) ? off : -off);
+    cen[2] = (double) Nodes[no].center[2] + ((slot & 4) ? off : -off);
+
+    int inside = 1;
+    for(int m = 0; m < n && inside; m++)
+    {
+        Vec3<double> sep = {(double) P[members[m]].Pos[0] - cen[0],
+                            (double) P[members[m]].Pos[1] - cen[1],
+                            (double) P[members[m]].Pos[2] - cen[2]};
+        nearest_xyz(sep, -1);
+        if(fabs(sep[0]) > off || fabs(sep[1]) > off || fabs(sep[2]) > off) {inside = 0;}
+    }
+    if(inside) {cen_out[0] = cen[0]; cen_out[1] = cen[1]; cen_out[2] = cen[2]; *len_out = 0.5 * plen;}
+    else
+    {
+        cen_out[0] = (double) Nodes[no].center[0];
+        cen_out[1] = (double) Nodes[no].center[1];
+        cen_out[2] = (double) Nodes[no].center[2];
+        *len_out   = plen;
+    }
+}
+
+/* The leaf aggregate's own drift allowance over the tree's life -- the widening a real node gets
+ * from let_node_len_over_tree_lifetime, for the same reason (the tree stands while its particles
+ * move), but taken from the aggregate's OWN centre of mass.  A parent's centre of mass is not a
+ * bound on it: the dilation varies with position, so borrowing one can widen too little. */
+static double let_aggregate_len_over_tree_lifetime(const struct LETNodeWire *w, double len)
+{
+    if(g_let_tree_lifetime_dti <= 0) {return len;}
+    Vec3<double> com = {(double) w->node.u.d.s[0], (double) w->node.u.d.s[1], (double) w->node.u.d.s[2]};
+    const double dilation = node_timestep_dilation_factor_at(com);
+    struct DriftKickTableView view = drift_kick_table_view_host();
+    const double dt_lifetime = get_drift_factor_impl(All.Ti_Current,
+                                   All.Ti_Current + g_let_tree_lifetime_dti, dilation, &view);
+    return len + TREE_DRIFT_VELOCITY_PREFAC * (double) w->extnode.vmax * dt_lifetime;
+}
+
+/* Build the leaf's aggregate wire from the members already gathered in the worker's scratch.
+ * Keyed by the head particle, which is the only member any sibling continuation can name, so the
+ * relabel map resolves a continuation to this wire with no special case. */
+static void let_build_bucket_aggregate(struct LETPackContext *pk, int n, int head,
+                                       const double *cen, double len, struct LETNodeWire *w)
+{
+    memset(w, 0, sizeof(struct LETNodeWire));
+    /* Keyed by the HEAD particle.  A sibling continuation can only ever name a direct child slot of
+     * the parent, and for a leaf that slot holds the head, so keying the aggregate this way lets
+     * RELABEL resolve such a continuation to this wire with no special case -- and the members it
+     * replaces emit no wires of their own, so the key stays unique within the subtree. */
+    w->remote_id = -1 - head;
+
+    moment_node_ref<MyFloat> ref;
+    let_wire_moment_ref(w, &ref);
+    for(int m = 0; m < n; m++) {moment_accum_add_particle<moment_plain_ops, MyFloat>(ref, pk->member_src[m]);}
+    Vec3<MyFloat> c = {(MyFloat) cen[0], (MyFloat) cen[1], (MyFloat) cen[2]};
+    moment_finalize<MyFloat>(ref, c);
+
+    w->node.center       = c;
+    w->node.len          = (MyFloat) len;
+    w->node.u.d.bitflags = (1u << BITFLAG_MULTIPLEPARTICLES);
+    w->node.u.d.sibling  = LET_WIRE_EXIT;
+    w->node.u.d.nextnode = LET_WIRE_EXIT;
+    w->node.u.d.father   = -1;
+    w->node.GravCost     = 0;
+    w->node.Ti_current   = All.Ti_Current;
+    w->extnode.Ti_lastkicked = All.Ti_Current;
+    w->extnode.Flag      = 0;
+
+    /* Terminal and not descendable: its members were not shipped.  Tagged the same way as a node
+     * the sender's cover closed on, and for the same reason -- a walk that later opens it is
+     * asking for a tree that has gone stale, which a rebuild repairs. */
+    w->leaf_tag = LET_LEAF_TAG_TRUNCATED_AGGREGATE;
+    w->leaf_type = 0; w->leaf_ags_zeta = 0; w->leaf_force_softening = 0; w->_pad1 = 0;
+}
+
+#endif
 
 /* ----------------------------------------------------------------------
  * Step 3: pack -- recursive walk producing LETNodeWire array for one rank
@@ -1068,6 +1278,87 @@ static void grow_wire_buf(struct LETPackContext *pk, struct LETNodeWire **buf, i
     pk->wire_grow_bytes += (long long)(new_cap - *capacity) * (long long) sizeof(struct LETNodeWire);
     *capacity = new_cap;
 }
+
+#if TREE_LEAF_BUCKET_SIZE > 1
+
+/* Ship the multi-particle leaf beginning at `child` under `no`, if that is what `child` begins.
+ * Both places that enumerate a node's children use this, so a leaf is treated the same whether it
+ * hangs under an interior node or directly under a top leaf.
+ *
+ * Returns 1 when wires were emitted (and sets first/last wire and the next walk target), 0 when
+ * `child` is not the head of a multi-particle leaf and the caller should take its own
+ * single-particle path, and -1 when the caller must bail (a malformed chain, or a failed wire
+ * reservation; `pack_oom` is set in both cases). */
+static int let_emit_leaf_group(struct LETPackContext *pk, int no, int child, int sib_terminator,
+                               struct LETNodeWire **buf, int *count, int *capacity,
+                               int *first_wire, int *last_wire, int *next_child)
+{
+    int slot = -1, boundary = -1, n = 0;
+    if(let_bucket_scratch_ready(pk))
+    {
+        n = let_bucket_members(no, child, sib_terminator, &slot, &boundary, pk->member_idx);
+    }
+    if(n < 0)
+    {
+        printf("LET pack FATAL: the leaf under node %d beginning at particle %d does not close on the "
+               "parent's next child (rank %d); the local tree is malformed.\n", no, child, ThisTask);
+        fflush(stdout); endrun(90001025);
+        pk->pack_oom = 1;   /* endrun is a soft stop that returns: raise the flag the callers test,
+                               so no truncated subtree is shipped */
+        return -1;
+    }
+    if(n < 2) {return 0;}   /* a single particle, or nothing this node owns: caller's own path */
+
+    /* Gather each member ONCE.  The same copies serve whichever way the decision goes, so no
+     * member is ever gathered twice. */
+    for(int m = 0; m < n; m++) {let_fill_particle_src(pk->member_idx[m], &pk->member_src[m]);}
+
+    double cen[3], len;
+    let_bucket_cube(no, slot, pk->member_idx, n, cen, &len);
+
+    struct LETNodeWire cand;
+    let_build_bucket_aggregate(pk, n, child, cen, len, &cand);
+
+    int cand_nsink = 0;
+#if (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES)) && defined(SINGLE_STAR_DIRECT_GRAVITY_RADIUS)
+    cand_nsink = cand.node.N_SINK;
+#endif
+    /* Decided on exactly the geometry the wire carries, so a receiver applying this same predicate
+     * to what it was sent cannot open, within this exchange, what was closed here.  Later motion
+     * still can, which is what the truncated-aggregate tag and its repair path are for. */
+    const double cand_len_decide = let_aggregate_len_over_tree_lifetime(&cand, len);
+    const int cand_essential = let_node_essential_for_rank(pk, cen[0], cen[1], cen[2],
+            (double) cand.node.u.d.s[0], (double) cand.node.u.d.s[1], (double) cand.node.u.d.s[2],
+            cand_len_decide, (double) cand.node.u.d.mass, (double) cand.node.maxsoft, cand_nsink);
+
+    if(!cand_essential)
+    {
+        /* No target on the receiving rank opens this leaf: it ships whole, as one multipole. */
+        grow_wire_buf(pk, buf, *count + 1, capacity);
+        if(pk->pack_oom) return -1;
+        *first_wire = *last_wire = (*count)++;
+        (*buf)[*first_wire] = cand;
+    }
+    else
+    {
+        /* Some target opens it: the members ship individually, exactly as they always have,
+         * emitted from the copies already gathered. */
+        grow_wire_buf(pk, buf, *count + n, capacity);
+        if(pk->pack_oom) return -1;
+        *first_wire = *count;
+        for(int m = 0; m < n; m++)
+        {
+            const int wi = (*count)++;
+            let_emit_particle_leaf_from_src(pk->member_idx[m], &pk->member_src[m],
+                                            LET_WIRE_EXIT, &(*buf)[wi]);
+            if(m > 0) {(*buf)[wi - 1].node.u.d.sibling = wi;}
+            *last_wire = wi;
+        }
+    }
+    *next_child = boundary;
+    return 1;
+}
+#endif
 
 static void grow_hdr_buf(struct LETPackContext *pk, struct LETSubtreeHeader **buf, int needed, int *capacity)
 {
@@ -1212,15 +1503,30 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
     {
         int next_child;
         int child_wire_idx = -1;
+#if TREE_LEAF_BUCKET_SIZE > 1
+        /* A multi-particle leaf emits several wires at once; the level then continues from the
+         * last of them rather than the first. */
+        int batch_last_wire_idx = -1;
+#endif
 
         if(child < All.TreeParticleSlots)
         {
-            /* Particle leaf -- synthesize */
-            grow_wire_buf(pk, buf, *count + 1, capacity);
-            if(pk->pack_oom) return;   /* realloc failed: bail before the OOB write */
-            child_wire_idx = (*count)++;
-            let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
-            next_child = Nextnode[child];  /* particle's next walk target */
+#if TREE_LEAF_BUCKET_SIZE > 1
+            int grp_first = -1, grp_last = -1;
+            const int grp = let_emit_leaf_group(pk, no, child, sib_terminator, buf, count, capacity,
+                                                &grp_first, &grp_last, &next_child);
+            if(grp < 0) {return;}
+            if(grp > 0) {child_wire_idx = grp_first; batch_last_wire_idx = grp_last;}
+            else
+#endif
+            {
+                /* Particle leaf -- synthesize */
+                grow_wire_buf(pk, buf, *count + 1, capacity);
+                if(pk->pack_oom) return;   /* realloc failed: bail before the OOB write */
+                child_wire_idx = (*count)++;
+                let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*buf)[child_wire_idx]);
+                next_child = Nextnode[child];  /* particle's next walk target */
+            }
         }
         else if(child < All.TreeNodeIndexBase)
         {
@@ -1268,6 +1574,9 @@ static void pack_recurse(struct LETPackContext *pk, int no, int sib_terminator,
                 (*buf)[last_child_wire_idx].node.u.d.sibling = child_wire_idx;
             }
             last_child_wire_idx = child_wire_idx;
+#if TREE_LEAF_BUCKET_SIZE > 1
+            if(batch_last_wire_idx >= 0) {last_child_wire_idx = batch_last_wire_idx;}
+#endif
         }
 
         child = next_child;
@@ -1452,15 +1761,30 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
         {
             int next_child;
             int child_wire_idx = -1;
+#if TREE_LEAF_BUCKET_SIZE > 1
+            /* A multi-particle leaf emits several wires at once; the level then continues from the
+             * last of them rather than the first. */
+            int batch_last_wire_idx = -1;
+#endif
             if(child < All.TreeParticleSlots)
             {
-                /* Particle directly under topleaf -- synthesize leaf */
-                grow_wire_buf(pk, out_buf, count + 1, out_capacity);
-                if(pk->pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
-                child_wire_idx = count;
-                let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*out_buf)[count]);
-                count++;
-                next_child = Nextnode[child];
+#if TREE_LEAF_BUCKET_SIZE > 1
+                int grp_first = -1, grp_last = -1;
+                const int grp = let_emit_leaf_group(pk, topleaf_no, child, sib_term, out_buf, &count,
+                                                    out_capacity, &grp_first, &grp_last, &next_child);
+                if(grp < 0) {goto pack_oom_bail;}
+                if(grp > 0) {child_wire_idx = grp_first; batch_last_wire_idx = grp_last;}
+                else
+#endif
+                {
+                    /* Particle directly under topleaf -- synthesize leaf */
+                    grow_wire_buf(pk, out_buf, count + 1, out_capacity);
+                    if(pk->pack_oom) goto pack_oom_bail;   /* realloc failed: ship nothing for R */
+                    child_wire_idx = count;
+                    let_synthesize_particle_leaf(child, LET_WIRE_EXIT, &(*out_buf)[count]);
+                    count++;
+                    next_child = Nextnode[child];
+                }
             }
             else if(child < All.TreeNodeIndexBase)
             {
@@ -1493,6 +1817,9 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                 if(last_child_wire_idx >= 0)
                     (*out_buf)[last_child_wire_idx].node.u.d.sibling = child_wire_idx;
                 last_child_wire_idx = child_wire_idx;
+#if TREE_LEAF_BUCKET_SIZE > 1
+                if(batch_last_wire_idx >= 0) {last_child_wire_idx = batch_last_wire_idx;}
+#endif
             }
             child = next_child;
         }

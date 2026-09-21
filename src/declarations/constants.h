@@ -120,6 +120,49 @@
 
 #define  GRAVITY_LET_DETECTOR_ENTRIES  4096  /* how many targets the gravity walk can record as not covered by the locally-built tree. Recording even one stops the run, so this only has to be large enough to report what happened, with room for every thread to record at once */
 
+/* Maximum number of particles a tree node may hold without being subdivided further: a node at or
+ * below this count becomes a terminal "bucket" leaf whose particles are visited directly, instead of
+ * being split down to one particle per leaf. Trading a few extra direct particle tests for a much
+ * shallower tree is standard (GADGET-4 TREE_NUM_BEFORE_NODESPLIT, ChaNGa bucketSize, SPH-EXA/SWIFT
+ * leaf sizes, and our own SFC tile size), and it also bounds the depth that near-coincident
+ * particles can force.
+ *
+ * There is no universally good value: the best choice depends on the problem, on how aggressively
+ * the opening criterion descends, and on the machine. Measured across a clustered cosmological zoom
+ * and a shallower-tree galaxy problem, 4 is a win on the first and neutral on the second, so it is
+ * the default; larger values suit strongly clustered problems and are limited in practice by the
+ * memory needed to export the tree between ranks. 1 reproduces the historical one-particle-per-leaf
+ * tree exactly, and compiles the multi-particle leaf code out entirely. Override in Config.sh. */
+#ifndef TREE_LEAF_BUCKET_SIZE
+#define TREE_LEAF_BUCKET_SIZE 4
+#endif
+#if TREE_LEAF_BUCKET_SIZE < 1
+/* Below one, no child count satisfies the terminal-leaf test, so a single particle would be neither
+ * stored in a leaf slot nor given a node of its own: it would drop out of the tree silently. */
+#error "TREE_LEAF_BUCKET_SIZE must be at least 1 (1 = one particle per leaf, the historical tree)"
+#endif
+
+/* How many targets the host gravity walk takes through the tree together. Targets adjacent in the
+ * active list are usually close in space (the list follows the particle order, which follows the
+ * space-filling curve), so their walks visit nearly the same nodes; a packet traverses the tree
+ * once for all of them, every member judges each node by its own opening criterion, and each
+ * member then evaluates the elements it accepted, so its force is exactly what its own walk would
+ * produce. What is shared is the traversal, which is most of the cost where a few targets descend
+ * a locally very deep tree. 1 walks every target alone, the historical walk.
+ *
+ * No single value suits every problem or machine. Measured on a clustered cosmological zoom at 128
+ * ranks, 8 cut the host walk by 14% and was never slower than 1 on any class of step, while 64 gave
+ * the same gain on the steps that matter most but cost more on the many tiny steps, where a large
+ * packet does far more opening-criterion work than the node loads it shares; so 8 is the default.
+ * Override in Config.sh. */
+#ifndef TREE_QUERY_PACKET_SIZE
+#define TREE_QUERY_PACKET_SIZE 8
+#endif
+#if TREE_QUERY_PACKET_SIZE < 1
+#error "TREE_QUERY_PACKET_SIZE must be at least 1 (1 = every target walks the tree alone)"
+#endif
+
+
 #define  EPSILON_FOR_TREERND_SUBNODE_SPLITTING (1.0e-4) /* define some number << 1; particles with less than this separation will trigger randomized sub-node splitting in the tree. we set it to a global value here so that other sub-routines will know not to force particle separations below this */
 
 #if !defined(EOS_GAMMA)

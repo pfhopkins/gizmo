@@ -35,7 +35,14 @@ void force_flag_localnodes(void);
 
 void *gravity_primary_loop(void *p);
 
-int force_treeevaluate(int target, int *exportflag, int *exportnodecount, int *exportindex);
+/* Walk the tree once for a packet of up to cap targets (see forcetree.cc). workspace is the
+ * calling thread's block of force_treewalk_workspace_bytes_per_thread(cap) bytes. Returns 1
+ * when every member's result is written (ninter_out[m] = its interaction count), 0 when a
+ * packet of several met a pseudo-particle and wrote nothing (walk each member alone), -1 when
+ * a packet of one found the import-detector table full. */
+int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_out, void *workspace,
+                       int *exportflag, int *exportnodecount, int *exportindex);
+size_t force_treewalk_workspace_bytes_per_thread(int cap);
 int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
 

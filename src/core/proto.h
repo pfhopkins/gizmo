@@ -186,6 +186,26 @@ GIZMO_GPU_FUNCTION inline double sigmoid_sqrt(double x) {return 0.5*(1 + x/sqrt(
    Jeans-refinement / grain-fluid builds where those types are reserved for
    non-stellar roles (analytic-BH anchor; grains, GRAIN_PTYPES defaults to type 3).
    Callers apply their own Mass>0 / KernelRadius>0 / age guards on top. */
+/*! Transient claim token for the sink accretion/merger protocol: which sink has claimed a given
+ *  particle this step. It replaces the particle ID there, which cannot do the job -- IDs repeat
+ *  (every spawned wind cell carries one stamped value, and an input can hold duplicates), so two
+ *  sinks sharing an ID were indistinguishable to the claim, the owner match and the cross-rank
+ *  arbitration alike.
+ *
+ *  The owning rank and the slot the sink occupies on it are EXACTLY unique for a given particle
+ *  layout, so no hashing and no collision handling are needed. The token is formed on the owner and
+ *  carried in the transported record, so a remote evaluation compares the same value; it stays valid
+ *  because nothing reorders particles between the feed pass that writes a claim and the swallow pass
+ *  that consumes it. The +1 keeps it clear of the 0 that means "unclaimed".
+ *
+ *  It is a token, NOT an identity: P[].ID remains what identifies a particle for physics and output.
+ *  Ordering comparisons on it (the arbitration among competing claims) stay well defined, but select
+ *  the largest TOKEN rather than the largest ID -- an arbitrary tie-break either way. */
+GIZMO_GPU_FUNCTION static inline MyIDType gizmo_sink_claim_token(int owner_task, int owner_slot)
+{
+    return (MyIDType)1 + (((MyIDType)(unsigned int)owner_task << 32) | (MyIDType)(unsigned int)owner_slot);
+}
+
 GIZMO_GPU_FUNCTION static inline int is_galsf_stellar_candidate_type(int type, int comoving_on)
 {
     if(type == 4) {return 1;}

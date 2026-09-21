@@ -59,6 +59,7 @@ SinkEnv1Spec::populate_call_scalars(const neighbor_loop_args& /*args*/)
     CallScalars scalars;
     scalars.common           = nlr_common_scalars_from_all();
     scalars.sink_radius_grav = SinkParticle_GravityKernelRadius;
+    scalars.owner_task       = ThisTask;
     return scalars;
 }
 
