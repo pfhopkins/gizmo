@@ -54,6 +54,13 @@ struct sfc_tile_t {
     double hi[3];                     /* bounding box upper corner */
     double hmax;                      /* max kernel radius in tile (any type) — kept for back-compat callers */
     double hmax_by_type[TILE_NUM_PTYPES]; /* max kernel radius PER TYPE (Bucket roadmap) */
+    /* Motion bound: the box above holds the members' positions as of t_ref
+     * (the EARLIEST member clock when the box was written), and no member moves
+     * faster than vmax (particle_motion_speed_bound).  A reader at a later time
+     * widens the box through motion_bound_widening, so the tile stays a valid
+     * bound while its particles drift without being re-tiled. */
+    double      vmax;
+    integertime t_ref;
 };
 
 /* BVH node over SFC tiles. Built bottom-up from SFC-sorted tiles via
@@ -63,6 +70,8 @@ struct tile_bvh_node_t {
     double lo[3], hi[3];                  /* bounding box of subtree */
     double hmax;                          /* max kernel radius in subtree (any type) — back-compat */
     double hmax_by_type[TILE_NUM_PTYPES]; /* max kernel radius PER TYPE in subtree */
+    double      vmax;                     /* max over the subtree's tiles */
+    integertime t_ref;                    /* min over the subtree's tiles */
     int left, right;                      /* children: >= 0 = internal node index, < 0 = -(tile_index+1) for leaf */
 };
 

@@ -51,6 +51,10 @@ static inline void sfc_tile_begin(sfc_tile_t *tile, int first)
     tile->hmax = 0;
     for(int t = 0; t < TILE_NUM_PTYPES; t++) tile->hmax_by_type[t] = 0;
     for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; }
+    /* No members yet: nothing moves, and the reference clock is later than any
+     * member can be, so the first fold sets it. */
+    tile->vmax  = 0;
+    tile->t_ref = TIMEBASE;
 }
 
 /* Fold one live member into a tile's box and reach. The tiling rule lives here
@@ -61,13 +65,21 @@ static inline void sfc_tile_begin(sfc_tile_t *tile, int first)
  * scale_factor (default 1.0 -> bare per-policy reach for Mode A; ghost_exchange
  * passes j_radius_scale * safety_factor to keep BVH bands and leaf compact h on
  * the same supply-side reach). */
-static inline void sfc_tile_fold(sfc_tile_t *tile, const struct particle_data *p,
+static inline void sfc_tile_fold(sfc_tile_t *tile, const struct particle_data *P,
+                                 const struct gas_cell_data *cells, int j,
                                  mode_b_radius_policy_t radius_policy, double scale_factor)
 {
+    const struct particle_data *p = &P[j];
     for(int k = 0; k < 3; k++) {
         if(p->Pos[k] < tile->lo[k]) tile->lo[k] = p->Pos[k];
         if(p->Pos[k] > tile->hi[k]) tile->hi[k] = p->Pos[k];
     }
+    /* The motion bound the box is read against later: the fastest member and
+     * the earliest clock among them (the positions folded here are each
+     * member's own, as of its own Ti_current). */
+    const double vb = particle_motion_speed_bound(j, P, cells);
+    if(vb > tile->vmax) tile->vmax = vb;
+    if(p->Ti_current < tile->t_ref) tile->t_ref = p->Ti_current;
     double hj = nlr_particle_symmetric_radius(*p, radius_policy) * scale_factor;
     if(hj > tile->hmax) tile->hmax = hj;
     int tj = (int)p->Type;
@@ -129,7 +141,7 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
         if((num_pool % target_tile_size) == 0) sfc_tile_begin(&tiles[ntiles++], num_pool);
         pool[num_pool++] = i;
         tiles[ntiles - 1].count++;
-        sfc_tile_fold(&tiles[ntiles - 1], &P[i], radius_policy, scale_factor);
+        sfc_tile_fold(&tiles[ntiles - 1], P, CellP, i, radius_policy, scale_factor);
     }
     /* An empty pool still publishes one (empty, inverted-box) tile so the BVH
      * always has a root to build over. */
@@ -173,7 +185,7 @@ int build_sfc_tiles_from_pool(struct particle_data *P, const int *pool, int num_
         {
             int j = pool[start + s];
             if(P[j].Mass <= 0) continue;
-            sfc_tile_fold(&tiles[t], &P[j], radius_policy, scale_factor);
+            sfc_tile_fold(&tiles[t], P, CellP, j, radius_policy, scale_factor);
         }
     }
 
@@ -209,6 +221,8 @@ static int build_bvh_recursive(sfc_tile_t *tiles, int tile_start, int tile_end,
         for(int k = 0; k < 3; k++) { bvh[idx].lo[k] = tiles[t].lo[k]; bvh[idx].hi[k] = tiles[t].hi[k]; }
         bvh[idx].hmax = tiles[t].hmax;
         for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) bvh[idx].hmax_by_type[tt] = tiles[t].hmax_by_type[tt];
+        bvh[idx].vmax  = tiles[t].vmax;
+        bvh[idx].t_ref = tiles[t].t_ref;
         bvh[idx].left = -(t + 1);   /* negative encoding: leaf = -(tile_index + 1) */
         bvh[idx].right = -(t + 1);  /* same tile for both (signals leaf) */
         return idx;
@@ -230,6 +244,8 @@ static int build_bvh_recursive(sfc_tile_t *tiles, int tile_start, int tile_end,
     bvh[idx].hmax = DMAX(bvh[left_idx].hmax, bvh[right_idx].hmax);
     for(int tt = 0; tt < TILE_NUM_PTYPES; tt++)
         bvh[idx].hmax_by_type[tt] = DMAX(bvh[left_idx].hmax_by_type[tt], bvh[right_idx].hmax_by_type[tt]);
+    bvh[idx].vmax  = DMAX(bvh[left_idx].vmax, bvh[right_idx].vmax);
+    bvh[idx].t_ref = (bvh[left_idx].t_ref < bvh[right_idx].t_ref) ? bvh[left_idx].t_ref : bvh[right_idx].t_ref;
     bvh[idx].left = left_idx;
     bvh[idx].right = right_idx;
     return idx;

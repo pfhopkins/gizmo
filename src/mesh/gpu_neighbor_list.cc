@@ -254,6 +254,7 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
     const mode_b_radius_policy_t policy_capture = idx->cache_radius_policy;
     /* Out-of-line host accessor for the host-side drift-factor input. */
     integertime time1 = gizmo_host_ti_current();
+    const struct gas_cell_data *cells = gpu_particles_arena_CellP();
 
     #pragma omp parallel for schedule(static)
     for(int t = 0; t < ntiles; t++) {
@@ -268,6 +269,10 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         double lo1 = y0, hi1 = y0;
         double lo2 = z0, hi2 = z0;
         double hmax = nlr_particle_symmetric_radius(P_shared[j0], policy_capture);
+        /* The box below is written at the predicted positions for time1, so the
+         * motion bound restarts from that clock; the speed bound is re-read
+         * because a kick since the build can have raised it. */
+        double vmax_tile = particle_motion_speed_bound(j0, P_shared, cells);
         /* Per-type bands recomputed alongside scalar hmax: under the new
          * invariant the bands are policy-aware and would otherwise stay
          * frozen at build-time values, contradicting the conservative-
@@ -290,6 +295,8 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
             if(z < lo2) lo2 = z; else if(z > hi2) hi2 = z;
             double h = nlr_particle_symmetric_radius(P_shared[j], policy_capture);
             if(h > hmax) hmax = h;
+            double vb = particle_motion_speed_bound(j, P_shared, cells);
+            if(vb > vmax_tile) vmax_tile = vb;
             int tj = (int)P_shared[j].Type;
             if(tj >= 0 && tj < TILE_NUM_PTYPES && h > hbt[tj]) hbt[tj] = h;
             if(pos_buf) { pos_buf[j*3+0] = x; pos_buf[j*3+1] = y; pos_buf[j*3+2] = z; }
@@ -299,6 +306,8 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         tile->lo[2] = lo2; tile->hi[2] = hi2;
         tile->hmax = hmax;
         for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) tile->hmax_by_type[tt] = hbt[tt];
+        tile->vmax  = vmax_tile;
+        tile->t_ref = time1;
 
     }
 }

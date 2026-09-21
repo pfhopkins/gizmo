@@ -381,6 +381,10 @@ static inline void glt_recompute_tile_(int t)
     /* Empty tiles carry an INVERTED box so they stay neutral under the BVH's
      * min/max union and always fail the sphere-overlap test; a zeroed box would
      * stretch every ancestor to the coordinate origin and defeat pruning there. */
+    /* The motion bound restarts with the box: no live member yet, so nothing
+     * moves and the reference clock is later than any member can be. */
+    tile->vmax  = 0;
+    tile->t_ref = TIMEBASE;
     if(tile->count <= 0) {
         for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; }
         return;
@@ -429,6 +433,10 @@ static inline void glt_recompute_tile_(int t)
         if(h > tile->hmax) tile->hmax = h;
         if(pt >= 0 && pt < TILE_NUM_PTYPES && h > tile->hmax_by_type[pt])
             tile->hmax_by_type[pt] = h;
+        /* The box holds each member's own position as of its own clock. */
+        const double vb = particle_motion_speed_bound(j, P, CellP);
+        if(vb > tile->vmax) tile->vmax = vb;
+        if(P[j].Ti_current < tile->t_ref) tile->t_ref = P[j].Ti_current;
     }
     /* Every member dead: same inverted empty-tile box as count <= 0 above. */
     if(!seeded) { for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; } }
@@ -447,6 +455,8 @@ static inline void glt_recompute_bvh_node_(int n)
         for(int k = 0; k < 3; k++) { node->lo[k] = tile->lo[k]; node->hi[k] = tile->hi[k]; }
         node->hmax = tile->hmax;
         for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) node->hmax_by_type[tt] = tile->hmax_by_type[tt];
+        node->vmax  = tile->vmax;
+        node->t_ref = tile->t_ref;
     } else {
         tile_bvh_node_t *left = &g_glt_cache.bvh[node->left];
         tile_bvh_node_t *right = &g_glt_cache.bvh[node->right];
@@ -457,6 +467,8 @@ static inline void glt_recompute_bvh_node_(int n)
         node->hmax = DMAX(left->hmax, right->hmax);
         for(int tt = 0; tt < TILE_NUM_PTYPES; tt++)
             node->hmax_by_type[tt] = DMAX(left->hmax_by_type[tt], right->hmax_by_type[tt]);
+        node->vmax  = DMAX(left->vmax, right->vmax);
+        node->t_ref = (left->t_ref < right->t_ref) ? left->t_ref : right->t_ref;
     }
 }
 

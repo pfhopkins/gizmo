@@ -80,6 +80,12 @@ struct gx_export_envelope_t {
  * standing for another rank's subtree.  Anything in the gap between the
  * particle slots and the node base belongs to no class at all and means the
  * tree is malformed. */
+/* What a walk reports when it cannot answer completely.  The caller stops the
+ * run; a walk that merely stopped stepping would return a short answer that
+ * looks complete.  Shared by the tree walk and the tile walk. */
+#define GX_WALK_ANOMALY_MALFORMED_TREE     1  /* index in no class, an unfilled view, or an invalid motion bound */
+#define GX_WALK_ANOMALY_TOUCHED_SET_FULL   2  /* touched-set list shorter than the set it recorded */
+
 struct GxDeviceTreeView {
     const Vec3<MyFloat> *node_center;
     const MyFloat       *node_len;

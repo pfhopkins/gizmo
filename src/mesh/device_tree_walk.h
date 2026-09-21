@@ -92,8 +92,8 @@
  * bookkeeping broke.  Both are fatal to the caller, so the value is for whoever
  * reads the report, not for deciding whether to stop.  Zero means nothing was
  * reported; callers test against it and must not assume 1. */
-#define GX_WALK_ANOMALY_MALFORMED_TREE     1  /* index in no class, or an unfilled view */
-#define GX_WALK_ANOMALY_TOUCHED_SET_FULL   2  /* touched-set list shorter than the set it recorded */
+/* The anomaly codes a walk can report are declared with the tree view in
+ * neighbor_list.h, because the tile walk reports the same states. */
 
 /* Which entry point a walk is using.  See the entry discussion at the top of
  * this file; the two forms correspond to the host walker's start node and
@@ -182,30 +182,17 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                  * to be negative and a non-finite term is refused outright. */
                 double len_eff = (double)tree.node_len[kn];
                 if(tree.node_vmax && tree.node_ti && tree.drift_tables_ok) {
-                    const integertime ti_node = tree.node_ti[kn];
-                    /* ⛔ `>= 0`, not `> 0`: zero is a VALID timestamp (the start of a
-                     * run), and excluding it would silently skip widening on exactly
-                     * the nodes a fresh tree has not advanced yet. */
-                    if(ti_node >= 0 && ti_node < tree.ti_now) {
-                        /* The undilated interval, as in force_drift_node: node_vmax
-                         * bounds each member's motion per unit undilated interval and
-                         * already carries that member's own dilation, so this stays
-                         * tight near a refinement centre without reading the node's
-                         * centre of mass. */
-                        const double dtw = get_drift_factor_impl(ti_node, tree.ti_now, 1.0,
-                                                                 &tree.drift_tables);
-                        const double dl = TREE_DRIFT_VELOCITY_PREFAC
-                                          * (double)tree.node_vmax[kn] * dtw;
-                        /* A non-finite or absurd widening is a DEFECT, not a big
-                         * number -- and falling back to the NARROW bound would be
-                         * silent under-inclusion, so say so through the channel the
-                         * caller already treats as fatal. NaN fails every comparison,
-                         * hence the explicit test rather than a range check alone. */
-                        if(!(dl >= 0.0) || dl >= 1.0e30) {
-                            Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
-                        } else {
-                            len_eff += dl;
-                        }
+                    /* The one widening rule (core/timestep_functions.h): the box grows
+                     * by how far its fastest member can have moved on the undilated
+                     * clock since the mirror was written.  An invalid value is a
+                     * defect and is reported through the channel the caller already
+                     * treats as fatal, never narrowed. */
+                    const double dl = motion_bound_widening((double)tree.node_vmax[kn], tree.node_ti[kn],
+                                                            tree.ti_now, &tree.drift_tables);
+                    if(!motion_bound_widening_is_valid(dl)) {
+                        Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
+                    } else {
+                        len_eff += dl;
                     }
                 }
                 const double hw = 0.5 * len_eff;

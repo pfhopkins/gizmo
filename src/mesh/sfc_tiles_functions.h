@@ -153,7 +153,15 @@ int check_tile_particles_gpu(const double *compact_xyzh, const double pos_i[3], 
  * `visit(tile_index)` is called once per overlapping tile, in traversal order.
  * A negative root is an EMPTY index (no tiles) and walks nothing: a query into
  * an empty pool has no neighbours, and must not read a node that was never
- * built. */
+ * built.
+ *
+ * With `drift_tables` given, every box is read as a MOTION BOUND: it is widened
+ * by how far its fastest member can have moved since the box was written
+ * (motion_bound_widening, the rule the tree walk uses), so an index whose
+ * particles have drifted since it was built still finds everything.  Without
+ * the tables the boxes are read as written -- the form for an index that was
+ * built or refreshed from current positions.  An invalid widening is reported
+ * through `anomaly` and never narrowed. */
 template <class TileVisitor>
 KOKKOS_INLINE_FUNCTION
 void bvh_walk_tiles(const double pos_i[3], double h_i, double j_radius_scale,
@@ -161,7 +169,12 @@ void bvh_walk_tiles(const double pos_i[3], double h_i, double j_radius_scale,
                     const tile_bvh_node_t *bvh, int bvh_root,
                     const struct particle_data *P_gpu, unsigned int supply_mask,
                     int *cnt_nodes_visited, int *cnt_tiles_visited,
-                    TileVisitor &visit)
+                    TileVisitor &visit,
+                    /* No defaults: the tables and the clock are one argument in two
+                     * parts, and a caller that supplied one without the other would
+                     * silently walk unwidened. Null tables = read the boxes as written. */
+                    const struct DriftKickTableView *drift_tables,
+                    integertime ti_now, int *anomaly)
 {
     if(bvh_root < 0) {return;}
 
@@ -192,6 +205,18 @@ void bvh_walk_tiles(const double pos_i[3], double h_i, double j_radius_scale,
          * j_radius_scale == 1.0; constant-propagated for default callers). */
         node_hmax_eff *= j_radius_scale;
         double search_r = (search_mode == NGB_SEARCH_ONEWAY) ? h_i : ((h_i > node_hmax_eff) ? h_i : node_hmax_eff);
+        if(drift_tables) {
+            /* Growing the sphere by the box's halfwidth growth is the same test
+             * as growing the box. */
+            const double dl = motion_bound_widening(node->vmax, node->t_ref, ti_now, drift_tables);
+            if(!motion_bound_widening_is_valid(dl)) {
+                /* A plain store: every reporter writes the same value, and this
+                 * header is also compiled by host units that carry no Kokkos. */
+                if(anomaly) {*anomaly = GX_WALK_ANOMALY_MALFORMED_TREE;}
+                continue;
+            }
+            search_r += 0.5 * dl;
+        }
         double search_r2 = search_r * search_r;
 
         /* Check if node's bbox (expanded by search_r) overlaps particle i */
@@ -281,7 +306,8 @@ int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], 
                              cnt_candidates_tested, cnt_candidates_accepted,
                              P_gpu, supply_mask, 0};
     bvh_walk_tiles(pos_i, h_i, j_radius_scale, search_mode, bvh, bvh_root,
-                   P_gpu, supply_mask, cnt_nodes_visited, cnt_tiles_visited, store);
+                   P_gpu, supply_mask, cnt_nodes_visited, cnt_tiles_visited, store,
+                   nullptr, 0, nullptr);   /* boxes as written: this index is built or refreshed from current positions */
     return store.count;
 }
 

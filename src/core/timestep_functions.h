@@ -227,6 +227,37 @@ double get_gravkick_factor_impl(integertime time0, integertime time1, double dil
     return drift_kick_table_factor(view->gravkick, time0, time1, view) * dilation;
 }
 
+/* --- Widening a spatial bound for the motion of what it holds ----------------
+ * A node or tile records the box its members occupied when it was written, at
+ * time t_ref, and the largest speed any of them can have (vmax, from
+ * particle_motion_speed_bound, which already carries each member's own
+ * dilation).  By `now` a member can have travelled vmax * dt on the UNDILATED
+ * clock, so the box LENGTH grows by twice that -- the same rule
+ * force_drift_node applies eagerly to a tree node.  Every reader of such a
+ * bound widens through this one function, so a tree node opened on the device,
+ * a tile opened by the BVH walk, and a node advanced on the host cannot disagree
+ * about how far a box may have moved.
+ *
+ * Returns the growth of the LENGTH (a halfwidth grows by half of it).  Zero
+ * when t_ref is not before `now`, so a fresh bound is read as written. */
+KOKKOS_INLINE_FUNCTION
+double motion_bound_widening(double vmax, integertime t_ref, integertime ti_now,
+                             const struct DriftKickTableView *view)
+{
+    if(!(t_ref >= 0 && t_ref < ti_now)) {return 0.0;}   /* zero is a valid timestamp: >= 0, not > 0 */
+    return TREE_DRIFT_VELOCITY_PREFAC * vmax * get_drift_factor_impl(t_ref, ti_now, 1.0, view);
+}
+
+/* A non-finite or absurd widening is a defect in the bound, never a large
+ * number: falling back to the unwidened box would under-include silently, so
+ * every reader tests the value and reports rather than narrows.  NaN fails
+ * every comparison, hence the explicit form rather than a range check alone. */
+KOKKOS_INLINE_FUNCTION
+int motion_bound_widening_is_valid(double dl)
+{
+    return (dl >= 0.0) && (dl < 1.0e30);
+}
+
 
 /* --- 4th-order Hermite integration -----------------------------------------
  * Which particles the Hermite integrator advances, and how a source that is not
