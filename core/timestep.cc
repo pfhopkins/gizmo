@@ -112,6 +112,9 @@ void find_timesteps(void)
 
 
     /* Now assign new timesteps  */
+#ifdef DEVELOPER_MODE
+    int n_stale_marker_warnings = 0; /* the stale-marker report below is capped per call: one line per particle would swamp the log */
+#endif
     for (int i : ActiveParticleList)
     {
 #ifdef FORCE_EQUAL_TIMESTEPS
@@ -222,7 +225,10 @@ void find_timesteps(void)
             integertime ti_step_old = P[i].dt_step; int newborn = (P[i].wakeup == -3);
 #endif
             if(!newborn && P[i].Ti_begstep + ti_step_old != All.Ti_Current)
-                {PRINT_WARNING("find_timesteps: step marker for particle ID=%llu type=%d was %lld ticks from the clock (Ti_begstep=%lld dt_step=%lld Ti_Current=%lld); re-deriving", (unsigned long long)P[i].ID, (int)P[i].Type, (long long)(All.Ti_Current - P[i].Ti_begstep - ti_step_old), (long long)P[i].Ti_begstep, (long long)ti_step_old, (long long)All.Ti_Current);}
+            {
+                if(n_stale_marker_warnings < 8) {PRINT_WARNING("find_timesteps: step marker for particle ID=%llu type=%d was %lld ticks from the clock (Ti_begstep=%lld dt_step=%lld Ti_Current=%lld); re-deriving", (unsigned long long)P[i].ID, (int)P[i].Type, (long long)(All.Ti_Current - P[i].Ti_begstep - ti_step_old), (long long)P[i].Ti_begstep, (long long)ti_step_old, (long long)All.Ti_Current);}
+                n_stale_marker_warnings++;
+            }
         }
 #endif
         P[i].Ti_begstep = All.Ti_Current;
@@ -251,6 +257,9 @@ void find_timesteps(void)
 #endif
         
     }
+#ifdef DEVELOPER_MODE
+    if(n_stale_marker_warnings > 8) {PRINT_WARNING("find_timesteps: %d stale step markers re-derived on this task this step (first 8 reported above)", n_stale_marker_warnings);}
+#endif
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     MPI_Allreduce(xyz_local, xyz_global, 3*SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); // broadcast the new position of the special particle
