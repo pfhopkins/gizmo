@@ -1137,7 +1137,18 @@ integertime get_timestep(int p,		/*!< particle index */
         }
         fflush(stdout); fprintf(stderr, "\n @ fflush \n");
 #ifdef STOP_WHEN_BELOW_MINTIMESTEP
-        if(P[p].Mass > 0) {endrun(888);}
+        int ramp_exempt = 0;
+#ifdef IO_GRADUAL_SNAPSHOT_RESTART
+        /* The snapshot-restart ramp near the top of this function puts EVERY particle on a 2-tick
+           step, which is far below MinSizeTimestep, so climbing back up the ladder necessarily
+           passes through steps under the floor. Aborting on that makes flag-2 restarts impossible
+           for any run whose MinSizeTimestep is more than a couple of ticks. Exempt it ONLY while
+           the particle is still below the floor, i.e. still climbing out of the ramp: once it has
+           recovered a step above MinSizeTimestep, a request to go back below it is a genuine
+           physical constraint and must still terminate the run. */
+        if(RestartFlag == 2 && get_particle_timestep_in_physical(p) < All.MinSizeTimestep) {ramp_exempt = 1;}
+#endif
+        if(P[p].Mass > 0 && !ramp_exempt) {endrun(888);}
 #endif
         dt = All.MinSizeTimestep;
     }
