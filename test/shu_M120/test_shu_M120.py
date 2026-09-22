@@ -144,3 +144,42 @@ def test_shu_M120(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     assert len(m_test) == 1
     assert m_test[0] == pytest.approx(m_bench[0], rel=0.1)
+
+
+def test_shu_M120_snapshot_restart():
+    """Snapshot (flag-2) restart of the baseline run's final state with a real MinSizeTimestep.
+
+    Guards the restart ramp. On the first step after a snapshot restart every particle is put on the
+    smallest allowed step. Sinks are coupled to their gas neighbours' timebin (dt_ngbs in get_timestep),
+    so when that ramp started at 2 ticks every sink requested a sub-floor step for the first few steps
+    and STOP_WHEN_BELOW_MINTIMESTEP killed the run; an interim exemption of the abort left the floor
+    warnings in the log. The floor here is 40 ticks of the restart's own timebase: above the coupled
+    requests, which reach ~33 ticks, and far below any physical step, so a clean log means the ramp
+    started at the floor. Runs a short window from the last baseline snapshot; the baseline variant
+    must have run first, which is the order in this module."""
+    import re
+    from os import chdir, getcwd, path
+    from gizmo.test import run_test
+    test_name = "shu_M120"
+    snap = get_final_snapshot(test_name, ())
+    if snap is None or not path.isfile(snap):
+        pytest.skip("baseline snapshot missing; the restart needs it")
+    with h5py.File(snap) as f:
+        t0 = float(f["Header"].attrs["Time"])
+    typedefs = path.join(path.dirname(__file__), "..", "..", "declarations", "typedefs.h")
+    timebins = int(re.search(r"#define\s+TIMEBINS\s+(\d+)", open(typedefs).read()).group(1))
+    dt_run = 3.0e-5                       # about a quarter of TimeBetSnapshot: dozens of steps up the ladder, a few seconds
+    tick = dt_run / 2 ** timebins         # Timebase_interval of the restarted run (TimeBegin is rebased to the snapshot time)
+    cwd = getcwd()
+    try:
+        chdir("test/shu_M120/")
+        run_test(test_name, default_mpi_ranks(), default_omp_threads(), timeout=300, restart_flag=2,
+                 param_overrides={"InitCondFile": "output/" + path.basename(snap).replace(".hdf5", ""),
+                                  "OutputDir": "output_restart", "TimeMax": t0 + dt_run,
+                                  "TimeBetSnapshot": dt_run, "MinSizeTimestep": 40 * tick})
+        log = open("test_shu_M120.out").read()
+    finally:
+        chdir(cwd)
+    n_floor = log.count("wants to be below the limit")
+    assert n_floor == 0, f"{n_floor} sub-floor timestep requests after the snapshot restart: the ramp is not starting at MinSizeTimestep"
+    assert "ENDRUN" not in log

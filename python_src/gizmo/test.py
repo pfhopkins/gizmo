@@ -328,8 +328,9 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
 
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None,
-             param_overrides: dict | None = None):
+             param_overrides: dict | None = None, restart_flag: int = 0):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
+    restart_flag is GIZMO's second argument: 0 = start from InitCondFile, 2 = snapshot restart from it.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped
     via pytest.skip. Timeout defaults to GIZMO_TEST_TIMEOUT env var or DEFAULT_TEST_TIMEOUT.
     param_overrides replaces parameter values for this run only, via a sibling params file.
@@ -354,7 +355,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
         cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus", "--oversubscribe"]
     if num_openmp_threads > 0 and not environ.get("SLURM_JOB_ID"):
         cmd += ["--bind-to", "none"]
-    cmd += ["./GIZMO", paramsfile, "0"]
+    cmd += ["./GIZMO", paramsfile, str(restart_flag)]
 
     effective_timeout = _resolve_test_timeout(timeout)
     outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"
