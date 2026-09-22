@@ -1772,7 +1772,18 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * eligible_for_hermite() -- it depends only on the SOURCE but is evaluated per
                  * (target, source) pair, and it is cross-TU, so it blocks optimization here.
                  * Hoisting it into a per-pass array would recover most of that. Not done. */
-                if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin] && eligible_for_hermite(no))
+                /* Validity gate on the extrapolation span. The Old* polynomial interpolates the
+                   source over its OWN step; used past that it is an extrapolation outside its
+                   convergence radius, and for a close pair it can displace the source by
+                   multiples of the separation with a sign correlated to the orbit -- which
+                   rectifies into a COM drift rather than averaging out. Outside the span we fall
+                   through to the KDK-drifted state computed above: larger-order error, but
+                   unbiased. Integer compares, and ahead of eligible_for_hermite so they
+                   short-circuit the expensive part of the gate. */
+                if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin]
+                   && (ti_Current >= P[no].Ti_begstep)
+                   && ((ti_Current - P[no].Ti_begstep) <= P[no].integertime_step())
+                   && eligible_for_hermite(no))
                 {
                     double hD = get_gravkick_factor(P[no].Ti_begstep, ti_Current, no, 0);
                     dr = P[no].OldPos + (P[no].OldVel + (P[no].Hermite_OldAcc + P[no].OldJerk * (hD/3)) * (hD/2)) * hD - pos;

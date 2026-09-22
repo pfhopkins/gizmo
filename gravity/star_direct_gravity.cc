@@ -81,7 +81,14 @@ void star_direct_gravity_build_table(void)
          * buffer is touched -- P[i] is untouched, so the KDK path is unaffected. Active stars
          * keep their live state: it is already correct, and at HermiteOnlyFlag==1 their Old* are
          * stale because find_timesteps has already advanced Ti_begstep. */
-        if(HermiteOnlyFlag && !TimeBinActive[P[i].TimeBin] && eligible_for_hermite(i))
+        /* Same extrapolation-span gate as the tree walk's single-particle branch: the Old*
+         * polynomial is only an interpolant over the source's own step, so past that we send the
+         * KDK-drifted state instead -- lower order, but unbiased, where the extrapolation is
+         * biased along the orbit and rectifies into a COM drift. */
+        if(HermiteOnlyFlag && !TimeBinActive[P[i].TimeBin]
+           && (All.Ti_Current >= P[i].Ti_begstep)
+           && ((All.Ti_Current - P[i].Ti_begstep) <= P[i].integertime_step())
+           && eligible_for_hermite(i))
         {
             double hD = get_gravkick_factor(P[i].Ti_begstep, All.Ti_Current, i, 0);
             sendbuf[k].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (hD/3)) * (hD/2)) * hD;

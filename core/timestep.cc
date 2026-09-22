@@ -33,7 +33,7 @@ void find_timesteps(void)
     CPU_Step[CPU_MISC] += measure_time();
 
     int i, bin, binold, prev, next;
-    integertime ti_step, ti_step_old, ti_min, ti_stepmax, ti_max;
+    integertime ti_step, ti_min, ti_stepmax, ti_max;
     double aphys;
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     int special_particle_active_with_this_index[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM], j_specialpartical_counter=0;
@@ -201,12 +201,31 @@ void find_timesteps(void)
             P[i].TimeBin = bin;
         }
 
-#ifndef WAKEUP
-        ti_step_old = GET_INTEGERTIME_FROM_TIMEBIN(binold);
+        /* Start the new step at the clock, not at the old step plus its length. Being in
+           ActiveParticleList here IS the statement that the particle is synchronized at
+           All.Ti_Current, so for consistent bookkeeping the two forms are bit-identical. They
+           differ only when something upstream left the marker wrong, and then the incremental
+           form advances faithfully from the wrong origin forever -- there is no other absolute
+           write on this path, so a single bad step is permanent. Downstream that shows up as a
+           Hermite source prediction extrapolated over many times the source's own step, far
+           outside the interpolant's convergence radius. Kick intervals are unaffected: kicks
+           take differences of endpoints derived from the same marker, and this lands between
+           the closing and opening kicks, not inside either. */
+#ifdef DEVELOPER_MODE
+        {   /* the absolute write heals silently, so report what it healed -- otherwise the next
+               thing that corrupts the marker is invisible. A cell spawned since the last call is
+               exempt: it is stamped at birth with a step it never took, so it trips this by
+               construction (see the wind/jet spawn site in sinks/sink_swallow_and_kick.cc). */
+#ifndef WAKEUP /* TimeBin is already the NEW bin here, so the old step has to come from binold */
+            integertime ti_step_old = GET_INTEGERTIME_FROM_TIMEBIN(binold); int newborn = 0;
 #else
-        ti_step_old = P[i].dt_step;
+            integertime ti_step_old = P[i].dt_step; int newborn = (P[i].wakeup == -3);
 #endif
-        P[i].Ti_begstep += ti_step_old;
+            if(!newborn && P[i].Ti_begstep + ti_step_old != All.Ti_Current)
+                {PRINT_WARNING("find_timesteps: step marker for particle ID=%llu type=%d was %lld ticks from the clock (Ti_begstep=%lld dt_step=%lld Ti_Current=%lld); re-deriving", (unsigned long long)P[i].ID, (int)P[i].Type, (long long)(All.Ti_Current - P[i].Ti_begstep - ti_step_old), (long long)P[i].Ti_begstep, (long long)ti_step_old, (long long)All.Ti_Current);}
+        }
+#endif
+        P[i].Ti_begstep = All.Ti_Current;
 #if defined(WAKEUP)
         P[i].dt_step = ti_step;
 #endif
