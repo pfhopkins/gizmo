@@ -591,7 +591,10 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode)
                 if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]<0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
 #endif
             }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;} TreeMomentsStaleFlag=1;}
+            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
+#pragma omp atomic write
+                TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
+            }
         }
         else if (P[i].Pos[j] >= box_upper[j])
         {
@@ -606,7 +609,10 @@ void apply_special_boundary_conditions(int i, double mass_for_dp, int mode)
                 if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]>0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
 #endif
             }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;} TreeMomentsStaleFlag=1;}
+            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
+#pragma omp atomic write
+                TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
+            }
         }
     }
 #endif
