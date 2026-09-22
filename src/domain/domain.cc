@@ -688,6 +688,28 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
 }
 
 
+/* The key a position sorts under: the domain's mapping of a coordinate into the
+ * Peano-Hilbert curve, in one place.  Anything that wants particles in spatial
+ * order -- the decomposition's own keys, a neighbour index ordering its pool --
+ * asks here, so the corner/extent convention cannot drift between them. */
+int domain_position_is_within_key_extent(const Vec3<MyDouble> &pos)
+{
+    for(int k = 0; k < 3; k++)
+    {
+        const double key_input = ((pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
+        if(!(key_input >= 1.0 && key_input < 2.0)) {return 0;}
+    }
+    return 1;
+}
+
+peanokey peano_hilbert_key_of_position(const Vec3<MyDouble> &pos)
+{
+    peano1D xb = domain_double_to_int(((pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
+    peano1D yb = domain_double_to_int(((pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
+    peano1D zb = domain_double_to_int(((pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
+    return peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+}
+
 /*! Lightweight domain repartition: reuses the existing top-tree structure and Peano-Hilbert keys,
  *  only recomputing particle costs, re-splitting, and exchanging particles that changed domain.
  *  Skips: key computation, sorting, top-tree building/combining, and PH reorder.
@@ -764,12 +786,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     int extent_outgrown_local = 0;
     for(i = 0; i < NumPart; i++)
     {
-        for(int k = 0; k < 3; k++)
-        {
-            double key_input = ((P[i].Pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
-            if(!(key_input >= 1.0 && key_input < 2.0)) {extent_outgrown_local = 1;}
-        }
-        if(extent_outgrown_local) {break;}
+        if(!domain_position_is_within_key_extent(P[i].Pos)) {extent_outgrown_local = 1; break;}
     }
     int extent_outgrown = 0;
     MPI_Allreduce(&extent_outgrown_local, &extent_outgrown, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -812,10 +829,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     Key = PersistentKey; /* reuse persistent key storage directly */
     for(i = 0; i < NumPart; i++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        Key[i] = peano_hilbert_key_of_position(P[i].Pos);
     }
 
     /* temporarily reconstruct the local topNodes from the persistent TopNodes for domain_sumCost.
@@ -959,10 +973,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     /* update persistent keys for moved particles */
     for(i = 0; i < NumPart; i++)
     {
-        peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-        peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-        peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-        PersistentKey[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+        PersistentKey[i] = peano_hilbert_key_of_position(P[i].Pos);
     }
     Key = NULL; /* no longer valid as a mymalloc pointer */
 
@@ -2838,10 +2849,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      Key[i] = peano_hilbert_key_of_position(P[i].Pos);
     }
   for(i = 0, count = 0; i < NumPart; i++)
     {
@@ -2857,10 +2865,7 @@ int domain_determineTopTree(void)
   #endif
   for(i = 0; i < NumPart; i++)
     {
-      peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
-      peano1D yb = domain_double_to_int(((P[i].Pos[1] - DomainCorner[1]) / DomainLen) + 1.0);
-      peano1D zb = domain_double_to_int(((P[i].Pos[2] - DomainCorner[2]) / DomainLen) + 1.0);
-      mp[i].key = Key[i] = peano_hilbert_key(xb, yb, zb, BITS_PER_DIMENSION);
+      mp[i].key = Key[i] = peano_hilbert_key_of_position(P[i].Pos);
       mp[i].index = i;
     }
   count = NumPart;

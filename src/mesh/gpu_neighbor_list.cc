@@ -1940,6 +1940,36 @@ static int gx_owned_tile_index_build(struct GxOwnedTileIndex *ix, unsigned int m
 
     int *h_pool = NULL;
     const int num_pool = build_sfc_supply_pool(P, num_local, (int)mask, &h_pool);
+    /* Put the pool in spatial order before it is tiled.  A tile is a run of
+     * consecutive pool entries, so its box is only compact if neighbouring
+     * entries are neighbours in space -- and the pool inherits the order of
+     * P[], which the decomposition re-establishes on a cadence and particle
+     * exchange, refinement and spawning decay in between.  Sorting here makes
+     * the index responsible for its own locality instead of borrowing another
+     * module's schedule: measured on forgedinfire, an index built from a
+     * decayed P[] order reached 1800 tile visits per active against a few tens
+     * for the same index sorted, for a sort costing about a tenth of a second
+     * per rank at the rebuild cadence.
+     *
+     * The keys come from the domain's own mapping (one spelling, proto.h) and
+     * from the same stored positions the boxes below are folded from, so the
+     * order and the boxes describe one geometry.  A particle that has drifted
+     * outside the extent the domain measured its keys against has no meaningful
+     * key -- the mapping reads the mantissa of a number it assumes lies in
+     * [1,2) -- so it sorts to the end instead, where such particles share a few
+     * tiles rather than scattering through every tile and inflating each box. */
+    if(num_pool > 1) {
+        struct keyed_pool_entry {peanokey key; int index;};
+        keyed_pool_entry *keyed = (keyed_pool_entry *) mymalloc("sfc_pool_sort", (size_t)num_pool * sizeof(keyed_pool_entry));
+        for(int s = 0; s < num_pool; s++) {
+            const int j = h_pool[s];
+            keyed[s].key   = domain_position_is_within_key_extent(P[j].Pos) ? peano_hilbert_key_of_position(P[j].Pos) : PEANOCELLS;
+            keyed[s].index = j;
+        }
+        std::sort(keyed, keyed + num_pool, [](const keyed_pool_entry &x, const keyed_pool_entry &y) {return x.key < y.key;});
+        for(int s = 0; s < num_pool; s++) {h_pool[s] = keyed[s].index;}
+        myfree(keyed);
+    }
     sfc_tile_t *h_tiles = NULL;
     int ntiles = 0;
     if(num_pool > 0) {ntiles = build_sfc_tiles_from_pool(P, h_pool, num_pool, TILE_TARGET_SIZE, &h_tiles);}
