@@ -228,10 +228,12 @@ void gpu_sidx_notify_pool_changed(void)
  * AND fills the host-side position-staging buffer (idx->h_pos_buf) with the
  * same values.
  *
- * "Virtual at-time1 position" = P[j].Pos + P[j].Vel * get_drift_factor(
- *     P[j].Ti_current, All.Ti_Current, j, 0). This matches what
- * drift_particle's Pos update would produce IF / WHEN the particle is
- * lazily drifted by a downstream consumer. Under the current full-drift
+ * "Virtual at-time1 position" = P[j].Pos + particle_drift_velocity(j) *
+ *     get_drift_factor(P[j].Ti_current, All.Ti_Current, j, 0). The velocity
+ * is the one that moves THAT particle's position -- a finite-volume gas cell
+ * moves with its mesh-generating point, not with its fluid velocity -- so this
+ * matches what drift_particle's Pos update would produce IF / WHEN the particle
+ * is lazily drifted by a downstream consumer. Under the current full-drift
  * regime (move_particles iterates every NumPart particle), Ti_current ==
  * All.Ti_Current for all j, dt = 0, virt_pos == P[j].Pos — i.e. this code
  * is a no-op in absolute value, just exercising the threadsafe drift-factor
@@ -262,9 +264,10 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         if(tile->count <= 0) continue;
         int j0 = h_pool[tile->first];
         double dt0 = get_drift_factor(P_shared[j0].Ti_current, time1, j0, 0);
-        double x0 = P_shared[j0].Pos[0] + P_shared[j0].Vel[0] * dt0;
-        double y0 = P_shared[j0].Pos[1] + P_shared[j0].Vel[1] * dt0;
-        double z0 = P_shared[j0].Pos[2] + P_shared[j0].Vel[2] * dt0;
+        const Vec3<double> v0 = particle_drift_velocity(j0, P_shared, cells);
+        double x0 = P_shared[j0].Pos[0] + v0[0] * dt0;
+        double y0 = P_shared[j0].Pos[1] + v0[1] * dt0;
+        double z0 = P_shared[j0].Pos[2] + v0[2] * dt0;
         double lo0 = x0, hi0 = x0;
         double lo1 = y0, hi1 = y0;
         double lo2 = z0, hi2 = z0;
@@ -287,9 +290,10 @@ static void sidx_refresh_tile_bboxes_host(gpu_spatial_index_t *idx,
         for(int s = 1; s < tile->count; s++) {
             int j = h_pool[tile->first + s];
             double dt = get_drift_factor(P_shared[j].Ti_current, time1, j, 0);
-            double x = P_shared[j].Pos[0] + P_shared[j].Vel[0] * dt;
-            double y = P_shared[j].Pos[1] + P_shared[j].Vel[1] * dt;
-            double z = P_shared[j].Pos[2] + P_shared[j].Vel[2] * dt;
+            const Vec3<double> v = particle_drift_velocity(j, P_shared, cells);
+            double x = P_shared[j].Pos[0] + v[0] * dt;
+            double y = P_shared[j].Pos[1] + v[1] * dt;
+            double z = P_shared[j].Pos[2] + v[2] * dt;
             if(x < lo0) lo0 = x; else if(x > hi0) hi0 = x;
             if(y < lo1) lo1 = y; else if(y > hi1) hi1 = y;
             if(z < lo2) lo2 = z; else if(z > hi2) hi2 = z;

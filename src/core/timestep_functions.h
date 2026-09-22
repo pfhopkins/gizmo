@@ -370,6 +370,31 @@ void hermite_predict_source_state(int no, struct particle_data *pp, struct Hermi
 
 #endif /* HERMITE_INTEGRATION */
 
+/* The velocity a particle's POSITION advances at: a finite-volume gas cell moves with its
+   mesh-generating point, everything else with its own velocity, and nothing moves at all when the
+   hydro is frozen.  This is the term drift_particle_impl applies, stated once so that the speed
+   bound below and anything that predicts where a particle will be cannot disagree about which
+   velocity moves it.  It is the BASE term only: the bound adds a super-timestepped sink's orbital
+   motion and the dilation factor on top, because those do not enter a straight-line prediction.
+   Curvilinear mesh motion (HYDRO_FIX_MESH_MOTION 2/3) turns this vector as the point moves; a
+   predictor may treat it as linear, since that motion assumes a radius of curvature far larger
+   than either the inter-particle spacing or the distance moved in a step. */
+KOKKOS_INLINE_FUNCTION
+Vec3<double> particle_drift_velocity(int i, const struct particle_data *pp, const struct gas_cell_data *cell)
+{
+#if defined(FREEZE_HYDRO)
+    (void)i; (void)pp; (void)cell;
+    return Vec3<double>{0, 0, 0};
+#else
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    if(pp[i].Type == 0) {return Vec3<double>{(double)cell[i].ParticleVel[0], (double)cell[i].ParticleVel[1], (double)cell[i].ParticleVel[2]};}
+#else
+    (void)cell;
+#endif
+    return Vec3<double>{(double)pp[i].Vel[0], (double)pp[i].Vel[1], (double)pp[i].Vel[2]};
+#endif
+}
+
 /* The fastest a particle can move along any one coordinate axis, per unit of the UNDILATED drift
    interval.  A box measured when the particle was last drifted still contains it after it has
    grown by this speed times the interval since, which is what the gravity tree and the spatial
@@ -384,17 +409,8 @@ void hermite_predict_source_state(int no, struct particle_data *pp, struct Hermi
 KOKKOS_INLINE_FUNCTION
 double particle_motion_speed_bound(int i, const struct particle_data *pp, const struct gas_cell_data *cell)
 {
-    double vx = 0, vy = 0, vz = 0;
-#if !defined(FREEZE_HYDRO)
-    vx = (double)pp[i].Vel[0]; vy = (double)pp[i].Vel[1]; vz = (double)pp[i].Vel[2];
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    if(pp[i].Type == 0) {vx = (double)cell[i].ParticleVel[0]; vy = (double)cell[i].ParticleVel[1]; vz = (double)cell[i].ParticleVel[2];}
-#else
-    (void)cell;
-#endif
-#else
-    (void)cell;
-#endif
+    const Vec3<double> v_drift = particle_drift_velocity(i, pp, cell);
+    double vx = v_drift[0], vy = v_drift[1], vz = v_drift[2];
     double ax = fabs(vx), ay = fabs(vy), az = fabs(vz);
     double bound = ax; if(ay > bound) {bound = ay;} if(az > bound) {bound = az;}
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3))
