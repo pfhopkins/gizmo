@@ -187,8 +187,12 @@ int force_treebuild(int npart, struct unbind_data *mp)
                    "One of the creation/destruction sites mis-updated the global count.\n", red_tot[2], (long long) All.TotNumPart);
             fflush(stdout);
         }
+        /* The deficit is measured against the reduced count of particles that actually exist
+           (red_tot[2]), not against All.TotNumPart: that global is hand-maintained, and once it has
+           drifted -- the case the warning above reports -- a comparison against it would see a
+           permanent deficit and buy a decomposition on every step without repairing anything. */
         long long in_tree = (long long) Nodes[All.MaxPart].N_part;
-        long long deficit = (long long) All.TotNumPart - in_tree;
+        long long deficit = red_tot[2] - in_tree;
         if(not_whole_any) {deficit = 0;} /* subset build: the count comparison is meaningless */
         if(deficit > n_zero_tot || deficit < 0)
         {
@@ -199,10 +203,10 @@ int force_treebuild(int npart, struct unbind_data *mp)
             if(ThisTask == 0)
             {
                 printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld "
-                       "(deficit %lld, of which %lld zero-mass are allowed). Particles missing from the tree "
-                       "contribute to no rank's multipole moments, so forces are wrong by their mass. "
+                       "(deficit %lld, of which %lld zero-mass are allowed; All.TotNumPart=%lld). Particles missing "
+                       "from the tree contribute to no rank's multipole moments, so forces are wrong by their mass. "
                        "Requesting a domain decomposition to restore ownership.\n",
-                       in_tree, (long long) All.TotNumPart, deficit, n_zero_tot);
+                       in_tree, red_tot[2], deficit, n_zero_tot, (long long) All.TotNumPart);
                 fflush(stdout);
             }
         }
