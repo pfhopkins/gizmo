@@ -114,18 +114,12 @@ SEED = 42
 # one of the 10 crossings (9.3e-6 -> 5.0e-4, settling to ~t^1.3 after an early transient), which
 # is the known 4th-order block-step residual; the drift wanders inside 2.8e-5 to 2.2e-4 with no
 # trend. Bounded momentum against secular energy is the signature the source prediction produces.
-# PROVISIONAL, loosened 2026-09-21 on user instruction. A 10-member ensemble of this exact
-# test -- identical seeded IC, identical binary, identical 2 MPI x 4 OMP, differing ONLY in
-# OpenMP reduction order -- gave |dE/E| of 2.43e-4 .. 7.24e-3, median 5.83e-4: a 29.8x spread
-# with a heavy tail. At the old 1.6e-3 that is a ~10% intrinsic failure rate (1/10 members),
-# which matches the historical "25x over tolerance" red that dedicated reruns then passed.
-# The median sits on the 5.24e-4 reference, so the reference is a fair TYPICAL value; it is the
-# tail that the single-run threshold cannot accommodate.
-# 1e-2 covers the observed ensemble max with ~38% headroom.
-# This buys quiet, not rigour: a 30x spread means no single-run threshold both admits the tail
-# and bounds a regression. The real fix is a multi-run criterion, median-of-N, or pinning OMP=1
-# for this test. Ensemble data: /mnt/ceph/users/mgrudic/starforge/plummer_ensemble/
-MAX_DE_OVER_E = 1e-2         # 1%, provisional -- see above; was 1.6e-3 (3.05x the 5.24e-4 reference)
+# PROVISIONAL (2026-09-21). |dE/E| scatters chaotically from run to run: a 10-member ensemble with
+# the identical seeded IC, binary and 2 MPI x 4 OMP layout, differing only in OpenMP reduction
+# order, gave 2.43e-4 .. 7.24e-3 (median 5.83e-4, on the 5.24e-4 reference). The old 1.6e-3
+# failed ~1 run in 10 on that tail alone. 1e-2 admits the observed max with ~38% headroom, so it
+# now catches only gross regressions; the real fix is a median-of-N criterion or OMP=1 here.
+MAX_DE_OVER_E = 1e-2         # provisional -- see above; was 1.6e-3 (3.05x the 5.24e-4 reference)
 MAX_COM_DRIFT = 7e-4         # |v_com| / cluster dispersion; 3.13x the measured 2.24e-4
 
 

@@ -409,7 +409,7 @@
 #define ADAPTIVE_TREEFORCE_UPDATE (0.0625) // optimization
 #endif
 #ifndef SINK_MDOT_RESERVOIR_CAP
-#define SINK_MDOT_RESERVOIR_CAP 30 /* marginally-resolved accretion guard: while a sink holds fewer than SINK_MDOT_RESERVOIR_CAP_NRESOLVED cells' worth of mass, drain at most M_total/CAP of the reservoir per t_acc (floored at one cell), so a formation gulp does not empty in one step. Above that threshold the sink is resolved and stock M_res/t_acc applies. Default ON for STARFORGE: the production configs all set it, and ungated it once stranded 98% of captured mass on test/shu_M120 */
+#define SINK_MDOT_RESERVOIR_CAP 30 /* throttle the reservoir drain of marginally-resolved sinks; see set_sink_mdot in sinks/sink.cc */
 #endif
 #if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
 #ifndef IO_SUPPRESS_TIMEBIN_STDOUT

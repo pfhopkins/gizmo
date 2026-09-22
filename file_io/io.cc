@@ -589,9 +589,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                            largest block in a STARFORGE snapshot (NUM_METAL_SPECIES wide).
                            Gated on IO_COMPRESS_HDF5: without it the fidelity is spent for nothing.
                            Rounded, not masked: masking alone truncates toward zero, so every value
-                           loses magnitude and the mean error is -3.4e-4 rather than ~0.
+                           loses magnitude and the mean relative error is -3.4e-4 rather than ~0.
                            memcpy, not a pointer cast: reading a float through unsigned int* is a
-                           strict-aliasing violation, and both compilers fold these to no code. */
+                           strict-aliasing violation; the memcpys compile to register moves. */
                         {
                             uint32_t b; memcpy(&b, &val, sizeof(b));
                             b += 0xFFFu + ((b >> 13) & 1u);   /* round-to-nearest-even */

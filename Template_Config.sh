@@ -293,6 +293,7 @@
 ## ----------------------------------------------------------------------------------------------------
 #SINK_SWALLOWGAS                  # 'top-level switch' for accretion (should always be enabled if accretion is on). enables BH to actually eliminate gas particles and take their mass.
 #SINK_ALPHADISK_ACCRETION=(10)    # gas accreted goes into a 'virtual' alpha-disk (mass reservoir), which then accretes onto the BH at the viscous rate (determining luminosity, etc). cite GIZMO methods. should be set to a value, which limits the maximum mass of the reservoir to that multiple of the central sink mass
+#SINK_MDOT_RESERVOIR_CAP=30       # with SINK_ALPHADISK_ACCRETION: while a sink holds fewer than SINK_MDOT_RESERVOIR_CAP_NRESOLVED (default 100) cells' worth of mass, drain at most M_sink/N of the reservoir per t_acc (floored at one gas cell). ON with N=30 under SINGLE_STAR_STARFORGE_DEFAULTS; set only to change N
 #SINK_SUBGRIDBHVARIABILITY        # model variability below resolved dynamical time for BH (convolve accretion rate with a uniform power spectrum of fluctuations on timescales below the minimum resolved dynamical time). cite Hopkins & Quataert 2011, MNRAS, 415, 1027. Requires GALSF.
 #SINK_GRAVCAPTURE_NONGAS          # accretion determined only by resolved gravitational capture by the BH, for non-gas particles (can be enabled with other accretion models for gas). cite Hopkins et al., 2016, MNRAS, 458, 816
 ## ----
@@ -317,7 +318,6 @@
 ## ----------------------------------------------------------------------------------------------------
 # ----- output options
 ## ----------------------------------------------------------------------------------------------------
-#SINK_MDOT_RESERVOIR_CAP=30       # marginally-resolved accretion guard: drain at most M_total/N of the reservoir per t_acc (floored at one mean gas cell) while a sink holds fewer than SINK_MDOT_RESERVOIR_CAP_NRESOLVED=100 cells' worth of mass; above that the sink is resolved and stock M_res/t_acc applies. ON BY DEFAULT under SINGLE_STAR_STARFORGE_DEFAULTS; set explicitly only to override N. See sinks/sink.cc
 #SINK_OUTPUT_MOREINFO             # output additional info to "sink_details" on timestep-level, following Angles-Alcazar et al. 2017, MNRAS 472, 109 (use caution: files can get very large if many BHs exist)
 #SINK_CALC_DISTANCES              # calculate distances for all particles to closest BH for, e.g., refinement, external potentials, etc. cite Garrison-Kimmel et al., MNRAS, 2017, 471, 1709
 ####################################################################################################

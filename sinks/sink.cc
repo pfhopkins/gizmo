@@ -470,26 +470,14 @@ void set_sink_mdot(int i, int n, double dt)
         if(dt > 0) {t_acc_disk = DMAX(t_acc_disk , 3.*dt);} /* make sure accretion timescale is at least a few timesteps to avoid over-shoot, etc */
         mdot = P[n].Sink_Mass_Reservoir / t_acc_disk;
 #ifdef SINK_MDOT_RESERVOIR_CAP
-        /* Marginally-resolved guard. While the sink holds fewer than _NRESOLVED cells' worth of
-           mass, drain at most M_total/CAP of the reservoir per t_acc, so a formation gulp of ~CAP
-           cells drains near the design rate instead of all at once; the limiter relaxes linearly
-           as the sink grows. Above that threshold the sink is resolved and stock M_res/t_acc
-           applies.
-
-           The resolution gate is load-bearing, not cosmetic: ungated, the cap kept throttling
-           well-resolved sinks whose capture rate outran M_total/(CAP*t_acc), and the reservoir
-           grew without bound. On test/shu_M120 that stranded 98% of the captured mass in the disk
-           and left the star 19x too light, throwing the gas, dust and radiation temperatures 80%
-           off.
-
-           DMAX(dm_cell, ...) floors the drain at one mean gas cell: below that the reservoir holds
-           less than a single resolution element, and throttling further only strands
-           sub-resolution mass. The DMIN against the reservoir still caps it at what is actually
-           there, so the floor cannot manufacture mass.
-
-           dm_cell comes from the run's mean gas cell mass, which lives in All and so survives
-           restarts. It is 0/0 when a run has no gas, so an unusable value skips the cap entirely,
-           failing open to stock behaviour -- this is a mitigation, not a correctness requirement. */
+        /* Marginally-resolved guard: while the sink holds fewer than _NRESOLVED cells' worth of
+           mass, drain at most M_total/CAP of the reservoir per t_acc, so a formation gulp drains
+           near the design rate rather than in one step; above the threshold stock M_res/t_acc
+           applies. The resolution gate matters: ungated, the cap keeps throttling resolved sinks
+           whose capture outpaces M_total/(CAP*t_acc), and the reservoir grows without bound.
+           The drain is floored at one mean gas cell (throttling below that only strands
+           sub-resolution mass) and never exceeds the reservoir itself. MeanGasParticleMass is
+           0/0 in a gasless run, in which case the cap is skipped. */
         {
             double dm_cell = All.MeanGasParticleMass;
             if(dm_cell > 0 && dm_cell < MAX_REAL_NUMBER &&
