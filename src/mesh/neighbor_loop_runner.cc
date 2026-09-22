@@ -2543,6 +2543,11 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
             const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
 
             auto flat_kernel = KOKKOS_LAMBDA(int kk) {
+                /* Named here, unconditionally, so that the capture happens outside the
+                 * `if constexpr` below: a device lambda may not first-capture a variable
+                 * inside one, and a Spec that does not write neighbour motion would
+                 * otherwise reach the capture only through the discarded branch. */
+                const struct GxMotionTargetSet &targets = motion_targets;
                 const int aa = c0 + kk;
                 Spec::zero_accum(d_accums[kk]);
                 const ActiveData& a = d_actives[kk];
@@ -2550,7 +2555,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
                 int64_t start = offsets[aa], end = offsets[aa + 1];
                 for(int64_t nn = start; nn < end; nn++) {
                     int j = neighbors[nn];
-                    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
+                    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(targets, j);}
                     IdentitySidecar id{};            /* NoIdentity */
                     NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[kk], s, cs);
@@ -4820,6 +4825,8 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
              * there. The only difference is the extra indirection from the
              * compacted active set to the build-time CSR row. */
             auto flat_kernel = KOKKOS_LAMBDA(int k) {
+                /* Captured outside the `if constexpr` below; see the single-pass site. */
+                const struct GxMotionTargetSet &targets = motion_targets;
                 int slot = active_set_arr[k];
                 int row  = csr_lookup[slot];
                 Spec::zero_accum(d_accums[k]);
@@ -4828,7 +4835,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                 int64_t start = offsets[row], end = offsets[row + 1];
                 for (int64_t nn = start; nn < end; nn++) {
                     int j = neighbors[nn];
-                    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
+                    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(targets, j);}
                     IdentitySidecar id{};
                     NeighborData nb = Spec::load_neighbor(dctx_local, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[k], s, cs_ref);
