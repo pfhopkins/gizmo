@@ -1937,10 +1937,30 @@ static int gx_owned_tile_index_current(const struct GxOwnedTileIndex *ix, unsign
  * through (particle -> tile, tile -> leaf node) and the parent links.  The host
  * arrays the builders hand back are copied into shared space and released in
  * arena order. */
+/* Where a pool member is at the clock the index is built for.  The sort key and
+ * the tile box must read the SAME position or the order and the geometry would
+ * describe different configurations, so this is the one place that says it. */
+static inline Vec3<MyDouble> gx_owned_tile_index_position_at(int j, const struct particle_data *P,
+                                                             const struct gas_cell_data *cells,
+                                                             integertime predict_to)
+{
+    Vec3<MyDouble> pos = P[j].Pos;
+    if(predict_to > 0) {pos += particle_drift_velocity(j, P, cells) * get_drift_factor(P[j].Ti_current, predict_to, j, 0);}
+    return pos;
+}
+
 static int gx_owned_tile_index_build(struct GxOwnedTileIndex *ix, unsigned int mask, int num_local,
                                      struct particle_data *P, const char *caller)
 {
     gx_owned_tile_index_free(ix);
+    /* The index is built where its members will be NOW, not where they were last
+     * left: a member behind the current clock would otherwise put a stale position
+     * in the box, and the bound that covers the difference is only as tight as the
+     * oldest member's clock -- on a run whose big timebins lag far behind, every
+     * tile is then born already widened.  The sort keys and the boxes read the same
+     * predicted position, so the order and the geometry agree. */
+    const integertime predict_to = All.Ti_Current;
+    const struct gas_cell_data *cells = gpu_particles_arena_CellP();
 
     int *h_pool = NULL;
     const int num_pool = build_sfc_supply_pool(P, num_local, (int)mask, &h_pool);
@@ -1967,7 +1987,8 @@ static int gx_owned_tile_index_build(struct GxOwnedTileIndex *ix, unsigned int m
         keyed_pool_entry *keyed = (keyed_pool_entry *) mymalloc("sfc_pool_sort", (size_t)num_pool * sizeof(keyed_pool_entry));
         for(int s = 0; s < num_pool; s++) {
             const int j = h_pool[s];
-            keyed[s].key   = domain_position_is_within_key_extent(P[j].Pos) ? peano_hilbert_key_of_position(P[j].Pos) : PEANOCELLS;
+            const Vec3<MyDouble> pos = gx_owned_tile_index_position_at(j, P, cells, predict_to);
+            keyed[s].key   = domain_position_is_within_key_extent(pos) ? peano_hilbert_key_of_position(pos) : PEANOCELLS;
             keyed[s].index = j;
         }
         std::sort(keyed, keyed + num_pool, [](const keyed_pool_entry &x, const keyed_pool_entry &y) {return x.key < y.key;});
@@ -1976,7 +1997,7 @@ static int gx_owned_tile_index_build(struct GxOwnedTileIndex *ix, unsigned int m
     }
     sfc_tile_t *h_tiles = NULL;
     int ntiles = 0;
-    if(num_pool > 0) {ntiles = build_sfc_tiles_from_pool(P, h_pool, num_pool, TILE_TARGET_SIZE, &h_tiles);}
+    if(num_pool > 0) {ntiles = build_sfc_tiles_from_pool(P, h_pool, num_pool, TILE_TARGET_SIZE, &h_tiles, MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, predict_to);}
     tile_bvh_node_t *h_bvh = NULL;
     const int nnodes = (ntiles > 0) ? build_tile_bvh(h_tiles, ntiles, &h_bvh) : 0;
 

@@ -67,19 +67,28 @@ static inline void sfc_tile_begin(sfc_tile_t *tile, int first)
  * the same supply-side reach). */
 static inline void sfc_tile_fold(sfc_tile_t *tile, const struct particle_data *P,
                                  const struct gas_cell_data *cells, int j,
-                                 mode_b_radius_policy_t radius_policy, double scale_factor)
+                                 mode_b_radius_policy_t radius_policy, double scale_factor,
+                                 integertime predict_to)
 {
     const struct particle_data *p = &P[j];
+    /* With a prediction clock the member is folded where it will be at that
+     * time, moving at the velocity that advances ITS position (a finite-volume
+     * gas cell moves with its mesh-generating point); a member already at that
+     * clock folds its stored position, dt being zero. */
+    Vec3<double> pos = p->Pos;
+    if(predict_to > 0) {pos += particle_drift_velocity(j, P, cells) * get_drift_factor(p->Ti_current, predict_to, j, 0);}
     for(int k = 0; k < 3; k++) {
-        if(p->Pos[k] < tile->lo[k]) tile->lo[k] = p->Pos[k];
-        if(p->Pos[k] > tile->hi[k]) tile->hi[k] = p->Pos[k];
+        if(pos[k] < tile->lo[k]) tile->lo[k] = pos[k];
+        if(pos[k] > tile->hi[k]) tile->hi[k] = pos[k];
     }
-    /* The motion bound the box is read against later: the fastest member and
-     * the earliest clock among them (the positions folded here are each
-     * member's own, as of its own Ti_current). */
+    /* The motion bound the box is read against later: the fastest member, and
+     * the clock the positions above were written at -- the prediction clock if
+     * there was one, else the earliest member's own, since each stored position
+     * is only current as of that member's Ti_current. */
     const double vb = particle_motion_speed_bound(j, P, cells);
     if(vb > tile->vmax) tile->vmax = vb;
-    if(p->Ti_current < tile->t_ref) tile->t_ref = p->Ti_current;
+    if(predict_to > 0) {tile->t_ref = predict_to;}
+    else if(p->Ti_current < tile->t_ref) {tile->t_ref = p->Ti_current;}
     double hj = nlr_particle_symmetric_radius(*p, radius_policy) * scale_factor;
     if(hj > tile->hmax) tile->hmax = hj;
     int tj = (int)p->Type;
@@ -141,7 +150,7 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
         if((num_pool % target_tile_size) == 0) sfc_tile_begin(&tiles[ntiles++], num_pool);
         pool[num_pool++] = i;
         tiles[ntiles - 1].count++;
-        sfc_tile_fold(&tiles[ntiles - 1], P, CellP, i, radius_policy, scale_factor);
+        sfc_tile_fold(&tiles[ntiles - 1], P, CellP, i, radius_policy, scale_factor, 0);
     }
     /* An empty pool still publishes one (empty, inverted-box) tile so the BVH
      * always has a root to build over. */
@@ -156,7 +165,7 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
 int build_sfc_tiles_from_pool(struct particle_data *P, const int *pool, int num_pool,
                               int target_tile_size, sfc_tile_t **tiles_out,
                               mode_b_radius_policy_t radius_policy,
-                              double scale_factor)
+                              double scale_factor, integertime predict_to)
 {
     /* Step 2: Compute number of tiles */
     int ntiles = (num_pool + target_tile_size - 1) / target_tile_size;
@@ -185,7 +194,7 @@ int build_sfc_tiles_from_pool(struct particle_data *P, const int *pool, int num_
         {
             int j = pool[start + s];
             if(P[j].Mass <= 0) continue;
-            sfc_tile_fold(&tiles[t], P, CellP, j, radius_policy, scale_factor);
+            sfc_tile_fold(&tiles[t], P, CellP, j, radius_policy, scale_factor, predict_to);
         }
     }
 
