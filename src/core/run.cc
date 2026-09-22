@@ -343,6 +343,7 @@ void run(void)
                this loop: group finding raises it and then runs decompositions of its own, which
                would otherwise consume it and leave the tree storage it later frees unclaimed. */
             DomainReconstructFlag = 0;
+            gravity_clear_pending_motion_bounds();
             reconstructed_tree = 1;
         }
         else if(TreeReconstructFlag)
@@ -356,6 +357,7 @@ void run(void)
             gizmo_full_drift_to(All.Ti_Current);
             make_list_of_active_particles();
             gx_owned_tile_index_note_tree_rebuilt();
+            gravity_clear_pending_motion_bounds();
             reconstructed_tree = 1;
         }
         else
@@ -370,6 +372,13 @@ void run(void)
                 const double t_tree_update_start = my_second();
                 const double child0_tree_update = CPU_ChildCharged;
                 force_update_tree();
+                /* Bounds raised outside the kick since the last update reach the
+                 * other ranks' copies of the top-level tree here, ahead of this
+                 * step's walks. A raise made LATER in a step reaches this rank's
+                 * own tree and tile indexes at once, but the other ranks' copies
+                 * only at the next flush: a loop later in that same step decides
+                 * its exports against the older bound. */
+                gravity_flush_pending_motion_bounds();
                 /* The neighbour indexes a fused loop discovers in carry the same
                  * kind of motion bound as the tree's nodes, raised from the same
                  * closed-out active list. */

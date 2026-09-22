@@ -2068,6 +2068,99 @@ int gx_owned_tile_index_raise_targets(struct GxOwnedTileRaise *out, int max_out)
     return n;
 }
 
+/* ============================================================================
+ * The motion-target set and the raise it feeds (declared in gpu_neighbor_list.h).
+ * ========================================================================== */
+static struct GxMotionTargetSet g_motion_targets;
+static int g_motion_targets_armed = 0;
+
+int gx_motion_target_ensure(int local_particle_slots)
+{
+    if(local_particle_slots <= 0) {return 1;}
+    if(g_motion_targets.capacity >= local_particle_slots && g_motion_targets.seen) {return 0;}
+    gx_motion_target_release();
+    unsigned int *seen    = (unsigned int *) ngl_alloc_shared((size_t)local_particle_slots * sizeof(unsigned int), "motion_target_seen");
+    int          *list    = (int *)          ngl_alloc_shared((size_t)local_particle_slots * sizeof(int),          "motion_target_list");
+    int          *counter = (int *)          ngl_alloc_shared(sizeof(int),                                         "motion_target_counter");
+    if(!seen || !list || !counter) {
+        if(seen)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(seen);}
+        if(list)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(list);}
+        if(counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(counter);}
+        return 1;
+    }
+    for(int k = 0; k < local_particle_slots; k++) {seen[k] = 0u;}
+    *counter = 0;
+    g_motion_targets.seen = seen; g_motion_targets.list = list; g_motion_targets.counter = counter;
+    g_motion_targets.capacity = local_particle_slots; g_motion_targets.gen = 0u;
+    return 0;
+}
+
+void gx_motion_target_begin_call(void)
+{
+    if(++g_motion_targets.gen == 0u) {
+        for(int k = 0; k < g_motion_targets.capacity; k++) {g_motion_targets.seen[k] = 0u;}
+        g_motion_targets.gen = 1u;
+    }
+    if(g_motion_targets.counter) {*g_motion_targets.counter = 0;}
+}
+
+struct GxMotionTargetSet gx_motion_target_view(void) {return g_motion_targets;}
+
+void gx_motion_target_mark_host(int j)
+{
+    /* Serial host callers only (the writeback apply loop, a host module's own
+     * loop); the device mark is the atomic form. */
+    struct GxMotionTargetSet &ts = g_motion_targets;
+    if(!ts.seen || j < 0 || j >= ts.capacity) {return;}
+    if(ts.seen[j] == ts.gen) {return;}
+    ts.seen[j] = ts.gen;
+    const int slot = (*ts.counter)++;
+    if(slot < ts.capacity) {ts.list[slot] = j;}
+}
+
+void gx_motion_target_set_armed(int armed) {g_motion_targets_armed = armed;}
+int  gx_motion_target_armed(void) {return g_motion_targets_armed;}
+
+void gx_motion_target_consume(void)
+{
+    if(!g_motion_targets.counter || !g_motion_targets.list) {return;}
+    Kokkos::fence();   /* the markers may be device kernels */
+    const int claimed = *g_motion_targets.counter;
+    const int n = (claimed < g_motion_targets.capacity) ? claimed : g_motion_targets.capacity;
+    if(n > 0) {gizmo_motion_bound_raise(g_motion_targets.list, n);}
+    *g_motion_targets.counter = 0;
+}
+
+void gx_motion_target_release(void)
+{
+    if(g_motion_targets.seen || g_motion_targets.list || g_motion_targets.counter) {Kokkos::fence();}
+    if(g_motion_targets.seen)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_motion_targets.seen);}
+    if(g_motion_targets.list)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_motion_targets.list);}
+    if(g_motion_targets.counter) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_motion_targets.counter);}
+    g_motion_targets = GxMotionTargetSet{};
+}
+
+void gizmo_motion_bound_raise(const int *idx, int n)
+{
+    if(n <= 0 || !idx) {return;}
+    /* The tree first: it also records which top-level nodes changed, for the
+     * exchange at the next tree-update phase. */
+    gravity_note_motion_bound(idx, n);
+    /* Then every resident owned tile index, on the host: the list is what the
+     * loop wrote, which on a small step is a handful of particles. */
+    struct GxOwnedTileRaise targets[GX_OWNED_TILE_INDEX_MAX_RESIDENT];
+    const int nt = gx_owned_tile_index_raise_targets(targets, GX_OWNED_TILE_INDEX_MAX_RESIDENT);
+    if(nt <= 0) {return;}
+    const struct particle_data *P_res = P;
+    const struct gas_cell_data *C_res = CellP;
+    Kokkos::fence();
+    for(int k = 0; k < n; k++) {
+        const int i = idx[k];
+        const double vmax = particle_motion_speed_bound(i, P_res, C_res);
+        for(int m = 0; m < nt; m++) {targets[m].raise(i, vmax);}
+    }
+}
+
 void gx_touched_set_drift_and_mark(integertime time1)
 {
     if(!g_touched_set.counter || !g_touched_set.list) {return;}

@@ -453,6 +453,7 @@ struct RadFBRPSpec {
     static constexpr bool mode_a_active_sources_in_sidx_pool = false; /* non-pool active sources (sink/star/grain) -> runner stages explicit P[].Pos */
     static constexpr bool           uses_ghost_writeback      = true;
     static constexpr bool           uses_ghost_write_detector = true;
+    static constexpr bool           writes_neighbour_motion   = true;   /* the radiation-pressure kick lands on the neighbour's velocity */
 
     /* Iterative metadata. 2 iters strict (iter 0 = wt_sum aggregation;
      * iter 1 = kicks). after_iter returns Converged at iter 1 always.

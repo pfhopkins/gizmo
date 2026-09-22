@@ -665,6 +665,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
 {
     using NeighborData = typename Spec::NeighborData;
     using ScatterData  = typename Spec::ScatterData;
+    const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
 
     /* Per-active evaluation. Writes ONLY accums[aa] plus call-local scratch, so
      * distinct aa are independent — the invariant the BitwiseReadonly threading
@@ -684,6 +685,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
             Spec::bind_active_to_eval_context(ctx, a);
             for(size_t kk = 0; kk < cands.size(); kk++) {
                 int j = cands[kk];
+                if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
                 IdentitySidecar id{};                 /* NoIdentity */
                 NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
                 Spec::pair_kernel(a, nb, accums[aa], s, cs);
@@ -693,6 +695,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
             const auto& a = actives[aa];
             for(size_t kk = 0; kk < cands.size(); kk++) {
                 int j = cands[kk];
+                if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
                 IdentitySidecar id{};                 /* NoIdentity */
                 NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
                 Spec::pair_kernel(a, nb, accums[aa], s, cs);
@@ -993,6 +996,39 @@ static constexpr NlrDiscoveryBackend kNlrDiscoveryBackend = NlrDiscoveryBackend:
 static constexpr NlrDiscoveryBackend kNlrDiscoveryBackend = NlrDiscoveryBackend::Octree;
 #endif
 static int nlr_mode_d_prepare(NlrModeDDiscovery *out, int n_masks, const unsigned int *masks, const char *caller);
+
+/* The motion-target set for one call of a loop that writes neighbour
+ * velocities: opened before any kernel, raised and closed after the writeback.
+ * A loop without the trait touches none of this. */
+template <typename Spec>
+static void nlr_motion_targets_open(void)
+{
+    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {
+        const int num_local = ghost_get_num_local();
+        if(num_local <= 0) {return;}   /* nothing this rank owns can be marked */
+        if(gx_motion_target_ensure(num_local) != 0) {
+            /* Without the set no bound can be raised, and a bound not raised
+             * under-includes silently. */
+            if(ThisTask == 0) {fprintf(stderr, "[%s] FATAL: no memory for the motion-target set.\n", Spec::loop_name); fflush(stderr);}
+            endrun(90001040);
+            return;
+        }
+        gx_motion_target_begin_call();
+    }
+}
+template <typename Spec>
+static void nlr_motion_targets_close(void)
+{
+    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_consume();}
+}
+/* Opened where a call's inputs are final, closed when the call leaves scope
+ * -- after its writeback, whichever return it takes. */
+template <typename Spec>
+struct NlrMotionTargetScope {
+    NlrMotionTargetScope()  {nlr_motion_targets_open<Spec>();}
+    ~NlrMotionTargetScope() {nlr_motion_targets_close<Spec>();}
+};
+
 
 template <typename Spec>
 struct NlrPeerAnswerDeviceFused;
@@ -2161,6 +2197,7 @@ struct NlrModeATeamPairKernel {
     /* One snapshot for the whole call, held by value so the device functor
      * carries it without reaching for a global. */
     typename Spec::CallScalars cs;
+    struct GxMotionTargetSet   motion_targets;   /* for a loop that writes neighbour motion */
 
     KOKKOS_INLINE_FUNCTION void operator()(const TeamMember& team) const {
         const int i   = team.league_rank();
@@ -2187,6 +2224,7 @@ struct NlrModeATeamPairKernel {
             [&](int nn, AccumData& lane_accum) {
                 ScatterData     s{};
                 IdentitySidecar id{};
+                if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, neighbors[start + nn]);}
                 NeighborData    nb = Spec::load_neighbor(ctx, neighbors[start + nn], id, a);
                 Spec::pair_kernel(a, nb, lane_accum, s, cs);
             },
@@ -2502,6 +2540,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
          * teams existed rather than to a one-lane imitation of a team. */
         {
             const double t_pair_kernel_start = my_second();
+            const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
 
             auto flat_kernel = KOKKOS_LAMBDA(int kk) {
                 const int aa = c0 + kk;
@@ -2511,6 +2550,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
                 int64_t start = offsets[aa], end = offsets[aa + 1];
                 for(int64_t nn = start; nn < end; nn++) {
                     int j = neighbors[nn];
+                    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
                     IdentitySidecar id{};            /* NoIdentity */
                     NeighborData nb = Spec::load_neighbor(ctx, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[kk], s, cs);
@@ -2519,7 +2559,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
 
             if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
                 if(team_width > 1) {
-                    TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0, cs};
+                    TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0, cs, motion_targets};
                     gizmo_gpu_team_kernel_launch(Spec::loop_name, n, team_width, fn);
                 } else {
                     gizmo_gpu_kernel_launch(Spec::loop_name, n, flat_kernel);
@@ -2747,7 +2787,9 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
     if constexpr (nlr_uses_ghost_writeback_v<Spec>()) {
         if(nlr_path_uses_imported_ghosts(plan.path)) {
             if constexpr (nlr_has_hook_gwb_end<Spec>::value) {
+                gx_motion_target_set_armed(nlr_spec_writes_neighbour_motion_v<Spec> ? 1 : 0);
                 Spec::ghost_writeback_end(args, plan);
+                gx_motion_target_set_armed(0);
             }
         }
     }
@@ -2900,7 +2942,8 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
             const int ready_local = (nlr_mode_d_prepare(&mode_d_discovery, 1, &one_mask, Spec::loop_name) == 0) ? 1 : 0;
             int ready = 0;
             MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(ready) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+            if(ready) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;
+            }
             else {gx_owned_tile_index_end_call();}
         }
     }
@@ -2915,6 +2958,8 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     for(int aa = 0; aa < args.num_active; ++aa) {
         radii[aa] = Spec::search_radius(args, aa, args.active_list[aa]);
     }
+    /* Neighbours whose motion this loop changes are raised when the call ends. */
+    NlrMotionTargetScope<Spec> motion_target_scope;
 
     /* ---- Hard-corridor counter snapshot (always-on, every build) ---- */
     /* Mode B paths must NOT enter move_particles, ghost_exchange_impl, or
@@ -3757,6 +3802,9 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
  * asserted, and no loop is named here.
  * ========================================================================== */
 
+
+
+
 /* The two ways a fused walk discovers neighbours (kNlrDiscoveryBackend): the
  * gravity tree, walked from the root or resumed from the start nodes a peer
  * exported, or the owned tile index, always walked from the root.  Every fused
@@ -3869,6 +3917,7 @@ struct NlrModeDReduceLeaf {
      * INSIDE the kernel. Hoisting that construction out would leave this
      * pointing at a host stack object and fault on device. */
     const typename Spec::CallScalars   *cs;
+    struct GxMotionTargetSet            motion_targets{};   /* for a loop that writes neighbour motion */
 
     KOKKOS_INLINE_FUNCTION
     void visit(int j, double qx, double qy, double qz, double reach)
@@ -3882,6 +3931,7 @@ struct NlrModeDReduceLeaf {
                                          qy - (double)Pj.Pos[1],
                                          qz - (double)Pj.Pos[2],
                                          reach, 0.0, NGB_SEARCH_ONEWAY)) {return;}
+        if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
         IdentitySidecar id{};
         typename Spec::NeighborData nb = Spec::load_neighbor(*ctx, j, id, *active);
         Spec::pair_kernel(*active, nb, *accum, *scatter, *cs);
@@ -4135,12 +4185,14 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
             reach = radii[kk];
         });
 
+    const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
     nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(accums_out[kk]);
         const int i = active_idx[kk];
         ActiveData  a = Spec::load_active(ctx, active_slot[kk], i, radii[kk], cs);
         ScatterData s{};
         NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask, &cs};
+        leaf.motion_targets = motion_targets;
         nlr_discovery_walk_root(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                 radii[kk], leaf, anomaly);
     });
@@ -4308,11 +4360,13 @@ static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
             reach = (double)a_rec.h_search;
         });
 
+    const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
     nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
         Spec::zero_accum(acc_d[kk]);
         const ActiveData& a = q_d[kk];
         ScatterData s{};
         NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, supply_mask, &cs};
+        leaf.motion_targets = motion_targets;
         nlr_discovery_walk_root(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                 (double)a.h_search, leaf, anomaly_d);
     });
@@ -4432,6 +4486,7 @@ struct NlrPeerAnswerDeviceFused {
             ctx.P, neighbor_type_mask, disc, q_d, nodes_d, nn_d, K, anomaly_d,
             "nlr_mode_d_peer_record");
 
+        const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
         nlr_walk_for_sources(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
             Spec::zero_accum(acc_d[kk]);
             const ActiveData& a = q_d[kk];
@@ -4440,6 +4495,7 @@ struct NlrPeerAnswerDeviceFused {
              * structure's to say (nlr_discovery_walk_received): nothing exported
              * to it on this rank for the tree, a full walk for the tile index. */
             NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
+            leaf.motion_targets = motion_targets;
             nlr_discovery_walk_received(disc, (double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                         (double)a.h_search,
                                         nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
@@ -4758,6 +4814,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             });
 
             const double t_pair_kernel_start = my_second();
+            const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
 
             /* Same two assignments as the single-pass site; see the commentary
              * there. The only difference is the extra indirection from the
@@ -4771,6 +4828,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
                 int64_t start = offsets[row], end = offsets[row + 1];
                 for (int64_t nn = start; nn < end; nn++) {
                     int j = neighbors[nn];
+                    if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, j);}
                     IdentitySidecar id{};
                     NeighborData nb = Spec::load_neighbor(dctx_local, j, id, a);
                     Spec::pair_kernel(a, nb, d_accums[k], s, cs_ref);
@@ -4780,7 +4838,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
             if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
                 using TeamKernel = NlrModeATeamPairKernel<Spec, typename Spec::DeviceContext>;
                 TeamKernel fn{dctx_local, d_actives, d_accums, offsets, neighbors,
-                              active_set_arr, csr_lookup, 0, cs_ref};
+                              active_set_arr, csr_lookup, 0, cs_ref, motion_targets};
                 const int team_width = nlr_mode_a_team_width<Spec>(fn);
                 if (team_width > 1) {
                     gizmo_gpu_team_kernel_launch(Spec::loop_name, n_compacted, team_width, fn);
@@ -5254,7 +5312,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             const int ready_local = (nlr_mode_d_prepare(mode_d_discovery.data(), args.num_subgroups, masks.data(), Spec::loop_name) == 0) ? 1 : 0;
             int ready = 0;
             MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(ready) {path = DispatchPath::ModeD_DeviceFused;}
+            if(ready) {path = DispatchPath::ModeD_DeviceFused;
+            }
             else {gx_owned_tile_index_end_call();}
         }
 #endif
@@ -5297,6 +5356,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * drift/ghost/arena globals, but inner-scope wrapping makes the invariant
      * maximally airtight). */
     {
+    /* Declared before the driver so it closes after the driver has finished
+     * (destructors run in reverse): the raise sees the final velocities. */
+    NlrMotionTargetScope<Spec> motion_target_scope;
     NlrIterDriver<Spec> drv(args, cs);
 
     /* ===== Path-specific DeviceContext init =====

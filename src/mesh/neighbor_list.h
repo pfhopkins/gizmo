@@ -126,6 +126,23 @@ struct GxDeviceTreeView {
 };
 
 
+/* The owned particles whose motion a loop changed, so that their bounds can be
+ * raised once the loop is done.  A pair kernel that writes a neighbour's
+ * velocity marks that neighbour here, immediately before the write, on every
+ * path (a device kernel, the host walker, the reverse writeback landing on the
+ * owner); the runner raises the marked set after the loop and clears it.
+ * Same shape as the touched set below, for the same reason: a generation
+ * stamp that is never cleared keeps the cost proportional to what was marked.
+ * Separate from the touched set, which is the drift's and is consumed
+ * differently. */
+struct GxMotionTargetSet {
+    unsigned int *seen     = nullptr;  /* [capacity] generation stamps */
+    int          *list     = nullptr;  /* [capacity] distinct marked local indices */
+    int          *counter  = nullptr;  /* [1] append cursor */
+    int           capacity = 0;
+    unsigned int  gen      = 0;
+};
+
 /* The owned tile index as a walk sees it (built and kept by
  * gpu_neighbor_list.cc).  Plain data, captured by value into a kernel; the
  * tile and node arrays are declared in sfc_tiles.h, which includes this file,

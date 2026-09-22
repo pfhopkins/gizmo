@@ -636,6 +636,21 @@ struct nlr_spec_needs_live_neighbours<Spec, std::void_t<decltype(Spec::needs_liv
 template <typename Spec>
 constexpr bool nlr_spec_needs_live_neighbours_v = nlr_spec_needs_live_neighbours<Spec>::value;
 
+/* Optional Spec::writes_neighbour_motion: the pair kernel changes a
+ * NEIGHBOUR's velocity (or another input of particle_motion_speed_bound).
+ * Every index that bounds particle motion -- the tree's nodes, the owned tile
+ * indexes -- must then be raised for the neighbours the loop wrote, on every
+ * path.  The runner marks each neighbour handed to the pair kernel (and each
+ * owner a reverse-writeback delta lands on) and raises the marked set once the
+ * loop is done.  Absent means false. */
+template <typename Spec, typename = void>
+struct nlr_spec_writes_neighbour_motion : std::false_type {};
+template <typename Spec>
+struct nlr_spec_writes_neighbour_motion<Spec, std::void_t<decltype(Spec::writes_neighbour_motion)>>
+    : std::integral_constant<bool, Spec::writes_neighbour_motion> {};
+template <typename Spec>
+constexpr bool nlr_spec_writes_neighbour_motion_v = nlr_spec_writes_neighbour_motion<Spec>::value;
+
 /* SFINAE detection of optional Spec::bind_active_to_eval_context.
  *
  * A Spec whose ActiveData carries rank-local context fields (rank-local

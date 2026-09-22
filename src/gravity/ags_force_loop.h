@@ -441,6 +441,7 @@ struct AgsForceSpec {
 
     static constexpr bool uses_ghost_write_detector = true;
     static constexpr bool uses_ghost_writeback      = true;
+    static constexpr bool writes_neighbour_motion = true;   /* the self-interaction scatter kicks the neighbour */
 
     /* ghost_write_detector_begin/end: runner default (loop_name = "ags_force"). */
     static void ghost_writeback_begin      (const neighbor_loop_args&,

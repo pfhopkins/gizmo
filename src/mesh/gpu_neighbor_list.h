@@ -503,6 +503,29 @@ void gx_owned_tile_index_release_all(void);
  * motion bounds then age no longer than the tree's own. */
 void gx_owned_tile_index_note_tree_rebuilt(void);
 
+/* Raise the motion bound of particles idx[0..n) in every structure that keeps
+ * one: the gravity tree's nodes (with the top-level part carried to the other
+ * ranks at the next tree-update phase) and the resident owned tile indexes.
+ * Called by whoever changed a particle's velocity outside the kick, with the
+ * list of particles it wrote; the cost is the list, never the rank. */
+void gizmo_motion_bound_raise(const int *idx, int n);
+
+/* The motion-target set (GxMotionTargetSet).  The runner opens a generation
+ * per call for a loop that writes neighbour velocities, the kernels mark into
+ * it, and `consume` raises the marked set and closes the generation.  The
+ * host mark serves units without Kokkos (the reverse writeback landing on the
+ * owner; a host module's own loop); the device mark is in
+ * sfc_tiles_functions.h.  `armed` is set by the runner around a loop's
+ * reverse writeback so the apply loop knows to mark the deltas' targets. */
+int  gx_motion_target_ensure(int local_particle_slots);
+void gx_motion_target_begin_call(void);
+struct GxMotionTargetSet gx_motion_target_view(void);
+void gx_motion_target_mark_host(int j);
+void gx_motion_target_consume(void);
+void gx_motion_target_set_armed(int armed);
+int  gx_motion_target_armed(void);
+void gx_motion_target_release(void);
+
 /* Raise every resident index's motion bounds for the particles whose kick has
  * just been closed out.  Called once per step from the run loop, right after
  * the tree's own kick update and before the active list is rebuilt, so it sees

@@ -270,6 +270,118 @@ inline int marked_top_level_slot(const int *node_slot, int no)
 }
 }  /* anonymous namespace */
 
+/* ---- Motion bounds raised outside the kick --------------------------------
+ * The pending set is the top-level nodes reached by such raises since the last
+ * flush, deduplicated by a per-node stamp.  Both live for the tree's lifetime
+ * and are re-sized when the top-level tree changes size. */
+static int  *g_pending_topnode_list  = NULL;   /* [NTopnodes] */
+static int  *g_pending_topnode_stamp = NULL;   /* [NTopnodes]: == g_pending_stamp when listed */
+static int   g_pending_topnode_n     = 0;
+static int   g_pending_topnode_cap   = 0;
+static int   g_pending_stamp         = 1;
+
+static void pending_topnodes_ensure(void)
+{
+    if(g_pending_topnode_cap == NTopnodes && g_pending_topnode_list) {return;}
+    free(g_pending_topnode_list); free(g_pending_topnode_stamp);
+    g_pending_topnode_cap   = NTopnodes;
+    g_pending_topnode_list  = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
+    g_pending_topnode_stamp = (int *) calloc((size_t)(NTopnodes > 0 ? NTopnodes : 1), sizeof(int));
+    g_pending_topnode_n = 0;
+    g_pending_stamp = 1;
+}
+
+void gravity_clear_pending_motion_bounds(void)
+{
+    g_pending_topnode_n = 0;
+    g_pending_stamp++;
+    if(g_pending_stamp == 0) {g_pending_stamp = 1; if(g_pending_topnode_stamp) {memset(g_pending_topnode_stamp, 0, (size_t)g_pending_topnode_cap * sizeof(int));}}
+}
+
+/* Raise one node's bound, in the node and in the walk's mirror. */
+static inline void raise_node_motion_bound(int no, MyFloat vmax)
+{
+    if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
+    force_soa_raise_vmax(no, Extnodes[no].vmax);
+}
+
+void gravity_note_motion_bound(const int *idx, int n)
+{
+    if(n <= 0 || !idx || !Father || !Nodes || !Extnodes) {return;}
+    pending_topnodes_ensure();
+    for(int k = 0; k < n; k++)
+    {
+        const int i = idx[k];
+        /* Father[] covers the slots the standing tree was built for; a particle
+         * created since then has no node above it until the next build. */
+        if(i < 0 || i >= NumPart || i >= All.TreeParticleSlots) {continue;}
+        const MyFloat vmax = (MyFloat) particle_motion_speed_bound(i, P, CellP);
+        int no = Father[i];
+        while(no >= 0)
+        {
+            /* A node already holding the bound has ancestors that do too. */
+            if(Extnodes[no].vmax >= vmax) {break;}
+            raise_node_motion_bound(no, vmax);
+            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
+            {
+                /* Shared with every rank: listed once for the flush.  The rest of
+                 * the chain is raised here too, so this rank's own walks see it
+                 * before the exchange. */
+                const int t = no - All.TreeNodeIndexBase;
+                if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_stamp[t] != g_pending_stamp)
+                {
+                    g_pending_topnode_stamp[t] = g_pending_stamp;
+                    g_pending_topnode_list[g_pending_topnode_n++] = no;
+                }
+            }
+            no = Nodes[no].u.d.father;
+        }
+    }
+}
+
+void gravity_flush_pending_motion_bounds(void)
+{
+    /* Every rank enters, with or without pending nodes of its own. */
+    pending_topnodes_ensure();
+    int *counts = (int *) mymalloc("mb_counts", sizeof(int) * NTask);
+    int n_local = g_pending_topnode_n;
+    MPI_Allgather(&n_local, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+    int total = 0;
+    for(int ta = 0; ta < NTask; ta++) {total += counts[ta];}
+    if(total > 0)
+    {
+        struct NodeBound {int node; MyFloat vmax;};
+        int *counts_b = (int *) mymalloc("mb_counts_b", sizeof(int) * NTask);
+        int *offset_b = (int *) mymalloc("mb_offset_b", sizeof(int) * NTask);
+        struct NodeBound *loc = (struct NodeBound *) mymalloc("mb_loc", (size_t)(n_local > 0 ? n_local : 1) * sizeof(struct NodeBound));
+        struct NodeBound *all = (struct NodeBound *) mymalloc("mb_all", (size_t)total * sizeof(struct NodeBound));
+        for(int k = 0; k < n_local; k++) {loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;}
+        for(int ta = 0; ta < NTask; ta++)
+        {
+            counts_b[ta] = counts[ta] * (int) sizeof(struct NodeBound);
+            offset_b[ta] = (ta == 0) ? 0 : offset_b[ta - 1] + counts_b[ta - 1];
+        }
+        MPI_Allgatherv(loc, n_local * (int) sizeof(struct NodeBound), MPI_BYTE, all, counts_b, offset_b, MPI_BYTE, MPI_COMM_WORLD);
+        for(int r = 0; r < total; r++)
+        {
+            int no = all[r].node;
+            /* The record names a top-level node, which every rank holds at the
+             * same index; validated rather than trusted, as the kick exchange does. */
+            if(!(no >= All.TreeNodeIndexBase && no - All.TreeNodeIndexBase < NTopnodes)) {continue;}
+            const MyFloat vmax = all[r].vmax;
+            while(no >= 0)
+            {
+                if(Extnodes[no].vmax >= vmax) {break;}
+                raise_node_motion_bound(no, vmax);
+                no = Nodes[no].u.d.father;
+            }
+        }
+        myfree(all); myfree(loc); myfree(offset_b); myfree(counts_b);
+    }
+    myfree(counts);
+    gravity_clear_pending_motion_bounds();
+}
+
 void force_finish_kick_nodes(void)
 {
   int i, no, ta, totDomainNumChanged;

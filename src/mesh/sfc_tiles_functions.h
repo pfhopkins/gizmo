@@ -312,6 +312,17 @@ int search_neighbors_sfc_gpu(const double *compact_xyzh, const double pos_i[3], 
 }
 
 #if defined(KOKKOS_VERSION)   /* device atomics: only a unit that carries Kokkos can compile this */
+/* Mark owned particle j as a motion target for this call.  Exactly one marker
+ * appends it, however many pairs reach it; an index outside the owned range
+ * (a ghost copy) is not this rank's to raise and is ignored. */
+KOKKOS_INLINE_FUNCTION
+void gx_motion_target_mark(const struct GxMotionTargetSet &ts, int j)
+{
+    if(!ts.seen || j < 0 || j >= ts.capacity) {return;}
+    if(Kokkos::atomic_exchange(&ts.seen[j], ts.gen) == ts.gen) {return;}
+    const int slot = Kokkos::atomic_fetch_add(ts.counter, 1);
+    if(slot < ts.capacity) {ts.list[slot] = j;}
+}
 /* Raise the motion bound of the tile and every node above it for particle i,
  * whose speed bound is `vmax`, in an owned tile index (gpu_neighbor_list.h).
  * Device- and host-callable; concurrent raises into one tile or one ancestor

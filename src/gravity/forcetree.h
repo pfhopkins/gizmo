@@ -75,6 +75,21 @@ void force_dynamic_update_node(int no, int mode, MyFloat *minbound, MyFloat *max
 void force_update_hmax(void);
 void force_update_hmax_of_node(int no, int mode);
 void force_finish_kick_nodes(void);
+
+/* A particle's velocity was changed outside the kick (a feedback receiver, a
+ * swallowed cell's neighbour, a scattered dark matter particle): raise the
+ * motion bound of every node above each of idx[0..n), and remember the
+ * top-level nodes reached so their new bound reaches the other ranks at the
+ * next tree-update phase.  The kick itself does not come through here: it has
+ * its own route and exchange (force_kick_node / force_finish_kick_nodes). */
+void gravity_note_motion_bound(const int *idx, int n);
+/* All ranks, once per reused-tree step, after force_update_tree: every rank
+ * learns the raised bound of every top-level node any rank changed since the
+ * last flush, and applies it up its own copy of the chain.  Nothing else in
+ * the node moves: no momentum, no kick flag, no timestamp. */
+void gravity_flush_pending_motion_bounds(void);
+/* A rebuild sets every bound afresh, so whatever was pending is void. */
+void gravity_clear_pending_motion_bounds(void);
 int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y, peano1D z, int *nodecount, int *nextfree);
 int  force_exchange_pseudodata(void);          /* returns complete() status: nonzero = unmatched (caller skips dependent pseudo-update) */
 void force_exchange_pseudodata_issue(void);    /* split for non-blocking overlap with LET */
