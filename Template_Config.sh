@@ -317,6 +317,7 @@
 ## ----------------------------------------------------------------------------------------------------
 # ----- output options
 ## ----------------------------------------------------------------------------------------------------
+#SINK_MDOT_RESERVOIR_CAP=30       # marginally-resolved accretion guard: drain at most M_total/N of the reservoir per t_acc (floored at one mean gas cell) while a sink holds fewer than SINK_MDOT_RESERVOIR_CAP_NRESOLVED=100 cells' worth of mass; above that the sink is resolved and stock M_res/t_acc applies. ON BY DEFAULT under SINGLE_STAR_STARFORGE_DEFAULTS; set explicitly only to override N. See sinks/sink.cc
 #SINK_OUTPUT_MOREINFO             # output additional info to "sink_details" on timestep-level, following Angles-Alcazar et al. 2017, MNRAS 472, 109 (use caution: files can get very large if many BHs exist)
 #SINK_CALC_DISTANCES              # calculate distances for all particles to closest BH for, e.g., refinement, external potentials, etc. cite Garrison-Kimmel et al., MNRAS, 2017, 471, 1709
 ####################################################################################################
