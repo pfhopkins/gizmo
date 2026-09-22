@@ -10,6 +10,7 @@
 #include <inttypes.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../mesh/gpu_neighbor_list.h"   /* gpu_sidx_notify_type_changed */
 #include "../core/wakeup_sidecar.h"
 #include "../declarations/gpu_rng.h"
 #include "../mesh/neighbor_list.h"
@@ -1504,6 +1505,7 @@ void fof_make_sink_particles(void)
                 { endrun(7772); continue; }	/* imported particle has wrong Type for a FOF sink: soft bad-stop, skip converting it (avoids bad P[] mutation); drains at caller phase poll */
         
         P[import_indices[n]].Mass = CellP[import_indices[n]].Mass; /* sync mass before type conversion */
+        gpu_sidx_notify_type_changed((int)P[import_indices[n]].Type, 5);
         P[import_indices[n]].Type = 5;    /* make it a sink particle particle */
 #ifdef GALSF
         P[import_indices[n]].StellarAge = All.Time; /* reset formation time to match BH formation */
