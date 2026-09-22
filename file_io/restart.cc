@@ -15,6 +15,12 @@
 #include "../core/proto.h"
 #include "../domain/domain.h"
 
+/* Restartfile layout sentinel (see restart()). The magic distinguishes a sentinel from the leading
+   bytes of an All struct written by a pre-sentinel binary. */
+#define RESTARTFILE_MAGIC 0x52535446u
+#define RESTARTFILE_LAYOUT_VERSION 1u
+struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
+
 static FILE *fd;
 
 #ifdef CHIMES 
@@ -150,6 +156,27 @@ void restart(int modus)
 
 
 	  save_PartAllocFactor = All.PartAllocFactor;
+
+	  /* Layout sentinel. What follows is a raw byte image of All, P, CellP and a hand-picked list of
+	     globals, so any change to those structs or to that list makes older restartfiles unreadable --
+	     and without this header they misread silently (every later field shifted) or crash somewhere far
+	     downstream. Written first; on read a mismatch is a clean, explained abort. Struct sizes are
+	     checked automatically; bump RESTARTFILE_LAYOUT_VERSION whenever a byten() field is added or
+	     removed below without a struct size changing. */
+	  {
+	      struct restart_layout_header hdr = {RESTARTFILE_MAGIC, RESTARTFILE_LAYOUT_VERSION,
+	          (unsigned long long) sizeof(struct global_data_all_processes), (unsigned long long) sizeof(struct particle_data), (unsigned long long) sizeof(struct gas_cell_data)};
+	      struct restart_layout_header want = hdr;
+	      byten(&hdr, sizeof(hdr), modus);
+	      if(modus && (hdr.magic != want.magic || hdr.layout_version != want.layout_version || hdr.size_all != want.size_all || hdr.size_p != want.size_p || hdr.size_cell != want.size_cell))
+		{
+		  printf("Restart file '%s' was written with a different data layout (file/binary: magic %08x/%08x, layout version %u/%u, sizeof All %llu/%llu, P %llu/%llu, CellP %llu/%llu). "
+			 "Restartfiles are byte images and do not survive changes to these structures: resume with the binary that wrote them, or restart from a snapshot.\n",
+			 buf, hdr.magic, want.magic, hdr.layout_version, want.layout_version, hdr.size_all, want.size_all, hdr.size_p, want.size_p, hdr.size_cell, want.size_cell);
+		  fflush(stdout);
+		  endrun(7879);
+		}
+	  }
 
 	  /* common data  */
 	  byten(&All, sizeof(struct global_data_all_processes), modus);
