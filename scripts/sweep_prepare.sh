@@ -3,7 +3,9 @@
 # per-task runner. Run this from a workstation or login node (no Slurm needed), then
 # submit scripts/run_sweep_genoa.sbatch.
 #
-#   ./scripts/sweep_prepare.sh [SWEEP_DIR]
+#   ./scripts/sweep_prepare.sh [SWEEP_DIR]     # default $GIZMO_SWEEP_ROOT/<timestamp>
+#
+# GIZMO_TEST_PYTHON selects the python that has pytest/h5py (default: python3 on PATH).
 #
 # The seed is a copy of THIS tree at its current HEAD with build outputs and prior test
 # outputs stripped, so downloaded ICs come along and the nodes do not each re-fetch them.
@@ -15,7 +17,7 @@ set -uo pipefail
 # so a different checkout can be swept -- e.g. upstream, for an A/B against this branch.
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TREE="${GIZMO_TREE:-$REPO}"
-SWEEP="${1:-/mnt/ceph/users/mgrudic/starforge_dev_sweep/$(date +%Y%m%d_%H%M%S)}"
+SWEEP="${1:-${GIZMO_SWEEP_ROOT:?pass SWEEP_DIR or set GIZMO_SWEEP_ROOT}/$(date +%Y%m%d_%H%M%S)}"
 HEAD_SHA="$(git -C "$TREE" rev-parse --short HEAD)"
 
 if [ -n "$(git -C "$TREE" status --porcelain --untracked-files=no)" ]; then
@@ -45,16 +47,10 @@ echo "$HEAD_SHA" > "$SWEEP/HEAD_SHA"
 echo "=== seed staged: $(du -sh "$SWEEP/seed" 2>/dev/null | cut -f1)"
 
 # ---------------------------------------------------------------- task list
-# One task per (test directory, VARIANT). Splitting variants is what keeps the sweep short:
-# 67% of node-time sits in multi-variant tests that would otherwise run their variants
-# sequentially inside one task, so one engine grinds through hernquist's 8 variants (2h45m)
-# while other nodes idle. Per-variant tasks drop the critical path from the longest TEST
-# (3.0h) to the longest VARIANT (1.5h).
-#
-# Safe because each engine rsyncs its own private tree and variant_output_dir() separates
-# outputs within it, so two variants on different engines never touch the same files. The
-# earlier "variants share the directory's ICs and output paths" concern applied to running
-# them concurrently in ONE tree, which never happens here.
+# One task per (test directory, VARIANT), so multi-variant tests spread across engines instead of
+# running their variants in sequence: the critical path becomes the longest variant rather than
+# the longest test. Safe because each engine rsyncs its own private tree and
+# variant_output_dir() separates outputs within it.
 #
 # SWEEP_TESTS restricts the run to a subset -- a file of directory names, or the names inline.
 # Used to re-run only what a fix could plausibly change, rather than paying 8 nodes to watch
@@ -94,7 +90,7 @@ fi
 #     what each Config change touches and the whole suite costs ~8 min; split, every task starts
 #     from a clean tree and pays a FULL build, turning 163 incremental builds into 163 full ones.
 NOSPLIT="hernquist_convergence compile_suite"
-PY="${GIZMO_TEST_PYTHON:-/mnt/home/mgrudic/python_work/bin/python}"
+PY="${GIZMO_TEST_PYTHON:-python3}"
 echo "=== collecting variants ..."
 ( cd "$TREE" && "$PY" -m pytest test/ --collect-only -q --continue-on-collection-errors 2>/dev/null ) \
   | "$PY" -c '
@@ -188,7 +184,7 @@ if [ ! -f "$TREE/.mpiok" ]; then
     fi
 fi
 
-PY=/mnt/home/mgrudic/python_work/bin/python
+PY="${GIZMO_TEST_PYTHON:-python3}"
 t0=$SECONDS
 
 # Resolve the pytest node id HERE rather than carrying it from prepare time. The id embeds
