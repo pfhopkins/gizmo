@@ -583,12 +583,21 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     for(k=0;k<NUM_METAL_SPECIES;k++)
                     {
                         MyOutputFloat val = (MyOutputFloat) P[pindex].Metallicity[k];
-#ifndef OUTPUT_IN_DOUBLEPRECISION
-                        /* Quantize to ~3.3 significant decimal digits (10-bit mantissa) by zeroing
-                           the low 13 mantissa bits of the float32. This is lossless at the precision
-                           level meaningful for metal abundances, and makes the data ~2x more
-                           compressible with shuffle+deflate (IO_COMPRESS_HDF5). */
-                        {unsigned int *ibits = (unsigned int *)&val; *ibits &= 0xFFFFE000u;}
+#if defined(IO_COMPRESS_HDF5) && !defined(OUTPUT_IN_DOUBLEPRECISION)
+                        /* Drop the low 13 mantissa bits of the float32, leaving ~3 significant
+                           decimal digits, so shuffle+deflate can compress this field -- it is the
+                           largest block in a STARFORGE snapshot (NUM_METAL_SPECIES wide).
+                           Gated on IO_COMPRESS_HDF5: without it the fidelity is spent for nothing.
+                           Rounded, not masked: masking alone truncates toward zero, so every value
+                           loses magnitude and the mean error is -3.4e-4 rather than ~0.
+                           memcpy, not a pointer cast: reading a float through unsigned int* is a
+                           strict-aliasing violation, and both compilers fold these to no code. */
+                        {
+                            uint32_t b; memcpy(&b, &val, sizeof(b));
+                            b += 0xFFFu + ((b >> 13) & 1u);   /* round-to-nearest-even */
+                            b &= 0xFFFFE000u;
+                            memcpy(&val, &b, sizeof(b));
+                        }
 #endif
                         fp[k] = val;
                     }
