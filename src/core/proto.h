@@ -656,8 +656,6 @@ size_t sizemax(size_t a, size_t b);
 void reconstruct_timebins(void);
 peano1D domain_double_to_int(double d);
 peanokey peano_hilbert_key(peano1D x, peano1D y, peano1D z, int bits);
-peanokey peano_hilbert_key_of_position(const Vec3<MyDouble> &pos);
-int domain_position_is_within_key_extent(const Vec3<MyDouble> &pos);
 peanokey peano_and_morton_key(peano1D x, peano1D y, peano1D z, int bits, peanokey *morton);
 peanokey morton_key(peano1D x, peano1D y, peano1D z, int bits);
 

@@ -128,15 +128,10 @@ int build_sfc_tiles(struct particle_data *P, int num_total,
  * already exists, while build_sfc_tiles() derives the pool and folds each member
  * into its tile in the same pass. Tiles are mymalloc'd; the caller owns them and
  * must free them before the pool. */
-/* predict_to: fold each member at the position it will hold at that time rather
- * than the one it holds now, and set the tile's motion-bound clock there.  0
- * folds stored positions with the earliest member's clock, which is what a
- * caller wants when the box is to be read as a bound over a past reference. */
 int build_sfc_tiles_from_pool(struct particle_data *P, const int *pool, int num_pool,
                               int target_tile_size, sfc_tile_t **tiles_out,
                               mode_b_radius_policy_t radius_policy = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES,
-                              double scale_factor = 1.0,
-                              integertime predict_to = 0);
+                              double scale_factor = 1.0);
 
 void free_sfc_tiles(sfc_tile_t *tiles, int *pool_indices);
 
