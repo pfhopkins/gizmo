@@ -156,5 +156,5 @@ TMP_WRAP_Z_S(x,y,z,sign);} /* note the ORDER MATTERS here for shearing boxes: Y-
 
 /* Feedback-op timestep for a particle, in physical units. Upstream gizmo-cpp defines this in its
    macros.h (optionally floored by Dt_Min_Between_FBCalc_Gyr under GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW,
-   which this branch does not carry); the dust-chemistry module consumes it. */
+   which is not implemented here); the dust-chemistry module consumes it. */
 #define GET_PARTICLE_FEEDBACK_TIMESTEP_IN_PHYSICAL(i) get_particle_timestep_in_physical(i)

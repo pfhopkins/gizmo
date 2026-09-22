@@ -64,17 +64,10 @@ MTOT = M1_IN + M2_IN + M3
 P_OUT = 2.0 * np.pi * np.sqrt(A_OUT ** 3 / (G_CODE * MTOT))
 V_OUT = np.sqrt(G_CODE * MTOT / A_OUT)
 
-# Calibrated at 3x the measured value on THIS configuration: the per-outer-orbit median envelope
-# of |dE/E| reached 5.66e-5 over 50 orbits (0.8+0.2 Msun eccentric inner binary, inclined
-# tertiary, eta=1.25e-3). The previous 1e-5 was set with equal inner masses, before the pair
-# could split a bin internally, and this IC exceeds it by 5.7x.
-#
-# This bounds gross breakage only. It is NOT the check that discriminated the source-prediction
-# defect -- that was the secular growth exponent on the COM drift (t^+0.95 defective vs t^+0.55
-# fixed, across a 0.85 threshold), which the defect passed on magnitude while failing on trend.
-# That check was calibrated on a configuration this IC no longer produces and was removed
-# pending recalibration, so NO committed test guards the fix (see the README); the evidence for
-# it lives off-suite.
+# 3x the per-outer-orbit median |dE/E| envelope measured on this configuration: 5.66e-5 over 50
+# orbits (0.8+0.2 Msun eccentric inner binary, inclined tertiary, eta=1.25e-3). This bounds gross
+# breakage only: the source-prediction defect passed on magnitude and failed only on the COM
+# drift's growth exponent, a check removed pending recalibration (see README.md).
 MAX_DE_OVER_E = 1.7e-4
 
 def _ic_matches():
@@ -240,17 +233,9 @@ def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     print(f"  COM drift   band max {dr_env.max():.3e}   growth t^{p_dr:+.2f}")
     print(f"  inner orbit a/a0 - 1 = {a_in[-1]/a_in[0]-1:+.3e}")
 
-    # ONE assertion. Everything else -- COM drift ceiling, secular growth exponents, the
-    # convergence sweep -- is reported above and judged by eye. The drift ceiling and exponent
-    # were calibrated on a configuration this IC no longer produces, and the sweep was withdrawn:
-    # its KDK control measured leapfrog at dt^3.4, which is above leapfrog's 2nd-order ceiling
-    # and therefore impossible, so the metric was not measuring integration order. Two causes
-    # were identified and neither was fixed here: |dx| was differenced in the box frame, so COM
-    # drift entered as a bulk translation comparable to the signal; and over 5 outer orbits the
-    # inner binary turns 442 times, so its phase error saturates |dx| at ~a_in and flattens the
-    # slope. Re-adding a sweep means fixing the QUANTITY (difference in the COM frame, and track
-    # the tertiary and the inner pair separately, each with ~5 periods of accumulation) and the
-    # ESTIMATOR (self-convergence over consecutive pairs needs no converged reference).
+    # One assertion. The COM drift ceiling and growth exponents are reported above but not
+    # asserted: they were calibrated on a configuration this IC no longer produces. The
+    # convergence sweep was withdrawn; README.md records why and what a valid one would need.
     assert de_env[-1] < MAX_DE_OVER_E, (
         f"relative energy error {de_env[-1]:.3e} over {n_orbits:.0f} outer orbits "
         f"(tol {MAX_DE_OVER_E})")

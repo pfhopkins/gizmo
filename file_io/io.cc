@@ -915,27 +915,16 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
         case IO_HERMITE_POS:
         case IO_HERMITE_VEL:
 #ifdef IO_HERMITE_SYNC
-            /* A mutually consistent (r,v) pair at the output time.
-             *
-             * The ordinary Coordinates/Velocities blocks are NOT such a pair: positions are
-             * drifted to the output time while velocities are whatever the last kick left
-             * (see the IO_VEL comment). Vis-viva, orbital elements and kinetic energy are
-             * all meaningless on that mixture -- in the e=0.9 binary test it makes
-             * |a/a0 - 1| swing by three orders of magnitude within a single orbit.
-             *
-             * For a Hermite particle the step base is retained, so the consistent state at
-             * any time in the step is just the Taylor series do_hermite_prediction() uses:
+            /* A mutually consistent (r,v) pair at the output time. The ordinary Coordinates and
+             * Velocities are not one: positions are drifted to the output time while velocities
+             * are from the last kick (see IO_VEL), so vis-viva, orbital elements and kinetic energy
+             * computed from them are meaningless. A Hermite particle retains its step base, so its
+             * state anywhere in the step is the predictor's Taylor series,
              *     x(D) = OldPos + OldVel*D + Hermite_OldAcc*D^2/2 + OldJerk*D^3/6
              *     v(D) = OldVel + Hermite_OldAcc*D + OldJerk*D^2/2
-             * with D measured from the particle's own step start. This is the PREDICTED
-             * state, not the corrected one -- the corrector needs the end-of-step
-             * acceleration, which does not exist at an arbitrary output time -- so it is
-             * 4th order in position and 3rd in velocity. That is far above the error being
-             * diagnosed, and unlike the mixed state it is a state the system actually passes
-             * through.
-             *
-             * Particles that are not Hermite-integrated fall back to the ordinary values, so
-             * the datasets are always well defined. */
+             * with D from the particle's own step start: the predicted rather than corrected state,
+             * 4th order in position and 3rd in velocity. Non-Hermite particles fall back to the
+             * ordinary values, so the datasets are always defined. */
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -948,7 +937,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                     /* the full eligibility predicate, not the type bitmask alone: a star being
                        super-timestepped or in its born-yesterday settling window is advanced by
                        KDK, so its retained base does not describe where it goes and the plain
-                       drifted values are the honest answer for it. NB the reference snapshot of
+                       drifted values are the right ones for it. NB the reference snapshot of
                        an energy diagnostic must come from ELIGIBLE stars -- IC-read sinks carry
                        an explicit (negative) StellarFormationTime for exactly this reason */
                     _herm = (P[pindex].Mass > 0) && eligible_for_hermite(pindex);

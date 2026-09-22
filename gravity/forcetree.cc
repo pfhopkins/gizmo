@@ -1749,37 +1749,22 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 Vec3<double> src_vel_asused = P[no].Vel;
 #endif
 #ifdef HERMITE_INTEGRATION
-                /* Hermite-only passes: an inactive Hermite-integrated source sits at its
-                 * KDK-drifted position -- and its stored Vel is whole-step-kicked (see
-                 * do_the_kick) -- so the drifted position is O(dt^2) wrong mid-step.
-                 * Re-predict the source from its own Old* state, exactly as
-                 * do_hermite_prediction does for the target. This covers the single-particle
-                 * branch only: a source absorbed into a node multipole still contributes at
-                 * its drifted position. Under SINGLE_STAR_DIRECT_GRAVITY_RADIUS (1000 AU,
-                 * STARFORGE default) star-bearing nodes inside that radius are force-opened
-                 * to singles, so close sink pairs -- where the O(dt^2) error matters -- take
-                 * this branch; more distant sinks arrive via drifted nodes uncorrected.
+                /* Hermite-only passes: an inactive Hermite source sits at its KDK-drifted position
+                 * with a whole-step-kicked Vel (see do_the_kick), O(dt^2) wrong mid-step, so
+                 * re-predict it from its own Old* state as do_hermite_prediction does for the
+                 * target. Single-particle branch only: a source inside a node multipole keeps its
+                 * drifted position, but SINGLE_STAR_DIRECT_GRAVITY_RADIUS opens star-bearing nodes
+                 * nearby, so the close pairs where this matters take this branch. Nothing is
+                 * written back. Active sources are skipped: at HermiteOnlyFlag==1 their Old* are
+                 * stale and their live Pos is already correct. The KDK pass is untouched, since the
+                 * leapfrog's cancellation assumes plain drifted positions.
                  *
-                 * Nothing is written back: the predicted state exists only in this force
-                 * evaluation. Active sources are
-                 * skipped: at HermiteOnlyFlag==1 their Old* are stale (find_timesteps has
-                 * already advanced Ti_begstep, so D=0 would return the previous step's start
-                 * position) and their live Pos is already correct -- corrected at flag==1,
-                 * predicted at flag==2. The KDK pass (HermiteOnlyFlag==0) is untouched: the
-                 * leapfrog's cancellation structure assumes the plain drifted positions.
-                 *
-                 * PERFORMANCE: this gate costs ~16% per particle-step, almost all of it in
-                 * eligible_for_hermite() -- it depends only on the SOURCE but is evaluated per
-                 * (target, source) pair, and it is cross-TU, so it blocks optimization here.
-                 * Hoisting it into a per-pass array would recover most of that. Not done. */
-                /* Validity gate on the extrapolation span. The Old* polynomial interpolates the
-                   source over its OWN step; used past that it is an extrapolation outside its
-                   convergence radius, and for a close pair it can displace the source by
-                   multiples of the separation with a sign correlated to the orbit -- which
-                   rectifies into a COM drift rather than averaging out. Outside the span we fall
-                   through to the KDK-drifted state computed above: larger-order error, but
-                   unbiased. Integer compares, and ahead of eligible_for_hermite so they
-                   short-circuit the expensive part of the gate. */
+                 * The Old* polynomial only interpolates over the source's own step. Past that it
+                 * extrapolates outside its convergence radius and, for a close pair, biases the
+                 * source along the orbit, which rectifies into COM drift -- so outside the span the
+                 * drifted state is kept: lower order, but unbiased. The integer span checks come
+                 * first because eligible_for_hermite() is the costly part: it depends only on the
+                 * source but runs per pair, and being cross-TU the compiler cannot hoist it. */
                 if(HermiteOnlyFlag && !TimeBinActive[P[no].TimeBin]
                    && (ti_Current >= P[no].Ti_begstep)
                    && ((ti_Current - P[no].Ti_begstep) <= P[no].integertime_step())

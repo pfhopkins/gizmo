@@ -69,11 +69,10 @@ N_PARTICLES = 2 ** 15
 # A factor of 4 in eta either side of the default. Enough to separate a criterion with the wrong
 # convergence order from one with the right order without paying for a wider scan.
 #
-# 0.01 is the default that matters: it is GIZMO's documented recommendation (begrun.cc:2655,
-# "ErrTolIntAccuracy 0.010 % <0.02"), what production runs, and what 58 of the 76 parameter files
-# in this suite use. The bare code default at begrun.cc:2683 is 0.02, but that only applies
-# without DEVELOPER_MODE, and the cosmological path overrides it to 0.05. test/hernquist's 0.005
-# is an outlier -- do not take it as the reference.
+# 0.01 is the default that matters: GIZMO's documented recommendation ("ErrTolIntAccuracy 0.010
+# % <0.02" in begrun.cc) and what most parameter files in this suite use. The bare code default
+# (without DEVELOPER_MODE) is 0.02, and the cosmological path overrides it to 0.05.
+# test/hernquist's 0.005 is an outlier -- do not take it as the reference.
 ETAS = (0.04, 0.01, 0.0025)
 
 # Parity is required at the DEFAULT tolerance, which is what the coefficient is calibrated for.

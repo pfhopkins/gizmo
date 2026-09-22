@@ -173,28 +173,16 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
     No-op when GIZMO_TEST_SKIP_BUILD_RUN is set (we're validating externally produced snapshots)."""
     if environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         return
-    # Serialise the build against other processes sharing this tree. Everything from here to the
-    # move is repo-root state -- Config.sh, GIZMO_config.h, every object file, and the GIZMO
-    # binary itself -- so two builds at once corrupt each other. The lock covers the BUILD only,
-    # so builds serialise (minutes) while runs overlap (tens of minutes).
+    # Serialise the build against other processes sharing this tree: Config.sh, GIZMO_config.h,
+    # the object files and the binary are all repo-root state. Builds serialise; runs overlap.
     #
-    # NECESSARY BUT NOT SUFFICIENT for concurrent jobs in one checkout. With this lock in place,
-    # a run of 11 concurrent jobs still produced a binary whose translation units disagreed on
-    # the layout of the All struct -- mymalloc_init read All.MaxMemSize at an offset holding a
-    # double's bit pattern and aborted before any physics -- and the identical test passed the
-    # moment it built alone. Whatever leaks past the lock was not identified. For parallel jobs,
-    # give each its own checkout (git worktree, ~10 MB); keep this lock as the last line of
-    # defence, not the guarantee.
+    # Necessary but not sufficient for concurrent jobs in ONE checkout: builds whose translation
+    # units disagreed on a struct layout have been seen even with the lock held. Give each
+    # parallel job its own checkout (git worktree) and treat this lock as a backstop.
     #
-    # lockf, NOT flock. Measured on this filesystem with four jobs on four nodes: fcntl.flock
-    # granted all four simultaneously -- it is honoured node-locally with no cluster
-    # coordination -- while fcntl.lockf serialised them exactly (waits 0/20/40/60 s, no
-    # overlapping intervals). They are different mechanisms with different cluster support; do
-    # not "simplify" this back to flock.
-    #
-    # Chosen over a mkdir/O_EXCL lock because the kernel releases this one when the holder dies.
-    # These jobs get killed and time out; a lock that survives its owner turns one dead job into
-    # every later job hanging until someone clears it by hand.
+    # lockf, not flock: on a network filesystem flock can be node-local, granting the "exclusive"
+    # lock to one process per node at once. And a kernel-released lock rather than mkdir/O_EXCL, so
+    # a killed job cannot leave every later job waiting on a stale lock.
     with open(_BUILD_LOCK, "w") as _lock:
         fcntl.lockf(_lock, fcntl.LOCK_EX)
         _build_gizmo_locked(test_name, num_openmp_threads, extra_config_flags)

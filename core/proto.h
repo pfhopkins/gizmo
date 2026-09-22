@@ -162,7 +162,7 @@ double ForceSoftening_KernelRadius(int p);
 double sigmoid_sqrt(double x);
 /* velocity_gradient_norm is now a member function of gas_cell_data — use cell[i].velocity_gradient_norm() */
 /* Free-function compat shims for modules synced verbatim from gizmo-cpp (the dust chemistry
-   module calls these as globals; on this branch they became methods): */
+   module calls these as globals; here they are member functions): */
 static inline double Get_Particle_Size(int i) {return P[i].Get_Particle_Size();}
 static inline double velocity_gradient_norm(int i) {return CellP[i].velocity_gradient_norm();}
 

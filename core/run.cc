@@ -195,15 +195,12 @@ void run(void)
             /* Condemned tree, no decomposition owed. The cheap answer -- skip force_update_tree,
                let gravity_tree below do the rearrange+rebuild -- is only safe while every local
                particle still keys into a top-leaf this rank owns: a rebuild buckets by position,
-               and an escaped particle's subtree is destroyed by the pseudo exchange (its mass then
-               enters no rank's moments; found by the stage-4 auditor, mechanism confirmed against
-               kokkos 068b4f33). Ownership drift therefore escalates to the decomposition tier;
-               benign steps keep the cheap rebuild. */
-            move_particles(All.Ti_Current); /* the build (gravity_tree) drifts everyone to now anyway;
-                doing it first lets the escape check below see the positions the build will actually
-                bucket -- checking pre-drift positions misses boundary crossings inside this step,
-                which is exactly how the auditor caught the first version of this branch. Idempotent:
-                the later calls are no-ops. */
+               and an escaped particle's subtree is destroyed by the pseudo exchange, so its mass
+               enters no rank's moments (cf. kokkos 068b4f33). Ownership drift therefore escalates
+               to a decomposition; benign steps keep the cheap rebuild. */
+            move_particles(All.Ti_Current); /* drift first, so the escape check sees the positions
+                the build will bucket (a pre-drift check misses crossings within this step);
+                idempotent, so the build's own drift is then a no-op. */
             int esc_loc = domain_any_local_particle_escaped(), esc_any = 0;
             MPI_Allreduce(&esc_loc, &esc_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
             if(esc_any)
@@ -413,7 +410,7 @@ void calculate_non_standard_physics(void)
 #endif
         /* one deterministic cleanup for the whole sink pass: eliminates swallow victims and folds
            in freshly spawned cells. Runs on spawn OR swallow (both rank-uniform triggers); the
-           tree consequences are decided inside rearrange itself (stage-2 protocol). */
+           tree consequences are decided inside rearrange itself. */
         if(need_cleanup_rearrange) {rearrange_particle_sequence();}
 #if defined(TREE_INTEGRITY_AUDITS) && defined(MAINTAIN_TREE_IN_REARRANGE)
         if(need_cleanup_rearrange) {force_tree_full_audit(0, "sink_cleanup");}

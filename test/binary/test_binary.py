@@ -69,21 +69,15 @@ A0 = A_AU / AU_PER_PC
 V_ORB = np.sqrt(G_CODE * MTOT / A0)          # normalisation for the COM drift
 P_ORB = 2.0 * np.pi * np.sqrt(A0 ** 3 / (G_CODE * MTOT))
 
-# WHAT THIS TEST GUARDS, as of the shared-normalization change (SINK_TIMESTEP_SAFETY_FACTOR in
-# core/timestep.cc). With both criteria on one normalization the pair's timebins FUSE, and an
-# isolated binary then has no inactive sources at all -- so the Hermite source prediction in
-# gravity/forcetree.cc never fires here and this test does NOT guard it. It guards the
-# NORMALIZATION: revert that and the bins split again, and the same run measures |dE/E| = 1.6e-2
-# and drift = 8.5e-3, ~10x and ~4x over the ceilings below. The source prediction itself has NO
-# guard in the committed suite -- test/triple's hierarchy cannot fuse, so the prediction is
-# load-bearing there, but its committed assertion does not discriminate it (see
-# test/triple/README.md for what would).
+# What this guards: the shared timestep normalization (SINK_TIMESTEP_SAFETY_FACTOR in
+# core/timestep.cc). With it the pair's timebins fuse, so an isolated binary has no inactive
+# sources and the Hermite source prediction never fires here; without it the bins split again
+# and |dE/E| and the drift exceed the ceilings below by ~10x and ~4x. The source prediction is
+# exercised by test/triple, whose hierarchy cannot fuse (see test/triple/README.md).
 #
-# Measured over 1000 orbits (starforge_defaults, 1 rank, per-orbit envelope), both changes in:
-#     |dE/E| = 7.78e-5    COM drift = 3.48e-15   (drift is at round-off; growth t^-0.25)
-# The drift ceiling is deliberately NOT set near 3e-15: that number is round-off on this
-# machine and would make the test a floating-point-reproducibility check. 5e-4 still catches a
-# revert by 4x, which is the regression this bounds.
+# Measured over 1000 orbits (starforge_defaults, 1 rank, per-orbit envelope): |dE/E| = 7.78e-5,
+# COM drift = 3.48e-15. The drift ceiling sits far above that round-off value so the test is not
+# a floating-point-reproducibility check; 5e-4 still catches a revert by 4x.
 MAX_DE_OVER_E = 1.5e-3
 MAX_COM_DRIFT = 5e-4
 
@@ -192,10 +186,8 @@ def _per_orbit_envelope(t, y):
     The instantaneous values oscillate by orders of magnitude WITHIN each orbit -- |a/a0-1|
     swings from 1e-4 to 0.2 -- because a snapshot catches the two particles at whatever point
     their own timebins have reached, so an inactive one contributes a velocity from its last
-    kick. Reading a final value, or fitting a power law through the oscillation, measures that
-    sampling artefact rather than the integration error: the first version of this test
-    reported |da/a| = 1.06e-3 and "energy is bounded", both of which were simply where the
-    last snapshot happened to fall.
+    kick. A final value, or a power law fitted through the oscillation, measures that sampling
+    artefact rather than the integration error.
 
     The per-orbit MINIMUM is the envelope floor, where the states are most nearly
     synchronised, and it is monotonic. That is the secular error.

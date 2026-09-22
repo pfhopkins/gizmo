@@ -1362,12 +1362,10 @@ void process_wake_ups(void)
     bin = 0; for(n = 0; n < TIMEBINS; n++) {if(TimeBinCount[n] > 0) {bin = n; break;}}
     n = 0;
 
-    /* The scan below is O(NumPart) at every sync point, which at production scale is the single
-       largest cost in the run: ~130k particles at 736 B of stride, ~100 times a second, and 97% of
-       those passes find nothing. Gating it is only safe because the flag cannot go false while a
-       request is live -- see the reduction above for migration, the recompute below for requests
-       that outlive a pass, and begrun() for restarts, where the flag is process memory but
-       P[].wakeup is serialized. */
+    /* The scan below is O(NumPart) at every sync point and usually finds nothing, so it is gated.
+       That is safe only because the flag cannot go false while a request is live: see the
+       reduction above for migration, the recompute below for requests that outlive a pass, and
+       begrun() for restarts (the flag is process memory; P[].wakeup is serialized). */
 
     int wakeup_bin_offset = 0;
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;

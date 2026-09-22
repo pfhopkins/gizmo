@@ -9,8 +9,7 @@
 # must evaluate it mid-step at drift depths spanning up to 2^6 of their own
 # steps. That is the configuration in which the Hermite gravity passes see
 # inactive companions far from a step boundary -- the regime the Old*-based
-# source prediction in forcetree.cc exists for, and the configuration of the
-# production momentum-conservation violation (a hardening triple).
+# source prediction in forcetree.cc exists for.
 #
 # The equal-mass inner pair shares a timebin by symmetry, so it cannot leak
 # against itself: any secular momentum drift is the inner<->outer channel.

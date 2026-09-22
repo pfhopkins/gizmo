@@ -5,12 +5,12 @@
 #   GIZMO_SWEEP=<path> sbatch scripts/run_sweep_genoa.sbatch
 #
 # One test directory per node at a time (-t 1). That is deliberate: run_test() sizes rank
-# count from cpu_count()/2 (python_src/gizmo/test.py:103), so on a 96-core Genoa node a
+# count from cpu_count()/2 (python_src/gizmo/test.py), so on a 96-core Genoa node a
 # test runs at 48 ranks. Packing several tests onto a node would either oversubscribe it
 # or force the rank count down, and rank count is an axis real defects live on.
 #
-# 68 test directories. --nodes=8 gives roughly 9 apiece; raise it with `sbatch --nodes=N`
-# if the queue is free, since disBatch just hands tasks to whatever engines exist.
+# Raise the node count with `sbatch --nodes=N` if the queue is free: disBatch hands tasks to
+# whatever engines exist.
 #
 # Pending on "Nodes required for job are DOWN, DRAINED, ... or reserved" just means the genoa
 # rocky9 pool is full. Wait it out. Do NOT reach for the idle rocky8 nodes in the site reservation:

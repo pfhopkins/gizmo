@@ -22,8 +22,7 @@ Runs 10 crossing times (TimeMax 29.2), matching test/plummer_binaries. Note this
 its t_cross is 2.92 code rather than ~3.24 and a duration copied from the sibling would cover a
 twentieth of the evolution.
 
-Tolerances remain provisional -- measured at the shorter duration and not yet re-derived for
-this one, so a failure here is more likely a stale ceiling than a regression.
+The energy tolerance is provisional; see MAX_DE_OVER_E.
 """
 
 import glob
@@ -98,27 +97,16 @@ A_MIN_AU = 100.0             # pericentre floor; sets the runtime, see the param
 A_MAX_AU = 5.0e3
 SEED = 42
 
-# Calibrated at 3x the observed maxima from the first full 10-crossing run (2 ranks x 4 threads,
-# icelake, 101 snapshots to t=29.2): |dE/E| peaked at 5.24e-4 and the drift band at 2.24e-4.
-# The old 5e-2 energy ceiling sat 95x above what the code actually does and could not have caught
-# anything. 3x leaves room for the run-to-run variation a different decomposition can produce
-# while still bounding a real regression.
+# Only magnitudes are asserted, not growth exponents: unlike test/triple's, this cluster's drift
+# has no stable trend (its local slope changes sign between windows), so a fitted exponent would
+# measure the window rather than the integrator. Energy climbs monotonically (the 4th-order
+# block-step residual, ~t^1.3); the drift wanders in a band.
 #
-# ONLY MAGNITUDES ARE ASSERTED HERE -- deliberately, unlike test/triple, which additionally guards
-# a growth EXPONENT. That works there because a clean 3-body configuration gives a stable trend.
-# It does not transfer: measured on this run the drift's local slope reads +0.10, -3.73, +8.71 and
-# +1.03 over successive windows. A negative slope is proof it is not a power law, so any exponent
-# fit here reports where the window landed, not the integrator.
-#
-# The distinction that matters is visible in the raw series: energy climbs monotonically at every
-# one of the 10 crossings (9.3e-6 -> 5.0e-4, settling to ~t^1.3 after an early transient), which
-# is the known 4th-order block-step residual; the drift wanders inside 2.8e-5 to 2.2e-4 with no
-# trend. Bounded momentum against secular energy is the signature the source prediction produces.
-# PROVISIONAL (2026-09-21). |dE/E| scatters chaotically from run to run: a 10-member ensemble with
-# the identical seeded IC, binary and 2 MPI x 4 OMP layout, differing only in OpenMP reduction
-# order, gave 2.43e-4 .. 7.24e-3 (median 5.83e-4, on the 5.24e-4 reference). The old 1.6e-3
-# failed ~1 run in 10 on that tail alone. 1e-2 admits the observed max with ~38% headroom, so it
-# now catches only gross regressions; the real fix is a median-of-N criterion or OMP=1 here.
+# MAX_COM_DRIFT is 3x the drift band measured over the full 10-crossing run. MAX_DE_OVER_E is
+# PROVISIONAL (2026-09-21): |dE/E| scatters chaotically between runs that differ only in OpenMP
+# reduction order -- 2.43e-4 .. 7.24e-3 over a 10-member ensemble, median 5.83e-4 -- so the old
+# 1.6e-3 failed ~1 run in 10 on that tail alone. 1e-2 admits the observed max with ~38% headroom
+# and so catches only gross regressions; the real fix is a median-of-N criterion or OMP=1 here.
 MAX_DE_OVER_E = 1e-2         # provisional -- see above; was 1.6e-3 (3.05x the 5.24e-4 reference)
 MAX_COM_DRIFT = 7e-4         # |v_com| / cluster dispersion; 3.13x the measured 2.24e-4
 
@@ -249,14 +237,9 @@ def test_plummer_binaries_realistic(num_mpi_ranks, num_omp_threads, extra_config
     print(f"  a range    {a_first[k].min()*AU_PER_PC:.0f} - {a_first[k].max()*AU_PER_PC:.0f} AU;"
           f"  e median {np.median(e_first[np.isfinite(e_first)]):.2f}")
 
-    # Binary survival and |da/a| are REPORTED, never asserted. Which pairs survive is set by
-    # individual chaotic three-body encounters: there is no a priori correct answer, and the
-    # outcome will not reproduce between runs any more than fewbody's threshold counts do (those
-    # moved 3/48 -> 1/48 between two builds differing in no relevant physics). An assertion on
-    # them would fail on chaos and pass on nothing.
-    #
-    # Energy and momentum are different in kind -- they have a priori correct values, so a
-    # deviation is unambiguously integration error. That is why only they are asserted.
+    # Binary survival and |da/a| are reported, never asserted: which pairs survive is decided by
+    # chaotic three-body encounters, so there is no correct answer to assert. Energy and momentum
+    # have a priori correct values, so only they are asserted.
     assert energy[-1] < MAX_DE_OVER_E, (
         f"energy error {energy[-1]:.3e} over t={t[-1]:.2f} (tol {MAX_DE_OVER_E}). Measured on the "
         f"synced state with a direct potential, so this is the integrator, not the output "

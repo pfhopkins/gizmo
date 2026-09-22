@@ -73,18 +73,12 @@ void star_direct_gravity_build_table(void)
         sendbuf[k].Pos = P[i].Pos;
         sendbuf[k].Vel = P[i].Vel;
 #ifdef HERMITE_INTEGRATION
-        /* Same correction the tree walk applies in its single-particle branch (forcetree.cc).
-         * Drifting to All.Ti_Current above puts an INACTIVE star on its KDK-drifted trajectory,
-         * which is O(dt^2) from where it actually is mid-step, and leaves Vel whole-step-kicked;
-         * feeding that to a 4th-order integrator caps its accuracy at 2nd order. During the
-         * Hermite-only passes, send the source's Old*-predicted state instead. Only the send
-         * buffer is touched -- P[i] is untouched, so the KDK path is unaffected. Active stars
-         * keep their live state: it is already correct, and at HermiteOnlyFlag==1 their Old* are
-         * stale because find_timesteps has already advanced Ti_begstep. */
-        /* Same extrapolation-span gate as the tree walk's single-particle branch: the Old*
-         * polynomial is only an interpolant over the source's own step, so past that we send the
-         * KDK-drifted state instead -- lower order, but unbiased, where the extrapolation is
-         * biased along the orbit and rectifies into a COM drift. */
+        /* Same correction as the tree walk's single-particle branch (forcetree.cc): during the
+         * Hermite-only passes, send an inactive star's Old*-predicted state instead of its
+         * KDK-drifted one, which is O(dt^2) off mid-step with a whole-step-kicked Vel. Only the
+         * send buffer changes, so the KDK path is unaffected. Active stars keep their live state
+         * (their Old* are stale at HermiteOnlyFlag==1), and so does any star past its own step
+         * span, where the Old* extrapolation would be biased along the orbit. */
         if(HermiteOnlyFlag && !TimeBinActive[P[i].TimeBin]
            && (All.Ti_Current >= P[i].Ti_begstep)
            && ((All.Ti_Current - P[i].Ti_begstep) <= P[i].integertime_step())

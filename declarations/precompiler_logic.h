@@ -283,14 +283,10 @@
 #endif // FIRE_PHYSICS_DEFAULTS clauses
 
 
-/* SINK_COMPTON_HEATING shares the per-sink angle-weighted luminosity tree infrastructure
- * (mass_sinklumwt_forradfb, NODE::sink_lum / sink_lum_grad, pseudo-node aggregation) with
- * SINK_PHOTONMOMENTUM -- the Compton incident flux IS the same angle-weighted luminosity the
- * rad-pressure module reads. Legacy code carried this implication; it was incorrectly dropped
- * during refactor. The rad-pressure momentum-kick term itself remains independently
- * disable-able at runtime via All.PhotonMomentum_Coupled_Fraction, so a Compton-only physics
- * setup is still expressible. Placed OUTSIDE the FIRE_PHYSICS_DEFAULTS clauses block so it
- * fires for any Config that explicitly enables SINK_COMPTON_HEATING. */
+/* SINK_COMPTON_HEATING reads the same angle-weighted sink luminosity tree data as
+ * SINK_PHOTONMOMENTUM, so it needs that infrastructure compiled in; the momentum kick itself can
+ * still be disabled at runtime (PhotonMomentum_Coupled_Fraction). Kept outside the
+ * FIRE_PHYSICS_DEFAULTS block so it applies to any Config that sets SINK_COMPTON_HEATING. */
 #if defined(SINK_COMPTON_HEATING) && !defined(SINK_PHOTONMOMENTUM)
 #define SINK_PHOTONMOMENTUM
 #endif
@@ -553,14 +549,11 @@
 #endif
 #endif
 
-/* TREE_INTEGRITY_AUDITS is set DIRECTLY in a Config file -- deliberately NOT implied by any other
-   flag. It enables the deep tree audits (exactly-once walk, Father/threading cross-check, moment
-   re-derivation) at build/refresh/mutation points, and its failures are FATAL. It was briefly
-   derived from DEVELOPER_MODE, which was wrong: DEVELOPER_MODE only promotes accuracy parameters
-   to runtime parameter-file tags, it is set for convenience by most test configs and by anyone
-   who wants to tune ErrTolTheta, and none of that should buy fatal instrumentation plus a
-   re-derivation of every node moment. The always-on tier-0 checks (force_validate_tree_links and
-   the treebuild root-count/bookkeeping reduce) are what production runs carry. */
+/* TREE_INTEGRITY_AUDITS must be set explicitly in Config.sh; nothing implies it. It enables fatal
+   deep tree audits (exactly-once walk, Father/threading cross-check, moment re-derivation) at
+   build/refresh/mutation points. It is deliberately not tied to DEVELOPER_MODE, which many test
+   configs set only to expose accuracy parameters. Without it only the always-on checks run
+   (force_validate_tree_links and the treebuild bookkeeping reduce). */
 
 #if defined(HERMITE_INTEGRATION) && defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
 /* Hermite is the one consumer that walks the STANDING tree while deliberately skipping the rebuild

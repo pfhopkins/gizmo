@@ -807,10 +807,8 @@ void sink_final_operations(void)
 #endif
 #ifdef HERMITE_INTEGRATION
             /* Keep the carry state on the post-accretion trajectory. Without this the prediction
-               that runs later in the same step recomputes Pos/Vel from the stale base and the
-               accretion kick is silently discarded -- measured on test/shu1977 as a 20x COM-drift
-               regression (1.8e-3 vs 8.4e-5) when accreting sinks were simply left Hermite-eligible
-               without this shift. */
+               later in the same step recomputes Pos/Vel from the stale base and silently discards
+               the accretion kick (test/shu1977 shows it as COM drift). */
             P[n].OldVel += P[n].Vel - hermite_pre_vel;
             P[n].OldPos += P[n].Pos - hermite_pre_pos;
 #endif
