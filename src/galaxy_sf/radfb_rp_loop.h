@@ -467,7 +467,7 @@ struct RadFBRPSpec {
      * default false_type. Runner runtime-asserts single subgroup at
      * entry. NO actives_partition_by_subgroup (that's only for
      * multi-subgroup Specs like ags_density). Mirrors mechfb. */
-    static constexpr double mode_a_csr_buffer_factor      = 1.3;
+    static constexpr double mode_a_csr_buffer_factor      = 1.0;   /* two passes over ONE fixed list: no AdjustRadius */
 
     /* Default 1e-10 — the iter-0
      * wt_sum aggregation reads only Pj.Get_Particle_Size() which is not

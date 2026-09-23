@@ -174,7 +174,7 @@ struct MechFBSpec {
 
     /* Mode A CSR policy. mode_a_rebuild_csr_every_iter=false is LOAD-BEARING
      * (design §F): preserves legacy 1-CSR-shared-across-6-modes optimization. */
-    static constexpr double mode_a_csr_buffer_factor      = 1.3;
+    static constexpr double mode_a_csr_buffer_factor      = 1.0;   /* fixed radius across its iterations: no AdjustRadius */
     static constexpr bool   mode_a_rebuild_csr_every_iter = false;
 
     /* Single j-mask subgroup (gas-only). SupportsSubgroups OMITTED (default

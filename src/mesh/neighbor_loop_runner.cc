@@ -4946,9 +4946,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         "Cached-SIDX Spec must declare 'static constexpr bool mode_a_active_sources_in_sidx_pool' "
         "(true = active sources are SIDX-pool members; false = runner stages explicit P[].Pos). "
         "Prevents the stale gas-only-compact source-position bug for non-pool actives.");
-    static_assert(Spec::mode_a_csr_buffer_factor > 1.0,
-                  "Spec::mode_a_csr_buffer_factor must be > 1.0 "
-                  "(legacy DENSITY_H_BUFFER_FACTOR = 1.3).");
+    static_assert(Spec::mode_a_csr_buffer_factor >= 1.0,
+                  "Spec::mode_a_csr_buffer_factor must be >= 1.0. It oversizes the CSR so an "
+                  "iteration that ENLARGES the search radius can reuse the list instead of "
+                  "rebuilding it (legacy DENSITY_H_BUFFER_FACTOR = 1.3). A Spec whose radius is "
+                  "fixed for the whole call -- no AdjustRadius -- declares 1.0: a larger value "
+                  "there is not a buffer, it is a wider import nothing will ever read.");
     /* TRAP-5 carry-forward: same trivially-copyable
      * checks as run_neighbor_loop. Don't let iterative Specs bypass TRAP 5. */
     static_assert(std::is_trivially_copyable_v<typename Spec::CallScalars>,

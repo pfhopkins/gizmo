@@ -412,7 +412,7 @@ struct AgsForceSpec {
     using SupportsSubgroups = std::true_type;
 
     static constexpr int    max_iters                     = 1;
-    static constexpr double mode_a_csr_buffer_factor      = 2.0;
+    static constexpr double mode_a_csr_buffer_factor      = 1.0;   /* fixed radius: no AdjustRadius, max_iters=1 */
     static constexpr bool   mode_a_rebuild_csr_every_iter = false;
     static constexpr bool   actives_partition_by_subgroup = true;
 

@@ -356,7 +356,7 @@ struct AgsDensitySpec {
     using SupportsSubgroups = std::true_type;
 
     static constexpr int    max_iters                       = MAXITER;
-    static constexpr double mode_a_csr_buffer_factor        = 2.0;
+    static constexpr double mode_a_csr_buffer_factor        = 1.3;   /* same structure as density, where 1.3 measured optimal */
     /* CSR correctness fallback. A regression that motivated flipping this
      * to true was traced to an unrelated bug: per-TU All_dev was
      * unsynced, so AGS_DesNumNgb came through as 0 and bisection
