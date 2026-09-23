@@ -22,7 +22,6 @@ Runs 10 crossing times (TimeMax 29.2), matching test/plummer_binaries. Note this
 its t_cross is 2.92 code rather than ~3.24 and a duration copied from the sibling would cover a
 twentieth of the evolution.
 
-The energy tolerance is provisional; see MAX_DE_OVER_E.
 """
 
 import glob
@@ -54,41 +53,16 @@ IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
 
 PERIODIC = False             # no BOX_PERIODIC, and the cluster is ~1 pc in a 300 pc box
 
-def _physical_cpu_count():
-    """Number of physical CPU cores on this host (counts hyperthreads as 1).
-
-    On Linux we parse /proc/cpuinfo for unique (physical id, core id) pairs;
-    elsewhere we fall back to os.cpu_count() // 2 assuming 2-way SMT.
-    """
-    import os
-    try:
-        with open("/proc/cpuinfo") as f:
-            text = f.read()
-        cores, cur = set(), {}
-        for line in text.splitlines():
-            if not line.strip():
-                if "physical id" in cur and "core id" in cur:
-                    cores.add((cur["physical id"], cur["core id"]))
-                cur = {}
-            elif ":" in line:
-                k, v = line.split(":", 1)
-                cur[k.strip()] = v.strip()
-        if cores:
-            return len(cores)
-    except OSError:
-        pass
-    return max(1, (os.cpu_count() or 4) // 2)
 
 
-# Same shape as test/plummer_binaries: 2 MPI ranks, threads filling out to a total core cap.
-# Capped rather than scaled with the node for the same reason -- a few hundred particles with a
-# deep timestep hierarchy leave a handful active per step, so wider parallelism adds
-# synchronisation without adding work. This test has FEWER particles than plummer_binaries (~335
-# vs 512) and a wider bin spread, so if anything it saturates sooner; 8 is an upper bound, not a
-# measured optimum here.
-PBR_MAX_CORES = 8
+# 2 MPI ranks, 1 OpenMP thread, fixed. One thread makes the run bit-reproducible: two runs at this
+# layout give identical energy and drift histories, whereas OpenMP reduction order alone spread
+# |dE/E| over 2.4e-4..7.2e-3 across a 10-member ensemble at 2x4, so no single-run tolerance could
+# both admit that tail and bound a regression. More ranks do not help either: a few hundred
+# particles with a deep timestep hierarchy leave a handful active per step, and 8 ranks ran ~50x
+# slower than 2 (sync-bound). 2x1 takes ~1 h on a 32-core workstation.
 PBR_NUM_MPI_RANKS = 2
-PBR_NUM_OMP_THREADS = max(1, min(PBR_MAX_CORES, _physical_cpu_count()) // PBR_NUM_MPI_RANKS)
+PBR_NUM_OMP_THREADS = 1
 
 N_SYSTEMS = 256
 A_CLUSTER = 1.0              # pc
@@ -102,13 +76,10 @@ SEED = 42
 # measure the window rather than the integrator. Energy climbs monotonically (the 4th-order
 # block-step residual, ~t^1.3); the drift wanders in a band.
 #
-# MAX_COM_DRIFT is 3x the drift band measured over the full 10-crossing run. MAX_DE_OVER_E is
-# PROVISIONAL (2026-09-21): |dE/E| scatters chaotically between runs that differ only in OpenMP
-# reduction order -- 2.43e-4 .. 7.24e-3 over a 10-member ensemble, median 5.83e-4 -- so the old
-# 1.6e-3 failed ~1 run in 10 on that tail alone. 1e-2 admits the observed max with ~38% headroom
-# and so catches only gross regressions; the real fix is a median-of-N criterion or OMP=1 here.
-MAX_DE_OVER_E = 1e-2         # provisional -- see above; was 1.6e-3 (3.05x the 5.24e-4 reference)
-MAX_COM_DRIFT = 7e-4         # |v_com| / cluster dispersion; 3.13x the measured 2.24e-4
+# Both tolerances are 3x the values measured over the full 10-crossing run at the fixed 2x1 layout
+# above, which is deterministic (see there): |dE/E| = 5.67e-4, |v_com|/sigma = 2.37e-4.
+MAX_DE_OVER_E = 1.7e-3       # 3.0x the measured 5.67e-4
+MAX_COM_DRIFT = 7e-4         # |v_com| / cluster dispersion; 2.95x the measured 2.37e-4
 
 
 def _ensure_ic():
