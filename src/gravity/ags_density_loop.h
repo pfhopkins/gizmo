@@ -328,10 +328,9 @@ struct AgsDensitySpec {
     /* search_mode is ONEWAY: the legacy ags_density CSR builder used
      * NGB_SEARCH_ONEWAY, and the pair predicate is one-way (r < h_i only —
      * no h_j check). Symmetric search would over-include neighbors via
-     * h_j logic and inflate NumNgb. AGSForce_calc is
-     * symmetric (overlap filter r > h_i + h_j) — that loop is a
-     * separate port. (Previously wrongly set to MODE_B_SEARCH_SYMMETRIC
-     * in the scaffold.)
+     * h_j logic and inflate NumNgb. AGSForce_calc is symmetric (its pair
+     * terms vanish at r >= max(h_i,h_j)) — that loop is a separate port.
+     * (Previously wrongly set to MODE_B_SEARCH_SYMMETRIC in the scaffold.)
      *
      * neighbor_type_mask is overridden per-subgroup by the runner from
      * subgroups[sg].j_type_bitmask (multi-bm support — ags_density

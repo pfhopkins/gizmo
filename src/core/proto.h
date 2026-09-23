@@ -1303,12 +1303,9 @@ void apply_excision();
 #endif
 
 #ifdef DM_SIDM
-/* prob_of_interaction / g_geo / calculate_interact_kick moved to
+/* prob_of_interaction / calculate_interact_kick moved to
    sidm/sidm_helper_functions.h (KOKKOS_INLINE_FUNCTION). Only the
    host-only tabulation and initialization helpers remain here. */
-void init_geofactor_table(void);
-double geofactor_integ(double x, void * params);
-double geofactor_angle_integ(double u, void * params);
 void init_self_interactions();
 #ifdef GRAIN_COLLISIONS
 /* return_grain_cross_section_per_unit_mass / prob_of_grain_interaction moved

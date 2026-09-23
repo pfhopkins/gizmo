@@ -401,5 +401,4 @@ int *Father;			/*!< gives parent node in tree (Prenodes array) */
 int maxThreads = 1;
 
 #if defined(DM_SIDM)
-MyDouble GeoFactorTable[GEOFACTOR_TABLE_LENGTH];
 #endif

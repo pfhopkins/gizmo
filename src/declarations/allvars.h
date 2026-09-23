@@ -298,8 +298,6 @@ extern gizmo_rng_t StRng; // random number generator key
 
 
 #if defined(DM_SIDM)
-#define GEOFACTOR_TABLE_LENGTH 1000    /*!< length of the table used for the geometric factor spline */
-extern MyDouble GeoFactorTable[GEOFACTOR_TABLE_LENGTH];
 #endif
 extern int NTopnodes, NTopleaves;
 
