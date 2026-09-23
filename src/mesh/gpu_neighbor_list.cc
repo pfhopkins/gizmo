@@ -130,21 +130,18 @@ void gpu_compact_xyzh_mark_h_dirty_indices(const int *indices, int n)
  * conservatively forces a full-pool refresh on every cache. */
 void gpu_compact_xyzh_mark_h_dirty(void) { gpu_compact_xyzh_mark_h_dirty_all(); }
 
-/* SSOT mark helpers — see header for design.  Route to BOTH the GPU SIDX
- * dirty tracker AND the host glt cache dirty tracker. Adding a further cache
- * later requires only register/unregister inside that cache's lifetime —
- * these helpers automatically include it. */
+/* SSOT mark helpers — see header for design.  The ghost-exchange supply cache
+ * holds membership only and does not track kernel radii, so the GPU SIDX dirty
+ * tracker is the sole consumer; a further cache registers here. */
 void gizmo_mark_kernel_radius_dirty_indices(const int *indices, int n)
 {
     if(!indices || n <= 0) return;
     gpu_dirty_tracker_mark_indices(indices, n);
-    ghost_exchange_local_tree_mark_h_dirty_indices(indices, n);
 }
 void gizmo_mark_kernel_radius_dirty_range(int start, int end)
 {
     if(end <= start) return;
     gpu_dirty_tracker_mark_range(start, end);
-    ghost_exchange_local_tree_mark_h_dirty_range(start, end);
 }
 
 /* SIDX lifecycle epoch counters, bumped by the notify hooks below on every

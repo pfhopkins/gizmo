@@ -117,27 +117,21 @@ static int *ghost_send_home_idx = NULL;     /* [ghost_send_home_count] exported 
 static int  ghost_send_home_count = 0;      /* == total_send at last import */
 static unsigned long long g_ghost_provenance_epoch = 0; /* import counter (see above) */
 
-/* Persistent local-tree cache (SIDX overlay) for the
- * request-driven ghost exchange path. Within a step, the local pool of
- * particles [0..NumPart_local) is stable across multiple ghost_exchange
- * calls (3-5 calls/step typical). Building tiles+BVH+compact_xyzh once per
- * call costs ~0.19s (gas) / ~0.65s (all-types) on the fire_m11i 6.2M/9.5M
- * pool. Caching them across calls saves N-1 of those builds per step.
+/* Persistent supply-pool cache for the request-driven ghost exchange.  Within
+ * a step the local pool [0..NumPart_local) is stable across the several
+ * ghost_exchange calls a step makes, so deriving membership once and reusing it
+ * saves N-1 scans of P[] per step.
  *
- * Invalidation is wired to the same hooks as gpu_step_sidx_invalidate_*:
- *   - run.cc post-drift            -> ghost_exchange_local_tree_invalidate_drift()
- *   - the decomposition itself     -> ghost_exchange_local_tree_invalidate_full()
- * Drift/h updates mark the cache for exact refit from P[] on the next hit;
- * domain decomposition and pool/ordering changes fully free it.
+ * Membership only: which particles are eligible supply, and the reverse map
+ * from a particle to its pool slot.  Nothing position-dependent is cached --
+ * the routed producer reads live positions -- so the entry stays valid as the
+ * particles move, and is keyed on the supply-identity epoch that every event
+ * changing pool membership already bumps.  NumPart and the eligible type mask
+ * are checked at use time as a defensive cross-check.
  *
- * Cache key (NumPart, safety_factor, eligible pool mask) is also checked
- * at use time as a defensive cross-check; pool/ordering changes force a
- * rebuild. Drift/h changes mark the cache for an exact refit from P[].
- *
- * Memory footprint: ~165MB (Type-0/cell pool, 6.2M pool) or ~250MB (all-types,
- * 9.5M pool) per rank. Tolerable on Vista host. Allocated via plain
- * malloc/free to avoid mymalloc-stack LIFO violation when the cache
- * outlives the function frame. */
+ * Allocated with plain malloc/free: the entry outlives the function frame, which
+ * would violate the mymalloc stack's LIFO ordering. */
+
 /* Membership/order epoch for the supply pool.  Rank-local and compared only for
  * equality: it answers "is the pool I cached still the same set, in the same
  * order?", nothing more.  Bumped ONLY where particles are created, eliminated,
@@ -152,88 +146,38 @@ extern "C" void ghost_exchange_supply_identity_changed(const char *reason)
     g_supply_identity_epoch++;
 }
 
-/* Which parts of the supply cache a consumer requires.  IDENTITY (pool,
- * pool_types, num_pool) is membership only: type-mask + positive mass, so it
- * stays valid as particles move.  GEOMETRY (compact_xyzh, tiles) carries
- * positions and the baked per-member reach, and is built only for the walkers
- * that need it.  A consumer that reads geometry without requesting it would
- * silently read NULL, so the request is mandatory and checked. */
-#define GX_POOL_IDENTITY  0x1u
-#define GX_POOL_GEOMETRY  0x2u
-
 struct ghost_local_tree_cache_t {
     int valid;
     int NumPart_when_built;
     /* Identity generation this entry's pool/j_to_pool were built against. */
     long long identity_epoch_when_built;
-    integertime Ti_when_built;
-    double safety_factor_when_built;
     unsigned int eligible_type_mask_when_built;
-    int needs_refit;
-    /* What this cache entry actually holds (GX_POOL_IDENTITY / GX_POOL_GEOMETRY).
-     * Geometry is skipped for calls whose producer never walks it, so `valid`
-     * alone does not imply tiles/bvh/compact_xyzh are present. */
-    unsigned int caps;
-    int ntiles;
     int num_pool;
-    int bvh_nnodes;
-    int bvh_root;
-    sfc_tile_t *tiles;            /* [ntiles] malloc */
     int *pool;                     /* [num_pool] malloc */
-    tile_bvh_node_t *bvh;          /* [bvh_nnodes] malloc */
-    float *compact_xyzh;           /* [num_pool*4] malloc; h field = supply-side policy * j_scale * safety baked in */
-    int *pool_types;               /* [num_pool] malloc */
     int *j_to_pool;                /* [NumPart_when_built] malloc, j -> pool_pos or -1 */
-    /* SSOT supply-side reach contract. These four fields, together with the
-     * (NumPart, safety, eligible_pool_mask) triple above, form the cache-key
-     * invariant: any mismatch on any of them forces a full rebuild (NOT a
-     * refit).  Ti and the needs_refit dirty bit continue to trigger
-     * glt_cache_refit_from_particles() instead of a rebuild — Ti is NOT a
-     * rebuild key: rebuilding every step would be exactly the work
-     * explosion this design is supposed to prevent. */
-    mode_b_radius_policy_t radius_policy_when_built;
-    double j_radius_scale_when_built;
 };
-/* Designated initialisers: the positional form silently mis-assigns whenever a
- * field is added to the struct above. */
+/* Membership only: type mask + positive mass, so an entry stays valid as the
+ * particles move.  The routed producer reads live positions for everything
+ * position-dependent, which is why no geometry is cached beside this. */
 static struct ghost_local_tree_cache_t g_glt_cache = {
     .valid = 0,
     .NumPart_when_built = -1,
     .identity_epoch_when_built = -1,
-    .Ti_when_built = -1,
-    .safety_factor_when_built = 0.0,
     .eligible_type_mask_when_built = GHOST_TYPE_ALL,
-    .needs_refit = 0,
-    .caps = 0u,
-    .ntiles = 0,
     .num_pool = 0,
-    .bvh_nnodes = 0,
-    .bvh_root = 0,
-    .tiles = NULL,
     .pool = NULL,
-    .bvh = NULL,
-    .compact_xyzh = NULL,
-    .pool_types = NULL,
     .j_to_pool = NULL,
-    .radius_policy_when_built = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES,
-    .j_radius_scale_when_built = 1.0,
 };
 
 /* gx_policy_scaled_h — SSOT supply-side reach inside ghost_exchange.cc.
  *
- * Single helper used at every site that writes a per-particle supply h into
- * the ghost local-tree cache: fresh build (compact + tile bands via
- * build_sfc_tiles' scale_factor pathway), refit (glt_recompute_tile_), and
- * any future site that needs the supply-side reach.  The output is identical
- * to what build_sfc_tiles aggregates internally when called with
- *   (radius_policy, scale_factor = j_radius_scale * safety_factor)
- * so leaf compact h and BVH band hmax see the exact same supply-side reach
- * for every particle — closing the leaf-vs-band scale gap that would
- * otherwise let the BVH prune pairs the leaf would have accepted.
+ * The j-side reach this call searches with, for one particle, under the spec's
+ * radius policy and scale.  Used by the routed producer on both sides of the
+ * exchange, so sender and receiver agree on how far a supply particle reaches.
  *
  * Compile-flag gating on AGS_KernelRadius lives in nlr_radius_policy.h's
  * wrapper; never replicate the `#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE`
- * inside this TU. */
+ * here. */
 static inline double gx_policy_scaled_h(int j,
                                         mode_b_radius_policy_t radius_policy,
                                         double j_radius_scale,
@@ -243,326 +187,20 @@ static inline double gx_policy_scaled_h(int j,
            * j_radius_scale * safety_factor;
 }
 
-/* Bucket 3 narrow-refit machinery. Mirrors gpu_neighbor_list.cc's g_dirty_list
- * pattern for the GPU compact_xyzh refresh — same call sites populate both, but
- * different consumers (host ghost_exchange cache vs device GPU NL builder), so
- * the two lists have independent lifecycles.
- *
- *  - g_glt_dirty_all = true  : full refit needed (drift, fresh build seed, or
- *    list overflow promotion). Default = true so first refit is full.
- *  - g_glt_dirty_all = false : refresh only the indices in g_glt_dirty_list.
- *    Indices outside the cache pool (j_to_pool[j] == -1) are skipped cleanly.
- *
- * Promote-to-all threshold matches GPU side (1M indices). When the list grows
- * past that, narrow refit costs ~the same as full, so flip to dirty_all. */
-static const int G_GLT_DIRTY_PROMOTE_THRESHOLD = 1 << 20; /* 1M indices */
-static bool g_glt_dirty_all = true;
-static std::vector<int> g_glt_dirty_list;
-static inline void g_glt_dirty_clear_(void)
-{
-    g_glt_dirty_all = false;
-    g_glt_dirty_list.clear();
-}
-static inline void g_glt_dirty_mark_all_(void)
-{
-    g_glt_dirty_all = true;
-    g_glt_dirty_list.clear();
-}
-
 /* Diagnostic counters. */
 static long g_glt_cache_hits = 0;
 static long g_glt_cache_misses = 0;
-static long g_glt_cache_refits = 0;
-static long g_glt_cache_narrow_refits = 0;
 
 static void glt_cache_free(void)
 {
-    if(g_glt_cache.tiles)        { free(g_glt_cache.tiles);        g_glt_cache.tiles = NULL; }
-    if(g_glt_cache.pool)         { free(g_glt_cache.pool);         g_glt_cache.pool = NULL; }
-    if(g_glt_cache.bvh)          { free(g_glt_cache.bvh);          g_glt_cache.bvh = NULL; }
-    if(g_glt_cache.compact_xyzh) { free(g_glt_cache.compact_xyzh); g_glt_cache.compact_xyzh = NULL; }
-    if(g_glt_cache.pool_types)   { free(g_glt_cache.pool_types);   g_glt_cache.pool_types = NULL; }
-    if(g_glt_cache.j_to_pool)    { free(g_glt_cache.j_to_pool);    g_glt_cache.j_to_pool = NULL; }
+    if(g_glt_cache.pool)      { free(g_glt_cache.pool);      g_glt_cache.pool = NULL; }
+    if(g_glt_cache.j_to_pool) { free(g_glt_cache.j_to_pool); g_glt_cache.j_to_pool = NULL; }
     g_glt_cache.valid = 0;
     g_glt_cache.NumPart_when_built = -1;
     g_glt_cache.identity_epoch_when_built = -1;
-    g_glt_cache.Ti_when_built = -1;
-    g_glt_cache.safety_factor_when_built = 0.0;
     g_glt_cache.eligible_type_mask_when_built = GHOST_TYPE_ALL;
-    g_glt_cache.radius_policy_when_built = MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES;
-    g_glt_cache.j_radius_scale_when_built = 1.0;
-    g_glt_cache.needs_refit = 0;
-    g_glt_cache.caps = 0u;
-    g_glt_cache.ntiles = 0;
     g_glt_cache.num_pool = 0;
-    g_glt_cache.bvh_nnodes = 0;
-    g_glt_cache.bvh_root = 0;
-    /* Cache gone -> no narrow-refit basis remains; force full on next build. */
-    g_glt_dirty_mark_all_();
 }
-
-/* Drop ONLY the position/radius-dependent half, keeping pool/j_to_pool/num_pool.
- * Used when a caller needs geometry under a different radius policy or scale:
- * membership does not depend on those, so re-deriving it would be pure waste. */
-static void glt_cache_free_geometry_(void)
-{
-    if(g_glt_cache.tiles)        { free(g_glt_cache.tiles);        g_glt_cache.tiles = NULL; }
-    if(g_glt_cache.bvh)          { free(g_glt_cache.bvh);          g_glt_cache.bvh = NULL; }
-    if(g_glt_cache.compact_xyzh) { free(g_glt_cache.compact_xyzh); g_glt_cache.compact_xyzh = NULL; }
-    if(g_glt_cache.pool_types)   { free(g_glt_cache.pool_types);   g_glt_cache.pool_types = NULL; }
-    g_glt_cache.ntiles = 0;
-    g_glt_cache.bvh_nnodes = 0;
-    g_glt_cache.bvh_root = 0;
-    g_glt_cache.caps &= ~GX_POOL_GEOMETRY;
-}
-
-extern "C" void ghost_exchange_local_tree_invalidate_drift(void)
-{
-    if(g_glt_cache.valid) g_glt_cache.needs_refit = 1;
-    /* Drift is a pool-wide event (every particle's Pos may have changed):
-     * the narrow-refit fast path can't represent that, so promote to full. */
-    g_glt_dirty_mark_all_();
-}
-extern "C" void ghost_exchange_local_tree_invalidate_full(void)  { glt_cache_free(); }
-
-
-extern "C" void ghost_exchange_local_tree_mark_h_dirty_indices(const int *indices, int n)
-{
-    if(n <= 0 || !indices) return;
-    if(g_glt_dirty_all) return; /* already covered by full-refit promotion */
-    if((int)(g_glt_dirty_list.size() + (size_t)n) > G_GLT_DIRTY_PROMOTE_THRESHOLD) {
-        g_glt_dirty_mark_all_();
-        return;
-    }
-    g_glt_dirty_list.reserve(g_glt_dirty_list.size() + (size_t)n);
-    for(int k = 0; k < n; k++) {
-        int j = indices[k];
-        if(j >= 0) g_glt_dirty_list.push_back(j);
-    }
-    /* Mark cache for refit-on-next-hit even though it isn't fully invalidated.
-     * This wakes up the refit branch in the request-driven build path. */
-    if(g_glt_cache.valid) g_glt_cache.needs_refit = 1;
-}
-
-extern "C" void ghost_exchange_local_tree_mark_h_dirty_range(int start, int end)
-{
-    if(end <= start) return;
-    if(g_glt_dirty_all) return;
-    int n = end - start;
-    if((int)(g_glt_dirty_list.size() + (size_t)n) > G_GLT_DIRTY_PROMOTE_THRESHOLD) {
-        g_glt_dirty_mark_all_();
-        return;
-    }
-    g_glt_dirty_list.reserve(g_glt_dirty_list.size() + (size_t)n);
-    for(int j = start; j < end; j++) g_glt_dirty_list.push_back(j);
-    if(g_glt_cache.valid) g_glt_cache.needs_refit = 1;
-}
-
-/* Stage-3 producer mode (Step 5).  Selects HOW the matched ghost set is produced;
- * Stages 1-2 (route CSR -> Alltoall -> Alltoallv -> received queries) are shared
- * SSOT regardless of mode.  HOST_ONLY = host walk only; HOST_AND_DEVICE_VALIDATE =
- * host walk + device Stage-3 compared (the Step-4 oracle); DEVICE_ONLY_AUTHORITY =
- * production device Stage-3 with NO host walk / NO broadcast / NO compare (reserved
- * for the device-routed install arm; no caller uses it yet). */
-enum gx_producer_mode {
-    GX_PRODUCER_HOST_ONLY = 0,
-    GX_PRODUCER_HOST_AND_DEVICE_VALIDATE,
-    GX_PRODUCER_DEVICE_ONLY_AUTHORITY
-};
-
-/* Recompute one tile's lo/hi/hmax/hmax_by_type fully from current P[] over its
- * pool members.  Also rewrites compact_xyzh + pool_types for those members.
- * Used by both full and narrow refit paths. */
-static inline void glt_recompute_tile_(int t)
-{
-    sfc_tile_t *tile = &g_glt_cache.tiles[t];
-    tile->hmax = 0;
-    for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) tile->hmax_by_type[tt] = 0;
-    /* Empty tiles carry an INVERTED box so they stay neutral under the BVH's
-     * min/max union and always fail the sphere-overlap test; a zeroed box would
-     * stretch every ancestor to the coordinate origin and defeat pruning there. */
-    /* The motion bound restarts with the box: no live member yet, so nothing
-     * moves and the reference clock is later than any member can be. */
-    tile->vmax  = 0;
-    tile->t_ref = TIMEBASE;
-    if(tile->count <= 0) {
-        for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; }
-        return;
-    }
-    /* SSOT supply-side reach pulled from the cache's stored policy/scale.
-     * For runner-driven imports this carries the
-     * Spec's radius_policy + nlr_spec_symmetric_j_radius_scale<Spec>();
-     * for legacy ghost_exchange wrappers it carries
-     * MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES + 1.0 → byte-equivalent to the
-     * pre-policy code that read P[j].KernelRadius * safety_factor.
-     * Leaf compact_xyzh[p*4+3] and tile band hmax_by_type[] use the
-     * IDENTICAL gx_policy_scaled_h output → no leaf-vs-band scale gap. */
-    const mode_b_radius_policy_t policy = g_glt_cache.radius_policy_when_built;
-    const double j_scale = g_glt_cache.j_radius_scale_when_built;
-    const double safety  = g_glt_cache.safety_factor_when_built;
-    /* Eliminated elements (Mass <= 0) are excluded from the band and the bbox:
-     * the pool is mass-filtered when built, but a cached entry outlives a
-     * Mass->0 marking until rearrange_particle_sequence() compacts it away, and
-     * a dead slot's stale reach would otherwise widen what this rank advertises
-     * as supply.  Dropping it can only remove pairs WITH the dead element, which
-     * must not be discovered anyway; live pairs carry their own reach.  The leaf
-     * walk applies the same test, so leaf h and band hmax stay on one reach.
-     * The bbox is seeded from the first live member rather than the tile's first
-     * member, which may itself be dead. */
-    int seeded = 0;
-    for(int s = 0; s < tile->count; s++) {
-        int p = tile->first + s;
-        int j = g_glt_cache.pool[p];
-        int pt = (int)P[j].Type;
-        double h = gx_policy_scaled_h(j, policy, j_scale, safety);
-        g_glt_cache.compact_xyzh[p*4+0] = (float)P[j].Pos[0];
-        g_glt_cache.compact_xyzh[p*4+1] = (float)P[j].Pos[1];
-        g_glt_cache.compact_xyzh[p*4+2] = (float)P[j].Pos[2];
-        g_glt_cache.compact_xyzh[p*4+3] = (float)h;
-        g_glt_cache.pool_types[p] = pt;
-        if(P[j].Mass <= 0) continue;
-        if(!seeded) {
-            for(int k = 0; k < 3; k++) tile->lo[k] = tile->hi[k] = P[j].Pos[k];
-            seeded = 1;
-        } else {
-            for(int k = 0; k < 3; k++) {
-                if(P[j].Pos[k] < tile->lo[k]) tile->lo[k] = P[j].Pos[k];
-                if(P[j].Pos[k] > tile->hi[k]) tile->hi[k] = P[j].Pos[k];
-            }
-        }
-        if(h > tile->hmax) tile->hmax = h;
-        if(pt >= 0 && pt < TILE_NUM_PTYPES && h > tile->hmax_by_type[pt])
-            tile->hmax_by_type[pt] = h;
-        /* The box holds each member's own position as of its own clock. */
-        const double vb = particle_motion_speed_bound(j, P, CellP);
-        if(vb > tile->vmax) tile->vmax = vb;
-        if(P[j].Ti_current < tile->t_ref) tile->t_ref = P[j].Ti_current;
-    }
-    /* Every member dead: same inverted empty-tile box as count <= 0 above. */
-    if(!seeded) { for(int k = 0; k < 3; k++) { tile->lo[k] = MAX_REAL_NUMBER; tile->hi[k] = -MAX_REAL_NUMBER; } }
-}
-
-/* Pull one BVH node's lo/hi/hmax/hmax_by_type from its children/leaf-tile.
- * BVH is in children-first order so calling this for indices 0..bvh_nnodes-1
- * in order updates internal nodes after their children. */
-static inline void glt_recompute_bvh_node_(int n)
-{
-    tile_bvh_node_t *node = &g_glt_cache.bvh[n];
-    if(node->left < 0) {
-        int t = -(node->left + 1);
-        if(t < 0 || t >= g_glt_cache.ntiles) return;
-        sfc_tile_t *tile = &g_glt_cache.tiles[t];
-        for(int k = 0; k < 3; k++) { node->lo[k] = tile->lo[k]; node->hi[k] = tile->hi[k]; }
-        node->hmax = tile->hmax;
-        for(int tt = 0; tt < TILE_NUM_PTYPES; tt++) node->hmax_by_type[tt] = tile->hmax_by_type[tt];
-        node->vmax  = tile->vmax;
-        node->t_ref = tile->t_ref;
-    } else {
-        tile_bvh_node_t *left = &g_glt_cache.bvh[node->left];
-        tile_bvh_node_t *right = &g_glt_cache.bvh[node->right];
-        for(int k = 0; k < 3; k++) {
-            node->lo[k] = DMIN(left->lo[k], right->lo[k]);
-            node->hi[k] = DMAX(left->hi[k], right->hi[k]);
-        }
-        node->hmax = DMAX(left->hmax, right->hmax);
-        for(int tt = 0; tt < TILE_NUM_PTYPES; tt++)
-            node->hmax_by_type[tt] = DMAX(left->hmax_by_type[tt], right->hmax_by_type[tt]);
-        node->vmax  = DMAX(left->vmax, right->vmax);
-        node->t_ref = (left->t_ref < right->t_ref) ? left->t_ref : right->t_ref;
-    }
-}
-
-/* Find the tile containing pool position pp via binary search on tile->first.
- * Tiles are stored in ascending pool-position order; tile.first values are
- * monotonically non-decreasing.  Returns -1 on out-of-range. */
-static inline int glt_tile_of_pool_pos_(int pp)
-{
-    int lo = 0, hi = g_glt_cache.ntiles - 1;
-    if(pp < 0 || g_glt_cache.ntiles <= 0) return -1;
-    if(pp < g_glt_cache.tiles[0].first) return -1;
-    while(lo < hi) {
-        int mid = (lo + hi + 1) / 2;
-        if(g_glt_cache.tiles[mid].first <= pp) lo = mid; else hi = mid - 1;
-    }
-    /* Sanity: pp must lie within [first, first+count). */
-    sfc_tile_t *tile = &g_glt_cache.tiles[lo];
-    if(pp >= tile->first && pp < tile->first + tile->count) return lo;
-    return -1;
-}
-
-static void glt_cache_refit_from_particles(void)
-{
-    if(!g_glt_cache.valid || !g_glt_cache.tiles || !g_glt_cache.pool ||
-       !g_glt_cache.bvh || !g_glt_cache.compact_xyzh || !g_glt_cache.pool_types) return;
-
-    /* Narrow path: refresh only tiles touched by g_glt_dirty_list, then walk
-     * BVH bottom-up updating only ancestor nodes of those tiles. */
-    if(!g_glt_dirty_all && !g_glt_dirty_list.empty() && g_glt_cache.j_to_pool) {
-        int n_dirty = (int)g_glt_dirty_list.size();
-        int ntiles = g_glt_cache.ntiles;
-        int bvh_nnodes = g_glt_cache.bvh_nnodes;
-        int NumPart_b = g_glt_cache.NumPart_when_built;
-        unsigned char *tile_dirty = (unsigned char *) calloc((size_t)(ntiles > 0 ? ntiles : 1), 1);
-        unsigned char *node_dirty = (unsigned char *) calloc((size_t)(bvh_nnodes > 0 ? bvh_nnodes : 1), 1);
-
-        /* refresh compact_xyzh + pool_types for each dirty j; mark its tile dirty. */
-        for(int k = 0; k < n_dirty; k++) {
-            int j = g_glt_dirty_list[k];
-            if(j < 0 || j >= NumPart_b) continue;
-            int pp = g_glt_cache.j_to_pool[j];
-            if(pp < 0 || pp >= g_glt_cache.num_pool) continue;
-            int t = glt_tile_of_pool_pos_(pp);
-            if(t < 0) continue;
-            tile_dirty[t] = 1;
-        }
-
-        /* re-scan each touched tile fully (cheaper than tracking which
-         * member exactly; tile_size ~64, dirty_count typically ~few-hundred). */
-        for(int t = 0; t < ntiles; t++) {
-            if(tile_dirty[t]) glt_recompute_tile_(t);
-        }
-
-        /* BVH bottom-up single pass.  At each leaf, propagate
-         * tile_dirty[tile] -> node_dirty[n].  At each internal node, OR its
-         * children's flags; if dirty, recompute lo/hi/hmax/hmax_by_type from
-         * children.  Children-first ordering is guaranteed by build_bvh_recursive. */
-        for(int n = 0; n < bvh_nnodes; n++) {
-            tile_bvh_node_t *node = &g_glt_cache.bvh[n];
-            if(node->left < 0) {
-                int t = -(node->left + 1);
-                if(t >= 0 && t < ntiles && tile_dirty[t]) {
-                    node_dirty[n] = 1;
-                    glt_recompute_bvh_node_(n);
-                }
-            } else {
-                int L = node->left, R = node->right;
-                int dL = (L >= 0 && L < bvh_nnodes) ? node_dirty[L] : 0;
-                int dR = (R >= 0 && R < bvh_nnodes) ? node_dirty[R] : 0;
-                if(dL || dR) {
-                    node_dirty[n] = 1;
-                    glt_recompute_bvh_node_(n);
-                }
-            }
-        }
-
-        free(tile_dirty);
-        free(node_dirty);
-        g_glt_dirty_clear_();
-        g_glt_cache.Ti_when_built = All.Ti_Current;
-        g_glt_cache.needs_refit = 0;
-        g_glt_cache_narrow_refits++;
-        return;
-    }
-
-    /* Full path: scan every tile + every BVH node. */
-    for(int t = 0; t < g_glt_cache.ntiles; t++) glt_recompute_tile_(t);
-    for(int n = 0; n < g_glt_cache.bvh_nnodes; n++) glt_recompute_bvh_node_(n);
-    g_glt_dirty_clear_();
-    g_glt_cache.Ti_when_built = All.Ti_Current;
-    g_glt_cache.needs_refit = 0;
-    g_glt_cache_refits++;
-}
-
 
 /* ---- Utility: walk TopNodes to find which leaf a particle belongs to ---- */
 static inline int ghost_toptree_leaf(peanokey key)
@@ -1356,55 +994,23 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      *
      * Bucket 3 (SIDX overlay): the local tree (tiles, pool, bvh,
      * compact_xyzh, pool_types) is cached across calls within a step.
-     * Cache invalidated via ghost_exchange_local_tree_invalidate_*()
-     * hooks at drift / domain_decomp boundaries (run.cc). Within a step
-     * the pool is stable, so 2nd..Nth calls skip this whole stanza. */
+     * Membership is keyed on the supply-identity epoch, which every event that
+     * changes who is in the pool already bumps, so within a step the pool is
+     * stable and 2nd..Nth calls skip this whole stanza. */
 
-    sfc_tile_t *h_tiles = NULL;
     int *h_pool = NULL;
     int num_pool = 0;
-    int ntiles = 0;
-    tile_bvh_node_t *h_bvh = NULL;
-    int bvh_nnodes = 0;
-    int bvh_root = 0;
-    float *h_compact_xyzh = NULL;
-    int *h_pool_types = NULL;
     int from_cache = 0;
     /* All particle types are eligible as ghost sources. */
     unsigned int desired_pool_mask = GHOST_TYPE_ALL;
-    /* Tile/BVH/compact geometry is built ONLY for a call that actually walks it.
-     * The walk-export producer discovers through the tree and reads nothing
-     * position-dependent from this cache (it needs pool membership to index the
-     * matched set, and takes its supply band from Extnodes), so when it is the
-     * authority the geometry would be built and never read.  Structural, keyed on
-     * the same predicate as producer selection — no caller names. */
-    /* ONE predicate drives BOTH what the cache holds and which producers may run
-     * below: geometry is skipped exactly when no consumer of it can execute.
-     * Keep this as the single definition — a second, weaker copy of the test
-     * here would let a run that does reach the broadcast walk walk NULL tiles. */
-    /* Only membership is read from the supply cache: the routed producer reads
-     * live positions, never the cached tile/BVH geometry. */
-    const unsigned int wanted_caps = GX_POOL_IDENTITY;
-    /* TWO validities, because the cache holds two payloads with different
-     * dependencies.  IDENTITY (pool, j_to_pool, num_pool) is membership and order:
-     * it depends on {NumPart, type mask, epoch} and on nothing positional, so it
-     * survives drift and survives a caller arriving with a different radius policy.
-     * GEOMETRY (tiles, bvh, compact_xyzh, pool_types) additionally depends on
-     * {safety, radius_policy, j_radius_scale} and on live positions/h, so it is
-     * rebuilt on a policy change and REFIT (not rebuilt) on drift.
-     *
-     * Keeping these separate is the point: rebuilding the identity map costs a
-     * full pass over the local particles, and callers within a step differ in
-     * radius policy far more often than the particle set changes.
-     *
-     * Mask is compared for EXACT equality, not coverage. Reuse across a narrowed
+    /* Mask is compared for EXACT equality, not coverage. Reuse across a narrowed
      * mask is unproven here — a narrower request would also make in-place Type
      * changes membership-relevant, which the epoch does not track — so anything
      * other than the all-types pool falls through to a full rebuild. */
     const int mask_reusable = (desired_pool_mask == GHOST_TYPE_ALL);
     const int identity_valid = (g_glt_cache.valid
-                       && (g_glt_cache.caps & GX_POOL_IDENTITY)
                        && g_glt_cache.pool && g_glt_cache.j_to_pool
+                       && mask_reusable
                        && mask_reusable
                        && g_glt_cache.eligible_type_mask_when_built == desired_pool_mask
                        && g_glt_cache.NumPart_when_built == NumPart
@@ -1412,23 +1018,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int cache_match = identity_valid;
 
     if(cache_match) {
-        h_tiles        = g_glt_cache.tiles;
         h_pool         = g_glt_cache.pool;
         num_pool       = g_glt_cache.num_pool;
-        ntiles         = g_glt_cache.ntiles;
-        h_bvh          = g_glt_cache.bvh;
-        bvh_nnodes     = g_glt_cache.bvh_nnodes;
-        bvh_root       = g_glt_cache.bvh_root;
-        h_compact_xyzh = g_glt_cache.compact_xyzh;
-        h_pool_types   = g_glt_cache.pool_types;
         from_cache = 1;
         g_glt_cache_hits++;
-        /* Refit refreshes position-dependent geometry only; an identity-only
-         * entry has none and its membership does not move with the particles. */
-        if((g_glt_cache.caps & GX_POOL_GEOMETRY)
-           && (g_glt_cache.needs_refit || g_glt_cache.Ti_when_built != All.Ti_Current)) {
-            glt_cache_refit_from_particles();
-        }
     } else {
         /* RANK-LOCAL BRANCH — NO MPI CALLS IN HERE.  cache_match keys on rank-local
          * NumPart, so ranks enter this independently; any collective placed here
@@ -1441,49 +1034,18 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         /* Free any stale entry before rebuild (cache key changed). */
         if(g_glt_cache.valid) glt_cache_free();
 
-        /* Fresh build via existing mymalloc path; we copy the result into
+        /* Fresh build via the existing mymalloc path; the result is copied into
          * malloc-backed cache buffers so it can outlive this function frame
          * without violating mymalloc LIFO ordering. */
-        sfc_tile_t *tmp_tiles = NULL;
         int *tmp_pool = NULL;
-        int tmp_num_pool = 0;
-        /* Tile bands and leaf compact h are computed from the IDENTICAL
-         * supply-side reach: nlr_particle_symmetric_radius(P[j], spec->radius_policy)
-         * * spec->j_radius_scale * safety_factor.  build_sfc_tiles bakes the
-         * scale into tile->hmax / tile->hmax_by_type[]; the loop below bakes it
-         * into c_compact[p*4+3] via gx_policy_scaled_h.  No leaf-vs-band scale
-         * gap, no BVH-prune-misses-pairs failure mode. */
-        int tmp_ntiles = 0;
-        tile_bvh_node_t *tmp_bvh = NULL;
-        int tmp_bvh_nnodes = 0;
-        if(wanted_caps & GX_POOL_GEOMETRY) {
-            tmp_ntiles = build_sfc_tiles(P, NumPart, (int)desired_pool_mask, TILE_TARGET_SIZE,
-                                         &tmp_tiles, &tmp_pool, &tmp_num_pool,
-                                         spec->radius_policy,
-                                         spec->j_radius_scale * safety_factor);
-            tmp_bvh_nnodes = build_tile_bvh(tmp_tiles, tmp_ntiles, &tmp_bvh);
-        } else {
-            /* Membership only — same selection, none of the position-dependent work. */
-            tmp_num_pool = build_sfc_supply_pool(P, NumPart, (int)desired_pool_mask, &tmp_pool);
-        }
-        int tmp_bvh_root = tmp_bvh_nnodes - 1;
+        int tmp_num_pool = build_sfc_supply_pool(P, NumPart, (int)desired_pool_mask, &tmp_pool);
 
         /* Allocate persistent cache buffers + copy. */
-        size_t sz_tiles   = (size_t)(tmp_ntiles > 0 ? tmp_ntiles : 1) * sizeof(sfc_tile_t);
-        size_t sz_pool    = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * sizeof(int);
-        size_t sz_bvh     = (size_t)(tmp_bvh_nnodes > 0 ? tmp_bvh_nnodes : 1) * sizeof(tile_bvh_node_t);
-        size_t sz_compact = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * 4 * sizeof(float);
-        size_t sz_types   = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * sizeof(int);
-        const int with_geometry = (wanted_caps & GX_POOL_GEOMETRY) ? 1 : 0;
-        sfc_tile_t      *c_tiles   = with_geometry ? (sfc_tile_t *)      malloc(sz_tiles)   : NULL;
-        int             *c_pool    =                 (int *)             malloc(sz_pool);
-        tile_bvh_node_t *c_bvh     = with_geometry ? (tile_bvh_node_t *) malloc(sz_bvh)     : NULL;
-        float           *c_compact = with_geometry ? (float *)           malloc(sz_compact) : NULL;
-        int             *c_types   =                 (int *)             malloc(sz_types);
-        /* Reverse map j -> pool_pos (-1 if j is not in this build's pool). Sized
-         * to NumPart_when_built; bounds-checked at narrow-refit lookup time. */
+        size_t sz_pool = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * sizeof(int);
+        int   *c_pool  = (int *) malloc(sz_pool);
+        /* Reverse map j -> pool_pos (-1 if j is not in this build's pool). */
         size_t sz_jtop = (size_t)(NumPart > 0 ? NumPart : 1) * sizeof(int);
-        int             *c_jtop    = (int *)             malloc(sz_jtop);
+        int   *c_jtop  = (int *) malloc(sz_jtop);
         /* An allocation failure here would otherwise be a segfault: the buffers are
          * written unconditionally just below, and this producer is now the only
          * supplier, so there is nothing to fall back to.  The request is RANK-LOCAL
@@ -1491,86 +1053,43 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
          * rank-local NumPart), so a collective here would deadlock whenever ranks
          * disagree about rebuilding.  The matching drain runs just past the branch,
          * where every rank converges and before anything reads the pool. */
-        if(!c_pool || !c_types || !c_jtop
-           || (with_geometry && (!c_tiles || !c_bvh || !c_compact))) {
-            printf("ERROR: supply-cache allocation failed on task %d (num_pool=%d NumPart=%d geometry=%d)\n",
-                   ThisTask, tmp_num_pool, NumPart, with_geometry);
+        if(!c_pool || !c_jtop) {
+            printf("ERROR: supply-cache allocation failed on task %d (num_pool=%d NumPart=%d)\n",
+                   ThisTask, tmp_num_pool, NumPart);
             fflush(stdout);
-            free(c_tiles); free(c_pool); free(c_bvh); free(c_compact); free(c_types); free(c_jtop);
-            c_tiles = NULL; c_pool = NULL; c_bvh = NULL; c_compact = NULL; c_types = NULL; c_jtop = NULL;
-            if(tmp_bvh)   myfree(tmp_bvh);
-            if(tmp_tiles) myfree(tmp_tiles);
-            if(tmp_pool)  myfree(tmp_pool);
+            free(c_pool); free(c_jtop);
+            c_pool = NULL; c_jtop = NULL;
+            if(tmp_pool) myfree(tmp_pool);
             gizmo_request_controlled_stop(7724, "ghost_exchange: supply-cache allocation failed",
                                           __FILE__, __LINE__, __FUNCTION__);
             cache_alloc_failed = 1;
         }
         if(!cache_alloc_failed) {
         for(int j = 0; j < NumPart; j++) c_jtop[j] = -1;
-        if(tmp_ntiles > 0)     memcpy(c_tiles, tmp_tiles, (size_t)tmp_ntiles * sizeof(sfc_tile_t));
-        if(tmp_num_pool > 0)   memcpy(c_pool,  tmp_pool,  (size_t)tmp_num_pool * sizeof(int));
-        if(tmp_bvh_nnodes > 0) memcpy(c_bvh,   tmp_bvh,   (size_t)tmp_bvh_nnodes * sizeof(tile_bvh_node_t));
+        if(tmp_num_pool > 0) memcpy(c_pool, tmp_pool, (size_t)tmp_num_pool * sizeof(int));
         for(int p = 0; p < tmp_num_pool; p++) {
             int j = tmp_pool[p];
-            if(with_geometry) {
-                c_compact[p*4+0] = (float)P[j].Pos[0];
-                c_compact[p*4+1] = (float)P[j].Pos[1];
-                c_compact[p*4+2] = (float)P[j].Pos[2];
-                /* SSOT: leaf compact h uses the SAME formula as build_sfc_tiles'
-                 * per-particle aggregation above (= gx_policy_scaled_h).  Result:
-                 * leaf h_j == tile band band's contribution from this particle. */
-                c_compact[p*4+3] = (float)gx_policy_scaled_h(j, spec->radius_policy,
-                                                            spec->j_radius_scale,
-                                                            safety_factor);
-            }
-            c_types[p] = (int)P[j].Type;
             if(j >= 0 && j < NumPart) c_jtop[j] = p;
         }
 
-        /* Free mymalloc temps in LIFO order. */
-        if(tmp_bvh)   myfree(tmp_bvh);
-        if(tmp_tiles) myfree(tmp_tiles);
-        if(tmp_pool)  myfree(tmp_pool);
+        /* Free the mymalloc temp. */
+        if(tmp_pool) myfree(tmp_pool);
 
-        /* Install in cache. */
-        g_glt_cache.tiles = c_tiles;
-        g_glt_cache.pool  = c_pool;
-        g_glt_cache.bvh   = c_bvh;
-        g_glt_cache.compact_xyzh = c_compact;
-        g_glt_cache.pool_types   = c_types;
-        g_glt_cache.j_to_pool    = c_jtop;
-        g_glt_cache.ntiles    = tmp_ntiles;
-        g_glt_cache.num_pool  = tmp_num_pool;
-        g_glt_cache.bvh_nnodes = tmp_bvh_nnodes;
-        g_glt_cache.bvh_root  = tmp_bvh_root;
+        g_glt_cache.pool = c_pool;
+        g_glt_cache.j_to_pool = c_jtop;
+        g_glt_cache.num_pool = tmp_num_pool;
         g_glt_cache.NumPart_when_built = NumPart;
         g_glt_cache.identity_epoch_when_built = g_supply_identity_epoch;
-        g_glt_cache.Ti_when_built = All.Ti_Current;
-        g_glt_cache.safety_factor_when_built = safety_factor;
-        g_glt_cache.radius_policy_when_built = spec->radius_policy;
-        g_glt_cache.j_radius_scale_when_built = spec->j_radius_scale;
-        /* Fresh build seeded compact_xyzh from current P[]; any pre-existing
-         * dirty marks are obsolete.  Next refresh decides full vs narrow from
-         * marks accumulated AFTER this point. */
-        g_glt_dirty_clear_();
         g_glt_cache.eligible_type_mask_when_built = desired_pool_mask;
-        g_glt_cache.needs_refit = 0;
-        g_glt_cache.caps = wanted_caps;
         g_glt_cache.valid = 1;
         }   /* end fill+install (skipped when the cache allocation failed) */
 
-        h_tiles = c_tiles; h_pool = c_pool; num_pool = tmp_num_pool;
-        ntiles = tmp_ntiles; h_bvh = c_bvh; bvh_nnodes = tmp_bvh_nnodes;
-        bvh_root = tmp_bvh_root;
-        h_compact_xyzh = c_compact; h_pool_types = c_types;
+        h_pool = c_pool; num_pool = tmp_num_pool;
     }
     /* Both branches converge here, so this poll is reached by every rank: it drains a
      * rank-local supply-cache allocation failure into an all-rank controlled stop
      * BEFORE anything below dereferences the pool. */
     gizmo_exit_bad_stop_if_requested("ghost_exchange:supply_cache_alloc");
-    (void)bvh_nnodes;
-
-    /* Periodic flags / box sizes for the BVH walker. */
 
 
     /* Matched producer: the routed walk-export set, built below so it reads the

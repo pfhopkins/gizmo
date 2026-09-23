@@ -36,7 +36,6 @@ static void domain_particle_layout_changed(const char *reason)
     /* Record the event first, so a consumer that only compares the epoch sees
      * it regardless of what the cache-freeing calls below do. */
     ghost_exchange_supply_identity_changed(reason);
-    ghost_exchange_local_tree_invalidate_full();
     gpu_step_sidx_invalidate_full();
 }
 

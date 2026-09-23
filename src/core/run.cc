@@ -270,14 +270,6 @@ void run(void)
             cpu_charge_child(CPU_SIDX_REFRESH,
                              cpu_minus_children(timediff(t_sidx_start, my_second()), child0_sidx));
         }
-        ghost_exchange_local_tree_invalidate_drift(); /* Bucket 3: drop the
-                                     * persistent local-tree cache used by request-driven
-                                     * ghost_exchange. Drift may have moved pool positions,
-                                     * so cached compact_xyzh/tiles are stale. Cheap (frees
-                                     * a few malloc buffers); next ghost_exchange of the
-                                     * step pays the rebuild once and amortizes across N
-                                     * physics calls within the step. */
-
         output_log_messages();	/* write some info to log-files */
         CPU_Step[CPU_LOGMSG] += measure_time();
 
