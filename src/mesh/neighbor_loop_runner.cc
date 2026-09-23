@@ -1196,21 +1196,15 @@ static void mode_b_remote_evaluate_into_buffer(
      * through streamed Mode-B at multi-round MUST be re-audited (evrard, the
      * validated case, is mass-preserving MFM). */
 
-    /* The eligibility gate is RETIRED — EVERY Mode-B loop routes via
-     * targeted export (per-type node band is cross-rank-fresh + dominates every
-     * radius_policy; see mode_b_local_walker.h). Hard-coded true; the `else`
-     * broadcast arms below are compile-time-DEAD cleanup debt, NOT a runtime
-     * fallback -- pending physical deletion. */
-    constexpr bool targeted_export_ok = true;
+    /* Every Mode-B loop routes via targeted export: the per-type node band is
+     * cross-rank-fresh and dominates every radius_policy (mode_b_local_walker.h). */
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
 
     /* Targeted-export reverse map: topnode indices are stable between builds →
      * build ONCE, reuse for the fused walk. */
     ModeBTopleafMap topleaf_map;   /* shared read-only map, built once */
     ModeBExportSink export_sink;   /* per-query export sink (write-only during the walk) */
-    if constexpr (targeted_export_ok) {
-        if(N > 0 && nt > 1) { export_sink.ensure_size(nt); topleaf_map.build(); }
-    }
+    if(N > 0 && nt > 1) { export_sink.ensure_size(nt); topleaf_map.build(); }
 
     /* Fused-walk export CSR (targeted specs): per active, its per-peer export
      * node-lists, staged ONCE by the fused self walk and marshalled (no second
@@ -1231,148 +1225,141 @@ static void mode_b_remote_evaluate_into_buffer(
      * keep the plain candidate walk (they have no export walk to fuse). */
     std::vector<std::vector<int>> cand_self_tree;
     if(N > 0) {
-        if constexpr (targeted_export_ok) {
-            if(nt > 1) {
-                /* want_cands: the tree walk needs candidates; the export CSR
-                 * for the round loop is built regardless,
-                 * so the fused walk runs with cand_out=nullptr there. */
-                /* The export CSR is built either way; the candidate list is
-                 * only wanted by a backend that will later walk it.  A fused
-                 * backend answers its own actives from the tree directly, so
-                 * collecting them here would be building a list to throw away. */
-                const bool want_cands = (Backend == NlrEvalBackend::HostWalk);
-                if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
-                csr_rec_off.assign(N + 1, 0);
-                /* Thread the fused self walk above the work threshold. Each thread
-                 * walks its actives into its OWN export sink + its OWN CSR segment
-                 * (no shared push, no lock); a serial prefix-sum then assembles the
-                 * active-ordered CSR BYTE-IDENTICALLY to the serial build
-                 * (per-active walk order fixed; peers ascending within an active;
-                 * node order = walk append order).
-                 *
-                 * The threshold is the only thing that decides this. Whether the
-                 * walk also collects candidates does not: it changes what the walk
-                 * records, not how its actives divide between threads, and the
-                 * per-active work is the traversal either way. This test once also
-                 * required candidates, back when a walk without them was a
-                 * validation pass whose speed was irrelevant; a walk without them
-                 * is now the production path that exports to peers, and it has the
-                 * most actives of any of them. */
-                const bool use_omp_self = nlr_modeb_use_omp(N, modeb_nthreads);
-                if(use_omp_self) {
-                    struct AaMeta { int tid; int rec_off; int n_recs; int node_off; int n_nodes; };
-                    std::vector<AaMeta> meta(N);
-                    std::vector<ModeBExportSink> tsink(modeb_nthreads);
-                    for(auto& s : tsink) s.ensure_size(nt);
-                    std::vector<std::vector<FusedExportRec>> trecs(modeb_nthreads);
-                    std::vector<std::vector<int>> tnodes(modeb_nthreads);
+                if(nt > 1) {
+            /* want_cands: the tree walk needs candidates; the export CSR
+             * for the round loop is built regardless,
+             * so the fused walk runs with cand_out=nullptr there. */
+            /* The export CSR is built either way; the candidate list is
+             * only wanted by a backend that will later walk it.  A fused
+             * backend answers its own actives from the tree directly, so
+             * collecting them here would be building a list to throw away. */
+            const bool want_cands = (Backend == NlrEvalBackend::HostWalk);
+            if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
+            csr_rec_off.assign(N + 1, 0);
+            /* Thread the fused self walk above the work threshold. Each thread
+             * walks its actives into its OWN export sink + its OWN CSR segment
+             * (no shared push, no lock); a serial prefix-sum then assembles the
+             * active-ordered CSR BYTE-IDENTICALLY to the serial build
+             * (per-active walk order fixed; peers ascending within an active;
+             * node order = walk append order).
+             *
+             * The threshold is the only thing that decides this. Whether the
+             * walk also collects candidates does not: it changes what the walk
+             * records, not how its actives divide between threads, and the
+             * per-active work is the traversal either way. This test once also
+             * required candidates, back when a walk without them was a
+             * validation pass whose speed was irrelevant; a walk without them
+             * is now the production path that exports to peers, and it has the
+             * most actives of any of them. */
+            const bool use_omp_self = nlr_modeb_use_omp(N, modeb_nthreads);
+            if(use_omp_self) {
+                struct AaMeta { int tid; int rec_off; int n_recs; int node_off; int n_nodes; };
+                std::vector<AaMeta> meta(N);
+                std::vector<ModeBExportSink> tsink(modeb_nthreads);
+                for(auto& s : tsink) s.ensure_size(nt);
+                std::vector<std::vector<FusedExportRec>> trecs(modeb_nthreads);
+                std::vector<std::vector<int>> tnodes(modeb_nthreads);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
 #endif
-                    for(int aa = 0; aa < N; aa++) {
+                for(int aa = 0; aa < N; aa++) {
 #ifdef _OPENMP
-                        const int tid = omp_get_thread_num();
+                    const int tid = omp_get_thread_num();
 #else
-                        const int tid = 0;
+                    const int tid = 0;
 #endif
-                        ModeBExportSink& sink = tsink[tid];
-                        std::vector<FusedExportRec>& lrecs = trecs[tid];
-                        std::vector<int>& lnodes = tnodes[tid];
-                        AaMeta& m = meta[aa];
-                        m.tid = tid; m.rec_off = (int)lrecs.size(); m.node_off = (int)lnodes.size();
-                        m.n_recs = 0; m.n_nodes = 0;
-                        const double h_q = (double)actives[aa].h_search;
-                        if(h_q <= 0) continue;
-                        double pos_arr[3] = {(double)actives[aa].pos[0],
-                                             (double)actives[aa].pos[1],
-                                             (double)actives[aa].pos[2]};
-                        sink.clear_all();
-                        /* No candidate sink when the backend will not walk one:
-                         * cand_self_tree is left empty in that case, so taking its
-                         * element address would be out of bounds. Both branches
-                         * guard it, and this one is now the branch that meets the
-                         * case, since a walk that collects nothing threads too. */
-                        std::vector<int>* cand_ptr = nullptr;
-                        if(want_cands) {
-                            cand_ptr = &cand_self_tree[aa];
-                            if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
-                        }
-                        mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
-                                                Spec::search_mode, Spec::radius_policy,
-                                                cand_ptr, topleaf_map, sink, jscale);
-                        for(int p = 0; p < nt; p++) {
-                            if(p == rank) continue;
-                            const std::vector<int>& nodes = sink.nodes_per_peer[p];
-                            const int nn = (int)nodes.size();
-                            if(nn == 0) continue;
-                            FusedExportRec rec;
-                            rec.peer = p; rec.node_off = (int)lnodes.size(); rec.n_nodes = nn;
-                            lrecs.push_back(rec);
-                            lnodes.insert(lnodes.end(), nodes.begin(), nodes.end());
-                            m.n_recs++;
-                            m.n_nodes += nn;
-                        }
+                    ModeBExportSink& sink = tsink[tid];
+                    std::vector<FusedExportRec>& lrecs = trecs[tid];
+                    std::vector<int>& lnodes = tnodes[tid];
+                    AaMeta& m = meta[aa];
+                    m.tid = tid; m.rec_off = (int)lrecs.size(); m.node_off = (int)lnodes.size();
+                    m.n_recs = 0; m.n_nodes = 0;
+                    const double h_q = (double)actives[aa].h_search;
+                    if(h_q <= 0) continue;
+                    double pos_arr[3] = {(double)actives[aa].pos[0],
+                                         (double)actives[aa].pos[1],
+                                         (double)actives[aa].pos[2]};
+                    sink.clear_all();
+                    /* No candidate sink when the backend will not walk one:
+                     * cand_self_tree is left empty in that case, so taking its
+                     * element address would be out of bounds. Both branches
+                     * guard it, and this one is now the branch that meets the
+                     * case, since a walk that collects nothing threads too. */
+                    std::vector<int>* cand_ptr = nullptr;
+                    if(want_cands) {
+                        cand_ptr = &cand_self_tree[aa];
+                        if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
                     }
-                    /* Deterministic active-ordered merge. */
-                    size_t total_recs = 0, total_nodes = 0;
-                    for(int aa = 0; aa < N; aa++) { total_recs += meta[aa].n_recs; total_nodes += meta[aa].n_nodes; }
-                    csr_recs.resize(total_recs);
-                    csr_nodes.resize(total_nodes);
-                    int rec_cursor = 0, node_cursor = 0;
-                    for(int aa = 0; aa < N; aa++) {
-                        csr_rec_off[aa] = rec_cursor;
-                        const AaMeta& m = meta[aa];
-                        const std::vector<FusedExportRec>& lrecs = trecs[m.tid];
-                        const std::vector<int>& lnodes = tnodes[m.tid];
-                        for(int rr = 0; rr < m.n_recs; rr++) {
-                            FusedExportRec rec = lrecs[m.rec_off + rr];
-                            const int local_node_off = rec.node_off;   /* thread-segment-relative */
-                            rec.node_off = node_cursor;
-                            for(int q = 0; q < rec.n_nodes; q++)
-                                csr_nodes[node_cursor++] = lnodes[local_node_off + q];
-                            csr_recs[rec_cursor++] = rec;
-                        }
+                    mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                            Spec::search_mode, Spec::radius_policy,
+                                            cand_ptr, topleaf_map, sink, jscale);
+                    for(int p = 0; p < nt; p++) {
+                        if(p == rank) continue;
+                        const std::vector<int>& nodes = sink.nodes_per_peer[p];
+                        const int nn = (int)nodes.size();
+                        if(nn == 0) continue;
+                        FusedExportRec rec;
+                        rec.peer = p; rec.node_off = (int)lnodes.size(); rec.n_nodes = nn;
+                        lrecs.push_back(rec);
+                        lnodes.insert(lnodes.end(), nodes.begin(), nodes.end());
+                        m.n_recs++;
+                        m.n_nodes += nn;
                     }
-                    csr_rec_off[N] = rec_cursor;
-                } else {
-                    for(int aa = 0; aa < N; aa++) {
-                        csr_rec_off[aa] = (int)csr_recs.size();
-                        const double h_q = (double)actives[aa].h_search;
-                        if(h_q <= 0) continue;
-                        double pos_arr[3] = {(double)actives[aa].pos[0],
-                                             (double)actives[aa].pos[1],
-                                             (double)actives[aa].pos[2]};
-                        export_sink.clear_all();
-                        std::vector<int>* cand_ptr = nullptr;
-                        if(want_cands) {
-                            cand_ptr = &cand_self_tree[aa];
-                            if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
-                        }
-                        mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
-                                                Spec::search_mode, Spec::radius_policy,
-                                                cand_ptr, topleaf_map, export_sink, jscale);
-                        /* stage this active's per-peer exports into the CSR */
-                        for(int p = 0; p < nt; p++) {
-                            if(p == rank) continue;
-                            const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
-                            const int nn = (int)nodes.size();
-                            if(nn == 0) continue;
-                            FusedExportRec rec;
-                            rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
-                            csr_recs.push_back(rec);
-                            csr_nodes.insert(csr_nodes.end(), nodes.begin(), nodes.end());
-                        }
-                    }
-                    csr_rec_off[N] = (int)csr_recs.size();
                 }
+                /* Deterministic active-ordered merge. */
+                size_t total_recs = 0, total_nodes = 0;
+                for(int aa = 0; aa < N; aa++) { total_recs += meta[aa].n_recs; total_nodes += meta[aa].n_nodes; }
+                csr_recs.resize(total_recs);
+                csr_nodes.resize(total_nodes);
+                int rec_cursor = 0, node_cursor = 0;
+                for(int aa = 0; aa < N; aa++) {
+                    csr_rec_off[aa] = rec_cursor;
+                    const AaMeta& m = meta[aa];
+                    const std::vector<FusedExportRec>& lrecs = trecs[m.tid];
+                    const std::vector<int>& lnodes = tnodes[m.tid];
+                    for(int rr = 0; rr < m.n_recs; rr++) {
+                        FusedExportRec rec = lrecs[m.rec_off + rr];
+                        const int local_node_off = rec.node_off;   /* thread-segment-relative */
+                        rec.node_off = node_cursor;
+                        for(int q = 0; q < rec.n_nodes; q++)
+                            csr_nodes[node_cursor++] = lnodes[local_node_off + q];
+                        csr_recs[rec_cursor++] = rec;
+                    }
+                }
+                csr_rec_off[N] = rec_cursor;
             } else {
-                /* single rank: no peers to export to → plain candidate walk. */
-                collect_candidates_pre_drift<Spec>(args, radii,
-                                                    neighbor_type_mask,
-                                                    DispatchPath::ModeB_HostWalker,
-                                                    cand_self_tree);
+                for(int aa = 0; aa < N; aa++) {
+                    csr_rec_off[aa] = (int)csr_recs.size();
+                    const double h_q = (double)actives[aa].h_search;
+                    if(h_q <= 0) continue;
+                    double pos_arr[3] = {(double)actives[aa].pos[0],
+                                         (double)actives[aa].pos[1],
+                                         (double)actives[aa].pos[2]};
+                    export_sink.clear_all();
+                    std::vector<int>* cand_ptr = nullptr;
+                    if(want_cands) {
+                        cand_ptr = &cand_self_tree[aa];
+                        if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
+                    }
+                    mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
+                                            Spec::search_mode, Spec::radius_policy,
+                                            cand_ptr, topleaf_map, export_sink, jscale);
+                    /* stage this active's per-peer exports into the CSR */
+                    for(int p = 0; p < nt; p++) {
+                        if(p == rank) continue;
+                        const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
+                        const int nn = (int)nodes.size();
+                        if(nn == 0) continue;
+                        FusedExportRec rec;
+                        rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
+                        csr_recs.push_back(rec);
+                        csr_nodes.insert(csr_nodes.end(), nodes.begin(), nodes.end());
+                    }
+                }
+                csr_rec_off[N] = (int)csr_recs.size();
             }
         } else {
+            /* single rank: no peers to export to → plain candidate walk. */
             collect_candidates_pre_drift<Spec>(args, radii,
                                                 neighbor_type_mask,
                                                 DispatchPath::ModeB_HostWalker,
@@ -1422,11 +1409,8 @@ static void mode_b_remote_evaluate_into_buffer(
      * reaches, carrying the exported start-nodes so the receiver resumes a bounded
      * walk. The per-type node band prunes the SYMMETRIC reach and is cross-rank-fresh
      * (via force_update_hmax), so the sender bounds every loop's reach on remote
-     * peers. The `else` broadcast arm (n_nodes==0 to all peers) is compile-time-DEAD
-     * cleanup debt, pending removal. Self-pair handled above; self entry stays
-     * empty. */
-    /* targeted_export_ok, jscale and exporter are hoisted above Stage 3 for
-     * the fused walk. */
+     * peers. Self-pair handled above; self entry stays empty. */
+    /* jscale and the exporter are hoisted above Stage 3 for the fused walk. */
     /* How much this round may carry: one communication chunk, divided by the size of a
      * query and its reply. NlrQueryEnvelope fuses what used to be sent as separate index,
      * node-list and active records, so counting envelopes here counts what the older code
@@ -1454,85 +1438,57 @@ static void mode_b_remote_evaluate_into_buffer(
          * active whose OWN set exceeds `bunch` ships in a solo oversized round
          * (graceful; loud diag) instead of aborting. */
         if(N > 0 && nt > 1) {
-            if constexpr (targeted_export_ok) {
-                int aa = cursor;
-                for(; aa < N; aa++) {
-                    const int r0 = csr_rec_off[aa], r1 = csr_rec_off[aa + 1];
-                    /* envelopes this active would add across all peers */
-                    long long add = 0;
-                    for(int r = r0; r < r1; r++)
-                        add += (csr_recs[r].n_nodes + NODELISTLENGTH - 1) / NODELISTLENGTH;
-                    if(round_env_count > 0 && round_env_count + add > bunch) break; /* defer to next round */
-                    if(round_env_count == 0 && add > bunch) {
-                        nlr_warn_once_rank0("modeb_oversize_active",
-                            "[mode_b B2a caller=%s] single active's export set (%lld envelopes, "
-                            "~%lld bytes) exceeds CommChunkSize bunch (%lld envelopes); shipping a solo "
-                            "oversized round — cap ineffective for this call (raise CommChunkSize).",
-                            Spec::loop_name, add, add * kEnvPairBytes, bunch);
-                    }
-                    /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
-                    int rr = r0;
-                    for(int p = 0; p < nt; p++) {
-                        if(p == rank) continue;
-                        if(rr < r1 && csr_recs[rr].peer == p) {
-                            const FusedExportRec& rec = csr_recs[rr];
-                            const int* nd = &csr_nodes[rec.node_off];
-                            const int nn = rec.n_nodes;
-                            diag_export_qr++; diag_node_appends += nn;
-                            /* Chunk into NODELISTLENGTH-sized records (legacy opens a
-                             * fresh export slot when a NodeList fills). Chunks cover
-                             * disjoint subtrees → the slot-keyed reply merge sums their
-                             * partial results without double counting. All chunks of a
-                             * (query,peer) group land in THIS round (all-or-nothing
-                             * above), so each group stays contiguous. */
-                            for(int c = 0; c < nn; c += NODELISTLENGTH) {
-                                Envelope env;
-                                env.origin_slot = aa;
-                                env.origin_rank = rank;
-                                int cnt = 0;
-                                for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
-                                    env.NodeList[cnt] = nd[c + cnt];
-                                }
-                                env.n_nodes = cnt;
-                                env.reserved_wire_padding = 0;
-                                for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                                env.active = actives[aa];
-                                queries_per_peer[p].push_back(env);
+                        int aa = cursor;
+            for(; aa < N; aa++) {
+                const int r0 = csr_rec_off[aa], r1 = csr_rec_off[aa + 1];
+                /* envelopes this active would add across all peers */
+                long long add = 0;
+                for(int r = r0; r < r1; r++)
+                    add += (csr_recs[r].n_nodes + NODELISTLENGTH - 1) / NODELISTLENGTH;
+                if(round_env_count > 0 && round_env_count + add > bunch) break; /* defer to next round */
+                if(round_env_count == 0 && add > bunch) {
+                    nlr_warn_once_rank0("modeb_oversize_active",
+                        "[mode_b B2a caller=%s] single active's export set (%lld envelopes, "
+                        "~%lld bytes) exceeds CommChunkSize bunch (%lld envelopes); shipping a solo "
+                        "oversized round — cap ineffective for this call (raise CommChunkSize).",
+                        Spec::loop_name, add, add * kEnvPairBytes, bunch);
+                }
+                /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
+                int rr = r0;
+                for(int p = 0; p < nt; p++) {
+                    if(p == rank) continue;
+                    if(rr < r1 && csr_recs[rr].peer == p) {
+                        const FusedExportRec& rec = csr_recs[rr];
+                        const int* nd = &csr_nodes[rec.node_off];
+                        const int nn = rec.n_nodes;
+                        diag_export_qr++; diag_node_appends += nn;
+                        /* Chunk into NODELISTLENGTH-sized records (legacy opens a
+                         * fresh export slot when a NodeList fills). Chunks cover
+                         * disjoint subtrees → the slot-keyed reply merge sums their
+                         * partial results without double counting. All chunks of a
+                         * (query,peer) group land in THIS round (all-or-nothing
+                         * above), so each group stays contiguous. */
+                        for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                            Envelope env;
+                            env.origin_slot = aa;
+                            env.origin_rank = rank;
+                            int cnt = 0;
+                            for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                                env.NodeList[cnt] = nd[c + cnt];
                             }
-                            rr++;
-                            continue;
+                            env.n_nodes = cnt;
+                            env.reserved_wire_padding = 0;
+                            for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                            env.active = actives[aa];
+                            queries_per_peer[p].push_back(env);
                         }
+                        rr++;
+                        continue;
                     }
-                    round_env_count += add;
                 }
-                cursor = aa;
-            } else {
-                /* Broadcast: each active adds exactly (nt-1) envelopes. */
-                int aa = cursor;
-                for(; aa < N; aa++) {
-                    const long long add = (long long)(nt - 1);
-                    if(round_env_count > 0 && round_env_count + add > bunch) break;
-                    if(round_env_count == 0 && add > bunch) {
-                        nlr_warn_once_rank0("modeb_oversize_active_bcast",
-                            "[mode_b B2a caller=%s] broadcast active adds %lld envelopes > CommChunkSize "
-                            "bunch (%lld); solo oversized round — cap ineffective (raise CommChunkSize).",
-                            Spec::loop_name, add, bunch);
-                    }
-                    for(int p = 0; p < nt; p++) {
-                        if(p == rank) continue;
-                        Envelope env;
-                        env.origin_slot = aa;
-                        env.origin_rank = rank;
-                        env.n_nodes = 0;
-                        env.reserved_wire_padding = 0;   /* legit broadcast, matches expected */
-                        for(int t = 0; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                        env.active = actives[aa];
-                        queries_per_peer[p].push_back(env);
-                    }
-                    round_env_count += add;
-                }
-                cursor = aa;
+                round_env_count += add;
             }
+            cursor = aa;
         } else {
             cursor = N;   /* nothing to export (N==0 or single rank) */
         }
@@ -4377,11 +4333,9 @@ struct NlrPeerAnswerDeviceFused {
              * rank; the host walker skips it rather than walking from anywhere,
              * and so does this. */
             /* No start nodes: nothing on this rank was exported to this query.
-             * ⚠ This is only correct while every Mode-B-wire query is TARGETED.
-             * A broadcast query (n_nodes == 0) means "walk your whole tree", and
-             * the host receiver does exactly that -- so if the broadcast arms are
-             * ever revived this must become a root walk, not a zero accumulator.
-             * Unreachable today: targeted_export_ok is a constexpr true. */
+             * ⚠ This is only correct because every Mode-B-wire query is
+             * TARGETED: a query carrying no start nodes reached nothing on this
+             * rank.  There is no broadcast query shape on this wire. */
             if(nn_d[kk] <= 0) {return;}
             NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
             leaf.motion_targets = motion_targets;
