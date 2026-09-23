@@ -611,70 +611,34 @@ enum ghost_exchange_result {
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec);
 static ghost_exchange_result ghost_exchange_tile_overlap_impl(const struct ghost_exchange_spec_t *spec);
 
-/* Is this spec eligible for the walk-export routed producer (sender fine-tree
- * export + bounded receiver walk)?  Keyed on the SEARCH MODE and structural spec
- * fields only — never on a caller name, so every loop of a given class routes.
+/* Every spec uses the walk-export routed producer (sender fine-tree export +
+ * bounded receiver walk).  Kept as a named predicate because the two search
+ * modes reach that conclusion for different reasons, recorded here.
  *
- * ONEWAY: always eligible.  Its reach is the query's own radius, which the sender
- * knows exactly, so routing needs nothing from the supply side.  The traversal AND
- * export opener are both R_open = h_q (mode_b_local_walker.cc, the R_open branch
- * and the topleaf export re-test), and the accept ignores h_j entirely
- * (ghost_exchange_functions.h gx_pair_accept_wrap_and_test, ONEWAY branch).  Query h already
- * carries the spec safety factor, so a widened query cannot outgrow the opener.
- * KEEP THOSE THREE IN STEP: if ONEWAY accept ever gains an h_j term, or the opener
- * stops using h_q, this eligibility no longer holds and must be re-derived.
+ * ONEWAY: its reach is the query's own radius, which the sender knows exactly,
+ * so routing needs nothing from the supply side.  The traversal AND export
+ * opener are both R_open = h_q (mode_b_local_walker.cc, the R_open branch and
+ * the topleaf export re-test), and the accept ignores h_j entirely
+ * (ghost_exchange_functions.h gx_pair_accept_wrap_and_test, ONEWAY branch).
+ * Query h already carries the spec safety factor, so a widened query cannot
+ * outgrow the opener.  KEEP THOSE THREE IN STEP: if ONEWAY accept ever gains an
+ * h_j term, or the opener stops using h_q, this must be re-derived.
  *
- * SYMMETRIC: eligible only when the supply-side reach is bounded by the per-type
- * node band the sender opener walks against — otherwise a reach beyond the band
- * silently under-imports.  ONE structural condition:
- *   supply_band_dominated  the spec's reach is proven bounded by that band
- * A safety factor above 1 (TURB_DIFF_DYNAMIC) is NOT a disqualifier: both walks
- * scale the j-side reach they search with by the spec's safety factor, so their
- * reach equals the accept's at any safety and a widened query cannot outgrow the
- * opener.  Fails closed: anything unproven keeps the broadcast path it uses today.
- * Rank-uniform — search_mode and both fields are spec constants, identical on
- * every rank, so this never splits ranks across a collective. */
+ * SYMMETRIC: the supply-side reach is bounded by the per-type node band the
+ * sender opener walks against.  The band is seeded from the conservative union
+ * of every radius source a leaf policy can select
+ * (force_hmax_per_type_particle_radius, MODE_B_RADIUS_ALL_SOURCES), so it
+ * dominates any radius_policy a spec can declare -- which is why this is a
+ * property of the BAND, not of the loop.  A new radius-policy bit therefore
+ * extends that union; it never needs a per-loop claim here.  A safety factor
+ * above 1 (TURB_DIFF_DYNAMIC) is not a disqualifier either: both walks scale
+ * the j-side reach they search with by the spec's safety factor, so their reach
+ * equals the accept's at any safety.
+ * Rank-uniform -- search_mode is a spec constant, identical on every rank, so
+ * this never splits ranks across a collective. */
 static inline int gx_walk_export_eligible(const struct ghost_exchange_spec_t *spec)
 {
-    if(!spec) return 0;
-    if(spec->search_mode == NGB_SEARCH_ONEWAY) return 1;
-    /* safety_factor is NOT a disqualifier: the walk-export sender opener and
-     * receiver walk fold it into the j-side reach they search with, so their
-     * reach equals the accept's for any safety. Only an unproven supply band
-     * still forces broadcast. */
-    return spec->search_mode == NGB_SEARCH_SYMMETRIC
-           && spec->supply_band_dominated;
-}
-
-/* Announce, ONCE per caller per run, that a SYMMETRIC caller is on broadcast.
- * Once-only so a timing arm is never perturbed by per-call stdout; loud enough
- * that an unpromoted caller cannot hide in a log. */
-static void gx_report_symm_broadcast(const struct ghost_exchange_spec_t *spec)
-{
-    enum { GX_SYMM_REPORT_MAX = 64 };   /* > the number of SYMMETRIC specs in the tree */
-    static const char *seen[GX_SYMM_REPORT_MAX];
-    static int n_seen = 0;
-    static int table_full_reported = 0;
-    if(ThisTask != 0 || !spec) return;
-    const char *name = spec->caller_name ? spec->caller_name : "?";
-    /* compare by CONTENT: callers pass distinct string objects (spec literals,
-     * Spec::loop_name), so pointer identity would let one caller report twice. */
-    for(int k = 0; k < n_seen; k++) { if(strcmp(seen[k], name) == 0) return; }
-    if(n_seen >= GX_SYMM_REPORT_MAX) {
-        /* Never degrade to per-call printing: that would flood a log and perturb
-         * the very timing this report exists to keep honest. Say so once, then stop. */
-        if(!table_full_reported) {
-            table_full_reported = 1;
-            printf("GHOST_SYMM_BCAST caller=<table full at %d> reason=further_callers_unreported\n",
-                   GX_SYMM_REPORT_MAX);
-            fflush(stdout);
-        }
-        return;
-    }
-    seen[n_seen++] = name;
-    printf("GHOST_SYMM_BCAST caller=%s reason=%s\n", name,
-           "band_unproven");   /* the only remaining disqualifier */
-    fflush(stdout);
+    return spec != NULL;
 }
 
 static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
@@ -689,19 +653,13 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
      * n_queries >= 0) use the request-driven path — tile-overlap cannot consume
      * an explicit query list (it scans ActiveParticleList filtered by
      * request_type_mask, so a spec with request_type_mask=0u + an explicit list
-     * would import zero ghosts).  Every ONEWAY request also uses request-driven,
-     * regardless of caller: routed ONEWAY discovery is a property of the search
-     * mode, not of any specific loop.  SYMMETRIC requests use request-driven when
-     * the spec proves supply-band domination (gx_walk_export_eligible); all other
-     * SYMMETRIC callers stay on tile-overlap/broadcast.  Which producer then
-     * supplies the matched set inside the request-driven path is a separate,
-     * likewise structural decision (same predicate). */
+     * would import zero ghosts).  Every request routes, whatever its search mode:
+     * ONEWAY opens on the query's own radius, SYMMETRIC on the per-type node band
+     * that bounds any radius policy.  Neither is a property of a specific loop. */
     const int explicit_queries = (spec && spec->n_queries >= 0);
     const int want_request_driven = explicit_queries
                                     || (spec && spec->search_mode == NGB_SEARCH_ONEWAY)
                                     || gx_walk_export_eligible(spec);
-    if(spec && spec->search_mode == NGB_SEARCH_SYMMETRIC && !gx_walk_export_eligible(spec))
-        gx_report_symm_broadcast(spec);
     if(want_request_driven) {
         ghost_exchange_request_driven_impl(spec);
     } else {
@@ -2849,39 +2807,28 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
  * — see ghost_symlist_lifecycle.h. */
 void ghost_exchange(double safety_factor)
 {
-    /* supply_band_dominated=1: this spec's reach is P[j].KernelRadius (the legacy
-     * all-types policy) for every type, times safety_factor (checked <= 1 at
-     * dispatch). The per-type opener band is seeded per particle from the
-     * conservative source union capped at All.MaxKernelRadius (ForceSoftening
-     * uncapped; force_hmax_per_type_particle_radius) and exchanged cross-rank on
-     * the nodes the export walk descends — so under the standing invariant that
-     * no P[].KernelRadius of any type exceeds All.MaxKernelRadius (drift clamps
-     * in predict.cc; the density-convergence maxsoft clamp; the sink accretion-
-     * radius cap in ags_rkern.cc), the band dominates this reach per type.
-     * Any future physics path that writes a non-gas KernelRadius must preserve
-     * that invariant or routed discovery under-imports. */
+    /* Reach is P[j].KernelRadius (the legacy all-types policy) for every type,
+     * times safety_factor. The per-type opener band is seeded from the
+     * conservative source union (force_hmax_per_type_particle_radius) and
+     * exchanged cross-rank on the nodes the export walk descends, so it bounds
+     * this reach per type. */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_ALL, GHOST_TYPE_ALL, NGB_SEARCH_SYMMETRIC, safety_factor, "all_types", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 1};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro(double safety_factor)
 {
-    /* supply_band_dominated=1: gas-only supply at the legacy all-types kernel
-     * radius. Every KernelRadius is held at or below MaxKernelRadius (density
-     * sink setup clamps it; ags_return_maxsoft clamps the drift path), which is
-     * exactly the quantity the per-type node band is built from — so the band is
-     * a valid upper bound on this spec's reach and routed discovery is complete.
-     * safety_factor is checked separately at dispatch (a >1 factor widens the
-     * query beyond the band until the opener scales with it). */
+    /* Gas-only supply at the legacy all-types kernel radius, which the per-type
+     * node band is built from, so the band bounds this spec's reach. */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_SYMMETRIC, safety_factor, "hydro_symmetric", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 1};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
     ghost_exchange_impl(&sp);
 }
 void ghost_exchange_hydro_oneway(double safety_factor)
 {
-    /* ONEWAY routes on search mode alone; the flag is unread here. */
+    /* ONEWAY opens on the query's own radius; the supply side bounds nothing here. */
     struct ghost_exchange_spec_t sp = {GHOST_TYPE_0, GHOST_TYPE_0, NGB_SEARCH_ONEWAY, safety_factor, "hydro_oneway", -1, NULL, NULL,
-                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0, 0};
+                                       MODE_B_RADIUS_LEGACY_KERNEL_ALLTYPES, 1.0};
     ghost_exchange_impl(&sp);
 }
 
