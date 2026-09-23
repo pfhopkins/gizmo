@@ -983,204 +983,6 @@ struct gx_query_t {
  * mesh/neighbor_list.h: the device receiver traversal compiles in another
  * translation unit and consumes the same records. */
 
-/* Host-only BVH bbox-vs-sphere overlap test. Mirrors bbox_overlaps_sphere_gpu
- * (mesh/sfc_tiles_functions.h). For each axis, take the periodic-shortened
- * gap between sphere center and bbox; if any gap exceeds search_r, prune.
- * Otherwise sum-of-squares vs search_r2 for the final accept. */
-static inline int gx_bbox_overlaps_sphere(const double bbox_lo[3], const double bbox_hi[3],
-                                          const double pos[3], double search_r, double search_r2)
-{
-    (void)search_r2;   /* the shared predicate squares the radius itself */
-    /* The box wrap is the canonical macro family's job, and it needs a centre
-     * separation rather than a lo/hi interval, so convert here.  Rounding the
-     * half-width UP (the larger of the two sides) keeps the test conservative
-     * under FP, which is what the direct point-to-interval form used to buy;
-     * over-opening costs a leaf test, under-opening drops a real neighbour. */
-    double c[3], hw[3];
-    for(int k = 0; k < 3; k++) {
-        c[k]  = 0.5 * (bbox_lo[k] + bbox_hi[k]);
-        double up = bbox_hi[k] - c[k], dn = c[k] - bbox_lo[k];
-        hw[k] = (up > dn) ? up : dn;
-    }
-    return gx_extended_overlap_wrap_and_test(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2],
-                                             hw[0], hw[1], hw[2], search_r);
-}
-
-/* Host-only BVH walk for the request-driven path. Mirrors
- * search_neighbors_sfc_gpu's iterative stack-based walk. For each query,
- * traverses the local BVH, accepts at leaves with per-particle r_ij vs the
- * caller-specified predicate (ONEWAY or SYMMETRIC), marks matched pool
- * indices in match_bitmask. */
-/* Compute hmax_eff over the supply types only. Avoids the scalar-hmax
- * contamination where a particle of a type the caller didn't ask for poisons
- * the opener. Inlined; on a hot path. */
-static inline double gx_node_hmax_supply(const tile_bvh_node_t *node, unsigned int supply_mask)
-{
-    double m = 0;
-    for(int t = 0; t < TILE_NUM_PTYPES; t++) {
-        if((supply_mask & (1u << t)) == 0u) continue;
-        if(node->hmax_by_type[t] > m) m = node->hmax_by_type[t];
-    }
-    return m;
-}
-
-static void gx_walk_local_bvh(const float *compact_xyzh,
-                              const sfc_tile_t *tiles, int ntiles,
-                              const int *pool, int num_pool,
-                              const int *pool_types, /* [num_pool] — P[].Type per pool slot, for leaf supply-mask filter */
-                              unsigned int supply_mask,
-                              const tile_bvh_node_t *bvh, int bvh_root,
-                              const double pos_q[3], double h_q, int search_mode,
-                              char *match_bitmask /* size num_pool */,
-                              long *n_exact_hits /* optional (NULL in production): count EXACT matches
-                                                  * this call would produce, computing r2 even for
-                                                  * already-set slots so the per-query count is
-                                                  * unbiased by the dedup skip (over-route diagnostic) */)
-{
-    (void)ntiles;
-    int stack[TILE_BVH_STACK_SIZE];
-    int sp = 0;
-    stack[sp++] = bvh_root;
-    while(sp > 0) {
-        int node_idx = stack[--sp];
-        const tile_bvh_node_t *node = &bvh[node_idx];
-        /* OPENER criterion. ONEWAY: r_ij<h_q so search_r is just h_q (subtree
-         * h's irrelevant). SYMMETRIC: r_ij<max(h_q,h_j); search_r = max(h_q,
-         * subtree-max-h-of-supply-types). Per-type hmax filter avoids node
-         * hmax being dominated by a type the caller didn't ask for. */
-        double node_hmax_eff = gx_node_hmax_supply(node, supply_mask);
-        double search_r = (search_mode == NGB_SEARCH_ONEWAY)
-                            ? h_q
-                            : ((h_q > node_hmax_eff) ? h_q : node_hmax_eff);
-        if(search_r <= 0) continue;
-        double search_r2 = search_r * search_r;
-        if(!gx_bbox_overlaps_sphere(node->lo, node->hi, pos_q, search_r, search_r2)) continue;
-        if(node->left < 0) {
-            /* Leaf: per-particle accept against EXACT predicate. */
-            int tile_idx = -(node->left + 1);
-            const sfc_tile_t *tile = &tiles[tile_idx];
-            for(int s = 0; s < tile->count; s++) {
-                int pool_pos = tile->first + s;
-                if(pool_pos < 0 || pool_pos >= num_pool) continue;
-                int already = match_bitmask[pool_pos];
-                if(already && !n_exact_hits) continue;   /* already matched: skip unless the caller wants unbiased hit counts */
-                /* Supply-mask filter at leaf: skip particles of a type the
-                 * caller didn't ask for (no-op when tree was built with the
-                 * same mask, but required when tree is shared across callers). */
-                if(pool_types) {
-                    int pt = pool_types[pool_pos];
-                    if(pt < 0 || pt >= TILE_NUM_PTYPES) continue;
-                    if((supply_mask & (1u << (unsigned)pt)) == 0u) continue;
-                }
-                /* Geometric accept is the shared SSOT predicate; supply-mask
-                 * filter + dedup bookkeeping stay caller-side (above/here).
-                 * BOTH position AND reach are DOUBLE: P[j].Pos (float absolute
-                 * coordinates are invalid for GIZMO's dynamic range) and the double
-                 * gx_policy_scaled_h reach (the node/tile hmax the opener prunes with
-                 * is built from this same double reach, so the opener conservatively
-                 * dominates the leaf — a float leaf h would let the opener under-prune
-                 * boundary pairs).  Recompute here for the host path; the production
-                 * GPU path needs a double h cache to avoid the per-candidate recompute.
-                 * The pool walked here is always g_glt_cache's, so its build-time
-                 * policy/scale/safety reproduce the cached double reach exactly. */
-                int j_neighbor = pool[pool_pos];
-                /* The pool is mass-filtered when it is built, but this pool is
-                 * cached across calls and an entry outlives a Mass->0 marking
-                 * until rearrange_particle_sequence() compacts it away.  Zero mass
-                 * is the code's marker for an eliminated element, which must never
-                 * be offered as a ghost source, so re-check it here instead of
-                 * trusting build time.  Ahead of the reach recompute so a dead
-                 * slot costs one compare. */
-                if(P[j_neighbor].Mass <= 0) continue;
-                double hj_dbl = gx_policy_scaled_h(j_neighbor, g_glt_cache.radius_policy_when_built,
-                                                   g_glt_cache.j_radius_scale_when_built,
-                                                   g_glt_cache.safety_factor_when_built);
-                if(gx_pair_accept_wrap_and_test(pos_q[0] - (double)P[j_neighbor].Pos[0],
-                                                pos_q[1] - (double)P[j_neighbor].Pos[1],
-                                                pos_q[2] - (double)P[j_neighbor].Pos[2],
-                                                h_q, hj_dbl, search_mode)) {
-                    if(n_exact_hits) (*n_exact_hits)++;
-                    if(!already) match_bitmask[pool_pos] = 1;
-                }
-            }
-        } else {
-            if(sp + 2 > TILE_BVH_STACK_SIZE) break;  /* defensive — shouldn't happen */
-            stack[sp++] = node->left;
-            stack[sp++] = node->right;
-        }
-    }
-}
-
-
-
-/* Broadcast discovery walk. Walks every remote rank's
- * queries (from the Allgatherv'd all_queries) against the pre-built local supply
- * snapshot and returns the per-peer match bitmask matched[t*num_pool+p] that the
- * shared pack/install steps consume.  Pure local walk over already-exchanged
- * queries -- no routing, no collectives.  CALLER OWNS the returned buffer (free
- * it).  The walk-export producer returns the identical layout, so the install
- * path stays shared between the two. */
-static char *compute_matched_broadcast(
-    const struct gx_query_t *all_queries, const int *q_disps, const int *all_q_counts,
-    const float *h_compact_xyzh, const sfc_tile_t *h_tiles, int ntiles,
-    const int *h_pool, int num_pool, const int *h_pool_types, unsigned int supply_mask,
-    const tile_bvh_node_t *h_bvh, int bvh_root, int search_mode)
-{
-    /* Per-peer match bitmask over pool indices (dedup multiple queries → one ghost). */
-    char *matched = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), sizeof(char));
-    for(int t = 0; t < NTask; t++) {
-        if(t == ThisTask) continue;
-        int q_start = q_disps[t];
-        int q_count = all_q_counts[t];
-        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
-        for(int qi = 0; qi < q_count; qi++) {
-            const struct gx_query_t *q = &all_queries[q_start + qi];
-            /* q->h already includes safety_factor (set at query-build time).
-             * compact_xyzh[*4+3] also includes safety_factor. So leaf r² check
-             * uses inflated radii on both sides of max(h_q, h_j). */
-            gx_walk_local_bvh(h_compact_xyzh, h_tiles, ntiles, h_pool, num_pool,
-                              h_pool_types, supply_mask,
-                              h_bvh, bvh_root,
-                              q->pos, q->h, search_mode,
-                              match_for_t, NULL);
-        }
-    }
-    return matched;
-}
-
-/* Lazy, idempotent collective broadcast of the local query lists to all ranks
- * (the legacy Step-2 Allgather/Allgatherv).  Safe to call multiple times: no-op
- * once *available.  MUST be called collectively (all ranks together).  Fills the
- * three malloc'd arrays (caller frees) + total_queries.  Enables the late
- * fallback: if routed discovery fails AFTER Step 2 was skipped, all ranks return
- * to the same point and run this collectively before the broadcast walk. */
-static void ensure_broadcast_queries(int *available,
-                                     const struct gx_query_t *local_queries, int n_local_queries,
-                                     int **all_q_counts_io, int **q_disps_io,
-                                     struct gx_query_t **all_queries_io, int *total_queries_io)
-{
-    if(*available) return;
-    int *all_q_counts = (int *) malloc(NTask * sizeof(int));
-    MPI_Allgather(&n_local_queries, 1, MPI_INT, all_q_counts, 1, MPI_INT, MPI_COMM_WORLD);
-    int *q_disps = (int *) malloc(NTask * sizeof(int));
-    int total_queries = 0;
-    for(int t = 0; t < NTask; t++) { q_disps[t] = total_queries; total_queries += all_q_counts[t]; }
-    struct gx_query_t *all_queries = (struct gx_query_t *)
-        malloc((size_t)(total_queries > 0 ? total_queries : 1) * sizeof(struct gx_query_t));
-    int *q_byte_counts = (int *) malloc(NTask * sizeof(int));
-    int *q_byte_disps  = (int *) malloc(NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) {
-        q_byte_counts[t] = all_q_counts[t] * (int)sizeof(struct gx_query_t);
-        q_byte_disps[t]  = q_disps[t]      * (int)sizeof(struct gx_query_t);
-    }
-    MPI_Allgatherv(local_queries, n_local_queries * (int)sizeof(struct gx_query_t), MPI_BYTE,
-                   all_queries, q_byte_counts, q_byte_disps, MPI_BYTE, MPI_COMM_WORLD);
-    free(q_byte_counts); free(q_byte_disps);
-    *all_q_counts_io = all_q_counts; *q_disps_io = q_disps;
-    *all_queries_io = all_queries;   *total_queries_io = total_queries;
-    *available = 1;
-}
-
 /* Walk-export routed producer — the discovery path for every spec that passes
  * gx_walk_export_eligible().  Sender: per local query mode_b_walk_and_export -> per-peer
  * NodeList -> fixed-size envelopes -> Alltoallv.  Receiver: mode_b_walk_from_start_nodes
@@ -1539,19 +1341,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
     gizmo_exit_bad_stop_if_requested("ghost_exchange:query_finite");
 
-    /* === Step 2: LAZY query distribution === The broadcast Allgather/
-     * Allgatherv now runs on demand via ensure_broadcast_queries(): SKIPPED in
-     * routed-production mode, run up-front for the oracle / when routed is
-     * unavailable, and as a collective LATE fallback if routed fails after the
-     * skip.  Declarations only here; the gather (if any) happens after the
-     * supply-snapshot build below, alongside the routed-vs-broadcast selection. */
-    int   *all_q_counts = NULL;
-    int   *q_disps      = NULL;
-    struct gx_query_t *all_queries = NULL;
-    int    total_queries = 0;
-    int    bcast_queries_available = 0;
-
-    /* === Step 3: per-rank, walk local BVH against each remote rank's queries ===
+        /* === Step 3: per-rank, walk local BVH against each remote rank's queries ===
      *
      * Build a host-side SFC tile + BVH index over the supply-mask-filtered pool.
      * For each remote query, walk the BVH (O(log N + matches) per query, vs the
@@ -1592,8 +1382,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * below: geometry is skipped exactly when no consumer of it can execute.
      * Keep this as the single definition — a second, weaker copy of the test
      * here would let a run that does reach the broadcast walk walk NULL tiles. */
-    const int walk_export_only    = gx_walk_export_eligible(spec);
-    const unsigned int wanted_caps = GX_POOL_IDENTITY | (walk_export_only ? 0u : GX_POOL_GEOMETRY);
+    /* Only membership is read from the supply cache: the routed producer reads
+     * live positions, never the cached tile/BVH geometry. */
+    const unsigned int wanted_caps = GX_POOL_IDENTITY;
     /* TWO validities, because the cache holds two payloads with different
      * dependencies.  IDENTITY (pool, j_to_pool, num_pool) is membership and order:
      * it depends on {NumPart, type mask, epoch} and on nothing positional, so it
@@ -1618,78 +1409,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                        && g_glt_cache.eligible_type_mask_when_built == desired_pool_mask
                        && g_glt_cache.NumPart_when_built == NumPart
                        && g_glt_cache.identity_epoch_when_built == g_supply_identity_epoch);
-    const int geometry_valid = (identity_valid
-                       && (g_glt_cache.caps & GX_POOL_GEOMETRY)
-                       && g_glt_cache.safety_factor_when_built == safety_factor
-                       && g_glt_cache.radius_policy_when_built == spec->radius_policy
-                       && g_glt_cache.j_radius_scale_when_built == spec->j_radius_scale);
-    const int want_geometry = (wanted_caps & GX_POOL_GEOMETRY) ? 1 : 0;
-    int cache_match = identity_valid && (!want_geometry || geometry_valid);
-    int geometry_rebuilt = 0;
+    int cache_match = identity_valid;
 
-    /* Identity still good, geometry stale or absent: rebuild geometry ONLY, over
-     * the pool we already hold.  This is the case a single fused key could not
-     * express, and it is the common one — successive callers in a step share the
-     * particle set and differ only in radius policy. */
-    if(identity_valid && want_geometry && !geometry_valid) {
-        glt_cache_free_geometry_();
-        sfc_tile_t *g_tiles = NULL;
-        int g_ntiles = build_sfc_tiles_from_pool(P, g_glt_cache.pool, g_glt_cache.num_pool,
-                                                 TILE_TARGET_SIZE, &g_tiles,
-                                                 spec->radius_policy,
-                                                 spec->j_radius_scale * safety_factor);
-        tile_bvh_node_t *g_bvh = NULL;
-        int g_bvh_nnodes = build_tile_bvh(g_tiles, g_ntiles, &g_bvh);
-        size_t gz_tiles   = (size_t)(g_ntiles > 0 ? g_ntiles : 1) * sizeof(sfc_tile_t);
-        size_t gz_bvh     = (size_t)(g_bvh_nnodes > 0 ? g_bvh_nnodes : 1) * sizeof(tile_bvh_node_t);
-        size_t gz_compact = (size_t)(g_glt_cache.num_pool > 0 ? g_glt_cache.num_pool : 1) * 4 * sizeof(float);
-        size_t gz_types   = (size_t)(g_glt_cache.num_pool > 0 ? g_glt_cache.num_pool : 1) * sizeof(int);
-        sfc_tile_t      *gc_tiles   = (sfc_tile_t *)      malloc(gz_tiles);
-        tile_bvh_node_t *gc_bvh     = (tile_bvh_node_t *) malloc(gz_bvh);
-        float           *gc_compact = (float *)           malloc(gz_compact);
-        int             *gc_types   = (int *)             malloc(gz_types);
-        if(!gc_tiles || !gc_bvh || !gc_compact || !gc_types) {
-            /* Same fail-closed shape as the full rebuild below: this producer is the
-             * only supplier, so drop the whole entry and let the full path re-decide
-             * rather than publishing a half-built one. */
-            free(gc_tiles); free(gc_bvh); free(gc_compact); free(gc_types);
-            if(g_bvh)   myfree(g_bvh);
-            if(g_tiles) myfree(g_tiles);
-            glt_cache_free();
-        } else {
-            if(g_ntiles > 0)      memcpy(gc_tiles, g_tiles, (size_t)g_ntiles * sizeof(sfc_tile_t));
-            if(g_bvh_nnodes > 0)  memcpy(gc_bvh,   g_bvh,   (size_t)g_bvh_nnodes * sizeof(tile_bvh_node_t));
-            for(int p = 0; p < g_glt_cache.num_pool; p++) {
-                int j = g_glt_cache.pool[p];
-                gc_compact[p*4+0] = (float)P[j].Pos[0];
-                gc_compact[p*4+1] = (float)P[j].Pos[1];
-                gc_compact[p*4+2] = (float)P[j].Pos[2];
-                gc_compact[p*4+3] = (float)gx_policy_scaled_h(j, spec->radius_policy,
-                                                              spec->j_radius_scale, safety_factor);
-                gc_types[p] = (int)P[j].Type;
-            }
-            if(g_bvh)   myfree(g_bvh);
-            if(g_tiles) myfree(g_tiles);
-            g_glt_cache.tiles        = gc_tiles;
-            g_glt_cache.bvh          = gc_bvh;
-            g_glt_cache.compact_xyzh = gc_compact;
-            g_glt_cache.pool_types   = gc_types;
-            g_glt_cache.ntiles       = g_ntiles;
-            g_glt_cache.bvh_nnodes   = g_bvh_nnodes;
-            g_glt_cache.bvh_root     = g_bvh_nnodes - 1;
-            g_glt_cache.safety_factor_when_built  = safety_factor;
-            g_glt_cache.radius_policy_when_built  = spec->radius_policy;
-            g_glt_cache.j_radius_scale_when_built = spec->j_radius_scale;
-            g_glt_cache.Ti_when_built = All.Ti_Current;
-            g_glt_cache.needs_refit = 0;
-            g_glt_cache.caps |= GX_POOL_GEOMETRY;
-            /* Geometry was just seeded from current P[]; marks predating it are
-             * obsolete, exactly as after a full build. */
-            g_glt_dirty_clear_();
-            cache_match = 1;
-            geometry_rebuilt = 1;
-        }
-    }
     if(cache_match) {
         h_tiles        = g_glt_cache.tiles;
         h_pool         = g_glt_cache.pool;
@@ -1701,10 +1422,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         h_compact_xyzh = g_glt_cache.compact_xyzh;
         h_pool_types   = g_glt_cache.pool_types;
         from_cache = 1;
-        /* A geometry-only rebuild reused the pool but did real build work, so it is
-         * not a hit. Counting it as one would overstate the cache and hide the very
-         * cost this split exists to measure. */
-        if(geometry_rebuilt) g_glt_cache_misses++; else g_glt_cache_hits++;
+        g_glt_cache_hits++;
         /* Refit refreshes position-dependent geometry only; an identity-only
          * entry has none and its membership does not move with the particles. */
         if((g_glt_cache.caps & GX_POOL_GEOMETRY)
@@ -1855,11 +1573,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     /* Periodic flags / box sizes for the BVH walker. */
 
 
-    /* Matched producer selection: for ONEWAY callers the routed top-leaf
-     * discovery installs when top-leaf geometry is collectively available;
-     * broadcast is the fail-closed path for any spec that is not routing-eligible.
-     * Broadcast query gather is LAZY (ensure_broadcast_queries) — skipped when
-     * routed installs. */
+    /* Matched producer: the routed walk-export set, built below so it reads the
+     * same supply-cache snapshot as the rest of this call.  It is the only
+     * producer; a failure to build it is a controlled stop, not a fallback. */
     /* Routed set from the walk-export producer, built further below so it reads the same
      * supply-cache snapshot as the rest of this call. */
     char *matched_walk_export = NULL;
@@ -1870,52 +1586,13 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int   used_routed = 0;
 
 
-    /* walk_export_only (defined with the cache capabilities above) means: no consumer of the
-     * tile/BVH geometry runs on this call, so the broadcast walk is skipped and the
-     * geometry was never built.  On producer failure there is no geometry-based
-     * fallback left, which is why that case is a controlled stop rather than a
-     * silent switch to a walk whose inputs are absent.  Rank-uniform (spec
-     * constants), so ranks never split across the collectives below. */
-    if(!walk_export_only) {
-        /* Collective broadcast gather + walk.  (walk_export_only SKIPS this
-         * — that path installs at the producer below and its failure is caught by the controlled
-         * stop before Step 4, so matched is never NULL entering the count/pack loops.) */
-        ensure_broadcast_queries(&bcast_queries_available, local_queries, n_local_queries,
-                                 &all_q_counts, &q_disps, &all_queries, &total_queries);
-        matched = compute_matched_broadcast(all_queries, q_disps, all_q_counts,
-                                            h_compact_xyzh, h_tiles, ntiles,
-                                            h_pool, num_pool, h_pool_types, supply_mask,
-                                            h_bvh, bvh_root, search_mode);
-        /* Broadcast is the safety path — its alloc failing is terminal.  Drain
-         * COLLECTIVELY here, BEFORE Step 4 dereferences matched: a per-rank NULL
-         * must become an all-rank controlled stop, never a NULL walk/segfault. */
-        int bcast_fail_local = (matched == NULL) ? 1 : 0;
-        int bcast_fail_any   = 0;
-        MPI_Allreduce(&bcast_fail_local, &bcast_fail_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-        if(bcast_fail_any) {
-            if(bcast_fail_local) {
-                printf("ERROR: request-driven broadcast matched alloc failed on task %d.\n", ThisTask);
-                gizmo_request_controlled_stop(7705, "ghost_exchange (request-driven): broadcast matched alloc failed",
-                                              __FILE__, __LINE__, __FUNCTION__);
-            }
-            gizmo_exit_bad_stop_if_requested("ghost_exchange:broadcast_matched_alloc");
-        }
-    }
-
-    /* An eligible SYMM spec installs the routed set BELOW this print, so used_routed is
-     * not yet set for it; report the path that will actually be used or the parity grep
-     * reads "bcast" on a routed call. A producer failure after this point prints
-     * GX_R1_FALLBACK, which already invalidates the run as a routed timing arm. */
-    const char *qdist = (used_routed || gx_walk_export_eligible(spec)) ? "routed" : "bcast";
-
     /* Walk-export discovery: produce the routed set (sender export + bounded receiver
      * walk, collective-safe) and INSTALL it for an eligible spec via the shared
      * ownership-transfer.  Placed here so it reads the SAME g_glt_cache snapshot as the
      * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept_wrap_and_test), so the
-     * only way this set can differ from a full walk is routing COVERAGE, which is what
-     * the per-spec supply-band domination proof establishes. */
-    const int walk_export_install = gx_walk_export_eligible(spec);
-    if(walk_export_install && NTask > 1) {
+     * only way this set can differ from a full walk is routing COVERAGE, which the
+     * per-type node band establishes for every radius policy. */
+    {
         matched_walk_export = compute_matched_walk_export(spec, local_queries, n_local_queries,
                                                   num_pool, supply_mask, search_mode,
                                                   &walk_export_res);
@@ -1926,35 +1603,26 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             matched = matched_walk_export; matched_walk_export = NULL;
             used_routed = 1;
         } else if(ThisTask == 0) {
-            /* Report what ACTUALLY happens next, which depends on whether a reference
-             * set exists.  In production (walk_export_only) none does, so the stop below
-             * fires.  Under diag the broadcast walk ran, so the call continues on that
-             * set -- correct physics, but NOT the routed substrate, so the run is not a
-             * valid routed arm either way.
-             * The GX_R1_FALLBACK token is kept only because the current run-validity
-             * checks grep for it; it does not describe the mechanism.  Rename it to match
-             * the surrounding names, or fold it into the general import-failure
-             * reporting, once nothing greps for the old spelling. */
-            printf("[GX_R1_FALLBACK call=%d caller=%s reason=producer_status_%d -> %s; INVALID as a routed arm]\n",
-                   this_call, (spec->caller_name ? spec->caller_name : "?"), walk_export_res.status,
-                   walk_export_only ? "controlled stop (no correctness-proven fallback)"
-                                    : "continuing on the broadcast reference set");
+            /* No set was installed, so the stop below fires.  Reported here
+             * because the producer's own status says why it could not build one,
+             * which the stop cannot. */
+            printf("[ghost_exchange call=%d caller=%s: walk-export producer status %d, no set installed]\n",
+                   this_call, (spec->caller_name ? spec->caller_name : "?"), walk_export_res.status);
             fflush(stdout);
         }
         free(matched_walk_export); matched_walk_export = NULL;
     }
 
-    /* An eligible caller skipped the broadcast walk, so if the walk-export producer
-     * did not install (UNAVAILABLE/ALLOC_FAIL) there is no set to install and no
-     * substrate left that is known to be correct.  The tile/BVH and broadcast walks
-     * both read the same cached geometry, which has been measured producing wrong
-     * densities on a decomposition where the cached geometry went stale, so falling
-     * back to either would trade a visible failure for a silent one.  Stop instead.
-     * walk_export_only and the producer status are rank-uniform, so all ranks stop together.
-     * The dominant failure mode is envelope allocation under memory pressure; the
-     * recovery that fits it is a retry at reduced import padding inside this producer,
-     * which does not exist yet — until it does, the honest outcome is this stop. */
-    if(walk_export_only && matched == NULL) {
+    /* If the producer did not install (UNAVAILABLE/ALLOC_FAIL) there is no set and
+     * no substrate left that is known to be correct.  The walks that once served as
+     * fallbacks read cached geometry which has been measured producing wrong
+     * densities where that geometry went stale, so reviving one would trade a
+     * visible failure for a silent one.  Stop instead.  The producer status is
+     * rank-uniform, so all ranks stop together.  The dominant failure mode is
+     * envelope allocation under memory pressure; the recovery that fits it is a
+     * retry at reduced import padding inside this producer, which does not exist
+     * yet — until it does, the honest outcome is this stop. */
+    if(matched == NULL) {
         gizmo_request_controlled_stop(7723,
             "ghost_exchange: walk-export producer unavailable and no correctness-proven fallback exists",
             __FILE__, __LINE__, __FUNCTION__);
@@ -2129,18 +1797,12 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
            The all-rank query total exists only on the broadcast path, where the queries are
            gathered; it is reported when it is real and omitted when it is not, rather than
            printed as a placeholder. */
-        char all_rank_queries[64];
-        all_rank_queries[0] = '\0';
-        if(!used_routed) {
-            snprintf(all_rank_queries, sizeof(all_rank_queries), ", %d across all ranks", total_queries);
-        }
-        PRINT_STATUS("Ghost exchange (request-driven, %s, %s, qdist=%s): rank 0 holds %d local + %d ghost "
-                     "from %d queries%s; supply pool %d  [%.4f s]",
+        PRINT_STATUS("Ghost exchange (request-driven, %s, %s): rank 0 holds %d local + %d ghost "
+                     "from %d queries; supply pool %d  [%.4f s]",
                      (spec->caller_name ? spec->caller_name : "?"),
                      (search_mode == NGB_SEARCH_ONEWAY ? "ONEWAY" : "SYMMETRIC"),
-                     (used_routed ? "routed" : "bcast"),
                      NumPart_before_ghost, NumGhostParticles,
-                     n_local_queries, all_rank_queries, num_pool, t_ghost_total);
+                     n_local_queries, num_pool, t_ghost_total);
     }
 
     /* Diagnostic: ghost composition + import-waste ratio (should be ~0% for
@@ -2157,7 +1819,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     myfree(send_count);
     free(send_home_idx);
     free(matched);
-    free(all_queries); free(q_disps); free(all_q_counts); free(local_queries);
+    free(local_queries);
     (void)from_cache;
     return GHOST_EXCHANGE_COMPLETED;
 }
