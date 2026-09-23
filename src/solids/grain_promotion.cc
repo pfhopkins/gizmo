@@ -6,7 +6,6 @@
 
 #include "../declarations/allvars.h"
 #include "../core/wakeup_sidecar.h"
-#include "../mesh/gpu_neighbor_list.h"   /* gpu_sidx_notify_type_changed */
 #include "grain_promotion.h"
 
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
@@ -43,7 +42,6 @@ void grain_promotion_parent_routine(void)
         /* Initialize CellP BEFORE type change */
         grain_promotion_init_cellp(i);
 
-        gpu_sidx_notify_type_changed((int)P[i].Type, 0);
         P[i].Type = 0;
         TimeBinCountGas[P[i].TimeBin]++;
         P[i].wakeup = -1; wakeup_sidecar_mark(i);

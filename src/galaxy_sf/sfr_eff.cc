@@ -8,7 +8,6 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
-#include "../mesh/gpu_neighbor_list.h"   /* gpu_sidx_notify_type_changed */
 #include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #define GRAVTREE_SOURCE_HOST_OWNER_TU  /* expose the source-helper core bodies (host-inline) for the wrappers below */
@@ -458,9 +457,9 @@ void star_formation_parent_routine(void)
                         /* make a sink particle */
                         P[i].Mass = CellP[i].Mass; /* sync mass before type conversion */
 #ifdef HYDRO_MULTIFLUID_DM
-                        if(P[i].FluidType == FLUID_DM) { gpu_sidx_notify_type_changed((int)P[i].Type, 3); P[i].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
+                        if(P[i].FluidType == FLUID_DM) { P[i].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
-                        { gpu_sidx_notify_type_changed((int)P[i].Type, 5); P[i].Type = 5; }
+                        { P[i].Type = 5; }
                         TimeBinCountGas[P[i].TimeBin]--;
                         num_sink_formed++;
                         Stars_converted++;
@@ -602,9 +601,9 @@ void star_formation_parent_routine(void)
                         {
                             /* P[i_star].Mass already holds the spawned-star mass (set above); CellP[i_star] is OOB for the spawned branch (i_star may be >= MaxPartGas), so do not round-trip through it */
 #ifdef HYDRO_MULTIFLUID_DM
-                            if(P[i_star].FluidType == FLUID_DM) { gpu_sidx_notify_type_changed((int)P[i_star].Type, 3); P[i_star].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
+                            if(P[i_star].FluidType == FLUID_DM) { P[i_star].Type = 3; } else /* dark fluid -> inert collisionless Type=3 */
 #endif
-                            { gpu_sidx_notify_type_changed((int)P[i_star].Type, 5); P[i_star].Type = 5; }
+                            { P[i_star].Type = 5; }
                             num_sink_formed++;
                             P[i_star].Sink_Mass = DMAX(All.SeedSinkMass, DMIN(0.5*P[i_star].Mass , 0.01/UNIT_MASS_IN_SOLAR)); // if desired to make this appreciable fraction of particle mass, please do so in params file
                             P[i_star].Sink_Formation_Mass = P[i_star].Mass; // save the mass we had at the time of sink formation, because we will use this later to understand how the sink has grown
@@ -679,9 +678,9 @@ void star_formation_parent_routine(void)
 #endif // SINGLE_STAR_SINK_DYNAMICS
                         /* P[i_star].Mass already holds the intended mass; CellP[i_star] is OOB for the spawned branch (i_star may be >= MaxPartGas), so do not round-trip through it */
 #ifdef HYDRO_MULTIFLUID_DM
-                        if(P[i_star].FluidType == FLUID_DM) { if(P[i_star].Type != 3) {gpu_sidx_notify_type_changed((int)P[i_star].Type, 3); P[i_star].Type = 3;} } else /* dark fluid -> inert collisionless Type=3 */
+                        if(P[i_star].FluidType == FLUID_DM) { if(P[i_star].Type != 3) {P[i_star].Type = 3;} } else /* dark fluid -> inert collisionless Type=3 */
 #endif
-                        { if(P[i_star].Type != 5) {gpu_sidx_notify_type_changed((int)P[i_star].Type, 4); P[i_star].Type = 4;} } // if we didn't set to type 5 above, default to type 4
+                        { if(P[i_star].Type != 5) {P[i_star].Type = 4;} } // if we didn't set to type 5 above, default to type 4
 
 #ifdef SINK_SEED_FROM_LOCALGAS
                     } /* closes else for decision to make a sink particle */

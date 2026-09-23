@@ -356,7 +356,6 @@ void run(void)
              * get their active list from reconstruct_timebins(), so neither call belongs above. */
             gizmo_full_drift_to(All.Ti_Current);
             make_list_of_active_particles();
-            gx_owned_tile_index_note_tree_rebuilt();
             gravity_clear_pending_motion_bounds();
             reconstructed_tree = 1;
         }

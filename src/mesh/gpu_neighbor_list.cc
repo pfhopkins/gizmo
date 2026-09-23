@@ -1847,6 +1847,7 @@ struct GxOwnedTileIndex {
     int num_local_at_build = 0;
     unsigned int mask = 0;
     uint64_t     pool_epoch_at_build = 0;
+    integertime  full_drift_ti_at_build = -1;
     int          valid = 0;
     int          held = 0;               /* inside a fused call: never released */
     unsigned long long last_used = 0;    /* for choosing what to evict */
@@ -1874,56 +1875,18 @@ void gx_owned_tile_index_release_all(void)
     for(int k = 0; k < GX_OWNED_TILE_INDEX_MAX_RESIDENT; k++) {gx_owned_tile_index_free(&g_owned_tile_index[k]);}
 }
 
-void gx_owned_tile_index_note_tree_rebuilt(void)
-{
-    /* Every position is current at a tree build, so a fresh index would carry
-     * the tightest boxes it can; releasing here makes the next use build one. */
-    gx_owned_tile_index_release_all();
-}
-
-/* A particle whose type changed in place may have ENTERED a pool it was not
- * built into; a member that LEFT is harmless, because every walk re-tests the
- * type at the leaf.  Every in-place type writer reports here, and the cache
- * whose mask admits the new type but not the old is dropped -- the step's
- * neighbour-list index and the owned tile indexes alike. */
-void gpu_sidx_notify_type_changed(int old_type, int new_type)
-{
-    if(old_type == new_type || new_type < 0 || new_type >= TILE_NUM_PTYPES) {return;}
-    const unsigned int was = (old_type >= 0 && old_type < TILE_NUM_PTYPES) ? (1u << (unsigned int)old_type) : 0u;
-    const unsigned int now = 1u << (unsigned int)new_type;
-    for(int k = 0; k < GX_OWNED_TILE_INDEX_MAX_RESIDENT; k++) {
-        struct GxOwnedTileIndex *ix = &g_owned_tile_index[k];
-        if(ix->valid && (ix->mask & now) && !(ix->mask & was)) {gx_owned_tile_index_free(ix);}
-    }
-    gpu_spatial_index_t *steps[2] = {&g_step_sidx, &g_step_sidx_alltypes};
-    for(int k = 0; k < 2; k++) {
-        gpu_spatial_index_t *idx = steps[k];
-        if(idx->valid && idx->cache_tbm >= 0 && ((unsigned int)idx->cache_tbm & now) && !((unsigned int)idx->cache_tbm & was)) {
-            gpu_spatial_index_free(idx);
-            gpu_compact_xyzh_mark_h_dirty_all();
-        }
-    }
-}
-
 /* Does this index still describe the rank?  Membership is fixed by the mask
  * over a slot layout that changes only through rearrangement (the pool epoch)
- * or growth.  Growth without a rearrangement (a spawned star behind a gas
- * index) is a change only if the appended slots hold members, which is a scan
- * of the appended range alone.  A particle changing TYPE in place is reported
- * by its writer (gpu_sidx_notify_type_changed) and invalidates the index here
- * when the new type is one the mask admits and the old one was not.
- *
- * Positions are NOT part of this test: the boxes are motion bounds, valid for
- * as long as the membership holds.  When they should be tightened is a
- * separate decision -- the run loop asks for a fresh build at the tree
- * rebuild (gx_owned_tile_index_note_tree_rebuilt), so the bounds age no longer
- * than the tree's own -- and never a full drift, which happens for outputs and
- * statistics without changing what a box must cover. */
+ * or growth; a full drift has made every position current, and a fresh build
+ * then resets the motion bounds to the tight boxes it can see.  Growth without
+ * a rearrangement (a spawned star behind a gas index) is a change only if the
+ * appended slots hold members, which is a scan of the appended range alone. */
 static int gx_owned_tile_index_current(const struct GxOwnedTileIndex *ix, unsigned int mask, int num_local,
                                        const struct particle_data *P)
 {
     if(!ix->valid || ix->mask != mask) {return 0;}
     if(ix->pool_epoch_at_build != g_sidx_pool_epoch) {return 0;}
+    if(ix->full_drift_ti_at_build != gizmo_full_drift_ti()) {return 0;}
     if(num_local < ix->num_local_at_build) {return 0;}
     if(num_local > ix->num_local_at_build) {
         const int appended = num_local - ix->num_local_at_build;
@@ -1994,6 +1957,7 @@ static int gx_owned_tile_index_build(struct GxOwnedTileIndex *ix, unsigned int m
     ix->ntiles = ntiles; ix->nnodes = nnodes; ix->bvh_root = (nnodes > 0) ? nnodes - 1 : -1;
     ix->num_pool = num_pool; ix->num_local_at_build = num_local; ix->mask = mask;
     ix->pool_epoch_at_build = g_sidx_pool_epoch;
+    ix->full_drift_ti_at_build = gizmo_full_drift_ti();
     ix->valid = 1;
     return 0;
 }

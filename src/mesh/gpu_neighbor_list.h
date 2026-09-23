@@ -233,9 +233,6 @@ void gpu_compact_xyzh_mark_h_dirty_all(void);
 void gpu_sidx_notify_ghost_imported(int start, int count);
 void gpu_sidx_notify_ghost_cleanup(void);
 void gpu_sidx_notify_pool_changed(void);
-/* A particle's type was changed in place (not through a rearrangement): the
- * caches whose mask now admits it and did not before are dropped. */
-void gpu_sidx_notify_type_changed(int old_type, int new_type);
 
 #ifdef __cplusplus
 extern "C" {
@@ -489,19 +486,12 @@ void gx_owned_tile_index_end_call(void);
 struct GxOwnedTileRaise;
 /* The raise objects of every resident index (none of them may be mid-build).
  * `n` says how many; a zero means nothing is live and the kick pass is a no-op. */
-/* One index per supply mask in use; the loops that can take a fused walk use
- * gas, dark matter, every type, and the grain types, so four covers a
- * mixed-physics step. A further mask evicts the one used longest ago between
- * calls and pays a rebuild, which the accounting shows. Not a knob. */
-#define GX_OWNED_TILE_INDEX_MAX_RESIDENT 4
+#define GX_OWNED_TILE_INDEX_MAX_RESIDENT 3
 int  gx_owned_tile_index_raise_targets(struct GxOwnedTileRaise *out, int max_out);
 
 /* Released at shutdown before Kokkos is finalized, and by the full invalidate
  * when the particle layout changes. */
 void gx_owned_tile_index_release_all(void);
-/* Asked for by the run loop at a tree rebuild without a decomposition: the
- * motion bounds then age no longer than the tree's own. */
-void gx_owned_tile_index_note_tree_rebuilt(void);
 
 /* Raise the motion bound of particles idx[0..n) in every structure that keeps
  * one: the gravity tree's nodes (with the top-level part carried to the other
