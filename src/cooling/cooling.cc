@@ -2829,7 +2829,6 @@ void gizmo_kokkos_finalize(void)
        This is the single chokepoint every shutdown path already routes through. */
     gx_touched_set_release();
     gx_motion_target_release();
-    gx_owned_tile_index_release_all();
     gpu_node_dirty_release();
     Kokkos::finalize();
 }

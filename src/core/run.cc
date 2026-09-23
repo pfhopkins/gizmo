@@ -378,10 +378,6 @@ void run(void)
                  * only at the next flush: a loop later in that same step decides
                  * its exports against the older bound. */
                 gravity_flush_pending_motion_bounds();
-                /* The neighbour indexes a fused loop discovers in carry the same
-                 * kind of motion bound as the tree's nodes, raised from the same
-                 * closed-out active list. */
-                nlr_mode_d_note_active_motion();
                 cpu_charge_child(CPU_FORCE_UPDATE_TREE,
                                  cpu_minus_children(timediff(t_tree_update_start, my_second()), child0_tree_update));
             }

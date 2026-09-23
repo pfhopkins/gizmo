@@ -323,33 +323,6 @@ void gx_motion_target_mark(const struct GxMotionTargetSet &ts, int j)
     const int slot = Kokkos::atomic_fetch_add(ts.counter, 1);
     if(slot < ts.capacity) {ts.list[slot] = j;}
 }
-/* Raise the motion bound of the tile and every node above it for particle i,
- * whose speed bound is `vmax`, in an owned tile index (gpu_neighbor_list.h).
- * Device- and host-callable; concurrent raises into one tile or one ancestor
- * are atomic maxima, so their order does not matter. */
-struct GxOwnedTileRaise {
-    sfc_tile_t      *tiles;
-    tile_bvh_node_t *bvh;
-    const int       *tile_of;          /* [num_local_at_build]: particle -> tile, or -1 */
-    const int       *leaf_of_tile;     /* [ntiles]: tile -> its BVH leaf node */
-    const int       *parent;           /* [nnodes]: node -> parent, or -1 at the root */
-    int              num_local_at_build;
-
-    KOKKOS_INLINE_FUNCTION
-    void raise(int i, double vmax) const
-    {
-        if(i < 0 || i >= num_local_at_build) {return;}
-        const int t = tile_of[i];
-        if(t < 0) {return;}
-        Kokkos::atomic_max(&tiles[t].vmax, vmax);
-        /* A node already holding at least this bound has ancestors that do too,
-         * since every node's bound is the maximum over its subtree. */
-        for(int no = leaf_of_tile[t]; no >= 0; no = parent[no]) {
-            if(Kokkos::atomic_load(&bvh[no].vmax) >= vmax) {break;}
-            Kokkos::atomic_max(&bvh[no].vmax, vmax);
-        }
-    }
-};
 #endif
 
 #endif /* SFC_TILES_FUNCTIONS_H */
