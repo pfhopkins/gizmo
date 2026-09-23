@@ -143,32 +143,6 @@ struct GxMotionTargetSet {
     unsigned int  gen      = 0;
 };
 
-/* The owned tile index as a walk sees it (built and kept by
- * gpu_neighbor_list.cc).  Plain data, captured by value into a kernel; the
- * tile and node arrays are declared in sfc_tiles.h, which includes this file,
- * so only their names are needed here.  A negative root is an empty index. */
-struct sfc_tile_t;
-struct tile_bvh_node_t;
-struct GxOwnedTileView {
-    const struct sfc_tile_t      *tiles    = nullptr;
-    const struct tile_bvh_node_t *bvh      = nullptr;
-    const int                    *pool     = nullptr;
-    int                           bvh_root = -1;
-    int                           local_particle_slots = -1;
-    struct DriftKickTableView     drift_tables{};
-    int                           drift_tables_ok = 0;
-    integertime                   ti_now = 0;
-};
-
-/* What a fused (Mode D) walk discovers neighbours in.  The runner prepares one
- * per call (per subgroup mask when a loop has several) and every walk of that
- * call reads it; which of the two structures is walked is decided once, at
- * compile time, in the runner.  Both are plain data. */
-struct NlrModeDDiscovery {
-    struct GxDeviceTreeView tree{};
-    struct GxOwnedTileView  tiles{};
-};
-
 /* The distinct set of local particles a fused walk reaches, so that only those
  * have to be brought current rather than the whole rank.
  *

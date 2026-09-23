@@ -1793,9 +1793,7 @@ struct NlrIterDriver {
      * answer decides WHICH PATH the call takes, every rank has to reach the same
      * verdict, and by the time a subgroup is being dispatched that decision has
      * already been acted on. */
-    /* One per subgroup: the tree half is the same object in each, the tile
-     * half is the index for that subgroup's supply mask. */
-    std::vector<NlrModeDDiscovery> mode_d_discovery;
+    GxDeviceTreeView mode_d_tree{};
 
     /* Per-subgroup state (DYNAMICALLY SIZED to args.num_subgroups).
      *

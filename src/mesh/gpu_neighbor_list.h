@@ -469,8 +469,17 @@ void gx_touched_set_release(void);
  * one residence, as the gravity tree's mirror is kept.
  * ========================================================================== */
 
-/* The view a walk captures (GxOwnedTileView) is declared with the tree view in
- * neighbor_list.h, since the runner holds both. */
+/* What a walk needs.  Plain data, captured by value into a kernel. */
+struct GxOwnedTileView {
+    const sfc_tile_t      *tiles    = nullptr;
+    const tile_bvh_node_t *bvh      = nullptr;
+    const int             *pool     = nullptr;
+    int                    bvh_root = -1;    /* -1: an empty index, walks nothing */
+    int                    local_particle_slots = -1;
+    struct DriftKickTableView drift_tables{};
+    int                    drift_tables_ok = 0;
+    integertime            ti_now = 0;
+};
 
 /* Ready the index for `mask` on this rank and describe it.  Returns 0 with
  * `out` filled, or 1 with the index unavailable (out of memory, reported), in
