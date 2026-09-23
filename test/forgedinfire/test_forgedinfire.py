@@ -12,7 +12,7 @@ magnetic energy density, radiation energy density, and thermal energy density.
 
 import pytest
 import numpy as np
-from os import path, system, chdir, environ
+from os import path, chdir
 from os.path import isfile
 from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
@@ -25,6 +25,7 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     get_final_snapshot,
+    run_test,
 )
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -182,13 +183,12 @@ def run_forgedinfire_test(test_name, num_mpi_ranks, num_omp_threads):
         get_cooling_tables(".")
     if not isfile("TREECOOL"):
         copy2("../../cooling/TREECOOL", "TREECOOL")
-    if num_omp_threads > 0:
-        environ["OMP_NUM_THREADS"] = str(num_omp_threads)
-    paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus "
-           f"./GIZMO {paramsfile} 0 "
-           f"1>test_{test_name}.out 2>test_{test_name}.err")
-    chdir("../../")
+    # Through the harness runner, not a bare os.system: that gave this run no timeout, so a GIZMO
+    # hang here (seen at the first step, 2 ranks) held a whole sweep until its walltime.
+    try:
+        run_test(test_name, num_mpi_ranks, num_omp_threads)
+    finally:
+        chdir("../../")
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))

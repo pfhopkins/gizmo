@@ -170,13 +170,17 @@ def test_shu_M120_snapshot_restart():
     timebins = int(re.search(r"#define\s+TIMEBINS\s+(\d+)", open(typedefs).read()).group(1))
     dt_run = 3.0e-5                       # about a quarter of TimeBetSnapshot: dozens of steps up the ladder, a few seconds
     tick = dt_run / 2 ** timebins         # Timebase_interval of the restarted run (TimeBegin is rebased to the snapshot time)
+    # With so short a window the tick is tiny, and a physical request above 2^63 ticks = 8 dt_run
+    # (the parent run's MaxSizeTimestep allows ~50) overflows the integer conversion in get_timestep,
+    # which then misreads it as a sub-floor step and aborts. Cap the step at a quarter of the window.
     cwd = getcwd()
     try:
         chdir("test/shu_M120/")
         run_test(test_name, default_mpi_ranks(), default_omp_threads(), timeout=300, restart_flag=2,
                  param_overrides={"InitCondFile": "output/" + path.basename(snap).replace(".hdf5", ""),
                                   "OutputDir": "output_restart", "TimeMax": t0 + dt_run,
-                                  "TimeBetSnapshot": dt_run, "MinSizeTimestep": 40 * tick})
+                                  "TimeBetSnapshot": dt_run, "MaxSizeTimestep": dt_run / 4,
+                                  "MinSizeTimestep": 40 * tick})
         log = open("test_shu_M120.out").read()
     finally:
         chdir(cwd)
