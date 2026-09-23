@@ -1503,25 +1503,34 @@ double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct par
     if(dEdt < 0)
     {
 	scalefac = 0.9;
+	double Tdust_floor = 2.73 / All.cf_atime; /* CMB temperature: dust cannot cool below the ambient radiation bath, so the downward bracket stops here */
 	T_upper = DMIN(Tmax,Tdust), dEdt_upper = dEdt_guess; 
-	while(dEdt<0) {
-	    Tdust *= scalefac; 
+	while(dEdt<0 && Tdust > Tdust_floor && n_iter < MAXITER) {
+	    Tdust *= scalefac; Tdust = DMAX(Tdust,Tdust_floor);
 	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
         if(dEdt==0){return Tdust;}
 	    scalefac *= 0.9; 
 	    n_iter++;
 	}
+	if(dEdt < 0)
+	{   /* no downward bracket: the equilibrium sits at or below the floor, or the cap was hit. A negative
+	       absorption rate has no root at all, and the unguarded loop then shrank Tdust to zero and spun
+	       forever (every rank of a FIRE RT run stuck in its first kick). Return the floored value. */
+	    if(n_iter >= MAXITER) {PRINT_WARNING("Dust temperature bracketing (cooling side) failed to converge: ID=%lld iter=%d T=%g Tdust=%g Tfloor=%g dEdt=%g absorption_rate=%g", (long long)pp[i].ID, n_iter, T, Tdust, Tdust_floor, dEdt, dust_absorption_rate);}
+	    return DMAX(Tdust,Tdust_floor);
+	}
 	T_lower = Tdust, dEdt_lower = dEdt;
     } else {
 	T_lower = Tdust, dEdt_lower = dEdt_guess;
 	scalefac = 1.1;
-	while(dEdt>0 && Tdust < Tmax) {
+	while(dEdt>0 && Tdust < Tmax && n_iter < MAXITER) {
 	    Tdust *= scalefac; Tdust = DMIN(Tdust,Tmax);
 	    dEdt = dust_dEdt(i,T,Tdust,dust_absorption_rate,fdustmet_init, pp, cell);
         if(dEdt==0){return Tdust;}
 	    scalefac *= 1.1; 
 	    n_iter++;
 	    }
+	    if(n_iter >= MAXITER && dEdt > 0) {PRINT_WARNING("Dust temperature bracketing (heating side) failed to converge: ID=%lld iter=%d T=%g Tdust=%g dEdt=%g", (long long)pp[i].ID, n_iter, T, Tdust, dEdt);}
 	    T_upper = Tdust, dEdt_upper = dEdt;
     }     
     if(T_upper==Tmax && dEdt_upper > 0) {return Tmax;}
