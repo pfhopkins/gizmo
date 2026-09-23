@@ -439,20 +439,19 @@ void gx_touched_set_drift_and_mark(integertime time1);
    domain epoch: the storage is persistent by design. */
 void gx_touched_set_release(void);
 
-/* Raise the motion bound of particles idx[0..n) in every structure that keeps
- * one: the gravity tree's nodes (with the top-level part carried to the other
- * ranks at the next tree-update phase) and the resident owned tile indexes.
- * Called by whoever changed a particle's velocity outside the kick, with the
- * list of particles it wrote; the cost is the list, never the rank. */
+/* Raise the motion bound of particles idx[0..n) in the gravity tree's nodes,
+ * with the top-level part carried to the other ranks at the next tree-update
+ * phase.  Called by whoever changed a particle's velocity outside the kick,
+ * with the list of particles it wrote; the cost is the list, never the rank. */
 void gizmo_motion_bound_raise(const int *idx, int n);
 
 /* The motion-target set (GxMotionTargetSet).  The runner opens a generation
  * per call for a loop that writes neighbour velocities, the kernels mark into
  * it, and `consume` raises the marked set and closes the generation.  The
  * host mark serves units without Kokkos (the reverse writeback landing on the
- * owner; a host module's own loop); the device mark is in
- * sfc_tiles_functions.h.  `armed` is set by the runner around a loop's
- * reverse writeback so the apply loop knows to mark the deltas' targets. */
+ * owner; a host module's own loop); the device mark is below.  `armed` is set
+ * by the runner around a loop's reverse writeback so the apply loop knows to
+ * mark the deltas' targets. */
 int  gx_motion_target_ensure(int local_particle_slots);
 void gx_motion_target_begin_call(void);
 struct GxMotionTargetSet gx_motion_target_view(void);
@@ -461,5 +460,19 @@ void gx_motion_target_consume(void);
 void gx_motion_target_set_armed(int armed);
 int  gx_motion_target_armed(void);
 void gx_motion_target_release(void);
+
+#if defined(KOKKOS_VERSION)   /* device atomics: only a unit that carries Kokkos can compile this */
+/* Mark owned particle j as a motion target for this call.  Exactly one marker
+ * appends it, however many pairs reach it; an index outside the owned range
+ * (a ghost copy) is not this rank's to raise and is ignored. */
+KOKKOS_INLINE_FUNCTION
+void gx_motion_target_mark(const struct GxMotionTargetSet &ts, int j)
+{
+    if(!ts.seen || j < 0 || j >= ts.capacity) {return;}
+    if(Kokkos::atomic_exchange(&ts.seen[j], ts.gen) == ts.gen) {return;}
+    const int slot = Kokkos::atomic_fetch_add(ts.counter, 1);
+    if(slot < ts.capacity) {ts.list[slot] = j;}
+}
+#endif
 
 #endif /* GPU_NEIGHBOR_LIST_H */
