@@ -157,7 +157,6 @@ struct MechFBSpec {
     static constexpr unsigned int            neighbor_type_mask = (1u << 0);   /* gas only */
     static constexpr mode_b_radius_policy_t  radius_policy      = MODE_B_RADIUS_DEFAULT;
 
-    
     /* Write policy. j-side writes happen via uses_ghost_writeback bundle
      * (orthogonal to write_pattern per WritePattern enum docstring). */
     static constexpr WritePattern   write_pattern   = WritePattern::ActiveReduceOnly;
