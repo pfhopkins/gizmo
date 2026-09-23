@@ -490,9 +490,6 @@ void init(void)
         if(P[i].Type == 5)
         {
             count_holes++;
-            P[i].Sink_TimeBinGasNeighbor = TIMEBINS; /* "no gas neighbour seen yet", the density loop's own convention. Not a snapshot field, so a sink
-               read from an IC or snapshot otherwise starts at 0 = the finest bin, and the dt_ngbs coupling in get_timestep would request
-               ~4 ticks for it on the first step, which is below any real MinSizeTimestep */
             if(RestartFlag == 0)
             {
                 P[i].Sink_Mass = All.SeedSinkMass;
