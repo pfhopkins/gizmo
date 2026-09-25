@@ -144,6 +144,9 @@ void refresh_old_acceleration_for_tree_opening(void)
     for(int i = 0; i < NumPart; i++) {P[i].OldAcc = P[i].OldAcc_LatestWalk;}
 }
 
+
+
+
 void gravity_tree(void)
 {
     /* initialize variables */
@@ -220,6 +223,7 @@ void gravity_tree(void)
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */
         TreeReconstructFlag = 0;
         TreeMomentsStaleFlag = 0;
+        TypePresenceMaskTrusted = 1;   /* the build recomputed the per-node type bits exactly */
         All.NumForcesSinceLastTreeBuild = 0;   /* the counter this build answers */
         PRINT_STATUS(" ..Tree construction done.");
     }
@@ -237,6 +241,7 @@ void gravity_tree(void)
             gizmo_exit_bad_stop_if_requested("gravtree:after_refresh_moments"); /* drain refresh bad-stop before any gravity walk */
             CPU_Step[CPU_TREEBUILD] += measure_time();
             TreeMomentsStaleFlag = 0;
+            TypePresenceMaskTrusted = 1;   /* the refresh recomputed the per-node type bits exactly */
         }
     }
 

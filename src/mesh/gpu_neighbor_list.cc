@@ -31,6 +31,7 @@
  * second interpolator answering the same question. Null on failure, which simply
  * disables widening -- the walk then opens on the stored length, and the caller's
  * certification is what makes that legal. */
+
 static struct DriftKickTableView g_walk_drift_tables;
 static double *g_walk_drift_storage = NULL;
 static int g_walk_drift_tables_ok = 0;
@@ -1426,6 +1427,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
                        search_radius_factor, symlist_raw_radii.data(), NULL, "symlist",
                        search_radius_factor /* j_kernel_radius_scale */);
 
+
     /* Copy CSR into mymalloc neighbor_list_t */
     out->num_active = num_active;
     out->total_pairs = gpu_nl.total_pairs;
@@ -1441,6 +1443,7 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
             d_neighbors(gpu_nl.neighbors, (size_t)gpu_nl.total_pairs);
         Kokkos::deep_copy(h_neighbors, d_neighbors);
     }
+
 
     /* Free GPU temporaries (keep tiles/BVH alive — owned by g_step_sidx).
      * Arena is intentionally not released — subsequent gradient/hydro callers
@@ -1577,6 +1580,7 @@ struct GxRecvEmitPairs {
 KOKKOS_INLINE_FUNCTION
 static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
                             unsigned int supply_mask,
+                            int type_mask_trusted,
                             const Vec3<MyFloat> *node_center,
                             const MyFloat *node_len,
                             const int *node_sibling,
@@ -1594,6 +1598,8 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
     tree.node_sibling   = node_sibling;
     tree.node_nextnode  = node_nextnode;
     tree.node_bitflags  = node_bitflags;
+    tree.type_mask_trusted = type_mask_trusted;   /* read on the host; a device read of the
+                                                   * host global would be silently wrong */
     tree.nextnode_aux   = nextnode_aux;
     tree.node_base      = tree_base;
     tree.particle_slots = tree_slots;
@@ -1609,7 +1615,7 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
     emit.cap         = cap;
     emit.n_found     = 0;
 
-    gx_device_tree_walk(env, tree, emit, anomaly);
+    gx_device_tree_walk(env, tree, emit, anomaly, supply_mask);
     return emit.n_found;
 }
 
@@ -1726,6 +1732,7 @@ int gx_device_tree_view_build(struct GxDeviceTreeView *out, int local_particle_s
     out->node_capacity        = node_capacity;
     out->foreign_base         = foreign_base;
     out->pseudo_start         = pseudo_start;
+    out->type_mask_trusted    = TypePresenceMaskTrusted;
     return 0;
 }
 
@@ -2137,9 +2144,13 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     GIZMO_GPU_ENSURE_ALL_FRESH();
     (void)radius_policy; (void)j_reach_scale;
 
-    /* Symmetric search needs the per-type node bands, which are not mirrored to
-     * the device yet; that is the next stage of this work.  Until then the host
-     * walk answers those callers. */
+    /* ONEWAY only.  A symmetric search accepts a pair on the NEIGHBOUR's radius as
+     * well as the query's, so it has to bound, per node, how far the particles of
+     * each type below it reach -- Extnodes[].hmax_per_type[].  Those bands are host
+     * AoS only.  The per-node type-presence bits the device walk does carry answer
+     * whether a type is there, which is enough to skip a node but not to decide
+     * whether one of its particles reaches back, so they do not close this gap.
+     * Symmetric callers are answered by the host walk. */
     if(search_mode != NGB_SEARCH_ONEWAY) {return 1;}
     if(n_env <= 0 || num_pool <= 0 || !matched) {return 1;}
 
@@ -2322,8 +2333,9 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             const struct gx_recv_leaf_t *leaf_v = leaf_d;
             int *scratch_v = scratch_d; int *counts_v = counts_d; int *anom_v = anomaly_d;
             const int stride = GX_RECV_STRIDE;
+            const int type_mask_trusted_v = TypePresenceMaskTrusted;   /* captured by value */
             Kokkos::parallel_for("gx_recv_walk", nb, KOKKOS_LAMBDA(int b) {
-                counts_v[b] = gx_recv_walk_one(env_v[b], supply_mask,
+                counts_v[b] = gx_recv_walk_one(env_v[b], supply_mask, type_mask_trusted_v,
                                                node_center, node_len, node_sibling,
                                                node_nextnode, node_bitflags, nextnode_aux,
                                                leaf_v,
@@ -2388,6 +2400,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                 int64_t *offsets_v = offsets_d; int *pairs_v = pairs_d; int *anom_v = anomaly_d;
                 const int stride = GX_RECV_STRIDE;
                 const int rr0 = r0;
+                const int type_mask_trusted_v = TypePresenceMaskTrusted;   /* captured by value */
                 Kokkos::parallel_for("gx_recv_compact", r1 - r0, KOKKOS_LAMBDA(int t) {
                     const int b = rr0 + t;
                     const int n = counts_v[b];
@@ -2399,7 +2412,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                     } else {
                         /* Overflowed its scratch slot: re-walk straight into the
                          * final position. */
-                        gx_recv_walk_one(env_v[b], supply_mask,
+                        gx_recv_walk_one(env_v[b], supply_mask, type_mask_trusted_v,
                                          node_center, node_len, node_sibling,
                                          node_nextnode, node_bitflags, nextnode_aux,
                                          leaf_v,

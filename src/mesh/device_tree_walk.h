@@ -82,7 +82,7 @@
 
 #include "neighbor_list.h"              /* gx_export_envelope_t, GxDeviceTreeView */
 #include "ghost_exchange_functions.h"   /* the canonical-wrap overlap predicate */
-#include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL */
+#include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, NODE_TYPE_PRESENCE */
 #include "../core/timestep_functions.h" /* get_drift_factor_impl, DriftKickTableView:
                                        * the SAME interpolator the node sweep uses
                                        * (gpu_force_drift.cc:184), not a second one */
@@ -121,7 +121,8 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                               const int *start_nodes, int n_start,
                               const GxDeviceTreeView &tree,
                               LeafPolicy &leaf_policy,
-                              int *anomaly)
+                              int *anomaly,
+                              unsigned int prune_type_mask)
 {
     /* An unfilled view would otherwise answer short in silence, which is the one
      * way this walk can be wrong without anything looking wrong. */
@@ -196,11 +197,23 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                     }
                 }
                 const double hw = 0.5 * len_eff;
-                const int do_open =
+                int do_open =
                     gx_extended_overlap_wrap_and_test((double)tree.node_center[kn][0] - qx,
                                                       (double)tree.node_center[kn][1] - qy,
                                                       (double)tree.node_center[kn][2] - qz,
                                                       hw, hw, hw, reach);
+                /* TYPE PRUNE.  A node holding none of the types this loop consumes has nothing for
+                 * it however close it is, so it is skipped whole rather than descended to have
+                 * every leaf rejected one at a time.  The same test the leaf already applies,
+                 * moved up to where it can save the descent.
+                 *
+                 * It reads nothing that drifts -- not a position, not a time, not the touched set
+                 * -- so a recording walk and the evaluating walk that follows it make the identical
+                 * decision at every node.  That is what lets it be added to a pair of walks whose
+                 * agreement about which leaves they reach is a correctness requirement. */
+                if(do_open && prune_type_mask && tree.type_mask_trusted) {
+                    if(!(NODE_TYPE_PRESENCE(tree.node_bitflags[kn]) & prune_type_mask)) {do_open = 0;}
+                }
                 if(do_open) {
                     const int child = tree.node_nextnode[kn];
                     /* An imported foreign subtree holds no locally-owned
@@ -226,11 +239,12 @@ KOKKOS_INLINE_FUNCTION
 void gx_device_tree_walk(const struct gx_export_envelope_t &env,
                          const GxDeviceTreeView &tree,
                          LeafPolicy &leaf_policy,
-                         int *anomaly)
+                         int *anomaly,
+                         unsigned int prune_type_mask = 0)
 {
     gx_device_tree_walk_impl<GxWalkEntry::SubtreeResume>(
         env.pos[0], env.pos[1], env.pos[2], env.h,
-        env.nodes, env.n_nodes, tree, leaf_policy, anomaly);
+        env.nodes, env.n_nodes, tree, leaf_policy, anomaly, prune_type_mask);
 }
 
 /* The same resumed walk, for a caller that holds the query and its start nodes
@@ -247,10 +261,11 @@ void gx_device_tree_walk(double qx, double qy, double qz, double reach,
                          const int *start_nodes, int n_start,
                          const GxDeviceTreeView &tree,
                          LeafPolicy &leaf_policy,
-                         int *anomaly)
+                         int *anomaly,
+                         unsigned int prune_type_mask = 0)
 {
     gx_device_tree_walk_impl<GxWalkEntry::SubtreeResume>(
-        qx, qy, qz, reach, start_nodes, n_start, tree, leaf_policy, anomaly);
+        qx, qy, qz, reach, start_nodes, n_start, tree, leaf_policy, anomaly, prune_type_mask);
 }
 
 /* Search this rank's whole tree for a query of its own.  There is no envelope
@@ -270,10 +285,11 @@ KOKKOS_INLINE_FUNCTION
 void gx_device_tree_walk_from_root(double qx, double qy, double qz, double reach,
                                    const GxDeviceTreeView &tree,
                                    LeafPolicy &leaf_policy,
-                                   int *anomaly)
+                                   int *anomaly,
+                                   unsigned int prune_type_mask = 0)
 {
     gx_device_tree_walk_impl<GxWalkEntry::LocalRoot>(
-        qx, qy, qz, reach, nullptr, 0, tree, leaf_policy, anomaly);
+        qx, qy, qz, reach, nullptr, 0, tree, leaf_policy, anomaly, prune_type_mask);
 }
 
 #endif /* DEVICE_TREE_WALK_H */

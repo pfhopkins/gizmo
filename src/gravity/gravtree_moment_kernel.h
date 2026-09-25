@@ -85,6 +85,7 @@ struct moment_plain_ops {
     template <class T> KOKKOS_INLINE_FUNCTION static void fmax(T *dst, T v) { if(v > *dst) { *dst = v; } }
     KOKKOS_INLINE_FUNCTION static void add_long(long *dst, long v) { *dst += v; }
     KOKKOS_INLINE_FUNCTION static void add_int (int  *dst, int  v) { *dst += v; }
+    KOKKOS_INLINE_FUNCTION static void or_uint(unsigned int *dst, unsigned int v) { *dst |= v; }
 };
 
 
@@ -97,6 +98,9 @@ struct moment_plain_ops {
  * ========================================================================================== */
 template <class AccT>
 struct moment_node_accum {
+    /* Types present below the node, in the (1u << Type) convention.  Unlike the other members this
+     * is a union rather than a sum, and it is the one payload that reaches the ref's bitflags. */
+    unsigned int type_mask;
     AccT       mass;
     Vec3<AccT> s;        /* Σ m x  (pre-normalize) */
     Vec3<AccT> vs;       /* Σ m v */
@@ -296,6 +300,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
 {
     moment_node_accum<AccT> a = {};
 
+    a.type_mask = (p.type >= 0 && p.type < 6) ? (1u << (unsigned int) p.type) : 0u;
     a.mass  = (AccT) p.mass;
     a.s     = moment_weighted_vec3<AccT>(p.mass, p.pos[0], p.pos[1], p.pos[2]);
     a.vs    = moment_weighted_vec3<AccT>(p.mass, p.vel[0], p.vel[1], p.vel[2]);
@@ -400,6 +405,7 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_child_n
 {
     moment_node_accum<AccT> a = {};
 
+    a.type_mask = c.type_mask;
     a.mass    = c.mass;
     a.s       = c.mass * c.s;
     a.vs      = c.mass * c.vs;
@@ -474,6 +480,9 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_zero(const moment_node_ref<AccT>
     *r.vmax    = (AccT) 0;
     *r.divVmax = (AccT) 0;
     *r.maxsoft = (AccT) 0;
+    /* Only the topology bits survive.  That is what the type-presence field needs: it is rebuilt
+     * exactly by the accumulation that follows, so keeping the old bits here would preserve types
+     * that have since left the node and defeat the recomputation. */
     *r.bitflags = saved_bitflags & ((1u << BITFLAG_TOPLEVEL) |
                                      (1u << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT) |
                                      (1u << BITFLAG_INTERNAL_TOPLEVEL));
@@ -527,6 +536,12 @@ KOKKOS_INLINE_FUNCTION static void moment_accum_zero(const moment_node_ref<AccT>
 template <class Ops, class AccT>
 KOKKOS_INLINE_FUNCTION static void moment_accum_apply(const moment_node_ref<AccT>& r, const moment_node_accum<AccT>& a)
 {
+    /* The types are unioned, not summed, and land in the ref's bitflags rather than in a payload
+     * of their own.  Venues that pass a null bitflags (the top-node re-sum, the LET wire builder)
+     * handle the field themselves at their store. */
+    if(r.bitflags && a.type_mask) {
+        Ops::or_uint(r.bitflags, (a.type_mask << BITFLAG_TYPEPRESENT_SHIFT) & BITFLAG_TYPEPRESENT_MASK);
+    }
     Ops::add(r.mass, a.mass);
     Ops::add_vec3(r.s,  a.s);
     Ops::add_vec3(r.vs, a.vs);

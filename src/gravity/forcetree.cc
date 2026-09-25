@@ -213,9 +213,14 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  *
  *  Why this exists: gpu_moment_refresh() writes the scalar Extnodes[no].hmax
  *  to AoS but not the per-type bands Extnodes[no].hmax_per_type[].  The GPU
- *  SoA intentionally does not carry per-type bands -- their only consumer is
- *  this host-side Mode B walker (mesh/mode_b_local_walker.cc) -- so the GPU
- *  moment path bypasses the host moment loop that would otherwise seed them.
+ *  SoA does not carry the per-type bands: their consumer is this host-side
+ *  Mode B walker (mesh/mode_b_local_walker.cc), whose SYMMETRIC opening needs
+ *  a per-type REACH.  The device walks ask a different question -- whether a
+ *  type is present below a node at all -- and answer it from the presence bits
+ *  packed into the node's bitflags word, which cost no extra storage and are
+ *  already mirrored.  Presence does not bound reach, so mirroring the bands
+ *  remains what a device SYMMETRIC walk would need.  Either way the GPU moment
+ *  path bypasses the host moment loop that would otherwise seed the bands.
  *  Without this pass every full force_treebuild and every
  *  force_refresh_node_moments would leave the bands at zero, and Mode B's
  *  SYMMETRIC walker reading zero bands would over-prune (collapse to ONEWAY)
@@ -1231,7 +1236,12 @@ int force_exchange_pseudodata_complete(void)
                     Extnodes[no].vmax = DomainMoment[i].vmax;
                     Extnodes[no].divVmax = DomainMoment[i].divVmax;
                     Nodes[no].N_part = DomainMoment[i].N_part;
-                    Nodes[no].u.d.bitflags = (Nodes[no].u.d.bitflags & (~((1 << BITFLAG_MULTIPLEPARTICLES)))) | (DomainMoment[i].bitflags & ((1 << BITFLAG_MULTIPLEPARTICLES)));
+                    /* The type-presence bits mean "present AND owned here"; this top-leaf is
+                     * another rank's, so ours are cleared rather than imported.  The remote
+                     * multiple-particles bit is the only thing taken from the wire. */
+                    Nodes[no].u.d.bitflags = (Nodes[no].u.d.bitflags
+                                                & (~((1 << BITFLAG_MULTIPLEPARTICLES) | BITFLAG_TYPEPRESENT_MASK)))
+                                             | (DomainMoment[i].bitflags & ((1 << BITFLAG_MULTIPLEPARTICLES)));
                     Nodes[no].maxsoft = DomainMoment[i].maxsoft;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     Nodes[no].cr_injection = DomainMoment[i].cr_injection;
@@ -1644,6 +1654,59 @@ void force_flag_localnodes(void)
  *  (insertions between drifts at the same Ti_current would otherwise leave
  *  the SoA stale until the next full rebuild).
  */
+
+/*! Mark the type a particle now has on every node above it.
+ *
+ *  The per-node type-presence bits are recomputed exactly by a build or a moment refresh, but a
+ *  particle can change type, or join the tree, while that tree is still standing -- star formation
+ *  converts a gas element in place, FoF seeds a sink, a wind cell is spawned.  Nothing else in the
+ *  tree depends on a particle's type, so no existing signal covers this; the moments are untouched
+ *  by a conversion that preserves mass, which is why TreeMomentsStaleFlag does not fire for one.
+ *
+ *  The raise walks all the way to the root rather than stopping at the first ancestor that already
+ *  carries the bit.  Stopping early would assume the bits are consistent from that node upward --
+ *  which is the property this function exists to restore, so it cannot be relied on here.  Walking
+ *  the whole chain is what lets a single call repair an arbitrarily broken chain.  It is cheap
+ *  regardless: the test comes before the write, so an ancestor that already has the bit costs a
+ *  read, and only a genuinely missing one pays for a write.
+ *
+ *  Both the AoS node and its device mirror are written, since the walks read the mirror.
+ */
+
+void force_tree_note_type_presence(int particle)
+{
+    if(!force_tree_is_allocated() || particle < 0 || particle >= All.TreeParticleSlots) {return;}
+
+    const int type = (int) P[particle].Type;
+    if(type < 0 || type >= 6) {return;}
+    const unsigned int bit = (1u << ((unsigned int) type + BITFLAG_TYPEPRESENT_SHIFT));
+
+    int no = Father[particle];
+    if(no < 0)
+    {
+        /* The particle is in the tree's index range but hangs off nothing we can walk, so its type
+         * cannot be recorded.  Rather than leave a node claiming a type is absent when it is not,
+         * withdraw the prune until the next build or refresh rebuilds the bits exactly. */
+        TypePresenceMaskTrusted = 0;
+        return;
+    }
+
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+
+    while(no >= 0)
+    {
+        /* Test each storage separately.  Short-circuiting on the AoS bit alone would turn a single
+         * skipped mirror write into a permanent one: the AoS bit is set, so every later raise stops
+         * here while the mirror the walks actually read still says the type is absent. */
+        const int k_soa = no - All.TreeNodeIndexBase;
+        const int has_mirror = (soa && soa->bitflags && k_soa >= 0
+                                && k_soa < MaxNodes + AllocatedForeignNodes);
+        if(!(Nodes[no].u.d.bitflags & bit)) {Nodes[no].u.d.bitflags |= bit;}
+        if(has_mirror && !(soa->bitflags[k_soa] & bit)) {soa->bitflags[k_soa] |= bit;}
+        no = Nodes[no].u.d.father;
+    }
+}
+
 void force_add_element_to_tree(int iparent, int ichild)
 {
     /* Both indices are written into the tree's particle-side arrays below, so both must be inside
@@ -1721,6 +1784,12 @@ void force_add_element_to_tree(int iparent, int ichild)
                only over-widen); a fresher time is not. */
         }
     }
+
+    /* The child joins its parent's node, so that node and every node above it now hold a particle
+     * of the child's type.  Its type may still be provisional here -- star formation copies the gas
+     * element into the new slot and only settles the type further on -- so the sites that assign a
+     * final type call this as well; the raise is monotone, so the repeat can only over-claim. */
+    force_tree_note_type_presence(ichild);
 
     /* Each insertion stales the LET / pseudo-particle
      * moments shipped on the last full build.  Mass+CoM remain conserved at

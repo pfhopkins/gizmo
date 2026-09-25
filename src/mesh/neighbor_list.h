@@ -123,6 +123,12 @@ struct GxDeviceTreeView {
      * on CUDA/HIP. `drift_tables_ok` says whether it was filled. */
     struct DriftKickTableView drift_tables{};
     int                       drift_tables_ok = 0;
+
+    /* Whether the per-node type-presence bits describe this tree.  A build or a moment refresh
+     * recomputes them exactly; between those, only monotone raises keep them true, and if one
+     * could not be applied this is cleared and a walk simply stops pruning on them.  Zero means
+     * "open every node geometry admits", which is what the walk did before the bits existed. */
+    int                       type_mask_trusted = 0;
 };
 
 

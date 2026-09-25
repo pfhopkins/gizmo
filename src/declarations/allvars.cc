@@ -137,6 +137,7 @@ int Flag_FullStep;		/*!< Flag used to signal that the current step involves all 
 int TreeReconstructFlag;
 int DomainReconstructFlag;
 int TreeMomentsStaleFlag;
+int TypePresenceMaskTrusted = 0;
 long long ForceAddElementToTree_CallsSinceBuild = 0;
 int NeedToWakeupParticles;      /*!< Flags used to signal that wakeups need to be processed at the beginning of the next timestep */
 int NeedToWakeupParticles_local;

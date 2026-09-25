@@ -3980,12 +3980,12 @@ static void nlr_record_and_drift(const struct particle_data *P,
         query(kk, qx, qy, qz, reach, start_nodes, n_start);
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
         if(n_start < 0) {
-            gx_device_tree_walk_from_root(qx, qy, qz, reach, tree, leaf, anomaly);
+            gx_device_tree_walk_from_root(qx, qy, qz, reach, tree, leaf, anomaly, supply_mask);
         } else if(n_start > 0) {
             /* Zero start nodes means nothing on this rank was exported to this
              * query, so there is nothing of ours for it to reach -- the same
              * skip the evaluating walk makes at the same data. */
-            gx_device_tree_walk(qx, qy, qz, reach, start_nodes, n_start, tree, leaf, anomaly);
+            gx_device_tree_walk(qx, qy, qz, reach, start_nodes, n_start, tree, leaf, anomaly, supply_mask);
         }
     });
     gx_touched_set_drift_and_mark(All.Ti_Current);
@@ -4092,7 +4092,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
         NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &accums_out[kk], &s, supply_mask, &cs};
         leaf.motion_targets = motion_targets;
         gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                                      radii[kk], tree, leaf, anomaly);
+                                      radii[kk], tree, leaf, anomaly, supply_mask);
     });
 }
 
@@ -4342,7 +4342,7 @@ struct NlrPeerAnswerDeviceFused {
             leaf.motion_targets = motion_targets;
             if(kk < n_local) {
                 gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                                              (double)a.h_search, tree, leaf, anomaly_d);
+                                              (double)a.h_search, tree, leaf, anomaly_d, neighbor_type_mask);
                 return;
             }
             const int kr = kk - n_local;
@@ -4357,7 +4357,7 @@ struct NlrPeerAnswerDeviceFused {
             gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                 (double)a.h_search,
                                 nodes_d + (size_t)kr * NODELISTLENGTH, nn_d[kr],
-                                tree, leaf, anomaly_d);
+                                tree, leaf, anomaly_d, neighbor_type_mask);
         });
 
         const int anomaly_seen = *anomaly_d;

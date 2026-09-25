@@ -28,6 +28,33 @@
 #define BITFLAG_NODEHASBEENKICKED          8
 #define BITFLAG_INSIDE_LINKINGLENGTH       9
 
+/* Which particle TYPES are present below a node, one bit per type, packed into the spare high
+ * bits of the same bitflags word the topology flags use.  Stored shifted so it cannot collide
+ * with the single-bit flags above; NODE_TYPE_PRESENCE() hands it back in the (1u << Type)
+ * convention that ghost_exchange_spec.h and every loop's neighbor_type_mask already use, so a
+ * consumer compares the two directly.
+ *
+ * MEANING: a type is marked when a particle of that type OWNED BY THIS RANK sits below the node.
+ * NOT the global union -- the device neighbour walks never descend a foreign subtree and only
+ * visit owned leaves, so this is the question they ask, and it is tighter than the union would
+ * be.  Two places keep it that way: the LET wire copy clears these bits (so foreign nodes carry
+ * none), and the top-node re-sum clears them before re-ORing its local children.  A consumer
+ * that genuinely needs remote contents needs a different field, not a widening of this one.
+ *
+ * It may over-claim (a type that has since gone) -- that only costs a missed prune.  It must
+ * never under-claim, which is why every mutation is a monotone OR and only a build or moment
+ * refresh recomputes it exactly. */
+#define BITFLAG_TYPEPRESENT_SHIFT          16
+#define BITFLAG_TYPEPRESENT_MASK           (0x3Fu << BITFLAG_TYPEPRESENT_SHIFT)
+
+/* Read on both the host and inside the device tree walk.  Deliberately a macro rather than an
+ * annotated inline: the device annotations are themselves defined by whichever header happens to be
+ * reached first (vec3.h defines GIZMO_GPU_FUNCTION to nothing behind a bare #ifndef), so an
+ * annotated function here would quietly compile host-only in exactly the translation units that
+ * need it on the device.  A bit extract has no reason to carry that risk. */
+#define NODE_TYPE_PRESENCE(bitflags) \
+    ((((unsigned int) (bitflags)) >> BITFLAG_TYPEPRESENT_SHIFT) & 0x3Fu)
+
 void force_update_tree(void);
 void force_refresh_node_moments(void);
 
@@ -96,6 +123,13 @@ void force_exchange_pseudodata_issue(void);    /* split for non-blocking overlap
 int  force_exchange_pseudodata_complete(void); /* pair to _issue; nonzero = unmatched (pending==NULL) */
 void force_insert_pseudo_particles(void);
 void force_add_element_to_tree(int igas, int istar);
+
+/* Record that a particle of this particle's CURRENT type sits below every node from its father to
+ * the root, so the per-node type-presence bits stay true when a type changes or a particle is
+ * inserted while the tree is standing.  Call it wherever a particle's type becomes final and
+ * wherever one is added to a live tree; it is monotone and idempotent, so calling it more often
+ * than strictly needed can only over-claim, which is safe. */
+void force_tree_note_type_presence(int particle);
 
 void   force_costevaluate(void);
 int    force_getcost_single(void);
