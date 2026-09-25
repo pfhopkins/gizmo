@@ -967,23 +967,23 @@ struct NlrPeerAnswerHostWalk {
     }
 };
 
-/* Declared here, defined below beside the leaf policy they share.
+/* The local queries a fused round co-schedules with the ones it received.
  *
- * Both reach for the device allocator and for NlrModeDReduceLeaf, which are
- * introduced further down this file, while the transport that calls them is
- * written above them.  Templates are resolved where they are instantiated --
- * in the dispatchers at the bottom -- so a declaration is all the transport
- * needs, and the alternative would be hoisting the allocator and the leaf policy
- * above a transport that has nothing to do with either. */
+ * Defined here rather than beside the walk that consumes it because the
+ * transport above fills it in, and it needs nothing the transport does not
+ * already have -- no allocator, no leaf policy, just the two Spec types.
+ *
+ * Empty by default, which is the single-rank case and every round after the one
+ * that took this call's locals.  `accums_out` is WRITTEN, not merged: a local
+ * query is evaluated exactly once per call, and the reply merge that follows
+ * accumulates on top of what this wrote. */
 template <typename Spec>
-static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
-                                   const typename Spec::ActiveData *actives,
-                                   bool actives_are_device_visible,
-                                   int n,
-                                   unsigned int supply_mask,
-                                   const GxDeviceTreeView& tree,
-                                   const typename Spec::CallScalars& cs,
-                                   typename Spec::AccumData *accums_out);
+struct NlrModeDLocalSlice {
+    const typename Spec::ActiveData *actives = nullptr;
+    bool                             device_visible = false;
+    int                              n = 0;
+    typename Spec::AccumData        *accums_out = nullptr;
+};
 
 /* The motion-target set for one call of a loop that writes neighbour
  * velocities: opened before any kernel, raised and closed after the writeback.
@@ -1173,13 +1173,23 @@ static void mode_b_remote_evaluate_into_buffer(
         }
     }
 
-    /* ---- SELF stages run ONCE, BEFORE the peer round loop. Self candidate
-     * collection + drift + evaluation must PRECEDE peer evaluation so the
-     * self-before-peer WRITE order (a neighbor j touched by a local active is
-     * updated before any remote active's pair sees it) is preserved. Only the
-     * PEER work streams in bounded rounds below.
+    /* ---- ON THE HOST-WALK BACKEND the self stages run ONCE, BEFORE the peer
+     * round loop: self candidate collection + drift + evaluation precede peer
+     * evaluation, and only the PEER work streams in bounded rounds below.
      *
-     * ORDERING NOTE — the reorder this introduces vs the prior single-pass form:
+     * ⛔ THE FUSED BACKEND DOES NOT DO THIS, AND THE "self-before-peer WRITE
+     * order" THIS COMMENT USED TO ASSERT IS NOT A CONTRACT ANYWHERE.  It walks
+     * local and received queries in one batch, so a neighbour j can be reached
+     * by both in the same launch.  Nothing is lost by that: whether a given
+     * local particle is reached by one of this rank's queries or by one a peer
+     * sent is an accident of where the domain boundary fell and carries no
+     * physical meaning, Mode A has always evaluated local and imported
+     * candidates together in a single fused loop, and the only pair kernels
+     * this backend admits are those whose neighbour-side writes already go
+     * through atomics.  The ordering below is therefore a description of the
+     * host path, not a rule the fused path breaks.
+     *
+     * ORDERING NOTE (host path) — the reorder this introduces vs the prior single-pass form:
      * peer candidate COLLECTION now runs AFTER self EVALUATION (previously it ran
      * before). The peer-candidate walk keys membership on P[j].{Type,Pos,Mass}:
      *   - Type/Pos are NEVER mutated by a pair kernel (only drift writes Pos, and
@@ -1378,22 +1388,22 @@ static void mode_b_remote_evaluate_into_buffer(
     /* Stage 8: answer THIS rank's own queries -> accums_out.
      *
      * The host backend evaluates the list it collected above.  The fused backend
-     * collected nothing and walks the tree from the root instead, and brings
-     * current the particles that walk will reach -- discovering them with a
-     * recording pass of its own rather than drifting the whole rank up front.
-     * So this site skips the collected-candidate drift because it collected no
-     * candidates, not because everything is already current. */
-    if(N > 0) {
-        if constexpr (Backend == NlrEvalBackend::HostWalk) {
+     * does NOT answer them here: it carries them into the round loop below and
+     * walks them in the same launch as the queries it received, because the two
+     * ask the same question of the same tree and a half-empty launch apiece
+     * leaves the device waiting twice.  Which of this rank's particles a given
+     * query reaches is an accident of where the domain boundary fell, so there
+     * is nothing to separate.  `local_cursor` tracks how many have been taken.
+     *
+     * The fused backend also skips the collected-candidate drift, because it
+     * collected no candidates -- not because everything is already current. */
+    [[maybe_unused]] int local_cursor = 0;   /* read only on the fused path */
+    if constexpr (Backend == NlrEvalBackend::HostWalk) {
+        if(N > 0) {
             evaluate_pairs_post_drift<Spec>(ctx, actives, N,
                                               cand_self_tree, accums_out, cs, EvalOMPPolicy::AllowProduction);
-        } else {
-            /* Reach comes from each query's own h_search, which is what the host
-             * self walk at this site uses; radii is the same value by
-             * construction and reading it from two places invites drift. */
-            nlr_mode_d_self_reduce<Spec>(ctx, actives, actives_are_device_visible, N,
-                                         neighbor_type_mask, *fused_tree, cs, accums_out);
         }
+        local_cursor = N;   /* answered here; the round loop carries nothing */
     }
 
     /* ---- PEER round loop (streaming). Build a CommChunkSize-bounded batch of
@@ -1594,10 +1604,40 @@ static void mode_b_remote_evaluate_into_buffer(
                                             neighbor_type_mask,
                                             peer_replies);
     } else {
+        /* Carry whatever of this rank's own queries are still unplaced into the
+         * same two launches as this group's received ones -- but only as many as
+         * fit under the accumulator high-water the unfused shape already
+         * required.
+         *
+         * WHY THERE IS A BOUND AT ALL.  Answering the locals separately meant
+         * their N accumulators were allocated and freed BEFORE this group's K
+         * were, so the call's peak was max(N, K).  One batch makes both live at
+         * once, which would be N + K.  Holding L + K <= max(N, K) -- i.e.
+         * L <= N - K -- keeps the peak exactly what it was, so fusing cannot
+         * make a call that used to fit stop fitting.
+         *
+         * WHAT IT COSTS.  When a group brings MORE queries than this rank has
+         * actives (K >= N) the headroom is zero and the locals wait, which for
+         * that group is the unfused launch count rather than a regression.  In
+         * the ordinary case K is bounded by the group budget and far below N, so
+         * the headroom covers essentially every local and one group takes them
+         * all.  Whether spreading them across groups instead would fill the
+         * device better is a measurement, not something to assume here. */
+        NlrModeDLocalSlice<Spec> local_slice;
+        const int local_headroom = (N > K) ? (N - K) : 0;
+        const int local_remaining = N - local_cursor;
+        const int local_take = (local_remaining < local_headroom) ? local_remaining : local_headroom;
+        if(local_take > 0) {
+            local_slice.actives        = actives + local_cursor;
+            local_slice.device_visible = actives_are_device_visible;
+            local_slice.n              = local_take;
+            local_slice.accums_out     = accums_out + local_cursor;
+        }
         NlrPeerAnswerDeviceFused<Spec>::answer(ctx, cs, *fused_tree, peer_actives,
                                                peer_nodelist_flat, peer_nnodes,
                                                neighbor_type_mask,
-                                               peer_replies);
+                                               peer_replies, local_slice);
+        local_cursor += local_slice.n;
     }
     /* Stage 10 (per group): build reply envelopes (origin_slot/rank copied from
      * each received query envelope), unflatten into per-peer arrays via the
@@ -1623,12 +1663,43 @@ static void mode_b_remote_evaluate_into_buffer(
     }
         }   /* end whole-peer group loop */
 
+        /* ⛔ ANY OF THIS RANK'S OWN QUERIES STILL UNPLACED ARE ANSWERED HERE,
+         * BEFORE THE REPLY DRAIN BELOW -- NEVER AFTER THE ROUND LOOP.
+         *
+         * accums_out[slot] is ASSIGNED by a local evaluation and MERGED INTO by
+         * an incoming reply.  A rank that received nothing this round got no
+         * group above, so without this its locals would still be unanswered when
+         * the drain merges its replies, and the assignment would then land on top
+         * of them and discard them.  Putting the flush here rather than after the
+         * do/while is what makes that impossible, and it is also the whole
+         * no-received-queries case: a rank that never receives anything from
+         * anyone answers all of its own work here, on the first round.
+         *
+         * Normally a no-op: the group loop above already took them. */
+        if constexpr (Backend == NlrEvalBackend::DeviceFused) {
+            if(local_cursor < N) {
+                std::vector<AccumData> no_replies;
+                NlrModeDLocalSlice<Spec> local_slice;
+                local_slice.actives        = actives + local_cursor;
+                local_slice.device_visible = actives_are_device_visible;
+                local_slice.n              = N - local_cursor;
+                local_slice.accums_out     = accums_out + local_cursor;
+                NlrPeerAnswerDeviceFused<Spec>::answer(ctx, cs, *fused_tree,
+                                                       std::vector<ActiveData>{},
+                                                       std::vector<int>{}, std::vector<int>{},
+                                                       neighbor_type_mask,
+                                                       no_replies, local_slice);
+                local_cursor = N;
+            }
+        }
+
         /* Stage 11: drain the exchange (remaining query-payload Isends + all
          * pre-posted reply Irecvs, byte-count-asserted), then merge replies
          * into accums_out by envelope.origin_slot. Pinned deterministic order:
          * ascending peer rank, ascending qi — identical to the pre-group
-         * single-shot merge (self contribution already in accums_out from
-         * stage 8). Asserts each reply envelope's origin_rank == ThisTask. */
+         * single-shot merge (the local contribution is already in accums_out:
+         * either the group loop above placed it, or the flush just did).
+         * Asserts each reply envelope's origin_rank == ThisTask. */
         {
             auto recv_replies = [&]{
                 return xch.finish();
@@ -3852,16 +3923,26 @@ struct NlrRecordLeaf {
  * for an earlier pass stays current for the rest of the call, and the generation
  * is per call, so the second and later passes record only what is new.
  *
- * `query` is device-callable and yields this work item's position and reach.
- * Two entries exist for the two ways a walk starts, matching the traversal's own
- * pair: from this rank's root, or resumed from the start nodes a peer sent. */
+ * One pass covers this rank's own queries and the ones its peers sent, in a
+ * single traversal over both.  They ask the same question of the same tree and
+ * write the same touched set, and which of the two a given local particle was
+ * reached by is an accident of where the domain boundary fell, so separating
+ * them bought nothing and cost a launch, a fence and a second drift pass.  The
+ * two kinds keep the two ENTRIES the traversal already has -- this rank's root,
+ * or the start nodes a peer exported -- and `query` says which this work item
+ * takes by yielding a start list or none.
+ *
+ * `query` is device-callable and yields this work item's position, reach, and
+ * either its start-node list or a negative count meaning "walk from the root".
+ * Callers keep the two kinds in CONTIGUOUS index ranges so that the entry a
+ * work item takes does not alternate between neighbouring lanes. */
 template <class QueryFn>
-static void nlr_record_and_drift_from_root(const struct particle_data *P,
-                                           unsigned int supply_mask,
-                                           const GxDeviceTreeView &tree,
-                                           int n, int *anomaly,
-                                           const char *label,
-                                           QueryFn query)
+static void nlr_record_and_drift(const struct particle_data *P,
+                                 unsigned int supply_mask,
+                                 const GxDeviceTreeView &tree,
+                                 int n, int *anomaly,
+                                 const char *label,
+                                 QueryFn query)
 {
     if(n <= 0) {return;}
     /* Nothing to discover when the whole rank is already uniform: something else
@@ -3894,39 +3975,18 @@ static void nlr_record_and_drift_from_root(const struct particle_data *P,
     GIZMO_GPU_ENSURE_ALL_FRESH();
     nlr_walk_for_sources(label, n, KOKKOS_LAMBDA(int kk) {
         double qx = 0, qy = 0, qz = 0, reach = 0;
-        query(kk, qx, qy, qz, reach);
+        const int *start_nodes = nullptr;
+        int n_start = -1;                 /* negative: this one walks from the root */
+        query(kk, qx, qy, qz, reach, start_nodes, n_start);
         NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
-        gx_device_tree_walk_from_root(qx, qy, qz, reach, tree, leaf, anomaly);
-    });
-    gx_touched_set_drift_and_mark(All.Ti_Current);
-}
-
-/* The resumed form: each query walks the subtrees a peer exported to it. */
-template <typename ActiveDataT>
-static void nlr_record_and_drift_from_envelopes(const struct particle_data *P,
-                                                unsigned int supply_mask,
-                                                const GxDeviceTreeView &tree,
-                                                const ActiveDataT *q_d,
-                                                const int *nodes_d, const int *nn_d,
-                                                int K, int *anomaly,
-                                                const char *label)
-{
-    if(K <= 0) {return;}
-    if(gizmo_full_drift_ti() == All.Ti_Current) {return;}
-    const struct GxTouchedSet ts = gx_touched_set_view();
-    if(!ts.seen || !ts.list || !ts.counter) {
-        Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);
-        return;
-    }
-    GIZMO_GPU_ENSURE_ALL_FRESH();
-    nlr_walk_for_sources(label, K, KOKKOS_LAMBDA(int kk) {
-        if(nn_d[kk] <= 0) {return;}
-        const ActiveDataT& a = q_d[kk];
-        NlrRecordLeaf leaf{P, ts, supply_mask, anomaly};
-        gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                            (double)a.h_search,
-                            nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
-                            tree, leaf, anomaly);
+        if(n_start < 0) {
+            gx_device_tree_walk_from_root(qx, qy, qz, reach, tree, leaf, anomaly);
+        } else if(n_start > 0) {
+            /* Zero start nodes means nothing on this rank was exported to this
+             * query, so there is nothing of ours for it to reach -- the same
+             * skip the evaluating walk makes at the same data. */
+            gx_device_tree_walk(qx, qy, qz, reach, start_nodes, n_start, tree, leaf, anomaly);
+        }
     });
     gx_touched_set_drift_and_mark(All.Ti_Current);
 }
@@ -4012,12 +4072,15 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
 
     /* Record what this walk will reach and bring just those current, before it
      * runs for real.  Same tree, same queries, so the same leaves. */
-    nlr_record_and_drift_from_root(
+    nlr_record_and_drift(
         ctx.P, supply_mask, tree, n, anomaly, "nlr_mode_d_self_record",
-        KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
+        KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach,
+                      const int *&start_nodes, int &n_start) {
             const ActiveData a_rec = Spec::load_active(ctx, active_slot[kk], active_idx[kk], radii[kk], cs);
             qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
             reach = radii[kk];
+            /* Single-rank: every query is this rank's own and walks from the root. */
+            start_nodes = nullptr; n_start = -1;
         });
 
     const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
@@ -4103,143 +4166,31 @@ nlr_build_self_actives_on_device(const neighbor_loop_args& args,
     return act_d;
 }
 
-/* Answer this rank's own queries from the root, when the queries already exist.
+/* Answering received queries and this rank's own in ONE device pass, no
+ * candidate list.
  *
- * The transport builds its actives up front and ships the same objects to peers,
- * so the self half on that path is handed them rather than building its own.
- * That is the one difference from nlr_mode_d_local_reduce, which has no
- * transport and constructs each query in the kernel from resident particles.
+ * Same contract as NlrPeerAnswerHostWalk for the received half -- queries in,
+ * one accumulator each out -- reached by walking each query's exported subtrees
+ * on the device and evaluating the pair kernel where the walk lands.  Nothing is
+ * COLLECTED, so there is no candidate list to drift -- but the locals this walk
+ * lands on are this rank's, and they are brought current by a recording pass
+ * over the same queries followed by a drift of exactly what it recorded.  A
+ * round can reach locals an earlier one never did, which is why it discovers
+ * rather than relying on what an earlier pass found.
  *
- * Those queries normally already sit where a kernel can read them, because the
- * transport builds them on the device. Then this walks them in place. When the
- * device buffer could not be had the transport builds them on the host instead,
- * and only then are they copied in -- which is why the caller says which it is
- * rather than this guessing from a pointer it cannot interrogate.
+ * `local` carries this rank's OWN queries when the round loop has some left to
+ * place, and they are walked in the same two launches: one record, one
+ * evaluate, over `n_local + K` work items.  Two half-filled launches apiece is
+ * what this replaces, and on the steps that matter neither of them came close
+ * to filling the device.  The two kinds occupy CONTIGUOUS index ranges --
+ * locals first -- so the entry a work item takes does not alternate between
+ * neighbouring lanes.
  *
- * The reach comes from the query itself here, matching the host self walk at the
- * same site; the two must agree about what a query's radius is or they would
- * search different neighbourhoods for the same particle. */
-template <typename Spec>
-static void nlr_mode_d_self_reduce(const typename Spec::DeviceContext& ctx,
-                                   const typename Spec::ActiveData *actives,
-                                   bool actives_are_device_visible,
-                                   int n,
-                                   unsigned int supply_mask,
-                                   const GxDeviceTreeView& tree,
-                                   const typename Spec::CallScalars& cs,
-                                   typename Spec::AccumData *accums_out)
-{
-    using ActiveData  = typename Spec::ActiveData;
-    using AccumData   = typename Spec::AccumData;
-    using ScatterData = typename Spec::ScatterData;
-
-    static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
-                  "Mode D evaluates a seeker's pairs on the rank that owns the neighbours, so a "
-                  "pair kernel's neighbour-side writes land on the owner's own particles and need "
-                  "no writeback -- but they land from many device lanes at once, so a kernel that "
-                  "must run serially (a read-then-write of live neighbour state) cannot be served.");
-    static_assert(Spec::search_mode == MODE_B_SEARCH_ONEWAY,
-                  "Mode D prunes on the query's reach alone. A symmetric search also needs the "
-                  "per-type supply bands, which are not mirrored to the device.");
-    static_assert(!nlr_spec_has_bind_active_to_eval_context_v<Spec>,
-                  "This Spec rebinds each active to the evaluating context before its pair kernel "
-                  "runs, which the host backend does inside evaluate_pairs_post_drift. The fused "
-                  "backend evaluates in a device kernel and performs no such rebind, so a received "
-                  "active would still carry the sending rank's pointers. Port the rebind into the "
-                  "device path before serving this Spec.");
-
-    /* Plus the fourth, uncheckable one: every active handed to this backend is
-     * already current at All.Ti_Current.  Stated in full at nlr_mode_d_local_reduce,
-     * which carries the same three assertions. */
-
-
-    if(n <= 0) {return;}
-
-    /* Only copied when the queries are not already somewhere the kernel can read
-     * them. On the ordinary path they are, so this allocates nothing and the
-     * walk reads the transport's own buffer. */
-    ActiveData *q_staged  = actives_are_device_visible
-                              ? nullptr
-                              : (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_q");
-    AccumData  *acc_d     = (AccumData *)  nlr_shared_alloc_bytes((size_t)n * sizeof(AccumData), "moded_self_accum");
-    int        *anomaly_d = (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_self_anomaly");
-
-    if((!actives_are_device_visible && !q_staged) || !acc_d || !anomaly_d) {
-        if(q_staged)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_staged);}
-        if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
-        if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
-        if(ThisTask == 0) {
-            fprintf(stderr, "[%s] FATAL: no device memory for %d local queries on the fused path.\n",
-                    Spec::loop_name, n);
-            fflush(stderr);
-        }
-        endrun(90001028);
-        return;
-    }
-
-    if(q_staged) {
-        for(int k = 0; k < n; k++) {q_staged[k] = actives[k];}
-    }
-    const ActiveData *q_d = q_staged ? q_staged : actives;
-    *anomaly_d = 0;
-
-    GIZMO_GPU_ENSURE_ALL_FRESH();
-
-    /* Record-then-drift, as in the single-rank shape: the reach here is each
-     * query's own h_search, which is what the evaluation below walks with. */
-    nlr_record_and_drift_from_root(
-        ctx.P, supply_mask, tree, n, anomaly_d, "nlr_mode_d_self_record",
-        KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach) {
-            const ActiveData& a_rec = q_d[kk];
-            qx = (double)a_rec.pos[0]; qy = (double)a_rec.pos[1]; qz = (double)a_rec.pos[2];
-            reach = (double)a_rec.h_search;
-        });
-
-    const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
-    nlr_walk_for_sources(Spec::loop_name, n, KOKKOS_LAMBDA(int kk) {
-        Spec::zero_accum(acc_d[kk]);
-        const ActiveData& a = q_d[kk];
-        ScatterData s{};
-        NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, supply_mask, &cs};
-        leaf.motion_targets = motion_targets;
-        gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                                      (double)a.h_search, tree, leaf, anomaly_d);
-    });
-
-    const int anomaly_seen = *anomaly_d;
-    for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
-
-    if(q_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_staged);}
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
-
-    if(anomaly_seen != 0) {
-        if(ThisTask == 0) {
-            fprintf(stderr,
-                "[%s] FATAL: local query walk: %s.\n", Spec::loop_name,
-                nlr_walk_anomaly_text(anomaly_seen));
-            fflush(stderr);
-        }
-        endrun(90001029);
-    }
-}
-
-/* Answering peers the other way: one device pass, no candidate list.
- *
- * Same contract as NlrPeerAnswerHostWalk -- received queries in, one accumulator
- * each out -- reached by walking each query's exported subtrees on the device and
- * evaluating the pair kernel where the walk lands.  Nothing is COLLECTED, so
- * there is no candidate list to drift -- but the locals this walk lands on are
- * this rank's, and they are brought current the same way the self walk brings
- * its own: a recording pass over the same envelopes, then a drift of exactly
- * what it recorded.  A peer round can reach locals the self walk never did,
- * which is why it discovers rather than relying on what an earlier pass found.
- *
- * The query arrives already built.  The rank that owns it constructed its
+ * A received query arrives already built.  The rank that owns it constructed its
  * ActiveData before shipping it, so the receiver re-uses that rather than
  * rebuilding one from particles it does not own -- and a query is the same
  * object to this kernel whoever sent it, which is what lets one leaf policy
- * serve both halves.
+ * serve every half.
  * ========================================================================== */
 template <typename Spec>
 struct NlrPeerAnswerDeviceFused {
@@ -4252,36 +4203,73 @@ struct NlrPeerAnswerDeviceFused {
                        const std::vector<int>& peer_nodelist_flat,
                        const std::vector<int>& peer_nnodes,
                        unsigned int neighbor_type_mask,
-                       std::vector<AccumData>& peer_replies_out)
+                       std::vector<AccumData>& peer_replies_out,
+                       const NlrModeDLocalSlice<Spec>& local = {})
     {
         using ActiveData  = typename Spec::ActiveData;
         using ScatterData = typename Spec::ScatterData;
 
+        /* The Mode-D admission tests.  They used to sit on the self walk, which
+         * ran on this same Spec ahead of the round loop; that walk is now this
+         * one, so they live here or nowhere.  The iterative dispatchers check
+         * only the search mode and the eval tier at runtime, so the bind-hook
+         * test in particular has no other compile-time home. */
+        static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
+                      "Mode D evaluates a seeker's pairs on the rank that owns the neighbours, so a "
+                      "pair kernel's neighbour-side writes land on the owner's own particles and need "
+                      "no writeback -- but they land from many device lanes at once, so a kernel that "
+                      "must run serially (a read-then-write of live neighbour state) cannot be served.");
+        static_assert(Spec::search_mode == MODE_B_SEARCH_ONEWAY,
+                      "Mode D prunes on the query's reach alone. A symmetric search also needs the "
+                      "per-type supply bands, which are not mirrored to the device.");
+        static_assert(!nlr_spec_has_bind_active_to_eval_context_v<Spec>,
+                      "This Spec rebinds each active to the evaluating context before its pair kernel "
+                      "runs, which the host backend does inside evaluate_pairs_post_drift. The fused "
+                      "backend evaluates in a device kernel and performs no such rebind, so a received "
+                      "active would still carry the sending rank's pointers. Port the rebind into the "
+                      "device path before serving this Spec.");
+
         const int K = (int)peer_actives.size();
-        if(K <= 0) {return;}
+        const int n_local = (local.actives && local.accums_out) ? local.n : 0;
+        const int M = n_local + K;
+        if(M <= 0) {return;}
 
         /* The queries and their start-node lists have to be where the kernel can
          * read them.  This is a copy of the QUERIES, which is what Mode D ships
-         * anyway -- not of the particles, which is what it exists to avoid. */
-        ActiveData *q_d      = (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "moded_peer_q");
-        int        *nodes_d  = (int *)        nlr_shared_alloc_bytes((peer_nodelist_flat.empty() ? 1 : peer_nodelist_flat.size()) * sizeof(int), "moded_peer_nodes");
-        int        *nn_d     = (int *)        nlr_shared_alloc_bytes((size_t)K * sizeof(int), "moded_peer_nnodes");
-        AccumData  *acc_d    = (AccumData *)  nlr_shared_alloc_bytes((size_t)K * sizeof(AccumData), "moded_peer_accum");
+         * anyway -- not of the particles, which is what it exists to avoid.
+         *
+         * The LOCAL queries are not copied here: the transport normally builds
+         * them on the device already, and then both launches read that buffer in
+         * place.  They are staged only when it could not be had, which is the
+         * same condition the transport reports rather than this guessing from a
+         * pointer it cannot interrogate.  The start-node array covers the
+         * RECEIVED slice only -- a local query walks from the root and has no
+         * list -- so the local half costs no NODELISTLENGTH stride. */
+        const bool stage_local = (n_local > 0) && !local.device_visible;
+        ActiveData *ql_staged= stage_local
+                                 ? (ActiveData *) nlr_shared_alloc_bytes((size_t)n_local * sizeof(ActiveData), "moded_local_q")
+                                 : nullptr;
+        ActiveData *q_d      = (K > 0) ? (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "moded_peer_q") : nullptr;
+        int        *nodes_d  = (K > 0) ? (int *)        nlr_shared_alloc_bytes((peer_nodelist_flat.empty() ? 1 : peer_nodelist_flat.size()) * sizeof(int), "moded_peer_nodes") : nullptr;
+        int        *nn_d     = (K > 0) ? (int *)        nlr_shared_alloc_bytes((size_t)K * sizeof(int), "moded_peer_nnodes") : nullptr;
+        AccumData  *acc_d    = (AccumData *)  nlr_shared_alloc_bytes((size_t)M * sizeof(AccumData), "moded_fused_accum");
         int        *anomaly_d= (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_peer_anomaly");
 
-        if(!q_d || !nodes_d || !nn_d || !acc_d || !anomaly_d) {
+        if((K > 0 && (!q_d || !nodes_d || !nn_d)) || (stage_local && !ql_staged) ||
+           !acc_d || !anomaly_d) {
             /* Answering short is not an option and neither is answering on the
              * host from inside a path every rank agreed to take, so this is the
              * controlled stop.  The agreement that selected this path is what
              * removes the option of quietly doing something else here. */
+            if(ql_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ql_staged);}
             if(q_d)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);}
             if(nodes_d)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);}
             if(nn_d)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);}
             if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
             if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
             if(ThisTask == 0) {
-                fprintf(stderr, "[%s] FATAL: no device memory for %d received queries on the fused path.\n",
-                        Spec::loop_name, K);
+                fprintf(stderr, "[%s] FATAL: no device memory for %d local + %d received queries "
+                        "on the fused path.\n", Spec::loop_name, n_local, K);
                 fflush(stderr);
             }
             endrun(90001026);
@@ -4305,56 +4293,90 @@ struct NlrPeerAnswerDeviceFused {
             q_d[k]  = peer_actives[k];
             int nn  = (k < (int)peer_nnodes.size()) ? peer_nnodes[k] : 0;
             if(nn > nodes_stride) {nn = nodes_stride;}
+            /* Floor as well as cap.  A count off the wire is not trusted, and a
+             * NEGATIVE one would otherwise reach the recording walk as this
+             * batch's "no start list, walk from the root" sentinel -- so a
+             * corrupt received query would have the whole local tree recorded
+             * for it while the evaluating walk skipped it.  Both passes have to
+             * make the same decision about the same query. */
+            if(nn < 0) {nn = 0;}
             const size_t need = (size_t)(k + 1) * (size_t)nodes_stride;
             if(need > nodes_have) {nn = 0;}
             nn_d[k] = nn;
         }
         for(size_t i = 0; i < peer_nodelist_flat.size(); i++) {nodes_d[i] = peer_nodelist_flat[i];}
+        if(stage_local) {
+            for(int k = 0; k < n_local; k++) {ql_staged[k] = local.actives[k];}
+        }
+        const ActiveData *ql = ql_staged ? ql_staged : local.actives;
         *anomaly_d = 0;
 
         GIZMO_GPU_ENSURE_ALL_FRESH();
 
-        /* The received queries reach this rank's particles too, and they are no
-         * more current than the ones the self walk reaches.  Same record-then-
-         * drift, entered the resumed way because that is how these walk. */
-        nlr_record_and_drift_from_envelopes<ActiveData>(
-            ctx.P, neighbor_type_mask, tree, q_d, nodes_d, nn_d, K, anomaly_d,
-            "nlr_mode_d_peer_record");
+        /* Every query in this batch reaches this rank's particles, and they are
+         * no more current for a local query than for a received one.  One
+         * record-then-drift over the whole batch, each work item entering the
+         * traversal the way its own kind does. */
+        nlr_record_and_drift(
+            ctx.P, neighbor_type_mask, tree, M, anomaly_d, "nlr_mode_d_record",
+            KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach,
+                          const int *&start_nodes, int &n_start) {
+                const ActiveData& a = (kk < n_local) ? ql[kk] : q_d[kk - n_local];
+                qx = (double)a.pos[0]; qy = (double)a.pos[1]; qz = (double)a.pos[2];
+                reach = (double)a.h_search;
+                if(kk < n_local) {
+                    start_nodes = nullptr; n_start = -1;       /* ours: from the root */
+                } else {
+                    const int kr = kk - n_local;
+                    start_nodes = nodes_d + (size_t)kr * NODELISTLENGTH;
+                    n_start = nn_d[kr];
+                }
+            });
 
         const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
-        nlr_walk_for_sources(Spec::loop_name, K, KOKKOS_LAMBDA(int kk) {
+        nlr_walk_for_sources(Spec::loop_name, M, KOKKOS_LAMBDA(int kk) {
             Spec::zero_accum(acc_d[kk]);
-            const ActiveData& a = q_d[kk];
+            const ActiveData& a = (kk < n_local) ? ql[kk] : q_d[kk - n_local];
             ScatterData s{};
-            /* A query with no start nodes has nothing exported to it on this
-             * rank; the host walker skips it rather than walking from anywhere,
-             * and so does this. */
+            NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
+            leaf.motion_targets = motion_targets;
+            if(kk < n_local) {
+                gx_device_tree_walk_from_root((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
+                                              (double)a.h_search, tree, leaf, anomaly_d);
+                return;
+            }
+            const int kr = kk - n_local;
             /* No start nodes: nothing on this rank was exported to this query.
              * ⚠ This is only correct because every Mode-B-wire query is
              * TARGETED: a query carrying no start nodes reached nothing on this
-             * rank.  There is no broadcast query shape on this wire. */
-            if(nn_d[kk] <= 0) {return;}
-            NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
-            leaf.motion_targets = motion_targets;
+             * rank.  There is no broadcast query shape on this wire.  The host
+             * walker skips it rather than walking from anywhere, and so does
+             * this -- note it leaves the ZEROED accumulator above in place,
+             * which is the right reply. */
+            if(nn_d[kr] <= 0) {return;}
             gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
                                 (double)a.h_search,
-                                nodes_d + (size_t)kk * NODELISTLENGTH, nn_d[kk],
+                                nodes_d + (size_t)kr * NODELISTLENGTH, nn_d[kr],
                                 tree, leaf, anomaly_d);
         });
 
         const int anomaly_seen = *anomaly_d;
-        for(int k = 0; k < K; k++) {peer_replies_out[k] = acc_d[k];}
+        /* The local half is ASSIGNED: a local query is evaluated exactly once per
+         * call, and the reply merge accumulates on top of what this writes. */
+        for(int k = 0; k < n_local; k++) {local.accums_out[k] = acc_d[k];}
+        for(int k = 0; k < K; k++) {peer_replies_out[k] = acc_d[n_local + k];}
 
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);
+        if(ql_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ql_staged);}
+        if(q_d)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);}
+        if(nodes_d)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);}
+        if(nn_d)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);}
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
 
         if(anomaly_seen != 0) {
             if(ThisTask == 0) {
                 fprintf(stderr,
-                    "[%s] FATAL: received query walk: %s.\n", Spec::loop_name,
+                    "[%s] FATAL: fused query walk: %s.\n", Spec::loop_name,
                     nlr_walk_anomaly_text(anomaly_seen));
                 fflush(stderr);
             }
