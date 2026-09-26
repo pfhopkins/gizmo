@@ -29,7 +29,9 @@
 #include <string.h>
 #include <math.h>
 #include <limits.h>
+#include <stdint.h>
 #include <vector>
+#include <algorithm>
 #include "../declarations/allvars.h"
 #include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
@@ -155,6 +157,8 @@ struct ghost_local_tree_cache_t {
     int num_pool;
     int *pool;                     /* [num_pool] malloc */
     int *j_to_pool;                /* [NumPart_when_built] malloc, j -> pool_pos or -1 */
+    unsigned char *mark;           /* [num_pool] calloc, the send set's per-peer dedup marker;
+                                      all zero between calls */
 };
 /* Membership only: type mask + positive mass, so an entry stays valid as the
  * particles move.  The routed producer reads live positions for everything
@@ -167,6 +171,7 @@ static struct ghost_local_tree_cache_t g_glt_cache = {
     .num_pool = 0,
     .pool = NULL,
     .j_to_pool = NULL,
+    .mark = NULL,
 };
 
 /* gx_policy_scaled_h — SSOT supply-side reach inside ghost_exchange.cc.
@@ -195,11 +200,161 @@ static void glt_cache_free(void)
 {
     if(g_glt_cache.pool)      { free(g_glt_cache.pool);      g_glt_cache.pool = NULL; }
     if(g_glt_cache.j_to_pool) { free(g_glt_cache.j_to_pool); g_glt_cache.j_to_pool = NULL; }
+    if(g_glt_cache.mark)      { free(g_glt_cache.mark);      g_glt_cache.mark = NULL; }
     g_glt_cache.valid = 0;
     g_glt_cache.NumPart_when_built = -1;
     g_glt_cache.identity_epoch_when_built = -1;
     g_glt_cache.eligible_type_mask_when_built = GHOST_TYPE_ALL;
     g_glt_cache.num_pool = 0;
+}
+
+/* The send set: which local pool slots this rank sends to which peer.
+ *
+ * The receiver walks hand it the slots they accept, peer by peer in ascending
+ * order, a peer possibly over several calls.  It keeps each (peer, slot) once,
+ * and when a peer is finished sorts that peer's slots, so the set reads out in
+ * send order -- destination rank ascending, then pool index ascending -- with
+ * no pass over the pool.  Work and memory are proportional to what is sent, not
+ * to NTask x num_pool, which on a step sending a handful of particles is the
+ * difference between reading a few slots and reading hundreds of millions.
+ *
+ * Duplicates are caught by a marker over the pool that is set for the peer being
+ * filled and cleared again when that peer is finished, so it only ever holds one
+ * peer's slots and is all zero between calls.  It is kept with the pool cache and
+ * never cleared wholesale: clearing it per call would touch the whole pool on
+ * every call, however little is sent.
+ *
+ * Emission never communicates, so ranks may emit in different numbers of calls
+ * and from different receiver backends.  A failure is rank-local until the caller
+ * agrees it across ranks. */
+struct ghost_send_set {
+    int  *slots;              /* unique matches, each peer's run contiguous */
+    long  capacity, used;
+    long *start;              /* [NTask] where peer t's run begins in slots */
+    int  *count;              /* [NTask] how many slots peer t is sent */
+    int   ntask_allocated;
+    unsigned char *mark;      /* [num_pool] owned by the pool cache */
+    int   num_pool;
+    long  marks_outstanding;  /* marks set and not yet cleared; zero between calls */
+    int   peer;               /* peer being filled, -1 when none is */
+    int   last_peer;          /* highest peer begun this call, -1 before the first */
+    int   failed;
+};
+static struct ghost_send_set g_send_set = {NULL, 0, 0, NULL, NULL, 0, NULL, 0, 0, -1, -1, 0};
+
+/* Sort the finished peer's run into pool order and clear its marks. */
+static void gx_send_set_finish_peer(struct ghost_send_set *s)
+{
+    if(s->peer < 0) {return;}
+    int *run = s->slots + s->start[s->peer];
+    const int n = s->count[s->peer];
+    std::sort(run, run + n);
+    for(int k = 0; k < n; k++) {s->mark[run[k]] = 0;}
+    s->marks_outstanding -= n;
+    s->peer = -1;
+}
+
+/* Clear whatever marks the unfinished peer holds and drop the output.  Finished
+ * peers have cleared their own marks already, so this restores the all-zero
+ * marker whenever it is called. */
+static void gx_send_set_abandon(struct ghost_send_set *s)
+{
+    if(s->peer >= 0) {
+        for(long k = s->start[s->peer]; k < s->used; k++) {s->mark[s->slots[k]] = 0;}
+        s->marks_outstanding -= s->count[s->peer];
+        s->peer = -1;
+    }
+    free(s->slots);
+    s->slots = NULL;
+    s->capacity = s->used = 0;
+    s->failed = 1;
+}
+
+/* Returns 0, or nonzero with the set failed and nothing to abandon but its output. */
+static int gx_send_set_begin(struct ghost_send_set *s, unsigned char *mark, int num_pool)
+{
+    s->failed = 1;
+    s->peer = -1;
+    s->last_peer = -1;
+    s->used = 0;
+    if(s->marks_outstanding != 0 || s->slots != NULL) {
+        printf("ERROR: ghost send set on task %d was not left clean by the previous call: %ld marks "
+               "still set, output buffer %s\n", ThisTask, s->marks_outstanding,
+               s->slots ? "never taken or dropped" : "released");
+        fflush(stdout);
+        gizmo_request_controlled_stop(7735, "ghost_exchange: send set not clear at the start of a call",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        return 1;
+    }
+    if(!mark) {return 1;}
+    if(s->ntask_allocated < NTask) {
+        free(s->start); free(s->count);
+        s->start = (long *) malloc((size_t)NTask * sizeof(long));
+        s->count = (int *)  malloc((size_t)NTask * sizeof(int));
+        if(!s->start || !s->count) {
+            free(s->start); free(s->count);
+            s->start = NULL; s->count = NULL; s->ntask_allocated = 0;
+            return 1;
+        }
+        s->ntask_allocated = NTask;
+    }
+    for(int t = 0; t < NTask; t++) {s->start[t] = 0; s->count[t] = 0;}
+    s->capacity = 256;
+    s->slots = (int *) malloc((size_t)s->capacity * sizeof(int));
+    if(!s->slots) {s->capacity = 0; return 1;}
+    s->mark = mark;
+    s->num_pool = num_pool;
+    s->failed = 0;
+    return 0;
+}
+
+static int gx_send_set_grow(struct ghost_send_set *s)
+{
+    if(s->capacity > LONG_MAX / 2) {return 1;}
+    const long new_capacity = 2 * s->capacity;
+    if((unsigned long)new_capacity > (unsigned long)(SIZE_MAX / sizeof(int))) {return 1;}
+    int *grown = (int *) realloc(s->slots, (size_t)new_capacity * sizeof(int));
+    if(!grown) {return 1;}
+    s->slots = grown;
+    s->capacity = new_capacity;
+    return 0;
+}
+
+int gx_send_set_emit(struct ghost_send_set *s, int peer, const int *slots, int n)
+{
+    if(s->failed) {return 1;}
+    /* A peer out of range, arriving out of order or a second time, or a slot
+     * outside the pool, can only come from a broken receiver: its slots would be
+     * sent out of order or split, or written outside the marker, which outlives
+     * the call.  Stop rather than build on it. */
+    int bad = (peer < 0 || peer >= NTask || n < 0 || (peer != s->peer && peer <= s->last_peer));
+    for(int k = 0; k < n && !bad; k++) {bad = ((unsigned)slots[k] >= (unsigned)s->num_pool);}
+    if(bad) {
+        printf("ERROR: ghost send set on task %d was handed %d slots for peer %d after peer %d (pool %d); "
+               "peers must arrive in ascending order, each in one run, with slots inside the pool\n",
+               ThisTask, n, peer, s->last_peer, s->num_pool);
+        fflush(stdout);
+        gizmo_request_controlled_stop(7734, "ghost_exchange: send set handed an invalid emission",
+                                      __FILE__, __LINE__, __FUNCTION__);
+        s->failed = 1;
+        return 1;
+    }
+    if(peer != s->peer) {
+        gx_send_set_finish_peer(s);
+        s->peer = peer;
+        s->last_peer = peer;
+        s->start[peer] = s->used;
+    }
+    for(int k = 0; k < n; k++) {
+        const int p = slots[k];
+        if(s->mark[p]) {continue;}
+        if(s->used == s->capacity && gx_send_set_grow(s) != 0) {s->failed = 1; return 1;}
+        s->mark[p] = 1;
+        s->marks_outstanding++;
+        s->slots[s->used++] = p;
+        s->count[peer]++;
+    }
+    return 0;
 }
 
 /* ---- Utility: walk TopNodes to find which leaf a particle belongs to ---- */
@@ -625,38 +780,44 @@ struct gx_query_t {
  * gx_walk_export_eligible().  Sender: per local query mode_b_walk_and_export -> per-peer
  * NodeList -> fixed-size envelopes -> Alltoallv.  Receiver: mode_b_walk_from_start_nodes
  * (resume from the exported NodeList) -> gx_pair_accept_wrap_and_test (the ghost-exchange SSOT predicate)
- * -> matched[t*num_pool+p] bitmap, the same layout the shared Steps 4-6 install consume.
+ * -> the send set (which local pool slots go to which peer), which Steps 4-6 install from.
  * MODE-GENERIC (search_mode is passed through): this is the install target for both search
  * modes, so ONEWAY and SYMMETRIC discover on ONE substrate rather than two.
  *
  * COLLECTIVE-SAFE (C MPI buffers): every C allocation preceding a collective — the index
- * arrays before the Alltoall, the envelope buffers before the Alltoallv, the matched bitmap
+ * arrays before the Alltoall, the envelope buffers before the Alltoallv, the send set's growth
  * — is Allreduce-checked, so a NULL on ANY rank makes ALL ranks return the same status and
  * ranks never diverge across a collective.  NOT covered: the C++ containers
  * (ModeBExportSink, the per-peer envelope vectors) throw std::bad_alloc rank-locally rather
  * than returning NULL, so an allocation failure there aborts that rank instead of returning
- * a uniform status.  Returns a caller-owned matched bitmap on GX_WALK_EXPORT_OK, else NULL.
+ * a uniform status.  On GX_WALK_EXPORT_OK the send set is finished and holds the result; on
+ * any other status it holds nothing and its marker is clear.
  *
  * THREADING (host): the sender-query loop and the received-envelope walk are both
  * `omp parallel for` — per-thread export sink and per-thread send buffers on the sender,
  * pre-sized per-envelope candidate slots on the receiver, so each thread writes only its own
  * index.  The walker's lazy node drift is the one shared mutation and is serialized under
- * critical(_modebdrift_).  Merge, accept and bitmap set run serially afterwards, which keeps
+ * critical(_modebdrift_).  Merge, accept and send-set emission run serially afterwards, which keeps
  * the resulting SET order-independent and therefore deterministic across thread counts.
  *
  * MEMORY SHAPE: the threaded receiver materializes one candidate list per received envelope
  * before the serial accept pass.  That is bounded by the exported envelope volume, which is
  * measured sparse; a pathologically clustered geometry with very large tot_r would grow it,
  * so it is a known scaling watch-point rather than a fixed bound. */
-enum { GX_WALK_EXPORT_OK = 0, GX_WALK_EXPORT_UNAVAILABLE = 1, GX_WALK_EXPORT_ALLOC_FAIL = 2 };
+/* RECEIVER_FAIL: some rank's receiver could not build its send set -- it could not
+ * grow, or it met a state that has already requested its own stop, printed by the
+ * rank that met it. */
+enum { GX_WALK_EXPORT_OK = 0, GX_WALK_EXPORT_UNAVAILABLE = 1, GX_WALK_EXPORT_ALLOC_FAIL = 2,
+       GX_WALK_EXPORT_RECEIVER_FAIL = 3 };
 struct gx_walk_export_result {
-    int status;   /* GX_WALK_EXPORT_OK / _UNAVAILABLE / _ALLOC_FAIL, uniform across ranks */
+    int status;   /* a GX_WALK_EXPORT_* value, uniform across ranks */
 };
 
-static char *compute_matched_walk_export(
+static void gx_walk_export_discover(
     const struct ghost_exchange_spec_t *spec,
     const struct gx_query_t *local_queries, int n_local_queries,
     int num_pool, unsigned int supply_mask, int search_mode,
+    struct ghost_send_set *send_set,
     struct gx_walk_export_result *res)
 {
     if(res) memset(res, 0, sizeof(*res));
@@ -673,7 +834,7 @@ static char *compute_matched_walk_export(
     int ok_local = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
     int ok_all = 0;
     MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return NULL; }
+    if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return; }
 
     /* (b) SENDER: build per-peer envelope lists (export is a byproduct of the walk).
      * THREADED, following the same shape the runner uses: the topleaf map is built once
@@ -743,11 +904,11 @@ static char *compute_matched_walk_export(
         int a_ok_local = 0, a_ok_all = 0;
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
         free(sc); free(sd); free(rc); free(rd);
-        if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL;
+        if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return;
     } else {
         int a_ok_local = 1, a_ok_all = 0;
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
+        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     }
     /* Per-peer counts are bounded by this rank's query set, but the prefix sums and
      * totals are not: the typed Alltoallv below consumes int displacements, so a value
@@ -782,7 +943,7 @@ static char *compute_matched_walk_export(
             }
             free(sc); free(sd); free(rc); free(rd);
             if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE;
-            return NULL;
+            return;
         }
     }
     struct gx_export_envelope_t *sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
@@ -791,50 +952,49 @@ static char *compute_matched_walk_export(
     int buf_ok_local = (sendbuf && recv) ? 1 : 0, buf_ok_all = 0;
     MPI_Allreduce(&buf_ok_local, &buf_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     if(!buf_ok_all) { free(sendbuf); free(recv); free(sc); free(sd); free(rc); free(rd);
-                      if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
+                      if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     for(int t = 0; t < NTask; t++)
         if(sc[t] > 0) memcpy(sendbuf + sd[t], send[t].data(), (size_t)sc[t] * sizeof(struct gx_export_envelope_t));
     gizmo_mpi_alltoallv_typed(sendbuf, sc, sd, recv, rc, rd,
                               sizeof(struct gx_export_envelope_t), MPI_COMM_WORLD);
     free(sendbuf); free(sc); free(sd);
 
-    /* (d) matched bitmap — collective before the RECEIVER walk (the caller reduces over the
-     * compare, so a NULL here on one rank would diverge the caller's Allreduce). */
-    char *matched_walk_export = (char *) calloc((size_t)NTask * (size_t)(num_pool > 0 ? num_pool : 1), 1);
-    int m_ok_local = (matched_walk_export != NULL) ? 1 : 0, m_ok_all = 0;
-    MPI_Allreduce(&m_ok_local, &m_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    if(!m_ok_all) { free(matched_walk_export); free(recv); free(rc); free(rd);
-                    if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return NULL; }
-
-    /* (e) RECEIVER: bounded resume-walk from the exported NodeList -> SSOT accept -> bitmap.
-     * Two interchangeable backends produce the SAME bitmap; the set is
-     * order-independent (a bit is set or it is not), so which one ran is not
-     * observable downstream.
+    /* (d) RECEIVER: bounded resume-walk from the exported NodeList -> SSOT accept -> send set.
+     * Two interchangeable backends feed the same send set, which keeps each (peer, slot)
+     * once and reads out in send order, so which one ran is not observable downstream.
      *
      * The device traversal is tried first and answers whenever the tree mirror
      * is current.  It declines rank-locally otherwise, and this window holds no
      * collectives, so a rank that declines simply does the work itself and no
      * other rank needs to agree.  Declining is for an unusable device tree state
      * or an allocation failure -- never for a disagreement, which would be a bug
-     * to fix rather than to route around. */
+     * to fix rather than to route around.  A decline happens before the device has
+     * emitted anything; a failure after it has emitted is not a decline, because the
+     * host walk cannot run over a half-filled set, so it fails this rank instead. */
+    int receiver_ok = (gx_send_set_begin(send_set, g_glt_cache.mark, num_pool) == 0);
     int receiver_done_on_device = 0;
-    if(tot_r > 0) {
+    if(receiver_ok && tot_r > 0) {
         std::vector<int> envelope_peer((size_t)tot_r, -1);
         for(int t = 0; t < NTask; t++) {
             for(int r = 0; r < rc[t]; r++) {envelope_peer[(size_t)rd[t] + r] = t;}
         }
-        receiver_done_on_device =
-            (gx_device_receiver_walk(recv, tot_r, envelope_peer.data(),
-                                     supply_mask, search_mode,
-                                     spec->radius_policy, walker_j_reach_scale,
-                                     g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
-                                     num_pool, matched_walk_export) == 0);
+        const int device_outcome =
+            gx_device_receiver_walk(recv, tot_r, envelope_peer.data(),
+                                    supply_mask, search_mode,
+                                    spec->radius_policy, walker_j_reach_scale,
+                                    g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
+                                    num_pool, send_set);
+        if(device_outcome == GX_RECEIVER_COMPLETED) {
+            receiver_done_on_device = 1;
+        } else if(device_outcome != GX_RECEIVER_DECLINED || send_set->used != 0 || send_set->peer >= 0) {
+            receiver_ok = 0;
+        }
     }
     /* Host backend.  THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized
      * per-envelope cand slot — each thread writes ONLY its own index (no shared write), walker
-     * race-safe.  The ACCEPT + bitmap set run SERIALLY afterward (cheap), which keeps the
-     * matched_walk_export bitmap race-free. */
-    if(!receiver_done_on_device) {
+     * race-safe.  The ACCEPT and send-set emission run SERIALLY afterward (cheap), peer by
+     * peer in ascending order, which is the order the send set requires. */
+    if(receiver_ok && !receiver_done_on_device) {
         std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, 16)
@@ -847,13 +1007,18 @@ static char *compute_matched_walk_export(
                                          spec->radius_policy, e->nodes, e->n_nodes,
                                          cvk, walker_j_reach_scale);
         }
-        for(int t = 0; t < NTask; t++) {
+        /* One emission per envelope.  Accepted pool slots are compacted in place
+         * into the front of the envelope's own candidate list -- each is written
+         * no later than the candidate it came from is read -- so accepting needs
+         * no second buffer and has no allocation that could fail on one rank
+         * between the envelope exchange and the agreement below. */
+        for(int t = 0; t < NTask && receiver_ok; t++) {
             if(t == ThisTask) continue;
-            char *mf = matched_walk_export + (size_t)t * num_pool;
-            for(int r = 0; r < rc[t]; r++) {
+            for(int r = 0; r < rc[t] && receiver_ok; r++) {
                 const long k = (long)rd[t] + r;
                 const struct gx_export_envelope_t *e = &recv[k];
-                const std::vector<int> &cvk = per_recv_cands[k];
+                std::vector<int> &cvk = per_recv_cands[k];
+                size_t n_accepted = 0;
                 for(size_t c = 0; c < cvk.size(); c++) {
                     int j = cvk[c];
                     if(j < 0 || j >= g_glt_cache.NumPart_when_built) continue;
@@ -873,15 +1038,41 @@ static char *compute_matched_walk_export(
                                                     e->pos[1] - (double)P[j].Pos[1],
                                                     e->pos[2] - (double)P[j].Pos[2],
                                                     e->h, hj_dbl, search_mode)) {
-                        mf[pp] = 1;   /* idempotent: set semantics, duplicates are a no-op */
+                        cvk[n_accepted++] = pp;   /* the send set drops repeats */
                     }
                 }
+                if(n_accepted > 0 &&
+                   gx_send_set_emit(send_set, t, cvk.data(), (int)n_accepted) != 0) {receiver_ok = 0;}
             }
         }
     }
     free(recv); free(rc); free(rd);
+    if(receiver_ok) {
+        gx_send_set_finish_peer(send_set);
+        /* Every peer is finished, so every mark must be cleared again; one left set
+         * would silently drop that slot for some peer on a later call. */
+        if(send_set->marks_outstanding != 0) {
+            printf("ERROR: ghost send set on task %d finished with %ld marks still set\n",
+                   ThisTask, send_set->marks_outstanding);
+            fflush(stdout);
+            gizmo_request_controlled_stop(7735, "ghost_exchange: send set finished with its marker not clear",
+                                          __FILE__, __LINE__, __FUNCTION__);
+            receiver_ok = 0;
+        }
+    }
+    if(!receiver_ok) {gx_send_set_abandon(send_set);}
+
+    /* The send set grows as it is filled, so whether it could be built is known only
+     * now.  Agree it here, where every rank arrives whichever backend it used, before
+     * the count and payload exchanges that follow. */
+    int receiver_ok_all = 0;
+    MPI_Allreduce(&receiver_ok, &receiver_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!receiver_ok_all) {
+        if(receiver_ok) {gx_send_set_abandon(send_set);}
+        if(res) res->status = GX_WALK_EXPORT_RECEIVER_FAIL;
+        return;
+    }
     if(res) res->status = GX_WALK_EXPORT_OK;
-    return matched_walk_export;
 }
 
 /* Non-finite test that survives fast-math (isnan/isfinite may fold to false under
@@ -1009,8 +1200,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * other than the all-types pool falls through to a full rebuild. */
     const int mask_reusable = (desired_pool_mask == GHOST_TYPE_ALL);
     const int identity_valid = (g_glt_cache.valid
-                       && g_glt_cache.pool && g_glt_cache.j_to_pool
-                       && mask_reusable
+                       && g_glt_cache.pool && g_glt_cache.j_to_pool && g_glt_cache.mark
                        && mask_reusable
                        && g_glt_cache.eligible_type_mask_when_built == desired_pool_mask
                        && g_glt_cache.NumPart_when_built == NumPart
@@ -1046,6 +1236,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         /* Reverse map j -> pool_pos (-1 if j is not in this build's pool). */
         size_t sz_jtop = (size_t)(NumPart > 0 ? NumPart : 1) * sizeof(int);
         int   *c_jtop  = (int *) malloc(sz_jtop);
+        /* The send set's dedup marker, one byte per pool slot.  Zeroed here, once per
+         * pool, and kept zero between calls by the send set itself. */
+        unsigned char *c_mark = (unsigned char *) calloc((size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1), 1);
         /* An allocation failure here would otherwise be a segfault: the buffers are
          * written unconditionally just below, and this producer is now the only
          * supplier, so there is nothing to fall back to.  The request is RANK-LOCAL
@@ -1053,12 +1246,12 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
          * rank-local NumPart), so a collective here would deadlock whenever ranks
          * disagree about rebuilding.  The matching drain runs just past the branch,
          * where every rank converges and before anything reads the pool. */
-        if(!c_pool || !c_jtop) {
+        if(!c_pool || !c_jtop || !c_mark) {
             printf("ERROR: supply-cache allocation failed on task %d (num_pool=%d NumPart=%d)\n",
                    ThisTask, tmp_num_pool, NumPart);
             fflush(stdout);
-            free(c_pool); free(c_jtop);
-            c_pool = NULL; c_jtop = NULL;
+            free(c_pool); free(c_jtop); free(c_mark);
+            c_pool = NULL; c_jtop = NULL; c_mark = NULL;
             if(tmp_pool) myfree(tmp_pool);
             gizmo_request_controlled_stop(7724, "ghost_exchange: supply-cache allocation failed",
                                           __FILE__, __LINE__, __FUNCTION__);
@@ -1077,6 +1270,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
         g_glt_cache.pool = c_pool;
         g_glt_cache.j_to_pool = c_jtop;
+        g_glt_cache.mark = c_mark;
         g_glt_cache.num_pool = tmp_num_pool;
         g_glt_cache.NumPart_when_built = NumPart;
         g_glt_cache.identity_epoch_when_built = g_supply_identity_epoch;
@@ -1092,75 +1286,45 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     gizmo_exit_bad_stop_if_requested("ghost_exchange:supply_cache_alloc");
 
 
-    /* Matched producer: the routed walk-export set, built below so it reads the
-     * same supply-cache snapshot as the rest of this call.  It is the only
-     * producer; a failure to build it is a controlled stop, not a fallback. */
-    /* Routed set from the walk-export producer, built further below so it reads the same
-     * supply-cache snapshot as the rest of this call. */
-    char *matched_walk_export = NULL;
+    /* The routed walk-export producer (sender export + bounded receiver walk,
+     * collective-safe) fills the send set, reading the same g_glt_cache snapshot as
+     * the rest of this call.  Membership comes from the SSOT accept
+     * (gx_pair_accept_wrap_and_test), so the only way the set can differ from a full
+     * walk is routing COVERAGE, which the per-type node band establishes for every
+     * radius policy.
+     *
+     * It is the only producer.  If it could not build the set there is no substrate
+     * left that is known to be correct: the walks that once served as fallbacks read
+     * cached geometry which has been measured producing wrong densities where that
+     * geometry went stale, so reviving one would trade a visible failure for a silent
+     * one.  Stop instead.  The producer status is rank-uniform, so all ranks stop
+     * together.  The dominant failure mode is allocation under memory pressure; the
+     * recovery that fits it is a retry at reduced import padding inside this
+     * producer, which does not exist yet -- until it does, the honest outcome is this
+     * stop. */
+    struct ghost_send_set *send_set = &g_send_set;
     struct gx_walk_export_result walk_export_res;
-    memset(&walk_export_res, 0, sizeof(walk_export_res));
-
-    char *matched = NULL;
-    int   used_routed = 0;
-
-
-    /* Walk-export discovery: produce the routed set (sender export + bounded receiver
-     * walk, collective-safe) and INSTALL it for an eligible spec via the shared
-     * ownership-transfer.  Placed here so it reads the SAME g_glt_cache snapshot as the
-     * rest of this call.  Membership comes from the SSOT accept (gx_pair_accept_wrap_and_test), so the
-     * only way this set can differ from a full walk is routing COVERAGE, which the
-     * per-type node band establishes for every radius policy. */
-    {
-        matched_walk_export = compute_matched_walk_export(spec, local_queries, n_local_queries,
-                                                  num_pool, supply_mask, search_mode,
-                                                  &walk_export_res);
-        /* Install via the shared ownership-transfer, so Steps 4-6 are reached by exactly
-         * one path whichever producer supplied the set. */
-        if(matched_walk_export && walk_export_res.status == GX_WALK_EXPORT_OK) {
-            if(matched) free(matched);
-            matched = matched_walk_export; matched_walk_export = NULL;
-            used_routed = 1;
-        } else if(ThisTask == 0) {
-            /* No set was installed, so the stop below fires.  Reported here
-             * because the producer's own status says why it could not build one,
-             * which the stop cannot. */
-            printf("[ghost_exchange call=%d caller=%s: walk-export producer status %d, no set installed]\n",
+    gx_walk_export_discover(spec, local_queries, n_local_queries,
+                            num_pool, supply_mask, search_mode,
+                            send_set, &walk_export_res);
+    if(walk_export_res.status != GX_WALK_EXPORT_OK) {
+        if(ThisTask == 0) {
+            printf("[ghost_exchange call=%d caller=%s: walk-export producer status %d, no send set built]\n",
                    this_call, (spec->caller_name ? spec->caller_name : "?"), walk_export_res.status);
             fflush(stdout);
         }
-        free(matched_walk_export); matched_walk_export = NULL;
-    }
-
-    /* If the producer did not install (UNAVAILABLE/ALLOC_FAIL) there is no set and
-     * no substrate left that is known to be correct.  The walks that once served as
-     * fallbacks read cached geometry which has been measured producing wrong
-     * densities where that geometry went stale, so reviving one would trade a
-     * visible failure for a silent one.  Stop instead.  The producer status is
-     * rank-uniform, so all ranks stop together.  The dominant failure mode is
-     * envelope allocation under memory pressure; the recovery that fits it is a
-     * retry at reduced import padding inside this producer, which does not exist
-     * yet — until it does, the honest outcome is this stop. */
-    if(matched == NULL) {
         gizmo_request_controlled_stop(7723,
             "ghost_exchange: walk-export producer unavailable and no correctness-proven fallback exists",
             __FILE__, __LINE__, __FUNCTION__);
         gizmo_exit_bad_stop_if_requested("ghost_exchange:walk_export_unavailable");
     }
 
-    /* === Step 4: per-peer counts + index list === */
+    /* === Step 4: per-peer counts === */
     int *send_count = (int *) mymalloc("gx_rd_sc", NTask * sizeof(int));
     int *recv_count = (int *) mymalloc("gx_rd_rc", NTask * sizeof(int));
     int *send_disp  = (int *) mymalloc("gx_rd_sd", NTask * sizeof(int));
     int *recv_disp  = (int *) mymalloc("gx_rd_rd", NTask * sizeof(int));
-    for(int t = 0; t < NTask; t++) { send_count[t] = 0; recv_count[t] = 0; }
-    for(int t = 0; t < NTask; t++) {
-        if(t == ThisTask) continue;
-        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
-        int s = 0;
-        for(int p = 0; p < num_pool; p++) if(match_for_t[p]) s++;
-        send_count[t] = s;
-    }
+    for(int t = 0; t < NTask; t++) { send_count[t] = send_set->count[t]; recv_count[t] = 0; }
     MPI_Alltoall(send_count, 1, MPI_INT, recv_count, 1, MPI_INT, MPI_COMM_WORLD);
     /* CHECKED int64 totals + prefix displacements (same rationale as the tile
      * impl). Request-driven is the last-resort Mode-A discovery — there is NO
@@ -1207,7 +1371,14 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * P[]/CellP[], fail HONESTLY via the collective controlled-stop poll below.
      * This stays the ONE predicate that decides whether the append may happen: if
      * the growth above was refused or failed, it is this guard that stops the run. */
-    if(!count_range_ok) {
+    if(send_set->used != total_send_ll) {
+        /* Step 5 hands the send set's slots over as the send list, one per send
+         * position; a different length would pack past it or leave positions unset. */
+        printf("ERROR: request-driven ghost exchange on task %d: the send set holds %ld slots but the per-peer "
+               "counts send %lld.\n", ThisTask, send_set->used, total_send_ll);
+        gizmo_request_controlled_stop(7736, "ghost_exchange (request-driven): send set length disagrees with its counts",
+                                      __FILE__, __LINE__, __FUNCTION__);
+    } else if(!count_range_ok) {
         printf("ERROR: request-driven ghost exchange counts exceed int MPI transport range on task %d.\n", ThisTask);
         gizmo_request_controlled_stop(7703, "ghost_exchange (request-driven): ghost count/displacement exceeds int MPI transport range", __FILE__, __LINE__, __FUNCTION__);
     } else if(!ghost_particle_slots_fit((long long)NumPart + total_recv_ll)) {
@@ -1220,40 +1391,23 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * collective pack/exchange. Every rank reaches this unconditionally. */
     gizmo_exit_bad_stop_if_requested("ghost_exchange:capacity_rd");
 
-    /* === Step 5: work out which local slot fills each send position === */
-    int *send_home_idx = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
-    /* Two integer-only streams over the match bitmap instead of one that also
-     * carries the payload copy.  Packing while streaming meant every particle_data
-     * + gas_cell_data copy was interleaved with a walk over an NTask x num_pool
-     * bitmap that is almost entirely zero, so the pack paid the sparse walk's
-     * memory behaviour; the destination offsets also had to be tracked per rank
-     * as the walk went.  Here the walk only records which pool slots match, and
-     * the pack then runs over that dense list.
-     * Send order is unchanged -- destination rank ascending, then pool index
-     * ascending, each rank's run based at send_disp[t] -- so the packed buffers
-     * are identical to what the interleaved walk produced. */
-    int *send_pool_slot = (int *) malloc((total_send > 0 ? total_send : 1) * sizeof(int));
-    if(!send_pool_slot) {
-        printf("ERROR: request-driven ghost exchange send-slot list allocation failed on task %d.\n", ThisTask);
-        gizmo_request_controlled_stop(7726, "ghost_exchange (request-driven): send-slot list allocation failed",
-                                      __FILE__, __LINE__, __FUNCTION__);
+    /* === Step 5: work out which local particle fills each send position ===
+     * The send set already lists each peer's pool slots in send order -- destination
+     * rank ascending, then pool index ascending -- in one contiguous run per peer,
+     * starting where send_disp[t] says, so mapping it through the pool in place IS
+     * the send list.  It is trimmed to its length first: it outlives this call as
+     * the refresh provenance, and growth by doubling can leave it up to twice that. */
+    int *send_home_idx = send_set->slots;
+    if(send_set->capacity > (long)total_send) {
+        int *fitted = (int *) realloc(send_home_idx, (size_t)(total_send > 0 ? total_send : 1) * sizeof(int));
+        if(fitted) {send_home_idx = fitted;}
     }
-    gizmo_exit_bad_stop_if_requested("ghost_exchange:send_slot_alloc_rd");
-    for(int t = 0; t < NTask; t++) {
-        if(t == ThisTask) continue;
-        char *match_for_t = matched + (size_t)t * (size_t)num_pool;
-        int *dst = send_pool_slot + send_disp[t];
-        int  k = 0;
-        for(int p = 0; p < num_pool; p++) if(match_for_t[p]) dst[k++] = p;
-    }
-    for(int off = 0; off < total_send; off++) {
-        int j = h_pool[send_pool_slot[off]];
-        send_home_idx[off] = j;
-    }
+    send_set->slots = NULL;
+    send_set->capacity = send_set->used = 0;
+    for(int off = 0; off < total_send; off++) {send_home_idx[off] = h_pool[send_home_idx[off]];}
     /* Advance the exported particles before copying them, so nothing goes on the
      * wire behind the time its receiver will read it at. */
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
-    free(send_pool_slot);
 
     /* === Step 6: pack and Alltoallv particles + cells, then home_idx === */
     gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
@@ -1337,7 +1491,6 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     myfree(recv_count);
     myfree(send_count);
     free(send_home_idx);
-    free(matched);
     free(local_queries);
     (void)from_cache;
     return GHOST_EXCHANGE_COMPLETED;

@@ -46,7 +46,7 @@ struct neighbor_list_t {
  * one query plus the start nodes the sender's walk reached on that peer.  A
  * (query,peer) needing more than NODELISTLENGTH nodes SPLITS into multiple
  * envelopes; the receiver walks each independently and dedups through the
- * matched bitmap, so a split costs an extra envelope and nothing else.
+ * send set, so a split costs an extra envelope and nothing else.
  *
  * Lives here rather than beside the host exchange code because both the host
  * receiver walk and the device receiver traversal consume it, and the device

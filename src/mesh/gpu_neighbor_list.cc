@@ -2139,7 +2139,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                             unsigned int supply_mask, int search_mode,
                             mode_b_radius_policy_t radius_policy, double j_reach_scale,
                             const int *j_to_pool, int npart_bound,
-                            int num_pool, char *matched)
+                            int num_pool, struct ghost_send_set *send_set)
 {
     GIZMO_GPU_ENSURE_ALL_FRESH();
     (void)radius_policy; (void)j_reach_scale;
@@ -2151,11 +2151,11 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
      * whether a type is there, which is enough to skip a node but not to decide
      * whether one of its particles reaches back, so they do not close this gap.
      * Symmetric callers are answered by the host walk. */
-    if(search_mode != NGB_SEARCH_ONEWAY) {return 1;}
-    if(n_env <= 0 || num_pool <= 0 || !matched) {return 1;}
+    if(search_mode != NGB_SEARCH_ONEWAY) {return GX_RECEIVER_DECLINED;}
+    if(n_env <= 0 || num_pool <= 0 || !send_set) {return GX_RECEIVER_DECLINED;}
 
     const int num_local = ghost_get_num_local();
-    if(num_local <= 0) {return 1;}
+    if(num_local <= 0) {return GX_RECEIVER_DECLINED;}
 
     /* DISPATCH FLOOR.  Staging the local leaves costs O(num_local) whatever the
      * envelopes ask for, while the traversal it enables scales with the envelope
@@ -2166,10 +2166,10 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
      * Structural and rank-local: no caller identity, no tuning knob.
      * The ratio is provisional and is what the pricing arm sets. */
     const long GX_RECV_LEAVES_PER_ENVELOPE = 32;
-    if(n_env * GX_RECV_LEAVES_PER_ENVELOPE < (long)num_local) {return 1;}
+    if(n_env * GX_RECV_LEAVES_PER_ENVELOPE < (long)num_local) {return GX_RECEIVER_DECLINED;}
 
     struct GxDeviceTreeView tree_view;
-    if(gx_device_tree_view_build(&tree_view, num_local, "gx_device_receiver_walk") != 0) {return 1;}
+    if(gx_device_tree_view_build(&tree_view, num_local, "gx_device_receiver_walk") != 0) {return GX_RECEIVER_DECLINED;}
     const int tree_base     = tree_view.node_base;
     const int tree_slots    = tree_view.particle_slots;
     const int node_capacity = tree_view.node_capacity;
@@ -2200,17 +2200,17 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
          * rewrites every node and every mirror, and no later host walk can re-arm
          * the latch at this time because force_drift_node returns early on a node
          * that is already current. */
-        if(force_host_lazy_drift_ti() == All.Ti_Current) {return 1;}
+        if(force_host_lazy_drift_ti() == All.Ti_Current) {return GX_RECEIVER_DECLINED;}
 #ifdef SELFGRAVITY_OFF
         /* No gravity walk exists to sweep the nodes in this build, so without
          * this the traversal could never run at all, however valid the tree and
          * its mirror are. */
-        if(gpu_force_drift_nodes(All.Ti_Current) != 0) {return 1;}
+        if(gpu_force_drift_nodes(All.Ti_Current) != 0) {return GX_RECEIVER_DECLINED;}
 #else
         /* Gravity owns the sweep. Sweeping here instead would drift the whole
          * tree eagerly where the walks drift only what they touch, so leave the
          * geometry alone and let the host answer. */
-        return 1;
+        return GX_RECEIVER_DECLINED;
 #endif
     }
 
@@ -2245,7 +2245,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         printf("gx_device_receiver_walk: task %d could not reserve host staging for %d local leaves; answering on the host\n",
                ThisTask, num_local);
         fflush(stdout);
-        return 1;
+        return GX_RECEIVER_DECLINED;
     }
 
     struct gx_recv_leaf_t *leaf_d = gx_recv_alloc<struct gx_recv_leaf_t>("gx_recv_leaf", (size_t)num_local);
@@ -2267,7 +2267,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         if(offsets_d) {Kokkos::kokkos_free<DevSp>(offsets_d);}
         if(pairs_d)   {Kokkos::kokkos_free<DevSp>(pairs_d);}
         if(anomaly_d) {Kokkos::kokkos_free<DevSp>(anomaly_d);}
-        return 1;
+        return GX_RECEIVER_DECLINED;
     }
 
     using UmHostI   = Kokkos::View<int*,     Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
@@ -2314,9 +2314,9 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     const unsigned int   *node_bitflags = tree_view.node_bitflags;
     const int            *nextnode_aux  = tree_view.nextnode_aux;
 
-    int status = 0;
+    int status = GX_RECEIVER_COMPLETED;
 
-    for(long base = 0; base < n_env && status == 0; base += GX_RECV_BATCH) {
+    for(long base = 0; base < n_env && status == GX_RECEIVER_COMPLETED; base += GX_RECV_BATCH) {
         const int nb = (int)((n_env - base < GX_RECV_BATCH) ? (n_env - base) : GX_RECV_BATCH);
         for(int b = 0; b < nb; b++) {env_h[(size_t)b] = envelopes[base + b];}
         {
@@ -2364,7 +2364,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                    ThisTask, nb, (long long)batch_total);
             fflush(stdout);
             endrun(90001025);
-            status = 1; break;
+            status = GX_RECEIVER_FAILED; break;
         }
         if(batch_total == 0) {continue;}
 
@@ -2376,7 +2376,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
          * pass fits by construction and no batch is ever abandoned for being
          * dense. */
         int r0 = 0;
-        while(r0 < nb && status == 0) {
+        while(r0 < nb && status == GX_RECEIVER_COMPLETED) {
             int r1 = r0; int64_t sub_total = 0;
             while(r1 < nb && sub_total + (int64_t)counts_h[(size_t)r1] <= pair_cap) {
                 sub_total += (int64_t)counts_h[(size_t)r1];
@@ -2390,7 +2390,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                        ThisTask, base + r0, counts_h[(size_t)r0], num_local);
                 fflush(stdout);
                 endrun(90001026);
-                status = 1; break;
+                status = GX_RECEIVER_FAILED; break;
             }
             const int64_t sub_base = offsets_h[(size_t)r0];
             {
@@ -2428,15 +2428,34 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             Kokkos::deep_copy(UmHostI(pairs_h.data(), (size_t)sub_total),
                               UmDevI(pairs_d, (size_t)sub_total));
 
-            /* Scatter into the bitmap.  It is MPI-facing host memory, and setting
-             * a bit twice is a no-op, so the host does it. */
-            for(int b = r0; b < r1; b++) {
+            /* Hand the pairs to the send set, one call per run of rows from the
+             * same peer: those rows' pairs are contiguous here.  Envelopes arrive
+             * grouped by peer in ascending order, so a peer that spans a pass or
+             * a batch boundary simply carries on in the next call. */
+            for(int b = r0; b < r1 && status == GX_RECEIVER_COMPLETED; ) {
                 const int t = envelope_peer[base + b];
-                if(t < 0 || t >= NTask || t == ThisTask) {continue;}
-                char *mf = matched + (size_t)t * (size_t)num_pool;
-                const int64_t off = offsets_h[(size_t)b] - sub_base;
-                const int n = counts_h[(size_t)b];
-                for(int c = 0; c < n; c++) {mf[pairs_h[(size_t)(off + c)]] = 1;}
+                int e = b + 1;
+                while(e < r1 && envelope_peer[base + e] == t) {e++;}
+                if(t < 0 || t >= NTask) {
+                    /* Every envelope's sender is known; one that is not would have
+                     * its pairs silently dropped, so stop rather than under-include. */
+                    printf("gx_device_receiver_walk: task %d envelope %ld names sender %d, outside 0..%d\n",
+                           ThisTask, base + b, t, NTask - 1);
+                    fflush(stdout);
+                    gizmo_request_controlled_stop(7737, "gx_device_receiver_walk: envelope with no valid sender",
+                                                  __FILE__, __LINE__, __FUNCTION__);
+                    status = GX_RECEIVER_FAILED;
+                    break;
+                }
+                if(t != ThisTask) {
+                    const int64_t off = offsets_h[(size_t)b] - sub_base;
+                    const int64_t n = offsets_h[(size_t)(e - 1)] + (int64_t)counts_h[(size_t)(e - 1)]
+                                    - offsets_h[(size_t)b];
+                    if(n > 0 && gx_send_set_emit(send_set, t, &pairs_h[(size_t)off], (int)n) != 0) {
+                        status = GX_RECEIVER_FAILED;
+                    }
+                }
+                b = e;
             }
             r0 = r1;
         }
@@ -2465,11 +2484,10 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                ThisTask);
         fflush(stdout);
         endrun(90001024);
-        return 1;
+        return GX_RECEIVER_FAILED;
     }
-    /* Bits already set when a pass gave up need no undo: the caller falls back to
-     * the host walk, which sets exactly the same bits, and setting a bit twice is
-     * a no-op. */
+    /* A pass that gave up reports FAILED rather than declining: what it already
+     * handed to the send set cannot be taken back by a host rerun. */
     return status;
 }
 

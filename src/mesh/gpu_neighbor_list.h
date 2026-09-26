@@ -344,38 +344,55 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
                                         int j_type_bitmask, int search_mode,
                                         neighbor_list_t *out);
 
+/* Which local supply-pool slots this rank sends to which peer (owned by
+   ghost_exchange.cc).  A receiver walk hands it the pool slots it accepts:
+   peers in ascending order, each peer's slots in one or more consecutive calls,
+   repeats allowed -- the set keeps each (peer, slot) once.  Returns 0, or nonzero
+   when the set could not take the slots; it is then failed, and the caller stops
+   emitting and reports the failure rather than trying another backend. */
+struct ghost_send_set;
+int gx_send_set_emit(struct ghost_send_set *send_set, int peer, const int *pool_slots, int n);
+
+/* What a receiver backend did with the envelopes it was handed. */
+enum {
+    GX_RECEIVER_COMPLETED = 0,   /* every accepted pair is in the send set */
+    GX_RECEIVER_DECLINED  = 1,   /* nothing emitted; the host walk must answer */
+    GX_RECEIVER_FAILED    = 2    /* stopped after emitting; the send set is unusable */
+};
+
 /* Device traversal of received export envelopes (the supply-rank half of
    request-driven ghost discovery).  Resumes a bounded subtree walk from each
    envelope's start nodes, applies the shared accept predicate at every local
-   leaf, and sets matched[peer * num_pool + pool_slot] for the pairs it admits —
-   the same bitmap the host walk produces, with the same set semantics, so the
-   two are interchangeable.
+   leaf, and hands the pool slots it admits to the send set -- the same pairs the
+   host walk would hand it, so the two are interchangeable.
 
-   Returns 0 when it did the work; nonzero when it declined, in which case the
-   caller must run the host walk instead and matched[] is left untouched.  Every
-   decline is decided before anything is written, so the two backends never
-   interleave into the bitmap.  Declining is rank-local and safe: the window this
-   runs in contains no collectives.  Reasons to decline are a search mode not yet
-   supported here, too little work to be worth staging the local leaves, the node
-   geometry not being certified current on the device, a tree mirror that does not
-   cover the range the walk may reach, and allocation failure.
+   Returns GX_RECEIVER_DECLINED when it declined, in which case the caller must run
+   the host walk instead.  Every decline is decided before anything is emitted, so
+   the two backends never interleave in the send set.  Declining is rank-local and
+   safe: the window this runs in contains no collectives.  Reasons to decline are a
+   search mode not yet supported here, too little work to be worth staging the
+   local leaves, the node geometry not being certified current on the device, a
+   tree mirror that does not cover the range the walk may reach, and allocation
+   failure.
 
-   Two states instead request a controlled stop, because neither can arise unless
-   the tree or the traversal is already wrong and continuing would answer with a
-   silently truncated or duplicated neighbour set: an index in the gap between the
-   particle slots and the node base (what the host walk stops on), and a single
-   envelope admitting more particles than the rank owns.
+   Returns GX_RECEIVER_FAILED when it stopped after it had begun emitting: the send
+   set could not grow, or one of two states that also request a controlled stop,
+   because neither can arise unless the tree or the traversal is already wrong and
+   continuing would answer with a silently truncated or duplicated neighbour set --
+   an index in the gap between the particle slots and the node base (what the host
+   walk stops on), and a single envelope admitting more particles than the rank
+   owns.  A host rerun cannot repair a half-filled set, so the caller fails too.
 
-   envelope_peer[k] is the task that sent envelope k.  j_to_pool / npart_bound
-   map a local particle index to its slot in the supply pool (negative = not in
-   the pool).  radius_policy and j_reach_scale are the caller's symmetric-search
-   reach; ONEWAY ignores both. */
+   envelope_peer[k] is the task that sent envelope k, non-decreasing in k.
+   j_to_pool / npart_bound map a local particle index to its slot in the supply
+   pool (negative = not in the pool).  radius_policy and j_reach_scale are the
+   caller's symmetric-search reach; ONEWAY ignores both. */
 int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
                             const int *envelope_peer,
                             unsigned int supply_mask, int search_mode,
                             mode_b_radius_policy_t radius_policy, double j_reach_scale,
                             const int *j_to_pool, int npart_bound,
-                            int num_pool, char *matched);
+                            int num_pool, struct ghost_send_set *send_set);
 
 /* Describe this rank's tree to the device walk, or say why it cannot be
    described.  Returns 0 with *out filled, 1 with *out untouched and a one-shot
