@@ -1310,6 +1310,9 @@ void write_cpu_log(void)
 	      "   hydro_frc  %10.2f  %5.1f%%\n"
 	      "   hmaxupdate %10.2f  %5.1f%%\n"
           "   misc_hydro %10.2f  %5.1f%%\n"
+#ifdef MHD_MODIFIED_GRADIENT
+          "mhd_mg_solve  %10.2f  %5.1f%%\n"
+#endif
           "ghost import  %10.2f  %5.1f%%\n"
           "   gi_loops   %10.2f  %5.1f%%\n"
           "   gi_corridor%10.2f  %5.1f%%\n"
@@ -1390,6 +1393,9 @@ void write_cpu_log(void)
     All.CPU_Sum[CPU_HYDCOMPUTE], (All.CPU_Sum[CPU_HYDCOMPUTE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_TREEHMAXUPDATE], (All.CPU_Sum[CPU_TREEHMAXUPDATE]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_DENSMISC], (All.CPU_Sum[CPU_DENSMISC]) / All.CPU_Sum[CPU_ALL] * 100,
+#ifdef MHD_MODIFIED_GRADIENT
+    All.CPU_Sum[CPU_MHD_MG], (All.CPU_Sum[CPU_MHD_MG]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
     All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM],
               (All.CPU_Sum[CPU_GHOSTIMPORT] + All.CPU_Sum[CPU_GHOSTIMPORT_SYMM]) / All.CPU_Sum[CPU_ALL] * 100,
     All.CPU_Sum[CPU_GHOSTIMPORT], (All.CPU_Sum[CPU_GHOSTIMPORT]) / All.CPU_Sum[CPU_ALL] * 100,
