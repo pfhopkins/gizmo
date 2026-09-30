@@ -1784,13 +1784,13 @@ double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *p
 #endif
 #ifdef RT_ISRF_BACKGROUND
     double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i) * UNIT_SURFDEN_IN_CGS, sigma_0=2.23e-3; // sigma_0 is N_H = 1e21 cm^-2 in g cm^-2
-    double u_cr_0 = sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; // unattenuated energy density; prescription for scaling here assumes ISRF ~ sigma_SFR but zeta_CR ~ t_depletion^-1 ~ sigma_SFR^0.5 assuming the Kennicutt 1998 relation
+    double u_cr_0 = COSMIC_RAY_BACKGROUND_FACTOR * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; // unattenuated energy density; prescription for scaling here assumes ISRF ~ sigma_SFR but zeta_CR ~ t_depletion^-1 ~ sigma_SFR^0.5 assuming the Kennicutt 1998 relation
     if(column < sigma_0) {return u_cr_0;} else {
         double atten_fac = exp(DMAX(-column/100.,-90)) * (sigma_0/(column+MIN_REAL_NUMBER)); // attenuates as N_H^{-1} above column of 1e21 cm^-2, with an exponential truncation above 100 g cm^-2; fairly uncertain, closer to predictions of diffusive transport models
 	    return atten_fac * u_cr_0;
     }
 #endif    
-    return 1.6e-12; // eV/cm-3, approximate from Cummings et al. 2016 V1 data
+    return COSMIC_RAY_BACKGROUND_FACTOR * 1.6e-12; // eV/cm-3, approximate from Cummings et al. 2016 V1 data
 }
 
 

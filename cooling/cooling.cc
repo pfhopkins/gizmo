@@ -2280,7 +2280,7 @@ double return_electron_fraction_from_heavy_ions(int target, double temperature, 
 #endif
     /* Regime I: highly/photo-ionized, any contributions here would be negligible -- no need to continue */
     if(n_elec_HHe > 0.01) {return n_ion_max;} // contribute something negligible, doesn't matter here //
-    double a_grain_micron=0.1, m_ion=24.305*PROTONMASS_CGS, mu_eff=2.38, m_neutrals=mu_eff*PROTONMASS_CGS, m_grain=4.189e-12*(2.4)*a_grain_micron*a_grain_micron*a_grain_micron, ngrain_ngas=(m_neutrals/m_grain)*f_dustgas; // effective size of grains that matter at these densities, and ions [here Mg] that dominate
+    double a_grain_micron=GRAIN_SIZE_MICRON_NONIDEAL, m_ion=24.305*PROTONMASS_CGS, mu_eff=2.38, m_neutrals=mu_eff*PROTONMASS_CGS, m_grain=4.189e-12*(2.4)*a_grain_micron*a_grain_micron*a_grain_micron, ngrain_ngas=(m_neutrals/m_grain)*f_dustgas; // effective size of grains that matter at these densities, and ions [here Mg] that dominate
     double k_ei=9.77e-8, y0=sqrt(m_ion/ELECTRONMASS_CGS);
     double y = exp(1.)*y0, ln_oneplusy=log(1.+y), psi_0 = 1.-ln_oneplusy + ln_oneplusy/(1.+ln_oneplusy) * log(ln_oneplusy*(1.+1./y)); // changed convention: using second-order expansion to solve for psi, psi should be < 0, and electron absorption should be suppressed for larger psi because of grain charge leading to coulomb repulsion
     double k_eg_00=0.0195*a_grain_micron*a_grain_micron*sqrt(temperature), k_eg_0=k_eg_00*exp(psi_0);

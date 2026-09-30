@@ -408,6 +408,12 @@
 #ifndef ADAPTIVE_TREEFORCE_UPDATE
 #define ADAPTIVE_TREEFORCE_UPDATE (0.0625) // optimization
 #endif
+#ifndef COSMIC_RAY_BACKGROUND_FACTOR
+#define COSMIC_RAY_BACKGROUND_FACTOR 1.0 /* multiplies the assumed background CR energy density (and so zeta_CR) when CRs are not evolved */
+#endif
+#ifndef GRAIN_SIZE_MICRON_NONIDEAL
+#define GRAIN_SIZE_MICRON_NONIDEAL 0.1 /* single grain size (micron) in the heavy-ion ionization balance and the non-ideal MHD resistivities */
+#endif
 #ifndef SINK_MDOT_RESERVOIR_CAP
 #define SINK_MDOT_RESERVOIR_CAP 30 /* marginally-resolved accretion guard: while a sink holds fewer than SINK_MDOT_RESERVOIR_CAP_NRESOLVED cells' worth of mass, drain at most M_total/CAP of the reservoir per t_acc (floored at one cell), so a formation gulp does not empty in one step. Above that threshold the sink is resolved and stock M_res/t_acc applies. Default ON for STARFORGE: the production configs all set it, and ungated it once stranded 98% of captured mass on test/shu_M120 */
 #endif
