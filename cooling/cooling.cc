@@ -893,9 +893,13 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
 #endif
 
 
-        nH0 = aHp / (MIN_REAL_NUMBER + aHp + geH0 + gJH0ne);	/* eqn (33) */
+        double aHp_tot = aHp; /* radiative + (optionally) grain-assisted recombination, per free electron; only the radiative part enters LambdaRecHp */
+#if defined(GRAIN_SIZE_SELFCONSISTENT) && defined(SIMPLE_STEADYSTATE_CHEMISTRY)
+        if(target >= 0 && necgs > 0) {aHp_tot += alpha_recomb_grain(target, pow(10.,logT), neold, shieldfac, "H+", pp, cell) * nHcgs / necgs;} /* WD01: rate = alpha_gr n_H n_H+ */
+#endif
+        nH0 = aHp_tot / (MIN_REAL_NUMBER + aHp_tot + geH0 + gJH0ne);	/* eqn (33) */
 #if defined(RT_CHEM_PHOTOION)
-        if(target >= 0) {nH0 = (cell[target].HI + fac_noneq_cgs * aHp) / (1 + fac_noneq_cgs * (aHp + geH0 + gJH0ne));} // slightly more general formulation that gives linear update but interpolates to equilibrium solution when dt >> dt_recombination
+        if(target >= 0) {nH0 = (cell[target].HI + fac_noneq_cgs * aHp_tot) / (1 + fac_noneq_cgs * (aHp_tot + geH0 + gJH0ne));} // slightly more general formulation that gives linear update but interpolates to equilibrium solution when dt >> dt_recombination
 #endif // note that the above can produce inconsistencies if used without He ionization routines below, because it will still assume equilibrium ionization of He which can lead to a much higher-than-expected free-electron fraction relative to the ionized H fraction, so be careful
         nHp = 1.0 - nH0;		/* eqn (34) */
 
@@ -937,7 +941,7 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
 	    n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);        
         n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
-	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
+	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, neold, shieldfac, pp, cell);
 #endif        
 #endif       
 	

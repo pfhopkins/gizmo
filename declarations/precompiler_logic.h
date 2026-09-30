@@ -411,6 +411,9 @@
 #ifndef COSMIC_RAY_BACKGROUND_FACTOR
 #define COSMIC_RAY_BACKGROUND_FACTOR 1.0 /* multiplies the assumed background CR energy density (and so zeta_CR) when CRs are not evolved */
 #endif
+#if defined(GRAIN_SIZE_SELFCONSISTENT) && !defined(GRAIN_RECOMB_FIT_AREA_EQUIV_MICRON)
+#define GRAIN_RECOMB_FIT_AREA_EQUIV_MICRON 0.035 /* single grain size with the same surface area per dust mass as the MRN (0.005-0.25 micron, n~a^-3.5) distribution the Weingartner & Draine 2001 grain-recombination fits assume: <a^3>/<a^2> */
+#endif
 #ifndef GRAIN_SIZE_MICRON_NONIDEAL
 #define GRAIN_SIZE_MICRON_NONIDEAL 0.1 /* single grain size (micron) in the heavy-ion ionization balance and the non-ideal MHD resistivities */
 #endif

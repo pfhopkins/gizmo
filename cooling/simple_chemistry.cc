@@ -66,7 +66,10 @@ ion: string
 Returns
 -------
 alpha_gr: float
-    Grain-assisted recombination coefficient in cm^3 s^-1, such that the volumetric recombination rate is alpha_gr n_ion n_e
+    Grain-assisted recombination coefficient in cm^3 s^-1, such that the volumetric recombination rate is alpha_gr n_ion n_H
+    (WD01 normalize per hydrogen nucleus, not per electron). Under GRAIN_SIZE_SELFCONSISTENT it is rescaled from the fit's
+    grain distribution to a single size GRAIN_SIZE_MICRON_NONIDEAL at fixed dust mass: total grain area, and so the
+    ion-grain collision rate, goes as 1/a. The charging dependence through psi is left as fitted.
 */
 MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, const char *ion_name, struct particle_data *pp, struct gas_cell_data *cell)
 {
@@ -90,6 +93,9 @@ MyFloat alpha_recomb_grain(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfa
     };
 
     MyFloat Z = pp[i].Metallicity[0] / All.SolarAbundances[0];
+#ifdef GRAIN_SIZE_SELFCONSISTENT
+    Z *= GRAIN_RECOMB_FIT_AREA_EQUIV_MICRON / GRAIN_SIZE_MICRON_NONIDEAL;
+#endif
     return Z * 1e-14 * C[j][0] / (1 + C[j][1] * pow(psi, C[j][2]) * (1 + C[j][3] * pow(temp, C[j][4]) * pow(psi, -C[j][5] - C[j][6] * log(temp))));
 }
 
@@ -139,11 +145,18 @@ MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp, struct particle_
 }
 
 /* Contribution of molecular ions to electron abundance */
-MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell){
+MyFloat return_electron_fraction_from_molecular_ions(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell){
     MyFloat zeta_cr = Get_CosmicRayIonizationRate_cgs(i, pp, cell);
     MyFloat beta_recomb = 3e-6 / sqrt(DMAX(All.MinGasTemp, temp)); // Fromang, Terquem & Balbus 2002 eq. 9
-    MyFloat xe= sqrt(zeta_cr / (beta_recomb * DMAX(1e2, cell[i].nHcgs())));
-    return sqrt(zeta_cr / (beta_recomb * DMAX(1e2, cell[i].nHcgs()))); // Armitage 2010 eq. 24
+    MyFloat n_eff = DMAX(1e2, cell[i].nHcgs());
+#ifdef GRAIN_SIZE_SELFCONSISTENT
+    /* balance zeta = beta n x^2 + alpha_gr n x (x = x_M = x_e for this channel), with grain recombination taken from the
+       Mg+ fit as a proxy for HCO+-like ions of similar mass */
+    MyFloat a_gr = alpha_recomb_grain(i, temp, x_elec, shieldfac, "Mg+", pp, cell);
+    return 2. * zeta_cr / (n_eff * (a_gr + sqrt(a_gr * a_gr + 4. * beta_recomb * zeta_cr / n_eff))); // root of the quadratic, in the cancellation-free form
+#else
+    return sqrt(zeta_cr / (beta_recomb * n_eff)); // Armitage 2010 eq. 24
+#endif
 }
 
 
