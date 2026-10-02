@@ -348,6 +348,13 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     pr->Td = 10; /* placeholder until an equilibrium dust-temperature estimate is wired in */
 #endif
 
+    /* Kim+23 nebular forbidden-line cooling of photoionized gas: on exactly where the standard module applies it */
+#if defined(RT_CHEM_PHOTOION) && defined(METALS)
+    pr->f_neb = 1.0;
+#else
+    pr->f_neb = 0.0;
+#endif
+
     /* Radiation field and cosmic rays */
     pr->G_0 = 1.0; /* Habing units; will be overridden below if RT available */
     pr->ISRF = 1.0;
