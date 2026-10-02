@@ -45,6 +45,8 @@ static void starforge_params(Params *pr, double n, double dt) {
     pr->y = 0.0994;
     pr->ISRF = 1.0;
     pr->G_0 = 1.0;
+    pr->G_LW = 1.0;
+    pr->f_metal = 1.0;
     pr->Td = 10.0;
     pr->Z_d = 1.0;
     pr->f_d = 1.0;
