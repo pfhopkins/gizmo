@@ -608,7 +608,7 @@ JACO_MODEL := $(strip $(shell grep '^\#define JACO ' GIZMO_config.h | awk '{prin
 ifeq ($(JACO_MODEL),)
 JACO_MODEL := wind_comparison
 endif
-EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_eos.o cooling/microphysics_func_jac.o cooling/jaco_util.o
+EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_solver.o cooling/jaco_eos.o cooling/microphysics_func_jac.o cooling/jaco_util.o
 endif
 ## sources written by the jaco codegen (plus cooling/jaco_tables.hdf5, which must be copied to the run directory)
 JACO_GENERATED = cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h \
@@ -640,7 +640,7 @@ INCL    += 	declarations/allvars.h \
 			Makefile
 
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
-INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h cooling/jaco_tables.h
+INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h cooling/jaco_tables.h cooling/jaco_solver.h
 JACO_PYTHON ?= python3
 ## one codegen run writes every generated file; the stamp keeps parallel make from running it per target
 $(JACO_STAMP): $(CONFIG)

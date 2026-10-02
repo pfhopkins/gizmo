@@ -1,23 +1,9 @@
 /*
- * jaco.cc — Implicit backward-Euler microphysics solver for GIZMO.
+ * jaco.cc -- GIZMO glue for the jaco code-generated microphysics network.
  *
- * This file is a static template distributed with the jaco codegen package.
- * It provides the Newton-Raphson solver loop and the GIZMO integration layer.
- * The physics (RHS + Jacobian) is supplied by the codegen-produced
- * microphysics_func_jac(), which is called as a black box.
- *
- * The solver uses SolveVars and Params unions (defined in microphysics_func_jac.h)
- * that provide both named field access (sv->T, pr->n_Htot) and indexed array
- * access (sv->data[i]) via anonymous structs. This eliminates index-mismatch
- * bugs while allowing generic loops over variables.
- *
- * Recovery strategy on convergence failure:
- *   1. Full Newton steps (careful_steps=1). Fast when it works.
- *   2. Damped Newton with 30-step ramp (careful_steps=30). Prevents overshoot.
- *   3. Bisection restart (careful_steps=31). Resets to geometric mean of
- *      temperature bounds, then damped Newton again.
- *   4. If all attempts exhaust MAXITER, accept the state if the residual is
- *      small (relaxed tolerance), otherwise abort.
+ * Packs a gas cell into the generated SolveVars/Params (gizmo_to_jaco), calls the implicit solver
+ * (jaco_solver.cc, no GIZMO dependencies), and writes the answer back (jaco_to_gizmo). Also
+ * builds the CIE table that seeds the ions, and reports per-step solver statistics.
  */
 
 #include "../core/proto.h"
@@ -25,9 +11,7 @@
 #include "microphysics_func_jac.h"
 #include <math.h>
 #include <string.h>
-extern "C" {
-#include <gsl/gsl_linalg.h>
-}
+#include "jaco_solver.h"
 /* NaN/Inf check — defined in jaco_util.cc to prevent LTO from optimizing it away */
 extern "C" int jaco_isfinite(double x);
 #define JACO_ABUNDANCE_FLOOR 1e-20
@@ -57,14 +41,15 @@ static double cie_interp(const double *table, double logT) {
     return (1 - t) * table[i] + t * table[i + 1];
 }
 
-/* Build the CIE table by sweeping T with continuation from the CIE test solver.
-   Called once from jaco_init_tables(). Uses the compiled microphysics_func_jac
-   with T fixed (identity rows for u/T) and the same Newton solver as the unit test. */
+/* Build the CIE table by sweeping T downward with continuation, solving the chemistry at each
+   fixed T with the solver's fixed-T chemistry solve. Called once from InitCool(). */
 void jaco_build_cie_table(void) {
     if (cie_table_initialized)
         return;
 
     /* Default params for CIE (low density, no radiation) */
+    struct JacoSolverSettings set;
+    jaco_solver_default_settings(&set);
     Params pr = {};
     pr.n_Htot = 1.0;
     pr.Delta_t = 1e15;
@@ -126,57 +111,10 @@ void jaco_build_cie_table(void) {
         pr.x_H_2_initial = sv.x_H_2;
 #endif
 
-        /* Newton solve at fixed T: zero the u/T equations */
-        SolveVars func, dsv;
-        double jac[N_VARS][N_VARS];
-        const int CIE_MAXITER = 100;
-        int converged = 0;
-        for (int iter = 0; iter < CIE_MAXITER; iter++) {
-            microphysics_func_jac(&sv, &pr, &func, jac);
-            func.data[0] = 0;
-            func.data[1] = 0;
-            for (int j = 0; j < N_VARS; j++) {
-                jac[0][j] = 0;
-                jac[1][j] = 0;
-            }
-            jac[0][0] = 1;
-            jac[1][1] = 1;
-
-            double jf[N_VARS * N_VARS], rhs[N_VARS];
-            for (int ii = 0; ii < N_VARS; ii++) {
-                rhs[ii] = -func.data[ii];
-                for (int jj = 0; jj < N_VARS; jj++)
-                    jf[ii * N_VARS + jj] = jac[ii][jj];
-            }
-            gsl_matrix_view A = gsl_matrix_view_array(jf, N_VARS, N_VARS);
-            gsl_vector_view b = gsl_vector_view_array(rhs, N_VARS);
-            gsl_vector_view x = gsl_vector_view_array(dsv.data, N_VARS);
-            gsl_vector *tau = gsl_vector_alloc(N_VARS);
-            gsl_linalg_QR_decomp(&A.matrix, tau);
-            gsl_linalg_QR_solve(&A.matrix, tau, &b.vector, &x.vector);
-            gsl_vector_free(tau);
-
-            double fac = fmin(1.0, (double)(iter + 1) / 10.0);
-            converged = 1;
-            for (int k = 0; k < N_VARS; k++) {
-                sv.data[k] += fac * dsv.data[k];
-                if (fabs(dsv.data[k]) > 1e-6 * (fabs(sv.data[k]) + 1e-6))
-                    converged = 0;
-            }
-            sv.T = fmax(10.0, fmin(1e10, sv.T));
-            for (int k = 2; k < N_VARS; k++)
-                sv.data[k] = fmax(JACO_ABUNDANCE_FLOOR, fmin(1.0, sv.data[k]));
-            sv.u = jaco_T_to_u(sv.T, &sv, &pr, NULL);
-            if (converged)
-                break;
-        }
-        if (!converged) {
-            printf("jaco_build_cie_table: failed to converge at logT=%g (T=%g) after %d iterations\n", logT, T,
-                   CIE_MAXITER);
-            printf("  sv:");
-            for (int k = 0; k < N_VARS; k++)
-                printf(" %.4e", sv.data[k]);
-            printf("\n");
+        int nfeval = 0;
+        if (jaco_solve_chemistry(&sv, &pr, &set, &nfeval)) {
+            printf("jaco_build_cie_table: chemistry failed at logT=%g (T=%g)\n", logT, T);
+            jaco_print_state(stdout, "  state:", &sv, &pr);
             endrun(11);
         }
 
@@ -470,8 +408,20 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
     SolveVars sv = {};
     Params pr = {};
     gizmo_to_jaco(0, &sv, &pr, p, c);
-    int nfeval = jaco_solve(&sv, &pr, 1e-6);
+
+    struct JacoSolverSettings set;
+    jaco_solver_default_settings(&set);
+    set.u_min = All.MinEgySpec * UNIT_SPECEGY_IN_CGS;
+    struct JacoSolveInfo info;
+    const SolveVars sv_in = sv;
+    if (jaco_solve(&sv, &pr, &set, &info)) {
+        printf("JACO FATAL: the solver failed on task %d (nfeval=%d)\n", ThisTask, info.nfeval);
+        jaco_print_state(stdout, "  input state:", &sv_in, &pr);
+        fflush(stdout);
+        endrun(10);
+    }
     jaco_to_gizmo(0, &sv, &pr, p, c);
+    int nfeval = info.nfeval;
 
 #ifdef _OPENMP
 #pragma omp atomic update
@@ -490,409 +440,5 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
     if (nfeval > 10) jaco_stats.n_expensive++;
     if (nfeval > jaco_stats.max_nfeval) jaco_stats.max_nfeval = nfeval;
 #endif
-}
-
-/* ---- Newton-Raphson solver ---- */
-
-/* Apply physical bounds. Returns 1 if any variable was clamped, 0 otherwise. */
-static int jaco_clamp(SolveVars *sv) {
-    int clamped = 0;
-    double T_old = sv->T, u_old = sv->u;
-    sv->T = DMAX(1.0, DMIN(1e10, sv->T));
-    sv->u = DMAX(All.MinEgySpec * UNIT_SPECEGY_IN_CGS, DMIN(1e17, sv->u));
-    if (sv->T != T_old || sv->u != u_old) clamped = 1;
-    for (int k = 2; k < N_VARS; k++) {
-        double old = sv->data[k];
-        sv->data[k] = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(1.0, sv->data[k]));
-        if (sv->data[k] != old) clamped = 1;
-    }
-    return clamped;
-}
-
-/* Returns 1 if the solver has not yet converged, 0 if converged. */
-static int iter_condition(const SolveVars *sv, const SolveVars *dsv, double tol) {
-    for (int i = 0; i < N_VARS; i++) {
-        /* NaN in state or step is never converged */
-        if (!jaco_isfinite(sv->data[i]) || !jaco_isfinite(dsv->data[i]))
-            return 1;
-
-        /* Abundances pinned at the floor with a negative step are constrained, not unconverged */
-        if (i >= 2 && sv->data[i] <= JACO_ABUNDANCE_FLOOR && dsv->data[i] <= 0)
-            continue;
-
-        /* For abundances, add an absolute tolerance so that tiny species
-           (e.g. x_Heplus ~ 1e-13 with dsv ~ 1e-16) count as converged */
-        double abstol = 0;
-        if (i >= 2)
-            abstol = JACO_ABUNDANCE_FLOOR;
-
-        if (fabs(dsv->data[i]) > tol * fabs(sv->data[i]) + abstol)
-            return 1;
-    }
-    return 0;
-}
-
-/* Solve the CIE subsystem at fixed T: equilibrate ion abundances only (rows 2+).
-   Replaces the u and T equations with identity rows so only chemistry updates. */
-static void solve_CIE_subsystem(SolveVars *sv, const Params *pr, double tol, int maxiter);
-
-/* Solve A * x = b via QR decomposition. */
-static void qr_solve(double A[N_VARS][N_VARS], double b[N_VARS], double x[N_VARS]) {
-    double A_flat[N_VARS * N_VARS];
-    for (int i = 0; i < N_VARS; i++)
-        for (int j = 0; j < N_VARS; j++)
-            A_flat[i * N_VARS + j] = A[i][j];
-
-    gsl_matrix_view Am = gsl_matrix_view_array(A_flat, N_VARS, N_VARS);
-    gsl_vector_view bv = gsl_vector_view_array(b, N_VARS);
-    gsl_vector_view xv = gsl_vector_view_array(x, N_VARS);
-    gsl_vector *tau = gsl_vector_alloc(N_VARS);
-    gsl_linalg_QR_decomp(&Am.matrix, tau);
-    gsl_linalg_QR_solve(&Am.matrix, tau, &bv.vector, &xv.vector);
-    gsl_vector_free(tau);
-}
-
-/* Solve the CIE subsystem at fixed T (ion equilibrium only). Used as an
-   operator-splitting step within the outer Newton loop to decouple chemistry
-   from thermal dynamics. */
-static void solve_CIE_subsystem(SolveVars *sv, const Params *pr, double tol, int maxiter) {
-    SolveVars func, dsv;
-    double jac[N_VARS][N_VARS];
-    for (int iter = 0; iter < maxiter; iter++) {
-        microphysics_func_jac(sv, pr, &func, jac);
-        /* Zero out u and T rows — only solve the chemistry equations */
-        func.data[0] = 0;
-        func.data[1] = 0;
-        for (int j = 0; j < N_VARS; j++) {
-            jac[0][j] = 0;
-            jac[1][j] = 0;
-        }
-        jac[0][0] = 1;
-        jac[1][1] = 1;
-
-        /* Check chemistry convergence (rows 2+) */
-        int converged = 1;
-        for (int k = 2; k < N_VARS; k++) {
-            if (fabs(func.data[k]) > tol * (fabs(sv->data[k]) * pr->n_Htot / pr->Delta_t + 1e-20))
-                converged = 0;
-        }
-        if (converged)
-            return;
-
-        double rhs[N_VARS];
-        for (int i = 0; i < N_VARS; i++)
-            rhs[i] = -func.data[i];
-        qr_solve(jac, rhs, dsv.data);
-
-        for (int k = 2; k < N_VARS; k++)
-            sv->data[k] = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(1.0, sv->data[k] + dsv.data[k]));
-    }
-}
-
-/* One Newton step: solve J * dsv = -func, then sv += dsv and clamp. */
-static void jaco_newton_step(SolveVars *sv, SolveVars *dsv, const SolveVars *func, double jac[N_VARS][N_VARS]) {
-    double rhs[N_VARS];
-    for (int i = 0; i < N_VARS; i++)
-        rhs[i] = -func->data[i];
-
-    qr_solve(jac, rhs, dsv->data);
-
-    for (int k = 0; k < N_VARS; k++)
-        sv->data[k] += dsv->data[k];
-
-    jaco_clamp(sv);
-}
-
-/* Run Newton iterations with damping factor that ramps from 1/careful_steps to 1.
-   Returns number of iterations taken, or -1 if MAXITER reached without convergence.
-   If verbose, prints all iterates to stdout.
-   If limit_T_step, restrict the T step so T changes by no more than a factor 1.1
-   per iteration — a trust-region-like safeguard for stiff low-density cases.
-   *nfeval is incremented by the number of microphysics_func_jac calls. */
-static int jaco_newton_loop(SolveVars *sv, const Params *pr, double tol, int careful_steps, int verbose,
-                            int limit_T_step, int *nfeval) {
-    SolveVars func, dsv;
-    double jac[N_VARS][N_VARS];
-
-    for (int i = 0; i < N_VARS; i++)
-        dsv.data[i] = MAX_REAL_NUMBER;
-
-    /* In the fallback stages (damping or T-step limiting), sync u with T via the
-       EOS so the func[u] residual is always zero. Without this, a stale u from
-       the hydro step produces a huge EOS residual that drives Newton's T step
-       even when we're trying to cautiously approach a solution. */
-    int sync_u_to_T = (careful_steps > 1) || limit_T_step;
-
-    for (int iter = 0; iter < MAXITER; iter++) {
-        if (!iter_condition(sv, &dsv, tol))
-            return iter;
-
-        if (sync_u_to_T)
-            sv->u = jaco_T_to_u(sv->T, sv, pr, NULL);
-
-        microphysics_func_jac(sv, pr, &func, jac);
-        if (nfeval) (*nfeval)++;
-
-        double fac = fmin(1.0, ((double)iter + 1) / careful_steps);
-        double rhs[N_VARS];
-        for (int i = 0; i < N_VARS; i++)
-            rhs[i] = -func.data[i];
-        qr_solve(jac, rhs, dsv.data);
-
-        /* Bail immediately if QR produced NaN (singular Jacobian) */
-        {
-            int has_nan = 0;
-            for (int k = 0; k < N_VARS; k++)
-                if (!jaco_isfinite(dsv.data[k])) { has_nan = 1; break; }
-            if (has_nan) return -1;
-        }
-
-        if (verbose) {
-            printf("  iter=%d sv:", iter);
-            for (int k = 0; k < N_VARS; k++)
-                printf(" %.4e", sv->data[k]);
-            printf("  func:");
-            for (int k = 0; k < N_VARS; k++)
-                printf(" %.4e", func.data[k]);
-            printf("  dsv:");
-            for (int k = 0; k < N_VARS; k++)
-                printf(" %.4e", dsv.data[k]);
-            printf("\n");
-            /* Decompose dsv[T] into contributions from each func component:
-               dsv = -J^{-1} func, so dsv[T] = sum_i -(J^{-1})[T][i] * func[i].
-               Compute each contribution by zeroing all but one func entry. */
-            printf("    dsv[T] contributions (zeroing all but func[i]):");
-            for (int i = 0; i < N_VARS; i++) {
-                double rhs2[N_VARS] = {0};
-                rhs2[i] = -func.data[i];
-                double dsv2[N_VARS];
-                double jac_copy[N_VARS][N_VARS];
-                for (int a = 0; a < N_VARS; a++)
-                    for (int b = 0; b < N_VARS; b++)
-                        jac_copy[a][b] = jac[a][b];
-                qr_solve(jac_copy, rhs2, dsv2);
-                printf(" [%d]=%.4e", i, dsv2[1]);
-            }
-            printf("\n");
-        }
-
-        /* Apply damping factor from careful_steps */
-        for (int k = 0; k < N_VARS; k++)
-            dsv.data[k] *= fac;
-
-        /* Trust-region limit on T: cap |dT/T| to 0.1 (i.e. factor-of-1.1 change per iter) */
-        if (limit_T_step) {
-            double max_dT = 0.1 * fabs(sv->T);
-            if (fabs(dsv.data[IDX_T]) > max_dT) {
-                double scale = max_dT / fabs(dsv.data[IDX_T]);
-                for (int k = 0; k < N_VARS; k++)
-                    dsv.data[k] *= scale;
-            }
-        }
-
-        /* Fraction-to-the-boundary: scale dsv so that no abundance falls below
-           its floor, and the conservation-derived neutral abundances (x_H, x_He)
-           stay non-negative. Required because Newton doesn't see these constraints
-           and can produce unphysical states where neutral abundances go negative,
-           which causes cooling rates to flip sign and T to run away. */
-        {
-            const double tau = 0.99; /* land at most 99% of the way to the boundary */
-            double alpha = 1.0;
-
-            /* Per-species non-negativity: x_k + alpha*dsv_k >= (1-tau)*x_k.
-               Skip variables already at the floor — those are active-set constraints
-               handled by the post-step clamp; letting them drive alpha would freeze
-               the whole solver when one species sits at its floor. */
-            for (int k = 2; k < N_VARS; k++) {
-                if (sv->data[k] <= 2.0 * JACO_ABUNDANCE_FLOOR) continue;
-                if (dsv.data[k] < 0) {
-                    double max_step = -tau * sv->data[k] / dsv.data[k];
-                    if (max_step < alpha) alpha = max_step;
-                }
-            }
-
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-            /* Neutral H budget: x_H = 1 - x_Hp - 2*x_H2 >= 0.
-               dsv[x_H] = -(dsv[x_Hp] + 2*dsv[x_H2]) */
-            {
-                double xH_now = 1.0 - sv->x_Hplus - 2.0 * sv->x_H_2;
-                double dxH = -(dsv.x_Hplus + 2.0 * dsv.x_H_2);
-                if (dxH < 0 && xH_now > 0) {
-                    double max_step = -tau * xH_now / dxH;
-                    if (max_step < alpha) alpha = max_step;
-                }
-            }
-#elif defined(JACO_MODEL_KWH)
-            /* Neutral H budget: x_H = 1 - x_Hp >= 0 */
-            {
-                double xH_now = 1.0 - sv->x_Hplus;
-                double dxH = -dsv.x_Hplus;
-                if (dxH < 0 && xH_now > 0) {
-                    double max_step = -tau * xH_now / dxH;
-                    if (max_step < alpha) alpha = max_step;
-                }
-            }
-#endif
-
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
-            /* Neutral He budget: x_He = y - x_Hep - x_Hepp >= 0 */
-            {
-                double xHe_now = pr->y - sv->x_Heplus - sv->x_Heplusplus;
-                double dxHe = -(dsv.x_Heplus + dsv.x_Heplusplus);
-                if (dxHe < 0 && xHe_now > 0) {
-                    double max_step = -tau * xHe_now / dxHe;
-                    if (max_step < alpha) alpha = max_step;
-                }
-            }
-#endif
-
-            /* Only scale the abundance rows (k>=2). Don't let chemistry floors
-               shrink u/T steps — thermal dynamics should evolve at full damping,
-               while chemistry stays within physical bounds via alpha. */
-            if (alpha < 1.0) {
-                for (int k = 2; k < N_VARS; k++)
-                    dsv.data[k] *= alpha;
-            }
-        }
-
-        for (int k = 0; k < N_VARS; k++)
-            sv->data[k] += dsv.data[k];
-
-        /* If any variable hit its physical bounds, the step was truncated by the
-           clamp and dsv no longer reflects the actual change. Reset dsv to large
-           values so iter_condition forces at least one more iteration to verify
-           convergence at the clamped state, rather than falsely declaring success
-           based on the pre-clamp step.
-           Exception: abundances that were already at the floor before the step
-           and got pushed further below (a normal active-set constraint) should
-           NOT trigger a global dsv reset — iter_condition's floor-skip handles them. */
-        {
-            SolveVars sv_pre = *sv; /* state before clamp but after step */
-            int clamped_nontrivially = jaco_clamp(sv);
-            if (clamped_nontrivially) {
-                /* Check if the only clamping was abundances already at the floor */
-                int nontrivial = 0;
-                if (sv->T != sv_pre.T || sv->u != sv_pre.u) nontrivial = 1;
-                for (int k = 2; k < N_VARS && !nontrivial; k++) {
-                    if (sv->data[k] != sv_pre.data[k] && sv_pre.data[k] > 2.0 * JACO_ABUNDANCE_FLOOR)
-                        nontrivial = 1; /* clamped a variable that wasn't already at the floor */
-                }
-                if (nontrivial)
-                    for (int k = 0; k < N_VARS; k++)
-                        dsv.data[k] = MAX_REAL_NUMBER;
-            }
-        }
-
-    }
-    return -1;
-}
-
-/* Try to solve a single implicit step with the 2-stage fallback strategy.
-   Returns: nfeval on success, -1 on hard failure. */
-static int jaco_solve_single(SolveVars *sv, Params *pr, double tol, int *nfeval_out) {
-    const SolveVars sv0 = *sv;
-    int nfeval = 0;
-    int converged = 0;
-
-    /* Stage 1: undamped Newton */
-    *sv = sv0;
-    if (jaco_newton_loop(sv, pr, tol, 1, 0, 0, &nfeval) >= 0)
-        converged = 1;
-
-    /* Stage 2: damped Newton with EOS sync.
-       Also sync u_initial to u(T_initial) so the BDF term starts at zero —
-       otherwise a u/T inconsistency from the hydro step creates a constant
-       offset that no amount of dt-halving can resolve. */
-    // if (!converged) {
-    //     *sv = sv0;
-    //     /* Reset to a fully self-consistent initial state: CIE ions for stored T,
-    //        then u = u(T, ions). This eliminates the u/T inconsistency from the
-    //        hydro step that prevents convergence even at tiny sub-timesteps. */
-    //     double logT = log10(DMAX(sv->T, 10.));
-    //     sv->x_Hplus = cie_interp(cie_xHp, logT);
-    //     sv->x_Heplus = cie_interp(cie_xHep, logT);
-    //     sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
-    //     pr->u_initial = jaco_T_to_u(sv->T, sv, pr, NULL);
-    //     sv->u = pr->u_initial;
-    //     if (jaco_newton_loop(sv, pr, tol, 30, 0, 1, &nfeval) >= 0)
-    //         converged = 1;
-    // }
-
-    /* Always report nfeval to the caller, even on failure */
-    if (nfeval_out) *nfeval_out += nfeval;
-
-    if (!converged) {
-        printf("jaco_solve_single FAILED: T0=%g T=%g n=%g dt=%g nfeval=%d\n",
-               sv0.T, sv->T, pr->n_Htot, pr->Delta_t, nfeval);
-        /* Replay stage 2 verbose to see what's happening */
-        static int _replay_count = 0;
-        if (_replay_count < 1) {
-            *sv = sv0;
-            // double logT = log10(DMAX(sv->T, 10.));
-            // sv->x_Hplus = cie_interp(cie_xHp, logT);
-            // sv->x_Heplus = cie_interp(cie_xHep, logT);
-            // sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
-            // pr->u_initial = jaco_T_to_u(sv->T, sv, pr, NULL);
-            // sv->u = pr->u_initial;
-            jaco_newton_loop(sv, pr, tol, 1, 1, 0, NULL);
-            fflush(stdout);
-            _replay_count++;
-        }
-    return -1;
-    }
-
-    /* Announce any suspiciously hot result */
-    if (sv->T > 2e4)
-        printf("jaco WARNING: T=%g > 2e4 after solve (T0=%g n=%g dt=%g nfeval=%d)\n",
-               sv->T, sv0.T, pr->n_Htot, pr->Delta_t, nfeval);
-
-    return nfeval;
-}
-
-int jaco_solve(SolveVars *sv, const Params *pr_in, double tol) {
-    Params pr = *pr_in;
-    const SolveVars sv0 = *sv;
-    int nfeval_total = 0;
-
-    /* Attempt the full timestep. On failure, halve the sub-step size and
-       subcycle until the full interval is covered. */
-    double dt_remaining = pr.Delta_t;
-    double dt_sub = dt_remaining;
-    const int MAX_SUBSTEPS = 256;
-
-    for (int substep = 0; substep < MAX_SUBSTEPS && dt_remaining > 1e-30 * pr_in->Delta_t; substep++) {
-        /* Set up sub-step params */
-        SolveVars sv_save = *sv;
-        pr.Delta_t = dt_sub;
-        pr.u_initial = sv->u;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-        pr.x_H_2_initial = sv->x_H_2;
-#endif
-
-        int ret = jaco_solve_single(sv, &pr, tol, &nfeval_total);
-
-        if (ret >= 0) {
-            /* Sub-step succeeded — advance time */
-            nfeval_total += ret;
-            dt_remaining -= dt_sub;
-            dt_sub = DMIN(dt_sub * 2.0, dt_remaining);
-            continue;
-        }
-
-        /* Failure: halve the sub-step and retry from saved state */
-        *sv = sv_save;
-        dt_sub *= 0.5;
-        printf("jaco_solve: subcycling dt_sub halved to %g (n=%g T=%g dt=%g)\n",
-               dt_sub, pr_in->n_Htot, sv->T, pr_in->Delta_t);
-
-        if (dt_sub < pr_in->Delta_t * 1e-10) {
-            printf("jaco_solve: subcycle dt_sub too small (n=%g T0=%g T=%g dt_sub=%g dt=%g nfeval=%d)\n",
-                   pr_in->n_Htot, sv0.T, sv->T, dt_sub, pr_in->Delta_t, nfeval_total);
-            fflush(stdout);
-            endrun(10);
-        }
-    }
-
-    return nfeval_total;
 }
 #endif
