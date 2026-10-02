@@ -172,8 +172,10 @@ static int check_answer(const SolveVars *sv, const Params *pr, const JacoSolverS
         sprintf(why, "neutral budget negative: x_H0=%g x_He0=%g", xH0, xHe0);
         return 1;
     }
-    if (sv->T < set->T_min || sv->T > set->T_max || sv->u < set->u_min * (1 - 1e-9)) {
-        sprintf(why, "T=%g or u=%g outside the floor/ceiling", sv->T, sv->u);
+    /* floors and ceiling hold exactly: an answer pinned at the floor sits on or above it */
+    if (sv->T < set->T_min || sv->T > set->T_max || sv->u < set->u_min) {
+        sprintf(why, "outside the floor/ceiling: T=%.9g (T/T_min-1=%.2e) u/u_min-1=%.2e", sv->T, sv->T / set->T_min - 1,
+                sv->u / set->u_min - 1);
         return 1;
     }
     for (int k = 1; k < N_VARS; k++) J[k][k] = diag_derivative(sv, pr, &F, J, k);
@@ -498,6 +500,8 @@ static int run_replays(const JacoSolverSettings *set) {
 
 /* ---- sweep ---- */
 
+static Stats cold10, ionized; /* sweep subsets: T0 = 10 K, and starts with x_H+ = 1 exactly */
+
 static const double sweep_n[] = {1e-2, 1e-1, 1, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8};
 static const double sweep_dt[] = {1e3, 1e5, 1e7, 1e9, 1e11, 1e13};
 static const double DT_EQ = 1e20; /* effectively infinite: the answer must be an equilibrium */
@@ -560,7 +564,16 @@ static void run_sweep(const JacoSolverSettings *set, int full, Stats &sweep, Sta
                                 continue;
                             }
                             long fails_before = st.fail + st.check_fail;
-                            if (solve_checked(&sv, &pr, set, st, what, &info)) continue;
+                            int rc_main = solve_checked(&sv, &pr, set, st, what, &info);
+                            /* the starts that used to hit non-finite model values, tallied apart */
+                            int bad_now = rc_main || st.fail + st.check_fail != fails_before;
+                            Stats *subset[2] = {T0 == 10.0 ? &cold10 : NULL, variant == SEED_IONIZED ? &ionized : NULL};
+                            for (Stats *sub : subset)
+                                if (sub) {
+                                    sub->add(rc_main, info);
+                                    sub->check_fail += (!rc_main && bad_now);
+                                }
+                            if (rc_main) continue;
                             if (check_eq && !info.pinned && st.fail + st.check_fail == fails_before) {
                                 double shift, dist;
                                 int r = near_root(&sv, &pr, set, &shift, &dist);
@@ -737,6 +750,9 @@ int main(int argc, char **argv) {
     sweep.print("sweep");
     warm.print("warm");
     eq.print("dt=1e20");
+    printf("-- subsets of the above (all dt) --\n");
+    cold10.print("T0=10K");
+    ionized.print("x_H+=1");
     printf("-- with FD repair of non-finite Jacobians (informational) --\n");
     sweep_fd.print("sweep");
     eq_fd.print("dt=1e20");
