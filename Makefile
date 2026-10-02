@@ -647,6 +647,9 @@ $(JACO_STAMP): $(CONFIG)
 	$(JACO_PYTHON) -m jaco.codegen.gizmo.gizmo $(JACO_MODEL) --language c --ext .cc --output-dir cooling
 	touch $@
 $(JACO_GENERATED): $(JACO_STAMP) ;
+## the generated expressions must not be reassociated: products of clamped exponentials hold huge intermediates
+## that -fassociative-math (part of -ffast-math) can overflow into inf*0 = NaN in the Jacobian
+cooling/microphysics_func_jac.o cooling/jaco_eos.o: CFLAGS += -fno-associative-math
 endif
 
 
