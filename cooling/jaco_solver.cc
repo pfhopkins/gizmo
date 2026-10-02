@@ -31,6 +31,7 @@
 /* ---- tolerances and limits ---- */
 #define JACO_TOL_DEFAULT 1e-6        /* relative; Newton converges quadratically, so tight costs ~1 extra iteration */
 #define JACO_X_ATOL 1e-14            /* absolute abundance tolerance: far below anything that affects heating or the EOS */
+#define JACO_NORM_XMIN 1e-6          /* abundance scale in the step-acceptance norm: trace species must not dominate it */
 #define JACO_EOS_START_TOL 1e-3      /* tier 0: re-derive T0 when |u(T0,x0) - u_initial| exceeds this fraction of u_initial */
 #define JACO_MASS_PER_H 2.34e-24     /* ~1.4 m_p: mass per H nucleus, only used to scale the energy residual */
 #define JACO_TIER1_MAXITER 8         /* tier-1 Newton steps; a consistent start needs 1-3 */
@@ -386,7 +387,8 @@ static double scaled_norm(const double *d, const double *cs, int n) {
    column dropped) unless its net production is positive.
    Step acceptance is Deuflhard's natural monotonicity test: the simplified Newton correction at
    the trial point, -J^-1 F(trial) with the current factors, must be smaller (in variables scaled
-   by their magnitudes) than the Newton correction by 1 - alpha/4; else alpha is halved. Being
+   by their magnitudes, abundances floored at JACO_NORM_XMIN) than the Newton correction by
+   1 - alpha/4; else alpha is halved. Being
    invariant to row scaling, it does not reject good steps because a fast, tiny species' residual
    jumped in absolute terms, which a raw residual-norm test does.
    Converged when, over the free variables, the step is below tol (relative, plus JACO_X_ATOL for
@@ -411,11 +413,12 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             return NEWTON_OK;
         }
 
-        double cs[N_VARS], b[N_VARS], d[N_VARS], A[N_VARS][N_VARS];
+        double cs[N_VARS], w[N_VARS], b[N_VARS], d[N_VARS], A[N_VARS][N_VARS];
         int res_ok = 1;
         for (int a = 0; a < n; a++) {
             int i = idx[a];
             cs[a] = (i == IDX_T) ? sv->T : sv->data[i] + JACO_X_ATOL;
+            w[a] = (i == IDX_T) ? sv->T : sv->data[i] + JACO_NORM_XMIN;
             if (fabs(e.F.data[i]) > tol * row_scale(sv, pr, &e, i)) res_ok = 0;
             for (int a2 = 0; a2 < n; a2++)
                 A[a][a2] = e.J[i][idx[a2]] - e.J[i][IDX_u] * e.J[IDX_u][idx[a2]] / e.J[IDX_u][IDX_u];
@@ -454,7 +457,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             }
         }
 
-        double norm_d = scaled_norm(d, cs, n);
+        double norm_d = scaled_norm(d, w, n);
         int accepted = 0;
         SolveVars trial;
         for (int bt = 0; bt <= JACO_MAX_BACKTRACK; bt++, alpha *= 0.5) {
@@ -464,7 +467,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             double bt_rhs[N_VARS], dbar[N_VARS];
             reduced_rhs(&et, idx, n, bt_rhs);
             if (lu_solve(&lu, bt_rhs, dbar)) continue;
-            if (scaled_norm(dbar, cs, n) <= (1 - 0.25 * alpha) * norm_d) {
+            if (scaled_norm(dbar, w, n) <= (1 - 0.25 * alpha) * norm_d) {
                 accepted = 1;
                 break;
             }
