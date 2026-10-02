@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdlib.h>
-#include "../cooling/microphysics_func_jac.h"
+#include "microphysics_func_jac.h" /* generated into build/ by the Makefile */
 
 /* Declarations from jaco_eos.cc */
 double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_out);

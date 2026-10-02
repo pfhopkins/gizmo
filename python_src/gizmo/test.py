@@ -188,11 +188,14 @@ def build_gizmo_for_test(test_name: str, num_openmp_threads: int = 0, extra_conf
         _build_gizmo_locked(test_name, num_openmp_threads, extra_config_flags)
 
 
+_JACO_TABLE_FILE = "jaco_tables.hdf5"
+
+
 def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_flags: tuple):
     """The build itself. Caller must hold _BUILD_LOCK -- see build_gizmo_for_test."""
     # Only this test's binary, NOT test/*/GIZMO: removing other tests' binaries breaks a
     # concurrent job that has already built and is about to run, and serves no purpose here.
-    system(f"rm -f GIZMO test/{test_name}/GIZMO")
+    system(f"rm -f GIZMO test/{test_name}/GIZMO test/{test_name}/{_JACO_TABLE_FILE}")
     system(f"cp test/{test_name}/Config.sh .")
     if num_openmp_threads > 0:
         with open("Config.sh", "a") as f:
@@ -226,6 +229,10 @@ def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_fl
         raise FileNotFoundError("Did not successfully build GIZMO")
     move("GIZMO", f"test/{test_name}/GIZMO")
     system(f"chmod +x test/{test_name}/GIZMO")
+    # JACO builds: the codegen writes the runtime tables next to the generated sources; GIZMO reads
+    # them from the run directory and checks they match the compiled code, so they travel with the binary
+    if path.isfile(f"cooling/{_JACO_TABLE_FILE}"):
+        copyfile(f"cooling/{_JACO_TABLE_FILE}", f"test/{test_name}/{_JACO_TABLE_FILE}")
 
 
 def download_test_files(test_name: str):

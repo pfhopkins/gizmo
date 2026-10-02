@@ -604,13 +604,16 @@ OPTIONS = $(OPTIMIZE) $(OPT)
 .DEFAULT_GOAL := $(EXEC)
 
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
-JACO_MODEL := $(strip $(shell grep '^\#define JACO' GIZMO_config.h | awk '{print $$3}'))
+JACO_MODEL := $(strip $(shell grep '^\#define JACO ' GIZMO_config.h | awk '{print $$3}'))
 ifeq ($(JACO_MODEL),)
 JACO_MODEL := wind_comparison
 endif
-JACO_GENERATED = cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h cooling/jaco_interp.h
-EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_eos.o cooling/microphysics_func_jac.o
+EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_eos.o cooling/microphysics_func_jac.o cooling/jaco_util.o
 endif
+## sources written by the jaco codegen (plus cooling/jaco_tables.hdf5, which must be copied to the run directory)
+JACO_GENERATED = cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h \
+			cooling/jaco_interp.h cooling/jaco_tables.h cooling/jaco_util.cc
+JACO_STAMP = cooling/.jaco_codegen_stamp
 
 ## combine all the objects above
 OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
@@ -637,10 +640,13 @@ INCL    += 	declarations/allvars.h \
 			Makefile
 
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
-INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h
+INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h cooling/jaco_tables.h
 JACO_PYTHON ?= python3
-$(JACO_GENERATED): $(CONFIG)
+## one codegen run writes every generated file; the stamp keeps parallel make from running it per target
+$(JACO_STAMP): $(CONFIG)
 	$(JACO_PYTHON) -m jaco.codegen.gizmo.gizmo $(JACO_MODEL) --language c --ext .cc --output-dir cooling
+	touch $@
+$(JACO_GENERATED): $(JACO_STAMP) ;
 endif
 
 
@@ -733,6 +739,6 @@ compile_time_info.cc: $(CONFIG)
 
 clean:
 	rm -f $(OBJS) $(FOBJS) $(EXEC) *.oo *.c~ compile_time_info.cc GIZMO_config.h
-	rm -f cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h cooling/jaco_interp.h
+	rm -f $(JACO_GENERATED) $(JACO_STAMP) cooling/jaco_tables.hdf5
 
 

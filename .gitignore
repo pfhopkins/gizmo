@@ -41,3 +41,16 @@ test/*/convergence_results/
 test/*/*_override.params
 .gizmo_build.lock
 nbody_val/
+
+# jaco codegen output (JACO=<model> builds); see the JACO block in the Makefile
+cooling/microphysics_func_jac.cc
+cooling/microphysics_func_jac.h
+cooling/jaco_eos.cc
+cooling/jaco_interp.h
+cooling/jaco_tables.h
+cooling/jaco_util.cc
+cooling/jaco_tables.hdf5
+cooling/.jaco_codegen_stamp
+test/*/jaco_tables.hdf5
+test/*/jaco_cie_table.dat
+test/jaco_CIE/build/

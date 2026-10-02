@@ -15,6 +15,8 @@ int jaco_solve(SolveVars *sv, const Params *pr, double tol);
 double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
 double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_out);
 double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
+void jaco_build_cie_table(void);
+void jaco_report_solve_stats(void);
 #endif
 #ifdef SINK_PARTICLES
 #include "../sinks/sink.h"

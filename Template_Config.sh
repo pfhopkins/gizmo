@@ -372,6 +372,10 @@
 # ----   the jaco codegen to produce microphysics_func_jac.cc, jaco_eos.cc, and associated headers in cooling/.
 # ----   When enabled, JACO replaces the default COOLING solver for thermochemistry (the call is made from do_the_cooling_for_particle).
 # ----   Requires the jaco Python package to be installed (pip install jaco). Requires COOLING to be enabled.
+# ----   The codegen runs as `$(JACO_PYTHON) -m jaco.codegen.gizmo.gizmo` (JACO_PYTHON defaults to python3). If the model uses
+# ----   2D/3D tables it also writes cooling/jaco_tables.hdf5, which must be copied into the run directory (GIZMO checks it matches
+# ----   the compiled code). JACO=starforge needs the jaco package's spcool_tables.hdf5, built once with
+# ----   `python -m jaco.models.starforge.convert_spcool_tables`.
 ## ----------------------------------------------------------------------------------------------------
 #JACO=model_name            # enable the jaco  microphysics solver with the specified model. requires COOLING.
 ####################################################################################################
