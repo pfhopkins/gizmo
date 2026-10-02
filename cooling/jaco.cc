@@ -206,6 +206,19 @@ void jaco_build_cie_table(void) {
 
 /* ---- GIZMO interface layer ---- */
 
+/* Mass per H nucleus (g) in jaco's EOS for the composition in pr. Species masses conserve every element,
+   electrons included, so jaco's mass density is n_Htot times this whatever the ionization and H2 state.
+   With no H2 every species carries (3/2)kT, so rho = (3/2) P/u. */
+static double jaco_mass_per_H(const Params *pr) {
+    SolveVars s = {};
+    s.T = 1e4;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+    s.x_Hplus = 1e-4; /* any value; nonzero keeps the H- expression away from 0/0 */
+    s.x_Heplus = s.x_Heplusplus = JACO_ABUNDANCE_FLOOR;
+#endif
+    return 1.5 * jaco_eos_pressure(&s, pr) / (jaco_T_to_u(s.T, &s, pr, NULL) * pr->n_Htot);
+}
+
 void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
     double dtime = get_particle_timestep_in_physical(i, pp);
     double Delta_t = dtime * UNIT_TIME_IN_CGS;
@@ -217,7 +230,13 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     pr->u_initial = sv->u;
     pr->n_Htot = n_Htot;
     pr->Delta_t = Delta_t;
+    /* set_PdV_work_heatingrate leaves DtInternalEnergy in erg/s per H at HYDROGEN_MASSFRAC, so this product with
+       nHcgs() (not pr->n_Htot) is rho*du/dt in erg/cm^3/s */
+#ifndef COOLING_OPERATOR_SPLIT
     pr->pdv_work = (cell[i].CoolingIsOperatorSplitThisTimestep == 0) ? cell[i].DtInternalEnergy * n_Htot : 0;
+#else
+    pr->pdv_work = 0;
+#endif
 
     /* --- Model-specific parameter packing --- */
 #ifdef JACO_MODEL_WIND_COMPARISON
@@ -342,9 +361,9 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     sv->x_Heplus = cie_interp(cie_xHep, logT);
     sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
 
-    /* H2: use stored MolecularMassFraction from previous step */
+    /* H2: use stored MolecularMassFraction from previous step; x_H_2 = n_H2/n_H = fmol/2 */
     double fmol = DMIN(DMAX(cell[i].MolecularMassFraction, 0), 1.0);
-    sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, fmol);
+    sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, 0.5 * fmol);
 
     pr->x_H_2_initial = sv->x_H_2;
 
@@ -360,8 +379,7 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #ifdef RT_INFRARED
     pr->Td = cell[i].Dust_Temperature;
 #else
-    double shieldfac_Td = return_uvb_shieldfac(i, 0, n_Htot, log10(DMAX(sv->T, 10.)), cell);
-    pr->Td = 10; // get_equilibrium_dust_temperature_estimate(i, shieldfac_Td, sv->T, pp, cell);
+    pr->Td = 10; /* placeholder until an equilibrium dust-temperature estimate is wired in */
 #endif
 
     /* Radiation field and cosmic rays */
@@ -385,6 +403,8 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     /* Cosmological redshift for inverse Compton cooling */
     pr->z = All.ComovingIntegrationOn ? (1.0 / All.Time - 1.0) : 0;
 
+    /* n_Htot from the cell's composition, so that jaco's mass density equals the cell's */
+    pr->n_Htot = cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS / jaco_mass_per_H(pr);
 #endif /* JACO_MODEL_STARFORGE */
 }
 
@@ -398,9 +418,9 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     double xHp = sv->x_Hplus, xH2 = sv->x_H_2;
     double xHep = sv->x_Heplus, xHepp = sv->x_Heplusplus;
     cell[i].Ne = xHp + xHep + 2.0 * xHepp;
-    double xH0 = DMAX(1.0 - xHp - 2.0 * xH2, 0);
     cell[i].MolecularMassFraction = 2.0 * xH2;
-    cell[i].MolecularMassFraction_perNeutralH = (xH0 > 0) ? cell[i].MolecularMassFraction / xH0 : 0;
+    double xH0 = DMAX(1.0 - xHp, 0); /* neutral H including H2, as in the standard cooling module */
+    cell[i].MolecularMassFraction_perNeutralH = (xH0 > 0) ? DMIN(1, cell[i].MolecularMassFraction / xH0) : 0;
 #elif defined(JACO_MODEL_KWH)
     cell[i].Ne = sv->x_Hplus + sv->x_Heplus + 2.0 * sv->x_Heplusplus;
 #endif
