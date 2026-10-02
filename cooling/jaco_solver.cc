@@ -798,8 +798,22 @@ static int rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSe
 
 /* ---- driver ---- */
 
-static int u_ok(const SolveVars *sv, const struct JacoSolverSettings *set) {
-    return sv->u >= set->u_min * (1 - 1e-12) && sv->T >= set->T_min && sv->T <= set->T_max;
+/* An answer within tol below the energy floor is moved onto it exactly: T is raised, abundances
+   fixed, until u(T, x) >= u_min as evaluated (Newton in T, then ulp steps for round-off). The
+   floor fixed point and the EOS inversion only reach it to their tolerances. Returns 0 if the
+   answer now satisfies the bounds, -1 if it was further below. */
+static int onto_floor(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, int *pinned) {
+    double cv;
+    sv->u = jaco_T_to_u(sv->T, sv, pr, &cv);
+    if (sv->u >= set->u_min) return 0;
+    if (sv->u < set->u_min * (1 - set->tol)) return -1;
+    for (int it = 0; it < 100 && sv->u < set->u_min; it++) {
+        double T_new = sv->T + (set->u_min - sv->u) / cv;
+        sv->T = fmin(set->T_max, fmax(T_new, nextafter(sv->T, set->T_max)));
+        sv->u = jaco_T_to_u(sv->T, sv, pr, &cv);
+    }
+    *pinned = 1;
+    return sv->u >= set->u_min ? 0 : -1;
 }
 
 /* Acceptance test of a tier-2 answer from a fresh evaluation: every free row within
@@ -823,18 +837,19 @@ static int solve_step(SolveVars *sv, const Params *pr, const struct JacoSolverSe
                       int *tier, int *pinned, int *nfeval_tier1, int *tier1_status) {
     SolveVars start = *sv;
     int st = newton(sv, pr, set, SOLVE_ALL, JACO_TIER1_MAXITER, NULL, c, NULL);
+    *pinned = 0;
+    int floor_ok = (st == NEWTON_OK) && onto_floor(sv, pr, set, pinned) == 0;
     if (nfeval_tier1) *nfeval_tier1 = c->nfeval;
-    if (tier1_status) *tier1_status = (st == NEWTON_OK && !u_ok(sv, set)) ? -5 : st;
-    if (st == NEWTON_OK && u_ok(sv, set)) {
+    if (tier1_status) *tier1_status = (st == NEWTON_OK && !floor_ok) ? -5 : st;
+    if (floor_ok) {
         *tier = JACO_TIER_NEWTON;
-        *pinned = 0;
         return 0;
     }
     if (set->verbose)
         printf("  jaco tier 1 failed (%s) T0=%g n=%g dt=%g; tier 2\n", st == NEWTON_OK ? "below energy floor" : newton_status(st),
                start.T, pr->n_Htot, pr->Delta_t);
     *sv = start;
-    if (rootfind_T(sv, pr, set, c, pinned) == 0 && sv->u >= set->u_min * (1 - set->tol)) {
+    if (rootfind_T(sv, pr, set, c, pinned) == 0 && onto_floor(sv, pr, set, pinned) == 0) {
         if (verify(sv, pr, set, c, *pinned) == 0) {
             *tier = JACO_TIER_ROOTFIND;
             return 0;
