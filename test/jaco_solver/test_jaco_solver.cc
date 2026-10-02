@@ -11,6 +11,11 @@
  * Exits non-zero on any failure.
  *
  *   make -C test/jaco_solver
+ *
+ * Debug modes (after the table directory argument, e.g. ./build/test_jaco_solver build ...):
+ *   case n T0 dt pdv ufac seed [verbose] [warm]    one sweep-style solve with an iterate trace
+ *   gscan n dt pdv seed Tlo Thi npts               heat + pdv with steady-state chemistry vs T
+ *   replay file [which] [verbose] [jac]            re-solve states dumped by jaco_print_state
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -596,6 +601,67 @@ int main(int argc, char **argv) {
     set.T_max = 1e10;
     set.u_min = 2.75e8; /* GIZMO's MinEgySpec for MinGasTemp = 2.73 K */
     if (build_cie_table(&set)) return 1;
+
+    if (argc > 3 && !strcmp(argv[2], "replay")) {
+        /* re-solve states printed by jaco_print_state (e.g. a GIZMO failure dump):
+           replay <file> [which (-1 = all)] [verbose] [jac: compare the generated Jacobian with central differences] */
+        FILE *fp = fopen(argv[3], "r");
+        if (!fp) return 1;
+        int which = argc > 4 ? atoi(argv[4]) : -1, k = 0;
+        set.verbose = argc > 5 ? atoi(argv[5]) : 0;
+        char line[16384];
+        SolveVars sv = {};
+        Params pr = {};
+        int have_sv = 0;
+        while (fgets(line, sizeof(line), fp)) {
+            double *dst = NULL;
+            int n = 0;
+            if (strstr(line, "SolveVars (")) dst = sv.data, n = N_VARS;
+            if (strstr(line, "Params (")) dst = pr.data, n = N_PARAMS;
+            if (!dst) continue;
+            char *q = line;
+            for (int i = 0; i < n; i++) {
+                q = strchr(q, '=');
+                if (!q) return 2;
+                dst[i] = strtod(q + 1, &q);
+            }
+            if (dst == sv.data) {
+                have_sv = 1;
+                continue;
+            }
+            if (!have_sv) continue;
+            have_sv = 0;
+            if (which >= 0 && k++ != which) continue;
+            if (argc > 6 && !strcmp(argv[6], "jac")) {
+                /* generated Jacobian against central differences at the dumped state */
+                SolveVars x = sv, F0;
+                double J[N_VARS][N_VARS], Jp[N_VARS][N_VARS];
+                x.u = jaco_T_to_u(x.T, &x, &pr, NULL);
+                microphysics_func_jac(&x, &pr, &F0, J);
+                for (int j = 1; j < N_VARS; j++) {
+                    double h = 1e-6 * (j == IDX_T ? x.T : x.data[j]); /* relative, so abundances stay positive */
+                    SolveVars xp = x, xm = x, Fp, Fm;
+                    xp.data[j] += h;
+                    xm.data[j] -= h;
+                    microphysics_func_jac(&xp, &pr, &Fp, Jp);
+                    microphysics_func_jac(&xm, &pr, &Fm, Jp);
+                    for (int i = 1; i < N_VARS; i++) {
+                        double fd = (Fp.data[i] - Fm.data[i]) / (2 * h);
+                        printf("  J[%d][%d] gen %+.6e fd %+.6e rel %.2e\n", i, j, J[i][j], fd, fabs(J[i][j] - fd) / (fabs(fd) + 1e-300));
+                    }
+                }
+            }
+            SolveVars x = sv;
+            JacoSolveInfo info;
+            int rc = jaco_solve(&x, &pr, &set, &info);
+            char why[256] = "ok";
+            double worst = 0;
+            if (!rc) check_answer(&x, &pr, &set, why, &worst);
+            printf("replay n=%.4g T0=%.6g dt=%.4g pdv=%.3g: rc=%d tier=%d nfeval=%d (tier-1 status %d) T=%.8g xHp=%.4g xH2=%.4g check %s\n",
+                   pr.n_Htot, sv.T, pr.Delta_t, pr.pdv_work, rc, info.tier, info.nfeval, info.tier1_status, x.T, x.x_Hplus, x.x_H_2, why);
+        }
+        return 0;
+    }
 
     if (argc > 2 && !strcmp(argv[2], "gscan")) {
         /* G(T) = heat + pdv with steady-state chemistry on a fine grid: gscan n dt pdv seed Tlo Thi npts */
