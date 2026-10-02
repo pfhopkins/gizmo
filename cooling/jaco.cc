@@ -417,15 +417,16 @@ static void jaco_species_from_cell(int i, struct gas_cell_data *cell, const Para
 }
 
 /* T with jaco_T_to_u(T) = u at the composition in sv, by Newton from T_seed (falling back to jaco_u_to_T for an
-   unusable seed). Returns T_seed itself when it already reproduces u to jaco_u_to_T's tolerance, so a solver
-   temperature passes through unchanged. *cv is du/dT at the returned T. */
+   unusable seed), to near round-off so the solver's energy row starts there. Returns T_seed itself when it
+   already reproduces u, so a solver temperature normally passes through unchanged. *cv is du/dT at the
+   returned T. */
 static double jaco_T_from_u(double u, double T_seed, const SolveVars *sv, const Params *pr, double *cv) {
     double T = T_seed, T_lo = 1e-3, T_hi = 1e12;
     if (!jaco_isfinite(T) || T <= 0 || T > 1e10)
         T = jaco_u_to_T(u, sv, pr);
     for (int iter = 0; iter < 100; iter++) {
         double du = jaco_T_to_u(T, sv, pr, cv) - u;
-        if (fabs(du) <= 1e-10 * fabs(u))
+        if (fabs(du) <= 1e-13 * fabs(u))
             return T;
         if (du > 0)
             T_hi = fmin(T_hi, T);
@@ -483,7 +484,7 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #endif
 
     /* Seed with the state jaco_cell_eos describes: species from the cached Ne and H2, and T on the EOS for u
-       at that composition (normally the cached Temperature itself), so the energy row starts at zero residual */
+       at that composition (normally the cached Temperature itself), so the energy row starts at round-off */
     jaco_species_from_cell(i, cell, pr, sv);
     double cv;
     sv->T = jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
@@ -504,7 +505,7 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     cell[i].Temperature = sv->T;
 
 #if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-    /* Write solved species back BEFORE set_eos_pressure, which needs Ne and MolecularMassFraction for gamma */
+    /* Write solved species back BEFORE set_eos_pressure, whose EOS composition comes from Ne and MolecularMassFraction */
     double xHp = sv->x_Hplus, xH2 = sv->x_H_2;
     double xHep = sv->x_Heplus, xHepp = sv->x_Heplusplus;
     cell[i].Ne = xHp + xHep + 2.0 * xHepp;
@@ -515,7 +516,7 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     cell[i].Ne = sv->x_Hplus + sv->x_Heplus + 2.0 * sv->x_Heplusplus;
 #endif
 
-    set_eos_pressure(i, pp, cell); /* P, Gamma, sound speed from jaco's EOS; keeps T = sv->T up to Ne/fH2 rounding */
+    set_eos_pressure(i, pp, cell); /* P, Gamma and sound speed from jaco's EOS; T moves only by the solver's u(T) residual */
 #ifndef COOLING_OPERATOR_SPLIT
     if (cell[i].CoolingIsOperatorSplitThisTimestep == 0) {
         cell[i].DtInternalEnergy = 0;
