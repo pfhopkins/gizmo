@@ -573,6 +573,9 @@ void init(void)
                the written Temperature back, so they are left alone. */
             CellP[i].Temperature = 1.22 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy;
         }
+#ifdef JACO
+        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT;} /* gamma_eos_value() returns this until the first set_eos_pressure(); snapshots do not carry it */
+#endif
         CellP[i].FaceClosureError = 0;
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;

@@ -17,6 +17,13 @@ double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_o
 double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
 void jaco_build_cie_table(void);
 void jaco_report_solve_stats(void);
+struct jaco_eos_state {
+    double T;          /* K */
+    double P_over_rho; /* erg/g */
+    double gamma;      /* first adiabatic index at frozen composition */
+    double x_Hplus, x_Heplus, x_Heplusplus, y; /* per H nucleus; y = total He */
+};
+void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, double u, double rho, struct jaco_eos_state *eos);
 #endif
 #ifdef SINK_PARTICLES
 #include "../sinks/sink.h"

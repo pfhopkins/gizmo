@@ -47,6 +47,12 @@ double return_user_desired_target_pressure(int i)
     variable as well. */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef JACO /* the cooling solver's own EOS on the cached composition, so the temperature it solved for survives here */
+    double soundspeed=0, press, gamma_eos_index; struct jaco_eos_state eos;
+    jaco_cell_eos(i, pp, cell, cell[i].InternalEnergyPred, cell[i].Density*All.cf_a3inv, &eos);
+    cell[i].Temperature = eos.T; cell[i].Gamma = gamma_eos_index = eos.gamma; /* fresh gamma also feeds the sound speed below */
+    press = cell[i].density_for_energy() * eos.P_over_rho / UNIT_SPECEGY_IN_CGS;
+#else
     double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; cell[i].Gamma = gamma_eos_index; /* get effective adiabatic index */
     press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
@@ -64,6 +70,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
 #endif
+#endif /* JACO */
     
 #ifdef GALSF_EFFECTIVE_EQS /* modify pressure to 'interpolate' between effective EOS and isothermal, with the Springel & Hernquist 2003 'effective' EOS */
     if(cell[i].Density*All.cf_a3inv >= All.PhysDensThresh) {press = All.FactorForSofterEQS * press + (1 - All.FactorForSofterEQS)  * (gamma_eos_index-1) * cell[i].Density * All.InitGasU;}
