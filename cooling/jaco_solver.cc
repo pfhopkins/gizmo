@@ -15,7 +15,10 @@
  *      dropped from the linear system, fraction-to-the-boundary on T and the neutral budgets,
  *      backtracking on Deuflhard's natural monotonicity test. Fails fast on a singular or
  *      non-finite system.
- *   3  subcycling: halve the substep until tier 1 succeeds on each piece.
+ *   2  1-D rootfind in T: chemistry solved at fixed T, R(T) = energy residual; geometric
+ *      bracketing outward from T0 then Brent in ln T, then a short Newton polish. If R keeps its
+ *      sign down to the floor (or up to the ceiling) the answer is the floor (ceiling).
+ *   3  subcycling: halve the substep until tiers 1-2 succeed on each piece.
  * A non-finite residual rejects that step or trial point. A non-finite Jacobian column (the
  * generated derivative of a rate that underflowed to zero can be 0/0 although the rate itself is
  * fine) is replaced by finite differences of F if settings.fd_jacobian, else it fails the tier.
@@ -37,7 +40,16 @@
 #define JACO_PIVOT_TOL 1e-13         /* LU pivot below this fraction of its column: singular to working precision */
 #define JACO_FD_REL 1e-7             /* finite-difference step, ~sqrt(machine epsilon) */
 #define JACO_FD_XMIN 1e-10           /* smallest abundance scale for a finite-difference step */
-#define JACO_CHEM_MAXITER 25         /* fixed-T chemistry Newton steps */
+#define JACO_CHEM_MAXITER 25         /* fixed-T chemistry Newton steps (tier 2 starts each solve warm) */
+#define JACO_PTC_MAXITER 6           /* Newton steps per pseudo-transient stage */
+#define JACO_PTC_MAXSTAGES 60        /* pseudo-transient stages before the fixed-T chemistry gives up */
+#define JACO_PTC_GROW 10.0           /* pseudo-timestep growth per successful stage */
+#define JACO_BRACKET_FAC0 1.1        /* tier 2: first bracketing factor in T, as in DoCooling */
+#define JACO_BRACKET_GROW 1.5        /* tier 2: growth of that factor per step (4 decades in ~8 steps) */
+#define JACO_BRACKET_MAXITER 60
+#define JACO_BRENT_MAXITER 100
+#define JACO_POLISH_MAXITER 2        /* tier 2: Newton steps from the rootfind answer */
+#define JACO_VERIFY_FAC 10.0         /* tier-2 acceptance slack: T is bracketed to tol, the energy row then moves with the total dR/dT */
 #define JACO_SUBCYCLE_MIN_FRAC 1e-6  /* tier 3 gives up below this fraction of Delta_t */
 #define JACO_SUBCYCLE_MAXSTEPS 2000
 
@@ -463,18 +475,322 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
     }
 }
 
-/* ---- fixed-T chemistry ---- */
+/* ---- tier 2 ---- */
 
-/* Newton on all species at fixed T, retried once from a nearly ionized state */
+/* 1-D rootfinding with warm starts: every evaluation solves an inner system starting from the
+   state of the nearest previously evaluated point. */
+#define JACO_ROOT_HISTORY 32
+struct RootCtx {
+    int (*eval)(double y, SolveVars *x, struct RootCtx *ctx, double *val);
+    const Params *pr;
+    const struct JacoSolverSettings *set;
+    struct Counters *c;
+    int nhist, next;
+    double yh[JACO_ROOT_HISTORY];
+    SolveVars xh[JACO_ROOT_HISTORY];
+};
+
+static void root_init(struct RootCtx *ctx, int (*eval)(double, SolveVars *, struct RootCtx *, double *), const Params *pr,
+                      const struct JacoSolverSettings *set, struct Counters *c) {
+    ctx->eval = eval;
+    ctx->pr = pr;
+    ctx->set = set;
+    ctx->c = c;
+    ctx->nhist = 0;
+    ctx->next = 0;
+}
+
+static void root_remember(struct RootCtx *ctx, double y, const SolveVars *x) {
+    int slot = ctx->nhist < JACO_ROOT_HISTORY ? ctx->nhist++ : (ctx->next++ % JACO_ROOT_HISTORY);
+    ctx->yh[slot] = y;
+    ctx->xh[slot] = *x;
+}
+
+/* evaluate at y from the nearest remembered state (or *x if none); the solved state goes to *x */
+static int root_eval(struct RootCtx *ctx, double y, SolveVars *x, double *val) {
+    int best = -1;
+    for (int i = 0; i < ctx->nhist; i++)
+        if (best < 0 || fabs(ctx->yh[i] - y) < fabs(ctx->yh[best] - y)) best = i;
+    if (best >= 0) *x = ctx->xh[best];
+    if (ctx->eval(y, x, ctx, val)) return -1;
+    root_remember(ctx, y, x);
+    return 0;
+}
+
+/* Brent's method on [a, b] (fa, fb of opposite sign; xa, xb the solved states there) to
+   |dy| <= ytol. The root and its solved state are returned. */
+static int brent(struct RootCtx *ctx, double a, double fa, const SolveVars *xa, double b, double fb, const SolveVars *xb,
+                 double ytol, double *root, SolveVars *x_root) {
+    SolveVars sa = *xa, sb = *xb, sc = sa;
+    double cc = a, fc = fa, dd = b - a, ee = dd;
+    for (int it = 0; it < JACO_BRENT_MAXITER; it++) {
+        if ((fb > 0) == (fc > 0)) {
+            cc = a;
+            fc = fa;
+            sc = sa;
+            dd = ee = b - a;
+        }
+        if (fabs(fc) < fabs(fb)) {
+            a = b; fa = fb; sa = sb;
+            b = cc; fb = fc; sb = sc;
+            cc = a; fc = fa; sc = sa;
+        }
+        double tol1 = 2e-16 * fabs(b) + 0.5 * ytol, xm = 0.5 * (cc - b);
+        if (fabs(xm) <= tol1 || fb == 0) {
+            *root = b;
+            *x_root = sb;
+            return 0;
+        }
+        if (fabs(ee) >= tol1 && fabs(fa) > fabs(fb)) {
+            double s = fb / fa, p, q;
+            if (a == cc) {
+                p = 2 * xm * s;
+                q = 1 - s;
+            } else {
+                double qq = fa / fc, r = fb / fc;
+                p = s * (2 * xm * qq * (qq - r) - (b - a) * (r - 1));
+                q = (qq - 1) * (r - 1) * (s - 1);
+            }
+            if (p > 0) q = -q;
+            p = fabs(p);
+            if (2 * p < fmin(3 * xm * q - fabs(tol1 * q), fabs(ee * q))) {
+                ee = dd;
+                dd = p / q;
+            } else {
+                dd = xm;
+                ee = dd;
+            }
+        } else {
+            dd = xm;
+            ee = dd;
+        }
+        a = b;
+        fa = fb;
+        sa = sb;
+        b += (fabs(dd) > tol1) ? dd : (xm > 0 ? tol1 : -tol1);
+        if (root_eval(ctx, b, &sb, &fb)) return -1;
+    }
+    return -1;
+}
+
+/* Steady-state species at fixed T (and fixed time-dependent species): Newton; if that fails,
+   pseudo-transient continuation from the same start, the pseudo-timestep growing from a tenth of
+   the fastest chemical timescale until the pseudo-time term is negligible. */
+static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                         SolveVars *F_out) {
+    SolveVars start = *sv;
+    int st = newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out);
+    if (st == NEWTON_OK) return 0;
+    *sv = start;
+    if (ionized_seed(sv, pr) && newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK) return 0;
+    if (set->verbose) printf("  jaco ions at T=%g: Newton %s, trying pseudo-transient continuation\n", sv->T, newton_status(st));
+    *sv = start;
+    struct Eval e;
+    if (evaluate(sv, pr, &e, c)) return -1;
+    double rate_max = 0;
+    for (int k = 2; k < N_VARS; k++) {
+        double r = fabs(e.J[k][k]) / pr->n_Htot;
+        if (!is_time_dependent(k) && jaco_isfinite(r)) rate_max = fmax(rate_max, r);
+    }
+    if (!(rate_max > 0)) return -1;
+    struct PTC ptc;
+    ptc.inv_tau = 10 * rate_max;
+    for (int stage = 0; stage < JACO_PTC_MAXSTAGES; stage++) {
+        ptc.anchor = *sv;
+        SolveVars trial = *sv;
+        if (newton(&trial, pr, set, SOLVE_IONS, JACO_PTC_MAXITER, &ptc, c, NULL) != NEWTON_OK) {
+            ptc.inv_tau *= JACO_PTC_GROW * JACO_PTC_GROW; /* retreat to a smaller pseudo-step */
+            continue;
+        }
+        *sv = trial;
+        ptc.inv_tau /= JACO_PTC_GROW;
+        /* done once the pseudo-time term is negligible against the current rates (they change as
+           the state moves, e.g. recombination slows as x_e falls) */
+        if (evaluate(sv, pr, &e, c)) return -1;
+        int negligible = 1;
+        for (int k = 2; k < N_VARS; k++)
+            if (!is_time_dependent(k) && (sv->data[k] > JACO_FLOOR_PIN || e.F.data[k] > 0) &&
+                pr->n_Htot * ptc.inv_tau > 1e-3 * fabs(e.J[k][k]))
+                negligible = 0;
+        if (negligible) break;
+    }
+    st = newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out);
+    if (st != NEWTON_OK && set->verbose) printf("  jaco ions at T=%g failed after continuation: %s\n", sv->T, newton_status(st));
+    return st == NEWTON_OK ? 0 : -1;
+}
+
+#ifdef JACO_HAVE_H2
+static double h2_upper(const SolveVars *x) { return 0.5 * (1 - x->x_Hplus) * (1 - 1e-9); }
+
+/* H2 residual at x_H2 = exp(y) with the steady-state species solved there */
+static int h2_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
+    x->x_H_2 = fmax(JACO_ABUNDANCE_FLOOR, fmin(exp(y), h2_upper(x)));
+    SolveVars F;
+    if (ions_at_fixed(x, ctx->pr, ctx->set, ctx->c, &F)) return -1;
+    *val = F.x_H_2;
+    return 0;
+}
+
+/* x_H2 at fixed T as a scalar backward-Euler equation, the steady-state species solved at each
+   trial: walk geometrically from x_H2_initial in the direction its net rate points, to the first
+   sign change (the root the time evolution reaches first; self-shielding can make the H2
+   equation non-monotonic, with several roots), then Brent in ln x_H2. At x_H2 = floor the
+   residual is >= 0 and at full molecular conversion <= 0, so a root or a pinned end exists. */
+static int h2_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
+    struct RootCtx ctx;
+    root_init(&ctx, h2_eval, pr, set, c);
+    const double y_floor = log(JACO_ABUNDANCE_FLOOR);
+    SolveVars xa = *sv;
+    double ya = log(fmax(JACO_ABUNDANCE_FLOOR, fmin(pr->x_H_2_initial, h2_upper(sv)))), Ga;
+    if (root_eval(&ctx, ya, &xa, &Ga)) return -1;
+    int up = Ga > 0;
+    double fac = log(2.0), yb = ya, Gb = Ga;
+    SolveVars xb = xa;
+    for (int it = 0; it < JACO_BRACKET_MAXITER && Ga != 0; it++) {
+        double y_hi = log(h2_upper(&xa));
+        if ((up && ya >= y_hi) || (!up && ya <= y_floor)) {
+            *sv = xa; /* the net rate keeps its sign to the bound: the bound is the answer */
+            return 0;
+        }
+        yb = up ? fmin(y_hi, ya + fac) : fmax(y_floor, ya - fac);
+        if (root_eval(&ctx, yb, &xb, &Gb)) return -1;
+        if ((Gb > 0) != (Ga > 0) || Gb == 0) break;
+        ya = yb;
+        Ga = Gb;
+        xa = xb;
+        fac *= 2;
+    }
+    if (Ga == 0) {
+        *sv = xa;
+        return 0;
+    }
+    if ((Gb > 0) == (Ga > 0) && Gb != 0) return -1;
+    double y;
+    if (brent(&ctx, ya, Ga, &xa, yb, Gb, &xb, set->tol, &y, sv)) return -1;
+    return 0;
+}
+#endif
+
+/* Chemistry at fixed T: Newton on all species; if that fails, the time-dependent species as a
+   bracketed scalar problem around the steady-state ones (or, without time-dependent species,
+   the steady-state fallback directly). F_out gets the full residual at the returned state. */
 static int chemistry_at_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                           SolveVars *F_out) {
     SolveVars start = *sv;
-    if (newton(sv, pr, set, SOLVE_IONS | SOLVE_TD, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK) return 0;
+    int st = newton(sv, pr, set, SOLVE_IONS | SOLVE_TD, JACO_CHEM_MAXITER, NULL, c, F_out);
+    if (st == NEWTON_OK) return 0;
     *sv = start;
     if (ionized_seed(sv, pr) && newton(sv, pr, set, SOLVE_IONS | SOLVE_TD, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK)
         return 0;
+    if (set->verbose) printf("  jaco chemistry at T=%g: Newton %s, falling back\n", sv->T, newton_status(st));
     *sv = start;
-    return -1;
+#ifdef JACO_HAVE_H2
+    if (h2_bracketed(sv, pr, set, c)) return -1;
+    /* residual at the returned state, which the bracketed solve evaluated last there */
+    struct Eval e;
+    if (evaluate(sv, pr, &e, c)) return -1;
+    if (F_out) *F_out = e.F;
+    return 0;
+#else
+    return ions_at_fixed(sv, pr, set, c, F_out);
+#endif
+}
+
+/* Energy residual at T with the chemistry solved there, signed as in DoCooling: R > 0 means T is
+   too high. x is the warm start in and the chemistry solution out. */
+static int energy_residual(double T, SolveVars *x, const Params *pr, const struct JacoSolverSettings *set,
+                           struct Counters *c, double *R) {
+    x->T = T;
+    SolveVars F;
+    if (chemistry_at_T(x, pr, set, c, &F)) return -1;
+    *R = -F.T;
+    return 0;
+}
+
+static int energy_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
+    return energy_residual(exp(y), x, ctx->pr, ctx->set, ctx->c, val);
+}
+
+/* Move x to the energy floor: the T where u(T, x) = u_min (or T_min), with the chemistry solved
+   there; a fixed point because the EOS depends on the abundances. R is the energy residual there. */
+static int pin_to_floor(SolveVars *x, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                        double *R) {
+    for (int it = 0; it < 6; it++) {
+        double Tf = set->T_min;
+        if (set->u_min > 0) Tf = fmax(Tf, jaco_u_to_T(set->u_min, x, pr));
+        int settled = it > 0 && fabs(Tf - x->T) <= set->tol * Tf;
+        if (energy_residual(Tf, x, pr, set, c, R)) return -1;
+        if (settled) return 0;
+    }
+    return 0;
+}
+
+/* Tier 2. On success sv holds the answer; *pinned is set if it is the floor or ceiling. */
+static int rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                      int *pinned) {
+    *pinned = 0;
+    struct RootCtx ctx;
+    root_init(&ctx, energy_eval, pr, set, c);
+    const double T_hi = set->T_max;
+    SolveVars xa = *sv;
+    double Ta = fmax(set->T_min, fmin(T_hi, sv->T)), Ra;
+    if (root_eval(&ctx, log(Ta), &xa, &Ra)) return -1;
+    int a_at_floor = 0;
+    if (xa.u < set->u_min) {
+        if (pin_to_floor(&xa, pr, set, c, &Ra)) return -1;
+        Ta = xa.T;
+        root_remember(&ctx, log(Ta), &xa);
+        a_at_floor = 1;
+    }
+    if (Ra == 0) {
+        *sv = xa;
+        return 0;
+    }
+
+    /* bracket: walk geometrically in the direction R points to, stopping at the floor or ceiling */
+    int down = Ra > 0;
+    double fac = JACO_BRACKET_FAC0, Tb = Ta, Rb = Ra;
+    SolveVars xb = xa;
+    int bracketed = 0;
+    for (int it = 0; it < JACO_BRACKET_MAXITER; it++) {
+        if ((down && (a_at_floor || Ta <= set->T_min)) || (!down && Ta >= T_hi)) {
+            *sv = xa; /* R kept its sign all the way to the limit: the limit is the answer */
+            *pinned = 1;
+            if (set->verbose) printf("  jaco tier 2: pinned at T=%g (R=%g)\n", Ta, Ra);
+            return 0;
+        }
+        Tb = down ? fmax(set->T_min, Ta / fac) : fmin(T_hi, Ta * fac);
+        if (root_eval(&ctx, log(Tb), &xb, &Rb)) return -1;
+        int b_at_floor = 0;
+        if (down && xb.u < set->u_min) {
+            if (pin_to_floor(&xb, pr, set, c, &Rb)) return -1;
+            Tb = xb.T;
+            root_remember(&ctx, log(Tb), &xb);
+            b_at_floor = 1;
+        }
+        if (Rb == 0) {
+            *sv = xb;
+            return 0;
+        }
+        if ((Rb > 0) != (Ra > 0)) {
+            bracketed = 1;
+            break;
+        }
+        Ta = Tb;
+        Ra = Rb;
+        xa = xb;
+        a_at_floor = b_at_floor;
+        fac *= JACO_BRACKET_GROW;
+    }
+    if (!bracketed) return -1;
+
+    double y;
+    if (brent(&ctx, log(Ta), Ra, &xa, log(Tb), Rb, &xb, set->tol, &y, sv)) return -1;
+
+    /* polish on the full system; keep the rootfind answer if the polish does not converge */
+    SolveVars pol = *sv;
+    if (newton(&pol, pr, set, SOLVE_ALL, JACO_POLISH_MAXITER, NULL, c, NULL) == NEWTON_OK) *sv = pol;
+    return 0;
 }
 
 /* ---- driver ---- */
@@ -483,7 +799,23 @@ static int u_ok(const SolveVars *sv, const struct JacoSolverSettings *set) {
     return sv->u >= set->u_min * (1 - 1e-12) && sv->T >= set->T_min && sv->T <= set->T_max;
 }
 
-/* Tier 1 over one (sub)step. */
+/* Acceptance test of a tier-2 answer from a fresh evaluation: every free row within
+   JACO_VERIFY_FAC tol of its row_scale; a floored species must not be net-produced, and a
+   temperature pinned at the floor (ceiling) must have an energy residual pointing below (above). */
+static int verify(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int pinned) {
+    struct Eval e;
+    if (evaluate(sv, pr, &e, c)) return -1;
+    const double lim = JACO_VERIFY_FAC * set->tol;
+    double r = e.F.T / row_scale(sv, pr, &e, IDX_T);
+    if (pinned ? (sv->T >= set->T_max ? r < -lim : r > lim) : fabs(r) > lim) return -1;
+    for (int k = 2; k < N_VARS; k++) {
+        double rk = e.F.data[k] / row_scale(sv, pr, &e, k);
+        if (sv->data[k] <= JACO_FLOOR_PIN ? rk > lim : fabs(rk) > lim) return -1;
+    }
+    return 0;
+}
+
+/* Tiers 1 and 2 over one (sub)step. */
 static int solve_step(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                       int *tier, int *pinned, int *nfeval_tier1, int *tier1_status) {
     SolveVars start = *sv;
@@ -496,8 +828,17 @@ static int solve_step(SolveVars *sv, const Params *pr, const struct JacoSolverSe
         return 0;
     }
     if (set->verbose)
-        printf("  jaco tier 1 failed (%s) T0=%g n=%g dt=%g\n", st == NEWTON_OK ? "below energy floor" : newton_status(st), start.T,
-               pr->n_Htot, pr->Delta_t);
+        printf("  jaco tier 1 failed (%s) T0=%g n=%g dt=%g; tier 2\n", st == NEWTON_OK ? "below energy floor" : newton_status(st),
+               start.T, pr->n_Htot, pr->Delta_t);
+    *sv = start;
+    if (rootfind_T(sv, pr, set, c, pinned) == 0 && sv->u >= set->u_min * (1 - set->tol)) {
+        if (verify(sv, pr, set, c, *pinned) == 0) {
+            *tier = JACO_TIER_ROOTFIND;
+            return 0;
+        }
+        if (set->verbose) printf("  jaco tier 2 answer T=%g failed the acceptance test\n", sv->T);
+    }
+    if (set->verbose) printf("  jaco tier 2 failed T0=%g n=%g dt=%g\n", start.T, pr->n_Htot, pr->Delta_t);
     *sv = start;
     return -1;
 }
