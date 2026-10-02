@@ -370,35 +370,51 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     }
 }
 
-/* ---- Per-timestep solver statistics ----
-   Accumulated across all particles processed by call_jaco() during one cooling pass,
-   reset and reported at the start of each call to jaco_report_solve_stats(). */
-struct JacoSolveStats {
-    long n_solves;        /* number of call_jaco() invocations with nfeval>0 */
-    long n_fevals;        /* total function evaluations */
-    long n_expensive;     /* solves with nfeval > 10 */
-    int  max_nfeval;      /* worst-case nfeval from a single particle */
-};
-static struct JacoSolveStats jaco_stats = {0, 0, 0, 0};
+/* ---- Per-step solver statistics ----
+   Accumulated over the cells call_jaco() solves in one cooling pass; reported and reset by
+   jaco_report_solve_stats(), which every rank must call (MPI collective) once per pass. */
+enum { JS_CELLS, JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED, JS_FEVALS, JS_RESYNC, JS_PINNED, JS_NANJ, JS_NANF,
+       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_N };
+static long jaco_stats[JS_N];
+static int jaco_stats_max_nfeval = 0;
 
-/* Called once at the end of cooling_parent_routine() to print per-timestep solver
-   statistics (MPI-reduced) and reset the counters. */
+static void jaco_stats_add(const struct JacoSolveInfo *info) {
+    int bin[4] = {JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED};
+    int t1 = info->nfeval - info->nfeval_fd; /* evaluations Newton asked for, not finite-difference columns */
+#ifdef _OPENMP
+#pragma omp critical(jaco_stats_update)
+#endif
+    {
+        jaco_stats[JS_CELLS]++;
+        jaco_stats[bin[info->tier - 1]]++;
+        jaco_stats[JS_FEVALS] += info->nfeval;
+        jaco_stats[JS_RESYNC] += info->resynced_T0;
+        jaco_stats[JS_PINNED] += info->pinned;
+        jaco_stats[JS_NANJ] += info->n_nonfinite_jac > 0;
+        jaco_stats[JS_NANF] += info->n_nonfinite_F > 0;
+        if (info->tier == JACO_TIER_NEWTON) jaco_stats[t1 <= 4 ? JS_T1_1 + t1 - 1 : JS_T1_MORE]++;
+        if (info->nfeval > jaco_stats_max_nfeval) jaco_stats_max_nfeval = info->nfeval;
+    }
+}
+
+/* Called at the end of each cooling pass on every rank: prints the MPI-reduced statistics on
+   rank 0 and resets the counters. */
 void jaco_report_solve_stats(void) {
-    long local[3] = {jaco_stats.n_solves, jaco_stats.n_fevals, jaco_stats.n_expensive};
-    long global[3] = {0, 0, 0};
-    int local_max = jaco_stats.max_nfeval, global_max = 0;
-    MPI_Reduce(local, global, 3, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&local_max, &global_max, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    if (ThisTask == 0 && global[0] > 0) {
-        double mean = (double)global[1] / (double)global[0];
-        printf("jaco solve stats: %ld particles, %ld fevals (mean=%.2f, max=%d), %ld expensive (>10)\n",
-               global[0], global[1], mean, global_max, global[2]);
+    long global[JS_N];
+    int global_max = 0;
+    MPI_Reduce(jaco_stats, global, JS_N, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&jaco_stats_max_nfeval, &global_max, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+    if (ThisTask == 0 && global[JS_CELLS] > 0) {
+        double n = (double)global[JS_CELLS];
+        printf("jaco solve stats: %ld cells | tier1 %ld (%.2f%%) tier2 %ld tier3 %ld FAILED %ld | nfeval mean %.2f max %d | "
+               "tier-1 evals 1:%ld 2:%ld 3:%ld 4:%ld >4:%ld | T0 resynced %ld, pinned %ld, non-finite J %ld F %ld\n",
+               global[JS_CELLS], global[JS_TIER1], 100.0 * global[JS_TIER1] / n, global[JS_TIER2], global[JS_TIER3],
+               global[JS_FAILED], global[JS_FEVALS] / n, global_max, global[JS_T1_1], global[JS_T1_2], global[JS_T1_3],
+               global[JS_T1_4], global[JS_T1_MORE], global[JS_RESYNC], global[JS_PINNED], global[JS_NANJ], global[JS_NANF]);
         fflush(stdout);
     }
-    jaco_stats.n_solves = 0;
-    jaco_stats.n_fevals = 0;
-    jaco_stats.n_expensive = 0;
-    jaco_stats.max_nfeval = 0;
+    memset(jaco_stats, 0, sizeof(jaco_stats));
+    jaco_stats_max_nfeval = 0;
 }
 
 void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
@@ -411,34 +427,20 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
 
     struct JacoSolverSettings set;
     jaco_solver_default_settings(&set);
+    set.T_min = (All.MinGasTemp > 0) ? All.MinGasTemp : 1.0;
     set.u_min = All.MinEgySpec * UNIT_SPECEGY_IN_CGS;
     struct JacoSolveInfo info;
     const SolveVars sv_in = sv;
     if (jaco_solve(&sv, &pr, &set, &info)) {
-        printf("JACO FATAL: the solver failed on task %d (nfeval=%d)\n", ThisTask, info.nfeval);
+        printf("JACO FATAL: every solver tier failed on task %d (nfeval=%d)\n", ThisTask, info.nfeval);
         jaco_print_state(stdout, "  input state:", &sv_in, &pr);
+        set.verbose = 2; /* replay with a trace of every iterate */
+        sv = sv_in;
+        jaco_solve(&sv, &pr, &set, &info);
         fflush(stdout);
         endrun(10);
     }
     jaco_to_gizmo(0, &sv, &pr, p, c);
-    int nfeval = info.nfeval;
-
-#ifdef _OPENMP
-#pragma omp atomic update
-    jaco_stats.n_solves++;
-#pragma omp atomic update
-    jaco_stats.n_fevals += nfeval;
-    if (nfeval > 10) {
-#pragma omp atomic update
-        jaco_stats.n_expensive++;
-    }
-#pragma omp critical
-    { if (nfeval > jaco_stats.max_nfeval) jaco_stats.max_nfeval = nfeval; }
-#else
-    jaco_stats.n_solves++;
-    jaco_stats.n_fevals += nfeval;
-    if (nfeval > 10) jaco_stats.n_expensive++;
-    if (nfeval > jaco_stats.max_nfeval) jaco_stats.max_nfeval = nfeval;
-#endif
+    jaco_stats_add(&info);
 }
 #endif
