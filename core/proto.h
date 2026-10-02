@@ -15,6 +15,8 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
 double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
 double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_out);
 double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
+double jaco_electron_abundance(const SolveVars *sv, const Params *pr);
+double jaco_fixed_electron_abundance(const SolveVars *sv, const Params *pr);
 void jaco_build_cie_table(void);
 double jaco_cie_electron_abundance(double T);
 void jaco_report_solve_stats(void);
@@ -25,6 +27,7 @@ struct jaco_eos_state {
     double P_over_rho; /* erg/g */
     double gamma;      /* first adiabatic index at frozen composition */
     double x_Hplus, x_Heplus, x_Heplusplus, y; /* per H nucleus; y = total He */
+    double x_e;        /* all free electrons per H nucleus, metals' included */
 };
 void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, double u, double rho, struct jaco_eos_state *eos);
 #endif

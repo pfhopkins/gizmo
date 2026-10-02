@@ -53,6 +53,7 @@ static void starforge_params(Params *pr, double n, double dt) {
     pr->Delta_x = 3e18;
     pr->N_H = n * pr->Delta_x;
     pr->grad_v = 1e-14;
+    pr->X = 0.7155;
     pr->x_C_tot = 2.1e-4;
     pr->x_N = 6.8e-5;
     pr->x_Ne = 8.5e-5;
