@@ -16,6 +16,7 @@ double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
 double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_out);
 double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
 void jaco_build_cie_table(void);
+double jaco_cie_electron_abundance(double T);
 void jaco_report_solve_stats(void);
 struct jaco_eos_state {
     double T;          /* K */

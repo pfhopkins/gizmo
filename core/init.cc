@@ -645,7 +645,11 @@ void init(void)
             CellP[i].Density = -1;
 #ifdef COOLING
 #ifndef CHIMES
+#ifdef JACO
+            CellP[i].Ne = jaco_cie_electron_abundance(CellP[i].Temperature); /* seeds the composition of jaco's EOS */
+#else
             CellP[i].Ne = 1.0;
+#endif
 #endif
 #if defined(COOL_MOLECFRAC_NONEQM)
             CellP[i].MolecularMassFraction = 0.0; CellP[i].MolecularMassFraction_perNeutralH = 0.0; // start atomic

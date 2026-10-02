@@ -65,6 +65,12 @@ static double cie_interp(const double *table, double logT) {
     return (1 - t) * table[i] + t * table[i + 1];
 }
 
+/* Free electrons per H in CIE at temperature T (from the table, at its fixed He abundance) */
+double jaco_cie_electron_abundance(double T) {
+    double logT = log10(DMAX(T, 10.));
+    return cie_interp(cie_xHp, logT) + cie_interp(cie_xHep, logT) + 2.0 * cie_interp(cie_xHepp, logT);
+}
+
 /* Build the CIE table by sweeping T with continuation from the CIE test solver.
    Called once from jaco_init_tables(). Uses the compiled microphysics_func_jac
    with T fixed (identity rows for u/T) and the same Newton solver as the unit test. */
@@ -469,21 +475,12 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     pr->pdv_work = 0;
 #endif
 
-    /* Initial T guess: use stored temperature from previous step. */
-    sv->T = cell[i].Temperature;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
-    /* Ion abundances: interpolate from pre-computed CIE table for a physically
-       correct initial guess at any T. This avoids cold-start issues where
-       stored Ne is zero or stale after shock heating. */
-    double logT = log10(DMAX(sv->T, 10.));
-    sv->x_Hplus = cie_interp(cie_xHp, logT);
-    sv->x_Heplus = cie_interp(cie_xHep, logT);
-    sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
-#endif
+    /* Seed with the state jaco_cell_eos describes: species from the cached Ne and H2, and T on the EOS for u
+       at that composition (normally the cached Temperature itself), so the energy row starts at zero residual */
+    jaco_species_from_cell(i, cell, pr, sv);
+    double cv;
+    sv->T = jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
 #if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-    /* H2: use stored MolecularMassFraction from previous step; x_H_2 = n_H2/n_H = fmol/2 */
-    double fmol = DMIN(DMAX(cell[i].MolecularMassFraction, 0), 1.0);
-    sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, 0.5 * fmol);
     pr->x_H_2_initial = sv->x_H_2;
 #endif
 
