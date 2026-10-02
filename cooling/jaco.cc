@@ -12,6 +12,7 @@
 #include <math.h>
 #include <string.h>
 #include "jaco_solver.h"
+#include "jaco_composition.h"
 /* NaN/Inf check — defined in jaco_util.cc to prevent LTO from optimizing it away */
 extern "C" int jaco_isfinite(double x);
 #define JACO_ABUNDANCE_FLOOR 1e-20
@@ -74,6 +75,7 @@ void jaco_build_cie_table(void) {
     pr.ISRF = 1.0;
     pr.N_H = 1e20;
     pr.G_0 = 1.0;
+    pr.G_LW = 1.0;
     pr.Td = 15.0;
     pr.Z_d = 1.0;
     pr.f_d = 1.0;
@@ -173,6 +175,22 @@ static double jaco_mass_per_H(const Params *pr_in) {
     return 1.5 * jaco_eos_pressure(&s, &pr) / jaco_T_to_u(s.T, &s, &pr, NULL);
 }
 
+/* H mass fraction of cell i and its n_He/n_H (*y), by jaco_mass_fractions */
+static inline double jaco_cell_X_H(int i, struct particle_data *pp, double *y) {
+    double Z_metals = 0, Y_tracked = 0, Y, Z;
+    int he_tracked = 0;
+#ifdef METALS
+    Z_metals = pp[i].Metallicity[0];
+#if (NUM_METAL_SPECIES >= 10)
+    Y_tracked = pp[i].Metallicity[1];
+    he_tracked = 1;
+#endif
+#endif
+    double X = jaco_mass_fractions(Z_metals, Y_tracked, he_tracked, HYDROGEN_MASSFRAC, &Y, &Z);
+    *y = 0.25 * Y / X;
+    return X;
+}
+
 /* Fill the cell-dependent Params: everything the generated EOS (jaco_eos.cc) reads plus the other cell
    properties the rates need, except N_H (left to gizmo_to_jaco). The solver and jaco_cell_eos both pack
    through here, so they evaluate the same EOS. rho_cgs is the physical gas density; returns jaco's mass
@@ -184,14 +202,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
 #elif defined(JACO_MODEL_KWH)
     /* Primordial H/He cooling model. Minimal params: y, C_2, plus T and ion solve vars. */
     {
-        double X_H = HYDROGEN_MASSFRAC;
-#ifdef METALS
-        X_H = 1.0 - pp[i].Metallicity[0];
-        if (NUM_METAL_SPECIES >= 10)
-            X_H -= pp[i].Metallicity[1];
-#endif
-        double Y_He = (1.0 - X_H) * 0.25;
-        pr->y = Y_He / X_H;
+        jaco_cell_X_H(i, pp, &pr->y);
     }
     /* Cell geometry for C_2 clumping factor (derived_param in the model). */
     {
@@ -203,14 +214,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
 #elif defined(JACO_MODEL_PRIMORDIAL)
     /* Primordial H/He + H2 chemistry model. KWH base plus H2 chemistry params. */
     {
-        double X_H = HYDROGEN_MASSFRAC;
-#ifdef METALS
-        X_H = 1.0 - pp[i].Metallicity[0];
-        if (NUM_METAL_SPECIES >= 10)
-            X_H -= pp[i].Metallicity[1];
-#endif
-        double Y_He = (1.0 - X_H) * 0.25;
-        pr->y = Y_He / X_H;
+        jaco_cell_X_H(i, pp, &pr->y);
     }
     /* C_2, C_3 are derived_params computed from T, grad_v, Delta_x in the model. */
     /* Dust and geometry — minimal defaults (no radiation field) */
@@ -225,15 +229,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     }
 #elif defined(JACO_MODEL_STARFORGE)
     /* Hydrogen mass fraction and helium abundance by number */
-    double X_H = HYDROGEN_MASSFRAC;
-#ifdef METALS
-    X_H = 1.0 - pp[i].Metallicity[0]; /* X = 1 - Z */
-    if (NUM_METAL_SPECIES >= 10) {
-        X_H -= pp[i].Metallicity[1]; /* X = 1 - Y - Z */
-    }
-#endif
-    double Y_He = (1.0 - X_H) * 0.25; /* He number fraction per H = (1-X)/(4X) but stored as y = n_He/n_H */
-    pr->y = Y_He / X_H;
+    double X_H = jaco_cell_X_H(i, pp, &pr->y);
 
     /* Metal abundances (per H nucleus) from metallicity array */
     double Z_solar = All.SolarAbundances[0];
@@ -279,26 +275,20 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     pr->Z_d = DMAX(1e-4, Zd_solar);
     pr->f_d = 1.0; /* no sublimation correction for now */
 
-    /* Dust temperature: use stored value if available, otherwise compute equilibrium estimate */
-#ifdef RT_INFRARED
-    pr->Td = cell[i].Dust_Temperature;
-#else
-    pr->Td = 10; /* placeholder until an equilibrium dust-temperature estimate is wired in */
-#endif
-
     /* Kim+23 nebular forbidden-line cooling of photoionized gas: on exactly where the standard module applies it */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
     pr->f_neb = 1.0;
 #else
     pr->f_neb = 0.0;
 #endif
+    pr->f_metal = jaco_metal_line_switch(); /* tabulated metal lines: on where the standard module applies them */
 
-    /* Radiation field and cosmic rays */
-    pr->G_0 = 1.0; /* Habing units; will be overridden below if RT available */
+    /* Radiation: G_0 sets the C+ fraction and so enters the EOS; G_LW and Td only enter the rates (gizmo_to_jaco).
+       Cosmic rays scale with sqrt(ISRF), as in Get_CosmicRayEnergyDensity_cgs. */
+    jaco_radiation_inputs(i, cell[i].Temperature, &pr->G_0, NULL, NULL, pp, cell);
     pr->ISRF = 1.0;
-#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
-    double shieldfac = return_uvb_shieldfac(i, 0, cell[i].nHcgs(), log10(DMAX(cell[i].Temperature, 10.)), cell);
-    pr->G_0 = get_FUV_G0(i, shieldfac, 0, pp, cell);
+#ifdef RT_ISRF_BACKGROUND
+    pr->ISRF = All.InterstellarRadiationFieldStrength;
 #endif
 
     /* Cell size and velocity gradient */
@@ -453,6 +443,8 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     /* Column density for shielding */
     pr->N_H = evaluate_NH_from_GradRho(pp[i].GradRho, pp[i].KernelRadius, cell[i].Density, pp[i].NumNgb, 1, i, pp) *
               UNIT_SURFDEN_IN_CGS / PROTONMASS_CGS;
+    /* LW field and dust temperature as the standard cooling module evaluates them, at the cached temperature */
+    jaco_radiation_inputs(i, cell[i].Temperature, NULL, &pr->G_LW, &pr->Td, pp, cell);
 #endif
 }
 

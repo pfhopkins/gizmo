@@ -58,9 +58,9 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-# JACO_MODEL_STARFORGE is not exercised here: it has never built in this suite, so the variant
-# only ever reported a build failure that says nothing about gmc_cooling.
-@pytest.mark.parametrize("extra_config_flags", [()], ids=["baseline"])
+# The jaco variant only checks that the run completes: its physics differs from the standard cooling
+# module that produced the benchmark.
+@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge",)], ids=["baseline", "jaco"])
 def test_gmc_cooling(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling"
 

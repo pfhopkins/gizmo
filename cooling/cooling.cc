@@ -2271,6 +2271,64 @@ MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data
     return G0;
 }
 
+#ifdef JACO
+/* Radiation inputs of jaco's starforge model, evaluated at gas temperature T as CoolingRate() and
+   update_explicit_molecular_fraction() evaluate them: the dust-attenuated FUV field for photoelectric heating and the
+   C+ fraction (*G0), the Lyman-Werner field H2 sees before its self-shielding (*G_LW), and the dust temperature (*Tdust).
+   Any output pointer may be NULL. */
+void jaco_radiation_inputs(int i, double T, double *G0, double *G_LW, double *Tdust, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    if(!isfinite(T) || T <= 0) {T = 1.e4;}
+    double rho = cell[i].Density * All.cf_a3inv, logT = log10(T), gamma_12 = return_local_gammamultiplier(i, cell) * gJH0 / 1.0e-12;
+    double shieldfac = return_uvb_shieldfac(i, gamma_12, HYDROGEN_MASSFRAC * rho * UNIT_DENSITY_IN_NHCGS, logT, cell); /* as in CoolingRate() */
+    if(G0) {*G0 = get_FUV_G0(i, shieldfac, 0, pp, cell);}
+
+    if(Tdust) {
+        double Td = 30.;
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || defined(SINGLE_STAR_SINK_DYNAMICS)
+        Td = get_equilibrium_dust_temperature_estimate(i, shieldfac, T, pp, cell);
+#endif
+#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(SINGLE_STAR_SINK_DYNAMICS) && !defined(SINGLE_STAR_FB_RT_HEATING)
+        Td = DMIN(DMAX(10., get_background_radiation_temperature_for_emission_corrections(i, cell)), 300.);
+#endif
+        *Tdust = Td;
+    }
+
+    if(G_LW) { /* update_explicit_molecular_fraction(), whose UVB shielding takes n = rho/m_p */
+        double urad_from_uvb_in_G0 = sqrt(return_uvb_shieldfac(i, gamma_12, rho * UNIT_DENSITY_IN_NHCGS, logT, cell)) * (gJH0 / 2.29e-10), urad_G0 = 1;
+#ifdef RT_ISRF_BACKGROUND
+        urad_G0 = All.InterstellarRadiationFieldStrength;
+#endif
+#ifdef GALSF_FB_FIRE_RT_LONGRANGE
+        urad_G0 = DMAX(cell[i].Rad_Flux_UV, 1.e-10);
+#endif
+#if defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER)
+        int whichbin = RT_FREQ_BIN_LYMAN_WERNER;
+#if !defined(RT_LYMAN_WERNER)
+        whichbin = RT_FREQ_BIN_PHOTOELECTRIC;
+#endif
+        urad_G0 = cell[i].Rad_E_gamma[whichbin] * (cell[i].Density*All.cf_a3inv/cell[i].Mass) * UNIT_EGY_DENSITY_IN_HABING;
+#endif
+        urad_G0 = DMIN(DMAX(urad_G0 + urad_from_uvb_in_G0, 1.e-10), 1.e10);
+#ifdef RT_INFRARED
+        urad_G0 += rt_irband_egydensity_in_band(i, 11.2, 500., cell) * UNIT_EGY_DENSITY_IN_HABING;
+#endif
+        *G_LW = urad_G0;
+    }
+}
+
+/* 1 where CoolingRate() applies the tabulated metal-line rates, i.e. with a UV background loaded (J_UV != 0), else 0.
+   GALSF_FB_FIRE_STELLAREVOLUTION <= 2 further restricts them to T > 1e4 K, which this switch cannot express. */
+double jaco_metal_line_switch(void)
+{
+#ifdef COOL_METAL_LINES_BY_SPECIES
+    return (J_UV != 0) ? 1. : 0.;
+#else
+    return 0.;
+#endif
+}
+#endif
+
 /* this function estimates the free electron fraction from heavy ions, assuming a simple mix of cold molecular gas, Mg, and dust, with the ions from singly-ionized Mg, to prevent artificially low free electron fractions */
 double return_electron_fraction_from_heavy_ions(int target, double temperature, double density_cgs, double n_elec_HHe, struct particle_data *pp, struct gas_cell_data *cell)
 {
