@@ -722,22 +722,22 @@ int main(int argc, char **argv) {
     printf("\n== sweep ==\n");
     run_sweep(&set, 1, sweep, warm, eq);
 
-    /* the same sweep without finite-difference repair of non-finite generated Jacobians, to show
-       which cells depend on it */
-    JacoSolverSettings nofd = set;
-    nofd.fd_jacobian = 0;
-    Stats sweep_nofd, warm_nofd, eq_nofd;
+    /* the same sweep with finite-difference repair of non-finite generated Jacobians, to show
+       which cells a model defect would cost */
+    JacoSolverSettings fd = set;
+    fd.fd_jacobian = 1;
+    Stats sweep_fd, warm_fd, eq_fd;
     report_quota = 0; /* no failure dumps for this pass */
-    run_sweep(&nofd, 0, sweep_nofd, warm_nofd, eq_nofd);
+    run_sweep(&fd, 0, sweep_fd, warm_fd, eq_fd);
 
     printf("\n== summary (solver tol %g, residual check at %g; %zu n x %d seeds x 15 T0 x 3 pdv x 3 u0) ==\n", set.tol, CHECK_TOL,
            sizeof(sweep_n) / sizeof(sweep_n[0]), (int)N_SEEDS);
     sweep.print("sweep");
     warm.print("warm");
     eq.print("dt=1e20");
-    printf("-- without FD repair of non-finite Jacobians (informational) --\n");
-    sweep_nofd.print("sweep");
-    eq_nofd.print("dt=1e20");
+    printf("-- with FD repair of non-finite Jacobians (informational) --\n");
+    sweep_fd.print("sweep");
+    eq_fd.print("dt=1e20");
     long bad = sweep.fail + sweep.check_fail + sweep.eq_mismatch + warm.fail + warm.check_fail + eq.fail + eq.check_fail +
                eq.eq_mismatch + sweep.eq_ref_fail + eq.eq_ref_fail + nfail;
     printf("\n%s: %ld failures (replays %d)\n", bad ? "FAILED" : "PASSED", bad, nfail);

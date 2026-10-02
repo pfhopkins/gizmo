@@ -61,7 +61,7 @@ void jaco_solver_default_settings(struct JacoSolverSettings *set) {
     set->T_max = 1e10;
     set->u_min = 0;
     set->tol = JACO_TOL_DEFAULT;
-    set->fd_jacobian = 1;
+    set->fd_jacobian = 0; /* a model that returns a non-finite Jacobian is a bug to fix, not to absorb */
     set->verbose = 0;
 }
 
