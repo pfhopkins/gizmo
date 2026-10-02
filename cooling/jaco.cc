@@ -12,6 +12,7 @@
 #include <math.h>
 #include <string.h>
 #include "jaco_solver.h"
+#include "jaco_composition.h"
 /* NaN/Inf check — defined in jaco_util.cc to prevent LTO from optimizing it away */
 extern "C" int jaco_isfinite(double x);
 #define JACO_ABUNDANCE_FLOOR 1e-20
@@ -174,6 +175,22 @@ static double jaco_mass_per_H(const Params *pr_in) {
     return 1.5 * jaco_eos_pressure(&s, &pr) / jaco_T_to_u(s.T, &s, &pr, NULL);
 }
 
+/* H mass fraction of cell i and its n_He/n_H (*y), by jaco_mass_fractions */
+static inline double jaco_cell_X_H(int i, struct particle_data *pp, double *y) {
+    double Z_metals = 0, Y_tracked = 0, Y, Z;
+    int he_tracked = 0;
+#ifdef METALS
+    Z_metals = pp[i].Metallicity[0];
+#if (NUM_METAL_SPECIES >= 10)
+    Y_tracked = pp[i].Metallicity[1];
+    he_tracked = 1;
+#endif
+#endif
+    double X = jaco_mass_fractions(Z_metals, Y_tracked, he_tracked, HYDROGEN_MASSFRAC, &Y, &Z);
+    *y = 0.25 * Y / X;
+    return X;
+}
+
 /* Fill the cell-dependent Params: everything the generated EOS (jaco_eos.cc) reads plus the other cell
    properties the rates need, except N_H (left to gizmo_to_jaco). The solver and jaco_cell_eos both pack
    through here, so they evaluate the same EOS. rho_cgs is the physical gas density; returns jaco's mass
@@ -185,14 +202,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
 #elif defined(JACO_MODEL_KWH)
     /* Primordial H/He cooling model. Minimal params: y, C_2, plus T and ion solve vars. */
     {
-        double X_H = HYDROGEN_MASSFRAC;
-#ifdef METALS
-        X_H = 1.0 - pp[i].Metallicity[0];
-        if (NUM_METAL_SPECIES >= 10)
-            X_H -= pp[i].Metallicity[1];
-#endif
-        double Y_He = (1.0 - X_H) * 0.25;
-        pr->y = Y_He / X_H;
+        jaco_cell_X_H(i, pp, &pr->y);
     }
     /* Cell geometry for C_2 clumping factor (derived_param in the model). */
     {
@@ -204,14 +214,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
 #elif defined(JACO_MODEL_PRIMORDIAL)
     /* Primordial H/He + H2 chemistry model. KWH base plus H2 chemistry params. */
     {
-        double X_H = HYDROGEN_MASSFRAC;
-#ifdef METALS
-        X_H = 1.0 - pp[i].Metallicity[0];
-        if (NUM_METAL_SPECIES >= 10)
-            X_H -= pp[i].Metallicity[1];
-#endif
-        double Y_He = (1.0 - X_H) * 0.25;
-        pr->y = Y_He / X_H;
+        jaco_cell_X_H(i, pp, &pr->y);
     }
     /* C_2, C_3 are derived_params computed from T, grad_v, Delta_x in the model. */
     /* Dust and geometry — minimal defaults (no radiation field) */
@@ -226,15 +229,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     }
 #elif defined(JACO_MODEL_STARFORGE)
     /* Hydrogen mass fraction and helium abundance by number */
-    double X_H = HYDROGEN_MASSFRAC;
-#ifdef METALS
-    X_H = 1.0 - pp[i].Metallicity[0]; /* X = 1 - Z */
-    if (NUM_METAL_SPECIES >= 10) {
-        X_H -= pp[i].Metallicity[1]; /* X = 1 - Y - Z */
-    }
-#endif
-    double Y_He = (1.0 - X_H) * 0.25; /* He number fraction per H = (1-X)/(4X) but stored as y = n_He/n_H */
-    pr->y = Y_He / X_H;
+    double X_H = jaco_cell_X_H(i, pp, &pr->y);
 
     /* Metal abundances (per H nucleus) from metallicity array */
     double Z_solar = All.SolarAbundances[0];

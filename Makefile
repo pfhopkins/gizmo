@@ -640,7 +640,7 @@ INCL    += 	declarations/allvars.h \
 			Makefile
 
 ifeq (JACO,$(findstring JACO,$(CONFIGVARS)))
-INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h cooling/jaco_tables.h cooling/jaco_solver.h
+INCL += cooling/microphysics_func_jac.h cooling/jaco_interp.h cooling/jaco_tables.h cooling/jaco_solver.h cooling/jaco_composition.h
 JACO_PYTHON ?= python3
 ## one codegen run writes every generated file; the stamp keeps parallel make from running it per target
 $(JACO_STAMP): $(CONFIG)
