@@ -3,13 +3,15 @@
 A 10 Msun, 50 Myr-old star at the center of a 50000 Msun, n_H = 100 cm^-3 box goes
 supernova on the first timestep, depositing 1e51 erg into the surrounding gas.
 
-Three variants are tested:
+Four variants are tested:
   1. Adiabatic (no cooling): verifies the shock radius and density jump match the
      analytic Sedov solution at early time (t ~ 0.015 code units).
   2. With COOLING: verifies the blast still produces a recognizable shell at the
      Sedov radius (before the radiative phase sets in).
   3. With COOLING + SINGLE_STAR_FB_RAD: same shell check, with the star's own radiative
      feedback also active. RAD needs COOLING to mean anything, so it is not tested alone.
+  4. With COOLING and the jaco network (JACO=starforge): the run must complete; the shell
+     check is printed, not asserted, since the physics differs from the standard module's.
 """
 
 import pytest
@@ -118,8 +120,9 @@ def plot_density_slice(coords, rho, box_center, output_dir=".", suffix=""):
         (),
         ("COOLING",),
         ("COOLING", "SINGLE_STAR_FB_RAD"),
+        ("COOLING", "JACO=starforge"),
     ],
-    ids=["adiabatic", "cooling", "rad"],
+    ids=["adiabatic", "cooling", "rad", "jaco"],
 )
 def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     generate_ics()
@@ -173,6 +176,10 @@ def test_SN_singlestar(num_mpi_ranks, num_omp_threads, extra_config_flags):
     i_peak = np.nanargmax(rho_binned)
     r_peak = r_centers[i_peak]
     rel_err = abs(r_peak - R_shock) / R_shock
+    if "JACO=starforge" in extra_config_flags:
+        print(f"jaco: shell peak {r_peak:.3f} pc vs Sedov {R_shock:.3f} pc (relative error {rel_err:.3f}), "
+              f"peak/ambient density {rho_binned[i_peak] / RHO_AMBIENT_CODE:.2f}, v_r at peak {vr_binned[i_peak]:.1f}")
+        return
     assert rel_err < 0.3, (
         f"Shock-radius mismatch: peak at {r_peak:.3f} pc vs Sedov {R_shock:.3f} pc "
         f"(relative error {rel_err:.3f})"
