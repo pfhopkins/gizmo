@@ -539,6 +539,25 @@ void jaco_report_solve_stats(void) {
     jaco_stats_max_nfeval = 0;
 }
 
+#ifdef OUTPUT_COOLRATE_DETAIL
+/* The standard module's per-cell rate outputs at the solved state, in CoolingRate()'s units (erg cm^3 s^-1, per nHcgs()^2).
+   jaco's energy row gives only the net radiative rate, so the separated ones (CoolingRate, HeatingRate, MetalCoolingRate,
+   PElecHeatingRate) are written as zero. Call before jaco_to_gizmo, which clears DtInternalEnergy. */
+static void jaco_coolrate_detail(const SolveVars *sv, const Params *pr, struct gas_cell_data *cell) {
+    Params p = *pr;
+    p.pdv_work = 0;
+    p.u_initial = sv->u; /* sv->u = u(T, x), so the backward-Euler term vanishes and the energy row is the net heating */
+    SolveVars F;
+    double J[N_VARS][N_VARS], nH = cell->nHcgs();
+    microphysics_func_jac(sv, &p, &F, J);
+    cell->NetHeatingRateQ = F.T / (nH * nH);
+#ifndef COOLING_OPERATOR_SPLIT
+    cell->HydroHeatingRate = cell->DtInternalEnergy / nH;
+#endif
+    cell->CoolingRate = cell->HeatingRate = cell->MetalCoolingRate = cell->PElecHeatingRate = 0;
+}
+#endif
+
 void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
     double dtime = get_particle_timestep_in_physical(0, p);
     if (dtime == 0)
@@ -562,6 +581,9 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
         fflush(stdout);
         endrun(10);
     }
+#ifdef OUTPUT_COOLRATE_DETAIL
+    jaco_coolrate_detail(&sv, &pr, c);
+#endif
     jaco_to_gizmo(0, &sv, &pr, p, c);
     jaco_stats_add(&info);
 }
