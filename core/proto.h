@@ -18,6 +18,8 @@ double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
 void jaco_build_cie_table(void);
 double jaco_cie_electron_abundance(double T);
 void jaco_report_solve_stats(void);
+void jaco_radiation_inputs(int i, double T, double *G0, double *G_LW, double *Tdust, struct particle_data *pp, struct gas_cell_data *cell);
+double jaco_metal_line_switch(void);
 struct jaco_eos_state {
     double T;          /* K */
     double P_over_rho; /* erg/g */

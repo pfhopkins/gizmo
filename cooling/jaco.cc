@@ -89,6 +89,7 @@ void jaco_build_cie_table(void) {
     pr.ISRF = 1.0;
     pr.N_H = 1e20;
     pr.G_0 = 1.0;
+    pr.G_LW = 1.0;
     pr.Td = 15.0;
     pr.Z_d = 1.0;
     pr.f_d = 1.0;
@@ -341,26 +342,20 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     pr->Z_d = DMAX(1e-4, Zd_solar);
     pr->f_d = 1.0; /* no sublimation correction for now */
 
-    /* Dust temperature: use stored value if available, otherwise compute equilibrium estimate */
-#ifdef RT_INFRARED
-    pr->Td = cell[i].Dust_Temperature;
-#else
-    pr->Td = 10; /* placeholder until an equilibrium dust-temperature estimate is wired in */
-#endif
-
     /* Kim+23 nebular forbidden-line cooling of photoionized gas: on exactly where the standard module applies it */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)
     pr->f_neb = 1.0;
 #else
     pr->f_neb = 0.0;
 #endif
+    pr->f_metal = jaco_metal_line_switch(); /* tabulated metal lines: on where the standard module applies them */
 
-    /* Radiation field and cosmic rays */
-    pr->G_0 = 1.0; /* Habing units; will be overridden below if RT available */
+    /* Radiation: G_0 sets the C+ fraction and so enters the EOS; G_LW and Td only enter the rates (gizmo_to_jaco).
+       Cosmic rays scale with sqrt(ISRF), as in Get_CosmicRayEnergyDensity_cgs. */
+    jaco_radiation_inputs(i, cell[i].Temperature, &pr->G_0, NULL, NULL, pp, cell);
     pr->ISRF = 1.0;
-#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
-    double shieldfac = return_uvb_shieldfac(i, 0, cell[i].nHcgs(), log10(DMAX(cell[i].Temperature, 10.)), cell);
-    pr->G_0 = get_FUV_G0(i, shieldfac, 0, pp, cell);
+#ifdef RT_ISRF_BACKGROUND
+    pr->ISRF = All.InterstellarRadiationFieldStrength;
 #endif
 
     /* Cell size and velocity gradient */
@@ -515,6 +510,8 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     /* Column density for shielding */
     pr->N_H = evaluate_NH_from_GradRho(pp[i].GradRho, pp[i].KernelRadius, cell[i].Density, pp[i].NumNgb, 1, i, pp) *
               UNIT_SURFDEN_IN_CGS / PROTONMASS_CGS;
+    /* LW field and dust temperature as the standard cooling module evaluates them, at the cached temperature */
+    jaco_radiation_inputs(i, cell[i].Temperature, NULL, &pr->G_LW, &pr->Td, pp, cell);
 #endif
 }
 
