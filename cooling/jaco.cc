@@ -384,6 +384,20 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     return pr->n_Htot * mass_per_H;
 }
 
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+/* CIE ions at temperature T, clamped to the H not in H2 (sv->x_H_2 must be set) and to the cell's He */
+static void jaco_cie_species(double T, const Params *pr, SolveVars *sv) {
+    double logT = log10(jaco_isfinite(T) ? DMAX(T, 10.) : 1e4), xHp_max = 1.0;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+    xHp_max -= 2.0 * sv->x_H_2;
+#endif
+    double xHepp = DMIN(cie_interp(cie_xHepp, logT), pr->y);
+    sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(cie_interp(cie_xHp, logT), xHp_max));
+    sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(cie_interp(cie_xHep, logT), pr->y - xHepp));
+    sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
+}
+#endif
+
 /* Species from the cell's cached Ne (free electrons per H, excluding those from C+) and MolecularMassFraction.
    jaco's u(T) and P(T) depend on the composition only through x_e and x_H2, so any split of Ne gives the same
    EOS. Electrons go to H+ first (up to the H not in H2), then He+ (up to y), then He+ converts to He++. A Ne
@@ -398,21 +412,15 @@ static void jaco_species_from_cell(int i, struct gas_cell_data *cell, const Para
     sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, xH2);
 #endif
     double ne = cell[i].Ne, y = pr->y, xHp_max = 1.0 - 2.0 * xH2;
-    double xHp, xHep, xHepp;
     if (jaco_isfinite(ne) && ne >= 0 && ne <= (xHp_max + 2.0 * y) * (1.0 + 1e-10)) {
-        xHp = DMIN(ne, xHp_max);
-        double ne_He = DMAX(ne - xHp, 0);
-        xHepp = DMIN(DMAX(ne_He - y, 0), y);
-        xHep = DMAX(DMIN(ne_He - 2.0 * xHepp, y - xHepp), 0);
+        double xHp = DMIN(ne, xHp_max), ne_He = DMAX(ne - xHp, 0);
+        double xHepp = DMIN(DMAX(ne_He - y, 0), y), xHep = DMAX(DMIN(ne_He - 2.0 * xHepp, y - xHepp), 0);
+        sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, xHp);
+        sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, xHep);
+        sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
     } else {
-        double T = cell[i].Temperature, logT = log10(jaco_isfinite(T) ? DMAX(T, 10.) : 1e4);
-        xHp = DMIN(cie_interp(cie_xHp, logT), xHp_max);
-        xHepp = DMIN(cie_interp(cie_xHepp, logT), y);
-        xHep = DMIN(cie_interp(cie_xHep, logT), y - xHepp);
+        jaco_cie_species(cell[i].Temperature, pr, sv);
     }
-    sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, xHp);
-    sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, xHep);
-    sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
 #endif
 }
 
@@ -486,8 +494,19 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     /* Seed with the state jaco_cell_eos describes: species from the cached Ne and H2, and T on the EOS for u
        at that composition (normally the cached Temperature itself), so the energy row starts at round-off */
     jaco_species_from_cell(i, cell, pr, sv);
+    int stale_ions = 0;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+    /* Except where the CIE table is collisionally ionized (x_e > 0.1, T >~ 1.3e4 K): there it bounds the steady state
+       from below, so a cached Ne under it is stale (shock heating, or a solve that settled on the near-neutral fixed
+       point of the ionization balance, where the gas stops cooling). Seed CIE ions at the cached T, keeping that T:
+       re-deriving T at the ionized composition roughly halves it and strands Newton far from the ionized state. */
+    double ne_cie = jaco_cie_electron_abundance(cell[i].Temperature);
+    stale_ions = (ne_cie > 0.1 && !(cell[i].Ne >= ne_cie));
+    if (stale_ions)
+        jaco_cie_species(cell[i].Temperature, pr, sv);
+#endif
     double cv;
-    sv->T = jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
+    sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
 #if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     pr->x_H_2_initial = sv->x_H_2;
 #endif
