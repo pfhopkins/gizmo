@@ -489,7 +489,9 @@ extern struct gas_cell_data
     inline double temperature() const {return Temperature;} /*!< gas temperature (must be precomputed) */
 
     inline double gamma_eos_value() const { /*!< effective adiabatic index */
-#if defined(COOL_MOLECFRAC_NONEQM)
+#if defined(JACO)
+        return Gamma; // cached with Temperature by jaco's EOS in set_eos_pressure
+#elif defined(COOL_MOLECFRAC_NONEQM)
         double fH = HYDROGEN_MASSFRAC, f = MolecularMassFraction, xe = Ne;
         double f_mono = fH*(xe + 1.-f) + (1.-fH)/4., f_di = fH*f/2., gamma_mono=5./3., gamma_di=7./5.;
 #ifdef EOS_SUBSTELLAR_ISM

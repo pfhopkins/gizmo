@@ -18,6 +18,14 @@ extern "C" int jaco_isfinite(double x);
 
 #ifdef JACO
 
+#ifndef COOLING
+#error "JACO requires COOLING"
+#endif
+/* These read the standard cooling module's chemistry or EOS directly, bypassing jaco_cell_eos */
+#if defined(OUTPUT_COOLRATE) || defined(GALSF_EFFECTIVE_EQS) || defined(CHIMES) || defined(COOL_GRACKLE) || defined(RT_CHEM_PHOTOION)
+#error "JACO does not yet support OUTPUT_COOLRATE, GALSF_EFFECTIVE_EQS, CHIMES, COOL_GRACKLE or RT_CHEM_PHOTOION"
+#endif
+
 /* ---- CIE lookup table for initial ion abundance guesses ---- */
 
 #define CIE_TABLE_N 200
@@ -39,6 +47,12 @@ static double cie_interp(const double *table, double logT) {
     int i = (int)f;
     double t = f - i;
     return (1 - t) * table[i] + t * table[i + 1];
+}
+
+/* Free electrons per H in CIE at temperature T (from the table, at its fixed He abundance) */
+double jaco_cie_electron_abundance(double T) {
+    double logT = log10(DMAX(T, 10.));
+    return cie_interp(cie_xHp, logT) + cie_interp(cie_xHep, logT) + 2.0 * cie_interp(cie_xHepp, logT);
 }
 
 /* Build the CIE table by sweeping T downward with continuation, solving the chemistry at each
@@ -144,20 +158,27 @@ void jaco_build_cie_table(void) {
 
 /* ---- GIZMO interface layer ---- */
 
-void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
-    double dtime = get_particle_timestep_in_physical(i, pp);
-    double Delta_t = dtime * UNIT_TIME_IN_CGS;
-    set_PdV_work_heatingrate(i, dtime, pp, cell);
-    double n_Htot = cell[i].nHcgs();
+/* Mass per H nucleus (g) in jaco's EOS for the composition in pr. Species masses conserve every element,
+   electrons included, so jaco's mass density is n_Htot times this whatever the ionization and H2 state.
+   With no H2 every species carries (3/2)kT, so rho = (3/2) P/u. */
+static double jaco_mass_per_H(const Params *pr_in) {
+    Params pr = *pr_in;
+    pr.n_Htot = 1.0;
+    SolveVars s = {};
+    s.T = 1e4;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+    s.x_Hplus = 1e-4; /* any value; nonzero keeps the H- expression away from 0/0 */
+    s.x_Heplus = s.x_Heplusplus = JACO_ABUNDANCE_FLOOR;
+#endif
+    return 1.5 * jaco_eos_pressure(&s, &pr) / jaco_T_to_u(s.T, &s, &pr, NULL);
+}
 
-    /* --- Variables common to all models --- */
-    sv->u = cell[i].InternalEnergy * UNIT_SPECEGY_IN_CGS;
-    pr->u_initial = sv->u;
-    pr->n_Htot = n_Htot;
-    pr->Delta_t = Delta_t;
-    pr->pdv_work = (cell[i].CoolingIsOperatorSplitThisTimestep == 0) ? cell[i].DtInternalEnergy * n_Htot : 0;
-
-    /* --- Model-specific parameter packing --- */
+/* Fill the cell-dependent Params: everything the generated EOS (jaco_eos.cc) reads plus the other cell
+   properties the rates need, except N_H (left to gizmo_to_jaco). The solver and jaco_cell_eos both pack
+   through here, so they evaluate the same EOS. rho_cgs is the physical gas density; returns jaco's mass
+   density for these Params. */
+static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, struct gas_cell_data *cell, double rho_cgs) {
+    pr->n_Htot = HYDROGEN_MASSFRAC * rho_cgs / PROTONMASS_CGS;
 #ifdef JACO_MODEL_WIND_COMPARISON
     pr->x_H = 1.;
 #elif defined(JACO_MODEL_KWH)
@@ -178,13 +199,6 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
         double grad_v = cell[i].velocity_gradient_norm();
         pr->Delta_x = dx_code * UNIT_LENGTH_IN_CGS;
         pr->grad_v = DMAX(1e-30, grad_v * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS);
-    }
-    sv->T = cell[i].Temperature;
-    {
-        double logT = log10(DMAX(sv->T, 10.));
-        sv->x_Hplus = cie_interp(cie_xHp, logT);
-        sv->x_Heplus = cie_interp(cie_xHep, logT);
-        sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
     }
 #elif defined(JACO_MODEL_PRIMORDIAL)
     /* Primordial H/He + H2 chemistry model. KWH base plus H2 chemistry params. */
@@ -208,18 +222,6 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
         double grad_v = cell[i].velocity_gradient_norm();
         pr->Delta_x = dx_code * UNIT_LENGTH_IN_CGS;
         pr->grad_v = DMAX(1e-30, grad_v * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS);
-    }
-    sv->T = cell[i].Temperature;
-    {
-        double logT = log10(DMAX(sv->T, 10.));
-        sv->x_Hplus = cie_interp(cie_xHp, logT);
-        sv->x_Heplus = cie_interp(cie_xHep, logT);
-        sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
-    }
-    {
-        double fmol = DMIN(DMAX(cell[i].MolecularMassFraction, 0), 1.0);
-        sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, 0.5 * fmol);
-        pr->x_H_2_initial = sv->x_H_2;
     }
 #elif defined(JACO_MODEL_STARFORGE)
     /* Hydrogen mass fraction and helium abundance by number */
@@ -269,23 +271,6 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     pr->x_C_tot = pr->x_N = pr->x_O_tot = pr->x_Ne = pr->x_Mg = pr->x_Si = pr->x_S = pr->x_Ca = pr->x_Fe = 0;
 #endif
 
-    /* Initial T guess: use stored temperature from previous step. */
-    sv->T = cell[i].Temperature;
-
-    /* Ion abundances: interpolate from pre-computed CIE table for a physically
-       correct initial guess at any T. This avoids cold-start issues where
-       stored Ne is zero or stale after shock heating. */
-    double logT = log10(DMAX(sv->T, 10.));
-    sv->x_Hplus = cie_interp(cie_xHp, logT);
-    sv->x_Heplus = cie_interp(cie_xHep, logT);
-    sv->x_Heplusplus = cie_interp(cie_xHepp, logT);
-
-    /* H2: use stored MolecularMassFraction from previous step */
-    double fmol = DMIN(DMAX(cell[i].MolecularMassFraction, 0), 1.0);
-    sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, fmol);
-
-    pr->x_H_2_initial = sv->x_H_2;
-
     /* H-, C+, CO are now fully inlined by jaco codegen as fixed_species with
        symbolic expressions. No params to set here. */
 
@@ -298,32 +283,177 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #ifdef RT_INFRARED
     pr->Td = cell[i].Dust_Temperature;
 #else
-    double shieldfac_Td = return_uvb_shieldfac(i, 0, n_Htot, log10(DMAX(sv->T, 10.)), cell);
-    pr->Td = 10; // get_equilibrium_dust_temperature_estimate(i, shieldfac_Td, sv->T, pp, cell);
+    pr->Td = 10; /* placeholder until an equilibrium dust-temperature estimate is wired in */
+#endif
+
+    /* Kim+23 nebular forbidden-line cooling of photoionized gas: on exactly where the standard module applies it */
+#if defined(RT_CHEM_PHOTOION) && defined(METALS)
+    pr->f_neb = 1.0;
+#else
+    pr->f_neb = 0.0;
 #endif
 
     /* Radiation field and cosmic rays */
     pr->G_0 = 1.0; /* Habing units; will be overridden below if RT available */
     pr->ISRF = 1.0;
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
-    double shieldfac = return_uvb_shieldfac(i, 0, n_Htot, log10(DMAX(sv->T, 10.)), cell);
+    double shieldfac = return_uvb_shieldfac(i, 0, cell[i].nHcgs(), log10(DMAX(cell[i].Temperature, 10.)), cell);
     pr->G_0 = get_FUV_G0(i, shieldfac, 0, pp, cell);
 #endif
 
-    /* Column density, cell size, and velocity gradient */
+    /* Cell size and velocity gradient */
     double dx_code = pp[i].Get_Particle_Size() * All.cf_atime; /* physical cell size in code units */
     double grad_v = cell[i].velocity_gradient_norm();          /* velocity gradient Frobenius norm in code units */
+    if (!jaco_isfinite(grad_v))
+        grad_v = 0; /* gradients are not yet computed at the first EOS call after reading the ICs */
     pr->Delta_x = dx_code * UNIT_LENGTH_IN_CGS;
-    pr->N_H = evaluate_NH_from_GradRho(pp[i].GradRho, pp[i].KernelRadius, cell[i].Density, pp[i].NumNgb, 1, i, pp) *
-              UNIT_SURFDEN_IN_CGS / PROTONMASS_CGS;
     pr->grad_v =
         DMAX(1e-30, grad_v * UNIT_VEL_IN_CGS /
                         UNIT_LENGTH_IN_CGS); /* CGS s^-1, floored to avoid division by zero in LVG expressions */
 
     /* Cosmological redshift for inverse Compton cooling */
     pr->z = All.ComovingIntegrationOn ? (1.0 / All.Time - 1.0) : 0;
-
 #endif /* JACO_MODEL_STARFORGE */
+
+    double mass_per_H = jaco_mass_per_H(pr);
+#ifdef JACO_MODEL_STARFORGE
+    pr->n_Htot = rho_cgs / mass_per_H; /* jaco's mass density equals the cell's */
+#endif
+    return pr->n_Htot * mass_per_H;
+}
+
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+/* CIE ions at temperature T, clamped to the H not in H2 (sv->x_H_2 must be set) and to the cell's He */
+static void jaco_cie_species(double T, const Params *pr, SolveVars *sv) {
+    double logT = log10(jaco_isfinite(T) ? DMAX(T, 10.) : 1e4), xHp_max = 1.0;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+    xHp_max -= 2.0 * sv->x_H_2;
+#endif
+    double xHepp = DMIN(cie_interp(cie_xHepp, logT), pr->y);
+    sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(cie_interp(cie_xHp, logT), xHp_max));
+    sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(cie_interp(cie_xHep, logT), pr->y - xHepp));
+    sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
+}
+#endif
+
+/* Species from the cell's cached Ne (free electrons per H, excluding those from C+) and MolecularMassFraction.
+   jaco's u(T) and P(T) depend on the composition only through x_e and x_H2, so any split of Ne gives the same
+   EOS. Electrons go to H+ first (up to the H not in H2), then He+ (up to y), then He+ converts to He++. A Ne
+   outside [0, 1 - 2 x_H2 + 2 y] cannot be split; CIE at the cached temperature is used instead. */
+static void jaco_species_from_cell(int i, struct gas_cell_data *cell, const Params *pr, SolveVars *sv) {
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+    double xH2 = 0;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+    double fmol = cell[i].MolecularMassFraction;
+    fmol = jaco_isfinite(fmol) ? DMIN(DMAX(fmol, 0), 1.0) : 0;
+    xH2 = 0.5 * fmol;
+    sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, xH2);
+#endif
+    double ne = cell[i].Ne, y = pr->y, xHp_max = 1.0 - 2.0 * xH2;
+    if (jaco_isfinite(ne) && ne >= 0 && ne <= (xHp_max + 2.0 * y) * (1.0 + 1e-10)) {
+        double xHp = DMIN(ne, xHp_max), ne_He = DMAX(ne - xHp, 0);
+        double xHepp = DMIN(DMAX(ne_He - y, 0), y), xHep = DMAX(DMIN(ne_He - 2.0 * xHepp, y - xHepp), 0);
+        sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, xHp);
+        sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, xHep);
+        sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
+    } else {
+        jaco_cie_species(cell[i].Temperature, pr, sv);
+    }
+#endif
+}
+
+/* T with jaco_T_to_u(T) = u at the composition in sv, by Newton from T_seed (falling back to jaco_u_to_T for an
+   unusable seed), to near round-off so the solver's energy row starts there. Returns T_seed itself when it
+   already reproduces u, so a solver temperature normally passes through unchanged. *cv is du/dT at the
+   returned T. */
+static double jaco_T_from_u(double u, double T_seed, const SolveVars *sv, const Params *pr, double *cv) {
+    double T = T_seed, T_lo = 1e-3, T_hi = 1e12;
+    if (!jaco_isfinite(T) || T <= 0 || T > 1e10)
+        T = jaco_u_to_T(u, sv, pr);
+    for (int iter = 0; iter < 100; iter++) {
+        double du = jaco_T_to_u(T, sv, pr, cv) - u;
+        if (fabs(du) <= 1e-13 * fabs(u))
+            return T;
+        if (du > 0)
+            T_hi = fmin(T_hi, T);
+        else
+            T_lo = fmax(T_lo, T);
+        double T_new = T - du / (*cv);
+        if (!(T_new > T_lo && T_new < T_hi))
+            T_new = sqrt(T_lo * T_hi);
+        T = T_new;
+    }
+    printf("jaco_T_from_u failed to converge: u=%g T_seed=%g T=%g\n", u, T_seed, T);
+    T = jaco_u_to_T(u, sv, pr);
+    jaco_T_to_u(T, sv, pr, cv);
+    return T;
+}
+
+/* jaco's EOS on the cell's cached state: composition from Ne, MolecularMassFraction and metallicity, at
+   specific energy u and physical density rho (both code units), seeded with the cached Temperature. Uses
+   only (i, pp, cell), so it is safe on the packed copies cooling works on. */
+void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, double u, double rho,
+                   struct jaco_eos_state *eos) {
+    SolveVars sv = {};
+    Params pr = {};
+    double rho_jaco = jaco_pack_params(i, &pr, pp, cell, rho * UNIT_DENSITY_IN_CGS), cv;
+    jaco_species_from_cell(i, cell, &pr, &sv);
+    sv.u = u * UNIT_SPECEGY_IN_CGS;
+    sv.T = jaco_T_from_u(sv.u, cell[i].Temperature, &sv, &pr, &cv);
+    eos->T = sv.T;
+    eos->P_over_rho = jaco_eos_pressure(&sv, &pr) / rho_jaco;
+    eos->gamma = 1.0 + eos->P_over_rho / (cv * sv.T); /* first adiabatic index at frozen composition */
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+    eos->x_Hplus = sv.x_Hplus;
+    eos->x_Heplus = sv.x_Heplus;
+    eos->x_Heplusplus = sv.x_Heplusplus;
+    eos->y = pr.y;
+#else
+    eos->x_Hplus = eos->x_Heplus = eos->x_Heplusplus = eos->y = 0;
+#endif
+}
+
+void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
+    double dtime = get_particle_timestep_in_physical(i, pp);
+    set_PdV_work_heatingrate(i, dtime, pp, cell);
+    jaco_pack_params(i, pr, pp, cell, cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS);
+
+    sv->u = cell[i].InternalEnergy * UNIT_SPECEGY_IN_CGS;
+    pr->u_initial = sv->u;
+    pr->Delta_t = dtime * UNIT_TIME_IN_CGS;
+    /* set_PdV_work_heatingrate leaves DtInternalEnergy in erg/s per H at HYDROGEN_MASSFRAC, so this product with
+       nHcgs() (not pr->n_Htot) is rho*du/dt in erg/cm^3/s */
+#ifndef COOLING_OPERATOR_SPLIT
+    pr->pdv_work = (cell[i].CoolingIsOperatorSplitThisTimestep == 0) ? cell[i].DtInternalEnergy * cell[i].nHcgs() : 0;
+#else
+    pr->pdv_work = 0;
+#endif
+
+    /* Seed with the state jaco_cell_eos describes: species from the cached Ne and H2, and T on the EOS for u
+       at that composition (normally the cached Temperature itself), so the energy row starts at round-off */
+    jaco_species_from_cell(i, cell, pr, sv);
+    int stale_ions = 0;
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+    /* Except where the CIE table is collisionally ionized (x_e > 0.1, T >~ 1.3e4 K): there it bounds the steady state
+       from below, so a cached Ne under it is stale (shock heating, or a solve that settled on the near-neutral fixed
+       point of the ionization balance, where the gas stops cooling). Seed CIE ions at the cached T, keeping that T:
+       re-deriving T at the ionized composition roughly halves it and strands Newton far from the ionized state. */
+    double ne_cie = jaco_cie_electron_abundance(cell[i].Temperature);
+    stale_ions = (ne_cie > 0.1 && !(cell[i].Ne >= ne_cie));
+    if (stale_ions)
+        jaco_cie_species(cell[i].Temperature, pr, sv);
+#endif
+    double cv;
+    sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
+#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+    pr->x_H_2_initial = sv->x_H_2;
+#endif
+
+#ifdef JACO_MODEL_STARFORGE
+    /* Column density for shielding */
+    pr->N_H = evaluate_NH_from_GradRho(pp[i].GradRho, pp[i].KernelRadius, cell[i].Density, pp[i].NumNgb, 1, i, pp) *
+              UNIT_SURFDEN_IN_CGS / PROTONMASS_CGS;
+#endif
 }
 
 void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
@@ -332,18 +462,18 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     cell[i].Temperature = sv->T;
 
 #if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-    /* Write solved species back BEFORE set_eos_pressure, which needs Ne and MolecularMassFraction for gamma */
+    /* Write solved species back BEFORE set_eos_pressure, whose EOS composition comes from Ne and MolecularMassFraction */
     double xHp = sv->x_Hplus, xH2 = sv->x_H_2;
     double xHep = sv->x_Heplus, xHepp = sv->x_Heplusplus;
     cell[i].Ne = xHp + xHep + 2.0 * xHepp;
-    double xH0 = DMAX(1.0 - xHp - 2.0 * xH2, 0);
     cell[i].MolecularMassFraction = 2.0 * xH2;
-    cell[i].MolecularMassFraction_perNeutralH = (xH0 > 0) ? cell[i].MolecularMassFraction / xH0 : 0;
+    double xH0 = DMAX(1.0 - xHp, 0); /* neutral H including H2, as in the standard cooling module */
+    cell[i].MolecularMassFraction_perNeutralH = (xH0 > 0) ? DMIN(1, cell[i].MolecularMassFraction / xH0) : 0;
 #elif defined(JACO_MODEL_KWH)
     cell[i].Ne = sv->x_Hplus + sv->x_Heplus + 2.0 * sv->x_Heplusplus;
 #endif
 
-    set_eos_pressure(i, pp, cell); /* use standard GIZMO EOS for pressure/sound speed */
+    set_eos_pressure(i, pp, cell); /* P, Gamma and sound speed from jaco's EOS; T moves only by the solver's u(T) residual */
 #ifndef COOLING_OPERATOR_SPLIT
     if (cell[i].CoolingIsOperatorSplitThisTimestep == 0) {
         cell[i].DtInternalEnergy = 0;

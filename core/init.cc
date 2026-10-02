@@ -573,6 +573,9 @@ void init(void)
                the written Temperature back, so they are left alone. */
             CellP[i].Temperature = 1.22 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy;
         }
+#ifdef JACO
+        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT;} /* gamma_eos_value() returns this until the first set_eos_pressure(); snapshots do not carry it */
+#endif
         CellP[i].FaceClosureError = 0;
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
@@ -642,7 +645,11 @@ void init(void)
             CellP[i].Density = -1;
 #ifdef COOLING
 #ifndef CHIMES
+#ifdef JACO
+            CellP[i].Ne = jaco_cie_electron_abundance(CellP[i].Temperature); /* seeds the composition of jaco's EOS */
+#else
             CellP[i].Ne = 1.0;
+#endif
 #endif
 #if defined(COOL_MOLECFRAC_NONEQM)
             CellP[i].MolecularMassFraction = 0.0; CellP[i].MolecularMassFraction_perNeutralH = 0.0; // start atomic

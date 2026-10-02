@@ -2432,7 +2432,14 @@ double get_background_radiation_temperature_for_emission_corrections(int target,
 /*  this function computes the self-consistent temperature and electron fraction */
 double ThermalProperties(double u, double rho, int target, double *mu_guess, double *ne_guess, double *nH0_guess, double *nHp_guess, double *nHe0_guess, double *nHep_guess, double *nHepp_guess, struct particle_data *pp, struct gas_cell_data *cell)
 {
-#if defined(CHIMES)
+#if defined(JACO) /* jaco's EOS on the cached composition (see set_eos_pressure); abundances per H, nH0 = neutral H including H2 */
+    if(target < 0) {printf("ThermalProperties: JACO needs the cached composition of a gas cell, got target=%d\n", target); endrun(7781);}
+    struct jaco_eos_state eos; jaco_cell_eos(target, pp, cell, u, rho, &eos);
+    *ne_guess = eos.x_Hplus + eos.x_Heplus + 2.*eos.x_Heplusplus; *nH0_guess = DMAX(0, 1.-eos.x_Hplus); *nHp_guess = eos.x_Hplus;
+    *nHe0_guess = DMAX(0, eos.y - eos.x_Heplus - eos.x_Heplusplus); *nHep_guess = eos.x_Heplus; *nHepp_guess = eos.x_Heplusplus;
+    *mu_guess = BOLTZMANN_CGS * eos.T / (PROTONMASS_CGS * eos.P_over_rho);
+    return eos.T;
+#elif defined(CHIMES)
     int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
     *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]]; *nHe0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeI]];
     *nHep_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeII]]; *nHepp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HeIII]];
