@@ -1787,7 +1787,7 @@ void InitCool(void)
 #ifdef JACO
     jaco_init_tables("."); /* load 2D/3D interpolation tables from HDF5 from run directory (no-op if model has none; aborts if files missing) */
     jaco_build_cie_table(); /* pre-compute CIE ion fractions for initial guess interpolation */
-    return;
+    /* no early return: the EOS (set_eos_pressure -> ThermalProperties) still reads the standard cooling tables below */
 #endif
 
 #ifdef COOL_GRACKLE
