@@ -93,7 +93,12 @@ void cooling_parent_routine(void)
         cool_indices.push_back(i);
     }
     int N_active = (int) cool_indices.size();
-    if(N_active == 0) {return;}
+    if(N_active == 0) {
+#ifdef JACO
+        jaco_report_solve_stats(); /* collective: ranks with nothing to cool must still take part */
+#endif
+        return;
+    }
 
     /* Step 2: Gather — allocate compact arrays and copy active particle data into contiguous storage */
     struct particle_data *compact_P = (struct particle_data *) mymalloc("compact_P", N_active * sizeof(struct particle_data));
