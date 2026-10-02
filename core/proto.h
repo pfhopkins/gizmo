@@ -8,10 +8,10 @@
 #endif
 #ifdef JACO
 #include "../cooling/microphysics_func_jac.h"
+#include "../cooling/jaco_solver.h"
 void call_jaco(struct particle_data *p, struct gas_cell_data *c);
 void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell);
 void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell);
-int jaco_solve(SolveVars *sv, const Params *pr, double tol);
 double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
 double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_out);
 double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);

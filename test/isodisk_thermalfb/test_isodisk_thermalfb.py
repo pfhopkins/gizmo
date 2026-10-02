@@ -14,7 +14,7 @@ Validation protocol:
 
 import pytest
 import numpy as np
-from os import path, chdir
+from os import path, chdir, getcwd
 from urllib.request import urlretrieve, HTTPError
 import h5py
 import glob
@@ -53,20 +53,24 @@ def _get_ics():
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_isodisk_thermalfb(num_mpi_ranks, num_omp_threads):
-    clean_test_outputs(TEST_NAME)
+@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge",)], ids=["baseline", "jaco"])
+def test_isodisk_thermalfb(num_mpi_ranks, num_omp_threads, extra_config_flags):
+    clean_test_outputs(TEST_NAME, extra_config_flags)
     get_cooling_tables(f"test/{TEST_NAME}")
-    build_gizmo_for_test(TEST_NAME, num_omp_threads)
-    stash_baseline_output(TEST_NAME)
+    build_gizmo_for_test(TEST_NAME, num_omp_threads, extra_config_flags)
+    stash_baseline_output(TEST_NAME, extra_config_flags)
+    cwd = getcwd()
     try:
         chdir(f"test/{TEST_NAME}/")
-        _get_ics()
-        run_test(TEST_NAME, num_mpi_ranks, num_omp_threads)
-        chdir("../../")
+        try:
+            _get_ics()
+            run_test(TEST_NAME, num_mpi_ranks, num_omp_threads)
+        finally:
+            chdir(cwd)
     finally:
-        finalize_variant_output(TEST_NAME)
+        finalize_variant_output(TEST_NAME, extra_config_flags)
 
-    outputdir = variant_output_dir(TEST_NAME)
+    outputdir = variant_output_dir(TEST_NAME, extra_config_flags)
     snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))
     if len(snaps) < 1:
         raise RuntimeError("GIZMO did not produce any output snapshots.")

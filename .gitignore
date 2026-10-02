@@ -54,3 +54,4 @@ cooling/.jaco_codegen_stamp
 test/*/jaco_tables.hdf5
 test/*/jaco_cie_table.dat
 test/jaco_CIE/build/
+test/jaco_solver/build/

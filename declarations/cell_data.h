@@ -284,9 +284,9 @@ extern struct gas_cell_data
     MyFloat Kappa_Conduction;                   /*!< conduction coefficient */
 #endif
     
-#if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM)
+#if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM) || defined(JACO) /* JACO: written by the solver, read by its EOS */
     MyFloat MolecularMassFraction;              /*!< holder for molecular mass fraction for sims where we evaluate it on-the-fly and wish to save it [different from detailed chemistry modules] */
-#if defined(COOL_MOLECFRAC_NONEQM)
+#if defined(COOL_MOLECFRAC_NONEQM) || defined(JACO)
     MyFloat MolecularMassFraction_perNeutralH;  /*! molecular mass fraction -of-the-neutral-gas-, which we retain as a separate variable since we have a hybrid model here using implicit updates for the ionization fraction */
 #endif
 #endif
