@@ -10,12 +10,14 @@
  *      with the chemistry at steady state, located by its own bisection.
  * Exits non-zero on any failure.
  *
- *   make -C test/jaco_solver
+ *   make -C test/jaco_solver [MODEL=starforge_legacy]
  *
- * Debug modes (after the table directory argument, e.g. ./build/test_jaco_solver build ...):
+ * Debug modes (after the table directory argument, e.g. ./build/starforge/test_jaco_solver build/starforge ...):
  *   case n T0 dt pdv ufac seed [verbose] [warm]    one sweep-style solve with an iterate trace
  *   gscan n dt pdv seed Tlo Thi npts               heat + pdv with steady-state chemistry vs T
  *   replay file [which] [verbose] [jac]            re-solve states dumped by jaco_print_state
+ *   compare                                        (make compare REF=rev) the sweep through the solver at
+ *                                                  git revision rev and the working tree's: tiers, nfeval, answers
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -25,6 +27,10 @@
 #include <vector>
 #include <algorithm>
 #include "jaco_solver.h"
+#ifdef JACO_COMPARE
+/* the reference solver (make compare REF=...), built with its entry points renamed */
+int jaco_ref_solve(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct JacoSolveInfo *info);
+#endif
 
 #ifndef JACO_FAMILY_STARFORGE
 #error "test_jaco_solver drives a STARFORGE-family model (MODEL=starforge or starforge_legacy)"
@@ -387,6 +393,15 @@ static int solve_checked(SolveVars *sv, const Params *pr, const JacoSolverSettin
 
 /* ---- replays ---- */
 
+/* Tier 1 stalls when a neutral budget is down to round-off: the step bound then allows steps of ~1e-13 and
+   Newton runs out of iterations (tier-1 status -4), leaving the answer to tier 2. Any change to the step
+   bound must keep these answers: the first case stalls today; in the second, letting the step past the
+   bound sends tier 1 to the x_e -> 0 root of the ionization balance (T ~ 2600 K, ions at the floor, under
+   MODEL=starforge_legacy) instead of the ionized one (T ~ 8800 K). Defined like sweep cases. */
+static int run_stall_cases(const JacoSolverSettings *set);
+
+
+
 struct Replay {
     const char *name;
     double T0, n, dt, xHp, xHep, xHepp, xH2, u_factor, N_H, pdv;
@@ -496,6 +511,48 @@ static int run_replays(const JacoSolverSettings *set) {
             report_failure(c.name, &in, &pr, set, why);
         }
     }
+    nfail += run_stall_cases(set);
+    return nfail;
+}
+
+static int run_stall_cases(const JacoSolverSettings *set) {
+    struct Stall {
+        const char *name;
+        double n, T0, dt, ufac;
+        int variant, ionized; /* ionized: the answer must not be the x_e -> 0 root */
+    };
+    const Stall cases[] = {
+        {"stall 3e4K n=0.01", 0.01, pow(10., 4.5), 1e3, 1.0, SEED_MOLECULAR, 0},
+        {"x_e root 1e4K n=0.1", 0.1, 1e4, 1e13, 1.1, SEED_MOLECULAR, 1},
+    };
+    int nfail = 0;
+    printf("\n== budget stall ==\n");
+    for (const Stall &c : cases) {
+        Params pr;
+        starforge_params(&pr, c.n, c.dt);
+        SolveVars sv = {};
+        seed_variant(&sv, c.T0, c.variant, pr.y);
+        pr.x_H_2_initial = sv.x_H_2;
+        pr.u_initial = c.ufac * jaco_T_to_u(c.T0, &sv, &pr, NULL);
+        sv.u = pr.u_initial;
+        SolveVars in = sv;
+        JacoSolveInfo info;
+        int rc = jaco_solve(&sv, &pr, set, &info);
+        char why[256] = "ok";
+        double worst = 0;
+        int bad = rc ? 1 : check_answer(&sv, &pr, set, why, &worst);
+        if (rc) strcpy(why, "every tier failed");
+        if (!bad && c.ionized && sv.x_Hplus <= 1e-10) {
+            bad = 1;
+            snprintf(why, sizeof(why), "x_e -> 0 root: x_H+ = %g, T = %g", sv.x_Hplus, sv.T);
+        }
+        printf("%-20s tier %d (tier-1 status %d) nfeval %d T=%.6g x_H+=%.4g x_H2=%.4g %s%s\n", c.name, info.tier, info.tier1_status,
+               info.nfeval, sv.T, sv.x_Hplus, sv.x_H_2, bad ? "FAIL: " : "", why);
+        if (bad) {
+            nfail++;
+            report_failure(c.name, &in, &pr, set, why);
+        }
+    }
     return nfail;
 }
 
@@ -526,8 +583,17 @@ static double sweep_pdv(double n, double T0, int variant, int sign) {
     return sign * fmax(r, 1e-27 * n * n);
 }
 
-/* full = 1: checks, equilibrium references and warm re-solves; full = 0: solve and count only */
-static void run_sweep(const JacoSolverSettings *set, int full, Stats &sweep, Stats &warm, Stats &eq) {
+/* one sweep input, with the labels the statistics are split by */
+struct SweepCase {
+    SolveVars sv;
+    Params pr;
+    double T0;
+    int variant, idt; /* idt == 6: dt = DT_EQ */
+    char what[160];
+};
+
+static std::vector<SweepCase> sweep_cases() {
+    std::vector<SweepCase> cases;
     std::vector<double> T0s = {3.0};
     for (int i = 2; i <= 14; i++) T0s.push_back(pow(10., 0.5 * i));
     T0s.push_back(6000.0); /* branch point of the H- rate fits */
@@ -538,76 +604,207 @@ static void run_sweep(const JacoSolverSettings *set, int full, Stats &sweep, Sta
                     double pdv = sweep_pdv(n, T0, variant, ps);
                     for (int idt = 0; idt <= 6; idt++) {
                         double dt = idt < 6 ? sweep_dt[idt] : DT_EQ;
-                        Params pr;
-                        starforge_params(&pr, n, dt);
-                        pr.pdv_work = pdv;
+                        SweepCase c;
+                        c.T0 = T0;
+                        c.variant = variant;
+                        c.idt = idt;
+                        starforge_params(&c.pr, n, dt);
+                        c.pr.pdv_work = pdv;
                         SolveVars s0 = {};
-                        seed_variant(&s0, T0, variant, pr.y);
-                        pr.x_H_2_initial = s0.x_H_2;
-                        int check_eq = full && dt >= 1e13;
+                        seed_variant(&s0, T0, variant, c.pr.y);
+                        c.pr.x_H_2_initial = s0.x_H_2;
                         for (double uf : sweep_ufac) {
-                            SolveVars sv = s0;
+                            c.sv = s0;
                             SolveVars s_eos = s0;
                             s_eos.x_Hplus = fmin(s_eos.x_Hplus, 1 - 1e-10);
-                            pr.u_initial = uf * jaco_T_to_u(T0, &s_eos, &pr, NULL);
-                            sv.u = pr.u_initial;
-                            Stats &st = (idt < 6) ? sweep : eq;
-                            char what[200];
-                            snprintf(what, sizeof(what), "n=%g T0=%g dt=%g pdv=%g ufac=%g seed=%s", n, T0, dt, pdv, uf, seed_name[variant]);
-                            JacoSolveInfo info;
-                            if (!full) {
-                                SolveVars in = sv;
-                                double t0 = now();
-                                int rc = jaco_solve(&sv, &pr, set, &info);
-                                st.seconds += now() - t0;
-                                st.add(rc, info);
-                                (void)in;
-                                continue;
-                            }
-                            long fails_before = st.fail + st.check_fail;
-                            int rc_main = solve_checked(&sv, &pr, set, st, what, &info);
-                            /* the starts that used to hit non-finite model values, tallied apart */
-                            int bad_now = rc_main || st.fail + st.check_fail != fails_before;
-                            Stats *subset[2] = {T0 == 10.0 ? &cold10 : NULL, variant == SEED_IONIZED ? &ionized : NULL};
-                            for (Stats *sub : subset)
-                                if (sub) {
-                                    sub->add(rc_main, info);
-                                    sub->check_fail += (!rc_main && bad_now);
-                                }
-                            if (rc_main) continue;
-                            if (check_eq && !info.pinned && st.fail + st.check_fail == fails_before) {
-                                double shift, dist;
-                                int r = near_root(&sv, &pr, set, &shift, &dist);
-                                if (r == 2)
-                                    st.eq_ref_fail++;
-                                else if (shift < EQ_GATE) {
-                                    st.eq_gated++;
-                                    if (r == 0)
-                                        st.eq_match++;
-                                    else {
-                                        st.eq_mismatch++;
-                                        char why[200];
-                                        snprintf(why, sizeof(why), "equilibrium: no root of heat+pdv within %.0f%% of T=%g (shift %.2g)",
-                                                 100 * EQ_TOL, sv.T, shift);
-                                        SolveVars in = s0;
-                                        in.u = pr.u_initial;
-                                        report_failure(what, &in, &pr, set, why);
-                                    }
-                                }
-                            }
-                            /* the next step of a settled cell: start from the answer with 1% more energy */
-                            if (idt < 6) {
-                                Params pw = pr;
-                                pw.u_initial = 1.01 * sv.u;
-                                pw.x_H_2_initial = sv.x_H_2;
-                                SolveVars sw = sv;
-                                JacoSolveInfo iw;
-                                solve_checked(&sw, &pw, set, warm, what, &iw);
-                            }
+                            c.pr.u_initial = uf * jaco_T_to_u(T0, &s_eos, &c.pr, NULL);
+                            c.sv.u = c.pr.u_initial;
+                            snprintf(c.what, sizeof(c.what), "n=%g T0=%g dt=%g pdv=%g ufac=%g seed=%s", n, T0, dt, pdv, uf, seed_name[variant]);
+                            cases.push_back(c);
                         }
                     }
                 }
+    return cases;
 }
+
+/* full = 1: checks, equilibrium references and warm re-solves; full = 0: solve and count only */
+static void run_sweep(const JacoSolverSettings *set, int full, Stats &sweep, Stats &warm, Stats &eq) {
+    for (const SweepCase &c : sweep_cases()) {
+        SolveVars sv = c.sv;
+        const Params &pr = c.pr;
+        Stats &st = (c.idt < 6) ? sweep : eq;
+        JacoSolveInfo info;
+        if (!full) {
+            double t0 = now();
+            int rc = jaco_solve(&sv, &pr, set, &info);
+            st.seconds += now() - t0;
+            st.add(rc, info);
+            continue;
+        }
+        long fails_before = st.fail + st.check_fail;
+        int rc_main = solve_checked(&sv, &pr, set, st, c.what, &info);
+        /* the starts that used to hit non-finite model values, tallied apart */
+        int bad_now = rc_main || st.fail + st.check_fail != fails_before;
+        Stats *subset[2] = {c.T0 == 10.0 ? &cold10 : NULL, c.variant == SEED_IONIZED ? &ionized : NULL};
+        for (Stats *sub : subset)
+            if (sub) {
+                sub->add(rc_main, info);
+                sub->check_fail += (!rc_main && bad_now);
+            }
+        if (rc_main) continue;
+        if (pr.Delta_t >= 1e13 && !info.pinned && st.fail + st.check_fail == fails_before) {
+            double shift, dist;
+            int r = near_root(&sv, &pr, set, &shift, &dist);
+            if (r == 2)
+                st.eq_ref_fail++;
+            else if (shift < EQ_GATE) {
+                st.eq_gated++;
+                if (r == 0)
+                    st.eq_match++;
+                else {
+                    st.eq_mismatch++;
+                    char why[200];
+                    snprintf(why, sizeof(why), "equilibrium: no root of heat+pdv within %.0f%% of T=%g (shift %.2g)", 100 * EQ_TOL, sv.T,
+                             shift);
+                    report_failure(c.what, &c.sv, &pr, set, why);
+                }
+            }
+        }
+        /* the next step of a settled cell: start from the answer with 1% more energy */
+        if (c.idt < 6) {
+            Params pw = pr;
+            pw.u_initial = 1.01 * sv.u;
+            pw.x_H_2_initial = sv.x_H_2;
+            SolveVars sw = sv;
+            JacoSolveInfo iw;
+            solve_checked(&sw, &pw, set, warm, c.what, &iw);
+        }
+    }
+}
+
+#ifdef JACO_COMPARE
+/* ---- the reference solver (make compare REF=...) and the working tree's on the same inputs ---- */
+
+/* Largest difference between two answers over T and the species, in units of the solver tolerance:
+   |a - b| / (tol max(|a|, |b|) + atol), atol = X_ATOL for abundances. *k_worst: its variable. */
+static double answer_distance(const SolveVars &a, const SolveVars &b, double tol, int *k_worst) {
+    double worst = 0;
+    *k_worst = -1;
+    for (int k = IDX_T; k < N_VARS; k++) {
+        double scale = tol * fmax(fabs(a.data[k]), fabs(b.data[k])) + (k == IDX_T ? 0 : X_ATOL);
+        double d = fabs(a.data[k] - b.data[k]) / scale;
+        if (d > worst || *k_worst < 0) {
+            worst = d;
+            *k_worst = k;
+        }
+    }
+    return worst;
+}
+
+struct Compare {
+    long n = 0, rc_differ = 0, tier_differ = 0, nfeval_equal = 0, check_fail_ref = 0, check_fail_new = 0, check_differ = 0, beyond = 0;
+    long tiers[5][5] = {};
+    long dist[6] = {}; /* answers: bitwise equal, < 1e-6 tol (round-off), < 1e-3 tol, <= tol, <= 10 tol, BEYOND */
+    double nfe_ref = 0, nfe_new = 0, sec_ref = 0, sec_new = 0, worst = 0;
+    void print(const char *name) const {
+        printf("%-8s %6ld cases | rc differs %ld | tier differs %ld | nfeval equal %ld (mean ref %.2f, new %.2f) | %.1f vs %.1f us/solve\n",
+               name, n, rc_differ, tier_differ, nfeval_equal, nfe_ref / fmax(1, n), nfe_new / fmax(1, n), 1e6 * sec_ref / fmax(1, n),
+               1e6 * sec_new / fmax(1, n));
+        printf("%-8s answers: identical %ld, <1e-6 tol %ld, <1e-3 tol %ld, <=tol %ld, <=10 tol %ld, BEYOND %ld (worst %.3g tol) | check failures "
+               "ref %ld, new %ld\n",
+               "", dist[0], dist[1], dist[2], dist[3], dist[4], dist[5], worst, check_fail_ref, check_fail_new);
+        for (int i = 1; i <= 4; i++)
+            for (int j = 1; j <= 4; j++)
+                if (i != j && tiers[i][j]) printf("%-8s   tier ref %d -> new %d: %ld\n", "", i, j, tiers[i][j]);
+    }
+};
+
+static int disagree_quota = 25, tier_quota = 10; /* detailed reports */
+
+static void print_answer(const char *who, int rc, const JacoSolveInfo &info, const SolveVars &x) {
+    printf("    %-3s rc=%d tier=%d nfeval=%d t1status=%d pinned=%d T=%.10g xHp=%.6g xHep=%.6g xHepp=%.6g xH2=%.6g\n", who, rc, info.tier,
+           info.nfeval, info.tier1_status, info.pinned, x.T, x.x_Hplus, x.x_Heplus, x.x_Heplusplus, x.x_H_2);
+}
+
+/* both solvers from `in`; the order alternates so that neither always runs on warm caches.
+   Returns the reference rc; *out_ref gets its answer. */
+static int compare_case(const SolveVars &in, const Params &pr, const JacoSolverSettings *set, Compare &cmp, const char *what,
+                        SolveVars *out_ref) {
+    SolveVars a = in, b = in;
+    JacoSolveInfo ia, ib;
+    int ra, rb;
+    double t0 = now();
+    if (cmp.n % 2) {
+        rb = jaco_solve(&b, &pr, set, &ib);
+        double t1 = now();
+        ra = jaco_ref_solve(&a, &pr, set, &ia);
+        cmp.sec_new += t1 - t0;
+        cmp.sec_ref += now() - t1;
+    } else {
+        ra = jaco_ref_solve(&a, &pr, set, &ia);
+        double t1 = now();
+        rb = jaco_solve(&b, &pr, set, &ib);
+        cmp.sec_ref += t1 - t0;
+        cmp.sec_new += now() - t1;
+    }
+    cmp.n++;
+    cmp.nfe_ref += ia.nfeval;
+    cmp.nfe_new += ib.nfeval;
+    cmp.nfeval_equal += ia.nfeval == ib.nfeval;
+    cmp.tiers[ia.tier][ib.tier]++;
+    cmp.tier_differ += ia.tier != ib.tier;
+    char why_ref[256] = "ok", why_new[256] = "ok";
+    double w;
+    int bad_ref = !ra && check_answer(&a, &pr, set, why_ref, &w);
+    int bad_new = !rb && check_answer(&b, &pr, set, why_new, &w);
+    cmp.check_fail_ref += bad_ref;
+    cmp.check_fail_new += bad_new;
+    double d = 0;
+    int k = -1;
+    if (ra || rb)
+        cmp.rc_differ += ra != rb;
+    else {
+        d = answer_distance(a, b, set->tol, &k);
+        cmp.worst = fmax(cmp.worst, d);
+        cmp.dist[d == 0 ? 0 : d < 1e-6 ? 1 : d < 1e-3 ? 2 : d <= 1 ? 3 : d <= 10 ? 4 : 5]++;
+    }
+    /* tier 1 converges to tol; tier 2 brackets T to tol and accepts residuals up to 10 tol */
+    double limit = (ia.tier == JACO_TIER_NEWTON && ib.tier == JACO_TIER_NEWTON) ? 1 : 10;
+    int disagree = ra != rb || d > limit || bad_ref != bad_new;
+    cmp.beyond += !ra && !rb && d > limit;
+    cmp.check_differ += bad_ref != bad_new;
+    if (disagree ? disagree_quota-- > 0 : ia.tier != ib.tier && tier_quota-- > 0) {
+        printf("%s (%s): distance %.3g tol in [%d]; check ref: %s; check new: %s\n", disagree ? "DISAGREE" : "tiers differ", what, d, k,
+               why_ref, why_new);
+        print_answer("ref", ra, ia, a);
+        print_answer("new", rb, ib, b);
+    }
+    if (out_ref) *out_ref = a;
+    return ra;
+}
+
+/* the sweep and its warm re-solves (from the reference answer) through both solvers */
+static int run_compare(const JacoSolverSettings *set) {
+    Compare sweep, warm, eq;
+    for (const SweepCase &c : sweep_cases()) {
+        SolveVars a;
+        if (compare_case(c.sv, c.pr, set, c.idt < 6 ? sweep : eq, c.what, &a) || c.idt == 6) continue;
+        Params pw = c.pr;
+        pw.u_initial = 1.01 * a.u;
+        pw.x_H_2_initial = a.x_H_2;
+        compare_case(a, pw, set, warm, c.what, NULL);
+    }
+    printf("\n== reference vs working-tree solver (tol %g; distance = max over T, x of |a-b| / (tol |x| + %g for x); must be <= tol\n"
+           "   if both answers are tier 1, else <= 10 tol, the tier-2 acceptance slack) ==\n", set->tol, X_ATOL);
+    sweep.print("sweep");
+    warm.print("warm");
+    eq.print("dt=1e20");
+    long bad = 0;
+    for (const Compare *c : {&sweep, &warm, &eq}) bad += c->rc_differ + c->beyond + c->check_differ;
+    printf("\n%s\n", bad ? "DISAGREEMENTS (see above)" : "AGREE within tolerance");
+    return bad ? 1 : 0;
+}
+#endif
 
 int main(int argc, char **argv) {
     jaco_init_tables(argc > 1 ? argv[1] : ".");
@@ -617,6 +814,9 @@ int main(int argc, char **argv) {
     set.T_max = 1e10;
     set.u_min = 2.75e8; /* GIZMO's MinEgySpec for MinGasTemp = 2.73 K */
     if (build_cie_table(&set)) return 1;
+#ifdef JACO_COMPARE
+    if (argc > 2 && !strcmp(argv[2], "compare")) return run_compare(&set);
+#endif
 
     if (argc > 3 && !strcmp(argv[2], "replay")) {
         /* re-solve states printed by jaco_print_state (e.g. a GIZMO failure dump):
