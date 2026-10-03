@@ -26,8 +26,8 @@
 #include <algorithm>
 #include "jaco_solver.h"
 
-#ifndef JACO_MODEL_STARFORGE
-#error "test_jaco_solver drives the STARFORGE model (MODEL=starforge)"
+#ifndef JACO_FAMILY_STARFORGE
+#error "test_jaco_solver drives a STARFORGE-family model (MODEL=starforge or starforge_legacy)"
 #endif
 
 void jaco_init_tables(const char *dir);

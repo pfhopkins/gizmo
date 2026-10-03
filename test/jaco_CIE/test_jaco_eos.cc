@@ -23,7 +23,7 @@ void fill_test_state(SolveVars *sv, Params *pr, double T, double xHp, double xH2
 
     pr->n_Htot = 100.0;       /* 100 cm^-3 */
     pr->y = 0.0994;           /* He/H number ratio for Y=0.27 */
-#if defined(JACO_MODEL_STARFORGE)
+#if defined(JACO_FAMILY_STARFORGE)
     sv->x_H_2 = xH2;
     pr->X = 0.7155;
     pr->x_C_tot = 2.1e-4;

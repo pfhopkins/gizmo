@@ -68,10 +68,10 @@ void jaco_build_cie_table(void) {
     Params pr = {};
     pr.n_Htot = 1.0;
     pr.Delta_t = 1e15;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     pr.y = 0.0994;
 #endif
-#if defined(JACO_MODEL_STARFORGE)
+#if defined(JACO_FAMILY_STARFORGE)
     pr.ISRF = 1.0;
     pr.N_H = 1e20;
     pr.G_0 = 1.0;
@@ -102,7 +102,7 @@ void jaco_build_cie_table(void) {
     pr.grad_v = 1e-14;
 #endif
 
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     /* Sweep with continuation, from HIGH T to LOW T. The (0.9, 0.01, 0.01)
        guess is in the basin of attraction of the physical solution at high T;
        sweeping downward, the previous (mostly-ionized) solution stays in the
@@ -119,12 +119,12 @@ void jaco_build_cie_table(void) {
         sv.x_Hplus = xHp;
         sv.x_Heplus = xHep;
         sv.x_Heplusplus = xHepp;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
         sv.x_H_2 = 1e-20;
 #endif
         sv.u = jaco_T_to_u(T, &sv, &pr, NULL);
         pr.u_initial = sv.u;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
         pr.x_H_2_initial = sv.x_H_2;
 #endif
 
@@ -155,7 +155,7 @@ void jaco_build_cie_table(void) {
             printf("JACO: CIE table written to jaco_cie_table.dat\n");
         }
     }
-#endif /* JACO_MODEL_STARFORGE || JACO_MODEL_PRIMORDIAL || JACO_MODEL_KWH */
+#endif /* JACO_FAMILY_STARFORGE || JACO_MODEL_PRIMORDIAL || JACO_MODEL_KWH */
     cie_table_initialized = 1;
 }
 
@@ -169,7 +169,7 @@ static double jaco_mass_per_H(const Params *pr_in) {
     pr.n_Htot = 1.0;
     SolveVars s = {};
     s.T = 1e4;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     s.x_Hplus = 1e-4; /* any value; nonzero keeps the H- expression away from 0/0 */
     s.x_Heplus = s.x_Heplusplus = JACO_ABUNDANCE_FLOOR;
 #endif
@@ -229,7 +229,7 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
         pr->Delta_x = dx_code * UNIT_LENGTH_IN_CGS;
         pr->grad_v = DMAX(1e-30, grad_v * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS);
     }
-#elif defined(JACO_MODEL_STARFORGE)
+#elif defined(JACO_FAMILY_STARFORGE)
     /* Hydrogen mass fraction and helium abundance by number */
     double X_H = jaco_cell_X_H(i, pp, &pr->y);
     pr->X = X_H;
@@ -308,20 +308,20 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
 
     /* Cosmological redshift for inverse Compton cooling */
     pr->z = All.ComovingIntegrationOn ? (1.0 / All.Time - 1.0) : 0;
-#endif /* JACO_MODEL_STARFORGE */
+#endif /* JACO_FAMILY_STARFORGE */
 
     double mass_per_H = jaco_mass_per_H(pr);
-#ifdef JACO_MODEL_STARFORGE
+#ifdef JACO_FAMILY_STARFORGE
     pr->n_Htot = rho_cgs / mass_per_H; /* jaco's mass density equals the cell's */
 #endif
     return pr->n_Htot * mass_per_H;
 }
 
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
 /* CIE ions at temperature T, clamped to the H not in H2 (sv->x_H_2 must be set) and to the cell's He */
 static void jaco_cie_species(double T, const Params *pr, SolveVars *sv) {
     double logT = log10(jaco_isfinite(T) ? DMAX(T, 10.) : 1e4), xHp_max = 1.0;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     xHp_max -= 2.0 * sv->x_H_2;
 #endif
     double xHepp = DMIN(cie_interp(cie_xHepp, logT), pr->y);
@@ -331,7 +331,7 @@ static void jaco_cie_species(double T, const Params *pr, SolveVars *sv) {
 }
 #endif
 
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
 /* Ion electrons ne_ions split onto H+ first (up to xHp_max), then He+ (up to y), then He+ converts to He++ */
 static void jaco_split_ion_electrons(double ne_ions, double xHp_max, double y, SolveVars *sv) {
     double xHp = DMIN(ne_ions, xHp_max), ne_He = DMAX(ne_ions - xHp, 0);
@@ -348,9 +348,9 @@ static void jaco_split_ion_electrons(double ne_ions, double xHp_max, double y, S
    so any split of Ne gives the same EOS. An ion share outside [0, 1 - 2 x_H2 + 2 y] cannot be split; CIE at the
    cached temperature is used instead. */
 static void jaco_species_from_cell(int i, struct gas_cell_data *cell, const Params *pr, SolveVars *sv) {
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     double xH2 = 0;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     double fmol = cell[i].MolecularMassFraction;
     fmol = jaco_isfinite(fmol) ? DMIN(DMAX(fmol, 0), 1.0) : 0;
     xH2 = 0.5 * fmol;
@@ -415,7 +415,7 @@ void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, 
     eos->T = sv.T;
     eos->P_over_rho = jaco_eos_pressure(&sv, &pr) / rho_jaco;
     eos->gamma = 1.0 + eos->P_over_rho / (cv * sv.T); /* first adiabatic index at frozen composition */
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     eos->x_Hplus = sv.x_Hplus;
     eos->x_Heplus = sv.x_Heplus;
     eos->x_Heplusplus = sv.x_Heplusplus;
@@ -446,7 +446,7 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
        at that composition (normally the cached Temperature itself), so the energy row starts at round-off */
     jaco_species_from_cell(i, cell, pr, sv);
     int stale_ions = 0;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     /* Except where the CIE table is collisionally ionized (x_e > 0.1, T >~ 1.3e4 K): there it bounds the steady state
        from below, so a cached Ne under it is stale (shock heating, or a solve that settled on the near-neutral fixed
        point of the ionization balance, where the gas stops cooling). Seed CIE ions at the cached T, keeping that T:
@@ -458,11 +458,11 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #endif
     double cv;
     sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     pr->x_H_2_initial = sv->x_H_2;
 #endif
 
-#ifdef JACO_MODEL_STARFORGE
+#ifdef JACO_FAMILY_STARFORGE
     /* LW field and dust temperature as the standard cooling module evaluates them, at the cached temperature */
     jaco_radiation_inputs(i, cell[i].Temperature, NULL, &pr->G_LW, &pr->Td, pp, cell);
 #endif
@@ -473,7 +473,7 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     cell[i].InternalEnergyPred = cell[i].InternalEnergy;
     cell[i].Temperature = sv->T;
 
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     /* Write solved species back BEFORE set_eos_pressure, whose EOS composition comes from Ne and MolecularMassFraction */
     double xHp = sv->x_Hplus, xH2 = sv->x_H_2;
     cell[i].Ne = jaco_electron_abundance(sv, pr); /* all free electrons, metals' included, as the rates use them */

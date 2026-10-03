@@ -275,7 +275,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
     return DMIN(1,DMAX(0, cell[i].grH2I + cell[i].grH2II)); // include both states of H2 tracked
 #endif
     
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) // H2 explicitly evolved by the jaco network, cached by jaco_to_gizmo
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) // H2 explicitly evolved by the jaco network, cached by jaco_to_gizmo
     return DMIN(1, DMAX(0, cell[i].MolecularMassFraction));
 #endif
 

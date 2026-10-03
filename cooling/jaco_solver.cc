@@ -89,7 +89,7 @@ enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESE
 /* which variables a Newton solve may move: T, steady-state species, time-dependent species */
 enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_ALL = 7 };
 
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
 #define JACO_HAVE_H2 1
 static int is_time_dependent(int k) { return k == IDX_x_H_2; }
 #else
@@ -115,7 +115,7 @@ static int budgets(const SolveVars *sv, const Params *pr, double val[2], double 
     memset(grad, 0, 2 * N_VARS * sizeof(double));
     (void)sv;
     (void)pr;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     val[nb] = 1.0 - sv->x_Hplus - 2.0 * sv->x_H_2;
     grad[nb][IDX_x_Hplus] = -1;
     grad[nb][IDX_x_H_2] = -2;
@@ -125,7 +125,7 @@ static int budgets(const SolveVars *sv, const Params *pr, double val[2], double 
     grad[nb][IDX_x_Hplus] = -1;
     nb++;
 #endif
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     val[nb] = pr->y - sv->x_Heplus - sv->x_Heplusplus;
     grad[nb][IDX_x_Heplus] = -1;
     grad[nb][IDX_x_Heplusplus] = -1;
@@ -144,14 +144,14 @@ static void sanitize(SolveVars *sv, Params *pr, const struct JacoSolverSettings 
         if (sv->data[k] > 1) sv->data[k] = 1;
     }
     const double margin = 1e-10;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     sv->x_Hplus = fmin(sv->x_Hplus, 1 - margin);
     sv->x_H_2 = fmax(JACO_ABUNDANCE_FLOOR, fmin(sv->x_H_2, 0.5 * (1 - margin - sv->x_Hplus)));
     pr->x_H_2_initial = fmax(JACO_ABUNDANCE_FLOOR, fmin(pr->x_H_2_initial, 0.5));
 #elif defined(JACO_MODEL_KWH)
     sv->x_Hplus = fmin(sv->x_Hplus, 1 - margin);
 #endif
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     double he = sv->x_Heplus + sv->x_Heplusplus, he_max = pr->y * (1 - margin);
     if (he > he_max) {
         sv->x_Heplus = fmax(JACO_ABUNDANCE_FLOOR, sv->x_Heplus * he_max / he);
@@ -166,12 +166,12 @@ static void sanitize(SolveVars *sv, Params *pr, const struct JacoSolverSettings 
 static int ionized_seed(SolveVars *sv, const Params *pr) {
     (void)sv;
     (void)pr;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     sv->x_Hplus = 0.999 * (1 - 2 * sv->x_H_2);
 #elif defined(JACO_MODEL_KWH)
     sv->x_Hplus = 0.999;
 #endif
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     sv->x_Heplus = 1e-3 * pr->y;
     sv->x_Heplusplus = 0.998 * pr->y;
     return 1;
@@ -326,7 +326,7 @@ static void project(SolveVars *sv, const Params *pr, const struct JacoSolverSett
     for (int k = 2; k < N_VARS; k++)
         if (sv->data[k] < JACO_ABUNDANCE_FLOOR) sv->data[k] = JACO_ABUNDANCE_FLOOR;
     (void)pr;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     while (1.0 - sv->x_Hplus - 2.0 * sv->x_H_2 < 0) {
         if (sv->x_Hplus >= 2 * sv->x_H_2)
             sv->x_Hplus = nextafter(fmin(sv->x_Hplus, 1.0 - 2.0 * sv->x_H_2), 0);
@@ -336,7 +336,7 @@ static void project(SolveVars *sv, const Params *pr, const struct JacoSolverSett
 #elif defined(JACO_MODEL_KWH)
     if (sv->x_Hplus > 1) sv->x_Hplus = 1;
 #endif
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
     while (pr->y - sv->x_Heplus - sv->x_Heplusplus < 0) {
         if (sv->x_Heplusplus >= sv->x_Heplus)
             sv->x_Heplusplus = nextafter(fmin(sv->x_Heplusplus, pr->y - sv->x_Heplus), 0);
@@ -907,7 +907,7 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
         ps.Delta_t = fmin(dt_sub, dt - t_done);
         if (nsub > 0) {
             ps.u_initial = cur.u;
-#if defined(JACO_MODEL_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
+#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
             ps.x_H_2_initial = cur.x_H_2;
 #endif
         }
