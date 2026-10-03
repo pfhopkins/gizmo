@@ -10,6 +10,9 @@ Parametrized over:
 Fixed at 64^3 resolution. Both check Weaver+ 1977 R2, using the coefficient for the
 applicable regime -- Weaver+ solve both: 0.88 adiabatic, 0.76 radiative. Adiabatic runs
 also check that E_kin + E_th equals the injected energy exactly.
+
+The jaco variant (COOLING with JACO=starforge, spawned winds only) must run to completion; its
+Weaver comparison is printed, not asserted, since the physics differs from the standard module's.
 """
 
 import pytest
@@ -229,11 +232,14 @@ def get_snapshots(test_name, extra_config_flags=()):
 @pytest.mark.parametrize("wind_mode", [1, 2], ids=["spawn", "local"])
 @pytest.mark.parametrize(
     "cooling_flags",
-    [(), ("COOLING",), ("COOLING", "SINGLE_STAR_FB_RAD")],
-    ids=["adiabatic", "cooling", "rad"],
+    [(), ("COOLING",), ("COOLING", "SINGLE_STAR_FB_RAD"), ("COOLING", "JACO=starforge")],
+    ids=["adiabatic", "cooling", "rad", "jaco"],
 )
 def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, wind_mode,
                          cooling_flags):
+    jaco = "JACO=starforge" in cooling_flags
+    if jaco and wind_mode == 2:
+        pytest.skip("jaco runs with spawned winds only: local injection with cooling is the known mode-2 defect below")
     if wind_mode == 2 and cooling_flags:
         # KNOWN DEFECT, local mechanical injection with cooling: the shell comes out ~28% inside
         # Weaver. Mode 2 over-delivers energy per unit injected mass by ~25%, so the bubble is
@@ -384,6 +390,16 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
         plt.title(f"t = {time:.4f}")
         plt.savefig(str(TEST_DIR / f"{field}{suffix}.png"))
         plt.close()
+
+    if jaco:
+        late = (times > 0.3 * times.max()) & (r_shells > 0)
+        slope = np.polyfit(np.log(times[late]), np.log(r_shells[late]), 1)[0]
+        xi = r_shells[late] * (RHO_AMBIENT_CODE / (L_w * times[late] ** 3)) ** 0.2
+        i_peak = np.nanargmax(rho_binned)
+        print(f"jaco: final shell peak {r_centers[i_peak]:.3f} pc vs Weaver radiative {R_weaver:.3f} pc "
+              f"(relative error {abs(r_centers[i_peak] - R_weaver) / R_weaver:.4f}); late R ~ t^{slope:.3f}, "
+              f"xi = {np.mean(xi):.3f} +/- {np.std(xi):.3f} (Weaver {ALPHA_RADIATIVE} radiative, {ALPHA_ADIABATIC} adiabatic)")
+        return
 
     # --- Assertions ---
 
