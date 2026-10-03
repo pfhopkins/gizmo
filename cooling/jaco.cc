@@ -324,10 +324,8 @@ static void jaco_cie_species(double T, const Params *pr, SolveVars *sv) {
 #if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
     xHp_max -= 2.0 * sv->x_H_2;
 #endif
-    double xHepp = DMIN(cie_interp(cie_xHepp, logT), pr->y);
-    sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(cie_interp(cie_xHp, logT), xHp_max));
-    sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, DMIN(cie_interp(cie_xHep, logT), pr->y - xHepp));
-    sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
+    jaco_cie_ions_for_cell(cie_interp(cie_xHp, logT), cie_interp(cie_xHep, logT), cie_interp(cie_xHepp, logT), xHp_max, pr->y,
+                           JACO_ABUNDANCE_FLOOR, &sv->x_Hplus, &sv->x_Heplus, &sv->x_Heplusplus);
 }
 #endif
 
@@ -451,10 +449,11 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
        from below, so a cached Ne under it is stale (shock heating, or a solve that settled on the near-neutral fixed
        point of the ionization balance, where the gas stops cooling). Seed CIE ions at the cached T, keeping that T:
        re-deriving T at the ionized composition roughly halves it and strands Newton far from the ionized state. */
-    double ne_cie = jaco_cie_electron_abundance(cell[i].Temperature);
-    stale_ions = (ne_cie > 0.1 && !(cell[i].Ne >= ne_cie));
+    SolveVars cie = *sv; /* at the cell's He and H2: the table's own He abundance would flag every ionized cell */
+    jaco_cie_species(cell[i].Temperature, pr, &cie);
+    stale_ions = jaco_ions_stale(cell[i].Ne, cie.x_Hplus + cie.x_Heplus + 2.0 * cie.x_Heplusplus);
     if (stale_ions)
-        jaco_cie_species(cell[i].Temperature, pr, sv);
+        *sv = cie;
 #endif
     double cv;
     sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);

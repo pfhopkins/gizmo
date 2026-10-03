@@ -53,6 +53,13 @@ int main() {
     /* GIZMO's caps on extreme abundances */
     X = jaco_mass_fractions(0.4, 0.5, 1, HYDROGEN_MASSFRAC, &Y, &Z);
     check("capped Z = 0.25, Y = 0.35: X", X, 0.4, 1e-14);
+    /* stale-ion check: a fully ionized cell at its own y (He less than the CIE table's 0.0994) is not stale */
+    double xHp, xHep, xHepp, y_cell = 0.0805, y_table = 0.0994;
+    double ne_cie = jaco_cie_ions_for_cell(1.0, 1e-6, y_table - 1e-6, 1.0, y_cell, 1e-20, &xHp, &xHep, &xHepp);
+    check("CIE ions at the cell's y: electrons", ne_cie, 1.0 + 2.0 * y_cell, 1e-12);
+    check("fully ionized cell at its own y flagged stale", jaco_ions_stale(1.0 + 2.0 * y_cell, ne_cie), 0., 0.);
+    check("... against the table's y it would be", jaco_ions_stale(1.0 + 2.0 * y_cell, 1.0 + 2.0 * y_table), 1., 0.);
+    check("a neutral cell under collisional CIE is stale", jaco_ions_stale(1e-4, ne_cie), 1., 0.);
     std::printf("%s\n", failures ? "FAILED" : "all passed");
     return failures ? 1 : 0;
 }
