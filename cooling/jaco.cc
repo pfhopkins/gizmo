@@ -2,7 +2,8 @@
  * jaco.cc -- GIZMO glue for the jaco code-generated microphysics network.
  *
  * Packs a gas cell into the generated SolveVars/Params (gizmo_to_jaco), calls the implicit solver
- * (jaco_solver.cc, no GIZMO dependencies), and writes the answer back (jaco_to_gizmo). Also
+ * (jaco_solver.cc, no GIZMO dependencies), and writes the answer back (jaco_to_gizmo), with the
+ * model's outputs at the answer (microphysics_outputs) for the host to apply over the step. Also
  * builds the CIE table that seeds the ions, and reports per-step solver statistics.
  */
 
@@ -575,7 +576,14 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #endif
 }
 
-void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
+/* Write the solved state back to cell i and, if out, evaluate the model's outputs there. Nothing consumes the outputs
+   yet; the radiation coupling will apply them over the step. */
+void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell,
+                   struct jaco_step_outputs *out) {
+    if (out) {
+        microphysics_outputs(sv, pr, &out->rate);
+        out->dt = pr->Delta_t;
+    }
     cell[i].InternalEnergy = sv->u / UNIT_SPECEGY_IN_CGS;
     cell[i].InternalEnergyPred = cell[i].InternalEnergy;
     cell[i].Temperature = sv->T;
@@ -622,13 +630,16 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
    Accumulated over the cells call_jaco() solves in one cooling pass; reported and reset by
    jaco_report_solve_stats(), which every rank must call (MPI collective) once per pass. */
 enum { JS_CELLS, JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED, JS_FEVALS, JS_RESYNC, JS_PINNED, JS_NANJ, JS_NANF,
-       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_N };
+       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_NANOUT, JS_N };
 static long jaco_stats[JS_N];
 static int jaco_stats_max_nfeval = 0;
 
-static void jaco_stats_add(const struct JacoSolveInfo *info) {
+static void jaco_stats_add(const struct JacoSolveInfo *info, const struct jaco_step_outputs *out) {
     int bin[4] = {JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED};
     int t1 = info->nfeval - info->nfeval_fd; /* evaluations Newton asked for, not finite-difference columns */
+    int bad_out = 0;
+    for (int k = 0; k < N_OUTPUTS; k++)
+        if (!jaco_isfinite(out->rate.data[k])) bad_out = 1;
 #ifdef _OPENMP
 #pragma omp critical(jaco_stats_update)
 #endif
@@ -641,6 +652,7 @@ static void jaco_stats_add(const struct JacoSolveInfo *info) {
         jaco_stats[JS_NANJ] += info->n_nonfinite_jac > 0;
         jaco_stats[JS_NANF] += info->n_nonfinite_F > 0;
         if (info->tier == JACO_TIER_NEWTON) jaco_stats[t1 <= 4 ? JS_T1_1 + t1 - 1 : JS_T1_MORE]++;
+        jaco_stats[JS_NANOUT] += bad_out;
         if (info->nfeval > jaco_stats_max_nfeval) jaco_stats_max_nfeval = info->nfeval;
     }
 }
@@ -655,10 +667,11 @@ void jaco_report_solve_stats(void) {
     if (ThisTask == 0 && global[JS_CELLS] > 0) {
         double n = (double)global[JS_CELLS];
         printf("jaco solve stats: %ld cells | tier1 %ld (%.2f%%) tier2 %ld tier3 %ld FAILED %ld | nfeval mean %.2f max %d | "
-               "tier-1 evals 1:%ld 2:%ld 3:%ld 4:%ld >4:%ld | T0 resynced %ld, pinned %ld, non-finite J %ld F %ld\n",
+               "tier-1 evals 1:%ld 2:%ld 3:%ld 4:%ld >4:%ld | T0 resynced %ld, pinned %ld, non-finite J %ld F %ld outputs %ld\n",
                global[JS_CELLS], global[JS_TIER1], 100.0 * global[JS_TIER1] / n, global[JS_TIER2], global[JS_TIER3],
                global[JS_FAILED], global[JS_FEVALS] / n, global_max, global[JS_T1_1], global[JS_T1_2], global[JS_T1_3],
-               global[JS_T1_4], global[JS_T1_MORE], global[JS_RESYNC], global[JS_PINNED], global[JS_NANJ], global[JS_NANF]);
+               global[JS_T1_4], global[JS_T1_MORE], global[JS_RESYNC], global[JS_PINNED], global[JS_NANJ], global[JS_NANF],
+               global[JS_NANOUT]);
         fflush(stdout);
     }
     memset(jaco_stats, 0, sizeof(jaco_stats));
@@ -710,7 +723,8 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
 #ifdef OUTPUT_COOLRATE_DETAIL
     jaco_coolrate_detail(&sv, &pr, c);
 #endif
-    jaco_to_gizmo(0, &sv, &pr, p, c);
-    jaco_stats_add(&info);
+    struct jaco_step_outputs out;
+    jaco_to_gizmo(0, &sv, &pr, p, c, &out);
+    jaco_stats_add(&info, &out);
 }
 #endif

@@ -58,3 +58,6 @@ int jaco_solve_chemistry(SolveVars *sv, const Params *pr, const struct JacoSolve
 
 /* Print every solve variable and parameter (by IDX_ and PARAM_ index) for failure diagnostics. */
 void jaco_print_state(FILE *fp, const char *label, const SolveVars *sv, const Params *pr);
+
+/* Print the model's outputs (microphysics_outputs) by name and units. */
+void jaco_print_outputs(FILE *fp, const char *label, const Outputs *out);

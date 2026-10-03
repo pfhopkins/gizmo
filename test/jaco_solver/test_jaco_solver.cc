@@ -5,9 +5,10 @@
  *      re-solve of every answer with u_initial raised 1% (what the next timestep of a settled cell
  *      looks like), and reports failures, tier counts and nfeval percentiles;
  *   3. checks every answer independently: residual of the generated system at the returned state,
- *      u = u(T,x), abundances and neutral budgets in bounds; and, where the energy backward-Euler
- *      term is negligible (dt >= 1e13 s), that T is within 3% of a root of heat(T) + pdv_work = 0
- *      with the chemistry at steady state, located by its own bisection.
+ *      u = u(T,x), abundances and neutral budgets in bounds, the model's outputs finite there; and,
+ *      where the energy backward-Euler term is negligible (dt >= 1e13 s), that T is within 3% of a
+ *      root of heat(T) + pdv_work = 0 with the chemistry at steady state, located by its own bisection;
+ *   4. prints the outputs at a few representative answers, to be eyeballed.
  * Exits non-zero on any failure.
  *
  *   make -C test/jaco_solver [MODEL=starforge_legacy]
@@ -185,6 +186,13 @@ static int check_answer(const SolveVars *sv, const Params *pr, const JacoSolverS
                 sv->u / set->u_min - 1);
         return 1;
     }
+    Outputs out;
+    microphysics_outputs(sv, pr, &out);
+    for (int k = 0; k < N_OUTPUTS; k++)
+        if (!isfinite(out.data[k])) {
+            sprintf(why, "non-finite output [%d]=%g", k, out.data[k]);
+            return 1;
+        }
     for (int k = 1; k < N_VARS; k++) J[k][k] = diag_derivative(sv, pr, &F, J, k);
     /* energy row: |F_T| small relative to rho u/dt + |dF_T/dT| T, unless T is at a limit and F_T points past it */
     double sT = M_PER_H * pr->n_Htot * sv->u / pr->Delta_t + fabs(J[IDX_T][IDX_T]) * sv->T;
@@ -512,6 +520,39 @@ static int run_replays(const JacoSolverSettings *set) {
         }
     }
     nfail += run_stall_cases(set);
+    return nfail;
+}
+
+/* the outputs at a few answers, to be eyeballed: cold molecular, warm neutral, hot ionized */
+static int print_outputs(const JacoSolverSettings *set) {
+    struct Cell {
+        double n, T0, dt;
+        int variant;
+    };
+    const Cell cells[] = {{1e3, 20.0, 1e11, SEED_MOLECULAR}, {1.0, 8000.0, 1e11, SEED_ATOMIC}, {0.1, 1e6, 1e11, SEED_IONIZED}};
+    int nfail = 0;
+    printf("\n== outputs at the answer (rates per unit volume; x dt for the step integral) ==\n");
+    for (const Cell &c : cells) {
+        Params pr;
+        starforge_params(&pr, c.n, c.dt);
+        SolveVars sv = {};
+        seed_variant(&sv, c.T0, c.variant, pr.y);
+        pr.x_H_2_initial = sv.x_H_2;
+        SolveVars s_eos = sv;
+        s_eos.x_Hplus = fmin(s_eos.x_Hplus, 1 - 1e-10);
+        sv.u = pr.u_initial = jaco_T_to_u(c.T0, &s_eos, &pr, NULL);
+        JacoSolveInfo info;
+        char why[256] = "ok";
+        double worst;
+        int bad = jaco_solve(&sv, &pr, set, &info) || check_answer(&sv, &pr, set, why, &worst);
+        Outputs out;
+        microphysics_outputs(&sv, &pr, &out);
+        char label[160];
+        snprintf(label, sizeof(label), "n=%g T0=%g dt=%g -> T=%.6g x_H+=%.3g x_H2=%.3g%s%s:", c.n, c.T0, c.dt, sv.T, sv.x_Hplus,
+                 sv.x_H_2, bad ? " FAIL: " : "", bad ? why : "");
+        jaco_print_outputs(stdout, label, &out);
+        nfail += bad;
+    }
     return nfail;
 }
 
@@ -932,7 +973,8 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    int nfail = run_replays(&set);
+    int nfail = print_outputs(&set);
+    nfail += run_replays(&set);
 
     Stats sweep, warm, eq;
     printf("\n== sweep ==\n");

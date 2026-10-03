@@ -11,7 +11,14 @@
 #include "../cooling/jaco_solver.h"
 void call_jaco(struct particle_data *p, struct gas_cell_data *c);
 void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell);
-void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell);
+/* The model's outputs (JACO_OUTPUT_NAMES, JACO_OUTPUT_UNITS: cgs rates per unit volume) at a cell's converged state:
+   under backward Euler, rate * dt is their integral over the cooling step */
+struct jaco_step_outputs {
+    Outputs rate;
+    double dt; /* s */
+};
+void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell,
+                   struct jaco_step_outputs *out);
 double jaco_eos_pressure(const SolveVars *sv, const Params *pr);
 double jaco_T_to_u(double T, const SolveVars *sv, const Params *pr, double *cv_out);
 double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);

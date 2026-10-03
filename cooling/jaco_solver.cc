@@ -1028,3 +1028,15 @@ void jaco_print_state(FILE *fp, const char *label, const SolveVars *sv, const Pa
     for (int k = 0; k < N_PARAMS; k++) fprintf(fp, " [%d]=%.17g", k, pr->data[k]);
     fprintf(fp, "\n");
 }
+
+void jaco_print_outputs(FILE *fp, const char *label, const Outputs *out) {
+    fprintf(fp, "%s", label);
+#ifdef JACO_HAS_OUTPUTS
+    static const char *names[N_OUTPUTS] = JACO_OUTPUT_NAMES, *units[N_OUTPUTS] = JACO_OUTPUT_UNITS;
+    for (int k = 0; k < N_OUTPUTS; k++) fprintf(fp, " %s=%.10g [%s]", names[k], out->data[k], units[k]);
+#else
+    (void)out;
+    fprintf(fp, " (the model has no outputs)");
+#endif
+    fprintf(fp, "\n");
+}

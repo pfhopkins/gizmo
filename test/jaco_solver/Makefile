@@ -19,7 +19,7 @@ MODEL  ?= starforge
 REF    ?= HEAD
 OPTFLAGS ?=
 BUILD  := build/$(MODEL)
-GEN    := $(BUILD)/microphysics_func_jac.cc $(BUILD)/jaco_eos.cc $(BUILD)/jaco_util.cc
+GEN    := $(BUILD)/microphysics_func_jac.cc $(BUILD)/microphysics_outputs.cc $(BUILD)/jaco_eos.cc $(BUILD)/jaco_util.cc
 SOLVER := $(BUILD)/jaco_solver.cc $(BUILD)/jaco_solver.h
 CXXFLAGS ?= -O2 -g -Wall
 CPPFLAGS += -I$(BUILD) $(if $(HDF5_BASE),-I$(HDF5_BASE)/include)
@@ -56,7 +56,7 @@ $(BUILD)/flags: FORCE | codegen
 	@echo '$(COMPILE) $(OPTFLAGS)' | cmp -s - $@ || echo '$(COMPILE) $(OPTFLAGS)' > $@
 
 DEPS = $(BUILD)/flags $(BUILD)/microphysics_func_jac.h $(BUILD)/jaco_solver.h
-$(BUILD)/microphysics_func_jac.o $(BUILD)/jaco_eos.o: $(BUILD)/%.o: $(BUILD)/%.cc $(DEPS)
+$(BUILD)/microphysics_func_jac.o $(BUILD)/microphysics_outputs.o $(BUILD)/jaco_eos.o: $(BUILD)/%.o: $(BUILD)/%.cc $(DEPS)
 	$(COMPILE) $(OPTFLAGS) -fno-associative-math -c $< -o $@
 $(BUILD)/jaco_util.o $(BUILD)/jaco_solver.o: $(BUILD)/%.o: $(BUILD)/%.cc $(DEPS)
 	$(COMPILE) $(OPTFLAGS) -c $< -o $@

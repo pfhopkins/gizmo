@@ -608,11 +608,12 @@ JACO_MODEL := $(strip $(shell grep '^\#define JACO ' GIZMO_config.h | awk '{prin
 ifeq ($(JACO_MODEL),)
 JACO_MODEL := wind_comparison
 endif
-EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_solver.o cooling/jaco_eos.o cooling/microphysics_func_jac.o cooling/jaco_util.o
+EOSCOOL_OBJS += cooling/jaco.o cooling/jaco_solver.o cooling/jaco_eos.o cooling/microphysics_func_jac.o cooling/microphysics_outputs.o \
+		cooling/jaco_util.o
 endif
 ## sources written by the jaco codegen (plus cooling/jaco_tables.hdf5, which must be copied to the run directory)
 JACO_GENERATED = cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h \
-			cooling/jaco_interp.h cooling/jaco_tables.h cooling/jaco_util.cc
+			cooling/microphysics_outputs.cc cooling/jaco_interp.h cooling/jaco_tables.h cooling/jaco_util.cc
 JACO_STAMP = cooling/.jaco_codegen_stamp
 
 ## combine all the objects above
@@ -649,7 +650,7 @@ $(JACO_STAMP): $(CONFIG)
 $(JACO_GENERATED): $(JACO_STAMP) ;
 ## the generated expressions must not be reassociated: products of clamped exponentials hold huge intermediates
 ## that -fassociative-math (part of -ffast-math) can overflow into inf*0 = NaN in the Jacobian
-cooling/microphysics_func_jac.o cooling/jaco_eos.o: CFLAGS += -fno-associative-math
+cooling/microphysics_func_jac.o cooling/microphysics_outputs.o cooling/jaco_eos.o: CFLAGS += -fno-associative-math
 endif
 
 
