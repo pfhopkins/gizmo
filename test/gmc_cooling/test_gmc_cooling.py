@@ -58,9 +58,10 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-# The jaco variant only checks that the run completes: its physics differs from the standard cooling
-# module that produced the benchmark.
-@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge",)], ids=["baseline", "jaco"])
+# jaco_legacy (the jaco transcription of the standard cooling module) is held to the benchmark; the jaco variant (the
+# physically preferred starforge model) only has to run to completion.
+@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge",), ("JACO=starforge_legacy",)],
+                         ids=["baseline", "jaco", "jaco_legacy"])
 def test_gmc_cooling(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling"
 
@@ -70,8 +71,8 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads, extra_config_flags):
     final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
-    if extra_config_flags:
-        return  # no benchmark yet for variant runs
+    if extra_config_flags == ("JACO=starforge",):
+        return  # physics deliberately differs from the module that produced the benchmark
 
     output_dir = variant_output_dir(test_name, extra_config_flags)
     test_stats = compute_test_statistic(f"{output_dir}/snapshot_010.hdf5", plot=True)
