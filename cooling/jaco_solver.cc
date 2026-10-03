@@ -618,8 +618,14 @@ static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolve
         if (negligible) break;
     }
     st = newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out);
-    if (st != NEWTON_OK && set->verbose) printf("  jaco ions at T=%g failed after continuation: %s\n", sv->T, newton_status(st));
-    return st == NEWTON_OK ? 0 : -1;
+    if (st == NEWTON_OK) return 0;
+    if (set->verbose) printf("  jaco ions at T=%g failed after continuation: %s\n", sv->T, newton_status(st));
+    /* Last, from the floor: where nothing ionizes the gas the root is at x = 0, and from an ionized start Newton only
+       halves the ions per step when the free electrons are the ions themselves (F ~ -x^2). */
+    *sv = start;
+    for (int k = 2; k < N_VARS; k++)
+        if (!is_time_dependent(k)) sv->data[k] = JACO_ABUNDANCE_FLOOR;
+    return newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK ? 0 : -1;
 }
 
 #ifdef JACO_HAVE_H2
