@@ -57,6 +57,15 @@ extern "C" int jaco_isfinite(double x);
 #ifndef JACO_RT_LEGACY_RETURN_GATE
 #define JACO_RT_LEGACY_RETURN_GATE 1
 #endif
+/* JACO_RT_OWNS_EUV: the RT kick does not absorb the ionizing band; the model's photoionizations, under its photon-limited
+   rate law (JACO_RT_FROZEN_RATE_LAW: GIZMO's frozen law, for comparison), are the band's only sink. Cooling must then
+   run at the transport step. */
+#if defined(JACO_RT_OWNS_EUV) && !(defined(RT_CHEM_PHOTOION) && defined(JACO_HAS_OUTPUT_photoionization_rate))
+#error "JACO_RT_OWNS_EUV needs RT_CHEM_PHOTOION and a model with the photoionization_rate output"
+#endif
+#if defined(JACO_RT_OWNS_EUV) && defined(TRANSPORT_SUBCYCLE) && !defined(TRANSPORT_SUBCYCLE_COOLING)
+#error "JACO_RT_OWNS_EUV with TRANSPORT_SUBCYCLE needs TRANSPORT_SUBCYCLE_COOLING: the ionizing band would stream through neutral gas for the whole subcycle"
+#endif
 #if defined(RT_CHEM_PHOTOION_HE) || defined(RT_PHOTOION_MULTIFREQUENCY) || defined(RT_SOFT_XRAY) || defined(RT_HARD_XRAY) || \
     defined(RT_FREEFREE) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_LEBRON) || defined(RT_EVOLVE_INTENSITIES) || \
     defined(RT_DIFFUSION_CG) || defined(RT_COOLING_DUST_ONLY) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
@@ -324,7 +333,10 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
 #endif
 
     /* Metal abundances (per H nucleus) from the metallicity array: C, N, O, Ne, Mg, Si, S, Ca, Fe */
-    double Z_solar = All.SolarAbundances[0];
+    double Z_solar = 0; /* without METALS: no metals, and dust at solar, as gas_dust_heating_coeff assumes */
+#ifdef METALS
+    Z_solar = All.SolarAbundances[0];
+#endif
     double Z_met = 0, x_metal[9] = {0, 0, 0, 0, 0, 0, 0, 0, 0};
     (void)Z_solar;
     (void)Z_met;
@@ -571,22 +583,36 @@ void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, 
 #ifdef JACO_HAS_PARAM_Gamma_HI
 /* The ionizing band as find_abundances_and_rates and Heat_Ion_from_RHD read it (cooling.cc): Gamma = c sigma n_gamma per
    neutral H at the true c, the IR band's tail above 13.6 eV included, and eps_HI = rt_ion_G_HI per ionization.
-   c_tilde = 0, GIZMO's rate law: the RT kick absorbs the band, so the rate is frozen over the step. T_bg: the background
+   c_tilde = 0, GIZMO's rate law, where the RT kick absorbs the band, so the rate is frozen over the step; under
+   JACO_RT_OWNS_EUV, the reduced speed of light, for the photon-limited law. T_bg: the background
    temperature of the emission corrections. f_recNUV: the share of the recombination cooling returned to the NUV band.
    f_IR_selfabs: CoolingRate's IR self-absorption factor at the cached temperature. */
+#ifdef RT_CHEM_PHOTOION
+/* Ionizing photons per code volume, as find_abundances_and_rates counts them: the H0 band's and the IR band's tail above
+   13.6 eV. *band_share: the H0 band's share. */
+static double jaco_ionizing_photon_density(int i, struct gas_cell_data *cell, double *band_share) {
+    const int k = RT_FREQ_BIN_H0;
+    double n_band = DMAX(cell[i].rt_photon_number_density(k), 0), n_tail = 0;
+#ifdef RT_INFRARED
+    n_tail = DMAX(rt_irband_egydensity_in_band(i, All.RHD_bins_nu_min_ev[k], All.RHD_bins_nu_max_ev[k], cell), 0) /
+             (DMAX(rt_nu_eff_eV[k], cell[i].Radiation_Temperature / 2959.81) * ELECTRONVOLT_IN_ERGS / UNIT_ENERGY_IN_CGS);
+#endif
+    if (band_share) *band_share = (n_band + n_tail > 0) ? n_band / (n_band + n_tail) : 1;
+    return n_band + n_tail;
+}
+#endif
+
 static void jaco_pack_radiation(int i, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
     pr->Gamma_HI = pr->sigma_HI = pr->eps_HI = pr->c_tilde = 0;
 #ifdef RT_CHEM_PHOTOION
     const int k = RT_FREQ_BIN_H0;
     const double L = UNIT_LENGTH_IN_CGS;
-    double n_gamma = cell[i].rt_photon_number_density(k); /* per code volume */
-#ifdef RT_INFRARED
-    n_gamma += rt_irband_egydensity_in_band(i, All.RHD_bins_nu_min_ev[k], All.RHD_bins_nu_max_ev[k], cell) /
-               (DMAX(rt_nu_eff_eV[k], cell[i].Radiation_Temperature / 2959.81) * ELECTRONVOLT_IN_ERGS / UNIT_ENERGY_IN_CGS);
-#endif
     pr->sigma_HI = rt_ion_sigma_HI[k] * L * L;
-    pr->Gamma_HI = C_LIGHT_CGS * pr->sigma_HI * DMAX(n_gamma, 0) / (L * L * L);
+    pr->Gamma_HI = C_LIGHT_CGS * pr->sigma_HI * jaco_ionizing_photon_density(i, cell, NULL) / (L * L * L);
     pr->eps_HI = rt_ion_G_HI[k] * UNIT_ENERGY_IN_CGS;
+#if defined(JACO_RT_OWNS_EUV) && !defined(JACO_RT_FROZEN_RATE_LAW)
+    pr->c_tilde = C_LIGHT_CODE_REDUCED * UNIT_VEL_IN_CGS; /* the gas absorbs the band: the photon-limited rate law */
+#endif
 #endif
     pr->T_bg = get_background_radiation_temperature_for_emission_corrections(i, cell);
     pr->f_recNUV = jaco_recombination_return_fraction(i, cell[i].Temperature, pr->eps_HI * pr->Gamma_HI, cell);
@@ -599,6 +625,34 @@ static void jaco_pack_radiation(int i, Params *pr, struct particle_data *pp, str
 }
 #endif
 
+#ifdef JACO_RT_OWNS_EUV
+static void jaco_stats_count_sink(double requested, double taken, double available);
+
+/* The ionizing band's sink: the band's share of the photoionizations over the step, at the reduced speed of light, each
+   taking rt_nu_eff_eV from it, capped at what it has; the absorbed energy goes to the donation band, as the RT kick's
+   absorption does. The flux is rescaled with the energy. */
+static void jaco_ionizing_band_sink(int i, const Params *pr, const struct jaco_step_outputs *out, struct gas_cell_data *cell) {
+    const int k = RT_FREQ_BIN_H0;
+    double share, L = UNIT_LENGTH_IN_CGS, volume_cgs = cell[i].Mass / (cell[i].Density * All.cf_a3inv) * L * L * L;
+    jaco_ionizing_photon_density(i, cell, &share);
+    double photons = (C_LIGHT_CODE_REDUCED / C_LIGHT_CODE) * DMAX(out->rate.photoionization_rate, 0) * share * pr->Delta_t * volume_cgs;
+    double E0 = DMAX(cell[i].Rad_E_gamma[k], 0), dE = photons * rt_nu_eff_eV[k] * ELECTRONVOLT_IN_ERGS / UNIT_ENERGY_IN_CGS;
+    double requested = dE;
+    if (dE > E0) dE = E0;
+    jaco_stats_count_sink(requested, dE, E0);
+    if (!(dE > 0)) return;
+    double fac = (E0 > 0) ? (E0 - dE) / E0 : 0;
+    cell[i].Rad_E_gamma[k] = cell[i].Rad_E_gamma_Pred[k] = E0 - dE;
+    cell[i].Rad_Flux[k] *= fac;
+    cell[i].Rad_Flux_Pred[k] *= fac;
+    int k_donor = rt_get_donation_target_bin(k);
+    if (k_donor >= 0) {
+        cell[i].Rad_E_gamma[k_donor] += dE;
+        cell[i].Rad_E_gamma_Pred[k_donor] = cell[i].Rad_E_gamma[k_donor];
+    }
+}
+#endif
+
 #if defined(RADTRANSFER)
 /* The standard module's cooling-radiation return from the model's outputs at the solved state: CoolingRate's routing
    into Lambda_RadiativeCooling_toRHDBins (NUV to the IR band where the IR radiation is hotter than 1e4 K), the dust
@@ -607,6 +661,9 @@ static void jaco_pack_radiation(int i, Params *pr, struct particle_data *pp, str
 static void jaco_return_cooling_radiation(int i, const SolveVars *sv, const Params *pr, const struct jaco_step_outputs *out,
                                           struct particle_data *pp, struct gas_cell_data *cell) {
     double nH = cell[i].nHcgs(), inv_nH2 = 1. / (nH * nH);
+#ifdef JACO_RT_OWNS_EUV
+    jaco_ionizing_band_sink(i, pr, out, cell); /* first, as the kick's absorption comes before cooling */
+#endif
     for (int k = 0; k < N_RT_FREQ_BINS; k++) cell[i].Lambda_RadiativeCooling_toRHDBins[k] = 0;
 #ifdef RT_NUV
     int k_nuv = RT_FREQ_BIN_NUV;
@@ -757,9 +814,27 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
    Accumulated over the cells call_jaco() solves in one cooling pass; reported and reset by
    jaco_report_solve_stats(), which every rank must call (MPI collective) once per pass. */
 enum { JS_CELLS, JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED, JS_FEVALS, JS_RESYNC, JS_PINNED, JS_NANJ, JS_NANF,
-       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_NANOUT, JS_N };
+       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_NANOUT, JS_CAPPED, JS_N };
 static long jaco_stats[JS_N];
 static int jaco_stats_max_nfeval = 0;
+
+#ifdef JACO_RT_OWNS_EUV
+/* The ionizing band's sink over a cooling pass, in band energy: what the photoionizations asked for, what was taken (at
+   most what the band had) and what the band had. A capped sink is energy the gas got that the band did not lose; a cell
+   counts as capped beyond the 0.1% the photon-limited law's Pade form can overshoot. */
+static double jaco_sink_energy[3];
+static void jaco_stats_count_sink(double requested, double taken, double available) {
+#ifdef _OPENMP
+#pragma omp critical(jaco_stats_update)
+#endif
+    {
+        jaco_sink_energy[0] += requested;
+        jaco_sink_energy[1] += taken;
+        jaco_sink_energy[2] += available;
+        jaco_stats[JS_CAPPED] += requested > 1.001 * taken;
+    }
+}
+#endif
 
 static void jaco_stats_add(const struct JacoSolveInfo *info, const struct jaco_step_outputs *out) {
     int bin[4] = {JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED};
@@ -791,14 +866,25 @@ void jaco_report_solve_stats(void) {
     int global_max = 0;
     MPI_Reduce(jaco_stats, global, JS_N, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&jaco_stats_max_nfeval, &global_max, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
+#ifdef JACO_RT_OWNS_EUV
+    double sink[3];
+    MPI_Reduce(jaco_sink_energy, sink, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    memset(jaco_sink_energy, 0, sizeof(jaco_sink_energy));
+#endif
     if (ThisTask == 0 && global[JS_CELLS] > 0) {
         double n = (double)global[JS_CELLS];
         printf("jaco solve stats: %ld cells | tier1 %ld (%.2f%%) tier2 %ld tier3 %ld FAILED %ld | nfeval mean %.2f max %d | "
-               "tier-1 evals 1:%ld 2:%ld 3:%ld 4:%ld >4:%ld | T0 resynced %ld, pinned %ld, non-finite J %ld F %ld outputs %ld\n",
+               "tier-1 evals 1:%ld 2:%ld 3:%ld 4:%ld >4:%ld | T0 resynced %ld, pinned %ld, non-finite J %ld F %ld outputs %ld | "
+               "band sink capped %ld\n",
                global[JS_CELLS], global[JS_TIER1], 100.0 * global[JS_TIER1] / n, global[JS_TIER2], global[JS_TIER3],
                global[JS_FAILED], global[JS_FEVALS] / n, global_max, global[JS_T1_1], global[JS_T1_2], global[JS_T1_3],
                global[JS_T1_4], global[JS_T1_MORE], global[JS_RESYNC], global[JS_PINNED], global[JS_NANJ], global[JS_NANF],
-               global[JS_NANOUT]);
+               global[JS_NANOUT], global[JS_CAPPED]);
+#ifdef JACO_RT_OWNS_EUV
+        if (sink[2] > 0)
+            printf("jaco ionizing-band sink (band energy, code units): requested %.6e taken %.6e available %.6e | capped cells %ld\n",
+                   sink[0], sink[1], sink[2], global[JS_CAPPED]);
+#endif
         fflush(stdout);
     }
     memset(jaco_stats, 0, sizeof(jaco_stats));
@@ -838,6 +924,17 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
     set.u_min = All.MinEgySpec * UNIT_SPECEGY_IN_CGS;
     struct JacoSolveInfo info;
     const SolveVars sv_in = sv;
+#ifdef RT_ILIEV_TEST1
+    /* Iliev et al. (2006) test 1: the chemistry at a fixed 1e4 K */
+    memset(&info, 0, sizeof(info));
+    sv.T = 1e4;
+    info.tier = jaco_solve_chemistry(&sv, &pr, &set, &info.nfeval) ? JACO_TIER_FAILED : JACO_TIER_NEWTON;
+    if (info.tier == JACO_TIER_FAILED) {
+        printf("JACO FATAL: the fixed-temperature chemistry failed on task %d\n", ThisTask);
+        jaco_print_state(stdout, "  input state:", &sv_in, &pr);
+        endrun(10);
+    }
+#else
     if (jaco_solve(&sv, &pr, &set, &info)) {
         printf("JACO FATAL: every solver tier failed on task %d (nfeval=%d)\n", ThisTask, info.nfeval);
         jaco_print_state(stdout, "  input state:", &sv_in, &pr);
@@ -847,6 +944,7 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
         fflush(stdout);
         endrun(10);
     }
+#endif
 #ifdef OUTPUT_COOLRATE_DETAIL
     jaco_coolrate_detail(&sv, &pr, c);
 #endif

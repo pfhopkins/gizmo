@@ -82,7 +82,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     {
         SET_ACTIVE_RT_CHECK(); double l_ion=All.IonizingLuminosityPerSolarMass_cgs * (pp[i].Mass * UNIT_MASS_IN_SOLAR) / UNIT_LUM_IN_CGS; // flux from star particles according to mass
 #ifdef RT_ILIEV_TEST1
-        l_ion = 5.0e48 * (13.6*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS; // 5e48 in ionizing photons per second -- constant for idealized test problem //
+        l_ion = 5.0e48 * (rt_nu_eff_eV[RT_FREQ_BIN_H0]*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS; // 5e48 ionizing photons per second -- constant for idealized test problem; photons are counted at rt_nu_eff_eV //
 #endif
         lum[RT_FREQ_BIN_H0] = l_ion; // default to all flux into single-band
 #if defined(RT_PHOTOION_MULTIFREQUENCY)
@@ -693,6 +693,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
         {
             kf = k_tmp; // normal loop
             double e0, dt_e_gamma_band=0, total_de_dt=0, a0_abs = -rt_absorption_rate(i,kf, pp, cell);
+#ifdef JACO_RT_OWNS_EUV
+            if(RT_BAND_IS_IONIZING(kf)) {a0_abs = 0;} /* the jaco model's photoionizations are this band's sink (cooling/jaco.cc); the flux still relaxes with Rad_Kappa */
+#endif
 #if defined(RT_EVOLVE_INTENSITIES)
             if(mode==0) {e0 = RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity[kf][k_angle];} else {e0 = RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity_Pred[kf][k_angle];}
             dt_e_gamma_band = RT_INTENSITY_BINS_DOMEGA*cell[i].Dt_Rad_Intensity[kf][k_angle];
