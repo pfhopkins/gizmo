@@ -53,6 +53,9 @@ ISOTHERMAL = ("EOS_GAMMA=1.001", "EOS_ENFORCE_ADIABAT=0.04")
 COOLING = ("COOLING", "OUTPUT_COOLRATE_DETAIL")
 # Radiative feedback from the protostar itself, on top of COOLING (RAD needs it to mean anything).
 RAD = COOLING + ("SINGLE_STAR_FB_RAD",)
+# COOLING with the jaco network in place of the standard module, default merging only. It takes the same
+# checks: they are sanity windows on the collapse, not benchmarks of the standard module.
+JACO = COOLING + ("JACO=starforge",)
 # Nominal only: Config.sh sets no EOS_GAMMA, and with COOLING the STARFORGE defaults
 # enable EOS_SUBSTELLAR_ISM, so gamma actually varies with the H2 state. Used solely to
 # put the angular-momentum plot in units of R_sink*c_s.
@@ -321,10 +324,12 @@ def assert_sink_mass(extra_config_flags):
     [JETS, JETS_NOMERGE],
     ids=["jets_merge", "jets_nomerge"],
 )
-@pytest.mark.parametrize("eos_flags", [COOLING, RAD], ids=["cooling", "rad"])
+@pytest.mark.parametrize("eos_flags", [COOLING, RAD, JACO], ids=["cooling", "rad", "jaco"])
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_shu_jets(num_mpi_ranks, num_omp_threads, eos_flags, merge_flags):
+    if eos_flags == JACO and merge_flags != JETS:
+        pytest.skip("the jaco variant runs with the default merge criteria only")
     extra_config_flags = merge_flags + eos_flags
     generate_ics()
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags=extra_config_flags)
