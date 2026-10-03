@@ -45,8 +45,19 @@ static const double CHECK_TOL = 1e-5;   /* residual check: 10x the solver tolera
 static const double EQ_GATE = 0.01;     /* equilibrium check applies when the backward-Euler term shifts T by < 1% (linearized) */
 static const double EQ_TOL = 0.03;      /* ... and then T must be within 3% of an equilibrium root */
 
+/* MODEL=starforge_legacy_RT: 0 dark; 1 the ionizing band of an HII region under GIZMO's rate law (frozen over the step);
+   2 the same under the photon-limited law (c_tilde = 1e-4 c) */
+static int g_rt_field = 0;
+
 static void starforge_params(Params *pr, double n, double dt) {
     memset(pr, 0, sizeof(*pr));
+#ifdef JACO_HAS_PARAM_Gamma_HI
+    pr->T_bg = 2.73;
+    pr->sigma_HI = 3.0e-18;
+    pr->eps_HI = 4.8e-12;
+    pr->Gamma_HI = g_rt_field ? 1e-8 : 0; /* ~ a few pc from an O star */
+    pr->c_tilde = (g_rt_field == 2) ? 2.9979e6 : 0;
+#endif
     pr->n_Htot = n;
     pr->Delta_t = dt;
     pr->y = 0.0994;
@@ -218,6 +229,7 @@ static int check_answer(const SolveVars *sv, const Params *pr, const JacoSolverS
         double sk = fabs(J[k][k]) * (sv->data[k] + X_ATOL) + 1e-300;
         double rk = F.data[k] / (CHECK_TOL * sk);
         if (sv->data[k] <= JACO_ABUNDANCE_FLOOR * (1 + 1e-9)) rk = fmax(rk, 0); /* floored: must not want to grow */
+        if (k == IDX_x_Hplus && xH0 <= 1e-9) rk = fmin(rk, 0); /* at the end of the H budget: must not want to shrink */
         rk = fabs(rk);
         *worst = fmax(*worst, rk);
         if (rk > 1) {
@@ -858,12 +870,14 @@ static int run_compare(const JacoSolverSettings *set) {
 
 int main(int argc, char **argv) {
     jaco_init_tables(argc > 1 ? argv[1] : ".");
+    const char *field = getenv("JACO_RT_FIELD"); /* the debug modes' ionizing band (MODEL=starforge_legacy_RT): 0, 1 or 2 */
     JacoSolverSettings set;
     jaco_solver_default_settings(&set);
     set.T_min = 2.73;   /* GIZMO's MinGasTemp; the model is not finite below ~1.6 K */
     set.T_max = 1e10;
     set.u_min = 2.75e8; /* GIZMO's MinEgySpec for MinGasTemp = 2.73 K */
     if (build_cie_table(&set)) return 1;
+    if (field) g_rt_field = atoi(field);
 #ifdef JACO_COMPARE
     if (argc > 2 && !strcmp(argv[2], "compare")) return run_compare(&set);
 #endif
@@ -982,6 +996,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
+    g_rt_field = 0;
     int nfail = print_outputs(&set);
     nfail += run_replays(&set);
 
@@ -1010,6 +1025,21 @@ int main(int argc, char **argv) {
     eq_fd.print("dt=1e20");
     long bad = sweep.fail + sweep.check_fail + sweep.eq_mismatch + warm.fail + warm.check_fail + eq.fail + eq.check_fail +
                eq.eq_mismatch + sweep.eq_ref_fail + eq.eq_ref_fail + nfail;
+#ifdef JACO_HAS_PARAM_Gamma_HI
+    /* the sweep again with the ionizing band lit, under each rate law */
+    report_quota = 4;
+    for (g_rt_field = 1; g_rt_field <= 2; g_rt_field++) {
+        Stats s_lit, w_lit, e_lit;
+        printf("\n== sweep with the ionizing band lit (%s law) ==\n", g_rt_field == 1 ? "frozen" : "photon-limited");
+        bad += print_outputs(&set);
+        run_sweep(&set, 1, s_lit, w_lit, e_lit);
+        s_lit.print("sweep");
+        w_lit.print("warm");
+        e_lit.print("dt=1e20");
+        bad += s_lit.fail + s_lit.check_fail + s_lit.eq_mismatch + w_lit.fail + w_lit.check_fail + e_lit.fail + e_lit.check_fail +
+               e_lit.eq_mismatch + s_lit.eq_ref_fail + e_lit.eq_ref_fail;
+    }
+#endif
     printf("\n%s: %ld failures (replays %d)\n", bad ? "FAILED" : "PASSED", bad, nfail);
     return bad ? 1 : 0;
 }

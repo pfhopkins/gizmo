@@ -24,14 +24,34 @@ extern "C" int jaco_isfinite(double x);
 #error "JACO requires COOLING"
 #endif
 /* These read the standard cooling module's chemistry or EOS directly, bypassing jaco_cell_eos */
-#if defined(OUTPUT_COOLRATE) || defined(GALSF_EFFECTIVE_EQS) || defined(CHIMES) || defined(COOL_GRACKLE) || defined(RT_CHEM_PHOTOION)
-#error "JACO does not yet support OUTPUT_COOLRATE, GALSF_EFFECTIVE_EQS, CHIMES, COOL_GRACKLE or RT_CHEM_PHOTOION"
+#if defined(OUTPUT_COOLRATE) || defined(GALSF_EFFECTIVE_EQS) || defined(CHIMES) || defined(COOL_GRACKLE)
+#error "JACO does not yet support OUTPUT_COOLRATE, GALSF_EFFECTIVE_EQS, CHIMES or COOL_GRACKLE"
 #endif
 /* do_the_cooling_for_particle returns right after call_jaco, so everything the standard path does afterwards is skipped:
-   the cooling-radiation return to the RT bands, cosmic-ray losses, the sink thermal-feedback energy injection and the
-   subcycle dt scaling. Refuse those configurations until the JACO path carries them. */
-#if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID) || defined(SINK_THERMALFEEDBACK) || defined(TRANSPORT_SUBCYCLE_COOLING)
-#error "JACO does not yet support RADTRANSFER, COSMIC_RAY_FLUID, SINK_THERMALFEEDBACK or TRANSPORT_SUBCYCLE_COOLING"
+   cosmic-ray losses, the sink thermal-feedback energy injection and the subcycle dt scaling. Refuse those configurations
+   until the JACO path carries them. */
+#if defined(COSMIC_RAY_FLUID) || defined(SINK_THERMALFEEDBACK) || defined(TRANSPORT_SUBCYCLE_COOLING)
+#error "JACO does not yet support COSMIC_RAY_FLUID, SINK_THERMALFEEDBACK or TRANSPORT_SUBCYCLE_COOLING"
+#endif
+/* Radiation. Supported: M1 RADTRANSFER with the single H-ionizing band (RT_CHEM_PHOTOION), whose photoionization and
+   photoheating the jaco model takes over (Gamma_HI, eps_HI) while the RT kick absorbs the band, and the bands that only
+   feed the model's inputs (RT_PHOTOELECTRIC, RT_LYMAN_WERNER: G_0 and G_LW; RT_OPTICAL_NIR: the donation target).
+   Not yet: the cooling-radiation return to the NUV and IR bands (RT_NUV, RT_INFRARED); He photoionization and further
+   ionizing bands; X-ray and free-free bands, which change what the cooling module returns where; ray-based and
+   intensity solvers; the dust-only cooling switch; the nuclear-zoom routing. */
+#if defined(RADTRANSFER) && !defined(JACO_HAS_PARAM_Gamma_HI)
+#error "JACO with RADTRANSFER needs a model with the RT coupling (JACO=starforge_legacy_RT)"
+#endif
+#if defined(RT_CHEM_PHOTOION) && !defined(RADTRANSFER)
+#error "JACO supports RT_CHEM_PHOTOION only with an explicit RADTRANSFER solver"
+#endif
+#if defined(RADTRANSFER) && (defined(RT_NUV) || defined(RT_INFRARED))
+#error "JACO does not yet carry the cooling-radiation return to the RT bands (RT_NUV, RT_INFRARED)"
+#endif
+#if defined(RT_CHEM_PHOTOION_HE) || defined(RT_PHOTOION_MULTIFREQUENCY) || defined(RT_SOFT_XRAY) || defined(RT_HARD_XRAY) || \
+    defined(RT_FREEFREE) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_LEBRON) || defined(RT_EVOLVE_INTENSITIES) || \
+    defined(RT_DIFFUSION_CG) || defined(RT_COOLING_DUST_ONLY) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
+#error "JACO does not support He photoionization, multifrequency ionizing bands, X-ray or free-free bands, LEBRON, RT intensities, RT_DIFFUSION_CG, RT_COOLING_DUST_ONLY or SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM"
 #endif
 
 /* The generated header defines JACO_HAS_VAR_<name> / JACO_HAS_PARAM_<name> for every SolveVars / Params field, so each
@@ -42,6 +62,15 @@ extern "C" int jaco_isfinite(double x);
 #ifndef JACO_HAS_PARAM_y
 #error "a jaco model that solves the He ions must take the He abundance y"
 #endif
+#endif
+
+/* Under RT_CHEM_PHOTOION the cell carries HII, which the RT opacity reads: the model's time-dependent H+ starts each step
+   there and is written back to it */
+#ifdef RT_CHEM_PHOTOION
+#if !defined(JACO_VAR_TIME_DEPENDENT_x_Hplus) || !defined(JACO_SOLVES_IONS)
+#error "JACO with RT_CHEM_PHOTOION needs a model that solves the ions with H+ time-dependent"
+#endif
+#define JACO_TRACKS_HII
 #endif
 
 #ifdef JACO_DEBUG_PARAMS
@@ -91,6 +120,9 @@ double jaco_cie_electron_abundance(double T) {
     double logT = log10(DMAX(T, 10.));
     return cie_interp(cie_xHp, logT) + cie_interp(cie_xHep, logT) + 2.0 * cie_interp(cie_xHepp, logT);
 }
+
+/* H+ per H in CIE at temperature T (from the table) */
+double jaco_cie_hplus_abundance(double T) { return cie_interp(cie_xHp, log10(DMAX(T, 10.))); }
 
 /* Build the CIE table by sweeping T downward with continuation, solving the chemistry at each
    fixed T with the solver's fixed-T chemistry solve. Called once from InitCool(). */
@@ -165,6 +197,12 @@ void jaco_build_cie_table(void) {
 #endif
 #ifdef JACO_HAS_PARAM_x_O_tot
     pr.x_O_tot = 4.9e-4;
+#endif
+#ifdef JACO_HAS_PARAM_T_bg
+    pr.T_bg = 2.73;
+#endif
+#ifdef JACO_VAR_TIME_DEPENDENT_x_Hplus
+    pr.Delta_t = 1e30; /* the table is the steady state: no pull towards the continuation's start */
 #endif
 
 #ifdef JACO_SOLVES_IONS
@@ -408,13 +446,22 @@ static void jaco_cie_species(double T, const Params *pr, SolveVars *sv) {
 #endif
 
 #ifdef JACO_SOLVES_IONS
-/* Ion electrons ne_ions split onto H+ first (up to xHp_max), then He+ (up to y), then He+ converts to He++ */
-static void jaco_split_ion_electrons(double ne_ions, double xHp_max, double y, SolveVars *sv) {
-    double xHp = DMIN(ne_ions, xHp_max), ne_He = DMAX(ne_ions - xHp, 0);
+/* Ion electrons ne_ions split onto H+ first (up to xHp_max; or xHp_fixed if >= 0), then He+ (up to y), then He+
+   converts to He++ */
+static void jaco_split_ion_electrons(double ne_ions, double xHp_max, double y, double xHp_fixed, SolveVars *sv) {
+    double xHp = (xHp_fixed >= 0) ? DMIN(xHp_fixed, ne_ions) : DMIN(ne_ions, xHp_max), ne_He = DMAX(ne_ions - xHp, 0);
     double xHepp = DMIN(DMAX(ne_He - y, 0), y), xHep = DMAX(DMIN(ne_He - 2.0 * xHepp, y - xHepp), 0);
     sv->x_Hplus = DMAX(JACO_ABUNDANCE_FLOOR, xHp);
     sv->x_Heplus = DMAX(JACO_ABUNDANCE_FLOOR, xHep);
     sv->x_Heplusplus = DMAX(JACO_ABUNDANCE_FLOOR, xHepp);
+}
+#endif
+
+#ifdef JACO_TRACKS_HII
+/* The cell's HII within the jaco floor and what H2 leaves */
+static double jaco_cell_HII(int i, struct gas_cell_data *cell, double xHp_max) {
+    double x = cell[i].HII;
+    return jaco_isfinite(x) ? DMAX(JACO_ABUNDANCE_FLOOR, DMIN(x, xHp_max)) : JACO_ABUNDANCE_FLOOR;
 }
 #endif
 
@@ -432,17 +479,20 @@ static void jaco_species_from_cell(int i, struct gas_cell_data *cell, const Para
     xH2 = 0.5 * fmol;
     sv->x_H_2 = DMAX(JACO_ABUNDANCE_FLOOR, xH2);
 #endif
-    double ne = cell[i].Ne, y = pr->y, xHp_max = 1.0 - 2.0 * xH2;
+    double ne = cell[i].Ne, y = pr->y, xHp_max = 1.0 - 2.0 * xH2, xHp_fixed = -1;
+#ifdef JACO_TRACKS_HII
+    xHp_fixed = jaco_cell_HII(i, cell, xHp_max);
+#endif
     if (jaco_isfinite(ne) && ne >= 0) {
         SolveVars s = *sv;
         s.T = (jaco_isfinite(cell[i].Temperature) && cell[i].Temperature > 0) ? cell[i].Temperature : 1e4;
         double ne_ions = ne;
         for (int pass = 0; pass < 2; pass++) {
-            jaco_split_ion_electrons(ne_ions, xHp_max, y, &s);
+            jaco_split_ion_electrons(ne_ions, xHp_max, y, xHp_fixed, &s);
             ne_ions = DMAX(ne - jaco_fixed_electron_abundance(&s, pr), 0);
         }
         if (ne_ions <= (xHp_max + 2.0 * y) * (1.0 + 1e-10)) {
-            jaco_split_ion_electrons(ne_ions, xHp_max, y, sv);
+            jaco_split_ion_electrons(ne_ions, xHp_max, y, xHp_fixed, sv);
             return;
         }
     }
@@ -512,6 +562,29 @@ void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, 
     eos->x_e = jaco_electron_abundance(&sv, &pr);
 }
 
+#ifdef JACO_HAS_PARAM_Gamma_HI
+/* The ionizing band as find_abundances_and_rates and Heat_Ion_from_RHD read it (cooling.cc): Gamma = c sigma n_gamma per
+   neutral H at the true c, the IR band's tail above 13.6 eV included, and eps_HI = rt_ion_G_HI per ionization.
+   c_tilde = 0, GIZMO's rate law: the RT kick absorbs the band, so the rate is frozen over the step. T_bg: the background
+   temperature of the emission corrections. */
+static void jaco_pack_radiation(int i, Params *pr, struct gas_cell_data *cell) {
+    pr->Gamma_HI = pr->sigma_HI = pr->eps_HI = pr->c_tilde = 0;
+#ifdef RT_CHEM_PHOTOION
+    const int k = RT_FREQ_BIN_H0;
+    const double L = UNIT_LENGTH_IN_CGS;
+    double n_gamma = cell[i].rt_photon_number_density(k); /* per code volume */
+#ifdef RT_INFRARED
+    n_gamma += rt_irband_egydensity_in_band(i, All.RHD_bins_nu_min_ev[k], All.RHD_bins_nu_max_ev[k], cell) /
+               (DMAX(rt_nu_eff_eV[k], cell[i].Radiation_Temperature / 2959.81) * ELECTRONVOLT_IN_ERGS / UNIT_ENERGY_IN_CGS);
+#endif
+    pr->sigma_HI = rt_ion_sigma_HI[k] * L * L;
+    pr->Gamma_HI = C_LIGHT_CGS * pr->sigma_HI * DMAX(n_gamma, 0) / (L * L * L);
+    pr->eps_HI = rt_ion_G_HI[k] * UNIT_ENERGY_IN_CGS;
+#endif
+    pr->T_bg = get_background_radiation_temperature_for_emission_corrections(i, cell);
+}
+#endif
+
 void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
     double dtime = get_particle_timestep_in_physical(i, pp);
     set_PdV_work_heatingrate(i, dtime, pp, cell);
@@ -553,6 +626,18 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     double cv;
     sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
     jaco_initial_from_state(sv, pr); /* the time-dependent species start the step at their seeds */
+#ifdef JACO_TRACKS_HII
+    {
+        double xHp_max = 1.0;
+#ifdef JACO_HAS_PARAM_x_H_2_initial
+        xHp_max -= 2.0 * pr->x_H_2_initial;
+#endif
+        pr->x_Hplus_initial = jaco_cell_HII(i, cell, xHp_max); /* even where the seed is CIE */
+    }
+#endif
+#ifdef JACO_HAS_PARAM_Gamma_HI
+    jaco_pack_radiation(i, pr, cell);
+#endif
 
 #if defined(JACO_HAS_PARAM_G_LW) || defined(JACO_HAS_PARAM_Td)
     {
@@ -587,6 +672,10 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     /* Write solved species back BEFORE set_eos_pressure, whose EOS composition comes from Ne and MolecularMassFraction */
 #ifdef JACO_SOLVES_IONS
     cell[i].Ne = jaco_electron_abundance(sv, pr); /* all free electrons, metals' included, as the rates use them */
+#endif
+#ifdef JACO_TRACKS_HII
+    cell[i].HII = sv->x_Hplus;
+    cell[i].HI = DMAX(1.0 - sv->x_Hplus, 0); /* neutral H including H2, as DoCooling stores it */
 #endif
 #ifdef JACO_HAS_VAR_x_H_2
     double xHp = sv->x_Hplus, xH2 = sv->x_H_2;

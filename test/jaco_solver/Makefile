@@ -34,7 +34,8 @@ COMPILE  = $(CXX) $(CPPFLAGS) $(CXXFLAGS)
 GEN_OBJ := $(GEN:.cc=.o)
 REF_SRC := $(BUILD)/ref/jaco_solver.cc
 REF_RENAME := -Djaco_solve=jaco_ref_solve -Djaco_solve_chemistry=jaco_ref_solve_chemistry \
-	-Djaco_solver_default_settings=jaco_ref_solver_default_settings -Djaco_print_state=jaco_ref_print_state
+	-Djaco_solver_default_settings=jaco_ref_solver_default_settings -Djaco_print_state=jaco_ref_print_state \
+	-Djaco_initial_from_state=jaco_ref_initial_from_state -Djaco_print_outputs=jaco_ref_print_outputs
 
 .PHONY: test compare codegen clean FORCE
 test: $(BUILD)/test_jaco_solver

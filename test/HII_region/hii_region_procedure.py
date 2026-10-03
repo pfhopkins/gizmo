@@ -181,6 +181,24 @@ def assert_subcycle_matches_baseline(base, var, base_rif, var_rif, rel=0.1, rif_
         f"ionization-front radius {var_rif:.2f} pc vs baseline {base_rif:.2f} pc (> {rif_rel:.0%} apart)"
 
 
+def assert_ifront_matches_reference(evo, ref_evo, rel=0.1, min_points=3):
+    """A variant's I-front radius r_IF(t) must match a reference run's at every snapshot time where both have a front.
+
+    The HII tests otherwise compare r_IF to nothing absolute (the T window, and other variants of the same physics), so a
+    variant that replaces the ionization physics is held to the reference implementation's front, the standard cooling
+    module's. evo and ref_evo are (times, radii) from compute_ifront_evolution."""
+    ref = {round(float(t), 6): r for t, r in zip(*ref_evo)}
+    rows = [(t, ref[round(float(t), 6)], r) for t, r in zip(*evo) if round(float(t), 6) in ref]
+    rows = [(t, rr, r) for t, rr, r in rows if np.isfinite(rr) and np.isfinite(r)]
+    print("I-front radius vs reference:  t  r_ref [pc]  r [pc]  r/r_ref")
+    for t, rr, r in rows:
+        print(f"  {t:.3f}  {rr:.3f}  {r:.3f}  {r / rr:.4f}")
+    assert len(rows) >= min_points, f"only {len(rows)} snapshot times with a front in both runs (need >= {min_points})"
+    worst = max(rows, key=lambda row: abs(row[2] / row[1] - 1))
+    assert abs(worst[2] / worst[1] - 1) <= rel, \
+        f"I-front radius {worst[2]:.3f} pc vs reference {worst[1]:.3f} pc at t={worst[0]:.3f} (> {rel:.0%} apart)"
+
+
 # --------------------------------------------------------------------------------------
 # Plots
 # --------------------------------------------------------------------------------------

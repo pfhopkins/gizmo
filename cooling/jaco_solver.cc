@@ -53,7 +53,7 @@
 #define JACO_BRACKET_GROW 1.5        /* tier 2: growth of that factor per step (4 decades in ~8 steps) */
 #define JACO_BRACKET_MAXITER 60
 #define JACO_BRENT_MAXITER 100
-#define JACO_POLISH_MAXITER 2        /* tier 2: Newton steps from the rootfind answer */
+#define JACO_POLISH_MAXITER 8        /* tier 2: Newton steps from the rootfind answer, whose nested time-dependent species are resolved to tol of themselves, not of their budgets */
 #define JACO_VERIFY_FAC 10.0         /* tier-2 acceptance slack: T is bracketed to tol, the energy row then moves with the total dR/dT */
 #define JACO_SUBCYCLE_MIN_FRAC 1e-6  /* tier 3 gives up below this fraction of Delta_t */
 #define JACO_SUBCYCLE_MAXSTEPS 2000

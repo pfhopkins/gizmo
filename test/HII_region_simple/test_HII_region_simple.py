@@ -20,6 +20,14 @@ TEST_DIR = Path(__file__).parent
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-def test_HII_region_simple(num_mpi_ranks, num_omp_threads):
-    profiles, _, _ = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads)
+# jaco_rt: the jaco model of the standard module's RT coupling, held to the baseline's I-front radius over time
+@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge_legacy_RT",)], ids=["baseline", "jaco_rt"])
+def test_HII_region_simple(num_mpi_ranks, num_omp_threads, extra_config_flags):
+    profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
     hii.assert_hii_temperature(profiles)
+    if extra_config_flags:
+        ref = hii.compute_ifront_evolution(TEST_NAME)
+        if not len(ref[0]):
+            pytest.skip("baseline must run first")
+        hii.make_ifront_evolution_plot({"baseline": ref, label: evo}, TEST_DIR)
+        hii.assert_ifront_matches_reference(evo, ref)
