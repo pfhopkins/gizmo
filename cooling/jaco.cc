@@ -191,9 +191,7 @@ void jaco_build_cie_table(void) {
 #ifdef JACO_HAS_PARAM_u_initial
         pr.u_initial = sv.u;
 #endif
-#ifdef JACO_HAS_PARAM_x_H_2_initial
-        pr.x_H_2_initial = sv.x_H_2;
-#endif
+        jaco_initial_from_state(&sv, &pr);
 
         int nfeval = 0;
         if (jaco_solve_chemistry(&sv, &pr, &set, &nfeval)) {
@@ -554,9 +552,7 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #endif
     double cv;
     sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
-#ifdef JACO_HAS_PARAM_x_H_2_initial
-    pr->x_H_2_initial = sv->x_H_2;
-#endif
+    jaco_initial_from_state(sv, pr); /* the time-dependent species start the step at their seeds */
 
 #if defined(JACO_HAS_PARAM_G_LW) || defined(JACO_HAS_PARAM_Td)
     {

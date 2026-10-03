@@ -10,7 +10,7 @@
 #include "microphysics_func_jac.h"
 
 #ifndef JACO_ABUNDANCE_FLOOR
-#define JACO_ABUNDANCE_FLOOR 1e-20 /* abundances are clamped here; floored species may be pinned */
+#define JACO_ABUNDANCE_FLOOR 1e-20 /* seed floor for host code; the solver clamps at the generated per-species floors */
 #endif
 
 /* from the generated jaco_eos.cc / jaco_util.cc */
@@ -51,6 +51,9 @@ void jaco_solver_default_settings(struct JacoSolverSettings *set);
    sv->u = u(T, x) exactly. Returns 0 on success, nonzero if every tier failed (sv then holds the
    starting state). info may be NULL. */
 int jaco_solve(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct JacoSolveInfo *info);
+
+/* Set the start-of-step values of the time-dependent species (pr->x_<name>_initial) to their abundances in sv. */
+void jaco_initial_from_state(const SolveVars *sv, Params *pr);
 
 /* Solve the chemistry rows (indices >= 2) at the fixed temperature sv->T, starting from the
    abundances in sv; sets sv->u = u(T, x). Returns 0 on success. *nfeval is incremented. */

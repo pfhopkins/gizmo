@@ -73,6 +73,15 @@ static void starforge_params(Params *pr, double n, double dt) {
     pr->z = 0;
 }
 
+/* Start-of-step values of the time-dependent species from a seed, as gizmo_to_jaco makes them: the H+ seed within
+   what H2 leaves. Matters only where H+ is time-dependent (TD=...): the sweep's seeds overfill the H budget on purpose,
+   which the solver clamps, but start-of-step values that overfill it define a different problem than the one checked. */
+static void set_initial(const SolveVars *s, Params *pr) {
+    SolveVars c = *s;
+    c.x_Hplus = fmin(c.x_Hplus, 1 - 2 * c.x_H_2);
+    jaco_initial_from_state(&c, pr);
+}
+
 /* ---- CIE seed table, as jaco_build_cie_table in cooling/jaco.cc ---- */
 #define CIE_N 200
 #define CIE_LOGTMIN 2.5
@@ -92,7 +101,7 @@ static int build_cie_table(const JacoSolverSettings *set) {
         sv.x_Heplus = xHep;
         sv.x_Heplusplus = xHepp;
         sv.x_H_2 = JACO_ABUNDANCE_FLOOR;
-        pr.x_H_2_initial = sv.x_H_2;
+        set_initial(&sv, &pr);
         if (jaco_solve_chemistry(&sv, &pr, set, NULL)) {
             printf("CIE table: chemistry failed at T=%g\n", sv.T);
             return 1;
@@ -460,7 +469,7 @@ static int run_replays(const JacoSolverSettings *set) {
             neutral.x_Heplus = neutral.x_Heplusplus = 1e-20;
             pr.u_initial = jaco_T_to_u(T0, &neutral, &pr, NULL);
             sv.u = pr.u_initial;
-            pr.x_H_2_initial = sv.x_H_2;
+            set_initial(&sv, &pr);
             SolveVars in = sv;
             JacoSolveInfo info;
             int rc = jaco_solve(&sv, &pr, set, &info);
@@ -495,7 +504,7 @@ static int run_replays(const JacoSolverSettings *set) {
         }
         pr.u_initial = c.u_factor * jaco_T_to_u(c.T0, &sv, &pr, NULL);
         sv.u = pr.u_initial;
-        pr.x_H_2_initial = sv.x_H_2;
+        set_initial(&sv, &pr);
         /* non-finite entries of the generated residual and Jacobian at the raw starting state */
         SolveVars F;
         double J[N_VARS][N_VARS];
@@ -537,7 +546,7 @@ static int print_outputs(const JacoSolverSettings *set) {
         starforge_params(&pr, c.n, c.dt);
         SolveVars sv = {};
         seed_variant(&sv, c.T0, c.variant, pr.y);
-        pr.x_H_2_initial = sv.x_H_2;
+        set_initial(&sv, &pr);
         SolveVars s_eos = sv;
         s_eos.x_Hplus = fmin(s_eos.x_Hplus, 1 - 1e-10);
         sv.u = pr.u_initial = jaco_T_to_u(c.T0, &s_eos, &pr, NULL);
@@ -573,7 +582,7 @@ static int run_stall_cases(const JacoSolverSettings *set) {
         starforge_params(&pr, c.n, c.dt);
         SolveVars sv = {};
         seed_variant(&sv, c.T0, c.variant, pr.y);
-        pr.x_H_2_initial = sv.x_H_2;
+        set_initial(&sv, &pr);
         pr.u_initial = c.ufac * jaco_T_to_u(c.T0, &sv, &pr, NULL);
         sv.u = pr.u_initial;
         SolveVars in = sv;
@@ -616,7 +625,7 @@ static double sweep_pdv(double n, double T0, int variant, int sign) {
     seed_variant(&s0, T0, variant, p0.y);
     s0.x_Hplus = fmin(s0.x_Hplus, 1 - 1e-10); /* x_H+ = 1 exactly is a known 0/0 in the model */
     s0.u = p0.u_initial = jaco_T_to_u(T0, &s0, &p0, NULL);
-    p0.x_H_2_initial = s0.x_H_2;
+    set_initial(&s0, &p0);
     SolveVars F;
     double J[N_VARS][N_VARS];
     microphysics_func_jac(&s0, &p0, &F, J);
@@ -653,7 +662,7 @@ static std::vector<SweepCase> sweep_cases() {
                         c.pr.pdv_work = pdv;
                         SolveVars s0 = {};
                         seed_variant(&s0, T0, variant, c.pr.y);
-                        c.pr.x_H_2_initial = s0.x_H_2;
+                        set_initial(&s0, &c.pr);
                         for (double uf : sweep_ufac) {
                             c.sv = s0;
                             SolveVars s_eos = s0;
@@ -715,7 +724,7 @@ static void run_sweep(const JacoSolverSettings *set, int full, Stats &sweep, Sta
         if (c.idt < 6) {
             Params pw = pr;
             pw.u_initial = 1.01 * sv.u;
-            pw.x_H_2_initial = sv.x_H_2;
+            set_initial(&sv, &pw);
             SolveVars sw = sv;
             JacoSolveInfo iw;
             solve_checked(&sw, &pw, set, warm, c.what, &iw);
@@ -832,7 +841,7 @@ static int run_compare(const JacoSolverSettings *set) {
         if (compare_case(c.sv, c.pr, set, c.idt < 6 ? sweep : eq, c.what, &a) || c.idt == 6) continue;
         Params pw = c.pr;
         pw.u_initial = 1.01 * a.u;
-        pw.x_H_2_initial = a.x_H_2;
+        set_initial(&a, &pw);
         compare_case(a, pw, set, warm, c.what, NULL);
     }
     printf("\n== reference vs working-tree solver (tol %g; distance = max over T, x of |a-b| / (tol |x| + %g for x); must be <= tol\n"
@@ -931,7 +940,7 @@ int main(int argc, char **argv) {
         pr.pdv_work = pdv;
         SolveVars x = {};
         seed_variant(&x, Thi, variant, pr.y);
-        pr.x_H_2_initial = x.x_H_2;
+        set_initial(&x, &pr);
         for (int i = 0; i < np; i++) {
             double T = Thi * pow(Tlo / Thi, (double)i / (np - 1)), G, u;
             int bad = G_of_T(T, &x, &pr, &set, &G, &u);
@@ -951,7 +960,7 @@ int main(int argc, char **argv) {
         pr.pdv_work = pdv;
         SolveVars sv = {};
         seed_variant(&sv, T0, variant, pr.y);
-        pr.x_H_2_initial = sv.x_H_2;
+        set_initial(&sv, &pr);
         SolveVars s_eos = sv;
         s_eos.x_Hplus = fmin(s_eos.x_Hplus, 1 - 1e-10);
         pr.u_initial = uf * jaco_T_to_u(T0, &s_eos, &pr, NULL);
@@ -962,7 +971,7 @@ int main(int argc, char **argv) {
         int rc = jaco_solve(&sv, &pr, &quiet, &info);
         if (do_warm && !rc) {
             pr.u_initial = 1.01 * sv.u;
-            pr.x_H_2_initial = sv.x_H_2;
+            set_initial(&sv, &pr);
             rc = jaco_solve(&sv, &pr, &set, &info);
         }
         char why[256] = "ok";

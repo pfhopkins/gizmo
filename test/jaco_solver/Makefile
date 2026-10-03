@@ -3,6 +3,8 @@
 # grid, and check every answer independently. Exits non-zero on any failure.
 #
 #   make -C test/jaco_solver [MODEL=starforge_legacy]   # needs the jaco package importable by $(PYTHON)
+#   make -C test/jaco_solver MODEL=starforge_legacy TD=T,H+,H_2   # override the model's time-dependent set
+#   make -C test/jaco_solver MODEL=wind_comparison   # models outside the STARFORGE family: test_jaco_solver_generic.cc
 #   make -C test/jaco_solver compare [REF=gizmo_jaco_dev]   # the solver at git revision REF (default HEAD)
 #                       # against the working tree's on the same sweep: tiers, nfeval, answers
 #   make -C test/jaco_solver OPTFLAGS="-O3 -ffast-math -funroll-loops -march=native"   # GIZMO's flags
@@ -16,9 +18,12 @@
 
 PYTHON ?= python3
 MODEL  ?= starforge
+TD     ?=
 REF    ?= HEAD
 OPTFLAGS ?=
-BUILD  := build/$(MODEL)
+comma  := ,
+BUILD  := build/$(MODEL)$(if $(TD),-td-$(subst +,p,$(subst $(comma),-,$(TD))))
+DRIVER := $(if $(filter starforge%,$(MODEL)),test_jaco_solver.cc,test_jaco_solver_generic.cc)
 GEN    := $(BUILD)/microphysics_func_jac.cc $(BUILD)/microphysics_outputs.cc $(BUILD)/jaco_eos.cc $(BUILD)/jaco_util.cc
 SOLVER := $(BUILD)/jaco_solver.cc $(BUILD)/jaco_solver.h
 CXXFLAGS ?= -O2 -g -Wall
@@ -40,7 +45,7 @@ compare: $(BUILD)/test_jaco_compare
 # Always rerun: the codegen only rewrites files whose content changed, so a stale build/ cannot hide
 # a model change.
 codegen:
-	$(PYTHON) -m jaco.codegen.gizmo.gizmo $(MODEL) --language c --ext .cc --output-dir $(BUILD)
+	$(PYTHON) -m jaco.codegen.gizmo.gizmo $(MODEL) --language c --ext .cc --output-dir $(BUILD) $(if $(TD),--time-dependent $(TD))
 $(GEN) $(BUILD)/microphysics_func_jac.h: codegen ;
 
 $(SOLVER): $(BUILD)/%: ../../cooling/% | codegen
@@ -62,7 +67,7 @@ $(BUILD)/jaco_util.o $(BUILD)/jaco_solver.o: $(BUILD)/%.o: $(BUILD)/%.cc $(DEPS)
 	$(COMPILE) $(OPTFLAGS) -c $< -o $@
 $(BUILD)/jaco_solver_ref.o: $(REF_SRC) $(DEPS)
 	$(COMPILE) $(OPTFLAGS) $(REF_RENAME) -c $< -o $@
-$(BUILD)/main.o: test_jaco_solver.cc $(DEPS)
+$(BUILD)/main.o: $(DRIVER) $(DEPS)
 	$(COMPILE) -c $< -o $@
 $(BUILD)/main_compare.o: test_jaco_solver.cc $(DEPS)
 	$(COMPILE) -DJACO_COMPARE -c $< -o $@

@@ -5,7 +5,7 @@
  *   F_0 = u(T,x) - u                                       EOS; u enters no other row
  *   F_1 = heat(T,x) + pdv_work - rho (u(T,x) - u_initial)/Delta_t      [erg cm^-3 s^-1]
  *   F_k = net production of species k: steady state, or with a backward-Euler term for the
- *         time-dependent species (x_H_2 in the H2 models)                [cm^-3 s^-1]
+ *         time-dependent species                                         [cm^-3 s^-1]
  * u is a slave of the EOS: every iterate sets u = u(T,x), so F_0 = 0 and Newton works on (T, x)
  * (u is eliminated by a Schur complement, which is exact for any model of this form).
  *
@@ -23,6 +23,10 @@
  * generated derivative of a rate that underflowed to zero can be 0/0 although the rate itself is
  * fine) is replaced by finite differences of F if settings.fd_jacobian, else it fails the tier.
  * Both are counted in JacoSolveInfo so model defects stay visible.
+ *
+ * What the solver knows about the model beyond F and its Jacobian (which species are time-dependent
+ * and the parameters holding their start-of-step values, abundance floors, ceilings and scales,
+ * charges, and the budgets that bound the eliminated abundances) comes from the generated header.
  */
 #include <math.h>
 #include <string.h>
@@ -53,8 +57,6 @@
 #define JACO_VERIFY_FAC 10.0         /* tier-2 acceptance slack: T is bracketed to tol, the energy row then moves with the total dR/dT */
 #define JACO_SUBCYCLE_MIN_FRAC 1e-6  /* tier 3 gives up below this fraction of Delta_t */
 #define JACO_SUBCYCLE_MAXSTEPS 2000
-
-#define JACO_FLOOR_PIN (JACO_ABUNDANCE_FLOOR * (1 + 1e-9)) /* at or below this a species counts as floored */
 
 void jaco_solver_default_settings(struct JacoSolverSettings *set) {
     set->T_min = 1.0;
@@ -92,55 +94,70 @@ enum Outcome { OUTCOME_FAILED, OUTCOME_SOLVED, OUTCOME_PINNED };
 /* which variables a Newton solve may move: T, steady-state species, time-dependent species */
 enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_ALL = 7 };
 
+#ifndef JACO_HAS_SOLVER_METADATA
+#error "microphysics_func_jac.h carries no solver metadata: regenerate it with a jaco that emits it"
+#endif
+
 /* layout the solver relies on: v = (u, T, species...), and the unions' data[] alias their named fields */
 static_assert(IDX_u == 0 && IDX_T == 1, "the solver assumes v = (u, T, species...)");
 static_assert(sizeof(SolveVars) == N_VARS * sizeof(double) && sizeof(Params) == N_PARAMS * sizeof(double),
               "SolveVars and Params must be exactly their data[] arrays");
 
-/* ---- model metadata: what the solver needs beyond the generated header ----
-   Time-dependent species carry a backward-Euler term; all other species are steady state.
-   Conserved budgets bound the eliminated abundances: total - sum_t w[t] x[k[t]] >= 0, the total a constant or
-   a parameter (e.g. x_H0 = 1 - x_H+ - 2 x_H2). The step bound, the projection, the finite-difference
-   direction and the H2 ceiling all read budget_table through budget_value, so they agree on a budget to the
-   last bit. Laid out so that the codegen can emit both from the model. The start clamps (sanitize) and
-   the ionized seed further down are model policy and remain hand-written. */
+/* ---- model metadata, from the generated header ----
+   Time-dependent species carry a backward-Euler term towards their start-of-step value pr->data[param]; all other
+   species are steady state. Abundances live in [var_floor, var_ceiling]; absolute abundance tolerances are fractions of
+   var_scale. Conserved budgets bound the eliminated abundances: total - sum_t w[t] x[k[t]] >= 0, the total a constant
+   or a parameter (e.g. x_H0 = 1 - x_H+ - 2 x_H2). The step bound, the projection, the finite-difference direction, the
+   start clamps, the ionized seed and the time-dependent species' caps all read budget_table through budget_value or
+   budget_cap, so they agree on a budget to the last bit. */
+static constexpr int var_time_dependent[N_VARS] = JACO_VAR_TIME_DEPENDENT_INIT;
+static constexpr double var_floor[N_VARS] = JACO_VAR_FLOOR_INIT;
+static constexpr double var_ceiling[N_VARS] = JACO_VAR_CEILING_INIT;
+static constexpr double var_scale[N_VARS] = JACO_VAR_SCALE_INIT;
+static constexpr int var_charge[N_VARS] = JACO_VAR_CHARGE_INIT;
+static constexpr int var_initial_param[N_VARS] = JACO_VAR_INITIAL_PARAM_INIT;
 
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-#define JACO_HAVE_H2 1
-static_assert(IDX_x_H_2 >= 2 && IDX_x_H_2 < N_VARS, "the time-dependent species must be a species");
-static int is_time_dependent(int k) { return k == IDX_x_H_2; }
-#else
-static int is_time_dependent(int k) { (void)k; return 0; }
-#endif
+static int is_time_dependent(int k) { return var_time_dependent[k]; }
+/* at or below this a species counts as floored */
+static double floor_pin(int k) { return var_floor[k] * (1 + 1e-9); }
+
+struct TDSpecies {
+    int k;     /* IDX_ of the species */
+    int param; /* PARAM_ of its start-of-step value */
+};
+static constexpr struct TDSpecies td_species[] = JACO_TD_SPECIES_INIT;
+#define N_TD JACO_N_TD_SPECIES
 
 struct Budget {
     double total;    /* the total if total_param < 0 */
     int total_param; /* else the PARAM_ index holding it */
     int nterm;
-    int k[2];        /* IDX_ of the species */
-    double w[2];     /* their weights */
+    int k[JACO_BUDGET_MAX_TERMS];    /* IDX_ of the species */
+    double w[JACO_BUDGET_MAX_TERMS]; /* their weights */
 };
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-static constexpr struct Budget budget_table[] = {
-    {1.0, -1, 2, {IDX_x_Hplus, IDX_x_H_2}, {1, 2}},             /* x_H0 */
-    {0.0, PARAM_y, 2, {IDX_x_Heplus, IDX_x_Heplusplus}, {1, 1}}, /* x_He0 */
-};
-#define N_BUDGETS 2
-#elif defined(JACO_MODEL_KWH)
-static constexpr struct Budget budget_table[] = {
-    {1.0, -1, 1, {IDX_x_Hplus, 0}, {1, 0}},                     /* x_H0 */
-    {0.0, PARAM_y, 2, {IDX_x_Heplus, IDX_x_Heplusplus}, {1, 1}}, /* x_He0 */
-};
-#define N_BUDGETS 2
-#else
-static constexpr struct Budget budget_table[1] = {{0.0, -1, 0, {0, 0}, {0, 0}}}; /* unused */
-#define N_BUDGETS 0
-#endif
+static constexpr struct Budget budget_table[] = JACO_BUDGETS_INIT;
+#define N_BUDGETS JACO_N_BUDGETS
+
+static constexpr bool metadata_valid() {
+    if (!var_time_dependent[IDX_T] || var_initial_param[IDX_T] != PARAM_u_initial || var_time_dependent[IDX_u]) return false;
+    int ntd = 0;
+    for (int k = 2; k < N_VARS; k++) {
+        if (!(var_floor[k] >= 0 && var_ceiling[k] > var_floor[k] && var_scale[k] > 0)) return false;
+        if (var_time_dependent[k]) {
+            if (ntd >= N_TD || td_species[ntd].k != k || td_species[ntd].param != var_initial_param[k]) return false;
+            if (td_species[ntd].param < 0 || td_species[ntd].param >= N_PARAMS) return false;
+            ntd++;
+        } else if (var_initial_param[k] >= 0) return false;
+    }
+    return ntd == N_TD;
+}
+static_assert(metadata_valid(), "solver metadata: T must be time-dependent with u_initial, species start at index 2, "
+                                "and the time-dependent species table must match the per-variable flags");
 
 static constexpr bool budget_table_valid() {
     for (int b = 0; b < N_BUDGETS; b++) {
         const struct Budget &B = budget_table[b];
-        if (B.total_param >= N_PARAMS || B.nterm < 1 || B.nterm > 2) return false;
+        if (B.total_param >= N_PARAMS || B.nterm < 1 || B.nterm > JACO_BUDGET_MAX_TERMS) return false;
         for (int t = 0; t < B.nterm; t++)
             if (B.k[t] < 2 || B.k[t] >= N_VARS || !(B.w[t] > 0)) return false;
     }
@@ -167,7 +184,7 @@ static double budget_weight(const struct Budget *b, int j) {
 }
 
 /* Largest x_j every budget containing it allows, the other species fixed. */
-[[maybe_unused]] static double budget_cap(const SolveVars *sv, const Params *pr, int j) {
+static double budget_cap(const SolveVars *sv, const Params *pr, int j) {
     double cap = HUGE_VAL;
     for (int b = 0; b < N_BUDGETS; b++) {
         const struct Budget *B = &budget_table[b];
@@ -186,7 +203,9 @@ static void trim_budgets(SolveVars *sv, const Params *pr) {
     for (int b = 0; b < N_BUDGETS; b++) {
         const struct Budget *B = &budget_table[b];
         while (budget_value(B, sv, pr) < 0) {
-            int t = (B->nterm > 1 && B->w[1] * sv->data[B->k[1]] > B->w[0] * sv->data[B->k[0]]) ? 1 : 0;
+            int t = 0;
+            for (int s2 = 1; s2 < B->nterm; s2++)
+                if (B->w[s2] * sv->data[B->k[s2]] > B->w[t] * sv->data[B->k[t]]) t = s2;
             double rest = budget_total(B, pr);
             for (int s2 = 0; s2 < B->nterm; s2++)
                 if (s2 != t) rest -= B->w[s2] * sv->data[B->k[s2]];
@@ -207,49 +226,98 @@ static const char *newton_status(int s) {
 }
 
 /* Clamp the starting state (and the time-dependent species' initial values) into the physical
-   region: T in [T_min, T_max], abundances at or above the floor, neutral budgets positive. */
+   region: T in [T_min, T_max], abundances in [floor, ceiling], budgets positive with a margin. In each budget the
+   steady-state species are scaled into it (a single one is clamped), then the time-dependent ones take what remains;
+   a start-of-step value is clamped to what its budgets allow on their own. */
 static void sanitize(SolveVars *sv, Params *pr, const struct JacoSolverSettings *set) {
     if (!jaco_isfinite(sv->T)) sv->T = set->T_min;
     sv->T = fmax(set->T_min, fmin(set->T_max, sv->T));
     for (int k = 2; k < N_VARS; k++) {
-        if (!jaco_isfinite(sv->data[k]) || sv->data[k] < JACO_ABUNDANCE_FLOOR) sv->data[k] = JACO_ABUNDANCE_FLOOR;
-        if (sv->data[k] > 1) sv->data[k] = 1;
+        if (!jaco_isfinite(sv->data[k]) || sv->data[k] < var_floor[k]) sv->data[k] = var_floor[k];
+        if (sv->data[k] > var_ceiling[k]) sv->data[k] = var_ceiling[k];
     }
     const double margin = 1e-10;
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-    sv->x_Hplus = fmin(sv->x_Hplus, 1 - margin);
-    sv->x_H_2 = fmax(JACO_ABUNDANCE_FLOOR, fmin(sv->x_H_2, 0.5 * (1 - margin - sv->x_Hplus)));
-    pr->x_H_2_initial = fmax(JACO_ABUNDANCE_FLOOR, fmin(pr->x_H_2_initial, 0.5));
-#elif defined(JACO_MODEL_KWH)
-    sv->x_Hplus = fmin(sv->x_Hplus, 1 - margin);
-#endif
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
-    double he = sv->x_Heplus + sv->x_Heplusplus, he_max = pr->y * (1 - margin);
-    if (he > he_max) {
-        sv->x_Heplus = fmax(JACO_ABUNDANCE_FLOOR, sv->x_Heplus * he_max / he);
-        sv->x_Heplusplus = fmax(JACO_ABUNDANCE_FLOOR, sv->x_Heplusplus * he_max / he);
+    for (int b = 0; b < N_BUDGETS; b++) {
+        const struct Budget *B = &budget_table[b];
+        double cap = budget_total(B, pr) * (1 - margin), ss = 0;
+        int nss = 0;
+        for (int t = 0; t < B->nterm; t++)
+            if (!is_time_dependent(B->k[t])) {
+                ss += B->w[t] * sv->data[B->k[t]];
+                nss++;
+            }
+        for (int t = 0; t < B->nterm; t++) {
+            int k = B->k[t];
+            if (is_time_dependent(k)) continue;
+            if (nss == 1)
+                sv->data[k] = fmin(sv->data[k], cap / B->w[t]);
+            else if (ss > cap)
+                sv->data[k] = fmax(var_floor[k], sv->data[k] * cap / ss);
+        }
+        for (int t = 0; t < B->nterm; t++) {
+            int k = B->k[t];
+            if (!is_time_dependent(k)) continue;
+            double rest = cap;
+            for (int t2 = 0; t2 < B->nterm; t2++)
+                if (t2 != t) rest -= B->w[t2] * sv->data[B->k[t2]];
+            sv->data[k] = fmax(var_floor[k], fmin(sv->data[k], rest / B->w[t]));
+        }
     }
-#endif
+    for (int t = 0; t < N_TD; t++) {
+        int k = td_species[t].k;
+        double cap = var_ceiling[k];
+        for (int b = 0; b < N_BUDGETS; b++) {
+            double w = budget_weight(&budget_table[b], k);
+            if (w > 0) cap = fmin(cap, budget_total(&budget_table[b], pr) / w);
+        }
+        pr->data[td_species[t].param] = fmax(var_floor[k], fmin(pr->data[td_species[t].param], cap));
+    }
+    /* start-of-step values that overfill a budget together are scaled into it */
+    for (int b = 0; b < N_BUDGETS; b++) {
+        const struct Budget *B = &budget_table[b];
+        double sum = 0, cap = budget_total(B, pr) * (1 - margin);
+        int ntd = 0;
+        for (int t = 0; t < B->nterm; t++)
+            if (is_time_dependent(B->k[t])) {
+                sum += B->w[t] * pr->data[var_initial_param[B->k[t]]];
+                ntd++;
+            }
+        if (ntd < 2 || sum <= cap) continue;
+        for (int t = 0; t < B->nterm; t++)
+            if (is_time_dependent(B->k[t])) {
+                double *x0 = &pr->data[var_initial_param[B->k[t]]];
+                *x0 = fmax(var_floor[B->k[t]], *x0 * cap / sum);
+            }
+    }
 }
 
-/* Replace the abundances by a nearly fully ionized state (time-dependent species kept). From
-   above, Newton descends to the physical ionization balance; from below it can be drawn to the
-   spurious x_e -> 0 root of collisional ionization, which is proportional to n_e. */
+/* Replace the steady-state abundances in each budget by a nearly fully ionized state (time-dependent species kept):
+   what the time-dependent species leave, 99.9% of it, nearly all on the most charged species. From above, Newton
+   descends to the physical ionization balance; from below it can be drawn to the spurious x_e -> 0 root of collisional
+   ionization, which is proportional to n_e. Returns 0 if no budget has a steady-state species. */
 static int ionized_seed(SolveVars *sv, const Params *pr) {
-    (void)sv;
-    (void)pr;
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-    sv->x_Hplus = 0.999 * (1 - 2 * sv->x_H_2);
-#elif defined(JACO_MODEL_KWH)
-    sv->x_Hplus = 0.999;
-#endif
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL) || defined(JACO_MODEL_KWH)
-    sv->x_Heplus = 1e-3 * pr->y;
-    sv->x_Heplusplus = 0.998 * pr->y;
-    return 1;
-#else
-    return 0;
-#endif
+    int seeded = 0;
+    for (int b = 0; b < N_BUDGETS; b++) {
+        const struct Budget *B = &budget_table[b];
+        double rest = budget_total(B, pr);
+        int nss = 0, top = -1;
+        for (int t = 0; t < B->nterm; t++) {
+            int k = B->k[t];
+            if (is_time_dependent(k)) {
+                rest -= B->w[t] * sv->data[k];
+            } else {
+                nss++;
+                if (top < 0 || var_charge[k] > var_charge[B->k[top]]) top = t;
+            }
+        }
+        for (int t = 0; t < B->nterm; t++) {
+            if (is_time_dependent(B->k[t])) continue;
+            double frac = (t == top) ? (nss == 1 ? 0.999 : 0.998) : 1e-3 / (nss - 1);
+            sv->data[B->k[t]] = frac * rest / B->w[t];
+        }
+        seeded |= nss > 0;
+    }
+    return seeded;
 }
 
 /* ---- evaluation ---- */
@@ -279,7 +347,7 @@ static int evaluate(SolveVars *sv, const Params *pr, struct Eval *e, struct Coun
         if (j == IDX_T) {
             h = -JACO_FD_REL * sv->T; /* backward keeps T > 0 */
         } else {
-            h = JACO_FD_REL * fmax(sv->data[j], JACO_FD_XMIN);
+            h = JACO_FD_REL * fmax(sv->data[j], JACO_FD_XMIN * var_scale[j]);
             for (int b = 0; b < N_BUDGETS; b++)
                 if (budget_value(&budget_table[b], sv, pr) - budget_weight(&budget_table[b], j) * h < 0) h = -fmin(h, 0.5 * sv->data[j]);
         }
@@ -393,7 +461,7 @@ static int lu_solve(const struct LU *lu, const double *b, double *d) {
 static void project(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set) {
     sv->T = fmax(set->T_min, fmin(set->T_max, sv->T));
     for (int k = 2; k < N_VARS; k++)
-        if (sv->data[k] < JACO_ABUNDANCE_FLOOR) sv->data[k] = JACO_ABUNDANCE_FLOOR;
+        if (sv->data[k] < var_floor[k]) sv->data[k] = var_floor[k];
     trim_budgets(sv, pr);
 }
 
@@ -425,7 +493,7 @@ static void reduced_rhs(const struct Eval *e, const int *idx, int n, double *b) 
    change that would remove the residual when cooling is stiff); species |dF_k/dx_k| (x_k + atol). */
 static double row_scale(const SolveVars *sv, const Params *pr, const struct Eval *e, int i) {
     if (i == IDX_T) return JACO_MASS_PER_H * pr->n_Htot * sv->u / pr->Delta_t + fabs(e->J[IDX_T][IDX_T]) * sv->T;
-    return fabs(e->J[i][i]) * (sv->data[i] + JACO_X_ATOL) + 1e-300;
+    return fabs(e->J[i][i]) * (sv->data[i] + JACO_X_ATOL * var_scale[i]) + 1e-300;
 }
 
 static double scaled_norm(const double *d, const double *cs, int n) {
@@ -457,7 +525,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         int idx[N_VARS], n = 0;
         if (mask & SOLVE_T) idx[n++] = IDX_T;
         for (int k = 2; k < N_VARS; k++)
-            if ((mask & (is_time_dependent(k) ? SOLVE_TD : SOLVE_IONS)) && (sv->data[k] > JACO_FLOOR_PIN || e.F.data[k] > 0))
+            if ((mask & (is_time_dependent(k) ? SOLVE_TD : SOLVE_IONS)) && (sv->data[k] > floor_pin(k) || e.F.data[k] > 0))
                 idx[n++] = k;
         if (n == 0) {
             if (F_out) *F_out = e.F;
@@ -468,8 +536,8 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         int res_ok = 1;
         for (int a = 0; a < n; a++) {
             int i = idx[a];
-            cs[a] = (i == IDX_T) ? sv->T : sv->data[i] + JACO_X_ATOL;
-            w[a] = (i == IDX_T) ? sv->T : sv->data[i] + JACO_NORM_XMIN;
+            cs[a] = (i == IDX_T) ? sv->T : sv->data[i] + JACO_X_ATOL * var_scale[i];
+            w[a] = (i == IDX_T) ? sv->T : sv->data[i] + JACO_NORM_XMIN * var_scale[i];
             if (fabs(e.F.data[i]) > tol * row_scale(sv, pr, &e, i)) res_ok = 0;
             for (int a2 = 0; a2 < n; a2++)
                 A[a][a2] = e.J[i][idx[a2]] - e.J[i][IDX_u] * e.J[IDX_u][idx[a2]] / e.J[IDX_u][IDX_u];
@@ -484,7 +552,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             take_step(&full, sv, idx, n, d, 1.0, pr, set);
             for (int a = 0; a < n; a++) {
                 int i = idx[a];
-                double atol = (i == IDX_T) ? 0 : JACO_X_ATOL;
+                double atol = (i == IDX_T) ? 0 : JACO_X_ATOL * var_scale[i];
                 if (fabs(full.data[i] - sv->data[i]) > tol * fabs(sv->data[i]) + atol) step_ok = 0;
             }
         }
@@ -536,6 +604,7 @@ struct RootCtx {
     const Params *pr;
     const struct JacoSolverSettings *set;
     struct Counters *c;
+    int level; /* the time-dependent species a td_bracketed search is over */
     int nhist, next;
     double yh[JACO_ROOT_HISTORY];
     SolveVars xh[JACO_ROOT_HISTORY];
@@ -547,6 +616,7 @@ static void root_init(struct RootCtx *ctx, int (*eval)(double, SolveVars *, stru
     ctx->pr = pr;
     ctx->set = set;
     ctx->c = c;
+    ctx->level = 0;
     ctx->nhist = 0;
     ctx->next = 0;
 }
@@ -660,7 +730,7 @@ static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolve
         if (evaluate(sv, pr, &e, c)) return -1;
         int negligible = 1;
         for (int k = 2; k < N_VARS; k++)
-            if (!is_time_dependent(k) && (sv->data[k] > JACO_FLOOR_PIN || e.F.data[k] > 0) &&
+            if (!is_time_dependent(k) && (sv->data[k] > floor_pin(k) || e.F.data[k] > 0) &&
                 pr->n_Htot * ptc.inv_tau > 1e-3 * fabs(e.J[k][k]))
                 negligible = 0;
         if (negligible) break;
@@ -672,39 +742,59 @@ static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolve
        halves the ions per step when the free electrons are the ions themselves (F ~ -x^2). */
     *sv = start;
     for (int k = 2; k < N_VARS; k++)
-        if (!is_time_dependent(k)) sv->data[k] = JACO_ABUNDANCE_FLOOR;
+        if (!is_time_dependent(k)) sv->data[k] = var_floor[k];
     return newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK ? 0 : -1;
 }
 
-#ifdef JACO_HAVE_H2
-static double h2_upper(const SolveVars *x, const Params *pr) { return budget_cap(x, pr, IDX_x_H_2) * (1 - 1e-9); }
+/* Largest abundance of time-dependent species k: its ceiling and its budgets, the other species fixed */
+static double td_upper(const SolveVars *x, const Params *pr, int k) {
+    return fmin(var_ceiling[k], budget_cap(x, pr, k)) * (1 - 1e-9);
+}
 
-/* H2 residual at x_H2 = exp(y) with the steady-state species solved there */
-static int h2_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
-    x->x_H_2 = fmax(JACO_ABUNDANCE_FLOOR, fmin(exp(y), h2_upper(x, ctx->pr)));
-    SolveVars F;
-    if (ions_at_fixed(x, ctx->pr, ctx->set, ctx->c, &F)) return -1;
-    *val = F.x_H_2;
+static int td_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level);
+
+/* At fixed T, with the time-dependent species before `level` fixed, solve the others: the next time-dependent species
+   by its own bracketed search, or, once all of them are fixed, the steady-state species. F_out gets the full residual
+   at the solution. */
+static int td_inner(SolveVars *x, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level,
+                    SolveVars *F_out) {
+    if (level >= N_TD) return ions_at_fixed(x, pr, set, c, F_out);
+    if (td_bracketed(x, pr, set, c, level)) return -1;
+    struct Eval e;
+    if (evaluate(x, pr, &e, c)) return -1;
+    *F_out = e.F;
     return 0;
 }
 
-/* x_H2 at fixed T as a scalar backward-Euler equation, the steady-state species solved at each
-   trial: walk geometrically from x_H2_initial in the direction its net rate points, to the first
-   sign change (the root the time evolution reaches first; self-shielding can make the H2
-   equation non-monotonic, with several roots), then Brent in ln x_H2. At x_H2 = floor the
-   residual is >= 0 and at full molecular conversion <= 0, so a root or a pinned end exists. */
-static int h2_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
+/* residual of the time-dependent species ctx->level at abundance exp(y), the species after it solved there */
+static int td_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
+    const int k = td_species[ctx->level].k;
+    x->data[k] = fmax(var_floor[k], fmin(exp(y), td_upper(x, ctx->pr, k)));
+    SolveVars F;
+    if (td_inner(x, ctx->pr, ctx->set, ctx->c, ctx->level + 1, &F)) return -1;
+    *val = F.data[k];
+    return 0;
+}
+
+/* Time-dependent species `level` at fixed T as a scalar backward-Euler equation, the species after it solved at each
+   trial: walk geometrically from its start-of-step value in the direction its net rate points, to the first sign
+   change (the root the time evolution reaches first; e.g. H2 self-shielding makes its equation non-monotonic, with
+   several roots), then Brent in ln x. At the floor the residual is >= 0 (nothing destroys a species that is not
+   there, and the backward-Euler term pulls it up) and at its cap <= 0, so a root or a pinned end exists. */
+static int td_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level) {
+    const int k = td_species[level].k;
     struct RootCtx ctx;
-    root_init(&ctx, h2_eval, pr, set, c);
-    const double y_floor = log(JACO_ABUNDANCE_FLOOR);
+    root_init(&ctx, td_eval, pr, set, c);
+    ctx.level = level;
+    const double y_floor = log(var_floor[k]);
     SolveVars xa = *sv;
-    double ya = log(fmax(JACO_ABUNDANCE_FLOOR, fmin(pr->x_H_2_initial, h2_upper(sv, pr)))), Ga;
+    double ya = log(fmax(var_floor[k], fmin(pr->data[td_species[level].param], td_upper(sv, pr, k)))), Ga;
     if (root_eval(&ctx, ya, &xa, &Ga)) return -1;
     int up = Ga > 0;
     double fac = log(2.0), yb = ya, Gb = Ga;
     SolveVars xb = xa;
     for (int it = 0; it < JACO_BRACKET_MAXITER && Ga != 0; it++) {
-        double y_hi = log(h2_upper(&xa, pr));
+        double y_hi = log(td_upper(&xa, pr, k));
         if ((up && ya >= y_hi) || (!up && ya <= y_floor)) {
             *sv = xa; /* the net rate keeps its sign to the bound: the bound is the answer */
             return 0;
@@ -726,10 +816,9 @@ static int h2_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolver
     if (brent(&ctx, ya, Ga, &xa, yb, Gb, &xb, set->tol, &y, sv)) return -1;
     return 0;
 }
-#endif
 
-/* Chemistry at fixed T: Newton on all species; if that fails, the time-dependent species as a
-   bracketed scalar problem around the steady-state ones (or, without time-dependent species,
+/* Chemistry at fixed T: Newton on all species; if that fails, the time-dependent species as nested
+   bracketed scalar problems around the steady-state ones (or, without time-dependent species,
    the steady-state fallback directly). F_out gets the full residual at the returned state. */
 static int chemistry_at_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                           SolveVars *F_out) {
@@ -741,16 +830,13 @@ static int chemistry_at_T(SolveVars *sv, const Params *pr, const struct JacoSolv
         return 0;
     if (set->verbose) printf("  jaco chemistry at T=%g: Newton %s, falling back\n", sv->T, newton_status(st));
     *sv = start;
-#ifdef JACO_HAVE_H2
-    if (h2_bracketed(sv, pr, set, c)) return -1;
+    if (N_TD == 0) return ions_at_fixed(sv, pr, set, c, F_out);
+    if (td_bracketed(sv, pr, set, c, 0)) return -1;
     /* residual at the returned state, which the bracketed solve evaluated last there */
     struct Eval e;
     if (evaluate(sv, pr, &e, c)) return -1;
     if (F_out) *F_out = e.F;
     return 0;
-#else
-    return ions_at_fixed(sv, pr, set, c, F_out);
-#endif
 }
 
 /* Energy residual at T with the chemistry solved there, signed as in DoCooling: R > 0 means T is
@@ -877,7 +963,7 @@ static int verify(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
     if (pinned ? (sv->T >= set->T_max ? r < -lim : r > lim) : fabs(r) > lim) return -1;
     for (int k = 2; k < N_VARS; k++) {
         double rk = e.F.data[k] / row_scale(sv, pr, &e, k);
-        if (sv->data[k] <= JACO_FLOOR_PIN ? rk > lim : fabs(rk) > lim) return -1;
+        if (sv->data[k] <= floor_pin(k) ? rk > lim : fabs(rk) > lim) return -1;
     }
     return 0;
 }
@@ -979,9 +1065,7 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
         ps.Delta_t = fmin(dt_sub, dt - t_done);
         if (nsub > 0) {
             ps.u_initial = cur.u;
-#if defined(JACO_FAMILY_STARFORGE) || defined(JACO_MODEL_PRIMORDIAL)
-            ps.x_H_2_initial = cur.x_H_2;
-#endif
+            jaco_initial_from_state(&cur, &ps);
         }
         SolveVars trial = cur;
         int t2;
@@ -1010,6 +1094,10 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
     info->tier = JACO_TIER_SUBCYCLE;
     info->pinned = pinned;
     return 0;
+}
+
+void jaco_initial_from_state(const SolveVars *sv, Params *pr) {
+    for (int t = 0; t < N_TD; t++) pr->data[td_species[t].param] = sv->data[td_species[t].k];
 }
 
 int jaco_solve_chemistry(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettings *set, int *nfeval) {
