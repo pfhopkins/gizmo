@@ -86,6 +86,9 @@ struct PTC {
 
 enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESEARCH = -3, NEWTON_MAXITER = -4 };
 
+/* outcome of a tier or of the tier-2 search; PINNED: the answer sits at the temperature/energy floor or ceiling */
+enum Outcome { OUTCOME_FAILED, OUTCOME_SOLVED, OUTCOME_PINNED };
+
 /* which variables a Newton solve may move: T, steady-state species, time-dependent species */
 enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_ALL = 7 };
 
@@ -779,26 +782,24 @@ static int pin_to_floor(SolveVars *x, const Params *pr, const struct JacoSolverS
     return 0;
 }
 
-/* Tier 2. On success sv holds the answer; *pinned is set if it is the floor or ceiling. */
-static int rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
-                      int *pinned) {
-    *pinned = 0;
+/* Tier-2 search. On success sv holds the answer, PINNED if it is the floor or ceiling. */
+static enum Outcome rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
     struct RootCtx ctx;
     root_init(&ctx, energy_eval, pr, set, c);
     const double T_hi = set->T_max;
     SolveVars xa = *sv;
     double Ta = fmax(set->T_min, fmin(T_hi, sv->T)), Ra;
-    if (root_eval(&ctx, log(Ta), &xa, &Ra)) return -1;
+    if (root_eval(&ctx, log(Ta), &xa, &Ra)) return OUTCOME_FAILED;
     int a_at_floor = 0;
     if (xa.u < set->u_min) {
-        if (pin_to_floor(&xa, pr, set, c, &Ra)) return -1;
+        if (pin_to_floor(&xa, pr, set, c, &Ra)) return OUTCOME_FAILED;
         Ta = xa.T;
         root_remember(&ctx, log(Ta), &xa);
         a_at_floor = 1;
     }
     if (Ra == 0) {
         *sv = xa;
-        return 0;
+        return OUTCOME_SOLVED;
     }
 
     /* bracket: walk geometrically in the direction R points to, stopping at the floor or ceiling */
@@ -809,22 +810,21 @@ static int rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSe
     for (int it = 0; it < JACO_BRACKET_MAXITER; it++) {
         if ((down && (a_at_floor || Ta <= set->T_min)) || (!down && Ta >= T_hi)) {
             *sv = xa; /* R kept its sign all the way to the limit: the limit is the answer */
-            *pinned = 1;
             if (set->verbose) printf("  jaco tier 2: pinned at T=%g (R=%g)\n", Ta, Ra);
-            return 0;
+            return OUTCOME_PINNED;
         }
         Tb = down ? fmax(set->T_min, Ta / fac) : fmin(T_hi, Ta * fac);
-        if (root_eval(&ctx, log(Tb), &xb, &Rb)) return -1;
+        if (root_eval(&ctx, log(Tb), &xb, &Rb)) return OUTCOME_FAILED;
         int b_at_floor = 0;
         if (down && xb.u < set->u_min) {
-            if (pin_to_floor(&xb, pr, set, c, &Rb)) return -1;
+            if (pin_to_floor(&xb, pr, set, c, &Rb)) return OUTCOME_FAILED;
             Tb = xb.T;
             root_remember(&ctx, log(Tb), &xb);
             b_at_floor = 1;
         }
         if (Rb == 0) {
             *sv = xb;
-            return 0;
+            return OUTCOME_SOLVED;
         }
         if ((Rb > 0) != (Ra > 0)) {
             bracketed = 1;
@@ -836,35 +836,34 @@ static int rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSe
         a_at_floor = b_at_floor;
         fac *= JACO_BRACKET_GROW;
     }
-    if (!bracketed) return -1;
+    if (!bracketed) return OUTCOME_FAILED;
 
     double y;
-    if (brent(&ctx, log(Ta), Ra, &xa, log(Tb), Rb, &xb, set->tol, &y, sv)) return -1;
+    if (brent(&ctx, log(Ta), Ra, &xa, log(Tb), Rb, &xb, set->tol, &y, sv)) return OUTCOME_FAILED;
 
     /* polish on the full system; keep the rootfind answer if the polish does not converge */
     SolveVars pol = *sv;
     if (newton(&pol, pr, set, SOLVE_ALL, JACO_POLISH_MAXITER, NULL, c, NULL) == NEWTON_OK) *sv = pol;
-    return 0;
+    return OUTCOME_SOLVED;
 }
 
 /* ---- driver ---- */
 
 /* An answer within tol below the energy floor is moved onto it exactly: T is raised, abundances
    fixed, until u(T, x) >= u_min as evaluated (Newton in T, then ulp steps for round-off). The
-   floor fixed point and the EOS inversion only reach it to their tolerances. Returns 0 if the
-   answer now satisfies the bounds, -1 if it was further below. */
-static int onto_floor(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, int *pinned) {
+   floor fixed point and the EOS inversion only reach it to their tolerances. SOLVED if the answer
+   was not below, PINNED if it was moved, FAILED if it was further below. */
+static enum Outcome onto_floor(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set) {
     double cv;
     sv->u = jaco_T_to_u(sv->T, sv, pr, &cv);
-    if (sv->u >= set->u_min) return 0;
-    if (sv->u < set->u_min * (1 - set->tol)) return -1;
+    if (sv->u >= set->u_min) return OUTCOME_SOLVED;
+    if (sv->u < set->u_min * (1 - set->tol)) return OUTCOME_FAILED;
     for (int it = 0; it < 100 && sv->u < set->u_min; it++) {
         double T_new = sv->T + (set->u_min - sv->u) / cv;
         sv->T = fmin(set->T_max, fmax(T_new, nextafter(sv->T, set->T_max)));
         sv->u = jaco_T_to_u(sv->T, sv, pr, &cv);
     }
-    *pinned = 1;
-    return sv->u >= set->u_min ? 0 : -1;
+    return sv->u >= set->u_min ? OUTCOME_PINNED : OUTCOME_FAILED;
 }
 
 /* Acceptance test of a tier-2 answer from a fresh evaluation: every free row within
@@ -883,33 +882,54 @@ static int verify(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
     return 0;
 }
 
-/* Tiers 1 and 2 over one (sub)step. */
-static int solve_step(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
-                      int *tier, int *pinned, int *nfeval_tier1, int *tier1_status) {
-    SolveVars start = *sv;
+/* Tier 1: Newton from the start, moved onto the energy floor if just below it. *status: 0, a
+   NEWTON_ code, or -5 (converged below the energy floor). */
+static enum Outcome tier1_newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                                 int *status) {
     int st = newton(sv, pr, set, SOLVE_ALL, JACO_TIER1_MAXITER, NULL, c, NULL);
-    *pinned = 0;
-    int floor_ok = (st == NEWTON_OK) && onto_floor(sv, pr, set, pinned) == 0;
+    enum Outcome o = (st == NEWTON_OK) ? onto_floor(sv, pr, set) : OUTCOME_FAILED;
+    *status = (st == NEWTON_OK && o == OUTCOME_FAILED) ? -5 : st;
+    return o;
+}
+
+/* Tier 2: rootfind in T, onto the energy floor, then the acceptance test. */
+static enum Outcome tier2_rootfind(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
+    enum Outcome r = rootfind_T(sv, pr, set, c);
+    if (r == OUTCOME_FAILED) return r;
+    enum Outcome f = onto_floor(sv, pr, set);
+    if (f == OUTCOME_FAILED) return f;
+    int pinned = (r == OUTCOME_PINNED || f == OUTCOME_PINNED);
+    if (verify(sv, pr, set, c, pinned)) {
+        if (set->verbose) printf("  jaco tier 2 answer T=%g failed the acceptance test\n", sv->T);
+        return OUTCOME_FAILED;
+    }
+    return pinned ? OUTCOME_PINNED : OUTCOME_SOLVED;
+}
+
+/* Tiers 1 and 2 over one (sub)step; *tier is set on success, sv left at the start on failure. */
+static enum Outcome solve_step(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                               int *tier, int *nfeval_tier1, int *tier1_status) {
+    SolveVars start = *sv;
+    int status;
+    enum Outcome o = tier1_newton(sv, pr, set, c, &status);
     if (nfeval_tier1) *nfeval_tier1 = c->nfeval;
-    if (tier1_status) *tier1_status = (st == NEWTON_OK && !floor_ok) ? -5 : st;
-    if (floor_ok) {
+    if (tier1_status) *tier1_status = status;
+    if (o != OUTCOME_FAILED) {
         *tier = JACO_TIER_NEWTON;
-        return 0;
+        return o;
     }
     if (set->verbose)
-        printf("  jaco tier 1 failed (%s) T0=%g n=%g dt=%g; tier 2\n", st == NEWTON_OK ? "below energy floor" : newton_status(st),
+        printf("  jaco tier 1 failed (%s) T0=%g n=%g dt=%g; tier 2\n", status == -5 ? "below energy floor" : newton_status(status),
                start.T, pr->n_Htot, pr->Delta_t);
     *sv = start;
-    if (rootfind_T(sv, pr, set, c, pinned) == 0 && onto_floor(sv, pr, set, pinned) == 0) {
-        if (verify(sv, pr, set, c, *pinned) == 0) {
-            *tier = JACO_TIER_ROOTFIND;
-            return 0;
-        }
-        if (set->verbose) printf("  jaco tier 2 answer T=%g failed the acceptance test\n", sv->T);
+    o = tier2_rootfind(sv, pr, set, c);
+    if (o != OUTCOME_FAILED) {
+        *tier = JACO_TIER_ROOTFIND;
+        return o;
     }
     if (set->verbose) printf("  jaco tier 2 failed T0=%g n=%g dt=%g\n", start.T, pr->n_Htot, pr->Delta_t);
     *sv = start;
-    return -1;
+    return OUTCOME_FAILED;
 }
 
 int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettings *set, struct JacoSolveInfo *info) {
@@ -932,10 +952,11 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
     }
     const SolveVars start = *sv;
 
-    int tier = 0, pinned = 0;
-    if (solve_step(sv, &pr, set, &c, &tier, &pinned, &info->nfeval_tier1, &info->tier1_status) == 0) {
+    int tier = 0;
+    enum Outcome o = solve_step(sv, &pr, set, &c, &tier, &info->nfeval_tier1, &info->tier1_status);
+    if (o != OUTCOME_FAILED) {
         info->tier = tier;
-        info->pinned = pinned;
+        info->pinned = (o == OUTCOME_PINNED);
         info->nfeval = c.nfeval;
         info->nfeval_fd = c.nfeval_fd;
         info->n_nonfinite_jac = c.n_nonfinite_jac;
@@ -949,7 +970,7 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
     Params ps = pr;
     const double dt = pr.Delta_t;
     double t_done = 0, dt_sub = 0.5 * dt;
-    int nsub = 0, ok = 1;
+    int nsub = 0, ok = 1, pinned = 0;
     while (t_done < dt * (1 - 1e-12)) {
         if (nsub >= JACO_SUBCYCLE_MAXSTEPS || dt_sub < JACO_SUBCYCLE_MIN_FRAC * dt) {
             ok = 0;
@@ -963,12 +984,13 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
 #endif
         }
         SolveVars trial = cur;
-        int t2, p2;
-        if (solve_step(&trial, &ps, set, &c, &t2, &p2, NULL, NULL) == 0) {
+        int t2;
+        enum Outcome o2 = solve_step(&trial, &ps, set, &c, &t2, NULL, NULL);
+        if (o2 != OUTCOME_FAILED) {
             cur = trial;
             t_done += ps.Delta_t;
             nsub++;
-            pinned |= p2;
+            pinned |= (o2 == OUTCOME_PINNED);
             dt_sub *= 2;
         } else {
             dt_sub *= 0.5;
