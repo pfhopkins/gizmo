@@ -36,17 +36,26 @@ extern "C" int jaco_isfinite(double x);
 /* Radiation. Supported: M1 RADTRANSFER with the single H-ionizing band (RT_CHEM_PHOTOION), whose photoionization and
    photoheating the jaco model takes over (Gamma_HI, eps_HI) while the RT kick absorbs the band, and the bands that only
    feed the model's inputs (RT_PHOTOELECTRIC, RT_LYMAN_WERNER: G_0 and G_LW; RT_OPTICAL_NIR: the donation target).
-   Not yet: the cooling-radiation return to the NUV and IR bands (RT_NUV, RT_INFRARED); He photoionization and further
-   ionizing bands; X-ray and free-free bands, which change what the cooling module returns where; ray-based and
-   intensity solvers; the dust-only cooling switch; the nuclear-zoom routing. */
+   The cooling radiation is returned to the NUV and IR bands (RT_NUV, RT_INFRARED) from the model's outputs by the
+   standard module's return (rt_cooling_radiation_to_bands). Not yet: He photoionization and further ionizing bands;
+   X-ray and free-free bands, which change what the cooling module returns where; ray-based and intensity solvers; the
+   dust-only cooling switch; the nuclear-zoom routing. */
 #if defined(RADTRANSFER) && !defined(JACO_HAS_PARAM_Gamma_HI)
 #error "JACO with RADTRANSFER needs a model with the RT coupling (JACO=starforge_legacy_RT)"
 #endif
 #if defined(RT_CHEM_PHOTOION) && !defined(RADTRANSFER)
 #error "JACO supports RT_CHEM_PHOTOION only with an explicit RADTRANSFER solver"
 #endif
-#if defined(RADTRANSFER) && (defined(RT_NUV) || defined(RT_INFRARED))
-#error "JACO does not yet carry the cooling-radiation return to the RT bands (RT_NUV, RT_INFRARED)"
+#if defined(RADTRANSFER) && (defined(RT_NUV) || defined(RT_INFRARED)) && !(defined(JACO_HAS_OUTPUT_L_NUV) && defined(JACO_HAS_OUTPUT_L_IR_gas) && defined(JACO_HAS_OUTPUT_dust_heat))
+#error "JACO with the NUV or IR band needs a model with the cooling-radiation outputs (JACO=starforge_legacy_RT)"
+#endif
+#if defined(RT_NUV) && !defined(RT_PHOTOELECTRIC)
+#error "JACO's NUV return assumes the photoelectric band carries the photoelectric heating (RT_NUV needs RT_PHOTOELECTRIC)"
+#endif
+/* JACO_RT_LEGACY_RETURN_GATE=0: return the cooling radiation to the bands without the standard module's limiter, which
+   under a reduced speed of light lets a band gain energy only where the cell's internal energy fell over the step */
+#ifndef JACO_RT_LEGACY_RETURN_GATE
+#define JACO_RT_LEGACY_RETURN_GATE 1
 #endif
 #if defined(RT_CHEM_PHOTOION_HE) || defined(RT_PHOTOION_MULTIFREQUENCY) || defined(RT_SOFT_XRAY) || defined(RT_HARD_XRAY) || \
     defined(RT_FREEFREE) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_LEBRON) || defined(RT_EVOLVE_INTENSITIES) || \
@@ -120,9 +129,6 @@ double jaco_cie_electron_abundance(double T) {
     double logT = log10(DMAX(T, 10.));
     return cie_interp(cie_xHp, logT) + cie_interp(cie_xHep, logT) + 2.0 * cie_interp(cie_xHepp, logT);
 }
-
-/* H+ per H in CIE at temperature T (from the table) */
-double jaco_cie_hplus_abundance(double T) { return cie_interp(cie_xHp, log10(DMAX(T, 10.))); }
 
 /* Build the CIE table by sweeping T downward with continuation, solving the chemistry at each
    fixed T with the solver's fixed-T chemistry solve. Called once from InitCool(). */
@@ -566,8 +572,9 @@ void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, 
 /* The ionizing band as find_abundances_and_rates and Heat_Ion_from_RHD read it (cooling.cc): Gamma = c sigma n_gamma per
    neutral H at the true c, the IR band's tail above 13.6 eV included, and eps_HI = rt_ion_G_HI per ionization.
    c_tilde = 0, GIZMO's rate law: the RT kick absorbs the band, so the rate is frozen over the step. T_bg: the background
-   temperature of the emission corrections. */
-static void jaco_pack_radiation(int i, Params *pr, struct gas_cell_data *cell) {
+   temperature of the emission corrections. f_recNUV: the share of the recombination cooling returned to the NUV band.
+   f_IR_selfabs: CoolingRate's IR self-absorption factor at the cached temperature. */
+static void jaco_pack_radiation(int i, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
     pr->Gamma_HI = pr->sigma_HI = pr->eps_HI = pr->c_tilde = 0;
 #ifdef RT_CHEM_PHOTOION
     const int k = RT_FREQ_BIN_H0;
@@ -582,6 +589,38 @@ static void jaco_pack_radiation(int i, Params *pr, struct gas_cell_data *cell) {
     pr->eps_HI = rt_ion_G_HI[k] * UNIT_ENERGY_IN_CGS;
 #endif
     pr->T_bg = get_background_radiation_temperature_for_emission_corrections(i, cell);
+    pr->f_recNUV = jaco_recombination_return_fraction(i, cell[i].Temperature, pr->eps_HI * pr->Gamma_HI, cell);
+    pr->f_IR_selfabs = 1;
+#ifdef RT_INFRARED
+    double T = cell[i].Temperature, tau_self = rt_kappa_adaptive_IR_band(i, T, T, -1, -1, pp, cell) * 0.5 *
+                                                (cell[i].Density * All.cf_a3inv) * (pp[i].Get_Particle_Size() * All.cf_atime);
+    pr->f_IR_selfabs = 1. / (1. + tau_self * tau_self);
+#endif
+}
+#endif
+
+#if defined(RADTRANSFER)
+/* The standard module's cooling-radiation return from the model's outputs at the solved state: CoolingRate's routing
+   into Lambda_RadiativeCooling_toRHDBins (NUV to the IR band where the IR radiation is hotter than 1e4 K), the dust
+   temperature rt_ir_lambdadust solves at the final gas temperature with the IR band credited with the dust coupling the
+   solve used, then rt_cooling_radiation_to_bands. Call before the cell's energy is updated. */
+static void jaco_return_cooling_radiation(int i, const SolveVars *sv, const Params *pr, const struct jaco_step_outputs *out,
+                                          struct particle_data *pp, struct gas_cell_data *cell) {
+    double nH = cell[i].nHcgs(), inv_nH2 = 1. / (nH * nH);
+    for (int k = 0; k < N_RT_FREQ_BINS; k++) cell[i].Lambda_RadiativeCooling_toRHDBins[k] = 0;
+#ifdef RT_NUV
+    int k_nuv = RT_FREQ_BIN_NUV;
+#ifdef RT_INFRARED
+    if (cell[i].Radiation_Temperature > 1.e4) k_nuv = RT_FREQ_BIN_INFRARED;
+#endif
+    cell[i].Lambda_RadiativeCooling_toRHDBins[k_nuv] += out->rate.L_NUV * inv_nH2;
+#endif
+#ifdef RT_INFRARED
+    cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += out->rate.L_IR_gas * inv_nH2;
+    double L_dust_legacy = rt_ir_lambdadust(i, sv->T, pp, cell); /* sets Dust_Temperature and the IR band's cooling-weighted temperature */
+    cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += out->rate.dust_heat * inv_nH2 - L_dust_legacy;
+#endif
+    rt_cooling_radiation_to_bands(i, sv->u / UNIT_SPECEGY_IN_CGS, pr->Delta_t / UNIT_TIME_IN_CGS, JACO_RT_LEGACY_RETURN_GATE, pp, cell);
 }
 #endif
 
@@ -636,7 +675,7 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
     }
 #endif
 #ifdef JACO_HAS_PARAM_Gamma_HI
-    jaco_pack_radiation(i, pr, cell);
+    jaco_pack_radiation(i, pr, pp, cell);
 #endif
 
 #if defined(JACO_HAS_PARAM_G_LW) || defined(JACO_HAS_PARAM_Td)
@@ -657,14 +696,17 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
 #endif
 }
 
-/* Write the solved state back to cell i and, if out, evaluate the model's outputs there. Nothing consumes the outputs
-   yet; the radiation coupling will apply them over the step. */
+/* Write the solved state back to cell i and, if out, evaluate the model's outputs there; under RADTRANSFER they are
+   returned to the RT bands over the step. */
 void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell,
                    struct jaco_step_outputs *out) {
     if (out) {
         microphysics_outputs(sv, pr, &out->rate);
         out->dt = pr->Delta_t;
     }
+#if defined(RADTRANSFER)
+    if (out) jaco_return_cooling_radiation(i, sv, pr, out, pp, cell); /* reads the start-of-step energy and DtInternalEnergy */
+#endif
     cell[i].InternalEnergy = sv->u / UNIT_SPECEGY_IN_CGS;
     cell[i].InternalEnergyPred = cell[i].InternalEnergy;
     cell[i].Temperature = sv->T;

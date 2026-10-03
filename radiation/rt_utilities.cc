@@ -1043,14 +1043,9 @@ void rt_set_simple_inits(int RestartFlag)
 #ifdef RT_CHEM_PHOTOION
             if(flag_to_reset_values_on_startup)
             {
-#ifdef JACO
-                CellP[i].HII = DMAX(MIN_REAL_NUMBER, jaco_cie_hplus_abundance(CellP[i].Temperature)); /* consistent with the CIE Ne init() seeded */
-                CellP[i].HI = 1.0 - CellP[i].HII;
-#else
                 CellP[i].HII = MIN_REAL_NUMBER;
                 CellP[i].HI = 1.0 - CellP[i].HII;
                 CellP[i].Ne = CellP[i].HII;
-#endif
 #ifdef RT_CHEM_PHOTOION_HE
                 double fac = (1-HYDROGEN_MASSFRAC) / (4.0 * HYDROGEN_MASSFRAC);
                 CellP[i].HeIII = MIN_REAL_NUMBER * fac;

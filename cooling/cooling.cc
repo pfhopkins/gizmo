@@ -173,6 +173,81 @@ void set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, str
 }
 
 
+#if defined(RADTRANSFER)
+/* Return the cooling radiation CoolingRate left in Lambda_RadiativeCooling_toRHDBins to the RT bands over the step dtime,
+   for a cell whose specific energy goes from InternalEnergy to unew. gate = 1: each band's change is also limited by
+   the gas energy change net of the hydro work and the absorbed radiation (de_u_touse); gate = 0: only by the positivity
+   floor and the magnitude cap. */
+void rt_cooling_radiation_to_bands(int i, double unew, double dtime, int gate, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    int k;
+    double nHcgs = cell[i].nHcgs(); /* hydrogen number dens in cgs units */
+    double ratefact = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
+    double de_u = (unew - cell[i].InternalEnergy) * cell[i].Mass; /* change in the total internal energy of the gas cell [integrating over everything] */
+    double de_rad_tot_final = 0, de_rad_tot = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {de_rad_tot += cell[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;} /* energy gained by gas needs to be subtracted from radiation. positive lambda means gas cooling (gas energy loss, so radiation energy gain, so positive here) */
+    double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad; /* variables for below showing total change in gas energy from radiation, and placeholder for the hydro work term */
+    de_u_work = (cell[i].DtInternalEnergy*(UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS)*(PROTONMASS_CGS/HYDROGEN_MASSFRAC)) / nHcgs * ratefact; /* account for hydro work going into the system as an energy source */
+#ifndef COOLING_OPERATOR_SPLIT
+    de_u_work = cell[i].DtInternalEnergy / nHcgs * ratefact; /* use the combined and rate-limited value which is more accurately computed above */
+#endif
+    double de_u_radabs=0; /* need to collect absorbed photon energy to know how much energy to limit the 'dumped' energy to */
+    for(k=0;k<N_RT_FREQ_BINS;k++)
+    {
+        int k_donor = rt_get_donation_target_bin(k); /* this is used to indicate whether in the rad drift-kick loop, absorption is immediately re-radiated or not, ie. whether or not we should account for it here */
+        double tau = fabs(rt_absorption_rate(i,k, pp, cell) * dtime), f_abs = 1.-exp(-tau); if(tau<0.01) {f_abs=tau*(1.-tau/2.);} /* fraction of energy absorbed in the timestep */
+        double absorpted_rad_energy = DMIN(cell[i].Rad_E_gamma[k],cell[i].Rad_E_gamma_Pred[k]) * f_abs; /* estimate energy from the band that is absorbed in this timestep */
+#ifdef RT_INFRARED
+        if(k==RT_FREQ_BIN_INFRARED) {
+            k_donor = -1; /* we use this below to indicate radiation which hasn't been re-radiated, which is handled in a special way for the adaptive bin here [which by default re-emits to itself], so set this here */
+            double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,-1,-1, pp, cell) / (rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,0,0, pp, cell) + MIN_REAL_NUMBER); /* want the opacity from gas absorption as a fraction of total, because this is -not- assumed to re-radiate immediately in the drift/kick routine */
+            absorpted_rad_energy *= opacity_fraction_from_gas_absorption;
+        }
+#endif
+        if(k_donor >= 0) {continue;} /* re-emitted immediately, ignore */
+        de_u_radabs += fabs(absorpted_rad_energy); /* sum up absorbed photon energy */
+    }
+    de_u_work += de_u_radabs; /* add this to the energy reservoir represented by the work function */
+    double de_u_touse = de_u - de_u_work; /* this is the actual difference between the implicit hydro work+absorption term and the total term, i.e. a corrected de_u_rad, which we use below */
+
+    for(k=0;k<N_RT_FREQ_BINS;k++)
+    {
+        if((fabs(cell[i].Lambda_RadiativeCooling_toRHDBins[k]) > MIN_REAL_NUMBER) && (fabs(de_rad_tot) > MIN_REAL_NUMBER))
+        {
+            double de_rad = cell[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact; /* energy gained by gas needs to be subtracted from radiation. positive lambda means gas cooling (gas energy loss, so radiation energy gain, so positive here) */
+            if(fabs(de_rad) > MIN_REAL_NUMBER)
+            {
+                double de_rad_min = DMIN(DMAX(-0.99*cell[i].Rad_E_gamma[k], -de_u_touse), 0); // don't let the radiation loss take all the radiation energy into negative, or more than the energy gained from cooling+heating
+                double de_rad_max = DMAX(DMIN(10.*unew*cell[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
+                if(!gate) {de_rad_min = -0.99*cell[i].Rad_E_gamma[k]; de_rad_max = 10.*unew*cell[i].Mass;} /* only the positivity floor and the magnitude cap */
+                de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min); // limit de_rad appropriately
+                if(fabs(de_rad) > MIN_REAL_NUMBER)
+                {
+                    de_rad_tot_final += de_rad; // add to our running total                        
+#ifdef RT_INFRARED  
+                    if(k==RT_FREQ_BIN_INFRARED) {cell[i].Radiation_Temperature = cell[i].Radiation_Temperature_CoolingWeighted;} // need to also update the IR band temperature measure
+#endif
+                    double Rad_E_gamma_before = cell[i].Rad_E_gamma[k]; // save for immediate use below
+                    cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
+                    cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
+#if defined(RT_EVOLVE_INTENSITIES)
+                    int k_tmp; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA; cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA;}
+#endif
+                    int kv; // add leading-order relativistic corrections here, accounting for gas motion in the addition/subtraction to the flux
+#if defined(RT_EVOLVE_FLUX)
+                    double corrfac = 0; if(Rad_E_gamma_before > 0 && cell[i].Rad_E_gamma[k] > 0) {corrfac = cell[i].Rad_E_gamma[k] / (MIN_REAL_NUMBER + Rad_E_gamma_before);}
+                    if(corrfac > 0) {cell[i].Rad_Flux[k] *= corrfac; cell[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS*cell[i].VelPred[kv]/All.cf_atime * de_rad; cell[i].Rad_Flux[k][kv] += fluxfac; cell[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
+#endif
+                    double momfac = 1. - de_rad / (cell[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
+                    pp[i].dp += pp[i].Vel * ((momfac - 1.) * cell[i].Mass); pp[i].Vel *= momfac; cell[i].VelPred *= momfac;
+                }
+            }
+        }
+    }
+    
+}
+#endif
+
+
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
@@ -237,68 +312,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         
 
 #if defined(RADTRANSFER) /* account for cooling radiation which should, according to our modules, come out in certain bands */
-        double nHcgs = cell[i].nHcgs(); /* hydrogen number dens in cgs units */
-        double ratefact = (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * nHcgs * nHcgs / (cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * cell[i].Mass; /* need to account for RSOL factors in emission/absorption rates */
-        double de_u = (unew - cell[i].InternalEnergy) * cell[i].Mass; /* change in the total internal energy of the gas cell [integrating over everything] */
-        double de_rad_tot_final = 0, de_rad_tot = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {de_rad_tot += cell[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;} /* energy gained by gas needs to be subtracted from radiation. positive lambda means gas cooling (gas energy loss, so radiation energy gain, so positive here) */
-        double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad; /* variables for below showing total change in gas energy from radiation, and placeholder for the hydro work term */
-        de_u_work = (cell[i].DtInternalEnergy*(UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS)*(PROTONMASS_CGS/HYDROGEN_MASSFRAC)) / nHcgs * ratefact; /* account for hydro work going into the system as an energy source */
-#ifndef COOLING_OPERATOR_SPLIT
-        de_u_work = cell[i].DtInternalEnergy / nHcgs * ratefact; /* use the combined and rate-limited value which is more accurately computed above */
-#endif
-        double de_u_radabs=0; /* need to collect absorbed photon energy to know how much energy to limit the 'dumped' energy to */
-        for(k=0;k<N_RT_FREQ_BINS;k++)
-        {
-            int k_donor = rt_get_donation_target_bin(k); /* this is used to indicate whether in the rad drift-kick loop, absorption is immediately re-radiated or not, ie. whether or not we should account for it here */
-            double tau = fabs(rt_absorption_rate(i,k, pp, cell) * dtime), f_abs = 1.-exp(-tau); if(tau<0.01) {f_abs=tau*(1.-tau/2.);} /* fraction of energy absorbed in the timestep */
-            double absorpted_rad_energy = DMIN(cell[i].Rad_E_gamma[k],cell[i].Rad_E_gamma_Pred[k]) * f_abs; /* estimate energy from the band that is absorbed in this timestep */
-#ifdef RT_INFRARED
-            if(k==RT_FREQ_BIN_INFRARED) {
-                k_donor = -1; /* we use this below to indicate radiation which hasn't been re-radiated, which is handled in a special way for the adaptive bin here [which by default re-emits to itself], so set this here */
-                double opacity_fraction_from_gas_absorption = rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,-1,-1, pp, cell) / (rt_kappa_adaptive_IR_band(i,cell[i].Dust_Temperature,cell[i].Radiation_Temperature,0,0, pp, cell) + MIN_REAL_NUMBER); /* want the opacity from gas absorption as a fraction of total, because this is -not- assumed to re-radiate immediately in the drift/kick routine */
-                absorpted_rad_energy *= opacity_fraction_from_gas_absorption;
-            }
-#endif
-            if(k_donor >= 0) {continue;} /* re-emitted immediately, ignore */
-            de_u_radabs += fabs(absorpted_rad_energy); /* sum up absorbed photon energy */
-        }
-        de_u_work += de_u_radabs; /* add this to the energy reservoir represented by the work function */
-        double de_u_touse = de_u - de_u_work; /* this is the actual difference between the implicit hydro work+absorption term and the total term, i.e. a corrected de_u_rad, which we use below */
-
-        for(k=0;k<N_RT_FREQ_BINS;k++)
-        {
-            if((fabs(cell[i].Lambda_RadiativeCooling_toRHDBins[k]) > MIN_REAL_NUMBER) && (fabs(de_rad_tot) > MIN_REAL_NUMBER))
-            {
-                double de_rad = cell[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact; /* energy gained by gas needs to be subtracted from radiation. positive lambda means gas cooling (gas energy loss, so radiation energy gain, so positive here) */
-                if(fabs(de_rad) > MIN_REAL_NUMBER)
-                {
-                    double de_rad_min = DMIN(DMAX(-0.99*cell[i].Rad_E_gamma[k], -de_u_touse), 0); // don't let the radiation loss take all the radiation energy into negative, or more than the energy gained from cooling+heating
-                    double de_rad_max = DMAX(DMIN(10.*unew*cell[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
-                    de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min); // limit de_rad appropriately
-                    if(fabs(de_rad) > MIN_REAL_NUMBER)
-                    {
-                        de_rad_tot_final += de_rad; // add to our running total                        
-#ifdef RT_INFRARED  
-                        if(k==RT_FREQ_BIN_INFRARED) {cell[i].Radiation_Temperature = cell[i].Radiation_Temperature_CoolingWeighted;} // need to also update the IR band temperature measure
-#endif
-                        double Rad_E_gamma_before = cell[i].Rad_E_gamma[k]; // save for immediate use below
-                        cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
-                        cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
-#if defined(RT_EVOLVE_INTENSITIES)
-                        int k_tmp; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA; cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA;}
-#endif
-                        int kv; // add leading-order relativistic corrections here, accounting for gas motion in the addition/subtraction to the flux
-#if defined(RT_EVOLVE_FLUX)
-                        double corrfac = 0; if(Rad_E_gamma_before > 0 && cell[i].Rad_E_gamma[k] > 0) {corrfac = cell[i].Rad_E_gamma[k] / (MIN_REAL_NUMBER + Rad_E_gamma_before);}
-                        if(corrfac > 0) {cell[i].Rad_Flux[k] *= corrfac; cell[i].Rad_Flux_Pred[k] *= corrfac;} else {for(kv=0;kv<3;kv++) {double fluxfac = RSOL_CORRECTION_FACTOR_FOR_VELOCITY_TERMS*cell[i].VelPred[kv]/All.cf_atime * de_rad; cell[i].Rad_Flux[k][kv] += fluxfac; cell[i].Rad_Flux_Pred[k][kv] += fluxfac;}}
-#endif
-                        double momfac = 1. - de_rad / (cell[i].Mass * C_LIGHT_CODE*C_LIGHT_CODE_REDUCED); // back-reaction on gas from emission [note peculiar units here, its b/c of how we fold in the existing value of v and tilde[u] in our derivation - one rsol factor in denominator needed]
-                        pp[i].dp += pp[i].Vel * ((momfac - 1.) * cell[i].Mass); pp[i].Vel *= momfac; cell[i].VelPred *= momfac;
-                    }
-                }
-            }
-        }
-        
+        rt_cooling_radiation_to_bands(i, unew, dtime, 1, pp, cell);
 #endif // done with RHD-cooling block update
         
 
@@ -2464,6 +2478,25 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 
 
 /* this function defines an effective background radiation temperature for purposes of computing the emission corrections above */
+#ifdef JACO
+/* Share of the recombination cooling CoolingRate returns to the NUV band (Lambda_rad_NUV): max(1 - shieldfac, 0) times
+   Heat_Ion_from_RHD / (Heat_Ion_from_UVB + Heat_Ion_from_RHD), here from the H terms per neutral H at temperature T, with
+   heat_rhd_per_H0 = rt_ion_G_HI c sigma n_gamma */
+double jaco_recombination_return_fraction(int i, double T, double heat_rhd_per_H0, struct gas_cell_data *cell)
+{
+    if(!isfinite(T) || T <= 0) {T = 1.e4;}
+    double rho = cell[i].Density * All.cf_a3inv, local_gammamultiplier = return_local_gammamultiplier(i, cell);
+    double shieldfac = return_uvb_shieldfac(i, local_gammamultiplier * gJH0 / 1.0e-12, HYDROGEN_MASSFRAC * rho * UNIT_DENSITY_IN_NHCGS, log10(T), cell);
+    double heat_uvb_per_H0 = 0;
+#if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
+    if(J_UV != 0) {heat_uvb_per_H0 = shieldfac * (epsH0 + gJH0*(local_gammamultiplier-1.)*2.9*1.6e-12);}
+#else
+    if(J_UV != 0) {heat_uvb_per_H0 = local_gammamultiplier * epsH0 * shieldfac;}
+#endif
+    return DMAX(1.-shieldfac, 0.) * DMIN(1., DMAX(0., heat_rhd_per_H0 / (heat_uvb_per_H0 + heat_rhd_per_H0 + MIN_REAL_NUMBER)));
+}
+#endif
+
 double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell)
 {
     double T_cmb = 2.73/All.cf_atime;

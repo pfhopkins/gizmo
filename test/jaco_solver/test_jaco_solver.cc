@@ -58,6 +58,9 @@ static void starforge_params(Params *pr, double n, double dt) {
     pr->Gamma_HI = g_rt_field ? 1e-8 : 0; /* ~ a few pc from an O star */
     pr->c_tilde = (g_rt_field == 2) ? 2.9979e6 : 0;
 #endif
+#ifdef JACO_HAS_PARAM_f_IR_selfabs
+    pr->f_IR_selfabs = 1;
+#endif
     pr->n_Htot = n;
     pr->Delta_t = dt;
     pr->y = 0.0994;
