@@ -26,6 +26,12 @@ extern "C" int jaco_isfinite(double x);
 #if defined(OUTPUT_COOLRATE) || defined(GALSF_EFFECTIVE_EQS) || defined(CHIMES) || defined(COOL_GRACKLE) || defined(RT_CHEM_PHOTOION)
 #error "JACO does not yet support OUTPUT_COOLRATE, GALSF_EFFECTIVE_EQS, CHIMES, COOL_GRACKLE or RT_CHEM_PHOTOION"
 #endif
+/* do_the_cooling_for_particle returns right after call_jaco, so everything the standard path does afterwards is skipped:
+   the cooling-radiation return to the RT bands, cosmic-ray losses, the sink thermal-feedback energy injection and the
+   subcycle dt scaling. Refuse those configurations until the JACO path carries them. */
+#if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID) || defined(SINK_THERMALFEEDBACK) || defined(TRANSPORT_SUBCYCLE_COOLING)
+#error "JACO does not yet support RADTRANSFER, COSMIC_RAY_FLUID, SINK_THERMALFEEDBACK or TRANSPORT_SUBCYCLE_COOLING"
+#endif
 
 /* ---- CIE lookup table for initial ion abundance guesses ---- */
 
