@@ -115,6 +115,8 @@ _SUBCYCLE_XFAIL = pytest.mark.xfail(
         pytest.param(("TRANSPORT_SUBCYCLE=10",), id="subcycle_rt", marks=_SUBCYCLE_XFAIL),
         pytest.param(("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
                      id="subcycle_rt_cooling", marks=_SUBCYCLE_XFAIL),
+        # the jaco model of the standard module's RT coupling, held to the benchmark
+        pytest.param(("JACO=starforge_legacy_RT",), id="jaco_rt"),
     ],
 )
 def test_shu_M120(num_mpi_ranks, num_omp_threads, extra_config_flags):
