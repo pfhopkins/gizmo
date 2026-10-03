@@ -28,10 +28,10 @@ extern "C" int jaco_isfinite(double x);
 #error "JACO does not yet support OUTPUT_COOLRATE, GALSF_EFFECTIVE_EQS, CHIMES or COOL_GRACKLE"
 #endif
 /* do_the_cooling_for_particle returns right after call_jaco, so everything the standard path does afterwards is skipped:
-   cosmic-ray losses, the sink thermal-feedback energy injection and the subcycle dt scaling. Refuse those configurations
-   until the JACO path carries them. */
-#if defined(COSMIC_RAY_FLUID) || defined(SINK_THERMALFEEDBACK) || defined(TRANSPORT_SUBCYCLE_COOLING)
-#error "JACO does not yet support COSMIC_RAY_FLUID, SINK_THERMALFEEDBACK or TRANSPORT_SUBCYCLE_COOLING"
+   cosmic-ray losses and the sink thermal-feedback energy injection. Refuse those configurations until the JACO path
+   carries them. */
+#if defined(COSMIC_RAY_FLUID) || defined(SINK_THERMALFEEDBACK)
+#error "JACO does not yet support COSMIC_RAY_FLUID or SINK_THERMALFEEDBACK"
 #endif
 /* Radiation. Supported: M1 RADTRANSFER with the single H-ionizing band (RT_CHEM_PHOTOION), whose photoionization and
    photoheating the jaco model takes over (Gamma_HI, eps_HI) while the RT kick absorbs the band, and the bands that only
@@ -683,6 +683,9 @@ static void jaco_return_cooling_radiation(int i, const SolveVars *sv, const Para
 
 void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, struct gas_cell_data *cell) {
     double dtime = get_particle_timestep_in_physical(i, pp);
+#ifdef TRANSPORT_SUBCYCLE_COOLING
+    dtime *= All.Transport_Subcycle_dt_fraction; /* cooling runs once per transport sub-step, from the sub-step's state */
+#endif
     set_PdV_work_heatingrate(i, dtime, pp, cell);
 #ifdef JACO_DEBUG_PARAMS
     jaco_poison_params(pr);

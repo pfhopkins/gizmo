@@ -13,6 +13,7 @@ assertions stay identical across variants. It is a plain (non-test_*) module so 
 can be imported from sibling test directories without pytest collection clashes.
 """
 
+import shutil
 import numpy as np
 import h5py
 from glob import glob
@@ -365,6 +366,9 @@ def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_confi
     ifront_evolution is the (times, radii) tuple from compute_ifront_evolution."""
     prepare_inputs(test_dir, test_name)
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    log = Path(test_dir) / f"test_{test_name}.out"
+    if log.exists():  # the next variant overwrites it
+        shutil.copy(log, Path(variant_output_dir(test_name, extra_config_flags)) / log.name)
     final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
     with h5py.File(final_snap, "r") as F:
