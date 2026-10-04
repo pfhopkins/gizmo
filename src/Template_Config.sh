@@ -75,6 +75,7 @@
 #EOS_ANEOS                      # Use ANEOS/SESAME tabulated EOS (for planetary impacts/collisions); specify table file paths in parameterfile (AneosTable0, AneosTable1, etc.)
 #EOS_ELASTIC                    # treat fluid as elastic or plastic (or visco-elastic) material, obeying Hooke's law with full stress terms and von Mises yield model. custom EOS params can be specified or pre-computed materials used.
 #EOS_TYPES_DEFAULTGAS_AND_SOLIDS # for hybrid gas+solid setups (e.g. grain-fluid promotion): make CompositionType=0 Type-0 cells behave as the standard gas fluid instead of a Tillotson/ANEOS material (solid materials then use CompositionType>=1). auto-enabled by GRAIN_FLUID_PROMOTION.
+#PLANET_HEATING                 # radiogenic-decay + background accretional heating of solid bodies: du/dt = Q_rad*exp(-t/tau_rad) + Q_acc (params PlanetHeating_RadQ0_cgs, PlanetHeating_RadTau_cgs, PlanetHeating_AccQ0_cgs). auto-enables EOS_TILLOTSON
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Nuclear Reaction Networks
 #NUCLEAR_NETWORK                 # top-level switch: enables nuclear burning and species tracking. requires EOS_HELMHOLTZ.
@@ -123,6 +124,8 @@
 #GRAIN_BACKREACTION             # account for momentum of grains pushing back on gas (from drag terms); users should cite Moseley et al., 2018, arXiv:1810.08214.
 #GRAIN_LORENTZFORCE             # charged grains feel Lorentz forces (requires MAGNETIC); if used with GRAIN_EPSTEIN_STOKES flag, will also compute Coulomb drag (grain charges self-consistently computed from gas properties). Need to set GrainType=2. Please cite Seligman et al., 2019, MNRAS 485 3991
 #GRAIN_COLLISIONS               # model collisions between grains (super-particles; so this is stochastic). Hard-sphere scattering across pi*(R_i+R_j)^2, weighted by how many grains each super-particle represents (see the scattering-rate equations in the User Guide); options for inelastic or velocity-dependent terms.  Approved users please cite paper
+#GRAIN_EVOLUTION=(1+2+4+8+16+32+64) # per-super-particle grain size+composition evolution (bitflag): 1=coagulation, 2=fragmentation, 4=shattering (1|2|4 require GRAIN_COLLISIONS), 8=thermal sputtering, 16=non-thermal (drift) sputtering, 32=ice condensation/mantle growth, 64=sublimation (32|64 require GRAIN_BACKREACTION). requires GRAIN_FLUID; not compatible with GALSF_ISMDUSTCHEM_GRAINSIZEEVO. in development, contact PFH before use
+#GRAIN_FLUID_PROMOTION          # promote grain super-particles (type 3) that grow above a mass threshold (and optionally a local dust-to-gas ratio threshold) into Type-0 solid bodies evolved with EOS_TILLOTSON (params GrainPromotion_MassThresh_cgs, GrainPromotion_DustGasRatioThresh). requires GRAIN_FLUID; auto-enables EOS_TILLOTSON, EOS_TYPES_DEFAULTGAS_AND_SOLIDS, IO_COMPOSITIONTYPE_NOT_IN_ICFILE. in development, contact PFH before use
 ## ----------------------------------------------------------------------------------------------------
 # --------------------------------------- Multi-Fluid Framework (Lagrangian-partition multi-fluid)
 #HYDRO_MULTIFLUID               # Lagrangian multi-fluid partition: Type=0 particles carry a FluidType ID (see declarations/multifluid_helpers.h); hydro pair operators skip cross-FluidType pairs. Force-implies EOS_GENERAL.
@@ -377,6 +380,7 @@
 ## ----------------------------------------------------------------------------------------------------
 #COOLING                        # top-level switch to enable radiative cooling and heating. if nothing else enabled, uses Hopkins et al. arXiv:1702.06148 cooling physics. if GALSF, also external UV background read from file "TREECOOL" (included in the cooling folder; be sure to cite its source as well, given in the TREECOOL file)
 #METALS                         # top-level switch to enable tracking metallicities / different heavy elements (with multiple species optional) for gas and stars [must be included in ICs or injected via dynamical feedback; needed for some routines]
+#DISK_BETA_COOL                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
 ## ----------------------------------------------------------------------------------------------------
 # ---- additional cooling physics options within the default COOLING (Hopkins et al. 2017) module
 ## ----------------------------------------------------------------------------------------------------
@@ -465,12 +469,12 @@
 #RT_USE_GRAVTREE_SAVE_RAD_FLUX          # save radiative fluxes incident on each cell if using RHD methods that propagate fluxes through the gravity tree when these wouldn't be saved by default
 #RT_REPROCESS_INJECTED_PHOTONS          # re-process photon energy while doing the discrete injection operation conserving photon energy, put only the un-absorbed component of the current band into that band, putting the rest in its "donation" bin (ionizing->optical, all others->IR). This would happen anyway during the routine for resolved absorption, but this may more realistically handle situations where e.g. your dust destruction front is at totally unresolved scales and you don't want to spuriously ionize stuff on larger scales. Assume isotropic re-radiation, so inject only energy for the donated bin and not net flux/momentum. follows STARFORGE methods (Grudic+ arXiv:2010.11254) - cite this
 #RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION   # uses a solid-angle as opposed to simple kernel weight (requires extra passes) for depositing radiation from sinks/BHs when the direct deposition is used. also ensures the sink uses a 2-way search to ensure overlapping diffuse gas gets radiation. cite Grudic+ arXiv:2010.11254
-#RT_ISRF_BACKGROUND=1                   # include Draine 1978 ISRF for photoelectric heating (appropriate for solar circle, must be re-scaled for different environments); rescaled by a constant normalization given by this constant, if defined
+#RT_ISRF_BACKGROUND=1                   # include Draine 1978 ISRF for photoelectric heating (appropriate for solar circle, must be re-scaled for different environments); normalized by the parameter InterstellarRadiationFieldStrength (the value here is only an on/off switch), if defined
 ## ----------------------------------------------------------------------------------------------------
 # ----------- Transport subcycling: allow RT and/or CR transport to take multiple smaller steps per hydro step  [HIGHLY EXPERIMENTAL]
 ## ----------------------------------------------------------------------------------------------------
 #TRANSPORT_SUBCYCLE=100                 # max number of transport (RT+CR) subcycles per hydro step. decouples the transport CFL from the hydro timestep.
-#TRANSPORT_SUBCYCLE_COOLING             # also subcycle cooling within the transport subcycle loop (otherwise cooling runs once per hydro step
+#TRANSPORT_SUBCYCLE_COOLING             # also subcycle cooling within the transport subcycle loop (otherwise cooling runs once per hydro step)
 ####################################################################################################
 
 
@@ -637,7 +641,7 @@
 #SINK_WIND_SPAWN_SET_JET_PRECESSION # manually set precession in parameter file (does not work for cosmological simulations).  Cite Su et al., arXiv:2102.02206, for methods.
 #SINK_SCALE_SPAWNINGMASS_WITH_INITIALMASS # rescale the cell spawning mass criterion to scale with the initial sink mass for any sink and sink feedback model (instead of setting the spawning mass to a fixed universal constant in code units).
 #SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA # modifies SINK_SEED_FROM_LOCALGAS to require that the local acceleration scale (including all mass/gravity sources) exceeds the critical value defined in arXiv:2103.10444. cite that paper for implementation
-#SINK_INTERACT_ON_GAS_TIMESTEP      # force sink particles to be active in the timestep hierarchy on a timestep no larger than the minimum timestep of any gas cell inside the sink particle interaction/accretion/neighbor kernel
+#SINK_INTERACT_ON_GAS_TIMESTEP      # perform the sink's gas interactions (neighbor search, accretion, feedback) only once about half the shortest neighboring-gas timestep has elapsed since the last ones, using the accumulated interval as their timestep
 #SINK_GRAVCAPTURE_FIXEDSINKRADIUS   # uses a fixed sink radius for gravitational capture/accretion onto sink particles, taken to be the force softening kernel radius of the sink particle
 #SINGLE_STAR_FB_TIMESTEPLIMIT       # limit the timesteps in gas cells potentially interacting with sink particles in the SINGLE_STAR modules, so that they cannot take timesteps large compared to quantities like the time for jets/winds to cross from the sink to the gas cell
 # --------------------
@@ -654,7 +658,7 @@
 #SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS=1 # uses default settings for SINGLE_STAR_AND_SSP_HYBRID_MODEL=SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS (plus lots of other flag settings) from zoom-in experiments around special particles
 #STARFORGE_GMC_TURBINIT=1           # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic uniform sphere harmonic potential + r^-3 halo outside to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
 #STARFORGE_FILAMENT_TURBINIT        # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic potential of an finitite cylinder with a Plummer density profile, truncated at the ends of the cylinder, to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
-#STARFORGE_FEEDBACK_TRACERS=3       # adds tracer fields to recycled gas in the SINGLE_STAR modules to explicitly track gas coming from jets versus main-sequence winds versus supernovae. tracer fields added to metal fields; 0 for jets, 1 for winds, 2 for SNe, 3 for all.
+#STARFORGE_FEEDBACK_TRACERS=3       # number of passive tracer fields for feedback channels (0=jets, 1=winds, 2=SNe); use 3
 # --------------------
 # ----- Dust grain/particulate/aerosol module special options
 #GRAIN_RDI_TESTPROBLEM             # top-level flag to enable a variety of test problem behaviors, customized for the idealized studies of dust dynamics in Moseley et al 2019MNRAS.489..325M, Seligman et al 2019MNRAS.485.3991S, Steinwandel et al arXiv:2111.09335, Ji et al arXiv:2112.00752, Hopkins et al 2020MNRAS.496.2123H and arXiv:2107.04608, Squire et al 2022MNRAS.510..110S. Cite these if used.
@@ -689,7 +693,7 @@
 #SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR #- derive the zoom refinement anchor (slot 0 of the SpecialParticle refinement array) from IC-tagged particles instead of a Type-3 special particle. reads a per-particle 'RefinementFlag' field from the ICs; particles with value 1 define the anchor, tracked as their mass-weighted center-of-mass (value=1, default) or the position of the single densest tagged gas cell (value=2). all downstream refinement/gravity/RT/sink consumers use the anchor unchanged. requires SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM. intended as a foundation for user-built refinement region logic.
 #CRFLUID_INJECTION_AT_SHOCKS=(0.1)          #- inject CRs (using standard spectra) at resolved shocks throughout simulation. value=maximum fraction of shock energy flux to convert to accelerated CRs. currently using hard threshold of >Mach 5, >100 km/s shock velocity, along with spurious shock detection. coded by PFH, in testing
 #SINK_CR_INJECTION_AT_TERMINATION=(0.25)    #- inject CRs (requires SINK_WIND_SPAWN and SINK_COSMIC_RAYS) approximately at spawned-cell termination shocks. developed by Kung-Yi Su, this version testing by PFH, currently uses very simple deceleration to fraction of launch velocity (=value set here) to determine when to inject
-#SINK_TEST_WIND_MIXED_FASTSLOW=(1.e5)       #- BH has a slow outflow and fast jet, where fast jet has 1/50th the mass-loading and this speed in kms by default
+#SINK_TEST_WIND_MIXED_FASTSLOW=(1.e5)       #- BH has a slow outflow and fast jet, where fast jet has 1/100th the mass-loading and this speed in kms by default
 #USE_TIMESTEP_DILATION_FOR_ZOOMS            #- enable time dilation modules, need to customize for applications, cannot be simply generically turned on without coding how they will work
 #DILATION_FOR_STELLAR_KINEMATICS_ONLY       #- special version of time dilation designed for stellar kinematics in e.g. dense star clusters or galaxy centers
 #SINK_RIAF_SUBEDDINGTON_MODEL=(0.01)        #- enable an arbitrary modular variation in the radiative efficiency of BHs as a function of eddington ratio or other particle properties, with the critical transition to the jet mode at this eddington ratio (defined in terms of mdot/mdot_crit)
