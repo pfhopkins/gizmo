@@ -24,9 +24,12 @@
  * fine) is replaced by finite differences of F if settings.fd_jacobian, else it fails the tier.
  * Both are counted in JacoSolveInfo so model defects stay visible.
  *
- * What the solver knows about the model beyond F and its Jacobian (which species are time-dependent
- * and the parameters holding their start-of-step values, abundance floors, ceilings and scales,
- * charges, and the budgets that bound the eliminated abundances) comes from the generated header.
+ * What the solver knows about the model beyond F and its Jacobian (which variables are time-dependent
+ * and the parameters holding their start-of-step values, floors, ceilings and scales, charges, the
+ * kind of each variable, and the budgets that bound the eliminated abundances) comes from the
+ * generated header. Variables beyond the species: radiation bands (time-dependent, linear in
+ * themselves: solved in every Newton subsystem rather than bracketed in tier 2) and temperatures set
+ * by a steady-state balance (e.g. the dust's), bounded like T.
  */
 #include <math.h>
 #include <string.h>
@@ -80,10 +83,12 @@ struct Eval {
     double J[N_VARS][N_VARS];
 };
 
-/* pseudo-transient term -n_Htot (x_k - anchor_k) inv_tau added to every species row */
+/* pseudo-transient term -w_k (x_k - anchor_k) inv_tau added to every row k >= 2: w_k = n_Htot for an abundance, for a
+   balance temperature the stiffness of its row at the anchor over the fastest chemical rate */
 struct PTC {
     double inv_tau;
     SolveVars anchor;
+    double w[N_VARS];
 };
 
 enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESEARCH = -3, NEWTON_MAXITER = -4 };
@@ -91,8 +96,9 @@ enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESE
 /* outcome of a tier or of the tier-2 search; PINNED: the answer sits at the temperature/energy floor or ceiling */
 enum Outcome { OUTCOME_FAILED, OUTCOME_SOLVED, OUTCOME_PINNED };
 
-/* which variables a Newton solve may move: T, steady-state species, time-dependent species */
-enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_ALL = 7 };
+/* which variables a Newton solve may move: T, steady-state variables, time-dependent species (bracketed one by one in
+   tier 2), time-dependent radiation bands (always solved with the steady-state variables) */
+enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_FAST = 8, SOLVE_ALL = 15 };
 
 #ifndef JACO_HAS_SOLVER_METADATA
 #error "microphysics_func_jac.h carries no solver metadata: regenerate it with a jaco that emits it"
@@ -116,10 +122,26 @@ static constexpr double var_ceiling[N_VARS] = JACO_VAR_CEILING_INIT;
 static constexpr double var_scale[N_VARS] = JACO_VAR_SCALE_INIT;
 static constexpr int var_charge[N_VARS] = JACO_VAR_CHARGE_INIT;
 static constexpr int var_initial_param[N_VARS] = JACO_VAR_INITIAL_PARAM_INIT;
+#ifndef JACO_VAR_KIND_INIT
+#error "microphysics_func_jac.h carries no variable kinds: regenerate it with a jaco that emits JACO_VAR_KIND_INIT"
+#endif
+static constexpr int var_kind[N_VARS] = JACO_VAR_KIND_INIT;
 
 static int is_time_dependent(int k) { return var_time_dependent[k]; }
-/* at or below this a species counts as floored */
+/* the Newton mask bit of variable k >= 2 */
+static int solve_bit(int k) {
+    return !is_time_dependent(k) ? SOLVE_IONS : var_kind[k] == JACO_KIND_SPECIES ? SOLVE_TD : SOLVE_FAST;
+}
+/* at or below this a variable counts as floored */
 static double floor_pin(int k) { return var_floor[k] * (1 + 1e-9); }
+/* a temperature set by a balance (not an abundance in a budget) also stops at its ceiling; at or above this it counts
+   as there */
+static int has_ceiling(int k) { return var_kind[k] == JACO_KIND_TEMPERATURE; }
+static double ceiling_pin(int k) { return var_ceiling[k] * (1 - 1e-9); }
+/* pinned in a Newton step: at its floor with nothing producing it, or at its ceiling with nothing removing it */
+static int is_pinned(int k, double x, double F) {
+    return (x <= floor_pin(k) && F <= 0) || (has_ceiling(k) && x >= ceiling_pin(k) && F >= 0);
+}
 
 struct TDSpecies {
     int k;     /* IDX_ of the species */
@@ -127,6 +149,25 @@ struct TDSpecies {
 };
 static constexpr struct TDSpecies td_species[] = JACO_TD_SPECIES_INIT;
 #define N_TD JACO_N_TD_SPECIES
+
+/* the time-dependent species tier 2 brackets one by one (abundances; the bands are solved with the steady state) */
+static constexpr int count_bracketed() {
+    int n = 0;
+    for (int t = 0; t < N_TD; t++) n += td_species[t].k >= 0 && var_kind[td_species[t].k] == JACO_KIND_SPECIES;
+    return n;
+}
+#define N_BRACKET count_bracketed()
+struct BracketTable {
+    int t[N_TD > 0 ? N_TD : 1]; /* indices into td_species */
+};
+static constexpr struct BracketTable make_bracketed() {
+    struct BracketTable b = {};
+    int n = 0;
+    for (int t = 0; t < N_TD; t++)
+        if (td_species[t].k >= 0 && var_kind[td_species[t].k] == JACO_KIND_SPECIES) b.t[n++] = t;
+    return b;
+}
+static constexpr struct BracketTable bracketed = make_bracketed();
 
 struct Budget {
     double total;    /* the total if total_param < 0 */
@@ -141,8 +182,12 @@ static constexpr struct Budget budget_table[] = JACO_BUDGETS_INIT;
 static constexpr bool metadata_valid() {
     if (!var_time_dependent[IDX_T] || var_initial_param[IDX_T] != PARAM_u_initial || var_time_dependent[IDX_u]) return false;
     int ntd = 0;
+    if (var_kind[IDX_u] != JACO_KIND_ENERGY || var_kind[IDX_T] != JACO_KIND_GAS_TEMPERATURE) return false;
     for (int k = 2; k < N_VARS; k++) {
         if (!(var_floor[k] >= 0 && var_ceiling[k] > var_floor[k] && var_scale[k] > 0)) return false;
+        if (var_kind[k] != JACO_KIND_SPECIES && var_kind[k] != JACO_KIND_RADIATION && var_kind[k] != JACO_KIND_TEMPERATURE)
+            return false;
+        if (var_kind[k] == JACO_KIND_TEMPERATURE && var_time_dependent[k]) return false;
         if (var_time_dependent[k]) {
             if (ntd >= N_TD || td_species[ntd].k != k || td_species[ntd].param != var_initial_param[k]) return false;
             if (td_species[ntd].param < 0 || td_species[ntd].param >= N_PARAMS) return false;
@@ -152,14 +197,15 @@ static constexpr bool metadata_valid() {
     return ntd == N_TD;
 }
 static_assert(metadata_valid(), "solver metadata: T must be time-dependent with u_initial, species start at index 2, "
-                                "and the time-dependent species table must match the per-variable flags");
+                                "the time-dependent species table must match the per-variable flags, and balance "
+                                "temperatures are steady state");
 
 static constexpr bool budget_table_valid() {
     for (int b = 0; b < N_BUDGETS; b++) {
         const struct Budget &B = budget_table[b];
         if (B.total_param >= N_PARAMS || B.nterm < 1 || B.nterm > JACO_BUDGET_MAX_TERMS) return false;
         for (int t = 0; t < B.nterm; t++)
-            if (B.k[t] < 2 || B.k[t] >= N_VARS || !(B.w[t] > 0)) return false;
+            if (B.k[t] < 2 || B.k[t] >= N_VARS || !(B.w[t] > 0) || var_kind[B.k[t]] != JACO_KIND_SPECIES) return false;
     }
     return true;
 }
@@ -367,9 +413,10 @@ static int evaluate(SolveVars *sv, const Params *pr, struct Eval *e, struct Coun
 }
 
 static void add_ptc(const SolveVars *sv, const Params *pr, const struct PTC *ptc, struct Eval *e) {
+    (void)pr;
     for (int k = 2; k < N_VARS; k++) {
-        e->F.data[k] -= pr->n_Htot * (sv->data[k] - ptc->anchor.data[k]) * ptc->inv_tau;
-        e->J[k][k] -= pr->n_Htot * ptc->inv_tau;
+        e->F.data[k] -= ptc->w[k] * (sv->data[k] - ptc->anchor.data[k]) * ptc->inv_tau;
+        e->J[k][k] -= ptc->w[k] * ptc->inv_tau;
     }
 }
 
@@ -460,8 +507,10 @@ static int lu_solve(const struct LU *lu, const double *b, double *d) {
    also as computed. */
 static void project(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set) {
     sv->T = fmax(set->T_min, fmin(set->T_max, sv->T));
-    for (int k = 2; k < N_VARS; k++)
+    for (int k = 2; k < N_VARS; k++) {
         if (sv->data[k] < var_floor[k]) sv->data[k] = var_floor[k];
+        if (has_ceiling(k) && sv->data[k] > var_ceiling[k]) sv->data[k] = var_ceiling[k];
+    }
     trim_budgets(sv, pr);
 }
 
@@ -525,8 +574,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         int idx[N_VARS], n = 0;
         if (mask & SOLVE_T) idx[n++] = IDX_T;
         for (int k = 2; k < N_VARS; k++)
-            if ((mask & (is_time_dependent(k) ? SOLVE_TD : SOLVE_IONS)) && (sv->data[k] > floor_pin(k) || e.F.data[k] > 0))
-                idx[n++] = k;
+            if ((mask & solve_bit(k)) && !is_pinned(k, sv->data[k], e.F.data[k])) idx[n++] = k;
         if (n == 0) {
             if (F_out) *F_out = e.F;
             return NEWTON_OK;
@@ -565,7 +613,8 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         /* bounded step: T may fall by at most JACO_TAU_T, neutral budgets shrink by at most JACO_TAU_BUDGET */
         double alpha = 1;
         for (int a = 0; a < n; a++)
-            if (idx[a] == IDX_T && d[a] < 0) alpha = fmin(alpha, JACO_TAU_T * sv->T / -d[a]);
+            if ((idx[a] == IDX_T || (idx[a] >= 2 && var_kind[idx[a]] == JACO_KIND_TEMPERATURE)) && d[a] < 0)
+                alpha = fmin(alpha, JACO_TAU_T * sv->data[idx[a]] / -d[a]);
         for (int bb = 0; bb < N_BUDGETS; bb++) {
             const struct Budget *B = &budget_table[bb];
             double db = 0, bval = budget_value(B, sv, pr);
@@ -694,16 +743,17 @@ static int brent(struct RootCtx *ctx, double a, double fa, const SolveVars *xa, 
     return -1;
 }
 
-/* Steady-state species at fixed T (and fixed time-dependent species): Newton; if that fails,
-   pseudo-transient continuation from the same start, the pseudo-timestep growing from a tenth of
-   the fastest chemical timescale until the pseudo-time term is negligible. */
+/* The steady-state variables and the bands at fixed T (and fixed time-dependent species): Newton; if that fails,
+   pseudo-transient continuation from the same start, the pseudo-timestep growing from a tenth of the fastest chemical
+   timescale until the pseudo-time term is negligible. */
 static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                          SolveVars *F_out) {
+    const int mask = SOLVE_IONS | SOLVE_FAST;
     SolveVars start = *sv;
-    int st = newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out);
+    int st = newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out);
     if (st == NEWTON_OK) return 0;
     *sv = start;
-    if (ionized_seed(sv, pr) && newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK) return 0;
+    if (ionized_seed(sv, pr) && newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK) return 0;
     if (set->verbose) printf("  jaco ions at T=%g: Newton %s, trying pseudo-transient continuation\n", sv->T, newton_status(st));
     *sv = start;
     struct Eval e;
@@ -711,15 +761,19 @@ static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolve
     double rate_max = 0;
     for (int k = 2; k < N_VARS; k++) {
         double r = fabs(e.J[k][k]) / pr->n_Htot;
-        if (!is_time_dependent(k) && jaco_isfinite(r)) rate_max = fmax(rate_max, r);
+        if ((solve_bit(k) & mask) && var_kind[k] != JACO_KIND_TEMPERATURE && jaco_isfinite(r)) rate_max = fmax(rate_max, r);
     }
     if (!(rate_max > 0)) return -1;
     struct PTC ptc;
     ptc.inv_tau = 10 * rate_max;
+    for (int k = 0; k < N_VARS; k++) {
+        double wk = (k >= 2 && var_kind[k] == JACO_KIND_TEMPERATURE) ? fabs(e.J[k][k]) / rate_max : pr->n_Htot;
+        ptc.w[k] = (jaco_isfinite(wk) && wk > 0) ? wk : pr->n_Htot;
+    }
     for (int stage = 0; stage < JACO_PTC_MAXSTAGES; stage++) {
         ptc.anchor = *sv;
         SolveVars trial = *sv;
-        if (newton(&trial, pr, set, SOLVE_IONS, JACO_PTC_MAXITER, &ptc, c, NULL) != NEWTON_OK) {
+        if (newton(&trial, pr, set, mask, JACO_PTC_MAXITER, &ptc, c, NULL) != NEWTON_OK) {
             ptc.inv_tau *= JACO_PTC_GROW * JACO_PTC_GROW; /* retreat to a smaller pseudo-step */
             continue;
         }
@@ -730,20 +784,20 @@ static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolve
         if (evaluate(sv, pr, &e, c)) return -1;
         int negligible = 1;
         for (int k = 2; k < N_VARS; k++)
-            if (!is_time_dependent(k) && (sv->data[k] > floor_pin(k) || e.F.data[k] > 0) &&
-                pr->n_Htot * ptc.inv_tau > 1e-3 * fabs(e.J[k][k]))
+            if ((solve_bit(k) & mask) && !is_pinned(k, sv->data[k], e.F.data[k]) &&
+                ptc.w[k] * ptc.inv_tau > 1e-3 * fabs(e.J[k][k]))
                 negligible = 0;
         if (negligible) break;
     }
-    st = newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out);
+    st = newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out);
     if (st == NEWTON_OK) return 0;
     if (set->verbose) printf("  jaco ions at T=%g failed after continuation: %s\n", sv->T, newton_status(st));
     /* Last, from the floor: where nothing ionizes the gas the root is at x = 0, and from an ionized start Newton only
        halves the ions per step when the free electrons are the ions themselves (F ~ -x^2). */
     *sv = start;
     for (int k = 2; k < N_VARS; k++)
-        if (!is_time_dependent(k)) sv->data[k] = var_floor[k];
-    return newton(sv, pr, set, SOLVE_IONS, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK ? 0 : -1;
+        if (!is_time_dependent(k) && var_kind[k] == JACO_KIND_SPECIES) sv->data[k] = var_floor[k];
+    return newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK ? 0 : -1;
 }
 
 /* Largest abundance of time-dependent species k: its ceiling and its budgets, the other species fixed */
@@ -753,12 +807,12 @@ static double td_upper(const SolveVars *x, const Params *pr, int k) {
 
 static int td_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level);
 
-/* At fixed T, with the time-dependent species before `level` fixed, solve the others: the next time-dependent species
-   by its own bracketed search, or, once all of them are fixed, the steady-state species. F_out gets the full residual
-   at the solution. */
+/* At fixed T, with the bracketed time-dependent species before `level` fixed, solve the others: the next one by its
+   own bracketed search, or, once all of them are fixed, the steady-state variables and the bands. F_out gets the full
+   residual at the solution. */
 static int td_inner(SolveVars *x, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level,
                     SolveVars *F_out) {
-    if (level >= N_TD) return ions_at_fixed(x, pr, set, c, F_out);
+    if (level >= N_BRACKET) return ions_at_fixed(x, pr, set, c, F_out);
     if (td_bracketed(x, pr, set, c, level)) return -1;
     struct Eval e;
     if (evaluate(x, pr, &e, c)) return -1;
@@ -768,7 +822,7 @@ static int td_inner(SolveVars *x, const Params *pr, const struct JacoSolverSetti
 
 /* residual of the time-dependent species ctx->level at abundance exp(y), the species after it solved there */
 static int td_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
-    const int k = td_species[ctx->level].k;
+    const int k = td_species[bracketed.t[ctx->level]].k;
     x->data[k] = fmax(var_floor[k], fmin(exp(y), td_upper(x, ctx->pr, k)));
     SolveVars F;
     if (td_inner(x, ctx->pr, ctx->set, ctx->c, ctx->level + 1, &F)) return -1;
@@ -782,13 +836,13 @@ static int td_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
    several roots), then Brent in ln x. At the floor the residual is >= 0 (nothing destroys a species that is not
    there, and the backward-Euler term pulls it up) and at its cap <= 0, so a root or a pinned end exists. */
 static int td_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level) {
-    const int k = td_species[level].k;
+    const int k = td_species[bracketed.t[level]].k, param = td_species[bracketed.t[level]].param;
     struct RootCtx ctx;
     root_init(&ctx, td_eval, pr, set, c);
     ctx.level = level;
     const double y_floor = log(var_floor[k]);
     SolveVars xa = *sv;
-    double ya = log(fmax(var_floor[k], fmin(pr->data[td_species[level].param], td_upper(sv, pr, k)))), Ga;
+    double ya = log(fmax(var_floor[k], fmin(pr->data[param], td_upper(sv, pr, k)))), Ga;
     if (root_eval(&ctx, ya, &xa, &Ga)) return -1;
     int up = Ga > 0;
     double fac = log(2.0), yb = ya, Gb = Ga;
@@ -817,20 +871,21 @@ static int td_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolver
     return 0;
 }
 
-/* Chemistry at fixed T: Newton on all species; if that fails, the time-dependent species as nested
-   bracketed scalar problems around the steady-state ones (or, without time-dependent species,
+/* Chemistry at fixed T: Newton on every variable but T; if that fails, the time-dependent species as nested
+   bracketed scalar problems around the steady-state variables and the bands (or, without time-dependent species,
    the steady-state fallback directly). F_out gets the full residual at the returned state. */
 static int chemistry_at_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                           SolveVars *F_out) {
+    const int mask = SOLVE_IONS | SOLVE_TD | SOLVE_FAST;
     SolveVars start = *sv;
-    int st = newton(sv, pr, set, SOLVE_IONS | SOLVE_TD, JACO_CHEM_MAXITER, NULL, c, F_out);
+    int st = newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out);
     if (st == NEWTON_OK) return 0;
     *sv = start;
-    if (ionized_seed(sv, pr) && newton(sv, pr, set, SOLVE_IONS | SOLVE_TD, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK)
+    if (ionized_seed(sv, pr) && newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK)
         return 0;
     if (set->verbose) printf("  jaco chemistry at T=%g: Newton %s, falling back\n", sv->T, newton_status(st));
     *sv = start;
-    if (N_TD == 0) return ions_at_fixed(sv, pr, set, c, F_out);
+    if (N_BRACKET == 0) return ions_at_fixed(sv, pr, set, c, F_out);
     if (td_bracketed(sv, pr, set, c, 0)) return -1;
     /* residual at the returned state, which the bracketed solve evaluated last there */
     struct Eval e;
@@ -963,7 +1018,8 @@ static int verify(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
     if (pinned ? (sv->T >= set->T_max ? r < -lim : r > lim) : fabs(r) > lim) return -1;
     for (int k = 2; k < N_VARS; k++) {
         double rk = e.F.data[k] / row_scale(sv, pr, &e, k);
-        if (sv->data[k] <= floor_pin(k) ? rk > lim : fabs(rk) > lim) return -1;
+        int at_ceiling = has_ceiling(k) && sv->data[k] >= ceiling_pin(k);
+        if (sv->data[k] <= floor_pin(k) ? rk > lim : at_ceiling ? rk < -lim : fabs(rk) > lim) return -1;
     }
     return 0;
 }
