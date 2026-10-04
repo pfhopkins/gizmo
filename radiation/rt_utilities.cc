@@ -974,7 +974,9 @@ void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_ce
 #ifdef RT_INFRARED
             if(k==RT_FREQ_BIN_INFRARED) {
                 cell[i].Radiation_Temperature = background_isrf_cmb_Teff();
+#ifndef JACO /* the jaco model solves the dust temperature (cooling/jaco.cc) */
                 cell[i].Dust_Temperature = DMIN(All.InitRadiationTemp,100.);
+#endif
             }
 #endif
         }
