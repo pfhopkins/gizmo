@@ -44,6 +44,7 @@
 #define JACO_TIER1_MAXITER 8         /* tier-1 Newton steps; a consistent start needs 1-3 */
 #define JACO_MAX_BACKTRACK 3         /* line search tries alpha = 1, 1/2, 1/4, 1/8 of the bounded step */
 #define JACO_TAU_T 0.9               /* T may fall by at most this fraction per step (a factor 10) */
+#define JACO_BALANCE_RISE 10.0       /* a balance temperature may rise by at most this factor per step */
 #define JACO_TAU_BUDGET 0.99         /* a neutral H/He budget may shrink by at most this fraction per step */
 #define JACO_PIVOT_TOL 1e-13         /* LU pivot below this fraction of its column: singular to working precision */
 #define JACO_FD_REL 1e-7             /* finite-difference step, ~sqrt(machine epsilon) */
@@ -91,14 +92,18 @@ struct PTC {
     double w[N_VARS];
 };
 
-enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESEARCH = -3, NEWTON_MAXITER = -4 };
+enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESEARCH = -3, NEWTON_MAXITER = -4,
+       NEWTON_UNSTABLE = -6 };
 
 /* outcome of a tier or of the tier-2 search; PINNED: the answer sits at the temperature/energy floor or ceiling */
 enum Outcome { OUTCOME_FAILED, OUTCOME_SOLVED, OUTCOME_PINNED };
 
-/* which variables a Newton solve may move: T, steady-state variables, time-dependent species (bracketed one by one in
-   tier 2), time-dependent radiation bands (always solved with the steady-state variables) */
-enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_FAST = 8, SOLVE_ALL = 15 };
+/* which variables a Newton solve may move: T, steady-state species, time-dependent species (bracketed one by one in
+   tier 2), time-dependent radiation bands (always solved with the steady-state species), balance temperatures
+   (bracketed in the steady-state fallback) */
+enum { SOLVE_T = 1, SOLVE_IONS = 2, SOLVE_TD = 4, SOLVE_FAST = 8, SOLVE_BAL = 16, SOLVE_ALL = 31 };
+/* everything at fixed T and fixed bracketed species */
+#define SOLVE_STEADY (SOLVE_IONS | SOLVE_FAST | SOLVE_BAL)
 
 #ifndef JACO_HAS_SOLVER_METADATA
 #error "microphysics_func_jac.h carries no solver metadata: regenerate it with a jaco that emits it"
@@ -130,6 +135,7 @@ static constexpr int var_kind[N_VARS] = JACO_VAR_KIND_INIT;
 static int is_time_dependent(int k) { return var_time_dependent[k]; }
 /* the Newton mask bit of variable k >= 2 */
 static int solve_bit(int k) {
+    if (var_kind[k] == JACO_KIND_TEMPERATURE) return SOLVE_BAL;
     return !is_time_dependent(k) ? SOLVE_IONS : var_kind[k] == JACO_KIND_SPECIES ? SOLVE_TD : SOLVE_FAST;
 }
 /* at or below this a variable counts as floored */
@@ -168,6 +174,25 @@ static constexpr struct BracketTable make_bracketed() {
     return b;
 }
 static constexpr struct BracketTable bracketed = make_bracketed();
+
+/* the balance temperatures, bracketed one by one where Newton on the steady state fails */
+static constexpr int count_balance() {
+    int n = 0;
+    for (int k = 2; k < N_VARS; k++) n += var_kind[k] == JACO_KIND_TEMPERATURE;
+    return n;
+}
+#define N_BALANCE count_balance()
+struct BalanceTable {
+    int k[N_VARS];
+};
+static constexpr struct BalanceTable make_balance() {
+    struct BalanceTable b = {};
+    int n = 0;
+    for (int k = 2; k < N_VARS; k++)
+        if (var_kind[k] == JACO_KIND_TEMPERATURE) b.k[n++] = k;
+    return b;
+}
+static constexpr struct BalanceTable balance = make_balance();
 
 struct Budget {
     double total;    /* the total if total_param < 0 */
@@ -267,6 +292,7 @@ static const char *newton_status(int s) {
     case NEWTON_SINGULAR: return "singular";
     case NEWTON_LINESEARCH: return "line search";
     case NEWTON_MAXITER: return "max iterations";
+    case NEWTON_UNSTABLE: return "unstable balance root";
     }
     return "?";
 }
@@ -605,6 +631,10 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             }
         }
         if (step_ok && res_ok) {
+            /* a balance temperature must sit on a stable root of its row (decreasing in it), as GIZMO's bracket walk
+               finds them: across a dust opacity switch the balance also has an unstable root between two stable ones */
+            for (int a = 0; a < n; a++)
+                if (idx[a] >= 2 && var_kind[idx[a]] == JACO_KIND_TEMPERATURE && !(e.J[idx[a]][idx[a]] < 0)) return NEWTON_UNSTABLE;
             if (F_out) *F_out = e.F;
             return NEWTON_OK;
         }
@@ -615,6 +645,11 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         for (int a = 0; a < n; a++)
             if ((idx[a] == IDX_T || (idx[a] >= 2 && var_kind[idx[a]] == JACO_KIND_TEMPERATURE)) && d[a] < 0)
                 alpha = fmin(alpha, JACO_TAU_T * sv->data[idx[a]] / -d[a]);
+        /* a balance temperature also rises by at most JACO_BALANCE_RISE per step: its row falls steeply with it (the
+           dust emission as T^6), so Newton from below overshoots by orders of magnitude */
+        for (int a = 0; a < n; a++)
+            if (idx[a] >= 2 && var_kind[idx[a]] == JACO_KIND_TEMPERATURE && d[a] > 0)
+                alpha = fmin(alpha, (JACO_BALANCE_RISE - 1) * sv->data[idx[a]] / d[a]);
         for (int bb = 0; bb < N_BUDGETS; bb++) {
             const struct Budget *B = &budget_table[bb];
             double db = 0, bval = budget_value(B, sv, pr);
@@ -743,17 +778,85 @@ static int brent(struct RootCtx *ctx, double a, double fa, const SolveVars *xa, 
     return -1;
 }
 
-/* The steady-state variables and the bands at fixed T (and fixed time-dependent species): Newton; if that fails,
-   pseudo-transient continuation from the same start, the pseudo-timestep growing from a tenth of the fastest chemical
-   timescale until the pseudo-time term is negligible. */
+static int balance_inner(SolveVars *x, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level,
+                         SolveVars *F_out);
+
+/* residual of the balance temperature ctx->level at exp(y), the variables after it solved there */
+static int balance_eval(double y, SolveVars *x, struct RootCtx *ctx, double *val) {
+    const int k = balance.k[ctx->level];
+    x->data[k] = fmax(var_floor[k], fmin(exp(y), var_ceiling[k]));
+    SolveVars F;
+    if (balance_inner(x, ctx->pr, ctx->set, ctx->c, ctx->level + 1, &F)) return -1;
+    *val = F.data[k];
+    return 0;
+}
+
+/* Balance temperature `level` (fixed T and bracketed species) as GIZMO's rt_eqm_dust_temp finds the dust temperature:
+   from its current value, in the direction its row points, by steps of 10% growing by 10% each, to the first sign
+   change, then Brent in ln; at a bound with the row still pointing past it, the bound. The walk only stops at a stable
+   root (the row decreasing through zero), the one the previous value leads to where an opacity switch makes two. */
+static int balance_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                             int level, SolveVars *F_out) {
+    const int k = balance.k[level];
+    struct RootCtx ctx;
+    root_init(&ctx, balance_eval, pr, set, c);
+    ctx.level = level;
+    const double y_lo = log(var_floor[k]), y_hi = log(var_ceiling[k]), step = log(1.1);
+    SolveVars xa = *sv, xb;
+    double ya = fmax(y_lo, fmin(y_hi, log(fmax(sv->data[k], var_floor[k])))), Ga, yb, Gb, fac = step;
+    if (root_eval(&ctx, ya, &xa, &Ga)) return -1;
+    const int up = Ga > 0;
+    int found = (Ga == 0);
+    for (int it = 0; it < JACO_BRACKET_MAXITER && !found; it++) {
+        if ((up && ya >= y_hi) || (!up && ya <= y_lo)) {
+            found = 1; /* the row keeps its sign to the bound: the bound is the answer */
+            break;
+        }
+        yb = up ? fmin(y_hi, ya + fac) : fmax(y_lo, ya - fac);
+        xb = xa;
+        if (root_eval(&ctx, yb, &xb, &Gb)) return -1;
+        if (Gb == 0) {
+            xa = xb;
+            found = 1;
+        } else if ((Gb > 0) != (Ga > 0)) {
+            double y;
+            if (brent(&ctx, ya, Ga, &xa, yb, Gb, &xb, set->tol, &y, &xa)) return -1;
+            found = 1;
+        } else {
+            ya = yb;
+            Ga = Gb;
+            xa = xb;
+            fac += step;
+        }
+    }
+    if (!found) return -1;
+    *sv = xa;
+    struct Eval e;
+    if (evaluate(sv, pr, &e, c)) return -1;
+    if (F_out) *F_out = e.F;
+    return 0;
+}
+
+/* at fixed T and bracketed species: the balance temperatures from `level` on bracketed, then Newton on the rest */
+static int balance_inner(SolveVars *x, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c, int level,
+                         SolveVars *F_out) {
+    if (level < N_BALANCE) return balance_bracketed(x, pr, set, c, level, F_out);
+    return newton(x, pr, set, SOLVE_IONS | SOLVE_FAST, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK ? 0 : -1;
+}
+
+/* The steady-state variables and the bands at fixed T (and fixed time-dependent species): Newton; if that fails, the
+   balance temperatures bracketed around the rest; then pseudo-transient continuation from the same start, the
+   pseudo-timestep growing from a tenth of the fastest chemical timescale until the pseudo-time term is negligible. */
 static int ions_at_fixed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                          SolveVars *F_out) {
-    const int mask = SOLVE_IONS | SOLVE_FAST;
+    const int mask = SOLVE_STEADY;
     SolveVars start = *sv;
     int st = newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out);
     if (st == NEWTON_OK) return 0;
     *sv = start;
     if (ionized_seed(sv, pr) && newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out) == NEWTON_OK) return 0;
+    *sv = start;
+    if (N_BALANCE > 0 && balance_inner(sv, pr, set, c, 0, F_out) == 0) return 0;
     if (set->verbose) printf("  jaco ions at T=%g: Newton %s, trying pseudo-transient continuation\n", sv->T, newton_status(st));
     *sv = start;
     struct Eval e;
@@ -876,7 +979,7 @@ static int td_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolver
    the steady-state fallback directly). F_out gets the full residual at the returned state. */
 static int chemistry_at_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
                           SolveVars *F_out) {
-    const int mask = SOLVE_IONS | SOLVE_TD | SOLVE_FAST;
+    const int mask = SOLVE_STEADY | SOLVE_TD;
     SolveVars start = *sv;
     int st = newton(sv, pr, set, mask, JACO_CHEM_MAXITER, NULL, c, F_out);
     if (st == NEWTON_OK) return 0;
@@ -1020,6 +1123,7 @@ static int verify(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         double rk = e.F.data[k] / row_scale(sv, pr, &e, k);
         int at_ceiling = has_ceiling(k) && sv->data[k] >= ceiling_pin(k);
         if (sv->data[k] <= floor_pin(k) ? rk > lim : at_ceiling ? rk < -lim : fabs(rk) > lim) return -1;
+        if (var_kind[k] == JACO_KIND_TEMPERATURE && !is_pinned(k, sv->data[k], e.F.data[k]) && !(e.J[k][k] < 0)) return -1;
     }
     return 0;
 }
