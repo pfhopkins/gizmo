@@ -3518,7 +3518,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                     status = GX_RECEIVER_FAILED;
                     break;
                 }
-                if(t == ThisTask) {continue;}
+                if(t == ThisTask || counts_h[(size_t)b] == 0) {continue;}   /* an envelope that found nothing has no row */
                 const int64_t off = offsets_h[(size_t)b] - sub_base;
                 struct gx_candidate_row row = {&env_h[(size_t)b], t, &pairs_h[(size_t)off], counts_h[(size_t)b]};
                 rows_h[(size_t)n_rows++] = row;
