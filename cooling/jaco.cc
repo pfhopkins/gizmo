@@ -829,7 +829,8 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
    Accumulated over the cells call_jaco() solves in one cooling pass; reported and reset by
    jaco_report_solve_stats(), which every rank must call (MPI collective) once per pass. */
 enum { JS_CELLS, JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED, JS_FEVALS, JS_RESYNC, JS_PINNED, JS_NANJ, JS_NANF,
-       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_NANOUT, JS_NONCONS, JS_N };
+       JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_NANOUT, JS_NONCONS,
+       JS_T1F_NONFINITE, JS_T1F_SINGULAR, JS_T1F_LINESEARCH, JS_T1F_BUDGET, JS_T1F_FLOOR, JS_T1F_UNSTABLE, JS_N };
 static long jaco_stats[JS_N];
 static int jaco_stats_max_nfeval = 0;
 /* energy accounting over a cooling pass, code units: band energy removed and added by the model, the gas internal
@@ -855,6 +856,7 @@ static void jaco_stats_add(const struct JacoSolveInfo *info, const struct jaco_s
         jaco_stats[JS_NANJ] += info->n_nonfinite_jac > 0;
         jaco_stats[JS_NANF] += info->n_nonfinite_F > 0;
         if (info->tier == JACO_TIER_NEWTON) jaco_stats[t1 <= 4 ? JS_T1_1 + t1 - 1 : JS_T1_MORE]++;
+        if (info->tier1_status <= -1 && info->tier1_status >= -6) jaco_stats[JS_T1F_NONFINITE - 1 - info->tier1_status]++;
         jaco_stats[JS_NANOUT] += bad_out;
         /* a subcycled answer's photoionization rate at the end of the step, times the step, is not its integral */
         jaco_stats[JS_NONCONS] += out->band_clipped > 0 || (out->euv_open && info->tier != JACO_TIER_SUBCYCLE);
@@ -884,6 +886,9 @@ void jaco_report_solve_stats(void) {
                global[JS_FAILED], global[JS_FEVALS] / n, global_max, global[JS_T1_1], global[JS_T1_2], global[JS_T1_3],
                global[JS_T1_4], global[JS_T1_MORE], global[JS_RESYNC], global[JS_PINNED], global[JS_NANJ], global[JS_NANF],
                global[JS_NANOUT]);
+        printf("jaco tier-1 failures: non-finite %ld singular %ld line search %ld iteration budget %ld below floor %ld "
+               "unstable balance root %ld\n", global[JS_T1F_NONFINITE], global[JS_T1F_SINGULAR], global[JS_T1F_LINESEARCH],
+               global[JS_T1F_BUDGET], global[JS_T1F_FLOOR], global[JS_T1F_UNSTABLE]);
 #ifdef JACO_HAS_VAR_x_photon_EUV
         printf("jaco band energy (code units): removed %.6e added %.6e | gas internal energy change %.6e | ionizing band: "
                "photoionized %.6e band loss %.6e | non-conserving cells %ld\n", energy[JE_REMOVED], energy[JE_ADDED],
@@ -948,6 +953,28 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
         jaco_solve(&sv, &pr, &set, &info);
         fflush(stdout);
         endrun(10);
+    }
+#endif
+#ifdef JACO_DUMP_SLOW
+    /* JACO_DUMP_SLOW=N: each rank writes the input state of every Nth solve that tier 1 did not finish (at most 400)
+       to jaco_slow_<rank>.txt, for test/jaco_solver's replay */
+    if (info.tier > JACO_TIER_NEWTON) {
+        static long n_slow = 0;
+        static int n_dumped = 0;
+#ifdef _OPENMP
+#pragma omp critical(jaco_dump_slow)
+#endif
+        if (n_slow++ % JACO_DUMP_SLOW == 0 && n_dumped < 400) {
+            char fname[64];
+            snprintf(fname, sizeof(fname), "jaco_slow_%d.txt", ThisTask);
+            FILE *fp = fopen(fname, n_dumped ? "a" : "w");
+            if (fp) {
+                fprintf(fp, "tier %d nfeval %d tier-1 status %d time %g\n", info.tier, info.nfeval, info.tier1_status, All.Time);
+                jaco_print_state(fp, "  input state:", &sv_in, &pr);
+                fclose(fp);
+            }
+            n_dumped++;
+        }
     }
 #endif
 #ifdef OUTPUT_COOLRATE_DETAIL

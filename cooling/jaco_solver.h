@@ -36,7 +36,8 @@ struct JacoSolveInfo {
     int nfeval_fd;     /* of which finite-difference columns */
     int nfeval_tier1;  /* of which spent in the first tier-1 attempt */
     int tier1_status;  /* outcome of that attempt: 0 converged, -1 non-finite residual, -2 singular,
-                          -3 line search, -4 iteration budget, -5 converged below the energy floor */
+                          -3 line search, -4 iteration budget, -5 converged below the energy floor,
+                          -6 unstable balance root */
     int n_nonfinite_jac; /* evaluations whose generated Jacobian had non-finite entries (repaired if fd_jacobian) */
     int n_nonfinite_F;   /* evaluations whose generated residual was non-finite (that step or trial is rejected) */
     int resynced_T0;   /* tier 0 re-derived the starting T from u_initial */
