@@ -15,7 +15,12 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
    under backward Euler, rate * dt is their integral over the cooling step */
 struct jaco_step_outputs {
     Outputs rate;
-    double dt; /* s */
+    double dt;                   /* s */
+    double gas_dE;               /* gas internal energy change over the step, code units */
+    double band_removed, band_added; /* band energy the model removed and added, code units */
+    double photoionized, euv_loss;   /* ionizing band: energy the photoionizations took, and the band's loss */
+    long band_clipped;           /* bands whose solved energy was negative or not finite, and was replaced */
+    int euv_open;                /* the ionizing band's loss is not what the photoionizations took over the step */
 };
 void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle_data *pp, struct gas_cell_data *cell,
                    struct jaco_step_outputs *out);
@@ -29,7 +34,7 @@ double jaco_cie_electron_abundance(double T);
 void jaco_report_solve_stats(void);
 void jaco_radiation_inputs(int i, double T, double *G0, double *G_LW, double *Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 double jaco_metal_line_switch(void);
-double jaco_recombination_return_fraction(int i, double T, double heat_rhd_per_H0, struct gas_cell_data *cell);
+void jaco_uvb_inputs(int i, double T, double *G_LW_bg, double *gamma_12, double *eps_H0, struct gas_cell_data *cell);
 struct jaco_eos_state {
     double T;          /* K */
     double P_over_rho; /* erg/g */

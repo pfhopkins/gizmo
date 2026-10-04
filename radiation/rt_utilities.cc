@@ -693,8 +693,8 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
         {
             kf = k_tmp; // normal loop
             double e0, dt_e_gamma_band=0, total_de_dt=0, a0_abs = -rt_absorption_rate(i,kf, pp, cell);
-#ifdef JACO_RT_OWNS_EUV
-            if(RT_BAND_IS_IONIZING(kf)) {a0_abs = 0;} /* the jaco model's photoionizations are this band's sink (cooling/jaco.cc); the flux still relaxes with Rad_Kappa */
+#ifdef JACO
+            a0_abs = 0; /* the jaco model's processes absorb and emit every band (cooling/jaco.cc): transport only here; the flux still relaxes with Rad_Kappa */
 #endif
 #if defined(RT_EVOLVE_INTENSITIES)
             if(mode==0) {e0 = RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity[kf][k_angle];} else {e0 = RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity_Pred[kf][k_angle];}
@@ -727,9 +727,12 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     cell[i].Radiation_Temperature = DMIN(cell[i].Radiation_Temperature, T_max);
                     cell[i].Radiation_Temperature = DMAX(cell[i].Radiation_Temperature, DMAX(T_min, MIN_REAL_NUMBER)); // numerator above can go non-positive in extreme dynamic-range regimes (e.g. e0 -> 0); floor before use so log10(<=0)=NaN cannot propagate into the opacity table lookup
                     a0_abs = -rt_absorption_rate(i,kf, pp, cell); // update absorption rate using the new radiation temperature //
+#ifdef JACO
+                    a0_abs = 0; /* transport only: the radiation-temperature update below then sees no absorption either */
+#endif
                 }
                 double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0; // add the summed absorption and equate to dust emission //
-#ifdef COOLING
+#if defined(COOLING) && !defined(JACO) /* under JACO the model solves the dust temperature */
                 cell[i].Dust_Temperature = rt_eqm_dust_temp(i, T_gas, total_absorption_rate * vol_inv_phys * C_LIGHT_CODE / C_LIGHT_CODE_REDUCED, pp, cell);
 #endif
                 if(cell[i].Dust_Temperature < T_min) {cell[i].Dust_Temperature = T_min;}

@@ -175,10 +175,9 @@ void set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, str
 
 #if defined(RADTRANSFER)
 /* Return the cooling radiation CoolingRate left in Lambda_RadiativeCooling_toRHDBins to the RT bands over the step dtime,
-   for a cell whose specific energy goes from InternalEnergy to unew. gate = 1: each band's change is also limited by
-   the gas energy change net of the hydro work and the absorbed radiation (de_u_touse); gate = 0: only by the positivity
-   floor and the magnitude cap. */
-void rt_cooling_radiation_to_bands(int i, double unew, double dtime, int gate, struct particle_data *pp, struct gas_cell_data *cell)
+   for a cell whose specific energy goes from InternalEnergy to unew; each band's change is limited by the positivity
+   floor, a magnitude cap and the gas energy change net of the hydro work and the absorbed radiation (de_u_touse). */
+void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int k;
     double nHcgs = cell[i].nHcgs(); /* hydrogen number dens in cgs units */
@@ -218,7 +217,6 @@ void rt_cooling_radiation_to_bands(int i, double unew, double dtime, int gate, s
             {
                 double de_rad_min = DMIN(DMAX(-0.99*cell[i].Rad_E_gamma[k], -de_u_touse), 0); // don't let the radiation loss take all the radiation energy into negative, or more than the energy gained from cooling+heating
                 double de_rad_max = DMAX(DMIN(10.*unew*cell[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
-                if(!gate) {de_rad_min = -0.99*cell[i].Rad_E_gamma[k]; de_rad_max = 10.*unew*cell[i].Mass;} /* only the positivity floor and the magnitude cap */
                 de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min); // limit de_rad appropriately
                 if(fabs(de_rad) > MIN_REAL_NUMBER)
                 {
@@ -312,7 +310,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         
 
 #if defined(RADTRANSFER) /* account for cooling radiation which should, according to our modules, come out in certain bands */
-        rt_cooling_radiation_to_bands(i, unew, dtime, 1, pp, cell);
+        rt_cooling_radiation_to_bands(i, unew, dtime, pp, cell);
 #endif // done with RHD-cooling block update
         
 
@@ -2479,21 +2477,21 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 
 /* this function defines an effective background radiation temperature for purposes of computing the emission corrections above */
 #ifdef JACO
-/* Share of the recombination cooling CoolingRate returns to the NUV band (Lambda_rad_NUV): max(1 - shieldfac, 0) times
-   Heat_Ion_from_RHD / (Heat_Ion_from_UVB + Heat_Ion_from_RHD), here from the H terms per neutral H at temperature T, with
-   heat_rhd_per_H0 = rt_ion_G_HI c sigma n_gamma */
-double jaco_recombination_return_fraction(int i, double T, double heat_rhd_per_H0, struct gas_cell_data *cell)
+/* The UV background's inputs to the jaco RT model, as CoolingRate and update_explicit_molecular_fraction take them at
+   temperature T: its contribution to the Lyman-Werner field (*G_LW_bg), its local H photoionization rate in 1e-12 s^-1
+   (*gamma_12, which sets the self-shielding) and its photoheating per neutral H before shielding (*eps_H0) */
+void jaco_uvb_inputs(int i, double T, double *G_LW_bg, double *gamma_12, double *eps_H0, struct gas_cell_data *cell)
 {
     if(!isfinite(T) || T <= 0) {T = 1.e4;}
     double rho = cell[i].Density * All.cf_a3inv, local_gammamultiplier = return_local_gammamultiplier(i, cell);
-    double shieldfac = return_uvb_shieldfac(i, local_gammamultiplier * gJH0 / 1.0e-12, HYDROGEN_MASSFRAC * rho * UNIT_DENSITY_IN_NHCGS, log10(T), cell);
-    double heat_uvb_per_H0 = 0;
+    *gamma_12 = local_gammamultiplier * gJH0 / 1.0e-12;
+    *G_LW_bg = sqrt(return_uvb_shieldfac(i, *gamma_12, rho * UNIT_DENSITY_IN_NHCGS, log10(T), cell)) * (gJH0 / 2.29e-10);
+    *eps_H0 = 0;
 #if ((GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
-    if(J_UV != 0) {heat_uvb_per_H0 = shieldfac * (epsH0 + gJH0*(local_gammamultiplier-1.)*2.9*1.6e-12);}
+    if(J_UV != 0) {*eps_H0 = epsH0 + gJH0*(local_gammamultiplier-1.)*2.9*1.6e-12;}
 #else
-    if(J_UV != 0) {heat_uvb_per_H0 = local_gammamultiplier * epsH0 * shieldfac;}
+    if(J_UV != 0) {*eps_H0 = local_gammamultiplier * epsH0;}
 #endif
-    return DMAX(1.-shieldfac, 0.) * DMIN(1., DMAX(0., heat_rhd_per_H0 / (heat_uvb_per_H0 + heat_rhd_per_H0 + MIN_REAL_NUMBER)));
 }
 #endif
 
