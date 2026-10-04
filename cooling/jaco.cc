@@ -210,6 +210,9 @@ void jaco_build_cie_table(void) {
 #endif
 #ifdef JACO_HAS_PARAM_T_rad
     pr.T_rad = pr.T_CMB = 2.73;
+#ifdef JACO_HAS_PARAM_Td_initial
+    pr.Td_initial = 20.;
+#endif
     pr.rho = 2.3e-24; /* n_Htot = 1 */
     pr.Z_metals = 0.014;
     pr.gamma_eos = 5. / 3.;
@@ -637,6 +640,9 @@ static void jaco_pack_bands(int i, SolveVars *sv, Params *pr, struct particle_da
     pr->gamma_eos = cell[i].gamma_eos_value();
     double Td = cell[i].Dust_Temperature;
     sv->Td = (jaco_isfinite(Td) && Td > 0) ? DMIN(DMAX(Td, JACO_TD_FLOOR), JACO_TD_CEILING) : DMAX(cell[i].Temperature, JACO_TD_FLOOR);
+#ifdef JACO_HAS_PARAM_Td_initial
+    pr->Td_initial = sv->Td; /* the dust-absorbed bands' opacity, as the kick takes it */
+#endif
     jaco_uvb_inputs(i, cell[i].Temperature, &pr->G_LW_bg, &pr->gamma_12_UVB, &pr->eps_H0_UVB, cell);
 #endif
 }

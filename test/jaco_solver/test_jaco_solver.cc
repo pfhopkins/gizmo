@@ -115,6 +115,9 @@ static void set_initial(SolveVars *s, Params *pr) {
     if (!(s->Td > 0)) s->Td = 10.;
 #endif
 #endif
+#ifdef JACO_HAS_PARAM_Td_initial
+    pr->Td_initial = s->Td;
+#endif
     SolveVars c = *s;
     c.x_Hplus = fmin(c.x_Hplus, 1 - 2 * c.x_H_2);
     jaco_initial_from_state(&c, pr);
