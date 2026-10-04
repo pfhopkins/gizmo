@@ -251,19 +251,16 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
     }
     gpu_particles_arena_invalidate();
 
-    /* Optional rank-0 traffic print. Backwards-compatible: bundles without a
-     * loop_name (manually-constructed bundles) stay silent. Uses MPI-summed
-     * global record count so rank 0 reports total traffic, not just its own
-     * share — avoids false-fail on multi-rank MA-N validation when rank 0
-     * is purely a receiver. */
-    if (bundle->loop_name != nullptr) {
+    /* Rank-0 traffic print, on status steps only (the reduction exists only to feed it, and the
+     * gate is the same on every task). Bundles without a loop_name stay silent. The record count
+     * is summed over tasks so rank 0 reports total traffic, not just its own share. */
+    if (bundle->loop_name != nullptr && PRINT_STATUS_THIS_STEP) {
         long long global_records = 0;
         MPI_Reduce(&local_records_sent, &global_records, 1, MPI_LONG_LONG,
                    MPI_SUM, 0, MPI_COMM_WORLD);
-        if (ThisTask == 0 && global_records > 0) {
-            printf("  Ghost writeback (%s): %lld records exchanged (global, sent==received)\n",
-                   bundle->loop_name, global_records);
-            fflush(stdout);
+        if (global_records > 0) {
+            PRINT_STATUS("  Ghost writeback (%s): %lld records exchanged (global, sent==received)",
+                         bundle->loop_name, global_records);
         }
     }
 }
