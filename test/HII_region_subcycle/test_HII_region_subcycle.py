@@ -29,13 +29,11 @@ _all_ifront = {}
         (),
         ("TRANSPORT_SUBCYCLE=10",),
         ("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
-        # the jaco model of the standard module's RT coupling, cooling at every transport sub-step; with the model's
-        # photoionizations as the ionizing band's sink too. Both are also held to the baseline's I-front radius over time.
+        # the jaco model of the standard module and its coupling to every band, solved at every transport sub-step; also
+        # held to the baseline's I-front radius over time
         ("JACO=starforge_legacy_RT", "TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
-        ("JACO=starforge_legacy_RT", "JACO_RT_OWNS_EUV", "TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
     ],
-    ids=["baseline", "subcycle_rt", "subcycle_rt_cooling", "jaco_rt_subcycle_cooling",
-         "jaco_rt_owns_euv_subcycle_cooling"],
+    ids=["baseline", "subcycle_rt", "subcycle_rt_cooling", "jaco_rt_subcycle_cooling"],
 )
 def test_HII_region_subcycle(num_mpi_ranks, num_omp_threads, extra_config_flags):
     profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)

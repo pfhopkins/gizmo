@@ -20,11 +20,9 @@ TEST_DIR = Path(__file__).parent
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-# jaco_rt: the jaco model of the standard module's RT coupling, held to the baseline's I-front radius over time;
-# jaco_rt_owns_euv: the same with the model's photoionizations as the ionizing band's only sink (JACO_RT_OWNS_EUV)
-@pytest.mark.parametrize("extra_config_flags",
-                         [(), ("JACO=starforge_legacy_RT",), ("JACO=starforge_legacy_RT", "JACO_RT_OWNS_EUV")],
-                         ids=["baseline", "jaco_rt", "jaco_rt_owns_euv"])
+# jaco_rt: the jaco model of the standard module and its coupling to the ionizing band, whose photons it solves (the RT
+# kick only transports them), held to the baseline's I-front radius over time
+@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge_legacy_RT_EUV",)], ids=["baseline", "jaco_rt"])
 def test_HII_region_simple(num_mpi_ranks, num_omp_threads, extra_config_flags):
     profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
     hii.assert_hii_temperature(profiles)

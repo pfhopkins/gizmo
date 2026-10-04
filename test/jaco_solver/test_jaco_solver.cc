@@ -45,32 +45,44 @@ static const double CHECK_TOL = 1e-5;   /* residual check: 10x the solver tolera
 static const double EQ_GATE = 0.01;     /* equilibrium check applies when the backward-Euler term shifts T by < 1% (linearized) */
 static const double EQ_TOL = 0.03;      /* ... and then T must be within 3% of an equilibrium root */
 
-/* MODEL=starforge_legacy_RT: 0 dark; 1 the ionizing band of an HII region under GIZMO's rate law (frozen over the step);
-   2 the same under the photon-limited law (c_tilde = 1e-4 c) */
+/* MODEL=starforge_legacy_RT(_EUV), the bands' start-of-step energies: 0 dark; 1 a few pc from an O star, the ionizing band
+   at c sigma n_gamma = 1e-8 s^-1 and 1e4 Habing in the photoelectric band, bright optical and NUV bands and an ISRF-like
+   IR band; 2 a dark protostellar core, the IR band at 100 K blackbody */
 static int g_rt_field = 0;
 
 static void starforge_params(Params *pr, double n, double dt) {
     memset(pr, 0, sizeof(*pr));
-#ifdef JACO_HAS_PARAM_Gamma_HI
-    pr->T_bg = 2.73;
+#ifdef JACO_HAS_PARAM_rsol
+    pr->rsol = 1e-4;
     pr->sigma_HI = 3.0e-18;
     pr->eps_HI = 4.8e-12;
-    pr->Gamma_HI = g_rt_field ? 1e-8 : 0; /* ~ a few pc from an O star */
-    pr->c_tilde = (g_rt_field == 2) ? 2.9979e6 : 0;
+    pr->hnu_EUV = 20.;
 #endif
-#ifdef JACO_HAS_PARAM_f_IR_selfabs
-    pr->f_IR_selfabs = 1;
+#ifdef JACO_HAS_PARAM_T_rad
+    pr->T_rad = (g_rt_field == 2) ? 100. : 30.;
+    pr->T_CMB = 2.73;
+    pr->rho = n * 2.34e-24;
+    pr->Z_metals = 0.014;
+    pr->gamma_eos = 5. / 3.;
 #endif
     pr->n_Htot = n;
     pr->Delta_t = dt;
     pr->y = 0.0994;
     pr->ISRF = 1.0;
+#ifdef JACO_HAS_PARAM_G_0
     pr->G_0 = 1.0;
+#endif
+#ifdef JACO_HAS_PARAM_G_LW
     pr->G_LW = 1.0;
+#endif
     pr->f_metal = 1.0;
+#ifdef JACO_HAS_PARAM_Td
     pr->Td = 10.0;
+#endif
     pr->Z_d = 1.0;
+#ifdef JACO_HAS_PARAM_f_d
     pr->f_d = 1.0;
+#endif
     pr->Delta_x = 3e18;
     pr->N_H = n * pr->Delta_x;
     pr->grad_v = 1e-14;
@@ -90,7 +102,19 @@ static void starforge_params(Params *pr, double n, double dt) {
 /* Start-of-step values of the time-dependent species from a seed, as gizmo_to_jaco makes them: the H+ seed within
    what H2 leaves. Matters only where H+ is time-dependent (TD=...): the sweep's seeds overfill the H budget on purpose,
    which the solver clamps, but start-of-step values that overfill it define a different problem than the one checked. */
-static void set_initial(const SolveVars *s, Params *pr) {
+static void set_initial(SolveVars *s, Params *pr) {
+#ifdef JACO_HAS_VAR_x_photon_EUV
+    /* the bands start the step, and the solve, at the field's energies (per H nucleus; photons for the ionizing band) */
+    const double n = pr->n_Htot, lit = g_rt_field == 1, core = g_rt_field == 2;
+    s->x_photon_EUV = lit * 1e-8 / (2.9979e10 * pr->sigma_HI) / n;
+#ifdef JACO_HAS_VAR_x_photon_IR
+    s->x_photon_FUV = lit * 1e4 * 5.34e-14 / 1.60217733e-12 / n;
+    s->x_photon_NUV = lit * 300. / n;
+    s->x_photon_ONIR = lit * 1000. / n;
+    s->x_photon_IR = (lit * 1. + core * 7.5657e-15 * 1e8 / 1.60217733e-12 + (1 - lit - core) * 0.65) / n;
+    if (!(s->Td > 0)) s->Td = 10.;
+#endif
+#endif
     SolveVars c = *s;
     c.x_Hplus = fmin(c.x_Hplus, 1 - 2 * c.x_H_2);
     jaco_initial_from_state(&c, pr);
@@ -105,7 +129,9 @@ static double cie_xHp[CIE_N], cie_xHep[CIE_N], cie_xHepp[CIE_N];
 static int build_cie_table(const JacoSolverSettings *set) {
     Params pr;
     starforge_params(&pr, 1.0, 1e15);
+#ifdef JACO_HAS_PARAM_Td
     pr.Td = 15.0;
+#endif
     pr.N_H = 1e20;
     double xHp = 0.99, xHep = 1e-4, xHepp = 0.099;
     for (int i = CIE_N - 1; i >= 0; i--) {
@@ -177,6 +203,14 @@ static double diag_derivative(const SolveVars *sv, const Params *pr, const Solve
     return (Fp.data[k] - F->data[k]) / h;
 }
 
+static const double var_floor[N_VARS] = JACO_VAR_FLOOR_INIT, var_ceiling[N_VARS] = JACO_VAR_CEILING_INIT;
+static const double var_scale[N_VARS] = JACO_VAR_SCALE_INIT;
+static const int var_kind[N_VARS] = JACO_VAR_KIND_INIT;
+static const int var_time_dependent[N_VARS] = JACO_VAR_TIME_DEPENDENT_INIT;
+/* a tier-3 answer solves the sub-steps' backward-Euler equations, not the full step's: only its steady-state rows can be
+   checked against the full step */
+static int g_check_subcycled = 0;
+
 /* 0 if OK; otherwise writes the reason. *worst gets the largest residual / (CHECK_TOL * scale). */
 static int check_answer(const SolveVars *sv, const Params *pr, const JacoSolverSettings *set, char *why, double *worst) {
     SolveVars F;
@@ -194,8 +228,8 @@ static int check_answer(const SolveVars *sv, const Params *pr, const JacoSolverS
         return 1;
     }
     for (int k = 2; k < N_VARS; k++)
-        if (sv->data[k] < JACO_ABUNDANCE_FLOOR || sv->data[k] > 1) {
-            sprintf(why, "abundance [%d]=%g out of bounds", k, sv->data[k]);
+        if (sv->data[k] < var_floor[k] || sv->data[k] > var_ceiling[k]) {
+            sprintf(why, "variable [%d]=%g out of bounds", k, sv->data[k]);
             return 1;
         }
     double xH0 = 1 - sv->x_Hplus - 2 * sv->x_H_2, xHe0 = pr->y - sv->x_Heplus - sv->x_Heplusplus;
@@ -223,15 +257,20 @@ static int check_answer(const SolveVars *sv, const Params *pr, const JacoSolverS
     int at_floor = sv->T <= T_floor_of(sv, pr, set) * (1 + 1e-4) || sv->u <= set->u_min * (1 + 1e-4);
     int at_ceiling = sv->T >= set->T_max * (1 - 1e-9);
     double rT = at_floor ? fmax(r, 0) : at_ceiling ? fmax(-r, 0) : fabs(r);
+    if (g_check_subcycled) rT = 0;
     *worst = rT;
     if (rT > 1) {
         sprintf(why, "energy residual %.3g x tolerance (F_T=%g scale=%g%s)", rT, F.T, sT, at_floor ? ", at floor" : "");
         return 1;
     }
     for (int k = 2; k < N_VARS; k++) {
-        double sk = fabs(J[k][k]) * (sv->data[k] + X_ATOL) + 1e-300;
+        /* subcycled: the last substep's rows, not the full step's; a balance temperature's row also reads the bands'
+           absorption over the step */
+        if (g_check_subcycled && (var_time_dependent[k] || var_kind[k] == JACO_KIND_TEMPERATURE)) continue;
+        double sk = fabs(J[k][k]) * (sv->data[k] + X_ATOL * var_scale[k]) + 1e-300;
         double rk = F.data[k] / (CHECK_TOL * sk);
-        if (sv->data[k] <= JACO_ABUNDANCE_FLOOR * (1 + 1e-9)) rk = fmax(rk, 0); /* floored: must not want to grow */
+        if (sv->data[k] <= var_floor[k] * (1 + 1e-9)) rk = fmax(rk, 0); /* floored: must not want to grow */
+        if (var_kind[k] == JACO_KIND_TEMPERATURE && sv->data[k] >= var_ceiling[k] * (1 - 1e-9)) rk = fmin(rk, 0); /* at its ceiling */
         if (k == IDX_x_Hplus && xH0 <= 1e-9) rk = fmin(rk, 0); /* at the end of the H budget: must not want to shrink */
         rk = fabs(rk);
         *worst = fmax(*worst, rk);
@@ -409,7 +448,10 @@ static int solve_checked(SolveVars *sv, const Params *pr, const JacoSolverSettin
         return rc;
     }
     double worst;
-    if (check_answer(sv, pr, set, why, &worst)) {
+    g_check_subcycled = info->tier == JACO_TIER_SUBCYCLE;
+    int bad = check_answer(sv, pr, set, why, &worst);
+    g_check_subcycled = 0;
+    if (bad) {
         st.check_fail++;
         if (!strncmp(why, "energy", 6))
             st.cat[0]++;
@@ -674,6 +716,12 @@ static std::vector<SweepCase> sweep_cases() {
                         c.variant = variant;
                         c.idt = idt;
                         starforge_params(&c.pr, n, dt);
+#ifdef JACO_HAS_PARAM_rsol
+                        /* without transport a band in a closed box has no equilibrium (with T_rad an input, the dust's
+                           emission at T_dust and its absorption at T_rad never balance): the dt -> infinity set holds
+                           the bands at their start-of-step energies */
+                        if (idt == 6) c.pr.rsol = 0;
+#endif
                         c.pr.pdv_work = pdv;
                         SolveVars s0 = {};
                         seed_variant(&s0, T0, variant, c.pr.y);
@@ -873,7 +921,7 @@ static int run_compare(const JacoSolverSettings *set) {
 
 int main(int argc, char **argv) {
     jaco_init_tables(argc > 1 ? argv[1] : ".");
-    const char *field = getenv("JACO_RT_FIELD"); /* the debug modes' ionizing band (MODEL=starforge_legacy_RT): 0, 1 or 2 */
+    const char *field = getenv("JACO_RT_FIELD"); /* the debug modes' radiation field (MODEL=starforge_legacy_RT): 0, 1 or 2 */
     JacoSolverSettings set;
     jaco_solver_default_settings(&set);
     set.T_min = 2.73;   /* GIZMO's MinGasTemp; the model is not finite below ~1.6 K */
@@ -1028,12 +1076,12 @@ int main(int argc, char **argv) {
     eq_fd.print("dt=1e20");
     long bad = sweep.fail + sweep.check_fail + sweep.eq_mismatch + warm.fail + warm.check_fail + eq.fail + eq.check_fail +
                eq.eq_mismatch + sweep.eq_ref_fail + eq.eq_ref_fail + nfail;
-#ifdef JACO_HAS_PARAM_Gamma_HI
-    /* the sweep again with the ionizing band lit, under each rate law */
+#ifdef JACO_HAS_VAR_x_photon_EUV
+    /* the sweep again in each radiation field */
     report_quota = 4;
     for (g_rt_field = 1; g_rt_field <= 2; g_rt_field++) {
         Stats s_lit, w_lit, e_lit;
-        printf("\n== sweep with the ionizing band lit (%s law) ==\n", g_rt_field == 1 ? "frozen" : "photon-limited");
+        printf("\n== sweep in the %s ==\n", g_rt_field == 1 ? "field near an O star" : "IR field of a protostellar core");
         bad += print_outputs(&set);
         run_sweep(&set, 1, s_lit, w_lit, e_lit);
         s_lit.print("sweep");
