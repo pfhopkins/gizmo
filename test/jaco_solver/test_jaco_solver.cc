@@ -1012,7 +1012,11 @@ int main(int argc, char **argv) {
         for (int i = 0; i < np; i++) {
             double T = Thi * pow(Tlo / Thi, (double)i / (np - 1)), G, u;
             int bad = G_of_T(T, &x, &pr, &set, &G, &u);
-            printf("T=%.6e G=%+.6e bad=%d xHp=%.6e xHep=%.4e xHepp=%.4e xH2=%.4e\n", T, G, bad, x.x_Hplus, x.x_Heplus, x.x_Heplusplus, x.x_H_2);
+            printf("T=%.6e G=%+.6e bad=%d xHp=%.6e xHep=%.4e xHepp=%.4e xH2=%.4e", T, G, bad, x.x_Hplus, x.x_Heplus, x.x_Heplusplus, x.x_H_2);
+#ifdef JACO_HAS_VAR_Td
+            printf(" Td=%.6g", x.Td);
+#endif
+            printf("\n");
         }
         return 0;
     }
@@ -1045,8 +1049,12 @@ int main(int argc, char **argv) {
         char why[256] = "ok";
         double worst = 0;
         if (!rc) check_answer(&sv, &pr, &set, why, &worst);
-        printf("rc=%d tier=%d nfeval=%d nonfinite_jac=%d pinned=%d T=%.9g xHp=%.4g xHep=%.4g xHepp=%.4g xH2=%.4g check: %s\n", rc, info.tier,
-               info.nfeval, info.n_nonfinite_jac, info.pinned, sv.T, sv.x_Hplus, sv.x_Heplus, sv.x_Heplusplus, sv.x_H_2, why);
+        printf("rc=%d tier=%d nfeval=%d nonfinite_jac=%d pinned=%d T=%.9g xHp=%.4g xHep=%.4g xHepp=%.4g xH2=%.4g", rc, info.tier,
+               info.nfeval, info.n_nonfinite_jac, info.pinned, sv.T, sv.x_Hplus, sv.x_Heplus, sv.x_Heplusplus, sv.x_H_2);
+#ifdef JACO_HAS_VAR_Td
+        printf(" Td=%.6g", sv.Td);
+#endif
+        printf(" check: %s\n", why);
         return 0;
     }
 
