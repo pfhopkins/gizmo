@@ -101,6 +101,23 @@ band/gas coupling convention, not a kick bug, and it is the regime of IR-trapped
 Decision: trace the second half (one agent-day) before deciding whether the RSOL convention needs a consistent
 treatment on starforge_dev.
 
+### 3.1c Full-STARFORGE closed box: D1 exact, and the RSOL coupling drains quantified (rt_energy_ab 0d109a0c)
+rt_closed_box now also runs SINGLE_STAR_STARFORGE_DEFAULTS + SINGLE_STAR_FB_RAD + COOLING (all five bands, STARFORGE
+cooling/dust/chemistry, gas cube inset in a larger box to dodge the ISRF edge reset), without sources and with a static
+30 Msun star. D1 ledger exact at n = 1e3 and 1e7: 1.00000000 fixed / 2.00000000 unfixed. Band ledger closes to 1e-4
+with every flow tallied (new per-band diagnostic, c8b1eab9). Not asserted, reported: under RSOL the bands + gas
+budget does not close by construction. Named drains, cumulative: (1) IR gas-share heating at c~ (1:1 in band units;
+25% of the band energy at 1e7), inconsistent with GIZMO's own RSOL ledger in kicks.cc:337-341 which values radiation
+at c/c~ of gas energy; (2) cooling return at c~/c of the gas emission (limiters clip 9-27% of what is offered at 1e3);
+(3) photoheating at c against ionizing-band loss at c~ while 100% of the absorbed ionizing energy is also donated to
+OPT/NIR: ~16% x c/c~ of the absorbed energy is created; photoheating drives 83-99.8% of the cooling return.
+Build-system defect found on the way: eos.h re-includes GIZMO_config.h after precompiler_logic.h's #undefs, so
+RT_ISRF_BACKGROUND=-1 (and the #undefs of MHD_CONSTRAINED_GRADIENT, NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_
+AND_DIFFUSION, SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) cannot take effect from Config.sh. Not fixed (changes production builds).
+Decision: whether the RSOL band/gas convention gets a consistent treatment (value every band/gas exchange at the
+same c, and stop donating photoheated ionizing energy to OPT/NIR) on starforge_dev; it is larger than D1 in IR-thick
+and photoionized gas. Needs its own design pass and benchmark regeneration.
+
 ### 3.2 Cooling-radiation return limiter under reduced c
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
 cooling radiation only if the cell's internal energy fell this step". Measured effect in the tests < 0.7%.
