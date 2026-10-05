@@ -130,6 +130,9 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+        eos_gamma_probe_report();
+#endif
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
         rt_diag_ir_double_count_report();
 #endif

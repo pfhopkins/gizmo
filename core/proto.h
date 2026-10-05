@@ -191,6 +191,9 @@ void do_fewbody_kick(int i, double fewbody_kick_dv[3], double dt);
 #endif
 
 void set_eos_pressure(int i, struct particle_data *pp = P, struct gas_cell_data *cell = CellP);
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+void eos_gamma_probe_report(void);
+#endif
 double return_user_desired_target_density(int i);
 double return_user_desired_target_pressure(int i);
 #ifdef EOS_TILLOTSON
