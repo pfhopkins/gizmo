@@ -91,6 +91,20 @@ long tests (HII_region_subcycle, shu_M120, gmc_cooling, SN_singlestar, gmc_cooli
 Decision: fix D1 on starforge_dev (now backed by a sensitive test) and regenerate the gmc_cooling_rt benchmark; D2
 is harmless either way (keep for consistency or drop). Not merged; your call.
 
+### 3.1a RT subsuite on a genoa node, switches off vs on (job 7177500, export 7d445bcf, 2026-10-05)
+15 test ids, 48 ranks x 2 threads, 1h11m. Every test passes in both arms except `gmc_cooling_rt[baseline]`, which
+fails with the fixes on urad_FIR only (max rel 0.216 vs 0.10; on/off per n_H bin 0.93 -> 0.76, T within 3.4%,
+T_dust within 0.1%, T_rad within 1%). shu_M120 passes with the fixes (T 0.032, T_dust 0.034, T_rad 0.050) with
+urad_FIR 0.31 off the benchmark (not asserted; 0.12 before). HII_region: r_IF and T_peak identical, box FIR energy
+2.68e4 -> 1.75e4. SN_singlestar (all three variants), gmc_cooling, HII_region_subcycle and the snapshot-restart test
+unchanged. Switch lines verified present/absent in every run log.
+Also on rt_energy_ab (e1f2ea45, 963fa578, 83f6b1cc): an include guard on the generated GIZMO_config.h so
+precompiler_logic.h's #undefs are no longer cancelled by eos.h's re-include (bit-identical for the three production
+configs; it changes the outcome only for MHD_CONSTRAINED_GRADIENT=2+MODIFIED, a user-set NUM_ADDITIONAL_PASSIVESCALAR
+value with ISMDUSTCHEM, and a bare SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, all to the originally intended values), and
+`RT_ISRF_BACKGROUND=0` honoured as "no background" even under the STARFORGE umbrella (every ISRF site compiled out;
+the cosmic-ray background then falls back to the unattenuated Milky Way value rather than zero).
+
 ### 3.1b IR-thick cells under COOLING: band energy drains into the gas (new, 2026-10-05)
 rt_closed_box now runs at n_H = 1e3, 1e4, 1e5, 1e7 (rt_energy_ab 116d5b5a). Without COOLING the fixed build conserves
 band energy to round-off up to tau_IR = 6.8e3 per cell. With COOLING at n_H = 1e7 (tau_IR ~ 2.5 per cell) the
