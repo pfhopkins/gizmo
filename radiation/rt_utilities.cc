@@ -922,7 +922,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(kf==RT_FREQ_BIN_INFRARED) {
 #ifdef COOLING
                 ef += de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption); /* update: assume a fraction de_abs * IRBand_opacity_fraction_from_gas_absorption is absorbed by the gas, which will not be instantly re-emitted here, but later in the cooling subroutines */
-                if(mode==0) {cell[i].DtInternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / ((MIN_REAL_NUMBER + dt_entr) * cell[i].Mass);} /* this fraction absorbed by gas goes into a heating rate which can be balanced implicitly in the cooling function later */
+                if(mode==0) {double du_gas = de_abs * IRBand_opacity_fraction_from_gas_absorption / cell[i].Mass; cell[i].InternalEnergy += du_gas; cell[i].InternalEnergyPred += du_gas;} /* the gas share heats the gas directly, once per half-kick: as a rate in DtInternalEnergy the hydro pre-loop would zero the opening half-kick's share, and the unsplit cooling solve would apply the closing one's over the whole step */
 #else
                 ef = e0 + total_de_dt * dt_entr; // previous version: assumes all self-absorption is re-emitted
 #endif

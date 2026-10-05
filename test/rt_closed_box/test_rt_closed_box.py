@@ -30,7 +30,22 @@ it directly as well (as the kick did before) makes (a), (b) and (d) fail with an
 
 With COOLING the gas-opacity share f_gas (~0.5-0.75% here) of the IR absorption heats the gas, and cooling returns
 radiation to the bands at c_tilde/c of the gas energy loss. At n_H = 1e3 this moves < 3e-5 of the band energy, so (a),
-(b) and (d) are held to 1e-3.
+(b) and (d) are held to 1e-3. At n_H = 1e5 and 1e7 the IR band is optically thick and the bands drain into the gas (see
+the gas-share checks below), so (a), (b) and (d) are reported there, not asserted; the IR ledger including the gas share
+and the cooling return (as for STARFORGE, below) is asserted instead.
+
+Gas-share checks (every COOLING and STARFORGE variant). Each half-kick gives the gas the share f_gas de_abs of the IR band's in-step
+absorption, at the 1:1 band-to-gas convention the code uses for it. From the diagnostic:
+  - the gas receives exactly that: its thermal energy change minus the cooling step's own exchange (the cooling-step
+    change without the DtInternalEnergy term) equals the gas share taken from the band (1e-4 of the share); not
+    asserted with the star, whose HII-region model also changes the gas energy outside these two;
+  - none of it is discarded: the DtInternalEnergy the hydro pre-loop drops is zero (FREEZE_HYDRO makes the hydro part
+    zero). Deposited as a rate in DtInternalEnergy (as before), the opening half-kick's share was zeroed by the hydro
+    pre-loop and the closing one reached the gas once (split cooling) or twice (unsplit, over the full step in the
+    cooling solve).
+Reported, not asserted: the remaining band drain. The gas re-radiates what it absorbs and the cooling step returns it
+at c_tilde/c, so with the 1:1 deposit the bands lose ~(1 - c_tilde/c) of the gas share; the reduced-c convention of
+kicks.cc (E_band c/c_tilde + E_gas conserved) would deposit it at c/c_tilde.
 
 STARFORGE variants: the production RT configuration (SINGLE_STAR_STARFORGE_DEFAULTS + SINGLE_STAR_FB_RAD + COOLING,
 which add the ionizing band with RT_CHEM_PHOTOION, the STARFORGE cooling, dust and H2 chemistry, radiation pressure,
@@ -90,6 +105,9 @@ TOL_COOLING = 1e-3
 TOL_IR_LEDGER = 1e-6
 TOL_BAND_LEDGER = 1e-4
 TOL_INJECTION = 1e-6
+TOL_GAS_SHARE = 1e-4  # of the share. The smallest miss with the share deposited as a rate is 5.6e-4 (STARFORGE, 1e7);
+# the deposit itself closes to 1e-8, and at n_H = 1e3, where the cooling step moves 1e4 x the share, an untraced 6e-10 of
+# the gas thermal energy (6e-6 of the share) is left
 TAU_STEP_SATURATED = 3.0
 
 
@@ -148,6 +166,14 @@ def diag(flags, n_h, star):
     return o
 
 
+def cool_diag(flags, n_h, star):
+    """rt_cool_diag.txt (named columns, per-row sums) summed over the run"""
+    fn = f"{output_dir(flags, n_h, star)}/rt_cool_diag.txt"
+    names = open(fn).readline().split()[2:]
+    d = np.atleast_2d(np.loadtxt(fn))
+    return {k: d[:, 1 + j].sum() for j, k in enumerate(names)}
+
+
 _built = {}
 
 
@@ -181,8 +207,35 @@ def run(flags, n_h, star, num_mpi_ranks):
     assert_final_time(sorted(glob(f"{out}/snapshot_*.hdf5"))[-1], TEST_NAME)
 
 
+def check_gas_share(flags, n_h, star):
+    """the IR gas share reaches the gas exactly once, and nothing is dropped from DtInternalEnergy. With the star the
+    gas also gains and loses energy outside the kick and the cooling solve (HII-region model), so only the second
+    holds exactly there and the first is reported"""
+    o, c = diag(flags, n_h, star), cool_diag(flags, n_h, star)
+    E = o["E"]
+    share = o["ir_gas_share"][-1].sum()
+    d_th = o["E_thermal"][-1] - o["E_thermal"][0]
+    cooling_own = c["gas_dE_cooling"] - c["gas_DtIE_term"]
+    delivered = d_th - cooling_own
+    band_drain = -(E[-1].sum() - E[0].sum() - o["kick_source"][-1].sum() - o["injected"][-1].sum())
+    print(f"  gas share {share:.6g} (opening / closing half-kick {c['gas_IR_share_K1']:.6g} / {c['gas_IR_share_K2']:.6g}); "
+          f"gas thermal change {d_th:.6g} = delivered {delivered:.6g} + cooling step {cooling_own:.6g} (incl. CR heating "
+          f"{c['gas_CR']:.4g}); delivered / share = {delivered / share:.8f}; DtInternalEnergy dropped by the hydro "
+          f"pre-loop {c['gas_DtIE_discarded']:.6g} = {c['gas_DtIE_discarded'] / share:.6f} x share; kick-side gas change "
+          f"{c['gas_kick_dE']:.6g}")
+    print(f"  band drain {band_drain:.6g} = {band_drain / E[0].sum():.4%} of the band energy = gas share - cooling return "
+          f"({o['cooling_to_band'][-1].sum():.6g}); (1 - c_tilde/c) x share = {(1 - C_RATIO) * share:.6g}")
+    assert share > 0, "no IR gas share: the check is not exercised"
+    if not star:
+        assert abs(delivered / share - 1) < TOL_GAS_SHARE, f"the gas receives {delivered / share:.6f} x the IR gas share"
+    assert c["gas_DtIE_discarded"] == 0, \
+        f"{c['gas_DtIE_discarded'] / share:.6f} x the gas share dropped from DtInternalEnergy by the hydro pre-loop"
+
+
 def check_bare(flags, n_h, star):
-    tol = TOL_COOLING if "COOLING" in flags else TOL_ENERGY
+    cooling = "COOLING" in flags
+    thick = cooling and n_h >= 1e5
+    tol = TOL_COOLING if cooling else TOL_ENERGY
     t, e, first = band_history(flags, n_h, star)
     e_tot = e.sum(axis=1)
     drift = e_tot / e_tot[0] - 1
@@ -224,6 +277,15 @@ def check_bare(flags, n_h, star):
             assert frac < 1e-7, f"{BANDS[k]} (tau per step {tau_step:.3g}) keeps {frac:.3e} of its energy"
 
     assert loss[-1] > 0.5 * e[0, DONORS].sum(), "the donor bands did not decay: the test is not exercising absorption"
+    if cooling:
+        ch = {k: o[k][-1] for k in CHANNELS}
+        ir_ledger = (d_ir[-1] - ch["kick_source"][IR] - ch["cooling_to_band"][IR] + ch["ir_gas_share"][IR]) / routed[-1]
+        print(f"  IR ledger: (IR change - kick source - cooling return + gas share) / routed = {ir_ledger:.8f}")
+        check_gas_share(flags, n_h, star)
+        assert abs(ir_ledger - 1) < TOL_IR_LEDGER, f"IR gain = {ir_ledger:.6f}x the energy routed to it"
+        assert ch["donated_in"][IR] == 0, "absorbed donor energy donated to the IR band directly"
+    if thick:
+        return
     assert np.max(np.abs(drift)) < tol, f"total band energy not conserved: max |E/E0 - 1| = {np.max(np.abs(drift)):.3e}"
     assert np.max(np.abs(gain[1:] - loss[1:]) / e_tot[0]) < tol, \
         f"IR gain / donor loss = {gain[-1] / loss[-1]:.6f} at the end"
@@ -269,6 +331,7 @@ def check_starforge(flags, n_h, star):
               f"{o['cooling_to_band'][i].sum():12.5g}   {o['cooling_offered'][i] / C_RATIO:16.5g}"
               f"                        {o['cooling_gas'][i]:12.5g}   {o['kick_source'][i].sum():12.5g}")
 
+    check_gas_share(flags, n_h, star)
     assert routed[-1] > 0.5 * E[0, 1:ir].sum(), "the donor bands were not absorbed: the test is not exercising them"
     assert abs(residual) < TOL_BAND_LEDGER, f"band ledger does not close: residual {residual:+.3e} of the band energy"
     if star:
@@ -283,7 +346,7 @@ def case(flags, n_h, *marks, star=False):
 
 # grouped by flag set, so each set is built once
 CASES = ([case(PLAIN_RT, n) for n in (1e3, 1e4, 1e5, 1e7)]
-         + [case(PLAIN_COOLING, 1e3)]
+         + [case(PLAIN_COOLING, n) for n in (1e3, 1e5, 1e7)]
          + [case(STARFORGE, n, star=s) for n in (1e3, 1e7) for s in (False, True)])
 
 
