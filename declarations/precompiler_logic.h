@@ -470,14 +470,19 @@
 #if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) || defined(COOLING)
 #define GALSF_FB_FIRE_STELLAREVOLUTION 3 // enable multi-loop feedback from such sources [this is specific to the DG-MG implementations here, not for public use right now!]. for now set to =2, which should force the code version to match previous iterations, as compared to the newer implementations.
 #endif
-#if defined(RT_ISRF_BACKGROUND)
-#if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(RT_ISRF_BACKGROUND)
-#if (RT_ISRF_BACKGROUND <= 0)
-#undef RT_ISRF_BACKGROUND /* use the negative or zero value above as a key to specifically -undefine- this variable, otherwise it will cause problems below by calling 0 to reset quantities it should not */
-#endif
-#endif
-#endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+/* RT_ISRF_BACKGROUND=0 (or any value <= 0) in Config.sh switches the interstellar background off, including where an
+   umbrella above would turn it on (those only define it if it is not defined yet). Defined without a value it stays on.
+   The value test is written so that an empty definition is not read as 0: CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_
+   cannot tell 0 from empty. */
+#if defined(RT_ISRF_BACKGROUND)
+#if !((1 - RT_ISRF_BACKGROUND - 1 == 2) && (RT_ISRF_BACKGROUND + 0 == 0)) /* given a value */
+#if (RT_ISRF_BACKGROUND + 0 <= 0)
+#undef RT_ISRF_BACKGROUND
+#endif
+#endif
+#endif
 
 #ifdef SINGLE_STAR_RT_DEFAULTS
 #define RT_M1
