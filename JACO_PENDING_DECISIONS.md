@@ -77,8 +77,19 @@ switches `RT_FIX_IR_DOUBLE_COUNT` and `RT_FIX_DUST_GAS_ABSORPTION`, arms base/d1
   Sink growth: d12 null (total ratio 0.997, 4/8 higher, p = 0.95); d1 marginal (+5% total, 7/8, p = 0.11; per-seed
   median +16%, p = 0.055, driven by seed 2: 0.46 -> 0.89 Msun); d2 null. Peak T_dust near sinks within 10%.
   Does not explain the dense-gas 70-80 K vs 28 K question.
-Decision: fix D1 on starforge_dev (unambiguous energy creation; impact scales with reprocessed stellar luminosity,
-small in these setups), D2 with it (correct, free). No RT test needs re-baselining. Not merged; your call.
+Sensitive test (2026-10-05, commits 39201f4f/7d445bcf on rt_energy_ab): `test/rt_closed_box` -- periodic 32^3 glass,
+n_H = 1e3, solar Z, FREEZE_HYDRO, no sources, no ISRF, bands pre-filled from a snapshot (flag 2). Unfixed: total band
+energy +66%, IR gain / donor loss = 2.000000 (strict xfail); fixed: 2.6e-10 and 1.000000. Donor decay rates match
+rt_kappa to 1%. D2 has NO ledger-sensitive test and cannot: the T_dust it changes is not used in the kick's energy
+split (only the T_rad target and opacities); in production regimes f_gas < 1e-2, and where f_gas ~ 0.8 (dense ionized,
+cold IR) gas-dust collisions dominate dust heating 300x. Leave D2 as correct-by-construction.
+RT subsuite with both switches on (ccalin030, 8x2): HII_region_simple PASS, HII_region PASS, gmc_cooling_rt FAILS on
+urad_FIR (max rel 0.215 vs 0.1 tolerance; on/off 0.76-0.94 by n_H bin; D1 alone causes it, D2 alone < 0.1%). The
+benchmark was made with the double count, so adopting D1 means regenerating gmc_cooling_rt's reference. Remaining
+long tests (HII_region_subcycle, shu_M120, gmc_cooling, SN_singlestar, gmc_cooling_rt, HII_region; off then on) are in
+`sbatch /mnt/ceph/users/mgrudic/starforge/M10_core/rt_energy_ab/tests/run_rt_subsuite_genoa.sbatch` (not submitted).
+Decision: fix D1 on starforge_dev (now backed by a sensitive test) and regenerate the gmc_cooling_rt benchmark; D2
+is harmless either way (keep for consistency or drop). Not merged; your call.
 
 ### 3.2 Cooling-radiation return limiter under reduced c
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
