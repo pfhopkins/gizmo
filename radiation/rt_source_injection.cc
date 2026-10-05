@@ -256,6 +256,12 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     /* now add the actual photon energies */
                     #pragma omp atomic
                     CellP[j].Rad_E_gamma[k] += dE; // dump discretely (noisier, but works smoothly with large timebin hierarchy)
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+                    rt_diag_add(RT_DIAG_INJECTED, k, dE);
+#ifdef RT_REPROCESS_INJECTED_PHOTONS
+                    if(donation_bin > -1) {rt_diag_add(RT_DIAG_INJECTED, donation_bin, dE_donation);}
+#endif
+#endif
 #ifdef RT_EVOLVE_ENERGY
                     #pragma omp atomic
                     CellP[j].Rad_E_gamma_Pred[k] += dE;

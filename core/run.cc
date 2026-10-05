@@ -130,6 +130,9 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+        rt_diag_ir_double_count_report();
+#endif
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 

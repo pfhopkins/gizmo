@@ -588,6 +588,7 @@
 #RT_TIMESTEP_LIMIT_RECOMBINATION   # limit timesteps to the explicit recombination time when transporting ionizing photons. note our chemistry solvers are all implicit and can handle larger timesteps, but no gaurantee of transport accuracy for much larger steps since opacities depend on ionization states.
 #RT_ENHANCED_NUMERICAL_DIFFUSION   # option which increases numerical diffusion, to get smoother solutions (akin to using HLL instead of HLLC+E fluxes), if desired; akin to slopelimiters~0 model
 #RT_COMPGRAD_EDDINGTON_TENSOR      # forces computation of eddington tensor even when not needed by the code
+#RT_DIAG_IR_DOUBLE_COUNT=1         # RT_INFRARED diagnostic, inert: every N sync points task 0 appends to OutputDir/rt_ir_diag.txt the energy routed to the IR band through E_abs_tot_toIR, injected sink luminosity, gas thermal energy, radiation energy per band and every flow into or out of each band; and to rt_cool_diag.txt the per-term ledger of the cooling step
 #RT_REINJECT_ACCRETED_PHOTONS      # when sink particles are used, photons lost when a gas cell is accreted are reinjected into the lowest-energy frequency bin on the following photon injection from that sink
 # --------------------
 # ----- Sink particle/sink particle special options
