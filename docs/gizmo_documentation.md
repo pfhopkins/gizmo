@@ -2,25 +2,34 @@
 ***
 #Table of Contents
 1. [Code Overview](#codeoverview)
+    + [Code Philosophy & Design](#codeoverview-philosophy)
 2. [Feature Set (Types of Physics Modules)](#features)
     + [Examples of Different Simulations Run with GIZMO](#features-examples)
     + [Code Scaling (Parallelism & Performance)](#codescaling)
     + [Notes on Stable vs. Development Branches](#features-private)
 3. [Code Use, Authorship, Citation, Sharing, & Development Rules](#requirements)
     + [Use, Authorship, & Citation Requirements](#requirements-authorship)
+        + [Citation Requirements](#requirements-authorship-citation)
+        + [Authorship Requirements & Acceptable Use](#requirements-authorship-use)
     + [Code Sharing Guidelines](#requirements-sharing)
     + [Code Development & Extensions (New Physics and Code)](#requirements-development)
+        + [General Code-style Principles (Good Practices)](#requirements-development-style)
 4. [Fluid (Hydro) Solvers](#hydro)
     + [Examples (Demonstrations, Animations, and Talks)](#hydro-examples)
-    + [MFV](#hydro-mfv), [MFM](#hydro-mfm), [Grid](#hydro-grid), [SPH](#hydro-sph), [other](#hydro-mmm) 
-    + [Mesh Motion](#hydro-meshmotion) ([Lagrangian/Fixed-Mass](#hydro-meshmotion-lagrangian), [User-Specified (Arbitrary/Hybrid)](#hydro-meshmotion-ale), [Eulerian/Fixed-Grid](#hydro-meshmotion-eulerian))
+    + [Mesh Structure: Overview of the Different Methods](#hydro-meshstructure)
+        + [MFV](#hydro-mfv), [MFM](#hydro-mfm), [Grid](#hydro-grid), [SPH](#hydro-sph), [Moving Voronoi Meshes](#hydro-mmm)
+    + [Mesh Motion](#hydro-meshmotion)
+        + [Eulerian/Fixed-Grid](#hydro-meshmotion-eulerian), [Lagrangian/Fixed-Mass](#hydro-meshmotion-lagrangian), [User-Specified (Arbitrary/Hybrid)](#hydro-meshmotion-ale)
 5. [Similarities & Differences from GADGET (+other codes)](#gadget)
     + [What's the same?](#gadget-same), [What's not?](#gadget-different), [Code modes](#gadget-mimic)
 6. [Compiling and Using the Code (a very brief tutorial)](#tutorial)
     + [Compilation Requirements](#tutorial-requirements)
-    + [Starting & Running the Code](#tutorial-running)  
+    + [Starting & Running the Code](#tutorial-running)
+        + [Interrupting a Run](#tutorial-interrupt)
     + [Performance-Portable Heterogeneous Execution (CPU-GPU, Kokkos)](#cpugpu)
-    + [Restarting a Run](#tutorial-restart) 
+        + [What Runs on the Device](#cpugpu-device), [How to Enable](#cpugpu-enable), [Architecture](#cpugpu-architecture), [Performance Characteristics](#cpugpu-performance)
+    + [Restarting a Run](#tutorial-restart)
+        + [From Restart-Files](#tutorial-restart-restartfile), [From Snapshot-Files](#tutorial-restart-snapshot)
 7. [Modules in Config.sh (Setting compile-time options, i.e. Physics)](#config)
     + [Overview](#config-overview)
     + [Boundary Conditions & Dimensions](#config-boundaries)
@@ -29,6 +38,7 @@
         + [Equations-of-State](#config-fluids-eos)
         + [Nuclear Reaction Networks](#config-fluids-nuclear)
         + [Magnetic Fields](#config-fluids-mhd)
+        + [Two-Temperature Plasma (Independent Electron Temperature)](#config-fluids-twotemperature)
         + [Conduction & Viscosity](#config-fluids-navierstokes)
         + [Passive Scalars, Metals, & Sub-Grid Turbulent Mixing](#config-fluids-metalsturb)
         + [Dust-Gas (Particulate) Mixtures](#config-fluids-dust)
@@ -36,15 +46,17 @@
     + [Particle-in-Cell (PIC) and Cosmic Ray-Laden Gas Simulations](#config-cosmicray)
         + [MHD-PIC Simulations](#config-cosmicray-pic)
         + [Continuum Cosmic Ray-MHD Simulations](#config-cosmicray-mhd)
+        + [Sub-Grid Models for CR Effects on MHD Fluids](#config-cosmicray-subgrid)
     + [Turbulent 'Stirring' (Large Eddy Simulations)](#config-turb)
     + [Gravity & Cosmological Integrations](#config-gravity)
         + [Numerical Solvers & Optimization](#config-gravity-numerics)
         + [Adaptive Force Softenings](#config-gravity-adaptive)
         + [External Fields and/or Disabling Gravity](#config-gravity-external)
         + [Non-Standard Dark Matter, Dark Energy, Gravity, or Expansion](#config-gravity-nonstandardDM)
-        + [On-the-Fly Analysis](#config-gravity-analysis)
+        + [Continuum Vlasov (6D Phase-Space Integration) Methods](#config-gravity-cbe)
         + [Artificial Pressure Floors](#config-gravity-pressure)
     + [On-the-Fly Group (Halo, Galaxy, Cluster, etc) Finding](#config-fof)
+        + [Sub-Structure (Subhalo, Satellite, etc) Finding](#config-fof-subfind)
     + [Galaxy & Galactic Star Formation Options](#config-galsf)
         + [Star Formation Criteria/Particle Spawning](#config-galsf-sflaw)
         + [Sub-Grid Feedback Models](#config-galsf-fb)
@@ -60,6 +72,7 @@
         + [BH Dynamics (Dynamical Friction, Drag)](#config-bh-dynamics)
         + [BH Accretion Models](#config-bh-accretion)
         + [BH Feedback Models](#config-bh-feedback)
+        + [BH Output/Additional Options](#config-bh-additionalbhoptions)
     + [Radiative Cooling & Chemistry](#config-fluids-cooling)
         + [Built-In Cooling & Thermochemistry Physics](#config-fluids-cooling-builtin)
         + [Grackle Thermochemistry Libraries](#config-fluids-cooling-grackle)
@@ -77,8 +90,13 @@
         + [Additional Fluid Physics and Gravity](#config-debug-fluids)
         + [Particle IDs](#config-debug-ids)
         + [Particle Merging/Splitting/Deletion/Boundaries](#config-debug-mergedelete)
+        + [Radiation-Hydrodynamics Special Options for Test Problems](#config-debug-radiation)
+        + [Black Hole/Sink Particle Special Options](#config-debug-sinks)
+        + [Cosmic Ray Special Options](#config-debug-cosmicrays)
+        + [FIRE Module Special Options](#config-debug-fire)
         + [MPI & Parallel-FFTW De-Bugging](#config-debug-mpi)
         + [Load-Balancing](#config-debug-loadbalance)
+        + [Development Flags (In Testing)](#config-debug-dev)
 8. [The Parameterfile (Setting run-time parameters)](#params)
     + [Generic (Always-Required) Parameters](#params-generic)
         + [Filenames, Directories, & Formats](#params-generic-files)
@@ -100,18 +118,45 @@
     + [Developer-Mode Parameters](#params-debug)
 9. [Snapshot & Initial Condition Files](#snaps)
     + [Initial Conditions (Making & Reading Them)](#snaps-ics)
+        + [File Formats and Necessary Fields](#snaps-ics-icsformats)
+        + [Generating Initial Conditions Files](#snaps-ics-icsgenerators)
+        + [Building Self-Gravitating Body ICs (Planets, Asteroids, Stars, Compact Objects)](#snaps-ics-hse-builder)
     + [Snapshots](#snaps-snaps)
+        + [Un-Formatted Binary Format](#snaps-snaps-binary), [HDF5 Format](#snaps-snaps-hdf5)
     + [Units](#snaps-units)
     + [Reading Snapshots (Examples)](#snaps-reading)
 10. [Log Outputs & Diagnostic Files](#logs)
+    + [Standard Output & Error](#logs-stdout)
+    + [info.txt](#logs-info), [timings.txt](#logs-timings), [cpu.txt](#logs-cpu), [energy.txt](#logs-energy), [timebin.txt](#logs-timebin), [balance.txt](#logs-balance)
+    + [Outputs Specific to Different Physics Modules](#logs-modules)
+        + [sfr.txt](#logs-modules-sfr), [HIIheating.txt](#logs-modules-hiiheating), [MomWinds.txt](#logs-modules-momwinds), [MechFeedbackEvents.txt](#logs-modules-mechfb), [sinks.txt](#logs-modules-sinks)
 11. [Test Problems](#tests)
-    + [Equilibrium and Steady-State Tests](#tests-eqm) (e.g. [soundwaves](#tests-eqm-soundwave), ['square test'](#tests-eqm-square), [Gresho vortex](#tests-eqm-gresho), [Keplerian disks](#tests-eqm-keplerian))
-    + [Shock and Non-Linear Jump Tests](#tests-shocks) (e.g. [shock tubes](#tests-shocks-sod), [interacting blastwaves](#tests-shocks-woodward), [Sedov explosions](#tests-shocks-sedov), [Noh implosions](#tests-shocks-noh))
-    + [Fluid Mixing Tests](#tests-mixing) (e.g. [Kelvin-Helmholtz](#tests-mixing-kh), [Rayleigh-Taylor](#tests-mixing-rt), ['blob test'](#tests-mixing-blob))
-    + [Self-Gravity & Cosmological Tests](#tests-grav) (e.g. [Evrard collapse](#tests-grav-evrard), [Zeldovich pancakes](#tests-grav-zeldovich), ['Santa Barbara Cluster'](#tests-grav-sbcluster), [galactic disks](#tests-grav-galdisk))
-    + [Magneto-Hydrodynamics Tests](#tests-mhd) (e.g. waves, shocktubes, field-loops, current sheets, Orszag-Tang vortex, rotors, MRI, jets, MHD-mixing/gravity)
-    + [Elasto-Dynamics Tests](#tests-elastic) (e.g. bouncing rubber cylinders)
-    + [Dust/Particulate-Dynamics Tests](#tests-dust) (e.g. [uniform dust-gas acceleration](#tests-dust-dustybox), [damped two-fluid waves](#tests-dust-dustywave))
+    + [Running Tests with pytest](#tests-pytest)
+    + [Test Problem Descriptions](#tests-descriptions)
+    + [Equilibrium and Steady-State Tests](#tests-eqm)
+        + [Soundwaves](#tests-eqm-soundwave), ['Square Test'](#tests-eqm-square), [Gresho Vortex](#tests-eqm-gresho), [Keplerian Disks](#tests-eqm-keplerian)
+    + [Shock and Non-Linear Jump Tests](#tests-shocks)
+        + [Sod Shock Tube](#tests-shocks-sod), [Interacting Blastwaves](#tests-shocks-woodward), [Sedov Explosions](#tests-shocks-sedov), [Noh Implosion](#tests-shocks-noh)
+    + [Fluid Mixing Tests](#tests-mixing)
+        + [Kelvin-Helmholtz](#tests-mixing-kh), [Rayleigh-Taylor](#tests-mixing-rt), ['Blob Test'](#tests-mixing-blob)
+    + [Self-Gravity & Cosmological Tests](#tests-grav)
+        + [Evrard Collapse](#tests-grav-evrard), [Zeldovich Pancake](#tests-grav-zeldovich), ['Santa Barbara Cluster'](#tests-grav-sbcluster), [Galactic Disks](#tests-grav-galdisk)
+        + [Collisionless and Few-Body Gravity Tests](#tests-grav-nbody) (Hernquist and Plummer spheres, star clusters with binaries, few-body integration, SIDM/fuzzy-DM/Vlasov examples)
+        + [Gravity Tree Accuracy](#tests-grav-treeaccuracy)
+        + [Group and Halo Finding](#tests-grav-halofinding)
+    + [Continuum Vlasov (Collisionless Boltzmann) Tests](#tests-cbe)
+    + [Magneto-Hydrodynamics Tests](#tests-mhd) (waves, shocktubes, field-loops, current sheets, Orszag-Tang vortex, rotors, MRI, jets, MHD-mixing/gravity)
+        + [Non-Ideal MHD and Multi-Fluid Tests](#tests-mhd-nonideal)
+    + [Solid-Body, Elasto-Dynamics, and Equation-of-State Tests](#tests-elastic)
+        + [Bouncing Rubber Cylinders](#tests-elastic-rubberrings), [Impact Cratering with Damage and Porosity](#tests-elastic-cratering), [Grain-to-Solid Promotion](#tests-elastic-grainpromotion)
+        + [Self-Gravitating Planetary Bodies](#tests-elastic-planets), [Tabulated Equations of State](#tests-elastic-eos)
+    + [Dust/Particulate-Dynamics Tests](#tests-dust)
+        + [Uniform Dust-Gas Acceleration](#tests-dust-dustybox), [Damped Two-Fluid Waves](#tests-dust-dustywave)
+    + [Cooling, Chemistry, and Two-Temperature Tests](#tests-cooling)
+    + [Star Formation and Single-Star Feedback Tests](#tests-starformation)
+    + [Galaxy-Formation and Feedback Tests](#tests-galaxy)
+    + [Nuclear Burning and Stellar Equation-of-State Tests](#tests-nuclear)
+    + [Numerical Stress, I/O, and Infrastructure Tests](#tests-infrastructure)
 12. [Useful Additional Resources](#rscr)
     + [Visualization, Radiative Transfer, and Plotting](#rscr-vis)
     + [Halo/Group-Finding and Structure Identification](#rscr-halofinders)
@@ -128,8 +173,8 @@
     + [Are there Public ICs? Analysis Tools? Image/Movie-Makers?](#faqs-rscr)
     + [What Does this Variable Mean?](#faqs-variable)
     + [What are the Code Units?](#faqs-units)
-    + [Can I use this Module? What should I cite?](#faq-citation)
-    + [Can the Code do 'X'?](#faq-capabilities)
+    + [Can I use this Module? What should I cite?](#faqs-citation)
+    + [Can the Code do 'X'?](#faqs-capabilities)
 14. [Disclaimer](#disclaimer)
 
 ***
@@ -152,6 +197,7 @@ The un-official code website (showing examples, demonstrations, and giving an ov
 **GIZMO** was written by me, Philip F. Hopkins (PFH), although the codebase builds on parts of Volker Springel's GADGET code. If you find the code useful, please reference the numerical methods paper in all studies using simulations run with **GIZMO**. You should also reference the GADGET paper for the domain decomposition and N-body algorithms. Various modules have their own methods papers, contributed by different authors, that should be cited if they are used; these are specified in the "Config.sh (Setting compile-time options)" section of this Guide.
 
 
+<a name="codeoverview-philosophy"></a>
 ## Code Philosophy & Design 
 
 A few core principles distinguish **GIZMO** from other simulation codes and are worth understanding before diving into the technical details.
@@ -228,7 +274,6 @@ The GIZMO code is a flexible, massively parallel, multi-purpose fluid dynamics +
 **GIZMO** and its methods have been used in a large number of simulations and well over a hundred different papers (for a partial list of works which reference the original methods paper, click [here](http://adsabs.harvard.edu/cgi-bin/nph-ref_query?bibcode=2015MNRAS.450...53H&amp;refs=CITATIONS&amp;)). Some examples are shown above, including: **(a)** Cosmology: Large-volume dark matter+baryonic cosmological simulation ([Davé et al. 2016](http://adsabs.harvard.edu/abs/2016MNRAS.462.3265D)). **(b)** Galaxy formation: with cooling, star formation, and stellar feedback ([Wetzel et al. 2016](http://adsabs.harvard.edu/abs/2016ApJ...827L..23W)). **(c)** Dust (aero)-dynamics: grains moving with Epstein drag and Lorentz forces in a super-sonically turbulent cloud ([Lee et al. 2017](http://adsabs.harvard.edu/abs/2017MNRAS.469.3532L)). **(d)** Black holes: AGN accretion according to resolved gravitational capture, with feedback driving outflows from the inner disk ([Hopkins et al. 2016](http://adsabs.harvard.edu/abs/2016MNRAS.458..816H)). **(e)** Proto-stellar disks: magnetic jet formation in a symmetric disk around a sink particle, in non-ideal MHD ([Raives 2016](http://adsabs.harvard.edu/abs/2016MNRAS.455...51H)). **(f)** Elastic/solid-body dynamics: collision and compression of two rubber rings with elastic stresses and von Mises stress yields. **(g)** Plasma physics: the magneto-thermal instability in stratified plasma in the kinetic MHD limit ([Hopkins 2017](http://adsabs.harvard.edu/abs/2017MNRAS.466.3387H)). **(h)** Magneto-hydrodynamics: the Orszag-Tang vortex as a test of strongly-magnetized turbulence ([Hopkins & Raives 2016](http://adsabs.harvard.edu/abs/2016MNRAS.455...51H)). **(i)** Star formation: star cluster formation (with individual stars) including stellar evolution, mass loss, radiation, and collisionless dynamics ([Grudic et al. 2016](http://adsabs.harvard.edu/abs/2016arXiv161205635G)). **(j)** Fluid dynamics: the non-linear Kelvin-Helmholtz instability ([Hopkins 2015](http://adsabs.harvard.edu/abs/2015MNRAS.450...53H)). **(k)** Multi-phase fluids in the ISM/CGM/IGM: ablation of a cometary cloud in a hot blastwave with anisotropic conduction and viscosity ([Su et al. 2017](http://adsabs.harvard.edu/abs/2017MNRAS.471..144S)). **(l)** Impact and multi-material simulations: giant impact (lunar formation) simulation, after impact, showing mixing of different materials using a Tillotson equation-of-state ([Deng et al. 2017](http://adsabs.harvard.edu/abs/2017arXiv171104589D)).
 
 
-
 <a name="codescaling"></a>
 ## Code Scaling (Parallelism & Performance)
 
@@ -243,13 +288,11 @@ Code scalings are always (highly) problem-and-resolution-dependent, so it is imp
 </div>
 
 
-
 <div class="image" style="display:inline-block">
 <img style="float: left; margin-right: 0.5em" width="26%" src="gizmo_documentation_ims/scaling_strong_med_hr.jpeg"> 
 <div>Strong scaling (CPU time on a fixed-size problem, increasing the processor number) for a "zoom-in” simulation of a Milky Way-mass galaxy (1e12 solar-mass halo, 1e11 solar-masses of stars in the galaxy) or a dwarf galaxy (1e10 solar-mass halo, 1e6 solar-masses in stars in the galaxy), each using 1.5e8 (150 million) baryonic particles in the galaxy, run to 25% of the present age of the Universe. In these units, “ideal” scaling is flat (dashed line), i.e. the problem would take same total CPU time (but shorter wall-clock time as it was spread over more processors). Our optimizations allow us to maintain near-ideal strong scaling on this problem up to ~16,000 cores per billion particles (~2000 for the specific resolution shown). 
 </div>
 </div>
-
 
 
 <div class="image" style="display:inline-block">
@@ -260,7 +303,6 @@ Code scalings are always (highly) problem-and-resolution-dependent, so it is imp
 
 
 This is an extremely inhomogeneous, high-dynamic-range (hence computationally challenging) problem with very dense structures (e.g. star clusters) taking very small timesteps, while other regions (e.g. the inter-galactic medium) take large timesteps — more “uniform” problems (e.g. a pure dark-matter only cosmological simulation or pure-hydrodynamic turbulence simulation) can achieve even better scalings. 
-
 
 
 
@@ -276,13 +318,13 @@ If you want to use a module that is still in development (in a development branc
 
 
 
-
 <a name="requirements"></a>
 # 3. Code Use, Authorship, Citation, Sharing, & Development Rules 
 
 <a name="requirements-authorship"></a>
 ## Use, Authorship, & Citation Requirements
 
+<a name="requirements-authorship-citation"></a>
 ### _Citation Requirements_:
 
 Any paper using **GIZMO** should, at a minimum, cite the methods paper: Hopkins 2015, MNRAS, 450, 53 ("A New Class of Accurate, Mesh-Free Hydrodynamics Methods," [arXiv:1409.7395](https://arxiv.org/abs/1409.7395)). You should also cite the **GADGET** methods paper (Springel, 2005, MNRAS, 364, 1105) for the domain decomposition and N-body algorithms.
@@ -291,6 +333,7 @@ When using specific modules, the relevant code papers must also be cited: for ex
 
 Remember, these modules were developed at great expense in both time and grant funding by their authors. Moreover readers may want to see more detailed numerical tests. So please, respect the citation requirements for all modules: appropriate citation, as requested in this Guide and for the different modules, is the expectation and requirement for any use of **GIZMO** in published scientific work.
 
+<a name="requirements-authorship-use"></a>
 ### _Authorship Requirements & Acceptable Use_:
 
 There are no requirements for offering authorship of papers resulting from the code. The requirement for use of **GIZMO** in published scientific work is appropriate citation, as requested in this Guide and for the different modules (above). If you use a module that is still in development, please contact its developers first (see [Notes on Stable vs. Development Branches](#features-private)).
@@ -318,6 +361,7 @@ You are encouraged to study and modify this code! Please, if you have ideas for 
 + If you're willing to push the changes back and share them, it adds incredibly to the value of the code and (likely) to your own citation rates. Consider it!
 
 
+<a name="requirements-development-style"></a>
 ### _General Code-style Principles (Good Practices)_:
 
 + Code formatting: Try to be consistent with the code formatting of the main code, which is more or less GNU-style, with a few small differences. You can run the indent-command with the options: 
@@ -385,6 +429,7 @@ For a variety of images and movies demonstrating how these produce different res
 Much more detailed quantitative discussions are found in the GIZMO methods paper [here](https://arxiv.org/abs/1409.7395) and the follow-up GIZMO MHD methods paper [here](https://arxiv.org/abs/1505.02783), or see [my notes here](http://www.tapir.caltech.edu/~phopkins/public/notes_pfh_numerical_methods.pdf) from a summer-school lecture for a broader overview of different methods (SPH, AMR, MFM/MFV, moving-Voronoi-meshes).
 
 
+<a name="hydro-meshstructure"></a>
 ## Mesh Structure: Overview of the Different Methods
 
 <p align="center">
@@ -413,7 +458,6 @@ Enabled by `HYDRO_MESHLESS_FINITE_MASS`: This method is similar to the meshless 
 Enabled by `HYDRO_REGULAR_GRID`, this is a standard finite-volume Godunov scheme solved on a fixed (non-moving), regular Cartesian mesh. This is built on the architecture of the MFV method, so the mesh-generating points are simply fixed relative to one another (a *uniform* boost of the whole system is trivial to add, if desired, but would have to be hard-coded for the problem), using the assumption of a geometric grid to exactly calculate closed, regular geometric faces. This is an "Eulerian" or "fixed-grid" method. However, mesh motion is allowed, so long as it preserves the regularity of the mesh (see the discussion in the mesh motion section, below) -- for example, the mesh can be uniformly shearing or boosted. This mode also can used to define grids of other regular geometries (e.g. cylindrical or spherical grids) -- in those cases the mesh can be rotating or spherically expanding/contracting with regular speeds, as well. For some problems (e.g. highly sub-sonic problems, where the constant mesh deformation implicit in MFM or MFV can seed sound wave), this can be more accurate or give smoother solutions, but it encounters challenges when the fluid is moving rapidly over the mesh or collapsing under self-gravity.
 
 
-
 <a name="hydro-sph"></a>
 ### _SPH (Smoothed-Particle Hydrodynamics)_: 
 
@@ -432,7 +476,6 @@ Note that --any-- SPH method, no matter how accurate the artificial dissipation 
 ### _Moving Voronoi Meshes_: 
 
 Moving Voronoi-type meshes (with exact geometric tessellation, as opposed to the MFM/MFV volume partition) are not currently available for general use. The MFV and MFM volume partitions provide similar functionality for most applications.
-
 
 
 <a name="hydro-meshmotion"></a>
@@ -461,7 +504,6 @@ This is the default behavior if you use the **REGULAR\_GRID** fluid method (enab
 You can also force it to be true with other methods, like **MFV**, by setting the compile-time parameter `HYDRO_FIX_MESH_MOTION=0`. The mesh can then have an arbitrary geometry, but not move. Note, though, that this can often lead to some nasty errors if your mesh is not well-ordered initially (e.g. if the cells are asymmetric, and the mesh cannot move to "regularize" then, you will imprint this asymmetry onto the global solution). 
 
 Although the discussion above in the section about different methods (and in the linked talks) describe many advantages of moving meshes or "Lagrangian" methods for problems with large bulk motion, advection, gravitational collapse, etc, there are certainly problems where fixed (non-moving) grids can still be advantageous (if the grid is well-ordered or regular). For example, on problems where you wish to follow highly sub-sonic motion accurately, moving meshes generate "grid noise" because the mesh is constantly moving and deforming. This deformation of the system generates pressure fluctuations on a scale of order the integration error, which in turn launch sound waves, that can significantly corrupt the desired behavior. A regular (e.g. Cartesian) non-moving mesh has no "grid noise" however, so avoids these issues. Of course, the method is more diffusive if the grid is not moving, especially if there is substantial advection across the cells, and one has to be careful about imprinting preferred directions on the flow. But in general, in problems where it is very important to maintain a "smooth" background flow (e.g. reduce noise at all costs, even at the cost of significant numerical diffusivity), this can be useful.
-
 
 
 <a name="hydro-meshmotion-lagrangian"></a>
@@ -503,7 +545,6 @@ This can be set to any of several values, which determine the mesh motion:
 This allows a tremendous amount of flexibility for different problems. However note that you should be careful setting the mesh motion to "custom" values. As noted, **MFM** and **SPH** require the mesh move with the fluid, and will always enforce this. If you use the **REGULAR\_GRID** setting, and choose any type of mesh motion (other than `HYDRO_FIX_MESH_MOTION=0`), you must be careful that the motion you choose actually preserves the regularity of the grid. A shearing box with a Cartesian, cuboid grid is a good example where this is well-defined: the different "rows" of the grid can each be shearing past each other at different speeds, but the cells all remain nice cubes (e.g. one can safely set the mesh-generating-point velocity in the "x" direction to be an arbitrary function of "y", $v^{i}_{\rm mesh,\,x} = f(y_{i})$). This is illustrated in the cartoon above. Curvilinear grids with circular motion of the meshes (e.g. the DISCO-like behavior described above) are another good example. But if you set "invalid" mesh motion (e.g. $v^{i}_{\rm mesh,\,x} = f(x_{i})$ in a Cartesian mesh, which could generate arbitrary compression or expansion of neighboring cubical cells), or worse yet allow the cells to move freely with the fluid, you will quickly reach the point where cells cannot possible still be regular (without overlapping or having "holes" between them). At that point the code will give garbage (meaningless) results (or simply crash, if you are lucky). The **MFV** method in the code, in principle, works with any of these settings, but as described above, you will still introduce quite nasty errors and poor behavior on problems if you choose "bad" mesh motion for your problem.
 
 Note that if `HYDRO_FIX_MESH_MOTION` is set, the simulation snapshot files will save a field titled `ParticleVelocities` which includes the motion of the mesh-generating points themselves. This is distinct from the `Velocities` field, which saves the *fluid* velocities at the mesh point locations (and is always saved in the snapshots). If `HYDRO_FIX_MESH_MOTION` is set to values (**1**), (**2**), or (**3**), where the velocities of the mesh-generating points are set in the initial conditions file, then the initial conditions file (or snapshot file, if re-starting from a snapshot) must, of course, contain the field `ParticleVelocities` with a value specified for all fluid elements (just like the initial masses/fluid velocities/positions/etc.). 
-
 
 
 
@@ -599,7 +640,6 @@ The necessary libraries are: MPI, FFTW (version 3), and HDF5:
 + **SkyNet / Torch** (optional, for external nuclear reaction networks) - required only when `NUCLEAR_NETWORK` is enabled with `NUCLEAR_NETWORK_SOLVER=1` (SkyNet) or `NUCLEAR_NETWORK_SOLVER=2` (Torch). With `NUCLEAR_NETWORK_SOLVER=0` (default), the built-in `aprox13` alpha-chain network requires no external libraries. **SkyNet** ([Lippuner & Roberts 2017](https://arxiv.org/abs/1712.00021)) is a general-purpose nuclear reaction network library supporting hundreds of species including r-process nucleosynthesis; see [`https://bitbucket.org/jlippuner/skynet`](https://bitbucket.org/jlippuner/skynet) for source and installation. **Torch** (Timmes, Hoffman, & Woosley 2000) is another general network library; contact the authors for access. Both must be separately compiled and linked; see the `Makefile` for example linking blocks (search for `SKYNET` or `TORCH`). The data directory for the chosen network must be specified at runtime via the `NuclearNetworkDataFile` parameter (see the parameterfile description below).
 
 
-
 The GIZMO code package includes various .c and .h files, folders with different modules, and the following critical files: 
 
 + **Makefile**: this actually controls the code compilation. A number of systems have been pre-defined here, you should follow these examples to add other system-types. Slight adjustments of the makefile will be needed if any of the above libraries is not installed in a standard location on your system. Also, compiler optimisation options may need adjustment, depending on the C-compiler that is used. The provided makefile is compatible with GNU- make, i.e. typing make or gmake should then build the executable. For example, for the "Frontera" system at TACC, the Makefile includes the machine-specific set of options: 
@@ -655,12 +695,25 @@ Here is a typical example SLURM script (most modern systems use this or PBS as t
 This is a script submitting job-name `TEST`, requesting it go in the `NORMAL` queue, run on `100` nodes, with `16` MPI tasks per node, running for 1 hour (time in HH:MM:SS format), charged to allocation `ALLOCATIONNAME`. We've set it to use 2 OPENMP threads. We've also used the module system of the machine to load the relevant shared libraries (intel compiler, intel-MPI, hdf5, and fftw here). We can also load the modules through our personal .bashrc file, so including both calls here is a bit redundant. Then we submit the job, using `ibrun` (this is like `mpirun` above: different compilers and machines have different calls for running MPI executables), to call our compiled `GIZMO` executable in the local directory, with parameterfile `params.txt` in the same directory, restartflag `0` (start from ICs). The `1>gizmo.out 2>gizmo.err` are standard bash prompts that redirect stdout and stderr to files with those names, respectively (otherwise the machine will decide their default names, which you may prefer). Note that on different machines, the modules will be different, as will the `ibrun`/`mpirun` call, as will some of the required flags. Some machines will use `#PBS` instead of `#SBATCH`. You need to read the machine user guide to know how to submit on a particular machine. Also read the SBATCH or PBS (whichever you are using) manual page to learn what all the different flag options are. Finally, you could name this script something like `runscript` and submit it with the command `sbatch runscript`.
 
 
+<a name="tutorial-interrupt"></a>
+### _Interrupting a run_
+
+Run interruption works just like in GADGET. From that users guide: 
+Usually, a single submission to a queue system will not provide enough CPU-time to process a big production run. Therefore, a running simulation can be interrupted after any timestep, and resumed at the very same place later on. If the CPU-time limit is specified correctly in the parameter file, the code will interrupt itself automatically before the CPU-time limit expires, and write a set of ‘restart’-files. Actually, each processor writes its own restart file. These restart-files can be used to continue the run conveniently (see below).
+Sometimes you may want to interrupt the code manually with the possibility to resume it later on. This can be achieved by generating a file named "stop" in the output-directory of a simulation, e.g.
+
+    cd /active_run_directory/
+    > stop
+
+The code will then write a restart-file and terminate itself after the current timestep is completed, and the file ‘stop’ will be erased automatically. Restart files are also generated when the last timestep of a simulation has been completed. They can be used if one later wants to extend the simulation beyond the original final time.
+
 
 <a name="cpugpu"></a>
 ## Performance-Portable Heterogeneous Execution (CPU-GPU, Kokkos)
 
 **GIZMO** is a flexible, performance-portable heterogeneous code: the same source tree targets NVIDIA GPUs (via CUDA), AMD GPUs (via HIP), and multi-core CPU-only nodes (via OpenMP), selected at compile time through the [Kokkos](https://github.com/kokkos/kokkos) portability library and the Makefile machine configuration. The design philosophy is that *almost all numerically-intensive work runs on the device*. On a GPU node the device is the GPU; on a CPU-only Kokkos build the device is the OpenMP thread pool — but in either case the same kernels execute, with the host MPI process acting primarily as a memory manager, dispatcher, and inter-rank communicator. Builds without Kokkos are no longer supported.
 
+<a name="cpugpu-device"></a>
 ### What runs on the device
 
 Practically every per-particle, per-pair, per-node, and per-substep loop is now device-resident. This includes not just the kernel evaluations themselves, but the full surrounding pipeline — neighbor-list construction, kernel calculations, post-processing reductions, tree construction, tree walks, drift/kick/timestep updates, and (where applicable) domain-decomposition work all execute on the device. The host is responsible for MPI traffic, file I/O, the high-level time-loop, and the small amount of bookkeeping where collective decisions or rank-to-rank sends/receives are unavoidable. The current device-resident inventory:
@@ -669,7 +722,7 @@ Practically every per-particle, per-pair, per-node, and per-substep loop is now 
 
 + **Hydro chain** (density, gradient, hydro force): the entire neighbor-interaction pipeline is device-resident. Ghost particles are imported via tile-based MPI_Alltoallv into a device-resident ghost arena; a GPU-built symmetric neighbor list (SFC tiles + BVH, two-pass CSR construction) replaces the legacy CPU tree-walk neighbor finder; density h-convergence iterates entirely on device with persistent arrays; the MLS gradient reconstruction and the Riemann/flux-accumulation force kernel both run as device parallel kernels with Kokkos atomic j-writes (for MFV mass conservation and wakeup flags); a reverse-communication "ghost writeback" step propagates j-particle modifications back to home ranks. The legacy CPU tree-walk path for hydro neighbors has been retired.
 
-+ **Self-gravity tree pipeline** (Step 13): every stage of the gravity solve runs on device — Peano-Hilbert key generation and Morton sort, Karras-style GPU BVH tree build, GPU moment refresh (incremental rebuilds), Local Essential Tree (LET) packing on device with MPI_Iallgatherv exchange, the speculative tree walk itself (Barnes-Hut multipole opening), per-particle gravitational acceleration accumulation, optional potential / tidal-tensor / jerk evaluation, adaptive softening lookups, PMGRID short-range table evaluation, and per-substep drift / cost / kick updates. The persistent particle arena (`P[]`, `CellP[]`, `Nodes[]`, `Nextnode[]`, `Father[]`) lives in Kokkos `SharedSpace` (CUDA Unified Memory on NVIDIA, page-migrated on HIP, plain host memory on OpenMP), giving zero-copy device access without explicit deep-copies. The legacy CPU export-loop and per-rank tree-walk paths have all been retired.
++ **Self-gravity tree pipeline**: every stage of the gravity solve runs on device — Peano-Hilbert key generation and Morton sort, Karras-style GPU BVH tree build, GPU moment refresh (incremental rebuilds), Local Essential Tree (LET) packing on device with MPI_Iallgatherv exchange, the speculative tree walk itself (Barnes-Hut multipole opening), per-particle gravitational acceleration accumulation, optional potential / tidal-tensor / jerk evaluation, adaptive softening lookups, PMGRID short-range table evaluation, and per-substep drift / cost / kick updates. The persistent particle arena (`P[]`, `CellP[]`, `Nodes[]`, `Nextnode[]`, `Father[]`) lives in Kokkos `SharedSpace` (CUDA Unified Memory on NVIDIA, page-migrated on HIP, plain host memory on OpenMP), giving zero-copy device access without explicit deep-copies. The legacy CPU export-loop and per-rank tree-walk paths have all been retired.
 
 + **Subgrid feedback and source physics**: mechanical feedback (SNe), thermal feedback, RT source injection, sink formation / accretion / swallow, FIRE radiative feedback (HII regions, momentum winds, photoelectric heating), AGS adaptive-softening density and force, SIDM scattering and CBE integration, dm_dispersion, MHD div-B correction (CG/SSOR/HYPRE solvers — note that HYPRE itself runs on CPU when not built with `--with-cuda`), elastic solids (kernel-gradient correction, Brookshaw Laplacian).
 
@@ -681,6 +734,7 @@ The host MPI process retains responsibility for: rank-to-rank communication (gho
 
 Numerically, all device-resident kernels produce results that are bitwise-identical to the corresponding host-only run on the same hardware, and within floating-point summation-order tolerance across CPU/GPU. The GPU gravity tree walk and GPU hydro chain have been validated to bitwise identity against the (now-retired) legacy CPU tree-walk reference at 1- and 2-rank scale on both NVIDIA GH200 (Vista) and Apple-Silicon Kokkos-OpenMP builds (MacBookCellar_Kokkos).
 
+<a name="cpugpu-enable"></a>
 ### How to enable
 
 Performance-portable execution is always active when Kokkos is linked, which is controlled by `SYSTYPE` in the Makefile (not by any `Config.sh` flag). The neighbor-list infrastructure, ghost exchange, GPU kernel dispatch, persistent particle arena, GPU gravity tree, and GPU domain decomposition are all unconditionally enabled in any Kokkos build. The choice between GPU and CPU-OpenMP execution is determined entirely by the Kokkos backend selected at Kokkos build time:
@@ -690,6 +744,7 @@ Performance-portable execution is always active when Kokkos is linked, which is 
 
 The Makefile must link to Kokkos and (for GPU) the appropriate device compiler. See the `Vista` (Vista GH200, CUDA), `MacBookCellar_Kokkos` (Apple Silicon, OpenMP), or `Frontier` (AMD MI250X, HIP) blocks in the Makefile for working examples. On HPC systems where Kokkos is installed as a module (`module load kokkos`), the include and library paths are typically set by environment variables. There are no `Config.sh` flags that toggle GPU vs CPU dispatch — both code paths are always compiled in, and the Kokkos backend selects which one runs.
 
+<a name="cpugpu-architecture"></a>
 ### Architecture
 
 The implementation follows an "AthenaK-style" pattern: device-callable physics functions live in `.h` header files (annotated `KOKKOS_INLINE_FUNCTION`), while `.cc` files contain only host-side orchestration — memory management, MPI communication, and `Kokkos::parallel_for` launches. A `__managed__` copy of the global `All` parameter struct (`All_dev`) provides device kernels with read-only access to simulation parameters. Each device translation unit (e.g. `density_gpu.cc`, `cooling.cc`, `gravity/gpu_gravtree.cc`) is compiled by the device compiler (`nvcc`/`hipcc`/host C++) and linked with the rest of the code.
@@ -709,6 +764,7 @@ A typical timestep, with all heavy work on the device, looks roughly like:
 
 The persistent device arena means that between these stages, particle data does not move — `P[]` and `CellP[]` are read and written in place by successive device kernels with no host-device deep-copies.
 
+<a name="cpugpu-performance"></a>
 ### Performance characteristics
 
 Headline results on NVIDIA GH200 (Vista, single GPU, Kokkos-CUDA) versus the same Vista node running the CPU-only reference build (`SYSTYPE=Vista_CPU`, GCC, no Kokkos):
@@ -723,18 +779,6 @@ Per-phase speedups for `gmc_cooling` 512k: hydro force kernel ~32×, gradient ~6
 
 At small particle counts (≲100k per rank), Kokkos kernel-launch overhead and CSR-build overhead can dominate and the GPU build is no faster — sometimes slightly slower — than CPU-OpenMP. Speedup grows with N and dominates the total wall-time at production scales. Ghost-exchange and LET MPI traffic remain on the host and are unaffected by the device backend; at very large rank counts these can become the bottleneck, motivating the "host-as-MPI-only" mental model.
 
-
-<a name="tutorial-interrupt"></a>
-### _Interrupting a run_
-
-Run interruption works just like in GADGET. From that users guide: 
-Usually, a single submission to a queue system will not provide enough CPU-time to process a big production run. Therefore, a running simulation can be interrupted after any timestep, and resumed at the very same place later on. If the CPU-time limit is specified correctly in the parameter file, the code will interrupt itself automatically before the CPU-time limit expires, and write a set of ‘restart’-files. Actually, each processor writes its own restart file. These restart-files can be used to continue the run conveniently (see below).
-Sometimes you may want to interrupt the code manually with the possibility to resume it later on. This can be achieved by generating a file named "stop" in the output-directory of a simulation, e.g.
-
-    cd /active_run_directory/
-    > stop
-
-The code will then write a restart-file and terminate itself after the current timestep is completed, and the file ‘stop’ will be erased automatically. Restart files are also generated when the last timestep of a simulation has been completed. They can be used if one later wants to extend the simulation beyond the original final time.
 
 <a name="tutorial-restart"></a>
 ## Restarting a run 
@@ -830,7 +874,6 @@ These options determine basic aspects of the boundary conditions and dimensional
 
 
 
-
 <a name="config-hydro"></a>
 ## Fluid Solver Method 
 
@@ -879,7 +922,6 @@ You should read the section on [Fluid (Hydro) Solvers](#hydro) for more details 
 **HYDRO\_GENERATE\_TARGET\_MESH**: This flag is designed for building initial conditions and equilibrium objects for simulations. It can be used with any hydro method. If enabled, you must provide the functions `return_user_desired_target_density` and `return_user_desired_target_pressure`, which are defined in the very top of the `eos/eos.c` file. The code will then attempt to evolve towards these ICs. This is accomplished by re-setting the pressure (and corresponding internal energies) in each timestep to a value $P = P_{target}(\rho/\rho_{target})$ -- in other words, if the density is locally above/below the target value, it will over/under-pressurize the region to move the particles. This is described in more detail in the [Initial Conditions (Making & Reading Them)](#snaps-ics) section below. Note that if you set up your target pressure to have gradients, there must be a restoring force designed to balance them (e.g. a gravitational force, which can be solved via self-gravity or imposed analytically with the appropriate parameter choices). Also note this will obviously generate some motion of the mesh; if you wish that to be damped, to arrive at something non-moving, find the line with this compiler flag in `kicks.c` and un-comment it (that will enable velocity damping).
 
 
-
 **HYDRO\_PRESSURE\_SPH**: Use SPH to solve hydro, specifically the Lagrangian "pressure-energy" formulation from Hopkins 2013. This will move the gas cell/particles with the fluid, so any `HYDRO_FIX_MESH_MOTION` setting is ignored.
 
 **HYDRO\_DENSITY\_SPH**: Use SPH to solve hydro, specifically the Lagrangian "density" formulation from Springel and Hernquist 2002. This will move the gas cell/particles with the fluid, so any `HYDRO_FIX_MESH_MOTION` setting is ignored.
@@ -891,7 +933,6 @@ You should read the section on [Fluid (Hydro) Solvers](#hydro) for more details 
 **KERNEL\_FUNCTION**: This option allows you to replace the standard cubic spline kernel (used for the volume partition with any of the mesh-free methods, and for gravitational softening in any method) with alternative kernel functions (all defined in the file kernel.h). Kernels currently implemented include: 1=linear ramp ($\sim(1-r)$); this is not generally recommended (it has certain well-known numerical problems), but is useful for some testing purposes. 2=quadratic 'peaked' kernel ($\sim (1-r)^{2}$). This is use-able for MFM/MFV methods, but should not be used for SPH, since it does not have a well-defined derivative at r=0 (the kernel derivative is a fundamental quantity in SPH, but meaningless in MFM/MFV). Still it is more noisy than higher-order kernels. 3=default (cubic spline). The recommended number of neighbors for the cubic spline is ~32 (in 3D). 4=Morris 1996 quartic spline. The recommended number of neighbors is ~45-62 (in 3D). 5=Morris 1996 quintic spline. Recommended ~64-128 neighbors (in 3D). 6=Wendland C2 kernel (see Cullen & Dehnen 2010 for details of this kernel). Recommend 3D 45-80 neighbors. In SPH, this kernel produces somewhat larger zeroth-order errors in density estimation compare to the quartic spline, but does not suffer the particle pairing instability. 7=Wendland C4 kernel (64-180 3D neighbors), 8=quadratic 2-step kernel (commonly used in image filtering, and has some special applications here, but not generally as accurate for fluid dynamics; 30-64 neighbors), 9=Wendland C6 kernel (180-600 neighbors). Higher-order kernels are more expensive and more diffusive. They are usually not necessary if MFM-mode, or MFV-mode is used. But if SPH is used, convergence requires (technically) infinite neighbor number. So even though this is more expensive, and more diffusive, it is the only way to suppress certain zeroth and first-order inconsistency error terms which appear in all SPH formulations. 
 
 **KERNEL\_CRK\_FACES**: Use the consistent reproducing kernel [higher-order tensor corrections to kernel above, compared to our usual matrix formalism] from Frontiere, Raskin, and Owen to define the faces in MFM/MFV methods. Enabling this will augment the usual kernel function (which should still be defined as usual with `KERNEL_FUNCTION`) with the tensor-corrected consistent reproducing kernel as defined in Frontiere, Raskin, and Owen (arXiv:1605.00725). This is currently valid for MFM/MFV. The CRK kernel gives an effective 'face' which is corrected to one-higher-order accuracy, compared to the default matrix-based face elements defined for MFM/MFV. This comes at some cost in memory and extra computations in the gradient step. However because of the higher-order correction, this gives more accurate 'closure' relations for the effective faces, which may reduce certain errors: it reduces numerical diffusion in multi-phase boundaries, allows for better maintaining of irregularly-shaped and sharp contact discontinuities, and most obviously reducing div-B errors in MHD. However it remains in testing/experimental stages right now, so please experiment for yourself.
-
 
 
 <a name="config-fluids"></a>
@@ -948,7 +989,6 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 **EOS\_SUBSTELLAR\_ISM**: This allows for the local equation of state polytropic index to vary between 7/5 and 5/3 (and occasionally outside this range) following the detailed fit from Vaidya et al. A&A 580, A110 (2015) for densities around $n_{H} \sim 10^{7} {\rm cm^{-3}}$ for atomic plus molecular mixtures (relevant in e.g. star formation simulations), which accounts for collisional dissociation at 2e3 K and ionization at 1e4 K, and take the molecular-fraction-weighted average to interpolate between atomic/not self-shielding and molecular/self-shielding. Gamma should technically really come from calculating the species number-weighted specific heats, but since the molecular fraction is itself only approximate in the regime where it matters, this should be OK. See the code and uncomment the noted lines in EOS.c if you want to use the exact version from Vaidya et al. 2015, which rolls the heat of ionization into the EOS. Users of this module should cite Grudic et al., arXiv:2010.11254.
 
 **EOS\_GMC\_BAROTROPIC**: This implements the idealized barotropic EOS calibrated to simplified radiation-hydrodynamic simulations Masunaga & Inutsuka 2000; useful for test problems in small-scale star formation such as cloud collapse, jet launching. See Federrath et al. 2014ApJ...790..128F. You can also set this parameter to a numerical value =1 to instead use EOS used in Bate Bonnell & Bromm 2003. 
-
 
 
 <a name="config-fluids-nuclear"></a>
@@ -1056,8 +1096,6 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 
 
 
-
-
 <a name="config-fluids-metalsturb"></a>
 ### _Passive Scalars, Metals, & Sub-Grid Turbulent Mixing_
 
@@ -1082,7 +1120,6 @@ The fluids in code can carry arbitrary mixes of scalar fields. These control som
 **TURB\_DIFF\_METALS**/**TURB\_DIFF\_ENERGY**/**TURB\_DIFF\_VELOCITY**: Enables turbulent diffusion following the Smagorinsky (1963) eddy mixing model. This model assumes that for a scalar A, the diffusion time derivative follows $\nabla\cdot(K\nabla A)$, where the diffusion coefficient $K = C\,|S|\,h^2$ where h is the interparticle spacing, C is a dimensionless constant set in the parameterfile, and |S| is the norm of the trace-free shear tensor. Essentially this assumes that the grid-scale velocity gradients are unstable and become a cascade, mixing scalars on the eddy turnover time. `TURB_DIFF_ENERGY` enables diffusion of thermal energy, `TURB_DIFF_VELOCITY` of momentum (essentially a true 'turbulent viscosity'), and `TURB_DIFF_METALS` of metals (treated as passive scalars, requires METALS enabled). All follow the same scaling (required for consistency). The SPH implementation of this is similar to that in Shen et al. 2009, with some numerical tweaks to improve accuracy, conservation, and integration stability; the MFM/MFV implementation follows our more accurate modeling of diffusion terms as described above for conduction and viscosity, with limiters based on a hybrid MFV-solution to prevent excessive diffusivity in many circumstances. Users of these modules should cite Hopkins et al. 2017 (arXiv:1702.06148) and Colbrook et al. (arXiv:1610.06590); a detailed description of the numerical methodology is given in the arXiv:1702.06148 paper, Appendix F3, or in Rennehan et al. (arXiv:1807.11509). 
 
 **TURB\_DIFF\_DYNAMIC**: This replaces the default code method for calculating the diffusion with the more sophisticated localized dynamical Smagorinsky model developed and tested in Rennehan et al. (arXiv:1807.11509 and 2104.07673). Please cite those papers if you use this for any applications. This requires more computational and memory expense as it performs multiple passes on the velocity field, smoothing it on various scales, to construct more accurate and robust estimators of the true local turbulent diffusivity (as compared to terms coming from shear or resolution-scale noise). If it is important to track turbulent diffusion but the standard code Smagorinsky method is too diffusive, this may yield dramatic improvement. However it is less trivially cross-compatible with all other models, so some care is needed. If this is on, the user must specify a few additional parameters in the params file: (1) `TurbDynamicDiffFac` sets the ratio of the higher-level filter size to the hydrodynamic kernel size (the smallest filter size): this is the ratio $\hat{h}/\bar{h}$ in Rennehan et al., and following that paper, optimal behavior appears to result from setting this to $=2$. (2) `TurbDynamicDiffSmoothing` sets the smoothing parameter $\epsilon$ used in weighting the contribution of the local resolution element versus its neighbors in constructing smoothed field values. Only values $0<\epsilon<1$ are physical, and really only values $0.7 < \epsilon < 1$ give effective smoothing. Following Rennehan et al. a good compromise default is $=0.8$. (3) `TurbDynamicDiffMax` sets the maximum dimensionless value of $C_{\rm dyn}$ or $C_{s}^{2}$ (the dimensionless coefficient in the diffusivity, which appears linearly in front of the diffusion rate. You can set this to some very large value to simply allow the code to do whatever it wants, but extremely large values resulting sometimes from numerical error can produce instability. A default value is $=1$, which should be rarely if ever reached. If you want to enforce lower diffusivity, however, this can be correspondingly lower. Note also that enabling `OUTPUT_TURB_DIFF_DYNAMIC_ERROR` allows you to record and save to snapshots the error terms tracked in that paper. The multi-iteration form of the dynamic model is disabled: the number of extra filtering iterations is fixed at zero in the code, and a `TurbDynamicDiffIterations` line in the parameterfile is ignored (the parser reports it as an unused tag).
-
 
 
 
@@ -1221,7 +1258,6 @@ Also note that the default code implementations allow the PIC particles to be ar
 **GRAIN\_FLUID\_AND\_PIC\_BOTH\_DEFINED**: This tells the code that both `GRAIN_FLUID` (integration of non-relativistic massive dust/particulate/aerosols particles) and `PIC_MHD` (for e.g. cosmic rays or other applications) are simultaneously active. cite Ji, Squire, & Hopkins, arXiv:2112.00752
 
 
-
 <a name="config-cosmicray-mhd"></a>
 ### _Continuum Cosmic Ray-MHD Simulations_
 
@@ -1269,7 +1305,6 @@ Note that various other special options, including disabling certain terms (cool
 
 
 
-
 <a name="config-cosmicray-subgrid"></a>
 ### _Sub-Grid Models for CR Effects on MHD Fluids_
 
@@ -1282,7 +1317,6 @@ Here we include more simplified sub-grid or toy models which do not actually exp
 ```
 
 **COSMIC\_RAY\_SUBGRID\_LEBRON**: Turning this on will enable a simple sub-grid model for the CR population, which can then be used for CR pressure effects (adding the CR pressure to the Riemann problem, as in the tight coupling approximation) and simple heating terms from CR losses and streaming. The approximation is akin to the LEBRON RHD approximation in GIZMO, assuming some losses occur but only local to sources and then CRs propagate with a constant, spherically-symmetric independent steady-state solution for each source following a constant diffusion+effective streaming speed, as detailed and derived and tested in Hopkins et al. arXiv:2211.05811. That paper should be cited for any use of this code.
-
 
 
 
@@ -1308,7 +1342,6 @@ These flags enable explicit turbulent 'stirring' of the simulation volume, as in
 Note that in most driven turbulence experiments, it is common to 'force' the gas to lie along an exact adiabatic equation-of-state (a single adiabat or entropic function), so any energy of e.g. shocks and kinetic dissipation is immediately removed (if this or some cooling physics is not enabled, the turbulent driving will gradually 'heat up' the box, decreasing the mach number). This is accomplished as described above by turning on `EOS_ENFORCE_ADIABAT` in the Config file. For example, for a truly isothermal test, with isothermal sound speed equal to unity, you can simply set `EOS_ENFORCE_ADIABAT=1` and `EOS_GAMMA=1.0001` (this is slightly larger than unity, so the temperature is re-set nearly as if `EOS_GAMMA=1` but various unphysical divergences that arise if GAMMA-1=0 will be avoided). 
 
 **TURB\_DRIVING\_SPECTRUMGRID**: This activates on-the-fly calculation of the turbulent velocity, vorticity, density, and smoothed-velocity power spectra; the power spectra are calculated over a range of modes and dumped to files titled `powerspec_X_NNN.txt` where NNN is the file number and X denotes the quantity the power spectrum is taken of (e.g. velocity, smoothed velocity, etc). The columns in these outputs are (1) k (Fourier mode number), (2) power per mode at k, (3) number of modes in the discrete interval in k, and (4) total discrete power over all modes at that k. To convert to a 'normal' power spectrum, and get e.g. the power per log-interval in k, take column (2) times the cube of column (1). The value to which you set `TURB_DRIVING_SPECTRUMGRID` determines the grid linear size (in each dimension) to which the quantities will be projected in taking the power spectrum. Users of this module should cite Bauer and Springel 2012, MNRAS, 423, 3102, as described above. Note that this only works if the box is periodic: `BOX_PERIODIC` must be enabled.
-
 
 
 <a name="config-gravity"></a>
@@ -1346,7 +1379,6 @@ These options all pertain to the gravity solver in the code. They determine how 
 **GRAVITY\_ACCURATE\_FEWBODY\_INTEGRATION**: Normally, the default error tolerances in GIZMO's tree-gravity solver will allow relatively large degradation of tight binary orbits if they form, because it is optimized for many-body dynamics with softened gravity (where individual resolution elements are not point-masses). If high accuracy in close few-body encounters is desired, a few flags will ensure this: several of these are rolled together into this convenience flag , which includes **GRAVITY\_HYBRID\_OPENING\_CRIT** (uses both a Barnes-Hut and relative acceleration tree opening criterion, to be more conservative), **LONG\_INTEGER\_TIME** and **STOP\_WHEN\_BELOW\_MINTIMESTEP** (to deal with deeper timestep hierarchies), and **TIDAL\_TIMESTEP\_CRITERION** to timestep carefully through close passages. However, this may drop the timesteps to very small values. To deal with this, the code modules in the `SINGLE_STAR` package allow for some major optimizations, developed by Mike Grudic. This module set is designed for simulations with 'real' point-particle or point-mass-like dynamics, as compared to smoothed gravity, so is only compatible with Tree-only gravity (as opposed to TreePM).
 
 **GIZMO\_MIXED\_PRECISION\_GRAVITY**: Enables a mixed-precision gravity tree walk that keeps particle positions in double precision but stores tree-node multipole moments (center of mass, total mass) and accumulates force-kernel sums in single precision (the typedef `MyGravFloat`, which is `float` when this flag is on and `double` otherwise, controls the relevant fields). This cuts the gravity-tree memory footprint and per-walk bandwidth by roughly $\sim 2\times$ at a sub-percent typical force-accuracy cost for the regimes most multi-physics simulations actually probe (extended distributions with smoothed gravity), since the dominant error source in those regimes is the multipole-opening criterion rather than the floating-point precision of the accumulation. The narrowing cast happens at the moment-seed step from the underlying double-precision NODE structures, so the host tree build is unchanged. Follows the precision conventions of pkdgrav3 and Bonsai, where mixed precision is the default. Default OFF (all gravity quantities in double precision). This is primarily a performance/memory optimization for the GPU gravity tree walk; not recommended for very few-body close-binary integration (use `GRAVITY_ACCURATE_FEWBODY_INTEGRATION` instead, which keeps full double precision).
-
 
 
 <a name="config-gravity-adaptive"></a>
@@ -1398,7 +1430,6 @@ When either `ADAPTIVE_GRAVSOFT_FORGAS` or `ADAPTIVE_GRAVSOFT_FORALL` or `ADAPTIV
 **GRAVITY\_ANALYTIC**: Add a specific analytic gravitational force. The analytic function is specified in the file `gravity/analytic_gravity.h`, specifically in the routine `add_analytic_gravitational_forces`. Youll see a number of analytic functions already pre-defined there for you, but can always add more or change them. This can be used in addition to the standard self-gravity calculation (if e.g. you want to simulate just gas with its self-gravity in some fixed halo or other potential) or in addition to `SELFGRAVITY_OFF` if you wish to disable self-gravity but still impose some external potential (as in e.g. a Rayleigh-Taylor problem). 
 
 
-
 <a name="config-gravity-nonstandardDM"></a>
 ### _Non-Standard Dark Matter, Dark Energy, Gravity, or Expansion_ 
 
@@ -1440,7 +1471,6 @@ Both expressions are symmetric, so the two elements of a pair compute the same p
 **DM\_HEATING**: Enables a continuous gas-heating source term driven by the local dark-matter density, modeling energy deposition from DM annihilation and/or DM decay into local baryons. The local DM mass density $\rho_{\rm DM}$ at each gas cell is computed via the kernel sum already maintained by the `dm_dispersion_loop` (enabling `DM_HEATING` automatically activates the dispersion loop and its associated support fields `CellP[].KernelRadiusDM`, `NumNgbDM`, `DM_Vx/y/z`, `DM_VelDisp`, `DM_Rho`, regardless of whether `GALSF_SUBGRID_WINDS` is also on). The heating rate added to gas-cell specific internal energy is $\dot{u}_{\rm DM} = f_h^{\rm ann}\,(\langle\sigma v\rangle/m_\chi)\,\rho_{\rm DM}^2\,c^2/\rho_{\rm gas} + f_h^{\rm dec}\,\Gamma\,\rho_{\rm DM}\,c^2/\rho_{\rm gas}$. The annihilation term uses the **self-conjugate-DM convention** with no extra factor of $1/2$: the volumetric annihilation rate $\tfrac{1}{2}n_\chi^2\langle\sigma v\rangle$ combined with rest-mass energy $2 m_\chi c^2$ per event gives $\rho_{\rm DM}^2\,(\langle\sigma v\rangle/m_\chi)\,c^2$ exactly. Users with Dirac/non-self-conjugate DM (separate $\chi$, $\bar\chi$ populations) should fold the appropriate factor of two into the supplied `DM_AnnihilationSigmaV_over_mChi` scalar. The heating is added to `CellP[].DtInternalEnergy` after the hydro step has zeroed and populated that field, so the cooling routine sees the combined hydro + DM-heating budget. Implemented as a continuous, deterministic source — no Monte-Carlo events, no daughter velocity kicks (those would be a future variant), no DM mass-loss bookkeeping ($\Gamma t \ll 1$ assumed for any realistic decaying-DM run). Sterile-neutrino X-ray-line decay is a special case of the decay channel: set $\Gamma$ from $(m_s, \sin^2 2\theta)$ and $f_h^{\rm dec}$ from the photon-energy fraction. The four run-time parameters are described below. Setting either pair (annihilation $\langle\sigma v\rangle/m_\chi$ + heating fraction; or decay $\Gamma$ + heating fraction) to zero disables that channel; both pairs zero leaves the module compiled but inert (with a notice at startup). Cite Hopkins et al., 2026 (internal).
 
 **GR\_TABULATED\_COSMOLOGY**: Top-level switch to enable cosmological integrations or regular simulations with non-standard, time-dependent dark energy equations-of-state, expansion histories, or gravitational constants. In this mode, the local gravitational forces will still be Newtonian, but the cosmological history will be different (and the gravitational constant G can, in principle, vary with time). This then allows the sub-switches **GR\_TABULATED\_COSMOLOGY\_W** which will read the dark energy equation of state w(z) from a pre-tabulated file (specified in the parameterfile by "TabulatedCosmologyFile"). For a constant $w(z)=w$, this just amounts to replacing the constant $\Lambda \rightarrow \Lambda_{0}\,a^{-3\,(1+w)}$ in the Hubble function. For a time-varying $w$, the expression used is the integral expression $\Lambda \rightarrow \Lambda_{0}\,\exp{\{ \int_{1}^{a}\,\frac{3\,(1+w[a^{\prime}])}{a^{\prime}}\,d a^{\prime} \}}$. The parameter **GR\_TABULATED\_COSMOLOGY\_H** will read the Hubble function H(z) itself from this file. **GR\_TABULATED\_COSMOLOGY\_G** will also read the value of G(z), the gravitational constant (i.e. allows for time-varying gravitational constant, albeit with an "instantaneously" Newton force). Note that these options will not self-consistently alter the power spectrum of initial conditions. To use the same cosmological initial conditions (assuming these are chosen early enough so that linear growth theory applies) intending to get roughly the same $z=0$ power spectrum, for example, one should change the starting scale factor (or redshift) in the parameterfile so that the linear growth factors match appropriately for the intended "initial time" -- i.e. so $g^{0}(z=0)/g^{0}(z_{\rm ICs}^{\rm original}) = g^{\prime}(z=0)/g^{\prime}(z_{\rm ICs}^{\rm new})$, where $g^{0}$ is the growth factor in the "original" cosmology for which the ICs were built to be used starting at redshift $z_{\rm ICs}^{\rm original}$ and $g^{\prime}$ is the growth factor in the new, modified cosmology and $z_{\rm ICs}^{\rm new}$ is the new starting redshift. Similarly, the initial velocity field should be re-scaled by the factor $[H^{\prime}(z_{\rm ICs}^{\rm new})\,\Omega^{\prime}(z_{\rm ICs}^{\rm new})^{0.6}]/[H^{0}(z_{\rm ICs}^{\rm original})\,\Omega^{0}(z_{\rm ICs}^{\rm original})^{0.6}]$. See the parameters description below for more details. 
-
 
 
 <a name="config-gravity-cbe"></a>
@@ -1485,7 +1515,6 @@ These flags implement a Lagrangian, finite-volume method for directly integratin
 **CBE\_INTEGRATOR\_OUTBUDGET\_VERBOSE**: Enables a verbose debug printf path for the per-basis outflow-budget ledger. Diagnostic only; produces substantial output and is not intended for production runs.
 
 
-
 <a name="config-gravity-pressure"></a>
 ### _Artificial Pressure Floors_ 
 
@@ -1496,7 +1525,6 @@ These flags implement a Lagrangian, finite-volume method for directly integratin
 ```
 
 **EOS\_TRUELOVE\_PRESSURE**: Adds a pressure term to the equations of motion following Truelove 1997, to prevent any fragmentation via self-gravity for which the "bottom scale" (the Jeans length) is smaller than the resolution limit. Note that this is commonly said to prevent "numerical fragmentation" but that is not really correct - the fragmentation it prevents is, in fact, physical (and should happen if we are solving the correct equations). Rather, this term artificially suppresses this fragmentation according to a desired threshold, so that only well-resolved structures appear in the simulation (even if those structures are physically incorrect). Therefore, the results using this criterion are inherently resolution-dependent, and it should be used with caution (it is not a 'cure' but a numerical side-step, and users should be careful). It can also tend to corrupt the temperature evolution of gas which is strongly dominated by the artificial pressure term. In any case, this is done in a manner that couples only to pressure, not to the internal energy or temperature of the gas (so the temperatures still becomes "correctly" cold, but artificial collapse below the resolution limit is suppressed). Users of this module should cite Robertson & Kravtsov 2008, ApJ, 680, 1083.
-
 
 
 
@@ -1565,7 +1593,6 @@ A very similar version of this algorithm (also adapted from the original GADGET3
 
 
 
-
 <a name="config-galsf"></a>
 ## Galaxy & Galactic Star Formation Options 
 
@@ -1584,7 +1611,6 @@ This is a large set of flags which control the physics of galaxy-scale star form
 First, there is the 'top-level switch' for galaxy formation and star formation.
 
 **GALSF**: Enables star formation, tracking of 'star particles' and their associated quantities (ages, etc). Required for everything else in this block. Requires COOLING on. These follow the algorithmic star formation model wherein gas elements are individually converted into star particles (on a probabilistic basis, from a smooth continuum star formation rate) as originally described in Springel & Hernquist, 2003, MNRAS, 339, 289 (and that paper should be cited for their use). The different specific star formation and (especially) stellar feedback sub-routines below have their own citations and developers, described with each.
-
 
 
 <a name="config-galsf-sflaw"></a>
@@ -1655,7 +1681,6 @@ These flags relate to popular 'sub-grid' models for star formation and feedback.
 **GALSF\_FB\_TURNOFF\_COOLING**: This enables the 'blastwave' or 'cooling turnoff' model developed by Stinson et al. 2006 in GASOLINE. SNe occur (this requires `GALSF_FB_THERMAL` is on), and when they do, a fixed fraction of their energy is coupled thermally to the gas, which is then not allowed to cool for some long timescale (set analytically following Stinson et al. 2006), typically $\sim 10^{7} - 10^{8}$ years (much longer than the physical cooling time of the gas). This is the model used a in wide range of GASOLINE projects (ERIS, MAGICC, etc). Users should cite Stinson et al. 2006 for the physical prescriptions, and consult PFH when using this module (the implementation in GIZMO has been tested under some conditions, but turning off cooling can produce strange interactions with cooling and heating routines under various circumstances so must be treated with caution).
 
 
-
 <a name="config-galsf-explicitfb"></a>
 ### _Explicit (Resolved) Feedback Models_ 
 
@@ -1683,7 +1708,6 @@ You must choose one of the two following modules, depending on whether you just 
 **GALSF\_FB\_MECHANICAL**: This enables the explicit mechanical (e.g. SNe, stellar winds, etc) feedback coupling algorithm described in detail in Hopkins et al. 2018, MNRAS, 477, 1578. This is a sophisticated algorithm which ensures manifest energy and momentum conservation, and statistical isotropy, even with arbitrary particle arrangements around the 'injection' site. As shown in that paper, this is non-trivial: simply depositing momentum with a kernel-weighting around the source leads to large violations of linear momentum and energy conservation which can seriously corrupt predictions for galaxy or star cluster evolution; moreover in quasi-Lagrangian codes this almost always leads to all the ejecta being 'dumped' in the direction of the highest densities (e.g. into thin disks, as opposed to 'venting') which is physically the opposite of the correct solution. Equally or more important, this algorithm also explicitly accounts for whether or not the code resolves (or partially-resolves) the reverse shocks and Sedov-Taylor (energy-conserving) phase of the ejecta. It properly accounts for the conversion of energy into momentum (e.g. the PdV work) done by the ejecta reaching the resolved radii where it is coupled, and for un-resolved cooling. As many studies have shown, including Hopkins et al 2014 (MNRAS 445, 581, where this algorithm was first introduced), and subsequently Kimm and Cen 2014 (ApJ 788, 121), Martizzi et al 2015 (MNRAS 450, 504), Rosdahl et al 2017 (MNRAS 466, 11), and others, this produces the correct solutions at the actual resolved radii of the blastwaves (compared to high-resolution simulations of those blastwaves in uniform media with properties identical to the cell where they explode), and so has stable and orders-of-magnitude superior convergence properties compared to models in which the ejecta energy is simply coupled as 'pure thermal' or 'pure kinetic/momentum' (with some arbitrary specify-able efficiency). Any users of this module should cite Hopkins et al. 2018, MNRAS, 477, 1578 (and ideally the earlier studies above, as well). 
 
 **GALSF\_FB\_THERMAL**: This implements a simple "pure thermal energy dump" feedback: mass, metals, and thermal energy are injected locally in simple kernel-weighted fashion around young stars. The kernel follows a typical SPH-like density kernel, so the deposition is effectively mass-weighted (as opposed to e.g. a more accurate solid-angle weighting). This is an extremely simplified local model for stellar feedback, **not** a model for mechanical feedback (which, critically, must include the actual momentum and solve for wind/SNe shock properties at the resolved interface with the ISM -- this module ignores all of that, which is done instead by completely different routines in `mechanical_fb.c`). As is well-known, owing to the neglect of these terms, such implementations will tend to over-cool (rather severely) at the resolution of typical galaxy simulations (for demonstrations, see Hopkins et al., arXiv:1707.07010). However, this implementation is potentially useful either (a) at extremely high mass resolution (particle masses $\ll 100\,M_{\odot}$), or (b) for historical comparison, as many models in the literature use this. 
-
 
 
 <a name="config-galsf-fire"></a>
@@ -2013,7 +2037,6 @@ The accretion models involve several parameterfile settings. `SinkAccretionFacto
 Note that you should only activate at most one of the flags **SINK\_BONDI**, **SINK\_GRAVACCRETION**, or **SINK\_GRAVCAPTURE\_GAS**. These are coded assuming one determines the model for the BH accretion rate of gas, and will give incorrect or un-predictable results if more than one are enabled. You can, however, enable **SINK\_GRAVCAPTURE\_NONGAS** "on top of" any of these gas accretion models.
 
 
-
 <a name="config-bh-feedback"></a>
 ### _BH Feedback Models_ 
 
@@ -2082,7 +2105,6 @@ These are miscellaneous additional BH options. See also the description of the v
      
 
 
-
 <a name="config-fluids-cooling"></a>
 ## Radiative Cooling & Chemistry
 
@@ -2117,7 +2139,6 @@ The TREECOOL file uses the compiled UV background data from Claude-Andre Faucher
 **METALS**: Enables tracking metallicities/passive scalars associated with gas and stars/sinks. Enrichment will be handled by the different specific physics modules below (e.g. some of the star formation modules attempt to inject metals on-the-fly), or can be added to the initial conditions (or specified in the parameterfile, if you wish to initialize the simulation to a uniform metallicity and set of abundance ratios). This specific flag does not require GALSF be enabled; if you turn it on without GALSF metals are treated as fixed by the ICs or passive scalars which can diffuse if e.g. models for turbulent metal diffusion are enabled, and can act in the metal-line cooling routines (they just do not have a dynamical mechanism for enrichment). Citation is not required for the specific passive-scalar routines, but the relevant cooling and diffusion routines do ask for appropriate citations.
 
 **DISK\_BETA\_COOL**: Enables a minimal 'beta-cooling' prescription for idealized protoplanetary-disk problems. It is an alternative to, and mutually exclusive with, `COOLING` (the code will not compile with both). Once per timestep each active gas cell's specific internal energy is relaxed toward a constant irradiation floor, $u_{\rm irr}$, as $du/dt = -(u-u_{\rm irr})/t_{\rm cool}$ with $t_{\rm cool} = \beta/\Omega$. The update is integrated exactly as $u_{\rm new} = u_{\rm irr} + (u_{\rm old}-u_{\rm irr})\,\exp(-\Delta t/t_{\rm cool})$. With `BOX_SHEARING`, $\Omega$ is the shearing-box value at the box center. Otherwise the code assumes a central potential at the origin and sets $\Omega = (|{\bf a}_{\rm grav}|/r)^{1/2}$ from each cell's gravitational acceleration and distance from the origin. Requires the parameters `BetaCool_Beta` (the dimensionless $\beta$) and `BetaCool_Tirr` (the floor temperature in K, converted to $u_{\rm irr}$ with the default mean molecular weight; set =0 for pure cooling toward zero, subject to `MinGasTemp`). This is deliberately a crude approximation. For realistic disk thermodynamics, use explicit radiation-hydrodynamics with dust-gas thermal coupling (e.g. `RT_OPACITY_FROM_EXPLICIT_GRAINS`) instead.
-
 
 
 ```bash
@@ -2218,7 +2239,6 @@ The CHIMES modules in this code have many additional options, only some of the m
 **CHIMES\_NH\_OUTPUT**: Writes the hydrogen column density of each gas cell to snapshots (HDF5 "ChimesColumnDensity", in cm$^{-2}$), using the same Sobolev-type estimate (times `Shielding_length_factor`) that the chemistry solver uses for self-shielding. This is useful for computing equilibrium abundances in post-processing with exactly the column densities the non-equilibrium calculation used. If `OUTPUT_DENS_AROUND_NONGAS` is also set, the equivalent effective surface density around star particles is written as well (HDF5 "SigmaEff", in g cm$^{-2}$).
 
 **CHIMES\_INITIALISE\_IN\_EQM**: By default the initial ion and molecule abundances are read from the ICs (or snapshot). With this enabled they are not read. Instead, at startup (any restart flag except 1), each gas cell's chemistry is evolved at fixed temperature for ten intervals of $\sim(1/n_{\rm H})$ Myr each (capped at 1 Gyr per interval), bringing the abundances close to chemical equilibrium. Stellar fluxes from the gravity tree are not yet available at that point, so the equilibrium includes only the UV background.
-
 
 
 
@@ -2354,7 +2374,6 @@ Flags governing the radiation pressure terms (photon momentum transfer to gas), 
 **RT\_ENABLE\_R15\_GRADIENTFIX**: This is relevant for radiation pressure if and only if one of the moments methods (M1/FLD/OTVET) is being used to evolve the radiation. If those methods are used, then if this is on (it is off by default), the radiation pressure force is calculated using the approximate fix from Rosdahl et al. 2015, MNRAS, 451, 34 (Appendix B), whereby the optically-thin flux (${\bf F}\rightarrow e_{\nu}c\hat{\bf F}$) is used to replace the explicitly-calculated ${\bf F}$, as the latter is smoothed over ~10 grid cells around any point sources owing to the fact that it depends on numerical sourcing of the relevant gradient terms. This being on is generally more accurate in simulations with lots of point sources where the initial single-scattering mean-free-paths are poorly-resolved (e.g. star and galaxy formation simulations). However, if there are not point sources or the mean-free-paths are well-resolved, turning this off will yield more accurate behavior with these methods.
 
 
-
 ```bash
 ############################################################################################################################
 # ----------- alternative, test-problem, or special behavior options
@@ -2391,7 +2410,6 @@ Flags governing the radiation pressure terms (photon momentum transfer to gas), 
 **TRANSPORT\_SUBCYCLE**: Lets the explicit radiation transport and cosmic-ray transport take several smaller sub-steps within each hydro step, so the transport Courant condition (often set by a large reduced speed of light) no longer sets the gas timestep. The value is the maximum number of sub-steps per hydro step. Each cell's hydro timestep is limited to (value - 0.5) times its RT timestep, or value times its CR transport timestep, instead of to the transport timestep itself. On each step the code uses $N = {\rm MIN}(\lceil \Delta t_{\rm hydro,max}/\Delta t_{\rm transport,min} \rceil,\ {\rm value})$ sub-steps, taken over the active cells across all tasks. On every sub-step it recomputes the transport fluxes and kicks the radiation and CR fields (and updates opacities) on a neighbor topology frozen for that hydro step. Source injection and the other non-flux RT operations still run once per hydro step. This replaces the retired `RT_DIFFUSION_IMPLICIT` (use `RT_M1` with this instead). It forces the neighbor-list ("Mode A") hydro path on every step. Written by Mike Grudic. This is highly experimental: please contact the developer before using it for production runs.
 
 **TRANSPORT\_SUBCYCLE\_COOLING**: With `TRANSPORT_SUBCYCLE`, also calls the cooling/thermochemistry routine on every transport sub-step (each with $1/N$ of the hydro timestep), instead of once per hydro step after the sub-cycle loop. This keeps the gas temperature, ionization state and dust-radiation exchange coupled to the radiation field as it evolves within the step, which can matter when the thermochemistry responds on the transport timescale. It costs $N$ cooling calls per hydro step. Same development status and contact as `TRANSPORT_SUBCYCLE`.
-
 
 
 
@@ -2451,6 +2469,7 @@ These flags govern snapshot outputs (what is saved and how it is saved).
 #OUTPUT_VORTICITY               # outputs the vorticity vector
 #OUTPUT_BFIELD_DIVCLEAN_INFO    # outputs the phi, phi-gradient, and numerical div-B fields used for de-bugging MHD simulations
 #OUTPUT_TIMESTEP                # outputs timesteps for each particle
+#AGS_OUTPUTZETA                 # outputs the adaptive-softening correction term zeta for each adaptively-softened particle
 #OUTPUT_COOLRATE                # outputs the net cooling rate (negative where gas is net heating), and conduction rate if enabled
 #OUTPUT_COOLRATE_DETAIL         # outputs cooling rate term by term [saves all individually to snapshot]
 #OUTPUT_POWERSPEC               # compute and output cosmological power spectra. requires BOX_PERIODIC and PMGRID.
@@ -2535,6 +2554,8 @@ The remaining flags in this section all turn on/off additional (optional) output
 
 **OUTPUT\_SOFTENING**: Output the gravitational softening length for each particle (HDF5 "Softening_KernelRadius"). Particularly useful when adaptive gravitational softening is enabled (`ADAPTIVE_GRAVSOFT_FORGAS` or `ADAPTIVE_GRAVSOFT_FORALL`), where softenings vary per particle.
 
+**AGS\_OUTPUTZETA**: Output the correction term $\zeta$ of the adaptive gravitational softening for each adaptively-softened particle (HDF5 "AGS-Zeta"): the term that keeps the equations of motion energy- and momentum-conserving when the softening varies with position (Price & Monaghan 2007). Only meaningful when adaptive softenings are active (e.g. `ADAPTIVE_GRAVSOFT_FORALL`).
+
 **OUTPUT\_UNSPAWNED\_SINKMASS**: Output the mass that has been flagged for spawning into a sink particle but has not yet been spawned (HDF5 "UnspawnedSinkMass"). Relevant for sink particle formation models where mass accumulation occurs over multiple timesteps before the sink is created.
 
 **OUTPUT\_SINK\_ACCRETION_HIST**: Save full accretion histories of sink (BH/star/etc) particles.
@@ -2573,7 +2594,6 @@ And some additional format options:
 **IO\_SUPPRESS\_TIMEBIN\_STDOUT**: Only prints timebin-list to log file if highest active timebin index is within $N$ (value set) of the highest timebin ($dt_{bin}=2^{-N} dt_{bin,max}$).
 
 **IO\_REDUNDANT\_BACKUP\_RESTARTFILE\_FREQUENCY**: Keep an extra set of backup files that are  this number of restarts old (allows for soft restarts from an older position)
-
 
 
 <a name="config-debug"></a>
@@ -2691,7 +2711,6 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 #DILATION_FOR_STELLAR_KINEMATICS_ONLY       #- special version of time dilation designed for stellar kinematics in e.g. dense star clusters or galaxy centers
 ####################################################################################################
 ```
-
 
 
 <a name="config-debug-general"></a>
@@ -3003,7 +3022,6 @@ This example sets every strictly-necessary parameter if we are running a non-cos
 **TimeBetStatistics** (or `Time_Between_Internal_Diagnostic_Statistics`): This determines the interval of time between two subsequent computations of the total energy of the system. This information is then written to the file given by EnergyFile. A first energy statistics is always produced at the start of the simulation at TimeBegin. (This has been deprecated to the `DEVELOPER_MODE` parameters, as this is used primarily for de-bugging purposes).
 
 
-
     %---- CPU Run-Time and CheckPointing Time-Limits 
     TimeLimitCPU              100000	% in seconds 
     CpuTimeBetRestartFile     7200  	% in seconds 
@@ -3209,7 +3227,6 @@ Here `SofteningGas` is *exactly* equivalent to `Softening_Type0` described above
 
 
 
-
 <a name="params-optional"></a>     
 ## Parameters of Optional Physics Modules (Examples) 
 
@@ -3270,7 +3287,6 @@ Here, we will list and describe some of these, but this will necessarily be an i
     CosmicRay_Subgrid_Vstream_0     20      % effective CR streaming speed [code velocity]
 
 **CosmicRay\_Subgrid\_Kappa\_0**/**CosmicRay\_Subgrid\_Vstream\_0**: If `COSMIC_RAY_SUBGRID_LEBRON` is on, these set the constant effective diffusion coefficient $\kappa_{0}$ and effective streaming speed $v_{\rm st,0}$ of the steady-state, spherically-symmetric CR profile assumed around each source (Hopkins et al. arXiv:2211.05811). The CR energy density from each source falls off as $\propto 1/[4\pi\,r\,(\kappa_{0} + v_{\rm st,0}\,r)]$, truncated beyond the maximum distance the CRs could have propagated in the source age; the same two values set the local loss-attenuation factor. Both are in code units (physical): $\kappa_{0}$ in code length times code velocity, $v_{\rm st,0}$ in code velocity. Defaults are 120 and 20, the values calibrated in the FIRE simulations, which assume code units of kpc/h and km/s; rescale them if your units differ.
-
 
 
     %---- Dust-Gas Mixtures (GRAIN_FLUID on)
@@ -3389,7 +3405,6 @@ Note that there are a variety of other grain parameters that can be enabled if t
 **IonizingLuminosityPerSolarMass\_cgs**/**star\_Teff**: Used only for idealized ionizing-RT problems: if `RT_CHEM_PHOTOION` is on and `GALSF` is not, every star particle (Type=4) is an ionizing source with luminosity equal to `IonizingLuminosityPerSolarMass_cgs` (erg/s per solar mass) times its mass, and the photo-ionization cross sections and photo-heating rates are averaged over a blackbody spectrum of temperature `star_Teff` (K). Both are required in that configuration (no defaults). (With `GALSF` the source luminosities come from the stellar-population model and $T_{\rm eff}=4\times10^{4}$ K is hard-coded.) The values in the block above are illustrative only.
 
 
-
 <a name="params-optional-sf"></a>
 ### _Star, Black Hole, and Galaxy Formation_ 
 
@@ -3412,7 +3427,6 @@ Note that there are a variety of other grain parameters that can be enabled if t
 
 **InitStellarAge** (or `Initial_StellarAge_inICs`): Median initial age of all pre-existing star particles in the simulation initial conditions file (in Gyr), required so their feedback and mass loss can be calculated. The stars will individually be assigned random ages between zero and twice this value. In cosmological integrations, there are no initial stars so this is ignored.
      
-
 
 
     %---- sub-grid (Springel+Hernquist/GADGET/AREPO) "effective equation of state" 
@@ -3580,7 +3594,6 @@ These parameters control the live ISM dust-evolution model enabled by `GALSF_ISM
     Sink_jet_precession_period 0.001         % jet precession period in Gyr (SINK_WIND_SPAWN_SET_JET_PRECESSION)
 
 
-
 These parameters control the sub-grid models for super-massive black hole particles, enabled by the top-level compile-time switch `SINK_PARTICLES`. There are many different compile-time options for the seeding of BH particles, for their accretion physics, and for different feedback physics. These are described above (Config.sh section) However, they are mostly controlled by a common set of parameters (e.g. all accretion models use the same "SinkAccretionFactor" term).
 
 **SeedSinkMass**: This gives the initial BH mass (in code units) when an on-the-fly seeding from the FoF method occurs. Likewise for any other on-the-fly seeding (for example, this determines the initial mass of the BHs in the on-the-fly local model, from `SINK_SEED_FROM_LOCALGAS`). In simulations which start with pre-existing BHs (from ICs), this should be set to the initial BH mass in code units (the *particle* mass will be read from the ICs, but GIZMO separately tracks the "sink" mass, and unless you construct special ICs that will not be read in). It's easy to forget this! If you restart from a snapshot or restartfile, the BH masses will be read from the file. 
@@ -3716,7 +3729,6 @@ These parameters control the optional module for stirred/driven turbulence (set 
 Reminder, for a truly 'isothermal' test with sound speed unity, set `EOS_ENFORCE_ADIABAT=1` and `EOS_GAMMA=1.001` (or some other extremely close-to-one number), and the temperatures will be re-set as if `EOS_GAMMA=1` but various unphysical divergences will be avoided (see notes for the `TURB_DRIVING` module above).
 
 
-
 <a name="params-optional-expansion"></a>
 ### _Non-Standard Dark Matter, Dark Energy, Gravity, or Expansion_ 
 
@@ -3778,14 +3790,12 @@ Reminder, for a truly 'isothermal' test with sound speed unity, set `EOS_ENFORCE
 
 
 
-
 ```bash
 1.00 -1.00 1.00 1.00 1.00
 0.90 -1.05 0.90 1.01 1.00
 ```
 
 Here Column (1) is scale factor ($a=1/(1+z)$). Column (2) is the Dark Energy equation-of-state $w(z)$, used if `GR_TABULATED_COSMOLOGY_W` is enabled. Column (3) is the Hubble function $E(z)$, e.g. for concordance $\Lambda$-CDM is just $E(z) = \sqrt{\Omega_{m}\,a^{-3}+\Omega_{K}\,a^{-2}+\Omega_{\Lambda}}$ -- note the normalization is still set by $H_{0}$ set as usual in the cosmological units of the parameterfile. This is used if `GR_TABULATED_COSMOLOGY_H` is enabled. If you want to use this with "standard" dark energy, just set the $w(z)$ values to $-1$ at all times. Columns (4)-(5) are used only if `GR_TABULATED_COSMOLOGY_G` is enabled. (4) Re-normalizes the gravitational contant $G$ at each time -- the default is the value set in the usual fashion in either the parameterfile above, or by the code, and then it will be multiplied by this number. Column (5) multiples the Hubble function by an appropruate multiplicative correction factor at each time. If you have pre-tabulated the correct $H(z)$ yourself already, just write this into column (3) and set column (5) to unity at all times. 
-
 
 
 <a name="params-optional-impact"></a>
@@ -3870,7 +3880,6 @@ All numerical methods include purely numerical parameters (for example, the Cour
 **DivBcleaningParabolicSigma**/**DivBcleaningHyperbolicSigma**: Dimensionless parameters which control the normalization of the parabolic and hyperbolic components of the divergence-cleaning scheme. The "default" values =1 will use the same values recommended by Tricco+Price (for SPH) or Gaburov & Nitadori 2010 (for non-SPH); see those papers for details. 
 
 
-
 When running the code with an SPH hydro solver, some additional parameters are required to control the artificial dissipation terms needed to stabilize all SPH methods. These are usually set to recommended values, unless `DEVELOPER_MODE` is enabled, then they can be set manually
 
     %---------- SPH-Specific Developer-Mode Parameters ---------------------------------
@@ -3930,7 +3939,16 @@ A large number of codes exist which can generate IC files for different types of
 
 + Arbitrary gas distributions for fluid dynamics & MHD problems: [WVTICs](https://arxiv.org/abs/1907.11250) is a flexible code for generating SPH or MFM/MFV-like initial conditions with equal-mass gas resolution elements and arbitrary user-specified density and pressure structure (giving you a nice relaxed glass distribution ideal for these numerical methods). Also the [Tests](#tests) portion of this User Guide links to pre-built ICs for dozens of test problems involving setups like multiphase fluid interfaces, shocktubes, spherical explosions, cloud-crushing problems, current sheets, field loops, rotors, Keplerian and galactic disks, and more. 
 
-+ Build your own! For many applications, you can generate your own ICs without one of the tools above. In the "scripts" folder of the GIZMO source code, the routine "make_IC.py" is a simple python script which generates a ready-to-go initial condition for GIZMO. This is a good starting point if you plan to build your own ICs -- it will show you what you need and how to set it up. All the ICs provided for test problems were built from variants of this script.  
++ Build your own! For many applications, you can generate your own ICs without one of the tools above. The routine `initial_conditions/make_IC.py` in the GIZMO source code is a simple python script which generates a ready-to-go initial condition for GIZMO. This is a good starting point if you plan to build your own ICs -- it will show you what you need and how to set it up. All the ICs provided for test problems were built from variants of this script.  
+
++ IC generators shipped with GIZMO. Beyond the general template above, the code carries a builder for self-gravitating bodies in hydrostatic equilibrium (`initial_conditions/eos_tools/`, described in [the next subsection](#snaps-ics-hse-builder)), a converter that renames the datasets of legacy GIZMO snapshots so they can be restarted from (`initial_conditions/update_legacy_gizmosnapshot_to_modern.py`), and the generators that build the ICs of the test problems in [Test Problems](#tests). The latter are plain Python scripts in each test directory and are good starting points for similar setups:
+    + *Collisionless equilibria and few-body systems:* `test/hernquist/make_hernquist_ics.py` (Hernquist sphere, radii from the mass profile and isotropic velocities from the equilibrium distribution function; $G=1$); `test/plummer/make_plummer_ics.py` (Plummer sphere, isotropic distribution function by inverse CDF); `test/plummer/make_plummer_binaries_ics.py` (a Plummer cluster of equal-mass circular sink binaries); `test/plummer/make_plummer_binaries_realistic_ics.py` (a Plummer cluster with an observed binary population: Kroupa IMF, mass-dependent binary fraction, log-normal periods, thermal eccentricities); `test/fewbody/make_binary_ics.py` and `make_triple_ics.py` (an eccentric unequal-mass Kepler binary and an inclined hierarchical triple, with zero total momentum); `test/fof_subfind/make_fof_subfind_ics.py` (a small periodic particle set with two bridged density peaks and a compact halo, for group finding).
+    + *Continuum Vlasov particles:* `test/cbe_two_stream/make_ic.py`, `test/cbe_density_wave/make_ic.py`, `test/cbe_free_slot_1d/make_ic.py`, `test/cbe_free_slot_3d/make_ic.py` and `test/cbe_harmonic_1d/make_ic.py`, which write the per-particle velocity-space bases (`VlasovMoments`) for counter-streaming beams, density waves, multi-stream free-slot problems and a Gaussian in a harmonic potential.
+    + *Star formation and single-star feedback:* `test/shu_jets/make_shu_jets_ics.py` (the truncated singular isothermal sphere of `test/shu1977` spun up to a chosen $E_{\rm rot}/|E_{\rm grav}|$); `test/HII_region/make_HII_region_ics.py`, `test/SN_singlestar/make_SN_singlestar_ics.py` and `test/wind_singlestar/make_wind_singlestar_ics.py` (a single star -- ZAMS, or past its main-sequence lifetime so it explodes at once -- at the centre of a uniform box at a chosen $n_{\rm H}$, with the sink fields the single-star modules need).
+    + *Fluids and MHD:* `test/poisson_box/make_poisson_box_ics.py` (cells at Poisson-random positions in a periodic box, at any resolution and mean density); `test/biermann_growth/make_biermann_growth_ics.py` (orthogonal sinusoidal density and temperature gradients with $\mathbf{B}=0$); `test/ionneutral_drag/make_ionneutral_drag_ics.py` (two interleaved fluids tagged by `FluidType`, ions drifting through neutrals).
+    + *Solid bodies, planets and tabulated EOS:* `test/hse_earth_smoke/make_ics.py`, `make_ics_basalt.py`, `make_ics_fibo.py` and `make_ics_fibo_hguess.py` (an Earth-mass layered or single-material body in hydrostatic equilibrium, by glass relaxation or Fibonacci shells, optionally with precomputed kernel radii); `test/aneos_giant_impact/generate_ics.py` (a differentiated forsterite-iron body on the M-ANEOS tables, which `convert_stewart_table.py` converts to SESAME format); `test/jutzi_crater/make_ics.py` (a 2D basalt projectile and porous target); `test/grain_promotion/make_ics.py` (a solid Tillotson slab with a super-massive grain); `test/cd21_hhe_compression/make_ics.py` (a 1D H/He box on the Chabrier & Debras 2021 table).
+    + *Nuclear burning:* `test/nuclear_detonation/make_detonation_ics.py` and `test/nuclear_xrb/make_xrb_ics.py` (He fuel at white-dwarf or accreted-layer conditions with a smooth hot spot to ignite a burning front).
+    + *File formats:* `test/read_ic_binary/make_binary_ic.py` writes a minimal GADGET-format binary IC (`ICFormat` 1), a template for producing or checking that format.
 
 Note that in many cases, even if you can easily build an 'approximate' IC file which is pretty good, it may have some nasty non-equilibrium or initially transient features, or may have some nasty geometric features (like preferred grid directions, if you lay the particles on a lattice). It is often desirable to 'relax' the system into equilibrium before running your simulation. This can be especially important in methods like MFM or SPH, if there are sharp density gradients but fixed particle masses, since the density gradient depends on the spatial distribution/positions of the particles. It is useful in general whenever the ICs contain very sharp gradients or discontinuities -- remember, in *any* numerical method, discontinuities have formally un-defined gradient and convergence properties (i.e. the gradient you get will be entirely determined by numerical error or slope limiter or similar terms). As a result, the behavior is ill-defined. What you should always do in such situations is relax the initial mesh so it does what you actually *want* it to do. Another example where this is important is hydrostatic equilibrium systems -- for example, a simulation of a polytrope (like a star). At the 'surface', the sharp falloff of density means that if you just took a lattice of mesh-generating points and cut it, you would get a lot of nasty 'edge effects' (and moreover, if your equilibrium is very sensitive, then the difference between the back-of-the-envelope estimate of the density and the discrete, numerical calculation of the density or its gradient can actually introduce features in your simulation). 
 
@@ -3988,28 +4006,32 @@ write_hdf5("earth_ics.hdf5", placed, prof, box_size=10*prof["R"])
 
 The same five-line core (`solve_hse` $\to$ `glass_relax` $\to$ `atmosphere_shell` $\to$ `correct_u_for_sph_density` $\to$ `write_hdf5`) handles any of the body classes named above; only the `Material` choices and the `Zone` list change. For a single-material body (a homogeneous basalt asteroid, a neutron star with a single nuclear EOS region, a brown-dwarf-like CD21 H/He envelope) the `zones` list is length one. For a multi-layer body (terrestrial planet with core+mantle+crust, a stratified giant planet, a stellar envelope on a compact-object core) add zones; the solver carries the material-boundary $T$ continuity automatically. The atmosphere shell is optional but strongly recommended for any vacuum-boundary body in SPH/MFM; we leave it off for periodic-box compression tests.
 
-Three example test problems in the GIZMO test suite already exercise the builder, and can be cloned as starting templates for your own setup:
+The following test problems use the builder or its EOS tables, and can be cloned as starting templates for your own setup:
+
++ `test/hse_earth_smoke/` is the end-to-end check on the builder: an Earth-mass Tillotson body (olivine mantle and iron core) built in hydrostatic equilibrium and run for a few dynamical times, which should simply sit still. It ships variants for a single-material basalt body, Fibonacci-shell placement, precomputed kernel radii and self-gravity off, and `analyze_hse.py` reports the velocity and density-profile drift per snapshot.
 
 + `test/aneos_giant_impact/` builds a differentiated Earth-mass body (forsterite mantle + iron core, layered HSE) against real Stewart-group M-ANEOS forsterite (S19) and iron (S20) tables, downloaded on demand from [Zenodo](https://zenodo.org/records/12732259) by the test driver. Demonstrates the multi-zone path with two distinct SESAME backends and the self-gravity-on / self-gravity-off Config variants.
 
-+ `test/cd21_hhe_compression/` exercises the substellar / giant-planet H/He EOS path: a single-material periodic box of Chabrier & Debras 2021 H/He at $Y=0.275$, loaded by running `cms_to_sesame.py` on the native CD21 ASCII table (publication electronic supplement) and consumed by GIZMO via the **EOS\_ANEOS** dispatch. Demonstrates the table-loader + `cms_to_sesame.py` pipeline end-to-end; physics validation against analytic Jupiter / Saturn interior models is deferred but the infrastructure is in place.
++ `test/cd21_hhe_compression/` exercises the substellar / giant-planet H/He EOS path: a single-material periodic box of Chabrier & Debras 2021 H/He at $Y=0.275$, loaded by running `cms_to_sesame.py` on the native CD21 ASCII table (publication electronic supplement) and consumed by GIZMO via the **EOS\_ANEOS** dispatch. It demonstrates the table-loader and `cms_to_sesame.py` pipeline end to end; it does not compare against Jupiter or Saturn interior models.
 
-+ `test/jutzi_crater/` is a 2-D basalt-on-basalt cratering smoke test (Jutzi 2008 P-$\alpha$ formulation) using the analytic Tillotson basalt preset. Useful as the simplest single-material reference: no SESAME tables, no atmosphere, just the Tillotson backend through the analytic path.
++ `test/jutzi_crater/` is a 2-D basalt-on-basalt cratering problem (Jutzi 2008 P-$\alpha$ formulation) using the analytic Tillotson basalt preset. Useful as the simplest single-material reference: no SESAME tables, no atmosphere, just the Tillotson backend through the analytic path.
 
-In addition to the builder itself, a real GIZMO bug surfaced and fixed in passing is worth flagging here: `core/init.cc` was previously unconditionally resetting `CellP[i].CompositionType` to the universal-fallback slot at every cold start, *after* the IC reader had populated it from the HDF5 "CompositionType" block. The net effect was that every multi-material **EOS\_TILLOTSON** or **EOS\_ANEOS** IC silently degraded to the slot-0 material parameters regardless of the per-particle labels in the IC file -- single-material runs "worked" by accident if the slot-0 material happened to match. The current code reads per-particle CompositionType from the IC and keeps it when it lies in the valid material-id range (values outside that range are reset to slot 0, the single sanitize/guarantee point before any solid-EOS dispatch); the IC read can be disabled with **IO\_COMPOSITIONTYPE\_NOT\_IN\_ICFILE** for ICs that assign composition at runtime (auto-enabled by **GRAIN\_FLUID\_PROMOTION**). Any multi-material IC produced before this fix should be re-run to verify the per-particle `CompositionType` is being honored.
+Multi-material ICs label each element's material with the per-particle HDF5 "CompositionType" block. The code reads it from the IC and keeps it when it lies in the valid material-id range (values outside that range are reset to slot 0, the single sanitize point before any solid-EOS dispatch). For ICs that assign composition at run time instead, disable the read with **IO\_COMPOSITIONTYPE\_NOT\_IN\_ICFILE** (auto-enabled by **GRAIN\_FLUID\_PROMOTION**).
 
-The builder is intentionally Python-only and run at IC construction time; no compile-time flags are needed for the builder itself, only for the GIZMO **EOS\_TILLOTSON** / **EOS\_ANEOS** / **NUCLEAR\_NETWORK** / etc. solver code that consumes the resulting IC. The smoke-level validation gates (a short run that compiles, reads the IC, and produces finite snapshot output) pass for all three example tests; a full quantitative HSE-validation gate (multi-dynamical-time run with sub-percent radial-velocity bounds at the body surface) is the natural next stress test for any new body class and is supported by the builder's residual diagnostics but is left to the user to define for their specific science application.
+The builder is intentionally Python-only and run at IC construction time; no compile-time flags are needed for the builder itself, only for the GIZMO **EOS\_TILLOTSON** / **EOS\_ANEOS** / **NUCLEAR\_NETWORK** / etc. solver code that consumes the resulting IC. A quantitative HSE check for a new body class -- a run of several dynamical times with bounds on the surface radial velocity and the density-profile drift -- is straightforward with the builder's residual diagnostics and `test/hse_earth_smoke/analyze_hse.py`, and should be defined for the specific science application.
 
 
 <a name="snaps-snaps"></a>
 ## Snapshots 
 
+<a name="snaps-snaps-binary"></a>
 ### _Un-Formatted Binary Format_
 
 The un-formatted binary snapshot format is also exactly the same as GADGET (up to the addition of certain output fields when additional physics is active in the simulations). If you are using this (usually for historical reasons), you should check the GADGET users guide, or you can just get the chapter specific to the snapshot format [here](http://www.tapir.caltech.edu/~phopkins/public/gadget_snapshot_chapter.pdf).
 
 Unless you have very good reason for using un-formatted binary (historical compatibility for some very special codes), you almost certainly DO NOT want to use this. Unformatted binary means that if even one byte is flipped, it can be difficult or impossible to recover data. Moreover, if your "snapshot reader" doesn't know **exactly** the format (to the byte) and ordering of the data, it will crash or give errors (which means running the code with slightly different options, which will produce different outputs, leads inevitably to in-ability to use the same analysis codes on the simulations). For those reasons this is maintained only for legacy purposes but users are **STRONGLY** advised to use HDF5 wherever possible.
 
+<a name="snaps-snaps-hdf5"></a>
 ### _HDF5 Format_ 
 
 If the hierarchical data format is selected as format for snapshot files (always recommended!) or initial conditions files, GIZMO accesses files with low level HDF5 routines. Advantages of HDF5 lie in its portability (e.g. automatic endianness conversion), generality, ease of reading (different blocks in files appear as meta-data, so if your snapshot includes some extra data from some additional physics, which isn't expected by the routine you're using for snapshot-reading, it won't crash the code or give errors!). But the fields expected/required in a GADGET HDF5 file are preserved in GIZMO, so again, everything is cross-compatible between the codes. There are also a very large number of tools available to easily manipulate or display HDF5 files (for example, the standard python library [h5py](http://www.h5py.org/)). A wealth of information about HDF5 can be found on the [HDF5 Project Website](https://support.hdfgroup.org//). 
@@ -4161,6 +4183,16 @@ Note that if particle splitting/merging is enabled, as it is by default in the c
 **Masses** (P['m']): [N] array of particle masses (in code units)
 
 **Softening\_KernelRadius**: [N]-array (only included if `OUTPUT_SOFTENING` is set; written for every particle type): the gravitational force-softening length of each element, given as the radius of compact support of the softening kernel (from `ForceSoftening_KernelRadius`), in code length units. With adaptive softening (`ADAPTIVE_GRAVSOFT_FORGAS`/`ADAPTIVE_GRAVSOFT_FORALL`) this varies from element to element.
+
+**AGS-KernelRadius**: [N]-array (included whenever adaptive kernel lengths are computed for non-gas particles: `ADAPTIVE_GRAVSOFT_FORALL`, `DM_SIDM`, `DM_FUZZY`, `CBE_INTEGRATOR`, or grain-collision modules): the radius of compact support of each such particle's kernel, set by `AGS_DesNumNgb`, in code length units.
+
+**AGS-Density**: [N]-array (only included if `DM_FUZZY` or `CBE_INTEGRATOR` is set): the kernel-estimated density of the adaptively-softened particles, in code units. Under `CBE_INTEGRATOR` it is the particle mass divided by its kernel volume.
+
+**AGS-QuantumPotentialQ**: [N]-array (only included if `DM_FUZZY` is set): the quantum potential of the scalar-field dark matter at each particle, evaluated from the kernel density and its first and second derivatives, in code units of specific energy.
+
+**WavefunctionPsi-Real**, **WavefunctionPsi-Imag**: [N]-arrays (only included if `DM_FUZZY` is set to 1 or 2, the direct Schroedinger-Poisson integrators): the real and imaginary parts of the scalar-field wavefunction carried by each particle.
+
+**AGS-Zeta**: [N]-array (only included if `AGS_OUTPUTZETA` is set): the adaptive-softening correction term $\zeta$ of each adaptively-softened particle.
 
 **RefinementFlag**: [N]-array of integers (64-bit; only included if `SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR` is set; written for every particle type): the tag read from the ICs. Elements with value 1 define the anchor point (the mass-weighted center or the densest tagged element) that the nuclear-zoom refinement follows. The code carries the value through unchanged and writes it back so that restarts from a snapshot keep it.
 
@@ -4456,6 +4488,7 @@ The code will write to standard error in general only when there is an error whi
 The top section shows the distribution of particles in different timebins (as in timebin.txt discussed below), then the file notes as it goes through different stages of calculation (updating the tree, walking the tree to calculate gravitational forces, entering the density computation, hydrodynamic gradients calculation, hydrodynamic forces, sink particle-specific calculations, calculating the next timestep and checking if particles need to be activated, etc). You should always monitor this output. This will be written regularly regardless of the output options. However the amount of output will be much more extensive if the compile-time flag **OUTPUT\_ADDITIONAL\_RUNINFO** is enabled (the example above included this). The extra output will be things like entering/exiting of different sub-routines, most of which is not important information (but can be useful for debugging).
 
 
+<a name="logs-info"></a>
 ## info.txt (only output if **OUTPUT\_ADDITIONAL\_RUNINFO** is enabled)
 
 In the file 'info.txt', you just find a list of all the timesteps. Typical output in this file looks like this:
@@ -4474,6 +4507,7 @@ The first number just counts and identifies all the timesteps, the values given 
     Begin Step 640, Time: 0.490626, Redshift: 1.03821, Systemstep: 0.000728814, Dloga: 0.00148658 
 
 
+<a name="logs-timings"></a>
 ## timings.txt (only output if **OUTPUT\_ADDITIONAL\_RUNINFO** is enabled)
 
 In the file 'timings.txt', you get some statistics about the performance of the gravitational force computation by the tree algorithm, which is usually (but not always) the main sink of computational time in a simulation. A typical output may look like this:
@@ -4488,6 +4522,7 @@ In the file 'timings.txt', you get some statistics about the performance of the 
 The first line of the block generated for each step informs you about the number of the current timestep, the current simulation time, and the system timestep itself (i.e. the time difference to the last force computation). Nf gives the number of particles that receive a force computation in the current timestep, while total-Nf gives the total number of force computations since the simulation was started. The work-load balance gives the work-load balance in the actual tree walk, i.e. the largest required time of all the processors divided by the average time. The number given by max is the maximum time (in seconds) among the processors spent for the tree walk, while avg gives the average, and PE0 the time for processor 0. particle-load balance gives the maximum number of particles per processor divided by the average number, i.e. it measures the memory imbalance. An upper bound for this number is PartAllocFactor. However, for technical reasons, the domain decomposition always leaves room for a few particles, hence this upper bound is never exactly reached. max.nodes informs about the maximum number of internal tree nodes that are used among the group of processors, and the number behind filled gives this quantity normalised to the total number of allocated tree nodes, it hence gives the fraction to which the tree storage is filled. Finally, part/sec measures the raw force speed in terms of tree-force computations per processor per second. The first num- ber gives the speed that would be achieved for perfect work-load balance. Due to work-load imbalance, the actually achieved average effective force speed will always be lower in practice, and this number is given after the vertical line. ia/part gives the average number of particle-node interactions required to compute the force for each of the active particles. The number in parenthesis is only non-zero if the Ewald correction is used to obtain periodic boundaries. It then gives the average number of Ewald correction-forces evaluated per particle.
 
 
+<a name="logs-cpu"></a>
 ## cpu.txt
 
 In the file 'cpu.txt', you get some statistics about the total CPU consumption measured in various parts of the code while it is running. A typical output looks like this:
@@ -4574,7 +4609,7 @@ Various optional physics modules will add their own blocks to the table here, so
 **rt\_nonfluxops**: Collects radiation-hydrodynamics operations (with `RADTRANSFER` active) not included already in the hydrodynamics solvers total above (those contain the cell-cell fluxes) and basic drift/kick operations (also already included above).
 
 
-
+<a name="logs-energy"></a>
 ## energy.txt (only output if **OUTPUT\_ADDITIONAL\_RUNINFO** is enabled)
 
 In the file 'energy.txt', the code gives some statistics about the total energy of the system. In regular intervals (specified by TimeBetStatistics), the code computes the total kinetic, thermal and (optionally) potential energy of the system, and it then adds one line to EnergyFile. Each of these lines contains 28 numbers, which you may process by some analysis script. The first number in the line is the output time, followed by the total internal energy of the system (will be 0 if no gas physics is included), the total potential energy, and the total kinetic energy. The next 18 numbers are the internal energy, potential energy, and kinetic energy of the six particle types Gas to Bndry. Finally, the last six numbers give the total mass in these components. 
@@ -4582,6 +4617,7 @@ In the file 'energy.txt', the code gives some statistics about the total energy 
 While the meaning of kinetic and potential energy in non-cosmological simulations is straightforward (and also the test for conservation of total energy), this is more problematic in cosmological integrations. See the GADGET user's guide for details (section 7.4). The output kinetic energy is the sum of $0.5\,m_{i}\,v_{i}^{2}$ where $v_{i} = w/\sqrt{a}$ is the peculiar velocity divided by $\sqrt{a}$. The potential energy is the energy from the peculiar potential. While checking energy conservation is straightforward for Newtonian dynamics, it is more difficult for cosmological integrations, where the Layzer-Irvine equation is needed. (Note that the softening needs to be fixed in comoving coordinates for it to even be defined, which is not true when adaptive softenings are used.) It is in practice not easy to obtain a precise value of the peculiar potential energy at high redshift. Also, the cosmic energy integration is a differential equation, so a test of conservation of energy in an expanding cosmos is less straightforward that one may think, to the point that it is nearly useless for testing code accuracy.
 
 
+<a name="logs-timebin"></a>
 ## timebin.txt (only output if **OUTPUT\_ADDITIONAL\_RUNINFO** is enabled)
 
 The file 'timebin.txt' shows the distribution of particles in different adaptive timesteps. A typical output looks like this:
@@ -4604,16 +4640,18 @@ The file 'timebin.txt' shows the distribution of particles in different adaptive
 The top line shows the current timestep number (sync-point), time, corresponding redshift (if cosmological), systemstep (minimum timestep), and corresponding dloga (for cosmological integrations). The table below shows each timebin with particles in it -- these are the hierarchical powers-of-two timestep levels (higher bins are particles with larger timesteps, and each bin has a timestep =0.5 that above it). The first column ("X") shows which bins are active that timestep, then we have the bin number, the number of non-gas particles ("non-cells") per bin, number of gas particles ("cells"), timestep ("dt"), cumulative number of particles (all types) in bins <= the bin, the currently largest active bin (header "A" and bin denoted with the "<"), the bins which require a new domain decomposition (every bin with a "$*$" in the "D" column requires domain decomposition: this is ultimately determined by the parameter `DomainBuild_ActiveFraction` in the parameterfile), the average time (wall-clock time) per cycle per MPI process currently estimated for the timebin, and the on-the-fly estimated fraction of the total CPU time used for each bin (this information is used to try to build a balanced domain decomposition in the code).
 
 
+<a name="logs-balance"></a>
 ## balance.txt
 
 This is a rather technical and hard-to-parse file containing the balance information for each processor at each timestep. Consult the GADGET users guide if you need it, but you usually shouldnt. The opening of the file contains a key which labels each of the different categories of CPU flags, and details over each timestep the fraction of time spent in each as the code works its way through. It is more detailed than what you get from cpu.txt, but less useful often than what you would get from using code profiling tools (which is recommended for real optimization, this is more of a useful tool for debugging). In newer versions of GIZMO, this file is not output by default unless additional outputs are enabled. 
 
 
-
+<a name="logs-modules"></a>
 ## Outputs specific to different physics modules:
 
 Various specific physics modules (enabled by different compile-time flags) will output their own files. Some examples are given below:
 
+<a name="logs-modules-sfr"></a>
 ### sfr.txt
 
 Models with star formation (`GALSF` on) will output this file. An output looks like: 
@@ -4624,6 +4662,7 @@ Models with star formation (`GALSF` on) will output this file. An output looks l
 Columns are: (1) simulation time, (2) expectation value of mass in stars the SF should form that timestep, (3) total SFR in code units, (4) discretized total stellar mass/timestep in solar masses per year, (5) total mass in stars actually spawned (new particles) that timestep. Unless **OUTPUT\_ADDITIONAL\_RUNINFO** is enabled, this is only output on top-level or domain-level timesteps.
 
 
+<a name="logs-modules-hiiheating"></a>
 ### HIIheating.txt
 
 Models with local photoionization heating (`GALSF_FB_FIRE_RT_HIIHEATING`) will write 'HIIheating.txt'
@@ -4633,6 +4672,7 @@ Models with local photoionization heating (`GALSF_FB_FIRE_RT_HIIHEATING`) will w
 Columns are (1) simulation time, (2) number of sources emitting ionizing photons (very young stars active that timestep), (3) total ionizing photon emission in photons/s, (4) total number of gas cells ionized (all or in part) by those stars, (5) total gas mass (in solar) ionized, (6) average size of the HII regions being created (distance from source to ionized gas element, in code units)
 
 
+<a name="logs-modules-momwinds"></a>
 ### MomWinds.txt
 
 Models with the short-range local radiation pressure (`GALSF_FB_FIRE_RT_LOCALRP`) will write 'MomWinds.txt'
@@ -4644,6 +4684,7 @@ Columns are (1) simulation time, (2) number of star particles active this timest
 Note that a line is written on every timestep, including those on which stars were active but none of them passed the emission criterion (columns 3-9 are then zero) -- the comparison of columns (2) and (3) is the diagnostic for whether that criterion is behaving as intended. 
 
 
+<a name="logs-modules-mechfb"></a>
 ### MechFeedbackEvents.txt
 
 Models with mechanical feedback from SNe and stellar winds (`GALSF_FB_MECHANICAL`) will write 'MechFeedbackEvents.txt'
@@ -4653,6 +4694,7 @@ Models with mechanical feedback from SNe and stellar winds (`GALSF_FB_MECHANICAL
 Columns are (1) simulation time, (2) number of (star) particles active which could (potentially) have SNe (or stellar wind mass ejection event), (3) total number of particles which actually have at least one SNe (or event), (4) total number of SNe (or events) this timestep (this can be larger than the number of host stars if the timestep is long enough), (5) exact (non-integer) integral of the rate functions over the timestep for all events, which should equal the expectation value of the number of discrete events, given in the previous column, (6) mean timestep of the active star particles (dt), (7), mean SNe rate of the active star particles at this time.
 
 
+<a name="logs-modules-sinks"></a>
 ### sinks.txt
 
 Models with black holes or stars or sink particles active (`SINK_PARTICLES`) will write 'sinks.txt'
@@ -4668,6 +4710,7 @@ Columns are (1) simulation time, (2) total number of sink particles/sinks (BHs) 
 
 Here we outline the setup, initial conditions files, and parameterfiles needed to run a large number of interesting code test problems. Most of these problems come from the code paper; we refer you to that paper for detailed discussion of each test as well as comparisons between various numerical methods.
 
+<a name="tests-pytest"></a>
 ## Running Tests with pytest
 
 GIZMO includes a **pytest-based test suite** that automates building, running, and validating test problems. To use it:
@@ -4699,6 +4742,7 @@ Each test automatically: (1) builds GIZMO with the test-specific `Config.sh` fla
 
 **Adding new tests.** See `test/how_to_add_new_tests.md` for instructions. Each test lives in `test/{test_name}/` and requires: a pytest file `test_{test_name}.py`, a `Config.sh` with compile flags, a `{test_name}.params` parameterfile, and optionally a `README.md` describing the test physics.
 
+<a name="tests-descriptions"></a>
 ## Test Problem Descriptions
 
 All the ICs and example parameterfiles mentioned here -- enough to let you run every one of these tests, is available in the directory [here](http://www.tapir.caltech.edu/~phopkins/sims/):
@@ -4725,7 +4769,7 @@ This is problem is analytically trivial; however, since virtually all schemes ar
 
 Initial conditions are `soundwave_ics.hdf5`
 
-An example run-time parameterfile is "soundwave.params"
+An example run-time parameterfile is "soundwave.params" (pytest: `test/soundwave`)
 
 Note that *most* of the run-time parameter settings in the file are totally irrelevant to the problem (things like gravitational softenings, etc); they are just here for completeness. And quantities like the memory allocation, cpu run time, etc should be modified appropriately for the machine you're using. Also, all the quantities governing integration accuracy can be adjusted, you should experiment to see how this alters the results. Since this is designed for convergence studies, the tolerances here are set fairly 'strictly'. 
 
@@ -4750,7 +4794,7 @@ We initialize a two-dimensional fluid in a periodic box of length $L=1$ and unif
 
 Initial conditions are `square_ics.hdf5`
 
-Parameterfile is "square.params"
+Parameterfile is "square.params" (pytest: `test/square`)
 
 In Config.sh, enable:
 
@@ -4772,7 +4816,7 @@ The system should represent a steady-state equilibrium vortex (the exact solutio
 
 Initial conditions: `gresho_ics.hdf5` or `gresho_ics_grid.hdf5`
 
-Parameterfile: "gresho.params"
+Parameterfile: "gresho.params" (pytest: `test/gresho`)
 
 In Config.sh, enable:
 
@@ -4805,7 +4849,7 @@ The MFM and MFV methods, on the other hand, should perform vastly better on this
 
 Initial conditions: `keplerian_ics.hdf5`
 
-Parameterfile: "keplerian.params"
+Parameterfile: "keplerian.params" (pytest: `test/keplerian`)
 
 In Config.sh, enable:
 
@@ -4834,7 +4878,7 @@ Initial conditions: `shocktube_ics_emass.hdf5` and `shocktube_ics_diffmass.hdf5`
 
 Note there are two different initial conditions, for comparison here: one (`shocktube_ics_emass.hdf5`) with equal-mass particles (but variable particle spacing) and one (`shocktube_ics_diffmass.hdf5`) with discontinuous particle masses but equal particle spacing. This lets you explore how those different choices make a difference for the distinct numerical methods. 
 
-Parameterfile: "shocktube.params"
+Parameterfile: "shocktube.params" (pytest: `test/shocktube`)
 
 As in all the tests above *most of the parameters here are irrelevant*, but this is included just to get you started
 
@@ -4858,7 +4902,7 @@ Another related one-dimensional test problem is the interaction of two strong bl
 
 Initial conditions: `interactblast_ics.hdf5`
 
-Parameterfile: "interactblast.params"
+Parameterfile: "interactblast.params" (pytest: `test/interactblast`)
 
 In Config.sh, enable:
 
@@ -4953,7 +4997,7 @@ This is a particularly interesting problem to compare fixed-grid and Voronoi-mes
 
 Initial conditions: `kh_wengen_ics.hdf5`
 
-Parameterfile: `kh_wengen.params`
+Parameterfile: `kh_wengen.params` (pytest: `test/kh_wengen`)
 
 In Config.sh, enable: 
 
@@ -5011,7 +5055,7 @@ Next we consider the "blob" test, which is designed to synthesize the fluid mixi
 
 Initial conditions: `blob_ics.hdf5` (Note: this IC file is much larger than most others)
 
-Parameterfile: "blob.params"
+Parameterfile: "blob.params" (pytest: `test/blob`)
 
 In Config.sh, enable: 
 
@@ -5040,7 +5084,7 @@ This problem comes from Evrard 1988, and is commonly used to test SPH codes, and
 
 Initial conditions: `evrard_ics.hdf5`
 
-Parameterfile: "evrard.params"
+Parameterfile: "evrard.params" (pytest: `test/evrard`)
 
 In Config.sh, enable: 
 
@@ -5059,7 +5103,7 @@ A standard test for cosmological integration is the "Zeldovich pancake": the evo
 
 Initial conditions: `zeldovich_ics.hdf5`
 
-Parameterfile: "zeldovich.params"
+Parameterfile: "zeldovich.params" (pytest: `test/zeldovich`)
 
 In Config.sh, enable: 
 
@@ -5125,6 +5169,53 @@ If you want to compare the Springel and Hernquist 'effective equation of state' 
 
 You should experiment with enabling/disabling `ADAPTIVE_GRAVSOFT_FORGAS` and `ADAPTIVE_GRAVSOFT_FORALL` or `ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION`, and varying the gravitational softenings (remember, with `ADAPTIVE_GRAVSOFT_FORGAS` set, the softenings in the parameterfile for gas are the minimum values; otherwise they are constant through the run). See how this changes the results. You may also want to experiment with DOMAIN_SEGMENTS_SCALE, which trades load-balancing against memory and communication. 
 
+
+<a name="tests-grav-nbody"></a>
+### Collisionless and Few-Body Gravity Tests
+
+Pure-gravity collisionless and few-body problems, complementing the hydro-plus-gravity tests of the tests above. Several tolerances in these tests are calibrated from recorded reference runs, and the reasoning is documented in the test files and READMEs. Read those before treating a marginal failure as a regression.
+
+**Hernquist Sphere** (`test/hernquist`): A $2^{15}$-particle equilibrium Hernquist sphere ($G=M=a=1$), run to $t=118$ (about 10 crossing times) under eight gravity-solver variants: baseline, `ADAPTIVE_GRAVSOFT_FORALL`, `BOX_PERIODIC`+`PMGRID` (TreePM), `BOX_PERIODIC` (Ewald), `TIDAL_TIMESTEP_CRITERION`, tidal timestepping with tidal-radius adaptive softening, and `RANDOMIZE_GRAVTREE` with and without TreePM. Each variant must keep its half-mass radius within 10% and its total energy within a per-variant ceiling (3x a recorded reference). The spurious centre-of-mass drift must stay bounded, and the `RANDOMIZE_GRAVTREE` variants are compared against their unrandomized partners. The two unrandomized periodic variants are marked as a known expected failure on the half-mass radius. A second file, `test_hernquist_convergence.py`, scans `ErrTolIntAccuracy` for the acceleration and tidal timestep criteria. It requires the tidal criterion's accumulated energy error to be within a factor of 2 of the acceleration criterion's at the default tolerance, and to fall as the tolerance is tightened (see `README_convergence.md`). The same directory holds optional dark-matter physics examples on this halo, outside the pytest sweep: self-interacting dark matter (`Config_sidm.sh`, `hernquist_sidm.params`), fuzzy dark matter (`Config_dmfuzzy.sh`, `hernquist_dmfuzzy.params`) and the continuum Vlasov integrator (`Config_cbe.sh`, `hernquist_cbe.params`). Their params choose units of kpc, $10^{10}\,M_{\odot}$ and 207.4 km/s, for which $G=1$ exactly, so the same IC generator gives a $10^{10}\,M_{\odot}$, $a=1$ kpc halo with cross-sections and boson masses in physical units; `validate_snapshot_vs_ic.py` compares any snapshot with the IC (see `README_dm_physics.md`).
+
+**Plummer Sphere and Star Clusters** (`test/plummer`): `test_plummer.py` runs a $2^{15}$-particle equilibrium Plummer sphere through the same eight gravity variants as `test/hernquist`. It requires the 10%, 50% and 90% Lagrange radii to be preserved, energy to be conserved to 4% of the initial kinetic energy, and the secular energy drift rate to stay within 3x a per-variant reference. `test_plummer_binaries.py` replaces each of 256 Plummer particles with an equal-mass circular binary of sink particles (Hermite integration, few-body timestepping), and compares tree gravity with `SINGLE_STAR_DIRECT_GRAVITY` (exact star-star summation). It requires the half-mass radius to hold to 15% and energy to be conserved to 1%. `test_plummer_binaries_realistic.py` instead draws a heterogeneous population (Kroupa IMF, mass-dependent binary fraction, log-normal periods, thermal eccentricities, truncated at 100 AU pericentre) and bounds the energy error and centre-of-mass drift over 10 crossing times (see `README_plummer_binaries_realistic.md`). All binary diagnostics use the synchronized `IO_HERMITE_SYNC` positions and velocities, with the potential recomputed by direct summation.
+
+**Few-Body Integration** (`test/fewbody`): Tests of the Hermite integrator for sink particles (`SINGLE_STAR_STARFORGE_DEFAULTS` + `IO_HERMITE_SYNC`) on exactly known few-body systems. `test_binary.py` evolves an $e=0.9$, $q=0.1$ Kepler binary. It requires the relative energy error to stay below $1.5\times10^{-3}$ and the spurious centre-of-mass velocity below $5\times10^{-4}$ of the orbital velocity (the ICs have zero total momentum exactly). It also scans `ErrTolIntAccuracy` and requires the energy error to converge at better than first order. A `DISABLE_HERMITE_INTEGRATION` (KDK leapfrog) comparison variant runs only on request (marked slow). `test_triple.py` evolves an inclined, eccentric, unequal-mass hierarchical triple whose inner binary and tertiary sit about 6 timebins apart, and bounds the per-outer-orbit energy error at $1.7\times10^{-4}$. That is a gross-breakage ceiling only; see `README_triple.md` for what it does and does not guard.
+
+<a name="tests-grav-treeaccuracy"></a>
+### Gravity Tree Accuracy
+
+**Tree Force Accuracy** (`test/gravtree`): The classic tree-force error test. Each variant is built once and run for a single step twice from the same IC: with the parameterfile's own (production) opening criterion, and with the walk tightened towards direct summation (`ErrTolTheta=0.15`, `ErrTolForceAcc`$=10^{-6}$). The two `snapshot_000` files, which hold the start-up force evaluation, are compared particle by particle (matched by ID), so the difference is the tree error alone. Five variants share one `Config.sh` plus per-variant flags: the Evrard IC with fixed softening; the same with the potential accumulated on the walk (`EVALPOTENTIAL`); a periodic box with the TreePM split (`BOX_PERIODIC`, `GRAVITY_NOT_PERIODIC`, `PMGRID=64`, on the `gmc_cooling` IC); and the isolated-disk IC with sink distances (`SINK_CALC_DISTANCES`) or long-range stellar radiation (`GALSF_FB_FIRE_RT_LONGRANGE`) gathered on the walk. For the gravitational acceleration (`OUTPUT_ACCELERATION` with `OUTPUT_HYDROACCELERATION`, so the hydro term is excluded) and the potential, the tight walk is a converged reference, and the test bounds the median and 99th percentile of the per-particle relative error (measured: about 0.1-0.3% median and 0.2-0.4% at the 99th percentile); a defect in the walk -- a missed node, a wrong softening or periodic image -- appears as a large error on some subset of particles even when the median stays small. The sink distance and the radiation energy are gathered opportunistically on a walk whose openings are chosen for force accuracy alone, so for them the tight run is only a tighter-walk reference: `Sink_Distance` is compared only where both walks report one (beyond the short-range region, whether a cell meets the sink at all depends on which nodes are opened) and must agree exactly there, while `PhotonEnergy`, a deliberately crude long-range estimate with no converged solution, is gated only on its median and energy-weighted error (a heavy per-cell tail is expected).
+
+<a name="tests-grav-halofinding"></a>
+### Group and Halo Finding
+
+**FOF/SUBFIND Halo Finding** (`test/fof_subfind`): Runs the friends-of-friends group finder and SUBFIND (`FOF`, `SUBFIND`, linking type 1) in post-processing mode (`RestartFlag=3`) on a locally generated periodic particle set: one FOF halo made of two bridged density peaks, plus a separate compact halo. The test checks that the neighbour-list FOF and SUBFIND stages report completion, and that the group catalogue holds at least two groups (the largest with at least 200 members) and at least two subhalos (the largest with at least 40). It is a functional check of the halo-finding pipeline, not a comparison against a reference catalogue.
+
+
+<a name="tests-cbe"></a>
+## Continuum Vlasov (Collisionless Boltzmann) Tests
+
+These problems exercise the continuum Vlasov integrator (`CBE_INTEGRATOR`; see [the Config section](#config-gravity-cbe); Hopkins 2026, in preparation), in which each collisionless particle carries a mixture of velocity-space basis functions (`CBE_INTEGRATOR_SECONDMOMENT`, `CBE_INTEGRATOR_WITHGRADIENTS`). The ICs (including the per-basis `VlasovMoments`) are generated locally by each test's `make_ic.py`. Unless noted, each test asserts the same conservation and diagnostic gates:
+
+- total mass conserved to $10^{-10}$;
+- momentum and the absolute-frame second-moment trace conserved within calibrated integration-error tolerances;
+- in the first row of `cbe_diagnostics.txt`, an inter-cell face mass-flux residual of at most $10^{-11}$ and no root-find bracket failures.
+
+Each test writes per-stream density profiles compared with exact collisionless advection, but these plots are diagnostic only and not gated. The 1D tests run on 2 MPI ranks and on 1 rank with 2 OpenMP threads.
+
+**CBE Counter-Streaming Beams** (`test/cbe_two_stream`): In a 1D periodic box, each particle carries two cold velocity bases at $\pm v$ with zero bulk velocity (`CBE_INTEGRATOR=2`), so the two streams advect through each other while the total density stays uniform. Because the problem is symmetric, momentum and the second moment must be conserved to round-off ($10^{-10}$ and $10^{-9}$ respectively) in addition to the common gates.
+
+**CBE Density Wave** (`test/cbe_density_wave`): As `test/cbe_two_stream`, but with a cosine density modulation of amplitude 0.2 ($\rho = 1 + \epsilon\cos 2\pi x/L$), so each stream carries the perturbation and the analytic solution is the IC density translated at $\pm v$. It applies the common gates, with momentum conserved to $10^{-10}$ and the second moment to $10^{-4}$.
+
+**CBE Free-Slot Injection, 1D** (`test/cbe_free_slot_1d`): Four cold streams ($v = +1, 0, -1, -2$; `CBE_INTEGRATOR=4`) plus a localized Gaussian perturbation at $v=+2$ that neighbouring particles have no basis for. Advecting it requires the free-slot pairing fallback, which opens a new basis to receive the incoming flux. The common conservation and face-residual gates are asserted. The masses in each velocity band are printed, and a plot of the per-band density shows whether the $+2$ perturbation is carried correctly.
+
+**CBE Free-Slot Injection, 3D** (`test/cbe_free_slot_3d`): The same streams and perturbation as `test/cbe_free_slot_1d` on a 3D slab (`BOX_LONG_X=16`, velocities along $x$). It checks that free-slot routing and conservation survive the full 3D moment set and domain decomposition, running on 2 and 4 MPI ranks with looser momentum and second-moment tolerances ($3\times10^{-3}$).
+
+**CBE Harmonic Breathing Mode** (`test/cbe_harmonic_1d`): A hot 1D Gaussian distribution in a fixed external harmonic potential (`GRAVITY_ANALYTIC_HARMONIC`), with the exact one-sided Gaussian-basis Riemann solver (`CBE_INTEGRATOR_RP_GAUSSIAN`). A Gaussian $f\propto\exp[-(v^{2}+\Omega^{2}x^{2})/2\sigma^{2}]$ is an exact stationary solution, and the IC's spatial width is set to 0.7 of the equilibrium value. The analytic response is therefore an undamped oscillation of the width at $2\Omega$. The run must reach its end time, conserve mass to $10^{-10}$, and keep the full compression and expansion range of the oscillation without damping or runaway. The per-basis velocities must also stay bounded, which catches basis collapse.
+
+The same integrator can also be run on a self-gravitating, three-dimensional equilibrium: see the continuum Vlasov example on the Hernquist halo in [Collisionless and Few-Body Gravity Tests](#tests-grav-nbody).
+
+
 <a name="tests-mhd"></a>
 ## Magneto-Hydrodynamics Tests 
 
@@ -5134,21 +5225,21 @@ The details of these problems, descriptions of their setups, and the results (to
 
 The test problems included are:
 
-1. Linear magnetosonic wave (mhd\_wave\_ics.hdf5, mhd\_wave.params)
-2. Brio-Wu shocktube (briowu\_ics.hdf5, briowu.params)
-3. Toth shocktube (toth\_ics.hdf5, toth.params)
-4. Field loop advection (field\_loop\_ics.hdf5, field\_loop.params)
-5. Hawley-Stone current sheet (currentsheet\_A0pt1\_b0pt1\_ics.hdf5, currentsheet\_A0pt1\_b1em12\_ics.hdf5, currentsheet\_A1e4\_b0pt1\_ics.hdf5, currentsheet.params)
-6. Orszag-Tang vortex (orszag\_tang\_ics.hdf5, orszag\_tang.params)
-7. Balsara-Spicer MHD rotor (rotor\_ics.hdf5, rotor.params)
-8. Blastwave in a magnetized medium (mhd\_blast\_ics.hdf5, mhd\_blast.params)
-9. Rayleigh-Taylor instability with MHD (rt\_ics.hdf5, rt.params)
-10. Kelvin-Helmholtz instability with MHD (kh\_mcnally\_2d\_ics\.hdf5, kh\_mcnally\_2d.params)
-11. Magneto-Rotational instability in a shearing sheet (mri\_ics.hdf5, mri.params)
-12. Magnetized core-collapse and jet-launching (core\_ics.hdf5, core.params)
-13. Zeldovich pancake with MHD (zeldovich\_mhd\_ics.hdf5, zeldovich\_mhd.params)
-14. Santa Barbara cluster with MHD (sbcluster\_ics.hdf5, sbcluster.params)
-15. Isolated galaxy disk with MHD (isodisk\_ics.hdf5, isodisk.params)
+1. Linear magnetosonic wave (mhd\_wave\_ics.hdf5, mhd\_wave.params) -- `test/mhd_wave`
+2. Brio-Wu shocktube (briowu\_ics.hdf5, briowu.params) -- `test/briowu`
+3. Toth shocktube (toth\_ics.hdf5, toth.params) -- `test/toth`
+4. Field loop advection (field\_loop\_ics.hdf5, field\_loop.params) -- `test/field_loop`
+5. Hawley-Stone current sheet (currentsheet\_A0pt1\_b0pt1\_ics.hdf5, currentsheet\_A0pt1\_b1em12\_ics.hdf5, currentsheet\_A1e4\_b0pt1\_ics.hdf5, currentsheet.params) -- `test/currentsheet`
+6. Orszag-Tang vortex (orszag\_tang\_ics.hdf5, orszag\_tang.params) -- `test/orszag_tang`
+7. Balsara-Spicer MHD rotor (rotor\_ics.hdf5, rotor.params) -- `test/rotor`
+8. Blastwave in a magnetized medium (mhd\_blast\_ics.hdf5, mhd\_blast.params) -- `test/mhd_blast`
+9. Rayleigh-Taylor instability with MHD (rt\_ics.hdf5, rt.params) -- `test/rt`
+10. Kelvin-Helmholtz instability with MHD (kh\_mcnally\_2d\_ics\.hdf5, kh\_mcnally\_2d.params) -- `test/kh_mcnally_2d`
+11. Magneto-Rotational instability in a shearing sheet (mri\_ics.hdf5, mri.params) -- `test/mri`
+12. Magnetized core-collapse and jet-launching (core\_ics.hdf5, core.params) -- `test/core`
+13. Zeldovich pancake with MHD (zeldovich\_mhd\_ics.hdf5, zeldovich\_mhd.params) -- `test/zeldovich_mhd`
+14. Santa Barbara cluster with MHD (sbcluster\_ics.hdf5, sbcluster.params) -- `test/sbcluster`
+15. Isolated galaxy disk with MHD (isodisk\_ics.hdf5, isodisk.params) -- `test/isodisk`
 
 In the list above, parenthesis contain the name of the ICs file and name of the example parameterfile. Just like all of the examples above, this should help you set up and get a problem running, but you should not take any parameters as recommendations or as exactly matching published solutions (rather, you should explore different choices yourself). 
 
@@ -5164,11 +5255,24 @@ As above, please explore these freely.
 
 
 
+<a name="tests-mhd-nonideal"></a>
+### Non-Ideal MHD and Multi-Fluid Tests
+
+These problems exercise the non-ideal terms (`MHD_NON_IDEAL`: Ohmic resistivity, the Hall effect and ambipolar diffusion), the battery source terms, and the ion-neutral coupling of the multi-fluid framework. Each compares against an analytic or reference solution.
+
+**C-Type Shock** (`test/c_shock`): A 1D C-type (continuous) shock in a weakly-ionized medium, where ambipolar diffusion broadens the jump into the smooth profile characteristic of ion-neutral drift (rather than a sharp J-shock). Uses `MAGNETIC`, `MHD_NON_IDEAL`, `EOS_ENFORCE_ADIABAT`, `BOX_SPATIAL_DIMENSION=1`, with problem-specific coefficients ($\eta_{\rm AD} = 10^{5}\,v_{A}^{2}$, $\eta_{\rm Ohm} = 10^{-5}\,\eta_{\rm AD}$, no Hall term). The final density, internal energy, velocity and magnetic field are compared against a reference numerical solution (`c_shock_exact.hdf5`) to a loose relative tolerance of 10%.
+
+**Hall MHD Waves** (`test/hall_wave`): Propagation of whistler/ion-cyclotron waves in 1D with fixed non-ideal coefficients ($\eta_{\rm Hall}=0.01$, $\eta_{\rm Ohm}=2\times10^{-4}$, no ambipolar term), following Berlok & Pfrommer (2023, arXiv:2309.15907). Uses `MAGNETIC`, `MHD_NON_IDEAL`, `BOX_SPATIAL_DIMENSION=1`. The final velocities and magnetic field are compared against a reference solution (`hall_wave_exact.hdf5`) to 5%, and a plot of the field and velocity components of one tracked cell versus time is written for inspection.
+
+**Biermann Battery Growth** (`test/biermann_growth`): A 2D periodic box with $\mathbf{B}=0$ and orthogonal sinusoidal gradients in density and temperature, from which the electron Biermann battery must generate a $B_{z}$ field. Uses `MAGNETIC`, `MHD_BATTERY_MECHANISMS=1`, `MHD_B_SET_IN_PARAMS`, `BOX_SPATIAL_DIMENSION=2`; the IC is generated locally by `make_biermann_growth_ics.py`. The test compares the field near the source maximum against the analytic rate $\mathrm{d}B_{z}/\mathrm{d}t = -(c\,k_{B}/e)\,a\,b\,T_{0}\,k^{2}$, requiring the correct sign and a magnitude within a factor of 5. It is a sign and order-of-magnitude check on the battery source term, not a precision convergence test.
+
+**Ion-Neutral Ambipolar Drag Relaxation** (`test/ionneutral_drag`): Two interleaved Type=0 fluids in a 1D periodic box — 32 ions tagged `FluidType=FLUID_ION` (with $v_x = +10^{-4}$ and a small $B_x$) interleaved with 32 neutrals tagged `FluidType=FLUID_DEFAULT` ($v=0$, $B=0$) — relax exponentially via the Draine ambipolar drag with $\mathrm{d}(\Delta v)/\mathrm{d}t = -\gamma_{\rm AD}(\rho_i+\rho_n)\,\Delta v$. Code units are chosen so $\gamma_{\rm AD,code}=1$ and $\rho_{\rm total}=1$, yielding analytic $t_{\rm damp}=1$ in code time. The pytest gate fits the measured decay rate to $\exp(-t)$ across 5 e-folds and asserts $\max|B_{\rm neutral}|<10^{-12}$ throughout (the cross-fluid MHD terms are skipped for neutrals, which therefore stay at $B=0$ under induction). The IC is generated locally by `make_ionneutral_drag_ics.py` (no website download). A recorded run measures a decay rate of 0.9997 against the analytic 1 over the full 5 e-folds. Uses `HYDRO_MULTIFLUID`, `HYDRO_MULTIFLUID_IONNEUTRAL`, `MAGNETIC`, `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SPATIAL_DIMENSION=1`.
+
 
 <a name="tests-elastic"></a>
-## Elasto-Dynamics Tests 
+## Solid-Body, Elasto-Dynamics, and Equation-of-State Tests
 
-I have begun testing the elastic and solid-body dynamics portions of the code. Thus far they have been vetted on a number of simple wave tests, as well as a couple of basic dynamics tests. Since there is not a formal methods paper for these specific modules, this remains relatively un-documented and currently there is just one example problem below. Users of the code are encouraged to develop additional test problems and contribute them, as well as to explore and expand this portion of the code functionality. 
+The elastic and solid-body portions of the code (elastic stresses, the Tillotson and tabulated M-ANEOS equations of state, porosity, damage and fracture) have been vetted on a number of simple wave tests and on the problems below, which range from colliding elastic rings and impact cratering to self-gravitating planetary bodies and tabulated-EOS shock tubes. Since there is not a formal methods paper for several of these modules, users are encouraged to develop additional test problems and contribute them, as well as to explore and expand this portion of the code functionality.
 
 
 <a name="tests-elastic-rubberrings"></a>
@@ -5181,6 +5285,8 @@ This is a powerful and useful test because while simple, it is actually quite de
 Initial conditions: "ring\_collision\_ics.hdf5"
 
 Parameterfile: "ring\_collision.params"
+
+The pytest version (`test/ring_collision`) runs this setup and requires the run to reach its end time with mass conserved to 0.1%, and the rings to have bounced apart rather than merged (their final $x$-extent at least half the initial one).
 
 In Config.sh, enable: 
 
@@ -5195,6 +5301,37 @@ The choice of `KERNEL_FUNCTION=6` is optional here. Experiment with different ke
 
 Note that this problem can be sensitive to the ICs: a setup without good ICs will have cracks along the surface or irregularities that can either lead to the rings 'sticking' or fracturing. The code attempts to deal with the sharp boundaries in the ICs with multiple methods, as well. By default, we use the kernel volume correction for sharp boundaries from Reinhardt & Stadel 2017 (arXiv:1701.08296), i.e. `HYDRO_KERNEL_SURFACE_VOLCORR` is turned on by default (you can turn if off if desired), which allows for a sharped (single-cell) density gradient. We also use a modified version for elasto-dynamics by default of directly integrating the kernel volume, rather than re-setting it each timestep based on the cell centers-of-notes, as this more accurately captures sharp divergences in collisions so gives more accurate bouncing as opposed to artificial sticking. However to prevent the estimates from unphysically diverging, the integrated volume is related back to the direct kernel volume decomposition if the two diverge too severely, on a timescale equal to a few times the slowest strain-wave or sound-wave crossing time of the local density gradient (to prevent accumulated integration errors in very long-duration integrations from driving noise). 
 
+
+
+<a name="tests-elastic-cratering"></a>
+### Impact Cratering with Damage and Porosity
+
+**Basalt Cratering** (`test/jutzi_crater`): A 2D basalt projectile striking a porous basalt target, with the analytic Tillotson basalt preset (`EOS_TILLOTSON`, `EOS_ELASTIC`) and the full damage and porosity model (`EOS_DAMAGE_POROSITY=7`: the Jutzi et al. 2008 P-$\alpha$ compaction model with Grady-Kipp fracture and a Drucker-Prager yield surface). The IC is generated locally by `make_ics.py`. The test requires the run to reach its end time with mass conserved to 0.1%, the `Damage`, `Distention` and `ActiveCracks` fields to be written, at least one cell to be damaged (the shock triggered fracture), and at least one cell to be compacted below the initial distention $\alpha_{0}=1.275$ (the shock pressure exceeded the crush threshold). It is a functional check of the damage and porosity model; it does not compare crater profiles against Jutzi et al. 2008.
+
+**P-alpha Crush-Curve Unit Test** (`test/jutzi_crush_unit`): A standalone unit test of the porous-compaction (P-$\alpha$) crush curve in `solids/jutzi_crush_curve.h` (Jutzi et al. 2008, Eq. 8), using a small C++ harness with no GIZMO build or MPI. Over a sweep of pressures and porous, icy and non-porous material parameters, the harness must match a Python reference implementation bit for bit and reproduce analytic basalt values. The curve must also be monotonically non-increasing, equal to $\alpha_{0}$ below the elastic limit, and equal to 1 above full compaction. It complements the `test/jutzi_crater` cratering problem above.
+
+<a name="tests-elastic-grainpromotion"></a>
+### Grain-to-Solid Promotion
+
+**Grain-to-Solid Promotion** (`test/grain_promotion`): A smoke test of `GRAIN_FLUID_PROMOTION`. In a 2D box of Tillotson elastic-solid gas cells (`EOS_TILLOTSON`, `EOS_ELASTIC`) with a back-reacting grain fluid (`GRAIN_FLUID`, `GRAIN_BACKREACTION`), one grain super-particle above the promotion mass threshold must be converted into a solid gas-type cell. The test checks that the grain count drops and the gas count rises by the same number. The new cell must carry the olivine Tillotson composition, and total gas plus grain mass must be conserved to 0.1%.
+
+<a name="tests-elastic-planets"></a>
+### Self-Gravitating Planetary Bodies
+
+Both problems start from ICs built with the hydrostatic-equilibrium IC builder described in [Building Self-Gravitating Body ICs](#snaps-ics-hse-builder).
+
+**Layered Planet in Hydrostatic Equilibrium** (`test/hse_earth_smoke`): An approximately Earth-mass Tillotson body (olivine mantle and iron core, CGS units) built in hydrostatic equilibrium and run for a few dynamical times ($t_{\rm dyn}\sim 810$ s). The body should simply sit there: if the IC and the solid EOS agree, the rms velocity in units of $v_{\rm dyn}$ stays small and the density profile does not drift. `analyze_hse.py` reports, per snapshot, the mean and rms $|v|/v_{\rm dyn}$, the radial density profile against the IC, the centre-of-mass drift, and the largest excursion of any particle from its initial radius. Variants (each one IC script plus one params file): a single-material basalt body; Fibonacci-shell placement instead of glass relaxation; the same with a precomputed kernel radius in the IC (`INPUT_READ_KERNELRADIUS`); and self-gravity off, which separates EOS and pressure errors from gravity errors. It is run by hand (see its README), not by pytest.
+
+**ANEOS Giant Impact** (`test/aneos_giant_impact`): Evolves a differentiated uniform-density sphere with real M-ANEOS forsterite (mantle) and iron (core) tables from Stewart et al. (2019, 2020). Tests that the code can load real ANEOS tables, handle multi-material particles, and run without crashing. Downloads tables from Zenodo and converts them automatically. Uses `EOS_ANEOS`, `HYDRO_MESHLESS_FINITE_MASS`.
+
+<a name="tests-elastic-eos"></a>
+### Tabulated Equations of State
+
+**ANEOS Unit Test** (`test/aneos_unit`): Standalone unit test for the ANEOS module. Generates an ideal-gas SESAME table, loads it, and verifies table reading, bilinear interpolation, temperature inversion (Newton-Raphson), derived quantities (Cv, Gruneisen parameter), and boundary clamping. Does not require running a GIZMO simulation.
+
+**ANEOS Shock Tube** (`test/aneos_shocktube`): A standard Sod shock tube using the ANEOS tabulated EOS with a gamma=1.4 ideal-gas table. Validates the full ANEOS pipeline (table loading, T-inversion, EOS dispatch, hydro coupling) by comparing against the exact Riemann solution. Uses `EOS_ANEOS`, `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SPATIAL_DIMENSION=1`.
+
+**Giant-Planet H/He EOS** (`test/cd21_hhe_compression`): A 1D periodic box of hydrogen-helium gas ($Y=0.275$) with the Chabrier & Debras (2021) equation of state, read through the **EOS\_ANEOS** table path after conversion to SESAME format by `initial_conditions/eos_tools/cms_to_sesame.py`. The IC (128 cells at $\rho=10^{-2}$ g cm$^{-3}$, $T=10^{3}$ K) carries a single-mode velocity perturbation that drives a small adiabatic compression wave for about ten sound-crossing times. The test checks that the run completes with finite, positive density and internal energy. It is a functional check of the table path for substellar and giant-planet interiors; it does not compare against Jupiter or Saturn interior models.
 
 
 <a name="tests-dust"></a>
@@ -5212,7 +5349,7 @@ This is a simple test used to validate the 'backreaction' term and total momentu
 
 Initial conditions: "dustybox\_ics.hdf5"
 
-Parameterfile: "dustboxwave.params" 
+Parameterfile: "dustboxwave.params"
 (Be sure in the parameterfile to choose the correct initial condition file)
 
 In Config.sh, enable: 
@@ -5241,7 +5378,7 @@ Note that in this particular problem, with zero forces on dust or gas and a homo
 
 Initial conditions: "dustywave\_ics.hdf5"
 
-Parameterfile: "dustboxwave.params"
+Parameterfile: "dustboxwave.params" (pytest: `test/dustywave`)
 (Be sure in the parameterfile to choose the correct initial condition file)
 
 In Config.sh, enable: 
@@ -5259,30 +5396,8 @@ The default test is 1D just for simplicity. You can trivially make a 2D or 3D te
 The exact solutions for the default setup are provided in the file "dustwave\_exact.txt". This gives the solution for the default parameterfile values, at time =1.2 (in code units). The three columns are: (1) x-coordinate position, (2) value of x-velocity of dust, (3) value of x-velocity of gas.
 
 
-<a name="tests-additional"></a>
-## Additional Test Problems
-
-The following test problems are available in the `test/` directory of the source code and can be run via `pytest` (see the beginning of this section for instructions). They are briefly described here; see the `README.md` in each test directory and the test's `Config.sh` and `.params` files for full details.
-
-<a name="tests-additional-mhd"></a>
-### Additional MHD Tests
-
-**Brio-Wu MHD Shock Tube** (`test/briowu`): The classic 1D MHD shock tube from Brio & Wu (1988, J. Comp. Phys., 75, 400), involving compound MHD wave structures (fast/slow shocks, rotational discontinuity, contact). Uses `MAGNETIC`, `HYDRO_MESHLESS_FINITE_VOLUME`, `BOX_SPATIAL_DIMENSION=1`.
-
-**Toth MHD Test** (`test/toth`): An MHD test problem from Toth (2000, J. Comp. Phys., 161, 605), used for testing MHD scheme robustness. Uses `MAGNETIC`.
-
-**MRI (Magnetorotational Instability)** (`test/mri`): Tests the growth of the MRI in a shearing-box setup, a key instability for accretion disk physics. Uses `MAGNETIC`, `BOX_SHEARING`.
-
-**Zeldovich Pancake with MHD** (`test/zeldovich_mhd`): The cosmological Zeldovich pancake test with magnetic fields, testing MHD in a cosmological context. Uses `MAGNETIC` plus cosmological integration.
-
-**C-Type Shock** (`test/c_shock`): A 1D C-type (continuous) shock in a weakly-ionized medium, where ambipolar diffusion broadens the jump into the smooth profile characteristic of ion-neutral drift (rather than a sharp J-shock). Uses `MAGNETIC`, `MHD_NON_IDEAL`, `EOS_ENFORCE_ADIABAT`, `BOX_SPATIAL_DIMENSION=1`, with problem-specific coefficients ($\eta_{\rm AD} = 10^{5}\,v_{A}^{2}$, $\eta_{\rm Ohm} = 10^{-5}\,\eta_{\rm AD}$, no Hall term). The final density, internal energy, velocity and magnetic field are compared against a reference numerical solution (`c_shock_exact.hdf5`) to a loose relative tolerance of 10%.
-
-**Hall MHD Waves** (`test/hall_wave`): Propagation of whistler/ion-cyclotron waves in 1D with fixed non-ideal coefficients ($\eta_{\rm Hall}=0.01$, $\eta_{\rm Ohm}=2\times10^{-4}$, no ambipolar term), following Berlok & Pfrommer (2023, arXiv:2309.15907). Uses `MAGNETIC`, `MHD_NON_IDEAL`, `BOX_SPATIAL_DIMENSION=1`. The final velocities and magnetic field are compared against a reference solution (`hall_wave_exact.hdf5`) to 5%, and a plot of the field and velocity components of one tracked cell versus time is written for inspection.
-
-**Biermann Battery Growth** (`test/biermann_growth`): A 2D periodic box with $\mathbf{B}=0$ and orthogonal sinusoidal gradients in density and temperature, from which the electron Biermann battery must generate a $B_{z}$ field. Uses `MAGNETIC`, `MHD_BATTERY_MECHANISMS=1`, `MHD_B_SET_IN_PARAMS`, `BOX_SPATIAL_DIMENSION=2`; the IC is generated locally by `make_biermann_growth_ics.py`. The test compares the field near the source maximum against the analytic rate $\mathrm{d}B_{z}/\mathrm{d}t = -(c\,k_{B}/e)\,a\,b\,T_{0}\,k^{2}$, requiring the correct sign and a magnitude within a factor of 5. It is a sign and order-of-magnitude check on the battery source term, not a precision convergence test.
-
-<a name="tests-additional-physics"></a>
-### Physics and Cooling Tests
+<a name="tests-cooling"></a>
+## Cooling, Chemistry, and Two-Temperature Tests
 
 **GMC Cooling** (`test/gmc_cooling`): Evolves an idealized giant molecular cloud with full cooling and chemistry (`COOLING`, `COOL_LOW_TEMPERATURES`, `COOL_METAL_LINES_BY_SPECIES`, `METALS`). Validates the density-temperature relation produced by the cooling physics against a reference solution.
 
@@ -5290,29 +5405,29 @@ The following test problems are available in the `test/` directory of the source
 
 **Two-Temperature Plasma** (`test/two_temperature`): Runs the `test/gmc_cooling` cloud (it reuses that test's IC, so run `gmc_cooling` once first) with `TWO_TEMPERATURE_PLASMA=1`, evolving an electron temperature $T_{e}$ separately from the gas temperature, under `SINGLE_STAR_STARFORGE_DEFAULTS` + `MAGNETIC` + `COOLING` + `METALS`. The electrons start out of equilibrium at $T_{e} = 0.1\,T_{\rm gas}$. The test checks that this seed is applied at $t=0$ (median ratio $0.1 \pm 0.005$), and that Spitzer electron-ion equilibration has acted by the final snapshot (median $T_{e}/T_{\rm gas} > 0.5$; at these densities the analytic relaxation time is far shorter than one timestep). Both temperatures must also stay finite and within a physical range.
 
-**Shu 1977 Collapse** (`test/shu1977`): The classic isothermal sphere collapse solution from Shu (1977, ApJ, 214, 488). Tests self-gravitating isothermal gas dynamics and is a standard benchmark for star formation simulations. A rotating version of this collapse with protostellar jets is `test/shu_jets` (see [Star Formation and Single-Star Feedback Tests](#tests-additional-starformation)).
-
-<a name="tests-additional-starformation"></a>
-### Star Formation and Single-Star Feedback Tests
+<a name="tests-starformation"></a>
+## Star Formation and Single-Star Feedback Tests
 
 These problems exercise the STARFORGE-type individual-star physics (`SINGLE_STAR_STARFORGE_DEFAULTS`): sink formation and accretion, and the radiative, wind, jet and supernova feedback of individual stars.
 
-**HII Region** (`test/HII_region`): A $10\,M_{\odot}$ zero-age main-sequence star sits in a uniform, optically thick $20\,{\rm pc}$ box of mean density $100\,{\rm cm^{-3}}$ (gravity off), and its multi-band radiation (`SINGLE_STAR_RT_DEFAULTS`, `RT_CHEM_PHOTOION=1`, NUV, optical/NIR, IR and photoelectric bands, reduced speed of light) must ionize a Strömgren-type HII region. The test requires the peak of the binned median gas temperature to lie at the photoionization-equilibrium value (7000-11000 K), which catches an over-hard spectrum, missing nebular cooling or spurious over-cooling. It is parametrized over a baseline, `TRANSPORT_SUBCYCLE=10` (subcycled radiation transport), and `TRANSPORT_SUBCYCLE=10` + `TRANSPORT_SUBCYCLE_COOLING`. The subcycled runs must reproduce the baseline's radial profiles of ionized fraction and NUV and optical/NIR radiation energy density to 10%. Plots of the ionization-front radius versus time are also produced.
-
-**Single-Star Supernova** (`test/SN_singlestar`): A $10\,M_{\odot}$ star near the end of its life, at the center of a $5\times10^{4}\,M_{\odot}$, $n_{\rm H}=100\,{\rm cm^{-3}}$ periodic box, explodes as a $10^{51}$ erg supernova on the first timestep (`SINGLE_STAR_FB_SNE`, gravity off). It is parametrized over adiabatic, `COOLING`, and `COOLING` + `SINGLE_STAR_FB_RAD` variants. In all three, the density peak at early time must lie within 30% of the analytic Sedov-Taylor shock radius and be moving outward. The adiabatic run must also show a strong-shock density jump (more than twice ambient) and conserve the injected energy to 10%. A separate check on the cooling variant's output (`test_SN_thermo_fidelity`) bounds the temperature-versus-internal-energy relation of the warm molecular shell and the remnant's total thermal energy against calibrated reference values, which guards the internal-energy-to-temperature inversion in the cooling module.
-
-**Single-Star Wind Bubble** (`test/wind_singlestar`): A $100\,M_{\odot}$ ZAMS star (`SINGLE_STAR_FB_WINDS=2`, $\dot{M}=10^{-4}\,M_{\odot}\,{\rm yr^{-1}}$, $v_{w}=3000\,{\rm km\,s^{-1}}$) blows a bubble into the same uniform box as `test/SN_singlestar`, compared against the Weaver et al. (1977) similarity solution $R_{2} = \alpha\,(L_{w}t^{3}/\rho_{0})^{1/5}$. It is parametrized over the wind injection mode (spawned discrete wind cells versus local mechanical injection) and over adiabatic, `COOLING`, and `COOLING` + `SINGLE_STAR_FB_RAD` thermodynamics. The adiabatic runs must reproduce energy conservation ($E_{\rm kin}+E_{\rm th}=L_{w}t$; 10% for spawning, looser for local injection), the $R\propto t^{3/5}$ growth law, a time-constant similarity coefficient, and $\alpha=0.88$ to 10%. The radiative runs must match $\alpha=0.76$ to 10%. Because the exact solution has a contact discontinuity that should never mix, the test is also a sensitive check on the merging criteria for spawned cells; the local-injection variants are currently non-strict expected failures (they over-deliver energy by roughly 25-30%; see the README).
+**Shu 1977 Collapse** (`test/shu1977`): The classic isothermal sphere collapse solution from Shu (1977, ApJ, 214, 488). Tests self-gravitating isothermal gas dynamics and is a standard benchmark for star formation simulations. A rotating version of this collapse with protostellar jets is `test/shu_jets` (below).
 
 **Rotating Shu Collapse with Jets** (`test/shu_jets`): The `test/shu1977` singular isothermal sphere, spun up to solid-body rotation with $E_{\rm rot}/|E_{\rm grav}| = 0.1$ and run with kinematic protostellar jets (`SINGLE_STAR_FB_JETS`, `JET_DIRECTION_FIXED_Z`), with jet cells spawned at 0.1 of the ambient gas-cell mass. Each run must form exactly one sink, conserve gas plus sink mass to $10^{-6}$, keep the sink mass within a broad window, and launch an outward outflow of correctly sized spawned cells. The outflow must also be collimated along $z$, both in position and in the principal axis of its kinetic-energy tensor. Four runs cross the default spawned-cell merging against `SINK_SPAWN_NO_MERGE` with `COOLING` against `COOLING` + `SINGLE_STAR_FB_RAD`. A separate check (`test_shu_jets_merging_energetics`) requires the merging run to retain more than half the no-merging run's gas energy, outward momentum and sink mass at matched times.
 
 **Massive Protostellar Core** (`test/shu_M120`): Collapse of a $120\,M_{\odot}$ protostellar core with an $r^{-2}$ density profile, under `SINGLE_STAR_STARFORGE_DEFAULTS` + `COOLING` + `SINGLE_STAR_FB_RAD`. It should produce a single sink with an approximately constant, high accretion rate, and smooth profiles of gas, dust and radiation temperature. The binned radial profiles of the three temperatures and the sink mass are compared against a reference solution (`shu_M120_exact.hdf5`, downloaded automatically) to 10%. It is parametrized over the same baseline / `TRANSPORT_SUBCYCLE=10` / `TRANSPORT_SUBCYCLE=10` + `TRANSPORT_SUBCYCLE_COOLING` variants as `test/HII_region`.
 
-<a name="tests-additional-galaxy"></a>
-### Galaxy-Formation Feedback Tests
+**HII Region** (`test/HII_region`): A $30\,M_{\odot}$ zero-age main-sequence star sits in a uniform, optically thick $20\,{\rm pc}$ box of mean density $100\,{\rm cm^{-3}}$ (gravity off), and its multi-band radiation (`SINGLE_STAR_RT_DEFAULTS`, `RT_CHEM_PHOTOION=1`, NUV, optical/NIR, IR and photoelectric bands, reduced speed of light) must ionize a Strömgren-type HII region. The test requires the peak of the binned median gas temperature to lie at the photoionization-equilibrium value (7000-11000 K), which catches an over-hard spectrum, missing nebular cooling or spurious over-cooling. It is parametrized over a baseline, `TRANSPORT_SUBCYCLE=10` (subcycled radiation transport), and `TRANSPORT_SUBCYCLE=10` + `TRANSPORT_SUBCYCLE_COOLING`. The subcycled runs must reproduce the baseline's radial profiles of ionized fraction and NUV and optical/NIR radiation energy density to 10%. Plots of the ionization-front radius versus time are also produced.
+
+**Single-Star Supernova** (`test/SN_singlestar`): A $10\,M_{\odot}$ star near the end of its life, at the center of a $5\times10^{4}\,M_{\odot}$, $n_{\rm H}=100\,{\rm cm^{-3}}$ periodic box, explodes as a $10^{51}$ erg supernova on the first timestep (`SINGLE_STAR_FB_SNE`, gravity off). It is parametrized over adiabatic, `COOLING`, and `COOLING` + `SINGLE_STAR_FB_RAD` variants. In all three, the density peak at early time must lie within 30% of the analytic Sedov-Taylor shock radius and be moving outward. The adiabatic run must also show a strong-shock density jump (more than twice ambient) and conserve the injected energy to 10%. A separate check on the cooling variant's output (`test_SN_thermo_fidelity`) bounds the temperature-versus-internal-energy relation of the warm molecular shell and the remnant's total thermal energy against calibrated reference values, which guards the internal-energy-to-temperature inversion in the cooling module.
+
+**Single-Star Wind Bubble** (`test/wind_singlestar`): A $100\,M_{\odot}$ ZAMS star (`SINGLE_STAR_FB_WINDS=2`, $\dot{M}=10^{-4}\,M_{\odot}\,{\rm yr^{-1}}$, $v_{w}=3000\,{\rm km\,s^{-1}}$) blows a bubble into the same uniform box as `test/SN_singlestar`, compared against the Weaver et al. (1977) similarity solution $R_{2} = \alpha\,(L_{w}t^{3}/\rho_{0})^{1/5}$. It is parametrized over the wind injection mode (spawned discrete wind cells versus local mechanical injection) and over adiabatic, `COOLING`, and `COOLING` + `SINGLE_STAR_FB_RAD` thermodynamics. The adiabatic runs must reproduce energy conservation ($E_{\rm kin}+E_{\rm th}=L_{w}t$; 10% for spawning, looser for local injection), the $R\propto t^{3/5}$ growth law, a time-constant similarity coefficient, and $\alpha=0.88$ to 10%. The radiative runs must match $\alpha=0.76$ to 10%. Because the exact solution has a contact discontinuity that should never mix, the test is also a sensitive check on the merging criteria for spawned cells; the local-injection variants are currently non-strict expected failures (they over-deliver energy by roughly 25-30%; see the README).
+
+<a name="tests-galaxy"></a>
+## Galaxy-Formation and Feedback Tests
 
 Most of these are short runs of the [isolated galactic disk](#tests-grav-galdisk) (`isodisk_ics.hdf5`) or of a FIRE galaxy. They check that each feedback or source-injection module is active and conserves mass, rather than comparing against an exact solution.
 
-**Isolated Disk: Mechanical Feedback** (`test/isodisk_mechfb`): The isolated disk with star formation and `GALSF_FB_MECHANICAL` (SNe and stellar mass loss) on a `COOLING` + `GALSF` + `METALS` base. Pre-existing old star particles produce supernovae from the first timestep. The test checks that the run reaches its end time with total baryonic mass (gas plus all stellar types) conserved to 1%. The directory also holds two cosmic-ray Config variants (`Config_cr.sh` and `Config_cr0.sh`: `FIRE_PHYSICS_DEFAULTS=3` with `FIRE_CRS=-1` or `0` and `FIRE_MHD`), which must be built and run by hand; pytest runs only the default.
+**Isolated Disk: Mechanical Feedback** (`test/isodisk_mechfb`): The isolated disk with star formation and `GALSF_FB_MECHANICAL` (SNe and stellar mass loss) on a `COOLING` + `GALSF` + `METALS` base. Pre-existing old star particles produce supernovae from the first timestep. The test checks that the run reaches its end time with total baryonic mass (gas plus all stellar types) conserved to 1%. The directory also holds Config variants that must be built and run by hand (pytest runs only the default): two cosmic-ray variants (`Config_cr.sh` and `Config_cr0.sh`: `FIRE_PHYSICS_DEFAULTS=3` with `FIRE_CRS=-1` or `0` and `FIRE_MHD`), and an explicit-radiation variant (`Config_rt.sh`, `isodisk_mechfb_rt.params`: `RT_M1` with the stars as sources in the NUV, optical/NIR, IR, photoelectric and photoionizing bands). See the README there.
 
 **Isolated Disk: Thermal Feedback** (`test/isodisk_thermalfb`): As `test/isodisk_mechfb`, but with `GALSF_FB_THERMAL` (pure thermal SN energy injection) in place of mechanical feedback. The test checks completion and conservation of total gas plus star plus black-hole mass to 0.1%.
 
@@ -5320,53 +5435,14 @@ Most of these are short runs of the [isolated galactic disk](#tests-grav-galdisk
 
 **Isolated Disk: Dark-Matter Velocity Dispersion** (`test/isodisk_dmdispersion`): The isolated disk with the Springel & Hernquist effective-EOS model and velocity-scaled subgrid winds (`GALSF_EFFECTIVE_EQS`, `GALSF_SUBGRID_WINDS`, `GALSF_SUBGRID_WIND_SCALING=2`), which need the local dark-matter velocity dispersion at every gas cell. The test checks that the dispersion computation ran (its status line appears in stdout) and that most gas cells carry a non-zero value. Gas plus star mass must be conserved to 0.1%. The extra `Config_dm_heating*.sh` and `*_dmheating_*.params` files (`DM_HEATING`) are for manual runs and are not used by pytest.
 
+**FIRE Cosmological Galaxy** (`test/fire`): A short cosmological run of a downsampled (10%, with particle masses raised 10x to conserve total mass) m11i-like dwarf galaxy from $a=0.2564$ ($z\approx 2.9$) to $a=0.257$, with the full FIRE physics set (`FIRE_PHYSICS_DEFAULTS=3`, `FIRE_BHS`) in a periodic box with `PMGRID=512`; it starts from a snapshot (`RestartFlag=2`). It is parametrized over a baseline and a tidal-timestep variant (`TIDAL_TIMESTEP_CRITERION`, `ADAPTIVE_TREEFORCE_UPDATE=0.06`). The test requires dark-matter (and, if present, type-2) mass to be conserved exactly, and the final gas, star and black-hole masses to agree with a reference snapshot to 10%; it also writes the gas density-temperature distribution and density histogram for inspection.
+
 **FIRE Galaxy: Radiation Sources** (`test/fire_rtsources`): A short run of the FIRE m11i dwarf-galaxy IC (z ~ 2.9) with `FIRE_PHYSICS_DEFAULTS=3` + `FIRE_BHS` and explicit M1 radiation transport (`RT_M1`, `RT_COMOVING`, `RT_SOURCES=48`, with NUV, optical/NIR, IR, photoelectric and photoionizing bands). Stars and black holes inject radiation from the first step. The test checks that dark-matter mass is exactly conserved and that the gas carries non-zero radiation energy after injection; it is a completion and activation check, not an accuracy test.
 
 **Forged-in-FIRE Nuclear AGN Disk** (`test/forgedinfire`): A short restart (`RestartFlag=2`) from a downsampled snapshot of a nuclear-scale AGN accretion-disk zoom (about $10^{6}$ gas cells, a black hole and stars). It uses full radiation-MHD, dust temperatures and star formation in the hybrid single-star/SSP nuclear-zoom model (`SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS`, `SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM`, `USE_TIMESTEP_DILATION_FOR_ZOOMS`). Primarily a does-it-run test of that pipeline, it produces radial profiles and phase diagrams for inspection. If the reference snapshot `forgedinfire_exact.hdf5` is present, the final total gas and star masses must agree with it to 10%. The IC is about 260 MB and gzip-compressed, so it needs an HDF5 build with the deflate filter.
 
-<a name="tests-additional-gravity"></a>
-### Gravity and N-Body Tests
-
-Pure-gravity collisionless and few-body problems, complementing the hydro-plus-gravity tests of [Self-Gravity & Cosmological Tests](#tests-grav). Several tolerances in these tests are calibrated from recorded reference runs, and the reasoning is documented in the test files and READMEs. Read those before treating a marginal failure as a regression.
-
-**Hernquist Sphere** (`test/hernquist`): A $2^{15}$-particle equilibrium Hernquist sphere ($G=M=a=1$), run to $t=118$ (about 10 crossing times) under eight gravity-solver variants: baseline, `ADAPTIVE_GRAVSOFT_FORALL`, `BOX_PERIODIC`+`PMGRID` (TreePM), `BOX_PERIODIC` (Ewald), `TIDAL_TIMESTEP_CRITERION`, tidal timestepping with tidal-radius adaptive softening, and `RANDOMIZE_GRAVTREE` with and without TreePM. Each variant must keep its half-mass radius within 10% and its total energy within a per-variant ceiling (3x a recorded reference). The spurious centre-of-mass drift must stay bounded, and the `RANDOMIZE_GRAVTREE` variants are compared against their unrandomized partners. The two unrandomized periodic variants are marked as a known expected failure on the half-mass radius. A second file, `test_hernquist_convergence.py`, scans `ErrTolIntAccuracy` for the acceleration and tidal timestep criteria. It requires the tidal criterion's accumulated energy error to be within a factor of 2 of the acceleration criterion's at the default tolerance, and to fall as the tolerance is tightened (see `README_convergence.md`).
-
-**Plummer Sphere and Star Clusters** (`test/plummer`): `test_plummer.py` runs a $2^{15}$-particle equilibrium Plummer sphere through the same eight gravity variants as `test/hernquist`. It requires the 10%, 50% and 90% Lagrange radii to be preserved, energy to be conserved to 4% of the initial kinetic energy, and the secular energy drift rate to stay within 3x a per-variant reference. `test_plummer_binaries.py` replaces each of 256 Plummer particles with an equal-mass circular binary of sink particles (Hermite integration, few-body timestepping), and compares tree gravity with `SINGLE_STAR_DIRECT_GRAVITY` (exact star-star summation). It requires the half-mass radius to hold to 15% and energy to be conserved to 1%. `test_plummer_binaries_realistic.py` instead draws a heterogeneous population (Kroupa IMF, mass-dependent binary fraction, log-normal periods, thermal eccentricities, truncated at 100 AU pericentre) and bounds the energy error and centre-of-mass drift over 10 crossing times (see `README_plummer_binaries_realistic.md`). All binary diagnostics use the synchronized `IO_HERMITE_SYNC` positions and velocities, with the potential recomputed by direct summation.
-
-**Few-Body Integration** (`test/fewbody`): Tests of the Hermite integrator for sink particles (`SINGLE_STAR_STARFORGE_DEFAULTS` + `IO_HERMITE_SYNC`) on exactly known few-body systems. `test_binary.py` evolves an $e=0.9$, $q=0.1$ Kepler binary. It requires the relative energy error to stay below $1.5\times10^{-3}$ and the spurious centre-of-mass velocity below $5\times10^{-4}$ of the orbital velocity (the ICs have zero total momentum exactly). It also scans `ErrTolIntAccuracy` and requires the energy error to converge at better than first order. A `DISABLE_HERMITE_INTEGRATION` (KDK leapfrog) comparison variant runs only on request (marked slow). `test_triple.py` evolves an inclined, eccentric, unequal-mass hierarchical triple whose inner binary and tertiary sit about 6 timebins apart, and bounds the per-outer-orbit energy error at $1.7\times10^{-4}$. That is a gross-breakage ceiling only; see `README_triple.md` for what it does and does not guard.
-
-<a name="tests-additional-cbe"></a>
-### Continuum Vlasov (CBE) Tests
-
-These problems exercise the continuum Vlasov integrator (`CBE_INTEGRATOR`; see [the Config section](#config-gravity-cbe); Hopkins 2026, in preparation), in which each collisionless particle carries a mixture of velocity-space basis functions (`CBE_INTEGRATOR_SECONDMOMENT`, `CBE_INTEGRATOR_WITHGRADIENTS`). The ICs (including the per-basis `VlasovMoments`) are generated locally by each test's `make_ic.py`. Unless noted, each test asserts the same conservation and diagnostic gates:
-
-- total mass conserved to $10^{-10}$;
-- momentum and the absolute-frame second-moment trace conserved within calibrated integration-error tolerances;
-- in the first row of `cbe_diagnostics.txt`, an inter-cell face mass-flux residual of at most $10^{-11}$ and no root-find bracket failures.
-
-Each test writes per-stream density profiles compared with exact collisionless advection, but these plots are diagnostic only and not gated. The 1D tests run on 2 MPI ranks and on 1 rank with 2 OpenMP threads.
-
-**CBE Counter-Streaming Beams** (`test/cbe_two_stream`): In a 1D periodic box, each particle carries two cold velocity bases at $\pm v$ with zero bulk velocity (`CBE_INTEGRATOR=2`), so the two streams advect through each other while the total density stays uniform. Because the problem is symmetric, momentum and the second moment must be conserved to round-off ($10^{-10}$ and $10^{-9}$ respectively) in addition to the common gates.
-
-**CBE Density Wave** (`test/cbe_density_wave`): As `test/cbe_two_stream`, but with a cosine density modulation of amplitude 0.2 ($\rho = 1 + \epsilon\cos 2\pi x/L$), so each stream carries the perturbation and the analytic solution is the IC density translated at $\pm v$. It applies the common gates, with momentum conserved to $10^{-10}$ and the second moment to $10^{-4}$.
-
-**CBE Free-Slot Injection, 1D** (`test/cbe_free_slot_1d`): Four cold streams ($v = +1, 0, -1, -2$; `CBE_INTEGRATOR=4`) plus a localized Gaussian perturbation at $v=+2$ that neighbouring particles have no basis for. Advecting it requires the free-slot pairing fallback, which opens a new basis to receive the incoming flux. The common conservation and face-residual gates are asserted. The masses in each velocity band are printed, and a plot of the per-band density shows whether the $+2$ perturbation is carried correctly.
-
-**CBE Free-Slot Injection, 3D** (`test/cbe_free_slot_3d`): The same streams and perturbation as `test/cbe_free_slot_1d` on a 3D slab (`BOX_LONG_X=16`, velocities along $x$). It checks that free-slot routing and conservation survive the full 3D moment set and domain decomposition, running on 2 and 4 MPI ranks with looser momentum and second-moment tolerances ($3\times10^{-3}$).
-
-**CBE Harmonic Breathing Mode** (`test/cbe_harmonic_1d`): A hot 1D Gaussian distribution in a fixed external harmonic potential (`GRAVITY_ANALYTIC_HARMONIC`), with the exact one-sided Gaussian-basis Riemann solver (`CBE_INTEGRATOR_RP_GAUSSIAN`). A Gaussian $f\propto\exp[-(v^{2}+\Omega^{2}x^{2})/2\sigma^{2}]$ is an exact stationary solution, and the IC's spatial width is set to 0.7 of the equilibrium value. The analytic response is therefore an undamped oscillation of the width at $2\Omega$. The run must reach its end time, conserve mass to $10^{-10}$, and keep the full compression and expansion range of the oscillation without damping or runaway. The per-basis velocities must also stay bounded, which catches basis collapse.
-
-<a name="tests-additional-aneos"></a>
-### ANEOS Equation-of-State Tests
-
-**ANEOS Unit Test** (`test/aneos_unit`): Standalone unit test for the ANEOS module. Generates an ideal-gas SESAME table, loads it, and verifies table reading, bilinear interpolation, temperature inversion (Newton-Raphson), derived quantities (Cv, Gruneisen parameter), and boundary clamping. Does not require running a GIZMO simulation.
-
-**ANEOS Shock Tube** (`test/aneos_shocktube`): A standard Sod shock tube using the ANEOS tabulated EOS with a gamma=1.4 ideal-gas table. Validates the full ANEOS pipeline (table loading, T-inversion, EOS dispatch, hydro coupling) by comparing against the exact Riemann solution. Uses `EOS_ANEOS`, `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SPATIAL_DIMENSION=1`.
-
-**ANEOS Giant Impact** (`test/aneos_giant_impact`): Evolves a differentiated uniform-density sphere with real M-ANEOS forsterite (mantle) and iron (core) tables from Stewart et al. (2019, 2020). Tests that the code can load real ANEOS tables, handle multi-material particles, and run without crashing. Downloads tables from Zenodo and converts them automatically. Uses `EOS_ANEOS`, `HYDRO_MESHLESS_FINITE_MASS`.
-
-<a name="tests-additional-nuclear"></a>
-### Nuclear Reaction Network Tests
+<a name="tests-nuclear"></a>
+## Nuclear Burning and Stellar Equation-of-State Tests
 
 **Nuclear Network Unit Test** (`test/nuclear_unit`): Standalone unit test for the `NUCLEAR_NETWORK` module. Exercises the aprox13 alpha-chain solver, optional Coulomb screening, and the tabulated NSE branch over a grid of thermodynamic states without running a full hydro simulation. Does not require running a GIZMO simulation.
 
@@ -5376,23 +5452,14 @@ Each test writes per-stream density profiles compared with exact collisionless a
 
 **X-Ray Burst (XRB)** (`test/nuclear_xrb`): A 1D test problem for thermonuclear burning in a neutron-star accretion layer (Type I X-ray burst regime), with `EOS_HELMHOLTZ` + `NUCLEAR_NETWORK` + `NUCLEAR_NETWORK_NSE_TABLE` + `METALS`. Exercises the hot, degenerate-electron regime of the EOS and the network's stability under high temperatures and densities.
 
-<a name="tests-additional-multifluid"></a>
-### Multi-Fluid Tests
+<a name="tests-infrastructure"></a>
+## Numerical Stress, I/O, and Infrastructure Tests
 
-**Ion-Neutral Ambipolar Drag Relaxation** (`test/ionneutral_drag`): Two interleaved Type=0 fluids in a 1D periodic box — 32 ions tagged `FluidType=FLUID_ION` (with $v_x = +10^{-4}$ and a small $B_x$) interleaved with 32 neutrals tagged `FluidType=FLUID_DEFAULT` ($v=0$, $B=0$) — relax exponentially via the Draine ambipolar drag with $\mathrm{d}(\Delta v)/\mathrm{d}t = -\gamma_{\rm AD}(\rho_i+\rho_n)\,\Delta v$. Code units are chosen so $\gamma_{\rm AD,code}=1$ and $\rho_{\rm total}=1$, yielding analytic $t_{\rm damp}=1$ in code time. The pytest gate fits the measured decay rate to $\exp(-t)$ across 5 e-folds and asserts $\max|B_{\rm neutral}|<10^{-12}$ throughout (the corridor cross-fluid skip keeps neutrals at $B=0$ by induction). The IC is generated locally by `make_ionneutral_drag_ics.py` (no website download). On Mac np=1 OMP=1, the measured decay rate is 0.9997 vs analytic 1.0000 over the full 5 e-folds. Uses `HYDRO_MULTIFLUID`, `HYDRO_MULTIFLUID_IONNEUTRAL`, `MAGNETIC`, `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SPATIAL_DIMENSION=1`.
-
-<a name="tests-additional-other"></a>
-### Other Tests
-
-**Ring Collision** (`test/ring_collision`): Collision of two elastic/solid rings using the Tillotson EOS and elastic stress tensor. Tests `EOS_TILLOTSON`, `EOS_ELASTIC`.
-
-**Grain-to-Solid Promotion** (`test/grain_promotion`): A smoke test of `GRAIN_FLUID_PROMOTION`. In a 2D box of Tillotson elastic-solid gas cells (`EOS_TILLOTSON`, `EOS_ELASTIC`) with a back-reacting grain fluid (`GRAIN_FLUID`, `GRAIN_BACKREACTION`), one grain super-particle above the promotion mass threshold must be converted into a solid gas-type cell. The test checks that the grain count drops and the gas count rises by the same number. The new cell must carry the olivine Tillotson composition, and total gas plus grain mass must be conserved to 0.1%.
-
-**P-alpha Crush-Curve Unit Test** (`test/jutzi_crush_unit`): A standalone unit test of the porous-compaction (P-$\alpha$) crush curve in `solids/jutzi_crush_curve.h` (Jutzi et al. 2008, Eq. 8), using a small C++ harness with no GIZMO build or MPI. Over a sweep of pressures and porous, icy and non-porous material parameters, the harness must match a Python reference implementation bit for bit and reproduce analytic basalt values. The curve must also be monotonically non-increasing, equal to $\alpha_{0}$ below the elastic limit, and equal to 1 above full compaction. It complements the `test/jutzi_crater` cratering problem described under the planetary IC builder.
+**Poisson Box** (`test/poisson_box`): A periodic 100 pc box of magnetized, cooling gas (`MAGNETIC`, `MHD_B_SET_IN_PARAMS`, `COOLING`, `METALS`, `COOL_METAL_LINES_BY_SPECIES`) at $T\sim10^{4}$ K and mean $n_{\rm H}=1$ cm$^{-3}$, whose cells sit at uniformly random (Poisson) positions -- no lattice and no glass. A random point set is the least regular arrangement the neighbour search, the kernel-radius iteration and the gradient and MHD estimators can be handed: local cell counts fluctuate by order unity on the kernel scale, so every kernel radius must converge from a poor initial guess. Gravity is in the code path but negligible (`GravityConstantInternal`$=10^{-100}$). The test runs a few all-active steps on $50^{3}$ cells and requires: the final time to be reached; gas mass conserved to round-off; finite, positive densities and kernel radii; and the magnetic energy of the uniform seed field to stay constant to $3\times10^{-4}$. `make_poisson_box_ics.py` writes the IC at any resolution and mean density (e.g. `python make_poisson_box_ics.py 30 50 80 100`), which makes the problem a convenient scaling benchmark as well (see the CPU-GPU performance table in [Performance-Portable Heterogeneous Execution](#cpugpu)).
 
 **Binary IC Reading** (`test/read_ic_binary`): A regression test that GIZMO can start from a GADGET-format binary IC (`ICFormat` 1/2) without a Temperature block, even when temperature output (`OUTPUT_TEMPERATURE`, implicit for most `COOLING` runs) is enabled. The 512-cell IC is generated locally. The default variant must read the IC, run, and still write Temperature to its snapshots. A sensitivity variant built with `INPUT_READ_TEMPERATURE` must instead fail with the end-of-file read error the original bug produced, which confirms that the IC still reproduces the condition being guarded.
 
-**FOF/SUBFIND Halo Finding** (`test/fof_subfind`): Runs the friends-of-friends group finder and SUBFIND (`FOF`, `SUBFIND`, linking type 1) in post-processing mode (`RestartFlag=3`) on a locally generated periodic particle set: one FOF halo made of two bridged density peaks, plus a separate compact halo. The test checks that the neighbour-list FOF and SUBFIND stages report completion, and that the group catalogue holds at least two groups (the largest with at least 200 members) and at least two subhalos (the largest with at least 40). It is a functional check of the halo-finding pipeline, not a comparison against a reference catalogue.
+**C++ Unit Tests** (`test/unit`): Standalone C++ tests of low-level code utilities (currently the `Vec3` math type: construction, element access, iteration, arithmetic operators, norms), compiled and run directly by pytest without a GIZMO build or MPI. New `test_*.cc` files in the directory are discovered automatically. (`test/trivial` holds a single always-passing test that checks the pytest installation itself.)
 
 **Compile Suite** (`test/compile_suite`): Not a physics test; systematically compiles GIZMO with many different combinations of Config flags to check for compilation errors and flag incompatibilities.
 

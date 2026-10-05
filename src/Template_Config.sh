@@ -534,6 +534,7 @@
 #OUTPUT_BFIELD_DIVCLEAN_INFO    # outputs the phi, phi-gradient, and numerical div-B fields used for de-bugging MHD simulations
 #OUTPUT_TIMESTEP                # outputs timesteps for each particle
 #OUTPUT_SOFTENING               # outputs force softening for each particle
+#AGS_OUTPUTZETA                 # outputs the adaptive-softening correction term zeta for each adaptively-softened particle
 #OUTPUT_COOLRATE                # outputs the net cooling rate (negative where gas is net heating), and conduction rate if enabled
 #OUTPUT_COOLRATE_DETAIL         # outputs cooling rate term by term [saves all individually to snapshot]
 #OUTPUT_POWERSPEC               # compute and output cosmological power spectra. requires BOX_PERIODIC and PMGRID.
