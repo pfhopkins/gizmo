@@ -91,8 +91,14 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
     struct GrainOutcomeElasticProps ep = grain_outcomes_elastic_props(GRAIN_OUTCOME_SPECIES_SILICATE);
     double a_i_cm = local.Grain_Size;
     double a_j_cm = (double)P[j].Grain_Size;
+    /* shattering onset: species value, unless GrainEvolution_VelThreshShat (physical, code units) overrides it */
+    double v_shat = ep.v_shat;
+    if(All.GrainEvolution_VelThreshShat > 0) { v_shat = All.GrainEvolution_VelThreshShat * UNIT_VEL_IN_CGS; }
     double v_coag = grain_outcomes_v_coag_dominik(a_i_cm, a_j_cm, ep.gamma, ep.E_young, ep.nu_poisson, All.Grain_Internal_Density);
-    if(v_coag > ep.v_shat) { v_coag = ep.v_shat; } /* clamp -- match ISMDustChem update_dust_shattering_and_coagulation:1619 */
+    if(v_coag > v_shat) { v_coag = v_shat; } /* clamp -- match ISMDustChem update_dust_shattering_and_coagulation:1619 */
+    /* coagulation/fragmentation boundary: sticking speed, unless GrainEvolution_VelThreshFrag overrides it */
+    double v_stick = v_coag * All.GrainEvolution_StickingCoeff;
+    if(All.GrainEvolution_VelThreshFrag > 0) { v_stick = DMIN(All.GrainEvolution_VelThreshFrag * UNIT_VEL_IN_CGS, v_shat); }
 
 #if (GRAIN_EVOLUTION & 1)
     /* Bit 0 COAG: low-velocity collision -> stick. Local absorbs j fully.
@@ -101,7 +107,7 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
      * host-side post-pass can do the mass-fraction renormalization with
      * full multi-source visibility (multiple j-neighbors of the same i
      * may all be absorbed in one step). */
-    if(dv_mag < v_coag * All.GrainEvolution_StickingCoeff) {
+    if(dv_mag < v_stick) {
         double M_j = (double)P[j].Mass;
         if(M_j <= 0) { return; }
         out.Grain_DeltaCoagMass += M_j;
@@ -132,8 +138,8 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
      *
      * Size update: a_new = a_old * (1 - frag_eff)^(1/3) -- the cube-root
      * reflects the conserved super-particle mass with implicit N growth. */
-    if(dv_mag >= v_coag * All.GrainEvolution_StickingCoeff && dv_mag < ep.v_shat) {
-        double frag_eff = 0.1 * (dv_mag * dv_mag) / (ep.v_shat * ep.v_shat);
+    if(dv_mag >= v_stick && dv_mag < v_shat) {
+        double frag_eff = 0.1 * (dv_mag * dv_mag) / (v_shat * v_shat);
         if(frag_eff > 0.5) { frag_eff = 0.5; }
         double frag_factor = pow(1.0 - frag_eff, 1.0/3.0);
         /* Local i-side accumulator (multiplicative; applied in host
@@ -169,8 +175,8 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
      * v_shat (FRAG saturates at frag_eff = 0.1; SHAT starts at
      * shat_eff = 0.5) -- this matches the bin-based ISMDustChem model
      * where v_shat is a real threshold, not a smooth crossover. */
-    if(dv_mag >= ep.v_shat) {
-        double shat_eff = 0.5 * dv_mag / ep.v_shat;
+    if(dv_mag >= v_shat) {
+        double shat_eff = 0.5 * dv_mag / v_shat;
         if(shat_eff > 0.9) { shat_eff = 0.9; }
         double shat_factor = pow(1.0 - shat_eff, 1.0/3.0);
         out.Grain_DeltaErosionFrac *= shat_factor;
@@ -184,7 +190,7 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
         return;
     }
 #endif
-    (void)dv_mag; (void)ep;
+    (void)dv_mag; (void)ep; (void)v_stick; (void)v_shat;
 }
 #endif
 

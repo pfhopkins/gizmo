@@ -2898,6 +2898,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}
                 if(strcmp("InitStellarAge",tag[i])==0) {*((double *)addr[i])=10.; printf("Tag %s (%s) not set in parameter file: defaulting to very old pre-existing stars [if any exist, otherwise this is irrelevant] (=%g Gyr) \n",tag[i],alternate_tag[i],All.InitStellarAgeinGyr); continue;}
 #endif
+#ifdef GRAIN_EVOLUTION
+                if(strcmp("GrainEvolution_VelThreshFrag",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g; use the sticking speed)\n",tag[i],alternate_tag[i],All.GrainEvolution_VelThreshFrag); continue;}
+                if(strcmp("GrainEvolution_VelThreshShat",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g; use the species value)\n",tag[i],alternate_tag[i],All.GrainEvolution_VelThreshShat); continue;}
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                 if(strcmp("Initial_ISMDustChem_Depletion",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g) \n",tag[i],alternate_tag[i],All.Initial_ISMDustChem_Depletion); continue;}
                 if(strcmp("Initial_ISMDustChem_SiltoCarbRatio",tag[i])==0) {*((double *)addr[i])=0.; printf("Tag %s (%s) not set in parameter file: defaulting to zero (=%g)\n",tag[i],alternate_tag[i],All.Initial_ISMDustChem_SiliconToCarbonRatio); continue;}

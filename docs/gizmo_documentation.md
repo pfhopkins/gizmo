@@ -3341,8 +3341,8 @@ Note that there are a variety of other grain parameters that can be enabled if t
 
     %-------------- grain microphysics on GRAIN_FLUID super-particles (GRAIN_EVOLUTION on)
     GrainEvolution_StickingCoeff              1.0   % multiplies the coagulation velocity threshold, and is the sticking coefficient for condensation
-    GrainEvolution_VelThreshFrag              0     % read but not currently used (set any value)
-    GrainEvolution_VelThreshShat              0     % read but not currently used (set any value)
+    GrainEvolution_VelThreshFrag              0     % coagulation/fragmentation boundary speed (code units); 0 = sticking speed (default)
+    GrainEvolution_VelThreshShat              0     % shattering onset speed (code units); 0 = species value (default)
     GrainEvolution_ThermalSputteringScaling   1.0   % multiplies the thermal-sputtering erosion rate
     %-------------- promotion of grain super-particles to solid gas cells (GRAIN_FLUID_PROMOTION on)
     GrainPromotion_MassThresh_cgs        0.01   % grain super-particles with mass >= this (in g) are promoted
@@ -3350,7 +3350,7 @@ Note that there are a variety of other grain parameters that can be enabled if t
 
 **GrainEvolution\_StickingCoeff**: If `GRAIN_EVOLUTION` is on (requires `GRAIN_FLUID`), this multiplies the species-dependent coagulation velocity threshold $v_{\rm coag}$ for the pairwise collision outcomes (bits 1/2/4, which also need `GRAIN_COLLISIONS`): collisions with $|\Delta v| < v_{\rm coag}\times$`GrainEvolution_StickingCoeff` coagulate, faster ones (up to the shattering velocity) fragment. For condensation (bit 32) it is used directly as the sticking coefficient (values $\le 0$ are replaced by 1). Set =1 for the species defaults. Required (no default).
 
-**GrainEvolution\_VelThreshFrag**/**GrainEvolution\_VelThreshShat**: Read when `GRAIN_EVOLUTION` is on, and required in the parameterfile, but not used anywhere by the current code: the fragmentation and shattering thresholds come from the per-species defaults. Any value can be given.
+**GrainEvolution\_VelThreshFrag**/**GrainEvolution\_VelThreshShat**: Override the two collision-speed thresholds of `GRAIN_EVOLUTION` (physical velocity, code units). A grain pair colliding slower than the fragmentation threshold coagulates, between the two thresholds both grains chip, and above the shattering threshold both shatter. By default (0, or not set) the fragmentation threshold is the size-dependent sticking speed (Dominik & Tielens form, times `GrainEvolution_StickingCoeff`) and the shattering threshold is the silicate value (2.7 km/s). A fragmentation threshold above the shattering threshold is capped at it.
 
 **GrainEvolution\_ThermalSputteringScaling**: If `GRAIN_EVOLUTION` thermal sputtering (bit 8) is on, multiplies the grain-radius erosion rate $da/dt \propto -Y_{\rm sput}(T)\,n_{\rm H}$. This is the analogue of `ThermalSputteringScaling` in the ISM dust-chemistry model. =1 is nominal. Required (no default).
 
