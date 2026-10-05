@@ -1070,15 +1070,14 @@ void subtract_companion_gravity(int i)
 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int n){
-    if(P[n].Type > 0){ // in this implementation we only do the lazy updating for gas cells whose timesteps are otherwise constrained by multiphysics (e.g. radiation, feedback)
-        return 1;
-    } else {
-        if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(P[n].Type == 5) {return 1;} // single-star sinks take a full tree force every step: their dynamics are followed more carefully
+#endif
+    if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        else if(P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
-#endif        
-        else {return 0;}
-    }
+    else if(P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
+#endif
+    else {return 0;}
 }
 #endif
 
