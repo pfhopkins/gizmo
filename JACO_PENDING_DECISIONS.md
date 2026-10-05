@@ -60,15 +60,25 @@ mismatches at n = 1e3, T0 = 1e7, dt = 1e13 are the check's linearized gate at th
 
 ## 3. Legacy GIZMO defects found along the way (not JACO)
 
-### 3.1 RT kick energy accounting (confirmed by reading; A/B prepared, user submits)
+### 3.1 RT kick energy accounting (confirmed by reading; A/B done 2026-10-05)
 - D1: donor-band energy absorbed by dust is added to the IR band twice per kick (direct donation and through
-  `E_abs_tot_toIR` in the IR update), `radiation/rt_utilities.cc` ~:743/:824/:843.
+  `E_abs_tot_toIR` in the IR update), `radiation/rt_utilities.cc` ~:743/:824/:843. Measured exactly 2.000x on the
+  first kick.
 - D2: the gas-opacity share of IR absorption heats the dust balance (:734-736) while also heating the gas (~:845),
   and the gas share is deposited at c~ rather than c.
-Legacy-only A/B: branch `rt_energy_ab` (worktree `~/code/gizmo_rt_ab`, off origin/starforge_dev d45941ca), switches
-`RT_FIX_IR_DOUBLE_COUNT` and `RT_FIX_DUST_GAS_ABSORPTION`, arms base/d1/d2/d12 on shu_M120 and the 8-seed M10
-ensemble; job tree `/mnt/ceph/users/mgrudic/starforge/M10_core/rt_energy_ab/`. Decision after the runs: fix on
-starforge_dev (changes every RT result and the RT benchmarks) or leave.
+Legacy-only A/B: branch `rt_energy_ab` (worktree `~/code/gizmo_rt_ab`, cfae0811 off origin/starforge_dev d45941ca),
+switches `RT_FIX_IR_DOUBLE_COUNT` and `RT_FIX_DUST_GAS_ABSORPTION`, arms base/d1/d2/d12; results and plots in
+`/mnt/ceph/users/mgrudic/starforge/M10_core/rt_energy_ab/{shu_M120/analysis,analysis}/summary.txt`.
+- shu_M120 (616 yr): D1 lowers urad_FIR 16% at the centre and up to 32% in the outer envelope; T/T_dust/T_rad move
+  2-5%; the test still passes (0.052/0.037/0.052 vs 0.1). D2 within run-to-run scatter. Double count = 8.6% of the
+  injected energy.
+- M10 8-seed ensemble (98 kyr): double-counted energy 0.25-2.8x the sinks' luminosity and 0.5-1.1x the final box
+  IR energy (continuous ISRF reprocessing), but box E_IR only 3-7% lower when fixed (boundary-dominated field).
+  Sink growth: d12 null (total ratio 0.997, 4/8 higher, p = 0.95); d1 marginal (+5% total, 7/8, p = 0.11; per-seed
+  median +16%, p = 0.055, driven by seed 2: 0.46 -> 0.89 Msun); d2 null. Peak T_dust near sinks within 10%.
+  Does not explain the dense-gas 70-80 K vs 28 K question.
+Decision: fix D1 on starforge_dev (unambiguous energy creation; impact scales with reprocessed stellar luminosity,
+small in these setups), D2 with it (correct, free). No RT test needs re-baselining. Not merged; your call.
 
 ### 3.2 Cooling-radiation return limiter under reduced c
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
