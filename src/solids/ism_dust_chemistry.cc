@@ -139,6 +139,17 @@ void Initialize_ISMDustChem_Global_Variables()
     for(j=0;j<NUM_ISMDUSTCHEM_SIZE_BINS;j++) {All.ISMDustChem_GrainBinCenters[j] = (All.ISMDustChem_GrainBinEdges[j+1]+All.ISMDustChem_GrainBinEdges[j])/2.;}
     ISMDustChemEvo_precompute_poly_coeffs(); /* precompute coag/shat polynomial coefficients following bin edges/centers init above; must run before gizmo_gpu_sync_all() pushes All to device */
 #endif
+    /* the initial carbonaceous depletion divides by the silicon-to-carbon ratio (Initialize_ISMDustChem_Particle_Variables) */
+#if defined(IO_DUST_NOT_IN_ICFILE)
+    int dust_set_from_parameters = (RestartFlag == 0 || RestartFlag == 2);
+#else
+    int dust_set_from_parameters = (RestartFlag == 0);
+#endif
+    if(dust_set_from_parameters && (GALSF_ISMDUSTCHEM_MODEL & 1) && All.Initial_ISMDustChem_Depletion > 0 && All.Initial_ISMDustChem_SiliconToCarbonRatio <= 0)
+    {
+        if(ThisTask==0) {printf("Initial_ISMDustChem_Depletion > 0 with carbonaceous dust requires Initial_ISMDustChem_SiltoCarbRatio > 0 (it is %g)\n", All.Initial_ISMDustChem_SiliconToCarbonRatio);}
+        endrun(1);
+    }
 }
 
 

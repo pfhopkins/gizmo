@@ -7,10 +7,14 @@
 %-------------------------------------------------------------------------
 Chimes_data_path        /path/reaction_network/chimes-data
 PhotoIonTable           FG20_cross_sections/z0.000_cross_sections.hdf5
+EqAbundanceTable        DummyTable.hdf5 % equilibrium-abundance table, relative to the EqAbundancesTables sub-directory (used if Chemistry_eqm=1)
+redshift_dependent_UVB_mode 0 % 0=fixed UV field; 1=interpolate UVB cross sections+strength to current z; 2=also interpolate equilibrium tables
+reionisation_redshift   7.5 % before this redshift the redshift-dependent UVB is zero (used if redshift_dependent_UVB_mode>0)
+InitIonState            1 % ionization state used to initialize abundances: 0=neutral, 1=singly ionized, ...
 Thermal_Evolution_On    1 % 0=evolve chemistry only; 1=evolve temperature and chemistry.
-Chemistry_eqm           0 % 0=NonEq; 1=eqm tables; 2=solve eqm from rate eqns.
+Chemistry_eqm           0 % 0=non-equilibrium (time-dependent); 1=equilibrium abundances from EqAbundanceTable.
 StaticMolCooling        0 % 0=incl Div(velocity); 1=thermal line broadening only.
-CellSelfShielding_On    2 % 0=optically thin; 1=update column densities within chemistry solver; 2=only update column densities at start of hydro step.
+CellSelfShielding_On    1 % 0=optically thin; >0=self-shielding on (requires CHIMES_SOBOLEV_SHIELDING).
 Shielding_length_factor 0.5 % Multiplicative factor for the shielding length.
 Grain_Temperature       10 % dust temperature in K
 CR_rate                 1.8e-16 % HI ionisation rate from cosmic rays, s^-1

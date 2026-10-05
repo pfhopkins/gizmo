@@ -1,7 +1,7 @@
 /* planet_heating.h — radiogenic decay and accretional background heating for solid bodies.
  *
  * Activated by PLANET_HEATING. Auto-implies EOS_TILLOTSON (see precompiler_logic.h).
- * Compatible with COOLING (gas cells are unaffected if COOLING handles them separately).
+ * Applied to every active Type-0 cell, whatever its EOS; with COOLING on, the cooling step acts on top of it.
  *
  * du/dt = Q_rad * exp(-t / tau_rad) + Q_acc
  *

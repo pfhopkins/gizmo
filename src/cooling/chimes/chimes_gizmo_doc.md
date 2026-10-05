@@ -94,13 +94,13 @@ CHIMES Parameters
 
 * ``StaticMolCooling`` The molecular cooling from CO and H2O depends on line broadening. When this flag is set to 0, we take into account the divergence of the velocity here. When this flag is set to 1, we only include thermal broadening for the CO and H2O cooling. *Typical value: 0*. 
 
-* ``CellSelfShieldingOn`` Flag to determine whether self shielding is included. When this flag is 0, self shielding is not included. When this flag is 1, self shielding is included. Note that, to switch on self shielding, you will also need to enable the ``CHIMES_SOBOLEV_SHIELDING`` Config option, which will define the shielding length. *Typical value: 1*. 
+* ``CellSelfShielding_On`` Flag to determine whether self shielding is included. When this flag is 0, self shielding is not included. When this flag is 1, self shielding is included. Note that, to switch on self shielding, you will also need to enable the ``CHIMES_SOBOLEV_SHIELDING`` Config option, which will define the shielding length. *Typical value: 1*. 
 
 * ``Shielding_length_factor`` The shielding length is multiplied by this factor. This allows you to control the normalisation of the shielding length. *Typical value: 0.5 (for Sobolev shielding)*. 
 
 * ``Grain_Temperature`` The temperature of dust grains in Kelvin, as used when computing the formation rate of H2 on dust grains. *Typical value: 10*. 
 
-* ``CrRate`` Cosmic ray ionisation rate of HI. The cosmic ray ionisation rate of all other species are then scaled relative to this parameter. *Typical value: 1.8e-16*. 
+* ``CR_rate`` Cosmic ray ionisation rate of HI. The cosmic ray ionisation rate of all other species are then scaled relative to this parameter. *Typical value: 1.8e-16*. 
 
 * ``max_mol_temperature`` Molecules are excluded above this temperature. *Typical value: 1.0e5*. 
 

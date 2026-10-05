@@ -2906,6 +2906,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("AGBDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_AGBDustScaling); continue;}
                 if(strcmp("DustAccretionScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_DustAccretionScaling); continue;}
                 if(strcmp("ThermalSputteringScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_ThermalSputteringScaling); continue;}
+                if(strcmp("AccretionTcutoffScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_AccretionTcutoffScaling); continue;}
                 if(strcmp("SNeGasClearedOfDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeGasClearedOfDustScaling); continue;}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
                 if(strcmp("ISMDustChem_Grain_Size_Min",tag[i])==0) {*((double *)addr[i])=1E-7; printf("Tag %s (%s) not set in parameter file: defaulting to 1E-7 (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_Grain_Size_Min); continue;}

@@ -271,7 +271,7 @@
 #endif
 
 
-#if !defined(RT_HYDROGEN_GAS_ONLY) || defined(RT_CHEM_PHOTOION_HE)
+#if !(defined(RT_HYDROGEN_GAS_ONLY) || (defined(CHIMES_HYDROGEN_ONLY) && !defined(METALS))) || defined(RT_CHEM_PHOTOION_HE)
 #define  HYDROGEN_MASSFRAC 0.76 /*!< mass fraction of hydrogen, relevant only for radiative cooling */
 #else
 #define  HYDROGEN_MASSFRAC 1.0  /*!< mass fraction of hydrogen, relevant only for radiative cooling */

@@ -2232,7 +2232,7 @@ The CHIMES modules in this code have many additional options, only some of the m
 
 **CHIMES_METAL_DEPLETION**: Reduces the abundance of metals in the gas-phase according to observed density-dependent metal depletion factors from Jenkins (2009) and De Cia et al. (2016). It also computes a density-dependent dust to gas ratio that is consistent with these depletion factors. 
 
-**CHIMES\_HYDROGEN\_ONLY**: Intended to run the CHIMES network with hydrogen only (hydrogen mass fraction set to 1); ignored if `METALS` is also set. Note that in the current code no source file reads this flag, so enabling it has no effect on the build.
+**CHIMES\_HYDROGEN\_ONLY**: Run the CHIMES network with hydrogen only: the hydrogen mass fraction is set to 1. Ignored if `METALS` is also set.
 
 **CHIMES\_REDUCED\_OUTPUT**: By default the full CHIMES abundance array (all species) is written to every snapshot (HDF5 "ChimesAbundances"). With this enabled, the full array is written only to snapshots whose number is a multiple of the parameter `N_chimes_full_output_freq`. All other snapshots get only a reduced array (HDF5 "ChimesReducedAbundances") of the electron, HI, H2 and CO abundances. Useful for saving storage in large runs.
 
@@ -2689,7 +2689,7 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 #SINGLE_STAR_AND_SSP_HYBRID_MODEL=1 # cells with mass less than this (in solar) are treated with the single-stellar evolution models, larger mass with ssp models. needs user to specify a refinement criterion, and a criterion for when one module or another will be used. still in testing.
 #SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS=1 # uses default settings for SINGLE_STAR_AND_SSP_HYBRID_MODEL=SINGLE_STAR_AND_SSP_HYBRID_MODEL_DEFAULTS (plus lots of other flag settings) from zoom-in experiments around special particles
 #STARFORGE_GMC_TURBINIT             # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic uniform sphere harmonic potential + r^-3 halo outside to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
-#STARFORGE_FILAMENT_TURBINIT        # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic potential of an finitite cylinder with a Plummer density profile, truncated at the ends of the cylinder, to confine stirred turbulent gas, during the 'stirring' phase. cite Lane et al., 2022MNRAS.510.4767L
+#STARFORGE_FILAMENT_TURBINIT        # special flag for custom ICs behavior in star formation simulations for turbulent clouds. adds an analytic potential of an finitite cylinder with a Plummer density profile, truncated at the ends of the cylinder, to confine stirred turbulent gas, during the 'stirring' phase. set STARFORGE_FILAMENT_MASS, _RADIUS and _LENGTH (code units) here as well. cite Lane et al., 2022MNRAS.510.4767L
 #STARFORGE_FEEDBACK_TRACERS         # passive tracer fields for the three feedback channels (0=jets, 1=winds, 2=SNe); on automatically with STARFORGE jets/winds/SNe
 # --------------------
 # ----- MPI & Parallel-FFTW De-Bugging
@@ -2875,7 +2875,7 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 
 **STARFORGE\_GMC\_TURBINIT**: Special IC-generation behavior for star formation simulations of turbulent clouds. During the turbulent 'stirring' phase used to generate the ICs, it adds an analytic confining potential to keep the stirred gas together: a uniform sphere of mass $0.808\,M_{\rm gas,total}$ and radius $L_{\rm box}/10$ centered in the box (the defaults of the MakeCloud uniform-sphere ICs; edit the code for other setups), plus an $r^{-3}$ density halo outside it. The value multiplies the strength of the potential and should be set to the desired virial parameter. With the STARFORGE defaults this automatically enables `TURB_DRIVING`, `GRAVITY_ANALYTIC` and `SELFGRAVITY_OFF`. Cite Lane et al., 2022, MNRAS, 510, 4767.
 
-**STARFORGE\_FILAMENT\_TURBINIT**: As `STARFORGE_GMC_TURBINIT`, but the confining potential during the stirring phase is that of a finite cylinder along the $x$-axis with a Plummer-like ($p=3$) radial density profile, truncated at the ends of the cylinder (using an approximate expression for the axial field). The value again multiplies the potential strength (the desired virial parameter). The filament mass, radius and length are taken from `STARFORGE_FILAMENT_MASS`, `STARFORGE_FILAMENT_RADIUS` and `STARFORGE_FILAMENT_LENGTH` (code units), which are not defined anywhere in the code, so you must define them in `Config.sh` yourself. Same automatic flags as above. Cite Lane et al., 2022, MNRAS, 510, 4767.
+**STARFORGE\_FILAMENT\_TURBINIT**: As `STARFORGE_GMC_TURBINIT`, but the confining potential during the stirring phase is that of a finite cylinder along the $x$-axis with a Plummer-like ($p=3$) radial density profile, truncated at the ends of the cylinder (using an approximate expression for the axial field). The value again multiplies the potential strength (the desired virial parameter). The filament mass, radius and length are taken from `STARFORGE_FILAMENT_MASS`, `STARFORGE_FILAMENT_RADIUS` and `STARFORGE_FILAMENT_LENGTH` (code units), which you define in `Config.sh` along with the flag (e.g. `STARFORGE_FILAMENT_MASS=...`). Same automatic flags as above. Cite Lane et al., 2022, MNRAS, 510, 4767.
 
 **STARFORGE\_FEEDBACK\_TRACERS**: Adds passive tracer fields in the `SINGLE_STAR` modules that track how much of each cell's gas came from each feedback channel: field 0 for protostellar jets, 1 for main-sequence winds, 2 for supernovae. Ejecta from each channel are spawned with that channel's tracer equal to 1 and the others 0; the tracers are then mixed like metals. They are stored in the metallicity array after the standard species, R-process and age tracers, and are labelled with key $-3$ in the snapshot attribute "Metals_Atomic_Number_Or_Key". It is an on/off switch: three fields are always allocated, one per channel, whatever value the flag is given. It is set automatically with the STARFORGE defaults whenever jets, winds or SNe are on, which also turns on `TURB_DIFF_METALS` and `TURB_DIFF_METALS_LOWORDER`.
 
@@ -3503,7 +3503,7 @@ These parameters control the stellar feedback models developed in the series of 
 
 Note that *all* of these FIRE parameters have sensible default values (the values in the parameter block above), which will be automatically used if the relevant code modules are turned on but the parameters are not specifically set by the user.
 
-    %-------------- ISM dust chemistry model (GALSF_ISMDUSTCHEM_MODEL on; all have defaults except AccretionTcutoffScaling)
+    %-------------- ISM dust chemistry model (GALSF_ISMDUSTCHEM_MODEL on; all have defaults)
     Initial_ISMDustChem_Depletion       0       % initial fraction of Si (and Fe) in dust, in gas below 1e5 K (alt name Initial_ISMDustChem_Dust_Depletion)
     Initial_ISMDustChem_SiltoCarbRatio  0       % initial silicate-to-carbonaceous dust mass ratio (alt name Initial_ISMDustChem_Silicate_to_Carbon_Dust_Ratio)
     SNeIIDustScaling                    1       % multiplies SNe II dust condensation efficiencies
@@ -3512,7 +3512,7 @@ Note that *all* of these FIRE parameters have sensible default values (the value
     DustAccretionScaling                1       % multiplies the rate of dust growth by gas-phase accretion
     ThermalSputteringScaling            1       % multiplies the thermal-sputtering destruction rate
     SNeGasClearedOfDustScaling          1       % multiplies the gas mass shocked by each SN in which dust is destroyed
-    AccretionTcutoffScaling             1       % multiplies the 300 K gas-temperature ceiling for accretion (REQUIRED: no default)
+    AccretionTcutoffScaling             1       % multiplies the 300 K gas-temperature ceiling for accretion (default 1)
     %--- grain-size evolution (GALSF_ISMDUSTCHEM_GRAINSIZEEVO on)
     UnitGrainNumber                     1       % unit of grain number used for the per-bin grain counts in ICs/snapshots (REQUIRED)
     UnitGrainLength_in_cm               1e-4    % grain length unit, written to snapshot headers (REQUIRED)
