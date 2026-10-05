@@ -72,7 +72,13 @@ the diagnostic, so:
     of the initial band energy;
   - with the star, the energy injected into the bands over the run must equal c_tilde/c L dt (1e-6);
   - the budget bands + gas thermal - injected is reported, not asserted: it is not conserved under a reduced speed of
-    light, and the printed channels name the terms that move it."""
+    light, and the printed channels name the terms that move it.
+
+Molecular variant (EOS check): the STARFORGE build plus EOS_GAMMA_PROBE at n_H = 1e4, starting fully molecular at 300 K,
+so the gas cools through the H2 rotational regime and its adiabatic index changes between EOS updates. After every
+update the sound speed must be the ideal-gas one for the adiabatic index of the temperature that update computed:
+|SoundSpeed^2 rho / (gamma P) - 1| < 1e-12, with gamma spanning > 0.05. Taking gamma before the temperature refresh
+leaves the sound speed one update behind."""
 
 import re
 import numpy as np
@@ -102,10 +108,14 @@ SOURCE_MASS = 1.0  # Msun
 SOURCE_PARAMS = {"IonizingLuminosityPerSolarMass_cgs": "1e38", "star_Teff": "1e5"}
 U_BANDS_EV_SOURCE = (0.0, 20.0, 20.0, 20.0, 30.0)  # ionizing band empty at the start
 STARFORGE = ("SINGLE_STAR_STARFORGE_DEFAULTS", "SINGLE_STAR_FB_RAD", "COOLING", "RT_ISRF_BACKGROUND=0")
+MOLECULAR = STARFORGE + ("EOS_GAMMA_PROBE",)
+T_MOLECULAR = 300.0  # K
+TOL_GAMMA_PROBE = 1e-12
 # G ~ 0: the star binds no gas, so it cannot accrete; the critical density keeps sink formation off
 STARFORGE_PARAMS = {"GravityConstantInternal": "1e-100", "CritPhysDensity": "1e30"}
 STAR_MASS = 30.0
-VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", ILIEV: "iliev", STARFORGE: "starforge"}
+VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", ILIEV: "iliev", STARFORGE: "starforge",
+            MOLECULAR: "molecular"}
 CHANNELS = ("absorbed", "donated_in", "ir_gas_share", "cooling_to_band", "injected", "kick_source")
 BANDS = ("photoelectric", "NUV", "optical-NIR", "IR")
 BANDS_STARFORGE = ("ionizing",) + BANDS
@@ -146,12 +156,17 @@ def is_starforge(flags):
     return "SINGLE_STAR_STARFORGE_DEFAULTS" in flags
 
 
+def is_molecular(flags):
+    return "EOS_GAMMA_PROBE" in flags
+
+
 def is_source(flags):
     return "RT_SOURCES=16" in flags
 
 
 def ic_name(flags, n_h, star):
-    kind = "_starforge" if is_starforge(flags) else ("_cooling" if "COOLING" in flags else ("_source" if is_source(flags) else ""))
+    kind = ("_molecular" if is_molecular(flags) else "_starforge" if is_starforge(flags) else "_cooling" if "COOLING" in flags
+            else "_source" if is_source(flags) else "")
     return f"{TEST_NAME}_n{tag(n_h)}{kind}{'_star' if star else ''}_ics"
 
 
@@ -211,6 +226,8 @@ def run(flags, n_h, star, num_mpi_ranks):
         kw["metallicity"] = Z_SOLAR_SPECIES
     if starforge:
         kw.update(u_bands_ev=U_BANDS_EV_IONIZING, neutral_hydrogen=True, star_mass=STAR_MASS if star else None)
+    if is_molecular(flags):
+        kw.update(t_gas=T_MOLECULAR, h2_per_neutral_h=1.0)
     if is_source(flags):
         kw.update(u_bands_ev=U_BANDS_EV_SOURCE, neutral_hydrogen=True, source_mass=SOURCE_MASS)
     make_rt_closed_box_ics(str(TEST_DIR / f"{ic_name(flags, n_h, star)}.hdf5"), n_h=n_h, **kw)
@@ -402,6 +419,19 @@ def check_starforge(flags, n_h, star):
     assert ch["donated_in"][ir] == 0, f"{ch['donated_in'][ir] / routed[-1]:.6f} x routed donated to the IR band directly"
 
 
+def check_molecular(flags, n_h, star):
+    rows = re.findall(r"EOS_GAMMA_PROBE t=(\S+) updates=(\d+) above_1e-12=(\d+) max_rel=(\S+) gamma_range=\[(\S+), (\S+)\]",
+                      open(f"{output_dir(flags, n_h, star)}/test_{TEST_NAME}.out").read())
+    a = np.array(rows, dtype=float)
+    t, max_rel, g_lo, g_hi = a[:, 0], a[:, 3], a[:, 4].min(), a[:, 5].max()
+    print(f"\n{VARIANTS[flags]}, n_H = {n_h:g}: {a[:, 1].sum():.0f} EOS updates, gamma in [{g_lo:.6f}, {g_hi:.6f}]; "
+          f"max |SoundSpeed^2 rho / (gamma P) - 1| = {max_rel.max():.3e} (at t = {t[np.argmax(max_rel)]:.4g}), "
+          f"{a[:, 2].sum():.0f} updates above 1e-12")
+    assert len(rows) > 0, "no EOS_GAMMA_PROBE output: the check is not exercised"
+    assert g_hi - g_lo > 0.05, f"the adiabatic index only spans [{g_lo:.4f}, {g_hi:.4f}]: the check is not exercised"
+    assert max_rel.max() < TOL_GAMMA_PROBE, f"sound speed inconsistent with the refreshed adiabatic index: {max_rel.max():.3e}"
+
+
 def case(flags, n_h, *marks, star=False):
     return pytest.param(flags, n_h, star, id=f"{VARIANTS[flags]}{'_star' if star else ''}-n{tag(n_h)}", marks=marks)
 
@@ -410,11 +440,13 @@ def case(flags, n_h, *marks, star=False):
 CASES = ([case(PLAIN_RT, n) for n in (1e3, 1e4, 1e5, 1e7)]
          + [case(PLAIN_COOLING, n) for n in (1e3, 1e5, 1e7)]
          + [case(POINT_SOURCE, 1e3), case(ILIEV, 1e3)]
-         + [case(STARFORGE, n, star=s) for n in (1e3, 1e7) for s in (False, True)])
+         + [case(STARFORGE, n, star=s) for n in (1e3, 1e7) for s in (False, True)]
+         + [case(MOLECULAR, 1e4)])
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=8),))
 @pytest.mark.parametrize("flags,n_h,star", CASES)
 def test_rt_closed_box(flags, n_h, star, num_mpi_ranks):
     run(flags, n_h, star, num_mpi_ranks)
-    (check_starforge if is_starforge(flags) else check_source if is_source(flags) else check_bare)(flags, n_h, star)
+    (check_molecular if is_molecular(flags) else check_starforge if is_starforge(flags) else check_source if is_source(flags)
+     else check_bare)(flags, n_h, star)

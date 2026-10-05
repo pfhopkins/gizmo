@@ -34,13 +34,14 @@ def ms_radius_solar(m):
 
 def make_rt_closed_box_ics(output_file="rt_closed_box_ics.hdf5", glass="glass_32.hdf5", n_h=N_H, t_gas=T_GAS,
                            t_rad=T_RAD, u_bands_ev=U_BANDS_EV, metallicity=Z_SOLAR, neutral_hydrogen=False,
-                           star_mass=None, source_mass=None, inset=False):
+                           star_mass=None, source_mass=None, h2_per_neutral_h=None, inset=False):
     """metallicity: total metal mass fraction, or one per species (it must match the build's NUM_METAL_SPECIES).
     neutral_hydrogen: write the H ionization state of an RT_CHEM_PHOTOION build (neutral). star_mass [Msun]: add a
     main-sequence STARFORGE star (Type 5, its sink properties set as a flag-2 start reads them) at the box centre.
     source_mass [Msun]: add the ionizing source of a non-GALSF RT_CHEM_PHOTOION build (Type 4) near the box centre, offset
     from the glass cell that sits exactly at the centre: the injection skips a cell at zero distance while the density
     loop's kernel sum counts it, which would lose 1/(kernel sum) of the luminosity.
+    h2_per_neutral_h: write the H2 fraction per neutral H that a COOL_MOLECFRAC_NONEQM snapshot stores.
     inset: put the gas cube in the middle of a box 1/0.8 times larger, so no cell lies within 10% of the box edge, where
     RT_ISRF_BACKGROUND resets the radiation field every kick (rt_apply_boundary_conditions), for builds that keep the
     background on. The cube's surface has no neighbours outside it, so nothing crosses it."""
@@ -88,6 +89,8 @@ def make_rt_closed_box_ics(output_file="rt_closed_box_ics.hdf5", glass="glass_32
         g.create_dataset("IRBand_Radiation_Temperature", data=np.full(ngas, t_rad, dtype=np.float32))
         g.create_dataset("Dust_Temperature", data=np.full(ngas, t_rad, dtype=np.float32))
         g.create_dataset("Metallicity", data=np.tile(z, (ngas, 1)))
+        if h2_per_neutral_h is not None:
+            g.create_dataset("MolecularMassFraction", data=np.full(ngas, h2_per_neutral_h, dtype=np.float32))
         if neutral_hydrogen:
             g.create_dataset("NeutralHydrogenAbundance", data=np.full(ngas, 1.0, dtype=np.float32))
             g.create_dataset("HII", data=np.full(ngas, 1e-6, dtype=np.float32))

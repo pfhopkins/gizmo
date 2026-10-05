@@ -72,8 +72,7 @@ void eos_gamma_probe_report(void) /* collective; rank 0 prints the totals since 
     variable as well. */
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
-    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; cell[i].Gamma = gamma_eos_index; /* get effective adiabatic index */
-    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
+    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; /* get effective adiabatic index */
 
 #ifdef COOLING
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
@@ -83,8 +82,10 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
     cell[i].Temperature = temp; // cache the temperature; must precede the gamma update below, which reads Temperature under EOS_SUBSTELLAR_ISM
 #ifdef COOLING
-    cell[i].Gamma = cell[i].gamma_eos_value(); // cache the adiabatic index, reusing the temperature just cached
+    gamma_eos_index = cell[i].gamma_eos_value(); // the adiabatic index at the temperature just cached: used for everything below, sound speed included
 #endif
+    cell[i].Gamma = gamma_eos_index;
+    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
