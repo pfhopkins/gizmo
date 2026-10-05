@@ -232,9 +232,9 @@ extern int DomainReconstructFlag; /*!< a full domain decomposition (particle own
     restartfiles. */
 extern int NtotSwallowedThisStep; /*!< global (Allreduce'd) count of particles swallowed in this step's sink pass; gates the cleanup rearrange in run.cc. Rank-uniform by construction. */
 extern int TreeWalkValidatePending; /*!< set (rank-local) when a maintained rearrange changed the walk threading; the next tree consumer runs force_validate_tree_links() and clears it. Cleared by force_treebuild (fresh tree). */
-enum TreeOpsIndex {TREEOPS_BUILD=0, TREEOPS_REFRESH, TREEOPS_DECOMP, TREEOPS_DECOMP_LIGHT, TREEOPS_DEFER, TREEOPS_ESCALATE, TREEOPS_REARRANGE, TREEOPS_N};
+enum TreeOpsIndex {TREEOPS_BUILD=0, TREEOPS_REFRESH, TREEOPS_DECOMP, TREEOPS_DECOMP_LIGHT, TREEOPS_DEFER, TREEOPS_ESCALATE, TREEOPS_REARRANGE, TREEOPS_CONDEMNED_WALK, TREEOPS_N};
 extern long long ForceAddElementToTree_CallsSinceBuild; /*!< rank-local insertions accepted by the standing tree since its build; the ladder SUM-reduces this and condemns the tree past a fixed fraction of TotNumPart (insertions attach at existing nodes, so tree quality degrades with their count) */
-extern long long TreeOpsCount[TREEOPS_N]; /*!< running counts of whole-tree builds, moment refreshes, full/light decompositions, deferred-rebuild ladder steps, and rearranges. All are collective events, so every rank agrees; reported in cpu.txt. Diagnostic only: not serialized, resets on resume. */
+extern long long TreeOpsCount[TREEOPS_N]; /*!< running counts of whole-tree builds, moment refreshes, full/light decompositions, deferred-rebuild ladder steps, rearranges, and walks started on a condemned tree (a protocol violation: should stay 0). All are collective events, so every rank agrees; reported in cpu.txt. Diagnostic only: not serialized, resets on resume. */
 extern double TreeMaintTime_SwapPointers; /*!< rank-local cumulative seconds in swap_treewalk_pointers (the per-swap O(tree) pointer surgery MAINTAIN_TREE_IN_REARRANGE pays); MAX across ranks in cpu.txt */
 extern double TreeMaintTime_Rearrange; /*!< rank-local cumulative seconds in rearrange_particle_sequence; MAX across ranks in cpu.txt */
 extern long long TreeMaintCount_SwapPointers; /*!< rank-local count of swap_treewalk_pointers calls */

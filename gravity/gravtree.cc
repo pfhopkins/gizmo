@@ -71,6 +71,11 @@ void gravity_tree(void)
         TreeMomentsStaleFlag = 0;
         PRINT_STATUS(" ..Tree construction done.");
     }
+#ifdef HERMITE_INTEGRATION
+    /* the Hermite passes skip the rebuild above by design (the predictor runs before the step-start
+       ladder, where a bucketing rebuild is not escape-safe), so they must find the tree intact */
+    if(HermiteOnlyFlag) {force_tree_check_walkable(HermiteOnlyFlag == 1 ? "hermite_predict" : "hermite_correct");}
+#endif
 
     force_validate_tree_links("gravtree"); /* tier-0: no-op unless a maintained rearrange changed the threading since the last build */
 
