@@ -47,6 +47,14 @@ Reported, not asserted: the remaining band drain. The gas re-radiates what it ab
 at c_tilde/c, so with the 1:1 deposit the bands lose ~(1 - c_tilde/c) of the gas share; the reduced-c convention of
 kicks.cc (E_band c/c_tilde + E_gas conserved) would deposit it at c/c_tilde.
 
+Point-source variant: the bare-RT bands plus an ionizing band (RT_CHEM_PHOTOION, no COOLING), with a type-4 source
+at the centre (RT_SOURCES=16, no gas sources) of luminosity IonizingLuminosityPerSolarMass_cgs x its mass, injected
+continuously (without RT_INJECT_PHOTONS_DISCRETELY a source's injection is a rate in its neighbours' Rad_Je, applied by
+the kicks). The ionizing band starts empty; what it absorbs is donated to the optical-NIR band and on to the IR. Every
+row of the diagnostic must show the bands gaining c_tilde/c L dt through their kick source terms (transport sums to zero
+over the box), and the total band energy must grow by c_tilde/c L t (1e-6 for both). Rad_Je has to be zeroed before
+each injection: if it is not, every injection adds to the last and the injected rate grows step by step.
+
 STARFORGE variants: the production RT configuration (SINGLE_STAR_STARFORGE_DEFAULTS + SINGLE_STAR_FB_RAD + COOLING,
 which add the ionizing band with RT_CHEM_PHOTOION, the STARFORGE cooling, dust and H2 chemistry, radiation pressure,
 discrete source injection with sub-grid reprocessing, and RT_ISRF_BACKGROUND), at n_H = 1e3 and 1e7, without sources
@@ -83,11 +91,15 @@ PLAIN_RT = ("RT_M1", "RT_COMOVING", "RT_SOURCES=32", "RT_PHOTOELECTRIC", "RT_NUV
 # what COOLING brings in a STARFORGE build (SINGLE_STAR_SINK_DYNAMICS adds the two sub-modules); a bare COOLING has
 # neither the low-temperature/dust cooling nor the 11 metal species
 PLAIN_COOLING = PLAIN_RT + ("COOLING", "COOL_LOW_TEMPERATURES", "COOL_METAL_LINES_BY_SPECIES")
+POINT_SOURCE = tuple(f for f in PLAIN_RT if not f.startswith("RT_SOURCES")) + ("RT_SOURCES=16", "RT_CHEM_PHOTOION=1")
+SOURCE_MASS = 1.0  # Msun
+SOURCE_PARAMS = {"IonizingLuminosityPerSolarMass_cgs": "1e38", "star_Teff": "1e5"}
+U_BANDS_EV_SOURCE = (0.0, 20.0, 20.0, 20.0, 30.0)  # ionizing band empty at the start
 STARFORGE = ("SINGLE_STAR_STARFORGE_DEFAULTS", "SINGLE_STAR_FB_RAD", "COOLING", "RT_ISRF_BACKGROUND=0")
 # G ~ 0: the star binds no gas, so it cannot accrete; the critical density keeps sink formation off
 STARFORGE_PARAMS = {"GravityConstantInternal": "1e-100", "CritPhysDensity": "1e30"}
 STAR_MASS = 30.0
-VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", STARFORGE: "starforge"}
+VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", STARFORGE: "starforge"}
 CHANNELS = ("absorbed", "donated_in", "ir_gas_share", "cooling_to_band", "injected", "kick_source")
 BANDS = ("photoelectric", "NUV", "optical-NIR", "IR")
 BANDS_STARFORGE = ("ionizing",) + BANDS
@@ -99,6 +111,7 @@ C_TILDE_CGS = C_RATIO * 2.9979e10
 DT = 3e-3  # code units: MaxSizeTimestep in the params rounds down to TimeMax / 2^6
 UNIT_TIME_S, UNIT_LENGTH_CM, UNIT_MASS_G = 3.085678e18 / 1e5, 3.085678e18, 1.989e33
 UNIT_RHO_CGS, UNIT_SURFDEN_CGS = UNIT_MASS_G / UNIT_LENGTH_CM**3, UNIT_MASS_G / UNIT_LENGTH_CM**2
+UNIT_LUM_CGS = UNIT_MASS_G * 1e10 / UNIT_TIME_S
 TOL_ENERGY = 1e-6
 TOL_LEDGER = 1e-4
 TOL_COOLING = 1e-3
@@ -126,8 +139,12 @@ def is_starforge(flags):
     return "SINGLE_STAR_STARFORGE_DEFAULTS" in flags
 
 
+def is_source(flags):
+    return "RT_SOURCES=16" in flags
+
+
 def ic_name(flags, n_h, star):
-    kind = "_starforge" if is_starforge(flags) else ("_cooling" if "COOLING" in flags else "")
+    kind = "_starforge" if is_starforge(flags) else ("_cooling" if "COOLING" in flags else ("_source" if is_source(flags) else ""))
     return f"{TEST_NAME}_n{tag(n_h)}{kind}{'_star' if star else ''}_ics"
 
 
@@ -187,6 +204,8 @@ def run(flags, n_h, star, num_mpi_ranks):
         kw["metallicity"] = Z_SOLAR_SPECIES
     if starforge:
         kw.update(u_bands_ev=U_BANDS_EV_IONIZING, neutral_hydrogen=True, star_mass=STAR_MASS if star else None)
+    if is_source(flags):
+        kw.update(u_bands_ev=U_BANDS_EV_SOURCE, neutral_hydrogen=True, source_mass=SOURCE_MASS)
     make_rt_closed_box_ics(str(TEST_DIR / f"{ic_name(flags, n_h, star)}.hdf5"), n_h=n_h, **kw)
     if _built.get("flags") != flags or not (TEST_DIR / "GIZMO").is_file():
         _built.clear()
@@ -197,6 +216,8 @@ def run(flags, n_h, star, num_mpi_ranks):
     overrides = {"InitCondFile": ic_name(flags, n_h, star), "OutputDir": out.name}
     if starforge:
         overrides.update(STARFORGE_PARAMS)
+    if is_source(flags):
+        overrides.update(SOURCE_PARAMS)
     cwd = getcwd()
     try:
         chdir(TEST_DIR)
@@ -294,6 +315,26 @@ def check_bare(flags, n_h, star):
         f"IR gain = {d_ir[-1] / routed[-1]:.6f}x the absorbed donor energy routed to it"
 
 
+def source_luminosity(flags):
+    """the source's luminosity in code units"""
+    return float(SOURCE_PARAMS["IonizingLuminosityPerSolarMass_cgs"]) * SOURCE_MASS / UNIT_LUM_CGS
+
+
+def check_source(flags, n_h, star):
+    o = diag(flags, n_h, star)
+    l_code = source_luminosity(flags)
+    t, E = o["t"], o["E"].sum(axis=1)
+    injected = np.diff(o["kick_source"].sum(axis=1))  # per row: transport sums to zero over the box
+    rate = injected / np.diff(t) / (C_RATIO * l_code)
+    gain = (E[1:] - E[0]) / (C_RATIO * l_code * t[1:])
+    print(f"\n{VARIANTS[flags]}, n_H = {n_h:g}: L = {l_code:.6g} code units; per-row injection / (c_tilde/c L dt): first "
+          f"{np.round(rate[:4], 8)}, last {np.round(rate[-3:], 8)}; band energy gain / (c_tilde/c L t) at the end "
+          f"{gain[-1]:.8f}")
+    assert np.max(np.abs(rate - 1)) < TOL_INJECTION, \
+        f"injected per step / (c_tilde/c L dt) ranges over [{rate.min():.6g}, {rate.max():.6g}]"
+    assert abs(gain[-1] - 1) < TOL_INJECTION, f"band energy gain = {gain[-1]:.6f} x c_tilde/c L t"
+
+
 def check_starforge(flags, n_h, star):
     o = diag(flags, n_h, star)
     E, routed = o["E"], o["routed"]
@@ -347,6 +388,7 @@ def case(flags, n_h, *marks, star=False):
 # grouped by flag set, so each set is built once
 CASES = ([case(PLAIN_RT, n) for n in (1e3, 1e4, 1e5, 1e7)]
          + [case(PLAIN_COOLING, n) for n in (1e3, 1e5, 1e7)]
+         + [case(POINT_SOURCE, 1e3)]
          + [case(STARFORGE, n, star=s) for n in (1e3, 1e7) for s in (False, True)])
 
 
@@ -354,4 +396,4 @@ CASES = ([case(PLAIN_RT, n) for n in (1e3, 1e4, 1e5, 1e7)]
 @pytest.mark.parametrize("flags,n_h,star", CASES)
 def test_rt_closed_box(flags, n_h, star, num_mpi_ranks):
     run(flags, n_h, star, num_mpi_ranks)
-    (check_starforge if is_starforge(flags) else check_bare)(flags, n_h, star)
+    (check_starforge if is_starforge(flags) else check_source if is_source(flags) else check_bare)(flags, n_h, star)

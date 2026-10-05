@@ -34,10 +34,13 @@ def ms_radius_solar(m):
 
 def make_rt_closed_box_ics(output_file="rt_closed_box_ics.hdf5", glass="glass_32.hdf5", n_h=N_H, t_gas=T_GAS,
                            t_rad=T_RAD, u_bands_ev=U_BANDS_EV, metallicity=Z_SOLAR, neutral_hydrogen=False,
-                           star_mass=None, inset=False):
+                           star_mass=None, source_mass=None, inset=False):
     """metallicity: total metal mass fraction, or one per species (it must match the build's NUM_METAL_SPECIES).
     neutral_hydrogen: write the H ionization state of an RT_CHEM_PHOTOION build (neutral). star_mass [Msun]: add a
     main-sequence STARFORGE star (Type 5, its sink properties set as a flag-2 start reads them) at the box centre.
+    source_mass [Msun]: add the ionizing source of a non-GALSF RT_CHEM_PHOTOION build (Type 4) near the box centre, offset
+    from the glass cell that sits exactly at the centre: the injection skips a cell at zero distance while the density
+    loop's kernel sum counts it, which would lose 1/(kernel sum) of the luminosity.
     inset: put the gas cube in the middle of a box 1/0.8 times larger, so no cell lies within 10% of the box edge, where
     RT_ISRF_BACKGROUND resets the radiation field every kick (rt_apply_boundary_conditions), for builds that keep the
     background on. The cube's surface has no neighbours outside it, so nothing crosses it."""
@@ -58,7 +61,7 @@ def make_rt_closed_box_ics(output_file="rt_closed_box_ics.hdf5", glass="glass_32
     e_bands = np.asarray(u_bands_ev) * EV_ERG / EGY_DENSITY_UNIT * v_cell  # code energy per cell
     with h5py.File(output_file, "w") as f:
         h = f.create_group("Header")
-        npart = np.array([ngas, 0, 0, 0, 0, 0 if star_mass is None else 1], dtype=np.int32)
+        npart = np.array([ngas, 0, 0, 0, 0 if source_mass is None else 1, 0 if star_mass is None else 1], dtype=np.int32)
         h.attrs["NumPart_ThisFile"] = npart
         h.attrs["NumPart_Total"] = npart.astype(np.uint32)
         h.attrs["NumPart_Total_HighWord"] = np.zeros(6, dtype=np.uint32)
@@ -103,6 +106,12 @@ def make_rt_closed_box_ics(output_file="rt_closed_box_ics.hdf5", glass="glass_32
             s.create_dataset("ProtoStellarStage", data=np.array([5], dtype=np.int32))  # main sequence
             s.create_dataset("ProtoStellarRadius_inSolar", data=np.array([ms_radius_solar(star_mass)], dtype=np.float32))
             s.create_dataset("Sink_Radius", data=np.array([1e-4], dtype=np.float32))  # pc: no cell can be captured
+        if source_mass is not None:
+            s = f.create_group("PartType4")
+            s.create_dataset("Coordinates", data=np.full((1, 3), 0.5 * box) + np.array([[0.1, 0.07, 0.03]]) * BOX_SIZE / 32)
+            s.create_dataset("Velocities", data=np.zeros((1, 3), dtype=np.float32))
+            s.create_dataset("Masses", data=np.array([source_mass], dtype=np.float32))
+            s.create_dataset("ParticleIDs", data=np.array([ngas + 2], dtype=np.uint32))
     return output_file
 
 
