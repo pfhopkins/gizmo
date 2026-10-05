@@ -1075,7 +1075,7 @@ int needs_new_treeforce(int n){
 #endif
     if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    else if(P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
+    else if(P[n].Type == 0 && P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // gas only, as the feedback-time step limit it serves: we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
 #endif
     else {return 0;}
 }
