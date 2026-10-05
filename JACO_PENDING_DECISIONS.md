@@ -91,6 +91,16 @@ long tests (HII_region_subcycle, shu_M120, gmc_cooling, SN_singlestar, gmc_cooli
 Decision: fix D1 on starforge_dev (now backed by a sensitive test) and regenerate the gmc_cooling_rt benchmark; D2
 is harmless either way (keep for consistency or drop). Not merged; your call.
 
+### 3.1b IR-thick cells under COOLING: band energy drains into the gas (new, 2026-10-05)
+rt_closed_box now runs at n_H = 1e3, 1e4, 1e5, 1e7 (rt_energy_ab 116d5b5a). Without COOLING the fixed build conserves
+band energy to round-off up to tau_IR = 6.8e3 per cell. With COOLING at n_H = 1e7 (tau_IR ~ 2.5 per cell) the
+bands + gas ledger loses 26% over the run (0.37% at 1e5), independent of D1/D2; strict xfail documents it. Half of
+it is the gas share of IR absorption being deposited at c~ instead of c (an experiment at c halves the drain); the
+other half is gas emission that the cooling step does not return to the bands, untraced. This is the RSOL
+band/gas coupling convention, not a kick bug, and it is the regime of IR-trapped cores.
+Decision: trace the second half (one agent-day) before deciding whether the RSOL convention needs a consistent
+treatment on starforge_dev.
+
 ### 3.2 Cooling-radiation return limiter under reduced c
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
 cooling radiation only if the cell's internal energy fell this step". Measured effect in the tests < 0.7%.
