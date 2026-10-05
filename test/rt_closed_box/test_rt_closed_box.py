@@ -54,6 +54,10 @@ the kicks). The ionizing band starts empty; what it absorbs is donated to the op
 row of the diagnostic must show the bands gaining c_tilde/c L dt through their kick source terms (transport sums to zero
 over the box), and the total band energy must grow by c_tilde/c L t (1e-6 for both). Rad_Je has to be zeroed before
 each injection: if it is not, every injection adds to the last and the injected rate grows step by step.
+With RT_ILIEV_TEST1 the source emits 5e48 ionizing photons/s whatever its mass, and photons are counted at the band's
+number-weighted mean energy rt_nu_eff_eV (a blackbody at star_Teff over 13.6-500 eV, recomputed here as rt_get_sigma
+does), so the same checks hold with L = 5e48 rt_nu_eff_eV; emitting 5e48 x 13.6 eV instead gives 13.6/rt_nu_eff_eV of
+the photons.
 
 STARFORGE variants: the production RT configuration (SINGLE_STAR_STARFORGE_DEFAULTS + SINGLE_STAR_FB_RAD + COOLING,
 which add the ionizing band with RT_CHEM_PHOTOION, the STARFORGE cooling, dust and H2 chemistry, radiation pressure,
@@ -92,6 +96,8 @@ PLAIN_RT = ("RT_M1", "RT_COMOVING", "RT_SOURCES=32", "RT_PHOTOELECTRIC", "RT_NUV
 # neither the low-temperature/dust cooling nor the 11 metal species
 PLAIN_COOLING = PLAIN_RT + ("COOLING", "COOL_LOW_TEMPERATURES", "COOL_METAL_LINES_BY_SPECIES")
 POINT_SOURCE = tuple(f for f in PLAIN_RT if not f.startswith("RT_SOURCES")) + ("RT_SOURCES=16", "RT_CHEM_PHOTOION=1")
+ILIEV = POINT_SOURCE + ("RT_ILIEV_TEST1",)
+Q_ILIEV = 5e48  # ionizing photons/s
 SOURCE_MASS = 1.0  # Msun
 SOURCE_PARAMS = {"IonizingLuminosityPerSolarMass_cgs": "1e38", "star_Teff": "1e5"}
 U_BANDS_EV_SOURCE = (0.0, 20.0, 20.0, 20.0, 30.0)  # ionizing band empty at the start
@@ -99,7 +105,7 @@ STARFORGE = ("SINGLE_STAR_STARFORGE_DEFAULTS", "SINGLE_STAR_FB_RAD", "COOLING", 
 # G ~ 0: the star binds no gas, so it cannot accrete; the critical density keeps sink formation off
 STARFORGE_PARAMS = {"GravityConstantInternal": "1e-100", "CritPhysDensity": "1e30"}
 STAR_MASS = 30.0
-VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", STARFORGE: "starforge"}
+VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", ILIEV: "iliev", STARFORGE: "starforge"}
 CHANNELS = ("absorbed", "donated_in", "ir_gas_share", "cooling_to_band", "injected", "kick_source")
 BANDS = ("photoelectric", "NUV", "optical-NIR", "IR")
 BANDS_STARFORGE = ("ionizing",) + BANDS
@@ -112,6 +118,7 @@ DT = 3e-3  # code units: MaxSizeTimestep in the params rounds down to TimeMax / 
 UNIT_TIME_S, UNIT_LENGTH_CM, UNIT_MASS_G = 3.085678e18 / 1e5, 3.085678e18, 1.989e33
 UNIT_RHO_CGS, UNIT_SURFDEN_CGS = UNIT_MASS_G / UNIT_LENGTH_CM**3, UNIT_MASS_G / UNIT_LENGTH_CM**2
 UNIT_LUM_CGS = UNIT_MASS_G * 1e10 / UNIT_TIME_S
+EV_ERG, K_BOLTZMANN = 1.60217733e-12, 1.38066e-16  # GIZMO's ELECTRONVOLT_IN_ERGS, BOLTZMANN_CGS
 TOL_ENERGY = 1e-6
 TOL_LEDGER = 1e-4
 TOL_COOLING = 1e-3
@@ -315,8 +322,18 @@ def check_bare(flags, n_h, star):
         f"IR gain = {d_ir[-1] / routed[-1]:.6f}x the absorbed donor energy routed to it"
 
 
+def nu_eff_ev(t_eff):
+    """rt_get_sigma's single-band rt_nu_eff_eV: number-weighted mean energy of a blackbody over 13.6-500 eV"""
+    n = 10000
+    e = 13.6 + np.arange(n) * ((500.0 - 13.6) / (n - 1))
+    i_nu = e**3 / np.expm1(e * EV_ERG / (K_BOLTZMANN * t_eff))  # constant factors cancel in the ratio
+    return i_nu.sum() / (i_nu / e).sum()
+
+
 def source_luminosity(flags):
     """the source's luminosity in code units"""
+    if "RT_ILIEV_TEST1" in flags:
+        return Q_ILIEV * nu_eff_ev(float(SOURCE_PARAMS["star_Teff"])) * EV_ERG / UNIT_LUM_CGS
     return float(SOURCE_PARAMS["IonizingLuminosityPerSolarMass_cgs"]) * SOURCE_MASS / UNIT_LUM_CGS
 
 
@@ -327,6 +344,10 @@ def check_source(flags, n_h, star):
     injected = np.diff(o["kick_source"].sum(axis=1))  # per row: transport sums to zero over the box
     rate = injected / np.diff(t) / (C_RATIO * l_code)
     gain = (E[1:] - E[0]) / (C_RATIO * l_code * t[1:])
+    if "RT_ILIEV_TEST1" in flags:
+        nu = nu_eff_ev(float(SOURCE_PARAMS["star_Teff"]))
+        q = injected / np.diff(t) / C_RATIO * UNIT_LUM_CGS / (nu * EV_ERG)
+        print(f"\nrt_nu_eff_eV = {nu:.6f} eV; ionizing photons injected per second: first {q[0]:.6e}, last {q[-1]:.6e}")
     print(f"\n{VARIANTS[flags]}, n_H = {n_h:g}: L = {l_code:.6g} code units; per-row injection / (c_tilde/c L dt): first "
           f"{np.round(rate[:4], 8)}, last {np.round(rate[-3:], 8)}; band energy gain / (c_tilde/c L t) at the end "
           f"{gain[-1]:.8f}")
@@ -388,7 +409,7 @@ def case(flags, n_h, *marks, star=False):
 # grouped by flag set, so each set is built once
 CASES = ([case(PLAIN_RT, n) for n in (1e3, 1e4, 1e5, 1e7)]
          + [case(PLAIN_COOLING, n) for n in (1e3, 1e5, 1e7)]
-         + [case(POINT_SOURCE, 1e3)]
+         + [case(POINT_SOURCE, 1e3), case(ILIEV, 1e3)]
          + [case(STARFORGE, n, star=s) for n in (1e3, 1e7) for s in (False, True)])
 
 
