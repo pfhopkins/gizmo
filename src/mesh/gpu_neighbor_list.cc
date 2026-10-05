@@ -597,9 +597,11 @@ struct SidxRecordSource {
     }
 };
 
-/* The sort's own working space, per member sorted (measured with the OpenMP backend).  An allowance for
- * projecting a build's peak, and the size reported, as an estimate, when the sort is refused its memory. */
-static constexpr size_t SIDX_SORT_BYTES_PER_MEMBER = 20;
+/* The sort's own working space, per member sorted: an allowance for projecting a build's peak, and the size
+ * reported, as an estimate, when the sort is refused its memory.  The sort allocates it internally; it is
+ * measured only on the OpenMP backend (20 bytes), and device backends are allowed 64.  A device sort refused
+ * its memory as an allocation failure is retried on the host; any other failure of the sort stops the run. */
+static constexpr size_t SIDX_SORT_BYTES_PER_MEMBER = 64;
 
 /* What a build reports besides the index itself. */
 struct SidxBuildReport {
@@ -1203,9 +1205,15 @@ enum SidxBuildRoute {SIDX_ROUTE_HOST = 0, SIDX_ROUTE_DEVICE = 1};
  * the rank's own members sorted, and the imported members, sorted, from their compact records. */
 enum SidxBuildShape {SIDX_SHAPE_OWNED_PRESORTED = 0, SIDX_SHAPE_OWNED_SORTED = 1, SIDX_SHAPE_IMPORTED = 2, SIDX_NUM_SHAPES = 3};
 
-/* The fewest members for which a build of each shape takes the device route.  No build takes it until its
- * builder has been checked on a device; these are then set from the measured crossover of the two routes. */
-static constexpr int SIDX_DEVICE_ROUTE_MIN_MEMBERS[SIDX_NUM_SHAPES] = {INT_MAX, INT_MAX, INT_MAX};
+/* The size from which a build of each shape takes the device route, in the units sidx_member_bound gives:
+ * gas cells for the gas index over the rank's own particles, else the particles in the source (for an
+ * imported segment, every particle in the ghost range).  A device build pays a fixed
+ * cost of about a millisecond (launches, staging, allocation) and then runs several times faster per member.
+ * Measured on MI250X against 7 host threads: imported builds cross over between 4096 and 8192 particles;
+ * full-rank owned builds of 0.5-1.1M members run 4.5x (sorted) and 2.2x (presorted) faster on the device,
+ * while ~30k-member owned builds are still slower there, so the owned thresholds sit well clear of that.
+ * Presorted builds skip the passes the device speeds up most, so their crossover lies higher. */
+static constexpr int SIDX_DEVICE_ROUTE_MIN_MEMBERS[SIDX_NUM_SHAPES] = {262144, 131072, 8192};
 
 /* The share of the device's free memory a build may plan on: ranks sharing a device allocate between the query
  * and the build.  The projection does not count the particle storage, which the device route reads where it lives
