@@ -115,6 +115,12 @@ _SUBCYCLE_XFAIL = pytest.mark.xfail(
         pytest.param(("TRANSPORT_SUBCYCLE=10",), id="subcycle_rt", marks=_SUBCYCLE_XFAIL),
         pytest.param(("TRANSPORT_SUBCYCLE=10", "TRANSPORT_SUBCYCLE_COOLING"),
                      id="subcycle_rt_cooling", marks=_SUBCYCLE_XFAIL),
+        # Fatal tree audits through accretion with radiation on: every swallow rearranges the
+        # particle list and the RT source injection from the sink walks the tree in the same step,
+        # before any rebuild. Both integrators: Hermite's corrector is one such walk, and the
+        # KDK variant proves the neighbour loops alone need the tree maintained through the swallow.
+        pytest.param(("TREE_INTEGRITY_AUDITS",), id="tree_audits"),
+        pytest.param(("DISABLE_HERMITE_INTEGRATION", "TREE_INTEGRITY_AUDITS"), id="kdk_tree_audits"),
     ],
 )
 def test_shu_M120(num_mpi_ranks, num_omp_threads, extra_config_flags):

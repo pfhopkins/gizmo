@@ -555,17 +555,19 @@
    configs set only to expose accuracy parameters. Without it only the always-on checks run
    (force_validate_tree_links and the treebuild bookkeeping reduce). */
 
-#if defined(HERMITE_INTEGRATION) && defined(SINK_PARTICLES) && !defined(MAINTAIN_TREE_IN_REARRANGE)
-/* Hermite is the one consumer that walks the STANDING tree while deliberately skipping the rebuild
-   it was asked for (the HermiteOnlyFlag gate in gravtree.cc), so any Hermite run whose particle list
-   is rearranged mid-step must have the full per-swap maintenance -- the parent-only carry is not
-   enough for a tree that keeps being walked. Spawning rearranges, and so does every swallow: the sink
-   pass's cleanup rearrange (run.cc) eliminates the victims even with no spawning at all. Without the
-   maintenance the Hermite corrector refreshes moments on, and takes sink forces from, a condemned
-   tree whose threading still points at the vacated slots. This deliberately OVERRIDES the
-   nuclear-zoom exclusion above. (cf. gizmo-cpp a06e0073) */
+#if defined(SINK_PARTICLES) && !defined(MAINTAIN_TREE_IN_REARRANGE) && (defined(HERMITE_INTEGRATION) || !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM))
+/* Every sink pass that swallows ends with a cleanup rearrange (run.cc) that eliminates the victims,
+   spawning or not. Without maintenance that rearrange only condemns the tree, and the consumers
+   that follow in the same step walk it without rebuilding: the Hermite passes (which skip the
+   rebuild by design, the HermiteOnlyFlag gate in gravtree.cc), RT source injection from the sink,
+   and the feedback neighbour loops. The threading still points at the vacated slots, so each of
+   those walks sees a duplicated particle per swallow, and Hermite also refreshes moments on, and
+   takes sink forces from, that tree. The parent-only carry is not enough for a tree that keeps
+   being walked, so every sink run gets the full per-swap maintenance. Nuclear zoom keeps its
+   upstream exclusion above unless Hermite is on; the condemned walks it then makes are reported
+   by force_tree_check_walkable. (cf. gizmo-cpp a06e0073) */
 #ifdef DISABLE_MAINTAIN_TREE_IN_REARRANGE
-#warning "DISABLE_MAINTAIN_TREE_IN_REARRANGE overridden: HERMITE_INTEGRATION + SINK_PARTICLES requires tree maintenance (this config cannot serve as the no-MAINTAIN A/B arm)"
+#warning "DISABLE_MAINTAIN_TREE_IN_REARRANGE overridden: SINK_PARTICLES requires tree maintenance (this config cannot serve as the no-MAINTAIN A/B arm)"
 #endif
 #define MAINTAIN_TREE_IN_REARRANGE
 #endif

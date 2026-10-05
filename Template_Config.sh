@@ -562,7 +562,7 @@
 #NO_CHILD_IDS_IN_ICS               # IC file does not have child IDs: do not read them (used for compatibility with snapshot restarts from old versions of the code)
 # --------------------
 # ----- Particle Merging/Splitting/Deletion/Boundaries
-#MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254
+#MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254 Forced on for any SINK_PARTICLES run (nuclear zoom excepted): swallows and spawns rearrange the particle list mid-step and the walks that follow do not rebuild first
 #PREVENT_PARTICLE_MERGE_SPLIT      # don't allow gas particle splitting/merging operations
 #PREVENT_PARTICLE_MERGE            # don't allow gas MERGING but still allow splitting (cf. PREVENT_PARTICLE_MERGE_SPLIT, which disables both). Gives a diffusion-free, finest-resolution reference for spawned outflows; cf. SINK_SPAWN_NO_MERGE, which protects only spawned cells.
 
