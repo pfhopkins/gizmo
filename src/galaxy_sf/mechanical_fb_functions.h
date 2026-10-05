@@ -511,20 +511,22 @@ static void mechanical_fb_pair_kernel(
 
 #ifdef METALS
     {
-        int kmax_std = NUM_METAL_SPECIES;
-#if defined(NUM_AGE_TRACERS)
-        kmax_std = NUM_METAL_SPECIES - NUM_AGE_TRACERS;
-#endif
-        for(int k = 0; k < kmax_std; k++) {
+        /* the enrichment-age tracers occupy [AGE_TRACER_OFFSET, AGE_TRACER_OFFSET+NUM_AGE_TRACERS) and are coupled
+           separately below; every other species (including tracers and scalars stored after them) mixes normally */
+        const int k_age_begin = AGE_TRACER_OFFSET, k_age_end = AGE_TRACER_OFFSET + NUM_AGE_TRACERS;
+        for(int k = 0; k < k_age_begin; k++) {
+            Metallicity_j[k] = (1 - massratio_ejecta) * Metallicity_j[k] + massratio_ejecta * (double)local.yields[k];
+        }
+        for(int k = k_age_end; k < NUM_METAL_SPECIES; k++) {
             Metallicity_j[k] = (1 - massratio_ejecta) * Metallicity_j[k] + massratio_ejecta * (double)local.yields[k];
         }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
         if(loop_iteration == 3) {
-            for(int k = NUM_METAL_SPECIES - NUM_AGE_TRACERS; k < NUM_METAL_SPECIES; k++) {
+            for(int k = k_age_begin; k < k_age_end; k++) {
                 Metallicity_j[k] += pnorm * (double)local.yields[k] / Mass_j;
             }
         } else {
-            for(int k = NUM_METAL_SPECIES - NUM_AGE_TRACERS; k < NUM_METAL_SPECIES; k++) {
+            for(int k = k_age_begin; k < k_age_end; k++) {
                 Metallicity_j[k] = (1 - massratio_ejecta) * Metallicity_j[k] + massratio_ejecta * (double)local.yields[k];
             }
         }

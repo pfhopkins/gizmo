@@ -358,7 +358,7 @@ void particle2in_addFB_ageTracer(struct addFB_evaluate_data_in_ *in, int i)
     if(k==-9) {printf("Stellar age greater than maximum allows in AGE_TRACERS bins\n"); return;} // legacy error trap for age > max bin
     double dt=get_particle_feedback_timestep_in_physical(i, P)*UNIT_TIME_IN_MYR, age_initial = age_myr - 0.5*dt, age_final = age_myr + 0.5*dt; // get particle timestep in Myr, and age at beginning and end of this timestep
     if(dt <= 0) {return;} // no event possible - must have arrived here in error
-    int k_age_start = 1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES; // first index of enrichment-age-tracers
+    int k_age_start = AGE_TRACER_OFFSET; // first index of enrichment-age-tracers
 
     // deposit tracer weights, with check if crossing age bins
     double t_start=get_age_tracer_bin_start_time(k), t_end=get_age_tracer_bin_start_time(k+1), bin_dt=t_end-t_start; // bin edges in Myr
@@ -484,7 +484,7 @@ void get_SNe_yields(double *yields, int i, double t_gyr, int SNeIaFlag, double *
     if(SNeIaFlag) {if(NUM_METAL_SPECIES>=10) {yields[1]=0.0;}} // no He yield for Ia SNe //
 #endif // fire-2 vs fire-2.x yields clause
 #ifdef STARFORGE_FEEDBACK_TRACERS
-    for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[NUM_METAL_SPECIES-NUM_STARFORGE_FEEDBACK_TRACERS+k]=0;} yields[NUM_METAL_SPECIES-NUM_STARFORGE_FEEDBACK_TRACERS+2]=1; // this is 'fully' sne material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
+    for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[STARFORGE_FEEDBACK_TRACER_OFFSET+k]=0;} yields[STARFORGE_FEEDBACK_TRACER_OFFSET+2]=1; // this is 'fully' sne material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
 #endif
     // just a catch to prevent un-physical yields, need to do this here before handing them off to other routines which may use the yields (currently just the dust routines)
     for(k=0;k<NUM_METAL_SPECIES;k++) {yields[k]=DMIN(1.,DMAX(0.,yields[k]));}
@@ -542,7 +542,7 @@ void get_wind_yields(double *yields, int i)
     if(is_particle_single_star_eligible(i))
     {
 #ifdef STARFORGE_FEEDBACK_TRACERS
-        for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[NUM_METAL_SPECIES-NUM_STARFORGE_FEEDBACK_TRACERS+k]=0;} yields[NUM_METAL_SPECIES-NUM_STARFORGE_FEEDBACK_TRACERS+1]=1; // this is 'fully' wind material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
+        for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[STARFORGE_FEEDBACK_TRACER_OFFSET+k]=0;} yields[STARFORGE_FEEDBACK_TRACER_OFFSET+1]=1; // this is 'fully' wind material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
 #endif
 #if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
         return; /* nothing more complicated gets modeled here, just use initial surface abundances */
@@ -641,7 +641,7 @@ void get_jet_yields(double *yields, int i) {
     if(P[i].Type==4) {double Msne; get_SNe_yields(yields,i,t_gyr,SNeIaFlag,&Msne);}
 #endif
 #ifdef STARFORGE_FEEDBACK_TRACERS
-    for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[NUM_METAL_SPECIES-NUM_STARFORGE_FEEDBACK_TRACERS+k]=0;} yields[NUM_METAL_SPECIES-NUM_STARFORGE_FEEDBACK_TRACERS+0]=1; // this is 'fully' jet material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
+    for(k=0;k<NUM_STARFORGE_FEEDBACK_TRACERS;k++) {yields[STARFORGE_FEEDBACK_TRACER_OFFSET+k]=0;} yields[STARFORGE_FEEDBACK_TRACER_OFFSET+0]=1; // this is 'fully' jet material, so mark as such here, so it is noted for all wind routines [whichever form of the wind subroutine we actually use, otherwise it would only appear in the jet version]
 #endif
 }
 #endif

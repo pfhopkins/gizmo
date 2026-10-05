@@ -1443,7 +1443,7 @@
 #endif
 
 #ifdef STARFORGE_FEEDBACK_TRACERS
-#define NUM_STARFORGE_FEEDBACK_TRACERS (STARFORGE_FEEDBACK_TRACERS)
+#define NUM_STARFORGE_FEEDBACK_TRACERS 3 /* one per channel (0=jets, 1=winds, 2=SNe), whatever value the flag carries: the writers fill all three */
 #else
 #define NUM_STARFORGE_FEEDBACK_TRACERS 0
 #endif
@@ -1507,6 +1507,8 @@
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS)
 
 /* offset of ISM dustchem species within Metallicity array */
+#define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[]; other tracers and scalars follow */
+#define STARFORGE_FEEDBACK_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS) /* first feedback-tracer slot in Metallicity[]; dust-chemistry and nuclear scalars follow the tracers */
 #define ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
 
 /* Sub-block offsets within Metallicity[] / yields[] / Z_injected[] for the dustchem layout.
