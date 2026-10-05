@@ -1,0 +1,61 @@
+%---- Closed periodic box of static dusty gas and radiation, no sources: started from a snapshot (restart flag 2)
+InitCondFile  rt_closed_box_ics
+OutputDir     output
+ICFormat      3
+SnapFormat    3
+RestartFile                 restart
+SnapshotFileBase            snapshot
+OutputListOn                0
+OutputListFilename          output_times.txt
+NumFilesPerSnapshot         1
+NumFilesWrittenInParallel   1
+
+%---- 64 steps of 3e-3 = TimeMax / 2^6, under the RT Courant step (0.4 x 0.25 pc / c_tilde = 3.3e-3); a snapshot every 8
+TimeOfFirstSnapshot     0.0
+TimeBetSnapshot         0.024
+TimeBegin   0.0
+TimeMax     0.192
+MaxSizeTimestep         3.1e-3
+MinSizeTimestep         1.0e-10
+
+TimeLimitCPU            3600
+CpuTimeBetRestartFile   7200
+
+%---- System of units: pc, Msun, km/s
+UnitLength_in_cm            3.085678e+18
+UnitMass_in_g               1.989e+33
+UnitVelocity_in_cm_per_s    1.00e+05
+GravityConstantInternal     0
+
+ComovingIntegrationOn   0
+BoxSize                 8.0
+Omega0                  0.
+OmegaLambda             0.
+OmegaBaryon             0.
+HubbleParam             1.
+
+MaxMemSize          4000
+PartAllocFactor     5.0
+BufferSize          200
+TreeDomainUpdateFrequency   0.005
+
+InitGasTemp     0
+MinGasTemp      1
+InitRadiationTemp   10
+
+SofteningGas    1e-10
+SofteningHalo   0.020
+SofteningDisk   0.150
+SofteningBulge  0.500
+SofteningStars  0.01
+SofteningBndry  0.01
+SofteningGasMaxPhys     0.0005
+SofteningHaloMaxPhys    0.010
+SofteningDiskMaxPhys    0.075
+SofteningBulgeMaxPhys   0.250
+SofteningStarsMaxPhys   0.0005
+SofteningBndryMaxPhys   0.0005
+
+DesNumNgb               32
+MaxKernelRadius         1.0e10
+MinGasKernelRadiusFractional    0
