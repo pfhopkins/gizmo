@@ -81,6 +81,30 @@ Decision: whether the RSOL band/gas convention gets a consistent treatment (valu
 same c, and stop donating photoheated ionizing energy to OPT/NIR) on starforge_dev; it is larger than D1 in IR-thick
 and photoionized gas. Needs its own design pass and benchmark regeneration.
 
+### 1.1d The IR-thick drain, closed (rt_energy_ab 5f2d395b diagnostic; ledgers close to 5e-12)
+The "untraced half" is not gas emission: the cooling step returns every erg it is offered (no limiter clipped in
+any fixed_cooling run). Both halves are the gas share of IR absorption:
+- Opening half-kick: `rt_utilities.cc:~890` writes the share into `DtInternalEnergy` as a rate over dt/2; the next
+  `hydro_force_initial_operations_preloop` (hydro_toplevel.cc:~971) zeroes `DtInternalEnergy` for every active cell
+  before anything applies it (run.cc order: hydro :125 -> first kick :152 -> hydro :256 -> second kick :266 ->
+  cooling :548). Destroyed every step, every build. 53% of the drain at 1e7 and 52% at 1e5.
+- Closing half-kick: applied once (split cooling, kicks.cc:263) or twice (unsplit, cooling.cc:1431 uses the dt/2 rate
+  over dt; STARFORGE cells go unsplit after step 1, trigger not isolated) but at 1:1 in band units where the kicks.cc
+  convention (E_band/(c~/c) + E_gas conserved) values it at c/c~. 53% / 51%.
+- Mechanisms ruled out with numbers: return limiter (0 in split cells; inert there because cooling.cc:242 reads
+  DtInternalEnergy in code units as cgs), gas-dust coupling (routed at exactly c~/c), kick-vs-cooling dust
+  temperature (both balances close; T_dust differs 0.05-0.15 K, opacity only), band caps (0).
+- STARFORGE-only extra: photoionization (cooling.cc:1246-1262) and photoelectric heating (:1286) are applied at c
+  while the kick also donates the full absorbed band energy onward -> created energy; at 1e5 the bands GAIN 2.3%.
+Experiment E2 (gas gains (c/c~) de_abs f_gas applied to u in each half-kick, not as a rate): bands +1.58% at 1e7
+(= CR heating + IC relaxation re-radiated + BE residual) and +0.014% at 1e5; STARFORGE +2.84% (= photoion +
+photoelectric double count + CR). All experiments reverted.
+Consistent convention per site: IR gas share deposited at c/c~ once per half-kick to u; cooling return and dust
+coupling keep c~/c (correct); limiter in one unit system, de_rad <= (c~/c) max(0, -(du - work)), drop de_u_radabs
+(double-counts the deposit), fix the split-cell units; photoionization/photoelectric: donate absorbed minus (c~/c)
+heat; CR background booked as injection. Predicted residual: BE tolerance only (~3e-4 at 1e7; ~0 if the return
+uses the actual du). Ledger tool: scratchpad rtledger/ledger3.py.
+
 ### 1.2 Cooling-radiation return limiter under reduced c
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
 cooling radiation only if the cell's internal energy fell this step". Measured effect in the tests < 0.7%.
