@@ -7,6 +7,23 @@ switches `RT_FIX_IR_DOUBLE_COUNT` / `RT_FIX_DUST_GAS_ABSORPTION`, the GIZMO_conf
 `RT_ISRF_BACKGROUND=0` override. Runs and analyses: `/mnt/ceph/users/mgrudic/starforge/M10_core/rt_energy_ab/`.
 Decisions that affect the jaco branches are cross-referenced from JACO_PENDING_DECISIONS.md.
 
+## Review status (independent code read, 2026-10-05)
+Every mechanism below was re-read in the source by the coordinator, separately from the agents that found it:
+- Verified by reading: 1.1 D1 (donation + E_abs_tot_toIR, IR processed last), 1.1 D2 (total-opacity absorption into
+  rt_eqm_dust_temp while the gas share is also deposited), 1.1c photoionization/photoelectric heating at true c with
+  the full absorbed energy also donated (rt_utilities.cc:956 `+= de_abs`, cooling.cc Heat_Ion_from_RHD at C_LIGHT_CGS),
+  1.1d opening-kick deposit discarded (rt_utilities.cc:932 rate over dt_entr -> hydro_toplevel.cc:971 zeroes it;
+  run.cc order hydro:125, kick:152, hydro:256, kick:266, cooling:548), closing-kick deposit applied once for split cells
+  (kicks.cc:269, dt_hydrokick = dt_entr) and over the full step for unsplit cells (cooling.cc:1477 into Q, integrated
+  over dtime), split cells' DtInternalEnergy in code units used as cgs at cooling.cc:244 (only unsplit cells are
+  converted at :166), 1.2 limiter under RSOL, 2.1 x-tolerance-only root-find, 3.1 Rad_Je zeroing only when
+  RT_SOURCES & 1 (startup-only zeroing at rt_utilities.cc:1082), Iliev photon count, ISRF edge reset (initial guess
+  only in legacy), the GIZMO_config.h re-include (eos.h:4, aneos.h:4), 4.1 init.cc:1074-1078 at function scope, and
+  eos.cc set_eos_pressure taking gamma_eos_index before the temperature refresh for SoundSpeed (:49, :185) while
+  cell.Gamma has no reader anywhere in the tree.
+- Measured, not re-derived: all run numbers (A/B tables, closed-box ledgers, subsuite statistics).
+- Unverified: the T_rad weighting "stuck at the lowest temperature" claim (3.1).
+
 ## 1. Radiation-transport energy accounting
 
 ### 1.1 RT kick energy accounting (confirmed by reading; A/B done 2026-10-05)
