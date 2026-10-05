@@ -76,8 +76,8 @@ def max_abs_pm(snap):
 
 
 def tr_T_abs(snap):
-    """Total absolute-frame raw second-moment trace (frame rule per
-    feedback_validation: Tr[T_abs]=Tr[T_rel]+2 V.p_rel+m|V|^2)."""
+    """Total absolute-frame raw second-moment trace (from the stored
+    relative-frame moments: Tr[T_abs]=Tr[T_rel]+2 V.p_rel+m|V|^2)."""
     vm = snap["vm"]; V = snap["vel"]; m = vm[:, :, 0]
     total = 0.0
     for a in range(DIM):

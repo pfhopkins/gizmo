@@ -1,4 +1,4 @@
-% Grain→Solid promotion smoke test (Phase 17g, CGS units).
+% Grain→Solid promotion smoke test (CGS units).
 % 2D periodic box: ~64 uniform gas particles + 1 Type-3 grain above mass threshold.
 % After one timestep, the grain should be promoted to a Type-0 olivine body.
 

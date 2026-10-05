@@ -83,11 +83,15 @@ build/
 # Claude Code per-session state (auto-memory, transcripts, etc.)
 .claude/
 
-# Step-15 benchmarking — entire tree is testing-ancillary, kept locally
-# (~/Documents/work/code/gizmo/benchmarks/step15_optimization/) but not in repo.
-# Drivers, sweep configs, analysis scripts, sanity probes — none of it is part
-# of the production code; meaningful only inside this immediate testing setup.
-test/benchmark/step15/
+# Local developer harnesses (benchmark drivers, build-vs-build comparisons, superseded
+# setups whose content now lives in a test problem's variants). Kept on disk for the
+# developers' own use; not test problems, so not part of the distributed code.
+test/benchmark/
+test/hernquist_sidm/
+test/isodisk_rtsources/
+test/fire_gravtree_rt/
+test/gravtree/Config_*.sh
+test/gravtree/compare_*.py
 
 # Local handoff / agent memory / planning notes. Same rationale as .claude/:
 # meaningful only to the immediate working session, not part of the code.

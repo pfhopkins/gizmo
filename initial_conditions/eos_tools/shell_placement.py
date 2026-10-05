@@ -1,4 +1,4 @@
-"""Particle placement for HSE-equilibrium layered bodies (Phase 17h).
+"""Particle placement for HSE-equilibrium layered bodies.
 
 Two backends:
     fibonacci_shells(profile, n_particles, ...)

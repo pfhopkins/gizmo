@@ -1,4 +1,4 @@
-"""End-to-end self-test for the Phase 17h IC builder.
+"""End-to-end self-test for the IC builder.
 
 Builds an Earth-like layered body (iron core, olivine mantle, adiabatic) and
 checks:
@@ -28,7 +28,7 @@ def main():
     M_earth = 5.972e27   # g
     R_earth = 6.371e8    # cm (reference; solver finds its own R)
 
-    print("Phase 17h self-test: Earth-like body (Tillotson olivine + iron, adiabatic)")
+    print("self-test: Earth-like body (Tillotson olivine + iron, adiabatic)")
     prof = solve_hse(M_total=M_earth, T_surface=300.0, P_surface=1e6,
                      zones=zones, verbose=True)
     R = prof["R"]

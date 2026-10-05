@@ -1,4 +1,4 @@
-"""IC generator for Phase 17g grain-promotion smoke test.
+"""IC generator for grain-promotion smoke test.
 
 2D periodic box (10 cm × 10 cm):
   - 8×8 = 64 gas particles (Type 0) on a uniform grid

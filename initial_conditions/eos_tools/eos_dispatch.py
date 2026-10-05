@@ -1,4 +1,4 @@
-"""Uniform EOS dispatch for the Phase 17h IC builder.
+"""Uniform EOS dispatch for the IC builder.
 
 A Material binds a backend (Tillotson analytic, or a SESAME table for ANEOS /
 CD21 H/He) to a CompositionType integer and a Cv. The HSE shooter only needs

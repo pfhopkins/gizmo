@@ -1,4 +1,4 @@
-% Isolated disk galaxy — thermal_fb (B6) activation test
+% Isolated disk galaxy — thermal SN feedback
 % Minimal config: HYDRO_MESHLESS_FINITE_MASS, COOLING, GALSF, METALS, GALSF_FB_THERMAL
 % Uses isodisk ICs (reuses isodisk_ics.hdf5). Pre-existing stellar particles (Type 4)
 % are older than 5 Myr so SNe_ThisTimeStep fires from step 1 under the AGORA model.

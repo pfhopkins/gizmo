@@ -1,4 +1,4 @@
-"""Phase 16 two-temperature plasma regression test.
+"""two-temperature plasma regression test.
 
 Validates that:
   (1) the LTE seed at startup applies the requested T_e/T_gas ratio

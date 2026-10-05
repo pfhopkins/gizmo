@@ -5,6 +5,16 @@ import os.path
 
 
 
+
+def _first_field(input_struct, bname, *names):
+    """Return the first of several dataset names present: current snapshots write e.g.
+    KernelMaxRadius and Sink_Mass, legacy snapshots (and the binary-format reader) use the
+    older SmoothingLength and BH_Mass."""
+    for name in names:
+        if (bname + name) in input_struct:
+            return input_struct[bname + name]
+    raise KeyError("none of " + ", ".join(names) + " found in " + (bname or "snapshot"))
+
 def readsnap(sdir,snum,ptype,
     snapshot_name='snapshot',
     extension='.hdf5',
@@ -155,7 +165,7 @@ def readsnap(sdir,snum,ptype,
     # initialize variables to be read
     pos=np.zeros([npartTotal[ptype],3],dtype=np.float64)
     vel=np.copy(pos)
-    ids=np.zeros([npartTotal[ptype]],dtype=long)
+    ids=np.zeros([npartTotal[ptype]],dtype=np.int64)
     mass=np.zeros([npartTotal[ptype]],dtype=np.float64)
     if (ptype==0):
         ugas=np.copy(mass)
@@ -208,7 +218,7 @@ def readsnap(sdir,snum,ptype,
             if (ptype==0):
                 ugas[nL:nR]=input_struct[bname+"InternalEnergy"]
                 rho[nL:nR]=input_struct[bname+"Density"]
-                hsml[nL:nR]=input_struct[bname+"SmoothingLength"]
+                hsml[nL:nR]=_first_field(input_struct, bname, "KernelMaxRadius", "SmoothingLength")
                 if (flag_cooling > 0): 
                     nume[nL:nR]=input_struct[bname+"ElectronAbundance"]
                     numh[nL:nR]=input_struct[bname+"NeutralHydrogenAbundance"]
@@ -225,14 +235,14 @@ def readsnap(sdir,snum,ptype,
             if (ptype == 4) and (flag_sfr > 0) and (flag_stellarage > 0):
                 stellage[nL:nR]=input_struct[bname+"StellarFormationTime"]
             if (ptype == 5) and (skip_bh == 0):
-                bhmass[nL:nR]=input_struct[bname+"BH_Mass"]
-                bhmdot[nL:nR]=input_struct[bname+"BH_Mdot"]
+                bhmass[nL:nR]=_first_field(input_struct, bname, "Sink_Mass", "BH_Mass")
+                bhmdot[nL:nR]=_first_field(input_struct, bname, "Sink_Mdot", "BH_Mdot")
             nL = nR # sets it for the next iteration	
 
 	## correct to same ID as original gas particle for new stars, if bit-flip applied
     if ((np.min(ids)<0) | (np.max(ids)>1.e9)):
         bad = (ids < 0) | (ids > 1.e9)
-        ids[bad] += (long(1) << 31)
+        ids[bad] += (1 << 31)
 
     # do the cosmological conversions on final vectors as needed
     pos *= hinv*ascale # snapshot units are comoving
@@ -422,7 +432,7 @@ def load_gadget_format_binary_particledat(f, header, ptype, skip_bh=0):
     ### Variable particle masses. 
     Npart_MassCode = np.copy(np.array(Npart))
     Npart=np.array(Npart)
-    Npart_MassCode[(Npart <= 0) | (np.array(Massarr,dtype='d') > 0.0)] = long(0)
+    Npart_MassCode[(Npart <= 0) | (np.array(Massarr,dtype='d') > 0.0)] = 0
     NwithMass = np.sum(Npart_MassCode)
     mass = array.array('f')
     mass.fromfile(f, NwithMass)

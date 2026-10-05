@@ -1,4 +1,4 @@
-"""SESAME-format ANEOS-style table loader for Phase 17h IC builder.
+"""SESAME-format ANEOS-style table loader for IC builder.
 
 Mirrors the loader in eos/aneos.cc::aneos_read_table — tables are dense 2D
 grids in (log10 rho, log10 T) on a uniform log-log mesh, columns rho, T, P,

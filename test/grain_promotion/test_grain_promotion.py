@@ -1,4 +1,4 @@
-"""Phase 17g smoke test: GRAIN_FLUID_PROMOTION — Type 3 grain → Type 0 solid body.
+"""smoke test: GRAIN_FLUID_PROMOTION — Type 3 grain → Type 0 solid body.
 
 Validates:
   1. GIZMO runs to completion with GRAIN_FLUID + GRAIN_FLUID_PROMOTION.

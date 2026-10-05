@@ -24,7 +24,7 @@ each write to their own output directory, so they can coexist with it.
 | --- | --- | --- | --- |
 | default | `Config.sh` | `gmc_cooling.params` | the benchmark above, to `TimeMax=1.0` |
 | particle mesh | `Config_pmgrid.sh` | `gmc_cooling_pmgrid.params` | drops `SINGLE_STAR_STARFORGE_DEFAULTS` and the adaptive tree-force update, adds `PMGRID=64`: exercises the short-range/long-range gravity split on this cloud. Short run (`TimeMax=0.025`), writes `output_pmgrid/` |
-| quick | `Config.sh` | `gmc_cooling_quick.params` | a shortened run; also used by `test/benchmark/benchmark_setup.sh` |
+| quick | `Config.sh` | `gmc_cooling_quick.params` | a shortened run |
 
 `Config_pmgrid.sh` and its params were formerly the separate
 `gmc_cooling_pmgrid/` directory, which pointed its `InitCondFile` back at this

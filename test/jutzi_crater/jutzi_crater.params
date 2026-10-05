@@ -1,4 +1,4 @@
-% Jutzi cratering smoke test (Phase 17e, CGS units)
+% Jutzi cratering smoke test (CGS units)
 % Basalt impactor into basalt target, 3 km/s impact.
 % CompositionType=2 (basalt) for all particles; per-material Tillotson params
 % are loaded from the built-in table via tillotson_eos_init() into slots [2][*].

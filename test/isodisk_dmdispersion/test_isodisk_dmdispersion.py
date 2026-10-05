@@ -1,18 +1,13 @@
-"""Isolated disk galaxy — dm_dispersion (3d.D) GPU activation test
+"""Isolated disk galaxy with velocity-scaled subgrid winds.
 
-Activation test for the dm_dispersion runner-template port (DMDispersionSpec /
-disp_density). Uses isodisk ICs with GALSF_EFFECTIVE_EQS + GALSF_SUBGRID_WINDS
-+ GALSF_SUBGRID_WIND_SCALING=2 so that disp_density() is called each timestep
-to populate CellP[i].DM_VelDisp before wind kicks.
+The isodisk IC with the Springel & Hernquist effective-EOS model and subgrid winds
+scaled by the local dark-matter velocity dispersion (GALSF_EFFECTIVE_EQS +
+GALSF_SUBGRID_WINDS + GALSF_SUBGRID_WIND_SCALING=2), which requires DM_VelDisp at
+every gas cell each timestep.
 
-Validation protocol:
-1. Build with isodisk_dmdispersion Config.sh (GALSF_EFFECTIVE_EQS + GALSF_SUBGRID_WINDS
-   + GALSF_SUBGRID_WIND_SCALING=2).
-2. Confirm stdout contains "dm_dispersion done" at least once (runner exercised).
-3. Confirm final snapshot has gas particles with nonzero DM_VelDisp (WIND_SCALING=2
-   reads this field; if disp_density() never ran it would remain 0 and no wind kicks
-   would fire even when a particle should be eligible).
-4. Basic mass conservation: total gas+star mass conserved to <0.1%.
+Checks: the run reaches its final time, stdout reports that the dispersion
+computation ran ("dm_dispersion done"), most gas cells carry a non-zero
+DM_VelDisp, and gas + star mass is conserved to 0.1%.
 """
 
 import pytest

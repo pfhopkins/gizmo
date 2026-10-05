@@ -1,10 +1,9 @@
 ########################################
-# cbe_two_stream — 1D counter-streaming CBE test (mirrors python_harness
-# tests/test_two_stream_boosted + test_two_stream_density_wave rest-frame).
+# cbe_two_stream — 1D counter-streaming CBE test.
 #
 # Every Type=1 particle carries an internal 2-basis velocity distribution
-# (+v_stream / -v_stream) supplied via the IC's VlasovMoments dataset (C7
-# reader). No gravity, no hydro, no gas — pure CBE moment advection on a
+# (+v_stream / -v_stream) supplied via the IC's VlasovMoments dataset.
+# No gravity, no hydro, no gas — pure CBE moment advection on a
 # uniform 1D periodic mesh. NBASIS=2, NMOMENTS=3 (m, p_x, T_xx) in 1D
 # (SECONDMOMENT + WITHGRADIENTS = the production CBE default).
 ########################################

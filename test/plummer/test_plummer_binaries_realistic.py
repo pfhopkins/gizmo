@@ -1,6 +1,6 @@
 """Plummer cluster with a realistic binary population -- conservation under a mixed population.
 
-test/plummer_binaries puts every star in an identical 1000 AU equal-mass circular binary: one
+test_plummer_binaries.py puts every star in an identical 1000 AU equal-mass circular binary: one
 point in parameter space, cleanly controlled. This test draws the population from the observed
 distributions instead (Kroupa IMF, Duchene & Kraus binary fraction vs primary mass, Raghavan
 log-normal periods, thermal eccentricities -- see make_plummer_binaries_realistic_ics.py), so a
@@ -17,7 +17,7 @@ positions rather than read from the snapshot's tree-evaluated Potential field. P
 last-kick velocity with a drifted-position potential gives a kinetic and a potential term
 belonging to different times; at N ~ 335 the exact O(N^2) sum costs milliseconds.
 
-Runs 10 crossing times (TimeMax 29.2), matching test/plummer_binaries. Note this cluster is
+Runs 10 crossing times (TimeMax 29.2), matching test_plummer_binaries.py. Note this cluster is
 133.85 Msun, not 512: the IMF gives 256 systems much less mass than 512 equal 1 Msun stars, so
 its t_cross is 2.92 code rather than ~3.24 and a duration copied from the sibling would cover a
 twentieth of the evolution.
@@ -41,7 +41,7 @@ from matplotlib import pyplot as plt
 # NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
 # 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
 # energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
-# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test_binary.py, an order of magnitude above
 # what that test measures.
 from pytreegrav import Potential
 
@@ -59,6 +59,11 @@ from gizmo.test import (
 # directory (and so the Config they share), VARIANT names this problem's own
 # parameter file, initial conditions and output.
 TEST_NAME = "plummer"
+
+# test/plummer/Config.sh is the pure-gravity build used by test_plummer.py; the binary-star
+# problems additionally need the sink/Hermite physics and the synchronized-state output.
+BINARY_FLAGS = ("SINGLE_STAR_STARFORGE_DEFAULTS", "IO_HERMITE_SYNC")
+
 VARIANT = "plummer_binaries_realistic"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{VARIANT}_ics.hdf5"
@@ -91,7 +96,7 @@ def _physical_cpu_count():
     return max(1, (os.cpu_count() or 4) // 2)
 
 
-# Same shape as test/plummer_binaries: 2 MPI ranks, threads filling out to a total core cap.
+# Same shape as test_plummer_binaries.py: 2 MPI ranks, threads filling out to a total core cap.
 # Capped rather than scaled with the node for the same reason -- a few hundred particles with a
 # deep timestep hierarchy leave a handful active per step, so wider parallelism adds
 # synchronisation without adding work. This test has FEWER particles than plummer_binaries (~335
@@ -114,7 +119,7 @@ SEED = 42
 # anything. 3x leaves room for the run-to-run variation a different decomposition can produce
 # while still bounding a real regression.
 #
-# ONLY MAGNITUDES ARE ASSERTED HERE -- deliberately, unlike test/triple, which additionally guards
+# ONLY MAGNITUDES ARE ASSERTED HERE -- deliberately, unlike test_triple.py, which additionally guards
 # a growth EXPONENT. That works there because a clean 3-body configuration gives a stable trend.
 # It does not transfer: measured on this run the drift's local slope reads +0.10, -3.73, +8.71 and
 # +1.03 over successive windows. A negative slope is proof it is not a power law, so any exponent
@@ -243,6 +248,7 @@ def _plot(t, energy, drift, a0, a1, variant_id):
 @pytest.mark.parametrize("num_omp_threads", (PBR_NUM_OMP_THREADS,))
 @pytest.mark.parametrize("extra_config_flags", [pytest.param((), id="starforge_defaults")])
 def test_plummer_binaries_realistic(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
+    extra_config_flags = BINARY_FLAGS + tuple(extra_config_flags)
     _ensure_ic()
     rmtree(problem_output_dir(TEST_NAME, VARIANT, extra_config_flags), ignore_errors=True)
     build_and_run_test(TEST_NAME, num_mpi_ranks, num_omp_threads, extra_config_flags, params_name=VARIANT)

@@ -1,4 +1,4 @@
-"""Top-level Phase 17h IC builder: zone spec -> HSE solve -> particle
+"""Top-level IC builder: zone spec -> HSE solve -> particle
 placement -> HDF5 output. Designed to replace the uniform-density rejection-
 sampled-sphere generators in test/aneos_giant_impact, test/jutzi_crater,
 test/cd21_hhe_compression once validated.

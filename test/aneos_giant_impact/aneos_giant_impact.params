@@ -1,5 +1,5 @@
 % ANEOS giant impact smoke test: differentiated Earth-mass body, forsterite
-% mantle (68%) + iron core (32%), built with the Phase 17h HSE IC builder
+% mantle (68%) + iron core (32%), built with the HSE IC builder
 % against the Stewart S19/S20 tables loaded through EOS_ANEOS.
 %
 % This default config has SELFGRAVITY_OFF and runs only a tiny fraction of a

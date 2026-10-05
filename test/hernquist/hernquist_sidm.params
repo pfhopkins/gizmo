@@ -1,0 +1,46 @@
+% Hernquist halo with self-interacting dark matter: an example of the DM_SIDM module on the
+% equilibrium halo of test/hernquist. Build with Config_sidm.sh.
+%
+% Units: kpc, 1e10 Msun and 207.41 km/s, which make G = 1 exactly, so the same
+% G=1 IC as the pure-gravity test is a M = 1e10 Msun, a = 1 kpc halo here, with
+% a time unit of 4.71 Myr (half-mass crossing time ~11.8 = 56 Myr). Make the IC
+% with (open domain; BoxSize is only used by the periodic variants):
+%   python make_hernquist_ics.py --N 4096 --boxsize 500 --out hernquist_dm_ics.hdf5
+% and compare the run against it with validate_snapshot_vs_ic.py.
+%
+InitCondFile                       hernquist_dm_ics
+OutputDir                          output_sidm
+TimeBegin                          0
+TimeMax                            59
+TimeBetSnapshot                    5.9
+TimeOfFirstSnapshot                0
+MaxSizeTimestep                    0.5
+MinSizeTimestep                    1e-8
+TreeDomainUpdateFrequency          0.05
+DesNumNgb                          32
+AGS_DesNumNgb                      32
+PartAllocFactor                    2.5
+MaxSimulationWallTime_in_Seconds   3600
+UnitLength_in_cm                   3.085678e21
+UnitMass_in_g                      1.989e43
+UnitVelocity_in_cm_per_s           2.0741e7
+Softening_Type0                    0.05
+Softening_Type1                    0.01
+Softening_Type2                    0.05
+Softening_Type3                    0.05
+Softening_Type4                    0.05
+Softening_Type5                    0.05
+Softening_Type0_MaxPhysLimit       0.05
+Softening_Type1_MaxPhysLimit       0.5
+Softening_Type2_MaxPhysLimit       0.05
+Softening_Type3_MaxPhysLimit       0.05
+Softening_Type4_MaxPhysLimit       0.05
+Softening_Type5_MaxPhysLimit       0.05
+% At r ~ a (rho ~ 1.4e-23 g/cm^3, v ~ 200 km/s) a cross-section of 1 cm^2/g gives a
+% mean free time of ~24 time units, so a run of 5 crossing times scatters each
+% inner particle several times and starts to core the cusp. Vary the cross-section
+% (and its velocity dependence) to explore.
+DM_InteractionCrossSection         1.0
+DM_DissipationFactor               0.0
+DM_KickPerCollision                0.0
+DM_InteractionVelocityScale        0.0

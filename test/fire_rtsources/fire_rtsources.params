@@ -1,4 +1,4 @@
-% FIRE cosmological run — RT source injection (B5) activation test
+% FIRE cosmological run with explicit radiation sources
 % Base: fire ICs (m11i dwarf at z~2.9), same as the fire test.
 % Added: RT_M1 + RT_COMOVING + RT_SOURCES=48 + 5 RT bands + RT_CHEM_PHOTOION=1
 % Type-4 stellar particles (pre-existing + newly formed) emit into the RT bands,
@@ -39,7 +39,7 @@ SeedSinkPerUnitMass                 2e-6
 SinkEddingtonFactor                 1e3
 % -- RT options (reduced speed of light for test stability)
 % RT_SPEEDOFLIGHT_REDUCTION=0.001: aggressive RSOL to ensure field propagates
-% within a few steps; safe for short activation test (not a physical RT test).
+% within a few steps; acceptable for this short run (not a physical RT test).
 % -- platform/runtime options
 DomainBuild_ActiveFraction          0.002
 Effective_Kernel_NeighborNumber     32

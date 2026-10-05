@@ -1,4 +1,4 @@
-% Isolated disk galaxy — FIRE_CRS=0 (multi-bin spectrum) activation test
+% Isolated disk galaxy — mechanical feedback with FIRE_CRS=0 multi-bin CR spectrum (Config_cr0.sh)
 InitCondFile                       isodisk_mechfb_ics
 OutputDir                          output_cr0
 TimeMax                            0.003

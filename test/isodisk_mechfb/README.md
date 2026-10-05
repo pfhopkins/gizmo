@@ -1,7 +1,7 @@
 # isodisk_mechfb — mechanical feedback in an isolated disk
 
 An isolated disk galaxy with star formation and mechanical (SNe/wind) feedback.
-The default run is the activation test for `GALSF_FB_MECHANICAL`: the coupling
+The default run exercises `GALSF_FB_MECHANICAL`: the coupling
 must inject the expected momentum and energy without the disk tearing itself
 apart.
 
@@ -16,6 +16,7 @@ test/isodisk_mechfb` runs the default.
 | default | `Config.sh` | `isodisk_mechfb.params` | `GALSF_FB_MECHANICAL` on a plain `COOLING`+`GALSF`+`METALS` disk |
 | cosmic rays | `Config_cr.sh` | `isodisk_mechfb_cr.params` | the FIRE physics set with `FIRE_CRS=(-1)`, `FIRE_MHD` and a reduced CR speed of light — mechanical feedback with the CR fluid live. Writes `output_cr/` |
 | cosmic rays, multi-bin | `Config_cr0.sh` | `isodisk_mechfb_cr0.params` | as above but `FIRE_CRS=0` (multi-bin CR spectrum). Writes `output_cr0/` |
+| radiation | `Config_rt.sh` | `isodisk_mechfb_rt.params` | the default plus explicit M1 radiation transport (`RT_M1`, `RT_COMOVING`, `RT_SOURCES=48`; NUV, optical/NIR, IR, photoelectric and photoionizing bands, reduced speed of light), with the stars as sources. Writes `output_rt/` |
 
 The two cosmic-ray variants were formerly a separate `isodisk_mechfb_cr/`
 directory that pointed at these same ICs; they are Config variants of this

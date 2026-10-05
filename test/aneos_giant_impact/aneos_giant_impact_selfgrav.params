@@ -1,6 +1,6 @@
 % ANEOS giant-impact HSE validation gate (SELFGRAVITY=ON variant).
 % Earth-mass differentiated body (forsterite mantle 68% + iron core 32%) built
-% with the Phase 17h HSE IC builder against the Stewart S19/S20 tables.
+% with the HSE IC builder against the Stewart S19/S20 tables.
 % t_dyn(surface) ~ 740 s; TimeMax = 8000 s ~ 11 t_dyn.
 %
 %        HYDRO_MESHLESS_FINITE_MASS

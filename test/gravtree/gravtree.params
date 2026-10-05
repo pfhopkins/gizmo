@@ -1,9 +1,8 @@
-% Gravity-walk validation on the evrard ICs with FIXED gas softening
-% (no ADAPTIVE_GRAVSOFT_FORGAS); short run, for comparing two builds.
-%
-%        HYDRO_MESHLESS_FINITE_MASS
-%        EOS_GAMMA=(5.0/3.0)
-%
+% Gravity tree accuracy, 'default' variant: evrard IC, fixed gas softening
+% (no ADAPTIVE_GRAVSOFT_FORGAS), so every softening branch of the walk is the plain one.
+% Run twice by test_gravtree.py: with the opening criterion below, and converged towards
+% direct summation (ErrTolTheta=0.15, ErrTolForceAcc=1e-6); the per-particle difference is
+% the production tree error.
 InitCondFile                       ../evrard/evrard_ics
 OutputDir                          output
 TimeMax                            0.05

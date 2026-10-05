@@ -1,6 +1,6 @@
 """Plummer cluster with a REALISTIC binary population (Type 5 sinks).
 
-test/plummer_binaries puts every star in an identical 1000 AU equal-mass circular binary. That
+test_plummer_binaries.py puts every star in an identical 1000 AU equal-mass circular binary. That
 is a clean control, but it exercises exactly one point in the parameter space the sink
 integrator has to survive. Here the population is drawn from the observed distributions
 instead, so a single run spans several decades in binary hardness, mass ratio and eccentricity

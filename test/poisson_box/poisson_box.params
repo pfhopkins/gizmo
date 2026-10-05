@@ -1,3 +1,10 @@
+% poisson_box: a periodic 100 pc box of magnetized, cooling gas whose cells sit at
+% Poisson-random positions (make_poisson_box_ics.py; no lattice, no glass) -- the least
+% regular particle arrangement the neighbour search, kernel-radius iteration, gradient
+% and MHD estimators can be handed. Gravity is present in the code path but negligible
+% (GravityConstantInternal = 1e-100). A few steps, all cells active.
+% Build with this directory's Config.sh. For scaling studies, write other resolutions
+% with make_poisson_box_ics.py and point InitCondFile at them.
 
 %----  Relevant files
 InitCondFile  poisson_box_50_ics
@@ -23,8 +30,6 @@ TimeBetStatistics       0.001
 %---- CPU run-time and checkpointing
 TimeLimitCPU            3600
 CpuTimeBetRestartFile   3600
-ResubmitOn              0
-ResubmitCommand         my-scriptfile
 
 %---- Simulation time range -- just a few steps for density evaluation
 TimeBegin   0.0
@@ -60,14 +65,17 @@ MinGasTemp      2.73
 DesNumNgb               32
 MinGasKernelRadiusFractional 0
 
-%---- Gravitational softening (GRAVITY_NOT_PERIODIC => tree gravity off for periodic dims)
-SofteningGas    1e-10
+%---- Gravitational softening (gravity is negligible here: GravityConstantInternal = 1e-100).
+%     The gas softening still sets the length scale of the acceleration timestep criterion
+%     (dt ~ sqrt(2 ErrTolIntAccuracy eps / |a|)), so it must be of order the cell spacing
+%     (~2 pc): a vanishing softening throttles every step to ~1e-7.
+SofteningGas    0.5
 SofteningHalo   0.020
 SofteningDisk   0.150
 SofteningBulge  0.500
 SofteningStars  0.100
 SofteningBndry  0.100
-SofteningGasMaxPhys     0.0005
+SofteningGasMaxPhys     0.5
 SofteningHaloMaxPhys    0.010
 SofteningDiskMaxPhys    0.075
 SofteningBulgeMaxPhys   0.250
@@ -79,11 +87,11 @@ BiniX   1.0e-8
 BiniY   1.0e-8
 BiniZ   1.0e-8
 
-%---- FIRE / stellar feedback parameters (needed by SINGLE_STAR_STARFORGE_DEFAULTS)
+%---- Initial metallicity (METALS)
 InitMetallicity             1.0
 InitStellarAge              0.0
 
-%--- Developer-mode parameters
+%--- Developer-mode parameters (read only when DEVELOPER_MODE is set)
 ErrTolTheta                  0.5
 ErrTolForceAcc               0.0025
 ErrTolIntAccuracy        0.01

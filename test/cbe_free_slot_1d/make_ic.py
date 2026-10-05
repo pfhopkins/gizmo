@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """IC for cbe_free_slot_1d — 1D free-slot injection test.
 
-Mirrors python_harness/tests/test_free_slot make_ic. Background 4-basis
+Background 4-basis
 distribution v = (+1, 0, -1, -2) with mass fractions ~(0.49, 0.02, 0.49,
 ~0). A Gaussian-localized perturbation at x=0.5 flips basis-3's velocity
 to v=+2 (mass fraction up to perturb_amp), redistributing the other three.

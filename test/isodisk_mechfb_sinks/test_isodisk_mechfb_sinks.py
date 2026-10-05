@@ -1,24 +1,12 @@
-"""Isolated disk + FIRE black-hole sinks — D1 sink_swallow_and_kick_gpu activation test.
+"""Isolated disk galaxy with FIRE black-hole sinks.
 
-Activation test for the sink-pipeline GPU port (D1 = sink_swallow_and_kick_gpu,
-exercising the same ghost-writeback pattern as B4 sink_environment_gpu and C3
-sink_feed_gpu). Uses the isodisk IC (shared with test/isodisk_mechfb) which already
-contains one Type-5 BH particle. FIRE_BHS enables SINK_PARTICLES + SINK_SWALLOWGAS +
-SINK_GRAVACCRETION=1, so D1's kernel fires on every timestep where the sink is active.
+The isodisk IC (shared with test/isodisk_mechfb), which contains one Type-5 black
+hole, under FIRE_PHYSICS_DEFAULTS=3 + FIRE_BHS. FIRE_BHS enables SINK_PARTICLES,
+SINK_SWALLOWGAS and SINK_GRAVACCRETION=1, so the sink accretes and swallows gas.
 
-Config notes:
-- NO FIRE_CRS. FIRE_CRS=0 does NOT disable cosmic rays (the presence of the flag
-  itself activates the CR pipeline). D1 Phase 1 #error-guards COSMIC_RAY_FLUID +
-  SINK_COSMIC_RAYS; Phase 2 will lift that.
-- SINK_GRAVACCRETION=1 (FIRE_BHS default), so E2 sink_environment_second_gpu (gated
-  on ==0) does NOT fire here — B4/C3/D1 are the active GPU paths.
-
-Validation protocol:
-1. Build with FIRE_BHS (Kokkos neighbor-list always active)
-2. Confirm PRINT_STATUS shows nonzero "GPU sink_swallow: N active, M pairs" on at
-   least one active-sink timestep
-3. Verify Sink_Mass grows via HQ accretion (gas → subgrid reservoir → sink)
-4. Assert baryon mass conservation across types 0+2+3+4+5
+Checks: the run reaches its final time, the subgrid black-hole mass (Sink_Mass)
+grows by accretion, and baryonic mass summed over types 0, 2, 3, 4 and 5 is
+conserved to 1%.
 """
 
 import pytest

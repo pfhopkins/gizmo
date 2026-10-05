@@ -1,8 +1,9 @@
-% PMGRID+BOX_PERIODIC GPU gravity walk validation.
-% Uses gmc_cooling ICs (BoxSize=100, 24754 gas particles filling full box).
-% SofteningGas=0.1 (reasonable: PMGRID=64 cell~1.56; avoids tiny-dt from 1e-10 softening).
-% No COOLING/METALS — clean gravity+hydro only.
-%
+% Gravity tree accuracy, 'pmgrid' variant: gmc_cooling IC (BoxSize=100, 24754 gas cells
+% filling the box) with BOX_PERIODIC + GRAVITY_NOT_PERIODIC + PMGRID=64, testing the
+% short-range/long-range split. SofteningGas=0.1 against a PM cell of ~1.56.
+% Run twice by test_gravtree.py: with the opening criterion below, and converged towards
+% direct summation (ErrTolTheta=0.15, ErrTolForceAcc=1e-6); the per-particle difference is
+% the production tree error.
 InitCondFile                       ../gmc_cooling/gmc_cooling_ics
 OutputDir                          output_pmgrid
 TimeMax                            0.05

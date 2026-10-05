@@ -11,7 +11,7 @@
 
 ## What is tested
 
-The wave propagates for one period (TimeMax=250) and should return to the initial conditions. The test compares initial and final snapshots for Density, Velocities, InternalEnergy, and MagneticField.
+The wave propagates to TimeMax=79 and should return to the initial conditions. The test compares initial and final snapshots for Density, Velocities, InternalEnergy, and MagneticField.
 
 ## Non-ideal MHD coefficient handling
 

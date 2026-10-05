@@ -2,7 +2,7 @@
 
 A 0.8+0.2 Msun eccentric 4 AU inner binary + 1 Msun tertiary at 100 AU, mutually inclined and
 randomly oriented: period ratio 88, so the tertiary runs ~6 timebins coarser than the inner
-stars at every sync point. This is the configuration test/binary cannot reach -- a bound pair
+stars at every sync point. This is the configuration test_binary.py cannot reach -- a bound pair
 splits by at most ~1 bin -- and the configuration of the production momentum violation (a
 hardening triple). Forces on the fine stars are evaluated with the coarse tertiary seen
 mid-step, up to 2^6 of their own steps from its last sync.
@@ -19,7 +19,7 @@ one the Old*-based source prediction (gravity/forcetree.cc) exists for -- the hi
 fuse -- but the committed assertion does not discriminate that fix, and nothing in the committed
 suite does; see the README for what did and what restoring a guard would take.
 
-Measured from the IO_HERMITE_SYNC datasets, for the same reason as test/binary: the plain
+Measured from the IO_HERMITE_SYNC datasets, for the same reason as test_binary.py: the plain
 Coordinates/Velocities are a mixed state (positions drifted, velocities at the last kick).
 """
 
@@ -38,7 +38,7 @@ from matplotlib import pyplot as plt
 # NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
 # 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
 # energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
-# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test_binary.py, an order of magnitude above
 # what that test measures.
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
@@ -89,7 +89,7 @@ def _ic_matches():
 
     Checking existence alone is not enough. The generator's parameters have changed before, and
     a stale file silently runs the OLD configuration under the new tolerances -- the same failure
-    that put test/plummer_binaries on a 100 AU IC while its test described 1000 AU. Recover the
+    that put test_plummer_binaries.py on a 100 AU IC while its test described 1000 AU. Recover the
     elements and compare, so a parameter change regenerates instead of being ignored.
     """
     if not path.exists(IC_FILE):
@@ -214,7 +214,7 @@ def _plot(t, de, dr, variant_id):
 @pytest.mark.parametrize("num_omp_threads", (1,))
 # Hermite only. A KDK variant here spent a 50-orbit run producing numbers nothing asserted on:
 # every ceiling below is calibrated for Hermite. The non-Hermite build path of the
-# IO_HERMITE_SYNC output block is covered by test/binary's kdk variant.
+# IO_HERMITE_SYNC output block is covered by test_binary.py's kdk variant.
 @pytest.mark.parametrize("extra_config_flags", [
     pytest.param((), id="starforge_defaults"),
 ])

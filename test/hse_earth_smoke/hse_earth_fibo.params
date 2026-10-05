@@ -1,4 +1,4 @@
-% HSE Earth-analog smoke test — Phase 17h IC validation gate.
+% HSE Earth-analog smoke test — IC validation gate.
 % Earth-mass, olivine mantle (68%) + iron core (32%), self-gravity ON,
 % Tillotson EOS, all CGS code units.  Goal: body remains in HSE for >=10 t_dyn.
 % t_dyn(surface) ~ 810 s -> TimeMax = 1e4 s = ~12 t_dyn.

@@ -1,5 +1,11 @@
-InitCondFile                       ../isodisk_thermalfb/isodisk_thermalfb_ics
-OutputDir                          output
+% Gravity tree accuracy, 'rt' variant: isodisk IC with its star particles as long-range
+% radiation sources (GALSF_FB_FIRE_RT_LONGRANGE): the radiation energy carried on the walk
+% (PhotonEnergy) is compared along with the force.
+% Run twice by test_gravtree.py: with the opening criterion below, and converged towards
+% direct summation (ErrTolTheta=0.15, ErrTolForceAcc=1e-6); the per-particle difference is
+% the production tree error.
+InitCondFile                       ../isodisk/isodisk_ics
+OutputDir                          output_rt
 TimeMax                            0.0301
 BoxSize                            200
 TimeBetSnapshot                    0.005

@@ -4,9 +4,6 @@ Density-modulated particle spacing (rho=1+eps cos(2 pi x/L)) with the same
 (+v/-v) 2-basis internal distribution.  Gates: global conservation, the
 cbe_diagnostics face-residual / bracket-fail receipt, clean controlled stop.
 Per-stream density vs analytic advection serves as the headline diagnostic.
-
-NOTE (2026-06-02): per-stream gates meaningful only after the C7 IC-reader
-merge (see cbe_two_stream).
 """
 
 import os
@@ -66,8 +63,8 @@ def read_snapshot(path, dim):
 
 def tr_T_abs(snap):
     """Total ABSOLUTE-frame raw second-moment trace Sum_i Sum_b Tr[T_abs,b] --
-    the conserved 2nd-moment invariant (cold IC -> 0).  Frame rule (see
-    feedback_validation): Tr[T_abs] = Tr[T_rel] + 2 V.p_rel + m|V|^2, evaluated
+    the conserved 2nd-moment invariant (cold IC -> 0).  In terms of the
+    stored relative-frame moments: Tr[T_abs] = Tr[T_rel] + 2 V.p_rel + m|V|^2, evaluated
     on the stored relative slots (diagonal stress at slot 1+dim+a)."""
     b = snap["bases"]
     if b is None or not b.get("secondmoment"):

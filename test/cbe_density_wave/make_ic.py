@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """IC for cbe_density_wave — 1D density-modulated counter-streaming test.
 
-Mirrors python_harness/cbe1d init_two_stream_density_wave (rest frame):
+Rest frame:
 equal-mass Type=1 particles whose POSITIONS are inverse-CDF sampled from
 rho(x) = 1 + eps cos(2 pi x / L), each carrying the same 2-basis (+v, -v)
 internal distribution. The total density advects as a wave at the stream

@@ -9,7 +9,7 @@ declarations/constants.h carries values that are in places decades old:
     SOLAR_MASS_CGS  1.989e33      IAU nominal is 1.98841e33   (3.0e-4 high)
 
 Those two partly cancel in the pc - km/s - Msun unit system, leaving G_code differing from the
-astropy value by 4.8e-5. Small, but not nothing: in test/binary that mismatch injects a spurious
+astropy value by 4.8e-5. Small, but not nothing: in test_binary.py that mismatch injects a spurious
 |dE/E| oscillation of 9.1e-4 -- an order of magnitude above the 7.8e-5 the test actually
 measures -- because the reconstructed energy then carries a term proportional to
 (G_test - G_code)/r, which sweeps with the orbit. The per-orbit envelope suppresses it (the run

@@ -4,9 +4,8 @@ Builds a 1D periodic box of H/He fluid evaluated through the Chabrier &
 Debras 2021 (Y=0.275) EOS, loaded via the existing EOS_ANEOS dispatch by
 running cms_to_sesame.py end-to-end. A small adiabatic compression is
 driven by a single-mode sinusoidal velocity perturbation; the test only
-checks that the run completes with finite, positive (rho, P, u). Physics
-validation (Jupiter/Saturn polytrope vs published interior models) is
-deferred.
+checks that the run completes with finite, positive (rho, P, u); it does
+not compare against Jupiter/Saturn interior models.
 
 Units: CGS throughout (UnitLength=UnitMass=UnitVelocity=1 -> code = CGS).
 

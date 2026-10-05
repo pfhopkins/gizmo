@@ -1,4 +1,4 @@
-"""Python SPH density estimator + u-correction step for the Phase 17h IC
+"""Python SPH density estimator + u-correction step for the IC
 builder.
 
 Why this exists:  the HSE solver gives each particle (rho_HSE, P_HSE, u_HSE)

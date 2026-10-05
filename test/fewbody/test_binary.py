@@ -47,7 +47,7 @@ from matplotlib import pyplot as plt
 # NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
 # 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
 # energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
-# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test_binary.py, an order of magnitude above
 # what that test measures.
 from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
@@ -82,9 +82,9 @@ P_ORB = 2.0 * np.pi * np.sqrt(A0 ** 3 / (G_CODE * MTOT))
 # gravity/forcetree.cc never fires here and this test does NOT guard it. It guards the
 # NORMALIZATION: revert that and the bins split again, and the same run measures |dE/E| = 1.6e-2
 # and drift = 8.5e-3, ~10x and ~4x over the ceilings below. The source prediction itself has NO
-# guard in the committed suite -- test/triple's hierarchy cannot fuse, so the prediction is
+# guard in the committed suite -- test_triple.py's hierarchy cannot fuse, so the prediction is
 # load-bearing there, but its committed assertion does not discriminate it (see
-# test/triple/README.md for what would).
+# test/fewbody/README_triple.md for what would).
 #
 # Measured over 1000 orbits (starforge_defaults, 1 rank, per-orbit envelope), both changes in:
 #     |dE/E| = 7.78e-5    COM drift = 3.48e-15   (drift is at round-off; growth t^-0.25)

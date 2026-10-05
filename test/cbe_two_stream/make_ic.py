@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """IC for cbe_two_stream — 1D counter-streaming CBE test.
 
-Mirrors python_harness/cbe1d init_two_stream (rest frame): N equal-mass
+Rest frame: N equal-mass
 Type=1 particles on a uniform 1D periodic mesh, each carrying a 2-basis
 internal velocity distribution (+v_stream, -v_stream) with equal mass
 split. Bulk velocity is zero, so each stream should advect at +/-v_stream

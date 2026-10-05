@@ -1,15 +1,11 @@
-"""Isolated disk galaxy — thermal_fb (B6) GPU activation test
+"""Isolated disk galaxy with thermal supernova feedback.
 
-Activation test for the thermal_fb GPU port (B6 / addthermalFB_evaluate).
-Uses isodisk ICs with a minimal config: GALSF_FB_THERMAL only (no FIRE_PHYSICS_DEFAULTS).
-Pre-existing Type-4 stellar particles are older than 5 Myr and fire SNe via the AGORA
-model from the very first timestep, guaranteeing the GPU kernel sees active sources.
+The isodisk IC with GALSF_FB_THERMAL (pure thermal SN energy injection) on a
+COOLING + GALSF + METALS base (no FIRE_PHYSICS_DEFAULTS). Pre-existing star
+particles are older than 5 Myr and produce SNe from the first timestep.
 
-Validation protocol:
-1. Build with default Kokkos Config.sh (flags are now always active)
-2. Confirm PRINT_STATUS shows nonzero "GPU thermal_fb: N sources, M pairs"
-3. Compare GPU output against CPU tree-walk reference — quantities written by
-   addthermalFB_evaluate (gas InternalEnergy, Metals, Masses) must match to round-off.
+Checks: the run reaches its final time, and total gas + star + black-hole mass is
+conserved to 0.1%.
 """
 
 import pytest

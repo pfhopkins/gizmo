@@ -1,4 +1,4 @@
-% Isolated disk galaxy — mechanical_fb (B8) activation test
+% Isolated disk galaxy — mechanical feedback with FIRE cosmic rays (Config_cr.sh)
 InitCondFile                       isodisk_mechfb_ics
 OutputDir                          output_cr
 TimeMax                            0.003

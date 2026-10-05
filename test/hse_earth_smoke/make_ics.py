@@ -1,4 +1,4 @@
-"""Generate an Earth-like HSE IC using the Phase 17h builder.
+"""Generate an Earth-like HSE IC using the builder.
 
 Mantle (olivine, 68%) + iron core (32%); adiabatic; 2000 particles for a
 fast smoke run. Output: hse_earth_smoke_ics.hdf5 in CGS code units

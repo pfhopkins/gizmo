@@ -1,6 +1,6 @@
 """Compare a GIZMO snapshot against the initial conditions for the
-hernquist_sidm-style test problem (small isolated Hernquist DM halo,
-~10^3 Type=1 particles).
+isolated Hernquist DM halo of the test/hernquist dark-matter physics examples
+(hernquist_sidm.params, hernquist_dmfuzzy.params, hernquist_cbe.params).
 
 Use this for any short evolution where the halo should be statistically
 indistinguishable from the IC (orbital phase advances; the distribution
@@ -16,9 +16,9 @@ Outputs:
   * Figure: 2x3 panel comparing IC vs final snapshot, saved alongside
     the snapshots as `validate_snapshot_vs_ic.png`.
 
-Defaults assume the script is run from `test/hernquist_sidm/` against the
-hernquist_sidm IC and the final snapshot of the run; pass --ic and
---snapshot to override.
+Defaults assume the script is run from `test/hernquist/` against
+hernquist_dm_ics.hdf5 and the final snapshot of the SIDM example; pass --ic and
+--snapshot to compare any other run.
 """
 
 import argparse
@@ -28,8 +28,8 @@ import h5py
 import numpy as np
 import matplotlib.pyplot as plt
 
-DEFAULT_IC       = "hernquist_sidm_ics.hdf5"
-DEFAULT_SNAPSHOT = "output/snapshot_002.hdf5"
+DEFAULT_IC       = "hernquist_dm_ics.hdf5"
+DEFAULT_SNAPSHOT = "output_sidm/snapshot_010.hdf5"
 DEFAULT_PLOT_OUT = "validate_snapshot_vs_ic.png"
 MIN_PARTICLES_FOR_BIN = 10   # log-binning starts where ~10 particles are inside
 
@@ -227,7 +227,7 @@ def main():
     ax.legend(loc="upper left", fontsize=9)
     ax.grid(True, which="both", ls=":", alpha=0.4)
 
-    fig.suptitle("hernquist_sidm PAA: IC vs t={:.4g}  (N={}, Mtot={:.3g})".format(
+    fig.suptitle("Hernquist halo: IC vs t={:.4g}  (N={}, Mtot={:.3g})".format(
         fn["t"], len(ic["ids"]), ic["m"].sum()))
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     fig.savefig(plot_out, dpi=150, bbox_inches="tight")

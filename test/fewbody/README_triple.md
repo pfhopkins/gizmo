@@ -4,10 +4,10 @@ Three Type 5 sinks: an **unequal-mass** (0.8 + 0.2 M<sub>⊙</sub>) eccentric 4 
 orbited by a 1 M<sub>⊙</sub> tertiary at 100 AU, mutually inclined and randomly oriented.
 Reports energy and momentum conservation across a **deep timebin hierarchy**.
 
-## Why this exists alongside `test/binary`
+## Why this exists alongside `test_binary.py`
 
 A bound *pair* splits by at most ~1 timebin — the symmetric 2-body criterion binds both members
-together — so `test/binary` cannot produce a deep hierarchy no matter how eccentric it is. Here
+together — so `test_binary.py` cannot produce a deep hierarchy no matter how eccentric it is. Here
 the period ratio is 88, putting the tertiary **~6 bins coarser** than the inner stars, so the fine
 stars evaluate the tertiary mid-step, up to 2⁶ of their own steps from its last sync. That is the
 regime the Hermite source prediction in `gravity/forcetree.cc` exists for, and the configuration
@@ -68,7 +68,7 @@ COM drift, growth exponents and the inner semi-major axis are **printed and save
 > drift — t^+0.95 defective vs t^+0.55 fixed, across a 0.85 threshold — which the defect *passed*
 > on magnitude while failing on trend. That check was calibrated on a configuration this IC no
 > longer produces and has been removed pending recalibration. It cannot be delegated:
-> `test/binary`'s pair shares a timebin so the prediction never fires there, and `test/fewbody`'s
+> `test_binary.py`'s pair shares a timebin so the prediction never fires there, and `test/fewbody`'s
 > 10% ceiling passes fixed and unfixed code alike. The evidence for the fix lives off-suite — the
 > fewbody per-problem medians (2.09×/2.44×), the production seed4 A/B (22× leak suppression), and
 > the M2e3 survey. Restoring an in-suite guard means recalibrating the drift-exponent check on

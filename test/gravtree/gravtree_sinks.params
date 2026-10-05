@@ -1,4 +1,10 @@
-InitCondFile                       ../isodisk_thermalfb/isodisk_thermalfb_ics
+% Gravity tree accuracy, 'sinks' variant: isodisk IC, whose central black hole is a
+% Type-5 sink, with SINK_CALC_DISTANCES: the distance from every cell to the nearest sink
+% (Sink_Distance) is gathered on the walk and must not depend on the opening criterion.
+% Run twice by test_gravtree.py: with the opening criterion below, and converged towards
+% direct summation (ErrTolTheta=0.15, ErrTolForceAcc=1e-6); the per-particle difference is
+% the production tree error.
+InitCondFile                       ../isodisk/isodisk_ics
 OutputDir                          output_sinks
 TimeMax                            2e-5
 BoxSize                            200

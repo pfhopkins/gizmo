@@ -1,17 +1,11 @@
-"""Isolated disk galaxy — mechanical_fb (B8 Phase 1) GPU activation test
+"""Isolated disk galaxy with mechanical feedback.
 
-Activation test for the mechanical_fb GPU port (B8 / addFB_evaluate default scheme).
-Uses isodisk ICs with a minimal config: GALSF_FB_MECHANICAL only (no FIRE_PHYSICS_DEFAULTS,
-no COSMIC_RAY_FLUID, no GALSF_ISMDUSTCHEM_MODEL — those come in Phase 2 / 2b).
-Pre-existing Type-4 stellar particles are older than 5 Myr and fire SNe via the AGORA
-model from the very first timestep, guaranteeing the GPU kernel sees active sources.
+The isodisk IC with GALSF_FB_MECHANICAL (SNe and stellar mass loss) on a
+COOLING + GALSF + METALS base. Pre-existing star particles are older than 5 Myr
+and produce SNe from the first timestep.
 
-Validation protocol:
-1. Build with default Kokkos Config.sh (flags are now always active)
-2. Confirm PRINT_STATUS shows nonzero "GPU mech_fb: N sources, M pairs" across modes
-3. Compare GPU output against CPU tree-walk reference — gas Mass, InternalEnergy,
-   Metallicity, Vel must match to round-off (mass + total energy conservation better
-   than 1e-3).
+Checks: the run reaches its final time, and total baryonic mass (gas plus all
+stellar types) is conserved to 1%.
 """
 
 import pytest

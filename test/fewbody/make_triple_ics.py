@@ -1,6 +1,6 @@
 """Hierarchical triple: unequal-mass eccentric inner binary + inclined tertiary, as Type 5 sinks.
 
-The many-timebin configuration test/binary cannot produce: a bound pair splits by at most ~1
+The many-timebin configuration test_binary.py cannot produce: a bound pair splits by at most ~1
 bin (the symmetric 2-body criterion binds both members), but a hierarchy separates cleanly --
 the tertiary's timestep is set by the slow outer orbit, the inner stars' by the fast inner one,
 and the period ratio (a_out/a_in)^1.5 * sqrt(M_in/M_tot) puts them log2 of that apart. Defaults

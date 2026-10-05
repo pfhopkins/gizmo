@@ -1,7 +1,10 @@
-% Isodisk + RT_M1 activation test — same physics as isodisk_thermalfb
-% but with explicit RT_M1 to exercise rt_source_injection (B5).
-InitCondFile                       isodisk_rtsources_ics
-OutputDir                          output
+% Isolated disk galaxy — mechanical feedback plus explicit M1 radiation transport (Config_rt.sh).
+% Pre-existing star particles (Type 4) are older than 5 Myr, so SNe fire and the stars
+% inject radiation in the NUV, optical/NIR, IR, photoelectric and photoionizing bands
+% from step 1. The reduced speed of light (RT_SPEEDOFLIGHT_REDUCTION=0.001) is chosen so
+% the field propagates within a few steps; it is not a converged RT setup.
+InitCondFile                       isodisk_mechfb_ics
+OutputDir                          output_rt
 TimeMax                            0.03
 BoxSize                            200
 TimeBetSnapshot                    0.01

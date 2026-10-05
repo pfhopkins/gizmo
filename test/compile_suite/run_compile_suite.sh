@@ -314,7 +314,7 @@ CONFIGS=(
     "EOS_ELASTIC EOS_TILLOTSON MAGNETIC"
     "RT_EVOLVE_INTENSITIES RT_LOCALRAYGRID=1 RT_FREEFREE METALS"
 
-    # --- Step 13 Phase 11 newly-ported gates: regression coverage for previously-blocked flags ---
+    # --- Regression coverage for previously-blocked flags ---
     "COUNT_MASS_IN_GRAVTREE COOLING METALS"                                              # N.3a: tree-mass diagnostic + scatter-back
     "PMGRID=64 OUTPUT_TIDAL_TENSOR BOX_PERIODIC"                                         # N.3b: shortrange_table_tidal mirror, PMGRID + tidal tensor
     "SPECIAL_POINT_MOTION SINK_PARTICLES SINK_CALC_DISTANCES"                            # N.4a: nearest-special vel/acc accumulation

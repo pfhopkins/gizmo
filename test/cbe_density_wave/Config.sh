@@ -1,6 +1,5 @@
 ########################################
-# cbe_density_wave — 1D density-modulated counter-streaming CBE test
-# (mirrors python_harness tests/test_two_stream_density_wave).
+# cbe_density_wave — 1D density-modulated counter-streaming CBE test.
 #
 # Same 2-basis (+v/-v) internal distribution as cbe_two_stream, but the
 # particle SPACING is inverse-CDF sampled from rho(x) = 1 + eps cos(2 pi x/L)

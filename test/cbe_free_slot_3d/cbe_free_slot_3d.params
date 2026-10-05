@@ -14,7 +14,7 @@ TimeBetStatistics                  0.0125
 % Transverse extent; x extent = BoxSize * BOX_LONG_X = 1.0
 BoxSize                            0.0625
 
-% 3D neighbour target (cf. hernquist_sidm AGS_DesNumNgb=32)
+% 3D neighbour target (the usual 3D value, AGS_DesNumNgb=32)
 AGS_DesNumNgb                      32
 AGS_MaxNumNgbDeviation             1.0
 DesNumNgb                          32

@@ -501,6 +501,10 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
                 if path.isdir(dst):
                     rmtree(dst)
                 move(src, dst)
+            # A Config variant stashed the family's baseline output/ before the run; put it back.
+            stash = path.join(_test_dir(test_name, "build_and_run_test"), _BASELINE_STASH)
+            if path.isdir(stash) and not path.isdir(src):
+                move(stash, src)
         else:
             finalize_variant_output(test_name, extra_config_flags)
 

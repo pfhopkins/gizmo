@@ -1,4 +1,4 @@
-"""Analytic Tillotson EOS evaluator for Phase 17h IC builder.
+"""Analytic Tillotson EOS evaluator for the IC builder.
 
 Direct port of the formula in declarations/cell_data.h::calculate_tillotson_eos
 and the material parameter table in solids/elastic_physics.cc::tillotson_eos_init.

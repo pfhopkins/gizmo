@@ -5,10 +5,6 @@ zero bulk velocity the streams advect at +/-v while total density stays
 uniform.  Gates: global conservation, the cbe_diagnostics face-residual /
 bracket-fail receipt, and a clean controlled stop.  Headline diagnostic is
 the per-stream density profile vs analytic (flat ICs stay flat).
-
-NOTE (2026-06-02): the IC's VlasovMoments dataset is only honoured once the
-C7 IC-reader is merged into this branch. Until then GIZMO synthesizes a
-cold single-stream default and these per-stream gates will not be meaningful.
 """
 
 import os
@@ -68,8 +64,8 @@ def read_snapshot(path, dim):
 
 def tr_T_abs(snap):
     """Total ABSOLUTE-frame raw second-moment trace Sum_i Sum_b Tr[T_abs,b] --
-    the conserved 2nd-moment invariant (cold IC -> 0).  Frame rule (see
-    feedback_validation): Tr[T_abs] = Tr[T_rel] + 2 V.p_rel + m|V|^2, evaluated
+    the conserved 2nd-moment invariant (cold IC -> 0).  In terms of the
+    stored relative-frame moments: Tr[T_abs] = Tr[T_rel] + 2 V.p_rel + m|V|^2, evaluated
     on the stored relative slots (diagonal stress at slot 1+dim+a)."""
     b = snap["bases"]
     if b is None or not b.get("secondmoment"):

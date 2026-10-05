@@ -1,4 +1,4 @@
-% Isolated disk + FIRE BH sinks — D1 activation test
+% Isolated disk + FIRE BH sinks
 % Derived from test/isodisk_mechfb/isodisk_mechfb.params, shortened TimeMax.
 %
 InitCondFile                       isodisk_mechfb_sinks_ics

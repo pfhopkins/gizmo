@@ -5,9 +5,7 @@ Validates that GIZMO can:
   2. Run a tiny 1D periodic adiabatic compression without crashing
   3. Produce finite, positive (rho, P, u)
 
-This is a crash/sanity test, not a quantitative accuracy test. Phase 17h
-deliverable; physics validation (Jupiter/Saturn polytrope vs published
-profiles) is deferred.
+This is a crash/sanity test, not a quantitative accuracy test.
 """
 
 import pytest

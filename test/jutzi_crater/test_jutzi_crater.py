@@ -1,4 +1,4 @@
-"""Phase 17e smoke test: Jutzi 2008 P-alpha + Grady-Kipp + Drucker-Prager
+"""smoke test: Jutzi 2008 P-alpha + Grady-Kipp + Drucker-Prager
 (EOS_DAMAGE_POROSITY=7) on a small basalt-on-basalt cratering impact.
 
 Validates:
@@ -9,7 +9,8 @@ Validates:
      (porosity was compacted by shock pressure > P_s).
   5. Mass is conserved to <0.1%.
 
-Full physics validation (Jutzi+ 2008 Fig. 4-7 crater profiles) is deferred.
+This is a functional check of the damage/porosity model; it does not compare crater
+profiles against Jutzi+ 2008 (their Figs. 4-7).
 """
 
 import glob

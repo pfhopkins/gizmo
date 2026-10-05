@@ -26,7 +26,7 @@ from matplotlib import pyplot as plt
 # NOT astropy: the code integrates with GRAVITY_G_CGS = 6.672e-8 and SOLAR_MASS_CGS =
 # 1.989e33, giving G_code = 4.300710573e-3 rather than 4.300917270e-3. Reconstructing
 # energies or orbital elements with the wrong G injects a spurious term ~ dG/r that
-# sweeps with the orbit -- 9.1e-4 in |dE/E| for test/binary, an order of magnitude above
+# sweeps with the orbit -- 9.1e-4 in |dE/E| for test_binary.py, an order of magnitude above
 # what that test measures.
 from pytreegrav import Potential
 
@@ -47,6 +47,11 @@ from gizmo.test import (
 # directory (and so the Config they share), VARIANT names this problem's own
 # parameter file, initial conditions and output.
 TEST_NAME = "plummer"
+
+# test/plummer/Config.sh is the pure-gravity build used by test_plummer.py; the binary-star
+# problems additionally need the sink/Hermite physics and the synchronized-state output.
+BINARY_FLAGS = ("SINGLE_STAR_STARFORGE_DEFAULTS", "IO_HERMITE_SYNC")
+
 VARIANT = "plummer_binaries"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{VARIANT}_ics.hdf5"
@@ -428,6 +433,7 @@ def _plot_variant_density_evolution(variant_id, snaps):
     pytest.param(("SINGLE_STAR_DIRECT_GRAVITY",), id="direct_gravity"),
 ])
 def test_plummer_binaries(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
+    extra_config_flags = BINARY_FLAGS + tuple(extra_config_flags)
     _ensure_ic()
     rmtree(problem_output_dir(TEST_NAME, VARIANT, extra_config_flags), ignore_errors=True)
     time_max = float(parse_params(f"{TEST_DIR}/{VARIANT}.params")["TimeMax"])

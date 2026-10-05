@@ -1,4 +1,4 @@
-"""Phase 17e bit-2 P-alpha analytic crush-curve unit test.
+"""P-alpha analytic crush-curve unit test.
 
 Builds a tiny standalone C++ harness around solids/jutzi_crush_curve.h, sweeps a
 range of pressures and material params, and asserts the output bit-matches the

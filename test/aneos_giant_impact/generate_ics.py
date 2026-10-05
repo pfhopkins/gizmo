@@ -1,4 +1,4 @@
-"""Generate ICs for the ANEOS giant-impact test via the Phase 17h HSE builder.
+"""Generate ICs for the ANEOS giant-impact test via the HSE builder.
 
 Earth-mass differentiated body, forsterite mantle (68% by mass) + iron core
 (32%). The HSE solve uses Material.sesame() against the same Stewart S19/S20

@@ -1,7 +1,7 @@
 """Convert a Chabrier-family H/He EOS table (CMS19, CD21, or compatible)
 to the SESAME-format ASCII table consumed by GIZMO's eos/aneos.cc loader.
 
-Phase 17d (planet formation suite): substellar H/He EOS support.
+substellar H/He EOS support.
 
 ----------------------------------------------------------------------
 Input format (CMS19 / CD21 native release, ASCII):

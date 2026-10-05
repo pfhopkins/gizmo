@@ -1,16 +1,13 @@
-"""FIRE galaxy — RT source injection (B5) GPU activation test
+"""FIRE galaxy with explicit radiation sources.
 
-Activation test for the rt_source_injection GPU port (B5).
-Uses fire ICs (m11i dwarf at z~2.9) with RT_M1 + RT_COMOVING + RT_SOURCES=48
-(Type 4 + Type 5 → RT bands: RT_OPTICAL_NIR, RT_NUV, RT_PHOTOELECTRIC,
-RT_CHEM_PHOTOION=1, RT_INFRARED).  Pre-existing Type-4 stellar particles
-emit into these bands from step 1, guaranteeing nonzero injection.
+A short run of the FIRE m11i dwarf-galaxy IC (z~2.9) with FIRE_PHYSICS_DEFAULTS=3
++ FIRE_BHS and explicit M1 radiation transport (RT_M1, RT_COMOVING, RT_SOURCES=48;
+RT_OPTICAL_NIR, RT_NUV, RT_PHOTOELECTRIC, RT_CHEM_PHOTOION=1, RT_INFRARED bands).
+Pre-existing star particles inject radiation from the first step.
 
-Validation protocol:
-1. Build with default Kokkos Config.sh (flags are now always active)
-2. Confirm PRINT_STATUS shows nonzero "GPU rt_source_injection: N sources, M pairs"
-3. Check that radiation energy density is nonzero in snapshot PartType0/PhotonEnergy_*
-4. Compare GPU vs CPU tree-walk reference on at least one RT band field.
+Checks: dark-matter mass is conserved exactly, and the gas carries non-zero
+radiation energy after injection. A completion and activation check, not an
+accuracy test.
 """
 
 import pytest

@@ -2,7 +2,7 @@
 
 A Plummer sphere of Type 5 sinks whose binary population is drawn from the observed
 distributions, rather than being identical equal-mass circular pairs as in
-[`test/plummer_binaries`](../plummer_binaries). Measures energy and momentum conservation
+[`test_plummer_binaries.py`](test_plummer_binaries.py). Measures energy and momentum conservation
 under a heterogeneous population.
 
 ## Why this exists alongside `plummer_binaries`
@@ -150,7 +150,7 @@ Of 79 binaries, 66 remained bound; median |da/a| = 5.1e-4 with a 90th percentile
 tail of genuinely perturbed systems, which is expected from encounters and is why survival is
 reported but never asserted.
 
-> **No growth-exponent assertion here**, unlike [`test/triple`](../triple). Its drift exponent is
+> **No growth-exponent assertion here**, unlike [`test_triple.py`](../fewbody/test_triple.py). Its drift exponent is
 > a stable statistic on a clean 3-body configuration; this one's is not. Measured local slopes
 > over successive windows: +0.10, −3.73, +8.71, +1.03. A negative slope proves it is not a power
 > law, so an exponent fit would report where the window landed rather than anything about the

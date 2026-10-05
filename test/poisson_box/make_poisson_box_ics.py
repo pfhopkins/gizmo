@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Generate Poisson-random uniform gas box ICs for ghost exchange / neighbor list testing.
+"""Generate Poisson-random uniform gas box ICs for the poisson_box test problem.
 
-Places N = 100^3 = 1,000,000 gas particles uniformly at random in a periodic
-box [0, BoxSize]^3.  All particles have equal mass, zero velocity, and uniform
-internal energy corresponding to T ~ 10^4 K.  Initial smoothing lengths are
-set from the mean inter-particle spacing scaled to enclose ~32 neighbors.
+Places N = N_per_side^3 gas cells uniformly at random (no lattice, no glass) in a
+periodic box [0, BoxSize]^3: equal masses, zero velocity, uniform internal energy
+for T ~ 10^4 K, solar metallicity, and initial kernel radii from the mean
+inter-cell spacing scaled to enclose ~32 neighbours. Several resolutions can be
+written at once, for scaling studies.
+
+Usage:
+  python make_poisson_box_ics.py              # 50^3 = 125k cells (the test default)
+  python make_poisson_box_ics.py 30 50 80 100 # one IC per resolution
+  python make_poisson_box_ics.py 80 --nH 100  # GMC-like mean density instead of 1 cm^-3
+Output: poisson_box_<N_per_side>_ics.hdf5
 
 Units match the gmc_cooling test:
   UnitLength  = 1 pc   = 3.09e18 cm
@@ -19,11 +26,12 @@ import os
 
 def make_poisson_box_ics(
     output_file="poisson_box_ics.hdf5",
-    N_per_side=100,
+    N_per_side=50,
     BoxSize=100.0,
     seed=42,
+    n_H=1.0,
 ):
-    Ngas = N_per_side**3  # 1,000,000
+    Ngas = N_per_side**3
 
     rng = np.random.default_rng(seed)
 
@@ -33,15 +41,11 @@ def make_poisson_box_ics(
     # --- Velocities: zero ---
     vel = np.zeros((Ngas, 3), dtype=np.float32)
 
-    # --- Masses: equal, pick a total mass that gives a reasonable density ---
-    # Target: mean n_H ~ 1 cm^-3  (low density, just for testing)
-    # rho = n_H * m_p / X_H;  X_H = 0.76
-    # M_total = rho * BoxSize^3  (BoxSize in pc, mass in Msun)
-    # n_H = 1 /cc => rho = 1 * 1.67e-24 / 0.76 = 2.197e-24 g/cc
-    # BoxSize = 100 pc = 100 * 3.09e18 cm = 3.09e20 cm
-    # Volume = (3.09e20)^3 = 2.953e61 cm^3
-    # M_total = 2.197e-24 * 2.953e61 / 1.99e33 = 3.26e4 Msun
-    M_total = 3.26e4  # Msun
+    # --- Masses: equal, for a mean hydrogen number density n_H (cm^-3) ---
+    # rho = n_H * m_p / X_H with X_H = 0.76; M_total = rho * BoxSize^3 (pc -> cm, g -> Msun).
+    # n_H = 1 in a 100 pc box gives M_total = 3.26e4 Msun.
+    rho_cgs = n_H * 1.6726e-24 / 0.76
+    M_total = rho_cgs * (BoxSize * 3.0857e18) ** 3 / 1.989e33  # Msun
     m_gas = M_total / Ngas
     masses = np.full(Ngas, m_gas, dtype=np.float32)
 
@@ -110,11 +114,20 @@ def make_poisson_box_ics(
     print(f"  N_gas        = {Ngas} ({N_per_side}^3)")
     print(f"  BoxSize      = {BoxSize}")
     print(f"  m_gas        = {m_gas:.6e} Msun")
-    print(f"  M_total      = {M_total:.2e} Msun  (mean n_H ~ 1 /cc)")
+    print(f"  M_total      = {M_total:.2e} Msun  (mean n_H = {n_H:g} /cc)")
     print(f"  u_therm      = {u_therm:.1f} (km/s)^2  (T ~ 1e4 K)")
     print(f"  h_guess      = {h_guess:.4f}  (mean spacing = {spacing:.2f})")
 
 
 if __name__ == "__main__":
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("N_per_side", type=int, nargs="*", default=[50])
+    parser.add_argument("--nH", type=float, default=1.0, help="mean n_H in cm^-3 (default 1)")
+    parser.add_argument("--boxsize", type=float, default=100.0, help="box side in pc (default 100)")
+    parser.add_argument("--seed", type=int, default=42)
+    args = parser.parse_args()
     outdir = os.path.dirname(os.path.abspath(__file__))
-    make_poisson_box_ics(os.path.join(outdir, "poisson_box_ics.hdf5"))
+    for n in args.N_per_side:
+        make_poisson_box_ics(os.path.join(outdir, f"poisson_box_{n}_ics.hdf5"), N_per_side=n,
+                             BoxSize=args.boxsize, seed=args.seed, n_H=args.nH)

@@ -1,5 +1,5 @@
 """1-D hydrostatic-equilibrium shooting solver for layered self-gravitating
-bodies. Used by Phase 17h IC builder.
+bodies. Used by IC builder.
 
 Equations (CGS):
     dP/dr   = -G m rho / r^2
