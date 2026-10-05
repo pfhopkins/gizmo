@@ -750,6 +750,9 @@
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // need this to estimate the dynamical time
 #endif
+#ifndef COMPUTE_JERK_IN_GRAVTREE
+#define COMPUTE_JERK_IN_GRAVTREE // the steps between tree forces extrapolate the acceleration with the jerk
+#endif
 #endif
 
 

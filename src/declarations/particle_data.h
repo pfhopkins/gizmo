@@ -79,9 +79,6 @@ extern ALIGN(32) struct particle_data
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
     MyFloat time_since_last_treeforce;
     MyFloat tdyn_step_for_treeforce;
-#ifndef COMPUTE_JERK_IN_GRAVTREE
-#define COMPUTE_JERK_IN_GRAVTREE
-#endif
 #endif
     
 #ifdef COMPUTE_JERK_IN_GRAVTREE
