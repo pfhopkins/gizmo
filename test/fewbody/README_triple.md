@@ -10,8 +10,8 @@ A bound *pair* splits by at most ~1 timebin — the symmetric 2-body criterion b
 together — so `test_binary.py` cannot produce a deep hierarchy no matter how eccentric it is. Here
 the period ratio is 88, putting the tertiary **~6 bins coarser** than the inner stars, so the fine
 stars evaluate the tertiary mid-step, up to 2⁶ of their own steps from its last sync. That is the
-regime the Hermite source prediction in `gravity/forcetree.cc` exists for, and the configuration
-of the production momentum violation this work started from.
+regime the Hermite source prediction in `gravity/forcetree.cc` exists for: without it, a coarse
+source is seen at a stale position, which leaks momentum in STARFORGE star-cluster simulations.
 
 ## Setup
 
@@ -31,8 +31,8 @@ of the production momentum violation this work started from.
 The **6-bin inner↔outer gap** is the deep one, and the reason this test exists.
 
 The **unequal inner masses** add a second, 1-bin split *inside* the pair: `dt_tidal` is set by the
-companion mass, so the components differ by √(m₁/m₂) = 2 — the asymmetry the original leak was
-traced to. This matters because the inner binary carries **86% of the total energy** (−27.7 of
+companion mass, so the components differ by √(m₁/m₂) = 2 — the asymmetry that drives the
+momentum leak. This matters because the inner binary carries **86% of the total energy** (−27.7 of
 −32.2); at equal masses it shares a bin by symmetry and is structurally blind to the source
 prediction. The cost is that COM drift is no longer unambiguously the inner↔outer channel.
 
@@ -63,16 +63,16 @@ That is 3× the 5.66e-5 measured on this configuration, and it bounds gross brea
 COM drift, growth exponents and the inner semi-major axis are **printed and saved** to
 `summary_<variant>.npz`, not judged.
 
-> **This test does not currently guard the source-prediction fix — and nothing in the committed
-> suite does.** What discriminated the defect here was the secular growth exponent on the COM
-> drift — t^+0.95 defective vs t^+0.55 fixed, across a 0.85 threshold — which the defect *passed*
-> on magnitude while failing on trend. That check was calibrated on a configuration this IC no
-> longer produces and has been removed pending recalibration. It cannot be delegated:
-> `test_binary.py`'s pair shares a timebin so the prediction never fires there, and `test/fewbody`'s
-> 10% ceiling passes fixed and unfixed code alike. The evidence for the fix lives off-suite — the
-> fewbody per-problem medians (2.09×/2.44×), the production seed4 A/B (22× leak suppression), and
-> the M2e3 survey. Restoring an in-suite guard means recalibrating the drift-exponent check on
-> this configuration.
+> **This test does not guard the source-prediction fix, and neither does any other test in the
+> suite.** What discriminated the defect was the secular growth exponent of the COM drift —
+> t^+0.95 without the prediction against t^+0.55 with it, across a 0.85 threshold — which the
+> defect *passed* on magnitude while failing on trend. That check was calibrated on an earlier
+> version of this IC and is not applied; guarding the fix in the suite means recalibrating it on
+> this configuration. No other test can stand in: `test_binary.py`'s pair shares a timebin, so the
+> prediction never fires there, and an energy ceiling at the 10% level passes the code with and
+> without the fix alike. The evidence for the fix comes from STARFORGE test problems run outside
+> this suite: few-body problems (median errors reduced 2.1× and 2.4×), a star-cluster formation run
+> (momentum leak suppressed 22×), and a survey of cloud-collapse runs.
 
 An integration-order sweep was also removed. Its KDK control measured leapfrog converging at
 dt^3.4 — above leapfrog's 2nd-order ceiling, therefore impossible — so the metric was not

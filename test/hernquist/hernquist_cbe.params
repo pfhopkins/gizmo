@@ -20,7 +20,6 @@ TreeDomainUpdateFrequency          0.05
 DesNumNgb                          32
 AGS_DesNumNgb                      32
 PartAllocFactor                    2.5
-MaxSimulationWallTime_in_Seconds   3600
 UnitLength_in_cm                   3.085678e21
 UnitMass_in_g                      1.989e43
 UnitVelocity_in_cm_per_s           2.0741e7
