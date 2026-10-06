@@ -43,6 +43,7 @@ struct jaco_eos_state {
     double x_e;        /* all free electrons per H nucleus, metals' included */
 };
 void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, double u, double rho, struct jaco_eos_state *eos);
+void jaco_seed_spawned_cell(int i, double T, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 #ifdef SINK_PARTICLES
 #include "../sinks/sink.h"

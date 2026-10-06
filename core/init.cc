@@ -574,7 +574,7 @@ void init(void)
             CellP[i].Temperature = 1.22 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy;
         }
 #ifdef JACO
-        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT;} /* gamma_eos_value() returns this until the first set_eos_pressure(); snapshots do not carry it */
+        if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].JacoReheated = 0;} /* gamma_eos_value() returns this until the first set_eos_pressure(); snapshots do not carry it */
 #ifndef COOL_MOLECFRAC_NONEQM
         if(RestartFlag != 1) {CellP[i].MolecularMassFraction = CellP[i].MolecularMassFraction_perNeutralH = 0;} /* not read from snapshots in this configuration: start atomic */
 #endif

@@ -1212,6 +1212,18 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         inject_cosmic_rays(dEcr, v_magnitude_physical, 5, j, veldir.data, CellP); /* inject directly */
 #endif
 #endif
+#ifdef JACO
+        { /* u above assumes mu = 0.59 at the outflow temperature, and the clone keeps its neighbour's composition */
+            double T_spawn = All.Sink_outflow_temperature; /* <= 0: u is set by the ejecta's energy instead */
+#ifdef SINK_RIAF_SUBEDDINGTON_MODEL
+            T_spawn = 0;
+#endif
+#if defined(SINGLE_STAR_FB_SNE) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
+            if(P[i].Type==5 && P[i].ProtoStellarStage == 6) {T_spawn = 0;}
+#endif
+            jaco_seed_spawned_cell(j, T_spawn, P, CellP);
+        }
+#endif
         /* Splice the spawned cell into the live tree. This maintains list connectivity and total node
            mass (the mass was debited from the co-located sink), but NOT the type-conditioned moments
            (gasmass, stellar_lum, ...) nor ancestor hmax beyond the immediate parent -- those are healed
