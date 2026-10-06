@@ -38,8 +38,10 @@ State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZ
     codegen (not the paper's edge power law).
   - Thermal emission into fixed-shape bands: per-band Kirchhoff (chi_B := chi_E), so that detailed balance holds per
     band and optically thick gas thermalises exactly.
-  - Photon vs energy bookkeeping in ionizing bands: measure the hardening mismatch after the split; if it is still
-    more than a few %, add a second moment (photon number + energy) to ionizing bands only.
+  - Photon vs energy bookkeeping in ionizing bands (measured after the split: 6.6% / 5.6% per sub-band, mostly
+    physical): photons are conserved exactly, and the deferred hardening energy (<h nu>_b - E_abs per absorption) is
+    booked as an explicit energy-ledger term. No second moment. Check: an ~8-sub-band HII_region run as the converged
+    reference for the 2-band front temperature and radius.
 - Legacy GIZMO is being fixed on a separate branch, `rt_microphysics_fixes` (see GIZMO_RT_MICROPHYSICS_ISSUES.md):
   the IR double count, the discarded IR gas share, Rad_Je, the Iliev photon count, the restart H2 rebuild, the sound
   speed's stale gamma, and an uninitialized `dt_hydrostep_i` in the hydro flux limiters. Consequences for jaco:
