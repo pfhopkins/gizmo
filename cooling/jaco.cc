@@ -170,6 +170,9 @@ void jaco_build_cie_table(void) {
 #ifdef JACO_HAS_PARAM_grad_v
     pr.grad_v = 1e-14;
 #endif
+#ifdef JACO_HAS_PARAM_grad_v_tf
+    pr.grad_v_tf = 1e-14;
+#endif
 #ifdef JACO_HAS_PARAM_Delta_x
     pr.Delta_x = 3e18;
 #endif
@@ -311,6 +314,24 @@ static inline double jaco_cell_X_H(int i, struct particle_data *pp, double *y) {
     return X;
 }
 
+#ifdef JACO_HAS_PARAM_grad_v_tf
+/* Frobenius norm of the trace-free part of the physical velocity gradient, |grad v - (div v / 3) I|, in code units (the
+   Hubble flow, being isotropic, drops out) */
+static double jaco_tracefree_gradient_norm(const struct gas_cell_data *c) {
+    double g[3][3], div = 0, s = 0;
+    for (int j = 0; j < 3; j++) {
+        for (int k = 0; k < 3; k++) g[j][k] = c->Gradients.Velocity[j][k] * All.cf_a2inv;
+        div += g[j][j];
+    }
+    for (int j = 0; j < 3; j++)
+        for (int k = 0; k < 3; k++) {
+            double t = g[j][k] - (j == k ? div / 3 : 0);
+            s += t * t;
+        }
+    return sqrt(s);
+}
+#endif
+
 /* Fill the cell-dependent Params: everything the generated EOS (jaco_eos.cc) reads, including the column that
    shields C+ and so sets the free electrons, plus the other cell properties the rates need, except the radiation
    inputs only the rates read (G_LW, Td: gizmo_to_jaco). The solver and jaco_cell_eos both pack
@@ -437,6 +458,12 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     pr->grad_v =
         DMAX(1e-30, grad_v * UNIT_VEL_IN_CGS /
                         UNIT_LENGTH_IN_CGS); /* CGS s^-1, floored to avoid division by zero in LVG expressions */
+#endif
+#ifdef JACO_HAS_PARAM_grad_v_tf
+    double grad_v_tf = jaco_tracefree_gradient_norm(&cell[i]);
+    if (!jaco_isfinite(grad_v_tf))
+        grad_v_tf = 0;
+    pr->grad_v_tf = DMAX(1e-30, grad_v_tf * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS);
 #endif
 
     /* Cosmological redshift for inverse Compton cooling */

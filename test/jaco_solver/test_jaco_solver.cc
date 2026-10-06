@@ -86,6 +86,9 @@ static void starforge_params(Params *pr, double n, double dt) {
     pr->Delta_x = 3e18;
     pr->N_H = n * pr->Delta_x;
     pr->grad_v = 1e-14;
+#ifdef JACO_HAS_PARAM_grad_v_tf
+    pr->grad_v_tf = 1e-14;
+#endif
     pr->X = 0.7155;
     pr->x_C_tot = 2.1e-4;
     pr->x_N = 6.8e-5;

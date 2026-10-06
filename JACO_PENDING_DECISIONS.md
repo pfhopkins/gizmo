@@ -58,7 +58,12 @@ applies C_2 to every two-body rate (by design: "all clumping factors in starforg
 Options: (a) cap C_2; (b) use the trace-free part of grad v only, so bulk expansion/shock jumps do not count as
 sub-grid turbulence; (c) clump only cold/neutral gas; (d) chemistry-only in `starforge` too.
 Recommendation: (b). `starforge_legacy` is unaffected by construction.
-Decision (MYG, 2026-10-06): (b), the trace-free part of grad v. Not yet implemented.
+Decision (MYG, 2026-10-06): (b), the trace-free part of grad v.
+Implemented (branches `jaco_p0`, 2026-10-06): a declared parameter `∇v_tf` (host: `jaco_tracefree_gradient_norm`);
+`starforge_legacy` keeps the full norm, its generated code unchanged. Effect is small: in SN_singlestar the trace-free
+norm is 0.9-0.98 of the full one (the shell is radial compression plus tangential stretching, which is trace-free, not
+homologous), so radial momentum at t = 0.05 goes from 0.787 to 0.803 of legacy (C_2 = 1: 1.016). gmc_cooling: median C_2
+2.2 -> 1.6 at t = 1. A planar shock, grad v = diag(-a, 0, 0), keeps sqrt(2/3) = 0.82 of the norm, 2/3 of C_2 - 1.
 
 ### 1.2 Reproduced legacy energy creation in `starforge_legacy_RT`
 To match the RT benchmarks the model reproduces four legacy behaviours that do not conserve energy, each
