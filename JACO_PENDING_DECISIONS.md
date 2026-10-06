@@ -64,6 +64,10 @@ Implemented (branches `jaco_p0`, 2026-10-06): a declared parameter `∇v_tf` (ho
 norm is 0.9-0.98 of the full one (the shell is radial compression plus tangential stretching, which is trace-free, not
 homologous), so radial momentum at t = 0.05 goes from 0.787 to 0.803 of legacy (C_2 = 1: 1.016). gmc_cooling: median C_2
 2.2 -> 1.6 at t = 1. A planar shock, grad v = diag(-a, 0, 0), keeps sqrt(2/3) = 0.82 of the norm, 2/3 of C_2 - 1.
+Decision (MYG, 2026-10-06): also clump cold gas only: C_2 = 1 + (C_2,tf - 1) f(T), f a logistic in log T with
+T_mid = 5000 K, w = 0.1 dex (jaco `symbols.py` constants; f = 0.98 at 2000 K, 0.047 at 1e4 K). Implemented (jaco
+`jaco_p0` 60831f2): SN_singlestar radial momentum 0.975 (t = 0.015) and 0.991 (t = 0.05) of legacy; shell (1e4-1e5 K)
+C_2 p50/p90/p99 1.01/1.04/1.23. gmc_cooling unchanged (cold gas). Solver tiers unchanged or better.
 
 ### 1.2 Reproduced legacy energy creation in `starforge_legacy_RT`
 To match the RT benchmarks the model reproduces four legacy behaviours that do not conserve energy, each
