@@ -46,8 +46,6 @@ void grain_promotion_parent_routine(void)
         P[i].Type = 0;
         force_tree_note_type_presence(i);  /* the element's type is final here, so tell the standing
                                             * tree before anything walks it looking for that type */
-        P[i].ForceSoftening = compute_force_softening_kernel_radius(i);  /* the cache still holds the grain's
-                                            * softening, which this step's timestep would otherwise read */
         TimeBinCountGas[P[i].TimeBin]++;
         P[i].wakeup = -1; wakeup_sidecar_mark(i);
         NeedToWakeupParticles_local = 1;
