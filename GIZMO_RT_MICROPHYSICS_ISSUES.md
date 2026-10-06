@@ -97,6 +97,8 @@ AND_DIFFUSION, SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) cannot take effect from Config.
 Decision: whether the RSOL band/gas convention gets a consistent treatment (value every band/gas exchange at the
 same c, and stop donating photoheated ionizing energy to OPT/NIR) on starforge_dev; it is larger than D1 in IR-thick
 and photoionized gas. Needs its own design pass and benchmark regeneration.
+Decision (MYG, 2026-10-06): deferred; not in the option-2 baseline. The jaco side already uses the consistent
+convention (band rows at rsol), and `starforge_RT` will check it with the closed-box ledger.
 
 ### 1.1d The IR-thick drain, closed (rt_energy_ab 5f2d395b diagnostic; ledgers close to 5e-12)
 The "untraced half" is not gas emission: the cooling step returns every erg it is offered (no limiter clipped in
@@ -126,6 +128,25 @@ uses the actual du). Ledger tool: scratchpad rtledger/ledger3.py.
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
 cooling radiation only if the cell's internal energy fell this step". Measured effect in the tests < 0.7%.
 
+### 1.3 Recombination: case-A rates with case-B photon routing (verified by reading, 2026-10-06)
+`cooling/cooling.cc:1477-1479` tabulates Verner & Ferland (1996) total radiative recombination coefficients, i.e.
+case A (H at 10^4 K: 4.19e-13 vs case B 2.59e-13). They drive the H/He balance (:813, :896-898) and the
+recombination cooling (:996-1000). The photon routing assumes case B instead: :1316 ("we're usually assuming case B
+recombination (UV emitted photons re-absorbed)") and :1317 send `LambdaRec` to the NUV band, and nothing returns
+ground-state recombination photons to the ionizing band. Those photons are neither transported (case A) nor reabsorbed
+on the spot (case B); they are lost. In photoionization equilibrium an HII region then needs alpha_A/alpha_B ~ 1.6x
+the ionizing photons: Strömgren radius ~0.85x and ionized mass ~0.62x the case-B values at 10^4 K.
+`radiation/rt_chem.cc:167` uses alpha_B but runs only without COOLING (`core/run.cc:483`), so every STARFORGE run
+takes the case-A path. `test/iliev_test1` checks against the case-A R_S: consistent with the code, not with
+Iliev et al. (2006), who use case B.
+Fix options: (a) case-B rates and recombination cooling, keeping the cascade routing (a table change; HII regions
+grow ~17% in radius, and the RT subsuite benchmarks move: HII_region*, gmc_cooling_rt, shu_M120, iliev_test1);
+(b) keep case A and emit the alpha_A - alpha_B share into the ionizing band, which must then carry ~14.5 eV photons
+without creating energy. Sensitive test: iliev_test1 against the case-B R_S (it measures 0.976-1.020 of the case-A
+R_S, so ~0.85 of the case-B one). jaco: `starforge_legacy_RT` reproduces the case-A rate; `starforge_RT` will default
+to case B with a case-A switch.
+Decision (MYG, 2026-10-06): deferred; not in the option-2 baseline. `starforge_RT` takes case B on its own.
+
 ## 2. Cooling solver
 
 ### 2.1 First cooling call from a warm neutral start
@@ -135,6 +156,8 @@ the root function with a sign change at the jump is accepted as a root: 89-98% o
 ionization persists. This is what the gmc_cooling_rt benchmark encodes.
 Decision: regenerate that benchmark from ICs whose ionization matches their temperature (recommended), or hold the
 jaco variant to a same-IC legacy run. Until then its jaco variants are xfail with this reason.
+Decision (MYG, 2026-10-06): regenerate the gmc_cooling_rt benchmark from a cold neutral start (InitGasTemp ~100 K)
+with the option-2 fixes. The root-find fix itself (x-tolerance only) is deferred to a later batch.
 
 ## 3. Idealized-test and build-system defects
 

@@ -53,7 +53,7 @@ def _get_ics():
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
-@pytest.mark.parametrize("extra_config_flags", [(), ("JACO=starforge",)], ids=["baseline", "jaco"])
+@pytest.mark.parametrize("extra_config_flags", [()], ids=["baseline"])  # galaxy-scale ISM is not a jaco target
 def test_isodisk_thermalfb(num_mpi_ranks, num_omp_threads, extra_config_flags):
     clean_test_outputs(TEST_NAME, extra_config_flags)
     get_cooling_tables(f"test/{TEST_NAME}")

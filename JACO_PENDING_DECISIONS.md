@@ -1,11 +1,11 @@
 # jaco integration: pending decisions
 
 State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZMO branch `gizmo_jaco_dev` (this tree) and jaco branch `gizmo_integration`
-(`~/code/jaco_gizmo`), both unpushed. Evidence lines cite the agent runs or code reads that produced them;
-"recommendation" is mine, not a decision.
+(`~/code/jaco_gizmo`), pushed 2026-10-06. Evidence lines cite the agent runs or code reads that produced them;
+"recommendation" is mine, not a decision; "Decision (MYG, date)" lines are the user's.
 
 ## 0. Where things stand (2026-10-06)
-- Tips, both unpushed: GIZMO `gizmo_jaco_dev` 1db4547e for code (later commits on it are docs only), jaco
+- Tips (pushed 2026-10-06): GIZMO `gizmo_jaco_dev` 1db4547e for code (later commits on it are docs only), jaco
   `gizmo_integration` 49f95d4. The pip-installed jaco in `~/python_work` points at `~/code/jaco_gizmo`.
 - Models: `starforge`, `starforge_legacy`, `starforge_legacy_RT` (12 unknowns: u, T, H+, He+, He++, H2, photon_EUV in
   photons/H, photon_FUV/NUV/ONIR/IR in eV/H, T_dust on its steady-state dust balance), `starforge_legacy_RT_EUV`.
@@ -16,6 +16,19 @@ State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZ
   donating the photon energy to ONIR), the photoelectric effect as a yield split of FUV dust absorption, gas IR
   absorption at c into the heat row, line/continuum cooling as photon products of the cooling processes, and LW
   dissociation consuming LW photons if that band is ever added. Not started.
+- Agenda to full-physics STARFORGE RT parity (approved 2026-10-06): `~/.claude/plans/have-a-look-at-delightful-umbrella.md`,
+  phases P0-P7. Decision (MYG, 2026-10-06), design of `starforge_RT`:
+  - an abstract band set in jaco: processes declare sigma(E)/j(E), codegen projects them onto a band spec, and GIZMO
+    takes its band count and indices from the generated header; `starforge_RT` is one spec, and refining a band
+    means editing only the spec;
+  - `starforge_legacy_RT` is ported onto the spec, with byte-identical generated code as the pass bar;
+  - in-band shape: piecewise power law with a fixed slope (nu E_nu = const) in every band except the T_rad-tracked
+    IR band; the EUV slope is fitted to GIZMO's 4e4 K blackbody band averages (`rt_chem.cc` `rt_get_sigma`);
+  - recombination: case B, with a switch for case A (legacy mixes the two; GIZMO_RT_MICROPHYSICS_ISSUES.md 1.3);
+  - every matter-radiation exchange, energy and momentum alike (flux absorption, radiation force, work terms),
+    lives inside the jaco solve, with local photon+matter momentum checks; GIZMO keeps transport only;
+  - stellar sources enter the solve as a per-band source term, fed by a scatter-side accumulator (a cell-side gather
+    was rejected on cost).
 - Legacy GIZMO is being fixed on a separate branch, `rt_microphysics_fixes` (see GIZMO_RT_MICROPHYSICS_ISSUES.md):
   the IR double count, the discarded IR gas share, Rad_Je, the Iliev photon count, the restart H2 rebuild, the sound
   speed's stale gamma, and an uninitialized `dt_hydrostep_i` in the hydro flux limiters. Consequences for jaco:
@@ -24,6 +37,16 @@ State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZ
   regenerated benchmarks; (b) the sound-speed and `dt_hydrostep_i` fixes change every STARFORGE legacy baseline the
   jaco variants were compared against, so the jaco acceptance must be rerun after merging that branch;
   (c) `gizmo_jaco_dev` needs a merge of origin/starforge_dev (now abd5e309) and later of the fix branch.
+  Decision (MYG, 2026-10-06), the GIZMO baseline for the jaco work:
+  - Only the option-2 fixes (F1-F6 + `dt_hydrostep_i`) go into it. Deferred, each to its own later batch: legacy
+    case-B recombination rates, the RSOL band/gas convention, and the first-call root-find.
+  - Before landing: the suite on the fix-branch tip c8312cc5, plus a gmc_cooling_rt benchmark regenerated from a COLD
+    NEUTRAL start (InitGasTemp ~100 K).
+  - Order: land on starforge_dev -> merge into `gizmo_jaco_dev` -> `starforge_legacy_RT` tracks F1/F2 -> regenerate
+    the golden codegen hashes -> rerun the jaco acceptance. That frozen state is the reference for the band
+    abstraction's byte-identical gate.
+  - The P1 full-physics mini test is a small turbulent cloud forming protostars plus one massive star placed near
+    the end of its life, so jets, winds, RT, MHD and a SN all fire within the test.
 
 ## 1. Model physics (jaco side)
 
@@ -35,6 +58,7 @@ applies C_2 to every two-body rate (by design: "all clumping factors in starforg
 Options: (a) cap C_2; (b) use the trace-free part of grad v only, so bulk expansion/shock jumps do not count as
 sub-grid turbulence; (c) clump only cold/neutral gas; (d) chemistry-only in `starforge` too.
 Recommendation: (b). `starforge_legacy` is unaffected by construction.
+Decision (MYG, 2026-10-06): (b), the trace-free part of grad v. Not yet implemented.
 
 ### 1.2 Reproduced legacy energy creation in `starforge_legacy_RT`
 To match the RT benchmarks the model reproduces four legacy behaviours that do not conserve energy, each
@@ -43,22 +67,34 @@ dust heated by the full gas IR absorption, gas IR heating deposited at c~/c rath
 and LW photodissociation not depleting their bands. Whether `starforge_legacy_RT` ships with these on (benchmark
 fidelity) or off (correct physics, benchmarks re-baselined) should follow the legacy A/B in section 3.
 The kick's exponent cap was lowered from 50 to 10 inside jaco for solver cost; beyond it the band keeps e^-10.
+Decision (MYG, 2026-10-06): `starforge_legacy_RT` exists solely to behave like baseline GIZMO in its most developed
+state on starforge_dev. It tracks that branch term for term: it drops each legacy term that a landed fix removes
+(starting with the IR double count and the gas IR share once `rt_microphysics_fixes` lands) and keeps reproducing
+whatever legacy still does, energy-creating or not. Physical corrections belong in `starforge_RT`, not here.
 
 ### 1.3 H2 source for the star-formation criterion under JACO
 Commit 779305d0 makes `Get_Gas_Molecular_Mass_Fraction` return the network's H2 under JACO (as GIZMO does for
 CHIMES/GRACKLE). In isodisk_thermalfb at 0.1 Zsun no H2 forms within 30 Myr, so the molecular SF criterion sees
 f_H2 ~ 1e-4 instead of the KG2010 fit's 0.68: ~100 stars / 4 Msun/yr vs legacy's ~400 / 12. The fit reproduces legacy.
 Recommendation: keep the network value; the commit is isolated and revertable.
+Decision (MYG, 2026-10-06): galaxy-scale ISM is not a jaco target; jaco is for the high-resolution ISM setups only.
+The `isodisk_thermalfb[jaco]` variant is removed from the test. 779305d0 stays: the network H2 is the consistent
+answer for every other `Get_Gas_Molecular_Mass_Fraction` consumer.
 
 ### 1.4 `starforge` dense-gas electrons
 With legacy's strong CR attenuation and WD01 grain recombination of Mg+, `starforge` x_e is 4-13x below legacy at
 1e3-1e4 cm^-3. Matters if Ne feeds non-ideal MHD. Mg is undepleted. No action taken.
+Decision (MYG, 2026-10-06): find out why. If the gap comes only from solving all the chemistry in one
+self-consistent system (rather than legacy's prescribed budget), accept it; if a process is missing or wrong, fix it.
+Investigation open.
 
 ### 1.5 Subcycled HII region and the lowest-density FUV bin
 Photon-conserving ownership of the ionizing band puts the subcycled HII region 1.8% below legacy-subcycled at
 t = 1 (legacy's own ionized mass moves 30% between non-subcycled and subcycled). Cold-start gmc_cooling_rt FUV is
 5.1% off in the lowest-density bin only (halves with dt/4; legacy moves more). Both are accepted as documented
 deviations; say if either should be chased.
+Decision (MYG, 2026-10-06): do not chase anything involving subcycling for now. The FUV lowest-density bin is not a
+subcycling item; it stays an accepted, documented deviation.
 
 ## 2. Solver
 
@@ -71,6 +107,8 @@ Options: (1) ignore the bound below 4 eps (recovers +410/+672 tier-1 answers, fa
 (2) detect the stall and hand to tier 2 (identical answers, saves the wasted iterations); (3) pin the eliminated
 neutral in the active set at its floor and move along the constraint (principled, untested).
 Recommendation: (2) now; (3) when floors for eliminated species are generated by R6.
+Decision (MYG, 2026-10-06): (2). Re-measure the stall share once the rest settles (the full-physics mini test, and
+again after `starforge_RT`). Not yet implemented.
 
 ### 2.2 Driver loose ends
 Four `starforge_legacy_RT` driver failures at dt = 1e20 with bands held (n = 1e8, protostellar field): T_dust cycles
@@ -90,14 +128,15 @@ variants can leave xfail.
 ## 4. Tests and tolerances
 - New r_IF assertions (HII_region_simple, HII_region, HII_region_subcycle) and the Iliev gate use 10%; measured
   agreement is 1-3%. Tightening to 5% is defensible.
+  Decision (MYG, 2026-10-06): leave the tolerances at 10%.
 - shu_M120's jaco variant needs 8 ranks x 2 threads to fit the test's 600 s timeout.
 - gmc_cooling: `jaco_legacy` asserts against the benchmark; `jaco` is run-to-completion only.
 
 ## 5. Housekeeping
-- Nothing is pushed: `gizmo_jaco_dev` (60 commits over origin/starforge_dev, which has moved to d45941ca; a merge
-  is due) and jaco `gizmo_integration` (over origin/slop_experiments).
-- Most subagent commits carry `Co-Authored-By: Claude Opus 5.5 (1M context)`; amend before publishing if a single
-  attribution is wanted.
+- Pushed 2026-10-06 as a backup (user's decision): `gizmo_jaco_dev` and jaco `gizmo_integration`. A merge of
+  origin/starforge_dev is due once the fix branch lands.
+- Most subagent commits carry `Co-Authored-By: Claude Opus 5.5 (1M context)`.
+  Decision (MYG, 2026-10-06): leave the co-author lines as they are (accurate); do not amend.
 - Side worktrees fully merged and removable: `gizmo_jaco_{eos,solver,tests}`, `jaco_{sync,design,design2}`.
   Keep branch `jaco_solver_cpp` (evaluated and rejected prototype, unmerged).
 - The GIZMO solver `#error`s without a jaco that carries the R6 metadata: keep the pip-installed jaco in sync.
