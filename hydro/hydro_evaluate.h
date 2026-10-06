@@ -72,6 +72,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
     /* --------------------------------------------------------------------------------- */
     /* pre-define Particle-i based variables (so we save time in the loop below) */
     /* --------------------------------------------------------------------------------- */
+    dt_hydrostep_i = local.dt_hydrostep_i; /* (physical) timestep of particle i, read by the flux limiters below */
     kernel.sound_i = local.SoundSpeed;
     kernel.spec_egy_u_i = local.InternalEnergyPred;
     kernel.h_i = local.KernelRadius;
