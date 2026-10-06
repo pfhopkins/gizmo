@@ -14,7 +14,8 @@
  *   1  Newton polish: few iterations, floored species with no tendency to grow are pinned and
  *      dropped from the linear system, fraction-to-the-boundary on T and the neutral budgets,
  *      backtracking on Deuflhard's natural monotonicity test. Fails fast on a singular or
- *      non-finite system.
+ *      non-finite system, and on a budget stall (a neutral budget at round-off holding the step
+ *      below tol, which only shrinks it further).
  *   2  1-D rootfind in T: chemistry solved at fixed T, R(T) = energy residual; geometric
  *      bracketing outward from T0 then Brent in ln T, then a short Newton polish. If R keeps its
  *      sign down to the floor (or up to the ceiling) the answer is the floor (ceiling).
@@ -31,6 +32,7 @@
  * themselves: solved in every Newton subsystem rather than bracketed in tier 2) and temperatures set
  * by a steady-state balance (e.g. the dust's), bounded like T.
  */
+#include <float.h>
 #include <math.h>
 #include <string.h>
 #include "jaco_solver.h"
@@ -46,6 +48,7 @@
 #define JACO_TAU_T 0.9               /* T may fall by at most this fraction per step (a factor 10) */
 #define JACO_BALANCE_RISE 10.0       /* a balance temperature may rise by at most this factor per step */
 #define JACO_TAU_BUDGET 0.99         /* a neutral H/He budget may shrink by at most this fraction per step */
+#define JACO_BUDGET_ROUNDOFF (4 * DBL_EPSILON) /* a budget at most this fraction of its total is at round-off */
 #define JACO_PIVOT_TOL 1e-13         /* LU pivot below this fraction of its column: singular to working precision */
 #define JACO_FD_REL 1e-7             /* finite-difference step, ~sqrt(machine epsilon) */
 #define JACO_FD_XMIN 1e-10           /* smallest abundance scale for a finite-difference step */
@@ -93,7 +96,7 @@ struct PTC {
 };
 
 enum { NEWTON_OK = 0, NEWTON_NONFINITE = -1, NEWTON_SINGULAR = -2, NEWTON_LINESEARCH = -3, NEWTON_MAXITER = -4,
-       NEWTON_UNSTABLE = -6 };
+       NEWTON_UNSTABLE = -6, NEWTON_STALL = -7 };
 
 /* outcome of a tier or of the tier-2 search; PINNED: the answer sits at the temperature/energy floor or ceiling */
 enum Outcome { OUTCOME_FAILED, OUTCOME_SOLVED, OUTCOME_PINNED };
@@ -293,6 +296,7 @@ static const char *newton_status(int s) {
     case NEWTON_LINESEARCH: return "line search";
     case NEWTON_MAXITER: return "max iterations";
     case NEWTON_UNSTABLE: return "unstable balance root";
+    case NEWTON_STALL: return "budget stall";
     }
     return "?";
 }
@@ -587,7 +591,12 @@ static double scaled_norm(const double *d, const double *cs, int n) {
    jumped in absolute terms, which a raw residual-norm test does.
    Converged when, over the free variables, the step is below tol (relative, plus JACO_X_ATOL for
    abundances) AND every residual is below tol times its row_scale. The returned state is the last
-   evaluated one, so its residual is the one tested. On failure sv holds the last accepted iterate. */
+   evaluated one, so its residual is the one tested. On failure sv holds the last accepted iterate.
+   Budget stall: when the Newton step points out of a budget that is already at round-off, the
+   fraction-to-the-boundary rule allows less than tol of it and leaves the budget ~100x smaller, so every
+   later step is smaller still. Two such steps in a row return NEWTON_STALL before the second is
+   evaluated. (One alone is not enough: the budget can round to exactly zero, which lifts the bound and
+   lets an answer on the boundary converge.) */
 static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, int mask, int maxiter,
                   const struct PTC *ptc, struct Counters *c, SolveVars *F_out) {
     struct Eval e, et;
@@ -595,6 +604,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
     if (evaluate(sv, pr, &e, c)) return NEWTON_NONFINITE;
     if (ptc) add_ptc(sv, pr, ptc, &e);
     const double tol = set->tol;
+    int held_prev = 0; /* the previous step was held below tol by a budget at round-off */
     for (int it = 0;; it++) {
         if (set->verbose >= 2) trace((mask & SOLVE_T) ? "newton" : (mask & SOLVE_TD) ? "chem" : "ions", it, sv, &e);
         int idx[N_VARS], n = 0;
@@ -650,12 +660,18 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         for (int a = 0; a < n; a++)
             if (idx[a] >= 2 && var_kind[idx[a]] == JACO_KIND_TEMPERATURE && d[a] > 0)
                 alpha = fmin(alpha, (JACO_BALANCE_RISE - 1) * sv->data[idx[a]] / d[a]);
+        int held = 0;
         for (int bb = 0; bb < N_BUDGETS; bb++) {
             const struct Budget *B = &budget_table[bb];
             double db = 0, bval = budget_value(B, sv, pr);
             for (int a = 0; a < n; a++) db += -budget_weight(B, idx[a]) * d[a];
-            if (db < 0 && bval > 0) alpha = fmin(alpha, JACO_TAU_BUDGET * bval / -db);
+            if (!(db < 0 && bval > 0)) continue;
+            double alpha_b = JACO_TAU_BUDGET * bval / -db;
+            alpha = fmin(alpha, alpha_b);
+            if (alpha_b < tol && bval <= JACO_BUDGET_ROUNDOFF * budget_total(B, pr)) held = 1;
         }
+        if (held && held_prev) return NEWTON_STALL;
+        held_prev = held;
 
         double norm_d = scaled_norm(d, w, n);
         int accepted = 0;

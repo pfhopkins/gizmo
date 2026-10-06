@@ -348,7 +348,7 @@ struct Stats {
     long t1hist[6] = {0, 0, 0, 0, 0, 0}; /* tier-1 answers by nfeval: 1,2,3,4,5-8,>8 */
     long eq_gated = 0, eq_match = 0, eq_mismatch = 0, eq_ref_fail = 0;
     long cat[8] = {0, 0, 0, 0, 0, 0, 0, 0}; /* check failures: energy, species 2..5, bounds/EOS, other */
-    long t1fail[6] = {0, 0, 0, 0, 0, 0};   /* tier-1 failure reasons, by -status */
+    long t1fail[8] = {0, 0, 0, 0, 0, 0, 0, 0}; /* tier-1 failure reasons, by -status */
     double worst = 0, seconds = 0;
     std::vector<int> nfeval;
     void add(int rc, const JacoSolveInfo &info) {
@@ -366,7 +366,7 @@ struct Stats {
         }
         nfeval.push_back(info.nfeval);
         fd_evals += info.nfeval_fd;
-        if (info.tier1_status < 0 && info.tier1_status >= -5) t1fail[-info.tier1_status]++;
+        if (info.tier1_status < 0 && info.tier1_status >= -7) t1fail[-info.tier1_status]++;
         if (info.tier == JACO_TIER_NEWTON) {
             int f = info.nfeval - info.nfeval_fd; /* evaluations the algorithm asked for, not FD columns */
             t1hist[f <= 4 ? f - 1 : (f <= 8 ? 4 : 5)]++;
@@ -392,8 +392,9 @@ struct Stats {
         if (fail)
             printf("%-10s of the %ld failed cells: %ld met a non-finite Jacobian, %ld a non-finite residual\n", "", fail, fail_nanjac,
                    fail_nanF);
-        printf("%-10s tier-1 failures: non-finite %ld, singular %ld, line search %ld, iteration budget %ld, below floor %ld\n", "",
-               t1fail[1], t1fail[2], t1fail[3], t1fail[4], t1fail[5]);
+        printf("%-10s tier-1 failures: non-finite %ld, singular %ld, line search %ld, iteration budget %ld, below floor %ld, "
+               "unstable balance root %ld, budget stall %ld\n", "", t1fail[1], t1fail[2], t1fail[3], t1fail[4], t1fail[5], t1fail[6],
+               t1fail[7]);
         if (check_fail)
             printf("%-10s check failures by row: energy %ld, x_H+ %ld, x_He+ %ld, x_He++ %ld, x_H2 %ld, bounds/EOS %ld\n", "", cat[0], cat[1],
                    cat[2], cat[3], cat[4], cat[6]);
@@ -470,9 +471,9 @@ static int solve_checked(SolveVars *sv, const Params *pr, const JacoSolverSettin
 
 /* ---- replays ---- */
 
-/* Tier 1 stalls when a neutral budget is down to round-off: the step bound then allows steps of ~1e-13 and
-   Newton runs out of iterations (tier-1 status -4), leaving the answer to tier 2. Any change to the step
-   bound must keep these answers: the first case stalls today; in the second, letting the step past the
+/* Tier 1 stalls when a neutral budget is down to round-off: the step bound then allows steps of ~1e-13, and
+   the solver hands the case to tier 2 (tier-1 status -7) instead of running out of iterations. Any change to
+   the step bound must keep these answers: the first case must stall; in the second, letting the step past the
    bound sends tier 1 to the x_e -> 0 root of the ionization balance (T ~ 2600 K, ions at the floor, under
    MODEL=starforge_legacy) instead of the ionized one (T ~ 8800 K). Defined like sweep cases. */
 static int run_stall_cases(const JacoSolverSettings *set);
@@ -630,10 +631,11 @@ static int run_stall_cases(const JacoSolverSettings *set) {
         const char *name;
         double n, T0, dt, ufac;
         int variant, ionized; /* ionized: the answer must not be the x_e -> 0 root */
+        int stall;            /* tier 1 must hand off as a budget stall */
     };
     const Stall cases[] = {
-        {"stall 3e4K n=0.01", 0.01, pow(10., 4.5), 1e3, 1.0, SEED_MOLECULAR, 0},
-        {"x_e root 1e4K n=0.1", 0.1, 1e4, 1e13, 1.1, SEED_MOLECULAR, 1},
+        {"stall 3e4K n=0.01", 0.01, pow(10., 4.5), 1e3, 1.0, SEED_MOLECULAR, 0, 1},
+        {"x_e root 1e4K n=0.1", 0.1, 1e4, 1e13, 1.1, SEED_MOLECULAR, 1, 0},
     };
     int nfail = 0;
     printf("\n== budget stall ==\n");
@@ -655,6 +657,10 @@ static int run_stall_cases(const JacoSolverSettings *set) {
         if (!bad && c.ionized && sv.x_Hplus <= 1e-10) {
             bad = 1;
             snprintf(why, sizeof(why), "x_e -> 0 root: x_H+ = %g, T = %g", sv.x_Hplus, sv.T);
+        }
+        if (!bad && c.stall && info.tier1_status != -7) {
+            bad = 1;
+            snprintf(why, sizeof(why), "tier 1 did not hand off as a budget stall (status %d)", info.tier1_status);
         }
         printf("%-20s tier %d (tier-1 status %d) nfeval %d T=%.6g x_H+=%.4g x_H2=%.4g %s%s\n", c.name, info.tier, info.tier1_status,
                info.nfeval, sv.T, sv.x_Hplus, sv.x_H_2, bad ? "FAIL: " : "", why);
