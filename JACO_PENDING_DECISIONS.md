@@ -29,6 +29,17 @@ State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZ
     lives inside the jaco solve, with local photon+matter momentum checks; GIZMO keeps transport only;
   - stellar sources enter the solve as a per-band source term, fed by a scatter-side accumulator (a cell-side gather
     was rejected on cost).
+- Band layer core built (jaco branch `band_spec` 4ebfed5, `~/code/jaco_bands`, design note docs/band_spec.md).
+  Decision (MYG, 2026-10-06), band-layer design:
+  - Split the ionizing band at 24.59 eV in `starforge_RT`: one fixed slope cannot match both G_HI and nu_eff, while
+    two bands each matched to GIZMO's 4e4 K blackbody reproduce sigma_HI, G_HI and nu_eff within 2.3%.
+    `starforge_legacy_RT` keeps its single band through overrides.
+  - In-band cross-sections: exact quadrature of the declared sigma(E) against the band's fixed-slope spectrum, at
+    codegen (not the paper's edge power law).
+  - Thermal emission into fixed-shape bands: per-band Kirchhoff (chi_B := chi_E), so that detailed balance holds per
+    band and optically thick gas thermalises exactly.
+  - Photon vs energy bookkeeping in ionizing bands: measure the hardening mismatch after the split; if it is still
+    more than a few %, add a second moment (photon number + energy) to ionizing bands only.
 - Legacy GIZMO is being fixed on a separate branch, `rt_microphysics_fixes` (see GIZMO_RT_MICROPHYSICS_ISSUES.md):
   the IR double count, the discarded IR gas share, Rad_Je, the Iliev photon count, the restart H2 rebuild, the sound
   speed's stale gamma, and an uninitialized `dt_hydrostep_i` in the hydro flux limiters. Consequences for jaco:
