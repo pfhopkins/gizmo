@@ -170,6 +170,9 @@ void jaco_build_cie_table(void) {
 #ifdef JACO_HAS_PARAM_grad_v
     pr.grad_v = 1e-14;
 #endif
+#ifdef JACO_HAS_PARAM_grad_v_tf
+    pr.grad_v_tf = 1e-14;
+#endif
 #ifdef JACO_HAS_PARAM_Delta_x
     pr.Delta_x = 3e18;
 #endif
@@ -311,6 +314,24 @@ static inline double jaco_cell_X_H(int i, struct particle_data *pp, double *y) {
     return X;
 }
 
+#ifdef JACO_HAS_PARAM_grad_v_tf
+/* Frobenius norm of the trace-free part of the physical velocity gradient, |grad v - (div v / 3) I|, in code units (the
+   Hubble flow, being isotropic, drops out) */
+static double jaco_tracefree_gradient_norm(const struct gas_cell_data *c) {
+    double g[3][3], div = 0, s = 0;
+    for (int j = 0; j < 3; j++) {
+        for (int k = 0; k < 3; k++) g[j][k] = c->Gradients.Velocity[j][k] * All.cf_a2inv;
+        div += g[j][j];
+    }
+    for (int j = 0; j < 3; j++)
+        for (int k = 0; k < 3; k++) {
+            double t = g[j][k] - (j == k ? div / 3 : 0);
+            s += t * t;
+        }
+    return sqrt(s);
+}
+#endif
+
 /* Fill the cell-dependent Params: everything the generated EOS (jaco_eos.cc) reads, including the column that
    shields C+ and so sets the free electrons, plus the other cell properties the rates need, except the radiation
    inputs only the rates read (G_LW, Td: gizmo_to_jaco). The solver and jaco_cell_eos both pack
@@ -437,6 +458,12 @@ static double jaco_pack_params(int i, Params *pr, struct particle_data *pp, stru
     pr->grad_v =
         DMAX(1e-30, grad_v * UNIT_VEL_IN_CGS /
                         UNIT_LENGTH_IN_CGS); /* CGS s^-1, floored to avoid division by zero in LVG expressions */
+#endif
+#ifdef JACO_HAS_PARAM_grad_v_tf
+    double grad_v_tf = jaco_tracefree_gradient_norm(&cell[i]);
+    if (!jaco_isfinite(grad_v_tf))
+        grad_v_tf = 0;
+    pr->grad_v_tf = DMAX(1e-30, grad_v_tf * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS);
 #endif
 
     /* Cosmological redshift for inverse Compton cooling */
@@ -836,7 +863,8 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
    jaco_report_solve_stats(), which every rank must call (MPI collective) once per pass. */
 enum { JS_CELLS, JS_TIER1, JS_TIER2, JS_TIER3, JS_FAILED, JS_FEVALS, JS_RESYNC, JS_PINNED, JS_NANJ, JS_NANF,
        JS_T1_1, JS_T1_2, JS_T1_3, JS_T1_4, JS_T1_MORE, JS_NANOUT, JS_NONCONS,
-       JS_T1F_NONFINITE, JS_T1F_SINGULAR, JS_T1F_LINESEARCH, JS_T1F_BUDGET, JS_T1F_FLOOR, JS_T1F_UNSTABLE, JS_N };
+       JS_T1F_NONFINITE, JS_T1F_SINGULAR, JS_T1F_LINESEARCH, JS_T1F_BUDGET, JS_T1F_FLOOR, JS_T1F_UNSTABLE, JS_T1F_STALL,
+       JS_N };
 static long jaco_stats[JS_N];
 static int jaco_stats_max_nfeval = 0;
 /* energy accounting over a cooling pass, code units: band energy removed and added by the model, the gas internal
@@ -862,7 +890,7 @@ static void jaco_stats_add(const struct JacoSolveInfo *info, const struct jaco_s
         jaco_stats[JS_NANJ] += info->n_nonfinite_jac > 0;
         jaco_stats[JS_NANF] += info->n_nonfinite_F > 0;
         if (info->tier == JACO_TIER_NEWTON) jaco_stats[t1 <= 4 ? JS_T1_1 + t1 - 1 : JS_T1_MORE]++;
-        if (info->tier1_status <= -1 && info->tier1_status >= -6) jaco_stats[JS_T1F_NONFINITE - 1 - info->tier1_status]++;
+        if (info->tier1_status <= -1 && info->tier1_status >= -7) jaco_stats[JS_T1F_NONFINITE - 1 - info->tier1_status]++;
         jaco_stats[JS_NANOUT] += bad_out;
         /* a subcycled answer's photoionization rate at the end of the step, times the step, is not its integral */
         jaco_stats[JS_NONCONS] += out->band_clipped > 0 || (out->euv_open && info->tier != JACO_TIER_SUBCYCLE);
@@ -893,8 +921,9 @@ void jaco_report_solve_stats(void) {
                global[JS_T1_4], global[JS_T1_MORE], global[JS_RESYNC], global[JS_PINNED], global[JS_NANJ], global[JS_NANF],
                global[JS_NANOUT]);
         printf("jaco tier-1 failures: non-finite %ld singular %ld line search %ld iteration budget %ld below floor %ld "
-               "unstable balance root %ld\n", global[JS_T1F_NONFINITE], global[JS_T1F_SINGULAR], global[JS_T1F_LINESEARCH],
-               global[JS_T1F_BUDGET], global[JS_T1F_FLOOR], global[JS_T1F_UNSTABLE]);
+               "unstable balance root %ld budget stall %ld\n", global[JS_T1F_NONFINITE], global[JS_T1F_SINGULAR],
+               global[JS_T1F_LINESEARCH], global[JS_T1F_BUDGET], global[JS_T1F_FLOOR], global[JS_T1F_UNSTABLE],
+               global[JS_T1F_STALL]);
 #ifdef JACO_HAS_VAR_x_photon_EUV
         printf("jaco band energy (code units): removed %.6e added %.6e | gas internal energy change %.6e | ionizing band: "
                "photoionized %.6e band loss %.6e | non-conserving cells %ld\n", energy[JE_REMOVED], energy[JE_ADDED],
