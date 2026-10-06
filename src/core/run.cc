@@ -63,6 +63,9 @@ void gizmo_request_controlled_stop(int code, const char *reason,
                  "%s (%s()/%s/line %d)",
                  reason ? reason : "(no reason given)",
                  func ? func : "(?)", file ? file : "(?)", line);
+        /* Printed here by the requesting rank: the drain reports only rank 0's own reason. */
+        printf("Controlled stop requested on task %d (code=%d): %s\n", ThisTask, code, ControlledStop_LocalDiag);
+        fflush(stdout);
     }
 }
 
