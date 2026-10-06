@@ -1,8 +1,29 @@
 # jaco integration: pending decisions
 
-State as of 2026-10-04. GIZMO branch `gizmo_jaco_dev` (this tree) and jaco branch `gizmo_integration`
+State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZMO branch `gizmo_jaco_dev` (this tree) and jaco branch `gizmo_integration`
 (`~/code/jaco_gizmo`), both unpushed. Evidence lines cite the agent runs or code reads that produced them;
 "recommendation" is mine, not a decision.
+
+## 0. Where things stand (2026-10-06)
+- Tips, both unpushed: GIZMO `gizmo_jaco_dev` 1db4547e for code (later commits on it are docs only), jaco
+  `gizmo_integration` 49f95d4. The pip-installed jaco in `~/python_work` points at `~/code/jaco_gizmo`.
+- Models: `starforge`, `starforge_legacy`, `starforge_legacy_RT` (12 unknowns: u, T, H+, He+, He++, H2, photon_EUV in
+  photons/H, photon_FUV/NUV/ONIR/IR in eV/H, T_dust on its steady-state dust balance), `starforge_legacy_RT_EUV`.
+  Every matter-radiation term is a process in `src/jaco/models/starforge/radiation.py`; GIZMO only transports bands.
+  Acceptance from the merged tips: 23 passed, 5 documented xfails (RT subsuite, Iliev gate, non-RT variants).
+- There is NO non-legacy RT model yet. `radiation.py` is used only by the legacy RT models. A physical `starforge_RT`
+  needs, in place of legacy's "donation": recombination emitting photons into the bands (instead of photoionization
+  donating the photon energy to ONIR), the photoelectric effect as a yield split of FUV dust absorption, gas IR
+  absorption at c into the heat row, line/continuum cooling as photon products of the cooling processes, and LW
+  dissociation consuming LW photons if that band is ever added. Not started.
+- Legacy GIZMO is being fixed on a separate branch, `rt_microphysics_fixes` (see GIZMO_RT_MICROPHYSICS_ISSUES.md):
+  the IR double count, the discarded IR gas share, Rad_Je, the Iliev photon count, the restart H2 rebuild, the sound
+  speed's stale gamma, and an uninitialized `dt_hydrostep_i` in the hydro flux limiters. Consequences for jaco:
+  (a) once that branch lands, `starforge_legacy_RT` should drop its reproduced IR double count
+  (`Model.without(...)`) and match the fixed legacy kick, and its gmc_cooling_rt/shu_M120 comparisons move to the
+  regenerated benchmarks; (b) the sound-speed and `dt_hydrostep_i` fixes change every STARFORGE legacy baseline the
+  jaco variants were compared against, so the jaco acceptance must be rerun after merging that branch;
+  (c) `gizmo_jaco_dev` needs a merge of origin/starforge_dev (now abd5e309) and later of the fix branch.
 
 ## 1. Model physics (jaco side)
 
