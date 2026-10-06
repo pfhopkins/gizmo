@@ -33,6 +33,15 @@ extern "C" int jaco_isfinite(double x);
 #if defined(COSMIC_RAY_FLUID) || defined(SINK_THERMALFEEDBACK)
 #error "JACO does not yet support COSMIC_RAY_FLUID or SINK_THERMALFEEDBACK"
 #endif
+/* The network takes its cosmic rays from the ISRF scaling, not from the LEBRON field */
+#ifdef COSMIC_RAY_SUBGRID_LEBRON
+#error "JACO does not yet support COSMIC_RAY_SUBGRID_LEBRON: the network's cosmic-ray ionization and heating ignore the LEBRON cosmic-ray field"
+#endif
+/* The non-ideal resistivities (calculate_and_assign_nonideal_mhd_coefficients) read Ne but estimate the temperature,
+   H2 fraction and cosmic-ray ionization rate themselves, inconsistently with the network's state */
+#ifdef MHD_NON_IDEAL
+#error "JACO does not yet support MHD_NON_IDEAL: its resistivities use their own temperature, H2 and cosmic-ray estimates, not the network's"
+#endif
 /* Radiation. Supported: M1 RADTRANSFER whose bands are all solve variables of the model (photon_EUV: RT_CHEM_PHOTOION's
    single H-ionizing band; photon_FUV, photon_NUV, photon_ONIR, photon_IR: RT_PHOTOELECTRIC, RT_NUV, RT_OPTICAL_NIR,
    RT_INFRARED), with the dust temperature solved where the IR band is. The model's processes are every exchange
