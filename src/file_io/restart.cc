@@ -464,6 +464,9 @@ void restart(int modus)
 #ifdef GALSF
         in(&Stars_converted, modus);
 #endif
+#if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
+        in(&Grains_promoted, modus);
+#endif
 
 
 	  /* now store relevant data for tree */
