@@ -86,7 +86,29 @@ With legacy's strong CR attenuation and WD01 grain recombination of Mg+, `starfo
 1e3-1e4 cm^-3. Matters if Ne feeds non-ideal MHD. Mg is undepleted. No action taken.
 Decision (MYG, 2026-10-06): find out why. If the gap comes only from solving all the chemistry in one
 self-consistent system (rather than legacy's prescribed budget), accept it; if a process is missing or wrong, fix it.
-Investigation open.
+Result (2026-10-06; scripts in the session scratchpad xe_gap/): mostly legitimate, plus one clumping defect.
+- The quoted 4-13x comes from the DENSE states in jaco's test_ionization_balance.py (G0=0, C2=1, N_H 1.8e23-6e23,
+  50-100x gmc_cooling's columns). It is not from CR attenuation: both models attenuate zeta identically, once.
+- Pure chemistry, legitimate. `starforge` moves the CR charge onto Mg+ by charge transfer and neutralises it on
+  small grains (WD01), so x_e ~ zeta/n. Legacy calls its charge "Mg+" but recombines it at k_ei = 9.77e-8
+  (cooling.cc:2359), a dissociative-recombination rate ~3700x Mg+'s radiative one, and adds a second
+  sqrt(zeta/beta n) molecular-ion term; x_e ~ sqrt(zeta/n) by construction. Gap at G0=0, C2=1: 2.1x at 1e3, 3.4x at
+  1e4, 13.5x at 1e5.
+- Assumption-dependent (not a bug; see the decision below): C2 on the steady-state ion balance (ionization_balance.py:37-42, :71; grain_assisted_recombination.py:260)
+  lowers x_e by a further 2.6-6.3x. The ions equilibrate in ~150 yr at 1e4, against a ~1.5e5 yr sub-grid crossing
+  time, so each density holds its local equilibrium x ~ zeta/(alpha n), and the mass-weighted mean is
+  zeta/(alpha n_mean): no clumping term. A lognormal sub-grid integration reproduces C2=1 within 3-25%.
+- At gmc_cooling's own states (1e2-1e3), the sign flips: Mg photoionization by the attenuated G0, which legacy lacks,
+  puts `starforge` 6-16x ABOVE legacy, and 5-20x above McKee's 1e-5 n^-1/2. Undepleted Mg and the band-averaged dust
+  attenuation inflate it.
+- Against McKee (1989), legacy tracks within 2.8x everywhere (it is built that way). `starforge` matches at 1e4 only
+  with C2=1, and sits 37x below at 1e5 even with C2=1: WD01's PAH-rich grains make the dense-core x_e a lower bound.
+  That is a modelling choice.
+Decision (MYG, 2026-10-06): keep C2 on every two-body rate, the ion balance included (a modelling convention:
+sub-grid abundances are taken as uniform within a cell). Gas-phase Mg: a simple constant for now, F_GAS_MG = 1
+(undepleted, GIZMO's assumption), in jaco `ionization_balance.py`, with a TODO pointing to Jenkins 2009
+(2009ApJ...700.1299J: Eq. 10, Table 4's Mg row, whose F*-<n(H)> fit is in sight-line mean densities). The generated
+code is byte-identical (golden hashes pass).
 
 ### 1.5 Subcycled HII region and the lowest-density FUV bin
 Photon-conserving ownership of the ionizing band puts the subcycled HII region 1.8% below legacy-subcycled at
