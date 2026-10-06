@@ -917,21 +917,79 @@ void jaco_report_solve_stats(void) {
 }
 
 #ifdef OUTPUT_COOLRATE_DETAIL
-/* The standard module's per-cell rate outputs at the solved state, in CoolingRate()'s units (erg cm^3 s^-1, per nHcgs()^2).
-   jaco's energy row gives only the net radiative rate, so the separated ones (CoolingRate, HeatingRate, MetalCoolingRate,
-   PElecHeatingRate) are written as zero. Call before jaco_to_gizmo, which clears DtInternalEnergy. */
+#if !defined(JACO_HAS_OUTPUT_heating_rate) || !defined(JACO_HAS_OUTPUT_cooling_rate) || \
+    !defined(JACO_HAS_OUTPUT_metal_line_cooling_rate) || !defined(JACO_HAS_OUTPUT_photoelectric_heating_rate)
+#include <stdint.h>
+static const char *jaco_rates_not_output = ""
+#ifndef JACO_HAS_OUTPUT_heating_rate
+    " HeatingRate"
+#endif
+#ifndef JACO_HAS_OUTPUT_cooling_rate
+    " CoolingRate"
+#endif
+#ifndef JACO_HAS_OUTPUT_metal_line_cooling_rate
+    " MetalCoolingRate"
+#endif
+#ifndef JACO_HAS_OUTPUT_photoelectric_heating_rate
+    " PElecHeatingRate"
+#endif
+    ;
+/* NaN for a rate the model does not output, with a warning the first time */
+static double jaco_rate_not_output(void) {
+    static int warned = 0;
+#ifdef _OPENMP
+#pragma omp critical(jaco_coolrate_warn)
+#endif
+    if (!warned) {
+        warned = 1;
+        if (ThisTask == 0)
+            printf("JACO WARNING: OUTPUT_COOLRATE_DETAIL: the model has no output for%s, written as NaN\n", jaco_rates_not_output);
+    }
+    const uint64_t qnan = 0x7ff8000000000000ULL; /* a bit pattern, so -ffast-math cannot fold it */
+    double x;
+    memcpy(&x, &qnan, sizeof(x));
+    return x;
+}
+#endif
+
+/* The standard module's per-cell rate outputs at the solved state, in CoolingRate()'s units (erg cm^3 s^-1, per
+   nHcgs()^2): the net radiative rate from the energy row, the separated rates from the model's outputs (NaN where it
+   has none). The model's heating and cooling sum each process's heat by its sign, so HeatingRate - CoolingRate =
+   NetHeatingRateQ. Call before jaco_to_gizmo, which clears DtInternalEnergy. */
 static void jaco_coolrate_detail(const SolveVars *sv, const Params *pr, struct gas_cell_data *cell) {
     Params p = *pr;
     p.pdv_work = 0;
     p.u_initial = sv->u; /* sv->u = u(T, x), so the backward-Euler term vanishes and the energy row is the net heating */
     SolveVars F;
-    double J[N_VARS][N_VARS], nH = cell->nHcgs();
+    double J[N_VARS][N_VARS], nH = cell->nHcgs(), nH2 = nH * nH;
     microphysics_func_jac(sv, &p, &F, J);
-    cell->NetHeatingRateQ = F.T / (nH * nH);
+    cell->NetHeatingRateQ = F.T / nH2;
 #ifndef COOLING_OPERATOR_SPLIT
     cell->HydroHeatingRate = cell->DtInternalEnergy / nH;
 #endif
-    cell->CoolingRate = cell->HeatingRate = cell->MetalCoolingRate = cell->PElecHeatingRate = 0;
+    Outputs out;
+    microphysics_outputs(sv, pr, &out);
+    (void)out;
+#ifdef JACO_HAS_OUTPUT_heating_rate
+    cell->HeatingRate = out.heating_rate / nH2;
+#else
+    cell->HeatingRate = jaco_rate_not_output();
+#endif
+#ifdef JACO_HAS_OUTPUT_cooling_rate
+    cell->CoolingRate = out.cooling_rate / nH2;
+#else
+    cell->CoolingRate = jaco_rate_not_output();
+#endif
+#ifdef JACO_HAS_OUTPUT_metal_line_cooling_rate
+    cell->MetalCoolingRate = out.metal_line_cooling_rate / nH2;
+#else
+    cell->MetalCoolingRate = jaco_rate_not_output();
+#endif
+#ifdef JACO_HAS_OUTPUT_photoelectric_heating_rate
+    cell->PElecHeatingRate = out.photoelectric_heating_rate / nH2;
+#else
+    cell->PElecHeatingRate = jaco_rate_not_output();
+#endif
 }
 #endif
 
