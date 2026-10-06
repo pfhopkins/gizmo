@@ -221,6 +221,9 @@ extern struct gas_cell_data
 #ifndef CHIMES
     MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
 #endif
+#ifdef JACO
+    int JacoReheated; /*!< u was raised directly (not through the solver) since the last jaco solve: its cached ions may be stale */
+#endif
 #endif
 #ifdef GALSF
     MyFloat Sfr;                      /*!< particle star formation rate */

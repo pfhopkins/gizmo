@@ -555,9 +555,42 @@ static double jaco_T_from_u(double u, double T_seed, const SolveVars *sv, const 
     return T;
 }
 
+#ifdef JACO_SOLVES_IONS
+/* T with u = jaco_T_to_u(T) at CIE ions at T (sv->x_H_2 kept), by bisection in log T, since u rises with both T and
+   the ionization; leaves those ions in sv and returns T refined at them to round-off */
+static double jaco_cie_T_from_u(double u, const Params *pr, SolveVars *sv) {
+    double lo = 0, hi = log(1e10), cv; /* 1 K to 1e10 K */
+    for (int iter = 0; iter < 60 && hi - lo > 1e-10; iter++) {
+        double lnT = 0.5 * (lo + hi);
+        jaco_cie_species(exp(lnT), pr, sv);
+        if (jaco_T_to_u(exp(lnT), sv, pr, NULL) > u) hi = lnT; else lo = lnT;
+    }
+    double T = exp(0.5 * (lo + hi));
+    jaco_cie_species(T, pr, sv);
+    return jaco_T_from_u(u, T, sv, pr, &cv);
+}
+
+/* CIE ions in *cie (sv's H2 kept) and the temperature *T_cie to take with them; returns 1 where they show cell i's
+   cached free electrons stale (jaco_ions_stale). CIE is taken at the cached temperature, except in a cell whose u was
+   raised directly since its last solve (JacoReheated): the cached temperature predates that heating, so CIE is taken
+   at the temperature where it reproduces u. */
+static int jaco_stale_ions(int i, double u, struct gas_cell_data *cell, const Params *pr, const SolveVars *sv, SolveVars *cie,
+                           double *T_cie) {
+    *cie = *sv;
+    if (cell[i].JacoReheated) {
+        *T_cie = jaco_cie_T_from_u(u, pr, cie);
+    } else {
+        *T_cie = cell[i].Temperature;
+        jaco_cie_species(*T_cie, pr, cie);
+    }
+    return jaco_ions_stale(cell[i].Ne, cie->x_Hplus + cie->x_Heplus + 2.0 * cie->x_Heplusplus);
+}
+#endif
+
 /* jaco's EOS on the cell's cached state: composition from Ne, MolecularMassFraction and metallicity, at
-   specific energy u and physical density rho (both code units), seeded with the cached Temperature. Uses
-   only (i, pp, cell), so it is safe on the packed copies cooling works on. */
+   specific energy u and physical density rho (both code units), seeded with the cached Temperature. In a cell
+   heated directly since its last solve, stale ions are replaced by CIE as the solver's seed replaces them
+   (jaco_stale_ions). Uses only (i, pp, cell), so it is safe on the packed copies cooling works on. */
 void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, double u, double rho,
                    struct jaco_eos_state *eos) {
     SolveVars sv = {};
@@ -565,10 +598,18 @@ void jaco_cell_eos(int i, struct particle_data *pp, struct gas_cell_data *cell, 
 #ifdef JACO_DEBUG_PARAMS
     jaco_poison_params(&pr); /* the EOS reads a subset of Params; an unpacked field it reads makes the state NaN */
 #endif
-    double rho_jaco = jaco_pack_params(i, &pr, pp, cell, rho * UNIT_DENSITY_IN_CGS), cv;
+    double rho_jaco = jaco_pack_params(i, &pr, pp, cell, rho * UNIT_DENSITY_IN_CGS), cv, T_seed = cell[i].Temperature;
     jaco_species_from_cell(i, cell, &pr, &sv);
     sv.u = u * UNIT_SPECEGY_IN_CGS;
-    sv.T = jaco_T_from_u(sv.u, cell[i].Temperature, &sv, &pr, &cv);
+#ifdef JACO_SOLVES_IONS
+    SolveVars cie;
+    double T_cie;
+    if (cell[i].JacoReheated && jaco_stale_ions(i, sv.u, cell, &pr, &sv, &cie, &T_cie)) {
+        sv = cie;
+        T_seed = T_cie;
+    }
+#endif
+    sv.T = jaco_T_from_u(sv.u, T_seed, &sv, &pr, &cv);
     eos->T = sv.T;
     eos->P_over_rho = jaco_eos_pressure(&sv, &pr) / rho_jaco;
     eos->gamma = 1.0 + eos->P_over_rho / (cv * sv.T); /* first adiabatic index at frozen composition */
@@ -739,19 +780,21 @@ void gizmo_to_jaco(int i, SolveVars *sv, Params *pr, struct particle_data *pp, s
        at that composition (normally the cached Temperature itself), so the energy row starts at round-off */
     jaco_species_from_cell(i, cell, pr, sv);
     int stale_ions = 0;
+    double T_stale = cell[i].Temperature;
 #ifdef JACO_SOLVES_IONS
     /* Except where the CIE table is collisionally ionized (x_e > 0.1, T >~ 1.3e4 K): there it bounds the steady state
        from below, so a cached Ne under it is stale (shock heating, or a solve that settled on the near-neutral fixed
        point of the ionization balance, where the gas stops cooling). Seed CIE ions at the cached T, keeping that T:
-       re-deriving T at the ionized composition roughly halves it and strands Newton far from the ionized state. */
-    SolveVars cie = *sv; /* at the cell's He and H2: the table's own He abundance would flag every ionized cell */
-    jaco_cie_species(cell[i].Temperature, pr, &cie);
-    stale_ions = jaco_ions_stale(cell[i].Ne, cie.x_Hplus + cie.x_Heplus + 2.0 * cie.x_Heplusplus);
+       re-deriving T at the ionized composition roughly halves it and strands Newton far from the ionized state. A cell
+       heated directly since its last solve takes CIE at the temperature consistent with its u instead
+       (jaco_stale_ions). */
+    SolveVars cie; /* at the cell's He and H2: the table's own He abundance would flag every ionized cell */
+    stale_ions = jaco_stale_ions(i, sv->u, cell, pr, sv, &cie, &T_stale);
     if (stale_ions)
         *sv = cie;
 #endif
     double cv;
-    sv->T = stale_ions ? cell[i].Temperature : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
+    sv->T = stale_ions ? T_stale : jaco_T_from_u(sv->u, cell[i].Temperature, sv, pr, &cv);
     jaco_initial_from_state(sv, pr); /* the time-dependent species start the step at their seeds */
 #ifdef JACO_TRACKS_HII
     {
@@ -812,6 +855,7 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
     double xH0 = DMAX(1.0 - xHp, 0); /* neutral H including H2, as in the standard cooling module */
     cell[i].MolecularMassFraction_perNeutralH = (xH0 > 0) ? DMIN(1, cell[i].MolecularMassFraction / xH0) : 0;
 #endif
+    cell[i].JacoReheated = 0;
 
     set_eos_pressure(i, pp, cell); /* P, Gamma and sound speed from jaco's EOS; T moves only by the solver's u(T) residual */
 #ifndef COOLING_OPERATOR_SPLIT
@@ -838,6 +882,44 @@ void jaco_to_gizmo(int i, const SolveVars *sv, const Params *pr, struct particle
         printf("\n");
         endrun(778);
     }
+}
+
+/* A spawned cell (jet, wind or SN ejecta) carries the composition of the cell it was cloned from. Start it H2-free with
+   CIE ions, either at temperature T with u from jaco's EOS, or, for T <= 0, at the temperature where CIE reproduces its
+   u; then cache its EOS. Call once its density and metallicity are set. */
+void jaco_seed_spawned_cell(int i, double T, struct particle_data *pp, struct gas_cell_data *cell) {
+    SolveVars sv = {};
+    Params pr = {};
+    if (T > 0) cell[i].Temperature = T; /* the radiation inputs to the C+ fraction read it */
+    jaco_pack_params(i, &pr, pp, cell, cell[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS);
+#ifdef JACO_HAS_VAR_x_H_2
+    sv.x_H_2 = JACO_ABUNDANCE_FLOOR;
+#endif
+    cell[i].MolecularMassFraction = cell[i].MolecularMassFraction_perNeutralH = 0;
+    if (T > 0) {
+#ifdef JACO_SOLVES_IONS
+        jaco_cie_species(T, &pr, &sv);
+#endif
+        cell[i].InternalEnergy = cell[i].InternalEnergyPred = jaco_T_to_u(T, &sv, &pr, NULL) / UNIT_SPECEGY_IN_CGS;
+    } else {
+        double u = cell[i].InternalEnergy * UNIT_SPECEGY_IN_CGS, cv;
+#ifdef JACO_SOLVES_IONS
+        T = jaco_cie_T_from_u(u, &pr, &sv);
+        (void)cv;
+#else
+        T = jaco_T_from_u(u, -1, &sv, &pr, &cv);
+#endif
+    }
+    sv.T = cell[i].Temperature = T;
+#ifdef JACO_SOLVES_IONS
+    cell[i].Ne = jaco_electron_abundance(&sv, &pr);
+#endif
+#ifdef JACO_TRACKS_HII
+    cell[i].HII = sv.x_Hplus;
+    cell[i].HI = DMAX(1.0 - sv.x_Hplus, 0);
+#endif
+    cell[i].JacoReheated = 0;
+    set_eos_pressure(i, pp, cell);
 }
 
 /* ---- Per-step solver statistics ----
