@@ -144,6 +144,32 @@ discretely, unaffected). The `RT_ILIEV_TEST1` source emitted ~half the intended 
 The ISRF boundary resets T_dust to 20 K after the cooling solve: harmless in legacy (initial guess only).
 Unverified: the claim that T_rad weighting sticks at the lowest temperature in optically thick cells.
 
+## 3b. Found while closing the option-2 blast radius (2026-10-06)
+
+### 3b.1 Uninitialized `dt_hydrostep_i` in the hydro flux loop (verified in source)
+`hydro/hydro_evaluate.h:25` declares `dt_hydrostep_i`; lines 152 (`dt_hydrostep = DMAX(dt_hydrostep_i, dt_hydrostep_j)`,
+the flux-limiter timestep for turbulent metal diffusion, conduction, viscosity) and 357 (MFV mass-flux holder) read it,
+and nothing assigns it. Upstream 41f0a224 (Hopkins, 2025-06-18) removed `dt_hydrostep_i = local.Timestep * ...` while
+introducing `local.dt_hydrostep_i` (set at hydro_toplevel.cc:406). So the limiters use stack garbage, layout-dependent:
+a change elsewhere (F6's stack frame) perturbed a FIRE-3 run at 1e-3 in H2 fractions. With `dt_hydrostep_i =
+local.dt_hydrostep_i;` in both arms the F6 A/B on test/fire is bit-identical over 16 snapshots. One-line fix; affects
+every MFM/MFV build with diffusion/conduction/viscosity, and every A/B that relies on bit-identity.
+
+### 3b.2 fire_rtsources cannot run at all (both base and fixed)
+Aborts in init() at the first tree build (node arena exhausted after 18 growths): FIRE-3 reads IC positions in float32,
+leaving 22 exactly coincident pairs; the tree only splits coincident particles below 1e-4 of the softening, and gas
+KernelRadius is zero at flag 0 before the first build, so the pair subdivides forever (test/fire uses the same IC with
+flag 2 and survives). With positions read in double the run dies at the first step: the IR band starts as a 20 K
+blackbody filling the cell volume (rt_utilities.cc:1081; 3.7e8 vs thermal 1.3e-5 code units), the unbounded IR
+diffusion coefficient in thin gas gives dt ~ 3e-23, and get_timestep's FIRE-RT clamp (timestep.cc ~829-833) never
+raises it to the RT Courant step. This standing "known failure" therefore tests nothing; F1/F2/F3/F6 have no FIRE+M1 RT
+coverage until it is repaired.
+
+### 3b.3 F6 on FIRE-3 is arithmetically inert; F5 is live in test/fire
+FIRE-3 never changes gamma across ThermalProperties (probe: 0 of 16.8M updates), so F6 is a no-op there. F5 is live
+because test/fire restarts with flag 2: snapshot_001 T differs in 6073 cells, end-of-run H2 mass +21%, stellar mass
+-0.13%, inside the test's tolerance.
+
 ## 4. Non-RT defects
 
 ### 4.1 Snapshot restart and sound speed
