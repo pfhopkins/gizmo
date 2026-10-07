@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <algorithm>
+#include <vector>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -2236,105 +2237,120 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 	}
     }
 
-  /* Iterative refinement (GADGET-4 approach): try random swaps of domain segments
-     between tasks and keep swaps that reduce the maximum imbalance across all metrics.
-     This improves the greedy solution, especially for inhomogeneous particle distributions. */
+  /* Iterative refinement (Gadget-4 approach): try random swaps of two segments between tasks, and keep a swap when it
+     lowers the objective, the largest normalized share any task holds of any balanced metric.  A swap changes only its
+     two tasks, so it is scored from those two plus the largest share held by a task outside the pair: each task's own
+     largest share is cached, with the three tasks holding the largest of them.  A swap that leaves the task holding the
+     objective untouched cannot lower it, so it is rejected without being scored.  A swap may not take a task over its
+     memory cap, nor further over it.  The search stops once the objective reaches the share of the largest single
+     segment on any metric, below which no assignment can go. */
   if(mode == 1 && multipledomains * NTask > 1)
   {
       int nswaps_accepted = 0;
-      int n_segments = multipledomains * NTask;
-      int max_iterations = 200 * n_segments; /* scale attempts with problem size */
-      unsigned int seed = 42 + NTask; /* deterministic seed for reproducibility */
+      long long iterations_done = 0;
+      const int n_segments = multipledomains * NTask;
+      const long long max_iterations = 200LL * n_segments; /* scale attempts with problem size */
+      /* deterministic 64-bit generator, drawn from its high bits so every segment index is reachable however many there are */
+      unsigned long long seed = 42ULL + (unsigned long long) NTask;
+      auto random_segment = [&]() -> int {seed = seed * 6364136223846793005ULL + 1442695040888963407ULL; return (int) ((seed >> 33) % (unsigned long long) n_segments);};
 
-      /* compute current max imbalance */
-      auto compute_max_imbalance = [&]() -> double {
-          double max_frac_work = 0, max_frac_load = 0, max_frac_gas = 0, max_frac_gasload = 0;
-          for(int t = 0; t < NTask; t++) {
-              double fw = tasklist[t].work / (tot_work + 1.0e-30);
-              double fl = tasklist[t].load / (tot_load + 1.0e-30);
-              double fg = tasklist[t].load_activegas / (tot_loadactivegas + 1.0e-30);
-              double fgl = tasklist[t].load_gas / (tot_loadgas + 1.0e-30);
-              if(fw > max_frac_work) max_frac_work = fw;
-              if(fl > max_frac_load) max_frac_load = fl;
-              if(fg > max_frac_gas) max_frac_gas = fg;
-              if(fgl > max_frac_gasload) max_frac_gasload = fgl;
-          }
-          double result = max_frac_work;
-          if(max_frac_load > result) result = max_frac_load;
-          if(max_frac_gas > result) result = max_frac_gas;
-          if(max_frac_gasload > result) result = max_frac_gasload;
+      /* largest share task t would hold if segment s_out were replaced by segment s_in (s_in < 0: as it stands) */
+      auto share_after = [&](int t, int s_out, int s_in) -> double {
+#define DOMAIN_SWAP_VALUE(field) ((s_in >= 0) ? tasklist[t].field + (domainAssign[s_in].field - domainAssign[s_out].field) : tasklist[t].field)
+          double result = DOMAIN_SWAP_VALUE(work) / (tot_work + 1.0e-30), f;
+          f = DOMAIN_SWAP_VALUE(load) / (tot_load + 1.0e-30); if(f > result) {result = f;}
+          f = DOMAIN_SWAP_VALUE(load_activegas) / (tot_loadactivegas + 1.0e-30); if(f > result) {result = f;}
+          f = DOMAIN_SWAP_VALUE(load_gas) / (tot_loadgas + 1.0e-30); if(f > result) {result = f;}
 #if (DOMAIN_TIMEBINS == 1)
-          for(int t = 0; t < NTask; t++) {
-              for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-                  double bg = tasklist[t].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30);
-                  double bh = tasklist[t].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30);
-                  if(bg > result) result = bg;
-                  if(bh > result) result = bh;
-              }
+          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+              f = DOMAIN_SWAP_VALUE(bin_GravCost[k]) / (tot_binGravCost[k] + 1.0e-30); if(f > result) {result = f;}
+              f = DOMAIN_SWAP_VALUE(bin_HydroCost[k]) / (tot_binHydroCost[k] + 1.0e-30); if(f > result) {result = f;}
           }
 #endif
+#undef DOMAIN_SWAP_VALUE
           return result;
       };
+      std::vector<double> task_share(NTask);
+      for(int t = 0; t < NTask; t++) {task_share[t] = share_after(t, -1, -1);}
+      int top[3] = {-1, -1, -1};   /* the three tasks holding the largest shares, largest first */
+      auto rank_top = [&]() {
+          top[0] = top[1] = top[2] = -1;
+          for(int t = 0; t < NTask; t++)
+          {
+              if(top[0] < 0 || task_share[t] > task_share[top[0]]) {top[2] = top[1]; top[1] = top[0]; top[0] = t;}
+              else if(top[1] < 0 || task_share[t] > task_share[top[1]]) {top[2] = top[1]; top[1] = t;}
+              else if(top[2] < 0 || task_share[t] > task_share[top[2]]) {top[2] = t;}
+          }
+      };
+      rank_top();
+      double current_imbalance = task_share[top[0]];
 
-      double current_imbalance = compute_max_imbalance();
-
-      for(int iter = 0; iter < max_iterations; iter++)
+      /* the objective can go no lower than the largest share of a single segment on any metric, nor than an even split */
+      double segment_bound = 1.0 / NTask;
+      for(int s = 0; s < n_segments; s++)
       {
+          double f = domainAssign[s].work / (tot_work + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          f = domainAssign[s].load / (tot_load + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          f = domainAssign[s].load_activegas / (tot_loadactivegas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          f = domainAssign[s].load_gas / (tot_loadgas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+#if (DOMAIN_TIMEBINS == 1)
+          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+              f = domainAssign[s].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+              f = domainAssign[s].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          }
+#endif
+      }
+      const double stop_at = segment_bound * (1.0 + 1.0e-12);
+
+      for(long long iter = 0; iter < max_iterations && current_imbalance > stop_at; iter++)
+      {
+          iterations_done = iter + 1;
           /* pick two random segments assigned to different tasks */
-          seed = seed * 1103515245 + 12345; int s1 = (seed >> 16) % n_segments;
-          seed = seed * 1103515245 + 12345; int s2 = (seed >> 16) % n_segments;
+          int s1 = random_segment();
+          int s2 = random_segment();
           if(s1 == s2) continue;
           int t1 = domainAssign[s1].task, t2 = domainAssign[s2].task;
           if(t1 == t2) continue;
+          if(t1 != top[0] && t2 != top[0]) continue;   /* the task holding the objective keeps it */
 
-          /* trial swap: move s1 to t2 and s2 to t1 */
-          tasklist[t1].work += domainAssign[s2].work - domainAssign[s1].work;
-          tasklist[t1].load += domainAssign[s2].load - domainAssign[s1].load;
-          tasklist[t1].load_activegas += domainAssign[s2].load_activegas - domainAssign[s1].load_activegas;
-          tasklist[t1].load_gas += domainAssign[s2].load_gas - domainAssign[s1].load_gas;
-          tasklist[t2].work += domainAssign[s1].work - domainAssign[s2].work;
-          tasklist[t2].load += domainAssign[s1].load - domainAssign[s2].load;
-          tasklist[t2].load_activegas += domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
-          tasklist[t2].load_gas += domainAssign[s1].load_gas - domainAssign[s2].load_gas;
-#if (DOMAIN_TIMEBINS == 1)
-          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-              tasklist[t1].bin_GravCost[k] += domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
-              tasklist[t1].bin_HydroCost[k] += domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
-              tasklist[t2].bin_GravCost[k] += domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
-              tasklist[t2].bin_HydroCost[k] += domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
-          }
-#endif
+          double load1 = tasklist[t1].load + (domainAssign[s2].load - domainAssign[s1].load), gas1 = tasklist[t1].load_gas + (domainAssign[s2].load_gas - domainAssign[s1].load_gas);
+          double load2 = tasklist[t2].load + (domainAssign[s1].load - domainAssign[s2].load), gas2 = tasklist[t2].load_gas + (domainAssign[s1].load_gas - domainAssign[s2].load_gas);
+          if((load1 > max_load_per_task && load1 > tasklist[t1].load) || (gas1 > max_gasload_per_task && gas1 > tasklist[t1].load_gas) ||
+             (load2 > max_load_per_task && load2 > tasklist[t2].load) || (gas2 > max_gasload_per_task && gas2 > tasklist[t2].load_gas)) {continue;}
 
-          double new_imbalance = compute_max_imbalance();
+          double share1 = share_after(t1, s1, s2), share2 = share_after(t2, s2, s1);
+          double new_imbalance = (share1 > share2) ? share1 : share2;
+          for(int m = 0; m < 3; m++) {if(top[m] >= 0 && top[m] != t1 && top[m] != t2) {if(task_share[top[m]] > new_imbalance) {new_imbalance = task_share[top[m]];} break;}}
 
-          if(new_imbalance < current_imbalance) {
-              /* accept swap */
-              domainAssign[s1].task = t2;
-              domainAssign[s2].task = t1;
-              current_imbalance = new_imbalance;
-              nswaps_accepted++;
-          } else {
-              /* revert */
-              tasklist[t1].work -= domainAssign[s2].work - domainAssign[s1].work;
-              tasklist[t1].load -= domainAssign[s2].load - domainAssign[s1].load;
-              tasklist[t1].load_activegas -= domainAssign[s2].load_activegas - domainAssign[s1].load_activegas;
-              tasklist[t1].load_gas -= domainAssign[s2].load_gas - domainAssign[s1].load_gas;
-              tasklist[t2].work -= domainAssign[s1].work - domainAssign[s2].work;
-              tasklist[t2].load -= domainAssign[s1].load - domainAssign[s2].load;
-              tasklist[t2].load_activegas -= domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
-              tasklist[t2].load_gas -= domainAssign[s1].load_gas - domainAssign[s2].load_gas;
+          if(new_imbalance < current_imbalance)
+          {
+              tasklist[t1].work += domainAssign[s2].work - domainAssign[s1].work;
+              tasklist[t1].load += domainAssign[s2].load - domainAssign[s1].load;
+              tasklist[t1].load_activegas += domainAssign[s2].load_activegas - domainAssign[s1].load_activegas;
+              tasklist[t1].load_gas += domainAssign[s2].load_gas - domainAssign[s1].load_gas;
+              tasklist[t2].work += domainAssign[s1].work - domainAssign[s2].work;
+              tasklist[t2].load += domainAssign[s1].load - domainAssign[s2].load;
+              tasklist[t2].load_activegas += domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
+              tasklist[t2].load_gas += domainAssign[s1].load_gas - domainAssign[s2].load_gas;
 #if (DOMAIN_TIMEBINS == 1)
               for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-                  tasklist[t1].bin_GravCost[k] -= domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
-                  tasklist[t1].bin_HydroCost[k] -= domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
-                  tasklist[t2].bin_GravCost[k] -= domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
-                  tasklist[t2].bin_HydroCost[k] -= domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
+                  tasklist[t1].bin_GravCost[k] += domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
+                  tasklist[t1].bin_HydroCost[k] += domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
+                  tasklist[t2].bin_GravCost[k] += domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
+                  tasklist[t2].bin_HydroCost[k] += domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
               }
 #endif
+              domainAssign[s1].task = t2;
+              domainAssign[s2].task = t1;
+              task_share[t1] = share_after(t1, -1, -1);
+              task_share[t2] = share_after(t2, -1, -1);
+              rank_top();
+              current_imbalance = task_share[top[0]];
+              nswaps_accepted++;
           }
       }
       if(ThisTask == 0 && nswaps_accepted > 0) {
-          PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %d attempts", nswaps_accepted, max_iterations);
+          PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts", nswaps_accepted, iterations_done);
       }
   }
 
