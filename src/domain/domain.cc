@@ -198,6 +198,28 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+/* A lightweight repartition keeps the top tree, so it cannot split a top leaf that carries too much of a balanced quantity.
+   It gives way to a full decomposition, which refines the top tree with the work recorded so far, when all of these hold:
+   a refinable leaf holds more than LIGHT_REPARTITION_LEAF_SHARE_LIMIT times the fair share 1/NTask; that leaf is what limits
+   the assignment (its share is at least LIGHT_REPARTITION_LEAF_LIMITED_FRACTION of the largest share any task was given);
+   and it is LIGHT_REPARTITION_LEAF_SHARE_GROWTH times larger than the largest leaf the last full decomposition left, so a
+   leaf a full decomposition could not split does not trigger one on every call.  A full decomposition is expensive and
+   slows much of the code for a while after it, and moderately concentrated work is normal where the active region is
+   compact and moves -- a full decomposition splits that leaf, and the next active region shows up in another -- so the
+   limits are set to catch only a leaf far beyond any assignment's reach. */
+/* Minimum particle count below which COST-driven top-tree refinement is suppressed. At low
+ * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
+ * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
+ * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
+ * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
+static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
+#define LIGHT_REPARTITION_LEAF_SHARE_LIMIT 20.0
+#define LIGHT_REPARTITION_LEAF_LIMITED_FRACTION 0.85
+#define LIGHT_REPARTITION_LEAF_SHARE_GROWTH 2.0
+static double domain_assigned_objective = -1;      /*!< largest share of a balanced quantity any task holds after the last work-balanced assignment, -1 if none */
+static double domain_leaf_share_after_full = -1;   /*!< largest share of a balanced quantity in one refinable top leaf, after the last full decomposition */
+static double domain_largest_refinable_leaf_share(void);
+static void domain_light_free_work_arrays(void);
 #define MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS 20 /*!< re-establish Peano-Hilbert order at most this far apart. The reorder moves nearly every element of P and CellP and is expensive, especially where those arrays are device-accessible, but particle exchange decays the ordering that the SFC tiles and the tree build rely on, so it cannot be dropped entirely */
 static int DomainCallsSincePeanoOrder = MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS; /*!< domain decompositions, full or lightweight, since the last ordering. Starts at the interval so the first decomposition of a run always orders, including after a restart, which does not take the startup one */
 
@@ -917,6 +939,16 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
         status = domain_check_memory_bound(multipledomains);
         if(status != 0) {if(ThisTask == 0) {printf("Lightweight repartition: memory bound violated.\n");}}
     }
+    /* every input is reduced across ranks and the assignment is identical on all of them, so all take the same branch */
+    int give_way_to_full = 0;
+    double leaf_share = 0;
+    if(status == 0 && !UseAllParticles && domain_assigned_objective > 0)
+    {
+        leaf_share = domain_largest_refinable_leaf_share();
+        give_way_to_full = (leaf_share > LIGHT_REPARTITION_LEAF_SHARE_LIMIT / NTask)
+                        && (leaf_share >= LIGHT_REPARTITION_LEAF_LIMITED_FRACTION * domain_assigned_objective)
+                        && (leaf_share > LIGHT_REPARTITION_LEAF_SHARE_GROWTH * domain_leaf_share_after_full);
+    }
 
 #if (DOMAIN_TIMEBINS == 1)
     /* Freed only after the memory-bound retry above, which calls
@@ -925,6 +957,16 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
     if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
 #endif
+    if(give_way_to_full)
+    {
+        if(ThisTask == 0) {printf("Domain: one top leaf holds %g of a balanced quantity (fair share %g, largest task share %g, %g after the last full decomposition), which a lightweight repartition cannot split. Rebuilding the top tree with a full decomposition.\n",
+                                  leaf_share, 1.0 / NTask, domain_assigned_objective, domain_leaf_share_after_full);}
+        domain_light_free_work_arrays();
+        Key = NULL;
+        /* merge/split already ran at the top of this call */
+        domain_Decomposition(UseAllTimeBins, 0, 0, 1);
+        return;
+    }
 
     /* flag particles that need to move */
     for(i = 0; i < NumPart; i++)
@@ -967,14 +1009,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
     while(ret > 0);
 
-    /* free everything in LIFO order */
-    myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
-    myfree(list_MaxPartGas); myfree(list_MaxPart);
-    myfree(list_N_gas); myfree(list_NumPart);
-    myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
-    myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
-    myfree(particle_hydro_cost); myfree(particle_total_cost);
-    myfree(topNodes);
+    domain_light_free_work_arrays();
 
     t1 = my_second();
     PRINT_STATUS(" ..lightweight domain repartition done. (took %g sec)", timediff(t0, t1));
@@ -997,6 +1032,47 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     domain_particle_layout_changed("domain_Decomposition_light", 0);
     report_memory_ledger_on_growth("post-domain-light");  /* same memory boundary as full decomposition; collective; growth-gated */
     if(UseAllTimeBins == 0) {domain_reset_work_history();}
+}
+
+
+/* Free what a lightweight repartition allocated for its split and assignment, in LIFO order. */
+static void domain_light_free_work_arrays(void)
+{
+    myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
+    myfree(list_MaxPartGas); myfree(list_MaxPart);
+    myfree(list_N_gas); myfree(list_NumPart);
+    myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
+    myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
+    myfree(particle_hydro_cost); myfree(particle_total_cost);
+    myfree(topNodes);
+}
+
+/* The largest share of any balanced quantity (work, particles, gas work, gas cells, and with DOMAIN_TIMEBINS=1 the work of
+   each balanced timebin) held by one top leaf that cost-driven refinement could still split, i.e. one holding more than
+   DOMAIN_COST_REFINE_MIN_COUNT particles. No assignment of whole leaves can give any task less than this. Reads the
+   per-leaf totals domain_sumCost has reduced across ranks, so every rank gets the same answer. */
+static double domain_largest_refinable_leaf_share(void)
+{
+    double tot_work = 0, tot_count = 0, tot_workgas = 0, tot_countgas = 0;
+    for(int l = 0; l < NTopleaves; l++) {tot_work += domainWork[l]; tot_count += domainCount[l]; tot_workgas += domainWorkGas[l]; tot_countgas += domainCountGas[l];}
+    double largest = 0;
+    for(int l = 0; l < NTopleaves; l++)
+    {
+        if(domainCount[l] <= DOMAIN_COST_REFINE_MIN_COUNT) {continue;}
+        double f;
+        f = (tot_work > 0) ? domainWork[l] / tot_work : 0; if(f > largest) {largest = f;}
+        f = (tot_count > 0) ? domainCount[l] / tot_count : 0; if(f > largest) {largest = f;}
+        f = (tot_workgas > 0) ? domainWorkGas[l] / tot_workgas : 0; if(f > largest) {largest = f;}
+        f = (tot_countgas > 0) ? domainCountGas[l] / tot_countgas : 0; if(f > largest) {largest = f;}
+#if (DOMAIN_TIMEBINS == 1)
+        for(int k = 0; k < NumTimeBinsToBeBalanced; k++)   /* each balanced timebin's per-leaf costs are already normalized to its total */
+        {
+            if(domainBinGravCost[k * NTopleaves + l] > largest) {largest = domainBinGravCost[k * NTopleaves + l];}
+            if(domainBinHydroCost[k * NTopleaves + l] > largest) {largest = domainBinHydroCost[k * NTopleaves + l];}
+        }
+#endif
+    }
+    return largest;
 }
 
 
@@ -1422,6 +1498,11 @@ int domain_decompose(void)
           endrun(90000022);
           gizmo_exit_bad_stop_if_requested("domain:memory_bound");
       }
+    }
+    if(!UseAllParticles)
+    {
+        domain_leaf_share_after_full = domain_largest_refinable_leaf_share();
+        PRINT_STATUS(" ..largest share of a balanced quantity in one refinable top leaf: %g (fair share %g)", domain_leaf_share_after_full, 1.0 / NTask);
     }
 
 #if (DOMAIN_TIMEBINS == 1)
@@ -2018,6 +2099,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
   double max_load_per_task = memory_safety_frac * DomainMaxPartLocal;
   double max_gasload_per_task = memory_safety_frac * DomainMaxGasLocal;
 
+  domain_assigned_objective = -1;
   domainAssign = (struct domain_segments_data *) mymalloc("domainAssign",
 							  multipledomains * NTask *
 							  sizeof(struct domain_segments_data));
@@ -2418,6 +2500,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
           for(int q = 0; q < n_quantities; q++) {double f = task_value(tt, q) / (quantity_total[q] + 1.0e-30); if(f > largest_share) {largest_share = f; its_floor = quantity_floor[q];}}
       PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts; largest avoidable imbalance left %g; largest share of a balanced quantity %g (its floor %g, even split %g)",
                    nswaps_accepted, iterations_done, current_imbalance, largest_share, its_floor, 1.0 / NTask);
+      domain_assigned_objective = largest_share;
   }
 
   qsort(domainAssign, multipledomains * NTask, sizeof(struct domain_segments_data), domain_sort_task);
@@ -2752,12 +2835,6 @@ int domain_compare_key(const void *a, const void *b)
 }
 
 
-/* Minimum particle count below which COST-driven top-tree refinement is suppressed. At low
- * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
- * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
- * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
- * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
-static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
 static long   g_domain_cost_suppressed = 0;         /* nodes where cost-refine was floor-suppressed this decomposition */
 static double g_domain_cost_suppressed_maxratio = 0;
 int domain_check_for_local_refine(int i, double countlimit, double costlimit)
