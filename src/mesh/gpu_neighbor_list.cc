@@ -473,21 +473,37 @@ int sidx_describe_member(int j, struct particle_data *P, const struct gas_cell_d
 /* Where an index's members come from: the particles [base, base + count) of P[], read where they live.  A
  * member is named by its ordinal o in that range -- the slot map is indexed by ordinal -- and by its global
  * particle index base + o everywhere else (the pool, the neighbour lists).  Particles below owned_end are the
- * rank's own.  exact: the members are read only at the reference time (the imported particles). */
+ * rank's own.  exact: the members are read only at the reference time (the imported particles).  as_stored:
+ * an array of the caller's own (group finding), searched where its particles stand, as the caller tests them:
+ * no clock, no motion and no cell data are read (cells is then NULL). */
 struct SidxParticleSource {
     struct particle_data *P;
     const struct gas_cell_data *cells;
-    int base, count, owned_end, type_bitmask, exact;
+    int base, count, owned_end, type_bitmask, exact, as_stored;
     KOKKOS_INLINE_FUNCTION int global(int o) const {return base + o;}
     KOKKOS_INLINE_FUNCTION int is_member(int o) const {return sfc_pool_member(&P[base + o], type_bitmask);}
     KOKKOS_INLINE_FUNCTION int is_owned(int o) const {return base + o < owned_end;}
     KOKKOS_INLINE_FUNCTION int position(int o, integertime ti_ref, const struct DriftKickTableView &tables,
                                         double center[3], double *hw, int *current) const
-    {return sidx_member_position(base + o, P, cells, ti_ref, tables, center, hw, current);}
+    {
+        if(!as_stored) {return sidx_member_position(base + o, P, cells, ti_ref, tables, center, hw, current);}
+        for(int k = 0; k < 3; k++) {center[k] = (double)P[base + o].Pos[k];}
+        for(int k = 0; k < 3; k++) {if(!(center[k] - center[k] == 0.0)) {return 1;}}   /* NaN or Inf, fast-math safe */
+        *hw = 0.0; *current = 1;
+        return 0;
+    }
     KOKKOS_INLINE_FUNCTION int describe(int o, mode_b_radius_policy_t policy, integertime ti_ref,
                                         const struct DriftKickTableView &tables, double growth, double kernel_floor,
                                         struct SidxMember &m) const
-    {return sidx_describe_member(base + o, P, cells, policy, ti_ref, tables, growth, kernel_floor, exact, m);}
+    {
+        if(!as_stored) {return sidx_describe_member(base + o, P, cells, policy, ti_ref, tables, growth, kernel_floor, exact, m);}
+        double center[3], hw, r, r_drifted;
+        int current;
+        if(position(o, ti_ref, tables, center, &hw, &current)) {return 1;}
+        sidx_member_reaches(base + o, P, policy, growth, kernel_floor, &r, &r_drifted);
+        sidx_describe_exact_member(center, hw, current, r, r_drifted, (int)P[base + o].Type, m);
+        return 0;
+    }
 };
 
 /* The most tiles num_members members can fill: the members inside the key extent fill tiles from the first,
@@ -1868,8 +1884,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * count, or leaves them out by passing the count of its own (hii_fb searches only the rank's own gas,
      * and the imported segment it leaves out stays as it is for the next caller).  ghost_base cannot move
      * during this call: every layout change refuses a live import.  Only the particle storage holds
-     * imported particles: a caller searching an array of its own (group finding) has none. */
-    const int pool_live = ghost_pool_is_live() && (P_shared == P);
+     * imported particles: a caller searching an array of its own (group finding) has none, and is searched where
+     * its particles stand, as it tests them: nothing global -- clock, certificate, cell data, drift -- describes it. */
+    const int callers_array = (P_shared != P);
+    const int pool_live = ghost_pool_is_live() && !callers_array;
     const int ghost_base = pool_live ? ghost_get_num_local() : num_total;
     const int ghost_end = pool_live ? ghost_base + ghost_get_num_ghosts() : num_total;
     const int owned_end = (num_total < ghost_base) ? num_total : ghost_base;
@@ -1885,8 +1903,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * set, so it does not advance it, which is what makes it a proof rather than a
      * convention); the imported ones by their owners having advanced them before
      * packing.  A new timestep advances All.Ti_Current, so a certificate from an
-     * earlier time simply stops matching. */
-    const int owned_current = (gizmo_full_drift_ti() == t_now);
+     * earlier time simply stops matching.  A caller's own array is read as it stands, so it is current by definition. */
+    const int owned_current = callers_array || (gizmo_full_drift_ti() == t_now);
     const int ghosts_current = (ghost_pool_current_ti() == t_now);
     const int pool_current = owned_current && (!walk_ghosts || ghosts_current);
     struct SidxBuildReport report;
@@ -1956,7 +1974,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
          * the segment invalid and has already asked for the stop, naming the cause.
          * There is nothing to walk, so hand back the same empty list any other
          * exhausted allocation here produces. */
-        const struct SidxParticleSource src = {P_shared, CellP, 0, owned_end, owned_end, type_bitmask, 0};
+        /* none of a caller's own array is the rank's own particles, so none can outgrow the domain's extent */
+        const struct SidxParticleSource src = {P_shared, callers_array ? NULL : CellP, 0, owned_end, callers_array ? 0 : owned_end,
+                                               type_bitmask, 0, callers_array};
         /* Only the gas index takes the order as it stands: every in-place write of a gas particle's
          * position, and every particle that becomes gas, advances the owned epoch, which is not so for the
          * other types.  (A particle that stops being gas leaves its slot to be retired, not the order.) */
@@ -1996,7 +2016,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         /* Built aside and published only whole: a build that fails leaves no part of a
          * segment visible, and the owned segment untouched. */
         gpu_index_segment_t fresh;
-        const struct SidxParticleSource src = {P_shared, CellP, ghost_base, ghost_end - ghost_base, ghost_base, type_bitmask, 1};
+        const struct SidxParticleSource src = {P_shared, CellP, ghost_base, ghost_end - ghost_base, ghost_base, type_bitmask, 1, 0};
         if(sidx_build_segment_now(src, 0, 0, radius_policy, caller_label, &fresh, &report)) {
             ngl_leave_csr_empty(gnl, num_active);
             return;
@@ -2069,7 +2089,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         if(source_positions_host) {
             for(int k = 0; k < 3; k++) {d_source_pos[aa*3 + k] = source_positions_host[aa*3 + k];}
         } else {
-            if(P_shared[i].Ti_current != t_now) {queries_not_current++;}
+            if(!callers_array && P_shared[i].Ti_current != t_now) {queries_not_current++;}
             for(int k = 0; k < 3; k++) {d_source_pos[aa*3 + k] = (double)P_shared[i].Pos[k];}
         }
     }
@@ -2401,15 +2421,10 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
                                         int j_type_bitmask, int search_mode,
                                         neighbor_list_t *out)
 {
-    /* Use the per-step particle arena to avoid a redundant full-NumPart memcpy
-     * (see gpu_build_symmetric_neighbor_list for rationale). */
-    gpu_particles_arena_set_site("gpu_build_cross_type_neighbor_list");
-    gpu_particles_arena_acquire(num_total, P_host, CellP);
-    struct particle_data *P_shared = gpu_particles_arena_P();
-
-    /* Build GPU CSR with explicit per-i radii and j-side type filter */
+    /* The caller's own array (group finding), searched where its particles stand; the particle arena describes
+     * the particle storage and is left pointing there. */
     gpu_neighbor_list_t gpu_nl;
-    gpu_ngb_list_build(P_shared, num_total, i_active_indices, num_active,
+    gpu_ngb_list_build(P_host, num_total, i_active_indices, num_active,
                        search_mode, j_type_bitmask, &gpu_nl, NULL,
                        1.0 /* search_radius_factor */, i_search_radii_host, NULL, "xtype");
 
@@ -2428,7 +2443,7 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
         Kokkos::deep_copy(h_neighbors, d_neighbors);
     }
 
-    /* Free GPU temporaries.  Arena is intentionally retained for subsequent callers. */
+    /* Free GPU temporaries. */
     gpu_ngb_list_free(&gpu_nl);
 }
 
