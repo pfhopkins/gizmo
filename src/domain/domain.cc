@@ -170,15 +170,20 @@ static inline int domain_work_bin(signed char min_work_bin, int current_bin)
    (MinExtraWorkBin), and hydro (CellP[].HydroWorkEstimate, MinHydroWorkBin). Only the normalized total
    used for top-tree refinement and total-work balancing combines them (domain_compute_particle_costs). */
 static double domain_stellar_prior_scale = 0; /*!< C, set by domain_compute_particle_costs for the decomposition in progress */
-static inline double domain_gravity_work(int i) {return 0.1 + (double) P[i].GravWork;}
+/* No work recorded anywhere yet (the decompositions before the first step): domain_compute_particle_costs then sets each
+   particle's cost from the a-priori estimate instead (domain_a_priori_cost_multiplier), and the per-timebin attribution
+   below uses that estimate in place of the recorded work. */
+static int domain_no_work_recorded = 0;
+static inline double domain_gravity_work(int i) {return domain_no_work_recorded ? (double) particle_total_cost[i] : 0.1 + (double) P[i].GravWork;}
 static inline double domain_stellar_work(int i)
 {
 #if defined(GALSF) && !defined(CHIMES)
-    return domain_stellar_prior_scale * (double) P[i].ExtraWorkEstimate;
+    return domain_no_work_recorded ? 0 : domain_stellar_prior_scale * (double) P[i].ExtraWorkEstimate;
 #else
     return 0;
 #endif
 }
+static inline double domain_hydro_bin_work(int i) {return domain_no_work_recorded ? 1.0 : (double) particle_hydro_cost[i];}
 static inline int domain_stellar_work_bin(int i)
 {
 #if defined(GALSF) && !defined(CHIMES)
@@ -363,6 +368,9 @@ void domain_init_timebin_costs(void)
 
     for(int i = 0; i < NumPart; i++)
     {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}   /* the same particles domain_compute_particle_costs costed */
+#endif
         const double grav_work = domain_gravity_work(i), stellar_work = domain_stellar_work(i);
         const int grav_bin = domain_work_bin(P[i].MinGravWorkBin, P[i].TimeBin), stellar_bin = domain_stellar_work_bin(i);
         const int hydro_bin = (P[i].Type == 0) ? domain_work_bin(CellP[i].MinHydroWorkBin, P[i].TimeBin) : 0;
@@ -374,7 +382,7 @@ void domain_init_timebin_costs(void)
             if(bin >= stellar_bin)
                 GravCostPerListedTimeBin[n] += stellar_work;
             if(P[i].Type == 0 && bin >= hydro_bin)
-                HydroCostPerListedTimeBin[n] += (double)particle_hydro_cost[i];
+                HydroCostPerListedTimeBin[n] += domain_hydro_bin_work(i);
         }
     }
 
@@ -1183,22 +1191,64 @@ void domain_merge_work_history(int i, int j)
    heavy in either kind of work is refined and spread. particle_hydro_cost -- the gas-work queue -- is
    the hydro work alone. Frequency is in all of these: a particle on a short timestep was active more
    often, so no per-timebin weighting is applied. Also fills NtypeLocal and the two local totals. */
+/* The a-priori estimate of a particle's work relative to a bare gravity target, used before any work has been recorded:
+   a gas cell's per-step hydro weight, a star particle's age weight, nothing for anything else. */
+static double domain_a_priori_cost_multiplier(int i)
+{
+    if(P[i].Type == 0) {return domain_gas_work_weight(i);}
+#if defined(GALSF) && !defined(CHIMES)
+    return domain_star_age_work_weight(i);
+#else
+    return 0;
+#endif
+}
+
 static void domain_compute_particle_costs(void)
 {
-    /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro) */
-    double sums[4] = {0, 0, 0, 0};
+    /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro),
+       [4] all recorded work */
+    double sums[5] = {0, 0, 0, 0, 0};
+    domain_no_work_recorded = 0;
     for(int i = 0; i < NumPart; i++)
     {
 #ifdef SUBFIND
         if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
 #endif
         sums[2] += domain_gravity_work(i);
+        sums[4] += (double) P[i].GravWork;
+#if defined(GALSF) && !defined(CHIMES)
+        sums[4] += (double) P[i].ExtraWorkEstimate;
+#endif
+        if(P[i].Type == 0) {sums[4] += (double) CellP[i].HydroWorkEstimate;}
         if(P[i].Type == 0) {sums[3] += (double) CellP[i].HydroWorkEstimate;}
 #if defined(GALSF) && !defined(CHIMES)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
     }
-    MPI_Allreduce(MPI_IN_PLACE, sums, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, sums, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(sums[4] <= 0)
+    {
+        /* Nothing has been recorded yet: weight each particle by the a-priori estimate of its work, (1 + multiplier) times
+           the bare gravity floor, and count active gas cells at that floor for the gas queue. */
+        domain_no_work_recorded = 1;
+        domain_stellar_prior_scale = 0;
+        if(ThisTask == 0) {PRINT_STATUS(" ..no work recorded yet: costs from the a-priori estimate");}
+        gravcost = gascost = 0;
+        for(int i = 0; i < NumPart; i++)
+        {
+#ifdef SUBFIND
+            if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+            NtypeLocal[P[i].Type]++;
+            const double total = (1 + domain_a_priori_cost_multiplier(i)) * 0.1;
+            const double hydro = (P[i].Type == 0 && (TimeBinActive[P[i].TimeBin] || UseAllParticles)) ? 0.1 : 0;
+            particle_total_cost[i] = (float) total;
+            particle_hydro_cost[i] = (float) hydro;
+            gravcost += total;
+            gascost += hydro;
+        }
+        return;
+    }
     domain_stellar_prior_scale = (sums[1] > 0) ? sums[0] / sums[1] : 0;
     const double grav_total = sums[2] + domain_stellar_prior_scale * sums[1];
     const double inv_grav_total = (grav_total > 0) ? 1.0 / grav_total : 0, inv_hydro_total = (sums[3] > 0) ? 1.0 / sums[3] : 0;
@@ -3222,7 +3272,7 @@ void domain_sumCost(void)
               composite_cost += contrib; \
               my_binGravCost[k_ * NTopleaves + no] += contrib; } \
           if(P[n].Type == 0 && bin_ >= hydro_bin_) { \
-              float hcontrib = (float)(HydroCostNormFactors[k_] * particle_hydro_cost[n]); \
+              float hcontrib = (float)(HydroCostNormFactors[k_] * domain_hydro_bin_work(n)); \
               composite_cost += hcontrib; \
               my_binHydroCost[k_ * NTopleaves + no] += hcontrib; } } \
       wk[no] += composite_cost; \
