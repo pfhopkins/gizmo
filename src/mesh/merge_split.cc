@@ -319,11 +319,9 @@ void merge_and_split_particles(void)
     }
 
     /* Indices flagged for a merge or a split, appended in the order the candidate
-     * loop below visits them, which is ascending particle index. The apply loop
-     * walks this instead of every local particle: only a flagged index does any
-     * work there, and the flags can only be set on candidates. This substitution
-     * visits the same indices in the same order, so it does not itself change
-     * which merges and splits are applied, or in what sequence. */
+     * loop below visits them. The apply loop walks this instead of every local
+     * particle: only a flagged index does any work there, and the flags can only be
+     * set on candidates. */
     std::vector<int> ms_flagged;
 
     /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
@@ -373,10 +371,17 @@ void merge_and_split_particles(void)
         std::vector<std::vector<int> > ms_idx_thread((size_t)ms_nthreads);
         std::vector<std::vector<double> > ms_rad_thread((size_t)ms_nthreads);
         std::vector<std::vector<unsigned char> > ms_kind_thread((size_t)ms_nthreads);
+        /* Only an active element can be a candidate, so the candidates come from the active timebins'
+         * lists, which are intact here (this runs before the re-sequencing), not from a scan of every
+         * local element. The visit order is grouped by timebin; that changes which of several possible
+         * partners is claimed first, which carries no meaning here. */
+        std::vector<int> ms_active;
+        for(int bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {for(int ip = FirstInTimeBin[bin]; ip >= 0; ip = NextInTimeBin[ip]) {ms_active.push_back(ip);}}}
+        const int ms_num_active = (int) ms_active.size();
         /* One chunk per thread, sized explicitly: with a chunk size given, chunks go to
          * threads in order of thread number, so each thread takes one contiguous block
-         * of ascending indices. */
-        const int ms_chunk = (NumPart + ms_nthreads - 1) / ms_nthreads;
+         * of the list. */
+        const int ms_chunk = (ms_num_active > 0) ? (ms_num_active + ms_nthreads - 1) / ms_nthreads : 1;   /* a schedule chunk must be positive, also on a rank with no actives */
 #pragma omp parallel
     {
 #ifdef _OPENMP
@@ -397,12 +402,13 @@ void merge_and_split_particles(void)
         std::vector<double> ms_rad_priv;
         std::vector<unsigned char> ms_kind_priv;
 #pragma omp for schedule(static, ms_chunk)
-        for (int ip = 0; ip < NumPart; ip++) {
+        for (int ia = 0; ia < ms_num_active; ia++) {
+            const int ip = ms_active[ia];
             if (P[ip].Mass <= 0) continue;
 #if defined(GALSF)
-            if (!(((P[ip].Type==0)||(P[ip].Type==4)) && TimeBinActive[P[ip].TimeBin])) continue;
+            if (!((P[ip].Type==0)||(P[ip].Type==4))) continue;
 #else
-            if (!((P[ip].Type==0) && TimeBinActive[P[ip].TimeBin])) continue;
+            if (!(P[ip].Type==0)) continue;
 #endif
             if (P[ip].KernelRadius <= 0) continue;   /* a necessary condition for candidacy
                                                       * either way, and cheap, so testing it
@@ -447,8 +453,7 @@ void merge_and_split_particles(void)
         ms_rad_thread[tid].swap(ms_rad_priv);
         ms_kind_thread[tid].swap(ms_kind_priv);
     }
-        /* Concatenating in thread order restores the ascending index order the serial
-         * scan produced. */
+        /* Concatenating in thread order restores the order of the list the scan walked. */
         for (int t = 0; t < ms_nthreads; t++) {
             ms_src_idx.insert(ms_src_idx.end(), ms_idx_thread[t].begin(), ms_idx_thread[t].end());
             ms_src_radii.insert(ms_src_radii.end(), ms_rad_thread[t].begin(), ms_rad_thread[t].end());
