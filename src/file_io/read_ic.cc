@@ -804,6 +804,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_STAR_EFFECTIVE_SIZE:
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+            for(n = 0; n < pc; n++) {P[offset + n].StarParticleEffectiveSize = *fp++;}
+#endif
+            break;
+
         case IO_UNSPMASS:
 #if defined(SINK_WIND_SPAWN)
              for(n = 0; n < pc; n++) {P[offset + n].unspawned_wind_mass = *fp++;}

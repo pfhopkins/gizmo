@@ -291,6 +291,10 @@ double target_mass_renormalization_factor_for_mergesplit(int i, int split_key)
   modified by Takashi Okamoto (t.t.okamoto@gmail.com) on 20/6/2019
  */
 /*!   -- this subroutine is not openmp parallelized at present, so there's not any issue about conflicts over shared memory. if you make it openmp, make sure you protect the writes to shared memory here! -- */
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+/* a star pair can merge only inside this many of the larger of their two softenings (evaluate_starstar_merger_for_starcluster_particle_pair) */
+#define STARCLUSTER_MERGER_MAX_SEPARATION_IN_SOFTENINGS 1.
+#endif
 void merge_and_split_particles(void)
 {
     if(ghost_require_no_live_pool_for_layout_change("merge_and_split_particles")) {return;}
@@ -350,6 +354,16 @@ void merge_and_split_particles(void)
 #endif
                                    ;
 
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+        /* A star can only merge with a partner inside STARCLUSTER_MERGER_MAX_SEPARATION_IN_SOFTENINGS times the larger of the
+           two softenings, so a star's candidates need be searched no further than that times the largest star softening
+           anywhere: the pairs found and the partner chosen are the same as with the full kernel, the list far shorter in a
+           dense cluster, where the kernel spans thousands of stars. */
+        double star_merger_search_radius = 0;
+        for(int ip = 0; ip < NumPart; ip++) {if(P[ip].Type == 4) {double eps = ForceSoftening_KernelRadius(ip); if(eps > star_merger_search_radius) {star_merger_search_radius = eps;}}}
+        MPI_Allreduce(MPI_IN_PLACE, &star_merger_search_radius, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        star_merger_search_radius *= STARCLUSTER_MERGER_MAX_SEPARATION_IN_SOFTENINGS * (1. + 1.e-6);   /* slack: the pair test, not the search, decides the boundary */
+#endif
 #ifdef _OPENMP
         int ms_nthreads = omp_get_max_threads();
 #else
@@ -420,7 +434,11 @@ void merge_and_split_particles(void)
             const int want_split = want_merge ? 0 : does_particle_need_to_be_split(ip);
             if (!(want_merge || want_split)) continue;
             ms_idx_priv.push_back(ip);
-            ms_rad_priv.push_back(P[ip].KernelRadius);
+            double search_radius = P[ip].KernelRadius;
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+            if(P[ip].Type == 4 && want_merge && star_merger_search_radius < search_radius) {search_radius = star_merger_search_radius;}
+#endif
+            ms_rad_priv.push_back(search_radius);
             ms_kind_priv.push_back(want_merge ? 1 : 2);
         }
         /* Published once each, after the loop, rather than grown in place: the per-thread
@@ -1588,7 +1606,7 @@ double evaluate_starstar_merger_for_starcluster_particle_pair(int i, int j)
 {
     if(evaluate_starstar_merger_for_starcluster_eligibility(j)) // already evaluated i, make sure j is also eligible
     {
-        double eta_position = 1., eta_velocity2 = 2.; // variables for below, defined for convenience here
+        double eta_position = STARCLUSTER_MERGER_MAX_SEPARATION_IN_SOFTENINGS, eta_velocity2 = 2.; // variables for below, defined for convenience here
         
         // consider separation and relative velocities
         int k; Vec3<double> dp = P[j].Pos - P[i].Pos; // calculate separation

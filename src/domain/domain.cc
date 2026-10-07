@@ -170,15 +170,20 @@ static inline int domain_work_bin(signed char min_work_bin, int current_bin)
    (MinExtraWorkBin), and hydro (CellP[].HydroWorkEstimate, MinHydroWorkBin). Only the normalized total
    used for top-tree refinement and total-work balancing combines them (domain_compute_particle_costs). */
 static double domain_stellar_prior_scale = 0; /*!< C, set by domain_compute_particle_costs for the decomposition in progress */
-static inline double domain_gravity_work(int i) {return 0.1 + (double) P[i].GravWork;}
+/* No work recorded anywhere yet (the decompositions before the first step): domain_compute_particle_costs then sets each
+   particle's cost from the a-priori estimate instead (domain_a_priori_cost_multiplier), and the per-timebin attribution
+   below uses that estimate in place of the recorded work. */
+static int domain_no_work_recorded = 0;
+static inline double domain_gravity_work(int i) {return domain_no_work_recorded ? (double) particle_total_cost[i] : 0.1 + (double) P[i].GravWork;}
 static inline double domain_stellar_work(int i)
 {
 #if defined(GALSF) && !defined(CHIMES)
-    return domain_stellar_prior_scale * (double) P[i].ExtraWorkEstimate;
+    return domain_no_work_recorded ? 0 : domain_stellar_prior_scale * (double) P[i].ExtraWorkEstimate;
 #else
     return 0;
 #endif
 }
+static inline double domain_hydro_bin_work(int i) {return domain_no_work_recorded ? 1.0 : (double) particle_hydro_cost[i];}
 static inline int domain_stellar_work_bin(int i)
 {
 #if defined(GALSF) && !defined(CHIMES)
@@ -193,6 +198,28 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+/* A lightweight repartition keeps the top tree, so it cannot split a top leaf that carries too much of a balanced quantity.
+   It gives way to a full decomposition, which refines the top tree with the work recorded so far, when all of these hold:
+   a refinable leaf holds more than LIGHT_REPARTITION_LEAF_SHARE_LIMIT times the fair share 1/NTask; that leaf is what limits
+   the assignment (its share is at least LIGHT_REPARTITION_LEAF_LIMITED_FRACTION of the largest share any task was given);
+   and it is LIGHT_REPARTITION_LEAF_SHARE_GROWTH times larger than the largest leaf the last full decomposition left, so a
+   leaf a full decomposition could not split does not trigger one on every call.  A full decomposition is expensive and
+   slows much of the code for a while after it, and moderately concentrated work is normal where the active region is
+   compact and moves -- a full decomposition splits that leaf, and the next active region shows up in another -- so the
+   limits are set to catch only a leaf far beyond any assignment's reach. */
+/* Minimum particle count below which COST-driven top-tree refinement is suppressed. At low
+ * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
+ * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
+ * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
+ * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
+static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
+#define LIGHT_REPARTITION_LEAF_SHARE_LIMIT 20.0
+#define LIGHT_REPARTITION_LEAF_LIMITED_FRACTION 0.85
+#define LIGHT_REPARTITION_LEAF_SHARE_GROWTH 2.0
+static double domain_assigned_objective = -1;      /*!< largest share of a balanced quantity any task holds after the last work-balanced assignment, -1 if none */
+static double domain_leaf_share_after_full = -1;   /*!< largest share of a balanced quantity in one refinable top leaf, after the last full decomposition */
+static double domain_largest_refinable_leaf_share(void);
+static void domain_light_free_work_arrays(void);
 #define MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS 20 /*!< re-establish Peano-Hilbert order at most this far apart. The reorder moves nearly every element of P and CellP and is expensive, especially where those arrays are device-accessible, but particle exchange decays the ordering that the SFC tiles and the tree build rely on, so it cannot be dropped entirely */
 static int DomainCallsSincePeanoOrder = MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS; /*!< domain decompositions, full or lightweight, since the last ordering. Starts at the interval so the first decomposition of a run always orders, including after a restart, which does not take the startup one */
 
@@ -363,6 +390,9 @@ void domain_init_timebin_costs(void)
 
     for(int i = 0; i < NumPart; i++)
     {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}   /* the same particles domain_compute_particle_costs costed */
+#endif
         const double grav_work = domain_gravity_work(i), stellar_work = domain_stellar_work(i);
         const int grav_bin = domain_work_bin(P[i].MinGravWorkBin, P[i].TimeBin), stellar_bin = domain_stellar_work_bin(i);
         const int hydro_bin = (P[i].Type == 0) ? domain_work_bin(CellP[i].MinHydroWorkBin, P[i].TimeBin) : 0;
@@ -374,7 +404,7 @@ void domain_init_timebin_costs(void)
             if(bin >= stellar_bin)
                 GravCostPerListedTimeBin[n] += stellar_work;
             if(P[i].Type == 0 && bin >= hydro_bin)
-                HydroCostPerListedTimeBin[n] += (double)particle_hydro_cost[i];
+                HydroCostPerListedTimeBin[n] += domain_hydro_bin_work(i);
         }
     }
 
@@ -907,6 +937,16 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
         status = domain_check_memory_bound(multipledomains);
         if(status != 0) {if(ThisTask == 0) {printf("Lightweight repartition: memory bound violated.\n");}}
     }
+    /* every input is reduced across ranks and the assignment is identical on all of them, so all take the same branch */
+    int give_way_to_full = 0;
+    double leaf_share = 0;
+    if(status == 0 && !UseAllParticles && domain_assigned_objective > 0)
+    {
+        leaf_share = domain_largest_refinable_leaf_share();
+        give_way_to_full = (leaf_share > LIGHT_REPARTITION_LEAF_SHARE_LIMIT / NTask)
+                        && (leaf_share >= LIGHT_REPARTITION_LEAF_LIMITED_FRACTION * domain_assigned_objective)
+                        && (leaf_share > LIGHT_REPARTITION_LEAF_SHARE_GROWTH * domain_leaf_share_after_full);
+    }
 
 #if (DOMAIN_TIMEBINS == 1)
     /* Freed only after the memory-bound retry above, which calls
@@ -915,6 +955,16 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     if(domainBinGravCost) {free(domainBinGravCost); domainBinGravCost = NULL;}
     if(domainBinHydroCost) {free(domainBinHydroCost); domainBinHydroCost = NULL;}
 #endif
+    if(give_way_to_full)
+    {
+        if(ThisTask == 0) {printf("Domain: one top leaf holds %g of a balanced quantity (fair share %g, largest task share %g, %g after the last full decomposition), which a lightweight repartition cannot split. Rebuilding the top tree with a full decomposition.\n",
+                                  leaf_share, 1.0 / NTask, domain_assigned_objective, domain_leaf_share_after_full);}
+        domain_light_free_work_arrays();
+        Key = NULL;
+        /* merge/split already ran at the top of this call */
+        domain_Decomposition(UseAllTimeBins, 0, 0, 1);
+        return;
+    }
 
     /* flag particles that need to move */
     for(i = 0; i < NumPart; i++)
@@ -957,14 +1007,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
     while(ret > 0);
 
-    /* free everything in LIFO order */
-    myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
-    myfree(list_MaxPartGas); myfree(list_MaxPart);
-    myfree(list_N_gas); myfree(list_NumPart);
-    myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
-    myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
-    myfree(particle_hydro_cost); myfree(particle_total_cost);
-    myfree(topNodes);
+    domain_light_free_work_arrays();
 
     t1 = my_second();
     PRINT_STATUS(" ..lightweight domain repartition done. (took %g sec)", timediff(t0, t1));
@@ -987,6 +1030,47 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     domain_particle_layout_changed("domain_Decomposition_light", 0);
     report_memory_ledger_on_growth("post-domain-light");  /* same memory boundary as full decomposition; collective; growth-gated */
     if(UseAllTimeBins == 0) {domain_reset_work_history();}
+}
+
+
+/* Free what a lightweight repartition allocated for its split and assignment, in LIFO order. */
+static void domain_light_free_work_arrays(void)
+{
+    myfree(list_workgas); myfree(list_work); myfree(list_loadgas); myfree(list_load);
+    myfree(list_MaxPartGas); myfree(list_MaxPart);
+    myfree(list_N_gas); myfree(list_NumPart);
+    myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
+    myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
+    myfree(particle_hydro_cost); myfree(particle_total_cost);
+    myfree(topNodes);
+}
+
+/* The largest share of any balanced quantity (work, particles, gas work, gas cells, and with DOMAIN_TIMEBINS=1 the work of
+   each balanced timebin) held by one top leaf that cost-driven refinement could still split, i.e. one holding more than
+   DOMAIN_COST_REFINE_MIN_COUNT particles. No assignment of whole leaves can give any task less than this. Reads the
+   per-leaf totals domain_sumCost has reduced across ranks, so every rank gets the same answer. */
+static double domain_largest_refinable_leaf_share(void)
+{
+    double tot_work = 0, tot_count = 0, tot_workgas = 0, tot_countgas = 0;
+    for(int l = 0; l < NTopleaves; l++) {tot_work += domainWork[l]; tot_count += domainCount[l]; tot_workgas += domainWorkGas[l]; tot_countgas += domainCountGas[l];}
+    double largest = 0;
+    for(int l = 0; l < NTopleaves; l++)
+    {
+        if(domainCount[l] <= DOMAIN_COST_REFINE_MIN_COUNT) {continue;}
+        double f;
+        f = (tot_work > 0) ? domainWork[l] / tot_work : 0; if(f > largest) {largest = f;}
+        f = (tot_count > 0) ? domainCount[l] / tot_count : 0; if(f > largest) {largest = f;}
+        f = (tot_workgas > 0) ? domainWorkGas[l] / tot_workgas : 0; if(f > largest) {largest = f;}
+        f = (tot_countgas > 0) ? domainCountGas[l] / tot_countgas : 0; if(f > largest) {largest = f;}
+#if (DOMAIN_TIMEBINS == 1)
+        for(int k = 0; k < NumTimeBinsToBeBalanced; k++)   /* each balanced timebin's per-leaf costs are already normalized to its total */
+        {
+            if(domainBinGravCost[k * NTopleaves + l] > largest) {largest = domainBinGravCost[k * NTopleaves + l];}
+            if(domainBinHydroCost[k * NTopleaves + l] > largest) {largest = domainBinHydroCost[k * NTopleaves + l];}
+        }
+#endif
+    }
+    return largest;
 }
 
 
@@ -1181,22 +1265,64 @@ void domain_merge_work_history(int i, int j)
    heavy in either kind of work is refined and spread. particle_hydro_cost -- the gas-work queue -- is
    the hydro work alone. Frequency is in all of these: a particle on a short timestep was active more
    often, so no per-timebin weighting is applied. Also fills NtypeLocal and the two local totals. */
+/* The a-priori estimate of a particle's work relative to a bare gravity target, used before any work has been recorded:
+   a gas cell's per-step hydro weight, a star particle's age weight, nothing for anything else. */
+static double domain_a_priori_cost_multiplier(int i)
+{
+    if(P[i].Type == 0) {return domain_gas_work_weight(i);}
+#if defined(GALSF) && !defined(CHIMES)
+    return domain_star_age_work_weight(i);
+#else
+    return 0;
+#endif
+}
+
 static void domain_compute_particle_costs(void)
 {
-    /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro) */
-    double sums[4] = {0, 0, 0, 0};
+    /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro),
+       [4] all recorded work */
+    double sums[5] = {0, 0, 0, 0, 0};
+    domain_no_work_recorded = 0;
     for(int i = 0; i < NumPart; i++)
     {
 #ifdef SUBFIND
         if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
 #endif
         sums[2] += domain_gravity_work(i);
+        sums[4] += (double) P[i].GravWork;
+#if defined(GALSF) && !defined(CHIMES)
+        sums[4] += (double) P[i].ExtraWorkEstimate;
+#endif
+        if(P[i].Type == 0) {sums[4] += (double) CellP[i].HydroWorkEstimate;}
         if(P[i].Type == 0) {sums[3] += (double) CellP[i].HydroWorkEstimate;}
 #if defined(GALSF) && !defined(CHIMES)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
     }
-    MPI_Allreduce(MPI_IN_PLACE, sums, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, sums, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    if(sums[4] <= 0)
+    {
+        /* Nothing has been recorded yet: weight each particle by the a-priori estimate of its work, (1 + multiplier) times
+           the bare gravity floor, and count active gas cells at that floor for the gas queue. */
+        domain_no_work_recorded = 1;
+        domain_stellar_prior_scale = 0;
+        if(ThisTask == 0) {PRINT_STATUS(" ..no work recorded yet: costs from the a-priori estimate");}
+        gravcost = gascost = 0;
+        for(int i = 0; i < NumPart; i++)
+        {
+#ifdef SUBFIND
+            if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+            NtypeLocal[P[i].Type]++;
+            const double total = (1 + domain_a_priori_cost_multiplier(i)) * 0.1;
+            const double hydro = (P[i].Type == 0 && (TimeBinActive[P[i].TimeBin] || UseAllParticles)) ? 0.1 : 0;
+            particle_total_cost[i] = (float) total;
+            particle_hydro_cost[i] = (float) hydro;
+            gravcost += total;
+            gascost += hydro;
+        }
+        return;
+    }
     domain_stellar_prior_scale = (sums[1] > 0) ? sums[0] / sums[1] : 0;
     const double grav_total = sums[2] + domain_stellar_prior_scale * sums[1];
     const double inv_grav_total = (grav_total > 0) ? 1.0 / grav_total : 0, inv_hydro_total = (sums[3] > 0) ? 1.0 / sums[3] : 0;
@@ -1370,6 +1496,11 @@ int domain_decompose(void)
           endrun(90000022);
           gizmo_exit_bad_stop_if_requested("domain:memory_bound");
       }
+    }
+    if(!UseAllParticles)
+    {
+        domain_leaf_share_after_full = domain_largest_refinable_leaf_share();
+        PRINT_STATUS(" ..largest share of a balanced quantity in one refinable top leaf: %g (fair share %g)", domain_leaf_share_after_full, 1.0 / NTask);
     }
 
 #if (DOMAIN_TIMEBINS == 1)
@@ -1966,6 +2097,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
   double max_load_per_task = memory_safety_frac * DomainMaxPartLocal;
   double max_gasload_per_task = memory_safety_frac * DomainMaxGasLocal;
 
+  domain_assigned_objective = -1;
   domainAssign = (struct domain_segments_data *) mymalloc("domainAssign",
 							  multipledomains * NTask *
 							  sizeof(struct domain_segments_data));
@@ -2236,12 +2368,15 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
     }
 
   /* Iterative refinement (Gadget-4 approach): try random swaps of two segments between tasks, and keep a swap when it
-     lowers the objective, the largest normalized share any task holds of any balanced metric.  A swap changes only its
-     two tasks, so it is scored from those two plus the largest share held by a task outside the pair: each task's own
-     largest share is cached, with the three tasks holding the largest of them.  A swap that leaves the task holding the
-     objective untouched cannot lower it, so it is rejected without being scored.  A swap may not take a task over its
-     memory cap, nor further over it.  The search stops once the objective reaches the share of the largest single
-     segment on any metric, below which no assignment can go. */
+     lowers the objective.  Every balanced quantity has a floor no assignment can go below, an even split or the share of
+     its largest single segment, and a task's score on it is the fraction of the avoidable imbalance it still carries,
+     (share - floor) / (1 - floor), zero at or below the floor and zero when one segment holds all of it.  The objective is
+     the largest score of any task on any quantity: a quantity that cannot be divided does not pin it, and while every
+     floor is the even split it ranks assignments exactly as the largest share does.  A swap changes only its two tasks,
+     so it is scored from those two plus the largest score held by a task outside the pair: each task's own largest score
+     is cached, with the three tasks holding the largest of them.  A swap that leaves the task holding the objective
+     untouched cannot lower it, so it is rejected without being scored.  A swap may not take a task over its memory cap,
+     nor further over it.  The search stops once no task carries any avoidable imbalance. */
   if(mode == 1 && multipledomains * NTask > 1)
   {
       int nswaps_accepted = 0;
@@ -2252,25 +2387,51 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       unsigned long long seed = 42ULL + (unsigned long long) NTask;
       auto random_segment = [&]() -> int {seed = seed * 6364136223846793005ULL + 1442695040888963407ULL; return (int) ((seed >> 33) % (unsigned long long) n_segments);};
 
-      /* largest share task t would hold if segment s_out were replaced by segment s_in (s_in < 0: as it stands) */
-      auto share_after = [&](int t, int s_out, int s_in) -> double {
-#define DOMAIN_SWAP_VALUE(field) ((s_in >= 0) ? tasklist[t].field + (domainAssign[s_in].field - domainAssign[s_out].field) : tasklist[t].field)
-          double result = DOMAIN_SWAP_VALUE(work) / (tot_work + 1.0e-30), f;
-          f = DOMAIN_SWAP_VALUE(load) / (tot_load + 1.0e-30); if(f > result) {result = f;}
-          f = DOMAIN_SWAP_VALUE(load_activegas) / (tot_loadactivegas + 1.0e-30); if(f > result) {result = f;}
-          f = DOMAIN_SWAP_VALUE(load_gas) / (tot_loadgas + 1.0e-30); if(f > result) {result = f;}
+      /* the balanced quantities: work, particles, active-gas work, gas cells, and per balanced timebin gravity and hydro */
 #if (DOMAIN_TIMEBINS == 1)
-          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-              f = DOMAIN_SWAP_VALUE(bin_GravCost[k]) / (tot_binGravCost[k] + 1.0e-30); if(f > result) {result = f;}
-              f = DOMAIN_SWAP_VALUE(bin_HydroCost[k]) / (tot_binHydroCost[k] + 1.0e-30); if(f > result) {result = f;}
-          }
+      const int n_quantities = 4 + 2 * NumTimeBinsToBeBalanced;
+#else
+      const int n_quantities = 4;
 #endif
-#undef DOMAIN_SWAP_VALUE
+      auto segment_value = [&](int s, int q) -> double {
+          switch(q) {case 0: return domainAssign[s].work; case 1: return domainAssign[s].load; case 2: return domainAssign[s].load_activegas; case 3: return domainAssign[s].load_gas;}
+#if (DOMAIN_TIMEBINS == 1)
+          return ((q - 4) % 2 == 0) ? domainAssign[s].bin_GravCost[(q - 4) / 2] : domainAssign[s].bin_HydroCost[(q - 4) / 2];
+#else
+          return 0;
+#endif
+      };
+      auto task_value = [&](int t, int q) -> double {
+          switch(q) {case 0: return tasklist[t].work; case 1: return tasklist[t].load; case 2: return tasklist[t].load_activegas; case 3: return tasklist[t].load_gas;}
+#if (DOMAIN_TIMEBINS == 1)
+          return ((q - 4) % 2 == 0) ? tasklist[t].bin_GravCost[(q - 4) / 2] : tasklist[t].bin_HydroCost[(q - 4) / 2];
+#else
+          return 0;
+#endif
+      };
+      std::vector<double> quantity_total(n_quantities), quantity_floor(n_quantities, 1.0 / NTask);
+      quantity_total[0] = tot_work; quantity_total[1] = tot_load; quantity_total[2] = tot_loadactivegas; quantity_total[3] = tot_loadgas;
+#if (DOMAIN_TIMEBINS == 1)
+      for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {quantity_total[4 + 2 * k] = tot_binGravCost[k]; quantity_total[5 + 2 * k] = tot_binHydroCost[k];}
+#endif
+      for(int s = 0; s < n_segments; s++)
+          for(int q = 0; q < n_quantities; q++) {double f = segment_value(s, q) / (quantity_total[q] + 1.0e-30); if(f > quantity_floor[q]) {quantity_floor[q] = f;}}
+
+      /* largest score task t would carry if segment s_out were replaced by segment s_in (s_in < 0: as it stands) */
+      auto share_after = [&](int t, int s_out, int s_in) -> double {
+          double result = 0;
+          for(int q = 0; q < n_quantities; q++)
+          {
+              if(quantity_floor[q] >= 1) {continue;}
+              double v = (s_in >= 0) ? task_value(t, q) + (segment_value(s_in, q) - segment_value(s_out, q)) : task_value(t, q);
+              double score = (v / (quantity_total[q] + 1.0e-30) - quantity_floor[q]) / (1 - quantity_floor[q]);
+              if(score > result) {result = score;}
+          }
           return result;
       };
       std::vector<double> task_share(NTask);
       for(int t = 0; t < NTask; t++) {task_share[t] = share_after(t, -1, -1);}
-      int top[3] = {-1, -1, -1};   /* the three tasks holding the largest shares, largest first */
+      int top[3] = {-1, -1, -1};   /* the three tasks holding the largest scores, largest first */
       auto rank_top = [&]() {
           top[0] = top[1] = top[2] = -1;
           for(int t = 0; t < NTask; t++)
@@ -2282,23 +2443,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       };
       rank_top();
       double current_imbalance = task_share[top[0]];
-
-      /* the objective can go no lower than the largest share of a single segment on any metric, nor than an even split */
-      double segment_bound = 1.0 / NTask;
-      for(int s = 0; s < n_segments; s++)
-      {
-          double f = domainAssign[s].work / (tot_work + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          f = domainAssign[s].load / (tot_load + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          f = domainAssign[s].load_activegas / (tot_loadactivegas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          f = domainAssign[s].load_gas / (tot_loadgas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-#if (DOMAIN_TIMEBINS == 1)
-          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-              f = domainAssign[s].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-              f = domainAssign[s].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          }
-#endif
-      }
-      const double stop_at = segment_bound * (1.0 + 1.0e-12);
+      const double stop_at = 1.0e-12;   /* no avoidable imbalance left, to round-off */
 
       for(long long iter = 0; iter < max_iterations && current_imbalance > stop_at; iter++)
       {
@@ -2347,9 +2492,13 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
               nswaps_accepted++;
           }
       }
-      if(ThisTask == 0 && nswaps_accepted > 0) {
-          PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts", nswaps_accepted, iterations_done);
-      }
+      /* the objective is a transformed quantity, so report the largest raw share beside it, with that quantity's floor */
+      double largest_share = 0, its_floor = 0;
+      for(int tt = 0; tt < NTask; tt++)
+          for(int q = 0; q < n_quantities; q++) {double f = task_value(tt, q) / (quantity_total[q] + 1.0e-30); if(f > largest_share) {largest_share = f; its_floor = quantity_floor[q];}}
+      PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts; largest avoidable imbalance left %g; largest share of a balanced quantity %g (its floor %g, even split %g)",
+                   nswaps_accepted, iterations_done, current_imbalance, largest_share, its_floor, 1.0 / NTask);
+      domain_assigned_objective = largest_share;
   }
 
   qsort(domainAssign, multipledomains * NTask, sizeof(struct domain_segments_data), domain_sort_task);
@@ -2684,12 +2833,6 @@ int domain_compare_key(const void *a, const void *b)
 }
 
 
-/* Minimum particle count below which COST-driven top-tree refinement is suppressed. At low
- * counts a node's cost is dominated by one/few particles whose work is NOT divisible by further
- * spatial splitting, so refining only wastes topnodes + downstream per-leaf work (Morton sort,
- * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
- * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
-static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
 static long   g_domain_cost_suppressed = 0;         /* nodes where cost-refine was floor-suppressed this decomposition */
 static double g_domain_cost_suppressed_maxratio = 0;
 int domain_check_for_local_refine(int i, double countlimit, double costlimit)
@@ -3220,7 +3363,7 @@ void domain_sumCost(void)
               composite_cost += contrib; \
               my_binGravCost[k_ * NTopleaves + no] += contrib; } \
           if(P[n].Type == 0 && bin_ >= hydro_bin_) { \
-              float hcontrib = (float)(HydroCostNormFactors[k_] * particle_hydro_cost[n]); \
+              float hcontrib = (float)(HydroCostNormFactors[k_] * domain_hydro_bin_work(n)); \
               composite_cost += hcontrib; \
               my_binHydroCost[k_ * NTopleaves + no] += hcontrib; } } \
       wk[no] += composite_cost; \
