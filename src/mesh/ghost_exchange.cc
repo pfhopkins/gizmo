@@ -1142,21 +1142,25 @@ static void gx_walk_export_discover(
                                          spec->radius_policy, e->nodes, e->n_nodes,
                                          cvk, walker_j_reach_scale);
         }
-        /* One row per envelope, pointing into its own candidate list, in ascending
-         * peer order.  The shared accept drifts the distinct candidates of every row
-         * together, then accepts at current positions. */
+        /* One row per envelope that found candidates, pointing into its own candidate
+         * list, in ascending peer order.  The shared accept drifts the distinct candidates
+         * of every row together, then accepts at current positions.  An envelope that
+         * found nothing would add a row every pass of the accept reads and none emits from;
+         * a rank can receive many times more envelopes than it has candidates for. */
         std::vector<struct gx_candidate_row> rows;
-        try {rows.reserve((size_t)tot_r);} catch(const std::bad_alloc &) {receiver_ok = 0;}
-        if(receiver_ok) {
+        try {
             for(int t = 0; t < NTask; t++) {
                 if(t == ThisTask) continue;
                 for(int r = 0; r < rc[t]; r++) {
                     const long k = (long)rd[t] + r;
                     std::vector<int> &cvk = per_recv_cands[k];
+                    if(cvk.empty()) continue;
                     struct gx_candidate_row row = {&recv[k], t, cvk.data(), (int)cvk.size()};
                     rows.push_back(row);
                 }
             }
+        } catch(const std::bad_alloc &) {receiver_ok = 0;}
+        if(receiver_ok) {
             if(gx_send_set_accept_rows(send_set, rows.data(), (long)rows.size(), search_mode,
                                        spec->radius_policy, spec->j_radius_scale, spec->safety_factor) != 0) {receiver_ok = 0;}
         }

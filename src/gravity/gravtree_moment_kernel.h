@@ -77,6 +77,7 @@
 #endif
 
 #include "../core/timestep_functions.h"   /* kernel_radius_drift_factor, for node_hmax_drift */
+#include "ags_functions.h"                 /* particle_radius_drifts_with_divergence_P, for the sources' radius_drifts */
 
 
 /* ==========================================================================================
@@ -274,6 +275,7 @@ struct moment_particle_src {
     double        max_kernel_radius;
     double        force_softening;   /* gpu_force_softening_kernelradius(pa) */
     double        particle_divvel;
+    int           radius_drifts;     /* particle_radius_drifts_with_divergence_P: its divergence grows the node's radii */
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     double        sink_mass_reservoir;
 #endif
@@ -324,8 +326,8 @@ KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particl
 
     if(p.type == 0) {
         a.hmax    = (AccT) moment_gas_hmax_from_kernelradius(p.kernel_radius, p.max_kernel_radius);
-        a.divVmax = (AccT) p.particle_divvel;
     }
+    if(p.radius_drifts) {a.divVmax = (AccT) p.particle_divvel;}
 
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     if(p.type == 0) { a.gasmass = (AccT) p.mass; }
@@ -836,9 +838,10 @@ KOKKOS_INLINE_FUNCTION static void node_motion_advance(const Node &n, double dt_
  * dilated interval; a dilation factor is at most one, so the undilated interval dt_widen is at least as
  * long as any member's, and the node's own (centre-of-mass) interval would not be.  divVmax is a maximum
  * taken from zero, so the factor is never below one: the scalar hmax and the per-type bands only grow
- * here, and force_update_hmax re-tightens them from the members.  divVmax is gathered from gas members
- * only, so a band holding non-gas radii (adaptive softening) is grown by the gas divergence, not its
- * own members'. */
+ * here (force_update_hmax raises them to the active members'; only a tree build re-seeds them, and can lower
+ * them).  divVmax is gathered from every member
+ * whose radius a drift advances by its own divergence (particle_radius_drifts_with_divergence_P), so it
+ * grows each band at least as fast as any of the band's members. */
 KOKKOS_INLINE_FUNCTION static void node_hmax_drift(struct extNODE &ext, double dt_widen)
 {
     const double growth = kernel_radius_drift_factor((double) ext.divVmax * dt_widen);

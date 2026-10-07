@@ -501,7 +501,7 @@
 #ifndef ADAPTIVE_TREEFORCE_UPDATE
 #define ADAPTIVE_TREEFORCE_UPDATE (0.0625) // optimization
 #endif
-#if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
+#if !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && !defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) && !defined(OUTPUT_ADDITIONAL_RUNINFO) && !defined(IO_SUPPRESS_TIMEBIN_STDOUT)
 #define IO_SUPPRESS_TIMEBIN_STDOUT 16 // only prints outputs to log file if the highest active timebin index is within n of the highest timebin (dt_bin=2^(-N)*dt_bin,max)
 #endif
 #define OUTPUT_SINK_ACCRETION_HIST // save accretion histories

@@ -2591,7 +2591,7 @@ And some additional format options:
 
 **IO\_COMPRESS\_HDF5**: This will attempt to write HDF5 in compressed form (will slow down snapshot I/O and may cause issues on old machines, but reduce snapshot sizes by a factor of about 2). Note due to some inefficiencies in the built-in HDF5 compression algorithm, this can take enormous time on massive-parallel runs, in which case it is far more efficient to compress the snapshots in serial after they are output with a separate script.
 
-**IO\_SUPPRESS\_TIMEBIN\_STDOUT**: Only prints timebin-list to log file if highest active timebin index is within $N$ (value set) of the highest timebin ($dt_{bin}=2^{-N} dt_{bin,max}$).
+**IO\_SUPPRESS\_TIMEBIN\_STDOUT**: Only prints timebin-list to log file if highest active timebin index is within $N$ (value set) of the highest timebin ($dt_{bin}=2^{-N} dt_{bin,max}$). **SINGLE\_STAR\_STARFORGE\_DEFAULTS** sets this to 16, unless you set your own value or enable **OUTPUT\_ADDITIONAL\_RUNINFO** (which asks for the full per-timestep output), **SINGLE\_STAR\_AND\_SSP\_NUCLEAR\_ZOOM**, or **FIRE\_SUPERLAGRANGIAN\_JEANS\_REFINEMENT**.
 
 **IO\_REDUNDANT\_BACKUP\_RESTARTFILE\_FREQUENCY**: Keep an extra set of backup files that are  this number of restarts old (allows for soft restarts from an older position)
 

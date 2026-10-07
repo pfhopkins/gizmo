@@ -244,7 +244,7 @@ extern int Gas_split;           /*!< current number of newly-spawned gas particl
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
 #endif
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
-extern int Grains_promoted;	/*!< current number of grain particles promoted to solid body in gas block */
+extern int Grains_promoted;	/*!< grains promoted to gas, held past the end of the gas block until the next rearrangement folds them in */
 #endif
 
 extern double TimeOfLastTreeConstruction;	/*!< holds what it says */

@@ -753,10 +753,8 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     double t_light_total = cpu_minus_children(timediff(t_light_start, t_light_end), child0_light);
     CPU_Step[CPU_DRIFT] += t_light_total;
     cpu_chain_sync(t_light_end);
-    if(ThisTask == 0) {
-        printf("  domain_light drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f\n",
-               t_light_mergesplit, t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
-    }
+    PRINT_STATUS("  domain_light drift breakdown: mergesplit=%.4f rearrange=%.4f drift_loop=%.4f boxwrap=%.4f barrier=%.4f total=%.4f",
+                 t_light_mergesplit, t_light_rearrange, t_light_drift, t_light_boxwrap, t_light_barrier, t_light_total);
 
     /* The lightweight repartition reuses the extent the last full decomposition measured, and the
        Peano key is only meaningful for a particle inside it: domain_double_to_int() reads the

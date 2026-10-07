@@ -473,21 +473,37 @@ int sidx_describe_member(int j, struct particle_data *P, const struct gas_cell_d
 /* Where an index's members come from: the particles [base, base + count) of P[], read where they live.  A
  * member is named by its ordinal o in that range -- the slot map is indexed by ordinal -- and by its global
  * particle index base + o everywhere else (the pool, the neighbour lists).  Particles below owned_end are the
- * rank's own.  exact: the members are read only at the reference time (the imported particles). */
+ * rank's own.  exact: the members are read only at the reference time (the imported particles).  as_stored:
+ * an array of the caller's own (group finding), searched where its particles stand, as the caller tests them:
+ * no clock, no motion and no cell data are read (cells is then NULL). */
 struct SidxParticleSource {
     struct particle_data *P;
     const struct gas_cell_data *cells;
-    int base, count, owned_end, type_bitmask, exact;
+    int base, count, owned_end, type_bitmask, exact, as_stored;
     KOKKOS_INLINE_FUNCTION int global(int o) const {return base + o;}
     KOKKOS_INLINE_FUNCTION int is_member(int o) const {return sfc_pool_member(&P[base + o], type_bitmask);}
     KOKKOS_INLINE_FUNCTION int is_owned(int o) const {return base + o < owned_end;}
     KOKKOS_INLINE_FUNCTION int position(int o, integertime ti_ref, const struct DriftKickTableView &tables,
                                         double center[3], double *hw, int *current) const
-    {return sidx_member_position(base + o, P, cells, ti_ref, tables, center, hw, current);}
+    {
+        if(!as_stored) {return sidx_member_position(base + o, P, cells, ti_ref, tables, center, hw, current);}
+        for(int k = 0; k < 3; k++) {center[k] = (double)P[base + o].Pos[k];}
+        for(int k = 0; k < 3; k++) {if(!(center[k] - center[k] == 0.0)) {return 1;}}   /* NaN or Inf, fast-math safe */
+        *hw = 0.0; *current = 1;
+        return 0;
+    }
     KOKKOS_INLINE_FUNCTION int describe(int o, mode_b_radius_policy_t policy, integertime ti_ref,
                                         const struct DriftKickTableView &tables, double growth, double kernel_floor,
                                         struct SidxMember &m) const
-    {return sidx_describe_member(base + o, P, cells, policy, ti_ref, tables, growth, kernel_floor, exact, m);}
+    {
+        if(!as_stored) {return sidx_describe_member(base + o, P, cells, policy, ti_ref, tables, growth, kernel_floor, exact, m);}
+        double center[3], hw, r, r_drifted;
+        int current;
+        if(position(o, ti_ref, tables, center, &hw, &current)) {return 1;}
+        sidx_member_reaches(base + o, P, policy, growth, kernel_floor, &r, &r_drifted);
+        sidx_describe_exact_member(center, hw, current, r, r_drifted, (int)P[base + o].Type, m);
+        return 0;
+    }
 };
 
 /* The most tiles num_members members can fill: the members inside the key extent fill tiles from the first,
@@ -525,7 +541,7 @@ struct SidxBuildMemoryPlan {
     /* kept by the segment: what a walk reads, then what keeps a maintained segment's bounds true */
     size_t tiles, bvh, pool, rows, level_nodes, slot_of, shear_folds, level_offsets, looseness;
     /* the build's working space; bvh_shape is on the host on either route (sidx_bvh_shape) */
-    size_t scan, members, keys, leaf_of_tile, bvh_shape;
+    size_t members, keys, leaf_of_tile, bvh_shape;
     /* one record per imported particle: its row, its type, its state */
     size_t record_rows, record_types, record_states;
 };
@@ -554,7 +570,6 @@ static struct SidxBuildMemoryPlan sidx_build_memory_plan(int num_source, int num
         m.level_offsets = (size_t)(m.nlevels + 1) * sizeof(int);
         m.looseness = sizeof(double);
     }
-    m.scan = ((size_t)num_source + 1) * sizeof(int);
     m.members = n_mem * sizeof(int);
     m.keys = presorted ? 0 : n_mem * sizeof(Morton128);
     m.leaf_of_tile = (size_t)m.ntiles * sizeof(int);
@@ -597,9 +612,11 @@ struct SidxRecordSource {
     }
 };
 
-/* The sort's own working space, per member sorted (measured with the OpenMP backend).  An allowance for
- * projecting a build's peak, and the size reported, as an estimate, when the sort is refused its memory. */
-static constexpr size_t SIDX_SORT_BYTES_PER_MEMBER = 20;
+/* The sort's own working space, per member sorted: an allowance for projecting a build's peak, and the size
+ * reported, as an estimate, when the sort is refused its memory.  The sort allocates it internally; it is
+ * measured only on the OpenMP backend (20 bytes), and device backends are allowed 64.  A device sort refused
+ * its memory as an allocation failure is retried on the host; any other failure of the sort stops the run. */
+static constexpr size_t SIDX_SORT_BYTES_PER_MEMBER = 64;
 
 /* What a build reports besides the index itself. */
 struct SidxBuildReport {
@@ -949,6 +966,14 @@ static int sidx_alloc_kept(gpu_index_segment_t *seg, int maintained, const struc
     return 0;
 }
 
+/* At most how many members a build of src has, read without touching a particle (defined with the route
+ * selector, which compares count), and whether that count is close enough to size the build's arrays
+ * without counting the members first: so for the gas index over the rank's own particles, not for a source
+ * whose bound is only how many particles it holds (a sparse mask, imported particles, a caller's array). */
+struct SidxMemberBound {int count, can_size_without_count;};
+static struct SidxMemberBound sidx_member_bound(const struct SidxParticleSource &src);
+static struct SidxMemberBound sidx_member_bound(const struct SidxRecordSource &src) {return {src.count, 0};}
+
 /* Build a segment over the members of src into seg.  kStageOnHost: run on the host with the working
  * space in the memory arena, then copy the segment to the device once; otherwise run on the device and
  * build it in place.  maintained: keep what raises need (the slot map, the level schedule, the shear folds,
@@ -969,15 +994,20 @@ static int sidx_build_segment(const Source &src, mode_b_radius_policy_t policy, 
     report->refused = 0; report->all_current = 1; report->n_outside = 0; report->n_outside_owned = 0;
     SidxScratch<kStageOnHost> scratch;
     try {
-        /* The member count first, so that on the host the index can be staged at its largest possible size
-         * BEFORE the build's transients: the arena is a stack, and the transients (above the stage) are then
-         * released before the index is allocated on the device. */
-        int members_counted = 0;
-        Kokkos::parallel_reduce("sidx_build_count", Kokkos::RangePolicy<Exec>(0, num_source),
-                                KOKKOS_LAMBDA(int o, int &c) {if(src.is_member(o)) {c++;}}, members_counted);
-        /* Sized for the most tiles the members can fill until they are sorted into tiles, exactly after. */
-        const struct SidxBuildMemoryPlan bound = sidx_build_memory_plan(num_source, members_counted,
-                                                                        sidx_tiles_bound(members_counted), maintained, presorted);
+        /* Sized from the most members the source can have, so that on the host the index can be staged at its
+         * largest possible size BEFORE the build's transients: the arena is a stack, and the transients (above
+         * the stage) are then released before the index is allocated on the device.  That bound is read without
+         * touching a particle where it is close (sidx_member_bound), and counted exactly otherwise.  The tiles
+         * are bounded the same way until the members are sorted into them, exact after. */
+        const struct SidxMemberBound source_bound = sidx_member_bound(src);
+        int members_bound = source_bound.count;
+        if(!source_bound.can_size_without_count) {
+            members_bound = 0;
+            Kokkos::parallel_reduce("sidx_build_count", Kokkos::RangePolicy<Exec>(0, num_source),
+                                    KOKKOS_LAMBDA(int o, int &c) {if(src.is_member(o)) {c++;}}, members_bound);
+        }
+        const struct SidxBuildMemoryPlan bound = sidx_build_memory_plan(num_source, members_bound,
+                                                                        sidx_tiles_bound(members_bound), maintained, presorted);
         if(!bound.fits) {throw std::runtime_error("index build: more members than one segment can index");}
         const size_t n_slot_of = bound.slot_of / sizeof(int);
         void *p_tiles = NULL, *p_bvh = NULL, *p_pool = NULL, *p_rows = NULL, *p_slot = NULL, *p_level = NULL, *p_folds = NULL;
@@ -991,25 +1021,22 @@ static int sidx_build_segment(const Source &src, mode_b_radius_policy_t policy, 
             if(bound.shear_folds > 0) {p_folds = scratch.take(bound.shear_folds, "ngl_sidx_stage_shear_folds");}
         }
         const int transients = scratch.mark();
-        /* 1. members, compacted in source order, as ordinals */
-        const size_t n_scan = bound.scan / sizeof(int);
-        Kokkos::View<int*, Mem, UV> first_member((int *)scratch.take(bound.scan, "ngl_sidx_build_scan"), n_scan);
-        Kokkos::parallel_scan("sidx_build_members", Kokkos::RangePolicy<Exec>(0, num_source),
-                              KOKKOS_LAMBDA(int o, int &acc, const bool final) {
-            if(final) {first_member(o) = acc;}
-            if(src.is_member(o)) {acc++;}
-            if(final && o == num_source - 1) {first_member(num_source) = acc;}
-        });
-        int num_members = 0;
-        if(num_source > 0) {Kokkos::deep_copy(num_members, Kokkos::subview(first_member, (size_t)num_source));}
-        if(num_members != members_counted) {throw std::runtime_error("index build: membership changed between its passes");}
+        /* 1. members, compacted in source order, as ordinals: one scan writes each member's ordinal at its place
+         * and returns how many there are */
         const size_t n_mem = bound.members / sizeof(int);
         Kokkos::View<int*, Mem, UV> member((int *)scratch.take(bound.members, "ngl_sidx_build_members"), n_mem);
-        Kokkos::parallel_for("sidx_build_member_list", Kokkos::RangePolicy<Exec>(0, num_source), KOKKOS_LAMBDA(int o) {
-            if(src.is_member(o)) {member(first_member(o)) = o;}
-        });
+        const int member_capacity = (int)n_mem;
+        int num_members = 0;
+        Kokkos::parallel_scan("sidx_build_members", Kokkos::RangePolicy<Exec>(0, num_source),
+                              KOKKOS_LAMBDA(int o, int &acc, const bool final) {
+            if(src.is_member(o)) {
+                if(final && acc < member_capacity) {member(acc) = o;}
+                acc++;
+            }
+        }, num_members);
         Exec().fence();
-        gizmo_gpu_check_last_error("sidx_build_member_list", num_source);
+        gizmo_gpu_check_last_error("sidx_build_members", num_source);
+        if(num_members > members_bound) {throw std::runtime_error("index build: more members than it was sized for (the source's bound, or its count before the scan)");}
         if(!presorted) {
             Kokkos::View<Morton128*, Mem, UV> key((Morton128 *)scratch.take(bound.keys, "ngl_sidx_build_keys"), n_mem);
             /* 2. keys: only the position is needed here */
@@ -1203,9 +1230,15 @@ enum SidxBuildRoute {SIDX_ROUTE_HOST = 0, SIDX_ROUTE_DEVICE = 1};
  * the rank's own members sorted, and the imported members, sorted, from their compact records. */
 enum SidxBuildShape {SIDX_SHAPE_OWNED_PRESORTED = 0, SIDX_SHAPE_OWNED_SORTED = 1, SIDX_SHAPE_IMPORTED = 2, SIDX_NUM_SHAPES = 3};
 
-/* The fewest members for which a build of each shape takes the device route.  No build takes it until its
- * builder has been checked on a device; these are then set from the measured crossover of the two routes. */
-static constexpr int SIDX_DEVICE_ROUTE_MIN_MEMBERS[SIDX_NUM_SHAPES] = {INT_MAX, INT_MAX, INT_MAX};
+/* The size from which a build of each shape takes the device route, in the units sidx_member_bound gives:
+ * gas cells for the gas index over the rank's own particles, else the particles in the source (for an
+ * imported segment, every particle in the ghost range).  A device build pays a fixed
+ * cost of about a millisecond (launches, staging, allocation) and then runs several times faster per member.
+ * Measured on MI250X against 7 host threads: imported builds cross over between 4096 and 8192 particles;
+ * full-rank owned builds of 0.5-1.1M members run 4.5x (sorted) and 2.2x (presorted) faster on the device,
+ * while ~30k-member owned builds are still slower there, so the owned thresholds sit well clear of that.
+ * Presorted builds skip the passes the device speeds up most, so their crossover lies higher. */
+static constexpr int SIDX_DEVICE_ROUTE_MIN_MEMBERS[SIDX_NUM_SHAPES] = {262144, 131072, 8192};
 
 /* The share of the device's free memory a build may plan on: ranks sharing a device allocate between the query
  * and the build.  The projection does not count the particle storage, which the device route reads where it lives
@@ -1214,17 +1247,19 @@ static constexpr double SIDX_DEVICE_FREE_FRACTION = 0.8;
 
 /* At most how many members a build of src has, without reading a particle: for the gas index over all of the
  * rank's own particles, its gas cells -- the gas block, and any grains promoted to gas since it was last
- * rearranged (an import never changes N_gas) -- else the particles in the source. */
-static int sidx_member_bound(const struct SidxParticleSource &src)
+ * rearranged (an import never changes N_gas; split and spawned gas cells are folded in by the rearrangement
+ * that follows them, before any build) -- which is close enough to size a build by; else the particles in the
+ * source, which is not. */
+static struct SidxMemberBound sidx_member_bound(const struct SidxParticleSource &src)
 {
     if(src.P == P && src.type_bitmask == 1 && src.base == 0 && src.count == src.owned_end) {
         long long gas = N_gas;
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
         gas += Grains_promoted;
 #endif
-        return (gas < src.count) ? (int)gas : src.count;
+        return {(gas < src.count) ? (int)gas : src.count, 1};
     }
-    return src.count;
+    return {src.count, 0};
 }
 
 /* The device route's peak in device memory: while sorting, the working space, the sort's own and the records;
@@ -1233,7 +1268,7 @@ static size_t sidx_device_route_peak(const struct SidxBuildMemoryPlan &m, int nu
                                      int imported)
 {
     const size_t records = imported ? m.record_rows + m.record_types + m.record_states : 0;
-    const size_t working = m.scan + m.members + m.keys + records;
+    const size_t working = m.members + m.keys + records;
     const size_t sorting = working + (presorted ? 0 : (size_t)num_members * SIDX_SORT_BYTES_PER_MEMBER);
     const size_t building = working + m.leaf_of_tile + (maintained ? 0 : m.level_nodes) + sidx_kept_device_bytes(m, maintained);
     return (sorting > building) ? sorting : building;
@@ -1259,7 +1294,7 @@ static int sidx_build_route(const struct SidxParticleSource &src, int maintained
     if(std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value) {return SIDX_ROUTE_HOST;}
     if(src.P != P) {return SIDX_ROUTE_HOST;}
     const int shape = src.exact ? SIDX_SHAPE_IMPORTED : (presorted ? SIDX_SHAPE_OWNED_PRESORTED : SIDX_SHAPE_OWNED_SORTED);
-    const int members = sidx_member_bound(src);
+    const int members = sidx_member_bound(src).count;
     if(members < SIDX_DEVICE_ROUTE_MIN_MEMBERS[shape]) {return SIDX_ROUTE_HOST;}
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return SIDX_ROUTE_HOST;}
@@ -1276,12 +1311,12 @@ static int sidx_build_route(const struct SidxParticleSource &src, int maintained
  * since a no is final).  A projection only; every request the build makes is checked again when it is made. */
 static int sidx_host_route_fits(const struct SidxParticleSource &src, int maintained, int presorted)
 {
-    const int members = sidx_member_bound(src);
+    const int members = sidx_member_bound(src).count;
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return 0;}
     if(!std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value &&
        !sidx_device_has_room(sidx_kept_device_bytes(m, maintained), 1.0)) {return 0;}
-    const size_t always[] = {m.tiles, m.bvh, m.pool, m.rows, m.level_nodes, m.scan, m.members, m.leaf_of_tile, m.bvh_shape};
+    const size_t always[] = {m.tiles, m.bvh, m.pool, m.rows, m.level_nodes, m.members, m.leaf_of_tile, m.bvh_shape};
     const size_t when_sized[] = {m.slot_of, m.shear_folds, m.keys};
     size_t bytes = 0; int blocks = 0;
     for(size_t b : always) {bytes += gizmo_mymalloc_rounded_size(b); blocks++;}
@@ -1849,8 +1884,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * count, or leaves them out by passing the count of its own (hii_fb searches only the rank's own gas,
      * and the imported segment it leaves out stays as it is for the next caller).  ghost_base cannot move
      * during this call: every layout change refuses a live import.  Only the particle storage holds
-     * imported particles: a caller searching an array of its own (group finding) has none. */
-    const int pool_live = ghost_pool_is_live() && (P_shared == P);
+     * imported particles: a caller searching an array of its own (group finding) has none, and is searched where
+     * its particles stand, as it tests them: nothing global -- clock, certificate, cell data, drift -- describes it. */
+    const int callers_array = (P_shared != P);
+    const int pool_live = ghost_pool_is_live() && !callers_array;
     const int ghost_base = pool_live ? ghost_get_num_local() : num_total;
     const int ghost_end = pool_live ? ghost_base + ghost_get_num_ghosts() : num_total;
     const int owned_end = (num_total < ghost_base) ? num_total : ghost_base;
@@ -1866,8 +1903,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * set, so it does not advance it, which is what makes it a proof rather than a
      * convention); the imported ones by their owners having advanced them before
      * packing.  A new timestep advances All.Ti_Current, so a certificate from an
-     * earlier time simply stops matching. */
-    const int owned_current = (gizmo_full_drift_ti() == t_now);
+     * earlier time simply stops matching.  A caller's own array is read as it stands, so it is current by definition. */
+    const int owned_current = callers_array || (gizmo_full_drift_ti() == t_now);
     const int ghosts_current = (ghost_pool_current_ti() == t_now);
     const int pool_current = owned_current && (!walk_ghosts || ghosts_current);
     struct SidxBuildReport report;
@@ -1937,7 +1974,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
          * the segment invalid and has already asked for the stop, naming the cause.
          * There is nothing to walk, so hand back the same empty list any other
          * exhausted allocation here produces. */
-        const struct SidxParticleSource src = {P_shared, CellP, 0, owned_end, owned_end, type_bitmask, 0};
+        /* none of a caller's own array is the rank's own particles, so none can outgrow the domain's extent */
+        const struct SidxParticleSource src = {P_shared, callers_array ? NULL : CellP, 0, owned_end, callers_array ? 0 : owned_end,
+                                               type_bitmask, 0, callers_array};
         /* Only the gas index takes the order as it stands: every in-place write of a gas particle's
          * position, and every particle that becomes gas, advances the owned epoch, which is not so for the
          * other types.  (A particle that stops being gas leaves its slot to be retired, not the order.) */
@@ -1977,7 +2016,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         /* Built aside and published only whole: a build that fails leaves no part of a
          * segment visible, and the owned segment untouched. */
         gpu_index_segment_t fresh;
-        const struct SidxParticleSource src = {P_shared, CellP, ghost_base, ghost_end - ghost_base, ghost_base, type_bitmask, 1};
+        const struct SidxParticleSource src = {P_shared, CellP, ghost_base, ghost_end - ghost_base, ghost_base, type_bitmask, 1, 0};
         if(sidx_build_segment_now(src, 0, 0, radius_policy, caller_label, &fresh, &report)) {
             ngl_leave_csr_empty(gnl, num_active);
             return;
@@ -2050,7 +2089,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         if(source_positions_host) {
             for(int k = 0; k < 3; k++) {d_source_pos[aa*3 + k] = source_positions_host[aa*3 + k];}
         } else {
-            if(P_shared[i].Ti_current != t_now) {queries_not_current++;}
+            if(!callers_array && P_shared[i].Ti_current != t_now) {queries_not_current++;}
             for(int k = 0; k < 3; k++) {d_source_pos[aa*3 + k] = (double)P_shared[i].Pos[k];}
         }
     }
@@ -2382,15 +2421,10 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
                                         int j_type_bitmask, int search_mode,
                                         neighbor_list_t *out)
 {
-    /* Use the per-step particle arena to avoid a redundant full-NumPart memcpy
-     * (see gpu_build_symmetric_neighbor_list for rationale). */
-    gpu_particles_arena_set_site("gpu_build_cross_type_neighbor_list");
-    gpu_particles_arena_acquire(num_total, P_host, CellP);
-    struct particle_data *P_shared = gpu_particles_arena_P();
-
-    /* Build GPU CSR with explicit per-i radii and j-side type filter */
+    /* The caller's own array (group finding), searched where its particles stand; the particle arena describes
+     * the particle storage and is left pointing there. */
     gpu_neighbor_list_t gpu_nl;
-    gpu_ngb_list_build(P_shared, num_total, i_active_indices, num_active,
+    gpu_ngb_list_build(P_host, num_total, i_active_indices, num_active,
                        search_mode, j_type_bitmask, &gpu_nl, NULL,
                        1.0 /* search_radius_factor */, i_search_radii_host, NULL, "xtype");
 
@@ -2409,7 +2443,7 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
         Kokkos::deep_copy(h_neighbors, d_neighbors);
     }
 
-    /* Free GPU temporaries.  Arena is intentionally retained for subsequent callers. */
+    /* Free GPU temporaries. */
     gpu_ngb_list_free(&gpu_nl);
 }
 
@@ -3518,7 +3552,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                     status = GX_RECEIVER_FAILED;
                     break;
                 }
-                if(t == ThisTask) {continue;}
+                if(t == ThisTask || counts_h[(size_t)b] == 0) {continue;}   /* an envelope that found nothing has no row */
                 const int64_t off = offsets_h[(size_t)b] - sub_base;
                 struct gx_candidate_row row = {&env_h[(size_t)b], t, &pairs_h[(size_t)off], counts_h[(size_t)b]};
                 rows_h[(size_t)n_rows++] = row;

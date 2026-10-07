@@ -257,10 +257,11 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
 #define PRINT_WARNING(...) {char termbuf1[MAX_PATH_BUFFERSIZE_TOUSE], termbuf2[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(termbuf1, MAX_PATH_BUFFERSIZE_TOUSE, "WARNING issued on task=%d, function %s(), file %s, line %d", ThisTask, __FUNCTION__, __FILE__, __LINE__); snprintf(termbuf2, MAX_PATH_BUFFERSIZE_TOUSE, __VA_ARGS__); fflush(stdout); printf("%s: %s\n", termbuf1, termbuf2); fflush(stdout);}
 #endif
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
-#define PRINT_STATUS(...) {if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {if(ThisTask==0) {fflush(stdout); printf( __VA_ARGS__ ); printf("\n"); fflush(stdout);}}}
+#define PRINT_STATUS_THIS_STEP (All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) /* same on every task, so it may also gate a collective that only feeds a status print */
 #else
-#define PRINT_STATUS(...) {if(ThisTask==0) {fflush(stdout); printf( __VA_ARGS__ ); printf("\n"); fflush(stdout);}}
+#define PRINT_STATUS_THIS_STEP (1)
 #endif
+#define PRINT_STATUS(...) {if(PRINT_STATUS_THIS_STEP) {if(ThisTask==0) {fflush(stdout); printf( __VA_ARGS__ ); printf("\n"); fflush(stdout);}}}
 
 
 /* A drifted tree node's size grows to bound the particles it may now contain: the node is widened

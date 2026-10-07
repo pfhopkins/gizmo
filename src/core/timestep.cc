@@ -432,9 +432,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(CBE_INTEGRATOR)
     if(CBE_INTEGRATOR_DOES_TYPE(P[p].Type)) {h_for_accel_dt = KERNEL_CORE_SIZE * Get_Particle_Size_AGS(p);} /* AGS particle size, not force-softening, like gas */
 #endif
-#ifdef GRAIN_FLUID
-    if(((1 << P[p].Type) & (GRAIN_PTYPES)) && (h_for_accel_dt <= 0)) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* for grain particles without gravity, use the inter-particle spacing as the characteristic length scale */
-#endif
+    if(h_for_accel_dt <= 0) {h_for_accel_dt = P[p].Get_Particle_Size() * All.cf_atime;} /* a particle without a force softening (e.g. grains without gravity, or an element whose type changed this step before its softening was refreshed) uses the inter-particle spacing as the characteristic length scale */
     dt = sqrt(2 * All.ErrTolIntAccuracy * All.cf_atime * h_for_accel_dt / ac);}
 
 #if (defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)) && defined(GALSF) && defined(GALSF_FB_MECHANICAL)
