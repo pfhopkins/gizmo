@@ -2288,12 +2288,15 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
     }
 
   /* Iterative refinement (Gadget-4 approach): try random swaps of two segments between tasks, and keep a swap when it
-     lowers the objective, the largest normalized share any task holds of any balanced metric.  A swap changes only its
-     two tasks, so it is scored from those two plus the largest share held by a task outside the pair: each task's own
-     largest share is cached, with the three tasks holding the largest of them.  A swap that leaves the task holding the
-     objective untouched cannot lower it, so it is rejected without being scored.  A swap may not take a task over its
-     memory cap, nor further over it.  The search stops once the objective reaches the share of the largest single
-     segment on any metric, below which no assignment can go. */
+     lowers the objective.  Every balanced quantity has a floor no assignment can go below, an even split or the share of
+     its largest single segment, and a task's score on it is the fraction of the avoidable imbalance it still carries,
+     (share - floor) / (1 - floor), zero at or below the floor and zero when one segment holds all of it.  The objective is
+     the largest score of any task on any quantity: a quantity that cannot be divided does not pin it, and while every
+     floor is the even split it ranks assignments exactly as the largest share does.  A swap changes only its two tasks,
+     so it is scored from those two plus the largest score held by a task outside the pair: each task's own largest score
+     is cached, with the three tasks holding the largest of them.  A swap that leaves the task holding the objective
+     untouched cannot lower it, so it is rejected without being scored.  A swap may not take a task over its memory cap,
+     nor further over it.  The search stops once no task carries any avoidable imbalance. */
   if(mode == 1 && multipledomains * NTask > 1)
   {
       int nswaps_accepted = 0;
@@ -2304,25 +2307,51 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       unsigned long long seed = 42ULL + (unsigned long long) NTask;
       auto random_segment = [&]() -> int {seed = seed * 6364136223846793005ULL + 1442695040888963407ULL; return (int) ((seed >> 33) % (unsigned long long) n_segments);};
 
-      /* largest share task t would hold if segment s_out were replaced by segment s_in (s_in < 0: as it stands) */
-      auto share_after = [&](int t, int s_out, int s_in) -> double {
-#define DOMAIN_SWAP_VALUE(field) ((s_in >= 0) ? tasklist[t].field + (domainAssign[s_in].field - domainAssign[s_out].field) : tasklist[t].field)
-          double result = DOMAIN_SWAP_VALUE(work) / (tot_work + 1.0e-30), f;
-          f = DOMAIN_SWAP_VALUE(load) / (tot_load + 1.0e-30); if(f > result) {result = f;}
-          f = DOMAIN_SWAP_VALUE(load_activegas) / (tot_loadactivegas + 1.0e-30); if(f > result) {result = f;}
-          f = DOMAIN_SWAP_VALUE(load_gas) / (tot_loadgas + 1.0e-30); if(f > result) {result = f;}
+      /* the balanced quantities: work, particles, active-gas work, gas cells, and per balanced timebin gravity and hydro */
 #if (DOMAIN_TIMEBINS == 1)
-          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-              f = DOMAIN_SWAP_VALUE(bin_GravCost[k]) / (tot_binGravCost[k] + 1.0e-30); if(f > result) {result = f;}
-              f = DOMAIN_SWAP_VALUE(bin_HydroCost[k]) / (tot_binHydroCost[k] + 1.0e-30); if(f > result) {result = f;}
-          }
+      const int n_quantities = 4 + 2 * NumTimeBinsToBeBalanced;
+#else
+      const int n_quantities = 4;
 #endif
-#undef DOMAIN_SWAP_VALUE
+      auto segment_value = [&](int s, int q) -> double {
+          switch(q) {case 0: return domainAssign[s].work; case 1: return domainAssign[s].load; case 2: return domainAssign[s].load_activegas; case 3: return domainAssign[s].load_gas;}
+#if (DOMAIN_TIMEBINS == 1)
+          return ((q - 4) % 2 == 0) ? domainAssign[s].bin_GravCost[(q - 4) / 2] : domainAssign[s].bin_HydroCost[(q - 4) / 2];
+#else
+          return 0;
+#endif
+      };
+      auto task_value = [&](int t, int q) -> double {
+          switch(q) {case 0: return tasklist[t].work; case 1: return tasklist[t].load; case 2: return tasklist[t].load_activegas; case 3: return tasklist[t].load_gas;}
+#if (DOMAIN_TIMEBINS == 1)
+          return ((q - 4) % 2 == 0) ? tasklist[t].bin_GravCost[(q - 4) / 2] : tasklist[t].bin_HydroCost[(q - 4) / 2];
+#else
+          return 0;
+#endif
+      };
+      std::vector<double> quantity_total(n_quantities), quantity_floor(n_quantities, 1.0 / NTask);
+      quantity_total[0] = tot_work; quantity_total[1] = tot_load; quantity_total[2] = tot_loadactivegas; quantity_total[3] = tot_loadgas;
+#if (DOMAIN_TIMEBINS == 1)
+      for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {quantity_total[4 + 2 * k] = tot_binGravCost[k]; quantity_total[5 + 2 * k] = tot_binHydroCost[k];}
+#endif
+      for(int s = 0; s < n_segments; s++)
+          for(int q = 0; q < n_quantities; q++) {double f = segment_value(s, q) / (quantity_total[q] + 1.0e-30); if(f > quantity_floor[q]) {quantity_floor[q] = f;}}
+
+      /* largest score task t would carry if segment s_out were replaced by segment s_in (s_in < 0: as it stands) */
+      auto share_after = [&](int t, int s_out, int s_in) -> double {
+          double result = 0;
+          for(int q = 0; q < n_quantities; q++)
+          {
+              if(quantity_floor[q] >= 1) {continue;}
+              double v = (s_in >= 0) ? task_value(t, q) + (segment_value(s_in, q) - segment_value(s_out, q)) : task_value(t, q);
+              double score = (v / (quantity_total[q] + 1.0e-30) - quantity_floor[q]) / (1 - quantity_floor[q]);
+              if(score > result) {result = score;}
+          }
           return result;
       };
       std::vector<double> task_share(NTask);
       for(int t = 0; t < NTask; t++) {task_share[t] = share_after(t, -1, -1);}
-      int top[3] = {-1, -1, -1};   /* the three tasks holding the largest shares, largest first */
+      int top[3] = {-1, -1, -1};   /* the three tasks holding the largest scores, largest first */
       auto rank_top = [&]() {
           top[0] = top[1] = top[2] = -1;
           for(int t = 0; t < NTask; t++)
@@ -2334,23 +2363,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       };
       rank_top();
       double current_imbalance = task_share[top[0]];
-
-      /* the objective can go no lower than the largest share of a single segment on any metric, nor than an even split */
-      double segment_bound = 1.0 / NTask;
-      for(int s = 0; s < n_segments; s++)
-      {
-          double f = domainAssign[s].work / (tot_work + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          f = domainAssign[s].load / (tot_load + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          f = domainAssign[s].load_activegas / (tot_loadactivegas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          f = domainAssign[s].load_gas / (tot_loadgas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-#if (DOMAIN_TIMEBINS == 1)
-          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-              f = domainAssign[s].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-              f = domainAssign[s].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
-          }
-#endif
-      }
-      const double stop_at = segment_bound * (1.0 + 1.0e-12);
+      const double stop_at = 1.0e-12;   /* no avoidable imbalance left, to round-off */
 
       for(long long iter = 0; iter < max_iterations && current_imbalance > stop_at; iter++)
       {
@@ -2399,9 +2412,12 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
               nswaps_accepted++;
           }
       }
-      if(ThisTask == 0 && nswaps_accepted > 0) {
-          PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts", nswaps_accepted, iterations_done);
-      }
+      /* the objective is a transformed quantity, so report the largest raw share beside it, with that quantity's floor */
+      double largest_share = 0, its_floor = 0;
+      for(int tt = 0; tt < NTask; tt++)
+          for(int q = 0; q < n_quantities; q++) {double f = task_value(tt, q) / (quantity_total[q] + 1.0e-30); if(f > largest_share) {largest_share = f; its_floor = quantity_floor[q];}}
+      PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts; largest avoidable imbalance left %g; largest share of a balanced quantity %g (its floor %g, even split %g)",
+                   nswaps_accepted, iterations_done, current_imbalance, largest_share, its_floor, 1.0 / NTask);
   }
 
   qsort(domainAssign, multipledomains * NTask, sizeof(struct domain_segments_data), domain_sort_task);
