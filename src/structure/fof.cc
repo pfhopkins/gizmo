@@ -1503,7 +1503,8 @@ void fof_make_sink_particles(void)
 #endif
                 { endrun(7772); continue; }	/* imported particle has wrong Type for a FOF sink: soft bad-stop, skip converting it (avoids bad P[] mutation); drains at caller phase poll */
         
-        P[import_indices[n]].Mass = CellP[import_indices[n]].Mass; /* sync mass before type conversion */
+        int seed_was_gas = (P[import_indices[n]].Type == 0); /* gas seeds carry cell data; star seeds have no CellP entry */
+        if(seed_was_gas) {P[import_indices[n]].Mass = CellP[import_indices[n]].Mass;} /* sync mass before type conversion */
         P[import_indices[n]].Type = 5;    /* make it a sink particle particle */
         force_tree_note_type_presence(import_indices[n]);  /* the element's type is final here, so tell the standing tree before anything walks it looking for that type */
 #ifdef GALSF
@@ -1522,7 +1523,7 @@ void fof_make_sink_particles(void)
         }
         P[import_indices[n]].Sink_Mdot = 0;
         /* set hydro-ish variables */
-        if(P[import_indices[n]].Type == 0){
+        if(seed_was_gas) {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             P[import_indices[n]].Mass = CellP[import_indices[n]].MassTrue + CellP[import_indices[n]].dMass;
 #endif
@@ -1555,7 +1556,9 @@ void fof_make_sink_particles(void)
 
     }
 
-  All.TotN_gas -= ntot;
+#if (SINK_SEED_FROM_FOF != 1)
+  All.TotN_gas -= ntot; /* only gas seeds leave the gas count */
+#endif
 
   myfree(export_indices);
   myfree(import_indices);
