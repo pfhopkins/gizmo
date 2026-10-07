@@ -10,6 +10,8 @@ import socket
 # stall into the URLError the mirror-fallback path already handles.
 socket.setdefaulttimeout(300)
 import fcntl
+import re
+import warnings
 from shutil import move, rmtree, copyfile
 from glob import glob
 import numpy as np
@@ -303,6 +305,30 @@ def _log_reached_timemax(logfile: str, nbytes: int = 262144) -> bool:
     return _GIZMO_FINISHED in _log_tail(logfile, nbytes)
 
 
+def _final_snapshot_reached_timemax(paramsfile: str, rtol: float = 1e-6) -> bool:
+    """Whether the run's last snapshot is at TimeMax: evidence of completion that does not depend on
+    stdout, whose tail srun can drop from very large logs."""
+    try:
+        params = parse_params(paramsfile)
+        time_max = float(params["TimeMax"])
+    except (OSError, KeyError, ValueError):
+        return False
+    outdir, base = params.get("OutputDir", "output"), params.get("SnapshotFileBase", "snapshot")
+    numbered = []
+    for s in glob(path.join(outdir, f"{base}_*.hdf5")) + glob(path.join(outdir, "snapdir_*", f"{base}_*.0.hdf5")):
+        m = re.search(r"_(\d+)(?:\.\d+)?\.hdf5$", s)
+        if m:
+            numbered.append((int(m.group(1)), s))
+    if not numbered:
+        return False
+    try:
+        with h5py.File(max(numbered)[1], "r") as F:
+            time = float(F["Header"].attrs["Time"])
+    except (OSError, KeyError):
+        return False
+    return abs(time - time_max) <= rtol * abs(time_max)
+
+
 def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: str, paramsfile: str):
     """Fail loudly if GIZMO did not run to completion.
 
@@ -318,6 +344,10 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
             f"--- tail of {outfile} ---\n{_log_tail(outfile)}"
         )
     if not _log_reached_timemax(outfile):
+        if _final_snapshot_reached_timemax(paramsfile):
+            warnings.warn(f"{test_name}: {outfile} lacks GIZMO's final-time line (truncated stdout?), "
+                          "but the last snapshot is at TimeMax; treating the run as complete")
+            return
         mark_run_truncated(test_name, "GIZMO exited 0 without reaching TimeMax", paramsfile)
         raise RuntimeError(
             f"GIZMO exited 0 for test '{test_name}' but never reported reaching TimeMax, so it "
