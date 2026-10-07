@@ -194,6 +194,23 @@ void do_dm_fuzzy_drift_kick_P(int i, double dt, int mode, struct particle_data *
 
 #endif /* AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE */
 
+/* Whether a drift advances this particle's search length by its own Particle_DivVel (drift_particle_impl): a gas
+ * cell's KernelRadius, a grain's, and the AGS_KernelRadius of a particle ags_density solves for.  A tree node's
+ * divVmax, which grows every radius band the node holds, is the largest such divergence among its members, so it
+ * must come from exactly these.  Reads only. */
+KOKKOS_INLINE_FUNCTION
+int particle_radius_drifts_with_divergence_P(int i, const struct particle_data *P_arr)
+{
+    if(P_arr[i].Type == 0) {return 1;}
+#ifdef GRAIN_FLUID
+    if((1 << P_arr[i].Type) & (GRAIN_PTYPES)) {return 1;}
+#endif
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+    if(ags_density_solves_for_P(i, P_arr)) {return 1;}
+#endif
+    return 0;
+}
+
 
 /* Kokkos atomics inside a device lambda. */
 #define AGS_ATOMIC_ADD(ptr, val)   Kokkos::atomic_add((ptr), (val))

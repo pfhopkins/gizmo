@@ -694,16 +694,18 @@ void force_update_hmax(void)
         int per_type_band = (int)P[i].Type;
         double per_type_htmp = force_hmax_per_type_particle_radius(i);
 
-        /* Scalar `hmax`/`divVmax` eligibility (legacy semantics):
-         * non-AGS-FORALL builds → gas only; AGS-FORALL builds → any Mass>0 type.
-         * Non-eligible particles still update per-type bands above, but MUST NOT
-         * leak their divVel / KernelRadius into the scalar band (which feeds
-         * downstream cross-rank exchange and legacy walkers). */
+        /* Scalar `hmax` eligibility (legacy semantics): non-AGS-FORALL builds → gas only;
+         * AGS-FORALL builds → any Mass>0 type.  Non-eligible particles still update
+         * per-type bands above, but MUST NOT leak their KernelRadius into the scalar
+         * band (which feeds downstream cross-rank exchange and legacy walkers).
+         * `divVmax` grows every band the node holds, so it takes the divergence of
+         * every member whose radius a drift advances by it, whatever the band. */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
         const int scalar_eligible = 1;
 #else
         const int scalar_eligible = (P[i].Type == 0);
 #endif
+        const int divv_eligible = particle_radius_drifts_with_divergence_P(i, P);
 
         while(no >= 0)
         {
@@ -721,11 +723,15 @@ void force_update_hmax(void)
                 per_type_grew = 1;
             }
             int scalar_grew = 0;
-            if(scalar_eligible && (htmp > Extnodes[no].hmax || divVel > Extnodes[no].divVmax))
+            if(scalar_eligible && htmp > Extnodes[no].hmax)
             {
                 atomic_max_double(&Extnodes[no].hmax, htmp);
-                atomic_max_double(&Extnodes[no].divVmax, divVel);
                 scalar_grew = 1;
+            }
+            if(divv_eligible && divVel > Extnodes[no].divVmax)
+            {
+                atomic_max_double(&Extnodes[no].divVmax, divVel);
+                scalar_grew = 1;   /* a divVmax rise alone joins the cross-rank exchange like any other */
             }
             if(scalar_grew || per_type_grew)
             {

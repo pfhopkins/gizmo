@@ -161,10 +161,9 @@ static inline int sphere_aabb_overlap(const double pos[3],
  *
  * Node-open slack: none is carried. A drift grows a particle's radius by at
  * most exp(KERNEL_RADIUS_DRIFT_MAX_LOG_CHANGE/NUMDIMS), and force_drift_node
- * grows the node's hmax and bands by the same capped rule applied to divVmax.
- * divVmax is gathered from gas members only, so a band holding adaptive-
- * softening radii of non-gas members is not grown by its own members'
- * divergence between force_update_hmax refreshes. Over-search is safe (extra
+ * grows the node's hmax and bands by the same capped rule applied to divVmax,
+ * the largest divergence of any member whose radius a drift advances by it
+ * (particle_radius_drifts_with_divergence_P). Over-search is safe (extra
  * candidates filter at the leaf); under-search is a correctness bug. */
 static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack; legacy has none (relies on force_update_hmax cadence + 0.866*len node term) */
 

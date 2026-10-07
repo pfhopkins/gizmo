@@ -881,6 +881,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
         ps.max_kernel_radius = maxKR;
         ps.force_softening   = gpu_force_softening_kernelradius(P_dev, i);
         ps.particle_divvel   = pa->Particle_DivVel;
+        ps.radius_drifts     = particle_radius_drifts_with_divergence_P(i, P_dev);
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
         ps.sink_mass_reservoir = pa->Sink_Mass_Reservoir;
 #endif
