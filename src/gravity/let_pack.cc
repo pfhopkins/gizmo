@@ -1030,7 +1030,6 @@ static void let_emit_particle_leaf_from_src(int p_idx, const moment_particle_src
     w->node.u.d.sibling  = sib_terminator_sentinel;
     w->node.u.d.nextnode = sib_terminator_sentinel;
     w->node.u.d.father   = -1;  /* foreign nodes have no father in OUR tree */
-    w->node.GravCost     = 0;
     w->node.Ti_current   = All.Ti_Current;
     w->node.N_part       = 1;
     w->extnode.Ti_lastkicked = All.Ti_Current;
@@ -1205,7 +1204,6 @@ static void let_build_bucket_aggregate(struct LETPackContext *pk, int n, int hea
     w->node.u.d.sibling  = LET_WIRE_EXIT;
     w->node.u.d.nextnode = LET_WIRE_EXIT;
     w->node.u.d.father   = -1;
-    w->node.GravCost     = 0;
     w->node.Ti_current   = All.Ti_Current;
     w->extnode.Ti_lastkicked = All.Ti_Current;
     w->extnode.Flag      = 0;

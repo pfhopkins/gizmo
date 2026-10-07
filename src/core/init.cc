@@ -170,9 +170,7 @@ void init(void)
     All.TimeNextOnTheFlyFoF = All.TimeBegin;
 #endif
 
-    for(i = 0; i < GRAVCOSTLEVELS; i++) {All.LevelToTimeBin[i] = 0;}
-
-    for(i = 0; i < NumPart; i++) {for(j = 0; j < GRAVCOSTLEVELS; j++) {P[i].GravCost[j] = 0;}}
+    domain_reset_work_history();
 
     if(All.ComovingIntegrationOn)	/*  change to new velocity variable */
         {for(i=0;i<NumPart;i++) {P[i].Vel *= sqrt(All.Time)*All.Time;}}

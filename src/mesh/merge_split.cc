@@ -975,6 +975,7 @@ int merge_particles_ij(int i, int j)
     if(P[j].ID == All.SpawnedWindCellID) {P[j].ID = All.SpawnedWindCellID + 1;} /* offset this to avoid checks through code */
 #endif
     if(swap_ids) {P[j].ID=P[i].ID; P[j].ID_child_number=P[i].ID_child_number; P[j].ID_generation=P[i].ID_generation;} /* swap the ids so save the desired set */
+    domain_merge_work_history(i, j);
     
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4 && P[j].Type==P[i].Type) /* identify a star-star merger, need to update the effective size -before- updating anything else */

@@ -3184,7 +3184,7 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
 
             ProcessedFlag[i] = 1;
             costtotal_added += d_ninter[a];
-            if(TakeLevel >= 0) {P[i].GravCost[TakeLevel] = d_ninter[a];}
+            gravity_record_walk_work(i, d_ninter[a]);
 
             /* No arena mirror-update here: under UVM-canonical
              * P_dev = arena_P aliases host P[], so the

@@ -338,7 +338,15 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
     
-    float GravCost[GRAVCOSTLEVELS];   /*!< weight factor used for balancing the work-load */
+    /* Work since the last domain decomposition, which the next one balances on. These predict the next
+     * interval's work rather than conserve anything: a split copies them to every child (each child walks
+     * as a full target), a merge keeps the larger. Reset after each production decomposition. */
+    float GravWork;                   /*!< gravity interactions evaluated for this particle as a walk target */
+    signed char MinGravWorkBin;       /*!< smallest timebin it walked on, -1 if it has not walked */
+#if defined(GALSF) && !defined(CHIMES)
+    signed char MinExtraWorkBin;      /*!< smallest timebin its stellar prior was recorded on, -1 if none */
+    float ExtraWorkEstimate;          /*!< provisional prior for stellar feedback work: the star-age weight summed over active steps */
+#endif
     
     integertime dt_step;
     

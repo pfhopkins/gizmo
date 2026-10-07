@@ -222,7 +222,6 @@ struct global_data_all_processes
 
   int    CPU_TimeBinCountMeasurements[TIMEBINS];
   double CPU_TimeBinMeasurements[TIMEBINS][NUMBER_OF_MEASUREMENTS_TO_RECORD];
-  int LevelToTimeBin[GRAVCOSTLEVELS];
 
   /* variables that keep track of cumulative CPU consumption */
   double TimeLimitCPU;

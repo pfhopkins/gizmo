@@ -44,6 +44,7 @@ void grain_promotion_parent_routine(void)
         grain_promotion_init_cellp(i);
 
         P[i].Type = 0;
+        CellP[i].HydroWorkEstimate = 0; CellP[i].MinHydroWorkBin = -1;   /* a new cell; its gravity work history is kept */
         force_tree_note_type_presence(i);  /* the element's type is final here, so tell the standing
                                             * tree before anything walks it looking for that type */
         TimeBinCountGas[P[i].TimeBin]++;
