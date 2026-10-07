@@ -260,6 +260,11 @@ void init(void)
 #endif
             {P[i].StellarAge = 0;}
         }
+#ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
+        /* a star's softening is its effective size (compute_force_softening_kernel_radius): one that brings none from the
+           initial conditions, or from a snapshot that does not carry it, starts at the star softening */
+        if(P[i].Type == 4 && (RestartFlag == 0 || !(P[i].StarParticleEffectiveSize > 0))) {P[i].StarParticleEffectiveSize = All.ForceSoftening[4];}
+#endif
 #ifdef GALSF_SFR_IMF_VARIATION
         if(RestartFlag == 0) {P[i].IMF_Mturnover = 2.0;} /* gives a solar-type IMF for our calculations in current code */
 #endif
