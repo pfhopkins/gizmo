@@ -148,6 +148,12 @@ static void sink_swk_scatter(const int *active_list, int num_active,
 #ifdef GALSF
         SCATTER_MIN(P[i].StellarAge, Accreted_Age)
 #endif
+        if(out.swallowed_sink_GravWork > P[i].GravWork) {P[i].GravWork = out.swallowed_sink_GravWork;}
+        P[i].MinGravWorkBin = min_work_bin(P[i].MinGravWorkBin, out.swallowed_sink_MinGravWorkBin);
+#if defined(GALSF) && !defined(CHIMES)
+        if(out.swallowed_sink_ExtraWorkEstimate > P[i].ExtraWorkEstimate) {P[i].ExtraWorkEstimate = out.swallowed_sink_ExtraWorkEstimate;}
+        P[i].MinExtraWorkBin = min_work_bin(P[i].MinExtraWorkBin, out.swallowed_sink_MinExtraWorkBin);
+#endif
         for(int b = 0; b < TIMEBINS; b++) {
             TimeBin_Sink_mass[b]          += out.delta_TimeBin_Sink_mass[b];
             TimeBin_Sink_dynamicalmass[b] += out.delta_TimeBin_Sink_dynamicalmass[b];
@@ -673,6 +679,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     for(j = NumPart + num_already_spawned; j < NumPart + num_already_spawned + n_particles_split; j++)
     {   /* first, clone the 'dummy' particle so various fields are set appropriately */
         P[j] = P[dummy_cell_i_to_clone]; CellP[j] = CellP[dummy_cell_i_to_clone]; /* set the pointers equal to one another -- all quantities get copied, we only have to modify what needs changing */
+        domain_clear_work_history(j);   /* a new cell, not a copy of the template's work */
         wakeup_sidecar_mark(j);   /* whole-struct clone inherits the template particle's wakeup into the spawned slot */
 
 #if defined(SINK_TEST_WIND_MIXED_FASTSLOW) || defined(SINK_RIAF_SUBEDDINGTON_MODEL)

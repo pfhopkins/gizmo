@@ -127,6 +127,7 @@ void find_timesteps(void)
     /* Now assign new timesteps  */
     for (int i : ActiveParticleList)
     {
+        domain_record_step_work(i);   /* this step's work, before the timebin below changes */
 #ifdef FORCE_EQUAL_TIMESTEPS
         ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else

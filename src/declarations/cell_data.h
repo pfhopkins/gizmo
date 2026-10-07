@@ -34,7 +34,10 @@ extern struct gas_cell_data
     
     Vec3<MyDouble> VelPred;         /*!< predicted gas cell velocity at the current time */
     Vec3<MyDouble> HydroAccel;      /*!< acceleration due to hydrodynamical force (for drifting) */
-    
+
+    float HydroWorkEstimate;        /*!< hydro work since the last domain decomposition: the per-step neighbour-count weight summed over active steps (an estimate, not a measurement); predictive like P[].GravWork */
+    signed char MinHydroWorkBin;    /*!< smallest timebin it was active on, -1 if none */
+
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
 #endif

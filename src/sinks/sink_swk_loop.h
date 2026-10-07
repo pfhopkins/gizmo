@@ -124,6 +124,15 @@ struct SinkSwallowOut {
 #ifdef GALSF
     MyFloat Accreted_Age;
 #endif
+    /* Domain work history of swallowed sinks (a sink-sink merger): the survivor keeps the larger history
+     * and the smaller key, as any merger does (domain_merge_work_history). Swallowed gas, stars and DM
+     * leave the sink's own history alone -- the sink's next walk is not theirs. */
+    float swallowed_sink_GravWork;
+    signed char swallowed_sink_MinGravWorkBin;
+#if defined(GALSF) && !defined(CHIMES)
+    signed char swallowed_sink_MinExtraWorkBin;
+    float swallowed_sink_ExtraWorkEstimate;
+#endif
     int n_gas_swallowed;
     int n_sink_swallowed;
     int n_star_swallowed;
@@ -435,6 +444,12 @@ static void sink_swk_pair_kernel(const SinkSwkActiveState& active,
                 out.Accreted_Age = (MyFloat)neighbor_particle.StellarAge;
             }
 #endif
+            if(neighbor_particle.GravWork > out.swallowed_sink_GravWork) {out.swallowed_sink_GravWork = neighbor_particle.GravWork;}
+            out.swallowed_sink_MinGravWorkBin = min_work_bin(out.swallowed_sink_MinGravWorkBin, neighbor_particle.MinGravWorkBin);
+#if defined(GALSF) && !defined(CHIMES)
+            if(neighbor_particle.ExtraWorkEstimate > out.swallowed_sink_ExtraWorkEstimate) {out.swallowed_sink_ExtraWorkEstimate = neighbor_particle.ExtraWorkEstimate;}
+            out.swallowed_sink_MinExtraWorkBin = min_work_bin(out.swallowed_sink_MinExtraWorkBin, neighbor_particle.MinExtraWorkBin);
+#endif
             out.n_sink_swallowed++;
         }
 
@@ -733,6 +748,10 @@ struct SinkSwkSpec {
 #ifdef GALSF
         accum.Accreted_Age = (MyFloat)MAX_REAL_NUMBER;
 #endif
+        accum.swallowed_sink_MinGravWorkBin = -1;   /* -1 = none, as on the particle */
+#if defined(GALSF) && !defined(CHIMES)
+        accum.swallowed_sink_MinExtraWorkBin = -1;
+#endif
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -775,6 +794,8 @@ struct SinkSwkSpec {
 #define ACCUM_ADD(field)        local_accum.field += peer_accum.field;
 #define ACCUM_ADD_VEC3(field)   for(int k = 0; k < 3; k++) local_accum.field[k] += peer_accum.field[k];
 #define ACCUM_MIN(field)        if(peer_accum.field < local_accum.field) local_accum.field = peer_accum.field;
+#define ACCUM_MAX(field)        if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
+#define ACCUM_MIN_WORK_BIN(field) local_accum.field = min_work_bin(local_accum.field, peer_accum.field);
 #define ACCUM_ADD_ARRAY(field, len)                                       \
         for(int k = 0; k < (len); k++) local_accum.field[k] += peer_accum.field[k];
 
@@ -808,6 +829,12 @@ struct SinkSwkSpec {
 #ifdef GALSF
         ACCUM_MIN(Accreted_Age)
 #endif
+        ACCUM_MAX(swallowed_sink_GravWork)
+        ACCUM_MIN_WORK_BIN(swallowed_sink_MinGravWorkBin)
+#if defined(GALSF) && !defined(CHIMES)
+        ACCUM_MAX(swallowed_sink_ExtraWorkEstimate)
+        ACCUM_MIN_WORK_BIN(swallowed_sink_MinExtraWorkBin)
+#endif
         ACCUM_ADD(n_gas_swallowed)
         ACCUM_ADD(n_sink_swallowed)
         ACCUM_ADD(n_star_swallowed)
@@ -820,6 +847,8 @@ struct SinkSwkSpec {
 #undef ACCUM_ADD
 #undef ACCUM_ADD_VEC3
 #undef ACCUM_MIN
+#undef ACCUM_MAX
+#undef ACCUM_MIN_WORK_BIN
 #undef ACCUM_ADD_ARRAY
     }
 

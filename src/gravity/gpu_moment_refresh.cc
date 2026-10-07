@@ -1068,7 +1068,7 @@ extern "C" void gpu_moment_writeback_to_aos(int n)
         Nodes[no].u.d.bitflags = soa->bitflags[k];
         Nodes[no].N_part       = soa->N_part[k];
         Nodes[no].maxsoft      = (MyFloat) soa->maxsoft[k];
-        /* GravCost / Ti_current: matches CPU step-1 reset, but we only
+        /* Ti_current: matches CPU step-1 reset, but we only
          * touch them in the same way force_refresh_node_moments did
          * before our dispatch was wired in. They are reset on the host
          * before this routine is called (see forcetree.cc step 1). */

@@ -252,7 +252,6 @@ extern "C" int gpu_node_reset_ephemeral(int n)
         /* k is the SoA index; absolute Nodes[] index is All.TreeNodeIndexBase + k.
          * Nodes_base/Extnodes_base are the unshifted arrays (Nodes ==
          * Nodes_base - All.TreeNodeIndexBase), so we index directly with k. */
-        Nodes_uvm[k].GravCost          = 0;
         Nodes_uvm[k].Ti_current        = ti_current;
         Extnodes_uvm[k].dp             = {};
         Extnodes_uvm[k].Ti_lastkicked  = ti_current;

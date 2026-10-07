@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <algorithm>
+#include <vector>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -137,8 +138,8 @@ static inline int domain_toptree_leaf(peanokey key, struct local_topnode_data *t
     return tNodes[no].Leaf;
 }
 
-static float *particle_total_cost;  /*!< cached per-particle total work cost: (1+multiplier)*costfactor */
-static float *particle_costfactor;  /*!< cached per-particle base cost factor (for gas work accounting) */
+static float *particle_total_cost;  /*!< per-particle total work, gravity and hydro each normalized to its global total (domain_compute_particle_costs) */
+static float *particle_hydro_cost;  /*!< per-gas-cell hydro work weight (domain_compute_particle_costs) */
 static float *domainWork;	/*!< a table that gives the total "work" due to the particles stored by each processor */
 static float *domainWorkGas;	/*!< a table that gives the total "work" due to the particles stored by each processor */
 static int *domainCount;	/*!< a table that gives the total number of particles held by each processor */
@@ -157,6 +158,35 @@ static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle ass
  * check itself does. */
 static int domain_bound_needed = 0, domain_bound_limit = 0;
 static double totgravcost, gravcost, totgascost, gascost;
+static void domain_compute_particle_costs(void);
+/* The timebin a particle's recorded work is balanced under: the smallest bin it did that work on, or
+   its current bin if that is smaller or it has not been active since the last decomposition. */
+static inline int domain_work_bin(signed char min_work_bin, int current_bin)
+{
+    return (min_work_bin >= 0 && min_work_bin < current_bin) ? (int) min_work_bin : current_bin;
+}
+/* The three kinds of recorded work, each kept apart wherever it is attributed to a timebin by its own
+   key: gravity (interactions walked, MinGravWorkBin), the stellar-feedback prior in gravity units
+   (MinExtraWorkBin), and hydro (CellP[].HydroWorkEstimate, MinHydroWorkBin). Only the normalized total
+   used for top-tree refinement and total-work balancing combines them (domain_compute_particle_costs). */
+static double domain_stellar_prior_scale = 0; /*!< C, set by domain_compute_particle_costs for the decomposition in progress */
+static inline double domain_gravity_work(int i) {return 0.1 + (double) P[i].GravWork;}
+static inline double domain_stellar_work(int i)
+{
+#if defined(GALSF) && !defined(CHIMES)
+    return domain_stellar_prior_scale * (double) P[i].ExtraWorkEstimate;
+#else
+    return 0;
+#endif
+}
+static inline int domain_stellar_work_bin(int i)
+{
+#if defined(GALSF) && !defined(CHIMES)
+    return domain_work_bin(P[i].MinExtraWorkBin, P[i].TimeBin);
+#else
+    return P[i].TimeBin;
+#endif
+}
 static long long totpartcount;
 static int UseAllParticles;
 static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviving between domain decompositions, used by lightweight repartition */
@@ -308,12 +338,13 @@ void domain_init_timebin_costs(void)
     sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
     sumup_large_ints(TIMEBINS, TimeBinCountGas, tot_count_gas);
 
-    /* Always include the highest active timebin */
-    ListOfTimeBinsToBeBalanced[0] = All.HighestActiveTimeBin;
+    /* Always include the highest occupied timebin: the work recorded on its steps is as real as the
+       work on the steps of the bin that happens to be active at this decomposition */
+    ListOfTimeBinsToBeBalanced[0] = All.HighestOccupiedTimeBin;
     NumTimeBinsToBeBalanced = 1;
 
-    /* Add all lower timebins that have particles, with exponentially increasing weight */
-    for(int i = All.HighestActiveTimeBin - 1; i >= 0; i--)
+    /* Add all lower timebins that have particles */
+    for(int i = All.HighestOccupiedTimeBin - 1; i >= 0; i--)
     {
         if(tot_count[i] > 0 || tot_count_gas[i] > 0)
         {
@@ -332,15 +363,18 @@ void domain_init_timebin_costs(void)
 
     for(int i = 0; i < NumPart; i++)
     {
-        double gc = (double)particle_total_cost[i];
-        if(gc <= 0) gc = 1.0;
+        const double grav_work = domain_gravity_work(i), stellar_work = domain_stellar_work(i);
+        const int grav_bin = domain_work_bin(P[i].MinGravWorkBin, P[i].TimeBin), stellar_bin = domain_stellar_work_bin(i);
+        const int hydro_bin = (P[i].Type == 0) ? domain_work_bin(CellP[i].MinHydroWorkBin, P[i].TimeBin) : 0;
         for(int n = 0; n < NumTimeBinsToBeBalanced; n++)
         {
             int bin = ListOfTimeBinsToBeBalanced[n];
-            if(bin >= P[i].TimeBin)
-                GravCostPerListedTimeBin[n] += gc;
-            if(P[i].Type == 0 && bin >= P[i].TimeBin)
-                HydroCostPerListedTimeBin[n] += 1.0;
+            if(bin >= grav_bin)
+                GravCostPerListedTimeBin[n] += grav_work;
+            if(bin >= stellar_bin)
+                GravCostPerListedTimeBin[n] += stellar_work;
+            if(P[i].Type == 0 && bin >= hydro_bin)
+                HydroCostPerListedTimeBin[n] += (double)particle_hydro_cost[i];
         }
     }
 
@@ -400,7 +434,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * their memory is returned now, before this decomposition's own allocations and
      * the tree allocation at its end. */
     gpu_step_sidx_invalidate_full();
-    int i, ret, retsum, diff, highest_bin_to_include; size_t bytes, all_bytes; double t0, t1;
+    int i, ret, retsum; size_t bytes, all_bytes; double t0, t1;
     
     /* call first -before- a merge-split, to be sure particles are in the correct order in the tree */
     // TO: we don't have to call this before merge_and_split particles()
@@ -418,7 +452,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     }
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
-    rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
     t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;
@@ -503,12 +537,6 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     
     TreeReconstructFlag = 1;	/* ensures that new tree will be constructed */
 
-    /* we take the closest cost factor */
-    if(UseAllParticles) {highest_bin_to_include = All.HighestOccupiedTimeBin;} else {highest_bin_to_include = All.HighestActiveTimeBin;}
-    
-    for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - highest_bin_to_include); i < GRAVCOSTLEVELS; i++)
-        {if(diff > abs(All.LevelToTimeBin[i] - highest_bin_to_include)) {TakeLevel = i; diff = abs(All.LevelToTimeBin[i] - highest_bin_to_include);}}
-    
     /* The particle load moves during a run, so revisit the granularity here -- the only point
      * where the old domain arrays are already freed and the new ones are not yet allocated, so the
      * count and the arrays it sizes can never disagree.  Suspended while a layout is parked, and
@@ -524,7 +552,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
           }
       }
 
-    PRINT_STATUS("Domain decomposition building... LevelToTimeBin[TakeLevel=%d]=%d  (presently allocated=%g MB)", TakeLevel, All.LevelToTimeBin[TakeLevel], AllocatedBytes / (1024.0 * 1024.0));
+    PRINT_STATUS("Domain decomposition building... (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
     t0 = my_second();
 
     do
@@ -692,6 +720,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
   domain_particle_layout_changed("domain_Decomposition", particles_ordered);
   report_memory_ledger_on_growth("post-domain");  /* memory peak (persistent + tree); collective; prints only on growth */
   DomainExtentOutgrownLocal = 0;   /* the extent was just re-measured around every particle */
+  if(UseAllTimeBins == 0) {domain_reset_work_history();}  /* group-finding decompositions do not consume it */
 }
 
 
@@ -728,7 +757,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
     t_light_mergesplit = timediff(t_light_start, my_second());
     double t_tmp_light = my_second();
-    rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
     t_light_rearrange = timediff(t_tmp_light, my_second());
     UseAllParticles = UseAllTimeBins;
 
@@ -784,13 +813,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
         return;
     }
 
-    /* we take the closest cost factor */
-    int diff, highest_bin_to_include;
-    if(UseAllParticles) {highest_bin_to_include = All.HighestOccupiedTimeBin;} else {highest_bin_to_include = All.HighestActiveTimeBin;}
-    for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - highest_bin_to_include); i < GRAVCOSTLEVELS; i++)
-        {if(diff > abs(All.LevelToTimeBin[i] - highest_bin_to_include)) {TakeLevel = i; diff = abs(All.LevelToTimeBin[i] - highest_bin_to_include);}}
-
-    PRINT_STATUS("Domain decomposition (lightweight)... LevelToTimeBin[TakeLevel=%d]=%d", TakeLevel, All.LevelToTimeBin[TakeLevel]);
+    PRINT_STATUS("Domain decomposition (lightweight)...");
     t0 = my_second();
 
     /* free force tree but keep domain structures (TopNodes, DomainTask) */
@@ -832,17 +855,8 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     /* recompute per-particle costs */
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
     particle_total_cost = (float *) mymalloc("particle_total_cost", NumPart * sizeof(float));
-    particle_costfactor = (float *) mymalloc("particle_costfactor", NumPart * sizeof(float));
-    for(i = 0, gravcost = gascost = 0; i < NumPart; i++)
-    {
-        NtypeLocal[P[i].Type]++;
-        double wt_0 = domain_particle_costfactor(i);
-        double wt_mult = domain_particle_cost_multiplier(i);
-        particle_costfactor[i] = (float)wt_0;
-        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0);
-        gravcost += particle_total_cost[i];
-        if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_0;}}
-    }
+    particle_hydro_cost = (float *) mymalloc("particle_hydro_cost", NumPart * sizeof(float));
+    domain_compute_particle_costs();
     sumup_large_ints(6, NtypeLocal, Ntype);
     for(i = 0, totpartcount = 0; i < 6; i++) {totpartcount += Ntype[i];}
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -949,7 +963,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     myfree(list_N_gas); myfree(list_NumPart);
     myfree(toGetGas); myfree(toGet); myfree(toGoGas); myfree(toGo);
     myfree(domainCountGas); myfree(domainCount); myfree(domainWorkGas); myfree(domainWork);
-    myfree(particle_costfactor); myfree(particle_total_cost);
+    myfree(particle_hydro_cost); myfree(particle_total_cost);
     myfree(topNodes);
 
     t1 = my_second();
@@ -972,6 +986,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     wakeup_sidecar_invalidate();   /* light repartition rearranged + exchanged particles → rebuild WakeupDirty next scan */
     domain_particle_layout_changed("domain_Decomposition_light", 0);
     report_memory_ledger_on_growth("post-domain-light");  /* same memory boundary as full decomposition; collective; growth-gated */
+    if(UseAllTimeBins == 0) {domain_reset_work_history();}
 }
 
 
@@ -1056,52 +1071,151 @@ void domain_allocate_trick(void)
     have additional, expensive physics which only apply to a subset of particles, it may be worth 
     up-weighting those particles here, so the code knows to try and spread them around. otherwise, 
     they may end up all bunched onto the same processor */
-double domain_particle_cost_multiplier(int i)
+/* Hydro work weight of one active step of a gas cell: cells with more neighbours cost more, and the
+   physics modules whose cost is dominated by dense gas weight it further. An estimate, summed over the
+   cell's active steps into CellP[].HydroWorkEstimate. */
+static double domain_gas_work_weight(int i)
 {
-    double multiplier = 0;
-    
-    if(P[i].Type == 0) /* for gas, weight particles with large neighbor number more, since they require more work */
-    {
-        double nngb_reduced = P[i].NumNgb; /* remember, in density.c we reduce this by pow(1/NUMDIMS), for use in other routines: need to correct here */
+    double nngb_reduced = P[i].NumNgb; /* stored as the cube root (density.cc), so cube it back */
 #if (NUMDIMS==3)
-        multiplier = nngb_reduced*nngb_reduced*nngb_reduced / All.DesNumNgb;
+    double weight = nngb_reduced*nngb_reduced*nngb_reduced / All.DesNumNgb;
 #elif (NUMDIMS==2)
-        multiplier = nngb_reduced*nngb_reduced / All.DesNumNgb;
+    double weight = nngb_reduced*nngb_reduced / All.DesNumNgb;
 #else
-        multiplier = nngb_reduced / All.DesNumNgb;
+    double weight = nngb_reduced / All.DesNumNgb;
 #endif
-        if(multiplier < 0.5) {multiplier = 0.5;} // floor //
-    } // end gas check
+    if(weight < 0.5) {weight = 0.5;} // floor //
+#ifdef CHIMES
+    /* With CHIMES, cost is dominated by the chemistry, particularly in dense gas. We therefore boost the cost factor of gas particles with nH >~ 1 cm^-3. */
+    {double nH_cgs = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS; if(nH_cgs > 1) {weight = 10.0;}}
+#endif
+#ifdef CRFLUID_EVOLVE_SPECTRUM // again, cost totally dominated by dense gas here, this helps significantly
+    {double nH_cgs = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS; if(nH_cgs > 1) {weight *= 100.;} else {weight *= 10.;}}
+#endif
+    return weight;
+}
 
-#if defined(GALSF) /* with star formation active, we will up-weight star particles which are active feedback sources */
-#ifndef CHIMES /* With CHIMES, the chemistry dominates the cost, so we boost (dense) gas but not stars. */
+#if defined(GALSF) && !defined(CHIMES)
+/* Provisional prior for the feedback work of a star particle, per active step: every star-particle type
+   is weighted, young ones (active feedback sources) most. Zero for anything else. Not used with CHIMES,
+   where the chemistry dominates the cost. Summed over active steps into P[].ExtraWorkEstimate. */
+static double domain_star_age_work_weight(int i)
+{
     if(is_galsf_stellar_candidate_type(P[i].Type, All.ComovingIntegrationOn) && (P[i].Mass>0))
     {
         double star_age = evaluate_stellar_age_Gyr(i);
-        if(star_age>0.1) {multiplier = 3.125;} else {if(star_age>0.035) {multiplier = 5.;} else {multiplier = 10.;}}
+        if(star_age>0.1) {return 3.125;} else {if(star_age>0.035) {return 5.;} else {return 10.;}}
     }
-#endif 
-#endif
-
-#ifdef CHIMES 
-    /* With CHIMES, cost is dominated by the chemistry, particularly in dense gas. We therefore boost the cost factor of gas particles with nH >~ 1 cm^-3. */
-    if(P[i].Type == 0) {double nH_cgs = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS; if(nH_cgs > 1) {multiplier = 10.0;}}
-#endif
-    
-#ifdef CRFLUID_EVOLVE_SPECTRUM // again, cost totally dominated by dense gas here, this helps significantly
-    if(P[i].Type == 0) {double nH_cgs = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_NHCGS; if(nH_cgs > 1) {multiplier *= 100.;} else {multiplier *= 10.;}}
-#endif
-    
-    return multiplier;
+    return 0;
 }
+#endif
 
-
-/* simple function to return costfactor for pure gravity calculation: based just on gravcost calculation, with constant for safety */
-double domain_particle_costfactor(int i)
+/* Clear one particle's work history: a particle with no parent to inherit from starts here. */
+void domain_clear_work_history(int i)
 {
-    return 0.1 + P[i].GravCost[TakeLevel];
+    P[i].GravWork = 0; P[i].MinGravWorkBin = -1;
+#if defined(GALSF) && !defined(CHIMES)
+    P[i].ExtraWorkEstimate = 0; P[i].MinExtraWorkBin = -1;
+#endif
+    if(P[i].Type == 0) {CellP[i].HydroWorkEstimate = 0; CellP[i].MinHydroWorkBin = -1;}
 }
 
+/* Clear the work recorded since the last production decomposition, which has just balanced on it. */
+void domain_reset_work_history(void)
+{
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int i = 0; i < NumPart; i++) {domain_clear_work_history(i);}
+}
+
+/* One completed active step of particle i, as work for the next domain decomposition: a gas cell's
+   hydro work estimate, a star's feedback prior. Called once per active particle per step, when its
+   next timestep is assigned. Gravity records its own work when a walk commits. A star formed this step
+   is still on the active list here (spawned stars are appended to it, converted cells stay on it), and
+   this runs before the next decomposition, so its first call is the one prior weight a new star carries. */
+void domain_record_step_work(int i)
+{
+    if(P[i].Type == 0)
+    {
+        CellP[i].HydroWorkEstimate += (float) domain_gas_work_weight(i);
+        CellP[i].MinHydroWorkBin = min_work_bin(CellP[i].MinHydroWorkBin, (signed char) P[i].TimeBin);
+    }
+#if defined(GALSF) && !defined(CHIMES)
+    else
+    {
+        const double weight = domain_star_age_work_weight(i);
+        if(weight > 0) {P[i].ExtraWorkEstimate += (float) weight; P[i].MinExtraWorkBin = min_work_bin(P[i].MinExtraWorkBin, (signed char) P[i].TimeBin);}
+    }
+#endif
+}
+
+/* Particle i merges into j, which survives and walks once: j keeps the larger history (these predict
+   the next interval's work, they are not conserved) and the smaller timebin it was done on. */
+void domain_merge_work_history(int i, int j)
+{
+    if(P[i].GravWork > P[j].GravWork) {P[j].GravWork = P[i].GravWork;}
+    P[j].MinGravWorkBin = min_work_bin(P[j].MinGravWorkBin, P[i].MinGravWorkBin);
+#if defined(GALSF) && !defined(CHIMES)
+    if(P[i].ExtraWorkEstimate > P[j].ExtraWorkEstimate) {P[j].ExtraWorkEstimate = P[i].ExtraWorkEstimate;}
+    P[j].MinExtraWorkBin = min_work_bin(P[j].MinExtraWorkBin, P[i].MinExtraWorkBin);
+#endif
+    if(P[i].Type == 0 && P[j].Type == 0)
+    {
+        if(CellP[i].HydroWorkEstimate > CellP[j].HydroWorkEstimate) {CellP[j].HydroWorkEstimate = CellP[i].HydroWorkEstimate;}
+        CellP[j].MinHydroWorkBin = min_work_bin(CellP[j].MinHydroWorkBin, CellP[i].MinHydroWorkBin);
+    }
+}
+
+/* Per-particle domain costs from the work recorded since the last production decomposition.
+   Gravity work of a particle is the interactions its walks evaluated, plus the stellar-feedback prior
+   converted to the same units by a provisional factor taken from the interval,
+   C = sum(w * GravWork) / sum(ExtraWorkEstimate) over stars, w being each star's current age weight.
+   C is only roughly the interactions per star step: a step whose walk was skipped adds to the
+   denominator and not the numerator, a star whose age weight changed during the interval is weighted
+   by its current one, and a star formed during the interval brings its gas cell's walks into the
+   numerator but only its own steps into the denominator. The 0.1 floor keeps a particle that never walked
+   from costing nothing. Hydro work of a gas cell is its hydro work estimate.
+   particle_total_cost -- the work queue and the cost-driven top-tree refinement -- is the sum of the
+   two, each normalized to its global total, the same construction normalized_load uses, so a region
+   heavy in either kind of work is refined and spread. particle_hydro_cost -- the gas-work queue -- is
+   the hydro work alone. Frequency is in all of these: a particle on a short timestep was active more
+   often, so no per-timebin weighting is applied. Also fills NtypeLocal and the two local totals. */
+static void domain_compute_particle_costs(void)
+{
+    /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro) */
+    double sums[4] = {0, 0, 0, 0};
+    for(int i = 0; i < NumPart; i++)
+    {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+        sums[2] += domain_gravity_work(i);
+        if(P[i].Type == 0) {sums[3] += (double) CellP[i].HydroWorkEstimate;}
+#if defined(GALSF) && !defined(CHIMES)
+        if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
+#endif
+    }
+    MPI_Allreduce(MPI_IN_PLACE, sums, 4, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    domain_stellar_prior_scale = (sums[1] > 0) ? sums[0] / sums[1] : 0;
+    const double grav_total = sums[2] + domain_stellar_prior_scale * sums[1];
+    const double inv_grav_total = (grav_total > 0) ? 1.0 / grav_total : 0, inv_hydro_total = (sums[3] > 0) ? 1.0 / sums[3] : 0;
+    gravcost = gascost = 0;
+    for(int i = 0; i < NumPart; i++)
+    {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+        NtypeLocal[P[i].Type]++;
+        const double grav = domain_gravity_work(i) + domain_stellar_work(i);
+        const double hydro = (P[i].Type == 0) ? (double) CellP[i].HydroWorkEstimate : 0;
+        const double total = grav * inv_grav_total + hydro * inv_hydro_total;
+        particle_total_cost[i] = (float) total;
+        particle_hydro_cost[i] = (float) hydro;
+        gravcost += total;
+        gascost += hydro;
+    }
+}
 
 
 /*! Update the adaptive domain balance weights based on measured imbalance from the
@@ -1157,7 +1271,7 @@ void domain_update_adaptive_weights(void)
 
 /*! This function carries out the actual domain decomposition for all
  *  particle types. It will try to balance the work-load for each domain,
- *  as estimated based on the P[i]-GravCost values.  The decomposition will
+ *  as estimated from the work recorded since the last decomposition (domain_compute_particle_costs).  The decomposition will
  *  respect the maximum allowed memory-imbalance given by the value of
  *  PartAllocFactor.
  */
@@ -1170,25 +1284,10 @@ int domain_decompose(void)
 
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
 
-    /* compute and cache per-particle costs once, reused in domain_check_for_local_refine and domain_sumCost.
-       particle_total_cost: unweighted cost used for top-tree refinement (preserves spatial structure).
-       For domain_sumCost, we apply timestep frequency weighting there to balance sub-step work
-       without distorting the tree refinement. */
+    /* compute and cache per-particle costs once, reused in domain_check_for_local_refine and domain_sumCost */
     particle_total_cost = (float *) mymalloc("particle_total_cost", NumPart * sizeof(float));
-    particle_costfactor = (float *) mymalloc("particle_costfactor", NumPart * sizeof(float));
-    for(i = 0, gravcost = gascost = 0; i < NumPart; i++)
-    {
-#ifdef SUBFIND
-        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
-#endif
-        NtypeLocal[P[i].Type]++;
-        double wt_0 = domain_particle_costfactor(i);
-        double wt_mult = domain_particle_cost_multiplier(i);
-        particle_costfactor[i] = (float)wt_0;
-        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0);
-        gravcost += particle_total_cost[i];
-        if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_0;}}
-    }
+    particle_hydro_cost = (float *) mymalloc("particle_hydro_cost", NumPart * sizeof(float));
+    domain_compute_particle_costs();
     /* because Ntype[] is of type `long long', we cannot do a simple MPI_Allreduce() to sum the total particle numbers */
     sumup_large_ints(6, NtypeLocal, Ntype);
 
@@ -1204,8 +1303,8 @@ int domain_decompose(void)
     /* determine global dimensions of domain grid */
     domain_findExtent();
     {int toptree_status = domain_determineTopTree();
-     if(toptree_status) {myfree(particle_costfactor); myfree(particle_total_cost); return toptree_status;}}
-    myfree(particle_costfactor); myfree(particle_total_cost);
+     if(toptree_status) {myfree(particle_hydro_cost); myfree(particle_total_cost); return toptree_status;}}
+    myfree(particle_hydro_cost); myfree(particle_total_cost);
 
     /* find the split of the domain grid */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
@@ -2136,105 +2235,120 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
 	}
     }
 
-  /* Iterative refinement (GADGET-4 approach): try random swaps of domain segments
-     between tasks and keep swaps that reduce the maximum imbalance across all metrics.
-     This improves the greedy solution, especially for inhomogeneous particle distributions. */
+  /* Iterative refinement (Gadget-4 approach): try random swaps of two segments between tasks, and keep a swap when it
+     lowers the objective, the largest normalized share any task holds of any balanced metric.  A swap changes only its
+     two tasks, so it is scored from those two plus the largest share held by a task outside the pair: each task's own
+     largest share is cached, with the three tasks holding the largest of them.  A swap that leaves the task holding the
+     objective untouched cannot lower it, so it is rejected without being scored.  A swap may not take a task over its
+     memory cap, nor further over it.  The search stops once the objective reaches the share of the largest single
+     segment on any metric, below which no assignment can go. */
   if(mode == 1 && multipledomains * NTask > 1)
   {
       int nswaps_accepted = 0;
-      int n_segments = multipledomains * NTask;
-      int max_iterations = 200 * n_segments; /* scale attempts with problem size */
-      unsigned int seed = 42 + NTask; /* deterministic seed for reproducibility */
+      long long iterations_done = 0;
+      const int n_segments = multipledomains * NTask;
+      const long long max_iterations = 200LL * n_segments; /* scale attempts with problem size */
+      /* deterministic 64-bit generator, drawn from its high bits so every segment index is reachable however many there are */
+      unsigned long long seed = 42ULL + (unsigned long long) NTask;
+      auto random_segment = [&]() -> int {seed = seed * 6364136223846793005ULL + 1442695040888963407ULL; return (int) ((seed >> 33) % (unsigned long long) n_segments);};
 
-      /* compute current max imbalance */
-      auto compute_max_imbalance = [&]() -> double {
-          double max_frac_work = 0, max_frac_load = 0, max_frac_gas = 0, max_frac_gasload = 0;
-          for(int t = 0; t < NTask; t++) {
-              double fw = tasklist[t].work / (tot_work + 1.0e-30);
-              double fl = tasklist[t].load / (tot_load + 1.0e-30);
-              double fg = tasklist[t].load_activegas / (tot_loadactivegas + 1.0e-30);
-              double fgl = tasklist[t].load_gas / (tot_loadgas + 1.0e-30);
-              if(fw > max_frac_work) max_frac_work = fw;
-              if(fl > max_frac_load) max_frac_load = fl;
-              if(fg > max_frac_gas) max_frac_gas = fg;
-              if(fgl > max_frac_gasload) max_frac_gasload = fgl;
-          }
-          double result = max_frac_work;
-          if(max_frac_load > result) result = max_frac_load;
-          if(max_frac_gas > result) result = max_frac_gas;
-          if(max_frac_gasload > result) result = max_frac_gasload;
+      /* largest share task t would hold if segment s_out were replaced by segment s_in (s_in < 0: as it stands) */
+      auto share_after = [&](int t, int s_out, int s_in) -> double {
+#define DOMAIN_SWAP_VALUE(field) ((s_in >= 0) ? tasklist[t].field + (domainAssign[s_in].field - domainAssign[s_out].field) : tasklist[t].field)
+          double result = DOMAIN_SWAP_VALUE(work) / (tot_work + 1.0e-30), f;
+          f = DOMAIN_SWAP_VALUE(load) / (tot_load + 1.0e-30); if(f > result) {result = f;}
+          f = DOMAIN_SWAP_VALUE(load_activegas) / (tot_loadactivegas + 1.0e-30); if(f > result) {result = f;}
+          f = DOMAIN_SWAP_VALUE(load_gas) / (tot_loadgas + 1.0e-30); if(f > result) {result = f;}
 #if (DOMAIN_TIMEBINS == 1)
-          for(int t = 0; t < NTask; t++) {
-              for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-                  double bg = tasklist[t].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30);
-                  double bh = tasklist[t].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30);
-                  if(bg > result) result = bg;
-                  if(bh > result) result = bh;
-              }
+          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+              f = DOMAIN_SWAP_VALUE(bin_GravCost[k]) / (tot_binGravCost[k] + 1.0e-30); if(f > result) {result = f;}
+              f = DOMAIN_SWAP_VALUE(bin_HydroCost[k]) / (tot_binHydroCost[k] + 1.0e-30); if(f > result) {result = f;}
           }
 #endif
+#undef DOMAIN_SWAP_VALUE
           return result;
       };
+      std::vector<double> task_share(NTask);
+      for(int t = 0; t < NTask; t++) {task_share[t] = share_after(t, -1, -1);}
+      int top[3] = {-1, -1, -1};   /* the three tasks holding the largest shares, largest first */
+      auto rank_top = [&]() {
+          top[0] = top[1] = top[2] = -1;
+          for(int t = 0; t < NTask; t++)
+          {
+              if(top[0] < 0 || task_share[t] > task_share[top[0]]) {top[2] = top[1]; top[1] = top[0]; top[0] = t;}
+              else if(top[1] < 0 || task_share[t] > task_share[top[1]]) {top[2] = top[1]; top[1] = t;}
+              else if(top[2] < 0 || task_share[t] > task_share[top[2]]) {top[2] = t;}
+          }
+      };
+      rank_top();
+      double current_imbalance = task_share[top[0]];
 
-      double current_imbalance = compute_max_imbalance();
-
-      for(int iter = 0; iter < max_iterations; iter++)
+      /* the objective can go no lower than the largest share of a single segment on any metric, nor than an even split */
+      double segment_bound = 1.0 / NTask;
+      for(int s = 0; s < n_segments; s++)
       {
+          double f = domainAssign[s].work / (tot_work + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          f = domainAssign[s].load / (tot_load + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          f = domainAssign[s].load_activegas / (tot_loadactivegas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          f = domainAssign[s].load_gas / (tot_loadgas + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+#if (DOMAIN_TIMEBINS == 1)
+          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
+              f = domainAssign[s].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+              f = domainAssign[s].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30); if(f > segment_bound) {segment_bound = f;}
+          }
+#endif
+      }
+      const double stop_at = segment_bound * (1.0 + 1.0e-12);
+
+      for(long long iter = 0; iter < max_iterations && current_imbalance > stop_at; iter++)
+      {
+          iterations_done = iter + 1;
           /* pick two random segments assigned to different tasks */
-          seed = seed * 1103515245 + 12345; int s1 = (seed >> 16) % n_segments;
-          seed = seed * 1103515245 + 12345; int s2 = (seed >> 16) % n_segments;
+          int s1 = random_segment();
+          int s2 = random_segment();
           if(s1 == s2) continue;
           int t1 = domainAssign[s1].task, t2 = domainAssign[s2].task;
           if(t1 == t2) continue;
+          if(t1 != top[0] && t2 != top[0]) continue;   /* the task holding the objective keeps it */
 
-          /* trial swap: move s1 to t2 and s2 to t1 */
-          tasklist[t1].work += domainAssign[s2].work - domainAssign[s1].work;
-          tasklist[t1].load += domainAssign[s2].load - domainAssign[s1].load;
-          tasklist[t1].load_activegas += domainAssign[s2].load_activegas - domainAssign[s1].load_activegas;
-          tasklist[t1].load_gas += domainAssign[s2].load_gas - domainAssign[s1].load_gas;
-          tasklist[t2].work += domainAssign[s1].work - domainAssign[s2].work;
-          tasklist[t2].load += domainAssign[s1].load - domainAssign[s2].load;
-          tasklist[t2].load_activegas += domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
-          tasklist[t2].load_gas += domainAssign[s1].load_gas - domainAssign[s2].load_gas;
-#if (DOMAIN_TIMEBINS == 1)
-          for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-              tasklist[t1].bin_GravCost[k] += domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
-              tasklist[t1].bin_HydroCost[k] += domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
-              tasklist[t2].bin_GravCost[k] += domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
-              tasklist[t2].bin_HydroCost[k] += domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
-          }
-#endif
+          double load1 = tasklist[t1].load + (domainAssign[s2].load - domainAssign[s1].load), gas1 = tasklist[t1].load_gas + (domainAssign[s2].load_gas - domainAssign[s1].load_gas);
+          double load2 = tasklist[t2].load + (domainAssign[s1].load - domainAssign[s2].load), gas2 = tasklist[t2].load_gas + (domainAssign[s1].load_gas - domainAssign[s2].load_gas);
+          if((load1 > max_load_per_task && load1 > tasklist[t1].load) || (gas1 > max_gasload_per_task && gas1 > tasklist[t1].load_gas) ||
+             (load2 > max_load_per_task && load2 > tasklist[t2].load) || (gas2 > max_gasload_per_task && gas2 > tasklist[t2].load_gas)) {continue;}
 
-          double new_imbalance = compute_max_imbalance();
+          double share1 = share_after(t1, s1, s2), share2 = share_after(t2, s2, s1);
+          double new_imbalance = (share1 > share2) ? share1 : share2;
+          for(int m = 0; m < 3; m++) {if(top[m] >= 0 && top[m] != t1 && top[m] != t2) {if(task_share[top[m]] > new_imbalance) {new_imbalance = task_share[top[m]];} break;}}
 
-          if(new_imbalance < current_imbalance) {
-              /* accept swap */
-              domainAssign[s1].task = t2;
-              domainAssign[s2].task = t1;
-              current_imbalance = new_imbalance;
-              nswaps_accepted++;
-          } else {
-              /* revert */
-              tasklist[t1].work -= domainAssign[s2].work - domainAssign[s1].work;
-              tasklist[t1].load -= domainAssign[s2].load - domainAssign[s1].load;
-              tasklist[t1].load_activegas -= domainAssign[s2].load_activegas - domainAssign[s1].load_activegas;
-              tasklist[t1].load_gas -= domainAssign[s2].load_gas - domainAssign[s1].load_gas;
-              tasklist[t2].work -= domainAssign[s1].work - domainAssign[s2].work;
-              tasklist[t2].load -= domainAssign[s1].load - domainAssign[s2].load;
-              tasklist[t2].load_activegas -= domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
-              tasklist[t2].load_gas -= domainAssign[s1].load_gas - domainAssign[s2].load_gas;
+          if(new_imbalance < current_imbalance)
+          {
+              tasklist[t1].work += domainAssign[s2].work - domainAssign[s1].work;
+              tasklist[t1].load += domainAssign[s2].load - domainAssign[s1].load;
+              tasklist[t1].load_activegas += domainAssign[s2].load_activegas - domainAssign[s1].load_activegas;
+              tasklist[t1].load_gas += domainAssign[s2].load_gas - domainAssign[s1].load_gas;
+              tasklist[t2].work += domainAssign[s1].work - domainAssign[s2].work;
+              tasklist[t2].load += domainAssign[s1].load - domainAssign[s2].load;
+              tasklist[t2].load_activegas += domainAssign[s1].load_activegas - domainAssign[s2].load_activegas;
+              tasklist[t2].load_gas += domainAssign[s1].load_gas - domainAssign[s2].load_gas;
 #if (DOMAIN_TIMEBINS == 1)
               for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
-                  tasklist[t1].bin_GravCost[k] -= domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
-                  tasklist[t1].bin_HydroCost[k] -= domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
-                  tasklist[t2].bin_GravCost[k] -= domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
-                  tasklist[t2].bin_HydroCost[k] -= domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
+                  tasklist[t1].bin_GravCost[k] += domainAssign[s2].bin_GravCost[k] - domainAssign[s1].bin_GravCost[k];
+                  tasklist[t1].bin_HydroCost[k] += domainAssign[s2].bin_HydroCost[k] - domainAssign[s1].bin_HydroCost[k];
+                  tasklist[t2].bin_GravCost[k] += domainAssign[s1].bin_GravCost[k] - domainAssign[s2].bin_GravCost[k];
+                  tasklist[t2].bin_HydroCost[k] += domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
               }
 #endif
+              domainAssign[s1].task = t2;
+              domainAssign[s2].task = t1;
+              task_share[t1] = share_after(t1, -1, -1);
+              task_share[t2] = share_after(t2, -1, -1);
+              rank_top();
+              current_imbalance = task_share[top[0]];
+              nswaps_accepted++;
           }
       }
       if(ThisTask == 0 && nswaps_accepted > 0) {
-          PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %d attempts", nswaps_accepted, max_iterations);
+          PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %lld attempts", nswaps_accepted, iterations_done);
       }
   }
 
@@ -3087,52 +3201,36 @@ void domain_sumCost(void)
 
     PRINT_STATUS(" ..NTopleaves= %d  NTopnodes=%d (space for %d)", NTopleaves, NTopnodes, MaxTopNodes);
 
-  /* Cost accumulation modes controlled by DOMAIN_TIMEBINS:
-     - undefined: unweighted (original GIZMO scheme)
-     - DOMAIN_TIMEBINS=0: frequency-weighted by 2^(HighestBin - particleBin)
-     - DOMAIN_TIMEBINS=1: per-timebin cost accumulation (Gadget-4 scheme),
-       with composite cost for tree splitting and separate per-timebin arrays for assignment */
-
-  /* Macro for the per-particle cost accumulation body, shared between OMP and serial paths */
-#if defined(DOMAIN_TIMEBINS) && (DOMAIN_TIMEBINS == 0)
+  /* Cost accumulation: each particle adds the work recorded since the last production decomposition
+     (domain_compute_particle_costs). Frequency is already in it -- a particle on a short timestep walked
+     more often -- so no per-timebin weighting is applied. With DOMAIN_TIMEBINS=1 the work is also kept
+     per balanced timebin (Gadget-4 scheme): a particle counts in every listed bin at or above the
+     smallest bin it did that work on, so each bin's set is the particles active on its steps. */
+#if defined(DOMAIN_TIMEBINS) && (DOMAIN_TIMEBINS == 1)
   #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
-    { float freq_weight = 1.0f; \
-      if(All.HighestOccupiedTimeBin > P[n].TimeBin) { \
-          int dbin = All.HighestOccupiedTimeBin - P[n].TimeBin; \
-          if(dbin > 20) {dbin = 20;} \
-          freq_weight = (float)(1 << dbin); } \
-      wk[no] += particle_total_cost[n] * freq_weight; \
-      cnt[no] += 1; \
-      if(P[n].Type == 0) { \
-          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n] * freq_weight;} \
-          cntg[no] += 1;} }
-#elif defined(DOMAIN_TIMEBINS) && (DOMAIN_TIMEBINS == 1)
-  #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
-    { double gc = (double)particle_total_cost[n]; \
-      if(gc <= 0) gc = 1.0; \
+    { const double grav_work_ = domain_gravity_work(n), stellar_work_ = domain_stellar_work(n); \
+      const int grav_bin_ = domain_work_bin(P[n].MinGravWorkBin, P[n].TimeBin), stellar_bin_ = domain_stellar_work_bin(n); \
+      const int hydro_bin_ = (P[n].Type == 0) ? domain_work_bin(CellP[n].MinHydroWorkBin, P[n].TimeBin) : 0; \
       float composite_cost = 0; \
       for(int k_ = 0; k_ < ntb; k_++) { \
           int bin_ = ListOfTimeBinsToBeBalanced[k_]; \
-          if(bin_ >= P[n].TimeBin) { \
-              float contrib = (float)(GravCostNormFactors[k_] * gc); \
+          const double gc_ = ((bin_ >= grav_bin_) ? grav_work_ : 0) + ((bin_ >= stellar_bin_) ? stellar_work_ : 0); \
+          if(gc_ > 0) { \
+              float contrib = (float)(GravCostNormFactors[k_] * gc_); \
               composite_cost += contrib; \
               my_binGravCost[k_ * NTopleaves + no] += contrib; } \
-          if(P[n].Type == 0 && bin_ >= P[n].TimeBin) { \
-              float hcontrib = (float)HydroCostNormFactors[k_]; \
+          if(P[n].Type == 0 && bin_ >= hydro_bin_) { \
+              float hcontrib = (float)(HydroCostNormFactors[k_] * particle_hydro_cost[n]); \
               composite_cost += hcontrib; \
               my_binHydroCost[k_ * NTopleaves + no] += hcontrib; } } \
       wk[no] += composite_cost; \
       cnt[no] += 1; \
-      if(P[n].Type == 0) { \
-          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
-          cntg[no] += 1;} }
+      if(P[n].Type == 0) {wkg[no] += particle_hydro_cost[n]; cntg[no] += 1;} }
 #else
   #define DOMAIN_SUMCOST_PARTICLE_BODY(n, no, wk, wkg, cnt, cntg) \
     { wk[no] += particle_total_cost[n]; \
       cnt[no] += 1; \
-      if(P[n].Type == 0) { \
-          if(TimeBinActive[P[n].TimeBin] || UseAllParticles) {wkg[no] += particle_costfactor[n];} \
-          cntg[no] += 1;} }
+      if(P[n].Type == 0) {wkg[no] += particle_hydro_cost[n]; cntg[no] += 1;} }
 #endif
 
 #ifdef _OPENMP

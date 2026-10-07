@@ -3,7 +3,6 @@
 #endif
 
 
-double domain_particle_cost_multiplier(int i);
 void domain_findSplit_work_balanced(int ncpu, int ndomain);
 void domain_findSplit_load_balanced(int ncpu, int ndomain);
 int domain_sort_loadorigin(const void *a, const void *b);
@@ -14,7 +13,6 @@ int domain_check_memory_bound(int multipledomains);
 int domain_compare_key(const void *a, const void *b);
 int domain_compare_key(const void *a, const void *b);
 int domain_compare_toplist(const void *a, const void *b);
-double domain_particle_costfactor(int i);
 int domain_countToGo(size_t nlimit);
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence);
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key);

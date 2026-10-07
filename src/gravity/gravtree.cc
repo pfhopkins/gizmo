@@ -174,7 +174,7 @@ void gravity_tree(void)
         PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
-        rearrange_particle_sequence();
+        rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
         refresh_old_acceleration_for_tree_opening();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         int build_status = force_treebuild(NumPart, NULL);
@@ -255,60 +255,12 @@ void gravity_tree(void)
     All.BunchSize = GRAVITY_LET_DETECTOR_ENTRIES;
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-    int k, ewald_max, diff, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
+    int k, ewald_max, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
     Ewaldcount = 0; Costtotal = 0; N_nodesinlist = 0; ewald_max=0;
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
 #endif
 
-    if(GlobNumForceUpdate > All.TreeRebuild_ActiveFraction * All.TotNumPart)
-    { /* we have a fresh tree and would like to measure gravity cost */
-        /* find the closest level */
-        for(i = 1, TakeLevel = 0, diff = abs(All.LevelToTimeBin[0] - All.HighestActiveTimeBin); i < GRAVCOSTLEVELS; i++)
-        {
-            if(diff > abs(All.LevelToTimeBin[i] - All.HighestActiveTimeBin))
-                {TakeLevel = i; diff = abs(All.LevelToTimeBin[i] - All.HighestActiveTimeBin);}
-        }
-        if(diff != 0) /* we have not found a matching slot */
-        {
-            if(All.HighestOccupiedTimeBin - All.HighestActiveTimeBin < GRAVCOSTLEVELS)	/* we should have space */
-            {
-                /* clear levels that are out of range */
-                for(i = 0; i < GRAVCOSTLEVELS; i++)
-                {
-                    if(All.LevelToTimeBin[i] > All.HighestOccupiedTimeBin) {All.LevelToTimeBin[i] = 0;}
-                    if(All.LevelToTimeBin[i] < All.HighestOccupiedTimeBin - (GRAVCOSTLEVELS - 1)) {All.LevelToTimeBin[i] = 0;}
-                }
-            }
-            for(i = 0, TakeLevel = -1; i < GRAVCOSTLEVELS; i++)
-            {
-                if(All.LevelToTimeBin[i] == 0)
-                {
-                    All.LevelToTimeBin[i] = All.HighestActiveTimeBin;
-                    TakeLevel = i;
-                    break;
-                }
-            }
-            if(TakeLevel < 0 && All.HighestOccupiedTimeBin - All.HighestActiveTimeBin < GRAVCOSTLEVELS)	/* we should have space */
-                {
-                    if(ThisTask == 0) {printf("TakeLevel < 0, even though we should have a slot\n"); fflush(stdout);}
-                    endrun(90001008);
-                    gizmo_exit_bad_stop_if_requested("gravtree:takelevel_no_slot");  /* symmetric (global LevelToTimeBin + bins): all ranks poll together */
-                }
-        }
-    }
-    else
-    { /* in this case we do not measure gravity cost. Check whether this time-level
-         has previously mean measured. If yes, then delete it so to make sure that it is not out of time */
-        for(i = 0; i < GRAVCOSTLEVELS; i++) {if(All.LevelToTimeBin[i] == All.HighestActiveTimeBin) {All.LevelToTimeBin[i] = 0;}}
-        TakeLevel = -1;
-    }
-    if(TakeLevel >= 0) {
-        /* Under UVM-canonical particles, arena_P aliases host P[] — an arena
-         * mirror write to P_arena_zero[i] is a self-assignment, so the single
-         * host write is sufficient for both views. */
-        for(i = 0; i < NumPart; i++) { P[i].GravCost[TakeLevel] = 0; }
-    } /* re-zero the cost [will be re-summed] */
 
     /* Decide which particles need a new tree force BEFORE any walk runs, ONCE for the whole call,
        and let every consumer read that one answer. The walk MUTATES the inputs -- it writes
@@ -340,6 +292,14 @@ void gravity_tree(void)
      * falling behind the particles, and rebuilding again would not address it. */
     const int gravity_let_repair_max = 1;
     int gravity_let_repair_attempts = 0;
+    /* Each committed walk adds to its target's GravWork and may lower its MinGravWorkBin
+     * (gravity_record_walk_work). Keep the values this call started from, so an import repair that
+     * redoes the walks puts both back instead of also counting the abandoned pass. Sized by the active
+     * set, never by NumPart, and released with the call. Not in the arena: an import repair below frees
+     * and reallocates the tree, which sits beneath it. */
+    std::vector<float> grav_work_at_call_start(ActiveParticleList.size());
+    std::vector<signed char> grav_work_bin_at_call_start(ActiveParticleList.size());
+    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {grav_work_at_call_start[ii] = P[ActiveParticleList[ii]].GravWork; grav_work_bin_at_call_start[ii] = P[ActiveParticleList[ii]].MinGravWorkBin;}
 gravity_walk_attempt:
 
     /* begin main communication and tree-walk loop. note the ewald-iter terms here allow for multiple iterations for periodic-tree corrections if needed */
@@ -559,11 +519,11 @@ gravity_walk_attempt:
                 DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
 
                 /* The redone pass re-counts its own work, so drop what the abandoned one counted.
-                 * GravCost is not just a diagnostic -- it is the per-particle weight the next
+                 * GravWork is not just a diagnostic -- it is the per-particle weight the next
                  * domain decomposition balances on.  Only the active set can have been written, so
-                 * only the active set is cleared: a step with few actives must not pay for NumPart. */
+                 * only the active set is restored: a step with few actives must not pay for NumPart. */
                 Costtotal = 0; Ewaldcount = 0; N_nodesinlist = 0;
-                if(TakeLevel >= 0) {for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {P[ActiveParticleList[ii]].GravCost[TakeLevel] = 0;}}
+                for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {P[ActiveParticleList[ii]].GravWork = grav_work_at_call_start[ii]; P[ActiveParticleList[ii]].MinGravWorkBin = grav_work_bin_at_call_start[ii];}
 
                 /* The repair goes through the same build and the same walks as any other, so its
                  * cost belongs in the same rows; charge the build here so the walk row it sits
@@ -575,14 +535,6 @@ gravity_walk_attempt:
     }
 
     myfree(DataNodeList); myfree(DataIndexTable);
-
-    /* assign node cost to particles */
-    if(TakeLevel >= 0) {
-        /* Modern GPU/LET gravity executes work on the target-owning rank, so
-         * gpu_gravtree_walk_primary() records target-side interaction counts
-         * directly in P[target].GravCost[TakeLevel]. */
-    }
-
 
     /* now perform final operations on results [communication loop is done] */
 #ifndef GRAVITY_HYBRID_OPENING_CRIT  // in collisional systems we don't want to rely on the relative opening criterion alone, because aold can be dominated by a binary companion but we still want accurate contributions from distant nodes. Thus we combine BH and relative criteria. - MYG
@@ -793,7 +745,17 @@ gravity_walk_attempt:
     MPI_Reduce(&timetree2, &maxt2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&timewait, &sumwaitall, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&timecomm, &sumcommall, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&Costtotal, &sum_costtotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    /* The interaction total the walks recorded into GravWork rides the same reduction as Costtotal, for
+     * the consistency check below, so it adds no collective to the call. */
+    double sum_costtotal_new = 0;
+    {
+        double costtotal_pair[2] = {Costtotal, 0}, sum_costtotal_pair[2] = {0, 0};
+#ifndef SELFGRAVITY_OFF
+        for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {costtotal_pair[1] += (double) P[ActiveParticleList[ii]].GravWork - (double) grav_work_at_call_start[ii];}
+#endif
+        MPI_Reduce(costtotal_pair, sum_costtotal_pair, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        sum_costtotal = sum_costtotal_pair[0]; sum_costtotal_new = sum_costtotal_pair[1];
+    }
     MPI_Reduce(&Ewaldcount, &ewaldtot, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     sumup_longs(1, &n_exported, &n_exported);
     sumup_longs(1, &N_nodesinlist, &N_nodesinlist);
@@ -886,15 +848,10 @@ gravity_walk_attempt:
             }} fprintf(FdTimings, "\n");
         fflush(FdTimings);
     }
-    double costtotal_new = 0, sum_costtotal_new;
-    if(TakeLevel >= 0)
     {
-        for(i = 0; i < NumPart; i++) {costtotal_new += P[i].GravCost[TakeLevel];}
-        MPI_Reduce(&costtotal_new, &sum_costtotal_new, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        /* Both walks accumulate the same per-target interaction count into GravCost and
-         * into Costtotal, so the two totals describe the same quantity and this should be
-         * at round-off whichever path each target took. A non-negligible value means the
-         * two are no longer measuring the same thing. */
+        /* Both walks record the same per-target interaction count into GravWork and into Costtotal, so
+         * the two totals describe the same quantity and should agree to the float rounding of GravWork
+         * whichever path each target took. A larger value means the two no longer measure the same thing. */
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
 #endif
@@ -917,14 +874,13 @@ void *gravity_primary_loop(void *p)
     int *batch = (int *) thread_ws, *batch_pos = batch + GravWalkBatchCap, *ninter = batch + 2 * GravWalkBatchCap;
     void *walk_ws = thread_ws + GravWalkBatchBytes;   /* present only when packet_cap > 0, i.e. when the primary walk has host candidates */
     const int packet_cap = GravWalkPacketCap;
-    /* what a completed walk hands to the rest of the step: the interaction count is the work
-     * weight for the next domain decomposition (the device walk records the same quantity,
-     * gpu_gravtree.cc, so a step whose walks are split between the two paths feeds one
-     * consistent measure to domain_particle_costfactor()); each thread writes only its own
-     * targets, so no synchronization is needed beyond the shared total */
+    /* what a completed walk hands to the rest of the step: the interaction count is work for the
+     * next domain decomposition (gravity_record_walk_work, which the device walk records through
+     * too); each thread writes only its own targets, so no synchronization is needed beyond the
+     * shared total */
     auto commit_target = [&](int target, int n_interactions)
     {
-        if(TakeLevel >= 0) {P[target].GravCost[TakeLevel] = n_interactions;}
+        gravity_record_walk_work(target, n_interactions);
 #ifdef _OPENMP
 #pragma omp atomic
 #endif
@@ -1070,15 +1026,14 @@ void subtract_companion_gravity(int i)
 
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int n){
-    if(P[n].Type > 0){ // in this implementation we only do the lazy updating for gas cells whose timesteps are otherwise constrained by multiphysics (e.g. radiation, feedback)
-        return 1;
-    } else {
-        if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(P[n].Type == 5) {return 1;} // single-star sinks take a full tree force every step: their dynamics are followed more carefully
+#endif
+    if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        else if(P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
-#endif        
-        else {return 0;}
-    }
+    else if(P[n].Type == 0 && P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // gas only, as the feedback-time step limit it serves: we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
+#endif
+    else {return 0;}
 }
 #endif
 

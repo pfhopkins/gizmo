@@ -253,7 +253,9 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS == 3)
+#if !defined(CHIMES) /* CHIMES evolves its own chemistry and does not carry the electron fraction this model reads */
 #define COOL_MOLECFRAC_NONEQM
+#endif
 #define OUTPUT_MOLECULAR_FRACTION
 #define OUTPUT_COOLRATE
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
@@ -572,7 +574,9 @@
 #endif
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
+#if !defined(CHIMES) /* not compatible with CHIMES, which evolves its own chemistry */
 #define COOL_MOLECFRAC_NONEQM
+#endif
 #define EOS_SUBSTELLAR_ISM
 #define OUTPUT_MOLECULAR_FRACTION
 #if defined(MAGNETIC) && !defined(CONDUCTION) && !defined(VISCOSITY) // if we have cooling and magnetic fields, enable conduction + viscosity
@@ -746,9 +750,12 @@
 #endif
 
 
-#ifdef ADAPTIVE_TREEFORCE_UPDATE // instead of going into the tree every timestep, only update gravity with a frequency set by this fraction of dynamical timescale (default for gas only)
+#ifdef ADAPTIVE_TREEFORCE_UPDATE // instead of going into the tree every timestep, only update gravity with a frequency set by this fraction of dynamical timescale (every type; single-star sinks always update)
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // need this to estimate the dynamical time
+#endif
+#ifndef COMPUTE_JERK_IN_GRAVTREE
+#define COMPUTE_JERK_IN_GRAVTREE // the steps between tree forces extrapolate the acceleration with the jerk
 #endif
 #endif
 
@@ -929,7 +936,7 @@
 
 
 #if defined(COOL_MOLECFRAC)
-#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM)
+#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)
 #endif
 #endif

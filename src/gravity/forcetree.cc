@@ -550,7 +550,7 @@ let_build_attempt:
      * establishes the particle Father[] links this walks, and the pseudo-particle exchange further
      * down is what carries a grown top-leaf length to the other ranks, so it belongs between them. */
     if(gpu_topology_grow_retained_paths() != 0) {endrun(90000090);}
-    /* GPU kernel resets GravCost + ephemeral fields for all
+    /* GPU kernel resets the ephemeral fields for all
      * nodes.  On the CPU path FUNR does this work inline; on the GPU path
      * FUNR is retired so the kernel takes its place.  Replaces a
      * host loop over Numnodestree -- the worst sparse-active scaling. */
@@ -4207,7 +4207,7 @@ void force_refresh_node_moments(void)
      * Extnodes[] are in the same state CPU steps 1-4 below would
      * produce, so the CPU pseudo-particle path can run unchanged. */
     {
-        /* Reset GravCost/Ti_current/Flag/Ti_lastkicked/dp/dp_dm/dp_stellarlum
+        /* Reset Ti_current/Flag/Ti_lastkicked/dp/dp_dm/dp_stellarlum
          * fields that the GPU kernel does not own. These mirror the
          * non-moment lines in CPU step 1 (forcetree.cc:3837..3848).
          *
@@ -4220,7 +4220,6 @@ void force_refresh_node_moments(void)
          * a refresh runs mid-step, where inactive particles and their nodes are behind. */
         for(no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
             if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
-            Nodes[no].GravCost = 0;
             Nodes[no].Ti_current = All.Ti_Current;
             Extnodes[no].dp = {};
             Extnodes[no].Ti_lastkicked = All.Ti_Current;

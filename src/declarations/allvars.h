@@ -195,7 +195,6 @@ extern int MaxTopNodes;	        /*!< Maximum number of nodes in the top-level tr
 extern int RestartFlag;		/*!< taken from command line used to start code. 0 is normal start-up from initial conditions, 1 is resuming a run from a set of restart files, while 2 marks a restart from a snapshot file. */
 extern int RestartSnapNum;
 extern int SelRnd;
-extern int TakeLevel;
 extern int *Exportflag;	        /*!< per-task flag used by the gravity LET-incompleteness detector (the export round-trip is retired) */
 extern int *Exportnodecount;
 extern int *Exportindex;
@@ -400,7 +399,6 @@ extern struct topnode_data
   peanokey Size;
   peanokey StartKey;
   long long Count;
-  MyFloat GravCost;
   int Daughter;
   int Pstart;
   int Blocks;
@@ -805,7 +803,6 @@ extern ALIGN(32) struct NODE
   }
   u;
 
-    double GravCost;
     integertime Ti_current;
     long N_part;   /*!< number of particles+cells in the tree node */
     MyFloat maxsoft;        /*!< hold the maximum gravitational softening of particle in the node */

@@ -59,8 +59,6 @@ int *Exportindex;
 
 int *Send_offset, *Send_count, *Recv_count, *Recv_offset, *Sendcount;
 
-int TakeLevel;
-
 std::vector<int> ActiveParticleList;
 unsigned char *ProcessedFlag;
 

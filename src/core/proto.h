@@ -104,6 +104,10 @@ void calculate_non_standard_physics(void);
 void compute_statistics(void);
 void execute_resubmit_command(void);
 void make_list_of_active_particles(void);
+void domain_reset_work_history(void);
+void domain_clear_work_history(int i);
+void domain_record_step_work(int i);
+void domain_merge_work_history(int i, int j);
 void output_extra_log_messages(void);
 
 
@@ -129,6 +133,8 @@ static inline double WRAP_POSITION_UNIFORM_BOX(double x)
 GIZMO_GPU_FUNCTION static inline double MINMOD(double a, double b) {return (a>0) ? ((b<0) ? 0 : DMIN(a,b)) : ((b>=0) ? 0 : DMAX(a,b));}
 /* special version of MINMOD below: a is always the "preferred" choice, b the stability-required one. here we allow overshoot, just not opposite signage */
 GIZMO_GPU_FUNCTION static inline double MINMOD_G(double a, double b) {return a;}
+/* the smaller of two domain-work timebin keys (P[].MinGravWorkBin and its siblings), where -1 means none recorded */
+GIZMO_GPU_FUNCTION static inline signed char min_work_bin(signed char a, signed char b) {return (a < 0) ? b : ((b < 0) ? a : ((a < b) ? a : b));}
 
 /* Whether a position lies outside the extent the domain was built on (DomainCorner, DomainLen). A Peano
    key is the mantissa of (Pos-DomainCorner)/DomainLen + 1, which encodes the position only while that
@@ -1087,7 +1093,7 @@ long long peek_total_particles_in_input(const char *fname);   /* particle count 
 void gizmo_register_hdf5_deflate_filter(void);  /* file_io/hdf5_deflate_filter.cc */
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
-void rearrange_particle_sequence(void);
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
 void remove_particle_from_tree(int i);
 void reorder_gas(void);

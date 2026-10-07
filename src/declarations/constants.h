@@ -195,9 +195,6 @@
 #endif
 #endif
 
-#ifndef  GRAVCOSTLEVELS
-#define  GRAVCOSTLEVELS      20
-#endif
 
 #define  NUMBER_OF_MEASUREMENTS_TO_RECORD  6  /* this is the number of past executions of a timebin that the reported average CPU-times average over */
 

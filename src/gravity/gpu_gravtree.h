@@ -99,4 +99,13 @@ int gpu_ewald_walk_primary(void);
 }
 #endif
 
+/* One committed walk of target i, as work for the next domain decomposition: its interactions added
+ * to P[i].GravWork, and the timebin it walked on kept if it is the smallest so far. The host and the
+ * device walk both record through here, so a step split between them adds one measure. */
+static inline void gravity_record_walk_work(int i, int n_interactions)
+{
+    P[i].GravWork += (float) n_interactions;
+    P[i].MinGravWorkBin = min_work_bin(P[i].MinGravWorkBin, (signed char) P[i].TimeBin);
+}
+
 #endif /* GIZMO_GPU_GRAVTREE_H */

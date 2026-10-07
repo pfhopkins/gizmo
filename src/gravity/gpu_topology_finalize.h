@@ -48,8 +48,7 @@ int gpu_topology_finalize_sibling(int n);
  * [0, n).  Idempotent.  Returns 0 on success. */
 int gpu_topology_writeback_d_to_aos(int n);
 
-/* GPU kernel that resets per-node ephemeral fields (GravCost,
- * Ti_current, dp, Ti_lastkicked, Flag, optional payloads) after topology
+/* GPU kernel that resets per-node ephemeral fields (Ti_current, dp, Ti_lastkicked, Flag, optional payloads) after topology
  * finalize and before moment_refresh accumulates fresh moments.  Operates
  * on the absolute Nodes[] index range [TreeNodeIndexBase .. TreeNodeIndexBase+n).  On the CPU
  * path FUNR does this work inline; on the GPU path FUNR is retired

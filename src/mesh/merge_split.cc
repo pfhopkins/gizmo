@@ -975,6 +975,7 @@ int merge_particles_ij(int i, int j)
     if(P[j].ID == All.SpawnedWindCellID) {P[j].ID = All.SpawnedWindCellID + 1;} /* offset this to avoid checks through code */
 #endif
     if(swap_ids) {P[j].ID=P[i].ID; P[j].ID_child_number=P[i].ID_child_number; P[j].ID_generation=P[i].ID_generation;} /* swap the ids so save the desired set */
+    domain_merge_work_history(i, j);
     
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     if(P[i].Type==4 && P[j].Type==P[i].Type) /* identify a star-star merger, need to update the effective size -before- updating anything else */
@@ -1397,8 +1398,18 @@ void remove_particle_from_treewalk(int i){
     'deletion', the standard procedure should be to set the deleted particle mass to zero, and then let this routine
     (when it is called in standard sequence) do its job and 'clean up' the particle
  */
-void rearrange_particle_sequence(void)
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 {
+    /* Under MAINTAIN_TREE_IN_REARRANGE every slot move repairs the standing tree's walk links, and finding the links into
+       one slot means walking the whole tree -- so a call that moves many particles costs that many full-tree walks. When
+       the caller frees or rebuilds the tree before anything walks it again, those repairs are discarded unread, and only
+       the attachment record (Father) is carried, as it is without the flag. */
+#ifdef MAINTAIN_TREE_IN_REARRANGE
+    const int repair_walk_links = !tree_rebuilt_before_next_walk;
+#else
+    const int repair_walk_links = 0;
+    (void) tree_rebuilt_before_next_walk;
+#endif
     /* With imported ghosts in [num_local, NumPart) this would scan ghost slots into the gas block,
        "eliminate" zero-mass ghost copies and shrink NumPart under the pool. */
     if(ghost_require_no_live_pool_for_layout_change("rearrange_particle_sequence")) {return;}
@@ -1471,11 +1482,8 @@ void rearrange_particle_sequence(void)
                 gascellsave = CellP[i];
                 CellP[i] = CellP[j];
                 CellP[j] = gascellsave;  /* have the gas particle take its gas/fluid cell pointer with it */
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i,j);
-#else
-                force_tree_swap_attachment_slots(i,j);   /* the parent follows the particle */
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(i,j);}
+                else {force_tree_swap_attachment_slots(i,j);}   /* the parent follows the particle */
 #ifdef CHIMES /* swap chimes-specific 'gasvars' structure which is separate from the default code gas cell structure */
                 gasVarsSave = ChimesGasVars[i]; ChimesGasVars[i] = ChimesGasVars[j]; ChimesGasVars[j] = gasVarsSave;
                 /* Old particle (now at position j) is no longer a gas particle, so delete its abundance array. */
@@ -1507,11 +1515,8 @@ void rearrange_particle_sequence(void)
 
                 P[i] = P[ngas_local - 1];
                 CellP[i] = CellP[ngas_local - 1];
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i, ngas_local-1);
-#else
-                force_tree_swap_attachment_slots(i, ngas_local-1);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(i, ngas_local-1);}
+                else {force_tree_swap_attachment_slots(i, ngas_local-1);}
                 /* swap with properties of last gas particle (i-- below will force a check of this so its ok) */
 #ifdef CHIMES
                 free_gas_abundances_memory(&(ChimesGasVars[i]), &ChimesGlobalVars);
@@ -1520,12 +1525,8 @@ void rearrange_particle_sequence(void)
 #endif
 
                 P[ngas_local - 1] = P[numpart_local - 1]; /* redirect the final gas pointer to go to the final particle (BH) */
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(ngas_local - 1, numpart_local-1);
-                remove_particle_from_treewalk(numpart_local - 1);
-#else
-                force_tree_swap_attachment_slots(ngas_local - 1, numpart_local-1);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(ngas_local - 1, numpart_local-1); remove_particle_from_treewalk(numpart_local - 1);}
+                else {force_tree_swap_attachment_slots(ngas_local - 1, numpart_local-1);}
                 ngas_local--; /* shorten the total N_gas count */
                 count_gaselim++; /* record that a BH was eliminated */
             }
@@ -1535,12 +1536,8 @@ void rearrange_particle_sequence(void)
                 P[i] = P[numpart_local - 1]; /* re-directs pointer for this particle to pointer at final particle -- so we
                                         swap the two; note that ordering -does not- matter among the non-fluid/gas cells
                                         so its fine if this mixes up the list ordering of different particle types */
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i, numpart_local - 1);
-                remove_particle_from_treewalk(numpart_local - 1);
-#else
-                force_tree_swap_attachment_slots(i, numpart_local - 1);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(i, numpart_local - 1); remove_particle_from_treewalk(numpart_local - 1);}
+                else {force_tree_swap_attachment_slots(i, numpart_local - 1);}
             }
 
             numpart_local--;
@@ -1572,15 +1569,14 @@ void rearrange_particle_sequence(void)
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}
-#ifndef MAINTAIN_TREE_IN_REARRANGE
-    /* Slots moved and the walk links were not repaired with them, so this tree must not be walked
-       again.  The sink spawn already asks for a rebuild on its own account; every other caller that
+    /* Slots moved and the walk links were not repaired with them (no MAINTAIN_TREE_IN_REARRANGE, or a caller that
+       rebuilds the tree anyway), so this tree must not be walked again.  The sink spawn already asks for a rebuild on
+       its own account; every other caller that
        re-sequences a live tree needs the same thing, and the one that does not ask for it today is
        the case where the spawn reservoir was over threshold but nothing was actually spawned.  The
        reduced count is what is tested, so every rank reaches the same decision and none of them is
        left walking a tree the others rebuilt. */
-    if(flag_sum) {TreeReconstructFlag = 1;}
-#endif
+    if(flag_sum && !repair_walk_links) {TreeReconstructFlag = 1;}
     wakeup_sidecar_invalidate();   /* particle indices compacted/reordered → rebuild WakeupDirty from P[] next scan */
 }
 
