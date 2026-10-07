@@ -451,7 +451,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     }
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
-    rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
     t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;
@@ -756,7 +756,7 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
     t_light_mergesplit = timediff(t_light_start, my_second());
     double t_tmp_light = my_second();
-    rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
     t_light_rearrange = timediff(t_tmp_light, my_second());
     UseAllParticles = UseAllTimeBins;
 

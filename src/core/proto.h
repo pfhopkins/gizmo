@@ -1093,7 +1093,7 @@ long long peek_total_particles_in_input(const char *fname);   /* particle count 
 void gizmo_register_hdf5_deflate_filter(void);  /* file_io/hdf5_deflate_filter.cc */
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
-void rearrange_particle_sequence(void);
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
 void remove_particle_from_tree(int i);
 void reorder_gas(void);

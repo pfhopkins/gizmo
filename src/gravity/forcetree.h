@@ -179,7 +179,8 @@ void   force_tree_invalidate_global_topology(void);
 /* Let a particle keep its parent when re-sequencing moves it between slots, so the record still
    describes the particles at the next rebuild.  Swaps only Father[]; drops the record if either slot
    is outside the tree's particle slots, and does nothing when there is no record to keep.  Not called
-   where MAINTAIN_TREE_IN_REARRANGE is doing the full pointer repair, which already swaps Father. */
+   where rearrange_particle_sequence does the full pointer repair (MAINTAIN_TREE_IN_REARRANGE, tree not about to be
+   rebuilt), which already swaps Father. */
 void   force_tree_swap_attachment_slots(int i, int j);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);

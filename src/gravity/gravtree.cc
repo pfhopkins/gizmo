@@ -174,7 +174,7 @@ void gravity_tree(void)
         PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
-        rearrange_particle_sequence();
+        rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
         refresh_old_acceleration_for_tree_opening();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         int build_status = force_treebuild(NumPart, NULL);
