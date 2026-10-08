@@ -606,7 +606,11 @@ void force_drift_node(int no, integertime time1)
     const double dt_widen = get_drift_factor_undilated(Nodes[no].Ti_current, time1);
 
     node_motion_advance(node, dt_drift, dt_widen);
-    node_hmax_drift(Extnodes[no], dt_widen);
+    if(node_hmax_drift(Extnodes[no], dt_widen, (double)All.MaxKernelRadius))
+      {
+        printf("Task=%d node %d: its kernel-length bounds could not be grown (divVmax=%g over dt=%g); set to the ceiling\n", ThisTask, no, (double)Extnodes[no].divVmax, dt_widen);
+        fflush(stdout); endrun(90000103);
+      }
 
     /* Record that this rank has now drifted at least one node to time1 without
      * updating that node's device SoA mirror. Relaxed: every caller passes
