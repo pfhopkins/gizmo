@@ -727,10 +727,26 @@ GIZMO_GPU_FUNCTION static inline double kernel_gravity(double u, double hinv, do
     }
 #endif
 
-    
+
     return 0;
 }
 
+
+/* One neighbour's contribution to the adaptive-softening correction 'zeta' of an element with inverse softening hinv_i,
+   from a neighbour of mass m_j and inverse softening hinv_j, at separation r. It follows how the gravity kernel treats a
+   pair inside the softening: averaging the two kernels gives each side half of the term; taking the larger softening
+   gives the whole term to the side whose softening is strictly the larger, and nothing to the other. */
+GIZMO_GPU_FUNCTION static inline double ags_zeta_pair_term(double r, double hinv_i, double hinv_j, double m_j)
+{
+    if(!(r * hinv_i < 1)) {return 0;}
+#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+    double prefac = 0.5; (void)hinv_j;
+#else
+    if(!(hinv_i < hinv_j)) {return 0;}
+    double prefac = 1;
+#endif
+    return prefac * m_j * kernel_gravity(r * hinv_i, hinv_i, hinv_i * hinv_i * hinv_i, 0);
+}
 
 
 #define KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER ((-1./kernel_gravity(0,1,1,-1))) /* factor which defines the plummer-equivalent radius for any kernel. multiplying ForceSoftening [radius of compact support] by this number gives the standard Plummer-equivalent definition: e.g. for a cubic spline, this returns 1./2.8, which is the desired conversion factor */

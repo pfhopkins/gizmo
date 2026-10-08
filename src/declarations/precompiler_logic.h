@@ -208,7 +208,18 @@
 #if !defined(ADAPTIVE_GRAVSOFT_FORGAS)
 #define ADAPTIVE_GRAVSOFT_FORGAS            /*! default choice is adaptive force softening for gas, but not stars [since ambiguously defined] */
 #endif
-#define ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING /* comment out to revert to behavior of taking 'greater' softening in pairwise kernel interactions with adaptive softenings enabled. really only needed currently for this particular AGS model given how it computes zeta terms (could be made optional with one more loop for those as well) */
+/* Where the non-gas adaptive-softening correction 'zeta' is summed (gas sums its own in the hydro gradients). With the
+   forces of a pair inside the softening symmetrized by averaging, the sum needs only the element's own softening, so the
+   softening (density) loop can take it; taking the larger softening needs both converged softenings, which the force
+   loop that CBE / fuzzy DM / SIDM already run over these elements has. Without such a loop, averaging is used. */
+#if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
+#define AGS_ZETA_IN_DENSITY
+#elif defined(CBE_INTEGRATOR) || defined(DM_FUZZY) || defined(DM_SIDM)
+#define AGS_ZETA_IN_FORCE
+#else
+#define AGS_ZETA_IN_DENSITY
+#define ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING /* symmetrize pairs inside the softening by averaging, instead of taking the larger softening */
+#endif
 #endif
 
 #if defined(COOL_GRACKLE) && !defined(COOLING)
