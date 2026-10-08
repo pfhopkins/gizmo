@@ -801,7 +801,7 @@ gravity_walk_attempt:
        fewest targets -- exactly the ones that take a different schedule from rank 0.  Without this
        an arm cannot tell whether the cooperative path ran at all, and a null result would be
        unreadable rather than negative. */
-    constexpr int mode_slots     = 3;   /* flat, packet, cooperative */
+    constexpr int mode_slots     = 4;   /* flat, packet, cooperative, flat walk that could not run as teams */
     constexpr int report_slots   = GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + mode_slots;
     long long packet_fail[report_slots] = {0};
     long long packet_fail_sum[report_slots] = {0};
@@ -816,6 +816,7 @@ gravity_walk_attempt:
         if(ps_local.mode == GRAV_PACKET_MODE_FLAT)             {packet_fail[mode_base + 0] = 1;}
         else if(ps_local.mode == GRAV_PACKET_MODE_PACKET)      {packet_fail[mode_base + 1] = 1;}
         else if(ps_local.mode == GRAV_PACKET_MODE_COOPERATIVE) {packet_fail[mode_base + 2] = 1;}
+        if(ps_local.mode == GRAV_PACKET_MODE_FLAT && ps_local.team == 0 && ps_local.team_max >= 0) {packet_fail[mode_base + 3] = 1;}
     }
     MPI_Reduce(packet_fail, packet_fail_sum, report_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(packet_fail, packet_fail_max, report_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
@@ -841,12 +842,13 @@ gravity_walk_attempt:
             const char *ps_mode = (ps.mode == GRAV_PACKET_MODE_COOPERATIVE) ? "cooperative"
                                 : (ps.mode == GRAV_PACKET_MODE_PACKET)      ? "packet"
                                 : (ps.mode == GRAV_PACKET_MODE_FLAT)        ? "flat" : "none";
-            fprintf(FdTimings, "packet-modes: ranks flat=%lld packet=%lld cooperative=%lld\n",
+            fprintf(FdTimings, "packet-modes: ranks flat=%lld packet=%lld cooperative=%lld flat-not-teams=%lld\n",
                     packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 0],
                     packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 1],
-                    packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 2]);
-            fprintf(FdTimings, "packet: mode=%s Q=%d T=%d Qdev=%d walkers=%d F=%d C=%d k=%d row=%d/%d scratch=%lld\n",
-                    ps_mode, TREE_QUERY_PACKET_SIZE, ps.team, ps.q_dev, ps.n_walkers, ps.frontier, ps.chunk,
+                    packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 2],
+                    packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 3]);
+            fprintf(FdTimings, "packet: mode=%s Q=%d T=%d Tmax=%d Qdev=%d walkers=%d F=%d C=%d k=%d row=%d/%d scratch=%lld\n",
+                    ps_mode, TREE_QUERY_PACKET_SIZE, ps.team, ps.team_max, ps.q_dev, ps.n_walkers, ps.frontier, ps.chunk,
                     ps.steps_per_round, ps.row_requested, ps.row_effective, ps.scratch_bytes);
             fprintf(FdTimings, "packet-gaveup: malformed=%lld pseudo=%lld nocont=%lld record=%lld noprogress=%lld (worst rank: %lld %lld %lld %lld %lld)\n",
                     packet_fail_sum[1], packet_fail_sum[2], packet_fail_sum[3], packet_fail_sum[4], packet_fail_sum[5],
