@@ -230,18 +230,19 @@ def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_fl
     system(f"chmod +x test/{test_name}/GIZMO")
 
 
-def download_test_files(test_name: str):
-    """Downloads the ICs and parameter files for a test of a given name"""
+def download_test_files(test_name: str, exact_files=None):
+    """Downloads the ICs and parameter files for a test of a given name. exact_files replaces the
+    conventional reference-solution names, so a regenerated reference can be published under a new
+    name without breaking checkouts that still expect the old one."""
 
     website_path = "http://www.tapir.caltech.edu/~phopkins/sims/"
     website_path2 = f"https://users.flatironinstitute.org/~mgrudic/gizmo_tests/{test_name}/"
 
     # Note: we are assuming a convention for the test ICs, params, and exact values
     icfile = f"{test_name}_ics.hdf5"
-    exactfile = f"{test_name}_exact.txt"  # exact solution (might not exist!)
-    exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
+    exact = exact_files or (f"{test_name}_exact.txt", f"{test_name}_exact.hdf5")  # might not exist!
 
-    for f in icfile, exactfile, exactfile2:
+    for f in (icfile, *exact):
         # Never clobber a locally-generated IC (e.g. from make_<test>_ics.py): a stale
         # remote copy would silently override the freshly generated one. Reference "exact"
         # solutions have no local generator, so those are always fetched.
@@ -493,7 +494,7 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
 
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (), timeout: float | None = None,
-                       param_overrides: dict | None = None):
+                       param_overrides: dict | None = None, exact_files=None):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
@@ -511,7 +512,7 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     try:
         chdir(f"test/{test_name}/")
         try:
-            download_test_files(test_name)
+            download_test_files(test_name, exact_files)
             run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout,
                      param_overrides=param_overrides)
         finally:

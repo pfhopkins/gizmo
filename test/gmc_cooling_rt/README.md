@@ -4,6 +4,8 @@ This test initializes a $$2\times10^4 M_\odot$$ giant molecular cloud at $1M_\od
 
 This is a benchmark test. Failing this test does not necessarily imply that there is a problem, but rather indicates that something has changed that should be noted.
 
+The reference is `gmc_cooling_rt_exact_coldstart.hdf5` (generated at 6602963f, cold start, with the RT/microphysics fixes), fetched from the test-file mirror. Checkouts without those fixes still use the older `gmc_cooling_rt_exact.hdf5`.
+
 Compile-time flags used for this setup:
 ```
   SINGLE_STAR_STARFORGE_DEFAULTS
