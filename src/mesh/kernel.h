@@ -735,10 +735,11 @@ GIZMO_GPU_FUNCTION static inline double kernel_gravity(double u, double hinv, do
 /* One neighbour's contribution to the adaptive-softening correction 'zeta' of an element with inverse softening hinv_i,
    from a neighbour of mass m_j and inverse softening hinv_j, at separation r. It follows how the gravity kernel treats a
    pair inside the softening: averaging the two kernels gives each side half of the term; taking the larger softening
-   gives the whole term to the side whose softening is strictly the larger, and nothing to the other. */
+   gives the whole term to the side whose softening is strictly the larger, and nothing to the other. An element
+   contributes nothing to its own sum: the conservative derivation excludes its self-potential. */
 GIZMO_GPU_FUNCTION static inline double ags_zeta_pair_term(double r, double hinv_i, double hinv_j, double m_j)
 {
-    if(!(r * hinv_i < 1)) {return 0;}
+    if(!(r > 0) || !(r * hinv_i < 1)) {return 0;}
 #if defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
     double prefac = 0.5; (void)hinv_j;
 #else
