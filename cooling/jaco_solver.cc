@@ -588,7 +588,8 @@ static double scaled_norm(const double *d, const double *cs, int n) {
    by their magnitudes, abundances floored at JACO_NORM_XMIN) than the Newton correction by
    1 - alpha/4; else alpha is halved. Being
    invariant to row scaling, it does not reject good steps because a fast, tiny species' residual
-   jumped in absolute terms, which a raw residual-norm test does.
+   jumped in absolute terms, which a raw residual-norm test does. If no alpha passes, the first trial
+   that passes with the variables it pins at a bound left out of its correction is taken.
    Converged when, over the free variables, the step is below tol (relative, plus JACO_X_ATOL for
    abundances) AND every residual is below tol times its row_scale. The returned state is the last
    evaluated one, so its residual is the one tested. On failure sv holds the last accepted iterate.
@@ -674,8 +675,9 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         held_prev = held;
 
         double norm_d = scaled_norm(d, w, n);
-        int accepted = 0;
-        SolveVars trial;
+        int accepted = 0, have_fallback = 0;
+        SolveVars trial, fallback;
+        struct Eval efallback;
         for (int bt = 0; bt <= JACO_MAX_BACKTRACK; bt++, alpha *= 0.5) {
             take_step(&trial, sv, idx, n, d, alpha, pr, set);
             if (evaluate(&trial, pr, &et, c)) continue;
@@ -687,6 +689,23 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
                 accepted = 1;
                 break;
             }
+            /* Fallback if no step passes: the same test without the variables the trial pins at a bound, which leave
+               the next system. A species decaying onto its floor from just above it keeps nearly all of its correction
+               there (its root lies below the floor), so the full test rejects every step that lands it. */
+            if (!have_fallback) {
+                for (int a = 0; a < n; a++)
+                    if (idx[a] >= 2 && is_pinned(idx[a], trial.data[idx[a]], et.F.data[idx[a]])) dbar[a] = 0;
+                if (scaled_norm(dbar, w, n) <= (1 - 0.25 * alpha) * norm_d) {
+                    fallback = trial;
+                    efallback = et;
+                    have_fallback = 1;
+                }
+            }
+        }
+        if (!accepted && have_fallback) {
+            trial = fallback;
+            et = efallback;
+            accepted = 1;
         }
         if (!accepted) return NEWTON_LINESEARCH;
         *sv = trial;
