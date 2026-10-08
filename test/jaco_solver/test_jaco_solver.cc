@@ -637,6 +637,32 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
          " x_Ne=9.3640811180711907e-05 x_O_tot=0.00053546471334260865 x_S=1.4456673733127759e-05"
          " x_Si=3.5539582848924831e-05 y=0.094444444475639752 z=0"},
 #endif
+#ifdef JACO_MODEL_SFX_NO_GRAIN_RECOMBINATION
+        /* SN_singlestar with JACO=sfx_no_grain_recombination (a knockout model in jaco's model_diff branch): the H+
+           balance has a neutral and an ionized root between ~10700 and ~12200 K, and the energy root lies on the
+           ionized branch (~11170 K, ~11300 K); tier 2 converged onto the jump between the branches, and tier 3 crept
+           up to the neutral branch's end and ran out of substeps */
+        {"SN 12065K H+ bistable", 1163206188832.6455, 12065.257447954842, 3.2746550500523199e-06, 1e-20, 1e-20,
+         1.8892559523646539e-08,
+         " Delta_t=12053429687.5 Delta_x=5.1117204990987565e+17 G_0=0.0058558039951543831 G_LW=1 ISRF=1"
+         " N_H=6.7809998032240346e+21 Td=14.111910925795728 X=0.71549999965273625 Z_d=1.0000000157437485 f_d=1 f_metal=0"
+         " f_neb=0 grad_v=6.9121533411559207e-12 grad_v_tf=6.9120352767212794e-12 n_Htot=1206.8741962381964"
+         " pdv_work=1.0251885047637987e-19 u_initial=1163206188832.6455 x_C_tot=0.00029466574453072901"
+         " x_Ca=2.400419300744924e-06 x_Fe=3.4441449710238874e-05 x_H_2_initial=1.8892559523646539e-08"
+         " x_Mg=4.4083392275880342e-05 x_N=7.3974244325601939e-05 x_Ne=9.3640811999614999e-05"
+         " x_O_tot=0.0005354647179154282 x_S=1.4456673813268023e-05 x_Si=3.5539582991851402e-05 y=0.094444444533504937"
+         " z=0"},
+        {"SN 9142K H+ bistable", 881396205553.2605, 9142.2645296425308, 4.1625860639221408e-07, 1e-20, 1e-20,
+         9.0252570932198488e-07,
+         " Delta_t=6026714843.75 Delta_x=7.0861208312778957e+17 G_0=0.0072649306284368982 G_LW=1 ISRF=1"
+         " N_H=6.5231644796047946e+21 Td=12.993766935117343 X=0.71549999083399995 Z_d=1.0000004266493208 f_d=1 f_metal=0"
+         " f_neb=0 grad_v=5.7623478678806135e-12 grad_v_tf=5.1584748420853096e-12 n_Htot=453.04113182836358"
+         " pdv_work=6.2172157731918698e-20 u_initial=881396205553.2605 x_C_tot=0.0002946661332914159"
+         " x_Ca=2.4004193681172796e-06 x_Fe=3.444145053794114e-05 x_H_2_initial=9.0252570932198488e-07"
+         " x_Mg=4.4083416290655015e-05 x_N=7.3974260089430455e-05 x_Ne=9.3640839953215222e-05"
+         " x_O_tot=0.00053546485225023515 x_S=1.4456674591489198e-05 x_Si=3.5539584271264792e-05 y=0.094444446740143573"
+         " z=0"},
+#endif
     };
     int nfail = 0, ncells = sizeof(cells) / sizeof(cells[0]);
     if (ncells) printf("\n== recorded cells ==\n");

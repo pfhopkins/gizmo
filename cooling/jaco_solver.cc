@@ -18,7 +18,9 @@
  *      below tol, which only shrinks it further).
  *   2  1-D rootfind in T: chemistry solved at fixed T, R(T) = energy residual; geometric
  *      bracketing outward from T0 then Brent in ln T, then a short Newton polish. If R keeps its
- *      sign down to the floor (or up to the ceiling) the answer is the floor (ceiling).
+ *      sign down to the floor (or up to the ceiling) the answer is the floor (ceiling). If that
+ *      fails, it is repeated with every chemistry solve started from one end of the bracket, then
+ *      the other (where the chemistry is bistable: each branch, the start's first).
  *   3  subcycling: halve the substep until tiers 1-2 succeed on each piece.
  * A non-finite residual rejects that step or trial point. A non-finite Jacobian column (the
  * generated derivative of a rate that underflowed to zero can be 0/0 although the rate itself is
@@ -724,6 +726,7 @@ struct RootCtx {
     const struct JacoSolverSettings *set;
     struct Counters *c;
     int level; /* the time-dependent species a td_bracketed search is over */
+    const SolveVars *seed; /* if set, every evaluation starts from it instead of the nearest remembered state */
     int nhist, next;
     double yh[JACO_ROOT_HISTORY];
     SolveVars xh[JACO_ROOT_HISTORY];
@@ -736,6 +739,7 @@ static void root_init(struct RootCtx *ctx, int (*eval)(double, SolveVars *, stru
     ctx->set = set;
     ctx->c = c;
     ctx->level = 0;
+    ctx->seed = NULL;
     ctx->nhist = 0;
     ctx->next = 0;
 }
@@ -746,12 +750,16 @@ static void root_remember(struct RootCtx *ctx, double y, const SolveVars *x) {
     ctx->xh[slot] = *x;
 }
 
-/* evaluate at y from the nearest remembered state (or *x if none); the solved state goes to *x */
+/* evaluate at y from ctx->seed if set, else from the nearest remembered state (or *x if none); the solved state goes
+   to *x */
 static int root_eval(struct RootCtx *ctx, double y, SolveVars *x, double *val) {
     int best = -1;
     for (int i = 0; i < ctx->nhist; i++)
         if (best < 0 || fabs(ctx->yh[i] - y) < fabs(ctx->yh[best] - y)) best = i;
-    if (best >= 0) *x = ctx->xh[best];
+    if (ctx->seed)
+        *x = *ctx->seed;
+    else if (best >= 0)
+        *x = ctx->xh[best];
     if (ctx->eval(y, x, ctx, val)) return -1;
     root_remember(ctx, y, x);
     return 0;
@@ -1061,10 +1069,13 @@ static int pin_to_floor(SolveVars *x, const Params *pr, const struct JacoSolverS
     return 0;
 }
 
-/* Tier-2 search. On success sv holds the answer, PINNED if it is the floor or ceiling. */
-static enum Outcome rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
+/* Tier-2 search. On success sv holds the answer, PINNED if it is the floor or ceiling. With seed, every chemistry solve
+   starts from it. ends (if given) gets the solved states at the bracket's start-side and far ends, once bracketed. */
+static enum Outcome rootfind_T(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                               const SolveVars *seed, SolveVars ends[2], int *have_ends) {
     struct RootCtx ctx;
     root_init(&ctx, energy_eval, pr, set, c);
+    ctx.seed = seed;
     const double T_hi = set->T_max;
     SolveVars xa = *sv;
     double Ta = fmax(set->T_min, fmin(T_hi, sv->T)), Ra;
@@ -1116,6 +1127,11 @@ static enum Outcome rootfind_T(SolveVars *sv, const Params *pr, const struct Jac
         fac *= JACO_BRACKET_GROW;
     }
     if (!bracketed) return OUTCOME_FAILED;
+    if (ends) {
+        ends[0] = xa;
+        ends[1] = xb;
+        *have_ends = 1;
+    }
 
     double y;
     if (brent(&ctx, log(Ta), Ra, &xa, log(Tb), Rb, &xb, set->tol, &y, sv)) return OUTCOME_FAILED;
@@ -1173,9 +1189,10 @@ static enum Outcome tier1_newton(SolveVars *sv, const Params *pr, const struct J
     return o;
 }
 
-/* Tier 2: rootfind in T, onto the energy floor, then the acceptance test. */
-static enum Outcome tier2_rootfind(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
-    enum Outcome r = rootfind_T(sv, pr, set, c);
+/* One tier-2 search (see rootfind_T), onto the energy floor, then the acceptance test. */
+static enum Outcome tier2_attempt(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                                  const SolveVars *seed, SolveVars ends[2], int *have_ends) {
+    enum Outcome r = rootfind_T(sv, pr, set, c, seed, ends, have_ends);
     if (r == OUTCOME_FAILED) return r;
     enum Outcome f = onto_floor(sv, pr, set);
     if (f == OUTCOME_FAILED) return f;
@@ -1185,6 +1202,24 @@ static enum Outcome tier2_rootfind(SolveVars *sv, const Params *pr, const struct
         return OUTCOME_FAILED;
     }
     return pinned ? OUTCOME_PINNED : OUTCOME_SOLVED;
+}
+
+/* Tier 2. Where the fixed-T chemistry has two stable roots (e.g. a neutral and an ionized H+ balance), warm starts
+   from the nearest evaluated T switch between them, R(T) jumps sign where they do, and Brent converges onto that
+   jump rather than a root. If the search fails, it is repeated with every chemistry solve started from one end of the
+   bracket, along whose branch R is continuous: the start's side first (the branch the evolution follows), then the
+   far side (the branch past the jump). */
+static enum Outcome tier2_rootfind(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c) {
+    const SolveVars start = *sv;
+    SolveVars ends[2];
+    int have_ends = 0;
+    enum Outcome o = tier2_attempt(sv, pr, set, c, NULL, ends, &have_ends);
+    for (int k = 0; k < 2 && o == OUTCOME_FAILED && have_ends; k++) {
+        if (set->verbose) printf("  jaco tier 2: retrying with the chemistry seeded from T=%g\n", ends[k].T);
+        *sv = start;
+        o = tier2_attempt(sv, pr, set, c, &ends[k], NULL, NULL);
+    }
+    return o;
 }
 
 /* Tiers 1 and 2 over one (sub)step; *tier is set on success, sv left at the start on failure. */
