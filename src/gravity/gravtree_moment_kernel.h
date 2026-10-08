@@ -833,22 +833,29 @@ KOKKOS_INLINE_FUNCTION static void node_motion_advance(const Node &n, double dt_
     n.len() = (MyFloat)((double) n.len() + TREE_NODE_WIDENING_DELTA(n.vmax(), dt_widen));
 }
 
-/* The kernel lengths a node bounds grow over a drift by the particle drift's capped factor
- * (kernel_radius_drift_factor) applied to the largest member divergence.  Each member grows on its own
- * dilated interval; a dilation factor is at most one, so the undilated interval dt_widen is at least as
- * long as any member's, and the node's own (centre-of-mass) interval would not be.  divVmax is a maximum
- * taken from zero, so the factor is never below one: the scalar hmax and the per-type bands only grow
- * here (force_update_hmax raises them to the active members'; only a tree build re-seeds them, and can lower
- * them).  divVmax is gathered from every member
- * whose radius a drift advances by its own divergence (particle_radius_drifts_with_divergence_P), so it
- * grows each band at least as fast as any of the band's members. */
-KOKKOS_INLINE_FUNCTION static void node_hmax_drift(struct extNODE &ext, double dt_widen)
+/* The kernel lengths a node bounds grow over its drift by aggregate_radius_bound applied to the largest
+ * member divergence: a member may have drifted several times within the node's one interval, each drift
+ * capping only its own growth, so the node's growth is not capped -- only held under the ceiling no drift
+ * can pass.  Each member grows on its own dilated interval; a dilation factor is at most one, so the
+ * undilated interval dt_widen is at least as long as any member's, and the node's own (centre-of-mass)
+ * interval would not be.  divVmax is a maximum taken from zero, so the scalar hmax and the per-type bands
+ * only grow here (force_update_hmax raises them to the active members'; only a tree build re-seeds them,
+ * and can lower them).  divVmax is gathered from every member whose radius a drift advances by its own
+ * divergence (particle_radius_drifts_with_divergence_P), so it grows each band at least as fast as any of
+ * the band's members.  Returns nonzero when an input was not a finite non-negative number: the bands were
+ * set to the ceiling and the caller must report it. */
+KOKKOS_INLINE_FUNCTION static int node_hmax_drift(struct extNODE &ext, double dt_widen, double max_kernel_radius)
 {
-    const double growth = kernel_radius_drift_factor((double) ext.divVmax * dt_widen);
-    if(ext.hmax > 0) {ext.hmax = (MyFloat)((double) ext.hmax * growth);}
+    int invalid = 0;
+    const double divvmax = (double) ext.divVmax;
+    /* a stored bound that is not a number is itself corrupt: report it and hold the ceiling */
+    if(!(ext.hmax >= 0)) {invalid = 1; ext.hmax = (MyFloat) max_kernel_radius;}
+    else if(ext.hmax > 0) {ext.hmax = (MyFloat) aggregate_radius_bound((double) ext.hmax, divvmax, dt_widen, max_kernel_radius, &invalid);}
     for(int t = 0; t < 6; t++) {
-        if(ext.hmax_per_type[t] > 0) {ext.hmax_per_type[t] = (MyFloat)((double) ext.hmax_per_type[t] * growth);}
+        if(!(ext.hmax_per_type[t] >= 0)) {invalid = 1; ext.hmax_per_type[t] = (MyFloat) max_kernel_radius;}
+        else if(ext.hmax_per_type[t] > 0) {ext.hmax_per_type[t] = (MyFloat) aggregate_radius_bound((double) ext.hmax_per_type[t], divvmax, dt_widen, max_kernel_radius, &invalid);}
     }
+    return invalid;
 }
 
 #endif /* GRAVTREE_MOMENT_KERNEL_H */

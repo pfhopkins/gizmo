@@ -54,6 +54,19 @@
  * same way. See drift_kick_table_mirror_refresh. */
 static double *drift_kick_table_dev_ = NULL;   /* SharedSpace, 2 * DRIFT_TABLE_LENGTH doubles */
 static int *list_index_outside_mirror_dev_ = NULL;   /* SharedSpace, one flag for gpu_device_node_list_bring_current */
+static int *node_bound_invalid_dev_ = NULL;          /* SharedSpace, one flag: a node's kernel-length bounds could not be grown */
+
+/* The flag the device venues raise when node_hmax_drift meets an invalid input, cleared for a launch. */
+static int *node_bound_invalid_flag(void)
+{
+    if(!node_bound_invalid_dev_) {node_bound_invalid_dev_ = (int *) gizmo_gpu_alloc_shared(sizeof(int), "node_bound_invalid_flag");}
+    if(node_bound_invalid_dev_) {*node_bound_invalid_dev_ = 0;}
+    return node_bound_invalid_dev_;
+}
+static void node_bound_invalid_report(const int *flag, const char *venue)
+{
+    if(flag && *flag) {printf("Task=%d %s: a node's kernel-length bounds could not be grown (invalid divVmax or interval); set to the ceiling\n", ThisTask, venue); fflush(stdout); endrun(90000104);}
+}
 
 /* --- dispatcher ---------------------------------------------------------- */
 
@@ -110,10 +123,10 @@ static inline struct gpu_node_mirror_ptrs_t gpu_node_mirror_ptrs(struct gpu_grav
  * `fold_kick` is the caller's: every venue folds a pending kick only when it moves the node
  * forward -- the host (force_drift_node) returns early on a node already at the target time, and
  * the sweep's refresh pass, which falls through at dt = 0 to rewrite the mirror, passes 0 there. */
-static KOKKOS_INLINE_FUNCTION void
+static KOKKOS_INLINE_FUNCTION int
 gpu_node_drift_apply(struct NODE *Nodes_uvm, struct extNODE *Extnodes_uvm, int no,
                      integertime ti_target, double dt_drift, double dt_widen,
-                     int fold_kick)
+                     int fold_kick, double max_kernel_radius)
 {
     /* The arithmetic is the shared node-motion unit (gravtree_moment_kernel.h), the same one the host
        lazy drift runs; the kick is folded only when the caller asks (see above). */
@@ -124,9 +137,10 @@ gpu_node_drift_apply(struct NODE *Nodes_uvm, struct extNODE *Extnodes_uvm, int n
         Nodes_uvm[no].u.d.bitflags &= (~(1u << BITFLAG_NODEHASBEENKICKED));
     }
     node_motion_advance(node, dt_drift, dt_widen);
-    node_hmax_drift(Extnodes_uvm[no], dt_widen);
+    const int invalid = node_hmax_drift(Extnodes_uvm[no], dt_widen, max_kernel_radius);
 
     Nodes_uvm[no].Ti_current = ti_target;
+    return invalid;   /* nonzero: the node's kernel-length bounds were set to the ceiling, and must be reported */
 }
 
 /* Publish one node's mirror.  Plain copies from the AoS, never monotone clamps: the moment
@@ -147,7 +161,8 @@ gpu_node_mirror_publish(const struct gpu_node_mirror_ptrs_t &m, int k, int no,
     m.vs[k]   = { (MyGravFloat)Extnodes_uvm[no].vs[0],
                     (MyGravFloat)Extnodes_uvm[no].vs[1],
                     (MyGravFloat)Extnodes_uvm[no].vs[2] };
-    m.hmax[k] = (MyGravFloat)Extnodes_uvm[no].hmax;
+    /* a reach this large already covers any domain; held finite for a single-precision mirror */
+    m.hmax[k] = (MyGravFloat)((Extnodes_uvm[no].hmax < 1.0e30) ? (double)Extnodes_uvm[no].hmax : 1.0e30);
     m.bitflags[k] = Nodes_uvm[no].u.d.bitflags;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     m.rt_s[k]  = { (MyGravFloat)Nodes_uvm[no].rt_source_lum_s[0],
@@ -243,6 +258,15 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
     /* The mirror pointers, packed: the kernel captures ONE value, and the subset consumer
      * fills the same pack from the same SoA so both publish through one unit. */
     const struct gpu_node_mirror_ptrs_t mirror = gpu_node_mirror_ptrs(soa);
+    const double max_kernel_radius = (double) All.MaxKernelRadius;
+    int *bound_invalid = node_bound_invalid_flag();
+    if(!bound_invalid) {
+        printf("gpu_force_drift_nodes: flag alloc failed\n");
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
+#endif
+        endrun(929702); return 1;
+    }
 
     Kokkos::parallel_for("gpu_force_drift_nodes", n_nodes, KOKKOS_LAMBDA(int kk) {
         /* kk in [0, n_local_nodes) drives local nodes; kk in
@@ -286,13 +310,14 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
 
         /* A pending kick is folded only when the node moves forward, as the host drift and the walk's
            read-only prediction both do: a node already at the target time keeps it pending. */
-        gpu_node_drift_apply(Nodes_uvm, Extnodes_uvm, no, ti_target,
-                             dt_drift, dt_widen, /*fold_kick=*/!node_already_current);
+        if(gpu_node_drift_apply(Nodes_uvm, Extnodes_uvm, no, ti_target,
+                                dt_drift, dt_widen, /*fold_kick=*/!node_already_current, max_kernel_radius)) {Kokkos::atomic_store(bound_invalid, 1);}
 
         gpu_node_mirror_publish(mirror, k, no, Nodes_uvm, Extnodes_uvm);
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gpu_force_drift_nodes", n_nodes);
+    node_bound_invalid_report(bound_invalid, "gpu_force_drift_nodes");
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
 #endif
@@ -337,6 +362,8 @@ extern "C" int gpu_device_node_list_bring_current(const int *list, int n, int ba
     }
     int *index_outside = list_index_outside_mirror_dev_;
     *index_outside = 0;
+    int *bound_invalid = node_bound_invalid_flag();   /* before any scratch below, so failing here leaves nothing behind */
+    if(!bound_invalid) {return 1;}
 
     /* The same interpolator and the same table view the sweep uses. */
     struct DriftKickTableView table_view;
@@ -358,6 +385,7 @@ extern "C" int gpu_device_node_list_bring_current(const int *list, int n, int ba
     struct extNODE *Extnodes_uvm = Extnodes;
     const struct gpu_node_mirror_ptrs_t mirror = gpu_node_mirror_ptrs(soa);
     const integertime ti_target = time1;
+    const double max_kernel_radius = (double) All.MaxKernelRadius;
 
     /* One lane per listed node: independent O(1) work, no serial chain, so the second level
      * of parallelism this loop is asked for is over the list itself. */
@@ -373,13 +401,14 @@ extern "C" int gpu_device_node_list_bring_current(const int *list, int n, int ba
 #endif
             double dt_drift, dt_widen;
             node_motion_intervals(Nodes_uvm[no].Ti_current, ti_target, dilation, &table_view, dt_drift, dt_widen);
-            gpu_node_drift_apply(Nodes_uvm, Extnodes_uvm, no, ti_target,
-                                 dt_drift, dt_widen, /*fold_kick=*/1);
+            if(gpu_node_drift_apply(Nodes_uvm, Extnodes_uvm, no, ti_target,
+                                    dt_drift, dt_widen, /*fold_kick=*/1, max_kernel_radius)) {Kokkos::atomic_store(bound_invalid, 1);}
         }
         gpu_node_mirror_publish(mirror, k, no, Nodes_uvm, Extnodes_uvm);
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("gpu_node_subset_bring_current", n);
+    node_bound_invalid_report(bound_invalid, "gpu_node_subset_bring_current");
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
 #endif
@@ -439,7 +468,9 @@ extern "C" int gpu_node_dirty_bring_gravity_current(integertime time1)
         const struct gpu_node_mirror_ptrs_t mirror = gpu_node_mirror_ptrs(soa);
 
         /* Each listed node is independent O(1) work, so the threads split the list. */
-#pragma omp parallel for schedule(static)
+        const double max_kernel_radius = (double) All.MaxKernelRadius;
+        int bound_invalid = 0;
+#pragma omp parallel for schedule(static) reduction(|:bound_invalid)
         for(int i = 0; i < n; i++) {
             const int no = v.list[i];
             if(Nodes[no].Ti_current != time1) {
@@ -450,10 +481,11 @@ extern "C" int gpu_node_dirty_bring_gravity_current(integertime time1)
 #endif
                 double dt_drift, dt_widen;
                 node_motion_intervals(Nodes[no].Ti_current, time1, dilation, &table_view, dt_drift, dt_widen);
-                gpu_node_drift_apply(Nodes, Extnodes, no, time1, dt_drift, dt_widen, /*fold_kick=*/1);
+                bound_invalid |= gpu_node_drift_apply(Nodes, Extnodes, no, time1, dt_drift, dt_widen, /*fold_kick=*/1, max_kernel_radius);
             }
             gpu_node_mirror_publish(mirror, no - v.base, no, Nodes, Extnodes);
         }
+        node_bound_invalid_report(&bound_invalid, "gpu_node_list_bring_current");
     }
 
     /* The claims are answered, so close the epoch: the generation bump invalidates every stamp
@@ -472,6 +504,8 @@ extern "C" void gpu_force_drift_release(void)
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(drift_kick_table_dev_);
         drift_kick_table_dev_ = NULL;
     }
+    if(list_index_outside_mirror_dev_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(list_index_outside_mirror_dev_); list_index_outside_mirror_dev_ = NULL;}
+    if(node_bound_invalid_dev_) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(node_bound_invalid_dev_); node_bound_invalid_dev_ = NULL;}
 }
 
 /* The ordinary sweep: advance whatever is behind, leave the rest alone. */
