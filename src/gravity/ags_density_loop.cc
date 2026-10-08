@@ -840,9 +840,12 @@ void ags_density(void)
                 double maxsoft = ags_return_maxsoft(i);
                 minsoft = DMAX(minsoft, AGS_Prev[i] * AGS_DSOFT_TOL);
                 maxsoft = DMIN(maxsoft, AGS_Prev[i] / AGS_DSOFT_TOL);
+#ifdef AGS_ZETA_IN_FORCE
+                P[i].AGS_zeta = 1;   /* the pair sum is taken by AGSForce_calc, which multiplies it into what this pass stores */
+#endif
                 if(P[i].AGS_KernelRadius >= maxsoft) { P[i].AGS_zeta = 0; }
 
-                double z0 = 0.5 * P[i].AGS_zeta * P[i].AGS_KernelRadius /
+                double z0 = P[i].AGS_zeta * P[i].AGS_KernelRadius /   /* the pair sum carries its symmetrization factor */
                             (NUMDIMS * P[i].Mass * P[i].NumNgb /
                              (VOLUME_NORM_COEFF_FOR_NDIMS *
                               pow(P[i].AGS_KernelRadius, NUMDIMS)));

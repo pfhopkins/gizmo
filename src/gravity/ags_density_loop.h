@@ -235,7 +235,9 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
 
     accum.Ngb       += wk;
     accum.DrkernNgb += -(NUMDIMS * hinv * wk + u * dwk);
-    accum.AGS_zeta  += (double)neighbor_particle.Mass * kernel_gravity(u, hinv, hinv3, 0);
+#ifdef AGS_ZETA_IN_DENSITY
+    accum.AGS_zeta  += ags_zeta_pair_term(r, hinv, 1. / (double)neighbor_particle.AGS_KernelRadius, (double)neighbor_particle.Mass);
+#endif
 
     if(r > 0) {
         Vec3<double> dv;

@@ -119,6 +119,10 @@ void AgsForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
                                            int /*active_slot*/, int i,
                                            const AccumData& accum)
 {
+#ifdef AGS_ZETA_IN_FORCE
+    /* ags_density stored the normalization for this step; this is the pair sum */
+    P[i].AGS_zeta *= accum.AGS_zeta;
+#endif
 #if defined(DM_SIDM)
     for(int k = 0; k < 3; k++) {
         P[i].Vel[k] += accum.sidm_kick[k];

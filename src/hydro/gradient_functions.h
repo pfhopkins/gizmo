@@ -548,11 +548,7 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
     if(kernel->r > 0 && local->Mass > 0 && P[j].Mass > 0 && kernel->h_i > 0 && h_j > 0)
     {
-        double prefac_ags_a=0.5, prefac_ags_b=0.5, h_a_inv=hinv, h_b_inv=1./h_j, m_b=P[j].Mass;
-#if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
-        if(h_a_inv < h_b_inv) {prefac_ags_a=1; prefac_ags_b=0; h_b_inv=h_a_inv;} else {prefac_ags_a=0; prefac_ags_b=1; h_a_inv=h_b_inv;}
-#endif
-        if((kernel->r*h_a_inv < 1) && (prefac_ags_a > 0)) {out->AGS_zeta += prefac_ags_a * m_b * kernel_gravity(kernel->r*h_a_inv, h_a_inv, h_a_inv*h_a_inv*h_a_inv, 0);}
+        out->AGS_zeta += ags_zeta_pair_term(kernel->r, hinv, 1./h_j, P[j].Mass);
     }
 #endif
 

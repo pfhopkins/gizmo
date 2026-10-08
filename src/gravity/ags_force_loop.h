@@ -153,6 +153,9 @@ struct AgsForceKernel {
 /* Per-active accumulator. Field set is the legacy ags_force_gpu_out (in the
  * retired gravity/ags_gpu_decls.h) ported here as the SSOT. */
 struct AgsForceOut {
+#ifdef AGS_ZETA_IN_FORCE
+    double AGS_zeta;              /* pair sum of the adaptive-softening correction (ags_zeta_pair_term) */
+#endif
 #if defined(DM_SIDM)
     double sidm_kick[3];
     double dtime_sidm;            /* MIN-reduced; sentinel = MAX_REAL_NUMBER in zero_accum */
@@ -292,6 +295,9 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     if(kernel.r > kernel.h_i && kernel.r > kernel.h_j) return;
 
     kernel_hinv(kernel.h_j, &kernel.hinv_j, &kernel.hinv3_j, &kernel.hinv4_j);
+#ifdef AGS_ZETA_IN_FORCE
+    accum.AGS_zeta += ags_zeta_pair_term(kernel.r, kernel.hinv_i, kernel.hinv_j, (double)Pj.Mass);
+#endif
     double u_i = kernel.r * kernel.hinv_i;
     double u_j = kernel.r * kernel.hinv_j;
     if(u_i < 1) kernel_main(u_i, kernel.hinv3_i, kernel.hinv4_i, &kernel.wk_i, &kernel.dwk_i, 0);
@@ -658,6 +664,9 @@ struct AgsForceSpec {
 #define ACCUM_MAX(field)         if(peer_accum.field > local_accum.field) local_accum.field = peer_accum.field;
 #define ACCUM_MUL(field)         local_accum.field *= peer_accum.field;
 
+#ifdef AGS_ZETA_IN_FORCE
+        ACCUM_ADD(AGS_zeta)
+#endif
 #if defined(DM_SIDM)
         ACCUM_ADD_ARRAY(sidm_kick, 3)
         ACCUM_MIN(dtime_sidm)

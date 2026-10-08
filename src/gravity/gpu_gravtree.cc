@@ -458,8 +458,7 @@ struct gpu_grav_member_inputs_t {
 #endif
 };
 
-struct gpu_grav_member_sums_t {
-    grav_pair_acc_t out;
+struct gpu_grav_member_optional_sums_t {
 #ifdef COUNT_MASS_IN_GRAVTREE
     double tree_mass;
 #endif
@@ -495,15 +494,27 @@ struct gpu_grav_member_sums_t {
 #endif
 };
 
+/* Everything the walk accumulates for one member: the core every build has, and the optional
+ * groups.  The packet engine keeps the two apart while it evaluates -- the core in registers for
+ * one evaluation pass, the optional groups in the lane's slot of team scratch -- so nothing a
+ * member accumulates is held privately across the traversal. */
+struct gpu_grav_member_sums_t {
+    grav_pair_core_acc_t core;
+    [[no_unique_address]] grav_pair_optional_acc_t pair;   /* tidal tensor / jerk / tidal-zeta, under their flags; takes no space when empty */
+    gpu_grav_member_optional_sums_t optional;
+};
+
 /* Every field of the sums, with the rule that combines two partial sums of the same member into one:
- * `a` takes in `b`.  THE single list for this member: a field added to gpu_grav_member_sums_t is added
- * here in the same edit, or the packet engine's fold silently drops it (the pair and sink-proximity
- * accumulators carry their own rules beside their definitions).  Every rule is a sum, a minimum, or a
+ * `a` takes in `b`.  THE single list for this member: a field added to gpu_grav_member_optional_sums_t
+ * is added here in the same edit, or the packet engine's fold silently drops it (the pair and
+ * sink-proximity accumulators carry their own rules beside their definitions).  Every rule is a sum, a minimum, or a
  * minimum carrying the fields that describe what attained it; on equal minima `a` keeps its own.
  * target_ptype is the member's type, which the sink-proximity rules need. */
-KOKKOS_INLINE_FUNCTION void gpu_grav_member_sums_combine(gpu_grav_member_sums_t &a, const gpu_grav_member_sums_t &b, int target_ptype)
+KOKKOS_INLINE_FUNCTION void gpu_grav_member_sums_combine(gpu_grav_member_sums_t &member_a, const gpu_grav_member_sums_t &member_b, int target_ptype)
 {
-    grav_pair_acc_combine(a.out, b.out);
+    grav_pair_core_acc_combine(member_a.core, member_b.core);
+    grav_pair_optional_acc_combine(member_a.pair, member_b.pair);
+    gpu_grav_member_optional_sums_t &a = member_a.optional; const gpu_grav_member_optional_sums_t &b = member_b.optional;
 #ifdef COUNT_MASS_IN_GRAVTREE
     a.tree_mass += b.tree_mass;
 #endif
@@ -539,12 +550,6 @@ KOKKOS_INLINE_FUNCTION void gpu_grav_member_sums_combine(gpu_grav_member_sums_t 
 #endif
     (void) target_ptype;
 }
-
-/* The single-target walk holds both halves itself. */
-struct gpu_grav_member_t {
-    gpu_grav_member_inputs_t in;
-    gpu_grav_member_sums_t sums;
-};
 
 /* What an accepted element carries from its load to the shared evaluation, beyond
  * the pair inputs in grav_pair_src_t: the payload values the walker-local blocks
@@ -622,46 +627,53 @@ gpu_grav_open_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target,
 /* Zero one member's sums: every field starts at the identity of the rule that folds it
  * (gpu_grav_member_sums_combine), so a partial that never evaluates anything folds in as nothing. */
 static KOKKOS_INLINE_FUNCTION void
-gpu_grav_member_sums_init(gpu_grav_member_sums_t &sums)
+gpu_grav_member_optional_sums_init(gpu_grav_member_optional_sums_t &optional)
 {
-    grav_pair_acc_init(sums.out);
 #ifdef COUNT_MASS_IN_GRAVTREE
     /* Diagnostic: total mass seen by this target during the walk, summed only
      * over accepted interactions (mirrors forcetree.cc). The walk excludes the
      * target's own leaf (r2==0); the post-loop +=P[i].Mass in gravtree.cc
      * finalizes the sum. */
-    sums.tree_mass = 0.0;
+    optional.tree_mass = 0.0;
 #endif
 #ifdef SINK_COMPTON_HEATING
-    sums.incident_flux_agn = 0.0;
+    optional.incident_flux_agn = 0.0;
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    sums.SubGrid_CosmicRayEnergyDensity = 0.0;
+    optional.SubGrid_CosmicRayEnergyDensity = 0.0;
 #endif
 #ifdef SINK_CALC_DISTANCES
-    grav_sink_prox_accum_init(sums.sink_prox);
+    grav_sink_prox_accum_init(optional.sink_prox);
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
-    {int kb; for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++) {sums.treecol_angular_bins[kb]=0.0;}}
+    {int kb; for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++) {optional.treecol_angular_bins[kb]=0.0;}}
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-    sums.m_enc_in_rcrit = 0.0;
+    optional.m_enc_in_rcrit = 0.0;
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
-    {int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {sums.chimes_flux_G0[kc]=0; sums.chimes_flux_ion[kc]=0;}}
+    {int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {optional.chimes_flux_G0[kc]=0; optional.chimes_flux_ion[kc]=0;}}
 #endif
 #ifdef RT_OTVET
-    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {sums.RT_ET[kf] = {};}}
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {optional.RT_ET[kf] = {};}}
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-    sums.incident_flux_uv = 0.0; sums.incident_flux_euv = 0.0;
+    optional.incident_flux_uv = 0.0; optional.incident_flux_euv = 0.0;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {sums.Rad_E_gamma[kf]=0.0;}}
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {optional.Rad_E_gamma[kf]=0.0;}}
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {sums.Rad_Flux[kf]={};}}
+    {int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {optional.Rad_Flux[kf]={};}}
 #endif
+}
+
+static KOKKOS_INLINE_FUNCTION void
+gpu_grav_member_sums_init(gpu_grav_member_sums_t &sums)
+{
+    grav_pair_core_acc_init(sums.core);
+    grav_pair_optional_acc_init(sums.pair);
+    gpu_grav_member_optional_sums_init(sums.optional);
 }
 
 /* Set up one target's inputs for the walk (the CPU walk's target prologue).
@@ -738,14 +750,6 @@ gpu_grav_member_inputs_init(const gpu_grav_walk_ctx_t &ctx, int target, gpu_grav
 #endif
     in.tgt = tgt;
     return 1;
-}
-
-/* Set up one target's member for the single-target walk: its inputs and its zeroed sums. */
-static KOKKOS_INLINE_FUNCTION int
-gpu_grav_member_init(const gpu_grav_walk_ctx_t &ctx, int target, gpu_grav_member_t &mem)
-{
-    gpu_grav_member_sums_init(mem.sums);
-    return gpu_grav_member_inputs_init(ctx, target, mem.in);
 }
 
 /* A particle source as a walk at `ti` reads it, with nothing written back: position, velocity and
@@ -1009,13 +1013,13 @@ gpu_grav_leaf_member_accepts(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_g
  * r2, mass, secondary softening/type/zeta and the gated per-pair terms); its payload
  * values are in pl. */
 static KOKKOS_INLINE_FUNCTION void
-gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inputs_t &in, gpu_grav_member_sums_t &sums, grav_pair_src_t &src, const gpu_grav_src_payload_t &pl)
+gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inputs_t &in, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &pair, gpu_grav_member_optional_sums_t &optional_sums, grav_pair_src_t &src, const gpu_grav_src_payload_t &pl)
 {
     if(!((src.r2 > 0.0) && (src.mass > 0.0))) {return;}
     /* pair-wise gravity, PM truncation, and the accumulations inside the PM short-range
      * gate, via the shared evaluation (gravtree_force_kernel.h), the single home for the
      * pair physics on both walks */
-    grav_pair_result_t res = grav_pair_evaluate_core(in.tgt, src, sums.out);
+    grav_pair_result_t res = grav_pair_evaluate_core(in.tgt, src, core, pair);
     const double r = res.r, fac_accel = res.fac_accel;
     (void) r; (void) fac_accel;
 #ifdef GIZMO_GPU_EWALD_POT_CORRECTION
@@ -1025,13 +1029,13 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
      * the caller); the guard only covers the post-endrun drain. */
     if(ctx.ewald_pot.active) {
         grav_ewald_interp_weights ew = grav_ewald_interp_setup(src.dr[0], src.dr[1], src.dr[2], ctx.ewald_pot.fac_intp);
-        sums.out.pot += src.mass * grav_ewald_interp_apply(ctx.ewald_pot.potcorr, ew);
+        core.pot += src.mass * grav_ewald_interp_apply(ctx.ewald_pot.potcorr, ew);
     }
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     /* counted only for accepted interactions (r2>0, mass>0), mirroring forcetree.cc -- the
      * walk excludes the target's own (r2==0) leaf; gravtree.cc adds it back exactly once. */
-    sums.tree_mass += src.mass;
+    optional_sums.tree_mass += src.mass;
 #endif
 
     /* RT cluster payloads.  Structure mirrors forcetree.cc: OUTSIDE the PM short-range
@@ -1041,15 +1045,15 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
 #ifdef RT_USE_TREECOL_FOR_NH
     {
         const double angular_bin_size = 4.0 * M_PI / RT_USE_TREECOL_FOR_NH;
-        grav_treecol_accumulate(src.dr, r, fac_accel, pl.gasmass, src.mass, angular_bin_size, sums.treecol_angular_bins);
+        grav_treecol_accumulate(src.dr, r, fac_accel, pl.gasmass, src.mass, angular_bin_size, optional_sums.treecol_angular_bins);
     }
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     /* per-interaction mass accumulation: each visited node contributes its multipole mass when within Rcrit */
-    if(r < in.r_for_total_menclosed) {sums.m_enc_in_rcrit += src.mass;}
+    if(r < in.r_for_total_menclosed) {optional_sums.m_enc_in_rcrit += src.mass;}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    grav_cr_lebron_accumulate(in.open.ptype, r, in.open.soft, pl.cr_injection, in.cr_active_gate, ctx.cr_data.t_max_cr, in.tgt.pm, sums.SubGrid_CosmicRayEnergyDensity);
+    grav_cr_lebron_accumulate(in.open.ptype, r, in.open.soft, pl.cr_injection, in.cr_active_gate, ctx.cr_data.t_max_cr, in.tgt.pm, optional_sums.SubGrid_CosmicRayEnergyDensity);
 #endif
 #ifdef RT_USE_GRAVTREE
     {
@@ -1070,24 +1074,24 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
 #endif
             grav_rt_accum_t rt_accum = {};
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
-            rt_accum.Rad_E_gamma = sums.Rad_E_gamma;
+            rt_accum.Rad_E_gamma = optional_sums.Rad_E_gamma;
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
-            rt_accum.chimes_flux_G0 = sums.chimes_flux_G0; rt_accum.chimes_flux_ion = sums.chimes_flux_ion;
+            rt_accum.chimes_flux_G0 = optional_sums.chimes_flux_G0; rt_accum.chimes_flux_ion = optional_sums.chimes_flux_ion;
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
-            rt_accum.incident_flux_uv = &sums.incident_flux_uv; rt_accum.incident_flux_euv = &sums.incident_flux_euv;
+            rt_accum.incident_flux_uv = &optional_sums.incident_flux_uv; rt_accum.incident_flux_euv = &optional_sums.incident_flux_euv;
 #endif
 #ifdef SINK_COMPTON_HEATING
-            rt_accum.incident_flux_agn = &sums.incident_flux_agn;
+            rt_accum.incident_flux_agn = &optional_sums.incident_flux_agn;
 #endif
 #ifdef RT_OTVET
-            rt_accum.RT_ET = sums.RT_ET;
+            rt_accum.RT_ET = optional_sums.RT_ET;
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
-            rt_accum.Rad_Flux = sums.Rad_Flux;
+            rt_accum.Rad_Flux = optional_sums.Rad_Flux;
 #endif
-            grav_rt_payload_accumulate(rt_src, rt_accum, sums.out.acc);
+            grav_rt_payload_accumulate(rt_src, rt_accum, core.acc);
         }
     }
 #endif /* RT_USE_GRAVTREE */
@@ -1097,7 +1101,7 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
     if(in.open.ptype != 0)
     {
         Vec3<double> d_dm = pl.d_dm;   /* the helper takes the displacement by non-const reference */
-        grav_dm_scalarfield_accumulate(d_dm, pl.mass_dm_local, in.open.soft, in.tgt.pm, sums.out.acc);
+        grav_dm_scalarfield_accumulate(d_dm, pl.mass_dm_local, in.open.soft, in.tgt.pm, core.acc);
     }
 #endif
 }
@@ -1107,7 +1111,7 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
  * (gpu_grav_particle_source_at), except where the Hermite predictor replaces the position
  * and velocity; everything else is read as stored. */
 static KOKKOS_INLINE_FUNCTION void
-gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_member_inputs_t &in, gpu_grav_member_sums_t &sums)
+gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_member_inputs_t &in, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &pair, gpu_grav_member_optional_sums_t &optional_sums)
 {
     struct particle_data *P_dev = ctx.P_dev;
     grav_pair_src_t src;
@@ -1268,11 +1272,11 @@ gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_me
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
         prox_src.motion.max_feedback_vel = P_dev[no].MaxFeedbackVel;
 #endif
-        grav_sink_prox_leaf_accumulate(src.r2, src.dr, prox_target, prox_src, sums.sink_prox);
+        grav_sink_prox_leaf_accumulate(src.r2, src.dr, prox_target, prox_src, optional_sums.sink_prox);
     }
 #endif /* SINK_CALC_DISTANCES */
 
-    gpu_grav_evaluate_pair(ctx, in, sums, src, pl);
+    gpu_grav_evaluate_pair(ctx, in, core, pair, optional_sums, src, pl);
 }
 
 /* Load an accepted node for a member through the SoA adapter and evaluate it, given
@@ -1283,7 +1287,7 @@ gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_me
  * moment cannot carry (Type + AGS_zeta) are restored via the shared seam so
  * grav_force_pair applies AGS symmetrization/zeta exactly as on the source's home rank. */
 static KOKKOS_INLINE_FUNCTION void
-gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelude_t &nd, const gpu_grav_member_inputs_t &in, gpu_grav_member_sums_t &sums,
+gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelude_t &nd, const gpu_grav_member_inputs_t &in, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &pair, gpu_grav_member_optional_sums_t &optional_sums,
                        const Vec3<MyFloat> &s_node, MyFloat mass_node, const Vec3<double> &dr, double r2)
 {
     const struct gpu_gravity_tree_soa_t *tree_soa = &ctx.tree_soa;
@@ -1391,7 +1395,7 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
     {
         Vec3<double> node_vs = Vec3<double>{(double)nd.motion.vs_[0], (double)nd.motion.vs_[1], (double)nd.motion.vs_[2]};
-        grav_sink_prox_node_specialweighted(src.r2, node_vs, in.open.ptype, sums.sink_prox);
+        grav_sink_prox_node_specialweighted(src.r2, node_vs, in.open.ptype, optional_sums.sink_prox);
     }
 #endif
     if(tree_soa->sink_mass[idx] > 0)
@@ -1420,18 +1424,18 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
         prox_src.motion.max_feedback_vel = tree_soa->MaxFeedbackVel[idx];
 #endif
-        grav_sink_prox_node_accumulate(src.r2, sink_dr, prox_src, prox_target, sums.sink_prox);
+        grav_sink_prox_node_accumulate(src.r2, sink_dr, prox_src, prox_target, optional_sums.sink_prox);
     }
 #endif /* SINK_CALC_DISTANCES */
 
-    gpu_grav_evaluate_pair(ctx, in, sums, src, pl);
+    gpu_grav_evaluate_pair(ctx, in, core, pair, optional_sums, src, pl);
 }
 
 /* Write a completed member's outputs to P_dev / CellP_dev (the host scatter loop in
  * gpu_gravtree_walk_primary copies them to P[] / CellP[]) and return the three the
  * caller collects directly. Mirrors forcetree.cc (mode=0). */
 static KOKKOS_INLINE_FUNCTION void
-gpu_grav_member_finish(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inputs_t &in, const gpu_grav_member_sums_t &sums, Vec3<double> &acc_out, int &ninter_out, double &pot_out)
+gpu_grav_member_finish(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inputs_t &in, const grav_pair_core_acc_t &core, const grav_pair_optional_acc_t &pair, const gpu_grav_member_optional_sums_t &optional, Vec3<double> &acc_out, int &ninter_out, double &pot_out)
 {
     struct particle_data *P_dev = ctx.P_dev; const int target = in.target;
 #ifdef RT_USE_GRAVTREE
@@ -1439,114 +1443,124 @@ gpu_grav_member_finish(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
     volatile int valid_gas_particle_for_rt = in.valid_gas_particle_for_rt;   /* nvc++ miscompiles raw boolean gates in device code */
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
-    {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = sums.treecol_angular_bins[k];}}
+    {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = optional.treecol_angular_bins[k];}}
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
-    P_dev[target].MencInRcrit = sums.m_enc_in_rcrit;
+    P_dev[target].MencInRcrit = optional.m_enc_in_rcrit;
 #endif
 #ifdef RT_USE_GRAVTREE
 #ifdef RT_OTVET
     if(valid_gas_particle_for_rt) {
-        int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP_dev[target].ET[k] = sums.RT_ET[k];}
+        int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP_dev[target].ET[k] = optional.RT_ET[k];}
     } else if(in.open.ptype == 0) {
         int k; for(k=0; k<N_RT_FREQ_BINS; k++) {CellP_dev[target].ET[k] = {};}
     }
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     if(valid_gas_particle_for_rt) {
-        CellP_dev[target].Rad_Flux_UV  = sums.incident_flux_uv;
-        CellP_dev[target].Rad_Flux_EUV = sums.incident_flux_euv;
+        CellP_dev[target].Rad_Flux_UV  = optional.incident_flux_uv;
+        CellP_dev[target].Rad_Flux_EUV = optional.incident_flux_euv;
     }
 #endif
 #ifdef CHIMES_STELLAR_FLUXES
     if(valid_gas_particle_for_rt) {
         int kc; for(kc=0; kc<CHIMES_LOCAL_UV_NBINS; kc++) {
-            CellP_dev[target].Chimes_G0[kc]          = sums.chimes_flux_G0[kc];
-            CellP_dev[target].Chimes_fluxPhotIon[kc] = sums.chimes_flux_ion[kc];
+            CellP_dev[target].Chimes_G0[kc]          = optional.chimes_flux_G0[kc];
+            CellP_dev[target].Chimes_fluxPhotIon[kc] = optional.chimes_flux_ion[kc];
         }
     }
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)
     if(valid_gas_particle_for_rt) {
-        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_E_gamma[kf] = sums.Rad_E_gamma[kf];}
+        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_E_gamma[kf] = optional.Rad_E_gamma[kf];}
     }
 #endif
 #ifdef SINK_COMPTON_HEATING
     if(valid_gas_particle_for_rt) {
-        CellP_dev[target].Rad_Flux_AGN = sums.incident_flux_agn;
+        CellP_dev[target].Rad_Flux_AGN = optional.incident_flux_agn;
     }
 #endif
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
     if(valid_gas_particle_for_rt) {
-        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_Flux[kf] = sums.Rad_Flux[kf];}
+        int kf; for(kf=0; kf<N_RT_FREQ_BINS; kf++) {CellP_dev[target].Rad_Flux[kf] = optional.Rad_Flux[kf];}
     }
 #endif
 #endif /* RT_USE_GRAVTREE */
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-    if(in.open.ptype == 0) {ctx.CellP_dev[target].SubGrid_CosmicRayEnergyDensity = sums.SubGrid_CosmicRayEnergyDensity;}
+    if(in.open.ptype == 0) {ctx.CellP_dev[target].SubGrid_CosmicRayEnergyDensity = optional.SubGrid_CosmicRayEnergyDensity;}
 #endif
 #ifdef SINK_CALC_DISTANCES
-    P_dev[target].Min_Distance_to_Sink = sqrt(sums.sink_prox.Min_Distance_to_Sink2);
-    P_dev[target].Min_xyz_to_Sink = sums.sink_prox.Min_xyz_to_Sink;
+    P_dev[target].Min_Distance_to_Sink = sqrt(optional.sink_prox.Min_Distance_to_Sink2);
+    P_dev[target].Min_xyz_to_Sink = optional.sink_prox.Min_xyz_to_Sink;
 #ifdef SINGLE_STAR_FIND_BINARIES
     P_dev[target].is_in_a_binary = 0;
-    P_dev[target].Min_Sink_OrbitalTime = sums.sink_prox.Min_Sink_OrbitalTime;
-    if(sums.sink_prox.Min_Sink_OrbitalTime < MAX_REAL_NUMBER) {
+    P_dev[target].Min_Sink_OrbitalTime = optional.sink_prox.Min_Sink_OrbitalTime;
+    if(optional.sink_prox.Min_Sink_OrbitalTime < MAX_REAL_NUMBER) {
         P_dev[target].is_in_a_binary = 1;
-        P_dev[target].comp_Mass = sums.sink_prox.comp_Mass;
-        P_dev[target].comp_dx = sums.sink_prox.comp_dx;
-        P_dev[target].comp_dv = sums.sink_prox.comp_dv;
+        P_dev[target].comp_Mass = optional.sink_prox.comp_Mass;
+        P_dev[target].comp_dx = optional.sink_prox.comp_dx;
+        P_dev[target].comp_dv = optional.sink_prox.comp_dv;
     }
 #endif
 #ifdef SINGLE_STAR_TIMESTEPPING
-    P_dev[target].Min_Sink_Approach_Time = sqrt(sums.sink_prox.Min_Sink_Approach_Time);
-    P_dev[target].Min_Sink_Freefall_time = sqrt(sqrt(sums.sink_prox.Min_Sink_Freefall_time) / All.G);
+    P_dev[target].Min_Sink_Approach_Time = sqrt(optional.sink_prox.Min_Sink_Approach_Time);
+    P_dev[target].Min_Sink_Freefall_time = sqrt(sqrt(optional.sink_prox.Min_Sink_Freefall_time) / All.G);
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-    P_dev[target].Min_Sink_FeedbackTime = sqrt(sums.sink_prox.Min_Sink_FeedbackTime);
+    P_dev[target].Min_Sink_FeedbackTime = sqrt(optional.sink_prox.Min_Sink_FeedbackTime);
 #endif
 #endif
 #endif /* SINK_CALC_DISTANCES */
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    P_dev[target].tidal_tensorps = sums.out.tidal_tensorps;
+    P_dev[target].tidal_tensorps = pair.tidal_tensorps;
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-    P_dev[target].GravJerk = sums.out.jerk;
+    P_dev[target].GravJerk = pair.jerk;
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
-    P_dev[target].TreeMass = sums.tree_mass;
+    P_dev[target].TreeMass = optional.tree_mass;
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    P_dev[target].tidal_zeta = (MyFloat) sums.out.tidal_zeta;
+    P_dev[target].tidal_zeta = (MyFloat) pair.tidal_zeta;
 #endif
 #ifdef SPECIAL_POINT_MOTION
-    P_dev[target].vel_of_nearest_special = Vec3<MyFloat>{(MyFloat)sums.sink_prox.vel_of_nearest_special[0],
-                                                         (MyFloat)sums.sink_prox.vel_of_nearest_special[1],
-                                                         (MyFloat)sums.sink_prox.vel_of_nearest_special[2]};
-    P_dev[target].acc_of_nearest_special = Vec3<MyFloat>{(MyFloat)sums.sink_prox.acc_of_nearest_special[0],
-                                                         (MyFloat)sums.sink_prox.acc_of_nearest_special[1],
-                                                         (MyFloat)sums.sink_prox.acc_of_nearest_special[2]};
+    P_dev[target].vel_of_nearest_special = Vec3<MyFloat>{(MyFloat)optional.sink_prox.vel_of_nearest_special[0],
+                                                         (MyFloat)optional.sink_prox.vel_of_nearest_special[1],
+                                                         (MyFloat)optional.sink_prox.vel_of_nearest_special[2]};
+    P_dev[target].acc_of_nearest_special = Vec3<MyFloat>{(MyFloat)optional.sink_prox.acc_of_nearest_special[0],
+                                                         (MyFloat)optional.sink_prox.acc_of_nearest_special[1],
+                                                         (MyFloat)optional.sink_prox.acc_of_nearest_special[2]};
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
-    P_dev[target].weight_sum_for_special_point_smoothing = (MyFloat) sums.sink_prox.weight_sum_for_special_point_smoothing;
+    P_dev[target].weight_sum_for_special_point_smoothing = (MyFloat) optional.sink_prox.weight_sum_for_special_point_smoothing;
 #endif
 #endif
-    acc_out = sums.out.acc;
-    ninter_out = sums.out.ninter;
-    pot_out = sums.out.pot;
+    acc_out = core.acc;
+    ninter_out = core.ninter;
+    pot_out = core.pot;
 }
 
 /* -------------------------------------------------------------------------
  * gpu_gravtree_walk_one -- the walk for a single target: the units above composed
  * with each accepted element evaluated at encounter.
  *
+ * The target's inputs, core sums and payload sums are the walk's own; its pair-optional sums (tidal
+ * tensor, jerk, tidal-zeta) live wherever the caller keeps them -- a local in the range launch, the
+ * lane's slot of team scratch in the team launch.
+ *
  * Returns 1 on success (outputs written), 0 on failure (pseudo-particle hit; host runs the CPU walk
  * for this target).  Every source is read at the walk time without being drifted (the leaf and node
  * loads above).  Mirrors force_treeevaluate().
  * ---------------------------------------------------------------------- */
 static KOKKOS_INLINE_FUNCTION int
-gpu_gravtree_walk_one(const gpu_grav_walk_ctx_t &ctx, int target, Vec3<double> &acc_out, int &ninter_out, double &pot_out)
+gpu_gravtree_walk_one(const gpu_grav_walk_ctx_t &ctx, int target, grav_pair_optional_acc_t &pair,
+                      Vec3<double> &acc_out, int &ninter_out, double &pot_out)
 {
-    gpu_grav_member_t mem;
-    if(!gpu_grav_member_init(ctx, target, mem)) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
+    gpu_grav_member_inputs_t in;
+    grav_pair_core_acc_t core;
+    gpu_grav_member_optional_sums_t optional;
+    grav_pair_core_acc_init(core);
+    grav_pair_optional_acc_init(pair);
+    gpu_grav_member_optional_sums_init(optional);
+    if(!gpu_grav_member_inputs_init(ctx, target, in)) {acc_out = Vec3<double>{0,0,0}; ninter_out = 0; pot_out = 0.0; return 1;}
     const struct gpu_gravity_tree_soa_t *tree_soa = &ctx.tree_soa;
     const int treeBase = ctx.treeBase, treeParticleSlots = ctx.treeParticleSlots;
     const int pseudo_start = treeBase + ctx.maxNodes + ctx.maxForeignNodes;   /* foreign-node range below the pseudos */
@@ -1557,7 +1571,7 @@ gpu_gravtree_walk_one(const gpu_grav_walk_ctx_t &ctx, int target, Vec3<double> &
         if(no >= treeParticleSlots && no < treeBase) {return 0;} /* gap: malformed tree -- defer; the CPU walk's guard stops loudly */
         if(no < treeParticleSlots) /* particle leaf */
         {
-            if(gpu_grav_leaf_member_accepts(ctx, no, mem.in.open)) {gpu_grav_evaluate_leaf(ctx, no, mem.in, mem.sums);}
+            if(gpu_grav_leaf_member_accepts(ctx, no, in.open)) {gpu_grav_evaluate_leaf(ctx, no, in, core, pair, optional);}
             no = tree_soa->nextnode_aux[no];
             continue;
         }
@@ -1568,19 +1582,80 @@ gpu_gravtree_walk_one(const gpu_grav_walk_ctx_t &ctx, int target, Vec3<double> &
         if(step == GPU_GRAV_NODE_SKIP_TO_SIBLING) {no = nd.sibling; continue;}
         if(step == GPU_GRAV_NODE_DESCEND) {no = nd.nextnode; continue;}
         Vec3<MyFloat> s_node; MyFloat mass_node; Vec3<double> dr; double r2;
-        if(!gpu_grav_node_member_geometry(ctx, nd, mem.in.open, s_node, mass_node, dr, r2)) {no = nd.sibling; continue;} /* pure-star node, star target */
+        if(!gpu_grav_node_member_geometry(ctx, nd, in.open, s_node, mass_node, dr, r2)) {no = nd.sibling; continue;} /* pure-star node, star target */
         int note;
-        const gravtree_open_t pred = gpu_grav_node_member_decide(ctx, nd, mem.in.open, mass_node, r2, note);
+        const gravtree_open_t pred = gpu_grav_node_member_decide(ctx, nd, in.open, mass_node, r2, note);
         if(note != GPU_GRAV_NOTE_NONE) {gpu_grav_note_commit(1, (note == GPU_GRAV_NOTE_UNSHIPPABLE) ? 1 : 0);}
         if(pred == GRAV_SKIP_NODE) {no = nd.sibling; continue;}
         if(pred == GRAV_OPEN_NODE) {no = nd.nextnode; continue;}
-        gpu_grav_evaluate_node(ctx, nd, mem.in, mem.sums, s_node, mass_node, dr, r2);
+        gpu_grav_evaluate_node(ctx, nd, in, core, pair, optional, s_node, mass_node, dr, r2);
         no = nd.sibling;
     }
 
-    gpu_grav_member_finish(ctx, mem.in, mem.sums, acc_out, ninter_out, pot_out);
+    gpu_grav_member_finish(ctx, in, core, pair, optional, acc_out, ninter_out, pot_out);
     return 1;
 }
+
+
+#ifdef GRAV_PAIR_HAS_OPTIONAL_ACC
+static_assert(!std::is_empty<grav_pair_optional_acc_t>::value, "GRAV_PAIR_HAS_OPTIONAL_ACC must match grav_pair_optional_acc_t");
+/* The single-target walk launched as teams: one target per lane, each lane walking the tree on its
+ * own exactly as above, with its pair-optional sums (tidal tensor, jerk, tidal-zeta) in its own slot
+ * of team scratch rather than in thread-private memory, which on a device spills to scratch once the
+ * walk's registers are full.  Only that group goes to the slot: it is the one every pair evaluation
+ * updates, and the slots of a team must stay small enough not to cap how many teams are resident.
+ * No lane reads another lane's slot, so there is no barrier, fold or atomic; lanes past the last
+ * target in the final team simply return. */
+#define GRAV_FLAT_TEAM_SIZE 64
+struct GravFlatTeamWalk {
+    gpu_grav_walk_ctx_t ctx;
+    const int *d_idx; int num_active; int only_failed;
+    Vec3<double> *d_acc; int *d_ninter; double *d_pot; int *d_failed;
+    KOKKOS_INLINE_FUNCTION void operator()(const Kokkos::TeamPolicy<>::member_type &team) const
+    {
+        grav_pair_optional_acc_t *slots = (grav_pair_optional_acc_t *)
+            team.team_scratch(0).get_shmem((size_t) team.team_size() * sizeof(grav_pair_optional_acc_t));
+        const int a = team.league_rank() * team.team_size() + team.team_rank();
+        if(a >= num_active) {return;}
+        if(only_failed && !d_failed[a]) {return;}
+        Vec3<double> acc; int ninter; double pot;
+        if(gpu_gravtree_walk_one(ctx, d_idx[a], slots[team.team_rank()], acc, ninter, pot) == 1) {
+            d_acc[a] = acc; d_ninter[a] = ninter; d_pot[a] = pot; d_failed[a] = 0;
+        } else {
+            d_failed[a] = 1;   /* met a pseudo-particle */
+        }
+    }
+};
+
+/* Launch the team form. Returns the team size it ran with, or 0 when this backend cannot hold the
+ * team's slots, in which case nothing ran and the caller takes the range launch instead; team_max_out
+ * is the largest team the backend allows with those slots either way. */
+static int gpu_gravtree_walk_flat_teams(const gpu_grav_walk_ctx_t &ctx, const int *d_idx, int num_active, int only_failed,
+                                        Vec3<double> *d_acc, int *d_ninter, double *d_pot, int *d_failed, int &team_max_out)
+{
+    GravFlatTeamWalk f;
+    f.ctx = ctx; f.d_idx = d_idx; f.num_active = num_active; f.only_failed = only_failed;
+    f.d_acc = d_acc; f.d_ninter = d_ninter; f.d_pot = d_pot; f.d_failed = d_failed;
+    const int team = GRAV_FLAT_TEAM_SIZE;
+    const size_t slot_bytes = (size_t) team * sizeof(grav_pair_optional_acc_t);
+    Kokkos::TeamPolicy<> probe(1, 1, 1);
+    probe.set_scratch_size(0, Kokkos::PerTeam(slot_bytes));
+    team_max_out = probe.team_size_max(f, Kokkos::ParallelForTag());
+    if(team_max_out < team) {return 0;}
+    const int league = (num_active + team - 1) / team;
+    if(league <= 0) {return team;}
+    Kokkos::TeamPolicy<> policy(league, team, 1);
+    policy.set_scratch_size(0, Kokkos::PerTeam(slot_bytes));
+    Kokkos::parallel_for("gravtree_walk_primary_teams", policy, f);
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("gravtree_walk_primary_teams", league);
+    return team;
+}
+#else
+static_assert(std::is_empty<grav_pair_optional_acc_t>::value, "GRAV_PAIR_HAS_OPTIONAL_ACC must match grav_pair_optional_acc_t");
+static_assert(sizeof(gpu_grav_member_sums_t) == sizeof(grav_pair_core_acc_t) + sizeof(gpu_grav_member_optional_sums_t),
+              "an empty pair-optional group must take no space in the member sums (the packet engine sizes its scratch from them)");
+#endif
 
 
 /* -------------------------------------------------------------------------
@@ -1941,13 +2016,13 @@ struct GpuGravPacketWalk {
      * already exists for every other reason a packet cannot be completed on the device. */
     KOKKOS_INLINE_FUNCTION int evaluate_record(int no, const gpu_grav_member_inputs_t &in, gpu_grav_member_sums_t &sums) const
     {
-        if(no < ctx.treeParticleSlots) {gpu_grav_evaluate_leaf(ctx, no, in, sums); return 1;}
+        if(no < ctx.treeParticleSlots) {gpu_grav_evaluate_leaf(ctx, no, in, sums.core, sums.pair, sums.optional); return 1;}
         gpu_grav_node_prelude_t nd;
         const gpu_grav_node_step_t step = gpu_grav_node_prelude(ctx, no, nd);
         if(step != GPU_GRAV_NODE_DECIDE) {return 0;}   /* an accepted node is one the prelude handed to the decision */
         Vec3<MyFloat> s_node; MyFloat mass_node; Vec3<double> dr; double r2;
         if(!gpu_grav_node_member_geometry(ctx, nd, in.open, s_node, mass_node, dr, r2)) {return 0;}   /* a member with the bit set is never a star seeing a pure-star node */
-        gpu_grav_evaluate_node(ctx, nd, in, sums, s_node, mass_node, dr, r2);
+        gpu_grav_evaluate_node(ctx, nd, in, sums.core, sums.pair, sums.optional, s_node, mass_node, dr, r2);
         return 1;
     }
 
@@ -2238,7 +2313,7 @@ struct GpuGravPacketWalk {
         if(t == 0) {gpu_grav_note_commit(ctr[GRAV_PACKET_CTR_NOTE_INCOMPLETE], ctr[GRAV_PACKET_CTR_NOTE_UNSHIPPABLE]);}
         if(serves && sub_lane == 0) {
             Vec3<double> acc = Vec3<double>{0,0,0}; int ninter = 0; double pot = 0.0;
-            if(in.open.alive) {gpu_grav_member_finish(ctx, in, sums, acc, ninter, pot);}
+            if(in.open.alive) {gpu_grav_member_finish(ctx, in, sums.core, sums.pair, sums.optional, acc, ninter, pot);}
             d_acc[first + member] = acc; d_ninter[first + member] = ninter; d_pot[first + member] = pot; d_failed[first + member] = 0;
         }
     }
@@ -2664,7 +2739,7 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
      * The give-up tally is cleared with it and for the same reason -- it was cleared only where
      * the engine runs, so a host-routed step re-reported, and re-reduced, the previous device
      * call's counts against gpu_gravtree.h's promise that they read zero on such a call. */
-    {struct gpu_grav_packet_shape_t cleared = {GRAV_PACKET_MODE_NONE, 0, 0, 0, 0, 0, 0, -1, -1, 0}; g_packet_shape = cleared;}
+    {struct gpu_grav_packet_shape_t cleared = {GRAV_PACKET_MODE_NONE, 0, 0, 0, 0, 0, 0, -1, -1, 0, -1}; g_packet_shape = cleared;}
     for(int r = 0; r < GRAV_PACKET_FAIL_REASONS; r++) {g_packet_fail[r] = 0;}
     /* How many candidates this walk leaves to the host loop: every active until this walk has
      * selected and taken some. The host loop sizes its per-thread packet workspace from it. */
@@ -3046,13 +3121,31 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
      * host loop -- the same targets the flat route leaves it. */
     {
         const int only_failed = walked_as_packets;
+        /* On a device, when the build has pair-optional sums, the walk runs as teams so each lane's
+           pair-optional sums sit in team scratch; on a host backend, or with nothing in that group, the
+           range launch is the walk. The team size and its scratch go into the shape record, so an arm
+           can tell which form ran (T=0: the range form). */
+        int flat_team = 0, flat_team_max = -1; long long flat_team_scratch = 0;
+#ifdef GRAV_PAIR_HAS_OPTIONAL_ACC
+        if(!gizmo_gpu_default_space_is_host()) {
+            flat_team = gpu_gravtree_walk_flat_teams(ctx, d_idx, num_active, only_failed, d_acc, d_ninter, d_pot, d_failed, flat_team_max);
+            flat_team_scratch = (long long) GRAV_FLAT_TEAM_SIZE * (long long) sizeof(grav_pair_optional_acc_t);
+        }
+#endif
+        if(!walked_as_packets) {
+            g_packet_shape.team = flat_team;
+            g_packet_shape.team_max = flat_team_max;
+            g_packet_shape.scratch_bytes = flat_team_scratch;
+        }
+        if(flat_team == 0) {
         Kokkos::parallel_for("gravtree_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
             if(only_failed && !d_failed[a]) {return;}
             int target = d_idx[a];
             Vec3<double> acc;
             int ninter;
             double pot;
-            int ok = gpu_gravtree_walk_one(ctx, target, acc, ninter, pot);
+            grav_pair_optional_acc_t pair;
+            int ok = gpu_gravtree_walk_one(ctx, target, pair, acc, ninter, pot);
             if(ok == 1) {
                 d_acc[a] = acc;
                 d_ninter[a] = ninter;
@@ -3064,6 +3157,7 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
         });
         Kokkos::fence();
         gizmo_gpu_check_last_error("gravtree_walk_primary", num_active);
+        }
     }
     gpu_grav_report_time_fault("gpu_gravtree_walk_primary", time_fault, ti_curr_host, 913213);
     /* Import-completeness record.  A foreign node the sender shipped as a childless multipole, which

@@ -300,6 +300,12 @@ void gravity_tree(void)
     std::vector<float> grav_work_at_call_start(ActiveParticleList.size());
     std::vector<signed char> grav_work_bin_at_call_start(ActiveParticleList.size());
     for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {grav_work_at_call_start[ii] = P[ActiveParticleList[ii]].GravWork; grav_work_bin_at_call_start[ii] = P[ActiveParticleList[ii]].MinGravWorkBin;}
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+    /* The walk writes this input of needs_new_treeforce(); a pass redone after a decomposition must decide from the value
+     * this call started with, or a particle the abandoned walk computed could be finalized as one it skipped. */
+    std::vector<MyFloat> feedback_time_at_call_start(ActiveParticleList.size());
+    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {feedback_time_at_call_start[ii] = P[ActiveParticleList[ii]].Min_Sink_FeedbackTime;}
+#endif
 gravity_walk_attempt:
 
     /* begin main communication and tree-walk loop. note the ewald-iter terms here allow for multiple iterations for periodic-tree corrections if needed */
@@ -498,18 +504,32 @@ gravity_walk_attempt:
                 gizmo_exit_bad_stop_if_requested("gravtree:before_repair_treebuild");
                 /* This rebuild stands on the tree just built here, whose attachments are intact, so it
                  * cannot ask for ownership to be restored -- and must not, with a walk in progress. */
-                /* A particle that left the domain extent during this pass would need a full decomposition,
-                 * which would reorder the particles under the walk, so this stops instead. */
-                const int repair_status = force_treebuild(NumPart, NULL);
+                int repair_status = force_treebuild(NumPart, NULL);
                 if(repair_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD)
                 {
-                    if(ThisTask == 0) {printf("Gravity: a particle drifted outside the domain extent during this step's gravity walk, and the "
-                                              "repair of the imported tree needs a tree built on it, which requires a full domain decomposition "
-                                              "that cannot run while the walk is in progress. Stopping. This needs a late crossing and a repair "
-                                              "in the same pass; a lower TreeRebuild_ActiveFraction makes repairs rarer.\n"); fflush(stdout);}
-                    endrun(91573);
+                    /* A particle left the domain extent during this pass, so the build needs a full decomposition
+                     * first.  That reorders the particles, so the pass is redone from the start of the call: the
+                     * work it counted is put back while the particles still sit where it was recorded, and the
+                     * state kept by position in the active list is taken again from the reordered list. */
+                    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {P[ActiveParticleList[ii]].GravWork = grav_work_at_call_start[ii]; P[ActiveParticleList[ii]].MinGravWorkBin = grav_work_bin_at_call_start[ii];}
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {P[ActiveParticleList[ii]].Min_Sink_FeedbackTime = feedback_time_at_call_start[ii];}
+#endif
+                    domain_Decomposition(0, 0, 0, 1);
+                    gravity_clear_pending_motion_bounds();   /* noted against the top tree just replaced */
+                    repair_status = force_treebuild(NumPart, NULL);
+                    if(repair_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD) {endrun(91573);}
+                    grav_work_at_call_start.resize(ActiveParticleList.size()); grav_work_bin_at_call_start.resize(ActiveParticleList.size());
+                    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {grav_work_at_call_start[ii] = P[ActiveParticleList[ii]].GravWork; grav_work_bin_at_call_start[ii] = P[ActiveParticleList[ii]].MinGravWorkBin;}
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
+                    feedback_time_at_call_start.resize(ActiveParticleList.size());
+                    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {feedback_time_at_call_start[ii] = P[ActiveParticleList[ii]].Min_Sink_FeedbackTime;}
+#endif
+#ifdef ADAPTIVE_TREEFORCE_UPDATE
+                    gravity_freeze_treeforce_candidates();   /* same inputs as at the start of the call, now at the reordered positions */
+#endif
                 }
-                else if(repair_status < 0) {endrun(91567);}
+                if(repair_status < 0) {endrun(91567);}
                 gizmo_exit_bad_stop_if_requested("gravtree:after_repair_treebuild");
                 if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
                 TreeMomentsStaleFlag = 0;   /* the build just refreshed every moment */
@@ -781,7 +801,7 @@ gravity_walk_attempt:
        fewest targets -- exactly the ones that take a different schedule from rank 0.  Without this
        an arm cannot tell whether the cooperative path ran at all, and a null result would be
        unreadable rather than negative. */
-    constexpr int mode_slots     = 3;   /* flat, packet, cooperative */
+    constexpr int mode_slots     = 4;   /* flat, packet, cooperative, flat walk that could not run as teams */
     constexpr int report_slots   = GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + mode_slots;
     long long packet_fail[report_slots] = {0};
     long long packet_fail_sum[report_slots] = {0};
@@ -796,6 +816,7 @@ gravity_walk_attempt:
         if(ps_local.mode == GRAV_PACKET_MODE_FLAT)             {packet_fail[mode_base + 0] = 1;}
         else if(ps_local.mode == GRAV_PACKET_MODE_PACKET)      {packet_fail[mode_base + 1] = 1;}
         else if(ps_local.mode == GRAV_PACKET_MODE_COOPERATIVE) {packet_fail[mode_base + 2] = 1;}
+        if(ps_local.mode == GRAV_PACKET_MODE_FLAT && ps_local.team == 0 && ps_local.team_max >= 0) {packet_fail[mode_base + 3] = 1;}
     }
     MPI_Reduce(packet_fail, packet_fail_sum, report_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(packet_fail, packet_fail_max, report_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
@@ -821,12 +842,13 @@ gravity_walk_attempt:
             const char *ps_mode = (ps.mode == GRAV_PACKET_MODE_COOPERATIVE) ? "cooperative"
                                 : (ps.mode == GRAV_PACKET_MODE_PACKET)      ? "packet"
                                 : (ps.mode == GRAV_PACKET_MODE_FLAT)        ? "flat" : "none";
-            fprintf(FdTimings, "packet-modes: ranks flat=%lld packet=%lld cooperative=%lld\n",
+            fprintf(FdTimings, "packet-modes: ranks flat=%lld packet=%lld cooperative=%lld flat-not-teams=%lld\n",
                     packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 0],
                     packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 1],
-                    packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 2]);
-            fprintf(FdTimings, "packet: mode=%s Q=%d T=%d Qdev=%d walkers=%d F=%d C=%d k=%d row=%d/%d scratch=%lld\n",
-                    ps_mode, TREE_QUERY_PACKET_SIZE, ps.team, ps.q_dev, ps.n_walkers, ps.frontier, ps.chunk,
+                    packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 2],
+                    packet_fail_sum[GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + 3]);
+            fprintf(FdTimings, "packet: mode=%s Q=%d T=%d Tmax=%d Qdev=%d walkers=%d F=%d C=%d k=%d row=%d/%d scratch=%lld\n",
+                    ps_mode, TREE_QUERY_PACKET_SIZE, ps.team, ps.team_max, ps.q_dev, ps.n_walkers, ps.frontier, ps.chunk,
                     ps.steps_per_round, ps.row_requested, ps.row_effective, ps.scratch_bytes);
             fprintf(FdTimings, "packet-gaveup: malformed=%lld pseudo=%lld nocont=%lld record=%lld noprogress=%lld (worst rank: %lld %lld %lld %lld %lld)\n",
                     packet_fail_sum[1], packet_fail_sum[2], packet_fail_sum[3], packet_fail_sum[4], packet_fail_sum[5],

@@ -2556,10 +2556,10 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                     /* pair-wise gravity, PM truncation, and the accumulations inside the PM short-range
                      * gate, via the shared evaluation (gravtree_force_kernel.h), the single home for the
                      * pair physics on both walks */
-                    grav_pair_result_t res = grav_pair_evaluate_core(tgt, src, out);
+                    grav_pair_result_t res = grav_pair_evaluate_core(tgt, src, out.core, out.optional);
                     const double r = res.r, fac_accel = res.fac_accel; (void) r; (void) fac_accel;
 #if defined(EVALPOTENTIAL) && defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-                    out.pot += pot_periodic_image;
+                    out.core.pot += pot_periodic_image;
 #endif
 
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
@@ -2606,7 +2606,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #if defined(RT_USE_GRAVTREE_SAVE_RAD_FLUX)
                         rt_accum.Rad_Flux = mem.Rad_Flux;
 #endif
-                        grav_rt_payload_accumulate(rt_src, rt_accum, out.acc);
+                        grav_rt_payload_accumulate(rt_src, rt_accum, out.core.acc);
                     } // closes if(valid_gas_particle_for_rt)
 
 #endif // RT_USE_GRAVTREE
@@ -2615,7 +2615,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #ifdef DM_SCALARFIELD_SCREENING
                     if(ptype != 0)    /* we have a dark matter particle as target */
                     {
-                        grav_dm_scalarfield_accumulate(d_dm, mass_dm, tgt.h, tgt.pm, out.acc);
+                        grav_dm_scalarfield_accumulate(d_dm, mass_dm, tgt.h, tgt.pm, out.core.acc);
                     } // closes if(ptype != 0)
 #endif // DM_SCALARFIELD_SCREENING //
 
@@ -2961,7 +2961,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         const int valid_gas_particle_for_rt = mem.valid_gas_particle_for_rt;
 #endif
         /* store result at the proper place (local target only; the imported-particle export path is retired) */
-        P[target_m].GravAccel = out.acc;
+        P[target_m].GravAccel = out.core.acc;
 #ifdef RT_USE_TREECOL_FOR_NH
         int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target_m].ColumnDensityBins[k] = mem.treecol_angular_bins[k];
 #endif
@@ -2997,16 +2997,16 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         if(valid_gas_particle_for_rt) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[target_m].Rad_Flux[kf] = mem.Rad_Flux[kf];}}
 #endif
 #ifdef EVALPOTENTIAL
-        P[target_m].Potential = out.pot;
+        P[target_m].Potential = out.core.pot;
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-        P[target_m].tidal_tensorps = out.tidal_tensorps;
+        P[target_m].tidal_tensorps = out.optional.tidal_tensorps;
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        P[target_m].tidal_zeta = out.tidal_zeta;
+        P[target_m].tidal_zeta = out.optional.tidal_zeta;
 #endif
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        P[target_m].GravJerk = out.jerk;
+        P[target_m].GravJerk = out.optional.jerk;
 #endif
 #ifdef SINK_CALC_DISTANCES
         P[target_m].Min_Distance_to_Sink = sqrt( sink_prox.Min_Distance_to_Sink2 );
@@ -3036,7 +3036,7 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #endif
 #endif // SINK_CALC_DISTANCES
-        ninter_out[m] = out.ninter;
+        ninter_out[m] = out.core.ninter;
     }
 
     return 1;
