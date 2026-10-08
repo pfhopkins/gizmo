@@ -453,7 +453,7 @@ KOKKOS_INLINE_FUNCTION void grav_ags_tidal_criterion_accumulate(double r, double
 #if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
         if(h >= h_p) {prefac_tt=1;} else {prefac_tt=1; h_touse=h_p; u_tt=sqrt(r2)/h_touse;} // this corresponds to adopting the MAX criterion for the softening
 #endif
-        if(u_tt<1 && prefac_tt>0) {tidal_zeta += prefac_tt * mass * kernel_gravity(u_tt,1./h,1./(h*h*h),0);} // simple sum to calculate this contribution, only from particles inside the kernel of the primary -- this is up here instead of below the if below because it needs to include the 'self' contribution here
+        if(u_tt<1 && prefac_tt>0) {tidal_zeta += prefac_tt * mass * kernel_gravity(u_tt,1./h,1./(h*h*h),0);} // simple sum over the other particles inside the kernel of the primary (r2 > 0 above leaves out the particle itself) -- this is up here instead of below the if below because it is summed for every such pair, whether or not either side uses the tidal softening
     }
     if(primary_uses_tidal_criterion || secondary_uses_tidal_criterion) // primary or secondary has associated correction terms here
     { // now this is correct, but always need to carefully ensure correction terms are only applied in the correct 'direction' if we have a mixed-particle-type pair //
