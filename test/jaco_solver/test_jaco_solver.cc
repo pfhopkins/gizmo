@@ -480,6 +480,7 @@ static int solve_checked(SolveVars *sv, const Params *pr, const JacoSolverSettin
    bound sends tier 1 to the x_e -> 0 root of the ionization balance (T ~ 2600 K, ions at the floor, under
    MODEL=starforge_legacy) instead of the ionized one (T ~ 8800 K). Defined like sweep cases. */
 static int run_stall_cases(const JacoSolverSettings *set);
+static int run_recorded_cells(const JacoSolverSettings *set);
 
 
 
@@ -593,6 +594,79 @@ static int run_replays(const JacoSolverSettings *set) {
         }
     }
     nfail += run_stall_cases(set);
+    nfail += run_recorded_cells(set);
+    return nfail;
+}
+
+/* Params from "name=value ..." by the generated names, so a recorded cell survives a reordering; every field must be
+   given, else the case no longer matches the model and fails */
+static int params_by_name(const char *text, Params *pr) {
+    static const char *names[N_PARAMS] = JACO_PARAM_NAMES;
+    for (int k = 0; k < N_PARAMS; k++) {
+        char key[64];
+        snprintf(key, sizeof(key), " %s=", names[k]);
+        const char *q = strstr(text, key);
+        if (!q) {
+            printf("recorded cell: no value for Params.%s\n", names[k]);
+            return 1;
+        }
+        pr->data[k] = strtod(q + strlen(key), NULL);
+    }
+    return 0;
+}
+
+/* Cells that broke the solver in GIZMO runs, with their exact inputs (the failures sit on knife edges that the sweep's
+   parameters miss). Each must be solved and pass the answer check. */
+static int run_recorded_cells(const JacoSolverSettings *set) {
+    struct Recorded {
+        const char *name;
+        double u, T, x_Hplus, x_Heplus, x_Heplusplus, x_H_2;
+        const char *params; /* leading space: names are matched as " name=" */
+    };
+    const Recorded cells[] = {
+#ifdef JACO_MODEL_STARFORGE_LEGACY
+        /* SN_singlestar with JACO=starforge_legacy: He++ decays onto its floor from the ionized seed, and the line search
+           rejected the step that lands it there; every tier failed */
+        {"SN 13291K He++ floor", 1281418834038.8325, 13291.375636872621, 7.1896669195168137e-06, 1e-20, 1e-20,
+         2.4742226975558945e-05,
+         " Delta_t=1506678710.9375 Delta_x=1.162081855068821e+18 G_0=0.0083956968897873144 G_LW=1 ISRF=1"
+         " N_H=6.3501903628287041e+21 Td=12.948727369128822 X=0.71549999987689183 Z_d=1.0000000056573703 f_d=1 f_metal=0"
+         " f_neb=0 grad_v=2.2701720397953114e-13 n_Htot=102.71954724922588 pdv_work=0 u_initial=1281418834038.8325"
+         " x_C_tot=0.00029466573743795342 x_Ca=2.4004192937834135e-06 x_Fe=3.4441449618701914e-05"
+         " x_H_2_initial=2.4742226975558945e-05 x_Mg=4.408339178837265e-05 x_N=7.3974243958390903e-05"
+         " x_Ne=9.3640811180711907e-05 x_O_tot=0.00053546471334260865 x_S=1.4456673733127759e-05"
+         " x_Si=3.5539582848924831e-05 y=0.094444444475639752 z=0"},
+#endif
+    };
+    int nfail = 0, ncells = sizeof(cells) / sizeof(cells[0]);
+    if (ncells) printf("\n== recorded cells ==\n");
+    for (int c = 0; c < ncells; c++) {
+        Params pr;
+        SolveVars sv = {};
+        sv.u = cells[c].u;
+        sv.T = cells[c].T;
+        sv.x_Hplus = cells[c].x_Hplus;
+        sv.x_Heplus = cells[c].x_Heplus;
+        sv.x_Heplusplus = cells[c].x_Heplusplus;
+        sv.x_H_2 = cells[c].x_H_2;
+        char why[256] = "ok";
+        int bad = params_by_name(cells[c].params, &pr);
+        JacoSolveInfo info = {};
+        SolveVars in = sv;
+        if (!bad) {
+            double worst;
+            int rc = jaco_solve(&sv, &pr, set, &info);
+            if (rc) strcpy(why, "every tier failed");
+            bad = rc || check_answer(&sv, &pr, set, why, &worst);
+        } else
+            strcpy(why, "stale recorded parameters");
+        printf("%-24s tier %d (tier-1 status %d) nfeval %d T=%.6g x_H+=%.4g %s%s\n", cells[c].name, info.tier, info.tier1_status,
+               info.nfeval, sv.T, sv.x_Hplus, bad ? "FAIL: " : "", why);
+        if (bad) {
+            nfail++;
+            if (strcmp(why, "stale recorded parameters")) report_failure(cells[c].name, &in, &pr, set, why);
+        }
+    }
     return nfail;
 }
 
