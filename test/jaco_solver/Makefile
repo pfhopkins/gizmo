@@ -23,7 +23,8 @@ REF    ?= HEAD
 OPTFLAGS ?=
 comma  := ,
 BUILD  := build/$(MODEL)$(if $(TD),-td-$(subst +,p,$(subst $(comma),-,$(TD))))
-DRIVER := $(if $(filter starforge%,$(MODEL)),test_jaco_solver.cc,test_jaco_solver_generic.cc)
+# sfx_*: the STARFORGE knockout models of jaco's model_diff branch
+DRIVER := $(if $(filter starforge% sfx_%,$(MODEL)),test_jaco_solver.cc,test_jaco_solver_generic.cc)
 GEN    := $(BUILD)/microphysics_func_jac.cc $(BUILD)/microphysics_outputs.cc $(BUILD)/jaco_eos.cc $(BUILD)/jaco_util.cc
 SOLVER := $(BUILD)/jaco_solver.cc $(BUILD)/jaco_solver.h
 CXXFLAGS ?= -O2 -g -Wall
