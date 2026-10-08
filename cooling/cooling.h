@@ -22,7 +22,7 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 void   set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, struct gas_cell_data *cell);
 #if defined(RADTRANSFER)
-void   rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct particle_data *pp, struct gas_cell_data *cell);
+void   rt_cooling_radiation_to_bands(int i, double unew, double dtime, double rt_diag_dtie_code_dt, struct particle_data *pp, struct gas_cell_data *cell); /* the last double feeds RT_DIAG_IR_DOUBLE_COUNT only */
 #endif
 void   InitCool(void);
 #ifndef CHIMES

@@ -130,6 +130,12 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
         compute_statistics();	/* regular statistics outputs (like total energy) */
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+        eos_gamma_probe_report();
+#endif
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+        rt_diag_ir_double_count_report();
+#endif
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
@@ -449,15 +455,6 @@ void calculate_non_standard_physics(void)
             printf("Transport subcycling: %d sub-steps (hydro_dt/transport_dt = %.1f)\n",
                    All.Transport_Subcycle_N, max_hydro_dt_global / min_transport_dt_global);
     }
-    /* Save the hydro-pass DtInternalEnergy before the subcycle loop. rt_update_driftkick adds
-       IR gas heating to DtInternalEnergy each sub-step; without resetting, it accumulates N-fold.
-       We reset to the hydro value before each kick so only one sub-step's IR contribution is present. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtIE_IR_Subcycle = CellP[idx].DtInternalEnergy;
-    }
-#endif
     for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
 #endif // TRANSPORT_SUBCYCLE
 
@@ -495,14 +492,6 @@ void calculate_non_standard_physics(void)
 #ifdef TRANSPORT_SUBCYCLE
     /* --- recompute transport fluxes every sub-step and apply kick --- */
     transport_subcycle_exchange_fluxes();
-    /* Reset DtInternalEnergy to hydro-pass value before each kick, so rt_update_driftkick's
-       IR gas heating contribution doesn't accumulate across sub-steps. */
-#if defined(RT_INFRARED) && defined(COOLING)
-    for(int idx : ActiveParticleList) {
-        if(P[idx].Type == 0 && P[idx].Mass > 0)
-            CellP[idx].DtInternalEnergy = CellP[idx].DtIE_IR_Subcycle;
-    }
-#endif
     transport_subcycle_kick();
 #endif
 
@@ -529,9 +518,6 @@ void calculate_non_standard_physics(void)
 
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
-    /* After the loop DtInternalEnergy = DtIE_IR_Subcycle + IR_rate_last_substep, which is correct:
-       the pre-kick reset already prevents N-fold accumulation, so the cooling solver and second
-       KDK half-kick see exactly one sub-step's IR contribution at the final Rad_E_gamma state. */
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && !defined(COOLING_OPERATOR_SPLIT)
     /* zero DtInternalEnergy after the subcycle loop — the hydro work has been fully applied across all sub-steps */
     for(int idx : ActiveParticleList) {
@@ -1088,7 +1074,7 @@ void write_cpu_log(void)
     {
       fprintf(FdCPU, "Step %lld, Time: %.16g, CPUs: %d\n",(long long) All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU, "Nactive=%lld, Imbal(Max/Mean)=%g \n", (long long) GlobNumForceUpdate, (max_CPU_Step[0]/(MIN_REAL_NUMBER + avg_CPU_Step[0])-1.)*NTask+1.);
-      fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], maint_max[0], maint_max[1], (long long) maint_max[2]);
+      fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld condemned_walk=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], TreeOpsCount[TREEOPS_CONDEMNED_WALK], maint_max[0], maint_max[1], (long long) maint_max[2]);
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"
 	      "tree+gravity  %10.2f  %5.1f%%\n"

@@ -10,6 +10,8 @@ import socket
 # stall into the URLError the mirror-fallback path already handles.
 socket.setdefaulttimeout(300)
 import fcntl
+import re
+import warnings
 from shutil import move, rmtree, copyfile
 from glob import glob
 import numpy as np
@@ -235,18 +237,19 @@ def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_fl
         copyfile(f"cooling/{_JACO_TABLE_FILE}", f"test/{test_name}/{_JACO_TABLE_FILE}")
 
 
-def download_test_files(test_name: str):
-    """Downloads the ICs and parameter files for a test of a given name"""
+def download_test_files(test_name: str, exact_files=None):
+    """Downloads the ICs and parameter files for a test of a given name. exact_files replaces the
+    conventional reference-solution names, so a regenerated reference can be published under a new
+    name without breaking checkouts that still expect the old one."""
 
     website_path = "http://www.tapir.caltech.edu/~phopkins/sims/"
     website_path2 = f"https://users.flatironinstitute.org/~mgrudic/gizmo_tests/{test_name}/"
 
     # Note: we are assuming a convention for the test ICs, params, and exact values
     icfile = f"{test_name}_ics.hdf5"
-    exactfile = f"{test_name}_exact.txt"  # exact solution (might not exist!)
-    exactfile2 = f"{test_name}_exact.hdf5"  # exact solution (might not exist!)
+    exact = exact_files or (f"{test_name}_exact.txt", f"{test_name}_exact.hdf5")  # might not exist!
 
-    for f in icfile, exactfile, exactfile2:
+    for f in (icfile, *exact):
         # Never clobber a locally-generated IC (e.g. from make_<test>_ics.py): a stale
         # remote copy would silently override the freshly generated one. Reference "exact"
         # solutions have no local generator, so those are always fetched.
@@ -310,6 +313,30 @@ def _log_reached_timemax(logfile: str, nbytes: int = 262144) -> bool:
     return _GIZMO_FINISHED in _log_tail(logfile, nbytes)
 
 
+def _final_snapshot_reached_timemax(paramsfile: str, rtol: float = 1e-6) -> bool:
+    """Whether the run's last snapshot is at TimeMax: evidence of completion that does not depend on
+    stdout, whose tail srun can drop from very large logs."""
+    try:
+        params = parse_params(paramsfile)
+        time_max = float(params["TimeMax"])
+    except (OSError, KeyError, ValueError):
+        return False
+    outdir, base = params.get("OutputDir", "output"), params.get("SnapshotFileBase", "snapshot")
+    numbered = []
+    for s in glob(path.join(outdir, f"{base}_*.hdf5")) + glob(path.join(outdir, "snapdir_*", f"{base}_*.0.hdf5")):
+        m = re.search(r"_(\d+)(?:\.\d+)?\.hdf5$", s)
+        if m:
+            numbered.append((int(m.group(1)), s))
+    if not numbered:
+        return False
+    try:
+        with h5py.File(max(numbered)[1], "r") as F:
+            time = float(F["Header"].attrs["Time"])
+    except (OSError, KeyError):
+        return False
+    return abs(time - time_max) <= rtol * abs(time_max)
+
+
 def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: str, paramsfile: str):
     """Fail loudly if GIZMO did not run to completion.
 
@@ -325,6 +352,10 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
             f"--- tail of {outfile} ---\n{_log_tail(outfile)}"
         )
     if not _log_reached_timemax(outfile):
+        if _final_snapshot_reached_timemax(paramsfile):
+            warnings.warn(f"{test_name}: {outfile} lacks GIZMO's final-time line (truncated stdout?), "
+                          "but the last snapshot is at TimeMax; treating the run as complete")
+            return
         mark_run_truncated(test_name, "GIZMO exited 0 without reaching TimeMax", paramsfile)
         raise RuntimeError(
             f"GIZMO exited 0 for test '{test_name}' but never reported reaching TimeMax, so it "
@@ -470,7 +501,7 @@ def finalize_variant_output(test_name: str, extra_config_flags=()):
 
 
 def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, extra_config_flags: tuple = (), timeout: float | None = None,
-                       param_overrides: dict | None = None):
+                       param_overrides: dict | None = None, exact_files=None):
     """Top-level routine that does all necessary building, downloading, and running of the test.
     When extra_config_flags is non-empty, the resulting output/ directory is renamed to a
     variant-specific name so that multiple flag combinations can coexist on disk. The baseline
@@ -488,7 +519,7 @@ def build_and_run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_thread
     try:
         chdir(f"test/{test_name}/")
         try:
-            download_test_files(test_name)
+            download_test_files(test_name, exact_files)
             run_test(test_name, num_mpi_ranks, num_openmp_threads, timeout=timeout,
                      param_overrides=param_overrides)
         finally:

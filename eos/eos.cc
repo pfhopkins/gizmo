@@ -37,6 +37,31 @@ double return_user_desired_target_pressure(int i)
      */
 }
 
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+/* Inert diagnostic: after every EOS update, |SoundSpeed^2 rho / (gamma P) - 1| with gamma = gamma_eos_value() at the
+   cell's current state, i.e. whether the sound speed uses the adiabatic index of the temperature just computed. Only
+   meaningful where SoundSpeed is the ideal-gas one (no CR, radiation-pressure or tabulated EOS). */
+static double eos_gamma_probe_max = 0, eos_gamma_probe_gmin = 1e30, eos_gamma_probe_gmax = 0;
+static long long eos_gamma_probe_n = 0, eos_gamma_probe_bad = 0;
+static void eos_gamma_probe_add(double rel, double g)
+{
+#pragma omp critical(eos_gamma_probe)
+    {
+        eos_gamma_probe_n++; if(rel > 1e-12) {eos_gamma_probe_bad++;}
+        if(rel > eos_gamma_probe_max) {eos_gamma_probe_max = rel;}
+        if(g < eos_gamma_probe_gmin) {eos_gamma_probe_gmin = g;}
+        if(g > eos_gamma_probe_gmax) {eos_gamma_probe_gmax = g;}
+    }
+}
+void eos_gamma_probe_report(void) /* collective; rank 0 prints the totals since the previous call */
+{
+    double mx[3] = {eos_gamma_probe_max, -eos_gamma_probe_gmin, eos_gamma_probe_gmax}, mx_g[3]; long long n[2] = {eos_gamma_probe_n, eos_gamma_probe_bad}, n_g[2];
+    MPI_Reduce(mx, mx_g, 3, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); MPI_Reduce(n, n_g, 2, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0 && n_g[0] > 0) {printf("EOS_GAMMA_PROBE t=%.10g updates=%lld above_1e-12=%lld max_rel=%.6e gamma_range=[%.8f, %.8f]\n", All.Time, n_g[0], n_g[1], mx_g[0], -mx_g[1], mx_g[2]);}
+    eos_gamma_probe_max = 0; eos_gamma_probe_gmin = 1e30; eos_gamma_probe_gmax = 0; eos_gamma_probe_n = eos_gamma_probe_bad = 0;
+}
+#endif
+
 /*!
     Updates the thermodynamic quantities determined by the current internal
     energy, density, and chemistry: pressure, and potentially adiabatic index
@@ -53,8 +78,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     cell[i].Temperature = eos.T; cell[i].Gamma = gamma_eos_index = eos.gamma; /* fresh gamma also feeds the sound speed below */
     press = cell[i].density_for_energy() * eos.P_over_rho / UNIT_SPECEGY_IN_CGS;
 #else
-    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; cell[i].Gamma = gamma_eos_index; /* get effective adiabatic index */
-    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
+    double soundspeed, press=0, temp=0, mu_meanwt=1, gamma_eos_index = cell[i].gamma_eos_value(); soundspeed=0; /* get effective adiabatic index */
 
 #ifdef COOLING
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, rho_fortemp=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
@@ -64,8 +88,10 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
     cell[i].Temperature = temp; // cache the temperature; must precede the gamma update below, which reads Temperature under EOS_SUBSTELLAR_ISM
 #ifdef COOLING
-    cell[i].Gamma = cell[i].gamma_eos_value(); // cache the adiabatic index, reusing the temperature just cached
+    gamma_eos_index = cell[i].gamma_eos_value(); // the adiabatic index at the temperature just cached: used for everything below, sound speed included
 #endif
+    cell[i].Gamma = gamma_eos_index;
+    press = (gamma_eos_index-1) * cell[i].InternalEnergyPred * cell[i].density_for_energy(); /* ideal gas EOS (will get over-written it more complex EOS assumed) */
 
 #ifdef EOS_SUBSTELLAR_ISM
     press = cell[i].density_for_energy() * BOLTZMANN_CGS * temp / UNIT_ENERGY_IN_CGS / (mu_meanwt * PROTONMASS_CGS / UNIT_MASS_IN_CGS);
@@ -194,6 +220,9 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 
     /* Finally, set the pressure as advertised */
     cell[i].Pressure = press;
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+    {double g = cell[i].gamma_eos_value(); eos_gamma_probe_add((press > 0) ? fabs(cell[i].SoundSpeed*cell[i].SoundSpeed*cell[i].density_for_energy()/(g*press) - 1.) : 0, g);}
+#endif
 }
 
 

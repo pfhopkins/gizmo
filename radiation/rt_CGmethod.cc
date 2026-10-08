@@ -110,6 +110,7 @@ for(k=0;k<N_RT_FREQ_BINS;k++) memset(x[k], 0, N_gas * sizeof(double));}
  to do the weights/matrix calculation on all particles */
 void rt_diffusion_cg_solve(void)
 {
+    force_tree_check_walkable("rt_diffusion_cg"); /* hand-rolled neighbour loop: not covered by the template's entry check */
     PRINT_STATUS("start CG iteration for radiative transfer (diffusion equation)...");
     int k, j; double alpha_cg, beta, sum, rel, res, maxrel, glob_maxrel, DQ;
     double dt = (All.Radiation_Ti_endstep - All.Radiation_Ti_begstep) * unit_integertime_in_physical(-1);

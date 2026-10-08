@@ -1,5 +1,5 @@
-%---- Iliev et al. (2006) test 1 at n_H = 100 cm^-3, legacy chemistry (case B at 1e4 K): R_S = 2.50 pc, t_rec = 1.24952e-03
-InitCondFile  iliev_test1_ics
+%---- Iliev et al. (2006) test 1 at n_H = 100 cm^-3: R_S = 2.13 pc, t_rec = 7.73e-4 (case A, 1e4 K)
+InitCondFile  iliev_test1_jaco_ics
 OutputDir     output
 ICFormat      3
 SnapFormat    3
@@ -10,12 +10,12 @@ OutputListFilename          output_times.txt
 NumFilesPerSnapshot         1
 NumFilesWrittenInParallel   1
 
-%---- Output every 0.25 t_rec, to 4.25 t_rec; every step below the RT Courant step, so the source injects at every step
+%---- Output frequency: every 0.25 t_rec, to 4.25 t_rec
 TimeOfFirstSnapshot     0.0
-TimeBetSnapshot         3.1237895e-04
-TimeBetStatistics       3.1237895e-04
+TimeBetSnapshot         1.9325538e-04
+TimeBetStatistics       1.9325538e-04
 TimeBegin   0.0
-TimeMax     5.3104422e-03
+TimeMax     3.2853415e-03
 MaxSizeTimestep         1.5e-06
 MinSizeTimestep         1.0e-15
 
@@ -32,7 +32,7 @@ UnitMagneticField_in_gauss  1.00e+00
 GravityConstantInternal     0
 
 ComovingIntegrationOn   0
-BoxSize                 8.0
+BoxSize                 6.0
 Omega0                  0.
 OmegaLambda             0.
 OmegaBaryon             0.
@@ -43,7 +43,7 @@ PartAllocFactor     5.0
 BufferSize          500
 TreeDomainUpdateFrequency   0.005
 
-%---- RT_ILIEV_TEST1 holds the chemistry's temperature at 1e4 K
+%---- Gas held at 1e4 K by the test's fixed-temperature chemistry
 InitGasTemp     1e4
 MinGasTemp      10
 

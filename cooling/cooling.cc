@@ -177,7 +177,7 @@ void set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, str
 /* Return the cooling radiation CoolingRate left in Lambda_RadiativeCooling_toRHDBins to the RT bands over the step dtime,
    for a cell whose specific energy goes from InternalEnergy to unew; each band's change is limited by the positivity
    floor, a magnitude cap and the gas energy change net of the hydro work and the absorbed radiation (de_u_touse). */
-void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct particle_data *pp, struct gas_cell_data *cell)
+void rt_cooling_radiation_to_bands(int i, double unew, double dtime, double rt_diag_dtie_code_dt, struct particle_data *pp, struct gas_cell_data *cell)
 {
     int k;
     double nHcgs = cell[i].nHcgs(); /* hydrogen number dens in cgs units */
@@ -188,6 +188,22 @@ void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct part
     de_u_work = (cell[i].DtInternalEnergy*(UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS)*(PROTONMASS_CGS/HYDROGEN_MASSFRAC)) / nHcgs * ratefact; /* account for hydro work going into the system as an energy source */
 #ifndef COOLING_OPERATOR_SPLIT
     de_u_work = cell[i].DtInternalEnergy / nHcgs * ratefact; /* use the combined and rate-limited value which is more accurately computed above */
+#endif
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    rt_diag_add(RT_DIAG_COOL_GAS, 0, de_u); rt_diag_add(RT_DIAG_COOL_OFFERED, 0, de_rad_tot);
+    struct rt_diag_cool_terms cr = rt_diag_cr; /* terms of the converged-u CoolingRate call */
+    double gasfact = ratefact * (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED), routed_sum = 0; for(k=0;k<N_RT_FREQ_BINS;k++) {routed_sum += cell[i].Lambda_RadiativeCooling_toRHDBins[k];}
+    rt_diag_sc(RT_DIAG_SC_DEU, de_u); rt_diag_sc(RT_DIAG_SC_Q, (cr.q_post + cr.dtie)*gasfact); rt_diag_sc(RT_DIAG_SC_DTIE, cr.dtie*gasfact);
+    rt_diag_sc(RT_DIAG_SC_DTIE_CODE, rt_diag_dtie_code_dt); rt_diag_sc(RT_DIAG_SC_THICK, (cr.q_post - cr.q_pre)*gasfact);
+    rt_diag_sc(RT_DIAG_SC_MOL, -cr.mol*gasfact); rt_diag_sc(RT_DIAG_SC_MOL_HEAT, -DMIN(cr.mol,0)*gasfact); rt_diag_sc(RT_DIAG_SC_DUST, -cr.dust*gasfact);
+    rt_diag_sc(RT_DIAG_SC_METAL, -cr.metal*gasfact); rt_diag_sc(RT_DIAG_SC_HHE, -cr.hhe*gasfact); rt_diag_sc(RT_DIAG_SC_COMPTON, -cr.compton*gasfact);
+    rt_diag_sc(RT_DIAG_SC_CR, cr.h_cr*cr.fcorr*gasfact); rt_diag_sc(RT_DIAG_SC_PE, -cr.pelec*gasfact); rt_diag_sc(RT_DIAG_SC_ION_HEAT, cr.h_ion*cr.fcorr*gasfact);
+    rt_diag_sc(RT_DIAG_SC_HEAT, cr.heat*gasfact); rt_diag_sc(RT_DIAG_SC_LAMBDA, -cr.lambda*gasfact);
+    rt_diag_sc(RT_DIAG_SC_ROUTED_GAS, -routed_sum*gasfact); rt_diag_sc(RT_DIAG_SC_UNROUTED, (cr.q_post + routed_sum)*gasfact);
+    rt_diag_sc(RT_DIAG_SC_OFFER_NUV, cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_NUV]*ratefact);
+    rt_diag_sc(RT_DIAG_SC_OFFER_IR, cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED]*ratefact);
+    rt_diag_sc(RT_DIAG_SC_DEU_WORK, de_u_work); rt_diag_sc(RT_DIAG_SC_N_COOL, 1);
+    rt_diag_sc(RT_DIAG_SC_DC_ABS_IR, cr.dc_abs_ir); rt_diag_sc(RT_DIAG_SC_DC_ABS_NONIR, cr.dc_abs_nonir); rt_diag_sc(RT_DIAG_SC_DC_EMIT, cr.dc_emit); rt_diag_sc(RT_DIAG_SC_DC_COUPLE, cr.dc_couple);
 #endif
     double de_u_radabs=0; /* need to collect absorbed photon energy to know how much energy to limit the 'dumped' energy to */
     for(k=0;k<N_RT_FREQ_BINS;k++)
@@ -207,6 +223,9 @@ void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct part
     }
     de_u_work += de_u_radabs; /* add this to the energy reservoir represented by the work function */
     double de_u_touse = de_u - de_u_work; /* this is the actual difference between the implicit hydro work+absorption term and the total term, i.e. a corrected de_u_rad, which we use below */
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    rt_diag_sc(RT_DIAG_SC_DEU_RADABS, de_u_radabs); if(de_u_touse > 0) {rt_diag_sc(RT_DIAG_SC_N_TOUSE_POS, 1);}
+#endif
 
     for(k=0;k<N_RT_FREQ_BINS;k++)
     {
@@ -217,6 +236,10 @@ void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct part
             {
                 double de_rad_min = DMIN(DMAX(-0.99*cell[i].Rad_E_gamma[k], -de_u_touse), 0); // don't let the radiation loss take all the radiation energy into negative, or more than the energy gained from cooling+heating
                 double de_rad_max = DMAX(DMIN(10.*unew*cell[i].Mass, -de_u_touse), 0); // don't let the radiation gain take more than some large factor times the current energy, or more than the energy lost from cooling+heating
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+                if(de_rad > de_rad_max) {rt_diag_sc((-de_u_touse <= 0) ? RT_DIAG_SC_CLIP_MAX_ZERO : ((10.*unew*cell[i].Mass < -de_u_touse) ? RT_DIAG_SC_CLIP_MAX_10UM : RT_DIAG_SC_CLIP_MAX_DEU), de_rad - de_rad_max);}
+                if(de_rad < de_rad_min) {rt_diag_sc((-de_u_touse >= 0) ? RT_DIAG_SC_CLIP_MIN_ZERO : ((-0.99*cell[i].Rad_E_gamma[k] > -de_u_touse) ? RT_DIAG_SC_CLIP_MIN_099E : RT_DIAG_SC_CLIP_MIN_DEU), de_rad_min - de_rad);}
+#endif
                 de_rad = DMAX(DMIN(de_rad, de_rad_max), de_rad_min); // limit de_rad appropriately
                 if(fabs(de_rad) > MIN_REAL_NUMBER)
                 {
@@ -226,6 +249,11 @@ void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct part
 #endif
                     double Rad_E_gamma_before = cell[i].Rad_E_gamma[k]; // save for immediate use below
                     cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+                    rt_diag_add(RT_DIAG_COOLING_TO_BAND, k, de_rad);
+                    if(k==RT_FREQ_BIN_NUV) {rt_diag_sc(RT_DIAG_SC_RET_NUV, de_rad);}
+                    if(k==RT_FREQ_BIN_INFRARED) {rt_diag_sc(RT_DIAG_SC_RET_IR, de_rad);}
+#endif
                     cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
 #if defined(RT_EVOLVE_INTENSITIES)
                     int k_tmp; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA; cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA;}
@@ -241,7 +269,7 @@ void rt_cooling_radiation_to_bands(int i, double unew, double dtime, struct part
             }
         }
     }
-    
+
 }
 #endif
 
@@ -278,6 +306,9 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         update_explicit_molecular_fraction(i, 0.5*dtime*UNIT_TIME_IN_CGS, pp, cell); // if we're doing the H2 explicitly with this particular model, we update it in two half-steps before and after the main cooling step
 #endif
 
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+        double rt_diag_dtie_code_dt = cell[i].DtInternalEnergy * dtime * cell[i].Mass; /* code units, before the cgs conversion */
+#endif
         set_PdV_work_heatingrate(i, dtime, pp, cell);
 
 #if !defined(CHIMES)
@@ -310,7 +341,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         
 
 #if defined(RADTRANSFER) /* account for cooling radiation which should, according to our modules, come out in certain bands */
-        rt_cooling_radiation_to_bands(i, unew, dtime, pp, cell);
+        #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+        rt_cooling_radiation_to_bands(i, unew, dtime, rt_diag_dtie_code_dt, pp, cell);
+#else
+        rt_cooling_radiation_to_bands(i, unew, dtime, 0, pp, cell);
+#endif
 #endif // done with RHD-cooling block update
         
 
@@ -320,6 +355,10 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         cell[i].InternalEnergy = unew;
         cell[i].InternalEnergyPred = cell[i].InternalEnergy;
         set_eos_pressure(i, pp, cell);
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+        rt_diag_sc(RT_DIAG_SC_M_COOL, cell[i].Mass); rt_diag_sc(RT_DIAG_SC_MT_GAS, cell[i].Mass*cell[i].temperature());
+        rt_diag_sc(RT_DIAG_SC_MT_DUST_COOL, cell[i].Mass*cell[i].Dust_Temperature); rt_diag_sc(RT_DIAG_SC_MT_RAD, cell[i].Mass*cell[i].Radiation_Temperature);
+#endif
 #ifndef COOLING_OPERATOR_SPLIT
         if(cell[i].CoolingIsOperatorSplitThisTimestep==0) {cell[i].DtInternalEnergy=0;} // if unsplit, zero the internal energy change here
         /* when TRANSPORT_SUBCYCLE_COOLING, DtInternalEnergy is saved/restored in run.cc around each cooling call */
@@ -1055,6 +1094,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     double LambdaRec, LambdaRecHp, LambdaRecHep, LambdaRecHepp, LambdaRecHepd, T, T_cmb_radeff, shieldfac, LambdaMol, LambdaMetal, LambdaNeb, LambdaPElec, LambdaDust, Heat_Ion_from_UVB, Heat_Ion_from_RHD;
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
     Lambda=0; Heat=0; LambdaMol=0; LambdaFF=0; LambdaRec=0; LambdaExc=0; LambdaIon=0; LambdaMetal=0; LambdaNeb=0; LambdaCompton=0; LambdaPElec=0; LambdaDust=0; Heat_Ion_from_UVB=0; Heat_Ion_from_RHD=0; /* make sure these are all initialized to zero */
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    if(target >= 0) {rt_diag_cr = {}; rt_diag_cr.fcorr = 1;}
+#endif
     if(logT <= Tmin) {logT = Tmin + 0.5 * deltaT;}	/* floor at Tmin */
     if(!isfinite(rho)) {return 0;}
     T = pow(10.0, logT);
@@ -1279,6 +1321,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
 
         Heat += CR_gas_heating(target, n_elec, nH0, nHcgs, pp, cell); // CR hadronic+Coulomb+ionization heating //
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+        if(target >= 0) {rt_diag_cr.h_cr = CR_gas_heating(target, n_elec, nH0, nHcgs, pp, cell);}
+#endif
 #if defined(COOL_LOW_TEMPERATURES)
         if(LambdaMol<0) {Heat -= LambdaMol;} // Molecular line heating (Trad_mol_cooling_batch > Tgas) //
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) || !defined(GALSF_FB_FIRE_STELLAREVOLUTION)
@@ -1322,6 +1367,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         double gas_self_absorption_opacity = rt_kappa_adaptive_IR_band(target,T,T,-1,-1, pp, cell), surface_density_fromcenter = 0.5 * (cell[target].Density*All.cf_a3inv) * (pp[target].Get_Particle_Size()*All.cf_atime);
         double tau_self = gas_self_absorption_opacity * surface_density_fromcenter, fcorr = 1./(1.+tau_self*tau_self);
         Heat*=fcorr; Lambda*=fcorr; LambdaMetal*=fcorr; LambdaExc*=fcorr; LambdaRec*=fcorr; LambdaIon*=fcorr; LambdaPElec*=fcorr; LambdaFF*=fcorr; LambdaMol*=fcorr; LambdaDust*=fcorr; LambdaCompton*=fcorr;
+#ifdef RT_DIAG_IR_DOUBLE_COUNT
+        rt_diag_cr.fcorr = fcorr;
+#endif
     }
 #endif
 
@@ -1375,6 +1423,11 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
     if(LambdaDust <= 0) {Heat = -LambdaDust; Lambda = 0;}
 #endif
     double Q = Heat - Lambda;
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    if(target >= 0) {rt_diag_cr.mol = LambdaMol; rt_diag_cr.dust = LambdaDust; rt_diag_cr.metal = LambdaMetal; rt_diag_cr.hhe = LambdaExc + LambdaIon + LambdaRec + LambdaFF;
+        rt_diag_cr.compton = LambdaCompton; rt_diag_cr.neb = LambdaNeb; rt_diag_cr.pelec = LambdaPElec; rt_diag_cr.h_ion = Heat_Ion_from_UVB + Heat_Ion_from_RHD;
+        rt_diag_cr.heat = Heat; rt_diag_cr.lambda = Lambda; rt_diag_cr.q_pre = Q;}
+#endif
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target>=0) {cell[target].CoolingRate = Lambda; cell[target].HeatingRate = Heat;}
 #endif
@@ -1433,6 +1486,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target>=0) {cell[target].NetHeatingRateQ = Q;}
 #endif
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    if(target >= 0) {rt_diag_cr.q_post = Q;}
+#endif
 #if defined(OUTPUT_MOLECULAR_FRACTION) && !defined(JACO)
     if(target>=0) {cell[target].MolecularMassFraction = Get_Gas_Molecular_Mass_Fraction(target, T, nH0, n_elec, sqrt(shieldfac)*(gJH0/2.29e-10), pp, cell);}
 #endif
@@ -1443,6 +1499,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #if defined(OUTPUT_COOLRATE_DETAIL)
     if(target >= 0) {cell[target].HydroHeatingRate = cell[target].DtInternalEnergy / nHcgs;}
 #endif
+#endif
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    if(target >= 0) {rt_diag_cr.dtie = Q - rt_diag_cr.q_post;}
 #endif
     return Q;
 } // ends CoolingRate

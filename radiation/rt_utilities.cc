@@ -82,7 +82,7 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     {
         SET_ACTIVE_RT_CHECK(); double l_ion=All.IonizingLuminosityPerSolarMass_cgs * (pp[i].Mass * UNIT_MASS_IN_SOLAR) / UNIT_LUM_IN_CGS; // flux from star particles according to mass
 #ifdef RT_ILIEV_TEST1
-        l_ion = 5.0e48 * (rt_nu_eff_eV[RT_FREQ_BIN_H0]*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS; // 5e48 ionizing photons per second -- constant for idealized test problem; photons are counted at rt_nu_eff_eV //
+        l_ion = 5.0e48 * (rt_nu_eff_eV[RT_FREQ_BIN_H0]*ELECTRONVOLT_IN_ERGS) / UNIT_LUM_IN_CGS; // 5e48 ionizing photons per second -- constant for idealized test problem; photons carry rt_nu_eff_eV each, as the chemistry counts them //
 #endif
         lum[RT_FREQ_BIN_H0] = l_ion; // default to all flux into single-band
 #if defined(RT_PHOTOION_MULTIFREQUENCY)
@@ -655,6 +655,98 @@ void rt_eddington_update_calculation(int j, struct gas_cell_data *cell)
     mode = 1 == predict/drift operation (update the predicted quantities)
  */
 /***********************************************************************************************************/
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+/* Energy accounting for the IR kick, written by task 0 to <OutputDir>/rt_ir_diag.txt every RT_DIAG_IR_DOUBLE_COUNT
+   sync points (every one if no value is given). Per row: energy that reached the IR band through E_abs_tot_toIR,
+   injected sink luminosity (c_red/c-scaled) integrated over the interval, gas thermal energy, radiation energy per
+   band, then the energy that entered or left each band through each channel since the previous row (rt_diag_add), the
+   gas energy change in the cooling step and the cooling radiation offered to the bands before limiters. The kick source
+   is the band's (Rad_Je + Dt_Rad_E_gamma) dt: transport, which sums to zero over the box, plus the radiation work
+   terms. Inert otherwise. */
+static double rt_diag_ir_donated = 0, rt_diag_lum_dt = 0; /* local sums since the last row */
+static double rt_diag_chan[RT_DIAG_NCHAN][N_RT_FREQ_BINS], rt_diag_cool_gas = 0, rt_diag_cool_rad_offered = 0;
+/* rt_cool_diag.txt: per row, sums since the previous row; columns named in the header. gas_*: gas thermal energy gained (code units, true
+   c); the cooling-step terms are those of the converged-u CoolingRate call times nH^2/rho dt M, so gas_dE_cooling - gas_Q_dt is the
+   backward-Euler residual and gas_unrouted the net heating exchanged with no band. band_*, deu_*: band energy (code units, reduced-c
+   clock); band_clip_*: what each cooling-return limiter withheld. gas_IR_share_K1/K2: IR gas share given to the gas by the
+   opening/closing half-kick, in band units (the split is not tracked under TRANSPORT_SUBCYCLE); gas_DtIE_discarded: the
+   DtInternalEnergy the hydro pre-loop drops, as energy over a half-step. */
+static double rt_diag_sc_sum[RT_DIAG_NSC];
+static const char *rt_diag_sc_names[RT_DIAG_NSC] = {"gas_dE_cooling", "gas_Q_dt", "gas_DtIE_term", "gas_DtIE_code_dt", "gas_thick_limiter",
+    "gas_mol", "gas_mol_heating_part", "gas_dust_coupling", "gas_metal", "gas_HHe", "gas_compton", "gas_CR", "gas_photoelectric",
+    "gas_ion_heating", "gas_heat_total", "gas_lambda_total", "gas_routed", "gas_unrouted", "band_offered_NUV", "band_offered_IR",
+    "band_returned_NUV", "band_returned_IR", "band_clip_max_10uM", "band_clip_max_deu", "band_clip_max_zero", "band_clip_min_099E",
+    "band_clip_min_deu", "band_clip_min_zero", "deu_work", "deu_radabs", "n_deu_touse_pos", "n_cool", "band_coolstep_dust_abs_IR",
+    "band_coolstep_dust_abs_nonIR", "band_coolstep_dust_emit", "band_coolstep_dust_coupling", "band_kick_dust_reemit",
+    "band_kick_dust_emit_implied", "band_kick_dust_coupling_implied", "M_cool", "MT_gas", "MT_dust_cool", "MT_rad", "M_kick",
+    "MT_dust_kick", "MT_gas_kick", "gas_kick_dE", "band_kick_dE", "gas_DtIE_discarded", "gas_IR_share_K1", "gas_IR_share_K2"};
+int rt_diag_kick_mode = 0;
+thread_local struct rt_diag_cool_terms rt_diag_cr;
+static thread_local double rt_diag_dc_last[4]; /* dust_dE_cooling's last absorption (IR, other bands), emission, gas coupling */
+void rt_diag_sc(int idx, double v)
+{
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    rt_diag_sc_sum[idx] += v;
+}
+static void rt_diag_ir_add_donated(double de)
+{
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    rt_diag_ir_donated += de;
+}
+void rt_diag_add(int channel, int k, double de)
+{
+    double *x = (channel == RT_DIAG_COOL_GAS) ? &rt_diag_cool_gas : ((channel == RT_DIAG_COOL_OFFERED) ? &rt_diag_cool_rad_offered : &rt_diag_chan[channel][k]);
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    *x += de;
+}
+void rt_diag_ir_double_count_report(void)
+{
+    static double t_last = -1, t_row = -1; static long long n_call = 0; static FILE *fd = NULL;
+    int i, k, c, stride = ((RT_DIAG_IR_DOUBLE_COUNT+0) > 1) ? (RT_DIAG_IR_DOUBLE_COUNT+0) : 1;
+    double lum_now = 0, dt = (t_last < 0) ? 0 : All.Time - t_last; t_last = All.Time;
+#ifdef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
+    for(i=0;i<NumPart;i++) {if((P[i].Type==5) && (P[i].Mass>0)) {lum_now += P[i].StarLuminosity_Solar;}}
+#endif
+    rt_diag_lum_dt += lum_now / UNIT_LUM_IN_SOLAR * (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * dt;
+    if((n_call++ % stride) != 0) {return;}
+    const int nv = 5 + (1+RT_DIAG_NCHAN)*N_RT_FREQ_BINS + 2, nall = nv + RT_DIAG_NSC;
+    double loc[nall], glob[nall]; for(i=0;i<nall;i++) {loc[i] = 0;}
+    for(i=0;i<RT_DIAG_NSC;i++) {loc[nv+i] = rt_diag_sc_sum[i]; rt_diag_sc_sum[i] = 0;}
+    loc[0] = rt_diag_ir_donated; loc[1] = rt_diag_lum_dt; loc[2] = lum_now;
+    for(i=0;i<NumPart;i++) {if((P[i].Type==0) && (P[i].Mass>0)) {loc[3] += P[i].Mass*CellP[i].InternalEnergy; loc[4] += P[i].Mass; for(k=0;k<N_RT_FREQ_BINS;k++) {loc[5+k] += CellP[i].Rad_E_gamma[k];}}}
+    for(c=0;c<RT_DIAG_NCHAN;c++) {for(k=0;k<N_RT_FREQ_BINS;k++) {loc[5+(1+c)*N_RT_FREQ_BINS+k] = rt_diag_chan[c][k]; rt_diag_chan[c][k] = 0;}}
+    loc[nv-2] = rt_diag_cool_gas; loc[nv-1] = rt_diag_cool_rad_offered;
+    rt_diag_ir_donated = rt_diag_lum_dt = rt_diag_cool_gas = rt_diag_cool_rad_offered = 0;
+    MPI_Reduce(loc, glob, nall, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    static FILE *fd_sc = NULL;
+    if(!fd_sc)
+    {
+        char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%srt_cool_diag.txt", All.OutputDir);
+        if((fd_sc = fopen(buf, "a"))) {fprintf(fd_sc, "# time"); for(i=0;i<RT_DIAG_NSC;i++) {fprintf(fd_sc, " %s", rt_diag_sc_names[i]);} fprintf(fd_sc, "\n");}
+    }
+    if(fd_sc) {fprintf(fd_sc, "%.12g", All.Time); for(i=0;i<RT_DIAG_NSC;i++) {fprintf(fd_sc, " %.12g", glob[nv+i]);} fprintf(fd_sc, "\n"); fflush(fd_sc);}
+    if(!fd)
+    {
+        char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%srt_ir_diag.txt", All.OutputDir);
+        if(!(fd = fopen(buf, "a"))) {return;}
+        fprintf(fd, "# time dt_row E_donated_toIR L_inj_dt L_sinks_Lsun E_thermal_gas M_gas E_rad[0..%d] absorbed[0..%d] donated_in[0..%d] "
+                "IR_gas_share[0..%d] cooling_to_band[0..%d] injected[0..%d] kick_source[0..%d] cooling_gas_dE cooling_rad_offered   (code "
+                "units; dt_row = time since the previous row; channel columns are sums over that interval)\n", N_RT_FREQ_BINS-1,
+                N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1);
+    }
+    fprintf(fd, "%.12g %.12g", All.Time, (t_row < 0) ? 0 : All.Time - t_row);
+    for(i=0;i<nv;i++) {fprintf(fd, " %.12g", glob[i]);}
+    fprintf(fd, "\n"); fflush(fd); t_row = All.Time;
+}
+#endif
+
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(RT_EVOLVE_ENERGY) || defined(RT_EVOLVE_INTENSITIES)
@@ -736,6 +828,16 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                 cell[i].Dust_Temperature = rt_eqm_dust_temp(i, T_gas, total_absorption_rate * vol_inv_phys * C_LIGHT_CODE / C_LIGHT_CODE_REDUCED, pp, cell);
 #endif
                 if(cell[i].Dust_Temperature < T_min) {cell[i].Dust_Temperature = T_min;}
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(COOLING)
+                if((mode==0) && (dt_entr>0)) { /* dust emission and gas coupling at the kick's Tdust, over this kick, in band units */
+                    double Td = cell[i].Dust_Temperature, rho_k = cell[i].Density*All.cf_a3inv, f_band = dt_entr * (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) / vol_inv_phys;
+                    double nH_k = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * rho_k / PROTONMASS_CGS;
+                    double emit_vol = 4.*5.67e-5/(UNIT_PRESSURE_IN_CGS*UNIT_VEL_IN_CGS) * rho_k * rt_kappa_adaptive_IR_band(i, Td, Td, 1, 1, pp, cell) * pow(Td,4);
+                    double couple_vol = gas_dust_heating_coeff(i, T_gas, Td, pp, cell) * nH_k * nH_k / (UNIT_PRESSURE_IN_CGS/UNIT_TIME_IN_CGS) * (T_gas - Td);
+                    rt_diag_sc(RT_DIAG_SC_DK_EMIT_IMPLIED, emit_vol*f_band); rt_diag_sc(RT_DIAG_SC_DK_COUPLE_IMPLIED, couple_vol*f_band);
+                    rt_diag_sc(RT_DIAG_SC_M_KICK, cell[i].Mass); rt_diag_sc(RT_DIAG_SC_MT_DUST_KICK, cell[i].Mass*Td); rt_diag_sc(RT_DIAG_SC_MT_GAS_KICK, cell[i].Mass*T_gas);
+                }
+#endif
                 double Tdust_eff = cell[i].Dust_Temperature, Trad_eff = cell[i].Radiation_Temperature;
                 double kappa_gas = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,-1,-1, pp, cell), kappa_total = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,0,0, pp, cell);
                 IRBand_opacity_fraction_from_gas_absorption = kappa_gas / (kappa_total + MIN_REAL_NUMBER); /* gas absorption opacity only, relative to total opacity (all sources+scattering) */
@@ -822,16 +924,28 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             int donation_target_bin = rt_get_donation_target_bin(kf); // frequency into which the photons will be deposited, if any //
 #ifdef RT_INFRARED
             if((donation_target_bin == RT_FREQ_BIN_INFRARED) && (kf != RT_FREQ_BIN_INFRARED)) {E_abs_tot_toIR += de_abs/(MIN_REAL_NUMBER + dt_entr);} /* donor bin is yourself in the IR - some self-absorption is re-emitted, but this is handled explicitly below, so don't need to include it in sum here */
+            if(donation_target_bin == RT_FREQ_BIN_INFRARED) {donation_target_bin = -1;} /* already reaches the IR band as E_abs_tot_toIR, the source term of its update (IR is processed last): donating it too would count it twice */
             if(kf==RT_FREQ_BIN_INFRARED) {
 #ifdef COOLING
                 ef += de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption); /* update: assume a fraction de_abs * IRBand_opacity_fraction_from_gas_absorption is absorbed by the gas, which will not be instantly re-emitted here, but later in the cooling subroutines */
-                if(mode==0) {cell[i].DtInternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / ((MIN_REAL_NUMBER + dt_entr) * cell[i].Mass);} /* this fraction absorbed by gas goes into a heating rate which can be balanced implicitly in the cooling function later */
+                if(mode==0) {double du_gas = de_abs * IRBand_opacity_fraction_from_gas_absorption / cell[i].Mass; cell[i].InternalEnergy += du_gas; cell[i].InternalEnergyPred += du_gas;} /* the gas share heats the gas directly, once per half-kick: as a rate in DtInternalEnergy the hydro pre-loop would zero the opening half-kick's share, and the unsplit cooling solve would apply the closing one's over the whole step */
 #else
                 ef = e0 + total_de_dt * dt_entr; // previous version: assumes all self-absorption is re-emitted
 #endif
             } /* donor bin is yourself in the IR - just need to decide what to do with the photons */
 #endif
             // isotropically re-emit the donated radiation into the target bin[s] //
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+            if((mode==0) && (dt_entr>0)) {
+                rt_diag_add(RT_DIAG_ABSORBED, kf, de_abs); if(donation_target_bin >= 0) {rt_diag_add(RT_DIAG_DONATED_IN, donation_target_bin, de_abs);}
+                rt_diag_add(RT_DIAG_KICK_SOURCE, kf, (cell[i].Rad_Je[kf] + dt_e_gamma_band) * dt_entr);
+#ifdef COOLING
+                if(kf==RT_FREQ_BIN_INFRARED) {rt_diag_add(RT_DIAG_IR_GAS_SHARE, kf, de_abs*IRBand_opacity_fraction_from_gas_absorption);
+                    rt_diag_sc(RT_DIAG_SC_DK_REEMIT, de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption));
+                    rt_diag_sc((rt_diag_kick_mode==0) ? RT_DIAG_SC_DEPOSIT_K1 : RT_DIAG_SC_DEPOSIT_K2, de_abs*IRBand_opacity_fraction_from_gas_absorption);}
+#endif
+            }
+#endif
 #if defined(RT_EVOLVE_INTENSITIES)
             // this is the leading-order (isotropic) emission-absorption step, i.e. the psi_a * (j_e - I) term in the intensity equation. solved by the methods above to deal generically with stiff emission-absorption problems, re-used below if needed //
             if(donation_target_bin >= 0) {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {if(mode==0) {cell[i].Rad_Intensity[donation_target_bin][k_q] += de_abs/RT_INTENSITY_BINS_DOMEGA;} else {cell[i].Rad_Intensity_Pred[donation_target_bin][k_q] += de_abs/RT_INTENSITY_BINS_DOMEGA;}}}
@@ -886,6 +1000,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #endif
         } // clause for radiation angle [needed for evolving intensities]	
     } // loop over frequencies
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+    if((mode==0) && (dt_entr>0)) {rt_diag_ir_add_donated(E_abs_tot_toIR*dt_entr);}
+#endif
     
 #if defined(RT_EVOLVE_INTENSITIES)
     if(dt_entr > 0) { // none of this is worth doing if we don't have a finite timestep here
@@ -1353,6 +1470,9 @@ double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoin
     double dust_absorption = dust_absorption_nonIR;
     dust_absorption += e_IR_final * C_LIGHT_CODE_REDUCED * rt_kappa_adaptive_IR_band(i, Tdust, T_IR_final,-1,1, pp, cell) * cell[i].Density*All.cf_a3inv * dt;
     double result = LambdaDust * lambda_to_dErad + dust_absorption - dust_emission;
+#ifdef RT_DIAG_IR_DOUBLE_COUNT
+    rt_diag_dc_last[0] = dust_absorption - dust_absorption_nonIR; rt_diag_dc_last[1] = dust_absorption_nonIR; rt_diag_dc_last[2] = dust_emission; rt_diag_dc_last[3] = LambdaDust * lambda_to_dErad;
+#endif
 
     double Tdust_fixed1_tmp = Tgas + (dust_absorption - dust_emission)/(alpha_gd*lambda_to_dErad + MIN_REAL_NUMBER); // make sure to include term in denominator to protect vs nans
     double Tdust_fixed2_tmp = sqrt(sqrt(DMAX(0,LambdaDust * lambda_to_dErad + dust_absorption)/(fac_emission * kappa_dust_emission + MIN_REAL_NUMBER))); // make sure to include term in denominator and MAX in numerator to protect vs nans
@@ -1370,6 +1490,9 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
     // define ROOTFIND_FUNCTION_INNER because this gets called nested inside the cooling solver, and needs to be def'd distinctly from the overlying ROOTFIND_FUNCTION
     #define ROOTFIND_FUNCTION_INNER(dTdust) dust_dE_cooling(i, T, T+dTdust, &Tdust_fixedpoint_1, &Tdust_fixedpoint_2, pp, cell)
     if((All.Time==0 )|| (!isfinite(cell[i].Dust_Temperature))) {Tdust=T;} else {Tdust = DMIN(MAX_DUST_TEMP, cell[i].Dust_Temperature);}
+#ifdef RT_DIAG_IR_DOUBLE_COUNT
+    rt_diag_cr.dc_abs_ir = rt_diag_cr.dc_abs_nonir = rt_diag_cr.dc_emit = rt_diag_cr.dc_couple = 0;
+#endif
 
     dE = dE_guess = ROOTFIND_FUNCTION_INNER(Tdust-T);
     //if(cell[i].Dust_Temperature >= MAX_DUST_TEMP && dE > 0) {return 0;}
@@ -1434,6 +1557,10 @@ double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_ce
         Tdust = ROOTFIND_X_new+T;
     }
     double LambdaDust = gas_dust_heating_coeff(i,T,Tdust, pp, cell) * (T-Tdust);
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(COOLING)
+    {double Trad_cw = cell[i].Radiation_Temperature_CoolingWeighted; dust_dE_cooling(i, T, Tdust, &dummy, &dummy, pp, cell); cell[i].Radiation_Temperature_CoolingWeighted = Trad_cw;
+     rt_diag_cr.dc_abs_ir = rt_diag_dc_last[0]; rt_diag_cr.dc_abs_nonir = rt_diag_dc_last[1]; rt_diag_cr.dc_emit = rt_diag_dc_last[2]; rt_diag_cr.dc_couple = rt_diag_dc_last[3];}
+#endif
     cell[i].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] += LambdaDust;
     cell[i].Dust_Temperature = Tdust;
     return LambdaDust;

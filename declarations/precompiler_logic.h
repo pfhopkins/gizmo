@@ -470,14 +470,19 @@
 #if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) || defined(COOLING)
 #define GALSF_FB_FIRE_STELLAREVOLUTION 3 // enable multi-loop feedback from such sources [this is specific to the DG-MG implementations here, not for public use right now!]. for now set to =2, which should force the code version to match previous iterations, as compared to the newer implementations.
 #endif
-#if defined(RT_ISRF_BACKGROUND)
-#if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(RT_ISRF_BACKGROUND)
-#if (RT_ISRF_BACKGROUND <= 0)
-#undef RT_ISRF_BACKGROUND /* use the negative or zero value above as a key to specifically -undefine- this variable, otherwise it will cause problems below by calling 0 to reset quantities it should not */
-#endif
-#endif
-#endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+/* RT_ISRF_BACKGROUND=0 (or any value <= 0) in Config.sh switches the interstellar background off, including where an
+   umbrella above would turn it on (those only define it if it is not defined yet). Defined without a value it stays on.
+   The value test is written so that an empty definition is not read as 0: CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_
+   cannot tell 0 from empty. */
+#if defined(RT_ISRF_BACKGROUND)
+#if !((1 - RT_ISRF_BACKGROUND - 1 == 2) && (RT_ISRF_BACKGROUND + 0 == 0)) /* given a value */
+#if (RT_ISRF_BACKGROUND + 0 <= 0)
+#undef RT_ISRF_BACKGROUND
+#endif
+#endif
+#endif
 
 #ifdef SINGLE_STAR_RT_DEFAULTS
 #define RT_M1
@@ -555,14 +560,19 @@
    configs set only to expose accuracy parameters. Without it only the always-on checks run
    (force_validate_tree_links and the treebuild bookkeeping reduce). */
 
-#if defined(HERMITE_INTEGRATION) && defined(SINK_WIND_SPAWN) && !defined(MAINTAIN_TREE_IN_REARRANGE)
-/* Hermite is the one consumer that walks the STANDING tree while deliberately skipping the rebuild
-   it was asked for (the HermiteOnlyFlag gate in gravtree.cc), so a spawning Hermite run must have
-   the full per-swap maintenance -- the parent-only carry is not enough for a tree that keeps being
-   walked. This deliberately OVERRIDES the nuclear-zoom exclusion above: a zoom run with Hermite and
-   spawning gets the maintenance despite the exclusion. (cf. gizmo-cpp a06e0073) */
+#if defined(SINK_PARTICLES) && !defined(MAINTAIN_TREE_IN_REARRANGE) && (defined(HERMITE_INTEGRATION) || !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM))
+/* Every sink pass that swallows ends with a cleanup rearrange (run.cc) that eliminates the victims,
+   spawning or not. Without maintenance that rearrange only condemns the tree, and the consumers
+   that follow in the same step walk it without rebuilding: the Hermite passes (which skip the
+   rebuild by design, the HermiteOnlyFlag gate in gravtree.cc), RT source injection from the sink,
+   and the feedback neighbour loops. The threading still points at the vacated slots, so each of
+   those walks sees a duplicated particle per swallow, and Hermite also refreshes moments on, and
+   takes sink forces from, that tree. The parent-only carry is not enough for a tree that keeps
+   being walked, so every sink run gets the full per-swap maintenance. Nuclear zoom keeps its
+   upstream exclusion above unless Hermite is on; the condemned walks it then makes are reported
+   by force_tree_check_walkable. (cf. gizmo-cpp a06e0073) */
 #ifdef DISABLE_MAINTAIN_TREE_IN_REARRANGE
-#warning "DISABLE_MAINTAIN_TREE_IN_REARRANGE overridden: HERMITE_INTEGRATION + SINK_WIND_SPAWN requires tree maintenance (this config cannot serve as the no-MAINTAIN A/B arm)"
+#warning "DISABLE_MAINTAIN_TREE_IN_REARRANGE overridden: SINK_PARTICLES requires tree maintenance (this config cannot serve as the no-MAINTAIN A/B arm)"
 #endif
 #define MAINTAIN_TREE_IN_REARRANGE
 #endif

@@ -967,6 +967,9 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+            rt_diag_sc(RT_DIAG_SC_DTIE_DISCARD, CellP[i].DtInternalEnergy * P[i].Mass * 0.5 * get_particle_timestep_in_physical(i)); /* dropped here, as energy over a half-step; in split-cooling cells it includes the closing-kick rate the opening kick already applied */
+#endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
             CellP[i].HydroAccel = {};
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME

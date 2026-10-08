@@ -60,9 +60,14 @@ def _load_gmc_data(f):
         }
 
 
+# Reference from the cold neutral start (InitGasTemp 100) with the RT/microphysics fixes; versioned so
+# checkouts without them keep the old gmc_cooling_rt_exact.hdf5.
+BENCHMARK = "gmc_cooling_rt_exact_coldstart.hdf5"
+
+
 def _render_combined_gmc_plots(test_dir):
     """Re-render nH-vs-X plots with the reference solution + all accumulated variants overlaid."""
-    ref = _load_gmc_data(f"{test_dir}/gmc_cooling_rt_exact.hdf5")
+    ref = _load_gmc_data(f"{test_dir}/{BENCHMARK}")
     plot_specs = [
         ("T", r"$T (\rm K)$", "nH_vs_T.png"),
         ("Tdust", r"$T_{\rm dust} (\rm K)$", "nH_vs_Tdust.png"),
@@ -149,7 +154,7 @@ def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling_rt"
     test_dir = "test/gmc_cooling_rt"
     get_cooling_tables(test_dir)
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags, exact_files=(BENCHMARK,))
     final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
 
@@ -165,7 +170,7 @@ def test_gmc_cooling_rt(num_mpi_ranks, num_omp_threads, extra_config_flags):
         # baseline: cache stats for subcycled variants, then compare against reference
         if not extra_config_flags:
             _baseline_stats_cache["stats"] = test_stats
-        benchmark_stats = compute_test_statistic(test_dir + "/gmc_cooling_rt_exact.hdf5")
+        benchmark_stats = compute_test_statistic(f"{test_dir}/{BENCHMARK}")
     else:
         # subcycled: compare against the baseline run
         benchmark_stats = _baseline_stats_cache.get("stats")

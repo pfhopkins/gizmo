@@ -4220,6 +4220,30 @@ void force_refresh_node_moments(void)
 }
 
 
+/*! Entry check for every consumer that walks the STANDING tree without first offering to rebuild
+ *  it. TreeReconstructFlag set here means the particle list changed (rearrange, spawn, fof, ...)
+ *  and nothing has rebuilt since: the threading still points at vacated or stale slots, so the
+ *  walk's neighbour set or forces are wrong. The rebuild cannot be done here -- it is not
+ *  escape-safe mid-step and would reorder slots under a caller that may hold indices -- so this
+ *  only reports: a warning once per rank and a cpu.txt counter, fatal under the audits. The
+ *  protocol answer is upstream: either maintain the tree through the mutation or rebuild before
+ *  the next walk. The flag is rank-uniform by protocol, so the fatal path cannot desync ranks. */
+void force_tree_check_walkable(const char *tag)
+{
+    if(!TreeReconstructFlag) {return;}
+    TreeOpsCount[TREEOPS_CONDEMNED_WALK]++;
+    static int reported = 0;
+    if(!reported)
+    {
+        reported = 1;
+        printf("WARNING task %d [%s]: tree walk started on a CONDEMNED tree (TreeReconstructFlag set, no rebuild since the particle list changed). Its results can be wrong; further occurrences are counted as condemned_walk in cpu.txt.\n", ThisTask, tag);
+        fflush(stdout);
+    }
+#ifdef TREE_INTEGRITY_AUDITS
+    endrun(91572);
+#endif
+}
+
 /*! Tier-0 (always-on) walk-threading validator. Runs only when a maintained rearrange noted a
  *  change (TreeWalkValidatePending); costs nothing otherwise. Walks the Nextnode threading from
  *  the root exactly as the gravity/neighbour walks will, counts the local particles it can reach,

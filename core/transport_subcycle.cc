@@ -221,11 +221,7 @@ void transport_subcycle_kick(void)
         if(sub_dt <= 0) continue;
 
 #ifdef RADTRANSFER
-        /* rt_update_driftkick adds IR gas heating to DtInternalEnergy as a rate.
-           Since we call it N times, the rate would accumulate N-fold. Save/restore
-           DtInternalEnergy each sub-step to prevent accumulation, but keep the final
-           sub-step's contribution so the cooling function sees the correct IR heating rate. */
-        rt_update_driftkick(i, sub_dt, 0, P, CellP); /* kick: advance conserved variables */
+        rt_update_driftkick(i, sub_dt, 0, P, CellP); /* kick: advance conserved variables (the IR gas share goes straight into InternalEnergy) */
         rt_eddington_update_calculation(i, CellP);
         /* update opacities — Rad_Kappa (especially IR band) depends on Dust_Temperature and
            Radiation_Temperature which were just modified by rt_update_driftkick. Stale opacities

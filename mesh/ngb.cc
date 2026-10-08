@@ -32,6 +32,7 @@ void ngb_treebuild(void)
     if(ThisTask == 0) {printf("Begin Ngb-tree construction.\n");}
     CPU_Step[CPU_MISC] += measure_time();
     force_treebuild(NumPart, NULL);
+    TreeReconstructFlag = 0; /* a whole-tree build satisfies the condemnation init() raised; the neighbour loops that follow in init walk this tree */
     CPU_Step[CPU_TREEBUILD] += measure_time();
     if(ThisTask == 0) {printf("Ngb-Tree contruction finished \n");}
 }

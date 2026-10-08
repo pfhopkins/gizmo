@@ -109,14 +109,14 @@ void rt_source_injection_initial_operations_preloop(void);
 void rt_source_injection_initial_operations_preloop(void)
 {
     /* first, we do a loop over the gas particles themselves. these are trivial -- they don't need to share any information,
-     they just determine their own source functions. so we don't need to do any loops. and we can zero everything before the loop below. */
-    if(!(RT_SOURCES & 1)) return; // we skip this if gas cells don't have explicit source terms
-
+     they just determine their own source functions. so we don't need to do any loops. and we can zero everything before the loop below.
+     The zeroing is needed whether or not gas cells are sources: continuous (non-discrete) injection adds to Rad_Je. */
     int j;
     for(j=0;j<NumPart;j++) {
         if(P[j].Type==0) {
-            double lum[N_RT_FREQ_BINS]; int k;
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection //
+            int k; for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[j].Rad_Je[k]=0;} // need to zero -before- calling injection //
+            if(!(RT_SOURCES & 1)) {continue;} // gas cells have no explicit source terms
+            double lum[N_RT_FREQ_BINS];
             int active_check = rt_get_source_luminosity(j,0,lum, P, CellP);
             /* here is where we would need to code some source luminosity for the gas */
             for(k=0;k<N_RT_FREQ_BINS;k++) if(active_check) {CellP[j].Rad_Je[k]=lum[k];}
@@ -256,6 +256,12 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     /* now add the actual photon energies */
                     #pragma omp atomic
                     CellP[j].Rad_E_gamma[k] += dE; // dump discretely (noisier, but works smoothly with large timebin hierarchy)
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
+                    rt_diag_add(RT_DIAG_INJECTED, k, dE);
+#ifdef RT_REPROCESS_INJECTED_PHOTONS
+                    if(donation_bin > -1) {rt_diag_add(RT_DIAG_INJECTED, donation_bin, dE_donation);}
+#endif
+#endif
 #ifdef RT_EVOLVE_ENERGY
                     #pragma omp atomic
                     CellP[j].Rad_E_gamma_Pred[k] += dE;
