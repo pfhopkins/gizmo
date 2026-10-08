@@ -45,10 +45,12 @@ State as of 2026-10-06 (section 0 summarizes what changed since 2026-10-04). GIZ
 - Legacy GIZMO is being fixed on a separate branch, `rt_microphysics_fixes` (see GIZMO_RT_MICROPHYSICS_ISSUES.md):
   the IR double count, the discarded IR gas share, Rad_Je, the Iliev photon count, the restart H2 rebuild, the sound
   speed's stale gamma, and an uninitialized `dt_hydrostep_i` in the hydro flux limiters. Consequences for jaco:
-  (a) once that branch lands, `starforge_legacy_RT` should drop its reproduced IR double count
-  (`Model.without(...)`) and match the fixed legacy kick, and its gmc_cooling_rt/shu_M120 comparisons move to the
-  regenerated benchmarks; (b) the sound-speed and `dt_hydrostep_i` fixes change every STARFORGE legacy baseline the
-  jaco variants were compared against, so the jaco acceptance must be rerun after merging that branch;
+  (a) once that branch lands, `starforge_legacy_RT` should drop its reproduced IR double count and match the fixed
+  legacy kick, and its gmc_cooling_rt/shu_M120 comparisons move to the regenerated benchmarks: DONE 2026-10-08 (jaco
+  `legacy_rt_fixed` 9cdb5ee; 1.2): gmc_cooling_rt[jaco_rt] passes against the cold-start benchmark (urad_FIR 0.38 ->
+  0.009) and is no longer xfail; shu_M120[jaco_rt] passes against its benchmark, which was not regenerated; (b) the
+  sound-speed and `dt_hydrostep_i` fixes change every STARFORGE legacy baseline the jaco variants were compared
+  against, so the jaco acceptance must be rerun after merging that branch;
   (c) `gizmo_jaco_dev` needs a merge of origin/starforge_dev (now abd5e309) and later of the fix branch.
   Decision (MYG, 2026-10-06), the GIZMO baseline for the jaco work:
   - Only the option-2 fixes (F1-F6 + `dt_hydrostep_i`) go into it. Deferred, each to its own later batch: legacy
@@ -83,16 +85,45 @@ T_mid = 5000 K, w = 0.1 dex (jaco `symbols.py` constants; f = 0.98 at 2000 K, 0.
 C_2 p50/p90/p99 1.01/1.04/1.23. gmc_cooling unchanged (cold gas). Solver tiers unchanged or better.
 
 ### 1.2 Reproduced legacy energy creation in `starforge_legacy_RT`
-To match the RT benchmarks the model reproduces four legacy behaviours that do not conserve energy, each
-documented in the model docstring: the IR double count (a separate process, removable with `Model.without`),
-dust heated by the full gas IR absorption, gas IR heating deposited at c~/c rather than c, and photoelectric heating
-and LW photodissociation not depleting their bands. Whether `starforge_legacy_RT` ships with these on (benchmark
+To match the RT benchmarks the model reproduces three legacy behaviours that do not conserve energy, each
+documented in the model docstring: dust heated by the full gas IR absorption, gas IR heating deposited at c~/c rather
+than c, and photoelectric heating and LW photodissociation not depleting their bands. (The IR double count, a fourth,
+was dropped when F1 landed; see below.) Whether `starforge_legacy_RT` ships with these on (benchmark
 fidelity) or off (correct physics, benchmarks re-baselined) should follow the legacy A/B in section 3.
 The kick's exponent cap was lowered from 50 to 10 inside jaco for solver cost; beyond it the band keeps e^-10.
 Decision (MYG, 2026-10-06): `starforge_legacy_RT` exists solely to behave like baseline GIZMO in its most developed
 state on starforge_dev. It tracks that branch term for term: it drops each legacy term that a landed fix removes
 (starting with the IR double count and the gas IR share once `rt_microphysics_fixes` lands) and keeps reproducing
 whatever legacy still does, energy-creating or not. Physical corrections belong in `starforge_RT`, not here.
+Done (2026-10-08, P0.4; jaco `legacy_rt_fixed` 9cdb5ee, GIZMO `legacy_rt_fixed`): `starforge_legacy_RT` tracks the
+fixed kick (F1 a5d1924c, F2 bf6e4745, merged here at 6d472eda).
+- F1: the process that reproduced the direct donation (`radiation.legacy_ir_donation_copy`) is deleted, not kept
+  behind `Model.without`. T_rad_new re-derived from the fixed kick (`rt_utilities.cc` 846-857, 924-927 at 6d472eda):
+  E_abs_tot_toIR dt is never in e0 (counted at T_rad); it joins the band's own absorbed energy in e_absorbed,
+  weighted at T_dust for the dust's share. The model's dust emission already carries the donors' dust absorption at
+  T_dust, so T_rad_new now starts from the band's initial photons alone (`ir_radiation_temperature` loses
+  `prior_sources`). Not reproduced, before or after: the kick also counts the gas share f_gas e_absorbed, which goes
+  to the gas, as photons at max(T_rad, T_gas) (f_gas < 1e-2 outside dense ionized gas).
+- F2 verified, no change: `kick_gas_share` = 2 (1 - e^-x/2) / x of the gas absorption rate is the full share of both
+  half-kicks, 1:1 with the band's loss, which is what bf6e4745 now delivers (before it, unsplit cells got the same
+  total with the opening share lost and the closing one doubled). Its standing approximations are unchanged: x and
+  the share use the dust absorption opacity alone, where GIZMO divides by the total (0,0) opacity.
+- jaco tests: `test_ir_band_gets_the_donations_once` (was `_twice`) and a fixed-kick transcription in
+  `test_ir_radiation_temperature_output` (exact to 1e-12; the old weighting gave 40.1 K vs 45.1 K in a thin case).
+  Fast suite 824 passed (test_CIE: missing data file, as before), slow test_legacy_rt 2 passed. Golden hashes: only
+  starforge_legacy_RT's `microphysics_func_jac.cc` and `microphysics_outputs.cc` change.
+- GIZMO (4 ranks x 1 thread, ccalin030): gmc_cooling_rt[jaco_rt] against the cold-start benchmark, max rel per
+  statistic before -> after: urad_FIR 0.381 -> 0.009, Trad 0.013 -> 0.001, T 0.021 -> 0.015, Tdust 0.012 -> 0.012,
+  urad_FUV 0.055 -> 0.048, xe 0.009 -> 0.011. It passes, so its xfail is removed: this branch's jaco_rt needs jaco at
+  or after 9cdb5ee (with the pip-installed `gizmo_integration` jaco it fails on urad_FIR).
+  shu_M120[jaco_rt] passes (run outside the test's 600 s limit, which 4 ranks exceed, then asserted on its snapshots
+  with GIZMO_TEST_SKIP_BUILD_RUN=1) against its old benchmark, still made with the double count: T 0.055, Tdust
+  0.057, Trad 0.071 (tolerance 0.1), sink mass 1.465 vs 1.461. Against the fixed legacy run at 6d472eda: T and Tdust
+  within 0.038 (jaco 2-4% colder inside 2.5e-3 pc), Trad within 0.084 (at 4-6e-3 pc), urad_FIR (not asserted) 3-14%
+  lower inside 2.5e-3 pc and within 1% outside 0.01 pc.
+- Merging `band_spec` later: expect conflicts where it edits `legacy_ir_donation_copy` (deleted here),
+  `ir_radiation_temperature`'s `prior_sources`/P_IR, and the model's `RADIATION_PROCESSES`/`_outputs`; take
+  band_spec's lines without the copy and P_IR.
 
 ### 1.3 H2 source for the star-formation criterion under JACO
 Commit 779305d0 makes `Get_Gas_Molecular_Mass_Fraction` return the network's H2 under JACO (as GIZMO does for
@@ -170,8 +201,8 @@ Findings about GIZMO's own RT and microphysics (the IR kick double count and its
 cooling-radiation return limiter, the first-cooling-call branch jump, the idealized-test and build-system defects,
 the two non-RT defects) now live in GIZMO_RT_MICROPHYSICS_ISSUES.md. The parts that are decisions for the jaco
 branches: whether `starforge_legacy_RT` keeps reproducing legacy's energy-creating terms (1.2 above), and the
-gmc_cooling_rt benchmark, which encodes the first-cooling-call defect and must be regenerated before its jaco
-variants can leave xfail.
+gmc_cooling_rt benchmark, which encoded the first-cooling-call defect (regenerated from a cold start; jaco_rt left
+xfail on 2026-10-08, 1.2).
 
 ## 4. Tests and tolerances
 - New r_IF assertions (HII_region_simple, HII_region, HII_region_subcycle) and the Iliev gate use 10%; measured
