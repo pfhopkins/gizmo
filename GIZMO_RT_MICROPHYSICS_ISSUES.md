@@ -124,6 +124,42 @@ coupling keep c~/c (correct); limiter in one unit system, de_rad <= (c~/c) max(0
 heat; CR background booked as injection. Predicted residual: BE tolerance only (~3e-4 at 1e7; ~0 if the return
 uses the actual du). Ledger tool: scratchpad rtledger/ledger3.py.
 
+### 1.1e The drain is per step, and the gas share counts the dust's scattering (rt_closed_box, 2026-10-09)
+Found with the jaco closed-box harness (gizmo_jaco_dev branch `rt_closed_box_jaco`, e694dcec); legacy code at b01265d8.
+Runs, A/B arms and scripts are in /mnt/ceph/users/mgrudic/jaco_cbox/.
+- **Per-step loss (extends 1.1d).** Where a cell is IR-thick over one step (x = c~ kappa_abs rho dt >> 1; the RT
+  Courant step gives x ~ 0.4 tau_cell), each half-kick absorbs nearly the whole band and hands the gas f_gas of it at
+  1:1 (rt_utilities.cc:931). The cooling return re-radiates it at c~/c. So the E_gas + E_b c/c~ ledger loses ~2 f_gas
+  of the band per step, whatever dt is: the drain per unit time scales as 1/dt.
+  Closed box (STARFORGE, c~/c = 1e-4, 64 steps at 12 K): -26% / -48% / -34% of the ledger at n_H = 1e7 / 1e8 / 1e9.
+  From LTE at n_H = 1e9: -2.5% at 200 K and -6.4% at 500 K.
+  In shu_M120's n_H > 1e9 cells it is ~3e-4 per step, i.e. k ~ 2e3 per code time and k t ~ 1.4 over the run. That is a
+  leading, timestep-dependent sink in the core. jaco's `starforge_legacy_RT` reproduces it.
+- **Gas-share denominator.** f_gas = kappa(-1,-1)/kappa(0,0) (:843) divides by the total opacity. Its dust part lacks
+  the absorption factor A(T_rad) = 1 - 0.5/(1 + 725^2/(1 + T_rad^2)) (:1860) that the absorption opacities carry. So
+  the gas absorbs at A(T_rad) times its own kappa_gas: 1.000 at 12 K, 0.975 at 167 K, 0.84 at 500 K, 0.77 at 680 K.
+  jaco's `starforge_legacy_RT` divides by the dust absorption opacity, so it drains 1/A more. Closed box: 1.0364
+  measured vs 1.0367 predicted at 200 K, 1.1896 vs 1.1919 at 500 K.
+  shu_M120 A/B (legacy with jaco's denominator; the base arm reproduces the reference to 1e-4), median ratios to the
+  reference at snapshot 5, T / u_IR:
+
+  | cut | A/B | jaco starforge_legacy_RT |
+  |---|---|---|
+  | n_H > 1e9 | 0.969 / 0.881 | 0.971 / 0.886 |
+  | n_H > 1e8 | 0.980 / 0.917 | 0.982 / 0.914 |
+
+  This fully explains the shu_M120 thick-gas gap between the two codes. It grows as T_rad rises: the mass-weighted
+  1/A goes from 1.009 to 1.074.
+- **Cosmic rays.** With `RT_ISRF_BACKGROUND=0`, legacy keeps unattenuated cosmic-ray heating (+23% of the ledger at
+  1e9); jaco attenuates it by column.
+- **Loose end.** Around a star the IR kick sources do not sum to zero: 0.6-0.8% of the injected energy, in both codes.
+  Untraced.
+
+Classification: the A(T_rad) denominator is a legacy defect: gas absorption is undercounted by A. jaco departing from it
+is a fidelity defect against `starforge_legacy_RT`'s brief. The per-step drain belongs to the deferred convention
+decision (1.1c-d); `starforge_RT` removes it by construction.
+Status: recorded, no decision.
+
 ### 1.2 Cooling-radiation return limiter under reduced c
 `rt_cooling_radiation_to_bands`: `ratefact` carries c~/c but `de_u` does not, so the cap degenerates to "a band gains
 cooling radiation only if the cell's internal energy fell this step". Measured effect in the tests < 0.7%.
