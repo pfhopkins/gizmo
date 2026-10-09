@@ -1103,7 +1103,7 @@ void output_log_messages(void)
   long long tot_count[TIMEBINS];
   long long tot_count_gas[TIMEBINS];
   long long tot_cumulative[TIMEBINS];
-  int weight, corr_weight;
+  double weight, corr_weight;   /* 2^(bins below the highest occupied): beyond an int after 31 bins */
   double sum, avg_CPU_TimeBin[TIMEBINS], frac_CPU_TimeBin[TIMEBINS];
 
   sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
@@ -1146,14 +1146,18 @@ void output_log_messages(void)
 	  if(All.CPU_TimeBinCountMeasurements[i]) {avg_CPU_TimeBin[i] = sum / All.CPU_TimeBinCountMeasurements[i];} else {avg_CPU_TimeBin[i] = 0;}
 	}
 
-      for(i = All.HighestOccupiedTimeBin, weight = 1, sum = 0; i >= 0 && tot_count[i] > 0; i--, weight *= 2)
+      /* Each bin's share of the CPU time, weighting its average cost by how often it is active relative to the
+         highest occupied bin.  Every occupied bin is weighted, including those below an empty one. */
+      for(i = 0; i < TIMEBINS; i++) {frac_CPU_TimeBin[i] = 0;}
+      for(i = All.HighestOccupiedTimeBin, weight = 1, sum = 0; i >= 0; i--, weight *= 2)
 	{
-	  if(weight > 1) {corr_weight = weight / 2;} else {corr_weight = weight;}
+	  if(tot_count[i] <= 0) {continue;}
+	  corr_weight = (weight > 1) ? weight / 2 : weight;
 	  frac_CPU_TimeBin[i] = corr_weight * avg_CPU_TimeBin[i];
 	  sum += frac_CPU_TimeBin[i];
 	}
 
-      for(i = All.HighestOccupiedTimeBin; i >= 0 && tot_count[i] > 0; i--) {if(sum) {frac_CPU_TimeBin[i] /= sum;}}
+      for(i = All.HighestOccupiedTimeBin; i >= 0; i--) {if(sum) {frac_CPU_TimeBin[i] /= sum;}}
 
 
         printf("Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");
