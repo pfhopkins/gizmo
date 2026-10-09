@@ -268,9 +268,9 @@ static int let_cluster_member_cmp(const void *a, const void *b)
     if(x->octave != y->octave) return (x->octave > y->octave) - (x->octave < y->octave);
     return (x->disp_octave > y->disp_octave) - (x->disp_octave < y->disp_octave);
 }
-/* The octave a softening or a displacement falls in; everything at or below zero shares the lowest, and a
- * value that is not finite the highest (log2 of it has no integer octave). */
-static inline int let_octave(double x) {return !(x > 1e-300) ? -2000000000 : (!isfinite(x) ? 2000000000 : (int) floor(log2(x)));}
+/* The octave a softening or a displacement falls in: a value that is not finite (NaN or infinite) the highest,
+ * everything else at or below zero the lowest. */
+static inline int let_octave(double x) {return !isfinite(x) ? 2000000000 : ((x > 1e-300) ? (int) floor(log2(x)) : -2000000000);}
 static inline void let_cl_member_push(int tl, double px, double py, double pz, double soft, double oldacc, double disp, int type)
 {
     if(g_cl_members_n >= g_cl_members_cap) {
@@ -458,6 +458,9 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
            where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
            nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
         double disp = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), g_let_tree_lifetime_drift);
+        /* A motion bound that is not a number bounds nothing: take it as unbounded, so the cover holds this target
+           anywhere rather than nowhere (a NaN would compare false against every maximum and leave its box unwidened). */
+        if(!isfinite(disp)) {disp = DBL_MAX;}
 
         if(DomainTask[tl] != ThisTask)
         {
