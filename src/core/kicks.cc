@@ -616,4 +616,4 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 
     
     
-void apply_special_boundary_conditions(int i, double mass_for_dp, int mode) { apply_special_boundary_conditions_P(i, mass_for_dp, mode, P, CellP); }
+void apply_special_boundary_conditions(int i, double mass_for_dp, int mode) { apply_special_boundary_conditions_P(i, mass_for_dp, mode, All.Ti_Current, P, CellP); }
