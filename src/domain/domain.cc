@@ -1854,16 +1854,16 @@ void domain_exchange(void)
 	{
 	  if(count_gas[target] > 0 || count_recv_gas[target] > 0)
 	    {
-            MPI_Sizelimited_Sendrecv(partBuf + offset_gas[target], count_gas[target] * sizeof(struct particle_data),
+            MPI_Sendrecv_into_particle_storage(partBuf + offset_gas[target], count_gas[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA_GAS,
 			   P + offset_recv_gas[target], count_recv_gas[target] * sizeof(struct particle_data),
-			   MPI_BYTE, target, TAG_PDATA_GAS, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   MPI_BYTE, target, TAG_PDATA_GAS, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 1);
 
-            MPI_Sizelimited_Sendrecv(gasBuf + offset_gas[target], count_gas[target] * sizeof(struct gas_cell_data),
+            MPI_Sendrecv_into_particle_storage(gasBuf + offset_gas[target], count_gas[target] * sizeof(struct gas_cell_data),
 			   MPI_BYTE, target, TAG_GASDATA,
 			   CellP + offset_recv_gas[target],
 			   count_recv_gas[target] * sizeof(struct gas_cell_data), MPI_BYTE, target,
-			   TAG_GASDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   TAG_GASDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 1);
 #ifdef CHIMES 
             MPI_Sizelimited_Sendrecv(gasChimesBuf + offset_gas[target], count_gas[target] * sizeof(struct gasVariables),
 			   MPI_BYTE, target, TAG_CHIMESDATA, ChimesGasVars + offset_recv_gas[target],
@@ -1898,10 +1898,10 @@ void domain_exchange(void)
 	       * × sizeof(struct particle_data)~400 B exceeds int_max for the
 	       * MPI_Sendrecv byte count. The gas branch above already uses this
 	       * wrapper for the same reason. */
-	      MPI_Sizelimited_Sendrecv(partBuf + offset[target], count[target] * sizeof(struct particle_data),
+	      MPI_Sendrecv_into_particle_storage(partBuf + offset[target], count[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA,
 			   P + offset_recv[target], count_recv[target] * sizeof(struct particle_data),
-			   MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 1);
 
 	      MPI_Sizelimited_Sendrecv(keyBuf + offset[target], count[target] * sizeof(peanokey),
 			   MPI_BYTE, target, TAG_KEY,

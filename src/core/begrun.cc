@@ -97,6 +97,7 @@ void begrun(void)
 #endif
 
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
+  particle_receive_staging_init();   /* a failure is a controlled stop, drained by the poll below */
 
   /* Bad-stop poll: parameter/config validation (inside read_parameter_file)
    * uses all-rank endrun -> bad-stop request after the macro flip.

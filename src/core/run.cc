@@ -264,11 +264,21 @@ void run(void)
            velocity change since the last kick -- the second half-kick and the end-of-step writers (winds,
            cooling back-reaction, sink drag) -- was to these same synchronous particles. */
         gpu_step_sidx_raise_motion(ActiveParticleList.data(), (int)ActiveParticleList.size());
+        /* The steps just assigned froze new dilation factors, which set how fast these particles' kernel lengths
+           now grow; the tree's nodes take that before anything drifts on it. */
+        gravity_note_radius_growth_rates(ActiveParticleList.data(), (int)ActiveParticleList.size());
         {   /* and the particles a wake-up set moving differently (the gravity tree's bounds as well) */
             const int *woken = NULL;
             const int n_woken = particles_woken_last(&woken);
             gizmo_motion_bound_raise(woken, n_woken);
+            gravity_note_radius_growth_rates(woken, n_woken);
         }
+        /* Every bound raised this step reaches the other ranks' copies of the top-level tree here, before
+           anything drifts on it: a copy drifted past this time under its old bound would stay too narrow for
+           the interval it covered, and publishing afterwards could not widen it.  A raise made later in the
+           next step reaches this rank's own tree and tile indexes at once, but the other ranks' copies only
+           here: a loop later in that same step decides its exports against the older bound. */
+        gravity_flush_pending_motion_bounds();
         CPU_Step[CPU_KICKS] += measure_time();
 
         find_next_sync_point_and_drift();	/* find next synchronization point and drift particles to this time.
@@ -391,13 +401,6 @@ void run(void)
                 const double t_tree_update_start = my_second();
                 const double child0_tree_update = CPU_ChildCharged;
                 force_update_tree();
-                /* Bounds raised outside the kick since the last update reach the
-                 * other ranks' copies of the top-level tree here, ahead of this
-                 * step's walks. A raise made LATER in a step reaches this rank's
-                 * own tree and tile indexes at once, but the other ranks' copies
-                 * only at the next flush: a loop later in that same step decides
-                 * its exports against the older bound. */
-                gravity_flush_pending_motion_bounds();
                 cpu_charge_child(CPU_FORCE_UPDATE_TREE,
                                  cpu_minus_children(timediff(t_tree_update_start, my_second()), child0_tree_update));
             }
@@ -1100,7 +1103,7 @@ void output_log_messages(void)
   long long tot_count[TIMEBINS];
   long long tot_count_gas[TIMEBINS];
   long long tot_cumulative[TIMEBINS];
-  int weight, corr_weight;
+  double weight, corr_weight;   /* 2^(bins below the highest occupied): beyond an int after 31 bins */
   double sum, avg_CPU_TimeBin[TIMEBINS], frac_CPU_TimeBin[TIMEBINS];
 
   sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
@@ -1143,14 +1146,18 @@ void output_log_messages(void)
 	  if(All.CPU_TimeBinCountMeasurements[i]) {avg_CPU_TimeBin[i] = sum / All.CPU_TimeBinCountMeasurements[i];} else {avg_CPU_TimeBin[i] = 0;}
 	}
 
-      for(i = All.HighestOccupiedTimeBin, weight = 1, sum = 0; i >= 0 && tot_count[i] > 0; i--, weight *= 2)
+      /* Each bin's share of the CPU time, weighting its average cost by how often it is active relative to the
+         highest occupied bin.  Every occupied bin is weighted, including those below an empty one. */
+      for(i = 0; i < TIMEBINS; i++) {frac_CPU_TimeBin[i] = 0;}
+      for(i = All.HighestOccupiedTimeBin, weight = 1, sum = 0; i >= 0; i--, weight *= 2)
 	{
-	  if(weight > 1) {corr_weight = weight / 2;} else {corr_weight = weight;}
+	  if(tot_count[i] <= 0) {continue;}
+	  corr_weight = (weight > 1) ? weight / 2 : weight;
 	  frac_CPU_TimeBin[i] = corr_weight * avg_CPU_TimeBin[i];
 	  sum += frac_CPU_TimeBin[i];
 	}
 
-      for(i = All.HighestOccupiedTimeBin; i >= 0 && tot_count[i] > 0; i--) {if(sum) {frac_CPU_TimeBin[i] /= sum;}}
+      for(i = All.HighestOccupiedTimeBin; i >= 0; i--) {if(sum) {frac_CPU_TimeBin[i] /= sum;}}
 
 
         printf("Occupied timebins: non-cells     cells       dt                 cumulative A D    avg-time  cpu-frac\n");

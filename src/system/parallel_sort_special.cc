@@ -131,12 +131,12 @@ void parallel_sort_special_P_GrNr_ID(void)
 	  if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
 	    {
 	      /* get the particles */
-	      MPI_Sendrecv(&pbuf[Send_offset[recvTask]],
+	      MPI_Sendrecv_into_particle_storage(&pbuf[Send_offset[recvTask]],
 			   Send_count[recvTask] * sizeof(struct particle_data), MPI_BYTE,
 			   recvTask, TAG_PSRT_A,
 			   &P[Recv_offset[recvTask]],
 			   Recv_count[recvTask] * sizeof(struct particle_data), MPI_BYTE,
-			   recvTask, TAG_PSRT_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   recvTask, TAG_PSRT_A, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
 	    }
 	}
     }

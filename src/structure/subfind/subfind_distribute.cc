@@ -178,10 +178,10 @@ void subfind_distribute_particles(int mode)
       target = ThisTask ^ ngrp;
       if(target < NTask)
 	{
-	  MPI_Sendrecv(partBuf + Send_offset[target], Send_count[target] * sizeof(struct particle_data),
+	  MPI_Sendrecv_into_particle_storage(partBuf + Send_offset[target], Send_count[target] * sizeof(struct particle_data),
 		       MPI_BYTE, target, TAG_PDATA,
 		       P + NumPart + Recv_offset[target], Recv_count[target] * sizeof(struct particle_data),
-		       MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+		       MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
 	}
     }
   NumPart += nimport;
@@ -364,25 +364,25 @@ void subfind_exchange(void)
 	{
 	  if(count_gas[target] > 0 || count_recv_gas[target] > 0)
 	    {
-	      MPI_Sendrecv(partBuf + offset_gas[target], count_gas[target] * sizeof(struct particle_data),
+	      MPI_Sendrecv_into_particle_storage(partBuf + offset_gas[target], count_gas[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA_GAS,
 			   P + offset_recv_gas[target], count_recv_gas[target] * sizeof(struct particle_data),
-			   MPI_BYTE, target, TAG_PDATA_GAS, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   MPI_BYTE, target, TAG_PDATA_GAS, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
 
-	      MPI_Sendrecv(gasBuf + offset_gas[target], count_gas[target] * sizeof(struct gas_cell_data),
+	      MPI_Sendrecv_into_particle_storage(gasBuf + offset_gas[target], count_gas[target] * sizeof(struct gas_cell_data),
 			   MPI_BYTE, target, TAG_GASDATA,
 			   CellP + offset_recv_gas[target],
 			   count_recv_gas[target] * sizeof(struct gas_cell_data), MPI_BYTE, target,
-			   TAG_GASDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   TAG_GASDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
 	    }
 
 
 	  if(count[target] > 0 || count_recv[target] > 0)
 	    {
-	      MPI_Sendrecv(partBuf + offset[target], count[target] * sizeof(struct particle_data),
+	      MPI_Sendrecv_into_particle_storage(partBuf + offset[target], count[target] * sizeof(struct particle_data),
 			   MPI_BYTE, target, TAG_PDATA,
 			   P + offset_recv[target], count_recv[target] * sizeof(struct particle_data),
-			   MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+			   MPI_BYTE, target, TAG_PDATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE, 0);
 	    }
 	}
     }

@@ -393,6 +393,32 @@ extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_
     return p;
 }
 
+/* Whether MPI must receive into the particle storage (P, CellP) through host staging rather than directly.
+ * Where CUDA managed memory is not coherent with the host (a PCIe-attached GPU) its pages migrate between host
+ * and device, and an MPI receive written straight into them can be lost: measured on Lonestar6 A100 nodes,
+ * imported and exchanged particles arrived still holding what their slots held before.  Where the host reads
+ * managed memory in place (GH200) nothing migrates, and the receive is direct.  HIP builds receive directly:
+ * their large particle arrays are placed host-preferred (particle_storage_apply_placement) and no loss has been
+ * seen there; host builds hold the storage in ordinary host memory.  Decided here, where the Kokkos memory space
+ * and the device are visible, for the host-compiled exchange code that cannot see them; an attribute that cannot
+ * be read counts as not coherent. */
+extern "C" int gizmo_particle_storage_needs_staged_mpi_receive(void)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    static int needs_staging = -1;
+    if(needs_staging < 0) {
+        int coherent = 0, dev = 0;
+        if(!std::is_same<GIZMO_KOKKOS_SHARED_SPACE, Kokkos::CudaUVMSpace>::value) {needs_staging = 0;}
+        else if(cudaGetDevice(&dev) == cudaSuccess &&
+                cudaDeviceGetAttribute(&coherent, cudaDevAttrDirectManagedMemAccessFromHost, dev) == cudaSuccess) {needs_staging = coherent ? 0 : 1;}
+        else {needs_staging = 1;}
+    }
+    return needs_staging;
+#else
+    return 0;
+#endif
+}
+
 /* Non-throwing allocation for the GPU transients, one entry point per memory space. Kokkos throws
    when it cannot serve a request, and an exception leaving a dispatcher takes the rank down where it
    stands, before the phase boundary that drains a controlled stop -- so one rank dies and the others
