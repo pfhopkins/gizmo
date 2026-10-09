@@ -171,6 +171,25 @@ deviations; say if either should be chased.
 Decision (MYG, 2026-10-06): do not chase anything involving subcycling for now. The FUV lowest-density bin is not a
 subcycling item; it stays an accepted, documented deviation.
 
+### 1.6 No optically-thick cooling cap in the non-RT models (found 2026-10-08)
+Legacy non-RT GIZMO caps net radiative cooling at a slab blackbody rate:
+|Q| <= sigma T^4 A_eff / ((1+tau) n_H), with tau = kappa(T) Sigma and Sigma from TreeCol (`cooling.cc:1438-1483`).
+Under JACO, `call_jaco` returns before that code (`cooling.cc:280-281`), and no jaco model, nor the solver, has a cap.
+So `starforge` and `starforge_legacy` cool optically thin at any column. They never form a first core: thin LTE H2
+cooling at ~1000 K and 1e-8 g/cm^3 exceeds compressional heating by ~15x. The existing gates are below the densities
+where the cap binds, so none of them sees this. Dense non-RT jaco runs (`shu_jets[jaco]`, sink neighbourhoods) are
+affected.
+
+RT models are not affected: they trap IR in the M1 band.
+
+The second-collapse work adds a cap to `starforge`: an option, on by default, ported from GIZMO's formula, with
+kappa packed by the host. `starforge_legacy` still lacks it; that is a parity defect against the model's purpose.
+
+Related, accuracy only: GA08's LTE H2 + H dissociation rate with the Forrey three-body formation rate puts the
+equilibrium n_H^2/n_H2 at 7.6x Saha at 2000 K (30x at 1500 K, ~1 at 4000 K), in legacy and jaco alike. H2 dissociates
+~150 K cooler than in Masunaga & Inutsuka (2000). Remedy: derive the three-body rate from dissociation by detailed
+balance.
+
 ## 2. Solver
 
 ### 2.1 Tier-1 budget stall
