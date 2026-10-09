@@ -142,6 +142,83 @@ void   force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_nod
  * All.MaxKernelRadius to match the legacy band semantics. */
 double force_hmax_per_type_particle_radius(int i);
 
+/* Where the gas under one top leaf can reach, published by the leaf's owner so a rank sending a
+ * neighbour query can tell whether the owner could find any gas neighbour there.  The node's own
+ * cube and per-type band answer that far too loosely for a large, nearly empty leaf.  Two boxes:
+ * the gas positions, and each gas position widened by its own reach (the same per-particle radius
+ * that seeds the per-type bands).  Both describe the particles at time Ti_ref; a reader widens
+ * them for motion and kernel growth since then by the node rules.  Doubles: a box can span 1e7
+ * against reaches of 0.1.
+ *   valid == 0               nothing is known; the nominal node test decides.
+ *   valid == 1, has_gas == 0 the owner holds no gas there.
+ *   valid == 1, has_gas == 1 the boxes hold. */
+struct topleaf_gas_route
+{
+    double member_lo[3], member_hi[3];
+    double reach_lo[3], reach_hi[3];
+    double reach_max;          /* largest reach among the gas */
+    integertime Ti_ref;
+    int valid;
+    int has_gas;
+};
+extern struct topleaf_gas_route *TopleafGasRoute;   /* [NTopleaves], allocated with the tree */
+
+/* What can make another rank's copy of a route fall short, by what it takes to put right.
+ *   GEOMETRY: gas joined a top-leaf or was placed outside the drift.  The owner's route takes it in
+ *             at once; the copies hold it after the next exchange that carries the route.
+ *   REACH:    gas kernel radii or softenings were set.  The owner's route takes them in only when
+ *             force_update_hmax folds in its active members, so only that exchange (or a build)
+ *             settles it.
+ *   MOTION:   a speed bound rose outside the kick.  Settled by the exchange of motion bounds.
+ *   MOTION_UNSHARED: a speed bound rose only on this rank's own nodes (a particle attached to the
+ *             standing tree); only a build settles it -- a moment refresh carries routes forward
+ *             with the bounds it is about to replace, which did not yet hold that speed.
+ * A neighbour query sent with its own radius needs GEOMETRY and MOTION settled; one that also uses
+ * the neighbour's radius needs REACH as well. */
+enum {
+    GAS_ROUTE_GEOMETRY        = 1,
+    GAS_ROUTE_REACH           = 2,
+    GAS_ROUTE_MOTION          = 4,
+    GAS_ROUTE_MOTION_UNSHARED = 8
+};
+/* Record a change of these kinds.  Safe from any thread. */
+void force_gas_routes_note_change(int kinds);
+/* Settled on this rank: GAS_ROUTE_GEOMETRY / _REACH / _MOTION (the last also asks for the unshared
+ * kind).  Zero while a rebuild is pending.  Rank-local: a sender must combine it over all ranks
+ * before trusting another rank's route. */
+int  force_gas_routes_settled_local(int kind);
+/* A gas particle was placed in the standing tree, or became gas there: fold it into its top-leaf's
+ * route.  Serialised internally (one critical section per call), so threads calling it per particle
+ * take turns. */
+void force_gas_route_add_member(int i, int kinds);
+/* A gas particle's position (and velocity) was set by something other than the drift. */
+void gizmo_gas_position_written_in_place(int i);
+/* The gas-route bookkeeping force_update_hmax needs.  _begin before its parallel loop (serial),
+ * _member inside it (any thread); force_gas_routes_hmax_carried after its band exchange, every rank. */
+void force_gas_routes_hmax_begin(void);
+void force_gas_routes_hmax_member(int i);
+/* Owned top-leaves whose route has changed since an exchange last carried it. */
+int  force_gas_routes_unsent(const int **leaves);
+/* Collective, after force_update_hmax's exchange has carried every changed route and band. */
+void force_gas_routes_hmax_carried(void);
+/* Collective, after the motion bounds raised outside the kick have reached every rank. */
+void force_gas_routes_motion_carried(void);
+/* How a route grows from its own time to ti_now: its members' motion (moved, added to each side of both
+ * boxes), the largest reach any member can then have (reach_grown), and the most any one member's reach can
+ * have risen (reach_rise, added to each side of the reach box) -- aggregate_radius_bound / _rise.  vmax and
+ * divvmax are the top-leaf node's.  Zero when the bound is unusable: treat the route as unknown. */
+struct DriftKickTableView;
+int  force_gas_route_widening(const struct topleaf_gas_route *route, double vmax, double divvmax, integertime ti_now,
+                              const struct DriftKickTableView *tables, double *moved, double *reach_grown, double *reach_rise);
+/* The same widening, for a walk that may ask about each top leaf many times from many threads: computed
+ * once per leaf per call and kept with the routes.  `call` comes from force_gas_routes_new_walk_call(),
+ * taken once (serially) per walk call.  Zero when the route cannot be widened. */
+unsigned long long force_gas_routes_new_walk_call(void);
+int  force_gas_route_widening_for_call(int leaf, unsigned long long call, integertime ti_now,
+                                       const struct DriftKickTableView *tables, double *moved, double *reach_rise);
+/* Top-leaf owning top-level node `no`, or -1. */
+int  force_topleaf_of_node(int no);
+
 /* Monotonic gravity-tree freshness generations.  treebuild_generation bumps on
  * every successful force_treebuild (topology + Father[] + node structure changed);
  * hmax_refresh_generation bumps at the end of force_update_hmax (ancestor node

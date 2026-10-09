@@ -161,9 +161,10 @@ static inline int sphere_aabb_overlap(const double pos[3],
  *
  * Node-open slack: none is carried. A drift grows a particle's radius by at
  * most exp(KERNEL_RADIUS_DRIFT_MAX_LOG_CHANGE/NUMDIMS), and force_drift_node
- * grows the node's hmax and bands by the same capped rule applied to divVmax,
+ * grows the node's hmax and bands by aggregate_radius_bound applied to divVmax,
  * the largest divergence of any member whose radius a drift advances by it
- * (particle_radius_drifts_with_divergence_P). Over-search is safe (extra
+ * (particle_radius_drifts_with_divergence_P): uncapped over the node's interval,
+ * since a member may drift several times inside it. Over-search is safe (extra
  * candidates filter at the leaf); under-search is a correctness bug. */
 static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack; legacy has none (relies on force_update_hmax cadence + 0.866*len node term) */
 
@@ -214,6 +215,7 @@ static inline double mode_b_node_symmetric_radius(int no,
  * are stable between tree builds; per-call rebuild avoids any staleness). */
 void ModeBTopleafMap::build(void)
 {
+    widen_call = force_gas_routes_new_walk_call();
     const int tree_base = All.TreeNodeIndexBase;
     int max_off = -1;
     for(int i = 0; i < NTopleaves; i++) {
@@ -228,6 +230,45 @@ void ModeBTopleafMap::build(void)
     }
 }
 
+/* A remote leaf's gas, at ti_now, lies within its member box grown by the motion its top-leaf node
+ * allows since the route was written (the node widening rule); a gas reach, by the same motion plus the
+ * most any one member's reach can have risen since then (aggregate_radius_rise) and the caller's reach
+ * scale.  A pair
+ * (q, j) is accepted when |q - j| < h_q, or SYMMETRIC with |q - j| < the scaled reach of j: the first
+ * puts j inside the sphere about q, the second puts q inside the reach box. */
+int ModeBTopleafMap::gas_route_admits(int leaf, unsigned int type_mask, const double pos[3], double h_q, int oneway,
+                                      double j_reach_scale, integertime ti_now, const struct DriftKickTableView *tables) const
+{
+#if defined(BOX_REFLECT_X) || defined(BOX_REFLECT_Y) || defined(BOX_REFLECT_Z)
+    /* A particle crossing a reflecting face is placed where no motion bound reaches
+     * (apply_special_boundary_conditions_body), so a route cannot bound its gas: the existing test decides. */
+    (void)leaf; (void)type_mask; (void)pos; (void)h_q; (void)oneway; (void)j_reach_scale; (void)ti_now; (void)tables;
+    return 1;
+#endif
+    if(type_mask != 1u || !TopleafGasRoute || !gas_geometry_settled || !gas_motion_settled) {return 1;}
+    if(!oneway && !gas_reach_settled) {return 1;}
+    const struct topleaf_gas_route *route = &TopleafGasRoute[leaf];
+    if(!route->valid) {return 1;}
+    if(!route->has_gas) {return 0;}
+    double moved, rise;
+    if(!force_gas_route_widening_for_call(leaf, widen_call, ti_now, tables, &moved, &rise)) {return 1;}
+    double c[3], hw[3];
+    for(int k = 0; k < 3; k++) {
+        c[k]  = 0.5 * (route->member_lo[k] + route->member_hi[k]);
+        hw[k] = 0.5 * (route->member_hi[k] - route->member_lo[k]) + moved;
+    }
+    if(gx_extended_overlap_wrap_and_test(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2], hw[0], hw[1], hw[2], h_q)) {return 1;}
+    if(oneway) {return 0;}
+    /* a member of reach r <= reach_max now reaches at most j_reach_scale*(r + rise), so the box of
+       position +- r widens by j_reach_scale*rise plus, for a scale above one, (scale - 1)*reach_max */
+    const double extra = j_reach_scale * rise + ((j_reach_scale > 1.0) ? (j_reach_scale - 1.0) * route->reach_max : 0.0);
+    for(int k = 0; k < 3; k++) {
+        c[k]  = 0.5 * (route->reach_lo[k] + route->reach_hi[k]);
+        hw[k] = 0.5 * (route->reach_hi[k] - route->reach_lo[k]) + moved + extra;
+    }
+    return gx_extended_overlap_wrap_and_test(c[0] - pos[0], c[1] - pos[1], c[2] - pos[2], hw[0], hw[1], hw[2], 0.0);
+}
+
 /* Shared traversal body (SSOT for all three public tree walks).
  *
  * Walks from `start_no`. Local real-particle matches are appended to `cand_out`
@@ -240,10 +281,11 @@ void ModeBTopleafMap::build(void)
  * (after_condition_unthreaded.h:74-81).
  *
  * SYMMETRIC internal-node pruning uses the per-type hmax bands
- * (mode_b_node_symmetric_radius); ONEWAY prunes by h_q alone. Bands are
- * rank-local and re-seeded every build/refresh; a query against another rank's
- * pool is shipped there and answered with that rank's own fresh bands, so no
- * cross-rank band exchange is needed. */
+ * (mode_b_node_symmetric_radius); ONEWAY prunes by h_q alone. A remote top
+ * leaf is opened on this rank's copy of its owner's bands, which
+ * force_update_hmax exchanges; the shipped query is answered with the owner's
+ * own bands. An opened remote leaf whose owner's published gas route rules out
+ * every pair (ModeBTopleafMap::gas_route_admits) is not exported to. */
 static void mode_b_walk_impl(const double pos[3],
                              double h_q,
                              unsigned int type_mask,
@@ -323,7 +365,9 @@ static void mode_b_walk_impl(const double pos[3],
             if(do_open && export_out) {
                 const int leaf = topleaf_map->topleaf_of(no, tree_base);
                 if(leaf >= 0 && DomainTask[leaf] != ThisTask) {
-                    export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    if(topleaf_map->gas_route_admits(leaf, type_mask, pos, h_q, oneway, j_reach_scale, ti_now, &drift_tables)) {
+                        export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    }
                     no = nop->u.d.sibling;
                     continue;
                 }
@@ -369,7 +413,9 @@ static void mode_b_walk_impl(const double pos[3],
                             do_export = sphere_aabb_overlap(pos, &Nodes[tl_node], R_exp_tl);
                         }
                     }
-                    if(do_export) export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    if(do_export && topleaf_map->gas_route_admits(leaf, type_mask, pos, h_q, oneway, j_reach_scale, ti_now, &drift_tables)) {
+                        export_out->add(DomainTask[leaf], DomainNodeIndex[leaf]);
+                    }
                 }
             }
             no = Nextnode[tree_slots + (no - tree_base - MaxNodes - MaxForeignNodes)];

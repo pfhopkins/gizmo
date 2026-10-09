@@ -684,6 +684,9 @@ void AgsDensitySpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
 
 void ags_density(void)
 {
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    if(1 & ADAPTIVE_GRAVSOFT_FORALL) {force_gas_routes_note_change(GAS_ROUTE_REACH);}   /* gas is adaptive-softened, and its reach includes that radius */
+#endif
     CPU_Step[CPU_MISC] += measure_time();
     double t00_truestart = my_second(); double child0_span = CPU_ChildCharged;
 

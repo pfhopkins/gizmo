@@ -963,11 +963,16 @@ static void gx_walk_export_discover(
      * above 1 previously had to fall back to broadcast. */
     const double walker_j_reach_scale = spec->j_radius_scale * spec->safety_factor;
     /* (a) tree availability — collective all-or-none (a rank-local skip would deadlock the
-     * envelope Alltoallv below / the caller's compare Allreduce). */
-    int ok_local = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
-    int ok_all = 0;
-    MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return; }
+     * envelope Alltoallv below / the caller's compare Allreduce).  The same reduction says whether
+     * every rank's published gas routes still hold: a route is another rank's, so one rank alone
+     * cannot know it is current. */
+    int ok_local[4], ok_all[4] = {0, 0, 0, 0};
+    ok_local[0] = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
+    ok_local[1] = force_gas_routes_settled_local(GAS_ROUTE_GEOMETRY);
+    ok_local[2] = force_gas_routes_settled_local(GAS_ROUTE_REACH);
+    ok_local[3] = force_gas_routes_settled_local(GAS_ROUTE_MOTION);
+    MPI_Allreduce(ok_local, ok_all, 4, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!ok_all[0]) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return; }
 
     /* (b) SENDER: build per-peer envelope lists (export is a byproduct of the walk).
      * THREADED, following the same shape the runner uses: the topleaf map is built once
@@ -976,6 +981,7 @@ static void gx_walk_export_discover(
      * critical(_modebdrift_) + release/acquire).  Merge is serial.  The routed SET is
      * unchanged (order-independent bitmap); only per-peer envelope ORDER differs (D6: FP-reorder only). */
     ModeBTopleafMap map; map.build();
+    map.gas_geometry_settled = ok_all[1]; map.gas_reach_settled = ok_all[2]; map.gas_motion_settled = ok_all[3];
     std::vector<std::vector<struct gx_export_envelope_t>> send(NTask);
     {
 #ifdef _OPENMP
