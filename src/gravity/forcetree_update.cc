@@ -326,7 +326,6 @@ static inline void raise_node_motion_bound(int no, MyFloat vmax)
 void gravity_note_motion_bound(const int *idx, int n)
 {
     if(n <= 0 || !idx || !Father || !Nodes || !Extnodes) {return;}
-    force_gas_routes_note_change(GAS_ROUTE_MOTION);
     pending_topnodes_ensure();
     for(int k = 0; k < n; k++)
     {
@@ -367,7 +366,6 @@ void gravity_note_radius_growth_rates(const int *idx, int n)
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
     if(n <= 0 || !idx || !Father || !Nodes || !Extnodes) {return;}
     pending_topnodes_ensure();
-    int raised = 0;
     for(int k = 0; k < n; k++)
     {
         const int i = idx[k];
@@ -379,7 +377,6 @@ void gravity_note_radius_growth_rates(const int *idx, int n)
             /* A node already bounding the rate has ancestors that do too. */
             if(Extnodes[no].divVmax >= rate) {break;}
             Extnodes[no].divVmax = rate;
-            raised = 1;
             if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
             {
                 const int t = no - All.TreeNodeIndexBase;
@@ -391,7 +388,6 @@ void gravity_note_radius_growth_rates(const int *idx, int n)
             }
         }
     }
-    if(raised) {force_gas_routes_note_change(GAS_ROUTE_MOTION);}   /* other ranks' copies lag until the flush */
 #else
     (void) idx; (void) n;   /* without dilation the rate changes only with the divergence, which force_update_hmax folds */
 #endif
@@ -455,7 +451,6 @@ void gravity_flush_pending_motion_bounds(void)
     }
     myfree(counts);
     gravity_clear_pending_motion_bounds();
-    force_gas_routes_motion_carried();   /* every raise above has reached every rank */
 }
 
 void force_finish_kick_nodes(void)
@@ -705,6 +700,7 @@ void force_update_hmax(void)
   int i, no, ta, totDomainNumChanged;
   int *domainList_all;
   int *counts, *offset_list, *offset_hmax;
+  MyFloat *domainHmax_loc, *domainHmax_all;
   /* Per-changed-topleaf exchange record: scalar hmax + divVmax + the 6 Mode-B
    * per-type bands.  The per-type slots ride this SAME post-density exchange so
    * remote topleaf/ancestor per-type bands are as fresh as the scalar hmax (they
@@ -712,15 +708,7 @@ void force_update_hmax(void)
    * last full tree build/refresh).  Required for the Mode-B SYMMETRIC targeted
    * export band, which prunes remote topleaves by these per-type bands. */
   enum { HMAX_EXCH_HMAX = 0, HMAX_EXCH_DIVVMAX = 1, HMAX_EXCH_PTYPE0 = 2, HMAX_EXCH_SIZE = 8 };
-  /* The same exchange carries the owner's gas route of each listed top-leaf (forcetree.h): of every one
-   * whose bands grew and every one whose route changed. */
-  struct HmaxExchangeRecord {
-      MyFloat band[HMAX_EXCH_SIZE];
-      struct topleaf_gas_route route;
-      int has_route;
-      int has_band;   /* listed for band growth: only these bands are applied, as before routes rode along */
-  };
-  struct HmaxExchangeRecord *domainHmax_loc, *domainHmax_all;
+  int OffsetSIZE = HMAX_EXCH_SIZE;
   double divVel;
 
   GlobFlag++;
@@ -747,7 +735,6 @@ void force_update_hmax(void)
         }
       }
   }
-  force_gas_routes_hmax_begin();   /* each touched route carried to now once, before members are folded in */
   /* Phase 2: update hmax/divVmax/per-type bands with atomics (parallel). */
 #pragma omp parallel for schedule(dynamic)
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
@@ -776,7 +763,6 @@ void force_update_hmax(void)
         const int scalar_eligible = (P[i].Type == 0);
 #endif
         const int divv_eligible = particle_radius_drifts_with_divergence_P(i, P);
-        force_gas_routes_hmax_member(i);
 
         while(no >= 0)
         {
@@ -829,32 +815,18 @@ void force_update_hmax(void)
 
   /* share the hmax-data of the pseudo-particles accross CPUs */
 
-  const int n_band_changed = DomainNumChanged;
-  {   /* the top-leaves whose route changed join the list, once each */
-      const int *unsent = NULL;
-      const int n_unsent = force_gas_routes_unsent(&unsent);
-      for(int k = 0; k < n_unsent; k++) {
-          const int node = DomainNodeIndex[unsent[k]];
-          if(Extnodes[node].Flag != GlobFlag) {Extnodes[node].Flag = GlobFlag; DomainList[DomainNumChanged++] = node;}
-      }
-  }
-
   counts = (int *) mymalloc("counts", sizeof(int) * NTask);
   offset_list = (int *) mymalloc("offset_list", sizeof(int) * NTask);
   offset_hmax = (int *) mymalloc("offset_hmax", sizeof(int) * NTask);
 
-  domainHmax_loc = (struct HmaxExchangeRecord *) mymalloc("domainHmax_loc", (DomainNumChanged > 0 ? DomainNumChanged : 1) * sizeof(struct HmaxExchangeRecord));
+  domainHmax_loc = (MyFloat *) mymalloc("domainHmax_loc", DomainNumChanged * OffsetSIZE * sizeof(MyFloat));
 
   for(i = 0; i < DomainNumChanged; i++)
     {
-      struct HmaxExchangeRecord *rec = &domainHmax_loc[i];
-      memset(rec, 0, sizeof(*rec));
-      rec->has_band = (i < n_band_changed) ? 1 : 0;
-      rec->band[HMAX_EXCH_HMAX]    = Extnodes[DomainList[i]].hmax;
-      rec->band[HMAX_EXCH_DIVVMAX] = Extnodes[DomainList[i]].divVmax;
-      for(int t = 0; t < 6; t++) {rec->band[HMAX_EXCH_PTYPE0 + t] = Extnodes[DomainList[i]].hmax_per_type[t];}
-      const int leaf = force_topleaf_of_node(DomainList[i]);
-      if(TopleafGasRoute && leaf >= 0 && DomainTask[leaf] == ThisTask) {rec->route = TopleafGasRoute[leaf]; rec->has_route = 1;}
+      domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_HMAX]    = Extnodes[DomainList[i]].hmax;
+      domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_DIVVMAX] = Extnodes[DomainList[i]].divVmax;
+      for(int t = 0; t < 6; t++)
+          domainHmax_loc[OffsetSIZE * i + HMAX_EXCH_PTYPE0 + t] = Extnodes[DomainList[i]].hmax_per_type[t];
     }
 
 
@@ -866,32 +838,27 @@ void force_update_hmax(void)
       if(ta > 0)
 	{
 	  offset_list[ta] = offset_list[ta - 1] + counts[ta - 1];
-	  offset_hmax[ta] = offset_hmax[ta - 1] + counts[ta - 1] * (int) sizeof(struct HmaxExchangeRecord);
+	  offset_hmax[ta] = offset_hmax[ta - 1] + counts[ta - 1] * OffsetSIZE * sizeof(MyFloat);
 	}
     }
 
   PRINT_STATUS(" ..Hmax exchange: %d topleaves out of %d", totDomainNumChanged, NTopleaves);
-  domainHmax_all = (struct HmaxExchangeRecord *) mymalloc("domainHmax_all", (totDomainNumChanged > 0 ? totDomainNumChanged : 1) * sizeof(struct HmaxExchangeRecord));
+  domainHmax_all = (MyFloat *) mymalloc("domainHmax_all", totDomainNumChanged * OffsetSIZE * sizeof(MyFloat));
   domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
 
   MPI_Allgatherv(DomainList, DomainNumChanged, MPI_INT,
 		 domainList_all, counts, offset_list, MPI_INT, MPI_COMM_WORLD);
 
   for(ta = 0; ta < NTask; ta++)
-    {counts[ta] *= (int) sizeof(struct HmaxExchangeRecord);}
+    {counts[ta] *= OffsetSIZE * sizeof(MyFloat);}
 
-  MPI_Allgatherv(domainHmax_loc, DomainNumChanged * (int) sizeof(struct HmaxExchangeRecord), MPI_BYTE,
+  MPI_Allgatherv(domainHmax_loc, OffsetSIZE * DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
 		 domainHmax_all, counts, offset_hmax, MPI_BYTE, MPI_COMM_WORLD);
 
 
   for(i = 0; i < totDomainNumChanged; i++)
     {
         no = domainList_all[i];
-        {   /* another rank's route replaces this rank's copy: the owner's is the newer, and covers it */
-            const int leaf = force_topleaf_of_node(no);
-            if(domainHmax_all[i].has_route && TopleafGasRoute && leaf >= 0 && DomainTask[leaf] != ThisTask) {TopleafGasRoute[leaf] = domainHmax_all[i].route;}
-        }
-        if(!domainHmax_all[i].has_band) {continue;}
         if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))    {no = Nodes[no].u.d.father;} /* to avoid that the hmax is updated twice */
         
         while(no >= 0)
@@ -902,13 +869,13 @@ void force_update_hmax(void)
              * while ANY of the 8 fields grew (a remote update that only grows one
              * per-type band must still propagate up the tree, just like scalar hmax). */
             int any_grew = 0;
-            if(domainHmax_all[i].band[HMAX_EXCH_HMAX] > Extnodes[no].hmax)
-                {Extnodes[no].hmax = domainHmax_all[i].band[HMAX_EXCH_HMAX]; any_grew = 1;}
-            if(domainHmax_all[i].band[HMAX_EXCH_DIVVMAX] > Extnodes[no].divVmax)
-                {Extnodes[no].divVmax = domainHmax_all[i].band[HMAX_EXCH_DIVVMAX]; any_grew = 1;}
+            if(domainHmax_all[OffsetSIZE * i + HMAX_EXCH_HMAX] > Extnodes[no].hmax)
+                {Extnodes[no].hmax = domainHmax_all[OffsetSIZE * i + HMAX_EXCH_HMAX]; any_grew = 1;}
+            if(domainHmax_all[OffsetSIZE * i + HMAX_EXCH_DIVVMAX] > Extnodes[no].divVmax)
+                {Extnodes[no].divVmax = domainHmax_all[OffsetSIZE * i + HMAX_EXCH_DIVVMAX]; any_grew = 1;}
             for(int t = 0; t < 6; t++)
             {
-                MyFloat v = domainHmax_all[i].band[HMAX_EXCH_PTYPE0 + t];
+                MyFloat v = domainHmax_all[OffsetSIZE * i + HMAX_EXCH_PTYPE0 + t];
                 if(v > Extnodes[no].hmax_per_type[t]) {Extnodes[no].hmax_per_type[t] = v; any_grew = 1;}
             }
             if(!any_grew) {break;}
@@ -926,7 +893,6 @@ void force_update_hmax(void)
   myfree(counts);
   myfree(DomainList);
 
-  force_gas_routes_hmax_carried();
   force_bump_hmax_refresh_generation();   /* ancestor boxes re-drifted + per-type bands re-seeded */
   CPU_Step[CPU_TREEHMAXUPDATE] += measure_time();
 }

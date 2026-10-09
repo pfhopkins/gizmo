@@ -8,6 +8,7 @@
  *
  * Include order: after allvars.h, proto.h. */
 #pragma once
+#include "../declarations/gpu_rng.h"   /* the near-wall offset of a reflected particle */
 
 #ifndef KOKKOS_INLINE_FUNCTION
 #define KOKKOS_INLINE_FUNCTION inline
@@ -826,27 +827,18 @@ struct particle_motion_in_arrays {
     KOKKOS_INLINE_FUNCTION void fewbody_use_com_acceleration() const {pp[i].GravAccel = pp[i].COM_GravAccel;}
 #endif
     KOKKOS_INLINE_FUNCTION void velocity_reflected(int j) const {if(pp[i].Type==0) {cell[i].VelPred[j]=pp[i].Vel[j]; cell[i].HydroAccel[j]=0;}}
-    KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int j, double mass_for_dp) const {pp[i].dp[j]+=2*pp[i].Vel[j]*mass_for_dp;}
+    KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int j, double mass_for_dp, double vel_before) const {pp[i].dp[j]+=(pp[i].Vel[j]-vel_before)*mass_for_dp;}
     KOKKOS_INLINE_FUNCTION void zero_momentum() const {pp[i].dp[0]=pp[i].dp[1]=pp[i].dp[2]=0;}
     KOKKOS_INLINE_FUNCTION void outflow_removed_mass() const {if(pp[i].Type==0) {cell[i].Mass=0;}}
-    KOKKOS_INLINE_FUNCTION void reflect_fluxes_at_lower_face(int j) const
+    /* A gas cell's radiation and cosmic-ray fluxes are mirrored with it: their normal components change sign. */
+    KOKKOS_INLINE_FUNCTION void reflect_normal_fluxes(int j) const
     {
         (void)j;
 #ifdef RT_EVOLVE_FLUX
-        if(pp[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(cell[i].Rad_Flux[kf][j]<0) {cell[i].Rad_Flux[kf][j]=-cell[i].Rad_Flux[kf][j]; cell[i].Rad_Flux_Pred[kf][j]=cell[i].Rad_Flux[kf][j];}}}
+        if(pp[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {cell[i].Rad_Flux[kf][j]=-cell[i].Rad_Flux[kf][j]; cell[i].Rad_Flux_Pred[kf][j]=cell[i].Rad_Flux[kf][j];}}
 #endif
 #ifdef COSMIC_RAY_FLUID
-        if(pp[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(cell[i].CosmicRayFlux[kf][j]<0) {cell[i].CosmicRayFlux[kf][j]=-cell[i].CosmicRayFlux[kf][j]; cell[i].CosmicRayFluxPred[kf][j]=cell[i].CosmicRayFlux[kf][j];}}}
-#endif
-    }
-    KOKKOS_INLINE_FUNCTION void reflect_fluxes_at_upper_face(int j) const
-    {
-        (void)j;
-#ifdef RT_EVOLVE_FLUX
-        if(pp[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(cell[i].Rad_Flux[kf][j]>0) {cell[i].Rad_Flux[kf][j]=-cell[i].Rad_Flux[kf][j]; cell[i].Rad_Flux_Pred[kf][j]=cell[i].Rad_Flux[kf][j];}}}
-#endif
-#ifdef COSMIC_RAY_FLUID
-        if(pp[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(cell[i].CosmicRayFlux[kf][j]>0) {cell[i].CosmicRayFlux[kf][j]=-cell[i].CosmicRayFlux[kf][j]; cell[i].CosmicRayFluxPred[kf][j]=cell[i].CosmicRayFlux[kf][j];}}}
+        if(pp[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {cell[i].CosmicRayFlux[kf][j]=-cell[i].CosmicRayFlux[kf][j]; cell[i].CosmicRayFluxPred[kf][j]=cell[i].CosmicRayFlux[kf][j];}}
 #endif
     }
 };
@@ -880,11 +872,10 @@ struct particle_motion_prediction {
     KOKKOS_INLINE_FUNCTION void fewbody_use_com_acceleration() const {}
 #endif
     KOKKOS_INLINE_FUNCTION void velocity_reflected(int) const {}
-    KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int, double) const {}
+    KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int, double, double) const {}
     KOKKOS_INLINE_FUNCTION void zero_momentum() const {}
     KOKKOS_INLINE_FUNCTION void outflow_removed_mass() const {}
-    KOKKOS_INLINE_FUNCTION void reflect_fluxes_at_lower_face(int) const {}
-    KOKKOS_INLINE_FUNCTION void reflect_fluxes_at_upper_face(int) const {}
+    KOKKOS_INLINE_FUNCTION void reflect_normal_fluxes(int) const {}
 };
 
 
@@ -974,52 +965,93 @@ double mfv_drifted_mass(double mass, double dt_mass, double mass_true, double dt
 }
 #endif /* HYDRO_MESHLESS_FINITE_VOLUME */
 
-/* mass_for_dp is the caller's: the kick passes the mass it has just assigned, the drift the
-   particle's current mass. */
+/* Reflecting and outflow faces of the box.  A reflecting face mirrors the particle's state through it: the
+   position is folded back into the box (with both faces of an axis reflecting, through as many crossings as the
+   step carried it), and on an odd number of crossings the normal components of its velocity, its finite-volume
+   mesh velocity and its radiation and cosmic-ray fluxes change sign; a particle, or its image, exactly on a
+   face crosses it once more only when it is moving out.  An image within 1e-8 of the box length of a reflecting face is set a
+   small random distance off it, so particles cannot sit on the face or on each other; the draw is keyed on the
+   particle's identity and the target time, so a drift and a prediction to the same time agree.  An outflow face
+   removes the particle if its path crossed that face, before or after a reflection.  mass_for_dp is the caller's: the
+   kick passes the mass it has just assigned, the drift the particle's current mass; only the kick (mode 1)
+   books the momentum change. */
 template <class Motion>
 KOKKOS_INLINE_FUNCTION
-void apply_special_boundary_conditions_body(Motion &a, double mass_for_dp, int mode)
+void apply_special_boundary_conditions_body(Motion &a, double mass_for_dp, int mode, integertime ti_target)
 {
 #if BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE
+    static constexpr uint64_t SPECIAL_BOUNDARY_RNG_SALT = gizmo_loop_rng_salt("special_boundary");
     double box_upper[3]; int j;
     box_upper[0]=boxSize_X; box_upper[1]=boxSize_Y; box_upper[2]=boxSize_Z;
     for(j=0; j<3; j++)
     {
-        if(a.pos()[j] <= 0)
+        const double L = box_upper[j], x0 = a.pos()[j];
+        int lower_hit = (x0 <= 0), upper_hit = (x0 >= L);   /* the faces the step's path crossed */
+        if(!lower_hit && !upper_hit) {continue;}
+        const int r = special_boundary_condition_xyz_def_reflect[j], o = special_boundary_condition_xyz_def_outflow[j];
+        const int reflect_lower = (r == 0 || r == -1), reflect_upper = (r == 0 || r == 1);
+        if((lower_hit && reflect_lower) || (upper_hit && reflect_upper))
         {
-            if(special_boundary_condition_xyz_def_reflect[j] == 0 || special_boundary_condition_xyz_def_reflect[j] == -1)
+            double x; long long crossings;
+            if(x0 == 0 || x0 == L) {x = x0; crossings = 0;}
+            else if(reflect_lower && reflect_upper)
             {
-                if(a.vel()[j]<0) {a.vel()[j]=-a.vel()[j]; a.velocity_reflected(j); if(mode==1) {a.add_reflected_momentum(j, mass_for_dp);}}
-                a.pos()[j]=DMAX((0.+((double)a.stored().ID)*2.e-8)*box_upper[j], 0.1*a.pos()[j]); // old  was 1e-9, safer on some problems, but can artificially lead to 'trapping' in some low-res tests
-#ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
-                a.pos()[j]+=3.e-3*boxSize_X; a.vel()[j] += 0.1; /* special because of our wierd boundary condition for this problem, sorry to have so many hacks for this! */
+                const double n = floor(x0 / L);
+                if(!(fabs(n) < 9.e15)) {x = (x0 < 0) ? 0 : L; crossings = 0;}   /* no finite path: put it on the face it left by */
+                else
+                {
+                    crossings = (long long) fabs(n);
+                    const double y = DMIN(DMAX(x0 - n * L, 0.), L);  /* the position within its image cell */
+                    x = (crossings & 1) ? L - y : y;
+                    if(crossings >= 2) {lower_hit = upper_hit = 1;}
+                }
+            }
+            else if(lower_hit) {x = -x0; crossings = 1; if(x >= L) {upper_hit = 1;}}
+            else {x = 2 * L - x0; crossings = 1; if(x <= 0) {lower_hit = 1;}}
+            /* an image exactly on a face crosses it once more if it is moving out through it */
+            const double v_image = (crossings & 1) ? -a.vel()[j] : a.vel()[j];
+            if((x == 0 && reflect_lower && v_image < 0) || (x == L && reflect_upper && v_image > 0)) {crossings++;}
+            if(x <= 0) {lower_hit = 1;}
+            if(x >= L) {upper_hit = 1;}
+            if(crossings & 1)
+            {
+                const double vel_before = a.vel()[j];
+                a.vel()[j] = -a.vel()[j]; a.velocity_reflected(j);
+                if(mode == 1) {a.add_reflected_momentum(j, mass_for_dp, vel_before);}
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                if(a.stored().Type == 0) {a.mesh_vel()[j] = -a.mesh_vel()[j];}
 #endif
-                a.reflect_fluxes_at_lower_face(j);
+                a.reflect_normal_fluxes(j);
             }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {a.mass()=0; a.outflow_removed_mass(); if(mode==1) {a.zero_momentum();}}
-        }
-        else if (a.pos()[j] >= box_upper[j])
-        {
-            if(special_boundary_condition_xyz_def_reflect[j] == 0 || special_boundary_condition_xyz_def_reflect[j] == 1)
+            const double wall_gap = 1.e-8 * L;
+            if((reflect_lower && x < wall_gap) || (reflect_upper && L - x < wall_gap))
             {
-                if(a.vel()[j]>0) {a.vel()[j]=-a.vel()[j]; a.velocity_reflected(j); if(mode==1) {a.add_reflected_momentum(j, mass_for_dp);}}
-                a.pos()[j]=box_upper[j]*(1.-((double)a.stored().ID)*2.e-8);
-                a.reflect_fluxes_at_upper_face(j);
+                const struct particle_data &s = a.stored();
+                const uint64_t key = gizmo_gpu_splitmix64((uint64_t) s.ID ^ gizmo_gpu_splitmix64((uint64_t) s.ID_child_number ^ gizmo_gpu_splitmix64((uint64_t) s.ID_generation)));
+                const int face = (reflect_lower && x < wall_gap) ? 0 : 1;
+                const uint64_t counter = gizmo_gpu_splitmix64(((uint64_t) ti_target) ^ SPECIAL_BOUNDARY_RNG_SALT) + (uint64_t)(6 * crossings + 2 * j + face);
+                const double offset = wall_gap * (0.5 + gizmo_gpu_rand_double(key, counter));
+                x = (face == 0) ? offset : L - offset;
             }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {a.mass()=0; a.outflow_removed_mass(); if(mode==1) {a.zero_momentum();}}
+            a.pos()[j] = x;
+#ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
+            if(lower_hit && reflect_lower) {a.pos()[j]+=3.e-3*boxSize_X; a.vel()[j] += 0.1;} /* special because of our wierd boundary condition for this problem, sorry to have so many hacks for this! */
+#endif
         }
+        const int outflow_lower = (o == 0 || o == -1), outflow_upper = (o == 0 || o == 1);
+        if((lower_hit && outflow_lower) || (upper_hit && outflow_upper)) {a.mass()=0; a.outflow_removed_mass(); if(mode==1) {a.zero_momentum();}}
     }
 #else
-    (void)a; (void)mass_for_dp; (void)mode;
+    (void)a; (void)mass_for_dp; (void)mode; (void)ti_target;
 #endif
     return;
 }
 
 KOKKOS_INLINE_FUNCTION
-void apply_special_boundary_conditions_P(int i, double mass_for_dp, int mode, struct particle_data *pp, struct gas_cell_data *cell)
+void apply_special_boundary_conditions_P(int i, double mass_for_dp, int mode, integertime ti_target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     particle_motion_in_arrays a = {pp, cell, i};
-    apply_special_boundary_conditions_body(a, mass_for_dp, mode);
+    apply_special_boundary_conditions_body(a, mass_for_dp, mode, ti_target);
 }
 
 /* The position a drift of dt_drift gives a particle: its binary's motion for a super-timestepped
@@ -1084,5 +1116,5 @@ void predict_particle_motion(struct particle_motion_prediction &m, integertime t
 #else
     (void)cell;
 #endif
-    apply_special_boundary_conditions_body(m, m.mass(), 0);
+    apply_special_boundary_conditions_body(m, m.mass(), 0, ti_to);
 }

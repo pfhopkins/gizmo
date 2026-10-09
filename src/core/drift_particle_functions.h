@@ -201,7 +201,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
-    apply_special_boundary_conditions_P(i,pp[i].Mass,0,pp,cell);
+    apply_special_boundary_conditions_P(i,pp[i].Mass,0,time1,pp,cell);
 
     pp[i].Ti_current = time1;
 }

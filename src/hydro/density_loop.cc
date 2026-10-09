@@ -1201,7 +1201,6 @@ void density(void)
 {
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
     if (host_all->TotN_gas <= 0) return;
-    force_gas_routes_note_change(GAS_ROUTE_REACH);   /* the gas kernel radii solved here widen gas reaches */
 
     CPU_Step[CPU_MISC] += measure_time();
     const double t00_truestart = my_second();

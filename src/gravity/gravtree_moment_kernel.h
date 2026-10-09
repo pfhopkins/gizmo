@@ -78,7 +78,6 @@
 
 #include "../core/timestep_functions.h"   /* kernel_radius_drift_factor, for node_hmax_drift */
 #include "ags_functions.h"                 /* particle_radius_drifts_with_divergence_P, for the sources' radius_drifts */
-#include "../mesh/nlr_radius_policy.h"     /* the per-particle reach seeding the per-type bands, for gas_route_member_extent */
 
 
 /* ==========================================================================================
@@ -304,27 +303,6 @@ struct moment_particle_src {
     double        tidal_prevstep[6];
 #endif
 };
-
-/* One gas member's place in its top-leaf's gas route (forcetree.h) at ti_ref: the box its position can
- * be in -- its motion envelope, the one the neighbour walks test it with -- and its reach, the radius that
- * seeds the per-type band, raised for a particle behind ti_ref to what its drift can grow it to.  The one
- * rule for the build (on the device) and for every later addition (on the host).  Returns 0 when the
- * member's motion cannot be bounded, and its route must then be treated as unknown. */
-KOKKOS_INLINE_FUNCTION static int gas_route_member_extent(int p, struct particle_data *pp, struct gas_cell_data *cell,
-                                                          integertime ti_ref, const struct DriftKickTableView *tables,
-                                                          double max_kernel_radius, double drift_growth, double kernel_floor,
-                                                          double center[3], double *half_width, double *reach)
-{
-    const int motion = particle_motion_envelope(p, pp, cell, ti_ref, tables, center, half_width);
-    if(motion == PARTICLE_MOTION_UNBOUNDED) {return 0;}
-    double r = nlr_particle_symmetric_radius_capped(pp[p], MODE_B_RADIUS_ALL_SOURCES, max_kernel_radius);
-    if(motion == PARTICLE_MOTION_BOUNDED) {
-        const double r_drift = nlr_particle_symmetric_radius_after_drift_P(p, pp, drift_growth, kernel_floor, MODE_B_RADIUS_ALL_SOURCES);
-        if(r_drift > r) {r = r_drift;}
-    }
-    *reach = r;
-    return 1;
-}
 
 template <class AccT>
 KOKKOS_INLINE_FUNCTION static moment_node_accum<AccT> moment_source_from_particle(const moment_particle_src<AccT>& p)
