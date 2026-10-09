@@ -203,3 +203,25 @@ because test/fire restarts with flag 2: snapshot_001 T differs in 6073 cells, en
   Fixing it changes every non-JACO result.
 Recommendation: both on their own branches with a sensitive test each.
 
+### 4.2 C+ 158 µm cooling normalised ~3-4x low (possible; checked against the cited rates, 2026-10-08)
+`cooling/cooling.cc:1163`: `Lambda_Cplus = Z_C * 4.7e-28 * (T^0.15 + 1.04e4*n_elec/sqrt_T) * exp(-91.2/T)`, per n_H^2,
+times the neutral fraction (:1188). The comment cites Barinovs et al. (2005) for H and Wilson & Bell (2002) for e-,
+"assuming factor of 0.5 depletion". The per-ion rates are right. T^0.15 fits the shape of Barinovs' Eq. 12,
+L = e^(-91.2/T)(16 + 0.344 sqrt(T) - 47.7/T) 1e-24 erg cm^3 s^-1 per C+ per H, to +-4% over 20-2000 K. At the same
+abundance the e- term matches GJ07's C+-e- rate per ion to 3%.
+
+The abundance is the problem. Dividing by L gives x_C+ = 4.9e-5 at Z_C = 1 (+-4% over 20-2000 K). The stated half-solar
+C/H is 1.94e-4 with the default `SolarAbundances[2]` = 3.26e-3 (`core/init.cc:198`, AG89), or 1.43e-4 with the
+proto-solar 2.53e-3 (:209). So both channels, which share the prefactor, are 4x or 2.9x low. GIZMO's dense-gas CO/C
+term, which the C+ term hands off to, was not checked.
+
+A second, smaller point: the e- term is also multiplied by the neutral fraction, which suppresses C+-e- cooling in
+partly ionized gas.
+
+Effect: jaco's starforge model with the GJ07 C+ rate (6.3x per ion over its previous coefficient, added together with
+O I/Si+/Fe+ lines) takes the gmc_cooling median T at n_H ~ 13 from 112 K to 42 K (legacy: 158 K); an e^(-92/T)
+estimate attributes the drop to C+. Runs in /mnt/ceph/users/mgrudic/jaco_fs_gates.
+Fix: rescale 4.7e-28 to the stated depletion. This changes every run with cold atomic gas. `starforge_legacy_RT` keeps
+the current coefficient. Sensitive test: Lambda_Cplus against Barinovs' L(T) times 0.5 solar C/H.
+Status: recorded, no decision.
+
