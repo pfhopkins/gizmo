@@ -30,7 +30,6 @@
 #include "gpu_peano_walk_functions.h"
 #include "gpu_gravity_tree.h"
 #include "gpu_topology_build.h"
-#include "gravtree_moment_kernel.h"        /* gas_route_member_extent */
 
 
 namespace {
@@ -1091,124 +1090,6 @@ extern "C" int gpu_topology_writeback_to_aos(int first_soa_idx, int last_soa_idx
     return 0;
 }
 
-namespace {
-
-/* The extent of one top leaf's gas, as a team folds it.  A whole number of int-sized pieces, since a
- * device lane reduction moves it in those (see NlrAccumReducer). */
-struct GasRouteExtent {
-    double member_lo[3], member_hi[3];
-    double reach_lo[3], reach_hi[3];
-    double reach_max;
-    int    n_gas;
-    int    unbounded;   /* some member's motion since its last drift cannot be bounded */
-};
-static_assert(sizeof(struct GasRouteExtent) % sizeof(int) == 0, "GasRouteExtent must be a whole number of ints");
-
-struct GasRouteExtentReducer {
-    using reducer          = GasRouteExtentReducer;
-    using value_type       = GasRouteExtent;
-    using result_view_type = Kokkos::View<value_type, Kokkos::AnonymousSpace, Kokkos::MemoryUnmanaged>;
-
-    KOKKOS_INLINE_FUNCTION explicit GasRouteExtentReducer(value_type& v) : m_value(v) {}
-    KOKKOS_INLINE_FUNCTION void join(value_type& dst, const value_type& src) const {
-        for(int k = 0; k < 3; k++) {
-            if(src.member_lo[k] < dst.member_lo[k]) {dst.member_lo[k] = src.member_lo[k];}
-            if(src.member_hi[k] > dst.member_hi[k]) {dst.member_hi[k] = src.member_hi[k];}
-            if(src.reach_lo[k]  < dst.reach_lo[k])  {dst.reach_lo[k]  = src.reach_lo[k];}
-            if(src.reach_hi[k]  > dst.reach_hi[k])  {dst.reach_hi[k]  = src.reach_hi[k];}
-        }
-        if(src.reach_max > dst.reach_max) {dst.reach_max = src.reach_max;}
-        dst.n_gas += src.n_gas;
-        if(src.unbounded) {dst.unbounded = 1;}
-    }
-    KOKKOS_INLINE_FUNCTION void init(value_type& v) const {
-        for(int k = 0; k < 3; k++) {
-            v.member_lo[k] = v.reach_lo[k] = 1.0e300;
-            v.member_hi[k] = v.reach_hi[k] = -1.0e300;
-        }
-        v.reach_max = 0.0; v.n_gas = 0; v.unbounded = 0;
-    }
-    KOKKOS_INLINE_FUNCTION value_type&      reference()         const { return m_value; }
-    KOKKOS_INLINE_FUNCTION result_view_type view()              const { return result_view_type(&m_value); }
-    KOKKOS_INLINE_FUNCTION bool             references_scalar() const { return true; }
-private:
-    value_type& m_value;
-};
-
-static double *g_gas_route_drift_storage = NULL;   /* drift tables mirrored for the device */
-
-}  /* anonymous namespace */
-
-/* Each member enters by gas_route_member_extent.  One team per owned leaf, its lanes sharing the leaf's
- * members, which run from none to several thousand. */
-extern "C" int gpu_topology_gas_routes(struct topleaf_gas_route *routes, double max_kernel_radius, integertime ti_ref)
-{
-    if(g_slot_map_active || !g_sorted_idx || !g_topleaf_start || !g_topleaf_count) {return 1;}
-    int n_own = 0;
-    for(int t = 0; t < NTopleaves; t++) {if(DomainTask[t] == ThisTask) {n_own++;}}
-    if(n_own == 0) {return 0;}
-    int *own = (int *) gizmo_gpu_alloc_shared((size_t)n_own * sizeof(int), "treescratch_gas_route_leaves");
-    struct GasRouteExtent *extent = (struct GasRouteExtent *) gizmo_gpu_alloc_shared((size_t)n_own * sizeof(struct GasRouteExtent), "treescratch_gas_route_extent");
-    if(!own || !extent) {
-        if(own) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(own);}
-        if(extent) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(extent);}
-        printf("gpu_topology_gas_routes: rank %d could not allocate scratch for %d top leaves\n", ThisTask, n_own);
-        return 1;
-    }
-    for(int t = 0, k = 0; t < NTopleaves; t++) {if(DomainTask[t] == ThisTask) {own[k++] = t;}}
-    struct DriftKickTableView tables;
-    if(drift_kick_table_mirror_refresh(&g_gas_route_drift_storage, &tables) != 0) {
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(extent); Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(own);
-        return 1;
-    }
-    const double growth = kernel_radius_drift_max_growth_factor();
-    const double kernel_floor = All.MinKernelRadius;
-    struct particle_data *P_uvm = P;
-    struct gas_cell_data *CellP_uvm = CellP;
-    const int *tsta = g_topleaf_start, *tcnt = g_topleaf_count, *sidx = g_sorted_idx;
-
-    Kokkos::TeamPolicy<> policy(n_own, Kokkos::AUTO);
-    Kokkos::parallel_for("topo_gas_routes", policy,
-        KOKKOS_LAMBDA(const Kokkos::TeamPolicy<>::member_type &team) {
-            const int t = own[team.league_rank()];
-            const int first = tsta[t];
-            GasRouteExtent leaf;
-            Kokkos::parallel_reduce(Kokkos::TeamThreadRange(team, tcnt[t]), [&](const int m, GasRouteExtent &acc) {
-                const int p = sidx[first + m];
-                if(P_uvm[p].Type != 0 || P_uvm[p].Mass <= 0) {return;}
-                double c[3], hw = 0.0, r = 0.0;
-                if(!gas_route_member_extent(p, P_uvm, CellP_uvm, ti_ref, &tables, max_kernel_radius, growth, kernel_floor, c, &hw, &r)) {acc.unbounded = 1; return;}
-                for(int k = 0; k < 3; k++) {
-                    if(c[k] - hw < acc.member_lo[k]) {acc.member_lo[k] = c[k] - hw;}
-                    if(c[k] + hw > acc.member_hi[k]) {acc.member_hi[k] = c[k] + hw;}
-                    if(c[k] - hw - r < acc.reach_lo[k]) {acc.reach_lo[k] = c[k] - hw - r;}
-                    if(c[k] + hw + r > acc.reach_hi[k]) {acc.reach_hi[k] = c[k] + hw + r;}
-                }
-                if(r > acc.reach_max) {acc.reach_max = r;}
-                acc.n_gas++;
-            }, GasRouteExtentReducer(leaf));
-            Kokkos::single(Kokkos::PerTeam(team), [&]() { extent[team.league_rank()] = leaf; });
-        });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("topo_gas_routes", n_own);
-
-    for(int k = 0; k < n_own; k++) {
-        struct topleaf_gas_route *r = &routes[own[k]];
-        const struct GasRouteExtent *e = &extent[k];
-        for(int d = 0; d < 3; d++) {
-            r->member_lo[d] = e->member_lo[d]; r->member_hi[d] = e->member_hi[d];
-            r->reach_lo[d]  = e->reach_lo[d];  r->reach_hi[d]  = e->reach_hi[d];
-        }
-        r->reach_max = e->reach_max;
-        r->Ti_ref    = ti_ref;
-        r->has_gas   = (e->n_gas > 0) ? 1 : 0;
-        r->valid     = e->unbounded ? 0 : 1;
-    }
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(extent);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(own);
-    return 0;
-}
-
 extern "C" const int *gpu_topology_build_sorted_idx(void)        { return g_sorted_idx;       }
 extern "C" const int *gpu_topology_build_topleaf_start(void)     { return g_topleaf_start;    }
 extern "C" const int *gpu_topology_build_topleaf_count(void)     { return g_topleaf_count;    }
@@ -1396,7 +1277,6 @@ extern "C" void gpu_topology_build_release(void)
     if(g_topleaf_cursor)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_cursor);   g_topleaf_cursor   = NULL;}
     if(g_slot_to_particle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_slot_to_particle); g_slot_to_particle = NULL;}
     if(g_retained_slots)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_retained_slots);   g_retained_slots   = NULL;}
-    if(g_gas_route_drift_storage) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_gas_route_drift_storage); g_gas_route_drift_storage = NULL;}
 #if TREE_LEAF_BUCKET_SIZE > 1
     if(g_leaf_chain)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);       g_leaf_chain       = NULL;}
     if(g_leaf_chain_n)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain_n);     g_leaf_chain_n     = NULL;}

@@ -90,15 +90,9 @@ void mode_b_local_neighbor_walk(const double pos[3],
  * export detector use); the map is derived from them per call, never assumed
  * from slot layout. build() once per call; read-only during the walk, so ONE
  * instance is safely shared across all walking threads. */
-struct DriftKickTableView;
 struct ModeBTopleafMap {
     std::vector<int> leaf_of_topnode;               /* [no - All.TreeNodeIndexBase] -> topleaf id, -1 = not a topleaf */
     int topnode_map_size = 0;                       /* valid offsets: [0, topnode_map_size) */
-    /* Whether every rank's published gas routes hold, by kind (force_gas_routes_settled_local, combined
-     * over all ranks by the caller).  A query sent with its own radius needs geometry and motion; one
-     * that also uses the neighbour's radius needs reach too.  Zero: no route is consulted. */
-    int gas_geometry_settled = 0, gas_reach_settled = 0, gas_motion_settled = 0;
-    unsigned long long widen_call = 0;              /* this call's stamp in the per-leaf widening memo */
     void build(void);                               /* fill from DomainNodeIndex[0..NTopleaves) */
     /* Returns the topleaf id for internal node `no`, or -1 if not a topleaf. */
     inline int topleaf_of(int no, int tree_base) const {
@@ -106,12 +100,6 @@ struct ModeBTopleafMap {
         if(off < 0 || off >= topnode_map_size) return -1;
         return leaf_of_topnode[off];
     }
-    /* Whether an export to remote top-leaf `leaf`, which the walk has already opened, can find a
-     * neighbour among the gas its owner holds there: 0 only when the leaf's published gas route
-     * (forcetree.h), widened to ti_now, rules every such pair out.  1 whenever the route is not
-     * current, the loop's neighbours are not exactly gas, or the leaf's route is unknown. */
-    int gas_route_admits(int leaf, unsigned int type_mask, const double pos[3], double h_q, int oneway,
-                         double j_reach_scale, integertime ti_now, const struct DriftKickTableView *tables) const;
 };
 
 /* Per-query export sink — the WRITE half. add() records, for the CURRENT
