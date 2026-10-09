@@ -1064,13 +1064,17 @@ static int read_file_sync_status(int readTask, int lastTask, int local_status)
 
 
 /*! This function reads a snapshot file and distributes the data it contains
- *  to tasks 'readTask' to 'lastTask'. Returns 0 on success, or a nonzero IC-error
+ *  to tasks 'readTask' to 'lastTask'. An HDF5 file shared by several tasks is read by all of them at
+ *  once: 'readTask' reads the header and passes it on, then each task opens the file read-only and reads
+ *  its own slice of every dataset, in the same chunks the distributing loop would have sent it, so the
+ *  result is the same; the other formats are read by 'readTask' and sent out. Returns 0 on success, or a nonzero IC-error
  *  code on failure (a soft bad-stop is also requested; the caller's per-turn poll
  *  drains it to a clean finalize -- no MPI_Abort, the node releases).
  */
 int read_file(char *fname, int readTask, int lastTask)
 {
     int read_status = 0;   /* soft bad-stop accumulator; reconciled among participants below */
+    const int parallel_ic = (All.ICFormat == 3) && (lastTask > readTask);   /* every task reads its own slice (see above) */
     size_t blockmaxlen;
     long long i, n_in_file, n_for_this_task, ntask, pc, offset = 0, task, nall, nread, nstart, npart;
     int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6];
@@ -1190,6 +1194,27 @@ int read_file(char *fname, int readTask, int lastTask)
      * particle storage is preflighted+allocated collectively (graceful OOM) and allocate_memory()
      * is never subset/turn-called from the IC path. By the time read_file() runs, All.TotNumPart
      * is already set and P/CellP/CommBuffer are already allocated; read_file() only reads data. */
+
+    if(parallel_ic)
+    {
+        if(ThisTask != readTask)
+        {
+            hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+            if(hdf5_file < 0) {printf("task %d: can't open file `%s' for reading initial conditions.\n", ThisTask, fname); fflush(stdout); read_status = 123;}
+            for(type = 0; type < 6 && read_status == 0; type++)
+            {
+                if(header.npart[type] > 0)
+                {
+                    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
+                    hdf5_grp[type] = H5Gopen(hdf5_file, buf);
+                    if(hdf5_grp[type] < 0) {printf("task %d: no group %s in `%s'.\n", ThisTask, buf, fname); fflush(stdout); read_status = 124;}
+                }
+            }
+        }
+        /* every task must have the file before any reads: one that could not open it stops them all here */
+        read_status = read_file_sync_status(readTask, lastTask, read_status);
+        if(read_status) {endrun(read_status); return read_status;}
+    }
 
     if(ThisTask == readTask)
     {
@@ -1486,6 +1511,7 @@ int read_file(char *fname, int readTask, int lastTask)
                         {
                             n_for_this_task = n_in_file / ntask;
                             if((task - readTask) < (n_in_file % ntask)) {n_for_this_task++;}
+                            if(parallel_ic && task != ThisTask) {pcsum += n_for_this_task; continue;}   /* another task's slice */
 
                             if(task == ThisTask)
                                 if(NumPart + n_for_this_task > All.MaxPart)
@@ -1504,7 +1530,7 @@ int read_file(char *fname, int readTask, int lastTask)
                                 pc = n_for_this_task;
                                 if(pc > (int)blockmaxlen) {pc = blockmaxlen;}
 
-                                if(ThisTask == readTask)
+                                if(ThisTask == readTask || parallel_ic)
                                 {
                                     if(All.ICFormat == 1 || All.ICFormat == 2)
                                     {
@@ -1640,9 +1666,9 @@ int read_file(char *fname, int readTask, int lastTask)
 
                                 }
 
-                                if(ThisTask == readTask && task != readTask && pc > 0) {MPI_Ssend(CommBuffer, bytes_per_blockelement * pc, MPI_BYTE, task, TAG_PDATA, MPI_COMM_WORLD);}
+                                if(!parallel_ic && ThisTask == readTask && task != readTask && pc > 0) {MPI_Ssend(CommBuffer, bytes_per_blockelement * pc, MPI_BYTE, task, TAG_PDATA, MPI_COMM_WORLD);}
 
-                                if(ThisTask != readTask && task == ThisTask && pc > 0) {MPI_Recv(CommBuffer, bytes_per_blockelement * pc, MPI_BYTE, readTask, TAG_PDATA, MPI_COMM_WORLD, &status);}
+                                if(!parallel_ic && ThisTask != readTask && task == ThisTask && pc > 0) {MPI_Recv(CommBuffer, bytes_per_blockelement * pc, MPI_BYTE, readTask, TAG_PDATA, MPI_COMM_WORLD, &status);}
 
                                 if(ThisTask == task && read_status == 0)   /* skip the P[] write if this rank overflowed (read_status set); Recv above still completed the Ssend */
                                 {
@@ -1692,9 +1718,9 @@ int read_file(char *fname, int readTask, int lastTask)
         if(type == 0) {N_gas += n_for_this_task;}
     }
 
-    if(ThisTask == readTask)
+    if(ThisTask == readTask || parallel_ic)
     {
-        if(All.ICFormat == 1 || All.ICFormat == 2) {fclose(fd);}
+        if((All.ICFormat == 1 || All.ICFormat == 2) && ThisTask == readTask) {fclose(fd);}
 
         if(All.ICFormat == 3)
         {
