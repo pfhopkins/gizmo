@@ -453,7 +453,7 @@ KOKKOS_INLINE_FUNCTION void grav_ags_tidal_criterion_accumulate(double r, double
 #if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
         if(h >= h_p) {prefac_tt=1;} else {prefac_tt=1; h_touse=h_p; u_tt=sqrt(r2)/h_touse;} // this corresponds to adopting the MAX criterion for the softening
 #endif
-        if(u_tt<1 && prefac_tt>0) {tidal_zeta += prefac_tt * mass * kernel_gravity(u_tt,1./h,1./(h*h*h),0);} // simple sum to calculate this contribution, only from particles inside the kernel of the primary -- this is up here instead of below the if below because it needs to include the 'self' contribution here
+        if(u_tt<1 && prefac_tt>0) {tidal_zeta += prefac_tt * mass * kernel_gravity(u_tt,1./h,1./(h*h*h),0);} // simple sum over the other particles inside the kernel of the primary (r2 > 0 above leaves out the particle itself) -- this is up here instead of below the if below because it is summed for every such pair, whether or not either side uses the tidal softening
     }
     if(primary_uses_tidal_criterion || secondary_uses_tidal_criterion) // primary or secondary has associated correction terms here
     { // now this is correct, but always need to carefully ensure correction terms are only applied in the correct 'direction' if we have a mixed-particle-type pair //
@@ -614,11 +614,23 @@ struct grav_pair_src_t {
 #endif
 };
 
-/* The accumulators the pair evaluation writes. */
-struct grav_pair_acc_t {
+/* The accumulators the pair evaluation writes, in two parts.  The core is what every build
+ * accumulates; the optional part is what only some builds carry.  They are separate types so a
+ * walk can keep them in different places -- the device packet walk holds the core in registers
+ * for one evaluation pass and the optional part in team scratch -- while the evaluation itself
+ * stays one body. */
+struct grav_pair_core_acc_t {
     Vec3<double> acc;
     double pot;                   /* accumulated only under EVALPOTENTIAL */
     int ninter;
+};
+
+/* Set exactly when the pair-optional accumulator below has a field (the device team form of the flat
+ * walk exists only then). */
+#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) || defined(COMPUTE_JERK_IN_GRAVTREE) || defined(ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)
+#define GRAV_PAIR_HAS_OPTIONAL_ACC
+#endif
+struct grav_pair_optional_acc_t {
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     SymmetricTensor2<double> tidal_tensorps;
 #endif
@@ -630,24 +642,45 @@ struct grav_pair_acc_t {
 #endif
 };
 
-KOKKOS_INLINE_FUNCTION void grav_pair_acc_init(grav_pair_acc_t &out)
+/* A walk that keeps both parts together (the CPU walk). */
+struct grav_pair_acc_t {
+    grav_pair_core_acc_t core;
+    grav_pair_optional_acc_t optional;
+};
+
+KOKKOS_INLINE_FUNCTION void grav_pair_core_acc_init(grav_pair_core_acc_t &core)
 {
-    out.acc = Vec3<double>{0,0,0}; out.pot = 0.0; out.ninter = 0;
+    core.acc = Vec3<double>{0,0,0}; core.pot = 0.0; core.ninter = 0;
+}
+
+KOKKOS_INLINE_FUNCTION void grav_pair_optional_acc_init(grav_pair_optional_acc_t &optional)
+{
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
-    out.tidal_tensorps = {};
+    optional.tidal_tensorps = {};
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-    out.jerk = Vec3<double>{0,0,0};
+    optional.jerk = Vec3<double>{0,0,0};
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-    out.tidal_zeta = 0.0;
+    optional.tidal_zeta = 0.0;
 #endif
+    (void) optional;
+}
+
+KOKKOS_INLINE_FUNCTION void grav_pair_acc_init(grav_pair_acc_t &out)
+{
+    grav_pair_core_acc_init(out.core);
+    grav_pair_optional_acc_init(out.optional);
 }
 
 /* Take another partial accumulation of the same target into `a`: every field here is a sum. */
-KOKKOS_INLINE_FUNCTION void grav_pair_acc_combine(grav_pair_acc_t &a, const grav_pair_acc_t &b)
+KOKKOS_INLINE_FUNCTION void grav_pair_core_acc_combine(grav_pair_core_acc_t &a, const grav_pair_core_acc_t &b)
 {
     a.acc += b.acc; a.pot += b.pot; a.ninter += b.ninter;
+}
+
+KOKKOS_INLINE_FUNCTION void grav_pair_optional_acc_combine(grav_pair_optional_acc_t &a, const grav_pair_optional_acc_t &b)
+{
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
     for(int k = 0; k < 6; k++) {a.tidal_tensorps.data[k] += b.tidal_tensorps.data[k];}
 #endif
@@ -657,6 +690,7 @@ KOKKOS_INLINE_FUNCTION void grav_pair_acc_combine(grav_pair_acc_t &a, const grav
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
     a.tidal_zeta += b.tidal_zeta;
 #endif
+    (void) a; (void) b;
 }
 
 /* What the walker's payload blocks consume after the evaluation: the separation and the
@@ -676,8 +710,9 @@ struct grav_pair_result_t {
  * after the tidal correction; both are pure additions into acc, and the CPU order is used for
  * both walks now. */
 KOKKOS_INLINE_FUNCTION grav_pair_result_t
-grav_pair_evaluate_core(const grav_pair_tgt_t &tgt, grav_pair_src_t &src, grav_pair_acc_t &out)
+grav_pair_evaluate_core(const grav_pair_tgt_t &tgt, grav_pair_src_t &src, grav_pair_core_acc_t &core, grav_pair_optional_acc_t &optional)
 {
+    (void) optional;   /* written only under the optional pair flags */
     const double r = sqrt(src.r2);
     double fac_accel;
     double fac_pot = 0;   /* a dead 0 when !EVALPOTENTIAL (consumed only under that gate) */
@@ -705,32 +740,32 @@ grav_pair_evaluate_core(const grav_pair_tgt_t &tgt, grav_pair_src_t &src, grav_p
         grav_force_apply_pm_truncation(tgt.pm, tabindex, fac_pot, fac_accel);
 #endif
 #ifdef EVALPOTENTIAL
-        out.pot += fac_pot;
+        core.pot += fac_pot;
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
         double r_target = grav_spherical_symmetry_r_from_center(tgt.pos[0],tgt.pos[1],tgt.pos[2],tgt.center[0],tgt.center[1],tgt.center[2]);
         grav_spherical_symmetry_force_override(src.r_source, r_target, tgt.h, src.mass, tgt.center[0],tgt.center[1],tgt.center[2],
                                                tgt.pos[0],tgt.pos[1],tgt.pos[2], src.dr, fac_accel);
 #endif
-        out.acc += fac_accel * src.dr;
+        core.acc += fac_accel * src.dr;
 #ifdef SINK_DYNFRICTION_FROMTREE
-        grav_sink_dynfriction_accumulate(src.dr, src.dv, fac_accel, src.mass, tgt.sink_mass, src.m_j_eff_for_df, tgt.ptype, out.acc);
+        grav_sink_dynfriction_accumulate(src.dr, src.dv, fac_accel, src.mass, tgt.sink_mass, src.m_j_eff_for_df, tgt.ptype, core.acc);
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
         grav_ags_tidal_criterion_accumulate(r, src.r2, src.dr, src.mass, tgt.h, src.h_p, tgt.ptype, src.ptype_sec, fac_tidal, fac2_tidal,
-                                            tgt.i_zeta_tidal_tensorps_prevstep, src.j_zeta_tidal_tensorps_prevstep, out.tidal_zeta, out.acc);
+                                            tgt.i_zeta_tidal_tensorps_prevstep, src.j_zeta_tidal_tensorps_prevstep, optional.tidal_zeta, core.acc);
 #endif
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
         fac2_tidal = grav_spherical_symmetry_fac2_tidal_override(src.r_source, r_target, tgt.h, src.mass);
 #endif
-        grav_tidal_tensor_accumulate(src.dr, fac_tidal, fac2_tidal, tgt.pm, tabindex, out.tidal_tensorps);
+        grav_tidal_tensor_accumulate(src.dr, fac_tidal, fac2_tidal, tgt.pm, tabindex, optional.tidal_tensorps);
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
-        grav_jerk_accumulate(src.dv, src.dr, fac_accel, fac2_tidal, tgt.ptype, out.jerk);
+        grav_jerk_accumulate(src.dv, src.dr, fac_accel, fac2_tidal, tgt.ptype, optional.jerk);
 #endif
     }
-    out.ninter++;
+    core.ninter++;
     grav_pair_result_t res; res.r = r; res.fac_accel = fac_accel;
     return res;
 }

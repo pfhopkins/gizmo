@@ -1386,6 +1386,9 @@ void ags_setup_smoothinglengths(void)
         }
     }
     ags_density();
+#ifdef AGS_ZETA_IN_FORCE
+    for(i = 0; i < NumPart; i++) {P[i].AGS_zeta = 0;}   /* ags_density stored only the normalization; the pair sum arrives with the first AGSForce_calc, after the first gravity evaluation */
+#endif
 #ifdef DM_FUZZY
     do_dm_fuzzy_initialization();
 #endif

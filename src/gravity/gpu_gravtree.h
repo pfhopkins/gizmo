@@ -70,6 +70,7 @@ struct gpu_grav_packet_shape_t {
     int row_requested;
     int row_effective;
     long long scratch_bytes;
+    int team_max;          /* flat walk: the largest team this backend allows with its slots, -1 when the team form was not tried */
 };
 void gpu_gravtree_packet_shape(struct gpu_grav_packet_shape_t *out);
 

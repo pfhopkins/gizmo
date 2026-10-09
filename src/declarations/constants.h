@@ -15,35 +15,23 @@
 
 /* Minimum number of particles needing a drift for the batched drift to run on the
  * device. The drift needs its own threshold rather than the shared one above: its
- * per-element work is far smaller than cooling's, while it stages the same whole
- * structs, so the two want opposite policies and the shared constant is read by
- * seven translation units.
+ * per-element work is far smaller than cooling's, so the two want different policies,
+ * and the shared constant is read by seven translation units.
  *
- * Set beyond any per-rank count so the drift runs on the host by default. Measured
- * on a 64-rank galaxy run, comparing clean builds with and without the batched path
- * at matched simulation time: the device path won modestly between roughly 4k and
- * 64k particles needing a drift per rank (-0.6 s and -0.7 s), and lost above that
- * (+9.5 s), as a uniform per-step increase rather than a few expensive steps. The
- * loss tracks the number of elements staged, which points at the cost of copying
- * whole particle and cell structs both ways rather than at launch overhead.
+ * The count is per rank. Where the particle arrays are device-visible the device drift works on
+ * them in place, sending only the index list (gpu_drift.cc), so the old cost of staging whole
+ * particle and cell structs both ways no longer applies. Measured on a 128-rank galaxy run at
+ * matched simulation time, drifting everything on the device against everything on the host:
+ * the host is ahead by ~0.3 ms per step on steps with up to ~1e3 particles active in total, and
+ * the two tie from ~1e4 active upward, where the busiest ranks hold ~1e3 of them. The default is
+ * the smallest per-rank count at which the device does not lose, so the drift runs on the device
+ * wherever it costs nothing to do so, and on the host for the many very small steps.
  *
- * ⚠ That measurement is for a configuration whose equation of state is cheap. It is
- * NOT a general verdict on running the drift on the device, and must not be read as
- * one. What decides the question is the work done per element against the bytes
- * staged for it: the drift loses here because an ideal-gas pressure update is trivial
- * beside copying whole particle and cell structs both ways, whereas cooling wins
- * comfortably on the same staging because its per-element solve is large. Under a
- * tabulated or solid equation of state the drift moves to the second camp -- the
- * per-particle pressure update becomes a Newton root-find over table lookups, with a
- * bisection fallback and an iteration cap in the tens -- so the same staging is
- * amortised over far more arithmetic and the balance can invert.
- *
- * Lower it to re-enable the device path once the staged set is narrowed to the fields
- * the drift actually writes, to select the band above if that is measured to be worth
- * the dispatch complexity, or per-configuration once the tabulated equations of state
- * are themselves device-callable. */
+ * That measurement is for a cheap equation of state. Under a tabulated or solid one the per-
+ * particle pressure update becomes a root-find over table lookups, and the device's share should
+ * be expected to grow. */
 #ifndef GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD
-#define GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD 2000000000
+#define GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD 1000
 #endif
 
 /* Minimum number of sources in ONE batch for a fused neighbour walk to run on the
