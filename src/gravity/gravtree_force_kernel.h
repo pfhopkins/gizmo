@@ -616,9 +616,9 @@ struct grav_pair_src_t {
 
 /* The accumulators the pair evaluation writes, in two parts.  The core is what every build
  * accumulates; the optional part is what only some builds carry.  They are separate types so a
- * walk can keep them in different places -- the device packet walk holds the core in registers
- * for one evaluation pass and the optional part in team scratch -- while the evaluation itself
- * stays one body. */
+ * walk can keep them in different places -- the device flat team walk keeps the optional part in
+ * team scratch, and so does the packet walk when it carries the tidal tensor and the jerk -- while
+ * the evaluation itself stays one body. */
 struct grav_pair_core_acc_t {
     Vec3<double> acc;
     double pot;                   /* accumulated only under EVALPOTENTIAL */
@@ -641,6 +641,18 @@ struct grav_pair_optional_acc_t {
     double tidal_zeta;
 #endif
 };
+
+/* True when the pair-optional accumulator carries both the tidal tensor and the jerk (every
+ * ADAPTIVE_TREEFORCE_UPDATE or Hermite build).  With that much per-target state the device packet
+ * walk keeps each member's inputs and each lane's sums in team scratch rather than in thread-private
+ * memory, which spills once the walk's registers are full; with less it keeps the member's inputs and
+ * sums in registers, which measured faster there.  (The jerk implies the tidal tensor; both are named
+ * because the pair is what was measured.) */
+#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) && defined(COMPUTE_JERK_IN_GRAVTREE)
+static constexpr bool grav_pair_carries_tidal_tensor_and_jerk = true;
+#else
+static constexpr bool grav_pair_carries_tidal_tensor_and_jerk = false;
+#endif
 
 /* A walk that keeps both parts together (the CPU walk). */
 struct grav_pair_acc_t {
