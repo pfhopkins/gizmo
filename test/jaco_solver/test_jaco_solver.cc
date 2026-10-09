@@ -195,7 +195,7 @@ static void seed_variant(SolveVars *sv, double T0, int variant, double y) {
 /* ---- independent check of an answer ---- */
 
 static double T_floor_of(const SolveVars *sv, const Params *pr, const JacoSolverSettings *set) {
-    return fmax(set->T_min, jaco_u_to_T(set->u_min, sv, pr));
+    return set->u_min > 0 ? fmax(set->T_min, jaco_u_to_T(set->u_min, sv, pr)) : set->T_min;
 }
 
 /* d F_k / d v_k: the generated value, or a finite difference where the model returns a non-finite one */
@@ -622,8 +622,23 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
         const char *name;
         double u, T, x_Hplus, x_Heplus, x_Heplusplus, x_H_2;
         const char *params; /* leading space: names are matched as " name=" */
+        double T_min = 0, u_min = 0; /* the run's solver floors as call_jaco sets them; T_min = 0: the driver's */
     };
     const Recorded cells[] = {
+#ifdef JACO_MODEL_STARFORGE
+        /* shu_jets[jaco] (MinGasTemp 0, so T_min = 1 K and u_min = 0): dense molecular gas cooled below the CMB by
+           expansion, its energy root near 1.6 K, where the H2 cooling's Jacobian was not finite; every tier failed */
+        {"shu_jets 1.8K molecular", 96026865.17575416, 1.8327357182447774, 1e-20, 1e-20, 1e-20, 0.49999999987066052,
+         " Delta_t=18833483.88671875 Delta_x=1665022286145074 G_0=6.536608459132372e-28 G_LW=1 ISRF=1"
+         " N_H=7.5481994987645799e+22 Td=2.8020555354610974 X=0.71550000000000002 Z_d=1 f_d=1 f_metal=0 f_neb=0"
+         " grad_v=2.3111437077742243e-10 grad_v_tf=8.6221397732264687e-11 n_Htot=1430418.353342931"
+         " pdv_work=-5.1417100242972378e-18 u_initial=96026865.17575416 x_C_tot=0.00029466573491730724"
+         " x_Ca=2.4004192872117401e-06 x_Fe=3.4441449535789159e-05 x_H_2_initial=0.49999999987066052"
+         " x_Mg=4.4083391567668295e-05 x_N=7.3974243785564537e-05 x_Ne=9.3640810621942704e-05"
+         " x_O_tot=0.0005354647099930119 x_S=1.4456673654786863e-05 x_Si=3.5539582709394029e-05"
+         " y=0.094444444444444442 z=0",
+         1.0, 0.0},
+#endif
 #ifdef JACO_MODEL_STARFORGE_LEGACY
         /* SN_singlestar with JACO=starforge_legacy: He++ decays onto its floor from the ionized seed, and the line search
            rejected the step that lands it there; every tier failed */
@@ -679,18 +694,23 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
         int bad = params_by_name(cells[c].params, &pr);
         JacoSolveInfo info = {};
         SolveVars in = sv;
+        JacoSolverSettings cs = *set;
+        if (cells[c].T_min > 0) {
+            cs.T_min = cells[c].T_min;
+            cs.u_min = cells[c].u_min;
+        }
         if (!bad) {
             double worst;
-            int rc = jaco_solve(&sv, &pr, set, &info);
+            int rc = jaco_solve(&sv, &pr, &cs, &info);
             if (rc) strcpy(why, "every tier failed");
-            bad = rc || check_answer(&sv, &pr, set, why, &worst);
+            bad = rc || check_answer(&sv, &pr, &cs, why, &worst);
         } else
             strcpy(why, "stale recorded parameters");
-        printf("%-24s tier %d (tier-1 status %d) nfeval %d T=%.6g x_H+=%.4g %s%s\n", cells[c].name, info.tier, info.tier1_status,
-               info.nfeval, sv.T, sv.x_Hplus, bad ? "FAIL: " : "", why);
+        printf("%-24s tier %d (tier-1 status %d) nfeval %d T=%.6g x_H+=%.4g %s%s (nan J evals %d)\n", cells[c].name, info.tier,
+               info.tier1_status, info.nfeval, sv.T, sv.x_Hplus, bad ? "FAIL: " : "", why, info.n_nonfinite_jac);
         if (bad) {
             nfail++;
-            if (strcmp(why, "stale recorded parameters")) report_failure(cells[c].name, &in, &pr, set, why);
+            if (strcmp(why, "stale recorded parameters")) report_failure(cells[c].name, &in, &pr, &cs, why);
         }
     }
     return nfail;
@@ -1036,7 +1056,7 @@ int main(int argc, char **argv) {
     const char *field = getenv("JACO_RT_FIELD"); /* the debug modes' radiation field (MODEL=starforge_legacy_RT): 0, 1 or 2 */
     JacoSolverSettings set;
     jaco_solver_default_settings(&set);
-    set.T_min = 2.73;   /* GIZMO's MinGasTemp; the model is not finite below ~1.6 K */
+    set.T_min = 2.73;   /* a production MinGasTemp; runs with MinGasTemp 0 (T_min 1 K, u_min 0) enter as recorded cells */
     set.T_max = 1e10;
     set.u_min = 2.75e8; /* GIZMO's MinEgySpec for MinGasTemp = 2.73 K */
     if (build_cie_table(&set)) return 1;
