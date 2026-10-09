@@ -371,7 +371,7 @@ extern ALIGN(32) struct particle_data
     MyDouble AGS_vsig;          /*!< signal velocity of particle approach, to properly time-step */
 #endif
     
-    short int wakeup;                     /*!< flag to wake up particle */
+    int wakeup;                           /*!< flag to wake up particle (int: a 4-byte field keeps every device atomic on it lock-free) */
     
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
     MyFloat StarParticleEffectiveSize;   /*!< effective 'size' of a star particle at formation */

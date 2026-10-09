@@ -181,7 +181,7 @@ void verify_and_assign_local_mechfb_integrals(void)
                      * perturbation. */
                     int wakeup_val = LocalGasMechFBInfoTemp[j].max_source_wakeup;
                     if(wakeup_val > 0 && wakeup_val > P[j].wakeup) {
-                        P[j].wakeup = (short int)wakeup_val;
+                        P[j].wakeup = wakeup_val;
                         wakeup_sidecar_mark(j);
                         NeedToWakeupParticles_local = 1;
                     }

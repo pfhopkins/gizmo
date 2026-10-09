@@ -273,7 +273,7 @@ struct ghost_delta_hydro_t {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble dMass;         /* additive: CellP[j].dMass */
 #endif
-    short int wakeup;       /* max: P[j].wakeup */
+    int wakeup;             /* max: P[j].wakeup */
 };
 
 
