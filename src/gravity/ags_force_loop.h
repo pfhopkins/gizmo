@@ -323,7 +323,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
         if(cbe_r.set_wakeup_j) {
             /* Hydro-convention wakeup: active.TimeBin+1 (positive), MAX
              * reverse-comm safe (legacy -1 sentinel silently dropped). */
-            int wakeup_val = (int)active.TimeBin + 1;
+            int wakeup_val = wakeup_flag_from_timebin(active.TimeBin);
             Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
             if(need_wakeup) { Kokkos::atomic_store(need_wakeup, 1); }
             if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */
@@ -342,7 +342,7 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
             scalars.TimeBinActive, scalars.rng_salt);
         if(sidm_r.scattered) {
             if(sidm_r.set_wakeup_j) {
-                int wakeup_val = (int)active.TimeBin + 1;
+                int wakeup_val = wakeup_flag_from_timebin(active.TimeBin);
                 Kokkos::atomic_max(&Pj.wakeup, wakeup_val);
                 if(need_wakeup) { Kokkos::atomic_store(need_wakeup, 1); }
                 if(wakeup_dirty_base) { wakeup_dirty_base[j] = 1; }   /* dirty-sidecar mark */

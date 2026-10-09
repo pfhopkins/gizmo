@@ -1531,7 +1531,7 @@ void process_wake_ups(void)
 
 	    if(P[i].wakeup > 0) {
 		/* hydro wakeup: target timestep = dt_waker / WAKEUP */
-		int waker_bin = P[i].wakeup - 1;
+		int waker_bin = wakeup_timebin_from_flag(P[i].wakeup);
 		bin = IMAX(0, waker_bin - wakeup_bin_offset);
 		/* Floor at the lowest-currently-occupied-and-active bin (see comment
 		 * above the i-loop). Prevents the multiplicative wakeup cascade. */

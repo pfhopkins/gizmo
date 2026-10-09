@@ -288,7 +288,7 @@ static void ags_density_pair_kernel_body(const AgsDensityActiveState& active,
              * reverse-comm. Legacy wrote (short int)-1, which the MAX path
              * silently dropped against home=0; fixed before this port
              * landed. */
-            const int wakeup_val = (int)active.TimeBin + 1;
+            const int wakeup_val = wakeup_flag_from_timebin(active.TimeBin);
             Kokkos::atomic_max(&neighbor_particle.wakeup, wakeup_val);
             if(need_wakeup) { Kokkos::atomic_or(need_wakeup, 1); }
             if(wakeup_dirty_slot) { *wakeup_dirty_slot = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
