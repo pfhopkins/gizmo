@@ -457,8 +457,19 @@ void fof_fof(int num)
      place with the last step's kicks (run.cc) and skipping construction before the next walk
      (gravtree.cc), both of which would read storage that no longer exists.  DomainReconstructFlag
      says the same thing to the decomposition, which is what holds the tree's storage: a rebuild on
-     its own would build into arrays this just released. */
-  if(num >= 0 && DumpFlag != 2) {force_treefree(); TreeReconstructFlag = 1; DomainReconstructFlag = 1;}
+     its own would build into arrays this just released.
+     Decompose first.  Freeing the tree also drops the record of where each particle was attached,
+     so a particle that has drifted into a top-leaf another rank owns could no longer be placed by
+     SUBFIND's whole-tree build -- and SUBFIND cannot repartition to repair that, since by then the
+     allocations below sit on top of the domain's own blocks.  Here nothing does, so the
+     decomposition (over all time bins, as group finding's others are) hands every particle back to
+     the rank whose top-leaf it is in, and the tree it leaves is released as before. */
+  if(num >= 0 && DumpFlag != 2)
+    {
+      domain_Decomposition(1, 0, 0, 0);
+      gravity_clear_pending_motion_bounds();   /* noted against the top tree just replaced */
+      force_treefree(); TreeReconstructFlag = 1; DomainReconstructFlag = 1;
+    }
 #endif
 
   FOF_PList =

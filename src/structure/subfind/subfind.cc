@@ -53,6 +53,28 @@ static struct subfind_id_list
 static int Nids;
 
 
+/* The tree over every local particle.  Group finding decomposed the domain before it started
+ * (fof_fof), so each particle sits in a top-leaf its own rank owns and the build has nothing to ask
+ * of its caller; a request to restore ownership or to re-decompose means that contract was broken,
+ * and SUBFIND cannot repair it here, where group finding's allocations sit on top of the domain's. */
+static void subfind_build_whole_tree(const char *what_for)
+{
+  const int status = force_treebuild(NumPart, NULL);
+  if(status >= 0) {return;}
+  if(ThisTask == 0)
+    {
+      printf("SUBFIND (tree for %s): the whole-tree build returned %s (%d).\n", what_for,
+             status == FORCE_TREE_NEEDS_OWNERSHIP_RESTORE ? "FORCE_TREE_NEEDS_OWNERSHIP_RESTORE: particles sit in top-leaves other ranks own" :
+             status == FORCE_TREE_NEEDS_DOMAIN_REBUILD ? "FORCE_TREE_NEEDS_DOMAIN_REBUILD: particles lie outside the extent the domain was built on" :
+             "a failed build", status);
+      fflush(stdout);
+    }
+  endrun(91569);
+  /* Stop here: nothing after this has a tree to walk.  Every negative status is decided by a
+     reduction inside the build, so every rank arrives together. */
+  gizmo_exit_bad_stop_if_requested("subfind:whole_tree_build");
+}
+
 void subfind(int num)
 {
 #if defined(FOF_DENSITY_SPLIT_TYPES)
@@ -124,7 +146,7 @@ void subfind(int num)
 
 	      CPU_Step[CPU_FOF] += measure_time();
 
-	      if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
+	      subfind_build_whole_tree("split-type densities");
 
 	      t1 = my_second();
 	      if(ThisTask == 0)
@@ -225,7 +247,7 @@ void subfind(int num)
 
   CPU_Step[CPU_FOF] += measure_time();
 
-  if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
+  subfind_build_whole_tree("dark matter densities");
 
   t1 = my_second();
   if(ThisTask == 0)
@@ -433,7 +455,7 @@ void subfind(int num)
 
   domain_Decomposition(1, 0, 0, 0);
 
-  if(force_treebuild(NumPart, NULL) < 0) {endrun(91569);}
+  subfind_build_whole_tree("spherical overdensities");
 
 
   /* compute spherical overdensities for FOF groups */

@@ -58,7 +58,7 @@ namespace gw_detail {
  * the process_wake_ups dirty-sidecar superset invariant when a home-rank wakeup
  * arrives via ghost writeback, with zero cost / no instantiation for every other
  * MAX field (the `if constexpr` false branch is discarded). */
-constexpr bool gw_is_wakeup_member(short int particle_data::* m) { return m == &particle_data::wakeup; }
+constexpr bool gw_is_wakeup_member(decltype(particle_data::wakeup) particle_data::* m) { return m == &particle_data::wakeup; }
 template <typename MP> constexpr bool gw_is_wakeup_member(MP) { return false; }
 
 /* ParticleMinOp<FieldT, MemPtr> — generic min-reduce reverse-comm for any

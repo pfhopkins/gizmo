@@ -585,7 +585,7 @@ static void mechanical_fb_pair_kernel(
      * for the host-side direct-dU branch in mechanical_fb.cc to apply as
      * P[j].wakeup = max(P[j].wakeup, max_source_wakeup). Standard hydro-
      * convention encoding: wakeup_val = source.TimeBin + 1. */
-    Kokkos::atomic_max(&gd->max_source_wakeup, (int)local.TimeBin + 1);
+    Kokkos::atomic_max(&gd->max_source_wakeup, wakeup_flag_from_timebin(local.TimeBin));
     Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
     Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
     Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);

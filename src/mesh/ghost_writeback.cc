@@ -266,16 +266,6 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
 }
 
 
-/* Compact delta struct for hydro j-writes.
- * Contains only the fields that hydro_force writes to j-particles. */
-struct ghost_delta_hydro_t {
-    int home_index;         /* P[]/CellP[] index on the home rank */
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-    MyDouble dMass;         /* additive: CellP[j].dMass */
-#endif
-    short int wakeup;       /* max: P[j].wakeup */
-};
-
 
 /* --- AGSForce variant (RETIRED) -----------------------------------------
  * The standalone ghost_writeback_{zero_,}agsforce path was retired when

@@ -135,6 +135,9 @@ GIZMO_GPU_FUNCTION static inline double MINMOD(double a, double b) {return (a>0)
 GIZMO_GPU_FUNCTION static inline double MINMOD_G(double a, double b) {return a;}
 /* the smaller of two domain-work timebin keys (P[].MinGravWorkBin and its siblings), where -1 means none recorded */
 GIZMO_GPU_FUNCTION static inline signed char min_work_bin(signed char a, signed char b) {return (a < 0) ? b : ((b < 0) ? a : ((a < b) ? a : b));}
+/* the positive P[].wakeup flag a particle active in timebin `bin` leaves on a neighbour it must wake (0 means none), and its inverse */
+GIZMO_GPU_FUNCTION static inline int wakeup_flag_from_timebin(int bin) {return bin + 1;}
+GIZMO_GPU_FUNCTION static inline int wakeup_timebin_from_flag(int flag) {return flag - 1;}
 
 /* Whether a position lies outside the extent the domain was built on (DomainCorner, DomainLen). A Peano
    key is the mantissa of (Pos-DomainCorner)/DomainLen + 1, which encodes the position only while that

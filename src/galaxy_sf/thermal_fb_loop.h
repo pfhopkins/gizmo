@@ -228,7 +228,7 @@ static void thermal_fb_pair_kernel(
      * wakes at the right pace immediately, killing the multi-
      * generation cascade that would otherwise emerge once shell-by-shell
      * pair-body wakeup-checks discover the stale-low MaxSignalVel. */
-    Kokkos::atomic_max(&Pj.wakeup, (short int)((int)local.TimeBin + 1));
+    Kokkos::atomic_max(&Pj.wakeup, wakeup_flag_from_timebin(local.TimeBin));
     if (wakeup_dirty_slot) { *wakeup_dirty_slot = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
 
 #ifdef METALS

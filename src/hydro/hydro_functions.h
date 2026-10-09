@@ -458,7 +458,7 @@ void hydro_accumulate_neighbor(
     if(TimeBinActive_arr && !(TimeBinActive_arr[P[j].TimeBin]))
     {
         if(kernel.vsig > WAKEUP * CellP[j].MaxSignalVel) {
-            short int wakeup_val = (short int)(local.TimeBin + 1);
+            int wakeup_val = wakeup_flag_from_timebin(local.TimeBin);
             HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);
             if(WakeupDirty_arr) { WakeupDirty_arr[j] = 1; }   /* dirty-sidecar mark (byte store; race-benign) */
