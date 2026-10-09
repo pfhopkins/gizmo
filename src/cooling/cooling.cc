@@ -63,6 +63,7 @@ GIZMO_GPU_FUNCTION double evaluate_NH_from_GradRho(const Vec3<MyFloat>& gradrho,
    not only the ones that pull kernel.h. */
 #include "../mesh/gpu_neighbor_list.h"   /* gx_touched_set_release at shutdown */
 #include "../gravity/gpu_gravity_tree.h" /* gpu_node_dirty_release at shutdown */
+#include "../gravity/gpu_topology_build.h" /* gpu_topology_build_release at shutdown */
 #include "../eos/eos_functions.h"
 #include "../eos/hydrogen_molecule_functions.h"
 #include "../core/timestep_functions.h"
@@ -2861,6 +2862,7 @@ void gizmo_kokkos_finalize(void)
     gx_touched_set_release();
     gx_motion_target_release();
     gpu_node_dirty_release();
+    gpu_topology_build_release();
     Kokkos::finalize();
 }
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort
