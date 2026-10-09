@@ -404,10 +404,10 @@ extern "C" void gizmo_gpu_prepare_shared_for_free(void *ptr)
             fflush(stdout);
         }
 #endif
-        return;
     }
-    /* A failure here is not this prefetch's: the synchronize reports any earlier asynchronous device
-       error, so it goes to the same check every kernel launch uses rather than being dropped. */
+    /* Waits for the migration, and -- after a refused one too, whose error was cleared -- for any
+       device work still using the block, reporting an earlier asynchronous device error through the
+       check every kernel launch uses rather than dropping it. */
     if(hipDeviceSynchronize() != hipSuccess) {gizmo_gpu_check_last_error("earlier asynchronous device work (reported while releasing a tree block)", 0);}
 #endif
 }
