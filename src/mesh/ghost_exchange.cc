@@ -707,6 +707,12 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                                                   const int *recv_count, const int *recv_disp)
 {
     const size_t slot_bytes = sizeof(struct particle_data) + sizeof(struct gas_cell_data);
+    /* Where the particle storage is CUDA managed memory, MPI does not write it directly: each round is received
+       into host staging and copied in (gizmo_particle_storage_needs_staged_mpi_receive).  Elsewhere the round is
+       received in place, as it always was. */
+    const int recv_staged = gizmo_particle_storage_needs_staged_mpi_receive();
+    const int recv_cellp = recv_staged && (All.TotN_gas > 0);
+    const int staging_blocks = 2 + (recv_staged ? 1 : 0) + (recv_cellp ? 1 : 0) + 4 + (recv_staged ? 1 : 0);
 
     /* How many slots per peer a round may carry. Sized from the room this rank has
        now, shared out over the peers a round touches, and reduced to what the
@@ -714,7 +720,8 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
        least one slot per peer: a round that cannot be afforded is reported below
        rather than skipped, or the transport would never finish.
 
-       Half the free room, not all of it: the two staging buffers are taken while
+       Half the free room, not all of it (a quarter when the round is also received
+       into staging): the staging buffers are taken while
        the callers still hold their own working arrays, and a round sized to the
        last free byte would be refused by the check below and turn a run that fits
        into a stop. */
@@ -722,7 +729,7 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
     long long tightest_free = 0;
     {
         const size_t per_peer = slot_bytes * (size_t) ((NTask > 0) ? NTask : 1);
-        long long affordable = (per_peer > 0) ? (long long) (((size_t) FreeBytes / 2) / per_peer) : 1;
+        long long affordable = (per_peer > 0) ? (long long) (((size_t) FreeBytes / (recv_staged ? 4 : 2)) / per_peer) : 1;
         if(affordable < 1) {affordable = 1;}
         if(affordable > INT_MAX) {affordable = INT_MAX;}
         /* The room left on the tightest rank rides along with the agreement, so
@@ -746,17 +753,25 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
     size_t staging_bytes = 0;
     int short_local = 0, short_any = 0;
     {
-        long long longest_run = 0, carried = 0, first_round = 0;
+        long long longest_run = 0, carried = 0, first_round = 0, first_recv_round = 0;
         for(int t = 0; t < NTask; t++) {
             if(send_count[t] > longest_run) {longest_run = send_count[t];}
             if(recv_count[t] > longest_run) {longest_run = recv_count[t];}
             carried += send_count[t];
             first_round += (send_count[t] < slots_per_peer) ? send_count[t] : slots_per_peer;
+            first_recv_round += (recv_count[t] < slots_per_peer) ? recv_count[t] : slots_per_peer;
         }
         const size_t first_slots = (size_t) (first_round > 0 ? first_round : 1);
         staging_bytes = gizmo_mymalloc_rounded_size(first_slots * sizeof(struct particle_data))
                       + gizmo_mymalloc_rounded_size(first_slots * sizeof(struct gas_cell_data));
-        short_local = gizmo_alloc_fits_this_rank(staging_bytes, 2) ? 0 : 1;
+        /* the per-peer count and offset arrays (four, five when staged) are taken before the round's buffers */
+        staging_bytes += (size_t) (4 + (recv_staged ? 1 : 0)) * gizmo_mymalloc_rounded_size((size_t) NTask * sizeof(int));
+        if(recv_staged) {
+            const size_t first_recv_slots = (size_t) (first_recv_round > 0 ? first_recv_round : 1);
+            staging_bytes += gizmo_mymalloc_rounded_size(first_recv_slots * sizeof(struct particle_data));
+            if(recv_cellp) {staging_bytes += gizmo_mymalloc_rounded_size(first_recv_slots * sizeof(struct gas_cell_data));}
+        }
+        short_local = gizmo_alloc_fits_this_rank(staging_bytes, staging_blocks) ? 0 : 1;
         /* What this rank puts on the wire, and whether it can afford a round, travel
            with the same agreement: the figure worth reporting belongs to whichever
            rank carries most, and that is not reliably rank 0. One rank short stops
@@ -783,11 +798,11 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                        ThisTask, (double) staging_bytes / (1024.0 * 1024.0),
                        (double) FreeBytes / (1024.0 * 1024.0));
             } else {
-                printf("Ghost exchange: rank %d cannot take the 2 staging buffers for one round: the "
+                printf("Ghost exchange: rank %d cannot take the %d staging buffers for one round: the "
                        "working memory has %g MB free, so this is not a shortage of memory but of its "
                        "table of live blocks. Something above is holding an unusual number of "
                        "allocations. Stopping.\n",
-                       ThisTask, (double) FreeBytes / (1024.0 * 1024.0));
+                       ThisTask, staging_blocks, (double) FreeBytes / (1024.0 * 1024.0));
             }
             fflush(stdout);
         }
@@ -823,6 +838,7 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
     int *round_send_disp  = (int *) mymalloc("gx_fwd_sd", NTask * sizeof(int));
     int *round_recv_count = (int *) mymalloc("gx_fwd_rc", NTask * sizeof(int));
     int *round_recv_disp  = (int *) mymalloc("gx_fwd_rd", NTask * sizeof(int));
+    int *staged_disp      = recv_staged ? (int *) mymalloc("gx_fwd_rsd", NTask * sizeof(int)) : NULL;
 
     for(int r = 0; r < rounds; r++)
     {
@@ -874,23 +890,53 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
             }
         }
 
-        gizmo_mpi_alltoallv_typed(send_P, round_send_count, round_send_disp,
-                                  dst_P, round_recv_count, round_recv_disp,
-                                  sizeof(struct particle_data), MPI_COMM_WORLD);
-        /* Only meaningful when the simulation has any gas particles globally. With
+        /* CellP is only exchanged when the simulation has any gas particles globally. With
            TotN_gas==0 (N-body / DM-only runs) CellP is allocated to size 0, so writing
            to dst_CellP would dereference out of bounds -- and no gas ghost can exist
            if no gas exists anywhere. */
-        if(All.TotN_gas > 0) {
-            gizmo_mpi_alltoallv_typed(send_CellP, round_send_count, round_send_disp,
-                                      dst_CellP, round_recv_count, round_recv_disp,
-                                      sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+        if(!recv_staged) {
+            gizmo_mpi_alltoallv_typed(send_P, round_send_count, round_send_disp,
+                                      dst_P, round_recv_count, round_recv_disp,
+                                      sizeof(struct particle_data), MPI_COMM_WORLD);
+            if(All.TotN_gas > 0) {
+                gizmo_mpi_alltoallv_typed(send_CellP, round_send_count, round_send_disp,
+                                          dst_CellP, round_recv_count, round_recv_disp,
+                                          sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+            }
+        } else {
+            /* The round lands packed in host staging, one run per peer, and each run is copied to the slots
+               its peer's run occupies in the delivered pool. */
+            int staged_total = 0;
+            for(int t = 0; t < NTask; t++) {staged_disp[t] = staged_total; staged_total += round_recv_count[t];}
+            const size_t staged_slots = (size_t) (staged_total > 0 ? staged_total : 1);
+            struct particle_data *recv_P = (struct particle_data *) mymalloc("gx_fwd_rP",
+                staged_slots * sizeof(struct particle_data));
+            struct gas_cell_data *recv_CellP = recv_cellp ? (struct gas_cell_data *) mymalloc("gx_fwd_rC",
+                staged_slots * sizeof(struct gas_cell_data)) : NULL;
+            gizmo_mpi_alltoallv_typed(send_P, round_send_count, round_send_disp,
+                                      recv_P, round_recv_count, staged_disp,
+                                      sizeof(struct particle_data), MPI_COMM_WORLD);
+            if(recv_cellp) {
+                gizmo_mpi_alltoallv_typed(send_CellP, round_send_count, round_send_disp,
+                                          recv_CellP, round_recv_count, staged_disp,
+                                          sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+            }
+            for(int t = 0; t < NTask; t++) {
+                if(round_recv_count[t] <= 0) {continue;}
+                memcpy(&dst_P[round_recv_disp[t]], &recv_P[staged_disp[t]], (size_t) round_recv_count[t] * sizeof(struct particle_data));
+                if(recv_cellp) {
+                    memcpy(&dst_CellP[round_recv_disp[t]], &recv_CellP[staged_disp[t]], (size_t) round_recv_count[t] * sizeof(struct gas_cell_data));
+                }
+            }
+            if(recv_CellP) {myfree(recv_CellP);}
+            myfree(recv_P);
         }
 
         myfree(send_CellP);
         myfree(send_P);
     }
 
+    if(staged_disp) {myfree(staged_disp);}
     myfree(round_recv_disp);
     myfree(round_recv_count);
     myfree(round_send_disp);

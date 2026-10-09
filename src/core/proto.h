@@ -343,6 +343,13 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
                              int dest, int sendtag, void *recvbuf0, size_t recvcount,
                              MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
                              MPI_Status *status);
+/* the same exchange for a receive into the particle storage (P, CellP): staged through host memory where that
+   storage is CUDA managed memory, otherwise MPI_Sizelimited_Sendrecv (size_limited=1) or MPI_Sendrecv (0) */
+int MPI_Sendrecv_into_particle_storage(void *sendbuf0, size_t sendcount, MPI_Datatype sendtype,
+                                       int dest, int sendtag, void *recvbuf0, size_t recvcount,
+                                       MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
+                                       MPI_Status *status, int size_limited);
+void particle_receive_staging_init(void);   /* allocates the staging buffer where it is needed; once, at start-up */
 
 int getNodeCount(void);
 void gizmo_node_comm_init(void);
@@ -426,6 +433,9 @@ extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unre
 extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label);   /* SharedSpace/UVM: host- and device-readable */
 extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label);   /* device-only memory */
 extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* host memory obtained through Kokkos */
+/* 1 when the particle storage is CUDA managed memory, which MPI must not receive into directly: such receives go
+   through host staging (MPI_Sendrecv_into_particle_storage, the ghost transport).  0 on HIP and host builds. */
+extern "C" int gizmo_particle_storage_needs_staged_mpi_receive(void);
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
    no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
    (current-at-print is misleading: force_treeallocate resets it before a stop ledger).
