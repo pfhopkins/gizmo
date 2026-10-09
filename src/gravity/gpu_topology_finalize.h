@@ -79,6 +79,9 @@ void  gpu_tree_free_bytes(void *p);        /* matching free */
  *  length was never recorded are left alone. */
 void  gizmo_gpu_prepare_shared_for_free(void *ptr);
 void  gizmo_gpu_shared_track(void *ptr, size_t bytes);
+/*! Move `n` ranges of recorded shared blocks to the device and wait, before a kernel that touches
+ *  all of them; a no-op except on HIP.  See the definition for the measurement behind it. */
+void  gizmo_gpu_prefetch_shared_to_device(int n, void *const *ptrs, const size_t *bytes, const char *what);
 /*! Tell the driver which side a shared block belongs to: 0 none / 1 host / 2 device, the
  *  three values the particle-storage knob already uses.  An unhinted managed block settles
  *  where it is FIRST TOUCHED, so one the host fills and the device reads stays host-resident

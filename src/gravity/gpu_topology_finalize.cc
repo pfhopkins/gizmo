@@ -11,6 +11,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <Kokkos_Core.hpp>
 #if defined(KOKKOS_ENABLE_HIP)
@@ -339,6 +340,34 @@ static size_t shared_tracked_take(void *ptr)
     return 0;
 }
 
+#if defined(KOKKOS_ENABLE_HIP)
+/* Whether [ptr, ptr + bytes) lies inside one recorded block, so a migration can never reach
+ * past the allocation it was asked about.  The entry is left in place.  Compared as integer
+ * addresses: ordering pointers into unrelated allocations is not defined. */
+static int shared_tracked_covers(const void *ptr, size_t bytes)
+{
+    const uintptr_t p = (uintptr_t) ptr;
+    for(int i = 0; i < shared_tracked_count; i++) {
+        const uintptr_t b = (uintptr_t) shared_tracked[i].ptr;
+        const size_t block = shared_tracked[i].bytes;
+        if(p >= b && p - b < block && bytes <= block - (p - b)) {return 1;}
+    }
+    return 0;
+}
+
+/* The one driver call that moves part of a shared-space block, in either direction.  It returns
+ * the driver's answer with the error already cleared: a refusal only costs speed, and a sticky
+ * error left set would be handed to the next routine that checks, which would stop the run and
+ * name a kernel that did nothing wrong.  An error that has broken the device is not hidden by
+ * this -- it stays with the device and the next kernel's own check reports it. */
+static hipError_t shared_prefetch(void *ptr, size_t bytes, int destination)
+{
+    const hipError_t rc = hipMemPrefetchAsync(ptr, bytes, destination, 0);
+    if(rc != hipSuccess) {(void) hipGetLastError();}
+    return rc;
+}
+#endif
+
 /*! Record how long a shared-space block is, so that releasing it can migrate exactly
  *  that block and no more.  The tree allocators below do this for themselves; the
  *  gravity-tree mirror keeps its own allocator and calls this directly. */
@@ -358,13 +387,10 @@ extern "C" void gizmo_gpu_prepare_shared_for_free(void *ptr)
     size_t bytes = shared_tracked_take(ptr);
     if(bytes == 0) {return;}
 #if defined(KOKKOS_ENABLE_HIP)
-    if(hipMemPrefetchAsync(ptr, bytes, hipCpuDeviceId, 0) != hipSuccess)
+    if(shared_prefetch(ptr, bytes, hipCpuDeviceId) != hipSuccess)
     {
-        /* Clear the error before returning.  It is sticky, so leaving it set would hand
-         * it to the next routine that checks, which would stop the run and name a kernel
-         * that did nothing wrong.  Failing to migrate only costs speed: the block is
-         * released either way and the answer does not change. */
-        (void) hipGetLastError();
+        /* Failing to migrate only costs speed: the block is released either way and the
+         * answer does not change. */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
         /* Once per run: the release still happens and the answer is unaffected, but the
          * run is paying the slow release this exists to avoid, and nothing else would
@@ -383,6 +409,51 @@ extern "C" void gizmo_gpu_prepare_shared_for_free(void *ptr)
     /* A failure here is not this prefetch's: the synchronize reports any earlier asynchronous device
        error, so it goes to the same check every kernel launch uses rather than being dropped. */
     if(hipDeviceSynchronize() != hipSuccess) {gizmo_gpu_check_last_error("earlier asynchronous device work (reported while releasing a tree block)", 0);}
+#endif
+}
+
+/*! Move `n` ranges of shared-space blocks to the device in one bulk migration each, and wait for
+ *  them, before a kernel that reads and writes all of them.  A managed page the host touched last
+ *  stays on the host until the device faults it across, one page at a time: measured on Frontier, a
+ *  device sweep of every tree node after a tree build cost 6.6-12.6 s that way, against 0.8 s to
+ *  migrate the same pages in bulk and 0.2 s for the sweep after it.  Pages already on the device
+ *  are left where they are.  Each range must lie inside one block whose length was recorded at
+ *  allocation; any other range is not moved.  Moving costs only time, so a range that cannot be
+ *  moved is said once and the caller carries on.
+ *  On HIP only: the stall was measured there, and on a GPU whose host access does not migrate
+ *  pages there is no measurement to say a prefetch would help rather than cost. */
+extern "C" void gizmo_gpu_prefetch_shared_to_device(int n, void *const *ptrs, const size_t *bytes, const char *what)
+{
+#if defined(KOKKOS_ENABLE_HIP)
+    int dev = 0;
+    hipError_t refusal = hipGetDevice(&dev);
+    int attempted = 0, outside_record = 0;
+    if(refusal != hipSuccess) {(void) hipGetLastError();}
+    else {
+        for(int i = 0; i < n; i++) {
+            if(!ptrs[i] || bytes[i] == 0) {continue;}
+            if(!shared_tracked_covers(ptrs[i], bytes[i])) {outside_record = 1; continue;}
+            const hipError_t rc = shared_prefetch(ptrs[i], bytes[i], dev);
+            attempted = 1;
+            if(rc != hipSuccess) {refusal = rc;}
+        }
+    }
+    if(refusal != hipSuccess || outside_record) {
+        static int reported = 0;
+        if(!reported && ThisTask == 0) {
+            reported = 1;
+            printf("Note: could not move part of the %s to the device before the kernel that reads it (%s); "
+                   "the answer is unchanged but slower than it needs to be (reported once).\n", what ? what : "shared memory",
+                   (refusal != hipSuccess) ? hipGetErrorString(refusal) : "a range lies outside every recorded allocation");
+            fflush(stdout);
+        }
+    }
+    /* Waits for the migration, and after any call at all -- a refused one included, whose error was
+       cleared -- reports an earlier asynchronous device error through the check every kernel launch
+       uses, rather than leaving it to surface later against an innocent kernel. */
+    if(attempted && hipDeviceSynchronize() != hipSuccess) {gizmo_gpu_check_last_error("earlier asynchronous device work (reported while moving shared memory to the device)", 0);}
+#else
+    (void) n; (void) ptrs; (void) bytes; (void) what;
 #endif
 }
 

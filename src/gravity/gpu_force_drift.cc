@@ -37,6 +37,7 @@
 #include "../declarations/gpu_error_check.h"
 #include "../system/gpu_particles_arena.h"
 #include "gpu_gravity_tree.h"
+#include "gpu_topology_finalize.h"    /* gizmo_gpu_prefetch_shared_to_device */
 #include "forcetree.h"
 #include "gravtree_moment_kernel.h"   /* the shared node-motion arithmetic */
 
@@ -266,6 +267,17 @@ extern "C" int gpu_force_drift_nodes_ex(integertime time1, int refresh_mirrors_a
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dilation_dev);
 #endif
         endrun(929702); return 1;
+    }
+
+    /* The sweep reads and writes every live node record. Any of those pages the host touched since
+     * the last device pass -- a tree build, a LET install, a host walk or host tree update, or the
+     * dilation loop above -- would otherwise be faulted across one page at a time, so move the live
+     * ranges in bulk first. Here, after every host access to the nodes in this function. */
+    {
+        void *const ranges[4] = {Nodes_base, Nodes_base + maxNodes_snap, Extnodes_base, Extnodes_base + maxNodes_snap};
+        const size_t lengths[4] = {(size_t) n_local_nodes * sizeof(struct NODE), (size_t) n_foreign_nodes * sizeof(struct NODE),
+                                   (size_t) n_local_nodes * sizeof(struct extNODE), (size_t) n_foreign_nodes * sizeof(struct extNODE)};
+        gizmo_gpu_prefetch_shared_to_device(4, ranges, lengths, "gravity tree nodes");
     }
 
     Kokkos::parallel_for("gpu_force_drift_nodes", n_nodes, KOKKOS_LAMBDA(int kk) {
