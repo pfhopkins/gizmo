@@ -191,7 +191,7 @@ def run_forgedinfire_test(test_name, num_mpi_ranks, num_omp_threads):
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"
     system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus "
-           f"./GIZMO {paramsfile} 0 "
+           f"./GIZMO {paramsfile} 2 "
            f"1>test_{test_name}.out 2>test_{test_name}.err")
     chdir("../../")
 
