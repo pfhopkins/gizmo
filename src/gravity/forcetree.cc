@@ -2,6 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <vector>
+#include <algorithm>
 #include <math.h>
 #include <time.h>
 #include <limits.h>
@@ -133,6 +135,7 @@ void compute_all_force_softening(int mode)
     }
     else
     {
+        force_gas_routes_note_change(GAS_ROUTE_REACH);   /* a gas reach includes its softening */
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -312,6 +315,320 @@ void force_bump_hmax_refresh_generation(void) { g_force_hmax_refresh_generation+
 static int g_force_global_topology_valid = 0;
 int  force_tree_global_topology_valid(void) {return g_force_global_topology_valid;}
 void force_tree_invalidate_global_topology(void) {g_force_global_topology_valid = 0;}
+
+/* Gas routes (forcetree.h).  Everything kept per top leaf or top node lives in one block allocated
+ * with the tree and freed with it, sized once; nothing grows afterwards. */
+struct topleaf_gas_route *TopleafGasRoute = NULL;
+static void *g_route_block = NULL;
+static int *g_topnode_leaf = NULL;   /* [NTopnodes]: the top-leaf a top-level node is, or -1 */
+/* A gas particle the standing tree holds under no top-leaf of this rank: only a build settles it. */
+static const int GAS_ROUTE_REBUILD_ONLY = 16;
+/* Kinds of change the other ranks' copies may not yet hold.  Nothing is trusted before the first
+ * whole-tree build. */
+static int g_gas_routes_pending = GAS_ROUTE_GEOMETRY | GAS_ROUTE_REACH | GAS_ROUTE_MOTION | GAS_ROUTE_MOTION_UNSHARED | GAS_ROUTE_REBUILD_ONLY;
+/* Owned top-leaves whose route changed since an exchange last carried it, each listed once (so at most
+ * NTopleaves), and the per-leaf stamp that lets force_update_hmax rebase a leaf once per call. */
+static int *g_route_unsent = NULL, *g_route_unsent_mark = NULL, *g_route_call_stamp = NULL;
+static int g_route_num_unsent = 0;
+static int g_route_call = 0;
+/* How far each remote route grows by ti_now, kept per top-leaf for one walk call (force_gas_route_widening_for_call):
+ * a word holds the call's stamp shifted left by two with the state in the low bits. */
+enum { GAS_ROUTE_WIDEN_COMPUTING = 1, GAS_ROUTE_WIDEN_READY = 2 };
+static unsigned long long *g_widen_word = NULL;
+static double *g_widen_moved = NULL, *g_widen_rise = NULL;   /* moved < 0: the route cannot be widened */
+static unsigned long long g_widen_calls = 0;
+
+/* Place `count` items of `size` bytes at the next multiple of `align` from *offset; (size_t)-1 if the
+ * block would not fit in a size_t. */
+static size_t gas_route_block_slice(size_t *offset, size_t count, size_t size, size_t align)
+{
+    const size_t no_fit = (size_t)-1;
+    if(*offset == no_fit || *offset > no_fit - align) {*offset = no_fit; return no_fit;}
+    const size_t at = (*offset + align - 1) / align * align;
+    if(count > (no_fit - at) / size) {*offset = no_fit; return no_fit;}
+    *offset = at + count * size;
+    return at;
+}
+/* Allocate the block for NTopleaves / NTopnodes and point every slice into it.  Returns its size. */
+static size_t gas_route_block_allocate(void)
+{
+    const size_t nleaf = (size_t)(NTopleaves > 0 ? NTopleaves : 1), ntop = (size_t)(NTopnodes > 0 ? NTopnodes : 1);
+    size_t end = 0;
+    const size_t at_route = gas_route_block_slice(&end, nleaf, sizeof(struct topleaf_gas_route), alignof(struct topleaf_gas_route));
+    const size_t at_word  = gas_route_block_slice(&end, nleaf, sizeof(unsigned long long), alignof(unsigned long long));
+    const size_t at_moved = gas_route_block_slice(&end, nleaf, sizeof(double), alignof(double));
+    const size_t at_rise  = gas_route_block_slice(&end, nleaf, sizeof(double), alignof(double));
+    const size_t at_leaf  = gas_route_block_slice(&end, ntop,  sizeof(int), alignof(int));
+    const size_t at_list  = gas_route_block_slice(&end, nleaf, sizeof(int), alignof(int));
+    const size_t at_mark  = gas_route_block_slice(&end, nleaf, sizeof(int), alignof(int));
+    const size_t at_stamp = gas_route_block_slice(&end, nleaf, sizeof(int), alignof(int));
+    if(end == (size_t)-1) {endrun(90000105); return 0;}   /* no block: every route reader sees TopleafGasRoute == NULL */
+    char *base = (char *) mymalloc("TopleafGasRoute", end);
+    memset(base, 0, end);
+    g_route_block       = base;
+    TopleafGasRoute     = (struct topleaf_gas_route *)(base + at_route);
+    g_widen_word        = (unsigned long long *)(base + at_word);
+    g_widen_moved       = (double *)(base + at_moved);
+    g_widen_rise        = (double *)(base + at_rise);
+    g_topnode_leaf      = (int *)(base + at_leaf);
+    g_route_unsent      = (int *)(base + at_list);
+    g_route_unsent_mark = (int *)(base + at_mark);
+    g_route_call_stamp  = (int *)(base + at_stamp);
+    for(size_t t = 0; t < ntop; t++) {g_topnode_leaf[t] = -1;}
+    g_route_num_unsent = 0;
+    return end;
+}
+static void gas_route_block_free(void)
+{
+    if(g_route_block) {myfree(g_route_block);}
+    g_route_block = NULL; TopleafGasRoute = NULL; g_topnode_leaf = NULL;
+    g_route_unsent = g_route_unsent_mark = g_route_call_stamp = NULL; g_route_num_unsent = 0;
+    g_widen_word = NULL; g_widen_moved = g_widen_rise = NULL;
+}
+
+void force_gas_routes_note_change(int kinds)
+{
+#ifdef _OPENMP
+#pragma omp atomic
+#endif
+    g_gas_routes_pending |= kinds;
+}
+static int gas_routes_pending(void)
+{
+    int pending;
+#ifdef _OPENMP
+#pragma omp atomic read
+#endif
+    pending = g_gas_routes_pending;
+    return pending;
+}
+int force_gas_routes_settled_local(int kind)
+{
+    int mask = kind | GAS_ROUTE_REBUILD_ONLY;
+    if(kind & GAS_ROUTE_MOTION) {mask |= GAS_ROUTE_MOTION_UNSHARED;}
+    /* A rebuild already asked for means the standing tree no longer describes the particles. */
+    return (!(gas_routes_pending() & mask) && !TreeReconstructFlag) ? 1 : 0;
+}
+/* Every rank has completed an exchange that carried all such changes; called collectively. */
+static void gas_routes_carried(int kinds)
+{
+    g_gas_routes_pending &= ~kinds;
+    if((kinds & GAS_ROUTE_GEOMETRY) && g_route_unsent) {
+        for(int k = 0; k < g_route_num_unsent; k++) {g_route_unsent_mark[g_route_unsent[k]] = 0;}
+        g_route_num_unsent = 0;
+    }
+}
+
+int force_topleaf_of_node(int no)
+{
+    const int off = no - All.TreeNodeIndexBase;
+    if(!g_topnode_leaf || off < 0 || off >= NTopnodes) {return -1;}
+    return g_topnode_leaf[off];
+}
+/* The top-leaf a particle hangs under in the standing tree: the first top-level node above it. */
+static int gas_route_leaf_of_particle(int i)
+{
+    if(!Father || i < 0 || i >= All.TreeParticleSlots) {return -1;}
+    for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father) {
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {return force_topleaf_of_node(no);}
+    }
+    return -1;
+}
+
+int force_gas_route_widening(const struct topleaf_gas_route *route, double vmax, double divvmax, integertime ti_now,
+                             const struct DriftKickTableView *tables, double *moved, double *reach_grown, double *reach_rise)
+{
+    *moved = 0.0; *reach_grown = route->reach_max; *reach_rise = 0.0;
+    if(!(route->Ti_ref >= 0 && route->Ti_ref <= ti_now)) {return 0;}
+    if(route->Ti_ref == ti_now) {return 1;}
+    const double dl = motion_bound_widening(vmax, route->Ti_ref, ti_now, tables);
+    if(!motion_bound_widening_is_valid(dl)) {return 0;}
+    *moved = 0.5 * dl;   /* the box length grows by dl, each side by half of it */
+    const double dt = get_drift_factor_impl(route->Ti_ref, ti_now, 1.0, tables);
+    int invalid = 0;
+    *reach_grown = aggregate_radius_bound(route->reach_max, divvmax, dt, (double)All.MaxKernelRadius, &invalid);
+    *reach_rise  = aggregate_radius_rise(route->reach_max, divvmax, dt, (double)All.MaxKernelRadius, &invalid);
+    return invalid ? 0 : 1;
+}
+
+unsigned long long force_gas_routes_new_walk_call(void) {return ++g_widen_calls;}
+
+int force_gas_route_widening_for_call(int leaf, unsigned long long call, integertime ti_now,
+                                      const struct DriftKickTableView *tables, double *moved, double *reach_rise)
+{
+    const struct topleaf_gas_route *route = &TopleafGasRoute[leaf];
+    const unsigned long long ready = (call << 2) | GAS_ROUTE_WIDEN_READY, busy = (call << 2) | GAS_ROUTE_WIDEN_COMPUTING;
+    unsigned long long seen = __atomic_load_n(&g_widen_word[leaf], __ATOMIC_ACQUIRE);
+    if(seen == ready) {*moved = g_widen_moved[leaf]; *reach_rise = g_widen_rise[leaf]; return (*moved >= 0.0) ? 1 : 0;}
+    /* the first thread to need the leaf this call claims it and stores what it computes; any other
+     * thread that finds it being computed works it out for itself without storing */
+    const struct extNODE *ext = &Extnodes[DomainNodeIndex[leaf]];
+    double grown;
+    if(!force_gas_route_widening(route, (double)ext->vmax, (double)ext->divVmax, ti_now, tables, moved, &grown, reach_rise)) {*moved = -1.0;}
+    if((seen >> 2) != call && __atomic_compare_exchange_n(&g_widen_word[leaf], &seen, busy, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+        g_widen_moved[leaf] = *moved; g_widen_rise[leaf] = *reach_rise;
+        __atomic_store_n(&g_widen_word[leaf], ready, __ATOMIC_RELEASE);
+    }
+    return (*moved >= 0.0) ? 1 : 0;
+}
+
+/* Carry an owned route forward to ti_now by its own node's bounds, so what is added next can be
+ * added at ti_now.  The node's bounds cover the interval except while MOTION_UNSHARED is pending (a
+ * speed raised only on a member's own parent, not yet on its top leaf); until a build clears that, no
+ * route is trusted.  Otherwise they only rise between builds and moment refreshes, and a refresh
+ * rebases every owned route before it recomputes them (copies of other ranks' routes are replaced). */
+static void gas_route_rebase(int leaf, integertime ti_now, const struct DriftKickTableView *tables)
+{
+    struct topleaf_gas_route *route = &TopleafGasRoute[leaf];
+    if(!route->valid) {return;}
+    if(!route->has_gas) {route->Ti_ref = ti_now; return;}
+    const struct extNODE *ext = &Extnodes[DomainNodeIndex[leaf]];
+    double moved, reach_grown, reach_rise;
+    if(!force_gas_route_widening(route, (double)ext->vmax, (double)ext->divVmax, ti_now, tables, &moved, &reach_grown, &reach_rise)) {route->valid = 0; return;}
+    const double reach_moved = moved + reach_rise;
+    for(int k = 0; k < 3; k++) {
+        route->member_lo[k] -= moved;       route->member_hi[k] += moved;
+        route->reach_lo[k]  -= reach_moved; route->reach_hi[k]  += reach_moved;
+    }
+    route->reach_max = reach_grown;
+    route->Ti_ref = ti_now;
+}
+
+static inline void gas_route_atomic_bound(double *addr, double value, int upper)
+{
+    double seen;
+    __atomic_load(addr, &seen, __ATOMIC_RELAXED);
+    while(upper ? (value > seen) : (value < seen)) {
+        if(__atomic_compare_exchange(addr, &seen, &value, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {break;}
+    }
+}
+/* Fold one member, at the route's own time, into its route.  Threads may fold into one route together. */
+static void gas_route_fold_member(struct topleaf_gas_route *route, int i, integertime ti_now, const struct DriftKickTableView *tables)
+{
+    double c[3], hw = 0.0, reach = 0.0;
+    if(!gas_route_member_extent(i, P, CellP, ti_now, tables, (double)All.MaxKernelRadius,
+                                kernel_radius_drift_max_growth_factor(), (double)All.MinKernelRadius, c, &hw, &reach))
+    {
+        __atomic_store_n(&route->valid, 0, __ATOMIC_RELAXED);
+        return;
+    }
+    for(int k = 0; k < 3; k++) {
+        gas_route_atomic_bound(&route->member_lo[k], c[k] - hw, 0);
+        gas_route_atomic_bound(&route->member_hi[k], c[k] + hw, 1);
+        gas_route_atomic_bound(&route->reach_lo[k], c[k] - hw - reach, 0);
+        gas_route_atomic_bound(&route->reach_hi[k], c[k] + hw + reach, 1);
+    }
+    gas_route_atomic_bound(&route->reach_max, reach, 1);
+    __atomic_store_n(&route->has_gas, 1, __ATOMIC_RELAXED);
+}
+static void gas_route_mark_unsent(int leaf)
+{
+    if(g_route_unsent_mark[leaf] || g_route_num_unsent >= NTopleaves) {return;}   /* each leaf listed once: never full */
+    g_route_unsent_mark[leaf] = 1;
+    g_route_unsent[g_route_num_unsent++] = leaf;
+}
+
+void force_gas_route_add_member(int i, int kinds)
+{
+    if(!TopleafGasRoute) {return;}
+    if(i < 0 || i >= NumPart) {force_gas_routes_note_change(kinds | GAS_ROUTE_REBUILD_ONLY); return;}
+    if(P[i].Type != 0 || P[i].Mass <= 0) {return;}
+#ifdef _OPENMP
+#pragma omp critical(gas_route_member)
+#endif
+    {
+        const int leaf = gas_route_leaf_of_particle(i);
+        int noted = kinds;
+        if(leaf < 0 || DomainTask[leaf] != ThisTask) {noted |= GAS_ROUTE_REBUILD_ONLY;}
+        else {
+            const struct DriftKickTableView tables = drift_kick_table_view_host();
+            gas_route_rebase(leaf, All.Ti_Current, &tables);
+            if(TopleafGasRoute[leaf].valid) {gas_route_fold_member(&TopleafGasRoute[leaf], i, All.Ti_Current, &tables);}
+            gas_route_mark_unsent(leaf);
+        }
+        force_gas_routes_note_change(noted);
+    }
+}
+void gizmo_gas_position_written_in_place(int i)
+{
+    /* the velocity was set with the position, outside the kick's bookkeeping */
+    if(P[i].Type == 0) {force_gas_route_add_member(i, GAS_ROUTE_GEOMETRY | GAS_ROUTE_MOTION_UNSHARED);}
+}
+
+void force_gas_routes_hmax_begin(void)
+{
+    if(!TopleafGasRoute) {return;}
+    if(++g_route_call <= 0) {g_route_call = 1; for(int leaf = 0; leaf < NTopleaves; leaf++) {g_route_call_stamp[leaf] = 0;}}
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    for(int i : ActiveParticleList) {
+        if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
+        const int leaf = gas_route_leaf_of_particle(i);
+        if(leaf < 0 || DomainTask[leaf] != ThisTask) {force_gas_routes_note_change(GAS_ROUTE_REBUILD_ONLY); continue;}
+        if(g_route_call_stamp[leaf] == g_route_call) {continue;}
+        g_route_call_stamp[leaf] = g_route_call;
+        gas_route_rebase(leaf, All.Ti_Current, &tables);
+        gas_route_mark_unsent(leaf);
+    }
+}
+void force_gas_routes_hmax_member(int i)
+{
+    if(!TopleafGasRoute || P[i].Type != 0 || P[i].Mass <= 0) {return;}
+    const int leaf = gas_route_leaf_of_particle(i);
+    if(leaf < 0 || DomainTask[leaf] != ThisTask) {return;}
+    struct topleaf_gas_route *route = &TopleafGasRoute[leaf];
+    if(!__atomic_load_n(&route->valid, __ATOMIC_RELAXED)) {return;}
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    gas_route_fold_member(route, i, All.Ti_Current, &tables);
+}
+int force_gas_routes_unsent(const int **leaves)
+{
+    *leaves = g_route_unsent;
+    return g_route_num_unsent;
+}
+void force_gas_routes_hmax_carried(void)
+{
+    /* every active member was folded in and every changed route went out with the bands */
+    gas_routes_carried(GAS_ROUTE_GEOMETRY | GAS_ROUTE_REACH);
+}
+void force_gas_routes_motion_carried(void) {gas_routes_carried(GAS_ROUTE_MOTION);}
+
+/* Before a moment refresh recomputes the node bounds -- which can lower them -- every owned route is
+ * carried to now by the bounds that held over its interval; the refresh then republishes them all. */
+static void force_gas_routes_refresh_begin(void)
+{
+    if(!TopleafGasRoute) {return;}
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    for(int leaf = 0; leaf < NTopleaves; leaf++) {if(DomainTask[leaf] == ThisTask) {gas_route_rebase(leaf, All.Ti_Current, &tables);}}
+}
+/* A refresh republishes every owned route and recomputed motion bounds; it folds in no radius, so
+ * REACH stays as it was.  MOTION_UNSHARED stays too: the routes were carried forward with the bounds
+ * from before the refresh, which did not yet hold that speed, so only a build settles it. */
+static void force_gas_routes_refresh_carried(void)
+{
+    gas_routes_carried(GAS_ROUTE_GEOMETRY | GAS_ROUTE_MOTION);
+}
+
+/* Fill this rank's routes for a fresh build: its own top leaves from the build's per-leaf grouping,
+ * everything else unknown until the pseudo-particle exchange brings the owners' routes.  A build
+ * over a subset of the particles describes only that subset, so it publishes nothing. */
+static void force_gas_routes_build(int whole_tree_everywhere)
+{
+    if(!TopleafGasRoute) {return;}
+    for(int t = 0; t < NTopnodes; t++) {g_topnode_leaf[t] = -1;}
+    for(int leaf = 0; leaf < NTopleaves; leaf++) {
+        const int off = DomainNodeIndex[leaf] - All.TreeNodeIndexBase;
+        if(off >= 0 && off < NTopnodes) {g_topnode_leaf[off] = leaf;}
+    }
+    g_route_num_unsent = 0;
+    for(int i = 0; i < NTopleaves; i++) {g_route_unsent_mark[i] = 0; g_route_call_stamp[i] = 0;}
+    for(int i = 0; i < NTopleaves; i++) {TopleafGasRoute[i].valid = 0; TopleafGasRoute[i].has_gas = 0;}
+    if(!whole_tree_everywhere) {return;}
+    if(gpu_topology_gas_routes(TopleafGasRoute, (double)All.MaxKernelRadius, All.Ti_Current) != 0)
+    {
+        for(int i = 0; i < NTopleaves; i++) {TopleafGasRoute[i].valid = 0;}
+        endrun(90000102);
+    }
+}
 
 /*! Let a particle keep its parent when it changes slots.  Re-sequencing moves particles between
  *  slots without moving what the tree says about them, so without this the record stops describing
@@ -572,6 +889,8 @@ let_build_attempt:
      * (and mirror to AoS for force_exchange_pseudodata / force_treeupdate_pseudos
      * which still run on CPU). */
     if(gpu_force_flag_localnodes() != 0) {endrun(90000071);}
+    /* The gas routes ride the pseudo-particle exchange below, so they are formed before it is posted. */
+    force_gas_routes_build(counts_any[2] == 0);
     /* Non-blocking overlap: post the pseudo-data Iallgathervs first, then run the
      * LET MPI round concurrently, then wait/unpack pseudo-data and resum.
      * LET pack reads only LOCAL Nodes/Extnodes (which are already valid from
@@ -673,6 +992,9 @@ let_build_attempt:
         if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
         let_finalize_unredirected_foreign_topleaves();
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
+        /* Every rank now holds every owner's route as of this build, so nothing noted before it applies.
+           A subset build published none, and leaves the flag as it was. */
+        if(counts_any[2] == 0) {g_gas_routes_pending = 0;}
     }
     /* Tree-integrity invariant. The root node's count is re-accumulated across foreign domains
        above, so after the resum it must equal the global particle number. A particle inserted
@@ -1059,6 +1381,7 @@ struct DomainNODE
         MyFloat mass_dm;
 #endif
         unsigned int bitflags;
+        struct topleaf_gas_route gas_route;   /* the owner's gas route for this top-leaf (forcetree.h) */
 #ifdef PAD_STRUCTURES
         int pad[3];
 #endif
@@ -1104,6 +1427,7 @@ void force_exchange_pseudodata_issue(void)
             DomainMoment[i].vmax = Extnodes[no].vmax;
             DomainMoment[i].divVmax = Extnodes[no].divVmax;
             DomainMoment[i].bitflags = Nodes[no].u.d.bitflags;
+            if(TopleafGasRoute) {DomainMoment[i].gas_route = TopleafGasRoute[i];} else {memset(&DomainMoment[i].gas_route, 0, sizeof(DomainMoment[i].gas_route));}   /* zero = unknown */
             DomainMoment[i].N_part = Nodes[no].N_part;
             DomainMoment[i].maxsoft = Nodes[no].maxsoft;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1257,6 +1581,7 @@ int force_exchange_pseudodata_complete(void)
                                                 & (~((1 << BITFLAG_MULTIPLEPARTICLES) | BITFLAG_TYPEPRESENT_MASK)))
                                              | (DomainMoment[i].bitflags & ((1 << BITFLAG_MULTIPLEPARTICLES)));
                     Nodes[no].maxsoft = DomainMoment[i].maxsoft;
+                    if(TopleafGasRoute) {TopleafGasRoute[i] = DomainMoment[i].gas_route;}
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     Nodes[no].cr_injection = DomainMoment[i].cr_injection;
 #endif
@@ -1693,7 +2018,7 @@ void force_tree_note_type_presence(int particle)
      * promoted) is a member the gas index does not hold, so it is rebuilt on next use; leaving gas (a star
      * or a sink formed) is one the gas index may keep (gpu_sidx_notify_member_lost). */
     if(particle >= 0 && particle < NumPart && P[particle].Type != 0) {gpu_sidx_notify_member_lost(particle);}
-    else {gpu_sidx_notify_owned_changed();}
+    else {gpu_sidx_notify_owned_changed(); force_gas_route_add_member(particle, GAS_ROUTE_GEOMETRY);}   /* gas no route has counted */
     if(!force_tree_is_allocated() || particle < 0 || particle >= All.TreeParticleSlots) {return;}
 
     const int type = (int) P[particle].Type;
@@ -1807,6 +2132,8 @@ void force_add_element_to_tree(int iparent, int ichild)
      * of the child's type.  Its type may still be provisional here -- star formation copies the gas
      * element into the new slot and only settles the type further on -- so the sites that assign a
      * final type call this as well; the raise is monotone, so the repeat can only over-claim. */
+    /* Gas joining a top-leaf after its route went out; its speed reached only its father's bound. */
+    force_gas_route_add_member(ichild, GAS_ROUTE_GEOMETRY | GAS_ROUTE_MOTION_UNSHARED);
     force_tree_note_type_presence(ichild);
 
     /* Each insertion stales the LET / pseudo-particle
@@ -3485,6 +3812,9 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
     TopNodeNodeIndex = (int *) mymalloc("TopNodeNodeIndex", bytes = (NTopnodes > 0 ? NTopnodes : 1) * sizeof(int));
     allbytes_topleaves += bytes;
     for(i = 0; i < NTopnodes; i++) TopNodeNodeIndex[i] = -1;  /* sentinel: post-build validation requires all populated */
+    /* Gas routes and their bookkeeping, one block; freed right before TopNodeNodeIndex.  Unknown until a
+     * build publishes them. */
+    allbytes_topleaves += gas_route_block_allocate();
     /* The tree's storage contract, enforced at the single point every caller passes through:
      *     NumPart  <=  tree_particle_slots  <=  All.TreeNodeIndexBase.
      * The upper leg keeps particle and node indices from ever overlapping (the base is fixed for
@@ -3944,6 +4274,7 @@ void force_treefree(void)
         if(ForeignLeafType) {gpu_tree_free_bytes(ForeignLeafType); ForeignLeafType = NULL;}
         if(ForeignLeafZeta) {gpu_tree_free_bytes(ForeignLeafZeta); ForeignLeafZeta = NULL;}
         if(ForeignLeafSoft) {gpu_tree_free_bytes(ForeignLeafSoft); ForeignLeafSoft = NULL;}
+        gas_route_block_free();     /* LIFO: allocated right after TopNodeNodeIndex */
         myfree(TopNodeNodeIndex);   /* LIFO: allocated right after DomainNodeIndex, so freed right before it */
         myfree(DomainNodeIndex);
         gizmo_mem_account_set(GIZMO_MEM_TREE_NODES, 0);   /* whole-family teardown */
@@ -4237,6 +4568,7 @@ void force_refresh_node_moments(void)
         /* Rank-local GPU refresh steps: on failure set a soft bad-stop and
          * fall through force_exchange_pseudodata (matched, topology-driven);
          * the gravtree:after_refresh_moments poll drains before the walk. */
+        force_gas_routes_refresh_begin();   /* before the bounds it widens by are recomputed */
         if(gpu_moment_refresh(-1) != 0)          {endrun(90000086);}
         /* Mode B: re-seed per-type bands; gpu_moment_refresh wrote scalar
          * hmax to AoS but not per-type. Without this, hmax_per_type[] are
@@ -4248,6 +4580,7 @@ void force_refresh_node_moments(void)
         /* skip dependent pseudo-update on an unmatched complete (soft bad-stop set);
          * drains at gravtree:after_refresh_moments. */
         if(!pseudo_status) {
+            force_gas_routes_refresh_carried();
             if(gpu_scatter_pseudo_to_soa() != 0)     {endrun(90000088);}
             if(gpu_topnode_moment_resum() != 0)      {endrun(90000089);}
         }

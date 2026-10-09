@@ -187,6 +187,7 @@ void do_hermite_prediction(void)
             }
 #endif
             P[i].Pos = P[i].OldPos + (P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/3)) * (dt_grav/2)) * dt_grav;
+            gizmo_gas_position_written_in_place(i);
             P[i].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].OldJerk * (dt_grav/2)) * dt_grav;
 		}}} // for (int _apl : ActiveParticleList)
 }
@@ -209,6 +210,7 @@ void do_hermite_correction(void) // corrector step
                     double dt_grav = get_gravkick_factor(tstart, tend, i, 0);
                     P[i].Vel = P[i].OldVel + (P[i].Hermite_OldAcc + P[i].GravAccel) * (dt_grav * 0.5) + (P[i].OldJerk - P[i].GravJerk) * (dt_grav * dt_grav / 12);
                     P[i].Pos = P[i].OldPos + (P[i].Vel + P[i].OldVel) * (dt_grav * 0.5) + (P[i].Hermite_OldAcc - P[i].GravAccel) * (dt_grav * dt_grav / 12);
+                    gizmo_gas_position_written_in_place(i);
 #ifdef PMGRID
                     //Add the long-range kick from the second half-step, if necessary (since we are overwriting the previous kick operations with the Hermite scheme)
                     if(All.PM_Ti_endstep == All.Ti_Current)	/* need to do long-range kick */

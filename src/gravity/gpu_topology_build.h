@@ -133,6 +133,13 @@ void gpu_topology_forget_prepared(void);
  * Returns 0 on success; a no-op when nothing was retained. */
 int gpu_topology_grow_retained_paths(void);
 
+/* The gas route (forcetree.h) of every top leaf this rank owns, from the gas the build just bucketed
+ * into it, written into routes[0..NTopleaves) at those leaves; other entries are left alone.  Only
+ * for a whole-tree build, after gpu_topology_grow_retained_paths and before the pseudo-particle
+ * exchange that publishes them.  Returns 0 on success. */
+struct topleaf_gas_route;
+int gpu_topology_gas_routes(struct topleaf_gas_route *routes, double max_kernel_radius, integertime ti_ref);
+
 /* Free internal SharedSpace scratch.  Idempotent. */
 /* Finish the leaves that hold more than one particle.  Both are no-ops at a leaf size of one.
  * _assign_fathers runs after Father[] is cleared and before the moments; _materialize runs after the
