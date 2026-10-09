@@ -170,6 +170,8 @@ struct LETTopleafScalars {
     double min_OldAcc;           /* relative-accel criterion (min over the topleaf's particles) */
     double max_soft_by_type[6];  /* relative-softening open (max per type over the topleaf) */
     double min_soft;             /* non-NEIGHBORS node-softening open (min over the topleaf) */
+    double max_displacement;     /* how far, per axis, any of these targets may move over the tree's expected lifetime;
+                                  * the sender widens the leaf's box by it, as it widens its own nodes by their vmax */
     int    has_sink;             /* sink-direct gate (any Type-5 in the topleaf) */
     int    populated;            /* 1 iff this owned topleaf actually holds >=1 local target particle; 0 = empty
                                   * (no real targets). Empty leaves formerly got a whole-rank worst-case fallback
@@ -193,14 +195,18 @@ struct LETOrphanRecord {
 
 /* One RULE-1 cluster cover leaf: an arbitrary AABB over a group of R's target particles + the conservative
  * opening scalars over that group.  A rank's targets are grouped WITHIN each populated owned topleaf by
- * softening OCTAVE (floor(log2(ForceSoftening_KernelRadius))) -- one cluster per distinct octave present --
- * so an over-softened subset gets its OWN tight box carrying its large softening instead of smearing that
- * softening over the whole topleaf box (the measured LET over-import).  Clusters are Allgatherv'd (like
+ * softening OCTAVE (floor(log2(ForceSoftening_KernelRadius))) and by the octave of their displacement over
+ * the tree's lifetime -- one cluster per distinct pair present -- so an over-softened subset gets its OWN
+ * tight box carrying its large softening instead of smearing that softening over the whole topleaf box (the
+ * measured LET over-import), and a few fast targets get their own box widened by their own motion instead of
+ * widening everyone else's.  Clusters are Allgatherv'd (like
  * orphan records) so every sender holds every receiver's cluster leaves for the cover-tree essentiality
  * test.  This struct doubles as the in-memory cover-leaf scratch (clusters + orphans both become these). */
 struct LETCoverLeaf {
-    double bmin[3], bmax[3];     /* tight AABB over the group's member positions (arbitrary, NOT Nodes[]-backed) */
-    struct LETTopleafScalars s;  /* min_OldAcc / max_soft_by_type / min_soft / has_sink over the group (populated=1) */
+    double bmin[3], bmax[3];     /* tight AABB over the group's member positions at build time (arbitrary, NOT
+                                  * Nodes[]-backed); the sender widens it by s.max_displacement */
+    struct LETTopleafScalars s;  /* min_OldAcc / max_soft_by_type / min_soft / max_displacement / has_sink over the group
+                                  * (populated=1) */
 };
 
 /* ----------------------------------------------------------------------

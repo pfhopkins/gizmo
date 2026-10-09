@@ -430,8 +430,9 @@ struct gpu_grav_open_inputs_t {
 /* A member is split in two.  The INPUTS are fixed for the walk: what the opening decision and the
  * pair evaluation read about the target.  The SUMS are everything the walk accumulates for it.  A
  * packet team holds one copy of a member's inputs and gives each of the lanes working on that member
- * its own sums, folded together when the packet commits; every field of the sums is listed, with the
- * rule that combines it, in gpu_grav_member_sums_combine below. */
+ * its own sums, folded together when the packet commits (where the team keeps them is the packet
+ * policy's sums_in_scratch); every field of the sums is listed, with the rule that combines it, in
+ * gpu_grav_member_sums_combine below. */
 struct gpu_grav_member_inputs_t {
     int target;
     struct gpu_grav_open_inputs_t open;
@@ -495,9 +496,8 @@ struct gpu_grav_member_optional_sums_t {
 };
 
 /* Everything the walk accumulates for one member: the core every build has, and the optional
- * groups.  The packet engine keeps the two apart while it evaluates -- the core in registers for
- * one evaluation pass, the optional groups in the lane's slot of team scratch -- so nothing a
- * member accumulates is held privately across the traversal. */
+ * groups.  The evaluation takes the three parts separately, so a walk may keep them in different
+ * places (see the packet policy's sums_in_scratch). */
 struct gpu_grav_member_sums_t {
     grav_pair_core_acc_t core;
     [[no_unique_address]] grav_pair_optional_acc_t pair;   /* tidal tensor / jerk / tidal-zeta, under their flags; takes no space when empty */
@@ -1665,9 +1665,12 @@ static_assert(sizeof(gpu_grav_member_sums_t) == sizeof(gpu_grav_member_sums_with
  * The packet engine: one team of threads walks the tree once for a packet of
  * up to q_dev adjacent targets and evaluates every member's forces.
  *
- * Member m is thread m (m < q_eff). It holds its own target state in registers
- * exactly as the single-target walk does and publishes only its opening inputs to
- * team scratch, where the walker reads them. The traversal is shared: the walker
+ * Member m is thread m (m < q_eff). It publishes its opening inputs to team
+ * scratch, where the walker reads them. Its full inputs and its sums are held in
+ * registers exactly as the single-target walk does, or, under a policy with
+ * sums_in_scratch, in team scratch: the inputs published once and read in place by
+ * every lane evaluating the member, the sums in each lane's own slot, with the core
+ * taken into registers only for one evaluation pass. The traversal is shared: the walker
  * carries one work item -- the next index, the first index NOT in the item, and
  * the members still taking part -- and at every node each member in the item
  * applies its own opening decision. Members that accept or skip a node the packet
@@ -1703,7 +1706,7 @@ struct gpu_grav_walk_item_t { int no, exit; };   /* a work item's indices; its m
 struct gpu_grav_packet_scratch_plan_t {
     int mask_words;
     int local_stack;   /* continuations per walker */
-    size_t open_inputs, member_inputs, member_fold, frontier, frontier_masks, records, record_masks, local, local_masks, walker_masks, counters, bytes;
+    size_t open_inputs, member_inputs, lane_sums, frontier, frontier_masks, records, record_masks, local, local_masks, walker_masks, counters, bytes;
 };
 
 /* The scratch a team needs for one launch shape: q_dev members, team_size threads,
@@ -1715,7 +1718,7 @@ struct gpu_grav_packet_scratch_plan_t {
  * request is what team_size_max is asked about, so an unused region is a real cost in
  * occupancy, not just in bytes. */
 static struct gpu_grav_packet_scratch_plan_t
-gpu_grav_packet_scratch_plan(int q_dev, int team_size, int frontier_cap, int chunk_cap, int local_stack, int team_evaluates)
+gpu_grav_packet_scratch_plan(int q_dev, int team_size, int frontier_cap, int chunk_cap, int local_stack, int shares_member_state)
 {
     struct gpu_grav_packet_scratch_plan_t p;
     p.mask_words = (q_dev + GRAV_PACKET_MASK_BITS - 1) / GRAV_PACKET_MASK_BITS;
@@ -1723,11 +1726,11 @@ gpu_grav_packet_scratch_plan(int q_dev, int team_size, int frontier_cap, int chu
     size_t off = 0;
     auto take = [&off](size_t bytes, size_t align) {off = ((off + align - 1) / align) * align; size_t here = off; off += bytes; return here;};
     p.open_inputs    = take((size_t) q_dev * sizeof(gpu_grav_open_inputs_t), alignof(gpu_grav_open_inputs_t));
-    /* a flavour whose whole team evaluates also publishes each member's full inputs, which every lane
-       working on that member reads, and one partial sum per thread, through which the lanes of a member
-       are folded when the packet commits */
-    p.member_inputs  = take(team_evaluates ? (size_t) q_dev * sizeof(gpu_grav_member_inputs_t) : 0, alignof(gpu_grav_member_inputs_t));
-    p.member_fold    = take(team_evaluates ? (size_t) team_size * sizeof(gpu_grav_member_sums_t) : 0, alignof(gpu_grav_member_sums_t));
+    /* a flavour whose whole team evaluates, or that keeps its sums in scratch, publishes each member's
+       full inputs, which every lane working on that member reads, and has one slot of sums per thread:
+       the lane's running sums, or the partial it leaves for the fold when the packet commits */
+    p.member_inputs  = take(shares_member_state ? (size_t) q_dev * sizeof(gpu_grav_member_inputs_t) : 0, alignof(gpu_grav_member_inputs_t));
+    p.lane_sums      = take(shares_member_state ? (size_t) team_size * sizeof(gpu_grav_member_sums_t) : 0, alignof(gpu_grav_member_sums_t));
     p.frontier       = take((size_t) frontier_cap * sizeof(gpu_grav_walk_item_t), alignof(gpu_grav_walk_item_t));
     p.frontier_masks = take((size_t) frontier_cap * p.mask_words * sizeof(grav_packet_mask_word_t), alignof(grav_packet_mask_word_t));
     p.records        = take((size_t) chunk_cap * sizeof(grav_walk_record_t), alignof(grav_walk_record_t));
@@ -1814,6 +1817,11 @@ struct GravPacketMaskedPolicy {
     /* One thread per member evaluates that member's records; see GravPacketMaskedTeamPolicy for the
        flavour that spreads them over a team wider than the packet. */
     static constexpr bool team_evaluates   = false;
+    /* Where a member's inputs and a lane's sums live: in team scratch when the pair group carries the
+       tidal tensor and the jerk, whose per-member state otherwise spills from registers to slower
+       thread-private memory; in registers otherwise, which measured faster for the smaller state.
+       Compile-time, for the layout reason given at GravPacketMaskedTeamPolicy. */
+    static constexpr bool sums_in_scratch  = grav_pair_carries_tidal_tensor_and_jerk;
     /* Compile-time so the walker's ring index stays a mask rather than a division. */
     static constexpr int  local_stack      = GRAV_PACKET_LOCAL_STACK;
     /* Members share one traversal and then evaluate its records in parallel, so the packet is
@@ -1880,9 +1888,10 @@ struct GravPacketMaskedPolicy {
  * packet commits.
  *
  * It is a separate flavour, not a runtime switch, so that each schedule is compiled for the work it
- * actually does: a team of one thread per member needs neither the published inputs nor the fold,
- * and their code changes how the compiler lays out the member state for the WHOLE kernel (one kernel
- * serving both schedules ran a quarter slower per call at large N under the FIRE physics). */
+ * actually does: a team of one thread per member never folds (with its sums in scratch it still
+ * publishes its inputs and keeps a slot per thread), and the fold's code changes how the compiler lays
+ * out the member state for the WHOLE kernel (one kernel serving both schedules ran a quarter slower per call
+ * at large N under the FIRE physics). */
 struct GravPacketMaskedTeamPolicy : GravPacketMaskedPolicy {
     static constexpr bool team_evaluates = true;
 };
@@ -1890,6 +1899,9 @@ struct GravPacketMaskedTeamPolicy : GravPacketMaskedPolicy {
 template <class Policy>
 struct GpuGravPacketWalk {
     using TeamMember = Kokkos::TeamPolicy<>::member_type;
+    /* Member inputs published to team scratch and one slot of sums per thread: needed by a team whose
+       lanes share a member's evaluation, and by a policy that keeps its sums out of registers. */
+    static constexpr bool shares_member_state = Policy::team_evaluates || Policy::sums_in_scratch;
     gpu_grav_walk_ctx_t ctx;
     const int *d_idx;   /* candidates in ActiveParticleList order */
     int n_cand, q_dev, frontier_cap, chunk_cap;
@@ -2017,15 +2029,16 @@ struct GpuGravPacketWalk {
      * the walker, and the cost of it being wrong is not a skipped contribution but an evaluation
      * on uninitialised geometry. Declining hands the whole packet to the replay chain that
      * already exists for every other reason a packet cannot be completed on the device. */
-    KOKKOS_INLINE_FUNCTION int evaluate_record(int no, const gpu_grav_member_inputs_t &in, gpu_grav_member_sums_t &sums) const
+    KOKKOS_INLINE_FUNCTION int evaluate_record(int no, const gpu_grav_member_inputs_t &in, grav_pair_core_acc_t &core,
+                                               grav_pair_optional_acc_t &pair, gpu_grav_member_optional_sums_t &optional_sums) const
     {
-        if(no < ctx.treeParticleSlots) {gpu_grav_evaluate_leaf(ctx, no, in, sums.core, sums.pair, sums.optional); return 1;}
+        if(no < ctx.treeParticleSlots) {gpu_grav_evaluate_leaf(ctx, no, in, core, pair, optional_sums); return 1;}
         gpu_grav_node_prelude_t nd;
         const gpu_grav_node_step_t step = gpu_grav_node_prelude(ctx, no, nd);
         if(step != GPU_GRAV_NODE_DECIDE) {return 0;}   /* an accepted node is one the prelude handed to the decision */
         Vec3<MyFloat> s_node; MyFloat mass_node; Vec3<double> dr; double r2;
         if(!gpu_grav_node_member_geometry(ctx, nd, in.open, s_node, mass_node, dr, r2)) {return 0;}   /* a member with the bit set is never a star seeing a pure-star node */
-        gpu_grav_evaluate_node(ctx, nd, in, sums.core, sums.pair, sums.optional, s_node, mass_node, dr, r2);
+        gpu_grav_evaluate_node(ctx, nd, in, core, pair, optional_sums, s_node, mass_node, dr, r2);
         return 1;
     }
 
@@ -2155,8 +2168,8 @@ struct GpuGravPacketWalk {
 
         /* the member this thread owns, if any; every thread publishes an entry so the
            walker's loop over q_dev members reads only initialised inputs */
-        gpu_grav_member_inputs_t in;
-        gpu_grav_member_sums_t sums;
+        [[maybe_unused]] gpu_grav_member_inputs_t in;     /* used only when the sums are held in registers */
+        [[maybe_unused]] gpu_grav_member_sums_t sums;     /* used only when the sums are held in registers */
         const int have_member = (t < q_eff);
         /* The lanes that EVALUATE a member are not the lanes that traverse.  In the flavour whose team
          * evaluates, every thread walks and, once the chunk is full, every thread also evaluates, the
@@ -2168,7 +2181,7 @@ struct GpuGravPacketWalk {
         const int member   = serves ? (t / lanes) : 0;   /* which member this thread evaluates for */
         const int sub_lane = serves ? (t % lanes) : 0;
         if(have_member) {
-            if constexpr (Policy::team_evaluates) {   /* published, for every lane working on this member */
+            if constexpr (shares_member_state) {   /* published, for every lane working on this member */
                 gpu_grav_member_inputs_t *member_inputs = (gpu_grav_member_inputs_t *) (scratch + plan.member_inputs);
                 (void) gpu_grav_member_inputs_init(ctx, d_idx[first + t], member_inputs[t]);
                 open[t] = member_inputs[t].open;
@@ -2179,13 +2192,21 @@ struct GpuGravPacketWalk {
         } else if(t < q_dev) {
             open[t].alive = 0;
         }
+        /* Kept in scratch, a lane's sums start at the identity before the barrier below and so before
+           anything is evaluated; a lane that then evaluates nothing still holds the identity, which is
+           what the fold takes in from it.  The fold reads only the lanes of a member. */
+        if constexpr (Policy::sums_in_scratch) {
+            if(serves) {gpu_grav_member_sums_init(((gpu_grav_member_sums_t *) (scratch + plan.lane_sums))[t]);}
+        }
         if(t == 0) {for(int c = 0; c < GRAV_PACKET_CTR_COUNT; c++) {ctr[c] = 0;}}
         team.team_barrier();
-        /* every thread holds a partial sum, at the identity until it evaluates something, and a
-           thread that evaluates holds its member's inputs */
-        gpu_grav_member_sums_init(sums);
-        if constexpr (Policy::team_evaluates) {
-            if(serves) {in = ((const gpu_grav_member_inputs_t *) (scratch + plan.member_inputs))[member];}
+        /* otherwise every thread holds a partial sum, at the identity until it evaluates something,
+           and a thread that evaluates holds its member's inputs */
+        if constexpr (!Policy::sums_in_scratch) {
+            gpu_grav_member_sums_init(sums);
+            if constexpr (Policy::team_evaluates) {
+                if(serves) {in = ((const gpu_grav_member_inputs_t *) (scratch + plan.member_inputs))[member];}
+            }
         }
 
         /* Every thread below n_walkers traverses; the root item starts with one of them and the
@@ -2268,14 +2289,30 @@ struct GpuGravPacketWalk {
             if(ctr[GRAV_PACKET_CTR_RECORDS] > 0 && (chunk_full || ctr[GRAV_PACKET_CTR_DONE])) {
                 /* the member's lanes take its records in turn: lane k of the member takes
                    records k, k + lanes, k + 2*lanes, ... that carry the member's bit */
-                if(serves && in.open.alive) {
-                    const int n_rec = ctr[GRAV_PACKET_CTR_RECORDS];
-                    for(int r = sub_lane; r < n_rec; r += lanes) {
-                        if(!mask_test(rmasks + (size_t) r * W, member)) {continue;}
-                        /* A record this member cannot reproduce fails the whole packet, exactly as a
-                           pseudo-particle does: nothing this team computed is
-                           committed, and the replay walks every member again. */
-                        if(!evaluate_record(records[r].no, in, sums)) {fail(ctr, GRAV_PACKET_FAIL_RECORD_UNUSABLE); break;}
+                /* A record this member cannot reproduce fails the whole packet, exactly as a
+                   pseudo-particle does: nothing this team computed is committed, and the
+                   replay walks every member again. */
+                if constexpr (Policy::sums_in_scratch) {
+                    /* inputs read in place; the core taken from the lane's slot for this pass only and
+                       put back before the barrier below, the optional groups added to in the slot */
+                    const gpu_grav_member_inputs_t &in_shared = ((const gpu_grav_member_inputs_t *) (scratch + plan.member_inputs))[member];
+                    if(serves && in_shared.open.alive) {
+                        gpu_grav_member_sums_t &slot = ((gpu_grav_member_sums_t *) (scratch + plan.lane_sums))[t];
+                        grav_pair_core_acc_t core = slot.core;
+                        const int n_rec = ctr[GRAV_PACKET_CTR_RECORDS];
+                        for(int r = sub_lane; r < n_rec; r += lanes) {
+                            if(!mask_test(rmasks + (size_t) r * W, member)) {continue;}
+                            if(!evaluate_record(records[r].no, in_shared, core, slot.pair, slot.optional)) {fail(ctr, GRAV_PACKET_FAIL_RECORD_UNUSABLE); break;}
+                        }
+                        slot.core = core;
+                    }
+                } else {
+                    if(serves && in.open.alive) {
+                        const int n_rec = ctr[GRAV_PACKET_CTR_RECORDS];
+                        for(int r = sub_lane; r < n_rec; r += lanes) {
+                            if(!mask_test(rmasks + (size_t) r * W, member)) {continue;}
+                            if(!evaluate_record(records[r].no, in, sums.core, sums.pair, sums.optional)) {fail(ctr, GRAV_PACKET_FAIL_RECORD_UNUSABLE); break;}
+                        }
                     }
                 }
                 team.team_barrier();
@@ -2301,22 +2338,40 @@ struct GpuGravPacketWalk {
             if(have_member && d_failed) {d_failed[first + t] = 1;}
             return;
         }
-        /* Fold each member's partial sums into its first lane: every thread leaves its whole partial
-           in team scratch, and the first lane of each member takes in the others in lane order.  A
-           thread working on no member leaves the identity it was initialised to.  `lanes` is the same
-           on every thread of the team, so the whole team takes this branch together or not at all. */
+        /* Fold each member's partial sums into its first lane, in lane order.  `lanes` is the same on
+           every thread of the team, so the whole team takes this branch together or not at all. */
         if constexpr (Policy::team_evaluates) {
             if(lanes > 1) {
-                gpu_grav_member_sums_t *partials = (gpu_grav_member_sums_t *) (scratch + plan.member_fold);
-                partials[t] = sums;
-                team.team_barrier();
-                if(serves && sub_lane == 0) {for(int j = 1; j < lanes; j++) {gpu_grav_member_sums_combine(sums, partials[t + j], in.open.ptype);}}
+                if constexpr (Policy::sums_in_scratch) {
+                    /* straight from the slots, with no barrier first: the loop above left through a
+                       barrier every thread reached after the last pass, and every slot write -- the
+                       initialisation, the pair and optional sums added during a pass, and each pass's
+                       core store -- came before one of its barriers */
+                    gpu_grav_member_sums_t *lane_sums = (gpu_grav_member_sums_t *) (scratch + plan.lane_sums);
+                    if(serves && sub_lane == 0) {
+                        const int ptype = ((const gpu_grav_member_inputs_t *) (scratch + plan.member_inputs))[member].open.ptype;
+                        for(int j = 1; j < lanes; j++) {gpu_grav_member_sums_combine(lane_sums[t], lane_sums[t + j], ptype);}
+                    }
+                } else {
+                    /* every thread leaves its whole partial in team scratch; a thread working on no
+                       member leaves the identity it was initialised to */
+                    gpu_grav_member_sums_t *partials = (gpu_grav_member_sums_t *) (scratch + plan.lane_sums);
+                    partials[t] = sums;
+                    team.team_barrier();
+                    if(serves && sub_lane == 0) {for(int j = 1; j < lanes; j++) {gpu_grav_member_sums_combine(sums, partials[t + j], in.open.ptype);}}
+                }
             }
         }
         if(t == 0) {gpu_grav_note_commit(ctr[GRAV_PACKET_CTR_NOTE_INCOMPLETE], ctr[GRAV_PACKET_CTR_NOTE_UNSHIPPABLE]);}
         if(serves && sub_lane == 0) {
             Vec3<double> acc = Vec3<double>{0,0,0}; int ninter = 0; double pot = 0.0;
-            if(in.open.alive) {gpu_grav_member_finish(ctx, in, sums.core, sums.pair, sums.optional, acc, ninter, pot);}
+            if constexpr (Policy::sums_in_scratch) {
+                const gpu_grav_member_inputs_t &in_shared = ((const gpu_grav_member_inputs_t *) (scratch + plan.member_inputs))[member];
+                gpu_grav_member_sums_t &slot = ((gpu_grav_member_sums_t *) (scratch + plan.lane_sums))[t];
+                if(in_shared.open.alive) {gpu_grav_member_finish(ctx, in_shared, slot.core, slot.pair, slot.optional, acc, ninter, pot);}
+            } else {
+                if(in.open.alive) {gpu_grav_member_finish(ctx, in, sums.core, sums.pair, sums.optional, acc, ninter, pot);}
+            }
             d_acc[first + member] = acc; d_ninter[first + member] = ninter; d_pot[first + member] = pot; d_failed[first + member] = 0;
         }
     }
@@ -2517,7 +2572,8 @@ static int gpu_grav_packet_launch_row(GpuGravPacketWalk<Policy> &f, const struct
         f.frontier_cap = (f.n_walkers > 1)
                              ? ((r.frontier_mul * team > 16) ? r.frontier_mul * team : 16) : 0;
         f.chunk_cap    = r.chunk;
-        f.plan = gpu_grav_packet_scratch_plan(f.q_dev, team, f.frontier_cap, f.chunk_cap, Policy::local_stack, Policy::team_evaluates);
+        f.plan = gpu_grav_packet_scratch_plan(f.q_dev, team, f.frontier_cap, f.chunk_cap, Policy::local_stack,
+                                              GpuGravPacketWalk<Policy>::shares_member_state);
         /* the legality bound is asked of a probe policy carrying the same scratch request: a
            policy constructed at an illegal team size throws before it can be asked anything */
         Kokkos::TeamPolicy<> probe(1, 1, 1);
