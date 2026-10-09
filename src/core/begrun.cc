@@ -1194,7 +1194,7 @@ void read_parameter_file(char *fname)
 
     FILE *fd, *fdout;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf2[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf3[DEFAULT_PATH_BUFFERSIZE_TOUSE], tag[MAXTAGS][50], alternate_tag[MAXTAGS][50];
-    int i, j, nt, id[MAXTAGS], pnum, errorFlag = 0;
+    int i, j, nt, id[MAXTAGS], errorFlag = 0;
     void *addr[MAXTAGS];
 #ifdef CHIMES
     double Tdust_buf, Tmol_buf, relTol_buf, absTol_buf, expTol_buf, z_reion_buf;
@@ -2790,7 +2790,7 @@ void read_parameter_file(char *fname)
                 /* below more like what is needed for safe runs on Frontera, notoriously picky about memory for the system */
                 if(strcmp("WorkingMemoryPoolSize",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: the size of the working memory pool will be worked out from what this run needs, once its particle count is known. Set it here only to override that.\n",tag[i],alternate_tag[i]); continue;}
                 if(strcmp("ICFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 ICs format (=%d) - change this if needed for your ICs (many codes generate ICs in the old GADGET unformatted binary format, which requires value=1 here) \n",tag[i],alternate_tag[i],All.ICFormat); continue;}
-                if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {int n_par = 1; while(2 * n_par <= NTask) {n_par *= 2;} *((int *)addr[i]) = n_par; printf("Tag %s (%s) not set in parameter file: defaulting to the largest power of 2 not above the number of MPI ranks, so that many ranks write or read their restart files at once (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
+                if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i]) = NTask; printf("Tag %s (%s) not set in parameter file: defaulting to the number of MPI ranks, so every rank writes or reads its restart file at once (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
                 if(strcmp("NumFilesPerSnapshot",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to single-file snapshots (=%d) \n",tag[i],alternate_tag[i],All.NumFilesPerSnapshot); continue;}
                 if(strcmp("SnapFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 snapshot format (=%d) \n",tag[i],alternate_tag[i],All.SnapFormat); continue;}
                 if(strcmp("RestartFile",tag[i])==0) {strcpy((char *)addr[i],"restart"); printf("Tag %s (%s) not set in parameter file: defaulting to value = 'restart' \n",tag[i],alternate_tag[i]); continue;}
@@ -3338,16 +3338,9 @@ void read_parameter_file(char *fname)
 #endif
 
 
-    for(pnum = 0; All.NumFilesWrittenInParallel > (1 << pnum); pnum++);
-
-    if(All.NumFilesWrittenInParallel != (1 << pnum))
+    if(All.NumFilesWrittenInParallel < 1 || All.NumFilesWrittenInParallel > NTask)
     {
-        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be a power of 2\n");} endrun(1);
-    }
-
-    if(All.NumFilesWrittenInParallel > NTask)
-    {
-        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be smaller than number of processors\n");} endrun(1);
+        if(ThisTask == 0) {printf("NumFilesWrittenInParallel must be at least 1 and no larger than the number of MPI ranks (%d)\n", NTask);} endrun(1);
     }
 
 #if defined(BOX_LONG_X) ||  defined(BOX_LONG_Y) || defined(BOX_LONG_Z)
