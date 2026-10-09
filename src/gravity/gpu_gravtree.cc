@@ -1653,7 +1653,10 @@ static int gpu_gravtree_walk_flat_teams(const gpu_grav_walk_ctx_t &ctx, const in
 }
 #else
 static_assert(std::is_empty<grav_pair_optional_acc_t>::value, "GRAV_PAIR_HAS_OPTIONAL_ACC must match grav_pair_optional_acc_t");
-static_assert(sizeof(gpu_grav_member_sums_t) == sizeof(grav_pair_core_acc_t) + sizeof(gpu_grav_member_optional_sums_t),
+/* The same sums without the pair member: the two must be the same size.  Not the sum of the members'
+ * sizes, which an empty optional group (itself one byte, padded) never satisfies. */
+struct gpu_grav_member_sums_without_pair_t {grav_pair_core_acc_t core; gpu_grav_member_optional_sums_t optional;};
+static_assert(sizeof(gpu_grav_member_sums_t) == sizeof(gpu_grav_member_sums_without_pair_t),
               "an empty pair-optional group must take no space in the member sums (the packet engine sizes its scratch from them)");
 #endif
 
