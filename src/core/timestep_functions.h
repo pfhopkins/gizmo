@@ -27,6 +27,17 @@ double timestep_dilation_factor(int i, const struct particle_data *pp)
 #endif
 }
 
+/* How fast a drift can change this particle's kernel length, per unit of UNDILATED time: its Particle_DivVel
+   times its timestep dilation factor, since a drift grows the length over the particle's own dilated interval
+   (drift_particle_impl).  A node's divVmax is the largest of these among its members, so growth over the
+   node's undilated interval bounds every member without counting a heavily dilated member's divergence over
+   time it never drifts through. */
+KOKKOS_INLINE_FUNCTION
+double particle_radius_growth_rate(int i, const struct particle_data *pp)
+{
+    return (double)pp[i].Particle_DivVel * timestep_dilation_factor(i, pp);
+}
+
 KOKKOS_INLINE_FUNCTION
 double unit_integertime_in_physical(int i, struct particle_data *pp)
 {

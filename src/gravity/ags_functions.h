@@ -196,8 +196,8 @@ void do_dm_fuzzy_drift_kick_P(int i, double dt, int mode, struct particle_data *
 
 /* Whether a drift advances this particle's search length by its own Particle_DivVel (drift_particle_impl): a gas
  * cell's KernelRadius, a grain's, and the AGS_KernelRadius of a particle ags_density solves for.  A tree node's
- * divVmax, which grows every radius band the node holds, is the largest such divergence among its members, so it
- * must come from exactly these.  Reads only. */
+ * divVmax, which grows every radius band the node holds, is the largest such member's growth rate (its divergence
+ * times its dilation factor, particle_radius_growth_rate), so it must come from exactly these.  Reads only. */
 KOKKOS_INLINE_FUNCTION
 int particle_radius_drifts_with_divergence_P(int i, const struct particle_data *P_arr)
 {

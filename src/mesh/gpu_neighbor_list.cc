@@ -2956,8 +2956,8 @@ void gx_motion_target_release(void)
 void gizmo_motion_bound_raise(const int *idx, int n)
 {
     if(n <= 0 || !idx) {return;}
-    /* The tree records which top-level nodes changed, for the exchange at the
-     * next tree-update phase. */
+    /* The tree records which top-level nodes changed, for the exchange after
+     * the step's kick. */
     gravity_note_motion_bound(idx, n);
     /* The kept gas neighbour index follows the same velocities. */
     gpu_step_sidx_raise_motion(idx, n);

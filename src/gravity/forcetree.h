@@ -98,13 +98,18 @@ void force_finish_kick_nodes(void);
  * swallowed cell's neighbour, a scattered dark matter particle): raise the
  * motion bound of every node above each of idx[0..n), and remember the
  * top-level nodes reached so their new bound reaches the other ranks at the
- * next tree-update phase.  The kick itself does not come through here: it has
+ * flush after the step's kick.  The kick itself does not come through here: it has
  * its own route and exchange (force_kick_node / force_finish_kick_nodes). */
 void gravity_note_motion_bound(const int *idx, int n);
-/* All ranks, once per reused-tree step, after force_update_tree: every rank
- * learns the raised bound of every top-level node any rank changed since the
- * last flush, and applies it up its own copy of the chain.  Nothing else in
- * the node moves: no momentum, no kick flag, no timestamp. */
+/* Raise the kernel-length growth rate (divVmax) of every node above each of idx[0..n) to the member's
+ * particle_radius_growth_rate, for particles whose dilation factor was just frozen anew; the top-level
+ * nodes reached ride the same flush.  Does nothing without USE_TIMESTEP_DILATION_FOR_ZOOMS. */
+void gravity_note_radius_growth_rates(const int *idx, int n);
+/* All ranks, once per step, after the kick and before the drift: every rank
+ * learns the raised bounds (speed, and kernel-length growth rate under
+ * dilation) of every top-level node any rank changed since the last flush, and
+ * applies them up its own copy of the chain.  Nothing else in the node moves:
+ * no momentum, no kick flag, no timestamp. */
 void gravity_flush_pending_motion_bounds(void);
 /* A rebuild sets every bound afresh, so whatever was pending is void. */
 void gravity_clear_pending_motion_bounds(void);

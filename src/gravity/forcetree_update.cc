@@ -358,6 +358,45 @@ void gravity_note_motion_bound(const int *idx, int n)
     }
 }
 
+/* A member's kernel length grows at particle_radius_growth_rate, which carries its dilation factor. That factor
+ * is frozen anew when the particle is given a step (or woken), after force_update_hmax has folded the rate with
+ * the old factor, and the particle drifts at the new rate from now on. So its nodes take the new rate now, before
+ * anything drifts; other ranks' copies of the top-level tree receive it at the flush that follows, still before the drift, as raised speeds do. */
+void gravity_note_radius_growth_rates(const int *idx, int n)
+{
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+    if(n <= 0 || !idx || !Father || !Nodes || !Extnodes) {return;}
+    pending_topnodes_ensure();
+    int raised = 0;
+    for(int k = 0; k < n; k++)
+    {
+        const int i = idx[k];
+        if(i < 0 || i >= NumPart || i >= All.TreeParticleSlots) {continue;}
+        if(P[i].Mass <= 0 || !particle_radius_drifts_with_divergence_P(i, P)) {continue;}
+        const MyFloat rate = (MyFloat) particle_radius_growth_rate(i, P);
+        for(int no = Father[i]; no >= 0; no = Nodes[no].u.d.father)
+        {
+            /* A node already bounding the rate has ancestors that do too. */
+            if(Extnodes[no].divVmax >= rate) {break;}
+            Extnodes[no].divVmax = rate;
+            raised = 1;
+            if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
+            {
+                const int t = no - All.TreeNodeIndexBase;
+                if(t >= 0 && t < g_pending_topnode_cap && g_pending_topnode_stamp[t] != g_pending_stamp)
+                {
+                    g_pending_topnode_stamp[t] = g_pending_stamp;
+                    g_pending_topnode_list[g_pending_topnode_n++] = no;
+                }
+            }
+        }
+    }
+    if(raised) {force_gas_routes_note_change(GAS_ROUTE_MOTION);}   /* other ranks' copies lag until the flush */
+#else
+    (void) idx; (void) n;   /* without dilation the rate changes only with the divergence, which force_update_hmax folds */
+#endif
+}
+
 void gravity_flush_pending_motion_bounds(void)
 {
     /* Every rank enters, with or without pending nodes of its own. */
@@ -369,12 +408,22 @@ void gravity_flush_pending_motion_bounds(void)
     for(int ta = 0; ta < NTask; ta++) {total += counts[ta];}
     if(total > 0)
     {
-        struct NodeBound {int node; MyFloat vmax;};
+        struct NodeBound {int node; MyFloat vmax;
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+            MyFloat divVmax;   /* gravity_note_radius_growth_rates */
+#endif
+        };
         int *counts_b = (int *) mymalloc("mb_counts_b", sizeof(int) * NTask);
         int *offset_b = (int *) mymalloc("mb_offset_b", sizeof(int) * NTask);
         struct NodeBound *loc = (struct NodeBound *) mymalloc("mb_loc", (size_t)(n_local > 0 ? n_local : 1) * sizeof(struct NodeBound));
         struct NodeBound *all = (struct NodeBound *) mymalloc("mb_all", (size_t)total * sizeof(struct NodeBound));
-        for(int k = 0; k < n_local; k++) {loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;}
+        for(int k = 0; k < n_local; k++)
+        {
+            loc[k].node = g_pending_topnode_list[k]; loc[k].vmax = Extnodes[g_pending_topnode_list[k]].vmax;
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+            loc[k].divVmax = Extnodes[g_pending_topnode_list[k]].divVmax;
+#endif
+        }
         for(int ta = 0; ta < NTask; ta++)
         {
             counts_b[ta] = counts[ta] * (int) sizeof(struct NodeBound);
@@ -390,8 +439,15 @@ void gravity_flush_pending_motion_bounds(void)
             const MyFloat vmax = all[r].vmax;
             while(no >= 0)
             {
+#ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
+                const int vmax_bounded = (Extnodes[no].vmax >= vmax), divv_bounded = (Extnodes[no].divVmax >= all[r].divVmax);
+                if(vmax_bounded && divv_bounded) {break;}
+                if(!vmax_bounded) {raise_node_motion_bound(no, vmax);}
+                if(!divv_bounded) {Extnodes[no].divVmax = all[r].divVmax;}
+#else
                 if(Extnodes[no].vmax >= vmax) {break;}
                 raise_node_motion_bound(no, vmax);
+#endif
                 no = Nodes[no].u.d.father;
             }
         }
@@ -700,7 +756,7 @@ void force_update_hmax(void)
     if(P[i].Mass > 0)
       {
         int no = Father[i];
-        double divVel = P[i].Particle_DivVel;
+        double divVel = particle_radius_growth_rate(i, P);
 
         /* Mode B per-type band: conservative across every leaf-policy-selectable
          * source. Helper covers KernelRadius / ForceSoftening / AGS_KernelRadius
@@ -712,7 +768,7 @@ void force_update_hmax(void)
          * AGS-FORALL builds → any Mass>0 type.  Non-eligible particles still update
          * per-type bands above, but MUST NOT leak their KernelRadius into the scalar
          * band (which feeds downstream cross-rank exchange and legacy walkers).
-         * `divVmax` grows every band the node holds, so it takes the divergence of
+         * `divVmax` grows every band the node holds, so it takes the growth rate of
          * every member whose radius a drift advances by it, whatever the band. */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
         const int scalar_eligible = 1;

@@ -856,15 +856,17 @@ KOKKOS_INLINE_FUNCTION static void node_motion_advance(const Node &n, double dt_
 }
 
 /* The kernel lengths a node bounds grow over its drift by aggregate_radius_bound applied to the largest
- * member divergence: a member may have drifted several times within the node's one interval, each drift
+ * member growth rate: a member may have drifted several times within the node's one interval, each drift
  * capping only its own growth, so the node's growth is not capped -- only held under the ceiling no drift
- * can pass.  Each member grows on its own dilated interval; a dilation factor is at most one, so the
- * undilated interval dt_widen is at least as long as any member's, and the node's own (centre-of-mass)
- * interval would not be.  divVmax is a maximum taken from zero, so the scalar hmax and the per-type bands
+ * can pass.  Each member grows on its own dilated interval, by its divergence over that interval; divVmax
+ * holds each member's divergence times its dilation factor (particle_radius_growth_rate), so growing at it
+ * over the undilated interval dt_widen bounds every member's growth -- exactly for the member that sets it,
+ * while its factor stands -- where the node's own (centre-of-mass) interval would not.  divVmax is a maximum taken from zero, so the scalar hmax and the per-type bands
  * only grow here (force_update_hmax raises them to the active members'; only a tree build re-seeds them,
- * and can lower them).  divVmax is gathered from every member whose radius a drift advances by its own
- * divergence (particle_radius_drifts_with_divergence_P), so it grows each band at least as fast as any of
- * the band's members.  Returns nonzero when an input was not a finite non-negative number: the bands were
+ * and can lower them; gravity_note_radius_growth_rates raises divVmax when a member's factor is frozen anew).
+ * divVmax is gathered from every member whose radius a drift advances by its own divergence
+ * (particle_radius_drifts_with_divergence_P), so it grows each band at least as fast as any of the band's
+ * members.  Returns nonzero when an input was not a finite non-negative number: the bands were
  * set to the ceiling and the caller must report it. */
 KOKKOS_INLINE_FUNCTION static int node_hmax_drift(struct extNODE &ext, double dt_widen, double max_kernel_radius)
 {

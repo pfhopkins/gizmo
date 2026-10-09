@@ -953,7 +953,7 @@ static void let_fill_particle_src(int p_idx, moment_particle_src<MyFloat> *src_o
     src.kernel_radius     = (double) pa->KernelRadius;
     src.max_kernel_radius = (double) All.MaxKernelRadius;
     src.force_softening   = ForceSoftening_KernelRadius(p_idx);
-    src.particle_divvel   = (double) pa->Particle_DivVel;
+    src.particle_divvel   = particle_radius_growth_rate(p_idx, P);
     src.radius_drifts     = particle_radius_drifts_with_divergence_P(p_idx, P);
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     src.sink_mass_reservoir = (double) pa->Sink_Mass_Reservoir;
