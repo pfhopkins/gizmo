@@ -231,13 +231,13 @@ extern "C" void let_compute_local_active_bitmap(uint64_t *bitmap, int n_words)
 
 /* ----------------------------------------------------------------------
  * Cluster cover leaves (see struct LETCoverLeaf).  Each rank groups its OWNED-topleaf targets by
- * softening octave into cluster leaves (let_compute_local_payload), and the per-rank cluster lists are
+ * softening octave and displacement octave into cluster leaves (let_compute_local_payload), and the per-rank cluster lists are
  * Allgatherv'd so every sender holds every receiver's cluster leaves for the cover-tree essentiality test.
  *   g_my_clusters   -- THIS rank's cluster leaves for the current build (producer side).
  *   g_cluster_all   -- every rank's cluster leaves, concatenated by rank (post-Allgatherv).
  *   g_cluster_off   -- prefix-sum offsets: rank R's clusters = g_cluster_all[off[R], off[R+1]).
- * g_cl_members is the transient per-build member scratch (target pos/soft/OldAcc/type + its topleaf+octave
- * bin key) that the sort-and-reduce below turns into clusters.  All grow-only, process-lifetime.
+ * g_cl_members is the transient per-build member scratch (target pos/soft/OldAcc/displacement/type + its
+ * topleaf, softening-octave and displacement-octave key) that the sort-and-reduce below turns into clusters.  All grow-only, process-lifetime.
  * UNBUCKETABLE guard: a local particle whose Father chain never reaches an owned topleaf loses its coverage
  * (a real under-import hazard) -> LOUD count + collective controlled stop in let_run_exchange.
  * ---------------------------------------------------------------------- */
@@ -255,18 +255,23 @@ static int g_cluster_off_cap = 0;
 static long long g_let_unbucketable = 0;          /* local count this build */
 static long long g_let_unbucketable_first_id = -1;/* first offending P[i].ID (diagnostic) */
 
-/* Transient per-build member scratch: one entry per owned-topleaf target, keyed by (topleaf, softening octave).
- * Sorted by that key then reduced into clusters (one per contiguous equal-key run) at the end of the payload. */
-struct LETClusterMember { int tl; int octave; double pos[3]; double soft; double oldacc; int type; };
+/* Transient per-build member scratch: one entry per owned-topleaf target, keyed by (topleaf, softening octave,
+ * displacement octave).  Sorted by that key then reduced into clusters (one per contiguous equal-key run) at the
+ * end of the payload. */
+struct LETClusterMember { int tl; int octave; int disp_octave; double pos[3]; double soft; double oldacc; double disp; int type; };
 static struct LETClusterMember *g_cl_members = NULL;
 static int g_cl_members_n = 0, g_cl_members_cap = 0;
 static int let_cluster_member_cmp(const void *a, const void *b)
 {
     const struct LETClusterMember *x = (const struct LETClusterMember *) a, *y = (const struct LETClusterMember *) b;
     if(x->tl != y->tl) return (x->tl > y->tl) - (x->tl < y->tl);
-    return (x->octave > y->octave) - (x->octave < y->octave);
+    if(x->octave != y->octave) return (x->octave > y->octave) - (x->octave < y->octave);
+    return (x->disp_octave > y->disp_octave) - (x->disp_octave < y->disp_octave);
 }
-static inline void let_cl_member_push(int tl, int octave, double px, double py, double pz, double soft, double oldacc, int type)
+/* The octave a softening or a displacement falls in; everything at or below zero shares the lowest, and a
+ * value that is not finite the highest (log2 of it has no integer octave). */
+static inline int let_octave(double x) {return !(x > 1e-300) ? -2000000000 : (!isfinite(x) ? 2000000000 : (int) floor(log2(x)));}
+static inline void let_cl_member_push(int tl, double px, double py, double pz, double soft, double oldacc, double disp, int type)
 {
     if(g_cl_members_n >= g_cl_members_cap) {
         int nc = g_cl_members_cap ? 2 * g_cl_members_cap : 8192;
@@ -275,9 +280,9 @@ static inline void let_cl_member_push(int tl, int octave, double px, double py, 
         g_cl_members = nb; g_cl_members_cap = nc;
     }
     struct LETClusterMember *m = &g_cl_members[g_cl_members_n++];
-    m->tl = tl; m->octave = octave;
+    m->tl = tl; m->octave = let_octave(soft); m->disp_octave = let_octave(disp);
     m->pos[0] = px; m->pos[1] = py; m->pos[2] = pz;
-    m->soft = soft; m->oldacc = oldacc; m->type = type;
+    m->soft = soft; m->oldacc = oldacc; m->disp = disp; m->type = type;
 }
 static inline void let_cluster_push(const struct LETCoverLeaf *c)
 {
@@ -309,9 +314,10 @@ static int g_orphan_off_cap = 0;
  * no positivity test, so a target with OldAcc==0 has aold==0 and its relative criterion opens
  * EVERY node with mass.  Excluding zero from this minimum therefore certified nodes as
  * non-essential that such a target does open, and the import lost them. */
-static inline void let_orphan_merge(struct LETOrphanRecord *r, double oa, double soft, int ptype)
+static inline void let_orphan_merge(struct LETOrphanRecord *r, double oa, double soft, double disp, int ptype)
 {
     if(oa < r->s.min_OldAcc) r->s.min_OldAcc = oa;
+    if(disp > r->s.max_displacement) r->s.max_displacement = disp;
     if(soft > r->s.max_soft_by_type[ptype]) r->s.max_soft_by_type[ptype] = soft;
     if(soft < r->s.min_soft) r->s.min_soft = soft;
     if(ptype == 5) r->s.has_sink = 1;
@@ -334,7 +340,7 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
     struct LETOrphanRecord *r = &g_my_orphans[g_my_orphans_n++];
     r->topleaf = t; r->_pad = 0;
     r->s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) r->s.max_soft_by_type[k] = 0.0;
-    r->s.min_soft = DBL_MAX; r->s.has_sink = 0; r->s.populated = 1;   /* orphan = a real drifted target -> always covered */
+    r->s.min_soft = DBL_MAX; r->s.max_displacement = 0.0; r->s.has_sink = 0; r->s.populated = 1;   /* orphan = a real drifted target -> always covered */
     return r;
 }
 
@@ -385,7 +391,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     }
     out->has_cover = found_any;   /* >=1 owned topleaf -> a real cover exists */
 
-    /* Per-particle bounds -> CLUSTER MEMBERS (grouped later by topleaf+softening octave) + WHOLE-RANK
+    /* Per-particle bounds -> CLUSTER MEMBERS (grouped later by topleaf, softening octave and displacement octave) + WHOLE-RANK
      * reduce. Each local target is bucketed to its owning topleaf via the Father chain; owned targets are
      * stashed as cluster members, drifted ones ride an orphan record. The whole-rank payload scalars below are
      * the reduce over all local targets -- a conservative wire-compat fallback (has_cover + empty-rank guard).
@@ -448,6 +454,10 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
 
         double oa = (double) P[i].OldAcc;
         double soft = (double) ForceSoftening_KernelRadius(i);
+        /* How far this target may move, per axis, before the tree is expected to be rebuilt: the walk evaluates it
+           where it is then, not where it is now.  The same bound and the same horizon the pack uses to widen its own
+           nodes (TREE_NODE_WIDENING_DELTA widens a node's full width, so one side moves by half of it). */
+        double disp = 0.5 * TREE_NODE_WIDENING_DELTA(particle_motion_speed_bound(i, P, CellP), g_let_tree_lifetime_drift);
 
         if(DomainTask[tl] != ThisTask)
         {
@@ -456,14 +466,13 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
              * ride an orphan record so senders open nodes essential to it against topleaf tl's box;
              * otherwise it is dropped from this rank's owned-topleaf cover (the pre-fix under-import
              * hazard, exposed under ADAPTIVE_TREEFORCE_UPDATE tree reuse). */
-            let_orphan_merge(let_my_orphan_for_topleaf(tl), oa, soft, t);
+            let_orphan_merge(let_my_orphan_for_topleaf(tl), oa, soft, disp, t);
         }
         else
         {
-            /* Owned target: stash as a cluster member keyed by (topleaf, softening octave) -- one cluster
-             * per distinct octave in a topleaf, applied by the sort-and-reduce after the loop. */
-            int octave = (soft > 1e-300) ? (int) floor(log2(soft)) : -2000000000;
-            let_cl_member_push(tl, octave, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], soft, oa, t);
+            /* Owned target: stash as a cluster member keyed by (topleaf, softening octave, displacement octave) -- one
+             * cluster per distinct pair in a topleaf, applied by the sort-and-reduce after the loop. */
+            let_cl_member_push(tl, (double) P[i].Pos[0], (double) P[i].Pos[1], (double) P[i].Pos[2], soft, oa, disp, t);
         }
         /* whole-rank reduce (derived fallback) -- over ALL local targets incl. orphans, so the
          * empty-owned-topleaf fallback baked in below stays a true worst case. */
@@ -491,9 +500,9 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
     if(out->min_OldAcc == DBL_MAX) out->min_OldAcc = 0.0;  /* no positive OldAcc; conservative-zero (maximally open) */
     if(out->min_soft   == DBL_MAX) out->min_soft   = 0.0;  /* empty cover; conservative (opens softening) */
 
-    /* Build MY rule-1 cluster cover leaves: sort the collected members by (topleaf, softening octave), then
-     * each contiguous equal-key RUN is one cluster = tight member bbox + conservative member-max scalars
-     * (max soft-by-type, min soft, min OldAcc including zero, OR has_sink). An empty owned topleaf collected no
+    /* Build MY rule-1 cluster cover leaves: sort the collected members by (topleaf, softening octave, displacement
+     * octave), then each contiguous equal-key RUN is one cluster = tight member bbox + conservative member-max
+     * scalars (max soft-by-type, min soft, min OldAcc including zero, max displacement, OR has_sink). An empty owned topleaf collected no
      * members, so it yields no cluster (the old populated=0 exclusion, now structural). This is the SSOT for
      * the receiver cover -- exchanged to every sender below; the whole-rank payload scalars are wire-compat only. */
     g_my_clusters_n = 0;
@@ -504,12 +513,12 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
         while(p < g_cl_members_n)
         {
             int q = p;
-            while(q < g_cl_members_n &&
-                  g_cl_members[q].tl == g_cl_members[p].tl && g_cl_members[q].octave == g_cl_members[p].octave) q++;
+            while(q < g_cl_members_n && g_cl_members[q].tl == g_cl_members[p].tl &&
+                  g_cl_members[q].octave == g_cl_members[p].octave && g_cl_members[q].disp_octave == g_cl_members[p].disp_octave) q++;
             struct LETCoverLeaf c;
             for(int d = 0; d < 3; d++) { c.bmin[d] = DBL_MAX; c.bmax[d] = -DBL_MAX; }
             c.s.min_OldAcc = DBL_MAX; for(int k = 0; k < 6; k++) c.s.max_soft_by_type[k] = 0.0;
-            c.s.min_soft = DBL_MAX; c.s.has_sink = 0; c.s.populated = 1;
+            c.s.min_soft = DBL_MAX; c.s.max_displacement = 0.0; c.s.has_sink = 0; c.s.populated = 1;
             for(int r = p; r < q; r++)
             {
                 struct LETClusterMember *m = &g_cl_members[r];
@@ -517,6 +526,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out,
                 if(m->type >= 0 && m->type < 6 && m->soft > c.s.max_soft_by_type[m->type]) c.s.max_soft_by_type[m->type] = m->soft;
                 if(m->oldacc < c.s.min_OldAcc) c.s.min_OldAcc = m->oldacc;
                 if(m->soft < c.s.min_soft) c.s.min_soft = m->soft;
+                if(m->disp > c.s.max_displacement) c.s.max_displacement = m->disp;
                 if(m->type == 5) c.s.has_sink = 1;
             }
             if(c.s.min_OldAcc == DBL_MAX) c.s.min_OldAcc = 0.0;   /* conservative-zero (maximally-open relaccel) */
@@ -548,8 +558,9 @@ extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
  * one whole-rank union box. A single union box spans ~the whole domain for a
  * spatially-spread rank, driving min_dist(node,cover)->0, which defeats the PM
  * cutoff + theta cull and imports ~the whole global tree; per-topleaf covers
- * restore that selectivity. Built sender-side each exchange from replicated
- * top-tree geometry + R's payload scalars (no wire-format change); the opening
+ * restore that selectivity. Built sender-side each exchange from R's exchanged
+ * cluster and orphan records (each box widened by its record's max_displacement)
+ * and the replicated top-tree geometry; the opening
  * predicate itself (gravtree_open_decision_cell) is untouched -- this only
  * refines which cover boxes feed it. Scratch is grown once and reused across
  * receivers/exchanges (no allocation in the pack recursion); the tree for the
@@ -764,6 +775,13 @@ static void let_build_cover_tree(struct LETPackContext *pk, int R)
         struct LETCoverLeaf *L = &pk->cover_leaves[nleaf++];
         for(int d = 0; d < 3; d++) { L->bmin[d] = (double) Nodes[no].center[d] - h; L->bmax[d] = (double) Nodes[no].center[d] + h; }
         L->s = g_orphan_all[k].s;
+    }
+    /* Widen every leaf by how far its targets may move before the tree is rebuilt, so the cover holds them where the
+       walk will find them and not only where they were when the import was pruned.  The one place the cover is
+       widened, for clusters and orphans alike. */
+    for(int k = 0; k < nleaf; k++) {
+        const double d = pk->cover_leaves[k].s.max_displacement;
+        for(int dim = 0; dim < 3; dim++) {pk->cover_leaves[k].bmin[dim] -= d; pk->cover_leaves[k].bmax[dim] += d;}
     }
     if(nleaf == 0) return;
     int need = 2 * nleaf;                  /* balanced tree over nleaf leaves has <= 2*nleaf-1 nodes */
