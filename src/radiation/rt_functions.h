@@ -551,11 +551,13 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     double fac = UNIT_SURFDEN_IN_CGS, Zfac, dust_to_metals_vs_standard, kappa_HHe; /* units */
     Zfac = 1.0; kappa_HHe=0.35; // assume solar metallicity, simple Thompson cross-section limit for various processes below
     dust_to_metals_vs_standard = return_dust_to_metals_ratio_vs_solar(i,0, pp, cell); // many of the dust opacities below will need this as the dimensionless dust-to-metals ratio normalized to the canonical Solar value of ~1/2
+    volatile int is_gas_cell = (i >= 0) && (pp[i].Type == 0); // gas-cell fields exist only for gas; a star (or no particle, i<0) takes the defaults set above
+    (void) is_gas_cell;
 #ifdef METALS
     if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
 #endif
 #if defined(COOLING) && !defined(CHIMES)
-    if(i>=0) {kappa_HHe=0.02 + 0.35*cell[i].Ne;}
+    if(is_gas_cell) {kappa_HHe=0.02 + 0.35*cell[i].Ne;}
 #endif
 
 #ifdef RT_FREEFREE /* pure (grey, non-relativistic) Thompson scattering opacity + free-free absorption opacity. standard expressions here from Rybicki & Lightman. */
@@ -581,7 +583,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     // Use either MW (FIRE-3 default) or SMC (FIRE-2 default) opacities depending on the evolved local dust population composition
     // If silicate mass / carbonaceous mass >= 5 use SMC opacities, else MW opacities.
     double sil_to_C = 0;
-    if (cell[i].ISMDustChem_Dust_Metal[0]>0 && cell[i].ISMDustChem_Dust_Species[1]>0)
+    if (is_gas_cell && cell[i].ISMDustChem_Dust_Metal[0]>0 && cell[i].ISMDustChem_Dust_Species[1]>0)
     {sil_to_C = (cell[i].ISMDustChem_Dust_Metal[0] - cell[i].ISMDustChem_Dust_Species[1])/cell[i].ISMDustChem_Dust_Species[1];} // Everything that isn't carbonaceous dust is silicates for our purpose
     else {sil_to_C = 100;}
     if (sil_to_C >= 5)
