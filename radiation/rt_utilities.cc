@@ -743,9 +743,9 @@ void rt_diag_ir_double_count_report(void)
         char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%srt_ir_diag.txt", All.OutputDir);
         if(!(fd = fopen(buf, "a"))) {return;}
         fprintf(fd, "# time dt_row E_donated_toIR L_inj_dt L_sinks_Lsun E_thermal_gas M_gas E_rad[0..%d] absorbed[0..%d] donated_in[0..%d] "
-                "IR_gas_share[0..%d] cooling_to_band[0..%d] injected[0..%d] kick_source[0..%d] cooling_gas_dE cooling_rad_offered   (code "
+                "IR_gas_share[0..%d] cooling_to_band[0..%d] injected[0..%d] kick_source[0..%d] kick_limiter[0..%d] cooling_gas_dE cooling_rad_offered   (code "
                 "units; dt_row = time since the previous row; channel columns are sums over that interval)\n", N_RT_FREQ_BINS-1,
-                N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1);
+                N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1, N_RT_FREQ_BINS-1);
     }
     fprintf(fd, "%.12g %.12g", All.Time, (t_row < 0) ? 0 : All.Time - t_row);
     for(i=0;i<nv;i++) {fprintf(fd, " %.12g", glob[i]);}
@@ -874,9 +874,11 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             double abs_0 = DMAX(0,fabs(a0_abs)*dt_entr); double slabfac = slab_averaging_function(abs_0); double e_abs_0=exp(-abs_0); if(abs_0>100.) {e_abs_0=0;}
             /* since we're taking exponentials and inverses of some large numbers here, need to be careful not to let floating point errors cause nan's */
             if((dt_entr <= 0.)||(a0_abs >= 0.)||(abs_0 <= 0.)) {abs_0=0.; slabfac=e_abs_0=1.;} else {if(abs_0 < 1.e-5) {slabfac=1.-0.5*abs_0; e_abs_0 = 1.-abs_0;} else {if(abs_0 > 100.) {slabfac = 1./abs_0; e_abs_0 = 0.;}}}
+            double ef_nominal = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // the band energy the absorption and the sources give before any limiter
+#ifndef JACO /* the floor keeps 1% of the post-absorption energy when the sources would drain the band past it; it creates energy that nothing pays for. Under JACO the kick only transports, so the band keeps what transport leaves it (the positivity clamp below is the only guard) */
             double e0_postabs = e0*e_abs_0, de_postabs = total_de_dt * dt_entr * slabfac, f_min = 0.01;
             if(e0_postabs+de_postabs < f_min*e0_postabs) {slabfac *= fabs((1.-f_min)*e0_postabs)/(fabs(de_postabs)+MIN_REAL_NUMBER);}
-            
+#endif
             double ef = e0 * e_abs_0 + total_de_dt * dt_entr * slabfac; // gives exact solution for dE/dt = -E*abs + de , the 'reduction factor' appropriately suppresses the source term //
 #ifdef RT_INFRARED
             if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g Trad=%g Tdust=%g\n", (unsigned long long) (long long)i /* particle index */,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac,cell[i].Radiation_Temperature,cell[i].Dust_Temperature);}
@@ -884,6 +886,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(isnan(ef)) {PRINT_WARNING("\n ef energy prediction is NaN for cell-ID=%llu, e0=%g e_abs_0=%g abs_0=%g a0_abs=%g total_de_dt=%g dt_entr=%g slabfac=%g\n", (unsigned long long) (long long)i /* particle index */,e0, e_abs_0,abs_0, a0_abs, total_de_dt,dt_entr,slabfac);}
 #endif
             if(ef < 0) {ef=0;}
+            double de_limiter = ef - ef_nominal; // energy the floor and the positivity clamp created: the kick-source tally below counts the nominal sources
             double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
             double de_emission_minus_absorption = (ef - DMAX(0, (e0 + dt_e_gamma_band * dt_entr * slabfac))); // total change, relative to what we would get with just advection (positive = net energy increase in the gas)
             if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
@@ -945,6 +948,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if((mode==0) && (dt_entr>0)) {
                 rt_diag_add(RT_DIAG_ABSORBED, kf, de_abs); if(donation_target_bin >= 0) {rt_diag_add(RT_DIAG_DONATED_IN, donation_target_bin, de_abs);}
                 rt_diag_add(RT_DIAG_KICK_SOURCE, kf, (cell[i].Rad_Je[kf] + dt_e_gamma_band) * dt_entr);
+                rt_diag_add(RT_DIAG_KICK_LIMITER, kf, de_limiter);
 #ifdef COOLING
                 if(kf==RT_FREQ_BIN_INFRARED) {rt_diag_add(RT_DIAG_IR_GAS_SHARE, kf, de_abs*IRBand_opacity_fraction_from_gas_absorption);
                     rt_diag_sc(RT_DIAG_SC_DK_REEMIT, de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption));

@@ -983,7 +983,7 @@ void rt_eddington_update_calculation(int j, struct gas_cell_data *cell);
 void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
 void rt_diag_ir_double_count_report(void);
-enum {RT_DIAG_ABSORBED, RT_DIAG_DONATED_IN, RT_DIAG_IR_GAS_SHARE, RT_DIAG_COOLING_TO_BAND, RT_DIAG_INJECTED, RT_DIAG_KICK_SOURCE, RT_DIAG_NCHAN, RT_DIAG_COOL_GAS, RT_DIAG_COOL_OFFERED};
+enum {RT_DIAG_ABSORBED, RT_DIAG_DONATED_IN, RT_DIAG_IR_GAS_SHARE, RT_DIAG_COOLING_TO_BAND, RT_DIAG_INJECTED, RT_DIAG_KICK_SOURCE, RT_DIAG_KICK_LIMITER, RT_DIAG_NCHAN, RT_DIAG_COOL_GAS, RT_DIAG_COOL_OFFERED};
 void rt_diag_add(int channel, int k, double de);
 /* scalar tallies written to rt_cool_diag.txt; names in rt_diag_sc_names (rt_utilities.cc), same order */
 enum {RT_DIAG_SC_DEU, RT_DIAG_SC_Q, RT_DIAG_SC_DTIE, RT_DIAG_SC_DTIE_CODE, RT_DIAG_SC_THICK, RT_DIAG_SC_MOL, RT_DIAG_SC_MOL_HEAT,

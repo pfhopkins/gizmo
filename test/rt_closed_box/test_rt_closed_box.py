@@ -97,9 +97,13 @@ a model whose every exchange is in the c/c_tilde convention). At n_H = 1e7, 1e8,
 the LTE boxes:
   - the step changes the ledger by Delta_t (R + PdV) to within the solver's bound (tol times its row scales) in every row,
     and to 1e-6 of the ledger over the run (measured 1e-11 to 1.5e-9);
-  - end to end, the box's ledger moves only by R, the PdV work and the kicks' band sources (1e-6): nothing outside the
-    model's step creates or destroys energy (with the star, the IR kick sources around it do not sum to zero, about
-    -0.8% of the injected energy; GIZMO's own STARFORGE run shows the same);
+  - end to end, the box's ledger moves only by R, the PdV work, the kicks' band sources and what the kick's positivity
+    clamp creates (1e-6): nothing outside the model's step creates or destroys energy (with the star, the IR kick
+    sources around it do not sum to zero, about -0.8% of the injected energy; GIZMO's own STARFORGE run shows the same).
+    The clamp (kick_limiter channel) fires when the solve empties a cell's ionizing band and the closing half-kick then
+    applies the flux divergence computed before the solve: 3.3e-6 of the ledger in the star box at n_H = 1e3, 99% of it
+    before t = 0.03 while the initial ionizing field is absorbed, bounded at 1e-5. GIZMO's 1% band floor, which legacy
+    keeps, is compiled out under JACO; the conservative fix is the transport term as a source in the solve;
   - the parts of R the model does not document, and what is left of R past its documented parts, are < 1e-6 of the
     ledger; the band ledger, injection and gas-share checks as for STARFORGE.
 starforge_legacy_RT documents all four parts. Its IR gas absorption drains 26-45% of the ledger at n_H >= 1e7 over the
@@ -165,7 +169,7 @@ def jaco_flags(model):
 
 VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", ILIEV: "iliev", STARFORGE: "starforge",
             MOLECULAR: "molecular", **{jaco_flags(m): f"jaco_{m}" for m in JACO_MODELS}}
-CHANNELS = ("absorbed", "donated_in", "ir_gas_share", "cooling_to_band", "injected", "kick_source")
+CHANNELS = ("absorbed", "donated_in", "ir_gas_share", "cooling_to_band", "injected", "kick_source", "kick_limiter")
 BANDS = ("photoelectric", "NUV", "optical-NIR", "IR")
 BANDS_STARFORGE = ("ionizing",) + BANDS
 IR, DONORS = 3, (0, 1, 2)
@@ -191,6 +195,7 @@ TAU_STEP_SATURATED = 3.0
 TIME_FIRST_OUTPUT = 0.024  # TimeBetSnapshot; the restart ramp's steps all fall before it
 TOL_JACO_SOLVE = 1e-6  # the jaco solver's relative tolerance (JACO_TOL_DEFAULT), on the ledger it changes per step
 TOL_JACO_UNDOCUMENTED = 1e-6  # of the ledger: any part of the model's ledger rate it does not document
+TOL_KICK_LIMITER = 1e-5  # of the ledger: what the kick's positivity clamp creates (3.3e-6 in the star box at n_H = 1e3, see below)
 TOL_DRAIN_COEFFICIENT = 1e-2  # jaco over GIZMO, of the IR band's drain into the gas per unit band energy
 OUT_ROOT = Path(os.environ.get("RT_CLOSED_BOX_OUTPUT_ROOT", TEST_DIR))  # absolute, < 100 characters (OutputDir)
 
@@ -561,7 +566,8 @@ def check_jaco(flags, n_h, star, lte=None):
     rest = R - sum(parts.values())
     # end to end: the box's ledger against the model's own rate, the PdV work and the kicks' band sources (transport,
     # which sums to zero over the box, and the radiation work terms)
-    drift = ledger - ledger[0] - R - pdv - kick
+    limiter = o["kick_limiter"].sum(axis=1) / C_RATIO  # energy the kick's positivity clamp created (under JACO there is no floor; the clamp fires on an emptied band whose transport term is still negative)
+    drift = ledger - ledger[0] - R - pdv - kick - limiter
     gas_outside = o["E_thermal"] - o["E_thermal"][0] - c["jaco_gas_dE"] - c["gas_kick_dE"]
     err_abs, bound = (np.diff(c[k], prepend=0) for k in ("jaco_ledger_err_abs", "jaco_ledger_bound"))  # per row
     legacy = o["E_thermal"] + E.sum(axis=1) - inj  # the 1:1 band/gas convention
@@ -569,7 +575,8 @@ def check_jaco(flags, n_h, star, lte=None):
           f"{c['jaco_n_solves'][-1]:.0f} solves, {c['jaco_n_subcycled'][-1]:.0f} subcycled; star luminosity {o['L_sun'][-1]:.4g} L_sun")
     print(f"  ledger E_gas + sum_b E_b c/c_tilde - injected c/c_tilde: start {scale:.6g} (gas {o['E_thermal'][0]:.4g}), end "
           f"{ledger[-1]:.6g}; model rate integral {R[-1]:+.6g} = " + " + ".join(f"{k} {parts[k][-1]:+.4g}" for k in JACO_PARTS)
-          + f" + rest {rest[-1]:+.4g}; PdV {pdv[-1]:+.4g}; kick sources {kick[-1]:+.4g}")
+          + f" + rest {rest[-1]:+.4g}; PdV {pdv[-1]:+.4g}; kick sources {kick[-1]:+.4g}; kick limiter {limiter[-1]:+.4g} "
+          f"({limiter[-1] / scale:+.3e})")
     print(f"  solve: step change - Delta_t (R + PdV) = {c['jaco_ledger_err'][-1]:+.4g} = {c['jaco_ledger_err'][-1] / scale:+.3e} of "
           f"the ledger (sum |.| {c['jaco_ledger_err_abs'][-1]:.4g}, at most {np.max(err_abs / np.maximum(bound, 1e-300)):.3e} of "
           f"the solver's bound in a row; subcycled {c['jaco_ledger_err_subcycled'][-1]:+.4g})")
@@ -597,6 +604,8 @@ def check_jaco(flags, n_h, star, lte=None):
         f"the solves change the ledger by Delta_t (R + PdV) to {c['jaco_ledger_err'][-1] / scale:+.3e} of it"
     assert np.max(np.abs(drift)) < TOL_JACO_SOLVE * scale, \
         f"the box's ledger departs from the model's rate by {np.max(np.abs(drift)) / scale:.3e} of it"
+    assert np.max(np.abs(limiter)) < TOL_KICK_LIMITER * scale, \
+        f"the kick's positivity clamp created {np.max(np.abs(limiter)) / scale:+.3e} of the ledger"
     for k in JACO_PARTS:
         if k not in JACO_MODELS[model]["documented"]:
             assert abs(parts[k][-1]) < TOL_JACO_UNDOCUMENTED * scale, f"{model}: undocumented {k} part {parts[k][-1] / scale:+.3e}"
