@@ -1275,8 +1275,8 @@ static int verify(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
 /* Tier 1: Newton from the start, moved onto the energy floor if just below it. *status: 0, a
    NEWTON_ code, or -5 (converged below the energy floor). */
 static enum Outcome tier1_newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
-                                 int *status) {
-    int st = newton(sv, pr, set, SOLVE_ALL, JACO_TIER1_MAXITER, NULL, c, NULL);
+                                 int *status, int maxiter) {
+    int st = newton(sv, pr, set, SOLVE_ALL, maxiter, NULL, c, NULL);
     enum Outcome o = (st == NEWTON_OK) ? onto_floor(sv, pr, set) : OUTCOME_FAILED;
     *status = (st == NEWTON_OK && o == OUTCOME_FAILED) ? -5 : st;
     return o;
@@ -1320,7 +1320,7 @@ static enum Outcome solve_step(SolveVars *sv, const Params *pr, const struct Jac
                                int *tier, int *nfeval_tier1, int *tier1_status) {
     SolveVars start = *sv;
     int status;
-    enum Outcome o = tier1_newton(sv, pr, set, c, &status);
+    enum Outcome o = tier1_newton(sv, pr, set, c, &status, JACO_TIER1_MAXITER);
     if (nfeval_tier1) *nfeval_tier1 = c->nfeval;
     if (tier1_status) *tier1_status = status;
     if (o != OUTCOME_FAILED) {
@@ -1377,10 +1377,10 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
        equilibrium manifold (shocked molecular gas that dissociates and cools by orders of magnitude): every implicit
        step from that start is the same hard problem, so halving the step does not help. Instead the transient is
        time-resolved. The first substep is JACO_SUBCYCLE_ETA times the shortest timescale the initial rates give (each
-       time-dependent species' change by max(x, JACO_SUBCYCLE_XSCALE), the energy's relative change), where tier 1
-       converges in a few evaluations; it grows as the state settles (JACO_SUBCYCLE_GROW_FAST when tier 1 took at most
+       time-dependent species' change by max(x, JACO_SUBCYCLE_XSCALE), the energy's relative change), where Newton
+       converges in a few evaluations; it grows as the state settles (JACO_SUBCYCLE_GROW_FAST when Newton took at most
        JACO_SUBCYCLE_FAST_EVALS evaluations, JACO_SUBCYCLE_GROW otherwise), is quartered on a failure, and once it has
-       grown past the remaining time the rest is one implicit step. */
+       grown past the remaining time the rest is one implicit step. Each substep gets the chemistry iteration budget. */
     if (set->verbose) printf("  jaco tier 3: adaptive subcycling dt=%g\n", pr.Delta_t);
     SolveVars cur = start;
     Params ps = pr;
@@ -1413,12 +1413,12 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
         jaco_initial_from_state(&cur, &ps);
         SolveVars trial = cur;
         int status, nf0 = c.nfeval;
-        enum Outcome o2 = tier1_newton(&trial, &ps, set, &c, &status);
-        if (o2 == OUTCOME_FAILED && status == NEWTON_LINESEARCH) {
+        enum Outcome o2 = tier1_newton(&trial, &ps, set, &c, &status, JACO_CHEM_MAXITER);
+        if (o2 == OUTCOME_FAILED && (status == NEWTON_LINESEARCH || status == NEWTON_MAXITER)) {
             /* steady-state ions at their floor are drawn to the spurious x_e -> 0 root of their own collisional
                ionization: retry from the ionized branch, as tier 2 does */
             trial = cur;
-            if (ionized_seed(&trial, &ps)) o2 = tier1_newton(&trial, &ps, set, &c, &status);
+            if (ionized_seed(&trial, &ps)) o2 = tier1_newton(&trial, &ps, set, &c, &status, JACO_CHEM_MAXITER);
         }
         if (set->verbose >= 2) printf("  jaco tier 3 substep %d: dt=%g t_done=%g -> %s (status %d, %d evals) T=%g\n", nsub, ps.Delta_t, t_done,
                                       o2 == OUTCOME_FAILED ? "FAILED" : "ok", status, c.nfeval - nf0, trial.T);

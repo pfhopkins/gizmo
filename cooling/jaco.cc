@@ -1389,8 +1389,10 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
 
     struct JacoSolverSettings set;
     jaco_solver_default_settings(&set);
-    set.T_min = (All.MinGasTemp > 0) ? All.MinGasTemp : 1.0;
-    set.u_min = All.MinEgySpec * UNIT_SPECEGY_IN_CGS;
+    /* the solver runs without GIZMO's temperature floor: its physics bounds the gas (the CMB bath); MinGasTemp is applied
+       to the solved state below, in the host layer, as DoCooling applies it */
+    set.T_min = 1.0;
+    set.u_min = 0;
     struct JacoSolveInfo info;
     const SolveVars sv_in = sv;
 #ifdef RT_ILIEV_TEST1
@@ -1439,6 +1441,17 @@ void call_jaco(struct particle_data *p, struct gas_cell_data *c) {
 #ifdef OUTPUT_COOLRATE_DETAIL
     jaco_coolrate_detail(&sv, &pr, c);
 #endif
+    /* GIZMO's energy floor (MinGasTemp through MinEgySpec), applied to the solved state as DoCooling applies it; T follows
+       u on the solved composition. Counted with the solver's own pins. */
+    {
+        double u_min = All.MinEgySpec * UNIT_SPECEGY_IN_CGS;
+        if (u_min > 0 && sv.u < u_min) {
+            double T_floor = jaco_u_to_T(u_min, &sv, &pr);
+            sv.u = u_min;
+            if (jaco_isfinite(T_floor) && T_floor > 0) sv.T = T_floor;
+            info.pinned = 1;
+        }
+    }
     struct jaco_step_outputs out;
     jaco_to_gizmo(0, &sv, &pr, p, c, &out);
     jaco_stats_add(&info, &out);
