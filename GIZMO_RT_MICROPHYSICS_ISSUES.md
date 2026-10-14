@@ -448,4 +448,13 @@ Found while attributing a jaco/legacy gap in `test/fullphysics_mini` (branch `sn
   - It inflates post-SN dense-gas temperatures by 0.1-0.26 dex in that test. Legacy, as the reference, is wrong there.
   - It is a production concern wherever SN ejecta meet coarse, long-step gas.
 Classification: legacy GIZMO energy-conservation defect (timestepping), independent of the cooling module.
-Status: recorded, not investigated further.
+Status (2026-10-13): **the jump is a snapshot-restart artefact.** Every run above was a flag-2 restart from snapshot_017 at
+t = 0.085, 1.1 kyr before the SN, which re-synchronises every coarse cell onto a fresh maximum step (1.2 kyr) that the
+ejecta then hit mid-step. A continuous baseline from t = 0 (ab_snwarn/control2, same tree and build) never exceeds
+0.9987 E_SN and its peak temperature is 5e8 K, not 5.8e10 K. The 0.1-0.26 dex post-SN inflation attributed to this
+needs re-examination: the test's own two legs resume with flag 1, which preserves the hierarchy.
+What the continuous run does show is that the gas has no warning of the SN: the feedback timestep limiter advertises
+the ejecta speed only at ProtoStellarStage 6, set as the ejecta are launched. With the speed advertised 3 maximum steps
+before the (deterministic) death (`SINGLE_STAR_FB_SNE_WARNING_STEPS`, sn_parity), the remnant's energy history tracks a
+MaxSizeTimestep = 1e-5 reference to 1-2% at every output, where the unwarned run lags by up to 30% at +200 yr
+(0.92 vs 0.70 E_SN), for +2% steps in the window and fewer steps overall. Runs: ab_snwarn/ (control2, warn, dtref).
