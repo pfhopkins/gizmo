@@ -66,7 +66,12 @@
 #define JACO_BRENT_MAXITER 100
 #define JACO_POLISH_MAXITER 8        /* tier 2: Newton steps from the rootfind answer, whose nested time-dependent species are resolved to tol of themselves, not of their budgets */
 #define JACO_VERIFY_FAC 10.0         /* tier-2 acceptance slack: T is bracketed to tol, the energy row then moves with the total dR/dT */
-#define JACO_SUBCYCLE_MIN_FRAC 1e-6  /* tier 3 gives up below this fraction of Delta_t */
+#define JACO_SUBCYCLE_MIN_FRAC 1e-10 /* tier 3 gives up below this fraction of Delta_t */
+#define JACO_SUBCYCLE_ETA 0.3        /* tier 3: first substep as a fraction of the shortest initial timescale */
+#define JACO_SUBCYCLE_XSCALE 1e-3    /* tier 3: an abundance change that counts as resolved (adds to x in its timescale) */
+#define JACO_SUBCYCLE_GROW 2.0       /* tier 3: substep growth after a substep tier 1 solved */
+#define JACO_SUBCYCLE_GROW_FAST 4.0  /* tier 3: growth after a substep tier 1 solved in at most JACO_SUBCYCLE_FAST_EVALS */
+#define JACO_SUBCYCLE_FAST_EVALS 3
 #define JACO_SUBCYCLE_MAXSTEPS 2000
 
 void jaco_solver_default_settings(struct JacoSolverSettings *set) {
@@ -355,7 +360,7 @@ static void sanitize(SolveVars *sv, Params *pr, const struct JacoSolverSettings 
     /* start-of-step values that overfill a budget together are scaled into it */
     for (int b = 0; b < N_BUDGETS; b++) {
         const struct Budget *B = &budget_table[b];
-        double sum = 0, cap = budget_total(B, pr) * (1 - margin);
+        double sum = 0, cap = budget_total(B, pr); /* the exact total: see edc99b1b */
         int ntd = 0;
         for (int t = 0; t < B->nterm; t++)
             if (is_time_dependent(B->k[t])) {
@@ -677,6 +682,17 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         }
         if (held && held_prev) return NEWTON_STALL;
         held_prev = held;
+        if (set->verbose >= 3) {
+            printf("      dir alpha=%.3e held=%d:", alpha, held);
+            for (int a = 0; a < n; a++) printf(" [%d]d=%.3e", idx[a], d[a]);
+            for (int bb = 0; bb < N_BUDGETS; bb++) {
+                const struct Budget *B = &budget_table[bb];
+                double db = 0;
+                for (int a = 0; a < n; a++) db += -budget_weight(B, idx[a]) * d[a];
+                printf(" budget%d val=%.3e dval=%.3e", bb, budget_value(B, sv, pr), db);
+            }
+            printf("\n");
+        }
 
         double norm_d = scaled_norm(d, w, n);
         int accepted = 0, have_fallback = 0;
@@ -1357,37 +1373,67 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
         return 0;
     }
 
-    /* tier 3: subcycle */
-    if (set->verbose) printf("  jaco tier 3: subcycling dt=%g\n", pr.Delta_t);
+    /* tier 3: adaptive sub-integration. A step tiers 1 and 2 cannot take in one implicit solve starts far off its
+       equilibrium manifold (shocked molecular gas that dissociates and cools by orders of magnitude): every implicit
+       step from that start is the same hard problem, so halving the step does not help. Instead the transient is
+       time-resolved. The first substep is JACO_SUBCYCLE_ETA times the shortest timescale the initial rates give (each
+       time-dependent species' change by max(x, JACO_SUBCYCLE_XSCALE), the energy's relative change), where tier 1
+       converges in a few evaluations; it grows as the state settles (JACO_SUBCYCLE_GROW_FAST when tier 1 took at most
+       JACO_SUBCYCLE_FAST_EVALS evaluations, JACO_SUBCYCLE_GROW otherwise), is quartered on a failure, and once it has
+       grown past the remaining time the rest is one implicit step. */
+    if (set->verbose) printf("  jaco tier 3: adaptive subcycling dt=%g\n", pr.Delta_t);
     SolveVars cur = start;
     Params ps = pr;
     const double dt = pr.Delta_t;
-    double t_done = 0, dt_sub = 0.5 * dt;
+    double t_done = 0, dt_sub = dt;
     int nsub = 0, ok = 1, pinned = 0;
+    {
+        struct Eval e0;
+        double t_min = HUGE_VAL;
+        if (!evaluate(&cur, &pr, &e0, &c)) {
+            for (int t = 0; t < N_TD; t++) {
+                int k = td_species[t].k;
+                double rate = fabs(e0.F.data[k]);
+                if (rate > 0) t_min = fmin(t_min, pr.n_Htot * (cur.data[k] + JACO_SUBCYCLE_XSCALE) / rate);
+            }
+            double rate_u = fabs(e0.F.T);
+            if (rate_u > 0) t_min = fmin(t_min, JACO_MASS_PER_H * pr.n_Htot * cur.u / rate_u);
+        }
+        if (jaco_isfinite(t_min) && t_min > 0) dt_sub = fmax(JACO_SUBCYCLE_ETA * t_min, JACO_SUBCYCLE_MIN_FRAC * dt);
+        dt_sub = fmin(dt_sub, 0.5 * dt);
+        if (set->verbose) printf("  jaco tier 3: shortest timescale %g s, first substep %g s\n", t_min, dt_sub);
+    }
     while (t_done < dt * (1 - 1e-12)) {
         if (nsub >= JACO_SUBCYCLE_MAXSTEPS || dt_sub < JACO_SUBCYCLE_MIN_FRAC * dt) {
             ok = 0;
             break;
         }
         ps.Delta_t = fmin(dt_sub, dt - t_done);
-        if (nsub > 0) {
-            ps.u_initial = cur.u;
-            jaco_initial_from_state(&cur, &ps);
-        }
+        ps.u_initial = cur.u;
+        jaco_initial_from_state(&cur, &ps);
         SolveVars trial = cur;
-        int t2;
-        enum Outcome o2 = solve_step(&trial, &ps, set, &c, &t2, NULL, NULL);
+        int status, nf0 = c.nfeval;
+        enum Outcome o2 = tier1_newton(&trial, &ps, set, &c, &status);
+        if (o2 == OUTCOME_FAILED && status == NEWTON_LINESEARCH) {
+            /* steady-state ions at their floor are drawn to the spurious x_e -> 0 root of their own collisional
+               ionization: retry from the ionized branch, as tier 2 does */
+            trial = cur;
+            if (ionized_seed(&trial, &ps)) o2 = tier1_newton(&trial, &ps, set, &c, &status);
+        }
+        if (set->verbose >= 2) printf("  jaco tier 3 substep %d: dt=%g t_done=%g -> %s (status %d, %d evals) T=%g\n", nsub, ps.Delta_t, t_done,
+                                      o2 == OUTCOME_FAILED ? "FAILED" : "ok", status, c.nfeval - nf0, trial.T);
         if (o2 != OUTCOME_FAILED) {
             info->substep_params = ps;
             cur = trial;
             t_done += ps.Delta_t;
             nsub++;
             pinned |= (o2 == OUTCOME_PINNED);
-            dt_sub *= 2;
+            dt_sub *= (c.nfeval - nf0 <= JACO_SUBCYCLE_FAST_EVALS) ? JACO_SUBCYCLE_GROW_FAST : JACO_SUBCYCLE_GROW;
         } else {
-            dt_sub *= 0.5;
+            dt_sub *= 0.25;
         }
     }
+    if (set->verbose) printf("  jaco tier 3: %d substeps, %s, nfeval %d\n", nsub, ok ? "done" : "FAILED", c.nfeval);
     info->nfeval = c.nfeval;
     info->nfeval_fd = c.nfeval_fd;
     info->n_nonfinite_jac = c.n_nonfinite_jac;
