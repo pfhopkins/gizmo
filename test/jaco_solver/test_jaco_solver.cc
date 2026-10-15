@@ -768,6 +768,21 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
          " x_O_tot=0.0005354647099930119 x_S=1.4456673654786863e-05 x_Si=3.5539582709394029e-05 y=0.094444444444444442"
          " z=0",
          2.73, 160803223.3050341},
+        /* m2e3 shakedown with JACO=starforge (MinGasTemp 2.73 applied by the host: T_min 1 K, u_min 0): wind-shocked molecular gas
+           at n ~ 1e9 cooling through the 680 K dust opacity switch, where the dust temperature's root vanishes in a fold and
+           every substep's Newton stalled on it; the subcycle's balance re-walk takes it to the other zone's root */
+        {"wind shock 21851K fold", 2336309032824.5918, 21850.870547551014, 9.9999999999999995e-21, 9.9999999999999995e-21, 9.9999999999999995e-21,
+         0.49999999999721356,
+         " A_dust=2.5310378263564023e-17 Delta_t=18123149.871826172 Delta_x=947023849939042.38 G_0=1e-56 G_LW=1"
+         " ISRF=1 N_H=1.2269436518030739e+24 N_H_cool=1.2269436518030739e+24 Td=596.99789474472811"
+         " X=0.71550000000000002 Z_d=1 f_d=1 f_metal=0 f_neb=0 grad_v=7.7198757695282668e-09"
+         " grad_v_tf=6.5199476141144902e-09 kappa_thick=0.3914460557742474 n_Htot=997539022.33174956"
+         " pdv_work=-1.8475177056110004e-12 rho=2.3476313549798091e-15 u_initial=2336309032824.5918"
+         " x_C_tot=0.00029466573491730724 x_Ca=2.4004192872117401e-06 x_Fe=3.4441449535789159e-05"
+         " x_H_2_initial=0.49999999999721356 x_Mg=4.4083391567668295e-05 x_N=7.3974243785564537e-05"
+         " x_Ne=9.3640810621942704e-05 x_O_tot=0.0005354647099930119 x_S=1.4456673654786863e-05"
+         " x_Si=3.5539582709394029e-05 y=0.094444444444444442 z=0",
+         1.0, 0.0},
 #endif
 #ifdef JACO_MODEL_STARFORGE_LEDGER_NOCHEMHEAT
         {"first-core 2357K", 224846258325.71915, 2356.729456984202, 9.9999999999999995e-21, 9.9999999999999995e-21, 9.9999999999999995e-21,
@@ -794,6 +809,19 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
          " x_H_2_initial=2.4742226975558945e-05 x_Mg=4.408339178837265e-05 x_N=7.3974243958390903e-05"
          " x_Ne=9.3640811180711907e-05 x_O_tot=0.00053546471334260865 x_S=1.4456673733127759e-05"
          " x_Si=3.5539582848924831e-05 y=0.094444444475639752 z=0"},
+        /* m2e3 shakedown with JACO=starforge_legacy (T_min 1 K, u_min 0): wind-shocked molecular gas at n ~ 5e8 cooling below the
+           dust (held at the CMB) to the solver's T floor, where Newton could not converge with T clamped; T is now pinned there */
+        {"wind shock 19867K below CMB", 2116667756547.6184, 19867.311394732853, 9.9999999999999995e-21, 9.9999999999999995e-21, 9.9999999999999995e-21,
+         0.49998901509483545,
+         " A_dust=1.3791032196266883e-17 Delta_t=18123149.871826172 Delta_x=1158836784244473.2 G_0=1e-56 G_LW=1"
+         " ISRF=1 N_H=1.5445325959378779e+24 N_H_cool=1.5445325959378779e+24 Td=542.31622217989263"
+         " X=0.71550000000000002 Z_d=1 f_d=1 f_metal=0 f_neb=0 grad_v=9.6940835703323741e-09"
+         " n_Htot=543535618.96361709 pdv_work=-1.1625763474524708e-10 rho=1.2791693298436389e-15"
+         " u_initial=2116667756547.6184 x_C_tot=0.00029466573491730724 x_Ca=2.4004192872117401e-06"
+         " x_Fe=3.4441449535789159e-05 x_H_2_initial=0.49998901509483545 x_Mg=4.4083391567668295e-05"
+         " x_N=7.3974243785564537e-05 x_Ne=9.3640810621942704e-05 x_O_tot=0.0005354647099930119"
+         " x_S=1.4456673654786863e-05 x_Si=3.5539582709394029e-05 y=0.094444444444444442 z=0",
+         1.0, 0.0},
 #endif
 #ifdef JACO_MODEL_SFX_NO_GRAIN_RECOMBINATION
         /* SN_singlestar with JACO=sfx_no_grain_recombination (a knockout model in jaco's model_diff branch): the H+
@@ -873,7 +901,12 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
         for (int k = IDX_x_H_2 + 1; k < N_VARS && !bad; k++) /* the bands, from their start-of-step values */
             if (var_initial_param[k] >= 0) sv.data[k] = pr.data[var_initial_param[k]];
 #if defined(JACO_HAS_VAR_Td) && !defined(JACO_HAS_VAR_x_photon_IR)
-        if (!bad) seed_dust_temperature(&sv, &pr); /* as the host seeds it */
+        /* the cell's dust temperature if recorded (the host carries it between steps), else seeded as for a new cell */
+        const char *td = strstr(cells[c].params, " Td=");
+        if (td)
+            sv.Td = strtod(td + 4, NULL);
+        else if (!bad)
+            seed_dust_temperature(&sv, &pr);
 #elif defined(JACO_HAS_VAR_Td)
         sv.Td = pr.Td_initial;
 #endif
@@ -1245,12 +1278,46 @@ int main(int argc, char **argv) {
     set.T_min = 2.73;   /* a production MinGasTemp; runs with MinGasTemp 0 (T_min 1 K, u_min 0) enter as recorded cells */
     set.T_max = 1e10;
     set.u_min = 2.75e8; /* GIZMO's MinEgySpec for MinGasTemp = 2.73 K */
+    if (getenv("JACO_T_MIN") && *getenv("JACO_T_MIN")) set.T_min = atof(getenv("JACO_T_MIN")); /* a run's floors, for replaying its failures */
+    if (getenv("JACO_U_MIN") && *getenv("JACO_U_MIN")) set.u_min = atof(getenv("JACO_U_MIN"));
     if (build_cie_table(&set)) return 1;
     if (field) g_rt_field = atoi(field);
 #ifdef JACO_COMPARE
     if (argc > 2 && !strcmp(argv[2], "compare")) return run_compare(&set);
 #endif
 
+    if (argc > 6 && !strcmp(argv[2], "tdrow")) {
+        /* tdrow <file> <Td_lo> <Td_hi> <N>: the dust row and its Td derivative across Td at the first state in file */
+        FILE *fp = fopen(argv[3], "r");
+        if (!fp) return 1;
+        char line[16384];
+        SolveVars sv = {};
+        Params pr = {};
+        while (fgets(line, sizeof(line), fp)) {
+            double *dst = NULL;
+            int n = 0;
+            if (strstr(line, "SolveVars (")) dst = sv.data, n = N_VARS;
+            if (strstr(line, "Params (")) dst = pr.data, n = N_PARAMS;
+            if (!dst) continue;
+            char *q = line;
+            for (int i = 0; i < n; i++) {
+                q = strchr(q, '=');
+                if (!q) return 2;
+                dst[i] = strtod(q + 1, &q);
+            }
+        }
+        double lo = atof(argv[4]), hi = atof(argv[5]);
+        int N = atoi(argv[6]);
+        sv.u = jaco_T_to_u(sv.T, &sv, &pr, NULL);
+        for (int i = 0; i <= N; i++) {
+            SolveVars x = sv, F;
+            double J[N_VARS][N_VARS];
+            x.Td = lo + (hi - lo) * i / N;
+            microphysics_func_jac(&x, &pr, &F, J);
+            printf("tdrow Td=%.10g F_Td=%+.10e dF_Td/dTd=%+.10e F_T=%+.10e\n", x.Td, F.data[IDX_Td], J[IDX_Td][IDX_Td], F.data[IDX_T]);
+        }
+        return 0;
+    }
     if (argc > 3 && !strcmp(argv[2], "replay")) {
         /* re-solve states printed by jaco_print_state (e.g. a GIZMO failure dump):
            replay <file> [which (-1 = all)] [verbose] [jac: compare the generated Jacobian with central differences] */

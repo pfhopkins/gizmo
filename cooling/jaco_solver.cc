@@ -12,7 +12,8 @@
  * Tiers, cheapest first; each runs only if the previous one failed:
  *   0  consistent start: if u(T0,x0) disagrees with u_initial, T0 = u^-1(u_initial, x0).
  *   1  Newton polish: few iterations, floored species with no tendency to grow are pinned and
- *      dropped from the linear system, fraction-to-the-boundary on T and the neutral budgets,
+ *      dropped from the linear system (so is T at its floor with net cooling, or at its ceiling
+ *      with net heating), fraction-to-the-boundary on T and the neutral budgets,
  *      backtracking on Deuflhard's natural monotonicity test. Fails fast on a singular or
  *      non-finite system, and on a budget stall (a neutral budget at round-off holding the step
  *      below tol, which only shrinks it further).
@@ -23,7 +24,10 @@
  *      the floor (ceiling). If that fails, it is repeated with every chemistry solve started from
  *      one end of the bracket, then the other (where the chemistry is bistable: each branch, the
  *      start's first).
- *   3  subcycling: halve the substep until tiers 1-2 succeed on each piece.
+ *   3  adaptive subcycling: tier 1 on substeps that start at a fraction of the shortest chemical
+ *      or thermal timescale and grow as the state settles; a failed substep is retried with its
+ *      balance temperatures re-walked (a root lost at an opacity switch) and from the ionized
+ *      seed, then shortened.
  * A non-finite residual rejects that step or trial point. A non-finite Jacobian column (the
  * generated derivative of a rate that underflowed to zero can be 0/0 although the rate itself is
  * fine) is replaced by finite differences of F if settings.fd_jacobian, else it fails the tier.
@@ -618,7 +622,10 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
     for (int it = 0;; it++) {
         if (set->verbose >= 2) trace((mask & SOLVE_T) ? "newton" : (mask & SOLVE_TD) ? "chem" : "ions", it, sv, &e);
         int idx[N_VARS], n = 0;
-        if (mask & SOLVE_T) idx[n++] = IDX_T;
+        /* T at its floor with net cooling (or at its ceiling with net heating) is held there, its row dropped: the
+           energy equation has no solution in range, and the host applies its own floor to the answer */
+        int T_pinned = (sv->T <= set->T_min * (1 + 1e-9) && e.F.T <= 0) || (sv->T >= set->T_max * (1 - 1e-9) && e.F.T >= 0);
+        if ((mask & SOLVE_T) && !T_pinned) idx[n++] = IDX_T;
         for (int k = 2; k < N_VARS; k++)
             if ((mask & solve_bit(k)) && !is_pinned(k, sv->data[k], e.F.data[k])) idx[n++] = k;
         if (n == 0) {
@@ -685,6 +692,7 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
         if (set->verbose >= 3) {
             printf("      dir alpha=%.3e held=%d:", alpha, held);
             for (int a = 0; a < n; a++) printf(" [%d]d=%.3e", idx[a], d[a]);
+            for (int a = 0; a < n; a++) printf(" A%d%d=%.3e(J %.3e)", idx[a], idx[a], A[a][a], e.J[idx[a]][idx[a]]);
             for (int bb = 0; bb < N_BUDGETS; bb++) {
                 const struct Budget *B = &budget_table[bb];
                 double db = 0;
@@ -705,6 +713,11 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             double bt_rhs[N_VARS], dbar[N_VARS];
             reduced_rhs(&et, idx, n, bt_rhs);
             if (lu_solve(&lu, bt_rhs, dbar)) continue;
+            if (set->verbose >= 3) {
+                printf("      bt alpha=%.3e |dbar|=%.3e |d|=%.3e F:", alpha, scaled_norm(dbar, w, n), norm_d);
+                for (int k = 0; k < N_VARS; k++) printf(" %.3e", et.F.data[k]);
+                printf("\n");
+            }
             if (scaled_norm(dbar, w, n) <= (1 - 0.25 * alpha) * norm_d) {
                 accepted = 1;
                 break;
@@ -1278,6 +1291,7 @@ static enum Outcome tier1_newton(SolveVars *sv, const Params *pr, const struct J
                                  int *status, int maxiter) {
     int st = newton(sv, pr, set, SOLVE_ALL, maxiter, NULL, c, NULL);
     enum Outcome o = (st == NEWTON_OK) ? onto_floor(sv, pr, set) : OUTCOME_FAILED;
+    if (o == OUTCOME_SOLVED && (sv->T <= set->T_min * (1 + 1e-9) || sv->T >= set->T_max * (1 - 1e-9))) o = OUTCOME_PINNED;
     *status = (st == NEWTON_OK && o == OUTCOME_FAILED) ? -5 : st;
     return o;
 }
@@ -1414,6 +1428,13 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
         SolveVars trial = cur;
         int status, nf0 = c.nfeval;
         enum Outcome o2 = tier1_newton(&trial, &ps, set, &c, &status, JACO_CHEM_MAXITER);
+        if (o2 == OUTCOME_FAILED && (status == NEWTON_LINESEARCH || status == NEWTON_MAXITER || status == NEWTON_UNSTABLE)) {
+            /* a balance temperature's root can vanish as the gas evolves (the dust temperature at an opacity switch:
+               its branch ends in a fold, where the row touches zero and Newton stalls); re-walk it to the root its row
+               points to, as GIZMO's bracketed search does, then Newton again */
+            trial = cur;
+            if (balance_reseed(&trial, &ps, set, &c)) o2 = tier1_newton(&trial, &ps, set, &c, &status, JACO_CHEM_MAXITER);
+        }
         if (o2 == OUTCOME_FAILED && (status == NEWTON_LINESEARCH || status == NEWTON_MAXITER)) {
             /* steady-state ions at their floor are drawn to the spurious x_e -> 0 root of their own collisional
                ionization: retry from the ionized branch, as tier 2 does */
