@@ -26,8 +26,8 @@ compression.
 | Variant | Config | Params | What it changes |
 | --- | --- | --- | --- |
 | default | `Config.sh` | `evrard.params` | `ADAPTIVE_GRAVSOFT_FORGAS`; full collapse to `TimeMax=0.8` |
-| all-type adaptive softening | `Config_forall.sh` | `evrard.params` | `ADAPTIVE_GRAVSOFT_FORALL=1` in place of `FORGAS` — adaptive softening for every particle type, not just gas |
-| gravity-walk validation | `Config.sh` or `Config_forall.sh` | `evrard_agswalk.params` | short run (`TimeMax=0.05`), larger `SofteningGas`, aggressive `DomainBuild_ActiveFraction` — for comparing gravity-walk output between two builds rather than against the exact solution; writes to `output_agswalk/` |
+| all-type adaptive softening | `Config_forall.sh` | `evrard_forall.params` | `ADAPTIVE_GRAVSOFT_FORALL=1` in place of `FORGAS` — adaptive softening for every particle type, not just gas |
+| gravity-walk validation | `Config.sh` (with `Config_forall.sh`, append the two `AGS_*` lines of `evrard_forall.params`) | `evrard_agswalk.params` | short run (`TimeMax=0.05`), larger `SofteningGas`, aggressive `DomainBuild_ActiveFraction` — for comparing gravity-walk output between two builds rather than against the exact solution; writes to `output_agswalk/` |
 
 `Config_forall.sh` was previously a separate `evrard_forall/` test directory,
 but its test file was a byte-identical copy that hardcoded `test_name =
@@ -38,6 +38,7 @@ but its test file was a byte-identical copy that hardcoded `test_name =
 
 - `Config.sh`, `Config_forall.sh` — build configs (see table)
 - `evrard.params` — the default run
+- `evrard_forall.params` — the default run for `Config_forall.sh`: adds the adaptive-softening neighbour target and tolerance (`AGS_DesNumNgb`, `AGS_MaxNumNgbDeviation`), which `DEVELOPER_MODE` requires
 - `evrard_agswalk.params` — short gravity-walk validation run
 - `evrard_exact.txt` — reference solution
 - `test_evrard.py` — pytest implementation
