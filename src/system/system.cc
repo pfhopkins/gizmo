@@ -222,36 +222,6 @@ size_t sizemax(size_t a, size_t b)
 }
 
 
-/* routine to invert square matrices of side Ndims x Ndims, used in a number of places in code for e.g. gradients, etc. */
-double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv)
-{
-    double FrobNorm = T.frobenius_norm_sq(); /* Frobenius norm of T */
-    Tinv = Mat3<double>{}; /* initialize Tinv to null */
-#if (NUMDIMS==1) /* one-dimensional case */
-    double detT = T[0][0]; if((detT != 0) && !isnan(detT)) {Tinv[0][0] = 1./detT;} else {Tinv[0][0]=1;} /* only one non-trivial element in 1D! */
-#elif (NUMDIMS==2) /* two-dimensional case */
-    double detT = T[0][0]*T[1][1] - T[0][1]*T[1][0];
-    if((detT != 0) && !isnan(detT))
-    {
-        Tinv[0][0] =  T[1][1] / detT; Tinv[0][1] = -T[0][1] / detT;
-        Tinv[1][0] = -T[1][0] / detT; Tinv[1][1] =  T[0][0] / detT;
-    }
-#else /* three-dimensional case */
-    double detT = T.invert(Tinv);
-#endif
-    double FrobNorm_inv = Tinv.frobenius_norm_sq(); /* Frobenius norm of inverse matrix */
-    double ConditionNumber = DMAX( sqrt(FrobNorm*FrobNorm_inv) / NUMDIMS , 1 ); /* this = sqrt( ||T^-1||*||T|| ) :: should be ~1 for a well-conditioned matrix */
-    return ConditionNumber;
-}
-
-/* legacy overload accepting raw arrays — forwards to Mat3 version */
-double matrix_invert_ndims(double T[3][3], double Tinv[3][3])
-{
-    return matrix_invert_ndims(*reinterpret_cast<Mat3<double>*>(T), *reinterpret_cast<Mat3<double>*>(Tinv));
-}
-
-
-
 long long report_comittable_memory(long long *MemTotal,
 				   long long *Committed_AS, long long *SwapTotal, long long *SwapFree)
 {

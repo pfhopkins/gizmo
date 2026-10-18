@@ -59,8 +59,34 @@ int merge_particles_ij(int i, int j);
 int split_particle_i(int i, int n_particles_split, int i_nearest);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
-double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
-double matrix_invert_ndims(double T[3][3], double Tinv[3][3]);
+/* routine to invert square matrices of side Ndims x Ndims, used in a number of places in code for e.g. gradients, etc.
+   Callable on host and device, so the per-particle solvers that use it run unchanged in either place. */
+GIZMO_GPU_FUNCTION static inline double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv)
+{
+    double FrobNorm = T.frobenius_norm_sq(); /* Frobenius norm of T */
+    Tinv = Mat3<double>{}; /* initialize Tinv to null */
+#if (NUMDIMS==1) /* one-dimensional case */
+    double detT = T[0][0]; if((detT != 0) && !isnan(detT)) {Tinv[0][0] = 1./detT;} else {Tinv[0][0]=1;} /* only one non-trivial element in 1D! */
+#elif (NUMDIMS==2) /* two-dimensional case */
+    double detT = T[0][0]*T[1][1] - T[0][1]*T[1][0];
+    if((detT != 0) && !isnan(detT))
+    {
+        Tinv[0][0] =  T[1][1] / detT; Tinv[0][1] = -T[0][1] / detT;
+        Tinv[1][0] = -T[1][0] / detT; Tinv[1][1] =  T[0][0] / detT;
+    }
+#else /* three-dimensional case */
+    double detT = T.invert(Tinv);
+#endif
+    double FrobNorm_inv = Tinv.frobenius_norm_sq(); /* Frobenius norm of inverse matrix */
+    double ConditionNumber = DMAX( sqrt(FrobNorm*FrobNorm_inv) / NUMDIMS , 1 ); /* this = sqrt( ||T^-1||*||T|| ) :: should be ~1 for a well-conditioned matrix */
+    (void)detT;
+    return ConditionNumber;
+}
+/* legacy overload accepting raw arrays -- forwards to the Mat3 version */
+GIZMO_GPU_FUNCTION static inline double matrix_invert_ndims(double T[3][3], double Tinv[3][3])
+{
+    return matrix_invert_ndims(*reinterpret_cast<Mat3<double>*>(T), *reinterpret_cast<Mat3<double>*>(Tinv));
+}
 #ifdef HERMITE_INTEGRATION
 GIZMO_GPU_FUNCTION int eligible_for_hermite(int i, struct particle_data *pp); /* definition in core/timestep_functions.h (single source of truth) */
 void do_hermite_prediction(void);
@@ -1454,20 +1480,6 @@ void cbe_corridor_end(void);
 #endif
 #endif
 
-#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-/* Result of inverting an AGS face moment matrix. cn_expansion is the signal
- * that drives neighbor-count expansion (a large sentinel when the raw matrix
- * is singular, because matrix_invert_ndims() reports CN=1 for a zero inverse);
- * cn_final + status are diagnostics (status: 0=clean, 1=regularized via
- * diagonal-loading, 2=could-not-condition / near-zero raw matrix, warned). */
-struct AgsNvtInversion { double cn_expansion; double cn_final; int status; };
-/* Invert the symmetric raw moment matrix (upper-triangle components
- * sym6 = {00,01,02,11,12,22}) accumulated at AGS kernel size h into the full
- * symmetric face operator Tinv_out (= inverse of the raw moment matrix). Uses
- * the hydro density-path preconditioning (diagonal-loading until well-
- * conditioned). Single source of truth for AGS/CBE face NV_T inversion. */
-AgsNvtInversion ags_invert_nvt_for_faces(const double sym6[6], double h, double Tinv_out[3][3]);
-#endif
 
 #ifdef DM_FUZZY
 void do_dm_fuzzy_initialization(void);

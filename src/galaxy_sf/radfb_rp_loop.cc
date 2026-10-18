@@ -214,16 +214,7 @@ void RadFBRPSpec::reset_per_iter_device_context(
 IterResult RadFBRPSpec::after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
                                     const AccumData& accum)
 {
-    if (ctx.iter_index == 0) {
-        ctx.scratch.wt_sum  = accum.wt_sum;
-        ctx.scratch.wt_area = accum.wt_area;
-        if (accum.wt_sum <= 0) {
-            return IterResult{IterStatus::Converged, ctx.h_search_current};
-        }
-        return IterResult{IterStatus::NeedsMore, ctx.h_search_current};
-    }
-    /* iter >= 1 — kicks applied; we're done. */
-    return IterResult{IterStatus::Converged, ctx.h_search_current};
+    return after_iter_body(ctx.iter_index, ctx.h_search_current, ctx.scratch, accum);
 }
 
 /* ============================================================================

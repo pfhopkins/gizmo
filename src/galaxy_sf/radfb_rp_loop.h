@@ -573,6 +573,23 @@ struct RadFBRPSpec {
      * iter-1's device kernel reads the staged value. */
     static IterResult after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
                                   const AccumData& accum);
+    /* after_iter_body -- the iteration decision for one source (contract at
+     * RadFBRPSpec::after_iter in radfb_rp_loop.cc). Host and device both run this one body. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_body(int iter, double h_search_current, IterScratch& scratch,
+                                      const AccumData& accum)
+    {
+        if (iter == 0) {
+            scratch.wt_sum  = accum.wt_sum;
+            scratch.wt_area = accum.wt_area;
+            if (accum.wt_sum <= 0) {
+                return IterResult{IterStatus::Converged, h_search_current};
+            }
+            return IterResult{IterStatus::NeedsMore, h_search_current};
+        }
+        /* iter >= 1 — kicks applied; we're done. */
+        return IterResult{IterStatus::Converged, h_search_current};
+    }
     static void       after_iter_global(const neighbor_loop_args& args,
                                          const struct NlrIterDriver<RadFBRPSpec>& drv);
 
