@@ -13,7 +13,8 @@
  *   0  consistent start: if u(T0,x0) disagrees with u_initial, T0 = u^-1(u_initial, x0).
  *   1  Newton polish: few iterations, floored species with no tendency to grow are pinned and
  *      dropped from the linear system (so is T at its floor with net cooling, or at its ceiling
- *      with net heating), fraction-to-the-boundary on T and the neutral budgets,
+ *      with net heating), a balance temperature landed on a rising slope of its row re-walked to a
+ *      stable root, fraction-to-the-boundary on T and the neutral budgets,
  *      backtracking on Deuflhard's natural monotonicity test. Fails fast on a singular or
  *      non-finite system, and on a budget stall (a neutral budget at round-off holding the step
  *      below tol, which only shrinks it further).
@@ -611,6 +612,8 @@ static double scaled_norm(const double *d, const double *cs, int n) {
    later step is smaller still. Two such steps in a row return NEWTON_STALL before the second is
    evaluated. (One alone is not enough: the budget can round to exactly zero, which lifts the bound and
    lets an answer on the boundary converge.) */
+static int balance_bracketed(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, struct Counters *c,
+                             int level, SolveVars *F_out, int alone);
 static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettings *set, int mask, int maxiter,
                   const struct PTC *ptc, struct Counters *c, SolveVars *F_out) {
     struct Eval e, et;
@@ -741,6 +744,21 @@ static int newton(SolveVars *sv, const Params *pr, const struct JacoSolverSettin
             accepted = 1;
         }
         if (!accepted) return NEWTON_LINESEARCH;
+        /* a balance temperature the step landed on a rising part of its row (between the two stable roots an opacity
+           switch makes) would draw Newton to the unstable root: walk it from its previous value to the first stable
+           root at the new state, as GIZMO re-solves the dust temperature at every iterate */
+        for (int l = 0; l < N_BALANCE; l++) {
+            const int k = balance.k[l];
+            if (!(mask & solve_bit(k)) || !(et.J[k][k] >= 0)) continue;
+            SolveVars x = trial;
+            x.data[k] = sv->data[k];
+            struct Eval ex;
+            if (balance_bracketed(&x, pr, set, c, l, NULL, 1) == 0 && !evaluate(&x, pr, &ex, c)) {
+                if (set->verbose >= 3) printf("      balance [%d] re-walked %.6g -> %.6g\n", k, trial.data[k], x.data[k]);
+                trial = x;
+                et = ex;
+            }
+        }
         *sv = trial;
         e = et;
     }

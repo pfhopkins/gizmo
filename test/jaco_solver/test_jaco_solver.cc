@@ -783,6 +783,21 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
          " x_Ne=9.3640810621942704e-05 x_O_tot=0.0005354647099930119 x_S=1.4456673654786863e-05"
          " x_Si=3.5539582709394029e-05 y=0.094444444444444442 z=0",
          1.0, 0.0},
+        /* m2e3 shakedown with JACO=starforge (T_min 1 K, u_min 0): dense gas at 1100 K whose dust sits just below the 680 K
+           opacity switch; the joint Newton step carried Td into the switch window, toward the unstable root between the two
+           stable ones, and every substep stalled there. A balance temperature landing on a rising slope is now re-walked */
+        {"wind shock 1131K switch", 108464885398.57845, 1131.1616833555195, 9.9999999999999995e-21, 9.9999999999999995e-21, 9.9999999999999995e-21,
+         0.014447657222099329,
+         " A_dust=5.3728087297453478e-17 Delta_t=4530787.467956543 Delta_x=341800702090824.62 G_0=1e-56 G_LW=1"
+         " ISRF=1 N_H=7.5077032347226654e+24 N_H_cool=7.5077032347226654e+24 Td=512.72119408830963"
+         " X=0.71550000000000002 Z_d=1 f_d=1 f_metal=0 f_neb=0 grad_v=2.6631721366683153e-10"
+         " grad_v_tf=2.2722684062181055e-10 kappa_thick=22.974924749886764 n_Htot=2117544949.9935331"
+         " pdv_work=1.3299669150422515e-10 rho=4.9834791510868938e-15 u_initial=108464885398.57845"
+         " x_C_tot=0.00029466573491730724 x_Ca=2.4004192872117401e-06 x_Fe=3.4441449535789159e-05"
+         " x_H_2_initial=0.014447657222099329 x_Mg=4.4083391567668295e-05 x_N=7.3974243785564537e-05"
+         " x_Ne=9.3640810621942704e-05 x_O_tot=0.0005354647099930119 x_S=1.4456673654786863e-05"
+         " x_Si=3.5539582709394029e-05 y=0.094444444444444442 z=0",
+         1.0, 0.0},
 #endif
 #ifdef JACO_MODEL_STARFORGE_LEDGER_NOCHEMHEAT
         {"first-core 2357K", 224846258325.71915, 2356.729456984202, 9.9999999999999995e-21, 9.9999999999999995e-21, 9.9999999999999995e-21,
