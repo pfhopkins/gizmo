@@ -236,7 +236,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                                 if(sink_check_boundedness(j,vrel,vesc,r,sink_radius) != 1) {allow_sink_merger = 0;} // stricter criterion
 #endif
                                 if(r >= max_rmerge) {allow_sink_merger = 0;} // beyond max radius (default sink)
-                                if(P[j].Mass > max_mmerge) {allow_sink_merger = 0;} // beyond max mass (default few cells)
+                                if(!(P[j].Mass <= max_mmerge)) {allow_sink_merger = 0;} // beyond max mass (default few cells); negated so a non-finite ceiling fails closed
                                 if(allow_sink_merger == 1) /* ok only if meet all the criteria above are we allowed to consider a BH-BH merger */
 #endif
                                 {
