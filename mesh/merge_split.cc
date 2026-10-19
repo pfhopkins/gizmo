@@ -348,6 +348,11 @@ void merge_and_split_particles(void)
                 {
                     target_for_merger = -1;
                     threshold_val = MAX_REAL_NUMBER;
+                    /* The one-way search returns the full contents of every node overlapping the search
+                       sphere, not the particles inside it (no sphere test for SEARCHBOTHWAYS==0). The
+                       merge target and the ambient average must be taken inside the kernel the search
+                       was built with, so each candidate is tested here. (cf. kokkos 50f785c1) */
+                    double h2_src = P[i].KernelRadius * P[i].KernelRadius;
 #if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
                     /* Characterize the ambient medium around a spawned cell, so retirement is judged
                        against the bulk flow rather than whichever single neighbor is picked as target.
@@ -360,6 +365,7 @@ void merge_and_split_particles(void)
                         int n_amb; for(n_amb=0; n_amb<numngb_inbox; n_amb++)
                         {
                             int j_amb = Ngblist[n_amb]; if((j_amb<0) || (j_amb==i)) {continue;}
+                            {Vec3<double> dp_amb = P[i].Pos - P[j_amb].Pos; nearest_xyz(dp_amb,-1); if(dp_amb.norm_sq() >= h2_src) {continue;}}
                             if((P[j_amb].Type!=0) || (P[j_amb].Mass<=0)) {continue;}
                             if(P[j_amb].ID==All.SpawnedWindCellID) {continue;} /* ambient = non-spawned gas only */
                             double w = P[j_amb].Mass; int k; for(k=0;k<3;k++) {v_ambient[k] += w * P[j_amb].Vel[k];}
@@ -380,7 +386,9 @@ void merge_and_split_particles(void)
 #endif
                     for(n=0; n<numngb_inbox; n++) /* loop over neighbors */
                     {
-                        j = Ngblist[n]; double m_eff = P[j].Mass; int do_allow_merger = 0; // boolean flag to check
+                        j = Ngblist[n]; if(j < 0) {continue;}
+                        {Vec3<double> dp_c = P[i].Pos - P[j].Pos; nearest_xyz(dp_c,-1); if(dp_c.norm_sq() >= h2_src) {continue;}}
+                        double m_eff = P[j].Mass; int do_allow_merger = 0; // boolean flag to check
                         if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {do_allow_merger = 1;}
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
                         if(P[i].Type==4 && P[j].Type==4) {m_eff=evaluate_starstar_merger_for_starcluster_particle_pair(i,j); if(m_eff<=0) {do_allow_merger=0;} else {do_allow_merger=1;}}
