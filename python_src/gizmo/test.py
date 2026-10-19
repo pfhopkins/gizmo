@@ -11,6 +11,7 @@ import socket
 socket.setdefaulttimeout(300)
 import fcntl
 import re
+import shlex
 import warnings
 from shutil import move, rmtree, copyfile
 from glob import glob
@@ -147,8 +148,8 @@ def default_mpi_ranks(max_ranks=None):
 # would silently point at a different file if anything ever built from another directory, and
 # two jobs locking different files is no lock at all -- a failure that shows up as a corrupted
 # build rather than as an error.
-_BUILD_LOCK = path.join(path.dirname(path.dirname(path.dirname(path.abspath(__file__)))),
-                        ".gizmo_build.lock")
+_REPO = path.dirname(path.dirname(path.dirname(path.abspath(__file__))))
+_BUILD_LOCK = path.join(_REPO, ".gizmo_build.lock")
 _KOKKOS_SYSTYPES = ("MacBookCellar_Kokkos", "Vista")
 
 
@@ -232,6 +233,28 @@ def _build_gizmo_locked(test_name: str, num_openmp_threads: int, extra_config_fl
         raise FileNotFoundError("Did not successfully build GIZMO")
     move("GIZMO", f"test/{test_name}/GIZMO")
     system(f"chmod +x test/{test_name}/GIZMO")
+
+
+def link_test_driver(source: str, exe: str):
+    """Compile a test driver and link it against the objects of the build that just finished, in place of
+    core/main.o. Call it from build_gizmo_for_test's post_build, so another build cannot replace the objects
+    in between. The driver is compiled without -ffast-math so its isfinite() checks work."""
+    makedirs(path.dirname(exe), exist_ok=True)
+    dry = subprocess.run(["make", "-n", "-B", "GIZMO"], capture_output=True, text=True, cwd=_REPO).stdout.splitlines()
+    compile_main = [l for l in dry if " -c core/main.cc" in l]
+    link = [l for l in dry if "-o GIZMO" in l]
+    assert compile_main and link, "could not read the compile/link commands from make -n"
+    obj = path.splitext(exe)[0] + ".o"
+    cc = [t for t in shlex.split(compile_main[-1]) if t != "-ffast-math"]
+    cc[cc.index("core/main.cc")] = source
+    cc[cc.index("core/main.o")] = obj
+    cc.insert(1, "-I" + _REPO)
+    ln = shlex.split(link[-1])
+    ln[ln.index("core/main.o")] = obj
+    ln[ln.index("GIZMO")] = exe
+    for cmd in (cc, ln):
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=_REPO)
+        assert r.returncode == 0, "driver build failed:\n%s\n%s" % (" ".join(cmd), r.stderr[-4000:])
 
 
 def download_test_files(test_name: str, exact_files=None):
