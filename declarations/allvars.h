@@ -335,7 +335,7 @@ extern MyDouble GeoFactorTable[GEOFACTOR_TABLE_LENGTH];
 extern int NTopnodes, NTopleaves;
 
 /* variables for input/output , usually only used on process 0 */
-extern char ParameterFile[100];    /*!< file name of parameterfile used for starting the simulation */
+extern char ParameterFile[256];    /*!< file name of parameterfile used for starting the simulation */
 extern FILE
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
 *FdTimebin,    /*!< file handle for timebin.txt log-file. */
