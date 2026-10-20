@@ -400,10 +400,27 @@ def mpi_launch_command(num_mpi_ranks: int, num_openmp_threads: int = 0) -> list:
         return shlex.split(launcher.format(ranks=num_mpi_ranks, threads=threads))
     if environ.get("SLURM_JOB_ID"):
         return ["srun", "-n", str(num_mpi_ranks), "--cpu-bind=none"]
-    cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus", "--oversubscribe"]
-    if num_openmp_threads > 0:
-        cmd += ["--bind-to", "none"]
+    cmd = ["mpirun", "-np", str(num_mpi_ranks)]
+    if mpirun_is_open_mpi():  # placement flags other mpiruns (Intel MPI, MPICH) reject
+        cmd += ["--use-hwthread-cpus", "--oversubscribe"]
+        if num_openmp_threads > 0:
+            cmd += ["--bind-to", "none"]
     return cmd
+
+
+_MPIRUN_IS_OPEN_MPI = None
+
+
+def mpirun_is_open_mpi() -> bool:
+    """Whether the mpirun on PATH is Open MPI. Asked once per pytest process."""
+    global _MPIRUN_IS_OPEN_MPI
+    if _MPIRUN_IS_OPEN_MPI is None:
+        try:
+            version = subprocess.run(["mpirun", "--version"], capture_output=True, text=True, timeout=30)
+            _MPIRUN_IS_OPEN_MPI = "open mpi" in (version.stdout + version.stderr).lower()
+        except (OSError, subprocess.TimeoutExpired):
+            _MPIRUN_IS_OPEN_MPI = False
+    return _MPIRUN_IS_OPEN_MPI
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None,
              param_overrides: dict | None = None, restart_flag: int = 0):
