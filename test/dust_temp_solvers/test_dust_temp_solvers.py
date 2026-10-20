@@ -17,14 +17,13 @@ No simulation is run; the build is the only slow part.
 """
 
 import os
-import shlex
 import subprocess
 from os.path import abspath, dirname, join
 
 import numpy as np
 import pytest
 
-from gizmo.test import build_gizmo_for_test, get_cooling_tables
+from gizmo.test import build_gizmo_for_test, get_cooling_tables, link_test_driver
 
 TEST_NAME = "dust_temp_solvers"
 TEST_DIR = dirname(abspath(__file__))
@@ -40,24 +39,7 @@ TOL_ENTRY = 1e-4     # B: spread of the answers for one cell over the entry dust
 
 
 def _link_driver():
-    """Compile and link the driver against the objects of the build that just finished. Runs under the build
-    lock (post_build), so the objects cannot be replaced by another test's build in between."""
-    os.makedirs(BUILD_DIR, exist_ok=True)
-    dry = subprocess.run(["make", "-n", "-B", "GIZMO"], capture_output=True, text=True, cwd=REPO).stdout.splitlines()
-    compile_main = [l for l in dry if " -c core/main.cc" in l]
-    link = [l for l in dry if "-o GIZMO" in l]
-    assert compile_main and link, "could not read the compile/link commands from make -n"
-    obj = join(BUILD_DIR, "dust_solver_driver.o")
-    cc = [t for t in shlex.split(compile_main[-1]) if t != "-ffast-math"]  # the driver's isfinite() must work
-    cc[cc.index("core/main.cc")] = join(TEST_DIR, "dust_solver_driver.cc")
-    cc[cc.index("core/main.o")] = obj
-    cc.insert(1, "-I" + REPO)
-    ln = shlex.split(link[-1])
-    ln[ln.index("core/main.o")] = obj
-    ln[ln.index("GIZMO")] = DRIVER
-    for cmd in (cc, ln):
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=REPO)
-        assert r.returncode == 0, "driver build failed:\n%s\n%s" % (" ".join(cmd), r.stderr[-4000:])
+    link_test_driver(join(TEST_DIR, "dust_solver_driver.cc"), DRIVER)
 
 
 def _run_driver():
