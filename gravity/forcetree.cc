@@ -1989,7 +1989,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     Vec3<double> dv;
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    double gasmass;
+    double gasmass = 0;
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
     Vec3<double> jerk = {};

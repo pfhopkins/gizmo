@@ -11,13 +11,12 @@ import numpy as np
 import pytest
 
 sys.path.insert(0, dirname(abspath(__file__)))
-sys.path.insert(0, join(dirname(abspath(__file__)), "..", "rt_source_luminosity"))
-from gizmo.test import build_gizmo_for_test
+from gizmo.test import build_gizmo_for_test, link_test_driver
 from make_treecol_nongas_ics import make_ics
-from test_rt_source_luminosity import REPO, link_driver
 
 TEST_NAME = "treecol_nongas"
 TEST_DIR = dirname(abspath(__file__))
+REPO = abspath(join(TEST_DIR, "..", ".."))
 
 
 def columns(with_star):
@@ -36,7 +35,7 @@ def test_treecol_nongas():
     cwd = os.getcwd()
     os.chdir(REPO)
     try:
-        build_gizmo_for_test(TEST_NAME, post_build=lambda: link_driver(TEST_DIR, "treecol_nongas_driver.cc", "treecol_nongas_driver"))
+        build_gizmo_for_test(TEST_NAME, post_build=lambda: link_test_driver(join(TEST_DIR, "treecol_nongas_driver.cc"), join(TEST_DIR, "output", "treecol_nongas_driver")))
     finally:
         os.chdir(cwd)
     without, with_star = columns(False), columns(True)

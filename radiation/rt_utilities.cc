@@ -55,18 +55,10 @@
 /***********************************************************************************************************/
 int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k]=0;}} // bands below only set what applies to this source
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion; use pp[i].Mass (valid for all types) not cell[i].Mass (only valid for gas)
     int active_check = 0; // default to inactive //
-    /* CRITICAL (2026-07-04): zero the output vector at entry. Callers pass an
-     * UNINITIALIZED stack array (e.g. rt_source_injection_initial_operations_preloop),
-     * and the gas branch only does lum[k] += Rad_Je[k] (rt_get_lum_gas is a no-op
-     * without RT_FREEFREE) -> stack garbage flowed straight into CellP.Rad_Je for
-     * every gas cell each step. Whether the garbage was benign zeros (net-5 builds)
-     * or NaN bit-patterns (net-17 multifreq builds -> instant step-1 Riemann crash)
-     * depended purely on stack-layout luck. */
-    {int k0; for(k0=0;k0<N_RT_FREQ_BINS;k0++) {lum[k0]=0;}}
-    
 #if defined(GALSF)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
@@ -1936,16 +1928,16 @@ double chimes_ion_luminosity(double stellar_age, double stellar_mass) // age in 
 
 int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    {int j; for(j=0;j<CHIMES_LOCAL_UV_NBINS;j++) {chimes_lum_G0[j]=0; chimes_lum_ion[j]=0;}} // callers use these for any active source, not only the stars set below
     int value_to_return = 0;
     value_to_return = rt_get_source_luminosity(i, mode, lum, pp, cell); // call routine as normal for all bands, before adding chimes-specific details
     if( ((pp[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((pp[i].Type == 2)||(pp[i].Type==3)))) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) )
     {
-        int age_bin, j; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=pp[i].Mass*UNIT_MASS_IN_SOLAR;
+        int age_bin; double age_Myr=1000.*evaluate_stellar_age_Gyr(i), log_age_Myr=log10(age_Myr), stellar_mass=pp[i].Mass*UNIT_MASS_IN_SOLAR;
         if(log_age_Myr < CHIMES_LOCAL_UV_AGE_LOW) {age_bin = 0;} else if (log_age_Myr < CHIMES_LOCAL_UV_AGE_MID) {age_bin = (int) floor(((log_age_Myr - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW) + 1);} else {
             age_bin = (int) floor((((log_age_Myr - CHIMES_LOCAL_UV_AGE_MID) / CHIMES_LOCAL_UV_DELTA_AGE_HI) + ((CHIMES_LOCAL_UV_AGE_MID - CHIMES_LOCAL_UV_AGE_LOW) / CHIMES_LOCAL_UV_DELTA_AGE_LOW)) + 1);
             if (age_bin > CHIMES_LOCAL_UV_NBINS - 1) {age_bin = CHIMES_LOCAL_UV_NBINS - 1;}}
-    
-        for(j=0;j<CHIMES_LOCAL_UV_NBINS;j++) {chimes_lum_G0[j]=0; chimes_lum_ion[j]=0;}
+
         chimes_lum_G0[age_bin] = chimes_G0_luminosity(age_Myr,stellar_mass) * All.Chimes_f_esc_G0;
         chimes_lum_ion[age_bin] = chimes_ion_luminosity(age_Myr,stellar_mass) * All.Chimes_f_esc_ion;
     }
