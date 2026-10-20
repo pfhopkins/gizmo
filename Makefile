@@ -823,6 +823,7 @@ ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
 OBJS    += galaxy_sf/ketju_coupling.o
 KETJU_INCL = -Iketju-integrator/include
 KETJU_LIBS = -Lketju-integrator/lib -lketju-integrator -lstdc++
+KETJU_LIB_DEP = ketju-integrator/lib/libketju-integrator.a
 else
 KETJU_INCL =
 KETJU_LIBS =
@@ -878,10 +879,10 @@ FFLAGS = $(FOPTIONS) -Icooling/chemcool
 
 # if we have Fortran objects (e.g. CHEMCOOL, EOS_HELMHOLTZ), link with FC; otherwise use CXX
 ifneq ($(FOBJS),)
-$(EXEC): $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) | $(STELLA_TABLES_DEP)
+$(EXEC): $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) | $(STELLA_TABLES_DEP) $(KETJU_LIB_DEP)
 	$(FC) $(OPTIMIZE) $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) $(LIBS) -o $(EXEC)
 else
-$(EXEC): $(OBJS) $(CHEMCXX_OBJS) | $(STELLA_TABLES_DEP)
+$(EXEC): $(OBJS) $(CHEMCXX_OBJS) | $(STELLA_TABLES_DEP) $(KETJU_LIB_DEP)
 	$(CXX) $(OPTIMIZE) $(OBJS) $(CHEMCXX_OBJS) $(LIBS) -o $(EXEC)
 endif
 
@@ -894,6 +895,12 @@ $(CHEMCXX_OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 
 $(FOBJS): %.o: %.F
 	$(FC) $(FOPTIONS) -I. -Icooling/chemcool -c $< -o $@
+
+# KETJU integrator library (ketju-integrator/lib is not tracked): built and installed in place on first link
+ketju-integrator/lib/libketju-integrator.a:
+	cmake -S ketju-integrator -B ketju-integrator/build -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(CURDIR)/ketju-integrator
+	cmake --build ketju-integrator/build -j 8
+	cmake --install ketju-integrator/build
 
 .PHONY: stella_tables
 stella_tables:
