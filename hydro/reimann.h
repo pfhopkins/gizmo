@@ -1174,7 +1174,9 @@ void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_ou
 #ifdef DIVBCLEANING_DEDNER
     /* use the solution for the modified Bx, given the action of the phi-field; 
         however this must be slope-limited to ensure the 'corrected' Bx remains stable */
-#if !defined(MHD_CONSTRAINED_GRADIENT) || defined(COOLING) || defined(GALSF)
+#if !defined(MHD_CONSTRAINED_GRADIENT) && !defined(MHD_MODIFIED_GRADIENT)
+    /* (never under the constrained- or modified-gradient methods: both minimize the face sum of (1/2)(B_L+B_R).A,
+        so the face-normal field must be that same arithmetic mean; the wavespeed-weighted mean would re-introduce divergence) */
     /* this is the formulation from E. Gaburov assuming -two- wavespeeds (cL and cR); this down-weights the correction term
      under some circumstances, which appears to increase stability */
     double cL = Riemann_out->cfast_L; // may want to try with correction for approach speed; this helps to stabilize things in the cL=cR case
