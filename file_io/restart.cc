@@ -217,6 +217,21 @@ void restart(int modus)
 #endif
           new_MaxPart = All.MaxPart;
 
+          /* The run's capacity ceiling was fixed when its initial conditions were read and travels in the
+             restart file.  Raising PartAllocFactor past it breaks that, so say so here where the cause is
+             obvious rather than at the first domain boundary.  A restart onto more memory does not move the
+             ceiling: a run that genuinely needs a larger one starts fresh. */
+          if(All.MaxPart > All.MaxPartExpandable)
+            {
+              if(ThisTask == 0)
+                {
+                  printf("PartAllocFactor was raised so far that %d particle slots would exceed this run's ceiling of %d, which was fixed when it started. "
+                         "Restart with the original value, or start a fresh run at the larger one.\n", All.MaxPart, All.MaxPartExpandable);
+                  fflush(stdout);
+                }
+              endrun(23);
+            }
+
 		  save_PartAllocFactor = -1;
 		}
 
