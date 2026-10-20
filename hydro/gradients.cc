@@ -102,6 +102,15 @@ struct kernel_GasGrad
     Vec3<double> dp; double r,wk_i, wk_j, dwk_i, dwk_j,h_i;
 };
 
+/* weight of neighbour j in i's least-squares gradient estimator (the gradient is the sum of -weight * dp * (f_j - f_i),
+   then multiplied by NV_T); sph-like weights only in the rare ill-conditioned fallback */
+static inline double gradient_pair_weight(const struct kernel_GasGrad *kernel, int sph_gradients_flag_i, double mass_j)
+{
+    double wk_for_grad = kernel->wk_i;
+    if(sph_gradients_flag_i && kernel->r > 0) {wk_for_grad = -kernel->dwk_i/kernel->r * mass_j;}
+    return wk_for_grad;
+}
+
 struct GasGraddata_in
 {
     Vec3<MyDouble> Pos;
@@ -111,9 +120,6 @@ struct GasGraddata_in
     MyDouble ConditionNumber;
     SymmetricTensor2<MyDouble> NV_T;
     MyFloat BGrad[3][3];
-#ifdef MHD_CONSTRAINED_GRADIENT_FAC_MEDDEV
-    Vec3<MyFloat> PhiGrad;
-#endif
 #endif
     int NodeList[NODELISTLENGTH];
 #ifdef SPHAV_CD10_VISCOSITY_SWITCH
@@ -256,9 +262,6 @@ static inline void particle2in_GasGrad(struct GasGraddata_in *in, int i, int gra
     {
         for(k=0;k<3;k++) {in->BGrad[j][k] = CellP[i].Gradients.B[j][k];}
     }
-#ifdef MHD_CONSTRAINED_GRADIENT_MIDPOINT
-    in->PhiGrad = CellP[i].Gradients.Phi;
-#endif
     if(gradient_iteration > 0)
     {
         in->GQuant.B = CellP[i].BPred * (CellP[i].Density / P[i].Mass);
@@ -1436,15 +1439,14 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
     double h2_i = kernel.h_i*kernel.h_i;
     kernel_hinv(kernel.h_i, &hinv, &hinv3, &hinv4);
     int sph_gradients_flag_i = 0;
-    int sph_gradients_flag_j = 0;
     if(local.Mass < 0) {sph_gradients_flag_i=1; local.Mass*=-1;}
     double V_i;
     V_i = local.Mass / local.GQuant.Density;
 
     int kernel_mode_i = -1; // only need to calculate wk, by default
     if(sph_gradients_flag_i) kernel_mode_i = 0; // for sph, only need dwk
-#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
-    kernel_mode_i = 0; // for some circumstances, we require both wk and dwk //
+#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES) || defined(MHD_CONSTRAINED_GRADIENT)
+    kernel_mode_i = 0; // for some circumstances, we require both wk and dwk (the constrained-gradient face reads dwk in its ill-conditioned fallback) //
 #endif
 
 
@@ -1521,17 +1523,10 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
 #if defined(MHD_CONSTRAINED_GRADIENT) || defined(KERNEL_CRK_FACES)
                 if(kernel.r < h_j)
                 {
-                    /* ok, we need the j-particle weights, but first check what kind of gradient we are calculating */
-                    sph_gradients_flag_j = SHOULD_I_USE_SPH_GRADIENTS(CellP[j].ConditionNumber);
-                    int kernel_mode_j;
-#if defined(HYDRO_SPH) || defined(KERNEL_CRK_FACES)
-                    kernel_mode_j = 0; // for some circumstances, we require both wk and dwk //
-#else
-                    if(sph_gradients_flag_j) {kernel_mode_j=0;} else {kernel_mode_j=-1;}
-#endif
+                    /* the j-side kernel only builds the face, which reads the derivative in its ill-conditioned fallback and CRK branches */
                     kernel_hinv(h_j, &hinv_j, &hinv3_j, &hinv4_j);
                     u = kernel.r * hinv_j;
-                    kernel_main(u, hinv3_j, hinv4_j, &kernel.wk_j, &kernel.dwk_j, kernel_mode_j);
+                    kernel_main(u, hinv3_j, hinv4_j, &kernel.wk_j, &kernel.dwk_j, 0);
                 }
                 else
 #endif
@@ -1606,30 +1601,21 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                 }
 
 #if defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
-                /* this will fit the gradient at the -midpoint- as opposed to at the j locations, i.e.
-                 attempting to minimize the quantity phi_L - phi_R, at face locations */
+                /* Fit the phi gradient of i to phi extrapolated from j to the face mid-point, i.e. minimise
+                   phi_L - phi_R at the faces rather than at the neighbour positions. With dp = x_i - x_j and
+                   dphi = phi_j - phi_i, a linear field has (1/2) dp.grad(phi)_j = -dphi/2, so the j-side
+                   extrapolation is kept between 0 and -dphi/2 (no overshoot past the mid-point, no wrong sign);
+                   the target then spans half the separation and takes twice the ordinary pair weight, so a
+                   linear field is reproduced exactly after the second gradient iteration. The previous form
+                   multiplied by dwk_i, which this pass never evaluated for well-conditioned cells, so the phi
+                   gradient was identically zero in every constrained-gradient build. (cf. kokkos c35ccf8b) */
                 double dphi = Get_Gas_PhiField(j) - local.GQuant.Phi;
-                if(gradient_iteration == 0)
-                {
-                    MINMAX_CHECK(dphi,out.Minima.Phi,out.Maxima.Phi);
-                }
-
-                // dphi = phi_j - phi_i :: if phi_i = 0, dphi = phi_j //
+                if(gradient_iteration == 0) {MINMAX_CHECK(dphi,out.Minima.Phi,out.Maxima.Phi);}
                 double dphi_grad_j = 0.5 * dot(kernel.dp, CellP[j].Gradients.Phi);
-                double dphi_grad_i = -0.5 * dot(kernel.dp, local.PhiGrad);
-                if(dphi > 0)
-                {
-                    if(dphi_grad_j>0) {dphi_grad_j=0;} else {if(dphi_grad_j<0.5*dphi) dphi_grad_j=0.5*dphi;}
-                    if(dphi_grad_i<0) {dphi_grad_i=0;} else {if(dphi_grad_i>0.5*dphi) dphi_grad_i=0.5*dphi;}
-                } else {
-                    if(dphi_grad_j<0) {dphi_grad_j=0;} else {if(dphi_grad_j>0.5*dphi) dphi_grad_j=0.5*dphi;}
-                    if(dphi_grad_i>0) {dphi_grad_i=0;} else {if(dphi_grad_i<0.5*dphi) dphi_grad_i=0.5*dphi;}
-                }
-                double dphi_j = dphi + dphi_grad_j;
-                double dphi_i = dphi - dphi_grad_i;
-                if(sph_gradients_flag_i) {dphi_j *= -2*kernel.wk_i;} else {dphi_j *= kernel.dwk_i/kernel.r * P[j].Mass;}
-                if(sph_gradients_flag_j) {dphi_i *= -2*kernel.wk_j;} else {dphi_i *= kernel.dwk_j/kernel.r * local.Mass;}
-                if(gradient_iteration == 0) {for(k=0;k<3;k++) {out.Gradients[k].Phi += dphi_j * kernel.dp[k];}} else {out_iter.PhiGrad += dphi_j * kernel.dp;}
+                double dphi_grad_j_linear = -0.5 * dphi;
+                dphi_grad_j = DMIN(DMAX(dphi_grad_j, DMIN(0., dphi_grad_j_linear)), DMAX(0., dphi_grad_j_linear));
+                double dphi_mid_weighted = -2. * gradient_pair_weight(&kernel, sph_gradients_flag_i, P[j].Mass) * (dphi + dphi_grad_j);
+                if(gradient_iteration == 0) {for(k=0;k<3;k++) {out.Gradients[k].Phi += dphi_mid_weighted * kernel.dp[k];}} else {out_iter.PhiGrad += dphi_mid_weighted * kernel.dp;}
 #endif
 #endif // MHD_CONSTRAINED_GRADIENT
 
@@ -1792,7 +1778,7 @@ int GasGrad_evaluate(int target, int mode, int *exportflag, int *exportnodecount
                     /* first do particle i */
                     if(kernel.r < kernel.h_i)
                     {
-                        if(sph_gradients_flag_i && kernel.r > 0) {kernel.wk_i = -kernel.dwk_i/kernel.r * P[j].Mass;} // sph-like weights for gradients //
+                        kernel.wk_i = gradient_pair_weight(&kernel, sph_gradients_flag_i, P[j].Mass); // sph-like weights for gradients in the ill-conditioned fallback //
                         for(k=0;k<3;k++)
                         {
                             double wk_xyz_i = -kernel.wk_i * kernel.dp[k]; /* sign is important here! */
