@@ -4424,8 +4424,9 @@ void force_tree_full_audit(int audit_moments, const char *tag)
 /*! Tier-2 geometric audit (TREE_INTEGRITY_AUDITS builds only; fatal). The audit above checks only
  *  time-independent quantities (topology, mass, counts), which stale positions cannot disturb. This
  *  one checks the geometry the walks rely on, with every local particle predicted to All.Ti_Current:
- *  (a) each particle lies inside every ancestor's box, center +- len/2 -- the neighbour search
- *      discards a node by exactly that box (rkern + len/2), so a member outside it can be missed;
+ *  (a) each particle lies inside every ancestor's box, center +- len/2, with no tolerance -- the
+ *      neighbour search discards a node by exactly that box (rkern + len/2), so a member outside it
+ *      can be missed, and the report names the worst offender and the bound that failed to cover it;
  *  (b) each gas particle's kernel is covered by its parent's hmax (searches both ways read hmax);
  *  (c) each node below the top level has s at the centre of mass of its members.
  *  Valid only when every local node is current: right after a build or a moments refresh. Rank-local
@@ -4438,7 +4439,7 @@ void force_tree_geometry_audit(const char *tag)
     memset(msum, 0, (size_t) Numnodestree * 4 * sizeof(double));
     long long nbad[3] = {0, 0, 0};
     double worst[4] = {0, 0, 0, 0}; /* box excess in len, box excess in h, kernel/hmax, COM offset in len */
-    int i, k, no;
+    int i, k, no, worst_i = -1, worst_f = -1;
     for(i = 0; i < NumPart; i++)
     {
         int f = Father[i];
@@ -4455,7 +4456,7 @@ void force_tree_geometry_audit(const char *tag)
             double dx = x[0] - Nodes[f].center[0], dy = x[1] - Nodes[f].center[1], dz = x[2] - Nodes[f].center[2];
             double d = DMAX(NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1), DMAX(NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1), NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1)));
             double excess = d - 0.5 * Nodes[f].len;
-            if(excess > 1.e-9 * Nodes[f].len) {nbad[0]++; worst[0] = DMAX(worst[0], excess / Nodes[f].len); if(hscale > 0) {worst[1] = DMAX(worst[1], excess / hscale);}}
+            if(excess > 0) {nbad[0]++; if(excess / Nodes[f].len > worst[0]) {worst[0] = excess / Nodes[f].len; worst_i = i; worst_f = f;} if(hscale > 0) {worst[1] = DMAX(worst[1], excess / hscale);}}
             double *ms = msum + 4 * (size_t) (f - All.MaxPart);
             ms[0] += P[i].Mass; for(k = 0; k < 3; k++) {ms[1 + k] += P[i].Mass * x[k];}
         }
@@ -4473,6 +4474,13 @@ void force_tree_geometry_audit(const char *tag)
     {
         printf("TREE-GEOMETRY-AUDIT task %d [%s] t=%.10g: %lld particle-ancestor pairs outside the node box (worst %.3g len, %.3g h); %lld gas kernels above parent hmax (worst x%.4g); %lld node COMs off (worst %.3g len)\n",
                ThisTask, tag, All.Time, nbad[0], worst[0], worst[1], nbad[1], worst[2], nbad[2], worst[3]);
+        if(worst_i >= 0)
+        {
+            double vm = 0; for(k = 0; k < 3; k++) {vm = DMAX(vm, fabs(P[worst_i].Vel[k]));}
+            printf("TREE-GEOMETRY-AUDIT task %d: worst box excess: particle %d ID=%llu Type=%d TimeBin=%d lagging %lld ticks, max|v_k|=%g; node %d (N_part=%d, top-level=%d) vmax=%g len=%g\n",
+                   ThisTask, worst_i, (unsigned long long) P[worst_i].ID, P[worst_i].Type, P[worst_i].TimeBin, (long long) (All.Ti_Current - P[worst_i].Ti_current), vm,
+                   worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0, Extnodes[worst_f].vmax, Nodes[worst_f].len);
+        }
         fflush(stdout);
         endrun(91573);
     }
