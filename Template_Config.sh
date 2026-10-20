@@ -423,7 +423,7 @@
 ## ----------------------------------------------------------------------------------------------------
 # ----------- Transport subcycling: allow RT and/or CR transport to take multiple smaller steps per hydro step  [HIGHLY EXPERIMENTAL]
 ## ----------------------------------------------------------------------------------------------------
-#TRANSPORT_SUBCYCLE=100                 # max number of transport (RT+CR) subcycles per hydro step. decouples the transport CFL from the hydro timestep.
+#TRANSPORT_SUBCYCLE=100                 # max number of radiation-transport subcycles per hydro step. decouples the RT CFL from the hydro timestep (cosmic rays are not subcycled: they keep their own explicit timestep; not compatible with RT_EVOLVE_INTENSITIES).
 #TRANSPORT_SUBCYCLE_COOLING             # also subcycle cooling within the transport subcycle loop (otherwise cooling runs once per hydro step
 ####################################################################################################
 

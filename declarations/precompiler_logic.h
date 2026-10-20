@@ -1063,6 +1063,13 @@
 #undef MHD_CONSTRAINED_GRADIENT_MIDPOINT
 #endif
 
+#if defined(TRANSPORT_SUBCYCLE) && !defined(RADTRANSFER)
+#error "TRANSPORT_SUBCYCLE subcycles radiation transport and needs a RADTRANSFER build (cosmic rays alone are not subcycled)"
+#endif
+#if defined(TRANSPORT_SUBCYCLE) && defined(RT_EVOLVE_INTENSITIES)
+#error "TRANSPORT_SUBCYCLE does not carry the radiation intensities (Dt_Rad_Intensity is not in the subcycle flux pass); run intensities without subcycling"
+#endif
+
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)
 #define TURB_DIFFUSION /* top-level switch to calculate properties needed for scalar turbulent diffusion/mixing: must enable with any specific version */
 #if defined(TURB_DIFF_VELOCITY) && !defined(VISCOSITY)

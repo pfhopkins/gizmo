@@ -558,9 +558,7 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #endif
     
 #ifdef COSMIC_RAY_FLUID
-#ifndef TRANSPORT_SUBCYCLE
-    CosmicRay_Update_DriftKick(i,dt_entr,0,P,CellP);
-#endif
+    CosmicRay_Update_DriftKick(i,dt_entr,0,P,CellP); /* once per hydro step, also under TRANSPORT_SUBCYCLE (the sub-steps do not recompute CR fluxes) */
 #endif
 
 #ifdef RADTRANSFER

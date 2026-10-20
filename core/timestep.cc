@@ -752,15 +752,9 @@ integertime get_timestep(int p,		/*!< particle index */
                         double dt_courant_CR = 0.4 * (L_particle*All.cf_atime) / cr_m1_speed;
                         dt_conduction = dt_courant_CR; // per TK, strictly enforce this timestep //
                     }
-                    if(dt_conduction < dt) {
-#ifdef TRANSPORT_SUBCYCLE
-                        CellP[p].Transport_Dt_Subcycle = DMIN(CellP[p].Transport_Dt_Subcycle, dt_conduction);
-                        double dt_max_hydro = TRANSPORT_SUBCYCLE * dt_conduction;
-                        if(dt_max_hydro < dt) {dt = dt_max_hydro;}
-#else
-                        dt = dt_conduction; // normal explicit time-step
-#endif
-                    }
+                    /* Not relaxed under TRANSPORT_SUBCYCLE: the transport sub-steps carry radiation only, so
+                       cosmic rays are advanced once per hydro step and must keep their own explicit limit. */
+                    if(dt_conduction < dt) {dt = dt_conduction;}
 #endif
                 }
             }
