@@ -265,6 +265,7 @@ struct global_data_all_processes
 #ifdef MHD_MODIFIED_GRADIENT
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */
+  double MG_RelativeFieldInvMeanB2; /*!< MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT: 1 / mean |B|^2 over the cells of the last accepted MG solve, normalising its face weights (held until the next accepted solve; 0 before the first, or if the field was zero everywhere) */
 #endif
 #ifdef TWO_TEMPERATURE_PLASMA
   double TwoTemp_InitialTeOverTgas; /*!< initial T_e / T_gas ratio used at the LTE seed in eos.cc on the first call (when u_e_cell == 0). Default 1.0 (LTE start). Set to !=1 in the param file to start in a 2-T initial state, e.g. for the 2T_relaxation regression test (electrons cold, ions hot, watch the analytic Spitzer relaxation toward T_eq). */

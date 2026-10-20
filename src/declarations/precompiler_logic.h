@@ -851,6 +851,9 @@
 #endif
 
 
+#if defined(MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT) && !defined(MHD_MODIFIED_GRADIENT)
+#error "MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT selects the face weighting of the MHD_MODIFIED_GRADIENT solve: enable MHD_MODIFIED_GRADIENT as well"
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC

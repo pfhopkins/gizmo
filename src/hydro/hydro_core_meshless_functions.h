@@ -206,13 +206,15 @@ void hydro_core_meshless_compute_pair(
     {
         /* MG correction (Tu et al. 2026). The coefficients c are defined only up to a constant on each
          * connected piece of the gas, so only c_j - c_i is physical: it shifts the face average of B along
-         * the face area vector A by (c_j - c_i)(r^2/8) A. Both face states take that shift, which leaves
-         * their jump as reconstructed. On a step without the solve the c of the last solve is reused, capped by
-         * the cells' envelopes, exactly as the constrained-gradient correction of that step assumes. */
+         * the face area vector A by (c_j - c_i) kappa A (kappa = mg_face_shift_factor). Both face states take that
+         * shift, which leaves their jump as reconstructed. On a step without the solve the c of the last solve is
+         * reused with the current kappa, capped by the cells' envelopes, exactly as the constrained-gradient
+         * correction of that step assumes. */
+        double mg_kappa = mg_face_shift_factor(r2, local.BPred.norm_sq(), BPred_j.norm_sq(), All.MG_RelativeFieldInvMeanB2);
         double mg_dc = mg_face_coefficient_difference(local.MG_cgcoeff, local.MG_piece_token, local.MG_envelope,
                                                       CellP[j].MG_cgcoeff, CellP[j].MG_piece_token, CellP[j].MG_envelope,
-                                                      r2, Face_Area_Vec.norm_sq(), All.Flag_SkipMGSolve);
-        Vec3<double> mg_dB_face = (0.125 * r2 * mg_dc) * Face_Area_Vec;
+                                                      mg_kappa, Face_Area_Vec.norm_sq(), All.Flag_SkipMGSolve);
+        Vec3<double> mg_dB_face = (mg_kappa * mg_dc) * Face_Area_Vec;
         Riemann_vec.R.B += mg_dB_face; Riemann_vec.L.B += mg_dB_face;
         if(!All.Flag_SkipMGSolve) {
             /* The solve zeroes the divergence of the face AVERAGE of the normal field. The 1D Riemann problem

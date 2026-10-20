@@ -26,9 +26,11 @@
  *  Implements Tu, Wang, Gao & Tang (2026), arXiv:2603.04077. The discrete divergence
  *  of cell i is the face sum b_i = sum_j (1/2)(B'_i + B'_j).A_ij, with B' the linear
  *  extrapolation of the (once-limited) cell gradients to the face midpoint. Shifting
- *  both face states by (c_j - c_i)(r^2/8) A_ij (along the face area vector only)
- *  changes that face's term by (c_j - c_i)(r^2/8)|A_ij|^2, so b = 0 on every cell is
- *  the graph-Laplacian system  R c = b  over all gas cells.
+ *  both face states by (c_j - c_i) kappa_ij A_ij (along the face area vector only)
+ *  changes that face's term by (c_j - c_i) kappa_ij |A_ij|^2, so b = 0 on every cell is
+ *  the graph-Laplacian system  R c = b  over all gas cells. kappa = r^2/8 (Tu et al.), or
+ *  under MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT the normalised pair field scale
+ *  squared plus a floor (mg_face_shift_factor in core/proto.h, the one definition every consumer uses).
  *
  *  This module:
  *    1) assembles R and b over every local gas cell (the graph must be complete: on
@@ -283,6 +285,17 @@ struct mg_face_kernel { Vec3<double> dp; double r, wk_i, wk_j, dwk_i, dwk_j, h_i
    values into MG_Rows, the kept flag of every CSR entry into `kept` (for the labelling, which walks
    the host CSR), and each row's cross-task faces into MG_Remote*. Returns 0 if device memory
    could not be had on some task (collective). */
+/* The face-weight normalisation this solve's coefficients use (MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT): 1 / mean |B|^2 over the
+   cells of the solve (0 if the field is zero everywhere). It becomes All.MG_RelativeFieldInvMeanB2 only when the solve is accepted
+   (mg_commit_solution), together with the coefficients it belongs to; a rejected solve leaves the previous pair in place. */
+static double MG_CandidateInvMeanB2 = 0;
+
+/* whether a cell is a row of the MG graph: the coefficients, the field normalisation and the commit all use this one test */
+GIZMO_GPU_FUNCTION static inline bool mg_cell_in_graph(const struct particle_data &p, const struct gas_cell_data &c)
+{
+    return (p.Type == 0) && (p.Mass > 0) && (c.Density > 0) && (p.KernelRadius > 0);
+}
+
 static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &kept)
 {
     const int n_rows = csr->n_rows, n_gas = N_gas;
@@ -325,6 +338,24 @@ static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &
         if(i < n_gas) {d_rdiag[i] = 0; d_rhs[i] = 0; d_s[i] = 0;}
     });
 
+#ifdef MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT
+    {   /* this solve's mean |B|^2, over the same cells the coefficients below keep as rows */
+        double sum_Bsq = 0, n_cells = 0;
+        Kokkos::parallel_reduce("mg_field_mean_sum", Kokkos::RangePolicy<>(0, n_rows), KOKKOS_LAMBDA(const int aa, double &s) {
+            const int i = rows[aa];
+            if(mg_cell_in_graph(Pd[i], Cd[i])) {s += Cd[i].Bfield().norm_sq();}
+        }, sum_Bsq);
+        Kokkos::parallel_reduce("mg_field_mean_count", Kokkos::RangePolicy<>(0, n_rows), KOKKOS_LAMBDA(const int aa, double &c) {
+            const int i = rows[aa];
+            if(mg_cell_in_graph(Pd[i], Cd[i])) {c += 1;}
+        }, n_cells);
+        double totals[2] = {sum_Bsq, n_cells};
+        MPI_Allreduce(MPI_IN_PLACE, totals, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        MG_CandidateInvMeanB2 = (totals[0] > 0) ? totals[1] / totals[0] : 0.0;
+    }
+#endif
+    const double inv_mean_Bsq = MG_CandidateInvMeanB2;
+
     /* Coefficients: one thread per row, faces in CSR order (each face appears in both of its rows'
        CSR; a row accumulates only itself, so rows are independent). Each face is evaluated in one
        orientation, with the cell of the smaller global row as "i", whichever of its two rows (on
@@ -334,7 +365,7 @@ static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &
        could be kept in one row and dropped in the other, leaving the matrix unsymmetric. */
     Kokkos::parallel_for("mg_coefficients", Kokkos::RangePolicy<>(0, n_rows), KOKKOS_LAMBDA(const int aa) {
         const int i = rows[aa];
-        if(Pd[i].Type != 0 || Pd[i].Mass <= 0 || Cd[i].Density <= 0 || Pd[i].KernelRadius <= 0) {
+        if(!mg_cell_in_graph(Pd[i], Cd[i])) {
             for(int64_t nn = off[aa]; nn < off[aa+1]; nn++) {d_cand_kept[nn] = 0;}
             return;
         }
@@ -345,7 +376,7 @@ static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &
         for(int64_t nn = off[aa]; nn < off[aa+1]; nn++) {
             d_cand_kept[nn] = 0;
             int j = ngb[nn];
-            if(Pd[j].Type != 0 || Pd[j].Mass <= 0 || Cd[j].Density <= 0 || Pd[j].KernelRadius <= 0) continue;
+            if(!mg_cell_in_graph(Pd[j], Cd[j])) continue;
             const long long row_j = (j < num_local) ? first_local + j : d_task_off[d_home_rank[j - num_local]] + d_home_index[j - num_local];
             const int a = (row_i < row_j) ? i : j, b = (row_i < row_j) ? j : i;   /* the face's orientation */
             const double sign = (a == i) ? 1.0 : -1.0;                             /* this row's side of it */
@@ -368,7 +399,7 @@ static int mg_build_graph(const struct mg_csr *csr, std::vector<unsigned char> &
                                     Face_Area_Vec, Face_Area_Norm, Vi_inv_corr_unused, Vj_inv_corr_unused);
             if(Face_Area_Norm <= 0) continue;
 
-            double Qnorm2 = 0.125 * r2 * Face_Area_Vec.norm_sq() + 1.0e-60;
+            double Qnorm2 = mg_face_shift_factor(r2, Cd[a].Bfield().norm_sq(), Cd[b].Bfield().norm_sq(), inv_mean_Bsq) * Face_Area_Vec.norm_sq() + 1.0e-60;
             rdiag += Qnorm2;
 
             /* face states as hydro reconstructs them at the face midpoint (x_ab - x_a = -dp/2, x_ab - x_b = +dp/2) */
@@ -1135,11 +1166,15 @@ static int mg_solve_backend(double *x)
 static void mg_commit_solution(const double *x, const double *envelope)
 {
     for(int i = 0; i < N_gas; i++) {
-        bool in_graph = (P[i].Type == 0) && (P[i].Mass > 0) && (CellP[i].Density > 0) && (P[i].KernelRadius > 0);
+        bool in_graph = mg_cell_in_graph(P[i], CellP[i]);
         CellP[i].MG_cgcoeff = in_graph ? x[i] : 0;
         CellP[i].MG_piece_token = in_graph ? (MG_Rows[i].piece + 1) : 0;
         CellP[i].MG_envelope = in_graph ? envelope[i] : 0;
     }
+#ifdef MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT
+    All.MG_RelativeFieldInvMeanB2 = MG_CandidateInvMeanB2;   /* the normalisation these coefficients were solved with */
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+#endif
 }
 
 void mg_gradient_correction_calc(void)
