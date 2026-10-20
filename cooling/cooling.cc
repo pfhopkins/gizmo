@@ -182,6 +182,9 @@ void cooling_parent_routine(void)
         int i = cool_indices[j];
         CellP[i] = compact_Cell[j];
         P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
+#if defined(RADTRANSFER)
+        force_raise_motion_bound(i); /* the emission back-reaction scaled this cell's velocity, outside the sync-point kick */
+#endif
     }
 
     myfree(compact_Cell);

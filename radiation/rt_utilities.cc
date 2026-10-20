@@ -1058,6 +1058,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     {int k_dir; for(k_dir=0;k_dir<3;k_dir++) {if(mode==0) {pp[i].dp[k_dir]+=pp[i].Vel[k_dir]*(mom_fac-1.)*cell[i].Mass; pp[i].Vel[k_dir]*=mom_fac;} else {cell[i].VelPred[k_dir] *= mom_fac;}}}
 #endif
 
+    /* mode 0 applies the radiation-pressure kick to pp[i].Vel above, outside the sync-point kick. Marked,
+       not raised: the callers are the threaded kick loops, and the chain walk is not thread-safe. */
+    if(mode == 0 && pp == P) {force_note_motion_change(i);}
     if(mode > 0) {rt_eddington_update_calculation(i, cell);} /* update the eddington tensor (if we calculate it) as well */
 
 #ifdef RT_ISRF_BACKGROUND
