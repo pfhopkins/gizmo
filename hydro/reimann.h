@@ -1277,8 +1277,11 @@ void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_ou
     if(within_sampled_vacuum == 1)
     {
         
-        /* ok, we are supersonically separating, the only safe thing to do is to assign no fluxes of conserved quantities */
-        P_M = MIN_REAL_NUMBER; S_M = v_frame = Riemann_out->B_normal_corrected = 0; // vanishing //
+        /* ok, we are supersonically separating, the only safe thing to do is to assign no fluxes of conserved quantities.
+           The face-normal magnetic field is NOT zeroed: across a vacuum the density vanishes but B_n is continuous into the
+           neighbour, so the face keeps the normal field computed above. Zeroing it booked B_n=0 on the face, an implicit
+           divergence that does not exist, feeding the Powell/Dedner sources and the moving-face induction term. */
+        P_M = MIN_REAL_NUMBER; S_M = v_frame = 0; // vanishing //
 #ifdef DIVBCLEANING_DEDNER
         Riemann_out->phi_normal_mean = Riemann_out->phi_normal_db = 0; // vanishing
 #endif
