@@ -98,6 +98,29 @@ void reconstruct_timebins(void)
 
 
 
+/*! The clamped volume-change exponent divV*dt a drift of dt_drift applies to particle i: kernel radii
+ *  scale by exp(result/NUMDIMS), densities by exp(-result). Also used to predict a lagging particle's
+ *  kernel without drifting it. */
+double drift_divv_factor(int i, double dt_drift)
+{
+    double divv_fac = P[i].Particle_DivVel * dt_drift;
+    /* How far the predicted kernel radius may move in one drift. The two directions are not the
+       same risk: growing follows the flow and simply predicts a larger search, while shrinking
+       can empty a kernel of the neighbours the next density solve needs. So growth carries the
+       looser bound, which also tracks the divergence it approximates more closely than the old
+       symmetric 0.3 did -- that tight cap lowers the guess's order and fails the density guess
+       more often. Adaptive softening has used the loose bound on both sides for the same reason. */
+    double divv_fac_max_grow   = 4.0;
+    double divv_fac_max_shrink = 1.5;
+#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
+    if(ags_density_isactive(i) && P[i].Type>0) {divv_fac_max_grow = 4; divv_fac_max_shrink = 4;} // can [should] allow larger changes when using adapting soft for all
+#endif
+    if(divv_fac > +divv_fac_max_grow)   divv_fac = +divv_fac_max_grow;
+    if(divv_fac < -divv_fac_max_shrink) divv_fac = -divv_fac_max_shrink;
+    return divv_fac;
+}
+
+
 void drift_particle(int i, integertime time1)
 {
     int j __attribute__((unused)); double dt_drift; integertime time0 = P[i].Ti_current;
@@ -145,21 +168,8 @@ void drift_particle(int i, integertime time1)
     }
 #endif
 
-    double divv_fac = P[i].Particle_DivVel * dt_drift;
-    /* How far the predicted kernel radius may move in one drift. The two directions are not the
-       same risk: growing follows the flow and simply predicts a larger search, while shrinking
-       can empty a kernel of the neighbours the next density solve needs. So growth carries the
-       looser bound, which also tracks the divergence it approximates more closely than the old
-       symmetric 0.3 did -- that tight cap lowers the guess's order and fails the density guess
-       more often. Adaptive softening has used the loose bound on both sides for the same reason. */
-    double divv_fac_max_grow   = 4.0;
-    double divv_fac_max_shrink = 1.5;
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if(ags_density_isactive(i) && P[i].Type>0) {divv_fac_max_grow = 4; divv_fac_max_shrink = 4;} // can [should] allow larger changes when using adapting soft for all
-#endif
-    if(divv_fac > +divv_fac_max_grow)   divv_fac = +divv_fac_max_grow;
-    if(divv_fac < -divv_fac_max_shrink) divv_fac = -divv_fac_max_shrink;
-    
+    double divv_fac = drift_divv_factor(i, dt_drift);
+
 #ifdef GRAIN_FLUID
     if((1 << P[i].Type) & (GRAIN_PTYPES))
     {
