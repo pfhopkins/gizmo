@@ -3479,6 +3479,7 @@ Newer versions of the code include a wide range of additional flags in the heade
     UnitVelocity_In_CGS = user-specified unit velocity in cgs (from parameterfile)
     UnitLength_In_CGS = user-specified unit length in cgs (from parameterfile)
     Internal_UnitB_In_Gauss = internal code B-units (not what is in the snapshot, but useful to check if desired setup is actually done, if MAGNETIC on) 
+    UnitMagneticField_In_Gauss = unit of the MagneticField dataset in Gauss, i.e. UnitMagneticField_in_gauss from the parameterfile (B[Gauss] = MagneticField * UnitMagneticField_In_Gauss; if MAGNETIC on)
     Gravitational_Constant_In_Code_Inits = gravity constant G in code units
     
     Minimum_Mass_For_Cell_Merge = minimum mass below which cells are merged
@@ -3569,9 +3570,9 @@ If the run uses an SPH hydro solver, it also includes:
 
 If the run includes magnetic fields:
 
-**MagneticField**: [N,3]-element array with B-field x,y,z components (units are Gauss and *physical*)
+**MagneticField**: [N,3]-element array with B-field x,y,z components (*physical*, in units of the parameterfile's `UnitMagneticField_in_gauss`, which is recorded in the snapshot header as `UnitMagneticField_In_Gauss`: multiply by it to get Gauss)
 
-**DivergenceOfMagneticField**: [N]-array, Div[B] (i.e. $\nabla\cdot{\bf B}$) at particle position (useful for testing div-cleaning). Units are Gauss/code length, and are *physical*. A common dimensionless measure of the divergence (which ideally would be zero) is $h\,|\nabla\cdot{\bf B}|/|{\bf B}|$, where $h=V_{i}/2$, $(V_{i}/\pi)^{1/2}$, $(3V_{i}/4\pi)^{1/3}$ in 1D, 2D, and 3D, respectively, and $V_{i}=m_{i}/\rho_{i}$ where $m_{i}$ and $\rho_{i}$ are the mass and density in *physical* units.
+**DivergenceOfMagneticField**: [N]-array, Div[B] (i.e. $\nabla\cdot{\bf B}$) at particle position (useful for testing div-cleaning). Units are those of **MagneticField** per code length, and are *physical*. A common dimensionless measure of the divergence (which ideally would be zero) is $h\,|\nabla\cdot{\bf B}|/|{\bf B}|$, where $h=V_{i}/2$, $(V_{i}/\pi)^{1/2}$, $(3V_{i}/4\pi)^{1/3}$ in 1D, 2D, and 3D, respectively, and $V_{i}=m_{i}/\rho_{i}$ where $m_{i}$ and $\rho_{i}$ are the mass and density in *physical* units.
 
 If the run includes explicit radiation-hydrodynamics:
 
