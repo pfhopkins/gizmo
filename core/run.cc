@@ -229,6 +229,14 @@ void run(void)
             else
             {
                 TreeOpsCount[TREEOPS_DEFER]++;
+                /* This path keeps the standing tree and skips force_update_tree, so nothing has
+                   raised the motion bounds for the particles kicked at the sync point just passed
+                   -- and the nodes are left behind to be drifted lazily by this step's walks, over
+                   an interval those particles have already crossed at their post-kick speeds. The
+                   raise has to happen here, before any of that, and while ActiveParticleList still
+                   names the particles that were kicked (make_list_of_active_particles below
+                   replaces it with this step's list). */
+                for(int i : ActiveParticleList) {force_raise_motion_bound(i);}
                 make_list_of_active_particles();
             }
         }
