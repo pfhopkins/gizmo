@@ -151,6 +151,7 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
+    force_motion_bounds_reset(1); /* every bound is freshly derived here, and the node numbering has changed */
     if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++; ForceAddElementToTree_CallsSinceBuild = 0; All.NumForcesSinceLastDomainDecomp = 0;} /* whole-tree builds only; subset builds are fof-internal. Both cadence counters measure tree age, so they reset HERE, not at decomposition (every decomposition is followed by a build anyway) */
 #ifdef TREE_INTEGRITY_AUDITS
     if(mp == NULL && npart == NumPart) {force_tree_full_audit(1, "build"); force_tree_geometry_audit("build");} /* whole-tree builds only: subset builds legitimately leave particles unreached */
@@ -1473,7 +1474,7 @@ void force_flag_localnodes(void)
  *  because every caller debits the child's mass from a co-located parent, so
  *  node total mass and COM are conserved. Type-conditioned moments (gasmass,
  *  stellar_lum, sink_*) are NOT updated here and go stale until the next
- *  refresh/rebuild, and hmax/vmax are bumped on the immediate parent only.
+ *  refresh/rebuild; hmax/vmax are raised over the whole ancestor chain.
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
@@ -1495,15 +1496,13 @@ void force_add_element_to_tree(int iparent, int ichild)
      * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
      * alone; the child inherits the same -1 and is skipped by the other consumers too. */
     if(Father[iparent] < 0) {return;}
-    /* update parent node properties [maximum softening, speed] for opening criteria.
-       The hmax bound must cover the CHILD's kernel: for a sink-spawn call the parent is the sink,
-       whose kernel radius is the wrong particle's -- it both misses a larger gas child and
-       pollutes the gas-hmax bound with sink kernels (the unsafe direction for neighbour
-       completeness is the miss). */
-    if(P[ichild].Type == 0) {Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[ichild].KernelRadius, All.MaxKernelRadius));}
-    double vmax = Extnodes[Father[iparent]].vmax;
-    int k; for(k=0; k<3; k++) {if(fabs(P[ichild].Vel[k]) > vmax) {vmax = fabs(P[ichild].Vel[k]);}}
-    Extnodes[Father[iparent]].vmax = vmax;
+    /* Raise the motion and kernel bounds the child needs over its whole ancestor chain: each of
+       those nodes prunes searches by its own bounds, so stopping at the immediate parent leaves the
+       child invisible to a query that opens from higher up. The bounds are the CHILD's: for a
+       sink-spawn call the parent is the sink, whose kernel radius is the wrong particle's -- that
+       both misses a larger gas child and pollutes the gas-hmax bound with sink kernels (the unsafe
+       direction for neighbour completeness is the miss). */
+    force_raise_motion_bound(ichild);
 }
 
 
@@ -3643,6 +3642,7 @@ void force_treefree(void)
 {
     if(tree_allocated_flag)
     {
+        force_motion_bounds_reset(0);
         myfree(Father);
         myfree(Nextnode);
         myfree(Extnodes_base);

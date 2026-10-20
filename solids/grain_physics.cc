@@ -330,6 +330,7 @@ int grain_backrx_evaluate(int target, int mode, int *exportflag, int *exportnode
                         #pragma omp atomic
                         P[j].dp[k] += dv * P[j].Mass; // track momentum change for tree node update
                     }
+                    force_note_motion_change(j);
                     
                     double taccel_min_prev = 0, taccel_min_new = 0;
                     #pragma omp atomic read
@@ -359,6 +360,7 @@ void grain_backrx(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds();
     //grain_backrx_final_operations_and_cleanup(); /* do final operations on results [nothing needed here] */
     CPU_Step[CPU_DRAGFORCE] += measure_time(); /* collect timings and reset clock for next timing */
 }

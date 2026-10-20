@@ -809,7 +809,7 @@ static inline void OUTPUTFUNCTION_NAME(struct OUTPUT_STRUCT_NAME *out, int i, in
 {
     int k,k2; k=0; k2=0;
 #if defined(DM_SIDM)
-    P[i].Vel += out->sidm_kick; P[i].dp += out->sidm_kick * P[i].Mass;
+    P[i].Vel += out->sidm_kick; P[i].dp += out->sidm_kick * P[i].Mass; force_note_motion_change(i);
     MIN_ADD(P[i].dtime_sidm, out->dtime_sidm, mode);
     P[i].NInteractions += out->si_count;
 #endif
@@ -937,6 +937,7 @@ void AGSForce_calc(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds(); /* scattered particles, on both sides of each interaction */
     /* do final operations on results: these are operations that can be done after the complete set of iterations */
 #ifdef CBE_INTEGRATOR
         for (int i : ActiveParticleList) {do_postgravity_cbe_calcs(i);} // do any final post-tree-walk calcs from the CBE integrator here //

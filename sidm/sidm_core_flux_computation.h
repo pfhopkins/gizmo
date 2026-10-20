@@ -32,6 +32,7 @@
                 #pragma omp atomic
                 P[j].dp[k] += dv_sidm * P[j].Mass;
             }
+            force_note_motion_change(j);
             out.si_count++;
             #pragma omp atomic
             P[j].NInteractions++;

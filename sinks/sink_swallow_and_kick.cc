@@ -483,6 +483,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic
                         P[j].dp[k] += Mass_j * Vel_j[k] - Mass_j_0*Vel_j_0[k]; // discrete momentum change
                     }
+                    force_note_motion_change(j);
 
                     if(P[j].Type==0) // gas variable, need to update the 'pred' and truemass and related variables as well
                     {
@@ -523,6 +524,7 @@ void sink_swallow_and_kick_loop(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds();
     /* collect results on any swallow operations in this pass. Allreduce (not Reduce): every rank
        needs the global count -- it raises the moments flag, and it gates the cleanup rearrange in
        run.cc, both of which must be rank-uniform decisions. */
@@ -1214,9 +1216,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
         /* Splice the spawned cell into the live tree. This maintains list connectivity and total node
            mass (the mass was debited from the co-located sink), but NOT the type-conditioned moments
-           (gasmass, stellar_lum, ...) nor ancestor hmax beyond the immediate parent -- those are healed
-           by the next moments refresh / force_update_hmax pass. Runs on ordinary steps (the spawn gate
-           in run.cc), not only at decomposition. */
+           (gasmass, stellar_lum, ...) -- those are healed by the next moments refresh. It raises the
+           motion bounds above the cell, so this call must follow its final Pos/Vel. Runs on ordinary
+           steps (the spawn gate in run.cc), not only at decomposition. */
         force_add_element_to_tree(i0, j);
     }
     if(*unspawned_mass_ptr < 0) {*unspawned_mass_ptr=0;}

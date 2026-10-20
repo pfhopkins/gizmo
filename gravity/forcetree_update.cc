@@ -363,6 +363,110 @@ void force_finish_kick_nodes(void)
 
 
 
+/* ---- Motion bounds raised outside the sync-point kick ----
+ * force_drift_node grows a node's box by 2*vmax*dt, so a box holds its members only while none of
+ * them moves faster than vmax. The sync-point kick raises vmax for the particles it kicks and for
+ * nothing else, so a velocity changed anywhere else -- a neighbour loop's kick, accretion, a
+ * merger, a newly inserted element -- must raise the bound along that particle's whole ancestor
+ * chain before any of those nodes drifts past the change. Raising early is safe: it only
+ * over-covers the part of a node's pending drift that precedes the change.
+ * Top-level nodes are held by every rank, and the kick's own exchange cannot carry these raises
+ * (it runs before the loops that make them), so the top-level nodes reached are listed and reach
+ * the other ranks at the next force_flush_motion_bounds. A tree build voids the list. */
+static std::vector<unsigned char> MotionChangeMark;  /* per particle: velocity changed in a threaded loop, chain not raised yet */
+static int MotionChangeMarkAny = 0;
+static std::vector<int> MotionTopStamp;              /* per node: == MotionTopGen while listed below */
+static std::vector<int> MotionTopPending;            /* top-level nodes raised since the last flush */
+static int MotionTopGen = 1;
+static int MotionBoundTreeLive = 0;
+
+/*! Called at every tree build (live=1) and teardown (live=0): a build sets every bound afresh and
+ *  renumbers the nodes, so anything pending from the old tree is void. */
+void force_motion_bounds_reset(int tree_live)
+{
+    MotionBoundTreeLive = tree_live;
+    MotionChangeMark.assign(tree_live ? All.MaxPart : 0, 0); MotionChangeMarkAny = 0;
+    MotionTopStamp.assign(tree_live ? Numnodestree : 0, 0); MotionTopPending.clear(); MotionTopGen = 1;
+}
+
+/*! Raise vmax (and, for a gas member, hmax) from node no up to the root, stopping at a node that
+ *  already holds both: every ancestor of such a node holds them too. */
+static void force_raise_chain_bounds(int no, MyFloat vmax, MyFloat hmax, int list_toplevel)
+{
+    for(; no >= All.MaxPart && no < All.MaxPart + Numnodestree; no = Nodes[no].u.d.father)
+    {
+        if(Extnodes[no].vmax >= vmax && Extnodes[no].hmax >= hmax) {break;}
+        if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
+        if(Extnodes[no].hmax < hmax) {Extnodes[no].hmax = hmax;}
+        if(list_toplevel && (Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)))
+        {
+            int t = no - All.MaxPart;
+            if(t < (int) MotionTopStamp.size() && MotionTopStamp[t] != MotionTopGen) {MotionTopStamp[t] = MotionTopGen; MotionTopPending.push_back(no);}
+        }
+    }
+}
+
+/*! Particle i's velocity (or, for gas, its kernel) changed outside the sync-point kick: raise the
+ *  bounds above it now. Serial callers only; from inside a threaded loop use
+ *  force_note_motion_change, which defers the chain walk. */
+void force_raise_motion_bound(int i)
+{
+    if(!MotionBoundTreeLive || i < 0 || i >= All.MaxPart) {return;}
+    MyFloat vmax = 0; int k; for(k = 0; k < 3; k++) {vmax = DMAX(vmax, fabs(P[i].Vel[k]));}
+    MyFloat hmax = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0;
+    force_raise_chain_bounds(Father[i], vmax, hmax, 1); /* a particle inserted since the build has no node above it; the range check in there covers that */
+}
+
+/*! Thread-safe form: marks i, whose chain is then raised by force_raise_noted_motion_bounds. The
+ *  loop that marked it must call that before anything reorders the particle arrays. */
+void force_note_motion_change(int i)
+{
+    if(i < 0 || i >= (int) MotionChangeMark.size()) {return;}
+    __atomic_store_n(&MotionChangeMark[i], (unsigned char) 1, __ATOMIC_RELAXED);
+    __atomic_store_n(&MotionChangeMarkAny, 1, __ATOMIC_RELAXED);
+}
+
+void force_raise_noted_motion_bounds(void)
+{
+    if(!MotionChangeMarkAny) {return;}
+    int i, n = IMIN(NumPart, (int) MotionChangeMark.size());
+    for(i = 0; i < n; i++) {if(MotionChangeMark[i]) {MotionChangeMark[i] = 0; force_raise_motion_bound(i);}}
+    MotionChangeMarkAny = 0;
+    if((int) MotionChangeMark.size() > n) {memset(MotionChangeMark.data() + n, 0, MotionChangeMark.size() - n);} /* slots vacated by a rearrange */
+}
+
+/*! Collective, entered by every rank unconditionally: every top-level node any rank raised since
+ *  the last flush has its (vmax, hmax) applied as a maximum up every rank's copy of the chain.
+ *  Nothing else in the node moves -- no momentum, no kick flag, no timestamp. Runs before the
+ *  step's first node drift (see run()); a raise made later in a step reaches this rank's own tree
+ *  at once and the other ranks' copies at the next flush. */
+void force_flush_motion_bounds(void)
+{
+    force_raise_noted_motion_bounds();
+    struct MotionBoundRecord {int no; MyFloat vmax, hmax;};
+    std::vector<MotionBoundRecord> loc;
+    loc.reserve(MotionTopPending.size());
+    for(int no : MotionTopPending) {loc.push_back({no, Extnodes[no].vmax, Extnodes[no].hmax});}
+    MotionTopPending.clear(); MotionTopGen++;
+    if(MotionTopGen == 0) {MotionTopGen = 1; MotionTopStamp.assign(MotionTopStamp.size(), 0);}
+    int nbytes = (int) (loc.size() * sizeof(MotionBoundRecord)), nbytes_tot = 0, ta;
+    std::vector<int> counts(NTask), offsets(NTask);
+    MPI_Allgather(&nbytes, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(ta = 0; ta < NTask; ta++) {offsets[ta] = nbytes_tot; nbytes_tot += counts[ta];}
+    if(nbytes_tot == 0) {return;}
+    std::vector<MotionBoundRecord> all(nbytes_tot / sizeof(MotionBoundRecord));
+    MPI_Allgatherv(loc.data(), nbytes, MPI_BYTE, all.data(), counts.data(), offsets.data(), MPI_BYTE, MPI_COMM_WORLD);
+    for(const MotionBoundRecord &r : all)
+    {
+        /* a record names a top-level node, which every rank holds at the same index; validated
+           rather than trusted, as the kick exchange does */
+        if(r.no < All.MaxPart || r.no >= All.MaxPart + Numnodestree) {continue;}
+        if(!(Nodes[r.no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))) {continue;}
+        force_raise_chain_bounds(r.no, r.vmax, r.hmax, 0);
+    }
+}
+
+
 void force_drift_node(int no, integertime time1)
 {
   int j;

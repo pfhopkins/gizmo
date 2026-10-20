@@ -54,6 +54,11 @@ void force_dynamic_update_node(int no, int mode, MyFloat *minbound, MyFloat *max
 void force_update_hmax(void);
 void force_update_hmax_of_node(int no, int mode);
 void force_finish_kick_nodes(void);
+void force_motion_bounds_reset(int tree_live);
+void force_raise_motion_bound(int i);       /* serial: a velocity changed outside the kick */
+void force_note_motion_change(int i);       /* thread-safe: same, raised by force_raise_noted_motion_bounds */
+void force_raise_noted_motion_bounds(void);
+void force_flush_motion_bounds(void);       /* collective */
 int force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount, int *nextfree);
 void force_exchange_pseudodata(void);
 void force_insert_pseudo_particles(void);

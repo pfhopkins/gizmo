@@ -146,6 +146,13 @@ void run(void)
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
         }
+        /* Bounds raised outside the kick during the previous step reach the other ranks' copies of
+           the top-level tree here, ahead of every walk and node drift this step makes. Collective
+           and never gated on a rank-local condition; a rank with nothing of its own to send still
+           enters it. A raise made later in a step reaches this rank's own tree at once and the
+           other ranks' copies only here, one step later. */
+        force_flush_motion_bounds();
+
         find_timesteps();		/* find-timesteps */
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
