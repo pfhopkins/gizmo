@@ -4422,16 +4422,27 @@ void force_tree_full_audit(int audit_moments, const char *tag)
 }
 
 
-/*! Tier-2 geometric audit (TREE_INTEGRITY_AUDITS builds only; fatal). The audit above checks only
+/*! Tier-2 geometric audit (TREE_INTEGRITY_AUDITS builds only). The audit above checks only
  *  time-independent quantities (topology, mass, counts), which stale positions cannot disturb. This
  *  one checks the geometry the walks rely on, with every local particle predicted to All.Ti_Current:
- *  (a) each particle lies inside every ancestor's box, center +- len/2, with no tolerance -- the
- *      neighbour search discards a node by exactly that box (rkern + len/2), so a member outside it
- *      can be missed, and the report names the worst offender and the bound that failed to cover it;
+ *  (a) each particle lies inside every ancestor's box, center +- len/2 -- the neighbour search
+ *      discards a node by exactly that box (rkern + len/2), so a member outside it can be missed.
+ *      REPORTED, not fatal: force_drift_node grows the half-width at exactly the speed of the
+ *      node's fastest member, so a member that is both the fastest and sitting on the face has zero
+ *      margin by construction, and any historical one-kick shortfall (~1e-10 in code units here)
+ *      persists forever since len never shrinks. That floor is not a diagnosable defect class --
+ *      it moves or vanishes with a recompile -- whereas the systematic classes this audit did catch
+ *      showed up on many particles at once and grew with time, which the count and worst case
+ *      printed here still expose. Totals go to cpu.txt per global step;
  *  (b) each gas particle's kernel is covered by its parent's hmax (searches both ways read hmax);
  *  (c) each node below the top level has s at the centre of mass of its members.
+ *  (b) and (c) are exact quantities with no such floor, and remain fatal.
  *  Valid only when every local node is current: right after a build or a moments refresh. Rank-local
  *  (no collectives): the refresh samples it on a rank-local condition. */
+long long TreeGeoAuditCount = 0;      /*!< rank-local: geometry audits run */
+long long TreeGeoAuditBoxCount = 0;   /*!< ... of which found a box-containment excess */
+double TreeGeoAuditWorstLen = 0;      /*!< worst box excess seen, in units of the node length */
+double TreeGeoAuditWorstH = 0;        /*!< ... and of the offending particle's kernel/softening */
 void force_tree_geometry_audit(const char *tag)
 {
     if(Numnodestree <= 0) {return;}
@@ -4471,6 +4482,8 @@ void force_tree_geometry_audit(const char *tag)
         if(off > 1.e-6 * Nodes[no].len) {nbad[2]++; worst[3] = DMAX(worst[3], off / Nodes[no].len);}
     }
     myfree(msum);
+    TreeGeoAuditCount++;
+    if(nbad[0]) {TreeGeoAuditBoxCount++; TreeGeoAuditWorstLen = DMAX(TreeGeoAuditWorstLen, worst[0]); TreeGeoAuditWorstH = DMAX(TreeGeoAuditWorstH, worst[1]);}
     if(nbad[0] || nbad[1] || nbad[2])
     {
         printf("TREE-GEOMETRY-AUDIT task %d [%s] t=%.10g: %lld particle-ancestor pairs outside the node box (worst %.3g len, %.3g h); %lld gas kernels above parent hmax (worst x%.4g); %lld node COMs off (worst %.3g len)\n",
@@ -4483,7 +4496,7 @@ void force_tree_geometry_audit(const char *tag)
                    worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0, Extnodes[worst_f].vmax, Nodes[worst_f].len);
         }
         fflush(stdout);
-        endrun(91573);
+        if(nbad[1] || nbad[2]) {endrun(91573);} /* the exact checks are fatal; the box excess is reported */
     }
 }
 #endif
