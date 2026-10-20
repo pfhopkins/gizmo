@@ -47,10 +47,12 @@ void force_update_tree(void)
     /* Phase 1: drift all ancestor nodes to Ti_Current (serial — force_drift_node has complex read-modify-write) */
     for (int i : ActiveParticleList)
     {
+        MyFloat vmax_i = 0; for(int k = 0; k < 3; k++) {vmax_i = DMAX(vmax_i, fabs(P[i].Vel[k]));}
         int no = Father[i];
         while(no >= 0)
         {
             if(Nodes[no].Ti_current == All.Ti_Current) {break;} /* already drifted; ancestors above will be too since they were drifted first */
+            if(Extnodes[no].vmax < vmax_i) {Extnodes[no].vmax = vmax_i;} /* before the drift; phase 2 repeats it harmlessly */
             force_drift_node(no, All.Ti_Current);
             no = Nodes[no].u.d.father;
         }
@@ -99,6 +101,11 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
   while(no >= 0)
     {
 #ifndef OPENMP_TREE_UPDATE
+      /* Raise before the drift, not after it: the drift below grows len by 2*vmax*dt over the
+         interval this particle has just been drifted across at its post-kick speed, so a bound
+         raised afterwards leaves that one interval covered at the old speed -- and len never
+         shrinks, so the deficit it leaves behind is permanent. */
+      if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
       force_drift_node(no, All.Ti_Current);
 #endif
 
@@ -151,7 +158,6 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 #ifdef SINK_NODE_MOTION_TRACKED
         Extnodes[no].sink_dp += sink_dp;
 #endif
-      if(Extnodes[no].vmax < vmax) {Extnodes[no].vmax = vmax;}
       Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
       Extnodes[no].Ti_lastkicked = All.Ti_Current;
       if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL))
@@ -300,6 +306,7 @@ void force_finish_kick_nodes(void)
 
       while(no >= 0)
 	{
+	  if(Extnodes[no].vmax < domainVmax_all[i]) {Extnodes[no].vmax = domainVmax_all[i];} /* before the drift, as in force_kick_node */
 	  force_drift_node(no, All.Ti_Current);
 
 	  Extnodes[no].dp[0] += domainDp_all[3 * i + 0];
