@@ -10,6 +10,10 @@ The `gizmo` package includes the python code in `gizmo/python_src`. In addition 
 
 If you are not working in an environment that works with the default build environment, uncomment the build environment you normally use in `Makefile.systype`, e.g. `SYSTYPE=MacBookCellar` should work for a typical macbook environment with openmpi, hdf5, and gsl installed with homebrew.
 
+## Step 2b: if your machine does not launch MPI jobs with `mpirun` or `srun`
+
+The tests launch GIZMO with `srun` inside a SLURM allocation and with Open MPI's `mpirun` otherwise. On systems that require their own launcher, set `GIZMO_TEST_MPI_LAUNCHER` to the launcher command, with `{ranks}` and `{threads}` standing for the rank and thread counts of each run, e.g. `export GIZMO_TEST_MPI_LAUNCHER="ibrun -n {ranks}"`. The executable and its arguments are appended to it. Every test that starts GIZMO goes through this one setting.
+
 ## Step 3: run pytest
 
 Run `pytest` or `python -m pytest` from the gizmo source code directory. This will run all tests found in the subdirectories of `gizmo/test` and let you know which tests have passed or failed. Optionally, you can pass a pattern to pytest to the test subdirectories you want to run, e.g. `pytest test/my_test_name*`.

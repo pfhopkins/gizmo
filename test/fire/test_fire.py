@@ -17,7 +17,9 @@ from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
 from matplotlib import pyplot as plt
 import h5py
+import shlex
 from gizmo.test import (
+    mpi_launch_command,
     build_gizmo_for_test,
     clean_test_outputs,
     get_cooling_tables,
@@ -116,9 +118,8 @@ def run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags=
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     paramsfile = f"{test_name}.params"
-    system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus "
-           f"./GIZMO {paramsfile} 2 "
-           f"1>test_{test_name}.out 2>test_{test_name}.err")
+    launch = shlex.join(mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", paramsfile, "2"])
+    system(f"{launch} 1>test_{test_name}.out 2>test_{test_name}.err")
     chdir("../../")
 
 
