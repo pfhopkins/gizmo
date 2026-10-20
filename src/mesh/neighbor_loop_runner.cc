@@ -254,10 +254,19 @@ bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int defaul
     return (sum_active > 0) && (sum_active <= TS) && (max_active <= TM);
 }
 
+/* The fewest actives, summed over the ranks, a call needs before Mode D takes it: one device batch
+ * (GPU_MIN_SOURCES_FOR_WALK_OFFLOAD).  Below it the request-driven host walker is the faster path --
+ * measured on FIF, 2.4 against 9.3 ms per step at 1-3 actives per rank and 7.1 against 16.2 at 10-32 --
+ * and it holds none of Mode D's device storage or pinned staging.  Whether a larger call has a
+ * device-sized batch on some responder (its own actives plus what it receives) is decided from the
+ * call's export count, not here. */
+static constexpr int MODE_D_MIN_SUMMED_ACTIVES = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
+
 /* Built-in Mode-B thresholds by search mode, used where neither the parameterfile
  * nor the Spec sets one.
  *   One-way loops: Mode B up to 64 active globally (and 64 on any rank); above
- *   that an eligible loop uses Mode D, which needs no ghost import either.
+ *   that an eligible loop uses Mode D, which needs no ghost import either, once the
+ *   call has MODE_D_MIN_SUMMED_ACTIVES in total (Mode B below that, while Mode B is on).
  *   Symmetric loops: Mode B up to an average of 320 active per rank, with no rank
  *   above 3200.  Measured on Frontier, Mode A's import and list build stop paying
  *   for themselves below a few hundred active per rank.  The per-rank cap is a
@@ -289,15 +298,16 @@ void gizmo_nlr_report_dispatch_thresholds(void)
     symm_max = gizmo_nlr_modeb_threshold_max_for(nullptr, symm_max);
     gizmo_nlr_moded_thresholds(&d_sum, &d_max);
     printf("Neighbor loops: Mode B at or below summed/per-rank-max active %d/%d (one-way), %d/%d (symmetric); "
-           "eligible one-way loops use Mode D at or above %d/%d, Mode A otherwise\n",
-           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_max);
+           "eligible one-way loops use Mode D at or above %d/%d with at least %d summed (below that Mode B when it is on, "
+           "else the usual path), Mode A otherwise\n",
+           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_max, MODE_D_MIN_SUMMED_ACTIVES);
 }
 
 void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max)
 {
     const int p_sum = nlr_host_all_ptr()->NeighborLoopModeDThresholdSum;
     const int p_max = nlr_host_all_ptr()->NeighborLoopModeDThresholdMax;
-    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen. */
+    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the call reaches MODE_D_MIN_SUMMED_ACTIVES. */
     *threshold_sum = (p_sum == -1) ? 0 : p_sum;
     *threshold_max = (p_max == -1) ? 0 : p_max;
 }
@@ -2746,7 +2756,20 @@ static int nlr_spec_threshold_max(int fallback) {
  * be answered by the fused device walk, some rank has work, and both counts
  * meet the Mode-D lower bounds; otherwise Mode A.  Collective inputs, so every
  * rank answers alike.  Nothing here touches Mode D's state: a call answered by
- * A or B pays nothing for D. */
+ * A or B pays nothing for D.
+ *
+ * A call that meets the Mode-D bounds but has fewer than MODE_D_MIN_SUMMED_ACTIVES actives in total
+ * goes to Mode B (see that constant), unless Mode B is switched off. */
+/* Whether the parameter file leaves Mode B on for this loop: a threshold of 0 switches it off. */
+template <typename Spec>
+static bool nlr_mode_b_switched_on(void)
+{
+    int default_sum, default_max;
+    nlr_default_modeb_thresholds(Spec::search_mode, &default_sum, &default_max);
+    return gizmo_nlr_modeb_threshold_sum_for(nullptr, nlr_spec_threshold_sum<Spec>(default_sum)) > 0 &&
+           gizmo_nlr_modeb_threshold_max_for(nullptr, nlr_spec_threshold_max<Spec>(default_max)) > 0;
+}
+
 template <typename Spec>
 NlrMode nlr_select_mode(int sum_active, int max_active)
 {
@@ -2759,7 +2782,10 @@ NlrMode nlr_select_mode(int sum_active, int max_active)
         int TDS = 0, TDM = 0;
         gizmo_nlr_moded_thresholds(&TDS, &TDM);
         if(sum_active > 0 && sum_active >= TDS && max_active >= TDM) {
-            return NlrMode::D;
+            if(sum_active >= MODE_D_MIN_SUMMED_ACTIVES) {return NlrMode::D;}
+            /* Below the floor: Mode B, unless the parameter file has switched Mode B off, in
+             * which case the call keeps its usual path. */
+            if(nlr_mode_b_switched_on<Spec>()) {return NlrMode::B;}
         }
     }
     return NlrMode::A;
@@ -2933,22 +2959,321 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
  * Public entry: run_neighbor_loop<Spec>
  * ========================================================================== */
 
-/* The touched-set epoch a fused call opens belongs to that call and to nothing after it.
+/* ============================================================================
+ * Mode D call admission: what a device-resident call holds, and the one owner of it.
  *
- * Retirement rides a scope guard rather than a statement at the end of the work, because the
- * epoch is opened by the walk preparation -- before the collective vote that decides whether
- * Mode D is taken at all -- and the paths between that point and the end of the call include a
- * vote that routes elsewhere, an out-of-memory fallback to the host walker, and several early
- * returns.  A recorder left held would refuse every later epoch, which pins the fused walk to
- * its fallback for the rest of the run while looking exactly like the mechanism working.
+ * A Mode D call needs fixed storage for its whole pipeline -- the export decision,
+ * the envelopes it packs, the staging the transport sends from and receives into --
+ * and every piece is sized from quantities known before the call starts: the actives
+ * on this rank, the task count, the top-level leaves and the communication chunk.
+ * So it is all decided and allocated ONCE, before any work, and the call either has
+ * every piece or is not a Mode D call: nothing is allocated, grown or declined in the
+ * middle of an exchange, where one rank stopping would leave its peers waiting.
  *
- * The retirement is ordered after the owner's last consume, which is also what fences the
- * recording kernel: gx_touched_set_drift_and_mark waits for it, and the guard runs at scope
- * exit, after every pass has been consumed. */
-struct GxTouchedEpochGuard {
-    int held;
-    ~GxTouchedEpochGuard() {if(held) {gx_touched_set_retire(GX_TOUCHED_OWNER_FUSED_WALK);}}
+ * Allocating is the test.  Free-memory figures are consulted first only to refuse
+ * early what plainly cannot fit; they are advisory (other ranks on the node or the
+ * device can take memory in between), so success of the allocation itself decides.
+ * The device storage is held for one call (allocating it costs milliseconds); the
+ * page-locked host staging is one fixed ring held for the run, because pinning costs
+ * far too much to repeat per call (gx_mode_d_staging_acquire).
+ * ========================================================================== */
+
+/* Raw export records per block of the partition by peer: the partition keeps one row
+ * of NTask counts per block, so this fixes that table's size against the round's
+ * records.  A structural constant -- a call whose table does not fit is refused; the
+ * constant is never shrunk to fit one. */
+static constexpr long long MODE_D_EXPORT_RECORDS_PER_BLOCK = 4096;
+
+/* The share of the device's free memory a lease may take: the rest stays for what the call
+ * still allocates while it runs, so admission can never leave the call's own later
+ * allocations to fail in the middle of an exchange. */
+static constexpr double MODE_D_DEVICE_FREE_FRACTION = 0.8;
+
+/* One (peer, active, node) entry of the export decision: active `active` sends top-level
+ * node `node` to `peer`. */
+struct ModeDExportRecord { int peer; int active; int node; };
+
+/* The sizes a Mode D call's storage is built from.  Every product is checked in 64-bit
+ * arithmetic before it is used.
+ *
+ * Outbound storage is bounded by what this call can send in one round: no more than the
+ * round allows (E), and no more than its actives can ask for (each at most the worst-case
+ * envelopes of one active, whatever its search radius) -- the active set never grows within
+ * a call, so this bound holds for every iteration.  Inbound storage is one staging message
+ * per group whatever the incoming traffic, since received queries are answered message by
+ * message.  So a call with few actives holds storage in proportion to them, and a rank with
+ * none still answers any amount of incoming work. */
+struct ModeDWorkspacePlan {
+    long long envelopes_per_round;           /* E: query envelopes one round may carry, the chunk / (query + reply) */
+    long long worst_envelopes_per_active;    /* the most one active can need: a run per peer plus its node lists */
+    long long call_envelopes;                /* C = min(E, actives x worst): what this call can send in one round */
+    long long records_per_round;             /* (peer, active, node) records one round can hold */
+    long long partition_blocks;              /* blocks of the partition by peer, per round */
+    long long group_envelopes;               /* received queries one staging message can carry, and their replies too */
+    long long device_bytes;                  /* what the lease allocates on the device */
 };
+
+/* a * b, or -1 when either is negative or the product leaves 64 bits. */
+static long long mode_d_checked_product(long long a, long long b)
+{
+    if(a < 0 || b < 0) {return -1;}
+    if(a != 0 && b > LLONG_MAX / a) {return -1;}
+    return a * b;
+}
+/* a + b, or -1 when either is negative or the sum leaves 64 bits. */
+static long long mode_d_checked_sum(long long a, long long b)
+{
+    if(a < 0 || b < 0 || b > LLONG_MAX - a) {return -1;}
+    return a + b;
+}
+
+/* The most envelopes one active can need: it can open every remote top leaf, and each peer's
+ * leaves go out in node lists of NODELISTLENGTH -- so the sum over the other tasks of their top
+ * leaves, chunked.  Local top leaves send nothing, so on one task this is zero.  O(NTopleaves),
+ * paid only by a call that reaches Mode D's admission.  -1 when its O(NTask) tally cannot be had. */
+static long long mode_d_worst_envelopes_per_active(void)
+{
+    if(NTask <= 1 || NTopleaves <= 0) {return 0;}
+    std::vector<long long> leaves_of_task;
+    try {leaves_of_task.assign((size_t) NTask, 0);} catch(const std::bad_alloc &) {return -1;}
+    for(int i = 0; i < NTopleaves; i++) {
+        const int t = DomainTask[i];
+        if(t >= 0 && t < NTask && t != ThisTask) {leaves_of_task[(size_t) t]++;}
+    }
+    long long worst = 0;
+    for(int t = 0; t < NTask; t++) {worst += (leaves_of_task[(size_t) t] + NODELISTLENGTH - 1) / NODELISTLENGTH;}
+    return worst;
+}
+
+/* Every message a Mode D call posts is cut to at most one staging message, so MPI's int byte
+ * count always holds it. */
+static_assert(GX_MODE_D_STAGING_MAX_MESSAGE_BYTES <= (size_t) INT_MAX,
+              "a Mode D staging message must fit one MPI byte count");
+
+/* Everything a Mode D call holds, released together.  On any route out of the call --
+ * the vote declining it, an early return, its normal end -- the destructor gives back
+ * the storage and retires the touched-set epoch the walk preparation opened.  A
+ * recorder left held would refuse every later epoch, which pins the fused walk to its
+ * fallback for the rest of the run while looking exactly like the mechanism working.
+ * The retirement is ordered after the owner's last consume, which is also what fences
+ * the recording kernel: gx_touched_set_drift_and_mark waits for it, and the lease is
+ * released at scope exit, after every pass has been consumed. */
+/* One device buffer of a lease: where it is kept, how many bytes, and its memory-ledger label. */
+struct ModeDLeaseBuffer { void **slot; long long bytes; const char *label; };
+static constexpr int MODE_D_LEASE_BUFFERS = 15;
+
+struct ModeDCallLease {
+    GxDeviceTreeView   tree{};
+    int                epoch_held = 0;
+    ModeDWorkspacePlan plan{};
+
+    /* Device, per active: the query each active asks, frozen once per iteration, and its
+     * export decision. */
+    void              *query_snapshot        = nullptr;   /* [num_active] ActiveData */
+    int               *active_nodes          = nullptr;   /* [num_active] remote top-level nodes each active reaches */
+    long long         *active_envelope_scan  = nullptr;   /* [num_active + 1] envelope bound per active, then its scan */
+    int               *reply_active_offsets  = nullptr;   /* [num_active + 1] where each active's replies start, once grouped */
+    /* Device, per round (call bound C): the records, their partition by peer, the envelopes
+     * they pack into, and the replies to them grouped back by active. */
+    ModeDExportRecord *export_records        = nullptr;   /* [records_per_round] */
+    int               *partition_counts      = nullptr;   /* [partition_blocks * NTask] */
+    int               *peer_send_offsets     = nullptr;   /* [NTask + 1] */
+    void              *send_envelopes        = nullptr;   /* [call_envelopes] queries */
+    int               *envelope_active       = nullptr;   /* [call_envelopes] the active each envelope asks for */
+    int               *reply_order           = nullptr;   /* [call_envelopes] replies grouped by active, peer-major within one */
+    void              *round_replies         = nullptr;   /* [call_envelopes] answers to this rank's queries */
+    /* Device, per received message: two in flight. */
+    void              *group_queries[2]      = {nullptr, nullptr};   /* [group_envelopes] received queries */
+    void              *group_replies[2]      = {nullptr, nullptr};   /* [group_envelopes] their answers */
+
+    /* Protocol metadata, all sized at admission: after the vote nothing in a Mode D call
+     * grows, so no rank can fail an allocation inside the exchange. */
+    BoundedPeerExchangeCore exchange;       /* reused for every round of the call */
+    std::vector<int>        group_peers;    /* the peers of the group being received */
+    std::vector<void *>     group_buffers;  /* where each of them lands */
+
+    ModeDCallLease() = default;
+    ModeDCallLease(const ModeDCallLease&) = delete;
+    ModeDCallLease& operator=(const ModeDCallLease&) = delete;
+    ~ModeDCallLease() {release();}
+
+    /* The device buffers, once: the plan sums them, the allocation and the release walk them.
+     * Sizes come from the plan and the record sizes (a negative size means a product left 64 bits);
+     * the release needs only the slots. */
+    void buffers(ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS], long long num_active,
+                 size_t active_bytes, size_t query_bytes, size_t reply_bytes)
+    {
+        const long long n = num_active, c = plan.call_envelopes, g = plan.group_envelopes;
+        auto bytes = [](long long count, long long each) {return mode_d_checked_product(count, each);};
+        int k = 0;
+        rows[k++] = {&query_snapshot,                  bytes(n, (long long) active_bytes),            "ngl_moded_query_snapshot"};
+        rows[k++] = {(void **) &active_nodes,          bytes(n, (long long) sizeof(int)),             "ngl_moded_active_nodes"};
+        rows[k++] = {(void **) &active_envelope_scan,  bytes(n + 1, (long long) sizeof(long long)),   "ngl_moded_active_envelope_scan"};
+        rows[k++] = {(void **) &reply_active_offsets,  bytes(n + 1, (long long) sizeof(int)),         "ngl_moded_reply_active_offsets"};
+        rows[k++] = {(void **) &export_records,        bytes(plan.records_per_round, (long long) sizeof(ModeDExportRecord)), "ngl_moded_export_records"};
+        rows[k++] = {(void **) &partition_counts,      bytes(bytes(plan.partition_blocks, NTask), (long long) sizeof(int)), "ngl_moded_partition_counts"};
+        rows[k++] = {(void **) &peer_send_offsets,     bytes((long long) NTask + 1, (long long) sizeof(int)), "ngl_moded_peer_send_offsets"};
+        rows[k++] = {&send_envelopes,                  bytes(c, (long long) query_bytes),             "ngl_moded_send_envelopes"};
+        rows[k++] = {(void **) &envelope_active,       bytes(c, (long long) sizeof(int)),             "ngl_moded_envelope_active"};
+        rows[k++] = {(void **) &reply_order,           bytes(c, (long long) sizeof(int)),             "ngl_moded_reply_order"};
+        rows[k++] = {&round_replies,                   bytes(c, (long long) reply_bytes),             "ngl_moded_round_replies"};
+        for(int m = 0; m < 2; m++) {
+            rows[k++] = {&group_queries[m],            bytes(g, (long long) query_bytes),             "ngl_moded_group_queries"};
+            rows[k++] = {&group_replies[m],            bytes(g, (long long) reply_bytes),             "ngl_moded_group_replies"};
+        }
+    }
+
+    void release()
+    {
+        ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+        buffers(rows, 0, 0, 0, 0);
+        int any = 0;
+        for(const ModeDLeaseBuffer &row : rows) {any |= (*row.slot != nullptr);}
+        /* Kernels and copies that use this storage are enqueued, not finished: wait for them. */
+        if(any) {Kokkos::fence("mode_d_call_lease_release");}
+        for(const ModeDLeaseBuffer &row : rows) {gizmo_gpu_free_device(*row.slot); *row.slot = nullptr;}
+        exchange.release_storage();
+        std::vector<int>().swap(group_peers);
+        std::vector<void *>().swap(group_buffers);
+        if(epoch_held) {gx_touched_set_retire(GX_TOUCHED_OWNER_FUSED_WALK); epoch_held = 0;}
+    }
+};
+
+/* Size a Mode D call.  Returns 0 and fills *plan, or names (in *why) the first bound the
+ * call does not meet.  Rank-local: the active count differs between ranks, so the verdict
+ * is voted. */
+static int mode_d_workspace_plan(long long num_active, size_t active_bytes, size_t query_bytes,
+                                 size_t reply_bytes, ModeDWorkspacePlan *plan, const char **why)
+{
+    *plan = ModeDWorkspacePlan{};
+    /* Payloads move through the staging in messages of at most GX_MODE_D_STAGING_MAX_MESSAGE_BYTES,
+     * cut between whole records: one record must fit in one. */
+    if(query_bytes > GX_MODE_D_STAGING_MAX_MESSAGE_BYTES || reply_bytes > GX_MODE_D_STAGING_MAX_MESSAGE_BYTES) {
+        *why = "one query or reply record is larger than a staging message"; return 1;}
+    const long long pair_bytes  = (long long) query_bytes + (long long) reply_bytes;
+    const long long chunk_bytes = (long long) (All.CommChunkSize * 1024.0 * 1024.0);
+    plan->envelopes_per_round = chunk_bytes / pair_bytes;
+    plan->worst_envelopes_per_active = mode_d_worst_envelopes_per_active();
+    if(plan->worst_envelopes_per_active < 0) {*why = "its per-peer top-leaf tally could not be allocated"; return 1;}
+    if(plan->envelopes_per_round < plan->worst_envelopes_per_active) {
+        *why = "one active's worst-case export does not fit in a communication chunk"; return 1;}
+    const long long asked = mode_d_checked_product(num_active, plan->worst_envelopes_per_active);
+    plan->call_envelopes = (asked < 0 || asked > plan->envelopes_per_round) ? plan->envelopes_per_round : asked;
+    if(plan->call_envelopes > INT_MAX) {*why = "a round's envelopes exceed the index range"; return 1;}
+    plan->records_per_round = mode_d_checked_product(NODELISTLENGTH, plan->call_envelopes);
+    if(plan->records_per_round < 0 || plan->records_per_round > INT_MAX) {
+        *why = "a round's export records exceed the index range"; return 1;}
+    plan->partition_blocks = (plan->records_per_round + MODE_D_EXPORT_RECORDS_PER_BLOCK - 1) / MODE_D_EXPORT_RECORDS_PER_BLOCK;
+    const long long partition_entries = mode_d_checked_product(plan->partition_blocks, NTask);
+    if(partition_entries < 0 || partition_entries > INT_MAX) {
+        *why = "the partition table by peer exceeds the index range"; return 1;}
+    const long long by_query = (long long) (GX_MODE_D_STAGING_MAX_MESSAGE_BYTES / query_bytes);
+    const long long by_reply = (long long) (GX_MODE_D_STAGING_MAX_MESSAGE_BYTES / reply_bytes);
+    /* One task never receives a query, so it holds no inbound buffers. */
+    plan->group_envelopes = (NTask <= 1) ? 0 : ((by_query < by_reply) ? by_query : by_reply);
+    if(plan->group_envelopes * (long long) query_bytes > (long long) GX_MODE_D_STAGING_MAX_MESSAGE_BYTES ||
+       plan->group_envelopes * (long long) reply_bytes > (long long) GX_MODE_D_STAGING_MAX_MESSAGE_BYTES) {
+        *why = "a received message's queries or replies exceed a staging message"; return 1;}
+
+    return 0;
+}
+
+/* The lease's device total, from its one buffer table; -1 when a size leaves 64 bits. */
+static long long mode_d_lease_device_bytes(ModeDCallLease *lease, long long num_active, size_t active_bytes,
+                                           size_t query_bytes, size_t reply_bytes)
+{
+    ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+    lease->buffers(rows, num_active, active_bytes, query_bytes, reply_bytes);
+    long long device = 0;
+    for(const ModeDLeaseBuffer &row : rows) {device = (device < 0) ? -1 : mode_d_checked_sum(device, row.bytes);}
+    return device;
+}
+
+/* Allocate every piece of a planned lease.  Returns 0 when all were granted; the caller
+ * releases a partial one. */
+static int mode_d_lease_allocate(ModeDCallLease *lease, long long num_active, size_t active_bytes,
+                                 size_t query_bytes, size_t reply_bytes)
+{
+    int ok = (lease->exchange.reserve(NTask) == 0);
+    try {lease->group_peers.reserve((size_t) NTask); lease->group_buffers.reserve((size_t) NTask);}
+    catch(const std::bad_alloc &) {ok = 0;}
+    ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+    lease->buffers(rows, num_active, active_bytes, query_bytes, reply_bytes);
+    /* A buffer this call cannot need (zero bytes: no actives, nothing to send, nothing to
+     * receive) is not allocated at all, and its slot stays null. */
+    for(const ModeDLeaseBuffer &row : rows) {
+        if(row.bytes == 0) {continue;}
+        *row.slot = gizmo_gpu_alloc_device((size_t) row.bytes, row.label);
+        ok = ok && (*row.slot != nullptr);
+    }
+    return ok ? 0 : 1;
+}
+
+/* The collective verdict on a Mode D call.  A rank that cannot hold the call's storage
+ * sends it to Mode B, which needs none of it (unless Mode B is switched off: then, as for a
+ * tree refusal, the call keeps its usual path).  A rank whose tree cannot be described to the
+ * device keeps the path the call had before Mode D was considered -- what such a refusal has
+ * always done -- and that class wins when both occur. */
+enum class ModeDAdmission { Admitted, StorageRefused, TreeRefused };
+
+/* Admit a Mode D call, collectively.  Plans, refuses early what plainly cannot fit, makes
+ * sure the persistent staging is held, allocates the whole lease, prepares the tree, then
+ * votes once.  Every rank returns the same verdict; on any refusal every rank's lease is
+ * already released, so the call proceeds holding nothing of Mode D.  If any rank's staging
+ * allocation was refused, every rank gives it up and later calls are refused without asking
+ * again (the latch is the same on every rank, so that refusal needs no vote). */
+static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, size_t active_bytes,
+                                   size_t query_bytes, size_t reply_bytes, const char *caller)
+{
+    if(gx_mode_d_staging_unavailable()) {return ModeDAdmission::StorageRefused;}
+    const char *why = nullptr;
+    int tree_ok = 1, staging_ok = 1;
+    int ok = (mode_d_workspace_plan(num_active, active_bytes, query_bytes, reply_bytes, &lease->plan, &why) == 0);
+    if(ok) {
+        lease->plan.device_bytes = mode_d_lease_device_bytes(lease, num_active, active_bytes, query_bytes, reply_bytes);
+        if(lease->plan.device_bytes < 0) {why = "the call's storage size leaves 64-bit range"; ok = 0;}
+    }
+    /* One task sends no messages, so it holds no staging. */
+    if(ok && NTask > 1) {staging_ok = (gx_mode_d_staging_acquire() == 0); if(!staging_ok) {why = "its pinned staging could not be allocated"; ok = 0;}}
+    if(ok && !gizmo_device_has_room((size_t) lease->plan.device_bytes, MODE_D_DEVICE_FREE_FRACTION)) {why = "the device has no room for its workspace"; ok = 0;}
+    if(ok && mode_d_lease_allocate(lease, num_active, active_bytes, query_bytes, reply_bytes) != 0) {why = "its workspace could not be allocated"; ok = 0;}
+    /* The tree preparation repairs state and is the expensive half: only a rank holding its
+     * storage pays for it.  It reports its own reasons when it declines. */
+    if(ok) {tree_ok = (gx_device_fused_walk_prepare(&lease->tree, caller) == 0); lease->epoch_held = tree_ok; ok = tree_ok;}
+    int local[3] = {ok, tree_ok, staging_ok}, all[3] = {0, 0, 0};
+    MPI_Allreduce(local, all, 3, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    /* Reported after the vote, so it names where the call actually went; each distinct reason the
+     * first time it occurs. */
+    if(why) {
+        /* Room for every reason this admission can give (eleven); were it ever full, nothing more
+         * is printed, so no reason can repeat on every call. */
+        static const char *reported_reasons[16] = {nullptr};
+        int seen = 0, k = 0;
+        for(; k < 16 && reported_reasons[k]; k++) {if(reported_reasons[k] == why) {seen = 1; break;}}
+        if(!seen && k < 16) {
+            reported_reasons[k] = why;
+            printf("%s: task %d declines a device-resident call: %s (%.1f MB device, %.1f MB pinned staging); "
+                   "a call declined this way %s on every rank\n",
+                   caller, ThisTask, why, (lease->plan.device_bytes > 0 ? lease->plan.device_bytes : 0) / (1024.0 * 1024.0),
+                   (double) GX_MODE_D_STAGING_BYTES / (1024.0 * 1024.0),
+                   all[1] ? "goes to Mode B (or keeps its usual path if Mode B is switched off)"
+                          : "keeps the path it had before Mode D (another task could not describe its tree)");
+            fflush(stdout);
+        }
+    }
+    if(all[0]) {return ModeDAdmission::Admitted;}
+    lease->release();
+    if(!all[2]) {gx_mode_d_staging_mark_unavailable();}
+    return all[1] ? ModeDAdmission::StorageRefused : ModeDAdmission::TreeRefused;
+}
+
+template <typename Spec>
+static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active)
+{
+    return mode_d_admit(lease, num_active, sizeof(typename Spec::ActiveData),
+                        sizeof(NlrQueryEnvelope<typename Spec::ActiveData>),
+                        sizeof(NlrReplyEnvelope<typename Spec::AccumData>), Spec::loop_name);
+}
 
 template <typename Spec>
 void run_neighbor_loop(const neighbor_loop_args& args_in)
@@ -3061,7 +3386,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     }
     plan.num_active_global = global_num_active;   /* -1 on dispatch-override paths */
 
-    GxDeviceTreeView mode_d_tree{};
     /* A loop whose kernel reads neighbour state it is itself changing needs the
      * live particle, which a ghost copy is not (nlr_spec_needs_live_neighbours).
      * It is answered where its neighbours live: on the device below when the
@@ -3072,24 +3396,20 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
                                     : NeighborLoopPlan::Path::ModeB_Local;
         }
     }
-    /* Retires this call's touched-set epoch on every way out of this function; see the guard's
-     * own note.  Declared here so it outlives the decision below and the execution further
-     * down, both of which can route away from Mode D after the epoch is already open. */
-    GxTouchedEpochGuard touched_epoch{0};
-    /* Mode D takes the calls nlr_select_mode gives it, when every rank can
-     * describe its tree to the device -- the same decision the iterative driver
-     * makes, and for the same reasons (stated there).  A caller-owned neighbour
-     * list is Mode A by construction.  The vote is collective; the mode was
-     * chosen from a collective too, so every rank reaches it. */
+    /* Everything a Mode D call holds, released on every way out of this function (see the
+     * lease).  Declared here so it outlives the decision below and the execution further down. */
+    ModeDCallLease mode_d_lease;
+    /* Mode D takes the calls nlr_select_mode gives it, when every rank is admitted -- the
+     * same decision the iterative driver makes, and for the same reasons (stated there).  A
+     * caller-owned neighbour list is Mode A by construction.  The admission is collective;
+     * the mode was chosen from a collective too, so every rank reaches it.  A refused call
+     * holds nothing of Mode D; where it goes is mode_d_admit's verdict. */
     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
         if(selected_mode == NlrMode::D && args.external_csr == nullptr) {
-            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
-            /* This rank's epoch is open exactly when its own preparation succeeded, whatever
-             * the vote below decides for the call. */
-            touched_epoch.held = ready_local;
-            int ready = 0;
-            MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(ready) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active);
+            if(verdict == ModeDAdmission::Admitted) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+            else if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {
+                plan.path = (NTask > 1) ? NeighborLoopPlan::Path::ModeB_Remote : NeighborLoopPlan::Path::ModeB_Local;}
         }
     }
 
@@ -3191,7 +3511,7 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
             break;
         case NeighborLoopPlan::Path::ModeD_DeviceFused:
             if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-                run_mode_d<Spec>(args, radii.data(), mode_d_tree);
+                run_mode_d<Spec>(args, radii.data(), mode_d_lease.tree);
             } else {
                 /* Never chosen without the eligibility above. */
                 endrun(90001032);
@@ -5850,12 +6170,12 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
 template <typename Spec>
 void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
 {
-    /* Retires this call's touched-set epoch on every way out, exactly as the non-iterative
-     * runner does.  The iterative driver opens its own epoch at its own dispatch decision, so
-     * it owns its own retirement: without this the recorder stays held after the first
-     * iterative call and every later fused call is refused, which silently pins the whole run
-     * to the fallback path. */
-    GxTouchedEpochGuard touched_epoch{0};
+    /* Everything a Mode D call holds, released on every way out, exactly as in the
+     * non-iterative runner.  Declared first so it outlives the driver, which walks the tree
+     * the lease prepared.  Without the release the touched-set recorder stays held after the
+     * first iterative call and every later fused call is refused, which silently pins the
+     * whole run to the fallback path. */
+    ModeDCallLease mode_d_lease;
 
     /* The one live argument view for this call.  A ghost import can raise the particle
      * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
@@ -5967,9 +6287,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * here for completeness and future use. */
     const NlrForceMode force_mode = args.dispatch_override;
     DispatchPath path;
-    /* Filled by the Mode D preparation below if that path is taken; handed to
-     * the driver so every iteration walks the tree the decision was made on. */
-    GxDeviceTreeView mode_d_tree{};
     int forced_modeb_global_active = -1;
     /* Global active-particle sum across all ranks (from the dispatch Allreduce);
      * -1 = not computed (force-A cheap path). Used for the globally-zero-active
@@ -6019,7 +6336,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          *
          * With the peer half in place this now runs at any task count, and the
          * reduction above stops being a formality: a rank that cannot describe
-         * its tree to the device pulls the WHOLE call back to Mode A, because the
+         * its tree to the device pulls the WHOLE call off Mode D, because the
          * alternative is one rank walking while its peers wait for queries that
          * never arrive. */
         /* nlr_select_mode never asks for Mode D on a call with no actives
@@ -6027,12 +6344,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * whole tree, and such a call has no work to justify that -- it is
          * O(Nnodes) on the way to the globally-zero-active no-op below. */
         if(mode == NlrMode::D) {
-            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
-            /* Open exactly when this rank's own preparation succeeded, whatever the vote decides. */
-            touched_epoch.held = ready_local;
-            int ready = 0;
-            MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(ready) {path = DispatchPath::ModeD_DeviceFused;}
+            /* The lease's prepared tree is handed to the driver so every iteration walks the
+             * tree the decision was made on.  A refused call holds nothing of Mode D; where it
+             * goes is mode_d_admit's verdict. */
+            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active);
+            if(verdict == ModeDAdmission::Admitted) {path = DispatchPath::ModeD_DeviceFused;}
+            else if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {path = DispatchPath::ModeB_HostWalker;}
         }
     }
 
@@ -6085,7 +6402,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     if (path == DispatchPath::ModeB_HostWalker) {
         drv.initialize_device_context_mode_b();
     } else if (path == DispatchPath::ModeD_DeviceFused) {
-        drv.mode_d_tree = mode_d_tree;
+        drv.mode_d_tree = mode_d_lease.tree;
         drv.acquire_arena_and_init_ctx_mode_d();
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
         /* Both read P/CellP from the device-resident arena; Mode D differs in

@@ -556,6 +556,21 @@ extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label)
     catch(const std::exception &) { return NULL; }
 }
 
+/* Page-locked host memory is a node resource: it cannot be paged out, so what one rank pins is
+   gone for every other process on the node until it is released. Callers hold it for a bounded
+   span and check the result like every allocation here. */
+extern "C" void *gizmo_gpu_alloc_pinned_host(size_t nbytes, const char *label)
+{
+    try { return label ? Kokkos::kokkos_malloc<GIZMO_KOKKOS_PINNED_HOST_SPACE>(label, nbytes)
+                       : Kokkos::kokkos_malloc<GIZMO_KOKKOS_PINNED_HOST_SPACE>(nbytes); }
+    catch(const std::exception &) { return NULL; }
+}
+
+extern "C" void gizmo_gpu_free_pinned_host(void *ptr)
+{
+    if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_PINNED_HOST_SPACE>(ptr);}
+}
+
 extern "C" void gpu_particles_uvm_free(void *ptr)
 {
     /* Paired with gpu_particles_uvm_alloc so a capacity change can allocate the replacement

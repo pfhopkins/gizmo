@@ -1380,15 +1380,6 @@ static size_t sidx_device_route_peak(const struct SidxBuildMemoryPlan &m, int nu
     return (sorting > building) ? sorting : building;
 }
 
-/* Whether bytes fit within fraction of the device's free memory: 1 when they do, or when that memory is not
- * known (a refused allocation is then the backstop). */
-static int sidx_device_has_room(size_t bytes, double fraction)
-{
-    size_t free_bytes = 0, total_bytes = 0;
-    if(!gizmo_gpu_device_memory(&free_bytes, &total_bytes)) {return 1;}
-    return (double)bytes <= fraction * (double)free_bytes;
-}
-
 /* The route a build takes: the device route when there is a device apart from the host, the source is the
  * particle storage the device shares (the device route reads members where they live, so never an array of a
  * caller's own), the build is of a size at which that route is the faster, its projected peak fits the device's
@@ -1404,7 +1395,7 @@ static int sidx_build_route(const struct SidxParticleSource &src, int maintained
     if(members < SIDX_DEVICE_ROUTE_MIN_MEMBERS[shape]) {return SIDX_ROUTE_HOST;}
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return SIDX_ROUTE_HOST;}
-    if(!sidx_device_has_room(sidx_device_route_peak(m, members, maintained, presorted, src.exact), SIDX_DEVICE_FREE_FRACTION)) {
+    if(!gizmo_device_has_room(sidx_device_route_peak(m, members, maintained, presorted, src.exact), SIDX_DEVICE_FREE_FRACTION)) {
         return SIDX_ROUTE_HOST;
     }
     gx_walk_drift_tables_refresh();
@@ -1421,7 +1412,7 @@ static int sidx_host_route_fits(const struct SidxParticleSource &src, int mainta
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return 0;}
     if(!std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value &&
-       !sidx_device_has_room(sidx_kept_device_bytes(m, maintained), 1.0)) {return 0;}
+       !gizmo_device_has_room(sidx_kept_device_bytes(m, maintained), 1.0)) {return 0;}
     const size_t always[] = {m.tiles, m.bvh, m.pool, m.rows, m.level_nodes, m.members, m.leaf_of_tile, m.bvh_shape};
     const size_t when_sized[] = {m.slot_of, m.shear_folds, m.keys};
     size_t bytes = 0; int blocks = 0;
@@ -3030,6 +3021,41 @@ long long gx_touched_set_retire_faults(void)  {return g_touched_retire_faults;}
 
 struct GxTouchedSet gx_touched_set_view(void) {return g_touched_set;}
 
+/* Mode D's persistent pinned staging (see gpu_neighbor_list.h).  Pinning is paid once:
+   page-locking is far too slow to repeat per call (about half a second for 3 GB on Frontier). */
+static char *gx_mode_d_staging_base = NULL;
+static int   gx_mode_d_staging_refused = 0;
+
+int gx_mode_d_staging_acquire(void)
+{
+    if(gx_mode_d_staging_base) {return 0;}
+    if(gx_mode_d_staging_refused) {return 1;}
+    gx_mode_d_staging_base = (char *) gizmo_gpu_alloc_pinned_host(GX_MODE_D_STAGING_BYTES, "ngl_moded_staging");
+    return gx_mode_d_staging_base ? 0 : 1;
+}
+
+void gx_mode_d_staging_mark_unavailable(void)
+{
+    gx_mode_d_staging_release();
+    gx_mode_d_staging_refused = 1;
+}
+
+int gx_mode_d_staging_unavailable(void) {return gx_mode_d_staging_refused;}
+
+char *gx_mode_d_staging_slab(int role, int which)
+{
+    if(!gx_mode_d_staging_base) {return NULL;}
+    return gx_mode_d_staging_base + ((size_t) role * GX_MODE_D_STAGING_SLABS_PER_ROLE + (size_t) which) * GX_MODE_D_STAGING_SLAB_BYTES;
+}
+
+void gx_mode_d_staging_release(void)
+{
+    if(!gx_mode_d_staging_base) {return;}
+    Kokkos::fence("gx_mode_d_staging_release");   /* copies from or into it may still be enqueued */
+    gizmo_gpu_free_pinned_host(gx_mode_d_staging_base);
+    gx_mode_d_staging_base = NULL;
+}
+
 /* Give the workspace back.  Called once, at shutdown, before Kokkos is
  * finalized -- Kokkos must not be torn down while an allocation it is tracking
  * is still owned.  Deliberately NOT hung off the tree epoch or the domain
@@ -3267,7 +3293,7 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
      *
      * The order matters and is not incidental.  A rank that cannot describe its
      * tree declines, and under the collective vote that decision pulls the WHOLE
-     * call back to Mode A -- so any repair performed before the checks is work
+     * call off Mode D -- so any repair performed before the checks is work
      * paid for an answer that is then thrown away, on every rank.  Ask first,
      * repair second.
      *

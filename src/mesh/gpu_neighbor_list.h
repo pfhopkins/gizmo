@@ -442,6 +442,28 @@ void gx_touched_set_drift_and_mark(integertime time1);
    domain epoch: the storage is persistent by design. */
 void gx_touched_set_release(void);
 
+/* The page-locked host staging a device-resident (Mode D) call moves its messages
+   through: one fixed budget per rank, allocated at the first Mode D call and kept,
+   split into two slabs for each direction of each payload, so no direction can take
+   the space another needs to make progress.  Messages are cut to at most a quarter
+   of a slab.  Fixed by construction, never grown, never a run parameter. */
+enum GxModeDStagingRole {GX_MODE_D_QUERIES_OUT, GX_MODE_D_QUERIES_IN, GX_MODE_D_REPLIES_OUT, GX_MODE_D_REPLIES_IN,
+                         GX_MODE_D_STAGING_ROLES};
+static constexpr size_t GX_MODE_D_STAGING_SLAB_BYTES        = (size_t) 8 * 1024 * 1024;
+static constexpr int    GX_MODE_D_STAGING_SLABS_PER_ROLE    = 2;
+static constexpr size_t GX_MODE_D_STAGING_BYTES             = GX_MODE_D_STAGING_SLAB_BYTES * GX_MODE_D_STAGING_SLABS_PER_ROLE * GX_MODE_D_STAGING_ROLES;
+static constexpr size_t GX_MODE_D_STAGING_MAX_MESSAGE_BYTES = GX_MODE_D_STAGING_SLAB_BYTES / 4;
+/* 0 when this rank holds the staging (already, or allocated now); 1 when the allocation was
+   refused.  The allocation alone decides: the budget is fixed and small, and a per-rank guess at
+   node headroom cannot see what the other ranks already hold.  Rank-local: the caller votes on it. */
+int   gx_mode_d_staging_acquire(void);
+/* Once any rank's allocation was refused, every rank gives it up and no later call asks again. */
+void  gx_mode_d_staging_mark_unavailable(void);
+int   gx_mode_d_staging_unavailable(void);
+char *gx_mode_d_staging_slab(int role, int which);
+/* Released once at shutdown, before Kokkos is finalized. */
+void  gx_mode_d_staging_release(void);
+
 /* Raise the motion bound of particles idx[0..n) in the gravity tree's nodes,
  * with the top-level part carried to the other ranks at the next tree-update
  * phase.  Called by whoever changed a particle's velocity outside the kick,

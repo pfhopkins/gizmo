@@ -37,6 +37,7 @@ double get_random_number(MyIDType id);
 double mpi_report_comittable_memory(long long BaseMem, int verbose);
 int report_node_memory_headroom(long long *avail_kb, long long *commit_headroom_kb);
 int gizmo_node_headroom_admits(long long bytes_this_rank);
+int gizmo_device_has_room(size_t bytes, double fraction);
 void gizmo_kept_list_grow(long long delta_bytes);
 void gizmo_kept_list_note_refused(long long bytes);
 long long report_comittable_memory(long long *MemTotal,
@@ -459,6 +460,7 @@ enum {
   GIZMO_KOKBUCKET_NGL_SIDX,             /* label prefix ngl_sidx_  (tile/BVH/pool/compact-position spatial index) */
   GIZMO_KOKBUCKET_NGL_PAIRS,            /* label prefix ngl_pairs_ (per-dispatch active list, CSR offsets/neighbours, search scratch) */
   GIZMO_KOKBUCKET_NGL_PACKET,           /* label prefix ngl_packet_ (the fused neighbour walk's packet workspace, kept between calls) */
+  GIZMO_KOKBUCKET_NGL_MODE_D_CALL,      /* label prefix ngl_moded_ (a device-resident neighbour call's workspace, held for that call, and its persistent pinned staging) */
   GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_ (remaining neighbour-list memory: build/refresh scratch) */
   GIZMO_KOKBUCKET_MG_GRAPH,             /* label prefix mg_graph_  (MG div(B) face graph, its per-row values and build scratch) */
   GIZMO_KOKBUCKET_MG_INSERT,            /* label prefix mg_insert_ (MG solver insertion arrays, freed once HYPRE has assembled) */
@@ -488,6 +490,8 @@ extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unre
 extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label);   /* SharedSpace/UVM: host- and device-readable */
 extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label);   /* device-only memory */
 extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* host memory obtained through Kokkos */
+extern "C" void *gizmo_gpu_alloc_pinned_host(size_t nbytes, const char *label);   /* page-locked host memory: device copies and MPI run at full speed from it */
+extern "C" void  gizmo_gpu_free_pinned_host(void *ptr);                            /* releases gizmo_gpu_alloc_pinned_host memory */
 extern "C" void  gizmo_gpu_free_device(void *ptr);                                              /* releases gizmo_gpu_alloc_device memory */
 extern "C" void  gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes); /* blocking bulk copies between */
 extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, size_t nbytes);   /* host and device-only memory (waits for all device work first) */

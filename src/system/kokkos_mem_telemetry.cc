@@ -84,6 +84,7 @@ static int classify_bucket(const char *label)
     if(!strncmp(label, "tree_",               5)) {return GIZMO_KOKBUCKET_TREE_ARRAYS;}
     if(!strncmp(label, "ngl_sidx_",           9)) {return GIZMO_KOKBUCKET_NGL_SIDX;}
     if(!strncmp(label, "ngl_packet_",         11)) {return GIZMO_KOKBUCKET_NGL_PACKET;}
+    if(!strncmp(label, "ngl_moded_",          10)) {return GIZMO_KOKBUCKET_NGL_MODE_D_CALL;}
     if(!strncmp(label, "ngl_pairs_",          10)) {return GIZMO_KOKBUCKET_NGL_PAIRS;}
     if(!strncmp(label, "ngl_",                4)) {return GIZMO_KOKBUCKET_NGL;}
     if(!strncmp(label, "mg_graph_",           9)) {return GIZMO_KOKBUCKET_MG_GRAPH;}
