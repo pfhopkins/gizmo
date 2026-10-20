@@ -27,8 +27,8 @@
  *      start's first).
  *   3  adaptive subcycling: tier 1 on substeps that start at a fraction of the shortest chemical
  *      or thermal timescale and grow as the state settles; a failed substep is retried with its
- *      balance temperatures re-walked (a root lost at an opacity switch) and from the ionized
- *      seed, then shortened.
+ *      balance temperatures re-walked (a root lost at an opacity switch), from the ionized
+ *      seed, then by tier 2, then shortened.
  * A non-finite residual rejects that step or trial point. A non-finite Jacobian column (the
  * generated derivative of a rate that underflowed to zero can be 0/0 although the rate itself is
  * fine) is replaced by finite differences of F if settings.fd_jacobian, else it fails the tier.
@@ -1458,6 +1458,13 @@ int jaco_solve(SolveVars *sv, const Params *pr_in, const struct JacoSolverSettin
                ionization: retry from the ionized branch, as tier 2 does */
             trial = cur;
             if (ionized_seed(&trial, &ps)) o2 = tier1_newton(&trial, &ps, set, &c, &status, JACO_CHEM_MAXITER);
+        }
+        if (o2 == OUTCOME_FAILED) {
+            /* Newton can also be too slow for a balance temperature far from its root whose row reads a radiation band
+               (a spawned cell's dust at the outflow temperature with nothing to absorb descends its emission term a few
+               percent per iteration, at any substep): tier 2 brackets it with the bands, as for a full step */
+            trial = cur;
+            o2 = tier2_rootfind(&trial, &ps, set, &c);
         }
         if (set->verbose >= 2) printf("  jaco tier 3 substep %d: dt=%g t_done=%g -> %s (status %d, %d evals) T=%g\n", nsub, ps.Delta_t, t_done,
                                       o2 == OUTCOME_FAILED ? "FAILED" : "ok", status, c.nfeval - nf0, trial.T);

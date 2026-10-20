@@ -898,6 +898,24 @@ static int run_recorded_cells(const JacoSolverSettings *set) {
          " x_O_tot=0.00048999999999999998 x_S=1.2999999999999999e-05 x_Si=3.1999999999999999e-05"
          " x_photon_EUV_initial=0 x_photon_FUV_initial=0 x_photon_IR_initial=6.5000000000000003e-09"
          " x_photon_NUV_initial=0 x_photon_ONIR_initial=0 y=0.099400000000000002 z=0"},
+        /* m2e3 RT shakedown, resumed on the adaptive subcycle (T_min 1 K, u_min 0): a wind cell just spawned at the outflow
+           temperature, H2-free, no radiation in any band, its dust at 707 K with a root at 137 K; every substep's Newton
+           hit its iteration cap descending the dust row, and the reseed cannot walk a row that reads a band. Tier 2 is
+           now the substep's last resort */
+        {"spawned wind 1000K dust", 96408622683.73587, 1000, 9.9999999999999995e-21, 9.9999999999999995e-21, 9.9999999999999995e-21,
+         9.9999999999999995e-21,
+         " Delta_t=4530787.467956543 Delta_x=392386881291530.81 G_LW_bg=0 ISRF=1 N_H=3.6144712455283759e+25"
+         " N_H_cool=5.1025030425372359e+24 T_CMB=2.73 T_rad=707.54467994853201 Td_initial=707.54475624859435"
+         " X=0.71550000000000002 Z_d=1 Z_metals=0.014200000000000001 eps_H0_UVB=0 eps_HI=4.7958698381434364e-12"
+         " f_metal=0 f_neb=1 gamma_12_UVB=0 gamma_eos=1.666666666395143 grad_v=2.8257598082129604e-09"
+         " hnu_EUV=18.612753515255079 n_Htot=14897836393.097496 pdv_work=0 rho=3.5060913636143187e-14"
+         " rsol=0.00050000000000000001 sigma_HI=3.3683402547443736e-18 u_initial=96408622683.73587"
+         " x_C_tot=0.00029466573491730724 x_Ca=2.4004192872117401e-06 x_Fe=3.4441449535789159e-05"
+         " x_H_2_initial=9.9999999999999995e-21 x_Hplus_initial=9.9999999999999995e-21 x_Mg=4.4083391567668295e-05"
+         " x_N=7.3974243785564537e-05 x_Ne=9.3640810621942704e-05 x_O_tot=0.0005354647099930119"
+         " x_S=1.4456673654786863e-05 x_Si=3.5539582709394029e-05 x_photon_EUV_initial=0 x_photon_FUV_initial=0"
+         " x_photon_IR_initial=0 x_photon_NUV_initial=0 x_photon_ONIR_initial=0 y=0.094444444444444442 z=0",
+         1.0, 0.0},
 #endif
     };
     int nfail = 0, ncells = sizeof(cells) / sizeof(cells[0]);
