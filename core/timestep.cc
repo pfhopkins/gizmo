@@ -1524,6 +1524,7 @@ void process_wake_ups(void)
 		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
 #endif
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
+		force_raise_motion_bound(i); /* a demotion reverses part of this particle's kick, so its velocity has changed outside the sync-point kick */
 	    }
 	}
 

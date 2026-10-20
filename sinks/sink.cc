@@ -671,7 +671,7 @@ void set_sink_drag(int i, int n, double dt)
             afac_vel = DMIN(dv_magnitude*UNIT_TIME_IN_MYR , DMAX( DMIN(DMAX(-2.*P[n].Sink_PotentialMinimumOfNeighbors/(P[n].KernelRadius*All.cf_atime*All.cf_atime), 0), 10.*dv_magnitude/dt), afac_vel)); // free-fall-acceleration [checked-to-zero], limited to multiple of actual vel difference in timestep
             fac_vel = afac_vel * dt / dv_magnitude; // rate at which de-celeration/damping occurs
             if(fac_vel > 1.e-4) {fac_vel = 1.-exp(-fac_vel);}
-            {auto dv_df = SinkTempInfo[i].DF_mean_vel * (All.cf_atime * fac_vel); P[n].dp += dv_df * P[n].Mass; P[n].Vel += dv_df;}
+            {auto dv_df = SinkTempInfo[i].DF_mean_vel * (All.cf_atime * fac_vel); P[n].dp += dv_df * P[n].Mass; P[n].Vel += dv_df; force_raise_motion_bound(n);}
         }
     }
 #endif // repositioning algorithm active
@@ -812,6 +812,7 @@ void sink_final_operations(void)
             P[n].OldVel += P[n].Vel - hermite_pre_vel;
             P[n].OldPos += P[n].Pos - hermite_pre_pos;
 #endif
+            force_raise_motion_bound(n); /* accretion moved this sink's velocity outside the kick */
         } // if(masses > 0) check
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
         if(All.ComovingIntegrationOn) {P[n].SinkRadius = DMIN(P[n].SinkRadius, SinkParticle_GravityKernelRadius);} // update sink radius if simulation has it dynamically evolving.

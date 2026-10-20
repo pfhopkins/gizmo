@@ -841,7 +841,7 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
         norm = dir.norm_sq();
         if(norm>0) {norm=sqrt(norm);} else {dir = {0,0,1}; norm=1;}
         dir /= norm;
-        {auto dv_kick = v * All.cf_atime * dir; P[i].Vel += dv_kick; P[i].dp += dv_kick * P[i].Mass;}
+        {auto dv_kick = v * All.cf_atime * dir; P[i].Vel += dv_kick; P[i].dp += dv_kick * P[i].Mass; force_raise_motion_bound(i);}
         for(j = 0; j < 3; j++)
         {
             CellP[i].VelPred[j] += v * All.cf_atime * dir[j];
