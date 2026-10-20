@@ -529,7 +529,7 @@ void merge_and_split_particles(void)
             if(did_split == 1) {n_particles_split++; if(P[i].Type==0) {n_particles_gas_split++;}} else {failed_splits++;}
         }
     }
-    if(failed_splits) {printf ("On Task=%d with NumPart=%d we tried and failed to split %d elements, after running out of space (REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart=%d, REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas=%d ).\n We did split %d total (%d gas) elements. Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, failed_splits, (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart), (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas), n_particles_split, n_particles_gas_split); fflush(stdout);}
+    if(failed_splits) {printf ("On Task=%d with NumPart=%d we tried and failed to split %d elements, after running out of space (REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart=%d, REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas=%d ).\n We did split %d total (%d gas) elements. The elements refused are counted and asked for at the domain boundary below, which is where the capacity may be raised; they are retried once it has been.\n", ThisTask, NumPart, failed_splits, (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart), (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas), n_particles_split, n_particles_gas_split); fflush(stdout);}
 
 #ifdef BOX_PERIODIC
     /* map the particles back onto the box (make sure they get wrapped if they go off the edges). Redundant
@@ -564,11 +564,23 @@ void merge_and_split_particles(void)
     so care needs to be taken modifying this so that it's done in a way that is (1) conservative, (2) minimizes perturbations to the
     volumetric quantities of the flow, and (3) doesn't crash the tree or lead to particle 'overlap'
     Modified by Takashi Okamoto on 20/6/2019.  */
+/*! Elements this rank wanted to create since the last domain boundary and could not, for want of particle
+    storage. Splitting refuses rather than growing storage under itself -- growing would move the arrays the
+    standing tree and the active list are indexing, and the capacity is that tree's node-index base -- so the
+    demand is remembered here and the next domain boundary, which is where capacity may move, asks for it.
+    Per-rank and never communicated: the boundary reduces it along with everything else it decides from. */
+static int UnmetSplitDemand = 0;
+int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
+void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
+
 int split_particle_i(int i, int n_particles_split, int i_nearest)
 {
     double mass_of_new_particle;
     if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) )
     {
+        /* Bounded: a run pinned at its capacity ceiling refuses splits every step, and the count is only ever
+           a request for slots, so it never needs to exceed what a rank could hold. */
+        if(UnmetSplitDemand < All.MaxPartExpandable) {UnmetSplitDemand++;}
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
         return 0;
         endrun(8888);

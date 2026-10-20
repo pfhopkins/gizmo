@@ -122,6 +122,121 @@ static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 
+/*! Raise the particle capacity to what the coming epoch is expected to need, at the one point in a step
+ *  where it may move: the tree has just been freed and will be rebuilt from the new value, and the active
+ *  list has not been reconstructed.
+ *
+ *  The need has two parts. One is the capacity the existing sizing rule gives for the particle count as it
+ *  stands now -- PartAllocFactor times the balanced count -- which rises by itself as refinement raises the
+ *  global totals, and is where a refining run gets most of its growth from. The other is demand that was
+ *  REFUSED rather than met: splitting cannot grow storage from under a standing tree, so the elements it
+ *  could not create are counted and asked for here. That term enters as a floor written against the very
+ *  predicate that refused it, not as another addend, because that predicate tests this rank's capacity and a
+ *  total built some other way could sit below it -- and then nothing would grow while the demand was
+ *  answered on paper.
+ *
+ *  The need is compared against the capacity in force, and the capacity is only moved when the need no
+ *  longer fits inside it -- and then moved past the need rather than onto it. Shifting every
+ *  capacity-sized block through the arena is not something to do for one more slot, and a run whose
+ *  need still fits must not move at all: that is what keeps a run that never refines on exactly the
+ *  capacity it has always had.
+ *
+ *  The capacity is rank-identical (it is the tree's node-index base, and the exchange compares every rank's
+ *  load against it), so the decision is reduced to the largest ask and then gated on every rank being able
+ *  to meet it. A rank that cannot leaves the capacity where it is everywhere: refused splits are carried to
+ *  the next boundary, which is what makes a shortage transient rather than fatal. */
+static void domain_raise_particle_capacity(void)
+{
+    const long long balanced     = balanced_particles_per_rank(All.TotNumPart, NTask);
+    const long long balanced_gas = balanced_particles_per_rank(All.TotN_gas, NTask);
+
+    double need_f     = All.PartAllocFactor * (double) balanced;
+    double need_gas_f = All.PartAllocFactor * (double) balanced_gas;
+#ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
+    need_gas_f = need_f;   /* the two capacities are one quantity under this option (see read_ic), and the
+                              sizing rule the run started with is the one it should keep */
+#endif
+    if(need_f     < (double) NumPart) {need_f     = (double) NumPart;}
+    if(need_gas_f < (double) N_gas)   {need_gas_f = (double) N_gas;}
+
+    const int unmet_splits = gizmo_get_unmet_split_demand();
+    if(unmet_splits > 0)
+    {
+        /* split_particle_i refuses when NumPart + n + 1 >= REDUC * capacity, and tests the gas capacity with
+         * the same NumPart, so both floors are written from the same expression. */
+        const double split_floor = ((double) NumPart + (double) unmet_splits + 1.0) / REDUC_FAC_FOR_MEMORY_IN_DOMAIN;
+        if(split_floor > need_f)     {need_f     = split_floor;}
+        if(split_floor > need_gas_f) {need_gas_f = split_floor;}
+    }
+
+    /* Truncated the way the sizing rule has always truncated it, so a capacity set from the same expression
+     * reads as already sufficient rather than a rounding step short of it. */
+    const int need = (int) need_f, need_gas = (int) need_gas_f;
+
+    long long want = All.MaxPart, want_gas = All.MaxPartGas;
+    if(need > All.MaxPart || need_gas > All.MaxPartGas)
+    {
+        want     = (long long)((1.0 + PARTICLE_CAPACITY_GROWTH_MARGIN) * (double) need);
+        want_gas = (long long)((1.0 + PARTICLE_CAPACITY_GROWTH_MARGIN) * (double) need_gas);
+        if(want_gas > want) {want_gas = want;}                                  /* gas cells are a subset of the particles */
+        /* Ceiling first and the current capacity second, in that order: a caller that never set a ceiling
+         * (a unit-test driver that stands the code up by hand) then simply gets no growth, rather than a
+         * request below the capacity it already has. */
+        if(want     > (long long) All.MaxPartExpandable) {want     = All.MaxPartExpandable;}
+        if(want_gas > (long long) All.MaxPartExpandable) {want_gas = All.MaxPartExpandable;}
+        if(want     < (long long) All.MaxPart)    {want     = All.MaxPart;}     /* capacity only rises */
+        if(want_gas < (long long) All.MaxPartGas) {want_gas = All.MaxPartGas;}
+    }
+
+    long long ask[2] = {want, want_gas};
+    MPI_Allreduce(MPI_IN_PLACE, ask, 2, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    if(ask[0] == (long long) All.MaxPart && ask[1] == (long long) All.MaxPartGas)
+    {
+        /* Nothing moved. A run sitting at the ceiling with splits still being refused is stuck there, and
+         * says so once: it is a property of the run, not of the boundary that noticed it. */
+        static int reported_at_ceiling = 0;
+        if(unmet_splits > 0 && All.MaxPart >= All.MaxPartExpandable && !reported_at_ceiling)
+        {
+            reported_at_ceiling = 1;
+            if(ThisTask == 0) {printf("Particle capacity is at this run's ceiling of %d slots and splits are still being refused; refinement will not go further. "
+                                      "Spread the run over more ranks, or raise Max_Memory_Per_MPI_Task_in_MB and start a fresh run.\n", All.MaxPartExpandable); fflush(stdout);}
+        }
+        return;
+    }
+
+    /* Everyone grows or nobody does: a capacity that differed between ranks would give them different tree
+     * node-index bases, and those indices are exchanged. */
+    const int target = (int) ask[0], target_gas = (int) ask[1];
+    int rank_ok = (resize_particle_storage_is_possible(target, target_gas) ? 1 : 0);
+    int all_ok;
+    MPI_Allreduce(&rank_ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!all_ok)
+    {
+        if(ThisTask == 0) {printf(" ..particle capacity stays at %d slots (%d gas): %d were asked for and at least one rank cannot hold them.\n", All.MaxPart, All.MaxPartGas, target); fflush(stdout);}
+        return;
+    }
+
+    const int prev = All.MaxPart, prev_gas = All.MaxPartGas;
+    if(resize_particle_storage(target, target_gas) != 0) {return;}
+    if(ThisTask == 0)
+    {
+        printf(" ..particle capacity raised: %d -> %d slots (%d -> %d gas), presently allocated %g MB of the %d MB budget\n",
+               prev, All.MaxPart, prev_gas, All.MaxPartGas, AllocatedBytes / (1024.0 * 1024.0), All.MaxMemSize);
+        fflush(stdout);
+    }
+
+    /* Refused splits are answered only if the capacity now in force could actually take them, under the very
+     * predicate that refused them -- truncation included, and against the gas capacity too. A capacity that
+     * could not move answers nothing, so the demand survives to the next boundary. */
+    if(unmet_splits > 0)
+    {
+        const int room     = (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN * All.MaxPart);
+        const int room_gas = (All.MaxPartGas > 0) ? (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN * All.MaxPartGas) : room;
+        const int wanted   = NumPart + unmet_splits + 1;
+        if(wanted < room && wanted < room_gas) {gizmo_reset_unmet_split_demand();}
+    }
+}
+
 #if (DOMAIN_TIMEBINS == 1)
 /* Per-timebin cost tracking for Gadget-4-style domain decomposition.
    Instead of a single composite cost, we track gravity and hydro costs separately
@@ -254,7 +369,11 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     domain_free();
     t_treefree = timediff(t_tmp, my_second());
 
-    if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}
+    if(old_MaxPart) {All.MaxPart = new_MaxPart; old_MaxPart = 0;}   /* restores a capacity the storage was
+                                                                       already allocated with, so it is not a
+                                                                       capacity change */
+
+    domain_raise_particle_capacity();
 
 #ifdef BOX_PERIODIC
     t_tmp = my_second();

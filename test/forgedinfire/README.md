@@ -9,9 +9,12 @@ Short run of a nuclear-zoom AGN accretion disk simulation with full radiation-MH
 - Full radiation transport (5 bands, RT_SPEEDOFLIGHT_REDUCTION=1)
 - Magnetic fields, dust temperature tracking
 - Restart flag 2 (read snapshot as IC)
+- Zoom refinement on: the cells here are well above their target mass, so the run roughly doubles its element count (962637 -> 1929215 gas) and is still refining at the end. The per-rank particle capacity is raised to follow it; the IC's own sizing holds about a quarter of what is wanted.
+- Runs 20 code time units (92800 -> 92820), 823 steps at the RT light-crossing timestep, ~25 min at 8 ranks x 2 threads
 
 ## What is tested
 
+- That refinement can outgrow the capacity the IC was read at, without splits being refused
 - Gas and star mass evolution compared to reference
 - Radial profiles: density, gas/radiation/dust temperature, B-field, energy densities
 - Gas density-temperature phase diagram
