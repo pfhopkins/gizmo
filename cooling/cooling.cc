@@ -82,7 +82,7 @@ MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data
    to the real pass. Costs a second cooling pass and a copy of the local gas every step: test builds only. */
 static void cooling_compact_crosscheck_run(struct particle_data *chk_P, struct gas_cell_data *chk_Cell, int N_active)
 {
-    if(N_gas < 2) {return;}
+    if(N_gas < 2) {for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(j, chk_P, chk_Cell);} return;} // nothing to shuffle: cool the copy unshuffled so the compare stays meaningful
     struct particle_data *shift_P = (struct particle_data *) mymalloc("shift_P", N_gas * sizeof(struct particle_data));
     struct gas_cell_data *shift_Cell = (struct gas_cell_data *) mymalloc("shift_Cell", N_gas * sizeof(struct gas_cell_data));
     for(int k = 0; k < N_gas; k++) {shift_P[k] = P[(k+1) % N_gas]; shift_Cell[k] = CellP[(k+1) % N_gas];}
