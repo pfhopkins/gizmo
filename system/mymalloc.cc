@@ -379,6 +379,48 @@ void *myrealloc_fullinfo(void *p, size_t n, const char *func, const char *file, 
   return Table[Nblocks - 1];
 }
 
+/*! Bytes a request of n actually occupies, after the alignment rounding every block gets.  A caller
+ *  planning several grows at once needs this to total them against FreeBytes before committing to
+ *  the first, since a partial set of grows cannot be undone. */
+size_t mymalloc_rounded_size(size_t n)
+{
+  if((n % MIN_ALIGNMENT) > 0) {n = (n / MIN_ALIGNMENT + 1) * MIN_ALIGNMENT;}
+  if(n < MIN_ALIGNMENT) {n = MIN_ALIGNMENT;}
+  return n;
+}
+
+/*! Would myrealloc_movable(p, n) succeed?  It endruns on the three conditions checked here, which
+ *  is the right answer for a caller that cannot carry on without the block, but not for one that
+ *  can decline and keep the size it has -- the particle-capacity resize is the latter.  So those
+ *  conditions are asked here first.  On a refusal *why is set to a short reason naming the cause;
+ *  it is untouched on success.  The arithmetic deliberately mirrors myrealloc_movable_fullinfo,
+ *  rounding included, so a "yes" here is not a near miss there. */
+int mymalloc_movable_can_resize(void *p, size_t n, const char **why)
+{
+  unsigned int i;
+  int nr;
+
+  n = mymalloc_rounded_size(n);
+
+  for(nr = Nblocks - 1; nr >= 0; nr--) {if(p == Table[nr]) {break;}}
+  if(nr < 0) {if(why) {*why = "block was not allocated by the memory manager";} return 0;}
+
+  for(i = nr + 1; i < Nblocks; i++)
+    {if(MovableFlag[i] == 0) {if(why) {*why = "a non-movable block sits above it in the arena";} return 0;}}
+
+  if(n > FreeBytes + BlockSize[nr]) {if(why) {*why = "the memory-manager budget has no room for it";} return 0;}
+
+  return 1;
+}
+
+/*! Size the arena is presently charging for the block at p, or 0 if it holds no such block. */
+size_t mymalloc_block_size(void *p)
+{
+  int nr;
+  for(nr = Nblocks - 1; nr >= 0; nr--) {if(p == Table[nr]) {return BlockSize[nr];}}
+  return 0;
+}
+
 void *myrealloc_movable_fullinfo(void *p, size_t n, const char *func, const char *file, int line)
 {
   unsigned int i;

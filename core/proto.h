@@ -54,6 +54,10 @@ long long report_comittable_memory(long long *MemTotal,
                                    long long *SwapFree);
 
 void merge_and_split_particles(void);
+/* Elements splitting could not create for want of storage since the last domain boundary, and the clear that
+   ends that window. The domain boundary's capacity decision reads the first and calls the second. */
+int gizmo_get_unmet_split_demand(void);
+void gizmo_reset_unmet_split_demand(void);
 int does_particle_need_to_be_merged(int i);
 int does_particle_need_to_be_split(int i);
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key);
@@ -316,6 +320,10 @@ void *myrealloc_movable_fullinfo(void *p, size_t n, const char *func, const char
 void myfree_fullinfo(void *p, const char *func, const char *file, int line);
 void myfree_movable_fullinfo(void *p, const char *func, const char *file, int line);
 
+int mymalloc_movable_can_resize(void *p, size_t n, const char **why);
+size_t mymalloc_rounded_size(size_t n);
+size_t mymalloc_block_size(void *p);
+
 void mymalloc_init(void);
 void dump_memory_table(void);
 void report_detailed_memory_usage_of_largest_task(size_t *OldHighMarkBytes, const char *label, const char *func, const char *file, int line);
@@ -542,6 +550,19 @@ void set_units_sfr(void);
 void gravity_forcetest(void);
 void allocate_commbuffers(void);
 void allocate_memory(void);
+/* Grow the persistent blocks sized by the particle capacity to new_maxpart / new_maxpartgas and publish the
+   new All.MaxPart / All.MaxPartGas. The ONLY route by which those may change once storage exists. Capacity
+   only rises, and because it is also the gravity tree's node-index base this may only run with no tree
+   standing. It is rank-local and does no communication, so the caller must pass the same arguments on every
+   rank; All.MaxPart is rank-identical and must stay so. Asking for the capacity in force returns at once.
+   Returns 0 on success, or nonzero after leaving the capacity untouched and saying why on stdout: 7720 the
+   request is below what is already here, 7721 above the run's ceiling, 7722 a tree is standing, 7723 a
+   non-movable arena block blocks the grow, 7724 the memory-manager budget has no room. */
+int resize_particle_storage(int new_maxpart, int new_maxpartgas);
+/* Whether that call would go through on this rank, asked with no side effect so the collective decision can
+   be gated on every rank's answer before any rank commits -- a grow cannot be undone. */
+int resize_particle_storage_is_possible(int new_maxpart, int new_maxpartgas);
+void set_particle_capacity_ceiling(void);
 void begrun(void);
 void check_omega(void);
 void compute_accelerations(void);

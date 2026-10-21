@@ -186,12 +186,12 @@ def run_forgedinfire_test(test_name, num_mpi_ranks, num_omp_threads):
     # Through the harness runner, not a bare os.system: that gave this run no timeout, so a GIZMO
     # hang here (seen at the first step, 2 ranks) held a whole sweep until its walltime.
     try:
-        run_test(test_name, num_mpi_ranks, num_omp_threads)
+        run_test(test_name, num_mpi_ranks, num_omp_threads, restart_flag=2)
     finally:
         chdir("../../")
 
 
-@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(8),))
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_forgedinfire(num_mpi_ranks, num_omp_threads):
     test_name = "forgedinfire"

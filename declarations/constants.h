@@ -12,6 +12,19 @@
 
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 
+/* Terms in the ceiling on how far the particle capacity may be raised during a run (All.MaxPartExpandable,
+ * set in set_particle_capacity_ceiling). The share is of the memory-manager budget, charged against the full
+ * marginal cost of a slot, so what it leaves over is for the work buffers, whose size follows the
+ * communication buffer rather than the particle count. The growth factor keeps a small problem given a large
+ * budget from advertising slots it will never hold. */
+#define PARTICLE_CAPACITY_SHARE_OF_BUDGET   0.75
+#define PARTICLE_CAPACITY_MAX_GROWTH_FACTOR 16
+
+/* Headroom on a raised particle capacity, as a fraction of the capacity the need works out to. Growth is not
+ * free -- every block sized by the capacity is shifted through the arena -- so the capacity is raised past
+ * what is needed rather than onto it, and then left alone while the need still fits inside it. */
+#define PARTICLE_CAPACITY_GROWTH_MARGIN     0.10
+
 /* these are tolerances for the slope-limiters. we define them here, because the gradient constraint routine needs to be sure to use the -same- values in both the gradients and reimann solver routines */
 #if MHD_CONSTRAINED_GRADIENT
 #if (MHD_CONSTRAINED_GRADIENT > 1)

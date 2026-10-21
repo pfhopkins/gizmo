@@ -835,6 +835,8 @@ void read_file(char *fname, int readTask, int lastTask)
         //   sufficiently irregular trees. overall more stable behavior with the 'buffer', albeit at the expense of memory )
 #endif
 
+        set_particle_capacity_ceiling();   /* the capacity above is a starting point, not a bound: refinement
+                                              raises it at a domain boundary, up to the ceiling fixed here */
 
         allocate_memory();
 

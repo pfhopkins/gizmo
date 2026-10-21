@@ -460,8 +460,9 @@ extern struct global_data_all_processes
     MyDouble DM_InteractionVelocityScale; /*!< scale above which the scattering becomes velocity-dependent */
 #endif
 
-  int MaxPart;			/*!< This gives the maxmimum number of particles that can be stored on one processor. */
-  int MaxPartGas;		/*!< This gives the maxmimum number of gas cells that can be stored on one processor. */
+  int MaxPart;			/*!< This gives the maxmimum number of particles that can be stored on one processor. Set when the initial conditions are read and raised at a domain boundary by resize_particle_storage(), which is the ONLY route by which it may change once storage exists.  IDENTICAL ON EVERY RANK, and that is its contract: it is both the physical size of P[] and the gravity tree's node-index base (Nodes = Nodes_base - MaxPart, root = MaxPart, pseudo-particles at MaxPart + MaxNodes), and those indices travel between ranks inside exported node lists.  The domain exchange also compares every rank's load against it while running over globally-reduced counts.  A per-rank value would break both. */
+  int MaxPartGas;		/*!< This gives the maxmimum number of gas cells that can be stored on one processor. Rank-identical and raised alongside MaxPart; see there. */
+  int MaxPartExpandable;	/*!< Hard ceiling on MaxPart for the whole run: the largest particle capacity a rank may be raised to.  Fixed when the initial conditions are read and carried through restart files, so a resumed run keeps the ceiling it started with.  It is a bound on growth, not a prediction of what fits: whether the memory is there remains the allocator's answer at the moment it is asked.  Derived from the mymalloc budget (Max_Memory_Per_MPI_Task_in_MB), since that budget is a fixed-size arena and is what growth actually spends, and held down by a wide multiple of the starting capacity so a small problem does not size for slots it will never hold. */
   int ICFormat;			/*!< selects different versions of IC file-format */
   int SnapFormat;		/*!< selects different versions of snapshot file-formats */
   int NumFilesPerSnapshot;	/*!< number of files in multi-file snapshot dumps */
