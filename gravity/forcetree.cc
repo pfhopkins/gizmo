@@ -727,7 +727,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef SINK_PHOTONMOMENTUM
                     if(pa->Type == 5)
                     {
-                        if((pa->Mass>0)&&(pa->DensityAroundParticle>0)&&(pa->Sink_Mdot>0))
+                        if(pa->Mass>0) // same rule as the leaf: non-accreting sinks can shine
                         {
                             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p);
                             sink_lum += BHLum;
@@ -1893,7 +1893,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                         mass_sinklumwt_forradfb=0;
-                        if(P[no].Type == 5)
+                        if(P[no].Type == 5 && P[no].Mass > 0)
                         {
                             double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
@@ -4065,7 +4065,7 @@ void force_refresh_node_moments(void)
         }}
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        if(pa->Type == 5 && pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0) {
+        if(pa->Type == 5 && pa->Mass > 0) {
             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
             Nodes[no].sink_lum += BHLum;
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
