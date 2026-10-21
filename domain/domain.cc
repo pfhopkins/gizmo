@@ -2811,7 +2811,7 @@ void domain_findExtent(void)
  * translate coordinates instead (domain_apply_random_shift), keeping DomainLen == box. */
 #if defined(RANDOMIZE_GRAVTREE) && !defined(RANDOMIZE_GRAVTREE_PERIODIC)
   double dx[3];
-  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType)(All.NumCurrentTiStep) * 3 + j) - 0.5); /* *3+j so the three axes draw distinct seeds: with +j alone, step N's y-shift reused step N+1's x-shift */}}
+  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType)(All.NumCurrentTiStep) * 3 + j) - 0.5); /* drawn from task 0's stream (the argument is ignored) and broadcast: same on all ranks, not reproducible across rank counts */}}
   MPI_Bcast(dx, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
   for(j=0; j<3; j++) {
       DomainCenter[j] += dx[j];

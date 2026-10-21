@@ -342,7 +342,7 @@ void init(void)
 #if defined(INPUT_READ_SINKPROPS) && defined(SINGLE_STAR_SINK_DYNAMICS)
             if(P[i].Type != 5) /* sink particles have their age read from the IC */
 #endif
-            {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number(P[i].ID + 3);}
+            {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number_keyed(P[i].ID + 3);}
         }
 #endif
         
@@ -522,7 +522,7 @@ void init(void)
                 P[i].Sink_Mass_Reservoir = All.SeedReservoirMass;
 #endif
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM
-                double sink_mu=2*get_random_number(P[i].ID+3)-1, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                double sink_mu=2*get_random_number_keyed(P[i].ID+3)-1, sink_phi=2*M_PI*get_random_number_keyed(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
                 double spin_prefac = All.G * P[i].Sink_Mass / C_LIGHT_CODE; // assume initially maximally-spinning black hole with random orientation
                 P[i].Sink_Specific_AngMom[0]=spin_prefac*sink_sin*cos(sink_phi); P[i].Sink_Specific_AngMom[1]=spin_prefac*sink_sin*sin(sink_phi); P[i].Sink_Specific_AngMom[2]=spin_prefac*sink_mu;
 #endif
