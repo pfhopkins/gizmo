@@ -103,6 +103,11 @@
 // nets 15 and 16 share species slots, driver policy and pools
 static inline int chem_net_nl99(int net) { return net == 15 || net == 16; }
 
+// net 20 ODE slots (H2, H+; energy is slot 2); GIZMO TracAbund adds CO (slot 2, equilibrium value)
+#define C20_IH2   0
+#define C20_IHP   1
+#define C20_NRATES_CHEM 7
+
 // ---------------------------------------------------------------------------
 // Immutable table state.  This is a *view* over the rate/cooling tables, NOT a
 // copy: at Gate 2 the tables are the ones COOLINMO/CHEMINMO built in the
@@ -313,6 +318,20 @@ struct ChemCell {
     double lambda[CHEM_NRATES];
     double lambda_chem[CHEM_NRATES_CHEM_MAX];
 
+    // ---- network 20 (TIGRESS-NCR) inputs and frozen photo state ----
+    double dvdr;                 // mean |dv_i/dx_i| for the CO LVG column [s^-1]
+    double Zg;                   // gas metallicity / solar (nebular, CIE, MH+)
+    double col_c[CHEM_NPIX];     // per-pixel N_C [cm^-2] (C self-shielding)
+    int    n20_kgr_const;        // 1: H2 formation coefficient without T dependence
+    double n20_tbb;              // dust-heating blackbody temperature [K]
+    double n20_sig_lw;           // LW dust cross section per H at Z'_d = 1 [cm^2]
+    double n20_chi_pe, n20_chi_lw, n20_chi_fuv;  // dust-attenuated fields [Draine]
+    double n20_wlw[CHEM_NPIX];   // per-pixel chi_LW contribution (dust-attenuated)
+    double n20_xi;               // attenuated primary CR ionization rate per H [s^-1]
+    double n20_gd_uv, n20_gd_ext;  // dust heating per H: UV, optical + blackbody [erg s^-1]
+    double n20_xe;               // last solved x_e (fixed-point start and output)
+    double n20_T, n20_xcp, n20_xc, n20_xco, n20_xo, n20_xop, n20_xmhp;  // last solved state
+
     const ChemTables* tab;
 };
 
@@ -410,6 +429,7 @@ int chem_rhs_net5 (double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net17(double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net15(double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net16(double t, const double* y, double* ydot, ChemCell& c);
+int chem_rhs_net20(double t, const double* y, double* ydot, ChemCell& c);
 
 // ---------------------------------------------------------------------------
 // Gate-2 backend binding (chem_backend_fortran.cc).

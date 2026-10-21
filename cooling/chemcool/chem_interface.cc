@@ -63,6 +63,14 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     timestep = in->dt_code;
     divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
     if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
+#if CHEMISTRYNETWORK == 20
+    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
+        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
+        double g = 0; int k;
+        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
+        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+    }
+#endif
 
     /* Per-particle element abundances for cooling rates.  28-slot layout:
      *   Met[0]=total Z, [1]=H (explicit), [2]=He, [MET_OF(k)] = element k for k>=ELEM_C.

@@ -190,6 +190,9 @@ struct ChemInputs {
     double column_density_projection_h2[NPIX]; /* N_H2 [cm^-2] */
     double column_density_projection_co[NPIX]; /* N_CO [cm^-2] */
 #endif
+#if CHEMISTRYNETWORK == 20
+    double dvdr_cgs;           /* mean |dv_i/dx_i| [s^-1]: CO LVG column (net 20) */
+#endif
 };
 
 
@@ -222,6 +225,10 @@ double chem_cxx_calc_temp(double abh2, double abhe, double ekn);
 void chem_cxx_begin_cell(const struct ChemInputs *in, double temp, double abh2, double abhd, double abco);
 void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double *energy, double *abundances);
 void chem_cxx_read_outputs(struct ChemOutputs *out);
+#if CHEMISTRYNETWORK == 20
+void chem_cxx_net20_finish(double *abundances, double energy, double *temp);
+double chem_cxx_net20_electrons(void);
+#endif
 #endif
 void chem_read_outputs(struct ChemOutputs *out);
 

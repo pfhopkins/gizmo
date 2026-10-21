@@ -1472,6 +1472,11 @@
 #define TRAC_NUM 9
 #elif CHEMISTRYNETWORK == 17
 #define TRAC_NUM 7
+#elif CHEMISTRYNETWORK == 20
+#define TRAC_NUM 3   /* H2, H+ evolved; CO = equilibrium value written back */
+#ifndef CHEMCOOL_CXX
+#error "CHEMISTRYNETWORK=20 (TIGRESS-NCR) exists only in the C++ backend: enable CHEMCOOL_CXX"
+#endif
 #endif
 #if defined(TURB_DIFF_METALS)
 /* Include CHEMCOOL tracked abundances (H2, H+, CO, ...) in turbulent diffusion
