@@ -314,6 +314,7 @@ void merge_and_split_particles(void)
     struct flags_merg_split {
         int flag; // 0 for nothing, -1 for clipping, 1 for merging, 2 for splitting, and 3 marked as merged
         int target_index;
+        double split_r_near; // distance to the nearest same-type neighbour when a split was flagged (valid for flag==2)
     } *Ptmp;
 
     int target_for_merger,dummy=0,numngb_inbox,startnode,i,j,n; double threshold_val;
@@ -326,6 +327,7 @@ void merge_and_split_particles(void)
     for (i = 0; i < NumPart; i++) {
       Ptmp[i].flag = 0;
       Ptmp[i].target_index = -1;
+      Ptmp[i].split_r_near = 0;
     }
 
     for (i = 0; i < NumPart; i++)
@@ -489,28 +491,30 @@ void merge_and_split_particles(void)
             }
             /* now ask if the particle needs to be split */
             else if(does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
-                /* if splitting: do a neighbor loop ON THE SAME DOMAIN to determine the nearest particle (so dont overshoot it) */
+                /* A cell without a valid density has no volume to divide: not split on this step. */
+                if((P[i].Type == 0) && !((CellP[i].Density > 0) && isfinite(CellP[i].Density))) {continue;}
+                /* The daughters are placed within a fraction of the distance to the nearest same-type neighbour,
+                   so that distance is taken over EVERY neighbour, including ones themselves flagged to split or
+                   merge (in a refinement cascade the nearest one usually is), and recorded now, before any cell is
+                   moved by the merges and splits applied below. With no neighbour, or one at the same position,
+                   the cell is not split on this step. (cf. kokkos 8271d055) */
                 startnode=All.MaxPart;
                 numngb_inbox = ngb_treefind_variable_targeted(P[i].Pos,P[i].KernelRadius,-1,&startnode,0,&dummy,&dummy,Pi_BITFLAG); // search for particles of matching type
                 if(numngb_inbox>0)
                 {
-                    target_for_merger = -1;
                     threshold_val = MAX_REAL_NUMBER;
-                    /* loop over neighbors */
                     for(n=0; n<numngb_inbox; n++)
                     {
                         j = Ngblist[n];
-                        /* make sure we're not taking the same particle */
-                        if((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0) && (Ptmp[j].flag == 0)) {
-                            Vec3<double> dp = P[i].Pos - P[j].Pos;
-                            nearest_xyz(dp);
-                            double r2 = dp.norm_sq();
-                            if(r2<threshold_val) {threshold_val=r2; target_for_merger=j;} // position-based //
-                        }
+                        if((j<0)||(j==i)||(P[j].Type!=P[i].Type)||!(P[j].Mass > 0)) {continue;}
+                        Vec3<double> dp = P[i].Pos - P[j].Pos;
+                        nearest_xyz(dp);
+                        double r2 = dp.norm_sq();
+                        if(r2<threshold_val) {threshold_val=r2;}
                     }
-                    if (target_for_merger >= 0) {
+                    if((threshold_val < MAX_REAL_NUMBER) && (threshold_val > 0)) {
                         Ptmp[i].flag = 2; // mark for splitting
-                        Ptmp[i].target_index = target_for_merger;
+                        Ptmp[i].split_r_near = sqrt(threshold_val);
                     }
                 }
             }
@@ -525,7 +529,7 @@ void merge_and_split_particles(void)
             if(did_merge == 1) {n_particles_merged++;}
         }
         if (Ptmp[i].flag == 2) {
-            int did_split = split_particle_i(i, n_particles_split, Ptmp[i].target_index);
+            int did_split = split_particle_i(i, n_particles_split, Ptmp[i].split_r_near);
             if(did_split == 1) {n_particles_split++; if(P[i].Type==0) {n_particles_gas_split++;}} else {failed_splits++;}
         }
     }
@@ -573,7 +577,7 @@ static int UnmetSplitDemand = 0;
 int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
 void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
 
-int split_particle_i(int i, int n_particles_split, int i_nearest)
+int split_particle_i(int i, int n_particles_split, double r_near)
 {
     double mass_of_new_particle;
     if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) )
@@ -596,9 +600,6 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     k=0;
     phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
     cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
-    Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
-    nearest_xyz(dp);
-    double r_near = dp.norm();
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
