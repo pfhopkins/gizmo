@@ -1149,6 +1149,11 @@
 #endif
 #endif // TALLBOX
 
+/* Stella stretched tallbox: no periodic gravity for BOX_LONG boxes; tree radiation still wraps in x/y (forcetree.cc) */
+#if defined(GALSF_RESOLVEDISM_TALLBOX) && defined(BOX_PERIODIC) && (defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z)) && !defined(GRAVITY_NOT_PERIODIC) && !defined(SELFGRAVITY_OFF)
+#error "GALSF_RESOLVEDISM_TALLBOX with BOX_PERIODIC and BOX_LONG_X/Y/Z requires GRAVITY_NOT_PERIODIC (stretched boxes have no periodic gravity solver)"
+#endif
+
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */
 #ifdef METALS

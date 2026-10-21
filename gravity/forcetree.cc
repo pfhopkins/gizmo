@@ -140,6 +140,15 @@ static double fac_intp;
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign) (fabs(z))
 #endif
 
+#if defined(BOX_PERIODIC) /* Stella tree radiation (columns, fluxes, TreeRay) wraps with the box, independent of gravity */
+#define RADIATION_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
+#else
+#define RADIATION_NEAREST_XYZ(x,y,z,sign)
+#endif
+#if defined(BOX_PERIODIC) && defined(GRAVITY_NOT_PERIODIC) && (defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO) || defined(GALSF_RESOLVEDISM_G0_VARIABLE))
+#define TREE_RADIATION_WRAPS_WITHOUT_GRAVITY /* radiation needs its own min-image vector and node opening */
+#endif
+
 /*! This function is a driver routine for constructing the gravitational
  *  oct-tree, which is done by calling a small number of other functions.
  */
@@ -1922,6 +1931,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
     int g0dbg_node = 0;   /* per-interaction: 1 = accepted-node (multipole) interaction */
 #endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+    Vec3<double> rad_dr; double rad_r2 = 0; /* min-image separation for radiation */
+#endif
 #ifdef RT_USE_TREECOL_FOR_NH
     double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[RT_USE_TREECOL_FOR_NH] = {0};
 #endif
@@ -2254,6 +2266,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                rad_dr = dr; RADIATION_NEAREST_XYZ(rad_dr[0],rad_dr[1],rad_dr[2],-1); rad_r2 = rad_dr.norm_sq();
+#endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
 #endif
@@ -2290,7 +2305,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = 0; lw_lum = 0;
                 if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                    g0_flux_dx = rad_dr[0]; g0_flux_dy = rad_dr[1]; g0_flux_dz = rad_dr[2]; g0_flux_r2 = rad_r2;}
+#else
                     g0_flux_dx = dr[0]; g0_flux_dy = dr[1]; g0_flux_dz = dr[2]; g0_flux_r2 = r2;}
+#endif
 #ifdef TREE_RAY_PI
                 ion_lum = 0; nh_m = 0;
                 if(P[no].Type == 4 || P[no].Type == 5) {ion_lum = P[no].Ion_luminosity;}
@@ -2652,6 +2671,35 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                     }
                 
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                /* re-apply the opening criteria at the min-image distance: a node near only through the wrap is opened */
+                rad_dr = dr; RADIATION_NEAREST_XYZ(rad_dr[0],rad_dr[1],rad_dr[2],-1); rad_r2 = rad_dr.norm_sq();
+                {
+                    int open_for_radiation = 0;
+#ifdef NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
+                    Vec3<double> d_nc_rad = nop->center - pos;
+                    RADIATION_NEAREST_XYZ(d_nc_rad[0],d_nc_rad[1],d_nc_rad[2],-1);
+                    double dist_to_open_rad = DMAX(soft , nop->maxsoft) + nop->len*1.73205/2.0;
+                    if(d_nc_rad.norm_sq() < dist_to_open_rad*dist_to_open_rad) {open_for_radiation = 1;}
+#else
+                    if((h < nop->maxsoft) && (rad_r2 < nop->maxsoft * nop->maxsoft)) {open_for_radiation = 1;}
+#endif
+                    if(All.ErrTolTheta) {if(nop->len * nop->len > rad_r2 * All.ErrTolTheta * All.ErrTolTheta) {open_for_radiation = 1;}}
+#ifndef GRAVITY_HYBRID_OPENING_CRIT
+                    else
+#else
+                    if(!(All.Ti_Current == 0 && RestartFlag != 1))
+#endif
+                    {
+                        if((rad_r2 < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (rad_r2 < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len))) {open_for_radiation = 1;}
+                        if(mass * nop->len * nop->len > rad_r2 * rad_r2 * aold) {open_for_radiation = 1;}
+                        if((NGB_PERIODIC_BOX_LONG_X(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len) &&
+                           (NGB_PERIODIC_BOX_LONG_Y(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len) &&
+                           (NGB_PERIODIC_BOX_LONG_Z(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)) {open_for_radiation = 1;}
+                    }
+                    if(open_for_radiation) {no = nop->u.d.nextnode; continue;}
+                }
+#endif
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
                 zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
@@ -2689,7 +2737,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         g0_flux_dx = nop->lum_s[0]/wl - pos[0];
                         g0_flux_dy = nop->lum_s[1]/wl - pos[1];
                         g0_flux_dz = nop->lum_s[2]/wl - pos[2];
-                        GRAVITY_NEAREST_XYZ(g0_flux_dx, g0_flux_dy, g0_flux_dz, -1);
+                        RADIATION_NEAREST_XYZ(g0_flux_dx, g0_flux_dy, g0_flux_dz, -1);
                         g0_flux_r2 = g0_flux_dx*g0_flux_dx + g0_flux_dy*g0_flux_dy + g0_flux_dz*g0_flux_dz;
                     }
                 }
@@ -2989,12 +3037,17 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #endif
 #if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-                if(gasmass > 0 && r > 0 && r < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                const Vec3<double> &dr_col = rad_dr; const double r2_col = rad_r2, r_col = sqrt(rad_r2);
+#else
+                const Vec3<double> &dr_col = dr; const double r2_col = r2, r_col = r;
+#endif
+                if(gasmass > 0 && r_col > 0 && r_col < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
                 {
                     long iheal;
-                    double vec_hp[3] = {dr[0], dr[1], dr[2]};
+                    double vec_hp[3] = {dr_col[0], dr_col[1], dr_col[2]};
                     vec2pix_ring(NSIDE, vec_hp, &iheal);
-                    double area = (4.0*M_PI / NPIX) * r2;
+                    double area = (4.0*M_PI / NPIX) * r2_col;
 #ifdef TREE_RAD
                     treecol_Projection[iheal] += gasmass / area;   /* total-H column: TREE_RAD (FUV-G0) only */
                     treecol_ProjectionDust[iheal] += dustmass / area;
@@ -3005,7 +3058,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef TREE_RAY
                     /* absorber deposit: same Sigma contribution, binned by COM distance */
-                    {int is_col = iheal*TREE_RAY_NSHELL + TREERAY_SHELL_OF(r2);
+                    {int is_col = iheal*TREE_RAY_NSHELL + TREERAY_SHELL_OF(r2_col);
                      treeray_shell_col[is_col] += gasmass / area;
 #ifdef TREE_RAY_PI
                      treeray_shell_nh[is_col] += nh_m / area;
@@ -3019,9 +3072,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
-                if(r2 > 0) {
-                    if(g0dbg_node) { if(uv_lum > 0) {G0DBG_fluxN += uv_lum/r2; G0DBG_nN++;} else {G0DBG_nNzero++;} }
-                    else if(uv_lum > 0) {G0DBG_fluxP += uv_lum/r2;}
+                if(r2_col > 0) {
+                    if(g0dbg_node) { if(uv_lum > 0) {G0DBG_fluxN += uv_lum/r2_col; G0DBG_nN++;} else {G0DBG_nNzero++;} }
+                    else if(uv_lum > 0) {G0DBG_fluxP += uv_lum/r2_col;}
 
                 }
 #endif
