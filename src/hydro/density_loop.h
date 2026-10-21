@@ -248,6 +248,29 @@ struct DensityNeighborData {
  * (5) DensitySpec — the runner-template Spec.
  *
  * Declares the density loop traits, data structs, and hook surface. ===== */
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+/* Whether a particle of this type searches for gas neighbours as a feedback or radiation source: with a looser
+   neighbour-number tolerance (it needs only enough neighbours to couple to) and, with star formation, a cap on the
+   search radius so a source in very diffuse gas does not search ludicrously far. By default the star types 1-4; in
+   idealized grain or radiation problems without star formation, type 4 only; and with radiation, every type that
+   injects radiation, since the injection uses the kernel set here. Never gas (it searches to its own target, with
+   its own cap), sinks (capped by their accretion radius) or grains. */
+KOKKOS_INLINE_FUNCTION static int density_is_coupling_source_type(int type)
+{
+    int valid_types = 2+4+8+16, invalid_types = 1+32;
+#if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
+    valid_types = 16;
+#endif
+#ifdef RT_SOURCES
+    valid_types |= RT_SOURCES;
+#endif
+#ifdef GRAIN_FLUID
+    invalid_types |= GRAIN_PTYPES;
+#endif
+    return ((1 << type) & valid_types) && !((1 << type) & invalid_types);
+}
+#endif
+
 struct DensitySpec {
     /* Identity */
     static constexpr const char *loop_name = "density";
@@ -681,15 +704,7 @@ struct DensitySpec {
         double maxsoft = cs.max_kernel_radius;
 
     #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-        /* legacy density.cc:153-159 constants — Config-resolved at compile time */
-        int valid_stellar_types = 2+4+8+16, invalid_stellar_types = 1+32;
-      #if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
-        valid_stellar_types = 16; invalid_stellar_types = 1+2+4+8+32;
-        #ifdef RADTRANSFER
-        invalid_stellar_types = 64; valid_stellar_types = RT_SOURCES;
-        #endif
-      #endif
-        if (((1 << P[i].Type) & (valid_stellar_types)) && !((1 << P[i].Type) & (invalid_stellar_types))) {
+        if (density_is_coupling_source_type(P[i].Type)) {
             desnumngb = cs.des_num_ngb;
       #if defined(RT_SOURCE_INJECTION)
             if (desnumngb < 64.0) desnumngb = 64.0;

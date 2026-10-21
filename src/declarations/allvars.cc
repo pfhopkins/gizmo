@@ -201,7 +201,7 @@ int NumPartGroup;
 /* variables for input/output , usually only used on process 0 */
 
 
-char ParameterFile[100];	/*!< file name of parameterfile used for starting the simulation */
+char ParameterFile[256];	/*!< file name of parameterfile used for starting the simulation */
 
 FILE
 #ifdef OUTPUT_ADDITIONAL_RUNINFO

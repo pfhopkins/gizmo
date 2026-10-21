@@ -23,6 +23,12 @@ void write_header_attributes_in_hdf5(hid_t handle);
 void read_header_attributes_in_hdf5(char *fname);
 
 void output_compile_time_options(void);
+const char *compile_time_config_literal(void);              /* the Config.sh lines, one per line */
+const char *compile_time_effective_options(void);           /* every option defined in the build, NAME or NAME=value, one per line */
+unsigned long long compile_time_effective_options_fnv1a64(void);
+const char *compile_time_compiler_version(void);
+unsigned long long executable_fnv1a64(void);
+long long executable_size_in_bytes(void);
 
 void report_pinning(void);
 void pin_to_core_set(void);
@@ -57,7 +63,7 @@ int is_particle_a_special_zoom_target(int i);
 void update_tag_anchor_refinement_center(void);
 #endif
 int merge_particles_ij(int i, int j);
-int split_particle_i(int i, int n_particles_split, int i_nearest);
+int split_particle_i(int i, int n_particles_split, double r_near);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
 /* routine to invert square matrices of side Ndims x Ndims, used in a number of places in code for e.g. gradients, etc.

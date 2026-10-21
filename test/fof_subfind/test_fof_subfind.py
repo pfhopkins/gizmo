@@ -8,7 +8,7 @@ import h5py
 import numpy as np
 import pytest
 
-from gizmo.test import build_gizmo_for_test, default_mpi_ranks
+from gizmo.test import build_gizmo_for_test, default_mpi_ranks, mpi_launch_command
 
 from make_fof_subfind_ics import make_fof_subfind_ics
 
@@ -33,23 +33,10 @@ def _run_fof_subfind(test_dir, num_mpi_ranks, num_omp_threads):
     make_fof_subfind_ics(test_dir)
     build_gizmo_for_test(TEST_NAME, num_omp_threads)
 
+    cmd = mpi_launch_command(num_mpi_ranks, num_omp_threads) + ["./GIZMO", "fof_subfind.params", "3", "0"]
     env = os.environ.copy()
     if num_omp_threads > 0:
         env["OMP_NUM_THREADS"] = str(num_omp_threads)
-
-    if env.get("GIZMO_TEST_USE_IBRUN"):
-        cmd = ["ibrun", "./GIZMO", "fof_subfind.params", "3", "0"]
-    else:
-        cmd = [
-            "mpirun",
-            "-np",
-            str(num_mpi_ranks),
-            "--use-hwthread-cpus",
-            "./GIZMO",
-            "fof_subfind.params",
-            "3",
-            "0",
-        ]
     try:
         with open(test_dir / "test_fof_subfind.out", "w") as stdout, open(test_dir / "test_fof_subfind.err", "w") as stderr:
             result = subprocess.run(cmd, cwd=test_dir, env=env, stdout=stdout, stderr=stderr, check=False, timeout=180)

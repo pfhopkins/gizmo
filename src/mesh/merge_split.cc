@@ -323,9 +323,11 @@ void merge_and_split_particles(void)
      * particle: only a flagged index does any work there, and the flags can only be
      * set on candidates. */
     std::vector<int> ms_flagged;
+    std::vector<double> ms_split_nearest_distance; /* per ms_flagged entry: distance to the nearest neighbour when a split was flagged */
 
-    /* Modern path: prebuilt CSR neighbor list. Skip ghosts in the inner loop —
-     * merge_particles_ij/split_particle_i operate on local P[] indices only.
+    /* Modern path: prebuilt CSR neighbor list. Merges and splits rearrange local particles, so no ghost
+     * pool is live here and the list holds local particles only: a neighbour owned by another task is
+     * not seen (neither as a merge target nor in the split spacing).
      * Bitmask is OR of all merge/split-eligible types (gas + GALSF stars);
      * type-equality filter inside the per-source loop keeps semantics identical
      * to legacy ngb_treefind_variable_targeted with bitflag = 1<<P[i].Type. */
@@ -462,6 +464,7 @@ void merge_and_split_particles(void)
 
         int num_src = (int)ms_src_idx.size();
         ms_flagged.reserve((size_t)num_src);
+        ms_split_nearest_distance.reserve((size_t)num_src);
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
@@ -603,26 +606,30 @@ void merge_and_split_particles(void)
                 if (target_for_merger >= 0) {
                     Ptmp[i].flag = 1; Ptmp[target_for_merger].flag = 3; Ptmp[i].target_index = target_for_merger;
                     ms_flagged.push_back(i);
+                    ms_split_nearest_distance.push_back(0); /* kept aligned with ms_flagged; read only for splits */
                 }
             }
             else if (ms_src_kind[aa] == 2) {
-                target_for_merger = -1;
+                /* a cell without a valid density has no volume to divide: it is not split on this step */
+                if ((P[i].Type == 0) && !((CellP[i].Density > 0) && isfinite(CellP[i].Density))) {continue;}
+                /* The daughters are placed within a fraction of the distance to the nearest neighbour, so that
+                   distance is taken over every neighbour in the list, including ones that are themselves about to
+                   split or merge. It is recorded now, before any cell is moved by the merges and splits applied
+                   below. With no neighbour at all, or one at exactly the same position, the cell is not split
+                   on this step. */
                 threshold_val = MAX_REAL_NUMBER;
                 for (int64_t nn = nl_start; nn < nl_end; nn++) {
                     j = gnl_neighbors[nn];
-                    if (j >= local_count) continue;
-                    if (P[j].Type != P[i].Type) continue;
-                    if ((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0) && (Ptmp[j].flag == 0)) {
-                        Vec3<double> dp = P[i].Pos - P[j].Pos;
-                        nearest_xyz(dp);
-                        double r2 = dp.norm_sq();
-                        if (r2<threshold_val) {threshold_val=r2; target_for_merger=j;}
-                    }
+                    if ((j < 0) || (j >= local_count) || (j == i) || (P[j].Type != P[i].Type) || !(P[j].Mass > 0)) continue;
+                    Vec3<double> dp = P[i].Pos - P[j].Pos;
+                    nearest_xyz(dp);
+                    double r2 = dp.norm_sq();
+                    if (r2 < threshold_val) {threshold_val = r2;}
                 }
-                if (target_for_merger >= 0) {
+                if ((threshold_val < MAX_REAL_NUMBER) && (threshold_val > 0)) {
                     Ptmp[i].flag = 2;
-                    Ptmp[i].target_index = target_for_merger;
                     ms_flagged.push_back(i);
+                    ms_split_nearest_distance.push_back(sqrt(threshold_val));
                 }
             }
         }
@@ -642,7 +649,7 @@ void merge_and_split_particles(void)
             if(did_merge == 1) {n_particles_merged++;}
         }
         if (Ptmp[i].flag == 2) {
-            int did_split = split_particle_i(i, n_particles_split, Ptmp[i].target_index);
+            int did_split = split_particle_i(i, n_particles_split, ms_split_nearest_distance[aa_apply]);
             if(did_split == 1) {n_particles_split++; if(P[i].Type==0) {n_particles_gas_split++;}} else {failed_splits++;}
         }
     }
@@ -692,7 +699,7 @@ static int UnmetSplitDemand = 0;
 int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
 void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
 
-int split_particle_i(int i, int n_particles_split, int i_nearest)
+int split_particle_i(int i, int n_particles_split, double r_near)
 {
     if(ghost_require_no_live_pool_for_layout_change("split_particle_i")) {return 0;}
     double mass_of_new_particle;
@@ -721,9 +728,6 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
     k=0;
     phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
     cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
-    Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
-    nearest_xyz(dp);
-    double r_near = dp.norm();
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
@@ -856,6 +860,9 @@ int split_particle_i(int i, int n_particles_split, int i_nearest)
         CellP[j].GravWorkTerm = {}; CellP[i].GravWorkTerm = {}; //= mass_of_new_particle * ...; //appears more stable with this zero'd
         CellP[j].MassTrue = mass_of_new_particle * CellP[i].MassTrue;
         CellP[i].MassTrue -= CellP[j].MassTrue;
+#endif
+#if defined(SINK_THERMALFEEDBACK)
+        CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -1278,6 +1285,9 @@ int merge_particles_ij(int i, int j)
     }
 #endif
 #endif
+#endif
+#if defined(SINK_THERMALFEEDBACK)
+    CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* pending energy (not specific): the survivor keeps both */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)

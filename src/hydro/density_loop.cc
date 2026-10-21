@@ -288,19 +288,6 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 {
     const int N = (int)active_list_concat.size();
 
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    /* Legacy density.cc:153-159 type-validity constants. Config-resolved
-     * at compile time; needed for valid_stellar_types gate around the
-     * DensityAroundParticle / GradRho scatter. */
-    int valid_stellar_types = 2+4+8+16, invalid_stellar_types = 1+32;
-  #if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
-    valid_stellar_types = 16; invalid_stellar_types = 1+2+4+8+32;
-    #ifdef RADTRANSFER
-    invalid_stellar_types = 64; valid_stellar_types = RT_SOURCES;
-    #endif
-  #endif
-#endif
-
     /* Parallel-for: legacy uses #pragma omp parallel for schedule(dynamic)
      * around density.cc:629-795. Preserved here. */
 #ifdef _OPENMP
@@ -786,18 +773,6 @@ void density(void)
      *       so the legacy `Left[i] = Right[i] = 0` is already covered. */
     gpu_particles_arena_invalidate();
     {
-#if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && defined(GALSF)
-        int valid_stellar_types   = 2+4+8+16;
-        int invalid_stellar_types = 1+32;
-#ifdef BLACK_HOLES
-        valid_stellar_types   = 16;
-        invalid_stellar_types = 1+2+4+8+32;
-#endif
-#ifdef RT_SOURCES
-        invalid_stellar_types = 64;
-        valid_stellar_types   = RT_SOURCES;
-#endif
-#endif
         for (int i : active_list_concat) {
 #ifdef SINK_PARTICLES
             P[i].SwallowID = 0;
@@ -810,10 +785,7 @@ void density(void)
 #endif
             double maxsoft = host_all->MaxKernelRadius;
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && defined(GALSF)
-            if (((1 << P[i].Type) & (valid_stellar_types)) &&
-                !((1 << P[i].Type) & (invalid_stellar_types))) {
-                maxsoft = 2.0 / (UNIT_LENGTH_IN_KPC * host_all->cf_atime);
-            }
+            if (density_is_coupling_source_type(P[i].Type)) {maxsoft = 2.0 / (UNIT_LENGTH_IN_KPC * host_all->cf_atime);}
 #endif
 #ifdef SINK_PARTICLES
             /* Enforce the recommended-policy invariant "nothing exceeds
