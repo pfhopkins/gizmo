@@ -113,6 +113,19 @@ static double fac_intp;
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign) (fabs(z))
 #endif
 
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY /* tree radiation and columns use the nearest periodic image even though gravity does not */
+#if !defined(BOX_PERIODIC) || !defined(GRAVITY_NOT_PERIODIC)
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY requires BOX_PERIODIC and GRAVITY_NOT_PERIODIC"
+#endif
+#ifdef PMGRID
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY is not compatible with PMGRID"
+#endif
+#if !defined(RT_USE_GRAVTREE) && !defined(RT_USE_TREECOL_FOR_NH)
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY requires RT_USE_GRAVTREE or RT_USE_TREECOL_FOR_NH"
+#endif
+#define RADIATION_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
+#endif
+
 /*! This function is a driver routine for constructing the gravitational
  *  oct-tree, which is done by calling a small number of other functions.
  */
@@ -1582,6 +1595,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_PHOTONMOMENTUM
     double mass_sinklumwt_forradfb=0; // convert bh luminosity to our tree units
 #endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+    Vec3<double> dr_rad = {}; double r2_rad = 0; int rad_target = 0; /* nearest-image separation for radiation and columns */
+#endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     double incident_flux_uv=0, incident_flux_euv=0;
 #endif
@@ -1695,6 +1711,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     }
 #endif
 #endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+#ifdef RT_USE_TREECOL_FOR_NH
+    rad_target = 1; /* columns are computed for every target */
+#else
+    rad_target = valid_gas_particle_for_rt;
+#endif
+#endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     double m_enc_in_rcrit = 0, r_for_total_menclosed = soft; r_for_total_menclosed = DMAX( r_for_total_menclosed , 0.1/(UNIT_LENGTH_IN_KPC*All.cf_atime) ); /* set a baseline Rcrit_min, otherwise we get statistics that are very noisy */
 #endif
@@ -1786,6 +1809,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                dr_rad = dr; RADIATION_NEAREST_XYZ(dr_rad[0],dr_rad[1],dr_rad[2],-1); r2_rad = dr_rad.norm_sq();
+#endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
 #endif
@@ -1876,7 +1902,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef RT_USE_GRAVTREE
                     if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
                     {
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                        d_stellarlum=dr_rad;
+#else
                         d_stellarlum=dr;
+#endif
                         double lum[N_RT_FREQ_BINS];
 #ifdef CHIMES_STELLAR_FLUXES
                         double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
@@ -1897,9 +1927,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         {
                             double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].Sink_Specific_AngMom, dr[0],dr[1],dr[2]);
+                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].Sink_Specific_AngMom, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
 #else
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].GradRho, dr[0],dr[1],dr[2]);
+                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].GradRho, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
 #endif
                         }
 #endif
@@ -2113,6 +2143,34 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                     }
                 
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                dr_rad = dr; RADIATION_NEAREST_XYZ(dr_rad[0],dr_rad[1],dr_rad[2],-1); r2_rad = dr_rad.norm_sq();
+                if(rad_target && (r2_rad < r2)) /* node is nearer through the periodic wrap: re-apply the opening criteria at that distance */
+                {
+                    int open_for_radiation = 0;
+#ifdef NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
+                    Vec3<double> d_nc_rad = nop->center - pos; RADIATION_NEAREST_XYZ(d_nc_rad[0],d_nc_rad[1],d_nc_rad[2],-1);
+                    double dist_to_open_rad = DMAX(soft , nop->maxsoft) + nop->len*1.73205/2.0;
+                    if(d_nc_rad.norm_sq() < dist_to_open_rad*dist_to_open_rad) {open_for_radiation = 1;}
+#else
+                    if((h < nop->maxsoft) && (r2_rad < nop->maxsoft * nop->maxsoft)) {open_for_radiation = 1;}
+#endif
+                    if(All.ErrTolTheta) {if(nop->len * nop->len > r2_rad * All.ErrTolTheta * All.ErrTolTheta) {open_for_radiation = 1;}}
+#ifndef GRAVITY_HYBRID_OPENING_CRIT
+                    else
+#else
+                    if(!(All.Ti_Current == 0 && RestartFlag != 1))
+#endif
+                    {
+                        if((r2_rad < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (r2_rad < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len))) {open_for_radiation = 1;}
+                        if(mass * nop->len * nop->len > r2_rad * r2_rad * aold) {open_for_radiation = 1;}
+                        if((NGB_PERIODIC_BOX_LONG_X(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len) &&
+                           (NGB_PERIODIC_BOX_LONG_Y(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len) &&
+                           (NGB_PERIODIC_BOX_LONG_Z(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)) {open_for_radiation = 1;}
+                    }
+                    if(open_for_radiation) {no = nop->u.d.nextnode; continue;}
+                }
+#endif
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
                 zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
@@ -2142,7 +2200,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                     d_stellarlum = nop->rt_source_lum_s - pos;
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                    RADIATION_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
+#else
                     GRAVITY_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
+#endif
+#elif defined(TREE_RADIATION_WRAPS_WITHOUT_GRAVITY)
+                    d_stellarlum = dr_rad;
 #else
                     d_stellarlum = dr;
 #endif
@@ -2458,6 +2522,19 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 tree_mass += mass;
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                if((gasmass>0) && (r2_rad < r2)) /* nearer through the periodic wrap: same column, at the nearest-image separation */
+                {
+                    double r_col = sqrt(r2_rad), h_col = DMAX(h, h_p), fac_col = 1./r2_rad;
+                    if(r_col < h_col) {double h_col_inv = 1./h_col; fac_col = r_col * kernel_gravity(r_col*h_col_inv, h_col_inv, h_col_inv*h_col_inv*h_col_inv, 1);}
+                    int bin;
+                    if((fabs(dr_rad[0]) > fabs(dr_rad[1])) && (fabs(dr_rad[0])>fabs(dr_rad[2]))) {if (dr_rad[0] > 0) {bin = 0;} else {bin=1;}
+                    } else if (fabs(dr_rad[1])>fabs(dr_rad[2])){if (dr_rad[1] > 0) {bin = 2;} else {bin=3;}
+                    } else {if (dr_rad[2] > 0) {bin = 4;} else {bin = 5;}}
+                    treecol_angular_bins[bin] += fac_col*gasmass / angular_bin_size;
+                }
+                else
+#endif
                 if(gasmass>0)
                 {
                     int bin; // Here we do a simple six-bin angular binning scheme
