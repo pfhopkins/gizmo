@@ -25,6 +25,7 @@
 //    The one-zone harness maps nonzero to the chemcool_fatal exit path.
 
 #include "chem_types.h"
+#include "chem_net20.h"
 #include <cvode/cvode.h>
 #include <nvector/nvector_serial.h>
 #include <sunmatrix/sunmatrix_dense.h>
@@ -64,6 +65,7 @@ static inline int rhs_dispatch(double t, const double* y, double* ydot, ChemCell
     if (c.net == 3)  return chem_rhs_net3(t, y, ydot, c);
     if (c.net == 15) return chem_rhs_net15(t, y, ydot, c);
     if (c.net == 16) return chem_rhs_net16(t, y, ydot, c);
+    if (c.net == 20) return chem_rhs_net20(t, y, ydot, c);
     return (c.net == 5) ? chem_rhs_net5(t, y, ydot, c)
                         : chem_rhs_net17(t, y, ydot, c);
 }
@@ -109,6 +111,9 @@ static void chem_atol(int net, double* atol)
     } else if (net == 5) {
         atol[CIH2] = 1e-7;  atol[CIHP] = 1e-12; atol[CICO] = 1e-14;
         atol[3] = 0.0;                       // ATOL_TMP = 0d0
+    } else if (net == 20) {
+        atol[C20_IH2] = 1e-10; atol[C20_IHP] = 1e-12;
+        atol[2] = 0.0;
     } else {
         atol[CIH2] = 1e-7;  atol[CIHP] = 1e-12; atol[CICO] = 1e-14;
         atol[CIHEP] = 1e-14; atol[CIHEPP] = 1e-14;
@@ -168,6 +173,9 @@ static int chem_check_abundances(double* y, ChemCell& c, const double* atol)
         max_abundance[C15_IHCOP] = co_max;
         max_abundance[C15_IHEP]  = c.abhe;
         max_abundance[C15_IMP]   = c.abundM;
+    } else if (c.net == 20) {
+        max_abundance[C20_IH2] = 0.5;
+        max_abundance[C20_IHP] = 1.0;
     } else {
         max_abundance[CIH2] = 0.5;
         max_abundance[CIHP] = 1.0;
@@ -222,7 +230,7 @@ static int chem_check_abundances(double* y, ChemCell& c, const double* atol)
           chem_clamp_pool_group(y, k, w, 3, c.abundo); }
         { const int k[] = {C15_IH2, C15_IHP, C15_ICHX, C15_IOHX, C15_IHCOP}; const double w[] = {2.0, 1.0, 1.0, 1.0, 1.0};
           chem_clamp_pool_group(y, k, w, 5, 1.0); }
-    } else if (c.net == 5) {
+    } else if (c.net == 5 || c.net == 20) {
         { const int k[] = {CIH2, CIHP}; const double w[] = {2.0, 1.0};
           chem_clamp_pool_group(y, k, w, 2, 1.0); }
     } else {
@@ -258,11 +266,11 @@ struct CvWork {
 // keeps the wall-time comparison fair (DEVIATIONS D-7), and making the cache
 // thread_local is what makes the C++ path OpenMP-safe -- a shared CVode memory
 // object cannot be entered concurrently.  Cost: one workspace per (thread,net).
-static thread_local CvWork g_work[4];   // [0] nspec 4 (net 5), [1] nspec 8 (net 17), [2] nspec 10 (nets 15/16), [3] nspec 20 (net 3)
+static thread_local CvWork g_work[5];   // [0] nspec 4 (net 5), [1] nspec 8 (net 17), [2] nspec 10 (nets 15/16), [3] nspec 20 (net 3), [4] nspec 3 (net 20)
 
 static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
 {
-    CvWork* w = &g_work[(nspec == 4) ? 0 : (nspec == 10) ? 2 : (nspec == 20) ? 3 : 1];
+    CvWork* w = &g_work[(nspec == 4) ? 0 : (nspec == 10) ? 2 : (nspec == 20) ? 3 : (nspec == 3) ? 4 : 1];
     if (w->mem == nullptr) {
         if (SUNContext_Create(NULL, &w->ctx)) return nullptr;
         w->nspec = nspec;
@@ -302,7 +310,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     const int nspec = c.nspec;
     const int itmp = nspec - 1;
     const int ih2 = CIH2, ihp = CIHP;
-    const int ico = chem_net_nl99(c.net) ? C15_ICO : (c.net == 3) ? C3_ICO : CICO;
+    const int ico = chem_net_nl99(c.net) ? C15_ICO : (c.net == 3) ? C3_ICO : CICO;   // unused for net 20 (no CO in the ODE)
 
     if (time < 0.0) return 0;                                // .F:72-74
 
@@ -358,7 +366,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
         ctrl_floor[C15_IHCOP] = std::fmax(atol[C15_IHCOP], eps_ctrl * co_pool);
         ctrl_floor[C15_IHEP]  = std::fmax(atol[C15_IHEP],  eps_ctrl * c.abhe);
         ctrl_floor[C15_IMP]   = std::fmax(atol[C15_IMP],   eps_ctrl * c.abundM);
-    } else {
+    } else if (c.net != 20) {
         double co_pool = (c.abundc < c.abundo) ? c.abundc : c.abundo;
         double f = eps_ctrl * co_pool;
         if (f > ctrl_floor[ico]) ctrl_floor[ico] = f;
@@ -376,13 +384,21 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
 
     // ---- TNOCHEM hot bypass (.F:200-260) ----
     {
-        double yntot_byp = (1.0 + c.abhe + y[ihp] - y[ih2]) * yn;
-        double ekn_byp = y[itmp] / (CHEM_KBOLTZ * yntot_byp);
-        double temp_byp, gam_byp;
-        cxx_lookup_temp_gamma(y[ih2], c.abhe, ekn_byp, &temp_byp, &gam_byp, *c.tab);
+        auto bypass_temp = [&]() {
+            if (c.net == 20) {
+                N20State s20;
+                return n20_solve_state(y[ih2], y[ihp], y[itmp], c, s20) ? 0.0 : s20.T;
+            }
+            double yntot_byp = (1.0 + c.abhe + y[ihp] - y[ih2]) * yn;
+            double ekn_byp = y[itmp] / (CHEM_KBOLTZ * yntot_byp);
+            double temp_byp, gam_byp;
+            cxx_lookup_temp_gamma(y[ih2], c.abhe, ekn_byp, &temp_byp, &gam_byp, *c.tab);
+            return temp_byp;
+        };
+        double temp_byp = bypass_temp();
         if (temp_byp > CHEMCOOL_TNOCHEM) {
             y[ih2] = 0.0;
-            y[ico] = 0.0;
+            if (c.net != 20) y[ico] = 0.0;
             if (c.net == 17) y[CIHD] = 0.0;
             // HOTIONFIX hot-CIE ion set (.F:223-228)
             y[ihp] = 1.0;
@@ -433,9 +449,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 y[itmp] += dt_byp * ydot[itmp];
                 t_start += dt_byp;
                 if (t_start >= t_end - 1e-10 * t_end) { done = 1; break; }  // WEDGEFIX 3
-                yntot_byp = (1.0 + c.abhe + y[ihp] - y[ih2]) * yn;
-                ekn_byp = y[itmp] / (CHEM_KBOLTZ * yntot_byp);
-                cxx_lookup_temp_gamma(y[ih2], c.abhe, ekn_byp, &temp_byp, &gam_byp, *c.tab);
+                temp_byp = bypass_temp();
                 if (temp_byp <= CHEMCOOL_TNOCHEM) break;    // hand off to stiff path
             }
             // budget exhausted while hot: accept state (.F:257-259)

@@ -4,7 +4,7 @@
 #ifndef CHEMCOOL_NETWORK_H
 #define CHEMCOOL_NETWORK_H
 
-#if CHEMISTRYNETWORK == 5        /* H2, H+, CO */
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20   /* H2, H+, CO (net 20: CO is the equilibrium value) */
 static const double chemcool_trac_molwt[] = {2.0, 1.0, 28.0};
 #elif CHEMISTRYNETWORK == 17     /* H2, H+, CO, He+, He++, D+, HD */
 static const double chemcool_trac_molwt[] = {2.0, 1.0, 28.0, 4.0, 4.0, 2.0, 3.0};
@@ -24,7 +24,10 @@ static_assert(sizeof(chemcool_trac_molwt)/sizeof(chemcool_trac_molwt[0]) == TRAC
 /* electrons per H; species not tracked by the network count as singly ionized at their full pool */
 static inline double chemcool_electrons(const double *ab, const struct ChemInputs *in)
 {
-#if CHEMISTRYNETWORK == 5
+#if CHEMISTRYNETWORK == 20
+    (void)ab; (void)in;
+    return chem_cxx_net20_electrons();   /* equilibrium x_e of the cell just finished */
+#elif CHEMISTRYNETWORK == 5
     return ab[IHP] + in->abundc + in->abundsi;
 #elif CHEMISTRYNETWORK == 17
     return ab[IHP] + ab[IHEP] + 2.0*ab[IHEPP] + in->abundc + in->abundsi;
@@ -68,7 +71,7 @@ static inline void chemcool_clamp_group(double *ab, const int *k, const double *
 /* species cannot hold more of an element than its gas-phase pool (upstream injection/diffusion can leave them inconsistent) */
 static inline void chemcool_clamp_pools(double *ab, const struct ChemInputs *in)
 {
-#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 17 || CHEMISTRYNETWORK == 20
     double co_pool = (in->abundc < in->abundo) ? in->abundc : in->abundo;
     if(co_pool < 0) co_pool = 0;
     if(ab[ICO] > co_pool) ab[ICO] = co_pool;  /* CO <= min(C_gas, O_gas) */
@@ -93,7 +96,7 @@ static inline void chemcool_clamp_pools(double *ab, const struct ChemInputs *in)
     {const int k[] = {IDP, IHD}; const double n[] = {1, 1}; chemcool_clamp_group(ab, k, n, 2, in->abundD);}
 #endif
     /* hydrogen pool, after the metal clamps (which only lower these species) */
-#if CHEMISTRYNETWORK == 5
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20
     {const int k[] = {IH2, IHP}; const double n[] = {2, 1}; chemcool_clamp_group(ab, k, n, 2, 1.0);}
 #elif CHEMISTRYNETWORK == 17
     {const int k[] = {IH2, IHP, IHD}; const double n[] = {2, 1, 1}; chemcool_clamp_group(ab, k, n, 3, 1.0);}

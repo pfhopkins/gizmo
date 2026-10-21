@@ -315,10 +315,14 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
     abe  = abundances[IHP];
 
     /* Compute final temperature */
+#if CHEMISTRYNETWORK == 20
+    (void)ekn; (void)abe;
+    chem_cxx_net20_finish(abundances, energy, &temp);  /* T with the equilibrium x_e; writes CO */
+#elif defined(CHEMCOOL_CXX)
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
-#ifdef CHEMCOOL_CXX
     temp = chem_cxx_calc_temp(abh2, chem_in.abhe, ekn);
 #else
+    ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
     CALC_TEMP(&abh2, &ekn, &temp);
 #endif
 

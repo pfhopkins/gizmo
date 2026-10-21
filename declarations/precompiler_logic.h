@@ -957,6 +957,8 @@
 
 #ifdef RT_CHEM_PHOTOION
 #define RT_BAND_IS_IONIZING(k) ((k==RT_FREQ_BIN_H0) || (k==RT_FREQ_BIN_He0) || (k==RT_FREQ_BIN_He1) || (k==RT_FREQ_BIN_He2))
+#else
+#define RT_BAND_IS_IONIZING(k) (0) // no ionizing bands without RT_CHEM_PHOTOION
 #endif
 
 #ifndef GALSF_FB_FIRE_RT_LONGRANGE
@@ -1146,6 +1148,11 @@
 #define BOX_PERIODIC
 #endif
 #endif // TALLBOX
+
+/* Stella stretched tallbox: no periodic gravity for BOX_LONG boxes; tree radiation still wraps in x/y (forcetree.cc) */
+#if defined(GALSF_RESOLVEDISM_TALLBOX) && defined(BOX_PERIODIC) && (defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z)) && !defined(GRAVITY_NOT_PERIODIC) && !defined(SELFGRAVITY_OFF)
+#error "GALSF_RESOLVEDISM_TALLBOX with BOX_PERIODIC and BOX_LONG_X/Y/Z requires GRAVITY_NOT_PERIODIC (stretched boxes have no periodic gravity solver)"
+#endif
 
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */
@@ -1470,6 +1477,11 @@
 #define TRAC_NUM 9
 #elif CHEMISTRYNETWORK == 17
 #define TRAC_NUM 7
+#elif CHEMISTRYNETWORK == 20
+#define TRAC_NUM 3   /* H2, H+ evolved; CO = equilibrium value written back */
+#ifndef CHEMCOOL_CXX
+#error "CHEMISTRYNETWORK=20 (TIGRESS-NCR) exists only in the C++ backend: enable CHEMCOOL_CXX"
+#endif
 #endif
 #if defined(TURB_DIFF_METALS)
 /* Include CHEMCOOL tracked abundances (H2, H+, CO, ...) in turbulent diffusion

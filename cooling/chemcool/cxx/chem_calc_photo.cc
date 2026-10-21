@@ -22,6 +22,7 @@
 
 #include "../../../GIZMO_config.h"
 #include "chem_types.h"
+#include "chem_net20.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -198,6 +199,7 @@ static inline double co_shield_lookup(const double* tab, int imax, double N,
 void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
                     ChemCell& c)
 {
+    if (c.net == 20) { cxx_calc_photo_net20(c); return; }
     const ChemTables& T = *c.tab;
     const int npr = CHEM_NPHTAB;
 

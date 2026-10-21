@@ -13,14 +13,16 @@
 #if defined(CHEMCOOL) && defined(CHEMCOOL_CXX)
 
 #include "chem_types.h"
+#include "chem_net20.h"
 #include "cooling/chemcool/chem_interface.h"
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
 extern "C" void chemcool_fatal_(int* code);
 
-#if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17
-#error "CHEMCOOL_CXX currently supports CHEMISTRYNETWORK 3, 5, 15, 16 and 17 only. \
+#if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17 && CHEMISTRYNETWORK != 20
+#error "CHEMCOOL_CXX currently supports CHEMISTRYNETWORK 3, 5, 15, 16, 17 and 20 only. \
 Build without CHEMCOOL_CXX (the Fortran path) for the other networks."
 #endif
 
@@ -69,6 +71,10 @@ void chem_cxx_tables_init(void)
 
 double chem_cxx_calc_temp(double abh2, double abhe, double ekn)
 {
+#if CHEMISTRYNETWORK == 20
+    (void)abh2; (void)abhe;
+    return ekn / 1.5;   // gamma = 5/3; the solve recomputes T with the equilibrium x_e
+#endif
     double temp, gamma;
     cxx_lookup_temp_gamma(abh2, abhe, ekn, &temp, &gamma, chem_cxx_tables());
     return temp;
@@ -115,6 +121,11 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #ifdef TREE_RAD_H2
     for (int k = 0; k < NPIX; k++) { c.col_h2[k] = in->column_density_projection_h2[k]; c.col_co[k] = in->column_density_projection_co[k]; }
 #endif
+#if CHEMISTRYNETWORK == 20
+    c.Zg = c.abundo / 3.2e-4;
+    c.dvdr = in->dvdr_cgs;
+    c.n20_tbb = std::max(6.0, 2.73 * (1.0 + c.redshift));
+#endif
     cxx_calc_photo(temp, abh2, abhd, abco, c);
 }
 
@@ -139,5 +150,19 @@ void chem_cxx_read_outputs(struct ChemOutputs* out)
     out->fac_shield_dust = c.fac_shield_dust;
 #endif
 }
+
+#if CHEMISTRYNETWORK == 20
+// final temperature, equilibrium x_e and CO for the (evolved or forced) state of this thread's cell
+void chem_cxx_net20_finish(double* abundances, double energy, double* temp)
+{
+    ChemCell& c = tl_cell;
+    N20State s;
+    if (n20_solve_state(abundances[C20_IH2], abundances[C20_IHP], energy, c, s)) { int rc = 4; chemcool_fatal_(&rc); }
+    abundances[ICO] = s.xCO;
+    *temp = s.T;
+}
+
+double chem_cxx_net20_electrons(void) { return tl_cell.n20_xe; }
+#endif
 
 #endif /* CHEMCOOL && CHEMCOOL_CXX */

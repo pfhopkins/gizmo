@@ -18,6 +18,7 @@
 // cvode_driver.cc, which is likewise thread_local (see DEVIATIONS D-7/D-15).
 
 #include "chem_types.h"
+#include "chem_net20.h"
 #include <cstring>
 #include <cstdio>
 
@@ -69,6 +70,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
     c.fshield_CO = 1.0;
     c.npix = CHEM_NPIX;
     for (int k = 0; k < CHEM_NPIX; k++) c.fac_uv[k] = 1.0 / CHEM_NPIX;
+    n20_cell_defaults(c);
     c.tab = &T;
 }
 
