@@ -474,6 +474,26 @@ so the Fortran-bound gamma/eh2 view (goldens, `CHEMCXX_TABLES=fortran`) was misa
   `cdh2_he` with He neutral, `ncrinv = ch5 + abhe*ch139`), incl. the 4.48 eV cooling; UV-pumping factor 6.94 (was 8.5).
 - Not changed: net 5 CR destruction of H2 (3 channels, 1.257 zeta); net 17's H2+ route has no exact net-5 equivalent.
 
+## D-28. (2026-10-21) Network 3 (Glover+10, `rate_eq_mol.F`) — `chem_rhs_net3.cc`
+Ported with the net-15 contract; driver policy from `evolve_abundances.F` (step control on H2, H+ and energy
+only, net-3 pool floors, atol, max abundances, pool projection, hot-gas state). As in the Fortran, the RHS calls
+`calc_photo` at every evaluation (live abh2/abco, abhd = 0); calc_photo now fills df09-df39/dfsp1 (both AV
+branches, RADTRANSFER/TREE_RAY overrides) and phrates 11-37, 52-54 for nets 3/7/8/11, plus 31/32 for net 3.
+Reproduced, not fixed: `ykdis = phrates(1)` without H2 self-shielding; dtemp is not zeroed above tmax; the
+14-species fixed point needs every species non-zero to converge early (otherwise 10 passes).
+Deviations (same classes as D-25): flagged input returns ydot = 0 and recoverable; temp <= 0 builds ydot at
+tmin and returns recoverable; NaN ydot returns recoverable. comp_equilib ABORT(9751/9752) and the bad-index
+ABORT(1) stay fatal: the RHS returns CHEM_RHS_FATAL with `c.fatal_code`, the driver returns that code to the
+chemcool_fatal path (a recoverable return made CVODE retry into dt collapse or minutes-long stalls). `CHEM_NSPEC_MAX` 20, `CHEM_NRATES_CHEM_MAX` 23.
+Not gated: G0 = 0, where calc_photo returns before setting chi_isrf and rate_eq_mol passes it on uninitialized
+to calc_dust_temp (measured: 484/700 G0 = 0 states differ in tdust-coupled terms, 0 at G0 > 0); the net-3
+phase-R grids use G0 = 1e-4 instead.
+Goldens (`golden/build_conservation.sh SRC OUT 3`): RHS vs `rate_eq` <= 6.7e-15 over 2071 states (359 states
+ABORT identically in both); Gate-3 tables/kernels/calc_photo ALL PASS at 1e-12; one-zone A/B (87 points)
+final T within 1.4e-3, trajectory 4.1e-3; conservation: identical failure sets (360/4200), no element
+overdraft above 3.4e-16 after any call, trajectories within 5.1e-3. GIZMO r17 dense box, Fortran vs C++: InternalEnergy
+median/p99 7.5e-7/1.9e-5, ChemcoolDustTemp 9.2e-5/9.9e-4, ChemcoolTracAbund 3.9e-6/6.3e-4.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

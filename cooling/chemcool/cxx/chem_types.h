@@ -77,7 +77,8 @@
 // net 5: abhe=0.10, TRAC_NUM=3, NRATES_CHEM=6
 // net 17: abhe=0.10, TRAC_NUM=7, NRATES_CHEM=22
 // nets 15/16: abhe=0.10, TRAC_NUM=9, NRATES_CHEM=6
-#define CHEM_NRATES_CHEM_MAX 22
+// net 3: abhe=0.10, TRAC_NUM=19, NRATES_CHEM=23
+#define CHEM_NRATES_CHEM_MAX 23
 
 // species slots (0-based, chemcool_consts.h nets 5/17)
 #define CIH2   0
@@ -98,10 +99,35 @@
 #define C15_IHCOP 6
 #define C15_IHEP  7
 #define C15_IMP   8   /* M+ (net 16: Si+) */
-#define CHEM_NSPEC_MAX 10
+
+// net 3 (Glover+10, rate_eq_mol.F) species slots (0-based); energy is slot 19
+#define C3_IH2   0
+#define C3_IHP   1
+#define C3_IC    2   /* C+ */
+#define C3_ISI   3   /* Si+ */
+#define C3_IO    4   /* O+ */
+#define C3_IDP   5
+#define C3_IHD   6
+#define C3_IHEP  7
+#define C3_IHEPP 8
+#define C3_ICO   9
+#define C3_IC2   10
+#define C3_IOH   11
+#define C3_IH2O  12
+#define C3_IO2   13
+#define C3_IHCOP 14
+#define C3_ICH   15
+#define C3_ICH2  16
+#define C3_ISIPP 17
+#define C3_ICH3P 18
+#define CHEM_NSPEC_MAX 20
 
 // nets 15 and 16 share species slots, driver policy and pools
 static inline int chem_net_nl99(int net) { return net == 15 || net == 16; }
+
+// tracked species per network (chemcool_consts.h TRAC_NUM)
+static inline int chem_trac_num(int net)
+{ return (net == 5) ? 3 : chem_net_nl99(net) ? 9 : (net == 3) ? 19 : 7; }
 
 // ---------------------------------------------------------------------------
 // Immutable table state.  This is a *view* over the rate/cooling tables, NOT a
@@ -242,10 +268,10 @@ inline double chem_CL(const ChemTables& T, int k, const ChemTIdx& ti)
 // as one explicit struct (audit R2).  Passed as CVODE user_data.
 // ---------------------------------------------------------------------------
 struct ChemCell {
-    int net;               // 5, 15, 16 or 17
-    int trac_num;          // 3, 9 (15/16) or 7
+    int net;               // 3, 5, 15, 16 or 17
+    int trac_num;          // 3, 9 (15/16), 19 (3) or 7
     int nspec;             // trac_num + 1
-    double abhe;           // 0.10 (nets 5/15/16/17)
+    double abhe;           // 0.10 (nets 3/5/15/16/17)
 
     // rpar equivalents
     double yn;             // H-nuclei number density [cm^-3]
@@ -302,6 +328,7 @@ struct ChemCell {
     double tdust;
     int dust_iter_failed;   // calc_dust_temp Newton budget exhausted (was ABORT(10))
     int cool_func_failed;   // cool_func hit an ABORT case (bad T index / H2 > 0.5)
+    int fatal_code;         // RHS ABORT code the driver returns (net 3 comp_equilib / index)
 
     // net-17 equilibrium-species previous-iterate memory (rate_eq_ulli locals;
     // persist across RHS evals within a cell call in the Fortran because they
@@ -406,10 +433,12 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net);
 //   return CHEM_RHS_RECOVERABLE -> recoverable bad input (CVODE retries)
 #define CHEM_RHS_OK 0
 #define CHEM_RHS_RECOVERABLE 1
+#define CHEM_RHS_FATAL (-1)   /* Fortran ABORT: c.fatal_code holds the code */
 int chem_rhs_net5 (double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net17(double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net15(double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net16(double t, const double* y, double* ydot, ChemCell& c);
+int chem_rhs_net3 (double t, const double* y, double* ydot, ChemCell& c);
 
 // ---------------------------------------------------------------------------
 // Gate-2 backend binding (chem_backend_fortran.cc).

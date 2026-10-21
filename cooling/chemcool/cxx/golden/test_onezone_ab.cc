@@ -1,8 +1,8 @@
-// test_onezone_ab.cc -- Fortran vs C++ one-zone golden for networks 15/16.
+// test_onezone_ab.cc -- Fortran vs C++ one-zone golden for networks 3, 15 and 16.
 //
 // Links the canonical Fortran (rate_eq, EVOLVE_ABUNDANCES/DVODE, calc_photo,
 // COOLINMO/CHEMINMO tables) and the C++ path GIZMO runs under CHEMCOOL_CXX
-// (chem_tables_build, cxx_calc_photo, chem_rhs_net15/16, cxx_evolve_abundances
+// (chem_tables_build, cxx_calc_photo, chem_rhs_net3/15/16, cxx_evolve_abundances
 // on CVODE) into ONE binary.
 //
 //   PHASE R  RHS: rate_eq vs chem_rhs_netN at identical states, identical frozen
@@ -76,8 +76,8 @@ void chemcool_fatal_(int* code)
 }
 }
 
-#if CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16
-#error "test_onezone_ab covers networks 15 and 16"
+#if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16
+#error "test_onezone_ab covers networks 3, 15 and 16"
 #endif
 
 void chem_bind_tables(ChemTables& T);
@@ -86,8 +86,28 @@ void chem_bind_cell(ChemCell& c, const ChemTables& T, int net);
 static const int NET = CHEMISTRYNETWORK;
 static const double SEC_PER_MYR = 3.156e13;
 static const double DL_SHIELD = 3.086e19;   // 10 pc TreeCol column length
+#if CHEMISTRYNETWORK == 3
+static const char* SPNAME[NSPEC] = {"H2", "H+", "C+", "Si+", "O+", "D+", "HD", "He+", "He++",
+                                    "CO", "C2", "OH", "H2O", "O2", "HCO+", "CH", "CH2", "Si++",
+                                    "CH3+", "e"};
+#else
 static const char* SPNAME[NSPEC] = {"H2", "H+", "C+", "CHx", "OHx", "CO", "HCO+",
                                     "He+", "M+", "e"};
+#endif
+
+// elemental pool of each tracked species (fractions in the mixes below are of these)
+static void species_pools(double* pool)
+{
+    const double C = COOLRC.abundc, O = COOLRC.abundo, CO = std::min(C, O);
+#if CHEMISTRYNETWORK == 3
+    const double Si = COOLRC.abundsi, D = COOLRC.abundD, He = CHEM_COMP.abhe;
+    const double p[TRAC_NUM] = {0.5, 1.0, C, Si, O, D, D, He, He, CO, 0.5 * C, O, O,
+                                0.5 * O, CO, C, C, Si, C};
+#else
+    const double p[TRAC_NUM] = {0.5, 1.0, C, C, O, CO, CO, CHEM_COMP.abhe, COOLRC.abundM};
+#endif
+    for (int i = 0; i < TRAC_NUM; i++) pool[i] = p[i];
+}
 
 // ---------------------------------------------------------------------------
 static double g_zeta = 2e-16;
@@ -151,20 +171,25 @@ static void set_columns(double yn, double abh2, double abco)
 // electrons and temperature exactly as the RHS (before O+/H3+)
 static double abe_of(const double* y)
 {
-    double e = y[C15_IHP] + y[C15_IC] + y[C15_IHCOP] + y[C15_IHEP] + y[C15_IMP];
+#if CHEMISTRYNETWORK == 3
+    double e = y[IHP] + y[IDP] + y[IHEP] + y[IC] + y[IO] + y[ISi] + y[IHCOP]
+             + 2.0 * y[ISIPP] + y[ICH3P] + 2.0 * y[IHEPP];
+#else
+    double e = y[IHP] + y[IC] + y[IHCOP] + y[IHEP] + y[IMP];
+#endif
     return e > 0.0 ? e : 0.0;
 }
 static double temp_of(const ChemTables& T, double yn, double energy, const double* y)
 {
-    double yntot = (1.0 + CHEM_COMP.abhe - y[C15_IH2] + abe_of(y)) * yn;
+    double yntot = (1.0 + CHEM_COMP.abhe - y[IH2] + abe_of(y)) * yn;
     double t, g;
-    cxx_lookup_temp_gamma(y[C15_IH2], CHEM_COMP.abhe, energy / (yntot * CHEM_KBOLTZ),
+    cxx_lookup_temp_gamma(y[IH2], CHEM_COMP.abhe, energy / (yntot * CHEM_KBOLTZ),
                           &t, &g, T);
     return t;
 }
 static double energy_at(const ChemTables& T, double yn, double T0, const double* y)
 {
-    double yntot = (1.0 + CHEM_COMP.abhe - y[C15_IH2] + abe_of(y)) * yn;
+    double yntot = (1.0 + CHEM_COMP.abhe - y[IH2] + abe_of(y)) * yn;
     double e = 1.5 * yntot * CHEM_KBOLTZ * T0;
     for (int k = 0; k < 40; k++) {
         double t = temp_of(T, yn, e, y);
@@ -212,12 +237,36 @@ static int phase_R(const ChemTables& TT, const char* tag)
         std::snprintf(nm[i], sizeof(nm[i]), "ydot(%s)", i == ITMP ? "energy" : SPNAME[i]);
         acc.push_back(Acc(nm[i]));
     }
-    Acc rlc("lambda_chem(1..6)"), rtd("tdust after RHS"), rfl("flag (0/1)");
+    Acc rlc("lambda_chem(all)"), rtd("tdust after RHS"), rfl("flag (0/1)");
 
     const double yns[]  = {1e-2, 1.0, 30.0, 1e3, 1e5, 1e7};
     const double ekns[] = {3.0, 15.0, 75.0, 400.0, 1.5e3, 7e3, 1.5e4, 6e4, 3e5, 1.5e6, 2e7};
+#if CHEMISTRYNETWORK == 3
+    // G0 = 0 not gated: calc_photo returns before setting chi_isrf, which rate_eq_mol passes on uninitialized
+    const double G0s[]  = {1e-4, 1.7, 1e3};
+#else
     const double G0s[]  = {0.0, 1.7, 1e3};
+#endif
     const double Zss[]  = {0.1, 1.0};
+#if CHEMISTRYNETWORK == 3
+    // fractions of species_pools(): H2 H+ C+ Si+ O+ D+ HD He+ He++ CO C2 OH H2O O2 HCO+ CH CH2 Si++ CH3+
+    const double mix[][TRAC_NUM] = {
+        {2e-6, 1e-4, 1.0, 1.0, 1e-4, 1e-4, 0.0, 1e-3, 0.0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},      // atomic
+        {0.99, 1e-8, 1e-3, 0.05, 1e-8, 1e-8, 0.5, 1e-9, 0.0, 0.9, 1e-4, 1e-3, 1e-2, 1e-3,
+         1e-6, 1e-4, 1e-5, 0.0, 1e-7},                                                         // molecular
+        {0.5, 1e-6, 0.4, 0.5, 1e-6, 0.01, 0.3, 1e-7, 0.0, 0.3, 1e-3, 1e-2, 1e-2, 1e-3,
+         1e-5, 1e-3, 1e-3, 1e-3, 1e-5},                                                        // mixed
+        {0.0, 0.999, 1.0, 0.5, 0.9, 0.99, 0.0, 0.9, 0.05, 0, 0, 0, 0, 0, 0, 0, 0, 0.5, 0},     // ionized
+        {0.2, 0.01, 0.1, 0.3, 0.05, 0.1, 0.1, 0.1, 0.01, 0.1, 0.05, 0.2, 0.2, 0.05,
+         0.05, 0.1, 0.1, 0.1, 0.05},                                                           // minor-species heavy
+        {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                             // all neutral
+        {1.0001, 0, 0, 0, 0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                      // H2 clip
+        {1.0004, 0, 0, 0, 0, 0, 0, 0, 0, 1.0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                      // H2 flag
+        {0.5, 1.0002, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},                      // H+ flag
+        {0.3, -1e-9, 0.5, 0.5, -1e-12, 0.0, 0.1, 0.0, 0.0, 0.2, 0.0, -1e-14, 0.01, 0.0,
+         0.0, 1e-3, 0.0, 0.0, 0.0},                                                            // small negatives
+    };
+#else
     // fractions of the pools: H2/0.5, H+, C+/C, CHx/C, OHx/O, CO/C, HCO+/C, He+/He, M+/M
     const double mix[][9] = {
         {2e-6, 1e-4,   1.0,   0.0,  0.0,  0.0,   0.0,  0.0,  1.0},   // atomic, C+ / M+
@@ -231,29 +280,33 @@ static int phase_R(const ChemTables& TT, const char* tag)
         {0.5,  1.0002, 0.0,   0.0,  0.0,  0.0,   0.0,  0.0,  0.0},   // H+ excess -> flagged
         {0.3, -1e-9,   0.5,  -1e-12, 0.0, 0.2,   0.0,  0.0,  0.5},   // small negatives (clip)
     };
+#endif
     const int nmix = sizeof(mix) / sizeof(mix[0]);
-    long nflag = 0;
+    long nflag = 0, nabort = 0;
 
     for (size_t zi = 0; zi < sizeof(Zss)/sizeof(Zss[0]); zi++)
     for (size_t gi = 0; gi < sizeof(G0s)/sizeof(G0s[0]); gi++) {
         set_cell_commons(G0s[gi], Zss[zi]);
-        const double pool[9] = {0.5, 1.0, COOLRC.abundc, COOLRC.abundc, COOLRC.abundo,
-                                COOLRC.abundc, COOLRC.abundc, CHEM_COMP.abhe, COOLRC.abundM};
+        double pool[TRAC_NUM];
+        species_pools(pool);
+#if CHEMISTRYNETWORK != 3
+        pool[5] = pool[6] = COOLRC.abundc;   // phase R grid as before: CO, HCO+ fractions of C
+#endif
         for (size_t ni = 0; ni < sizeof(yns)/sizeof(yns[0]); ni++)
         for (int mi = 0; mi < nmix; mi++)
         for (size_t ei = 0; ei < sizeof(ekns)/sizeof(ekns[0]); ei++) {
             double yn = yns[ni];
             double y[NSPEC];
             for (int i = 0; i < TRAC_NUM; i++) y[i] = mix[mi][i] * pool[i];
-            double yntot = (1.0 + CHEM_COMP.abhe - y[C15_IH2] + abe_of(y)) * yn;
+            double yntot = (1.0 + CHEM_COMP.abhe - y[IH2] + abe_of(y)) * yn;
             y[ITMP] = ekns[ei] * yntot * CHEM_KBOLTZ;
 
             // frozen photo state from the Fortran calc_photo (both sides read it)
             double tguess = temp_of(TT, yn, y[ITMP], y);
-            set_columns(yn, std::max(y[C15_IH2], 0.0), std::max(y[C15_ICO], 0.0));
+            set_columns(yn, std::max(y[IH2], 0.0), std::max(y[ICO], 0.0));
             double rpar[NRPAR]; std::memset(rpar, 0, sizeof(rpar));
             rpar[0] = yn; rpar[1] = 0.0; rpar[2] = 0.0;
-            double a2 = std::max(y[C15_IH2], 0.0), ahd = 0.0, aco = std::max(y[C15_ICO], 0.0);
+            double a2 = std::max(y[IH2], 0.0), ahd = 0.0, aco = std::max(y[ICO], 0.0);
             COOLRC.cosmic_ray_ion_rate = g_zeta;
             CALC_PHOTO_WRAPPER(&tguess, rpar, &a2, &ahd, &aco);
 
@@ -267,19 +320,25 @@ static int phase_R(const ChemTables& TT, const char* tag)
             int neq = NSPEC, ipar[NIPAR] = {0, 0};
             double t0 = 0.0;
             for (int k = 0; k < NRATES_CHEM; k++) COOLRC.lambda_chem[k] = 0.0;   // flagged evals leave it unwritten
-            RATE_EQ(&neq, &t0, yF, ydF, rpar, ipar);
-            int rc = NET == 16 ? chem_rhs_net16(0.0, y, ydC, c) : chem_rhs_net15(0.0, y, ydC, c);
+            int aborted = 0;
+            g_fatal_armed = 1;
+            if (setjmp(g_fatal_jmp) == 0) RATE_EQ(&neq, &t0, yF, ydF, rpar, ipar);
+            else aborted = 1;                  // comp_equilib / index ABORT
+            g_fatal_armed = 0;
+            int rc = NET == 3 ? chem_rhs_net3(0.0, y, ydC, c)
+                   : NET == 16 ? chem_rhs_net16(0.0, y, ydC, c) : chem_rhs_net15(0.0, y, ydC, c);
 
-            int fF = ipar[0] != 0, fC = rc != 0;
+            int fF = (ipar[0] != 0) || aborted, fC = rc != 0;
             rfl.add(fF, fC, 0.0);
-            nflag += fF;
+            nflag += fF; nabort += aborted;
+            if (aborted) continue;             // Fortran ydot unspecified after an ABORT
             for (int i = 0; i < NSPEC; i++) acc[i].add(ydF[i], ydC[i], TOL);
-            for (int k = 0; k < 6; k++) rlc.add(COOLRC.lambda_chem[k], c.lambda_chem[k], TOL);
+            for (int k = 0; k < NRATES_CHEM; k++) rlc.add(COOLRC.lambda_chem[k], c.lambda_chem[k], TOL);
             rtd.add(COOLRC.tdust, c.tdust, TOL);
         }
     }
-    std::printf("PHASE %s -- RHS (rate_eq vs chem_rhs_net%d), %ld flagged states\n",
-                tag, NET, nflag);
+    std::printf("PHASE %s -- RHS (rate_eq vs chem_rhs_net%d), %ld flagged states (%ld Fortran ABORTs)\n",
+                tag, NET, nflag, nabort);
     int ok = 1;
     for (int i = 0; i < NSPEC; i++) ok &= report(acc[i]);
     ok &= report(rlc); ok &= report(rtd); ok &= report(rfl);
@@ -294,14 +353,25 @@ struct Point { double nH, T0, G0, Zs; int start; };   // start 0 atomic, 1 molec
 static void initial_state(int start, double* y)
 {
     for (int i = 0; i < TRAC_NUM; i++) y[i] = 0.0;
+#if CHEMISTRYNETWORK == 3
     if (start == 0) {
-        y[C15_IH2] = 1e-6; y[C15_IHP] = 1e-4;
-        y[C15_IC] = COOLRC.abundc; y[C15_IMP] = COOLRC.abundM;
+        y[IH2] = 1e-6; y[IHP] = 1e-4;
+        y[IC] = COOLRC.abundc; y[ISi] = COOLRC.abundsi;
     } else {
-        y[C15_IH2] = 0.49; y[C15_IHP] = 1e-6;
-        y[C15_IC] = 0.01 * COOLRC.abundc; y[C15_ICO] = 0.5 * COOLRC.abundc;
-        y[C15_IMP] = 0.01 * COOLRC.abundM;
+        y[IH2] = 0.49; y[IHP] = 1e-6;
+        y[IC] = 0.01 * COOLRC.abundc; y[ICO] = 0.5 * COOLRC.abundc;
+        y[ISi] = 0.01 * COOLRC.abundsi; y[IHD] = 0.5 * COOLRC.abundD;
     }
+#else
+    if (start == 0) {
+        y[IH2] = 1e-6; y[IHP] = 1e-4;
+        y[IC] = COOLRC.abundc; y[IMP] = COOLRC.abundM;
+    } else {
+        y[IH2] = 0.49; y[IHP] = 1e-6;
+        y[IC] = 0.01 * COOLRC.abundc; y[ICO] = 0.5 * COOLRC.abundc;
+        y[IMP] = 0.01 * COOLRC.abundM;
+    }
+#endif
 }
 
 int main(int argc, char** argv)
@@ -370,7 +440,12 @@ int main(int argc, char** argv)
     double worst_sp[TRAC_NUM], worst_sp_raw[TRAC_NUM];
     int worst_sp_pt[TRAC_NUM];
     for (int i = 0; i < TRAC_NUM; i++) { worst_sp[i] = 0; worst_sp_raw[i] = 0; worst_sp_pt[i] = -1; }
-    const double atolv[9] = {1e-7, 1e-12, 1e-16, 1e-14, 1e-14, 1e-14, 1e-18, 1e-14, 1e-14};
+#if CHEMISTRYNETWORK == 3
+    const double atolv[TRAC_NUM] = {1e-7, 1e-12, 1e-16, 1e-16, 1e-16, 1e-14, 1e-12, 1e-14, 1e-14,
+                                    1e-14, 1e-14, 1e-14, 1e-14, 1e-14, 1e-18, 1e-18, 1e-18, 1e-14, 1e-18};
+#else
+    const double atolv[TRAC_NUM] = {1e-7, 1e-12, 1e-16, 1e-14, 1e-14, 1e-14, 1e-18, 1e-14, 1e-14};
+#endif
 
     std::printf("\nPHASE O -- one-zone evolutions, %zu points x %d steps to %.0f Myr, zeta = %.1e, TreeCol L = 10 pc\n",
                 pts.size(), NSTEP_OZ, t1 / SEC_PER_MYR, g_zeta);
@@ -380,10 +455,8 @@ int main(int argc, char** argv)
     for (size_t p = 0; p < pts.size(); p++) {
         const Point& P = pts[p];
         set_cell_commons(P.G0, P.Zs);
-        const double pool[9] = {0.5, 1.0, COOLRC.abundc, COOLRC.abundc, COOLRC.abundo,
-                                std::min(COOLRC.abundc, COOLRC.abundo),
-                                std::min(COOLRC.abundc, COOLRC.abundo),
-                                CHEM_COMP.abhe, COOLRC.abundM};
+        double pool[TRAC_NUM];
+        species_pools(pool);
         double yn = P.nH;
         double yF[TRAC_NUM], yC[TRAC_NUM];
         initial_state(P.start, yF);
@@ -400,10 +473,10 @@ int main(int argc, char** argv)
             // ---- Fortran ----
             if (!rcF) {
                 double Tf = temp_of(Cx, yn, eF, yF);
-                set_columns(yn, yF[C15_IH2], yF[C15_ICO]);
+                set_columns(yn, yF[IH2], yF[ICO]);
                 double rpar[NRPAR]; std::memset(rpar, 0, sizeof(rpar));
                 rpar[0] = yn;
-                double a2 = yF[C15_IH2], ahd = 0.0, aco = yF[C15_ICO];
+                double a2 = yF[IH2], ahd = 0.0, aco = yF[ICO];
                 COOLRC.cosmic_ray_ion_rate = g_zeta;
                 COOLRC.tdust = tdF;
                 CALC_PHOTO_WRAPPER(&Tf, rpar, &a2, &ahd, &aco);
@@ -420,11 +493,11 @@ int main(int argc, char** argv)
             // ---- C++ ----
             if (!rcC) {
                 double Tc = temp_of(Cx, yn, eC, yC);
-                set_columns(yn, yC[C15_IH2], yC[C15_ICO]);
+                set_columns(yn, yC[IH2], yC[ICO]);
                 COOLRC.cosmic_ray_ion_rate = g_zeta;
                 ChemCell c; chem_bind_cell(c, Cx, NET);
                 c.yn = yn; c.dl = 0.0; c.divv = 0.0; c.tdust = tdC;
-                cxx_calc_photo(Tc, yC[C15_IH2], 0.0, yC[C15_ICO], c);
+                cxx_calc_photo(Tc, yC[IH2], 0.0, yC[ICO], c);
                 rcC = cxx_evolve_abundances(dt, 0.0, yn, 0.0, &eC, yC, c);
                 tdC = c.tdust;
             }

@@ -52,9 +52,9 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
 {
     std::memset(&c, 0, sizeof(ChemCell));
     c.net = net;
-    c.trac_num = (net == 5) ? 3 : chem_net_nl99(net) ? 9 : 7;
+    c.trac_num = chem_trac_num(net);
     c.nspec = c.trac_num + 1;
-    c.abhe = 0.1;                            // chemcool_consts.h ABHE (nets 5/15/16/17)
+    c.abhe = 0.1;                            // chemcool_consts.h ABHE (nets 3/5/15/16/17)
     c.no_dchem = 0;                          // audit sec 3.1 item 4: explicit
     c.iflag_mn = 1; c.iflag_ad = 1; c.iflag_atom = 2;
     c.iflag_3bh2a = 1; c.iflag_3bh2b = 1; c.iflag_h3pra = 1;

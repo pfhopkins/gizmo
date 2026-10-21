@@ -240,7 +240,7 @@ void chem_bind_cell(ChemCell& c, const ChemTables& T, int net)
 {
     std::memset(&c, 0, sizeof(ChemCell));
     c.net = net;
-    c.trac_num = (net == 5) ? 3 : chem_net_nl99(net) ? 9 : 7;
+    c.trac_num = chem_trac_num(net);
     c.nspec = c.trac_num + 1;
     c.abhe = CHEM_COMP.abhe;
 

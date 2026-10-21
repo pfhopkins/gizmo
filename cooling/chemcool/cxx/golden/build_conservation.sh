@@ -1,5 +1,5 @@
 #!/bin/bash
-# Conservation audit + Fortran/C++ goldens for CHEMISTRYNETWORK 5/15/16/17.
+# Conservation audit + Fortran/C++ goldens for CHEMISTRYNETWORK 3/5/15/16/17.
 #
 # usage: build_conservation.sh SRC OUT NET [SUNDIALS_DIR]
 #   SRC  gizmo source tree (worktree or a frozen copy); it is COPIED, never built in
@@ -10,7 +10,7 @@
 #                                 check_abundances clip ledger, H3+ stock); values
 #                                 are untouched, so PHASE R parity is unaffected
 #   test_gate3_netN               table/leaf-kernel golden (tol 1e-12)
-#   test_onezone_ab_netN          nets 15/16 only: existing RHS + one-zone A/B golden
+#   test_onezone_ab_netN          nets 3/15/16 only: existing RHS + one-zone A/B golden
 set -e
 SRC=$(readlink -f "$1"); OUT=$(readlink -f -m "$2"); NET=$3
 SUN=${4:-/orion/ptmp/uli/orion/fb_tests/_sundials/install}
@@ -34,7 +34,7 @@ echo "== net $NET  $($FC --version | head -1) / $($CXX --version | head -1)"
 
 # ---- instrumented copies (line numbers preserved in the RHS files) ----
 fid=1
-for n in 5 15 16 17; do
+for n in 5 15 16 17 3; do
     f=chem_rhs_net$n.cc
     { echo 'extern "C" void probe_floor(int, int, const char*, double); extern "C" void probe_h3p(double, double);'
       echo '#line 1'
@@ -45,7 +45,7 @@ for n in 5 15 16 17; do
 done
 sed -e 's/^static int chem_check_abundances(double\* y, ChemCell& c, const double\* atol)$/static int chem_check_abundances_orig(double* y, ChemCell\& c, const double* atol)/' \
     -e 's/fail = chem_check_abundances(y, c, atol);/fail = probe_check_wrap(y, c, atol);/' \
-    -e 's/^\(    if (c\.net == 15) return chem_rhs_net15(t, y, ydot, c);\)/    probe_rhs();\n\1/' \
+    -e 's/^\(    if (c\.net == 3)  return chem_rhs_net3(t, y, ydot, c);\)/    probe_rhs();\n\1/' \
     "$CX/cvode_driver.cc" > "$OUT/instr/cvode_driver.cc"
 python3 - "$OUT/instr/cvode_driver.cc" <<'EOF'
 import sys
@@ -66,7 +66,7 @@ s = s.replace('static inline int rhs_dispatch(', hook + 'static inline int rhs_d
 open(p, 'w').write(s)
 EOF
 for s in probe_check_wrap probe_rhs; do grep -q "$s" "$OUT/instr/cvode_driver.cc" || { echo "instrumentation $s missing"; exit 1; }; done
-for n in 5 15 16 17; do grep -c probe_floor "$OUT/instr/chem_rhs_net$n.cc" | sed "s/^/  floors instrumented net$n: /"; done
+for n in 5 15 16 17 3; do grep -c probe_floor "$OUT/instr/chem_rhs_net$n.cc" | sed "s/^/  floors instrumented net$n: /"; done
 
 # ---- Fortran ----
 FSRC="coolinmo cheminmo spline cool_func photoinit_ism dvode evolve_abundances \
@@ -102,7 +102,7 @@ SUNLIBS="-L$SUNLIB -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixde
 $CXX -O2 -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/test_conservation.cc" -o "$OUT/obj/test_conservation.o"
 $FC "$OUT/obj/test_conservation.o" $CI $FO $SUNLIBS -lstdc++ -lm -o "$OUT/test_conservation_net$NET"
 TESTS="test_gate3"
-[ "$NET" = 15 -o "$NET" = 16 ] && TESTS="$TESTS test_onezone_ab"
+[ "$NET" = 3 -o "$NET" = 15 -o "$NET" = 16 ] && TESTS="$TESTS test_onezone_ab"
 for t in $TESTS; do
     $CXX -O2 -std=c++14 -I"$CX" -I"$TREE" -I"$SUN/include" -c "$CX/golden/$t.cc" -o "$OUT/obj/$t.o"
     $FC "$OUT/obj/$t.o" $CO $FO $SUNLIBS -lstdc++ -lm -o "$OUT/${t}_net$NET"
@@ -114,7 +114,7 @@ STATUS=0
 ( cd "$OUT/rundir" && "$OUT/test_conservation_net$NET" "$OUT/conservation_net$NET.csv" ) \
     > "$OUT/conservation_net$NET.txt" 2> "$OUT/conservation_net$NET.err" || STATUS=1
 ( cd "$OUT/rundir" && "$OUT/test_gate3_net$NET" ) > "$OUT/gate3_net$NET.txt" 2>&1 || STATUS=1
-if [ "$NET" = 15 -o "$NET" = 16 ]; then
+if [ "$NET" = 3 -o "$NET" = 15 -o "$NET" = 16 ]; then
     ( cd "$OUT/rundir" && "$OUT/test_onezone_ab_net$NET" "$OUT/onezone_traj_net$NET.csv" ) \
         > "$OUT/onezone_ab_net$NET.txt" 2> "$OUT/onezone_ab_net$NET.err" || STATUS=1
 fi

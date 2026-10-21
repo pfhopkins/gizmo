@@ -3,7 +3,7 @@
 //   chi                         (calc_photo.F:683-735)
 //   calc_H2_shielding_factor    (calc_photo.F:745-823)  DB96 curve of growth
 //   calc_HD_shielding_factor    (calc_photo.F:825-914)
-//   calc_photo (+ wrapper)      (calc_photo.F:73-666)
+//   calc_photo (+ wrapper)      (calc_photo.F:73-808)
 //
 // Effective-column convention (2026-07-28 variable-DGR work, preserved here):
 //   * AV is built from AV_conversion_factor * dust_to_gas_ratio * N_H, i.e. the
@@ -226,7 +226,10 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 
     double f_dust = 1.0, f_simp = 1.0, df05 = 1.0, df19 = 1.0;
     double df25 = 1.0, df30 = 1.0, AV = 0.0;
-    double df15 = 1.0, df17 = 1.0;   // net 15 (NL99) only
+    double df15 = 1.0, df17 = 1.0;   // df15: net 15; df17: nets 15 (1.5 AV) and 3/7/8/11 (1.7 AV)
+    double df09 = 1.0, df12 = 1.0, df18 = 1.0, df21 = 1.0, df23 = 1.0, df24 = 1.0,
+           df28 = 1.0, df31 = 1.0, df37 = 1.0, df38 = 1.0, df39 = 1.0,
+           dfsp1 = 1.0;               // nets 3/7/8/11
     double df187 = 1.0;   // sigma_PE = 1e-21 Z' (Gong+17; Kim+2023 under CHEMCOOL_PE_K23)
 #if CHEMISTRYNETWORK == 16
     double df418 = 1.0, df388 = 1.0, df376 = 1.0,
@@ -266,6 +269,24 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
             df212 = std::exp(-2.12 * AV);
             df266 = std::exp(-2.66 * AV);
 #endif
+#if CHEMISTRYNETWORK == 3 || CHEMISTRYNETWORK == 7 || CHEMISTRYNETWORK == 8 || CHEMISTRYNETWORK == 11
+            df09 = std::exp(-0.9 * AV);
+            df12 = std::exp(-1.2 * AV);
+            df17 = std::exp(-1.7 * AV);
+            df18 = std::exp(-1.8 * AV);
+            df21 = std::exp(-2.1 * AV);
+            df23 = std::exp(-2.3 * AV);
+            df24 = std::exp(-2.4 * AV);
+            df28 = std::exp(-2.8 * AV);
+            df31 = std::exp(-3.1 * AV);
+            df37 = std::exp(-3.7 * AV);
+            df38 = std::exp(-3.8 * AV);
+            df39 = std::exp(-3.9 * AV);
+            if (AV < 1.5e1)
+                dfsp1 = std::exp(-2.55 * AV + 1.65e-2 * chem_fpowi(AV, 2));
+            else
+                dfsp1 = std::exp(-(double)2.7975f * AV);   // default-REAL literal
+#endif
         } else {
             f_dust = 1.0; f_simp = 1.0;
             df05 = 1.0; df19 = 1.0; df25 = 1.0; df30 = 1.0;
@@ -277,6 +298,8 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         f_dust = 0.0; f_simp = 0.0;
         df05 = 0.0; df19 = 0.0; df25 = 0.0; df30 = 0.0;
         df15 = 0.0; df17 = 0.0;
+        df09 = 0.0; df12 = 0.0; df18 = 0.0; df21 = 0.0; df23 = 0.0; df24 = 0.0;
+        df28 = 0.0; df31 = 0.0; df37 = 0.0; df38 = 0.0; df39 = 0.0; dfsp1 = 0.0;
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
         df187 = 0.0;
 #endif
@@ -324,6 +347,24 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
             df212 += fac_uv_pix * std::exp(-2.12 * AV);
             df266 += fac_uv_pix * std::exp(-2.66 * AV);
 #endif
+#if CHEMISTRYNETWORK == 3 || CHEMISTRYNETWORK == 7 || CHEMISTRYNETWORK == 8 || CHEMISTRYNETWORK == 11
+            df09 += fac_uv_pix * std::exp(-0.9 * AV);
+            df12 += fac_uv_pix * std::exp(-1.2 * AV);
+            df17 += fac_uv_pix * std::exp(-1.7 * AV);
+            df18 += fac_uv_pix * std::exp(-1.8 * AV);
+            df21 += fac_uv_pix * std::exp(-2.1 * AV);
+            df23 += fac_uv_pix * std::exp(-2.3 * AV);
+            df24 += fac_uv_pix * std::exp(-2.4 * AV);
+            df28 += fac_uv_pix * std::exp(-2.8 * AV);
+            df31 += fac_uv_pix * std::exp(-3.1 * AV);
+            df37 += fac_uv_pix * std::exp(-3.7 * AV);
+            df38 += fac_uv_pix * std::exp(-3.8 * AV);
+            df39 += fac_uv_pix * std::exp(-3.9 * AV);
+            if (AV < 1.5e1)
+                dfsp1 += fac_uv_pix * std::exp(-2.55 * AV + 1.65e-2 * chem_fpowi(AV, 2));
+            else
+                dfsp1 += fac_uv_pix * std::exp(-(double)2.7975f * AV);
+#endif
         }
 #endif
     }
@@ -332,6 +373,8 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #ifdef RADTRANSFER
     f_dust = 1.0; c.chi_isrf = 1.0; f_simp = 1.0; df25 = 1.0; df30 = 1.0;
     df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
+    df09 = 1.0; df12 = 1.0; df18 = 1.0; df21 = 1.0; df23 = 1.0; df24 = 1.0;
+    df28 = 1.0; df31 = 1.0; df37 = 1.0; df38 = 1.0; df39 = 1.0; dfsp1 = 1.0;
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
     df187 = 1.0;
 #endif
@@ -346,6 +389,8 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #ifdef TREE_RAY
     f_dust = 1.0; f_simp = 1.0; df25 = 1.0; df30 = 1.0;
     df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
+    df09 = 1.0; df12 = 1.0; df18 = 1.0; df21 = 1.0; df23 = 1.0; df24 = 1.0;
+    df28 = 1.0; df31 = 1.0; df37 = 1.0; df38 = 1.0; df39 = 1.0; dfsp1 = 1.0;
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
     df187 = 1.0;
 #endif
@@ -467,6 +512,11 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     }
     if (c.net == 2) goto done;
 
+    if (c.net == 3) {
+        c.phrates[30] = T.phtab[30] * c.G0 * df12;
+        c.phrates[31] = T.phtab[31] * c.G0 * df24;
+    }
+
     // CO
     c.phrates[9] = T.phtab[9] * c.G0 * fshield_CO * df25;
     // Network 17 needs only phrates 1,4,5,8,9,10,35,38-45
@@ -481,8 +531,31 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         goto done;
     }
 
-    // nets 3/7/8/11 not ported (DEVIATIONS D-14)
-    std::printf("CHEMCOOL_CXX calc_photo: network %d not ported\n", c.net);
+    // nets 3/7/8/11 (calc_photo.F:738-767)
+    c.phrates[10] = T.phtab[10] * c.G0 * df17;
+    c.phrates[11] = T.phtab[11] * c.G0 * df17;
+    c.phrates[13] = T.phtab[13] * c.G0 * df25;
+    c.phrates[14] = T.phtab[14] * c.G0 * df17;
+    c.phrates[15] = T.phtab[15] * c.G0 * df17;
+    c.phrates[17] = T.phtab[17] * c.G0 * df12;
+    c.phrates[18] = T.phtab[18] * c.G0 * df28;
+    c.phrates[19] = T.phtab[19] * c.G0 * df17;
+    c.phrates[20] = T.phtab[20] * c.G0 * df23;
+    c.phrates[21] = T.phtab[21] * c.G0 * df18;
+    c.phrates[22] = T.phtab[22] * c.G0 * df31;
+    c.phrates[23] = T.phtab[23] * c.G0 * df39;
+    c.phrates[24] = T.phtab[24] * c.G0 * df21;
+    c.phrates[26] = T.phtab[26] * c.G0 * df18;
+    c.phrates[27] = T.phtab[27] * c.G0 * df37;
+    c.phrates[28] = T.phtab[28] * c.G0 * df09;
+    c.phrates[29] = T.phtab[29] * c.G0 * df05;
+    c.phrates[32] = T.phtab[32] * c.G0 * dfsp1;
+    c.phrates[33] = T.phtab[33] * c.G0 * dfsp1;
+    c.phrates[35] = 0.5 * T.phtab[35] * c.G0 * df18;   // H3+ -> H2  + H+
+    c.phrates[36] = 0.5 * T.phtab[35] * c.G0 * df23;   // H3+ -> H2+ + H
+    c.phrates[51] = T.phtab[51] * c.G0 * df38;
+    c.phrates[52] = T.phtab[52] * c.G0 * df17;
+    c.phrates[53] = T.phtab[53] * c.G0 * df23;
 
 done:
     // f_rsc rescales the field strength to Habing units (photoinit sets it).

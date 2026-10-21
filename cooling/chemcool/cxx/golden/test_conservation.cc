@@ -1,5 +1,5 @@
 // test_conservation.cc -- element/charge conservation audit + Fortran/C++ parity,
-// networks 5, 15, 16, 17 (one binary per net, both backends linked).
+// networks 3, 5, 15, 16, 17 (one binary per net, both backends linked).
 //
 //   PHASE R  RHS parity: rate_eq vs chem_rhs_netN on a state grid, frozen
 //            photorates and tdust, tolerance 1e-12 (as test_onezone_ab).
@@ -93,8 +93,8 @@ void chemcool_fatal_(int* code)
 struct ChemInputs { double abundc, abundo, abundsi, abundD, abhe, abundM; };
 #include "cooling/chemcool/chemcool_network.h"
 
-#if CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17
-#error "test_conservation covers networks 5, 15, 16, 17"
+#if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17
+#error "test_conservation covers networks 3, 5, 15, 16, 17"
 #endif
 
 void chem_bind_tables(ChemTables& T);
@@ -119,6 +119,17 @@ static const Sp SP[TRAC_NUM] = {{"H2", {2, 0, 0, 0, 0, 0}, 0}, {"H+", {1, 0, 0, 
                                 {"CO", {0, 0, 1, 1, 0, 0}, 0}, {"He+", {0, 1, 0, 0, 0, 0}, 1},
                                 {"He++", {0, 1, 0, 0, 0, 0}, 2}, {"D+", {0, 0, 0, 0, 0, 1}, 1},
                                 {"HD", {1, 0, 0, 0, 0, 1}, 0}};
+#elif CHEMISTRYNETWORK == 3   /* M = Si */
+static const Sp SP[TRAC_NUM] = {{"H2", {2, 0, 0, 0, 0, 0}, 0}, {"H+", {1, 0, 0, 0, 0, 0}, 1},
+                                {"C+", {0, 0, 1, 0, 0, 0}, 1}, {"Si+", {0, 0, 0, 0, 1, 0}, 1},
+                                {"O+", {0, 0, 0, 1, 0, 0}, 1}, {"D+", {0, 0, 0, 0, 0, 1}, 1},
+                                {"HD", {1, 0, 0, 0, 0, 1}, 0}, {"He+", {0, 1, 0, 0, 0, 0}, 1},
+                                {"He++", {0, 1, 0, 0, 0, 0}, 2}, {"CO", {0, 0, 1, 1, 0, 0}, 0},
+                                {"C2", {0, 0, 2, 0, 0, 0}, 0}, {"OH", {1, 0, 0, 1, 0, 0}, 0},
+                                {"H2O", {2, 0, 0, 1, 0, 0}, 0}, {"O2", {0, 0, 0, 2, 0, 0}, 0},
+                                {"HCO+", {1, 0, 1, 1, 0, 0}, 1}, {"CH", {1, 0, 1, 0, 0, 0}, 0},
+                                {"CH2", {2, 0, 1, 0, 0, 0}, 0}, {"Si++", {0, 0, 0, 0, 1, 0}, 2},
+                                {"CH3+", {3, 0, 1, 0, 0, 0}, 1}};
 #else
 static const Sp SP[TRAC_NUM] = {{"H2", {2, 0, 0, 0, 0, 0}, 0}, {"H+", {1, 0, 0, 0, 0, 0}, 1},
                                 {"C+", {0, 0, 1, 0, 0, 0}, 1}, {"CHx", {1, 0, 1, 0, 0, 0}, 0},
@@ -130,7 +141,11 @@ static const Sp SP[TRAC_NUM] = {{"H2", {2, 0, 0, 0, 0, 0}, 0}, {"H+", {1, 0, 0, 
 static void pools_of(double P[NEL])
 {
     P[EH] = 1.0; P[EHE] = CHEM_COMP.abhe; P[EC] = COOLRC.abundc; P[EO] = COOLRC.abundo;
+#if CHEMISTRYNETWORK == 3
+    P[EM] = COOLRC.abundsi; P[ED] = COOLRC.abundD;
+#else
     P[EM] = COOLRC.abundM; P[ED] = COOLRC.abundD;
+#endif
 }
 // an element is audited when some tracked species carries it
 static bool el_active(int e) { for (int i = 0; i < TRAC_NUM; i++) if (SP[i].n[e]) return true; return false; }
@@ -169,6 +184,7 @@ static double floor_pool(const char* var)
     if (v == "abcI" || v == "abcp") return COOLRC.abundc;
     if (v == "aboI" || v == "abo" || v == "abotot") return COOLRC.abundo;
     if (v == "abmI") return COOLRC.abundM;
+    if (v == "absiI") return COOLRC.abundsi;
     if (v == "abDI") return COOLRC.abundD;
     return 1.0;                                  // abHI, abe: per H nucleus
 }
@@ -276,6 +292,9 @@ static double abe_of(const double* y)
 #elif CHEMISTRYNETWORK == 17
     double cp = std::max(COOLRC.abundc - y[ICO], 0.0);
     return y[IHP] + y[IHEP] + 2.0 * y[IHEPP] + cp + y[IDP] + COOLRC.abundsi;
+#elif CHEMISTRYNETWORK == 3
+    return y[IHP] + y[IDP] + y[IHEP] + y[IC] + y[IO] + y[ISi] + y[IHCOP]
+         + 2.0 * y[ISIPP] + y[ICH3P] + 2.0 * y[IHEPP];
 #else
     double e = y[IHP] + y[IC] + y[IHCOP] + y[IHEP] + y[IMP];
     return e > 0.0 ? e : 0.0;
@@ -333,6 +352,24 @@ static void initial_state(int start, double* y)
     case 2: y[IHEP] = 0.5 * He; y[IHEPP] = 0.4 * He; y[IDP] = D; break;
     case 3: y[IHEP] = 0.5 * He; y[IHEPP] = 0.5 * He; y[IDP] = 0.5 * D; y[IHD] = 0.5 * D; break;
     case 4: y[IHEP] = 0.6 * He; y[IHEPP] = 0.45 * He; y[IDP] = 0.55 * D; y[IHD] = 0.5 * D; break;
+    }
+#endif
+#if CHEMISTRYNETWORK == 3
+    const double Si = COOLRC.abundsi;
+    switch (start) {
+    case 0: y[IC] = C; y[ISi] = Si; y[IDP] = 1e-4 * D; break;
+    case 1: y[IC] = 0.01 * C; y[ISi] = 0.01 * Si; y[IHD] = 0.5 * D; y[IDP] = 1e-6 * D;
+            y[IOH] = 1e-3 * O; y[IH2O] = 1e-3 * O; y[IHCOP] = 1e-6 * C; y[ICH] = 1e-4 * C; break;
+    case 2: y[IC] = C; y[IO] = 0.9 * O; y[ISi] = 0.5 * Si; y[ISIPP] = 0.5 * Si; y[IHEP] = 0.5 * He;
+            y[IHEPP] = 0.4 * He; y[IDP] = D; break;
+    case 3: y[IC] = 0.1 * C; y[IO] = 0.05 * O; y[ISi] = 0.3 * Si; y[ISIPP] = 0.1 * Si; y[IDP] = 0.5 * D;
+            y[IHD] = 0.5 * D; y[IHEP] = 0.1 * He; y[IHEPP] = 0.01 * He; y[IC2] = 0.05 * C; y[IOH] = 0.2 * O;
+            y[IH2O] = 0.1 * O; y[IO2] = 0.02 * O; y[IHCOP] = 0.05 * CO; y[ICH] = 0.1 * C; y[ICH2] = 0.1 * C;
+            y[ICH3P] = 0.02 * C; break;
+    case 4: y[IC] = 0.5 * C; y[IO] = 0.3 * O; y[ISi] = 0.6 * Si; y[ISIPP] = 0.45 * Si; y[IDP] = 0.55 * D;
+            y[IHD] = 0.5 * D; y[IHEP] = 0.6 * He; y[IHEPP] = 0.45 * He; y[IC2] = 0.05 * C; y[IOH] = 0.3 * O;
+            y[IH2O] = 0.2 * O; y[IO2] = 0.05 * O; y[IHCOP] = 0.05 * CO; y[ICH] = 0.1 * C; y[ICH2] = 0.1 * C;
+            y[ICH3P] = 0.05 * C; break;
     }
 #endif
 #if CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
@@ -423,7 +460,9 @@ struct Acc {
 
 static int rhs_cxx(const double* y, double* yd, ChemCell& c)
 {
-#if CHEMISTRYNETWORK == 5
+#if CHEMISTRYNETWORK == 3
+    return chem_rhs_net3(0.0, y, yd, c);
+#elif CHEMISTRYNETWORK == 5
     return chem_rhs_net5(0.0, y, yd, c);
 #elif CHEMISTRYNETWORK == 15
     return chem_rhs_net15(0.0, y, yd, c);
@@ -441,10 +480,16 @@ static int phase_R(const ChemTables& TT, const char* tag)
     Acc rlc, rtd, rfl;
     const double yns[]  = {1e-2, 1.0, 30.0, 1e3, 1e5, 1e7};
     const double Ts[]   = {10.0, 50.0, 300.0, 3e3, 1e4, 5e4, 3e5, 3e6, 3e7};
+#if CHEMISTRYNETWORK == 3
+    // G0 = 0 not gated: calc_photo returns before setting chi_isrf, which rate_eq_mol passes on uninitialized
+    const double G0s[]  = {1e-4, 1.7, 1e3};
+#else
     const double G0s[]  = {0.0, 1.7, 1e3};
+#endif
     const double Zss[]  = {0.1, 1.0, 3.0};
-    long nflag = 0;
+    long nflag = 0, nabort = 0, nbad_g0[3] = {0, 0, 0}, nst_g0[3] = {0, 0, 0};
     for (double Z : Zss) for (double G0 : G0s) {
+        const int gi = (G0 < 1e-3) ? 0 : (G0 < 10.0) ? 1 : 2;
         set_cell_commons(G0, Z);
         for (double yn : yns) for (int st = 0; st < NSTART; st++) for (double T0 : Ts) {
             std::snprintf(g_where, sizeof(g_where), "R nH=%g T=%g G0=%g Z=%g start=%d", yn, T0, G0, Z, st);
@@ -471,26 +516,36 @@ static int phase_R(const ChemTables& TT, const char* tag)
             int neq = NSPEC, ipar[NIPAR] = {0, 0};
             double t0 = 0.0;
             for (int k = 0; k < NRATES_CHEM; k++) COOLRC.lambda_chem[k] = 0.0;
-            RATE_EQ(&neq, &t0, yF, ydF, rpar, ipar);
+            int aborted = 0;
+            g_fatal_armed = 1;
+            if (setjmp(g_fatal_jmp) == 0) RATE_EQ(&neq, &t0, yF, ydF, rpar, ipar);
+            else aborted = 1;          // comp_equilib / index ABORT
+            g_fatal_armed = 0;
             int rc = rhs_cxx(y, ydC, c);
-            int fF = ipar[0] != 0, fC = rc != 0;
+            int fF = (ipar[0] != 0) || aborted, fC = rc != 0;
             rfl.add(fF, fC, 0.0);
-            nflag += fF;
+            nflag += fF; nabort += aborted;
             if (fF && fC) continue;   // both flagged: Fortran ydot zeroed, C++ ydot unspecified
+            long before = 0, after = 0;
+            for (int i = 0; i < NSPEC; i++) before += acc[i].n - acc[i].npass;
             for (int i = 0; i < NSPEC; i++) acc[i].add(ydF[i], ydC[i], TOL);
-            for (int k = 0; k < 6; k++) rlc.add(COOLRC.lambda_chem[k], c.lambda_chem[k], TOL);
+            for (int i = 0; i < NSPEC; i++) after += acc[i].n - acc[i].npass;
+            nst_g0[gi]++; if (after > before) nbad_g0[gi]++;
+            for (int k = 0; k < NRATES_CHEM; k++) rlc.add(COOLRC.lambda_chem[k], c.lambda_chem[k], TOL);
             rtd.add(COOLRC.tdust, c.tdust, TOL);
         }
     }
-    std::printf("PHASE %s -- RHS parity (rate_eq vs chem_rhs_net%d), %ld flagged states, tol %.0e\n",
-                tag, NET, nflag, TOL);
+    std::printf("PHASE %s -- RHS parity (rate_eq vs chem_rhs_net%d), %ld flagged states (%ld Fortran ABORTs), tol %.0e\n",
+                tag, NET, nflag, nabort, TOL);
+    std::printf("  states with a ydot mismatch, by G0 (lowest / 1.7 / 1e3): %ld/%ld  %ld/%ld  %ld/%ld\n",
+                nbad_g0[0], nst_g0[0], nbad_g0[1], nst_g0[1], nbad_g0[2], nst_g0[2]);
     int ok = 1;
     for (int i = 0; i < NSPEC; i++) {
         int pass = acc[i].npass == acc[i].n; ok &= pass;
         std::printf("  ydot(%-6s) %7ld/%-7ld %s worst rel = %.3e\n", i == ITMP ? "energy" : SP[i].name,
                     acc[i].npass, acc[i].n, pass ? "PASS" : "FAIL", acc[i].worst);
     }
-    const char* nm[3] = {"lambda_chem(1..6)", "tdust after RHS", "flag (0/1)"};
+    const char* nm[3] = {"lambda_chem(all)", "tdust after RHS", "flag (0/1)"};
     Acc* a3[3] = {&rlc, &rtd, &rfl};
     for (int k = 0; k < 3; k++) {
         int pass = a3[k]->npass == a3[k]->n; ok &= pass;
@@ -767,7 +822,8 @@ static void report_probes()
     for (auto& kv : g_floor) {
         int fid = kv.first / 100000, line = kv.first % 100000;
         const char* fn = fid == 1 ? "chem_rhs_net5.cc" : fid == 2 ? "chem_rhs_net15.cc" :
-                         fid == 3 ? "chem_rhs_net16.cc" : fid == 4 ? "chem_rhs_net17.cc" : "?";
+                         fid == 3 ? "chem_rhs_net16.cc" : fid == 4 ? "chem_rhs_net17.cc" :
+                         fid == 5 ? "chem_rhs_net3.cc" : "?";
         const FloorStat& s = kv.second;
         std::printf("    %s:%d %-6s %ld | %ld / %ld / %ld / %ld | %.3e\n", fn, line, s.var, s.n,
                     s.bin[0], s.bin[1], s.bin[2], s.bin[3], s.maxrel);
