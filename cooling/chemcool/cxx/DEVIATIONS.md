@@ -414,6 +414,66 @@ backend moves 1e-3..2e-2 in T between RTOL 1e-4 and 1e-8, while at RTOL 1e-8
 the F-vs-C gap falls to <= 5.6e-6 in final T (1000/100: 7.1e-5 -> 6.8e-9).
 Removing the Fortran in-place clip (D-1) changed only three hot cells.
 
+## D-23. (Gate 4) direct path: entry temperature uses this cell's abhe
+With `GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE`, the Fortran entry `CALC_TEMP` (chem_fill_inputs) runs before
+the commit and reads the previous cell's `CHEM_COMP.abhe`; `CHEMCOOL_CXX` passes `in->abhe`.
+Identical without variable composition. Skipped (PHOTOION-ionized) cells still report the last solved
+cell's lambda, as the Fortran path does.
+
+## D-24. (Gate 4) calc_photo, net 15 and RT overrides
+Net 15 fills only phrates 48-51 beyond the shared set (rate_eq_nl99 reads 1, 2, 10, 48-51); the
+Fortran also fills 11-37 and 52-54 from df factors never assigned for net 15. df17 = exp(-1.5 AV)
+for net 15 as in calc_photo.F. Fixed: the TreeCol pixel loop never accumulated df05/df19 (net-17
+phrates 4, 5, 8, 9 were zero in TreeCol mode), and the RADTRANSFER/TREE_RAY overrides did not reset
+df05/df19.
+
+## D-25. Network 16 (Gong+17, `rate_eq_gong17.F`) — `chem_rhs_net16.cc`
+Ported 2026-10-21 with the net-15 contract (same slots, M = Si; driver policy, pools, atol, max
+abundances and hot-gas state shared via `chem_net_nl99()`, as `evolve_abundances.F` shares them).
+calc_photo: df187/df418/df388/df376/df261/df212/df266 in both AV branches and the RADTRANSFER /
+TREE_RAY overrides; phrates 1, 2, 3, 10, 48, 49 only (the Fortran jumps to 212, so the M1 `rt_*`
+additions are not applied for net 16 either); G_dust and the CR_ATTEN_K23 tau use df187.
+cool_func: net 16 always takes the Gong+17/Kim+23 CR-heating branch. Tables: chtab 174-181,
+crphot 13, cst 92-94 and the net-16 variants of ch40, ch147, crphot 1/11, cst 85 come from
+`extract_rates.py` (`rate16_*`, `rates_registry16.inc`); phtab 2/48/49/50 in `build_phtab`.
+`CHEM_NCHTAB/NCRPHOT/NCONST` follow CHEMISTRYNETWORK (chem_types.h now includes GIZMO_config.h).
+
+Same deviation classes as nets 5/17: `validate_input` on a copy, a flagged input returns ydot = 0
+and recoverable (the Fortran returns zero ydot); temp <= 0 builds ydot at tmin and returns
+recoverable; NaN ydot returns recoverable (no `validate_output` in the Fortran). Not ported:
+THERMAL_INFO_DUMP diagnostics.
+
+Goldens (`golden/build_onezone_ab.sh`, nets 16 and 15): tables and leaf kernels incl. calc_photo
+at 1e-12; RHS ydot vs `rate_eq` at <= 4e-15 over 3960 states; one-zone A/B (87 points, nH 0.1-1e5,
+G0 0.1-17, Z 0.1-1, atomic and molecular starts, 300 Myr) final T within 2.3e-3, trajectory 3.6e-3.
+
+Also fixed: `chem_backend_fortran.cc` declared /gamma_data/ with the pre-netab_x size (250000),
+so the Fortran-bound gamma/eh2 view (goldens, `CHEMCXX_TABLES=fortran`) was misaligned.
+
+## D-26. (2026-10-21) element/charge conservation fixes, both backends (Uli ruling: fix all)
+- nets 15/16: free H excludes HCO+ and 3 H3+ (floored at 0, H3+ NOT capped: capping zeroed H3+ in fully
+  molecular gas and cut H3+ + O -> CO; residual H non-conservation <= 3 x_H3+ ~ 1e-8); net 15 free O excludes HCO+.
+- nets 15/16: He+ + H2 H2 loss = 2 f_H3+ cst75 (H2+ either returns to H2 or takes a second H2 into H3+).
+- net 16: O+ capped at the free O pool; HCO+ + e 8% branch -> OH + C (Geppert+05), was CHx.
+- net 17: free H excludes HD; H2 photoionization feeds H2+; HeH+ formation debits H+.
+- net 3 (Fortran only): O + H- -> OH + e added to the H- destruction rate.
+- drivers (evolve_abundances.F clamp_pool_group, cvode_driver.cc chem_clamp_pool_group) and the solver-entry
+  clamp (chemcool_network.h): over-subscribed element groups scaled down proportionally, H last; the excess
+  returns to the derived neutral, so element totals are exact. Ionized-cell override uses the cell's abhe.
+
+## D-27. (2026-10-21) networks 5 and 17 aligned, both backends (Uli-approved set)
+- net 17: H2 self-shielding local column `NH = dl*yn` (was `0.5*dl*yn`); the ionizing-photon test keeps `0.5*dl*yn`.
+- net 17: cool_func gets Si+ = abundsi (slot 9) and HD (slot 13).
+- O I for cool_func: `(abundo - CO) * (1 - x_H+)` in both nets; option `CHEMCOOL_NET5_OXYGEN_IONIZED` removed.
+- net 17: H recombination cooling zeroed below 100 K, as net 5.
+- net 17: ABHE 0.1 and HYDROGEN_MASSFRAC 0.7065 (net 1 keeps 0.079 / 0.76); `chem_cxx_cell_defaults` abhe 0.1.
+- cool_func: WSS_CIE_COOL He-state override only for nets 4, 5, 6, 9 (no He species) and 15 (He+ tracked but
+  not passed to cool_func); nets passing He states (1, 2, 3, 7, 8, 11, 16, 17) keep their own.
+- net 5: `cs2 < 0 -> 0` guard in the Jeans length.
+- net 5 (shared code, also nets 4/6): H2 collisional dissociation as net 17 (MSM96 CID + DT by H, He term
+  `cdh2_he` with He neutral, `ncrinv = ch5 + abhe*ch139`), incl. the 4.48 eV cooling; UV-pumping factor 6.94 (was 8.5).
+- Not changed: net 5 CR destruction of H2 (3 channels, 1.257 zeta); net 17's H2+ route has no exact net-5 equivalent.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

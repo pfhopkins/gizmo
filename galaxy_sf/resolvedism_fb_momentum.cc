@@ -510,6 +510,11 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                  else {wk = 0;}}
 #endif
 
+                /* concurrent wind events can share a receiver: the whole mix (incl. the H closure and kick) is one step */
+                #pragma omp critical (fb_mom_receiver)
+                {
+                #pragma omp atomic read
+                Mass_j = P[j].Mass;
                 /* ---- Mass + metals injection (wind and AGB ejecta) ---- */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
@@ -755,6 +760,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     NeedToWakeupParticles_local = 1;
                 }
 #endif /* GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY (kick block ends here) */
+
+                } /* critical (fb_mom_receiver) */
 
                 /* NaN sanity check */
                 {

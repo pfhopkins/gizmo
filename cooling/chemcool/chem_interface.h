@@ -49,6 +49,7 @@
 
 #ifdef CHEMCOOL
 
+
 /* ------------------------------------------------------------------------
  * Fortran COMMON block declarations - these map to the Fortran COMMON
  * /coolr/, /cooli/, /chem_comp/ and /project/ blocks (Fortran side declared
@@ -56,53 +57,20 @@
  * conditional members MUST track the Fortran cool.h layout exactly.
  * ---------------------------------------------------------------------- */
 extern "C" {
-    extern struct {
-        double temptab[NMD], cltab[NCLTAB][NMD], chtab[NCHTAB][NMD],
-               dtcltab[NCLTAB][NMD], dtchtab[NCHTAB][NMD],
-               crtab[NCRTAB], crphot[NCRPHOT],
-               phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
-               deff, abundc, abundo, abundsi, abundD,
-               abundM, abundN, G0, G0_LW, G0_dust,
-               f_rsc, phi_pah,
-               dust_to_gas_ratio, AV_conversion_factor,
-               cosmic_ray_ion_rate, redshift, AV_ext,
-               pdv_term, h2_form_ex, h2_form_kin,
-               lambda[28], lambda_chem[NRATES_CHEM],
-#ifdef OUTPUT_SHIELD_FAC
-               fac_shield_h2, fac_shield_dust,
-#endif
-#ifdef WSS_CIE_COOL
-               Zmass[12],
-               C_tbl[352], N_tbl[352], O_tbl[352],
-               Ne_tbl[352], Mg_tbl[352], Si_tbl[352],
-               S_tbl[352], Ca_tbl[352], Fe_tbl[352],
-               HeI_tbl[51], HeII_tbl[51],
-#endif
-               dm_density,
-               rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
-               rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-               cr_energy_density;
-    } COOLR;
+#include "chem_commons.h"
 
-    extern struct {
-        int iphoto, iflag_mn, iflag_ad, iflag_atom,
-            iflag_3bh2a, iflag_3bh2b, iflag_h3pra,
-            iflag_h2opc, id_current, index_current,
-            idma_mass_option, no_chem, irad_heat,
-            isrf_option;
-    } COOLI;
 
     /* Mirrors Fortran common /chem_comp/ in cool.h. Defaults initialized
      * in coolinmo from ABHE macro. With GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE,
      * overwritten per-particle (chem_commit_to_fortran) before each
      * EVOLVE_ABUNDANCES call. */
-    extern struct {
+    extern CHEM_TLS_VARCOMP struct {
         double abhe;
         double X_H_chem;
     } CHEM_COMP;
 
 #if defined(TREE_RAD) || defined(TREE_RAD_H2)
-    extern struct {
+    extern CHEM_TLS struct {
         double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         double fac_uv[NPIX];
@@ -142,7 +110,7 @@ struct ChemInputs {
     double u_code;             /* specific internal energy [code], seeded by caller */
 
     /* --- hydro/thermo state (orig chemcool.cc:173-181,577-602,604-621) -- */
-    double redshift;           /* -> COOLR.redshift                          */
+    double redshift;           /* -> COOLRC.redshift                          */
     double rho_cgs;            /* density [g cm^-3] (post orig:584)          */
     double timestep_cgs;       /* dt [s]            (post orig:585)          */
     double divv_cgs;           /* velocity divergence [s^-1] (post orig:588) */
@@ -164,37 +132,37 @@ struct ChemInputs {
     double column_est;         /* EVOLVE_ABUNDANCES in/out arg (orig:719)    */
 
     /* --- element pools (orig chemcool.cc:183-267) ----------------------- */
-    double abundc;             /* -> COOLR.abundc  (gas-phase C/H by number) */
-    double abundo;             /* -> COOLR.abundo                            */
-    double abundsi;            /* -> COOLR.abundsi                           */
-    double abundN;             /* -> COOLR.abundN [commit: GALSF_RESOLVEDISM_METALS_INDIVIDUAL] */
-    double abundM;             /* -> COOLR.abundM: NL99 low-IP metal "M" (network 15) */
-    double abundD;             /* -> COOLR.abundD                            */
-    double Zmass[12];          /* -> COOLR.Zmass  [commit: WSS_CIE_COOL && METALS_INDIVIDUAL]
+    double abundc;             /* -> COOLRC.abundc  (gas-phase C/H by number) */
+    double abundo;             /* -> COOLRC.abundo                            */
+    double abundsi;            /* -> COOLRC.abundsi                           */
+    double abundN;             /* -> COOLRC.abundN [commit: GALSF_RESOLVEDISM_METALS_INDIVIDUAL] */
+    double abundM;             /* -> COOLRC.abundM: NL99 low-IP metal "M" (network 15) */
+    double abundD;             /* -> COOLRC.abundD                            */
+    double Zmass[12];          /* -> COOLRC.Zmass  [commit: WSS_CIE_COOL && METALS_INDIVIDUAL]
                                   gadget_tnt_new ordering:
                                   He,C,Mg,O,Fe,Si,H,N,Ne,S,Ca,Zn (orig:220-231) */
 
     /* --- dust (orig chemcool.cc:274-308,568-575,624-634) ---------------- */
-    double dust_to_gas_ratio;  /* -> COOLR.dust_to_gas_ratio [solar units];
+    double dust_to_gas_ratio;  /* -> COOLRC.dust_to_gas_ratio [solar units];
                                   includes the 10x-solar certified-domain cap
                                   AND the T>1e5 K hot-gas sputter zero        */
-    double tdust;              /* -> COOLR.tdust (cell DustTemp or M1
+    double tdust;              /* -> COOLRC.tdust (cell DustTemp or M1
                                   Dust_Temperature)                          */
 
     /* --- radiation field (orig chemcool.cc:267-269,312-483) ------------- */
-    double G0;                 /* -> COOLR.G0    [Habing]                    */
-    double G0_LW;              /* -> COOLR.G0_LW [Habing]                    */
-    double G0_dust;            /* -> COOLR.G0_dust [commit: GALSF_RESOLVEDISM_G0_VARIABLE || RADTRANSFER] */
-    double rt_phot_HI;         /* -> COOLR.rt_phot_HI   [s^-1]               */
-    double rt_phot_HeI;        /* -> COOLR.rt_phot_HeI  [s^-1]               */
-    double rt_phot_HeII;       /* -> COOLR.rt_phot_HeII [s^-1]               */
-    double rt_heat_HI;         /* -> COOLR.rt_heat_HI   [erg s^-1 /atom]     */
-    double rt_heat_HeI;        /* -> COOLR.rt_heat_HeI                       */
-    double rt_heat_HeII;       /* -> COOLR.rt_heat_HeII                      */
+    double G0;                 /* -> COOLRC.G0    [Habing]                    */
+    double G0_LW;              /* -> COOLRC.G0_LW [Habing]                    */
+    double G0_dust;            /* -> COOLRC.G0_dust [commit: GALSF_RESOLVEDISM_G0_VARIABLE || RADTRANSFER] */
+    double rt_phot_HI;         /* -> COOLRC.rt_phot_HI   [s^-1]               */
+    double rt_phot_HeI;        /* -> COOLRC.rt_phot_HeI  [s^-1]               */
+    double rt_phot_HeII;       /* -> COOLRC.rt_phot_HeII [s^-1]               */
+    double rt_heat_HI;         /* -> COOLRC.rt_heat_HI   [erg s^-1 /atom]     */
+    double rt_heat_HeI;        /* -> COOLRC.rt_heat_HeI                       */
+    double rt_heat_HeII;       /* -> COOLRC.rt_heat_HeII                      */
 
     /* --- cosmic rays (orig chemcool.cc:270,350-360,369-379,470-481) ----- */
-    double cosmic_ray_ion_rate; /* -> COOLR.cosmic_ray_ion_rate [s^-1]       */
-    double cr_energy_density;   /* -> COOLR.cr_energy_density [erg cm^-3]
+    double cosmic_ray_ion_rate; /* -> COOLRC.cosmic_ray_ion_rate [s^-1]       */
+    double cr_energy_density;   /* -> COOLRC.cr_energy_density [erg cm^-3]
                                    [commit: COSMIC_RAY_FLUID && (G0_VARIABLE
                                     || G0_SCALE_SFR || RADTRANSFER)]         */
 
@@ -205,10 +173,10 @@ struct ChemInputs {
     double X_H_chem;           /* -> CHEM_COMP.X_H_chem [commit: as abhe]    */
 
     /* --- misc flags/terms ----------------------------------------------- */
-    double pdv_term;           /* -> COOLR.pdv_term (orig:721, always 0)     */
-    int    id_current;         /* -> COOLI.id_current (orig:272)             */
-    int    no_chem;            /* -> COOLI.no_chem    (orig:717, always 0)   */
-    int    irad_heat;          /* -> COOLI.irad_heat (orig:565: 1 if cosmological,
+    double pdv_term;           /* -> COOLRC.pdv_term (orig:721, always 0)     */
+    int    id_current;         /* -> COOLIC.id_current (orig:272)             */
+    int    no_chem;            /* -> COOLIC.no_chem    (orig:717, always 0)   */
+    int    irad_heat;          /* -> COOLIC.irad_heat (orig:565: 1 if cosmological,
                                   else keeps the init value 0)               */
 
     /* --- per-pixel TREECOL columns -> PROJECT (orig chemcool.cc:637-713) - */
@@ -234,30 +202,29 @@ struct ChemInputs {
  * COMMON block -- identical to pre-refactor behavior (bit-identity).
  * ---------------------------------------------------------------------- */
 struct ChemOutputs {
-    double tdust;                    /* <- COOLR.tdust (updated by the solve) */
-    double lambda[28];               /* <- COOLR.lambda: individual cooling
+    double tdust;                    /* <- COOLRC.tdust (updated by the solve) */
+    double lambda[28];               /* <- COOLRC.lambda: individual cooling
                                         rates [erg s^-1 cm^-3]               */
-    double lambda_chem[NRATES_CHEM]; /* <- COOLR.lambda_chem                 */
+    double lambda_chem[NRATES_CHEM]; /* <- COOLRC.lambda_chem                 */
 #ifdef OUTPUT_SHIELD_FAC
-    double fac_shield_h2;            /* <- COOLR.fac_shield_h2 (calc_photo)  */
-    double fac_shield_dust;          /* <- COOLR.fac_shield_dust             */
+    double fac_shield_h2;            /* <- COOLRC.fac_shield_h2 (calc_photo)  */
+    double fac_shield_dust;          /* <- COOLRC.fac_shield_dust             */
 #endif
 };
 
 
 void chem_fill_inputs(int target, struct ChemInputs *in);
 void chem_commit_to_fortran(const struct ChemInputs *in);
+void chem_percell_snapshot(void);
+#ifdef CHEMCOOL_CXX
+void chem_cxx_tables_init(void);
+double chem_cxx_calc_temp(double abh2, double abhe, double ekn);
+void chem_cxx_begin_cell(const struct ChemInputs *in, double temp, double abh2, double abhd, double abco);
+void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double *energy, double *abundances);
+void chem_cxx_read_outputs(struct ChemOutputs *out);
+#endif
 void chem_read_outputs(struct ChemOutputs *out);
 
-#ifdef CHEMCOOL_CXX
-/* C++/CVODE backend entry point (cooling/chemcool/cxx/chem_gizmo_backend.cc).
- * Signature is deliberately identical to EVOLVE_ABUNDANCES so the swap at the
- * call site in do_chemcool_step() is a one-line #ifdef.  Selected by the
- * CHEMCOOL_CXX compile flag (default OFF -- the Fortran DVODE path stays the
- * reference implementation). */
-extern "C" void chem_evolve_cxx(double *timestep, double *dl, double *yn, double *divv,
-                                double *energy, double *abundances, double *column_est);
-#endif
 
 #endif /* CHEMCOOL */
 #endif /* CHEM_INTERFACE_H */

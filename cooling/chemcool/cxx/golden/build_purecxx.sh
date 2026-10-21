@@ -27,7 +27,7 @@ ln -sfn "$CANON" "$OUT/rundir/gizmo"
 
 # The pure path: every C++ TU of the port EXCEPT chem_backend_fortran.cc
 SRC="rates_gen chem_spline chem_cool_util chem_cool_func chem_calc_photo \
-     chem_calc_temp chem_tables_build chem_rhs_net5 chem_rhs_net17 \
+     chem_calc_temp chem_tables_build chem_rhs_net5 chem_rhs_net15 chem_rhs_net16 chem_rhs_net17 \
      cvode_driver chem_backend_cxx"
 
 STATUS=0

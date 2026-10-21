@@ -69,7 +69,7 @@ NEED_HEALPIX                             % HEALPix support
 COOLING                                  % cooling master switch  [auto by CHEMCOOL]
 COOLING_OPERATOR_SPLIT                   % operator-split cooling
 CHEMCOOL                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
-CHEMISTRYNETWORK=17                      % 17 = full network with CO (ABHE 0.079); 5 = reduced (ABHE 0.1)
+CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
 #GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances

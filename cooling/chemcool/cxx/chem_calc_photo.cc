@@ -22,6 +22,7 @@
 
 #include "../../../GIZMO_config.h"
 #include "chem_types.h"
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 
@@ -66,6 +67,9 @@ double cxx_calc_H2_shielding_factor(double temp, double abh2, double NH,
                                     ChemCell& c)
 {
     double b  = std::sqrt(CHEM_KBOLTZ * temp / CHEM_PROTONMASS);
+#ifdef CHEMCOOL_H2SHIELD_B5
+    b = CHEMCOOL_H2SHIELD_B5 * 1e5;
+#endif
     double b5 = b / 1e5;
     double fshield = 0.0;
     double NH2_local = abh2 * NH;
@@ -215,7 +219,6 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     double fshield = (c.iphoto == 0)
                    ? 1.0
                    : cxx_calc_H2_shielding_factor(temp, abh2, NH, c);
-    (void)fshield;   // nets != 1 apply it in the RHS, not here
 
     double fshield_HD = (c.iphoto == 0 || c.abundD == 0)
                       ? 1.0
@@ -223,6 +226,12 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 
     double f_dust = 1.0, f_simp = 1.0, df05 = 1.0, df19 = 1.0;
     double df25 = 1.0, df30 = 1.0, AV = 0.0;
+    double df15 = 1.0, df17 = 1.0;   // net 15 (NL99) only
+    double df187 = 1.0;   // sigma_PE = 1e-21 Z' (Gong+17; Kim+2023 under CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
+    double df418 = 1.0, df388 = 1.0, df376 = 1.0,
+           df261 = 1.0, df212 = 1.0, df266 = 1.0;   // Gong+17 (SGChem)
+#endif
 
     if ((c.iphoto != 2 && c.iphoto != 6) || c.dust_to_gas_ratio == 0.0) {
         if (c.iphoto == 0) AV = c.AV_ext;
@@ -242,6 +251,21 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
             df05 = std::exp(-0.5 * AV);
             df19 = std::exp(-1.9 * AV);
 #endif
+#if CHEMISTRYNETWORK == 15
+            df15 = std::exp(-1.5 * AV);
+            df17 = std::exp(-1.5 * AV);   // 1.5 as in calc_photo.F (Glover code)
+#endif
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+            df187 = std::exp(-1.87 * AV);
+#endif
+#if CHEMISTRYNETWORK == 16
+            df418 = std::exp(-4.18 * AV);
+            df388 = std::exp(-3.88 * AV);
+            df376 = std::exp(-3.76 * AV);
+            df261 = std::exp(-2.61 * AV);
+            df212 = std::exp(-2.12 * AV);
+            df266 = std::exp(-2.66 * AV);
+#endif
         } else {
             f_dust = 1.0; f_simp = 1.0;
             df05 = 1.0; df19 = 1.0; df25 = 1.0; df30 = 1.0;
@@ -252,6 +276,14 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         double sigma_dust = 2e-21 * c.dust_to_gas_ratio;
         f_dust = 0.0; f_simp = 0.0;
         df05 = 0.0; df19 = 0.0; df25 = 0.0; df30 = 0.0;
+        df15 = 0.0; df17 = 0.0;
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+        df187 = 0.0;
+#endif
+#if CHEMISTRYNETWORK == 16
+        df418 = 0.0; df388 = 0.0; df376 = 0.0;
+        df261 = 0.0; df212 = 0.0; df266 = 0.0;
+#endif
         c.chi_isrf = 0.0;
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
@@ -273,6 +305,25 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #endif
             df25 += fac_uv_pix * std::exp(-2.5 * AV);
             df30 += fac_uv_pix * std::exp(-3.0 * AV);
+#if CHEMISTRYNETWORK != 4 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 6
+            df05 += fac_uv_pix * std::exp(-0.5 * AV);
+            df19 += fac_uv_pix * std::exp(-1.9 * AV);
+#endif
+#if CHEMISTRYNETWORK == 15
+            df15 += fac_uv_pix * std::exp(-1.5 * AV);
+            df17 += fac_uv_pix * std::exp(-1.5 * AV);
+#endif
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+            df187 += fac_uv_pix * std::exp(-1.87 * AV);
+#endif
+#if CHEMISTRYNETWORK == 16
+            df418 += fac_uv_pix * std::exp(-4.18 * AV);
+            df388 += fac_uv_pix * std::exp(-3.88 * AV);
+            df376 += fac_uv_pix * std::exp(-3.76 * AV);
+            df261 += fac_uv_pix * std::exp(-2.61 * AV);
+            df212 += fac_uv_pix * std::exp(-2.12 * AV);
+            df266 += fac_uv_pix * std::exp(-2.66 * AV);
+#endif
         }
 #endif
     }
@@ -280,12 +331,28 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     // M1: the RT solver already applied continuum dust attenuation.
 #ifdef RADTRANSFER
     f_dust = 1.0; c.chi_isrf = 1.0; f_simp = 1.0; df25 = 1.0; df30 = 1.0;
+    df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+    df187 = 1.0;
+#endif
+#if CHEMISTRYNETWORK == 16
+    df418 = 1.0; df388 = 1.0; df376 = 1.0;
+    df261 = 1.0; df212 = 1.0; df266 = 1.0;
+#endif
 #endif
     // TreeRay attenuates the STELLAR bands inside the walk, but chi_isrf KEEPS
     // its computed AV attenuation (the isotropic ISRF background still needs
     // target-side shielding).
 #ifdef TREE_RAY
     f_dust = 1.0; f_simp = 1.0; df25 = 1.0; df30 = 1.0;
+    df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+    df187 = 1.0;
+#endif
+#if CHEMISTRYNETWORK == 16
+    df418 = 1.0; df388 = 1.0; df376 = 1.0;
+    df261 = 1.0; df212 = 1.0; df266 = 1.0;
+#endif
 #endif
 
     // ---- CO self-shielding + shielding by H2 (L96) ----
@@ -334,6 +401,8 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #else
     c.phrates[0] = T.phtab[0] * c.G0_LW * fshield * f_dust;
 #endif
+    c.fac_shield_h2 = fshield;     // OUTPUT_SHIELD_FAC diagnostics (calc_photo.F)
+    c.fac_shield_dust = f_dust;
 
     if (c.net == 4) goto done;
 
@@ -351,6 +420,17 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         c.phrates[41] = T.phtab[41] * c.G0 + c.rt_heat_HI;
         goto done;
     }
+
+#if CHEMISTRYNETWORK == 16
+    // Gong+17 (SGChem) dust factors; rate_eq_gong17 reads phrates 1, 2, 3, 10, 48, 49
+    c.phrates[0]  = T.phtab[0]  * c.G0_LW * df418;
+    c.phrates[1]  = T.phtab[1]  * c.G0 * df376;
+    c.phrates[2]  = T.phtab[2]  * c.G0 * df261;
+    c.phrates[9]  = T.phtab[9]  * c.G0 * fshield_CO * df388;
+    c.phrates[47] = T.phtab[47] * c.G0 * df212;
+    c.phrates[48] = T.phtab[48] * c.G0 * df266;
+    goto done;
+#endif
 
     // ---- other networks: shared rates ----
     c.phrates[3] = T.phtab[3] * c.G0 * df05;
@@ -392,13 +472,36 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     // Network 17 needs only phrates 1,4,5,8,9,10,35,38-45
     if (c.net == 17) goto done;
 
-    // Networks 3/7/8/11/15 fill the rest; those df* factors are only defined
-    // under their own CHEMISTRYNETWORK guards in the Fortran, so this port
-    // stops here for nets 5/17 (the production pair).  See DEVIATIONS D-14.
+    // Network 15 (NL99) reads only phrates 1, 2, 10, 48-51 of the remaining set
+    if (c.net == 15) {
+        c.phrates[47] = T.phtab[47] * c.G0 * df15;
+        c.phrates[48] = T.phtab[48] * c.G0 * df17;
+        c.phrates[49] = T.phtab[49] * c.G0 * df25;
+        c.phrates[50] = T.phtab[50] * c.G0 * df19;
+        goto done;
+    }
+
+    // nets 3/7/8/11 not ported (DEVIATIONS D-14)
     std::printf("CHEMCOOL_CXX calc_photo: network %d not ported\n", c.net);
 
 done:
     // f_rsc rescales the field strength to Habing units (photoinit sets it).
     (void)f_simp;   // used only under CHEMISTRYNETWORK 5/6 (UNUSED_PARAM in the .F)
+    (void)df187;    // read only by net 16 or under CHEMCOOL_PE_K23
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+    c.G_dust = c.f_rsc * c.G0 * df187;
+#else
     c.G_dust = c.f_rsc * c.G0 * df25;
+#endif
+#ifdef CHEMCOOL_CR_ATTEN_K23
+    {   // Kim+2023 Eq. 55: N_eff = tau_PE,eff / (1e-21 Z'_d), xi ~ 1/N_eff above N_0 = 9.35e20
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+        double cr_tau  = -std::log(std::max(df187, 1e-300));
+#else
+        double cr_tau  = -std::log(std::max(df25, 1e-300));
+#endif
+        double cr_neff = cr_tau / (1e-21 * std::max(c.dust_to_gas_ratio, 1e-30));
+        if (cr_neff > 9.35e20) c.cosmic_ray_ion_rate *= 9.35e20 / cr_neff;
+    }
+#endif
 }

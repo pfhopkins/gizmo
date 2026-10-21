@@ -34,47 +34,14 @@ extern "C" {
 #define NPIX (12 * NSIDE * NSIDE)
 #endif
 
-extern struct {
-    double temptab[NMD], cltab[NCLTAB][NMD], chtab[NCHTAB][NMD],
-           dtcltab[NCLTAB][NMD], dtchtab[NCHTAB][NMD],
-           crtab[NCRTAB], crphot[NCRPHOT],
-           phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
-           deff, abundc, abundo, abundsi, abundD,
-           abundM, abundN, G0, G0_LW, G0_dust,
-           f_rsc, phi_pah,
-           dust_to_gas_ratio, AV_conversion_factor,
-           cosmic_ray_ion_rate, redshift, AV_ext,
-           pdv_term, h2_form_ex, h2_form_kin,
-           lambda[28], lambda_chem[NRATES_CHEM],
-#ifdef OUTPUT_SHIELD_FAC
-           fac_shield_h2, fac_shield_dust,
-#endif
-#ifdef WSS_CIE_COOL
-           Zmass[12],
-           C_tbl[352], N_tbl[352], O_tbl[352],
-           Ne_tbl[352], Mg_tbl[352], Si_tbl[352],
-           S_tbl[352], Ca_tbl[352], Fe_tbl[352],
-           HeI_tbl[51], HeII_tbl[51],
-#endif
-           dm_density,
-           rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
-           rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-           cr_energy_density;
-} COOLR;
+#include "../../chem_commons.h"
 
-extern struct {
-    int iphoto, iflag_mn, iflag_ad, iflag_atom,
-        iflag_3bh2a, iflag_3bh2b, iflag_h3pra,
-        iflag_h2opc, id_current, index_current,
-        idma_mass_option, no_chem, irad_heat,
-        isrf_option;
-} COOLI;
 
-extern struct { double abhe; double X_H_chem; } CHEM_COMP;
-extern struct { double G_dust, chi_isrf, phrates[NPHTAB]; } current_photo_;
+extern CHEM_TLS_VARCOMP struct { double abhe; double X_H_chem; } CHEM_COMP;
+extern CHEM_TLS struct { double G_dust, chi_isrf, phrates[NPHTAB]; } current_photo_;
 
 #if defined(TREE_RAD) || defined(TREE_RAD_H2)
-extern struct {
+extern CHEM_TLS struct {
     double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double fac_uv[NPIX];
@@ -162,32 +129,32 @@ static void init_commons(double G0, double zeta, int iphoto)
     COOLI.iflag_mn = 1; COOLI.iflag_ad = 1; COOLI.iflag_atom = 2;
     COOLI.iflag_3bh2a = 1; COOLI.iflag_3bh2b = 1; COOLI.iflag_h3pra = 1;
     COOLI.iphoto = iphoto;
-    COOLI.irad_heat = 0; COOLI.isrf_option = 1; COOLI.no_chem = 0;
-    COOLI.id_current = 1; COOLI.index_current = 0;
+    COOLIC.irad_heat = 0; COOLI.isrf_option = 1; COOLIC.no_chem = 0;
+    COOLIC.id_current = 1; COOLIC.index_current = 0;
     COOLI.iflag_h2opc = 0; COOLI.idma_mass_option = 1;
     COOLR.h2_form_ex = 0.84; COOLR.h2_form_kin = 0.12;
     COOLR.deff = 1.0; COOLR.phi_pah = 1.0;
     COOLR.AV_conversion_factor = 5.348e-22;
-    COOLR.AV_ext = 0.0; COOLR.dm_density = 0.0; COOLR.pdv_term = 0.0;
-    COOLR.redshift = 0.0;
-    COOLR.abundD = 2.6e-5;
-    COOLR.G0 = G0; COOLR.G0_LW = G0; COOLR.G0_dust = G0;
-    COOLR.cosmic_ray_ion_rate = zeta;
-    COOLR.cr_energy_density = 0.0;
-    COOLR.dust_to_gas_ratio = Zs;
-    COOLR.tdust = 10.0;
-    COOLR.rt_phot_HI = COOLR.rt_phot_HeI = COOLR.rt_phot_HeII = 0;
-    COOLR.rt_heat_HI = COOLR.rt_heat_HeI = COOLR.rt_heat_HeII = 0;
-    COOLR.abundc  = 1.4e-4 * Zs;
-    COOLR.abundo  = 3.2e-4 * Zs;
-    COOLR.abundsi = 1.5e-5 * Zs;
-    COOLR.abundM  = 1.5e-5 * Zs;
-    COOLR.abundN  = 7.6e-5 * Zs;
+    COOLR.AV_ext = 0.0; COOLR.dm_density = 0.0; COOLRC.pdv_term = 0.0;
+    COOLRC.redshift = 0.0;
+    COOLRC.abundD = 2.6e-5;
+    COOLRC.G0 = G0; COOLRC.G0_LW = G0; COOLRC.G0_dust = G0;
+    COOLRC.cosmic_ray_ion_rate = zeta;
+    COOLRC.cr_energy_density = 0.0;
+    COOLRC.dust_to_gas_ratio = Zs;
+    COOLRC.tdust = 10.0;
+    COOLRC.rt_phot_HI = COOLRC.rt_phot_HeI = COOLRC.rt_phot_HeII = 0;
+    COOLRC.rt_heat_HI = COOLRC.rt_heat_HeI = COOLRC.rt_heat_HeII = 0;
+    COOLRC.abundc  = 1.4e-4 * Zs;
+    COOLRC.abundo  = 3.2e-4 * Zs;
+    COOLRC.abundsi = 1.5e-5 * Zs;
+    COOLRC.abundM  = 1.5e-5 * Zs;
+    COOLRC.abundN  = 7.6e-5 * Zs;
 #ifdef WSS_CIE_COOL
     double zsolar[12] = {0.7065, 2.07e-3, 5.91e-4, 5.49e-3, 1.10e-3, 6.83e-4,
                          0.2806, 8.36e-4, 1.41e-3, 4.09e-4, 6.44e-5, 1.10e-3};
-    for (int k = 0; k < 12; k++) COOLR.Zmass[k] = zsolar[k];
-    for (int k = 0; k < 12; k++) if (k != 0 && k != 6) COOLR.Zmass[k] *= Zs;
+    for (int k = 0; k < 12; k++) COOLRC.Zmass[k] = zsolar[k];
+    for (int k = 0; k < 12; k++) if (k != 0 && k != 6) COOLRC.Zmass[k] *= Zs;
 #endif
 }
 
@@ -444,7 +411,7 @@ static int kernels(const ChemTables& TT, const char* tag, int net)
             ChemCell cF, cC;
             chem_bind_cell(cF, TT, net); chem_bind_cell(cC, TT, net);
             cF.dust_to_gas_ratio = cC.dust_to_gas_ratio = dgrs[di];
-            COOLR.dust_to_gas_ratio = dgrs[di];
+            COOLRC.dust_to_gas_ratio = dgrs[di];
             cF.tdust = cC.tdust = td0s[t0];
             double RH2f = 0, Rdf = 0, RH2c = 0, Rdc = 0;
             fort_calc_dust_temp(yns[yi], chis[xi], temp, 0.7, &RH2f, &Rdf, nocalc, cF);
@@ -453,7 +420,7 @@ static int kernels(const ChemTables& TT, const char* tag, int net)
             rrh.add(RH2f, RH2c);
             rrd.add(Rdf, Rdc);
         }
-        COOLR.dust_to_gas_ratio = Zs;
+        COOLRC.dust_to_gas_ratio = Zs;
         std::printf("PHASE %s -- calc_dust_temp\n", tag);
         ok &= report(rtd); ok &= report(rrh); ok &= report(rrd);
     }
@@ -549,8 +516,8 @@ static int kernels(const ChemTables& TT, const char* tag, int net)
         for (size_t ti = 0; ti < T.size(); ti += 61) {
             double temp = T[ti], abh2 = h2s[hi], abhd = 1e-9, abco = cos_[oi];
             double dl = 1e18, yn = 1e3;
-            COOLR.G0 = COOLR.G0_LW = COOLR.G0_dust = G0s[gi];
-            COOLR.dust_to_gas_ratio = dgrs[di];
+            COOLRC.G0 = COOLRC.G0_LW = COOLRC.G0_dust = G0s[gi];
+            COOLRC.dust_to_gas_ratio = dgrs[di];
             COOLI.iphoto = iph[pi];
 #if defined(TREE_RAD) || defined(TREE_RAD_H2)
             for (int k = 0; k < NPIX; k++) {
@@ -579,8 +546,8 @@ static int kernels(const ChemTables& TT, const char* tag, int net)
             rgd.add(GdF, c.G_dust);
             rci.add(chF, c.chi_isrf);
         }
-        COOLR.G0 = COOLR.G0_LW = COOLR.G0_dust = 1.7;
-        COOLR.dust_to_gas_ratio = Zs;
+        COOLRC.G0 = COOLRC.G0_LW = COOLRC.G0_dust = 1.7;
+        COOLRC.dust_to_gas_ratio = Zs;
         std::printf("PHASE %s -- calc_photo\n", tag);
         ok &= report(rp); ok &= report(rgd); ok &= report(rci);
         for (int k = 0; k < NPHTAB; k++)
@@ -612,8 +579,8 @@ int main(int argc, char** argv)
     cfg.wss_cie = 0;
 #endif
     cfg.deff = COOLR.deff; cfg.phi_pah = COOLR.phi_pah;
-    cfg.dust_to_gas_ratio = COOLR.dust_to_gas_ratio;
-    cfg.cosmic_ray_ion_rate = COOLR.cosmic_ray_ion_rate;
+    cfg.dust_to_gas_ratio = COOLRC.dust_to_gas_ratio;
+    cfg.cosmic_ray_ion_rate = COOLRC.cosmic_ray_ion_rate;
 
     ChemTables Cx;
     if (chem_tables_build(Cx, cfg, datadir)) {

@@ -13,15 +13,22 @@
 #define CHEM_TYPES_H
 
 #include <cmath>
+#include "../../../GIZMO_config.h"   /* CHEMISTRYNETWORK sets the chtab/crphot/cst widths below */
 
 // ---- dimensions (mirror cooling/chemcool/chemcool_consts.h) ----
 #define CHEM_NMD     10000
 #define CHEM_NCLTAB  67
+#if CHEMISTRYNETWORK == 16  /* Gong+17 adds chtab 174-181, crphot 13, cst 92-94 */
+#define CHEM_NCHTAB  181
+#define CHEM_NCRPHOT 13
+#define CHEM_NCONST  94
+#else
 #define CHEM_NCHTAB  173
-#define CHEM_NCRTAB  12
 #define CHEM_NCRPHOT 12
-#define CHEM_NPHTAB  54
 #define CHEM_NCONST  91
+#endif
+#define CHEM_NCRTAB  12
+#define CHEM_NPHTAB  54
 #define CHEM_NRATES  28      /* cool_func radiative rates */
 #define CHEM_NPIX    12      /* NSIDE=1 HEALPix, as one-zone/production */
 #define CHEM_NETAB_X 21      /* energy table blocks in x = abh2/(1+abhe-abh2) (gamma.h netab_x) */
@@ -68,8 +75,8 @@
 
 // network-dependent compile-time constants are passed at runtime instead:
 // net 5: abhe=0.10, TRAC_NUM=3, NRATES_CHEM=6
-// net 17: abhe=0.079, TRAC_NUM=7, NRATES_CHEM=22
-// net 15: abhe=0.10, TRAC_NUM=9, NRATES_CHEM=6
+// net 17: abhe=0.10, TRAC_NUM=7, NRATES_CHEM=22
+// nets 15/16: abhe=0.10, TRAC_NUM=9, NRATES_CHEM=6
 #define CHEM_NRATES_CHEM_MAX 22
 
 // species slots (0-based, chemcool_consts.h nets 5/17)
@@ -81,7 +88,7 @@
 #define CIDP   5
 #define CIHD   6
 
-// net 15 (NL99) species slots (0-based); energy is slot 9
+// nets 15 (NL99) and 16 (Gong+17) species slots (0-based); energy is slot 9
 #define C15_IH2   0
 #define C15_IHP   1
 #define C15_IC    2   /* C+ */
@@ -90,8 +97,11 @@
 #define C15_ICO   5
 #define C15_IHCOP 6
 #define C15_IHEP  7
-#define C15_IMP   8   /* M+ */
+#define C15_IMP   8   /* M+ (net 16: Si+) */
 #define CHEM_NSPEC_MAX 10
+
+// nets 15 and 16 share species slots, driver policy and pools
+static inline int chem_net_nl99(int net) { return net == 15 || net == 16; }
 
 // ---------------------------------------------------------------------------
 // Immutable table state.  This is a *view* over the rate/cooling tables, NOT a
@@ -232,10 +242,10 @@ inline double chem_CL(const ChemTables& T, int k, const ChemTIdx& ti)
 // as one explicit struct (audit R2).  Passed as CVODE user_data.
 // ---------------------------------------------------------------------------
 struct ChemCell {
-    int net;               // 5, 15 or 17
-    int trac_num;          // 3, 9 or 7
+    int net;               // 5, 15, 16 or 17
+    int trac_num;          // 3, 9 (15/16) or 7
     int nspec;             // trac_num + 1
-    double abhe;           // 0.10 (net 5) / 0.079 (net 17)
+    double abhe;           // 0.10 (nets 5/15/16/17)
 
     // rpar equivalents
     double yn;             // H-nuclei number density [cm^-3]
@@ -269,6 +279,7 @@ struct ChemCell {
     double phrates[CHEM_NPHTAB];
     double G_dust, chi_isrf;
     double fshield_CO;           // calc_photo output, frozen for the cell call
+    double fac_shield_h2, fac_shield_dust;  // calc_photo diagnostics (OUTPUT_SHIELD_FAC)
 
     // TREECOL pixel columns for the LIVE H2 self-shielding evaluated inside
     // the RHS (calc_H2_shielding_factor); frozen for the cell call.
@@ -398,6 +409,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net);
 int chem_rhs_net5 (double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net17(double t, const double* y, double* ydot, ChemCell& c);
 int chem_rhs_net15(double t, const double* y, double* ydot, ChemCell& c);
+int chem_rhs_net16(double t, const double* y, double* ydot, ChemCell& c);
 
 // ---------------------------------------------------------------------------
 // Gate-2 backend binding (chem_backend_fortran.cc).

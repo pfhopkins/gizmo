@@ -1444,9 +1444,6 @@
 #if defined(CHIMES)
 #error "CHEMCOOL and CHIMES are mutually exclusive chemistry solvers"
 #endif
-#if defined(OPENMP) || defined(_OPENMP)
-#error "CHEMCOOL is not thread-safe (per-cell state in COMMON blocks and solver statics): build without OPENMP"
-#endif
 #ifndef CHEMISTRYNETWORK
 #define CHEMISTRYNETWORK 5
 #endif

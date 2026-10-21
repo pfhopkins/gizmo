@@ -17,6 +17,8 @@ Outputs (this directory):
     rates.json         -- structured extraction (expressions, guards, citations)
     rates_gen.h/.cc    -- generated C++, one function per extractable rate
     rates_registry.inc -- registry consumed by golden/test_rates.cc
+    rates_registry16.inc -- network-16 (Gong+17) entries: rate16_* functions
+                          for rates whose CHEMISTRYNETWORK == 16 branch differs
     RATE_AUDIT.md      -- Tier-2 audit table
 
 NOTHING is hand-transcribed: every expression is parsed into an AST from the
@@ -750,8 +752,8 @@ def rewrite_ifix(kept, K, arrname):
 # ----------------------------------------------------------------------------
 # Code generation
 # ----------------------------------------------------------------------------
-def gen_function(rid, pfx, K, kept, const_names, fixlog):
-    fname = "rate_%s%d" % (pfx, K)
+def gen_function(rid, pfx, K, kept, const_names, fixlog, fprefix="rate_"):
+    fname = "%s%s%d" % (fprefix, pfx, K)
     target_keys = {
         "ch": "chtab(%d,itemp)" % K, "cl": "cltab(%d,itemp)" % K,
         "cr": "crtab(%d)" % K, "crphot": "crphot(%d)" % K,
@@ -975,6 +977,85 @@ def branches_summary(nodes, target_key=None):
     walk(nodes, 0)
     return lines
 
+def find_table_assigns(scope):
+    """(pfx,K) -> [(in_residual_loop, node)] for every constant-index table
+    assignment in scope."""
+    found = OrderedDict()
+    def walk(nodes, in_loop):
+        for node in nodes:
+            if node is None: continue
+            if node.kind == "assign" and node.lhs[0] == "aref" and \
+               node.lhs[1] in TABLE_ARRAYS:
+                idx0 = node.lhs[2][0]
+                if idx0[0] == "num" and num_kind(idx0[1]) == "int":
+                    key = (TABLE_ARRAYS[node.lhs[1]], int(idx0[1]))
+                    found.setdefault(key, []).append((in_loop, node))
+            elif node.kind == "if":
+                for _, b in node.branches:
+                    walk(b, in_loop)
+            elif node.kind == "do":
+                walk(node.body, True)
+    walk(scope, False)
+    return found
+
+# ----------------------------------------------------------------------------
+# network 16 (Gong+17): rates whose CHEMISTRYNETWORK == 16 code differs from
+# the net-5 build, or that exist only in net 16 -> rate16_* functions and
+# rates_registry16.inc (applied after the base registry by chem_tables_build).
+# ----------------------------------------------------------------------------
+def extract_net16(macros5, const_names, base_defn, records, gen_decls,
+                  gen_defns, counts):
+    macros16 = dict(macros5)
+    macros16["CHEMISTRYNETWORK"] = "16"
+    registry16 = []
+    counts["generated_net16"] = 0
+    for fname in ("cheminmo.F", "const_rates.F"):
+        scope = build_scope(build_tree(
+            read_statements(os.path.join(CANON, fname), macros16)))
+        for (pfx, K), nodes in sorted(find_table_assigns(scope).items()):
+            rid = "%s%d" % (pfx, K)
+            arrname = {"ch": "chtab", "cl": "cltab", "cr": "crtab",
+                       "crphot": "crphot", "cst": "cst"}[pfx]
+            tkey = "%s(%d,itemp)" % (arrname, K) if pfx in ("ch", "cl") \
+                else "%s(%d)" % (arrname, K)
+            flags = {}
+            kept = slice_scope(scope, {tkey}, flags)
+            fixlog = None
+            skip = any(in_loop for in_loop, _ in nodes) or \
+                flags.get("loops") or flags.get("calls")
+            if not skip and any(re.match(r"(chtab|cltab)\(\d+,ifix\)", u)
+                                for u in flags.get("arrrefs", set())):
+                fixlog = rewrite_ifix(kept, K, arrname)
+                skip = fixlog is None
+            if skip:
+                if rid not in base_defn:
+                    print("NOTE net16: %s not extractable (TABLE/SPECIAL)" % rid)
+                continue
+            try:
+                decl, defn = gen_function(rid, pfx, K, kept, const_names,
+                                          fixlog, "rate16_")
+            except (KeyError, RuntimeError) as e:
+                print("NOTE net16: %s codegen failed: %s" % (rid, e))
+                continue
+            if defn.replace("rate16_", "rate_") == base_defn.get(rid):
+                continue
+            lines_span = [min(n.stmt.l0 for _, n in nodes),
+                          max(n.stmt.l1 for _, n in nodes)]
+            gen_decls.append(decl)
+            gen_defns.append("/* %s  %s:%d-%d  nets:16 */\n%s"
+                             % (rid, fname, lines_span[0], lines_span[1], defn))
+            grid_only = 1 if (fixlog is not None or "f_itemp(" in defn) else 0
+            registry16.append('    {"%s", "%s", %d, rate16_%s%d, %d},'
+                              % (rid, pfx, K, pfx, K, grid_only))
+            comment = next((n.stmt.comment for _, n in nodes
+                            if n.stmt.comment), "")
+            records.append({"rate_id": "%s@net16" % rid, "networks": [16],
+                            "fortran_file": fname, "lines": lines_span,
+                            "comment": comment[:600], "kind": "GENERATED",
+                            "expression": branches_summary(kept, tkey)[:40]})
+            counts["generated_net16"] += 1
+    return registry16
+
 # ----------------------------------------------------------------------------
 # main
 # ----------------------------------------------------------------------------
@@ -987,6 +1068,7 @@ def main():
     usage = scan_usage()
 
     records, gen_decls, gen_defns, registry = [], [], [], []
+    base_defn = {}   # rid -> net-5 function text, for the net-16 pass
     counts = {"generated": 0, "TABLE": 0, "SPECIAL": 0, "RHS_INLINE": 0}
     guard_temps = set()
     # default-real macro values as gfortran sees them (float-rounded)
@@ -998,22 +1080,7 @@ def main():
         scope = build_scope(tree)
 
         # locate every constant-index table assignment (with loop-nesting info)
-        found = OrderedDict()   # (pfx,K) -> [(in_residual_loop, node)]
-        def find_targets(nodes, in_loop):
-            for node in nodes:
-                if node is None: continue
-                if node.kind == "assign" and node.lhs[0] == "aref" and \
-                   node.lhs[1] in TABLE_ARRAYS:
-                    idx0 = node.lhs[2][0]
-                    if idx0[0] == "num" and num_kind(idx0[1]) == "int":
-                        key = (TABLE_ARRAYS[node.lhs[1]], int(idx0[1]))
-                        found.setdefault(key, []).append((in_loop, node))
-                elif node.kind == "if":
-                    for _, b in node.branches:
-                        find_targets(b, in_loop)
-                elif node.kind == "do":
-                    find_targets(node.body, True)
-        find_targets(scope, False)
+        found = find_table_assigns(scope)
 
         for (pfx, K), nodes in sorted(found.items()):
             rid = "%s%d" % (pfx, K)
@@ -1076,6 +1143,7 @@ def main():
                 counts["SPECIAL"] += 1
                 continue
             gen_decls.append(decl)
+            base_defn[rid] = defn
             gen_defns.append("/* %s  %s:%d-%d  nets:%s */\n%s"
                              % (rid, fname, lines_span[0], lines_span[1],
                                 ",".join(map(str, nets)) or "-", defn))
@@ -1090,6 +1158,9 @@ def main():
                             % (rid, pfx, K, pfx, K, grid_only))
             rec["kind"] = "GENERATED"
             counts["generated"] += 1
+
+    registry16 = extract_net16(macros5, const_names, base_defn, records,
+                               gen_decls, gen_defns, counts)
 
     for fname, nets, mac in (("rate_eq_simple.F", (5,), macros5),
                              ("rate_eq_ulli.F", (17,), macros17),
@@ -1108,6 +1179,8 @@ def main():
                                    defns="\n".join(gen_defns)))
     with open(os.path.join(OUT, "rates_registry.inc"), "w") as f:
         f.write("\n".join(registry) + "\n")
+    with open(os.path.join(OUT, "rates_registry16.inc"), "w") as f:
+        f.write("\n".join(registry16) + "\n")
 
     nmd = 10000
     with open(os.path.join(CANON, "chemcool_consts.h")) as f:

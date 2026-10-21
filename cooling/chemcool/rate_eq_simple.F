@@ -29,8 +29,9 @@ c
 c
       REAL ylam    , temp    ,
      $     yn      , dl      , divv    , yntot   , gamma , 
-     $     energy  , dtemp   , ncrinv  , h2var0  , h2var1, 
-     $     h2var2  , ykdh    , ykdh2   , ykdis   , NH    ,
+     $     energy  , dtemp   , ncrinv  , h2var0  , 
+     $     h2var2  , cdh2_h  , cdh2_h_dt, cdh2_h2, cdh2_he,
+     $     ykdis   , NH    ,
      $     ylam_chem, f_ex   , rho     , cs2     , L_jeans,
      $     f_tot   , RH2     , Rdust   , ekn, energy_dummy
 c
@@ -47,13 +48,19 @@ c
 c
       REAL cr1, cr2, cr10, cr11
 c
-      REAL ch1     , ch2     , ch3     , ch4     , ch5  ,
-     $     ch6     , ch11    , ch13    , ch25    ,
-     $     ch34    , ch35
+      REAL ch2     , ch4     , ch5     ,
+     $     ch11    , ch13    , ch25    ,
+     $     ch34    , ch35    , ch137   , ch138   , ch139   ,
+     $     ch161   , ch162   , ch163   , ch164   , ch165   ,
+     $     ch166   , ch167   , ch168   , ch169   , ch170   ,
+     $     ch171   , ch172
 c
-      REAL dtch1   , dtch2   , dtch3   , dtch4   , dtch5  ,
-     $     dtch6   , dtch11  , dtch13  , dtch25  ,
-     $     dtch34  , dtch35
+      REAL dtch2   , dtch4   , dtch5   ,
+     $     dtch11  , dtch13  , dtch25  ,
+     $     dtch34  , dtch35  , dtch137 , dtch138 , dtch139 ,
+     $     dtch161 , dtch162 , dtch163 , dtch164 , dtch165 ,
+     $     dtch166 , dtch167 , dtch168 , dtch169 , dtch170 ,
+     $     dtch171 , dtch172
 c
       REAL cdex, rdex, fpheat
 c M1 RT photoionization (ph38) + photoheating (ph42) of HI; mirrors net-17.
@@ -169,39 +176,81 @@ c
 c
 c Read in coefficients
 c
-      dtch1  = dtchtab(1, itemp)
       dtch2  = dtchtab(2, itemp)
-      dtch3  = dtchtab(3, itemp)
       dtch4  = dtchtab(4, itemp)
       dtch5  = dtchtab(5, itemp)
-      dtch6  = dtchtab(6, itemp)
       dtch11 = dtchtab(11, itemp)
       dtch13 = dtchtab(13, itemp)
       dtch25 = dtchtab(25, itemp)
       dtch34 = dtchtab(34, itemp)
       dtch35 = dtchtab(35, itemp)
+      dtch137 = dtchtab(137, itemp)
+      dtch138 = dtchtab(138, itemp)
+      dtch139 = dtchtab(139, itemp)
+      dtch161 = dtchtab(161, itemp)
+      dtch162 = dtchtab(162, itemp)
+      dtch163 = dtchtab(163, itemp)
+      dtch164 = dtchtab(164, itemp)
+      dtch165 = dtchtab(165, itemp)
+      dtch166 = dtchtab(166, itemp)
+      dtch167 = dtchtab(167, itemp)
+      dtch168 = dtchtab(168, itemp)
+      dtch169 = dtchtab(169, itemp)
+      dtch170 = dtchtab(170, itemp)
+      dtch171 = dtchtab(171, itemp)
+      dtch172 = dtchtab(172, itemp)
 c
-      ch1  = chtab(1, itemp) + dtemp * dtch1
       ch2  = chtab(2, itemp) + dtemp * dtch2
-      ch3  = chtab(3, itemp) + dtemp * dtch3
       ch4  = chtab(4, itemp) + dtemp * dtch4
       ch5  = chtab(5, itemp) + dtemp * dtch5
-      ch6  = chtab(6, itemp) + dtemp * dtch6
       ch11 = chtab(11, itemp) + dtemp * dtch11
       ch13 = chtab(13, itemp) + dtemp * dtch13
       ch25 = chtab(25, itemp) + dtemp * dtch25
       ch34 = chtab(34, itemp) + dtemp * dtch34
       ch35 = chtab(35, itemp) + dtemp * dtch35
+      ch137 = chtab(137, itemp) + dtemp * dtch137
+      ch138 = chtab(138, itemp) + dtemp * dtch138
+      ch139 = chtab(139, itemp) + dtemp * dtch139
+      ch161 = chtab(161, itemp) + dtemp * dtch161
+      ch162 = chtab(162, itemp) + dtemp * dtch162
+      ch163 = chtab(163, itemp) + dtemp * dtch163
+      ch164 = chtab(164, itemp) + dtemp * dtch164
+      ch165 = chtab(165, itemp) + dtemp * dtch165
+      ch166 = chtab(166, itemp) + dtemp * dtch166
+      ch167 = chtab(167, itemp) + dtemp * dtch167
+      ch168 = chtab(168, itemp) + dtemp * dtch168
+      ch169 = chtab(169, itemp) + dtemp * dtch169
+      ch170 = chtab(170, itemp) + dtemp * dtch170
+      ch171 = chtab(171, itemp) + dtemp * dtch171
+      ch172 = chtab(172, itemp) + dtemp * dtch172
 c
-c H2 collisional dissociation rates -- need special handling because of
-c density dependence
+c H2 collisional dissociation, as rate_eq_ulli.F: MSM96 CID + DT by H; He neutral
 c
-      ncrinv   = (2d0 * abh2 * (ch6 - ch5) + ch5)
+      cdh2_h = (ch161 - (ch161 - ch163)
+     $       / (1d0 + (yn * abHI / ch165)**ch166))
+     $       + (ch162 - (ch162 - ch164)
+     $       / (1d0 + (yn * abHI / (1d1**(-1.164408e0)
+     $       * ch165))**ch166))
+      cdh2_h = 1d1**cdh2_h
+c
+      cdh2_h_dt = (ch167 - (ch167 - ch169)
+     $          / (1d0 + (yn * abHI / ch171)**ch172))
+     $          + (ch168 - (ch168 - ch170)
+     $          / (1d0 + (yn * abHI / (1d1**(-1.174242e0)
+     $          * ch171))**ch172))
+      cdh2_h_dt = 1d1**cdh2_h_dt
+c
+      cdh2_h = cdh2_h + cdh2_h_dt
+c
+      ncrinv   = ch5 + abhe * ch139
       h2var0   = 1d0 / ( 1d0 + yn * ncrinv)
-      h2var1   = ch3**h2var0
       h2var2   = ch4**h2var0
-      ykdh     = ch1 * h2var1
-      ykdh2    = ch2 * h2var2
+      cdh2_h2  = ch2 * h2var2
+      if (ch138 .lt. 1d-100) then
+        cdh2_he = 1d-100
+      else
+        cdh2_he = ch138 * (ch137 / ch138)**h2var0
+      endif
 c
 c Photodissociation:
 c
@@ -283,8 +332,9 @@ c
 c Molecular hydrogen
 c
       ydot(ih2) = (-ch25  * abe  * abh2          ! Collisional dissoc.: H2 + e- 
-     $          -   ykdh  * abHI * abh2          ! Collisional dissoc.: H2 + H 
-     $          -   ykdh2 * abh2 * abh2          ! Collisional dissoc.: H2 + H2
+     $          -   cdh2_h  * abHI * abh2        ! Collisional dissoc.: H2 + H 
+     $          -   cdh2_h2 * abh2 * abh2        ! Collisional dissoc.: H2 + H2
+     $          -   cdh2_he * abhe * abh2        ! Collisional dissoc.: H2 + He
      $          +   Rdust * abHI * 1d0 ) * yn    ! H2 formation on dust
      $          -   ykdis * abh2                 ! Photodissoc:         H2 + PH
      $      - 0.5d0 * cr2 * abh2   ! Fudge factor of two gives correct HI production
@@ -353,8 +403,9 @@ c      y(ih2) = abh2
 c
 c H2 collisional dissociation cooling:
 c
-      rates_chem(1) = 4.48d0 * eV * (ykdh  * abHI * abh2 + 
-     $                               ykdh2 * abh2 * abh2 +
+      rates_chem(1) = 4.48d0 * eV * (cdh2_h  * abHI * abh2 + 
+     $                               cdh2_h2 * abh2 * abh2 +
+     $                               cdh2_he * abhe * abh2 +
      $                               ch25  * abe  * abh2 ) * yn**2
 c
 c H2 photodissociation heating -- 0.4eV per photodissociation:
@@ -364,8 +415,7 @@ c
 c Heating by UV pumping of H2 -- effective for n > n_crit
 c
 c We assume 2 eV per UV photon (Burton, Hollenbach & Tielens 1990),
-c and adopt a pumping rate 8.5 times larger than the dissociation rate
-c (Draine & Bertoldi 1996, table 2). 
+c and a pumping rate 6.94 times the dissociation rate (as rate_eq_ulli.F).
 c
       cdex = (1.4 * dexp(-1.81d4 / (temp + 1200)) * abH2
      $     +  1.0 * dexp(-1d3 / temp) * abHI) * 1d-12 * dsqrt(temp) * yn
@@ -375,7 +425,7 @@ c
       fpheat = 1.0 / (1.0 + 1e4 / yn)
 #endif
 
-      rates_chem(3) = - 2d0 * eV * abH2 * yn * ykdis * 8.5d0 * fpheat
+      rates_chem(3) = - 2d0 * eV * abH2 * yn * ykdis * 6.94d0 * fpheat
 c
 c H2 formation heating -- we assume a similar depedence on n / n_crit to 
 c the collisional dissociation rates, although ideally one would like to
@@ -448,7 +498,7 @@ c
 c
       abundances(1)  = abh2
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
-      abundances(2)  = max(0d0, abundo - abco - abcos)
+      abundances(2)  = max(0d0, abundo - abco - abcos) * (1d0 - abhp)  ! Assume O+/O = H+/H
       abundances(5)  = abco
       abundances(7)  = abcp
 #else
@@ -471,6 +521,7 @@ c Compute local Jeans length (for use in cool_func)
 c
       rho = (1d0 + 4d0 * abhe) * mh * yn
       cs2 = (gamma * (gamma - 1d0) * energy / rho)
+      if (cs2 .lt. 0d0) cs2 = 0d0
       L_jeans  = dsqrt(PI * cs2 /
      $           (GRAVITY * rho))
 c

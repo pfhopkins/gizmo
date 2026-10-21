@@ -32,29 +32,29 @@ extern thread_local long cxx_stat_calls, cxx_stat_substeps, cxx_stat_retries,
 void chem_bind_build_config(ChemBuildConfig& cfg, int net);
 
 static ChemTables g_tab;          // C++-built (default) or Fortran-bound
-static ChemCell   g_cell;
+static thread_local ChemCell g_cell;   // per OpenMP thread; g_tab is shared, read-only after init
 static int        g_bound = 0;
 
 // tdust is a CARRIED per-cell state, not a per-call input.  In GIZMO it lives
-// in CellP[i].DustTemp: chem_interface.cc:471/703 seeds COOLR.tdust from it and
-// :736 reads it back, so chem_bind_cell()'s `c.tdust = COOLR.tdust` is exactly
-// right there.  The one-zone harness, however, sets COOLR.tdust = 10 K ONCE at
+// in CellP[i].DustTemp: chem_interface.cc:471/703 seeds COOLRC.tdust from it and
+// :736 reads it back, so chem_bind_cell()'s `c.tdust = COOLRC.tdust` is exactly
+// right there.  The one-zone harness, however, sets COOLRC.tdust = 10 K ONCE at
 // init and never writes the C++ result back -- so without the carry below the
 // C++ cell restarts its dust-temperature Newton solve from 10 K on every hydro
-// step while the Fortran path carries its own COOLR.tdust forward.  At Gate 2
-// this could not happen: the leaf shim wrote c.tdust into COOLR.tdust, so both
+// step while the Fortran path carries its own COOLRC.tdust forward.  At Gate 2
+// this could not happen: the leaf shim wrote c.tdust into COOLRC.tdust, so both
 // backends shared the global.  Now that the C++ owns tdust in ChemCell, the
 // harness needs this to compare like with like.  Measured effect: the six
 // nH = 1e6 certification zones move from 1.1-1.3% Teq disagreement to <1e-3.
 // Production (GIZMO) is unaffected -- the caller carries tdust there.
-static double g_carry_tdust = 0.0;
-static int    g_have_tdust  = 0;
+static thread_local double g_carry_tdust = 0.0;
+static thread_local int    g_have_tdust  = 0;
 
 extern "C" {
 
 int chemcxx_init(int net)
 {
-    if (net != 5 && net != 15 && net != 17) return 1;
+    if (net != 5 && net != 15 && net != 16 && net != 17) return 1;
     if (!g_bound) {
         const char* mode = std::getenv("CHEMCXX_TABLES");
         if (mode && std::strcmp(mode, "fortran") == 0) {
@@ -94,7 +94,7 @@ void chemcxx_stats(long* calls, long* substeps, long* retries,
 }
 
 // expose the post-solve dust temperature so the caller can carry it (the
-// Fortran path carries it in COOLR.tdust automatically)
+// Fortran path carries it in COOLRC.tdust automatically)
 double chemcxx_tdust(void) { return g_cell.tdust; }
 void chemcxx_set_tdust(double t) { g_cell.tdust = t;
                                    g_carry_tdust = t; g_have_tdust = 1; }

@@ -26,7 +26,7 @@
 extern "C" void chemcool_fatal_(int *code)
 {
     printf("CHEMCOOL FATAL: solver failure code %d (particle id_current=%d, task=%d) -- clean abort.\n",
-           *code, COOLI.id_current, ThisTask);
+           *code, COOLIC.id_current, ThisTask);
     fflush(stdout);
     endrun(78100 + *code);
 }
@@ -47,9 +47,9 @@ void chemcool_init(void)
     COOLI.iflag_3bh2b = 1; /* three-body H2 formation channel b (PSS83) */
     COOLI.iflag_h3pra = 1; /* H3+ dissociative recombination (GP98) */
     COOLI.iphoto     = 6;  /* TREECOL column densities (overridden per-particle) */
-    COOLI.irad_heat  = 0;  /* no external radiative heating (handled via G0) */
+    COOLIC.irad_heat  = 0;  /* no external radiative heating (handled via G0) */
     COOLI.isrf_option = 1; /* Draine (1978) ISRF spectral shape */
-    COOLI.no_chem    = 0;
+    COOLIC.no_chem    = 0;
 
     /* Set COOLR defaults before COOLINMO (matching gadget_tnt_new standard values) */
     COOLR.h2_form_ex  = 0.84;       /* fraction of H2 binding energy → vibrational excitation */
@@ -59,20 +59,24 @@ void chemcool_init(void)
     COOLR.AV_conversion_factor = 5.348e-22; /* N_H to A_V conversion (Bohlin+ 1978) */
     COOLR.AV_ext      = 0.0;        /* no external dust extinction */
     COOLR.dm_density  = 0.0;        /* no dark matter annihilation heating */
-    COOLR.pdv_term    = 0.0;
-    COOLR.redshift    = 0.0;        /* isolated galaxy, non-cosmological */
-    COOLR.abundD      = All.DeutAbund;
-    COOLR.G0          = All.G0;
-    COOLR.G0_LW       = All.G0;
-    COOLR.cosmic_ray_ion_rate = All.CosmicRayIonRate;
-    COOLR.cr_energy_density = 0.0;  /* [erg/cm^3], overwritten per-cell if COSMIC_RAY_FLUID active */
-    COOLR.dust_to_gas_ratio = All.DGRnormalized;
+    COOLRC.pdv_term    = 0.0;
+    COOLRC.redshift    = 0.0;        /* isolated galaxy, non-cosmological */
+    COOLRC.abundD      = All.DeutAbund;
+    COOLRC.G0          = All.G0;
+    COOLRC.G0_LW       = All.G0;
+    COOLRC.cosmic_ray_ion_rate = All.CosmicRayIonRate;
+    COOLRC.cr_energy_density = 0.0;  /* [erg/cm^3], overwritten per-cell if COSMIC_RAY_FLUID active */
+    COOLRC.dust_to_gas_ratio = All.DGRnormalized;
 
     COOLINMO();
     CHEMINMO();
     INIT_TOLERANCES();
     LOAD_H2_TABLE();
     INIT_TEMPERATURE_LOOKUP();
+#ifdef CHEMCOOL_CXX
+    chem_cxx_tables_init();
+#endif
+    chem_percell_snapshot(); /* per-thread COMMON copies start every cell from these values */
 
     if(ThisTask == 0) {
         printf("initialization of SG cooling and chemistry finished.\n");
@@ -122,7 +126,11 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
      * Fortran solve (and, now, before any COMMON write) */
     if(mode == 2) return chem_in.temp;
 
+#ifdef CHEMCOOL_CXX
+    COOLIC.id_current = chem_in.id_current;  /* only for chemcool_fatal messages */
+#else
     chem_commit_to_fortran(&chem_in);
+#endif
 
     /* Local working variables seeded from the seam struct — identical roles
      * (and values) to the pre-refactor locals of the same names. */
@@ -139,7 +147,11 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
     double ekn, u_new = u_code;
 
 
+#ifdef CHEMCOOL_CXX
+    chem_cxx_begin_cell(&chem_in, temp, abh2, abhd, abco);
+#else
     CALC_PHOTO_WRAPPER(&temp, chem_in.rpar, &abh2, &abhd, &abco);
+#endif
 
     int skip_evolve_abundances = 0;
 
@@ -268,12 +280,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
          * (trace species near their floors) so conservation is unaffected. */
         chemcool_clamp_pools(abundances, &chem_in);
 #ifdef CHEMCOOL_CXX
-        /* C++/CVODE backend (cooling/chemcool/cxx/).  Same seam, same inputs:
-         * everything it needs is already in the COMMON blocks courtesy of
-         * chem_commit_to_fortran() + CALC_PHOTO_WRAPPER above.  Default OFF;
-         * the Fortran DVODE path below remains the reference implementation.
-         * See cooling/chemcool/cxx/DEVIATIONS.md and GATE2_ACCEPTANCE.md. */
-        chem_evolve_cxx(&timestep, &dl_cgs, &yn, &divv, &energy, abundances, &column_est);
+        chem_cxx_evolve_cell(timestep, dl_cgs, yn, divv, &energy, abundances);
 #else
         EVOLVE_ABUNDANCES(&timestep, &dl_cgs, &yn, &divv, &energy, abundances, &column_est);
 #endif
@@ -282,7 +289,11 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
     /* GATE 0 seam: read back the COMMON fields the solve updated.  When the
      * solve was skipped (PHOTOION-ionized cell) this reads the same
      * (stale-lambda) COMMON state the pre-refactor code read -- identical. */
+#ifdef CHEMCOOL_CXX
+    chem_cxx_read_outputs(&chem_out);
+#else
     chem_read_outputs(&chem_out);
+#endif
 
     /* Compute cooling rate */
     double cooling_rate = 0.;
@@ -305,7 +316,11 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 
     /* Compute final temperature */
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
+#ifdef CHEMCOOL_CXX
+    temp = chem_cxx_calc_temp(abh2, chem_in.abhe, ekn);
+#else
     CALC_TEMP(&abh2, &ekn, &temp);
+#endif
 
     /* Enforce the global temperature floor (All.MinGasTemp) on the CHEMCOOL path.
      * The parameter was accepted but silently IGNORED here (ignored-param class,
@@ -379,7 +394,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 #if defined(RADTRANSFER)
         /* --- Distribute CHEMCOOL cooling rates into RT bins ---
            Mirrors the standard cooling solver (cooling.cc ~lines 1295-1333).
-           chem_out.lambda[0..27] (read from COOLR.lambda) contains individual rates in erg/s/cm^3 (= nH^2 * Lambda).
+           chem_out.lambda[0..27] (read from COOLRC.lambda) contains individual rates in erg/s/cm^3 (= nH^2 * Lambda).
            Lambda_RadiativeCooling_toRHDBins uses the same nH^2-scaled convention. */
         {
             double nHcgs_loc = HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS * CellP[target].Density * All.cf_a3inv / PROTONMASS_CGS;

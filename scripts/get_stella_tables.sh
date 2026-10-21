@@ -21,6 +21,7 @@ if [ $missing = 0 ]; then
     echo "get_stella_tables: installed tables are not stella-tables $REF ($(grep -s '^commit:' "$STAMP" || echo 'no stamp')); rebuilding" >&2
 fi
 
+if [ -e "$DIR" ] && [ ! -d "$DIR/.git" ]; then mv "$DIR" "$DIR.incomplete-$(date +%Y%m%d%H%M%S)"; fi   # e.g. copied without .git
 [ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
 git -C "$DIR" fetch -q origin
 git -C "$DIR" checkout -q "$REF"

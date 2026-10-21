@@ -42,7 +42,7 @@ static inline void chemcool_set_ionized(double *ab, const struct ChemInputs *in)
     ab[IHP] = 0.9998;
     ab[ICO] = 0.0;
 #if CHEMISTRYNETWORK == 17
-    ab[IHEP]  = ABHE;         /* He -> He+ (13.6-54.4 eV photons) */
+    ab[IHEP]  = in->abhe;     /* He -> He+ (13.6-54.4 eV photons) */
     ab[IHEPP] = 0.0;          /* He++ negligible for most O stars */
     ab[IDP]   = in->abundD;   /* D -> D+ (same IP as H) */
     ab[IHD]   = 0.0;          /* HD dissociated */
@@ -91,6 +91,16 @@ static inline void chemcool_clamp_pools(double *ab, const struct ChemInputs *in)
     {const int k[] = {ISi, ISIPP}; const double n[] = {1, 1}; chemcool_clamp_group(ab, k, n, 2, in->abundsi);}
     {const int k[] = {IHEP, IHEPP}; const double n[] = {1, 1}; chemcool_clamp_group(ab, k, n, 2, in->abhe);}
     {const int k[] = {IDP, IHD}; const double n[] = {1, 1}; chemcool_clamp_group(ab, k, n, 2, in->abundD);}
+#endif
+    /* hydrogen pool, after the metal clamps (which only lower these species) */
+#if CHEMISTRYNETWORK == 5
+    {const int k[] = {IH2, IHP}; const double n[] = {2, 1}; chemcool_clamp_group(ab, k, n, 2, 1.0);}
+#elif CHEMISTRYNETWORK == 17
+    {const int k[] = {IH2, IHP, IHD}; const double n[] = {2, 1, 1}; chemcool_clamp_group(ab, k, n, 3, 1.0);}
+#elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+    {const int k[] = {IH2, IHP, ICHX, IOHX, IHCOP}; const double n[] = {2, 1, 1, 1, 1}; chemcool_clamp_group(ab, k, n, 5, 1.0);}
+#elif CHEMISTRYNETWORK == 3
+    {const int k[] = {IH2, IHP, IHD, IOH, IH2O, IHCOP, ICH, ICH2, ICH3P}; const double n[] = {2, 1, 1, 1, 2, 1, 1, 2, 3}; chemcool_clamp_group(ab, k, n, 9, 1.0);}
 #endif
 }
 

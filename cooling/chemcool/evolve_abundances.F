@@ -695,6 +695,47 @@ c
         endif
       enddo
 c
+c The caps above bound each species singly, not their sum: scale an
+c over-subscribed element group down proportionally (H last, as the
+c metal groups only lower H-bearing species)
+c
+#if CHEMISTRYNETWORK == 5
+      call clamp_pool_group(y, (/ ih2, ihp /), (/ 2d0, 1d0 /), 2, 1d0)
+#endif
+#if CHEMISTRYNETWORK == 17
+      call clamp_pool_group(y, (/ ihep, ihepp /), (/ 1d0, 1d0 /), 2,
+     $                      abhe)
+      call clamp_pool_group(y, (/ idp, ihd /), (/ 1d0, 1d0 /), 2,
+     $                      abundD)
+      call clamp_pool_group(y, (/ ih2, ihp, ihd /), (/ 2d0, 1d0, 1d0 /),
+     $                      3, 1d0)
+#endif
+#if CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+      call clamp_pool_group(y, (/ ic, ichx, ico, ihcop /),
+     $                      (/ 1d0, 1d0, 1d0, 1d0 /), 4, abundc)
+      call clamp_pool_group(y, (/ iohx, ico, ihcop /),
+     $                      (/ 1d0, 1d0, 1d0 /), 3, abundo)
+      call clamp_pool_group(y, (/ ih2, ihp, ichx, iohx, ihcop /),
+     $                      (/ 2d0, 1d0, 1d0, 1d0, 1d0 /), 5, 1d0)
+#endif
+#if CHEMISTRYNETWORK == 3
+      call clamp_pool_group(y, (/ ic, ico, ic2, ihcop, ich, ich2,
+     $                      ich3p /), (/ 1d0, 1d0, 2d0, 1d0, 1d0, 1d0,
+     $                      1d0 /), 7, abundc)
+      call clamp_pool_group(y, (/ io, ico, ioh, ih2o, io2, ihcop /),
+     $                      (/ 1d0, 1d0, 1d0, 1d0, 2d0, 1d0 /), 6,
+     $                      abundo)
+      call clamp_pool_group(y, (/ isi, isipp /), (/ 1d0, 1d0 /), 2,
+     $                      abundsi)
+      call clamp_pool_group(y, (/ ihep, ihepp /), (/ 1d0, 1d0 /), 2,
+     $                      abhe)
+      call clamp_pool_group(y, (/ idp, ihd /), (/ 1d0, 1d0 /), 2,
+     $                      abundD)
+      call clamp_pool_group(y, (/ ih2, ihp, ihd, ioh, ih2o, ihcop, ich,
+     $                      ich2, ich3p /), (/ 2d0, 1d0, 1d0, 1d0, 2d0,
+     $                      1d0, 1d0, 2d0, 3d0 /), 9, 1d0)
+#endif
+c
 #endif /* CHEMCOOL */
       return
       end
@@ -833,3 +874,29 @@ c    \\\\\\\\\\        E N D     S U B R O U T I N E      //////////
 c    //////////       I N I T _ T O L E R A N C E S       \\\\\\\\\\
 c
 c=======================================================================
+c=======================================================================
+c
+c    Scale species k(1..n), each holding w(j) atoms of an element, down
+c    proportionally so that together they hold at most pool of it
+c
+c=======================================================================
+      subroutine clamp_pool_group(y, k, w, n, pool)
+#ifdef CHEMCOOL
+      implicit NONE
+#include "cool.h"
+#include "non_eq.h"
+      integer n, k(n), J
+      REAL y(nspec), w(n), pool, s, f
+      s = 0d0
+      do J = 1, n
+        s = s + w(J) * y(k(J))
+      enddo
+      if (s .gt. pool .and. s .gt. 0d0) then
+        f = max(pool, 0d0) / s
+        do J = 1, n
+          y(k(J)) = f * y(k(J))
+        enddo
+      endif
+#endif /* CHEMCOOL */
+      return
+      end

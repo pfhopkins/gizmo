@@ -1,129 +1,143 @@
-// chem_gizmo_backend.cc -- the CHEMCOOL_CXX entry point that GIZMO calls.
+// chem_gizmo_backend.cc -- the CHEMCOOL_CXX entry points that GIZMO calls.
 //
-// This is the ONLY file that couples the C++/CVODE chemistry to GIZMO proper.
-// It sits behind the Gate-0 seam (cooling/chemcool/chem_interface.h): by the
-// time chem_evolve_cxx() runs, do_chemcool_step() has already executed
+// ChemCell is filled straight from struct ChemInputs; calc_photo, temperature
+// lookup and solve are C++.  No per-cell COMMON block is read or written.  The
+// Fortran init (COOLINMO etc.) still runs once; its scalar settings seed the
+// cell template so both backends start from identical constants.
 //
-//     chem_fill_inputs(target, &chem_in);      // gather, no COMMON writes
-//     chem_commit_to_fortran(&chem_in);        // the ONLY per-cell COMMON write
-//     CALC_PHOTO_WRAPPER(...);                 // fills /current_photo/
-//
-// so every per-cell input and the frozen photorate cache are already in the
-// COMMON blocks.  chemcxx_init() snapshots them into the explicit ChemCell
-// context (audit R2) and cxx_evolve_abundances() integrates.  The signature is
-// deliberately identical to EVOLVE_ABUNDANCES so the call site in chemcool.cc
-// is a one-line #ifdef swap and nothing else in GIZMO changes.
-//
-// Scope note, UPDATED AFTER GATE 3.  The leaf kernels and the table builders
-// are now C++ too (chem_cool_func.cc, chem_cool_util.cc, chem_calc_photo.cc,
-// chem_calc_temp.cc, chem_tables_build.cc), and golden/build_purecxx.sh proves
-// that set links with g++ alone -- no Fortran object, no libgfortran.
-//
-// A GIZMO build with CHEMCOOL_CXX ON nonetheless STILL LINKS the Fortran
-// chemistry objects, for two deliberate reasons:
-//   1. the Fortran DVODE path is retained as the fallback (Uli's standing
-//      requirement) and chemcool.cc keeps both call sites under #ifdef;
-//   2. do_chemcool_step() still uses COOLINMO/CHEMINMO/CALC_PHOTO_WRAPPER as
-//      the INPUT transport -- chem_commit_to_fortran() writes the per-cell
-//      inputs into /coolr/ and CALC_PHOTO_WRAPPER fills /current_photo/, and
-//      chemcxx_init() snapshots both into ChemCell.
-// Closing (2) is the remaining Gate-4 step and is now a short one: replace the
-// chem_commit_to_fortran + CALC_PHOTO_WRAPPER pair with a ChemCell filled
-// directly from `struct ChemInputs` plus cxx_calc_photo(), i.e. call
-// chem_backend_cxx.cc instead of chem_backend_c_api.cc.  Everything it needs
-// already exists.
-//
-// THREAD SAFETY: the C++ side is now safe (audit R2) -- ChemTables is
-// immutable after init, ChemCell is per-cell, and the CVODE workspace and the
-// statistics counters are thread_local (DEVIATIONS D-15); 64 concurrent solves
-// on 8 threads reproduce the serial answers bit-for-bit.  The COMMON-block
-// INPUT transport described above is still shared, so OPENMP + CHEMCOOL_CXX
-// must wait for the Gate-4 step, not for any further porting.
+// THREAD SAFETY: tables are immutable after chem_cxx_tables_init(); the cell,
+// the last-solve rates and the CVODE workspace are thread_local.
 
 #include "GIZMO_config.h"
 
 #if defined(CHEMCOOL) && defined(CHEMCOOL_CXX)
 
 #include "chem_types.h"
+#include "cooling/chemcool/chem_interface.h"
+#include <cstdlib>
+#include <cstring>
 
-extern "C" {
-int  chemcxx_init(int net);
-int  chemcxx_evolve(double timestep, double dl, double yn, double divv,
-                    double* energy, double* abundances);
-double chemcxx_tdust(void);
-void chemcxx_set_tdust(double t);
-void chemcxx_get_lambda(double* lam, int nlam, double* lamchem, int nchem);
-}
+extern "C" void chemcool_fatal_(int* code);
 
-// the Fortran /coolr/ common -- we only need tdust here (in/out algebraic state)
-extern "C" {
-#include "cooling/chemcool/f2c.h"
-#include "cooling/chemcool/chemcool_consts.h"
-extern struct {
-    double temptab[NMD], cltab[NCLTAB][NMD], chtab[NCHTAB][NMD],
-           dtcltab[NCLTAB][NMD], dtchtab[NCHTAB][NMD],
-           crtab[NCRTAB], crphot[NCRPHOT],
-           phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
-           deff, abundc, abundo, abundsi, abundD,
-           abundM, abundN, G0, G0_LW, G0_dust,
-           f_rsc, phi_pah,
-           dust_to_gas_ratio, AV_conversion_factor,
-           cosmic_ray_ion_rate, redshift, AV_ext,
-           pdv_term, h2_form_ex, h2_form_kin,
-           lambda[28], lambda_chem[NRATES_CHEM],
-#ifdef OUTPUT_SHIELD_FAC
-           fac_shield_h2, fac_shield_dust,
-#endif
-#ifdef WSS_CIE_COOL
-           Zmass[12],
-           C_tbl[352], N_tbl[352], O_tbl[352],
-           Ne_tbl[352], Mg_tbl[352], Si_tbl[352],
-           S_tbl[352], Ca_tbl[352], Fe_tbl[352],
-           HeI_tbl[51], HeII_tbl[51],
-#endif
-           dm_density,
-           rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
-           rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-           cr_energy_density;
-} COOLR;
-
-void chemcool_fatal_(int* code);
-}
-
-#if CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 17
-#error "CHEMCOOL_CXX currently supports CHEMISTRYNETWORK 5, 15 and 17 only. \
+#if CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17
+#error "CHEMCOOL_CXX currently supports CHEMISTRYNETWORK 5, 15, 16 and 17 only. \
 Build without CHEMCOOL_CXX (the Fortran path) for the other networks."
 #endif
 
-extern "C"
-void chem_evolve_cxx(double* timestep, double* dl, double* yn, double* divv,
-                     double* energy, double* abundances, double* /*column_est*/)
+void chem_bind_build_config(ChemBuildConfig& cfg, int net);  // chem_backend_fortran.cc
+
+#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+static_assert(NPIX <= CHEM_NPIX, "ChemCell pixel arrays are sized for NSIDE=1");
+#endif
+
+static ChemCell g_tmpl;                                   // init-time constants of every cell
+static thread_local ChemCell tl_cell;                     // the cell being solved on this thread
+static thread_local double tl_lambda[28], tl_lambda_chem[NRATES_CHEM];  // last solved cell (Fortran COMMON semantics)
+
+static_assert(28 <= CHEM_NRATES && NRATES_CHEM <= CHEM_NRATES_CHEM_MAX, "rate array sizes");
+
+void chem_cxx_tables_init(void)
 {
-    // column_est is hard-zeroed by the caller in every supported config
-    // (chemcool.cc; audit §5.1) and the iphoto=4/5 path that consumed it is
-    // not ported (DEVIATIONS D-5) -- ignored deliberately, not accidentally.
+    ChemBuildConfig cfg;
+    chem_bind_build_config(cfg, CHEMISTRYNETWORK);
+    const char* dd = std::getenv("CHEMCXX_DATADIR");
+    if (chem_cxx_tables_init(cfg, dd ? dd : "gizmo/cooling/chemcool")) { int c = 3; chemcool_fatal_(&c); }
 
-    static int inited = 0;
-    if (!inited) { if (chemcxx_init(CHEMISTRYNETWORK)) { int c = 3; chemcool_fatal_(&c); } inited = 1; }
+    // constants as chemcool_init / COOLINMO left them; per-cell fields keep the init
+    // values wherever chem_commit_to_fortran would not overwrite them
+    ChemCell& c = g_tmpl;
+    chem_cxx_cell_defaults(c, chem_cxx_tables(), CHEMISTRYNETWORK);
+    c.abhe = CHEM_COMP.abhe;
+    c.iphoto = COOLI.iphoto; c.isrf_option = COOLI.isrf_option;
+    c.iflag_mn = COOLI.iflag_mn; c.iflag_ad = COOLI.iflag_ad; c.iflag_atom = COOLI.iflag_atom;
+    c.iflag_3bh2a = COOLI.iflag_3bh2a; c.iflag_3bh2b = COOLI.iflag_3bh2b;
+    c.iflag_h3pra = COOLI.iflag_h3pra; c.iflag_h2opc = COOLI.iflag_h2opc;
+    c.deff = COOLR.deff; c.phi_pah = COOLR.phi_pah;
+    c.h2_form_ex = COOLR.h2_form_ex; c.h2_form_kin = COOLR.h2_form_kin;
+    c.f_rsc = COOLR.f_rsc; c.AV_conversion_factor = COOLR.AV_conversion_factor; c.AV_ext = COOLR.AV_ext;
+    c.abundN = COOLRC.abundN; c.G0_dust = COOLRC.G0_dust; c.cr_energy_density = COOLRC.cr_energy_density;
+#ifdef WSS_CIE_COOL
+    for (int k = 0; k < 12; k++) c.Zmass[k] = COOLRC.Zmass[k];
+#endif
+#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+    c.npix = NPIX;
+    for (int k = 0; k < NPIX; k++) c.fac_uv[k] = 1.0 / NPIX;
+#else
+    c.npix = 0;
+#endif
+}
 
-    // refresh the per-cell context from the COMMONs that chem_commit_to_fortran
-    // and CALC_PHOTO_WRAPPER just wrote (this is the R5 freeze point)
-    double tdust_cell = COOLR.tdust; /* this cell's carried dust temperature (CellP.DustTemp) */
-    chemcxx_init(CHEMISTRYNETWORK);
-    chemcxx_set_tdust(tdust_cell);   /* init would otherwise restore the previous cell's tdust (one-zone carry) */
+double chem_cxx_calc_temp(double abh2, double abhe, double ekn)
+{
+    double temp, gamma;
+    cxx_lookup_temp_gamma(abh2, abhe, ekn, &temp, &gamma, chem_cxx_tables());
+    return temp;
+}
 
-    int rc = chemcxx_evolve(*timestep, *dl, *yn, *divv, energy, abundances);
-    chemcxx_get_lambda(COOLR.lambda, 28, COOLR.lambda_chem, NRATES_CHEM); /* publish rates like the Fortran solver */
+// ChemInputs -> ChemCell (same fields and guards as chem_commit_to_fortran), then calc_photo
+void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, double abhd, double abco)
+{
+    ChemCell& c = tl_cell;
+    c = g_tmpl;
+    c.yn = in->rpar[0]; c.dl = in->rpar[1]; c.divv = in->rpar[2];
+    c.redshift = in->redshift;
+    c.abundc = in->abundc; c.abundo = in->abundo; c.abundsi = in->abundsi;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+    c.abundN = in->abundN;
+#ifdef WSS_CIE_COOL
+    for (int k = 0; k < 12; k++) c.Zmass[k] = in->Zmass[k];
+#endif
+#endif
+    c.abundD = in->abundD; c.abundM = in->abundM;
+    c.G0 = in->G0; c.G0_LW = in->G0_LW;
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+    c.G0_dust = in->G0_dust;
+#endif
+    c.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate;
+#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(RADTRANSFER))
+    c.cr_energy_density = in->cr_energy_density;
+#endif
+    c.rt_phot_HI = in->rt_phot_HI; c.rt_phot_HeI = in->rt_phot_HeI; c.rt_phot_HeII = in->rt_phot_HeII;
+    c.rt_heat_HI = in->rt_heat_HI; c.rt_heat_HeI = in->rt_heat_HeI; c.rt_heat_HeII = in->rt_heat_HeII;
+    c.dust_to_gas_ratio = in->dust_to_gas_ratio;
+    c.tdust = in->tdust;
+    c.id_current = in->id_current;
+    c.irad_heat = in->irad_heat;
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+    c.abhe = in->abhe;
+#endif
+#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+    for (int k = 0; k < NPIX; k++) c.col_tot[k] = in->column_density_projection[k];
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    for (int k = 0; k < NPIX; k++) c.fac_uv[k] = in->fac_uv[k];
+#endif
+#endif
+#ifdef TREE_RAD_H2
+    for (int k = 0; k < NPIX; k++) { c.col_h2[k] = in->column_density_projection_h2[k]; c.col_co[k] = in->column_density_projection_co[k]; }
+#endif
+    cxx_calc_photo(temp, abh2, abhd, abco, c);
+}
 
-    // tdust rides outside the ODE vector (audit §3.1 item 2): publish the
-    // driver's accepted value so chem_read_outputs() -> CellP.DustTemp sees it.
-    COOLR.tdust = chemcxx_tdust();
+void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double* energy, double* abundances)
+{
+    ChemCell& c = tl_cell;
+    int rc = cxx_evolve_abundances(timestep, dl, yn, divv, energy, abundances, c);
+    std::memcpy(tl_lambda, c.lambda, sizeof(tl_lambda));
+    std::memcpy(tl_lambda_chem, c.lambda_chem, sizeof(tl_lambda_chem));
+    if (rc != 0) chemcool_fatal_(&rc);  // same funnel as the Fortran driver
+}
 
-    if (rc != 0) {
-        // same failure taxonomy and funnel as the Fortran driver:
-        // chemcool_fatal -> endrun(78100+code) -> MPI_Abort (audit R7)
-        chemcool_fatal_(&rc);
-    }
+// unsolved (PHOTOION-ionized) cells keep the last solved cell's rates, as the Fortran path does
+void chem_cxx_read_outputs(struct ChemOutputs* out)
+{
+    const ChemCell& c = tl_cell;
+    out->tdust = c.tdust;
+    std::memcpy(out->lambda, tl_lambda, sizeof(tl_lambda));
+    std::memcpy(out->lambda_chem, tl_lambda_chem, sizeof(tl_lambda_chem));
+#ifdef OUTPUT_SHIELD_FAC
+    out->fac_shield_h2 = c.fac_shield_h2;
+    out->fac_shield_dust = c.fac_shield_dust;
+#endif
 }
 
 #endif /* CHEMCOOL && CHEMCOOL_CXX */

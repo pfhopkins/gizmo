@@ -694,8 +694,13 @@ c
         temp2  = temp  * 1d-2
         tdust2 = tdust * 1d-2
         fa     = 1d0 / (1d0 + 1d4 * dexp(-6d2 / tdust))
+#ifdef CHEMCOOL_H2FORM_K23
+        ch7    = ch7 * 2d0 / (1d0 + 0.4d0 * dsqrt(temp2) +
+     $                       0.2d0 * temp2 + 0.08d0 * temp2 * temp2)
+#else
         ch7    = ch7 * fa / (1d0 + 0.4d0 * dsqrt(temp2 + tdust2) +
      $                       0.2d0 * temp2 + 0.08d0 * temp2 * temp2)
+#endif
       else
         h_gr    = 0d0
         heii_gr = 0d0
@@ -799,7 +804,7 @@ c
         num   = ch21 * abHI * abe
         denom = ch22 * abHI + ch26 * abe + ch27 * abHI + ch28 * abhp
      $        + ch29 * abhp + (ph4 / yn) + ch8 * abhep + cst(74) * aboh 
-     $        + cst(76) * abcI
+     $        + cst(76) * abcI + cst(22) * aboI
 c
         abhm = comp_equilib(num, denom, 1d0, 1, yn, time_to_equilibrium)
 c

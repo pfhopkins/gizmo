@@ -25,6 +25,7 @@
 // the generator, so nothing covered them.  They are written out by hand below
 // from coolinmo.F:1028-1071 and are covered by the Gate-3 table golden.
 
+#include "../../../GIZMO_config.h"
 #include "chem_types.h"
 #include "chem_tables_data.h"
 #include "rates_gen.h"
@@ -50,6 +51,14 @@ static const RateEntry chem_rate_registry[] = {
 };
 static const int chem_rate_registry_n =
     (int)(sizeof(chem_rate_registry) / sizeof(chem_rate_registry[0]));
+#if CHEMISTRYNETWORK == 16
+// entries whose CHEMISTRYNETWORK == 16 branch differs or is net-16 only
+static const RateEntry chem_rate_registry16[] = {
+#include "rates_registry16.inc"
+};
+static const int chem_rate_registry16_n =
+    (int)(sizeof(chem_rate_registry16) / sizeof(chem_rate_registry16[0]));
+#endif
 
 // ---------------------------------------------------------------------------
 // owned storage
@@ -265,6 +274,12 @@ static void build_phtab(std::vector<double>& p)
     p[51] = 1.353e-10;  // N2 photodissociation [vD88]
     p[52] = 2.53e-10;   // NO photodissociation
     p[53] = 1.53e-10;   // NO photoionization
+#if CHEMISTRYNETWORK == 16
+    p[1]  = 2.059e-10;  // CI ionization (Heays+17)
+    p[47] = 5.35e-10;   // CHx
+    p[48] = 2.235e-10;  // OHx
+    p[49] = 0.0;        // HCO+
+#endif
 }
 
 // ---------------------------------------------------------------------------
@@ -329,6 +344,28 @@ static double cl61_of(double temp)
          / (std::pow(temp, 0.397) * (1.0 + std::sqrt(temp / 1e5)));
 }
 
+// evaluate one generated rate into its table slot
+static void store_rate(ChemTableStore& S, const RateEntry& e, const ChemGlobals& g,
+                       int nmd)
+{
+    if (!e.fn) return;
+    if (std::strcmp(e.kind, "cl") == 0) {
+        for (int i = 0; i < nmd; i++)
+            S.cltab[(size_t)i * CHEM_NCLTAB + (e.idx - 1)] =
+                e.fn(S.temptab[i], g);
+    } else if (std::strcmp(e.kind, "ch") == 0) {
+        for (int i = 0; i < nmd; i++)
+            S.chtab[(size_t)i * CHEM_NCHTAB + (e.idx - 1)] =
+                e.fn(S.temptab[i], g);
+    } else if (std::strcmp(e.kind, "cr") == 0) {
+        S.crtab[e.idx - 1] = e.fn(0.0, g);
+    } else if (std::strcmp(e.kind, "crphot") == 0) {
+        S.crphot[e.idx - 1] = e.fn(0.0, g);
+    } else if (std::strcmp(e.kind, "cst") == 0) {
+        S.cst[e.idx - 1] = e.fn(0.0, g);
+    }
+}
+
 // ===========================================================================
 // chem_tables_build
 // ===========================================================================
@@ -361,25 +398,12 @@ int chem_tables_build(ChemTables& T, const ChemBuildConfig& cfg,
     S->crphot.assign(CHEM_NCRPHOT, 0.0);
     S->cst.assign(CHEM_NCONST, 0.0);
 
-    for (int r = 0; r < chem_rate_registry_n; r++) {
-        const RateEntry& e = chem_rate_registry[r];
-        if (!e.fn) continue;
-        if (std::strcmp(e.kind, "cl") == 0) {
-            for (int i = 0; i < nmd; i++)
-                S->cltab[(size_t)i * CHEM_NCLTAB + (e.idx - 1)] =
-                    e.fn(S->temptab[i], g);
-        } else if (std::strcmp(e.kind, "ch") == 0) {
-            for (int i = 0; i < nmd; i++)
-                S->chtab[(size_t)i * CHEM_NCHTAB + (e.idx - 1)] =
-                    e.fn(S->temptab[i], g);
-        } else if (std::strcmp(e.kind, "cr") == 0) {
-            S->crtab[e.idx - 1] = e.fn(0.0, g);
-        } else if (std::strcmp(e.kind, "crphot") == 0) {
-            S->crphot[e.idx - 1] = e.fn(0.0, g);
-        } else if (std::strcmp(e.kind, "cst") == 0) {
-            S->cst[e.idx - 1] = e.fn(0.0, g);
-        }
-    }
+    for (int r = 0; r < chem_rate_registry_n; r++)
+        store_rate(*S, chem_rate_registry[r], g, nmd);
+#if CHEMISTRYNETWORK == 16
+    for (int r = 0; r < chem_rate_registry16_n; r++)
+        store_rate(*S, chem_rate_registry16[r], g, nmd);
+#endif
     // the four entries with no generated function (see file header)
     for (int i = 0; i < nmd; i++) {
         double t = S->temptab[i];
@@ -387,6 +411,9 @@ int chem_tables_build(ChemTables& T, const ChemBuildConfig& cfg,
         S->cltab[(size_t)i * CHEM_NCLTAB + 58] = cl59_of(t);
         S->cltab[(size_t)i * CHEM_NCLTAB + 59] = cl60_of(t);
         S->cltab[(size_t)i * CHEM_NCLTAB + 60] = cl61_of(t);
+#ifdef CHEMCOOL_GASDUST_K23
+        S->cltab[(size_t)i * CHEM_NCLTAB + 13] = 3.2e-34 * std::sqrt(t);   // Kim+2023 Eq. 45
+#endif
     }
 
     // ---- cl1, cl2, cl3, cl6 (spline entries; chem_spline.cc) ----

@@ -45,10 +45,10 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- conservation-law species (.F:97-102) ---
     double abe   = abhp + abcp + abhcop + abhep + abmp;  if (abe < 0.0) abe = 0.0;
-    double abHI  = 1.0 - 2.0 * abh2 - abhp - abchx - abohx;  if (abHI < 0.0) abHI = 0.0;
+    double abHI  = 1.0 - 2.0 * abh2 - abhp - abchx - abohx - abhcop;  if (abHI < 0.0) abHI = 0.0;
     double abheI = c.abhe - abhep;  if (abheI < 0.0) abheI = 0.0;
     double abcI  = c.abundc - abcp - abchx - abco - abhcop;  if (abcI < 0.0) abcI = 0.0;
-    double aboI  = c.abundo - abohx - abco;  if (aboI < 0.0) aboI = 0.0;
+    double aboI  = c.abundo - abohx - abco - abhcop;  if (aboI < 0.0) aboI = 0.0;
     double abmI  = c.abundM - abmp;  if (abmI < 0.0) abmI = 0.0;
 
     // --- energy, temperature (.F:106-115) ---
@@ -148,6 +148,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double denom = cst84 * abcI + cst86 * aboI + cst59 * abco
                  + ch106 * abe + cst81 * abmI;
     double abh3p = num / denom;
+    abHI = (abHI > 3.0 * abh3p) ? abHI - 3.0 * abh3p : 0.0;   // H3+ holds three H atoms of the HI pool; not capped
     abe = abe + abh3p;
 
     // --- protons (.F:278-284) ---
@@ -170,7 +171,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               +   cst86 * abh3p * aboI
               +   cst59 * abh3p * abco
               -     ch9 * abhep * abh2
-              -   cst75 * abhep * abh2 * (1.0 - fh3p)
+              - 2.0 * fh3p * cst75 * abhep * abh2   // via H2+ + H2
               +  ch106a * abh3p * abe
               +   cst81 * abh3p * abmI) * yn
               - 2.0 * fh3p * cr2 * abh2

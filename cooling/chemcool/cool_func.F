@@ -388,8 +388,8 @@ c
       abheII = abundances(15)
       abheIII = abundances(16)
 c
-c
-#ifdef WSS_CIE_COOL
+c CIE He states only for networks that pass no He states of their own
+#if defined(WSS_CIE_COOL) && (CHEMISTRYNETWORK == 4 || CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6 || CHEMISTRYNETWORK == 9 || CHEMISTRYNETWORK == 15)
       if (temp <= 1e4) then
          abheI = abhe
          abheII = 0.0
@@ -837,7 +837,7 @@ c       -- following Goldsmith & Langer (1978), we assume that
 c          each ionization deposits 20eV as heat
 c
       if (iflag_cmb .eq. 0) then
-#if CHEMISTRYNETWORK == 16
+#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_CRHEAT_K23)
 c       Gong+17: Draine (2011) for HI, Krumholz (2014) for H2
         qcr_HI = 6.5d0 + 26.4d0 * dsqrt(abe / (abe + 0.07d0))
         logn = log10(yn)
@@ -853,7 +853,8 @@ c       Gong+17: Draine (2011) for HI, Krumholz (2014) for H2
           qcr_H2 = 1.8d1
         endif
         qcr = (abHI * qcr_HI + 2d0 * abh2 * qcr_H2) * 1.6d-12
-        rates(11) = - qcr * (ynh2 + ynh) * cosmic_ray_ion_rate
+c       qcr is per H nucleus (Kim+2023 Eqs. 32-33), so it multiplies yn
+        rates(11) = - qcr * yn * cosmic_ray_ion_rate
 #else
         rates(11) =  -3.2d-11 * (ynh2 + ynh) * cosmic_ray_ion_rate
 #endif
@@ -899,6 +900,17 @@ c
 c        eps = 8.6d-2
         
         rates(12) = -1.3d-24 * eps * G_dust * yn * dust_to_gas_ratio
+#ifdef CHEMCOOL_PE_K23
+c       Kim+2023 Eqs. 30-31 (psi + 50), plus WD01 Eq. 45 recombination cooling (R_V=3.1, b_C=4, ISRF)
+        PEvar0 = G_dust * dsqrt(temp) / yne + 5d1
+        eps = (5.22d0 + 2.25d0 * temp**0.147d0) / (1d0 + 0.04996d0
+     $        * PEvar0**0.431d0 * (1d0 + 0.0043d0 * PEvar0**0.692d0))
+        PEvar1 = dlog(PEvar0)
+        rates(12) = (- 1d-26 * eps * G_dust
+     $     + 1d-28 * yne * temp**(0.3959d0 + 2.380d0 / PEvar1)
+     $     * dexp(-6.554d0 + 1.575d0 * PEvar1 - 0.05674d0 * PEvar1**2))
+     $     * yn * dust_to_gas_ratio
+#endif
       endif
 c
 c (R13) -- OI fine-structure cooling

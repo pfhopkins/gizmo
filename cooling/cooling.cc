@@ -152,10 +152,32 @@ void cooling_parent_routine(void)
        on the compact copies: cool in place with global indices (pp/cell = the global arrays, same data). */
     double *u_before_cool = (double *) malloc(N_active * sizeof(double));
     for(int j = 0; j < N_active; j++) {u_before_cool[j] = CellP[cool_indices[j]].InternalEnergy;}
+#ifdef CHEMCOOL_OMP_CROSSCHECK
+    /* serial reference on the same inputs, then the threaded pass must reproduce it byte for byte */
+    struct particle_data *xin_P = (struct particle_data *) mymalloc("xin_P", N_active * sizeof(struct particle_data));
+    struct gas_cell_data *xin_C = (struct gas_cell_data *) mymalloc("xin_C", N_active * sizeof(struct gas_cell_data));
+    struct particle_data *xref_P = (struct particle_data *) mymalloc("xref_P", N_active * sizeof(struct particle_data));
+    struct gas_cell_data *xref_C = (struct gas_cell_data *) mymalloc("xref_C", N_active * sizeof(struct gas_cell_data));
+    for(int j = 0; j < N_active; j++) {xin_P[j] = P[cool_indices[j]]; xin_C[j] = CellP[cool_indices[j]];}
+    for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
+    for(int j = 0; j < N_active; j++) {int i = cool_indices[j]; xref_P[j] = P[i]; xref_C[j] = CellP[i]; P[i] = xin_P[j]; CellP[i] = xin_C[j];}
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
+#ifdef CHEMCOOL_OMP_CROSSCHECK
+    {
+        int n_bad = 0, j_bad = -1;
+        for(int j = 0; j < N_active; j++) {int i = cool_indices[j];
+            if(memcmp(&xref_P[j], &P[i], sizeof(struct particle_data)) || memcmp(&xref_C[j], &CellP[i], sizeof(struct gas_cell_data))) {if(n_bad++ == 0) {j_bad = j;}}}
+        if(n_bad > 0) {int i = cool_indices[j_bad];
+            PRINT_WARNING("CHEMCOOL_OMP_CROSSCHECK: %d of %d cells differ between serial and threaded chemistry; first ID=%llu InternalEnergy %.17g (threaded) vs %.17g (serial)",
+                          n_bad, N_active, (unsigned long long) P[i].ID, CellP[i].InternalEnergy, xref_C[j_bad].InternalEnergy);
+            endrun(8859);}
+    }
+    myfree(xref_C); myfree(xref_P); myfree(xin_C); myfree(xin_P);
+#endif
 
     /* Accumulate cooling energy losses (positive = energy removed) + sanity checks */
     double dE_cool_step = 0;

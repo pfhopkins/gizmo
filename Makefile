@@ -114,6 +114,9 @@ CC       =  mpicc
 CXX      =  mpicxx -std=c++11
 FC       =  mpifort
 OPTIMIZE = -g -O3 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
 GSL_INCL = -I$(GSL_HOME)/include
 GSL_LIBS = -L$(GSL_HOME)/lib
 FFTW_INCL= -I$(FFTW_HOME)/include
@@ -166,6 +169,9 @@ CC       =  mpicc
 CXX      =  mpicxx -std=c++11
 FC       =  mpifort
 OPTIMIZE = -g -O3 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
 GSL_INCL = -I$(GSL_HOME)/include
 GSL_LIBS = -L$(GSL_HOME)/lib
 FFTW_INCL= -I$(FFTW_HOME)/include
@@ -755,12 +761,9 @@ FOBJS   += cooling/chemcool/coolinmo.o cooling/chemcool/cheminmo.o cooling/chemc
 
 # CHEMCOOL_CXX: C++/CVODE chemistry backend (cooling/chemcool/cxx/).
 # DEFAULT OFF -- with the flag absent the build is byte-for-byte the Fortran
-# DVODE path above, which remains the reference implementation.  With the flag
-# ON, the same Fortran objects are still linked (the RHS leaf kernels
-# cool_func/calc_dust_temp/calc_photo/calc_temp and the coolinmo/cheminmo table
-# builders are still Fortran -- see cooling/chemcool/cxx/DEVIATIONS.md D-0);
-# what is replaced is the integrator (SUNDIALS CVODE instead of DVODE), the RHS
-# assembly and the driver/retry policy.
+# DVODE path above.  With the flag ON the per-cell chemistry is C++ (nets 5/17
+# direct from ChemInputs, net 15 via the COMMON blocks); the Fortran objects are
+# still linked for init and the net-15 photo rates.
 #
 # SUNDIALS: point SUNDIALS_DIR at a local static build (CVODE >= 6.x).  Build it
 # once with:

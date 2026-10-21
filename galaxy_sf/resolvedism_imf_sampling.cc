@@ -474,11 +474,14 @@ void out2particle_resolvedismIMF(struct OUTPUT_STRUCT_NAME *out, int i, int mode
         for(k=0;k<NUM_RESOLVEDISM_ELEMENTS;k++)
             IMF_ElemAccreted[i*NUM_RESOLVEDISM_ELEMENTS+k] += out->elem_accreted[k];
 #endif
-        /* donor logging — mode 0 is single-threaded, safe to push_back */
-        if(IMF_AccretionMode == 1 && out->r_max_donor > IMF_RmaxDonor[i]) {IMF_RmaxDonor[i] = out->r_max_donor;}
+        /* donor logging — the mode-0 primary loop is threaded too: shared vector needs the critical section */
         if(IMF_AccretionMode == 1) {
-            for(int d = 0; d < out->n_donors; d++)
-                IMF_DonorLog.push_back({i, out->donors[d].ID, (double)out->donors[d].dM});
+            #pragma omp critical (imf_donor_log)
+            {
+                if(out->r_max_donor > IMF_RmaxDonor[i]) {IMF_RmaxDonor[i] = out->r_max_donor;}
+                for(int d = 0; d < out->n_donors; d++)
+                    IMF_DonorLog.push_back({i, out->donors[d].ID, (double)out->donors[d].dM});
+            }
         }
     } else {
         #pragma omp atomic
@@ -573,107 +576,66 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                 else
                 {
                     /* --- REMOVAL PASS: use correct f_acc --- */
-                    double dM = local.f_acc * (Mass_j - M_floor);
-                    if(dM > 0.5 * Mass_j) dM = 0.5 * Mass_j;
-                    if(dM > Mass_j - M_floor) dM = Mass_j - M_floor;
-                    if(dM <= 0) continue;
-
-                    double Vel_j[3];
-                    for(k=0;k<3;k++) {
-                        #pragma omp atomic read
-                        Vel_j[k] = P[j].Vel[k];
-                    }
-
+                    /* threads accreting onto different stars can share a donor: read-compute-subtract is one step */
+                    double dM = 0, Vel_j[3] = {0, 0, 0};
 #ifdef METALS
-                    double Z_j;
-                    #pragma omp atomic read
-                    Z_j = P[j].Metallicity[0];  /* total Z, slot 0 in FIRE-pattern Metallicity[] */
+                    double Z_j = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                    double X_j[NUM_RESOLVEDISM_ELEMENTS];
+#endif
+                    #pragma omp critical (imf_donor_mass)
+                    {
+                        double Mj = P[j].Mass;
+                        if(Mj > M_floor) {
+                            dM = local.f_acc * (Mj - M_floor);
+                            if(dM > 0.5 * Mj) dM = 0.5 * Mj;
+                            if(dM > Mj - M_floor) dM = Mj - M_floor;
+                        }
+                        if(dM > 0) {
+                            for(k=0;k<3;k++) {Vel_j[k] = P[j].Vel[k];}
+#ifdef METALS
+                            Z_j = P[j].Metallicity[0];  /* total Z, slot 0 in FIRE-pattern Metallicity[] */
+#endif
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+                            for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {X_j[k] = P[j].Metallicity[MET_OF(k)];}
+#endif
+                            /* conserved MHD quantities scale with the mass removed (parent side of merge_split.cc:517-525) */
+                            double frac = dM / Mj;
+#ifdef MAGNETIC
+                            for(k=0;k<3;k++) {
+                                CellP[j].B[k] -= frac * CellP[j].B[k];
+                                CellP[j].BPred[k] -= frac * CellP[j].BPred[k];
+                                CellP[j].DtB[k] -= frac * CellP[j].DtB[k];
+                            }
+                            CellP[j].divB -= frac * CellP[j].divB;
+#ifdef DIVBCLEANING_DEDNER
+                            CellP[j].Phi -= frac * CellP[j].Phi;
+                            CellP[j].PhiPred -= frac * CellP[j].PhiPred;
+                            CellP[j].DtPhi -= frac * CellP[j].DtPhi;
+                            for(k=0;k<3;k++) {CellP[j].DtB_PhiCorr[k] -= frac * CellP[j].DtB_PhiCorr[k];}
+#endif
+#endif
+                            P[j].Mass -= dM;
+                            CellP[j].Mass -= dM;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                            CellP[j].MassTrue -= dM;
+#endif
+                        }
+                    }
+                    if(dM <= 0) continue;
+#ifdef METALS
                     out.metal_accreted += dM * Z_j;
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                    /* Accrete per-element mass.  IMF_ElemAccreted/out.elem_accreted
-                     * is indexed by StellarElement (0..26 = H..Zn).  Read each
-                     * element's mass-fraction from Met[MET_OF(k)] (1..27). */
-                    for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {
-                        double Xk_j;
-                        #pragma omp atomic read
-                        Xk_j = P[j].Metallicity[MET_OF(k)];
-                        out.elem_accreted[k] += dM * Xk_j;
-                    }
+                    /* IMF_ElemAccreted is indexed by StellarElement (0..26 = H..Zn); Met[MET_OF(k)] holds its mass fraction */
+                    for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {out.elem_accreted[k] += dM * X_j[k];}
 #endif
-                    /* Rescale conserved MHD quantities proportional to mass removed,
-                     * matching parent-side of split in merge_split.cc:517-525.
-                     * Star doesn't inherit B-flux; removed portion is discarded. */
-                    double frac = dM / Mass_j;
-#ifdef MAGNETIC
-                    for(k=0;k<3;k++) {
-                        double dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].B[k];
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].B[k] -= dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].BPred[k];
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].BPred[k] -= dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].DtB[k];
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].DtB[k] -= dq;
-                    }
-                    {
-                        double dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].divB;
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].divB -= dq;
-                    }
-#ifdef DIVBCLEANING_DEDNER
-                    {
-                        double dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].Phi;
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].Phi -= dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].PhiPred;
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].PhiPred -= dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].DtPhi;
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].DtPhi -= dq;
-                    }
-                    for(k=0;k<3;k++) {
-                        double dq;
-                        #pragma omp atomic read
-                        dq = CellP[j].DtB_PhiCorr[k];
-                        dq *= frac;
-                        #pragma omp atomic
-                        CellP[j].DtB_PhiCorr[k] -= dq;
-                    }
-#endif
-#endif
-                    #pragma omp atomic
-                    P[j].Mass -= dM;
-                    #pragma omp atomic
-                    CellP[j].Mass -= dM;
 #ifdef STELLA_SELFCHECK
                     { static long n_don = 0, n_low = 0; n_don++;   /* donor drained below the accretion floor */
                       if(P[j].Mass < (1 - 1.0e-9) * 0.01 * All.MinMassForParticleMerger && ++n_low <= 50)
                           STELLA_CHECK("donor_mass_floor", 0, "donor ID=%llu M_left=%.3e M_merge=%.3e (code) n_low=%ld", (unsigned long long)P[j].ID, (double)P[j].Mass, All.MinMassForParticleMerger, n_low);
                       if(n_don == 1 || n_don % 1000 == 0) STELLA_CHECK_RAN("donor_mass_floor", 1);}
-#endif
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                    #pragma omp atomic
-                    CellP[j].MassTrue -= dM;
 #endif
                     out.mass_accreted += dM;
                     if(r2 > out.r_max_donor * out.r_max_donor) {out.r_max_donor = sqrt(r2);}

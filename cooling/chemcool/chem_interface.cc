@@ -163,7 +163,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->G0_LW   = All.G0; /* default: LW = full FUV, overridden below if G0_VARIABLE */
     in->cosmic_ray_ion_rate = All.CosmicRayIonRate;
 
-    in->id_current = P[target].ID;   /* [orig chemcool.cc:272] (same int truncation as COOLI.id_current) */
+    in->id_current = P[target].ID;   /* [orig chemcool.cc:272] (same int truncation as COOLIC.id_current) */
 
 #ifdef GALSF_RESOLVEDISM_DUST
     /* [orig chemcool.cc:274-280] */
@@ -281,7 +281,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     /* [orig chemcool.cc:382-384] Default RT photoionization rates to zero */
     in->rt_phot_HI = in->rt_phot_HeI = in->rt_phot_HeII = 0;
     in->rt_heat_HI = in->rt_heat_HeI = in->rt_heat_HeII = 0;
-    /* Mirror of the init-time COOLI.irad_heat default (chemcool_init sets 0; the
+    /* Mirror of the init-time COOLIC.irad_heat default (chemcool_init sets 0; the
      * pre-refactor per-cell path only ever wrote it in the cosmological branch
      * below, so in non-cosmological runs the committed 0 == the value the COMMON
      * block held anyway — bit-identical). */
@@ -558,7 +558,11 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     /* [orig chemcool.cc:620-621] entry temperature (CALC_TEMP is a pure
      * lookup: init-time temp/gamma tables + explicit arguments only) */
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
+#ifdef CHEMCOOL_CXX
+    temp = chem_cxx_calc_temp(abh2, in->abhe, ekn);  /* this cell's abhe (Fortran reads the last committed one) */
+#else
     CALC_TEMP(&abh2, &ekn, &temp);
+#endif
     /* (the mode==2 early return [orig chemcool.cc:622] is taken by
      *  do_chemcool_step right after this function returns; the remaining
      *  gathering below only fills the struct — no observable state — so
@@ -696,49 +700,58 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
  * original never wrote — e.g. CHEM_COMP without VARIABLE_XH_AND_ABHE, or
  * G0_dust without G0_VARIABLE/RADTRANSFER — stay Fortran-owned).
  * ========================================================================= */
+/* per-cell COMMON values after chemcool_init; every cell starts from them on every thread (no copyin needed) */
+static struct chem_coolrc_t chem_coolrc_init;
+static struct chem_coolic_t chem_coolic_init;
+
+void chem_percell_snapshot(void) {chem_coolrc_init = COOLRC; chem_coolic_init = COOLIC;}
+
 void chem_commit_to_fortran(const struct ChemInputs *in)
 {
     int i;
 
-    COOLR.redshift = in->redshift;                       /* [orig chemcool.cc:174/176] */
+    COOLRC = chem_coolrc_init;
+    COOLIC = chem_coolic_init;
 
-    COOLR.abundc  = in->abundc;                          /* [orig chemcool.cc:208-214/263-265] */
-    COOLR.abundo  = in->abundo;
-    COOLR.abundsi = in->abundsi;
+    COOLRC.redshift = in->redshift;                       /* [orig chemcool.cc:174/176] */
+
+    COOLRC.abundc  = in->abundc;                          /* [orig chemcool.cc:208-214/263-265] */
+    COOLRC.abundo  = in->abundo;
+    COOLRC.abundsi = in->abundsi;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    COOLR.abundN  = in->abundN;                          /* [orig chemcool.cc:216] */
+    COOLRC.abundN  = in->abundN;                          /* [orig chemcool.cc:216] */
 #ifdef WSS_CIE_COOL
-    for(i = 0; i < 12; i++) {COOLR.Zmass[i] = in->Zmass[i];}  /* [orig chemcool.cc:220-231,253-256] */
+    for(i = 0; i < 12; i++) {COOLRC.Zmass[i] = in->Zmass[i];}  /* [orig chemcool.cc:220-231,253-256] */
 #endif
 #endif
-    COOLR.abundD = in->abundD;                           /* [orig chemcool.cc:267] */
-    COOLR.abundM = in->abundM;
+    COOLRC.abundD = in->abundD;                           /* [orig chemcool.cc:267] */
+    COOLRC.abundM = in->abundM;
 
-    COOLR.G0    = in->G0;                                /* [orig chemcool.cc:268,344,367,420] */
-    COOLR.G0_LW = in->G0_LW;                             /* [orig chemcool.cc:269,346,368,422] */
+    COOLRC.G0    = in->G0;                                /* [orig chemcool.cc:268,344,367,420] */
+    COOLRC.G0_LW = in->G0_LW;                             /* [orig chemcool.cc:269,346,368,422] */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
-    COOLR.G0_dust = in->G0_dust;                         /* [orig chemcool.cc:348,428] */
+    COOLRC.G0_dust = in->G0_dust;                         /* [orig chemcool.cc:348,428] */
 #endif
 
-    COOLR.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate; /* [orig chemcool.cc:270,354,358,374,378,476,479] */
+    COOLRC.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate; /* [orig chemcool.cc:270,354,358,374,378,476,479] */
 #if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(RADTRANSFER))
-    COOLR.cr_energy_density = in->cr_energy_density;     /* [orig chemcool.cc:355,375,477] */
+    COOLRC.cr_energy_density = in->cr_energy_density;     /* [orig chemcool.cc:355,375,477] */
 #endif
 
-    COOLR.rt_phot_HI   = in->rt_phot_HI;                 /* [orig chemcool.cc:383-384,447-465,515-518,559-564] */
-    COOLR.rt_phot_HeI  = in->rt_phot_HeI;
-    COOLR.rt_phot_HeII = in->rt_phot_HeII;
-    COOLR.rt_heat_HI   = in->rt_heat_HI;
-    COOLR.rt_heat_HeI  = in->rt_heat_HeI;
-    COOLR.rt_heat_HeII = in->rt_heat_HeII;
+    COOLRC.rt_phot_HI   = in->rt_phot_HI;                 /* [orig chemcool.cc:383-384,447-465,515-518,559-564] */
+    COOLRC.rt_phot_HeI  = in->rt_phot_HeI;
+    COOLRC.rt_phot_HeII = in->rt_phot_HeII;
+    COOLRC.rt_heat_HI   = in->rt_heat_HI;
+    COOLRC.rt_heat_HeI  = in->rt_heat_HeI;
+    COOLRC.rt_heat_HeII = in->rt_heat_HeII;
 
-    COOLR.dust_to_gas_ratio = in->dust_to_gas_ratio;     /* [orig chemcool.cc:279-308,634] */
-    COOLR.tdust             = in->tdust;                 /* [orig chemcool.cc:572/574] */
-    COOLR.pdv_term          = in->pdv_term;              /* [orig chemcool.cc:721] */
+    COOLRC.dust_to_gas_ratio = in->dust_to_gas_ratio;     /* [orig chemcool.cc:279-308,634] */
+    COOLRC.tdust             = in->tdust;                 /* [orig chemcool.cc:572/574] */
+    COOLRC.pdv_term          = in->pdv_term;              /* [orig chemcool.cc:721] */
 
-    COOLI.id_current = in->id_current;                   /* [orig chemcool.cc:272] */
-    COOLI.no_chem    = in->no_chem;                      /* [orig chemcool.cc:717] */
-    COOLI.irad_heat  = in->irad_heat;                    /* [orig chemcool.cc:565 + init default] */
+    COOLIC.id_current = in->id_current;                   /* [orig chemcool.cc:272] */
+    COOLIC.no_chem    = in->no_chem;                      /* [orig chemcool.cc:717] */
+    COOLIC.irad_heat  = in->irad_heat;                    /* [orig chemcool.cc:565 + init default] */
 
 #ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
     CHEM_COMP.X_H_chem = in->X_H_chem;                   /* [orig chemcool.cc:596-597] */
@@ -766,12 +779,12 @@ void chem_commit_to_fortran(const struct ChemInputs *in)
 void chem_read_outputs(struct ChemOutputs *out)
 {
     int i;
-    out->tdust = COOLR.tdust;                            /* [orig chemcool.cc:924] */
-    for(i = 0; i < 28; i++) {out->lambda[i] = COOLR.lambda[i];}                  /* [orig chemcool.cc:869-871,956-985] */
-    for(i = 0; i < NRATES_CHEM; i++) {out->lambda_chem[i] = COOLR.lambda_chem[i];}  /* [orig chemcool.cc:875-877] */
+    out->tdust = COOLRC.tdust;                            /* [orig chemcool.cc:924] */
+    for(i = 0; i < 28; i++) {out->lambda[i] = COOLRC.lambda[i];}                  /* [orig chemcool.cc:869-871,956-985] */
+    for(i = 0; i < NRATES_CHEM; i++) {out->lambda_chem[i] = COOLRC.lambda_chem[i];}  /* [orig chemcool.cc:875-877] */
 #ifdef OUTPUT_SHIELD_FAC
-    out->fac_shield_h2   = COOLR.fac_shield_h2;
-    out->fac_shield_dust = COOLR.fac_shield_dust;        /* [orig chemcool.cc:931] */
+    out->fac_shield_h2   = COOLRC.fac_shield_h2;
+    out->fac_shield_dust = COOLRC.fac_shield_dust;        /* [orig chemcool.cc:931] */
 #endif
 }
 

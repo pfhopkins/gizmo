@@ -120,7 +120,8 @@ c
 c Non-equilibrium species computed using conservation laws
 c
       abe   = max(abhp + abcp + abhcop + abhep + abmp, 0d0)
-      abHI  = max(1d0 - 2d0 * abh2 - abhp - abchx - abohx, 0d0)
+      abHI  = max(1d0 - 2d0 * abh2 - abhp - abchx - abohx - abhcop,
+     $            0d0)
       abheI = max(abhe - abhep, 0d0)
       abcI  = max(abundc - abcp - abchx - abco - abhcop, 0d0)
       abmI  = max(abundM - abmp, 0d0)
@@ -422,7 +423,7 @@ c
 c
 c     (no H, H2 or H+: O+ cannot form or be destroyed here; keep it neutral)
       if (denom .gt. 0d0) then
-        abop = num / denom
+        abop = min(num / denom, abotot)
       else
         abop = 0d0
       endif
@@ -463,6 +464,8 @@ c
         abh3p = (-denom + dsqrt(denom**2 + 4d0 * ch106 * num))
      $        / (2d0 * ch106)
       endif
+c H3+ holds three H atoms of the HI pool (not capped: keeps H3+ chemistry in fully molecular gas)
+      abHI = max(abHI - 3d0 * abh3p, 0d0)
       abe = abe + abh3p
 c
 c Protons
@@ -490,7 +493,7 @@ c
      $          + ch174   * abh3p * aboI
      $          + cst(59) * abh3p * abco
      $          -     ch9 * abhep * abh2
-     $          - cst(75) * abhep * abh2 * (1d0 - fh3p)
+     $          - 2d0 * fh3p * cst(75) * abhep * abh2  ! via H2+ + H2
      $          - cst(93) * abop  * abh2
      $          +  ch106a * abh3p * abe
      $          +   ch53  * abhI  * abohx
@@ -518,7 +521,6 @@ c
       ydot(ichx) = (  ch180 * abcI   * abh3p
      $           +   ch176a * abcp   * abh2
      $           +  cst(54) * abcI   * abh2
-     $           +    ch87b * abhcop * abe
      $           -  cst(85) * aboI   * abchx
      $           -    ch181 * abchx  * abhep
      $           -    ch178 * abHI   * abchx) * yn
@@ -527,6 +529,7 @@ c
 c OHx
 c
       ydot(iohx) = ( ch174a * aboI * abh3p
+     $           +    ch87b * abhcop * abe
      $           +   cst93a * abop * abh2
      $           +    ch89  * abco * abhI
      $           -    ch147 * abcI * abohx

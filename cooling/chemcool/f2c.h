@@ -6,6 +6,8 @@
 
 #define COOLR coolr
 #define COOLI cooli
+#define COOLRC coolrc
+#define COOLIC coolic
 #define CHEM_COMP chem_comp
 #define COOLINMO coolinmo
 #define CHEMINMO cheminmo
@@ -31,6 +33,8 @@
 
 #define COOLR coolr_
 #define COOLI cooli_
+#define COOLRC coolrc_
+#define COOLIC coolic_
 #define CHEM_COMP chem_comp_
 #define COOLINMO coolinmo_
 #define CHEMINMO cheminmo_

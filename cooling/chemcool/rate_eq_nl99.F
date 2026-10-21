@@ -95,10 +95,11 @@ c
 c Non-equilibrium species computed using conservation laws
 c
       abe   = max(abhp + abcp + abhcop + abhep + abmp, 0d0)
-      abHI  = max(1d0 - 2d0 * abh2 - abhp - abchx - abohx, 0d0)
+      abHI  = max(1d0 - 2d0 * abh2 - abhp - abchx - abohx - abhcop,
+     $            0d0)
       abheI = max(abhe - abhep, 0d0)
       abcI  = max(abundc - abcp - abchx - abco - abhcop, 0d0)
-      aboI  = max(abundo - abohx - abco, 0d0)
+      aboI  = max(abundo - abohx - abco - abhcop, 0d0)
       abmI  = max(abundM - abmp, 0d0)
 c
 c Internal energy (erg cm^-3)
@@ -271,6 +272,8 @@ c
      $      + ch106 * abe + cst(81) * abmI
 c
       abh3p = num / denom
+c H3+ holds three H atoms of the HI pool (not capped: keeps H3+ chemistry in fully molecular gas)
+      abHI = max(abHI - 3d0 * abh3p, 0d0)
       abe   = abe + abh3p
 c
 c Protons
@@ -295,7 +298,7 @@ c
      $          + cst(86) * abh3p * aboI
      $          + cst(59) * abh3p * abco
      $          -     ch9 * abhep * abh2
-     $          - cst(75) * abhep * abh2 * (1d0 - fh3p)
+     $          - 2d0 * fh3p * cst(75) * abhep * abh2  ! via H2+ + H2
      $          +  ch106a * abh3p * abe
      $          + cst(81) * abh3p * abmI) * yn
      $          - 2d0 * fh3p * cr2 * abh2        ! Cosmic rays

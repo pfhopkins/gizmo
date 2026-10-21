@@ -3,7 +3,7 @@
 // Source: /orion/ptmp/uli/orion/test/gizmo/cooling/chemcool/rate_eq_ulli.F
 // (canonical, read 2026-07-29 -- includes the 2026-07-28 fixes:
 //  METAL-ELECTRON FIX: abe += abundsi (line 172);
-//  UNINITIALIZED-NH FIX: NH = 0.5*dl*yn assigned BEFORE the H2-shielding call).
+//  UNINITIALIZED-NH FIX: NH assigned BEFORE the H2-shielding call).
 //
 // ODE vector (0-based): y[0]=H2, y[1]=H+, y[2]=CO, y[3]=He+, y[4]=He++,
 // y[5]=D+, y[6]=HD, y[7]=energy density.
@@ -24,7 +24,7 @@
 // creation-without-destruction or over-saturated equilibrium (callers clamp).
 static double comp_equilib(double num, double denom, double max_abundance, int id)
 {
-    static int nwarn = 0;
+    static thread_local int nwarn = 0;
     if (num == 0.0) return 0.0;
     if (denom == 0.0) {
         if (nwarn < 50) { std::fprintf(stderr,
@@ -78,7 +78,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double abcp = c.abundc - abco; if (abcp < 0.0) abcp = 0.0;
     // METAL-ELECTRON FIX (2026-07-28): + abundsi
     double abe  = abhp + abhep + 2.0 * abhepp + abcp + abdp + c.abundsi;
-    double abHI = 1.0 - 2.0 * abh2 - abhp; if (abHI < 0.0) abHI = 0.0;
+    double abHI = 1.0 - 2.0 * abh2 - abhp - abhd; if (abHI < 0.0) abHI = 0.0;
     double abheI = c.abhe - abhep - abhepp; if (abheI < 0.0) abheI = 0.0;
 
     // --- energy / temperature with NaN guards (.F:181-218) ---
@@ -197,8 +197,8 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double h2p_cdh = ch160 * std::pow(ch159 / ch160, h2p_alpha);
 
     // --- photodissociation rates (.F:512-573) ---
-    // UNINITIALIZED-NH FIX: NH defined BEFORE the shielding call.
-    double NH = 0.5 * dl * yn;
+    // local H2 shielding column over the full length dl, as net 5 and calc_photo
+    double NH = dl * yn;
     double fshield = (c.iphoto == 0) ? 1.0
                      : cxx_calc_H2_shielding_factor(temp, abh2, NH, c);
     double ykdis = c.phrates[0] * fshield;
@@ -271,7 +271,8 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
         abM = abHI + abh2 / std::sqrt(2.0) + abheI / 2.0;
         num   = ch23 * abHI * abhp + ch24 * abh2 * abhp
               + ch29 * abhp * abhm + ch156 * abhehp * abHI
-              + (cr2 * abh2 / yn) + T.cst[74] * abhep * abh2;
+              + (cr2 * abh2 / yn) + T.cst[74] * abhep * abh2
+              + (ph41 / yn) * abh2;
         denom = T.cst[0] * abHI + h2p_dr * abe + (ph5 / yn)
               + 2.0 * ch127 * abhm + ch154 * abheI
               + h2p_cdh * abM;
@@ -315,6 +316,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               +  ch18 * abhep * abe
               +  ch32 * abhep * abHI
               -  ch33 * abheI * abhp
+              - ch155 * abheI * abhp
               + h2p_cdh * abh2p * abM
               +  ch9  * abhep * abh2) * yn
               +  ph5  * abh2p
@@ -451,6 +453,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     rc[8] = 24.6 * CHEM_EV * ch14 * abe * abheI * ynsq;
     rc[9] = 54.4 * CHEM_EV * ch15 * abe * abhep * ynsq;
     rc[10] = CHEM_KBOLTZ * temp * abhp * (ch13 * abe + h_gr) * ynsq;
+    if (temp < 100.0) rc[10] = 0.0;
     rc[11] = 40.8 * CHEM_EV * ch10 * abhep * abe * ynsq;
     rc[12] = CHEM_KBOLTZ * temp * (ch17 - ch10) * abhep * abe * ynsq;
     rc[13] = CHEM_KBOLTZ * temp * abhepp * ch20 * abe * ynsq;
@@ -478,14 +481,14 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     abundances[1]  = abo * (1.0 - abhp);   // "Assume O+/O = H+/H"
     abundances[4]  = abco;
     abundances[6]  = abcp;
+    abundances[8]  = c.abundsi;
     abundances[9]  = abe;
     abundances[10] = abhp;
     abundances[11] = abHI;
+    abundances[12] = abhd;
     abundances[13] = abheI;
     abundances[14] = abhep;
     abundances[15] = abhepp;
-    // NB: slots 9 (Si+) and 13->HD are NOT set -- SiII and HD cooling are OFF
-    // in net 17 as compiled (AMBIGUOUS A7; port preserves compiled behavior).
 
     double ylam, rates[CHEM_NRATES];
     int cferr = cxx_cool_func(temp, yn, L_jeans, divv, c.G_dust, abundances,

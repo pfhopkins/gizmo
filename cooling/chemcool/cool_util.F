@@ -838,6 +838,12 @@ c Only calculate new RH2, Rdust values, don't update tdust
           fa     = 1d0 / (1d0 + 1d4 * dexp(-6d2 / tdust))
           stick  = 1d0 / (1d0 + 0.4d0 * (temp2 + tdust2)**0.5d0 +
      $                    0.2d0 * temp2 + 0.08d0 * temp2**2d0)
+#ifdef CHEMCOOL_H2FORM_K23
+c         Kim+2023 Eq. 16: 3e-17 Z'_d 2 sqrt(T2) / (1 + 0.4 sqrt(T2) + 0.2 T2 + 0.08 T2^2), no T_d dependence
+          fa     = 1d0
+          stick  = 2d0 / (1d0 + 0.4d0 * temp2**0.5d0 +
+     $                    0.2d0 * temp2 + 0.08d0 * temp2**2d0)
+#endif
           Rdust  = ch7 * fa * stick
           RH2 = Rdust * abHI * yn**2
           return
@@ -913,11 +919,21 @@ c
           fa     = 1d0 / (1d0 + 1d4 * dexp(-6d2 / tdust))
           stick  = 1d0 / (1d0 + 0.4d0 * (temp2 + tdust2)**0.5d0 +
      $                    0.2d0 * temp2 + 0.08d0 * temp2**2d0)
+#ifdef CHEMCOOL_H2FORM_K23
+c         Kim+2023 Eq. 16: 3e-17 Z'_d 2 sqrt(T2) / (1 + 0.4 sqrt(T2) + 0.2 T2 + 0.08 T2^2), no T_d dependence
+          fa     = 1d0
+          stick  = 2d0 / (1d0 + 0.4d0 * temp2**0.5d0 +
+     $                    0.2d0 * temp2 + 0.08d0 * temp2**2d0)
+          dtrdust = 0d0
+          Rdust  = ch7 * fa * stick
+          Rdust_rat = 0d0
+#else
           dfa    = - fa * (1 - fa) * (6d2 / tdust**2)
           dtrdust = ch7 * stick * (dfa - 2d-2 * stick * fa / 
      $            dsqrt(tdust + temp))
           Rdust  = ch7 * fa * stick
           Rdust_rat = (dfa / fa - 2d-2 * stick / dsqrt(tdust + temp))
+#endif
           RH2 = Rdust * abHI * yn**2
 c
 #ifdef NO_DUST_H2_HEAT

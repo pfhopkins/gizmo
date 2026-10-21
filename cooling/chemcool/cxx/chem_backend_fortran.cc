@@ -34,49 +34,16 @@ extern "C" {
 
 // ---- /coolr/ : layout copied verbatim from onezone2.c (which is itself the
 // ---- cool.h common-block order); must stay byte-compatible.
-extern struct {
-    double temptab[NMD], cltab[NCLTAB][NMD], chtab[NCHTAB][NMD],
-           dtcltab[NCLTAB][NMD], dtchtab[NCHTAB][NMD],
-           crtab[NCRTAB], crphot[NCRPHOT],
-           phtab[NPHTAB], cst[NCONST], dtlog, tdust, tmax, tmin,
-           deff, abundc, abundo, abundsi, abundD,
-           abundM, abundN, G0, G0_LW, G0_dust,
-           f_rsc, phi_pah,
-           dust_to_gas_ratio, AV_conversion_factor,
-           cosmic_ray_ion_rate, redshift, AV_ext,
-           pdv_term, h2_form_ex, h2_form_kin,
-           lambda[28], lambda_chem[NRATES_CHEM],
-#ifdef OUTPUT_SHIELD_FAC
-           fac_shield_h2, fac_shield_dust,
-#endif
-#ifdef WSS_CIE_COOL
-           Zmass[12],
-           C_tbl[352], N_tbl[352], O_tbl[352],
-           Ne_tbl[352], Mg_tbl[352], Si_tbl[352],
-           S_tbl[352], Ca_tbl[352], Fe_tbl[352],
-           HeI_tbl[51], HeII_tbl[51],
-#endif
-           dm_density,
-           rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
-           rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
-           cr_energy_density;
-} COOLR;
+#include "cooling/chemcool/chem_commons.h"
 
-extern struct {
-    int iphoto, iflag_mn, iflag_ad, iflag_atom,
-        iflag_3bh2a, iflag_3bh2b, iflag_h3pra,
-        iflag_h2opc, id_current, index_current,
-        idma_mass_option, no_chem, irad_heat,
-        isrf_option;
-} COOLI;
 
-extern struct { double abhe; double X_H_chem; } CHEM_COMP;
+extern CHEM_TLS_VARCOMP struct { double abhe; double X_H_chem; } CHEM_COMP;
 
 // /current_photo/ -- the frozen photorate cache (audit §1.5)
-extern struct { double G_dust, chi_isrf, phrates[NPHTAB]; } current_photo_;
+extern CHEM_TLS struct { double G_dust, chi_isrf, phrates[NPHTAB]; } current_photo_;
 
 #if defined(TREE_RAD) || defined(TREE_RAD_H2)
-extern struct {
+extern CHEM_TLS struct {
     double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double fac_uv[NPIX];
@@ -138,7 +105,7 @@ extern struct {
 } co_shield_;
 
 extern struct {
-    double temp_table[250000], gamma_table[250000], eh2_table[50000];
+    double temp_table[CHEM_ISIZE], gamma_table[CHEM_ISIZE], eh2_table[CHEM_ISIZE2];   /* gamma.h isize, isize2 */
 } gamma_data_;
 
 // ---- Fortran leaf kernels (all arguments by reference) ----
@@ -265,28 +232,28 @@ void chem_bind_build_config(ChemBuildConfig& cfg, int net)
 #endif
     cfg.deff = COOLR.deff;
     cfg.phi_pah = COOLR.phi_pah;
-    cfg.dust_to_gas_ratio = COOLR.dust_to_gas_ratio;
-    cfg.cosmic_ray_ion_rate = COOLR.cosmic_ray_ion_rate;
+    cfg.dust_to_gas_ratio = COOLRC.dust_to_gas_ratio;
+    cfg.cosmic_ray_ion_rate = COOLRC.cosmic_ray_ion_rate;
 }
 
 void chem_bind_cell(ChemCell& c, const ChemTables& T, int net)
 {
     std::memset(&c, 0, sizeof(ChemCell));
     c.net = net;
-    c.trac_num = (net == 5) ? 3 : (net == 15) ? 9 : 7;
+    c.trac_num = (net == 5) ? 3 : chem_net_nl99(net) ? 9 : 7;
     c.nspec = c.trac_num + 1;
     c.abhe = CHEM_COMP.abhe;
 
-    c.abundc = COOLR.abundc;   c.abundo = COOLR.abundo;
-    c.abundsi = COOLR.abundsi; c.abundN = COOLR.abundN;
-    c.abundD = COOLR.abundD;
-    c.abundM = COOLR.abundM;
+    c.abundc = COOLRC.abundc;   c.abundo = COOLRC.abundo;
+    c.abundsi = COOLRC.abundsi; c.abundN = COOLRC.abundN;
+    c.abundD = COOLRC.abundD;
+    c.abundM = COOLRC.abundM;
 
-    c.G0 = COOLR.G0; c.G0_LW = COOLR.G0_LW; c.G0_dust = COOLR.G0_dust;
-    c.dust_to_gas_ratio = COOLR.dust_to_gas_ratio;
-    c.cosmic_ray_ion_rate = COOLR.cosmic_ray_ion_rate;
-    c.cr_energy_density = COOLR.cr_energy_density;
-    c.redshift = COOLR.redshift;
+    c.G0 = COOLRC.G0; c.G0_LW = COOLRC.G0_LW; c.G0_dust = COOLRC.G0_dust;
+    c.dust_to_gas_ratio = COOLRC.dust_to_gas_ratio;
+    c.cosmic_ray_ion_rate = COOLRC.cosmic_ray_ion_rate;
+    c.cr_energy_density = COOLRC.cr_energy_density;
+    c.redshift = COOLRC.redshift;
     c.AV_ext = COOLR.AV_ext;
 
     c.deff = COOLR.deff; c.phi_pah = COOLR.phi_pah;
@@ -299,14 +266,14 @@ void chem_bind_cell(ChemCell& c, const ChemTables& T, int net)
     c.iflag_atom = COOLI.iflag_atom;
     c.iflag_3bh2a = COOLI.iflag_3bh2a; c.iflag_3bh2b = COOLI.iflag_3bh2b;
     c.iflag_h3pra = COOLI.iflag_h3pra; c.iflag_h2opc = COOLI.iflag_h2opc;
-    c.irad_heat = COOLI.irad_heat;
-    c.id_current = COOLI.id_current;
+    c.irad_heat = COOLIC.irad_heat;
+    c.id_current = COOLIC.id_current;
     // audit §3.1 item 4: no_dchem is never written for net 17 and works only by
     // Fortran BSS zero-init.  Made explicit here.
     c.no_dchem = 0;
 
 #ifdef WSS_CIE_COOL
-    for (int k = 0; k < 12; k++) c.Zmass[k] = COOLR.Zmass[k];
+    for (int k = 0; k < 12; k++) c.Zmass[k] = COOLRC.Zmass[k];
 #endif
 
     // frozen photo state (must be bound AFTER CALC_PHOTO_WRAPPER)
@@ -333,15 +300,15 @@ void chem_bind_cell(ChemCell& c, const ChemTables& T, int net)
     c.diffuse_dust_heat = PROJECT.diffuse_dust_heat;
 #endif
 #endif
-    c.rt_phot_HI  = COOLR.rt_phot_HI;
-    c.rt_phot_HeI = COOLR.rt_phot_HeI;
-    c.rt_phot_HeII= COOLR.rt_phot_HeII;
-    c.rt_heat_HI  = COOLR.rt_heat_HI;
-    c.rt_heat_HeI = COOLR.rt_heat_HeI;
-    c.rt_heat_HeII= COOLR.rt_heat_HeII;
+    c.rt_phot_HI  = COOLRC.rt_phot_HI;
+    c.rt_phot_HeI = COOLRC.rt_phot_HeI;
+    c.rt_phot_HeII= COOLRC.rt_phot_HeII;
+    c.rt_heat_HI  = COOLRC.rt_heat_HI;
+    c.rt_heat_HeI = COOLRC.rt_heat_HeI;
+    c.rt_heat_HeII= COOLRC.rt_heat_HeII;
     c.column_est = 0.0;   // rpar(5); D-5: the iphoto 4/5 paths are always 0
 
-    c.tdust = COOLR.tdust;     // in/out algebraic state (audit §3.1 item 2)
+    c.tdust = COOLRC.tdust;     // in/out algebraic state (audit §3.1 item 2)
     c.tab = &T;
 }
 
@@ -372,26 +339,26 @@ void fort_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
 {
     // tdust is an in/out algebraic state carried by the driver's snapshot
     // (audit §3.1 item 2): push the driver's copy in, take the Newton result out.
-    COOLR.tdust = c.tdust;
+    COOLRC.tdust = c.tdust;
     double y = yn, x = chi_isrf, t = temp, h = abHI;
     int nc = nocalc;
     calc_dust_temp_(&y, &x, &t, &h, RH2, Rdust, &nc);
-    c.tdust = COOLR.tdust;
+    c.tdust = COOLRC.tdust;
 }
 
 int fort_cool_func(double temp, double yn, double dl, double divv, double G_dust,
                    const double abundances[16], double* ylam,
                    double rates[CHEM_NRATES], int iflag_cmb, ChemCell& c)
 {
-    COOLR.tdust = c.tdust;         // cool_func reads tdust for gas-grain cooling
+    COOLRC.tdust = c.tdust;         // cool_func reads tdust for gas-grain cooling
     double t = temp, y = yn, d = dl, dv = divv, g = G_dust, en = 0.0;
     double ab[16];
     for (int i = 0; i < 16; i++) ab[i] = abundances[i];
     int fc = iflag_cmb;
     cool_func_(&t, &y, &d, &dv, &g, ab, ylam, rates, &fc, &en);
     // cool_func WRITES tdust in the yn*DGR > 1e10 branch (cool_func.F:615)
-    c.tdust = COOLR.tdust;
-    for (int i = 0; i < CHEM_NRATES && i < 28; i++) c.lambda[i] = COOLR.lambda[i];
+    c.tdust = COOLRC.tdust;
+    for (int i = 0; i < CHEM_NRATES && i < 28; i++) c.lambda[i] = COOLRC.lambda[i];
     if (*ylam != *ylam) return 1;
     return 0;
 }

@@ -172,7 +172,7 @@ c inconsistent; net 5 counts both. Affects cold-gas n_e (~10% metal-donor
 c share), grain PE-heating charging phi, grain recombination, H- formation.
       abe  = abhp + abhep + 2d0 * abhepp + abcp + abdp + abundsi
 c
-      abHI = 1d0 - 2d0 * abH2 - abhp
+      abHI = 1d0 - 2d0 * abH2 - abhp - abhd
       abHI = max(0d0, abHI)
 c
       abheI = max(0d0, abhe - abhep - abhepp)
@@ -510,13 +510,8 @@ c
 c
 c Photodissociation rates
 c
-c UNINITIALIZED-NH FIX (2026-07-28, Uli sign-off): NH was first assigned ~90
-c lines BELOW this call (ionizing-opacity block) -- so the local intra-cell
-c H2 column NH2_local = abh2*NH inside calc_H2_shielding_factor read stack
-c garbage on the first RHS evaluation of every chemistry call (affects ykdis
-c AND the 0.4+2.0 eV photodissociation/pumping heating). Net 5 assigns NH
-c before use; net 17 now does too, keeping ITS half-length convention.
-      NH = 0.5d0 * dl * yn
+c Local H2 shielding column over the full length dl, as net 5 and calc_photo
+      NH = dl * yn
       if (iphoto .eq. 0) then
          fshield = 1d0
       else
@@ -657,6 +652,7 @@ c
         num   = ch23 * abHI * abhp + ch24 * abh2 * abhp
      $        + ch29 * abhp * abhm + ch156 * abhehp * abHI
      $        + (cr2 * abh2 / yn)  + cst(75) * abhep * abh2
+     $        + (ph41 / yn) * abh2
 c
         denom = cst(1) * abHI + h2p_dr * abe + (ph5 / yn)
      $        + 2d0 * ch127 * abhm + ch154 * abheI
@@ -728,6 +724,7 @@ c
      $           + ch18 * abhep * abe           ! Ion. from He+ rec: He+ + e
      $           + ch32 * abhep * abHI          ! Charge transfer: He+ + H
      $           - ch33 * abheI * abhp          ! Charge transfer: He  + H+
+     $          - ch155 * abheI * abhp          ! HeH+ formation:  He  + H+
      $          + h2p_cdh * abh2p * abM         ! Collisional dissoc. of H2+
      $          + ch9 * abhep * abh2) * yn      ! DiCT: He+ + H2
      $          +  ph5  * abh2p                 ! Photodissoc:    H2+ + PH
@@ -942,6 +939,10 @@ c HII recombination cooling
 c
       rates_chem(11) = kboltz * temp * abhp * (ch13 * abe + h_gr) *
      $                 ynsq
+
+      if (temp .lt. 100.) then
+         rates_chem(11) = 0.
+      endif
 c
 c HeII recombination cooling.
 c Dielectronic:
@@ -1007,9 +1008,11 @@ c
       abundances(2)  = abo * (1d0 - abhp)  ! Assume O+/O = H+/H
       abundances(5)  = abco
       abundances(7)  = abcp
+      abundances(9)  = abundsi
       abundances(10) = abe
       abundances(11) = abhp
       abundances(12) = abHI
+      abundances(13) = abhd
       abundances(14) = abheI
       abundances(15) = abhep
       abundances(16) = abhepp

@@ -59,6 +59,9 @@ c defaults and the chemistry behaves exactly as before.
 c
       REAL abhe, X_H_chem
       common /chem_comp/ abhe, X_H_chem
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+c$omp threadprivate(/chem_comp/)
+#endif
 c
 c Symbolic constants representing the slot in the abundance vector passed
 c to DVODE occupied by each species. The same ordering is used in 
@@ -367,38 +370,46 @@ c     Do not indent the next line!
 #endif
       common /coolr/ temptab, cltab, chtab, dtcltab, dtchtab, 
      $               crtab, crphot, 
-     $               phtab, cst, dtlog, tdust, tmax, tmin, 
-     $               deff, abundc, abundo, abundsi, abundD, 
+     $               phtab, cst, dtlog, tmax, tmin, 
+     $               deff, f_rsc, phi_pah,
+     $               AV_conversion_factor, AV_ext,
+     $               h2_form_ex, h2_form_kin,
+#ifdef WSS_CIE_COOL
+     $               C_tbl, N_tbl, O_tbl,
+     $               Ne_tbl, Mg_tbl, Si_tbl,
+     $               S_tbl, Ca_tbl, Fe_tbl,
+     $               HeI_tbl, HeII_tbl,
+#endif
+     $               dm_density
+
+c     per-cell state, one copy per OpenMP thread (reset from the init snapshot for every cell)
+      common /coolrc/ tdust, abundc, abundo, abundsi, abundD,
      $               abundM, abundN, G0, G0_LW, G0_dust,
-     $               f_rsc,
-     $               phi_pah,
-     $               dust_to_gas_ratio, AV_conversion_factor,
-     $               cosmic_ray_ion_rate, redshift, AV_ext,
-     $               pdv_term, h2_form_ex, h2_form_kin,
+     $               dust_to_gas_ratio, cosmic_ray_ion_rate,
+     $               redshift, pdv_term,
      $               lambda, lambda_chem,
 #ifdef OUTPUT_SHIELD_FAC
      $               fac_shield_h2, fac_shield_dust, 
 #endif
 #ifdef WSS_CIE_COOL
      $               Zmass,
-     $               C_tbl, N_tbl, O_tbl,
-     $               Ne_tbl, Mg_tbl, Si_tbl,
-     $               S_tbl, Ca_tbl, Fe_tbl,
-     $               HeI_tbl, HeII_tbl,
 #endif
-     $               dm_density,
      $               rt_phot_HI, rt_phot_HeI, rt_phot_HeII,
      $               rt_heat_HI, rt_heat_HeI, rt_heat_HeII,
      $               cr_energy_density
+c$omp threadprivate(/coolrc/)
 
       common /cooli/ iphoto, iflag_mn, iflag_ad, iflag_atom
      $,              iflag_3bh2a, iflag_3bh2b, iflag_h3pra
-     $,              iflag_h2opc,id_current, index_current
-     $,              idma_mass_option, no_chem, irad_heat
+     $,              iflag_h2opc
+     $,              idma_mass_option
      $,              isrf_option
 #ifdef TEST
      $,              itest
 #endif
+c     per-cell flags, one copy per OpenMP thread
+      common /coolic/ id_current, index_current, no_chem, irad_heat
+c$omp threadprivate(/coolic/)
 
 #ifdef THERMAL_INFO_DUMP
       REAL cool_h2_line, heat_accr
@@ -436,6 +447,7 @@ c     Do not indent the next line!
      $                 column_density_projection, 
      $                 column_density_projection_h2,
      $                 column_density_projection_co
+c$omp threadprivate(/project/)
 #endif
 
 #if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17

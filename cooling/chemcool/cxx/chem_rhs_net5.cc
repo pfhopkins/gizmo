@@ -20,6 +20,7 @@
 //  - RT_INFRARED is OFF in the one-zone/production-subgrid config: the
 //    calc_dust_temp call uses nocalc=0.
 
+#include "../../../GIZMO_config.h"
 #include "chem_types.h"
 #include "chem_rhs_common.h"
 #include <cstdio>
@@ -62,25 +63,47 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     temp = ti.temp;
 
     // --- rate coefficients (.F:172-194) ---
-    const double ch1  = chem_CH(T, 1,  ti);
     const double ch2  = chem_CH(T, 2,  ti);
-    const double ch3  = chem_CH(T, 3,  ti);
     const double ch4  = chem_CH(T, 4,  ti);
     const double ch5  = chem_CH(T, 5,  ti);
-    const double ch6  = chem_CH(T, 6,  ti);
     const double ch11 = chem_CH(T, 11, ti);
     const double ch13 = chem_CH(T, 13, ti);
     const double ch25 = chem_CH(T, 25, ti);
     const double ch34 = chem_CH(T, 34, ti);
     const double ch35 = chem_CH(T, 35, ti);
+    const double ch137 = chem_CH(T, 137, ti), ch138 = chem_CH(T, 138, ti);
+    const double ch139 = chem_CH(T, 139, ti);
+    const double ch161 = chem_CH(T, 161, ti), ch162 = chem_CH(T, 162, ti);
+    const double ch163 = chem_CH(T, 163, ti), ch164 = chem_CH(T, 164, ti);
+    const double ch165 = chem_CH(T, 165, ti), ch166 = chem_CH(T, 166, ti);
+    const double ch167 = chem_CH(T, 167, ti), ch168 = chem_CH(T, 168, ti);
+    const double ch169 = chem_CH(T, 169, ti), ch170 = chem_CH(T, 170, ti);
+    const double ch171 = chem_CH(T, 171, ti), ch172 = chem_CH(T, 172, ti);
 
-    // --- H2 collisional dissociation, density-dependent (.F:199-204) ---
-    double ncrinv = 2.0 * abh2 * (ch6 - ch5) + ch5;
+    // --- H2 collisional dissociation as net 17: MSM96 CID + DT by H; He neutral ---
+    const double msm_a = (double)(float)-1.164408f;   // single-precision literals in the .F
+    const double msm_b = (double)(float)-1.174242f;
+    double cdh2_h = (ch161 - (ch161 - ch163)
+                  / (1.0 + std::pow(yn * abHI / ch165, ch166)))
+                  + (ch162 - (ch162 - ch164)
+                  / (1.0 + std::pow(yn * abHI / (std::pow(10.0, msm_a) * ch165), ch166)));
+    cdh2_h = std::pow(10.0, cdh2_h);
+
+    double cdh2_h_dt = (ch167 - (ch167 - ch169)
+                     / (1.0 + std::pow(yn * abHI / ch171, ch172)))
+                     + (ch168 - (ch168 - ch170)
+                     / (1.0 + std::pow(yn * abHI / (std::pow(10.0, msm_b) * ch171), ch172)));
+    cdh2_h_dt = std::pow(10.0, cdh2_h_dt);
+
+    cdh2_h = cdh2_h + cdh2_h_dt;
+
+    double ncrinv = ch5 + c.abhe * ch139;
     double h2var0 = 1.0 / (1.0 + yn * ncrinv);
-    double h2var1 = std::pow(ch3, h2var0);
     double h2var2 = std::pow(ch4, h2var0);
-    double ykdh  = ch1 * h2var1;
-    double ykdh2 = ch2 * h2var2;
+    double cdh2_h2 = ch2 * h2var2;
+    double cdh2_he;
+    if (ch138 < 1e-100) cdh2_he = 1e-100;
+    else                cdh2_he = ch138 * std::pow(ch137 / ch138, h2var0);
 
     // --- photodissociation (.F:208-225) ---
     double fshield = (c.iphoto == 0) ? 1.0
@@ -114,8 +137,9 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- molecular hydrogen (.F:285-292) ---
     ydot[ih2] = (-ch25  * abe  * abh2
-              -   ykdh  * abHI * abh2
-              -   ykdh2 * abh2 * abh2
+              -   cdh2_h  * abHI * abh2
+              -   cdh2_h2 * abh2 * abh2
+              -   cdh2_he * c.abhe * abh2
               +   Rdust * abHI * 1.0) * yn
               -   ykdis * abh2
               -   0.5 * cr2 * abh2   // "fudge factor of two gives correct HI production"
@@ -133,8 +157,9 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- chemical heating/cooling, rates_chem(1..6) (.F:354-418) ---
     double rates_chem[6];
-    rates_chem[0] = 4.48 * CHEM_EV * (ykdh  * abHI * abh2 +
-                                      ykdh2 * abh2 * abh2 +
+    rates_chem[0] = 4.48 * CHEM_EV * (cdh2_h  * abHI * abh2 +
+                                      cdh2_h2 * abh2 * abh2 +
+                                      cdh2_he * c.abhe * abh2 +
                                       ch25  * abe  * abh2) * (yn * yn);
     rates_chem[1] = -4e-1 * CHEM_EV * abh2 * yn * ykdis;
 
@@ -142,7 +167,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
                  + 1.0 * std::exp(-1e3 / temp) * abHI) * 1e-12 * std::sqrt(temp) * yn;
     double rdex = 2e-7;
     double fpheat = cdex / (cdex + rdex);
-    rates_chem[2] = -2.0 * CHEM_EV * abh2 * yn * ykdis * 8.5 * fpheat;
+    rates_chem[2] = -2.0 * CHEM_EV * abh2 * yn * ykdis * 6.94 * fpheat;
 
     double f_ex = (RH2 > 0.0)
         ? cxx_compute_h2_heating_fraction(temp, yn, abh2) * c.h2_form_ex : 0.0;
@@ -165,7 +190,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double abundances[16];
     for (int i = 0; i < 16; i++) abundances[i] = 0.0;
     abundances[0]  = abh2;
-    { double a2 = c.abundo - abco; if (a2 < 0.0) a2 = 0.0; abundances[1] = a2; }
+    { double a2 = c.abundo - abco; if (a2 < 0.0) a2 = 0.0; abundances[1] = a2 * (1.0 - abhp); }  // O+/O = H+/H
     abundances[4]  = abco;
     abundances[6]  = abcp;
     abundances[8]  = c.abundsi;
@@ -173,9 +198,10 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     abundances[10] = abhp;
     abundances[11] = abHI;
 
-    // --- Jeans length (.F:473-476; NOTE: no cs2<0 guard in net 5) ---
+    // --- Jeans length (.F:473-477) ---
     double rho = (1.0 + 4.0 * c.abhe) * CHEM_PROTONMASS * yn;
     double cs2 = gamma * (gamma - 1.0) * energy / rho;
+    if (cs2 < 0.0) cs2 = 0.0;
     double L_jeans = std::sqrt(CHEM_PI * cs2 / (CHEM_GRAVITY * rho));
 
     double ylam, rates[CHEM_NRATES];

@@ -547,6 +547,9 @@ c
          gg              = 1d0 - 0.8 * dexp(-75d0 * tinv)
 c
          cltab(14,itemp) = 3.8d-33 * tsqrt * gg * exp(-temp / 3e4)
+#ifdef CHEMCOOL_GASDUST_K23
+         cltab(14,itemp) = 3.2d-34 * tsqrt
+#endif
 c
 c (cl15) --  OH cooling - non-lte
 c like water cooling: HM79 universal cooling law

@@ -356,5 +356,22 @@ double rate_cst88(double temp, const ChemGlobals& g);
 double rate_cst89(double temp, const ChemGlobals& g);
 double rate_cst90(double temp, const ChemGlobals& g);
 double rate_cst91(double temp, const ChemGlobals& g);
+double rate16_ch40(double temp, const ChemGlobals& g);
+double rate16_ch147(double temp, const ChemGlobals& g);
+double rate16_ch174(double temp, const ChemGlobals& g);
+double rate16_ch175(double temp, const ChemGlobals& g);
+double rate16_ch176(double temp, const ChemGlobals& g);
+double rate16_ch177(double temp, const ChemGlobals& g);
+double rate16_ch178(double temp, const ChemGlobals& g);
+double rate16_ch179(double temp, const ChemGlobals& g);
+double rate16_ch180(double temp, const ChemGlobals& g);
+double rate16_ch181(double temp, const ChemGlobals& g);
+double rate16_crphot1(double temp, const ChemGlobals& g);
+double rate16_crphot11(double temp, const ChemGlobals& g);
+double rate16_crphot13(double temp, const ChemGlobals& g);
+double rate16_cst85(double temp, const ChemGlobals& g);
+double rate16_cst92(double temp, const ChemGlobals& g);
+double rate16_cst93(double temp, const ChemGlobals& g);
+double rate16_cst94(double temp, const ChemGlobals& g);
 
 #endif

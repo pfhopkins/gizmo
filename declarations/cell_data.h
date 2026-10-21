@@ -332,7 +332,7 @@ extern struct gas_cell_data
 #endif  /* GALSF_RESOLVEDISM_G0_VARIABLE (subgrid radiation fields end here) */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
     /* CR ionization rate [s^-1] handed to CHEMCOOL, driving the CR HEATING term
-     * in cool_func (= COOLR.cosmic_ray_ion_rate).  CR ionization is INDEPENDENT
+     * in cool_func (= COOLRC.cosmic_ray_ion_rate).  CR ionization is INDEPENDENT
      * of the radiation solver, so this must live in BOTH the subgrid-G0 and the
      * M1/RADTRANSFER chemistry paths (Uli 2026-07-04) -- it was mis-scoped inside
      * the G0_VARIABLE-only block above, which failed to compile any M1 build.
