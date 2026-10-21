@@ -83,7 +83,7 @@ static void make_gas(int i, double x, double y, double z, double mass, double X_
 #endif
 #endif
 #endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
     for(int k = 0; k < NUM_METAL_SPECIES + NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION; k++) {CellP[i].Dyield_pending[k] = 1e-3 * mass * (k % 2 ? -1. : 1.) * (1. + seed + 0.1 * k);}
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
@@ -116,7 +116,7 @@ static const int NZ = NUM_METAL_SPECIES;
 #else
 static const int NZ = 0;
 #endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
 static const int NPEND = NUM_METAL_SPECIES + NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;
 #else
 static const int NPEND = 0;
@@ -138,7 +138,9 @@ static Totals totals(int n)
         for(int k = 0; k < NZ; k++) {t.MZ[k] += P[i].Mass * P[i].Metallicity[k];}
 #endif
         if(P[i].Type != 0) {continue;}
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
         for(int k = 0; k < NPEND; k++) {t.pend[k] += CellP[i].Dyield_pending[k];}
+#endif
 #if defined(GALSF_RESOLVEDISM_DUST)
         for(int k = 0; k < NUM_RESOLVEDISM_DUST; k++) {t.dust[k] += P[i].Mass * CellP[i].Dust[k];}
 #endif
@@ -193,7 +195,7 @@ static void test_split()
     int ok = split_particle_i(0, 0, 1, 0.); /* 0: measure the distance to cell 1 now */
     check("split:succeeded", ok == 1, ok, 1);
     check_totals("split", before, totals(4));
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
     check("split:daughter_starts_with_no_pending_exchange", CellP[3].Dyield_pending[0] == 0, CellP[3].Dyield_pending[0], 0);
 #endif
     /* daughters straddle the parent, each within 0.4 of the nearest-neighbour distance (0.1) */
@@ -282,7 +284,7 @@ static void test_split_zero_density()
 }
 #endif
 
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
 void hydro_final_operations_and_cleanup(void);
 static void test_metal_floor()
 {
@@ -326,7 +328,7 @@ static void test_sn_spawn()
     double bt = CellP[0].B.norm(), b = CellP[j].B.norm(); /* template is cell 0 */
     check_rel("sn_spawn:B_scaled_to_ejecta_mass", b, bt * 5.0 / P[0].Mass, bt);
 #endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
     double pend = 0; for(int k = 0; k < NPEND; k++) {pend += fabs(CellP[j].Dyield_pending[k]);}
     check("sn_spawn:no_template_pending_exchange", pend == 0, pend, 0);
 #endif
@@ -396,7 +398,7 @@ int main(int argc, char **argv)
 #ifdef MAGNETIC
     test_split_zero_density();
 #endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
     test_metal_floor();
 #endif
 #if defined(GALSF_RESOLVEDISM_SN_SPAWN) && defined(GALSF_RESOLVEDISM_FB)

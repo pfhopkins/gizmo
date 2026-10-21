@@ -72,11 +72,16 @@
                 double dmet = (Z_j-local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_hydrostep;
                 cmag = MINMOD(dmet,cmag); // limiter based on mass exchange from MFV HLLC solver //
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
                 /* each side moves half the exchange over its own timestep; j's share waits in its pending buffer */
                 cmag *= 0.5 * dt_hydrostep_i / dt_hydrostep; // limiters above used dt_hydrostep >= dt_hydrostep_i
                 out.Dyield[k_species] += cmag;
                 #pragma omp atomic
                 CellP[j].Dyield_pending[k_species] -= cmag;
+#else
+                out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag;
+                if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag;}
+#endif
             }
         }
     }

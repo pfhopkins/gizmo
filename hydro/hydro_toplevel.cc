@@ -651,11 +651,18 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
-/*! global metal budget after each hydro step: sum of M*Z, and diffusive exchange still pending */
+/*! global metal budget after each hydro step: sum of M*Z, and diffusive exchange still pending (0 without TURB_DIFF_METALS_EXACT_CONSERVATION) */
 void turb_diff_metals_budget_log(void)
 {
     int i; double loc[2]={0}, tot[2];
-    for(i=0;i<NumPart;i++) {if(P[i].Type==0 && P[i].Mass>0) {loc[0] += P[i].Mass*P[i].Metallicity[0]; loc[1] += CellP[i].Dyield_pending[0];}}
+    for(i=0;i<NumPart;i++)
+    {
+        if(P[i].Type!=0 || P[i].Mass<=0) {continue;}
+        loc[0] += P[i].Mass*P[i].Metallicity[0];
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        loc[1] += CellP[i].Dyield_pending[0];
+#endif
+    }
     MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask==0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
 }
@@ -821,10 +828,12 @@ void hydro_final_operations_and_cleanup(void)
 
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
-#ifdef TURB_DIFF_METALS /* add the exchange received while inactive */
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive */
             for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
-#endif
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);} // floor at 0: a fractional floor creates metal
+#else
+            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange */
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
             for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}

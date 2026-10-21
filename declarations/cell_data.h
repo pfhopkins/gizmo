@@ -167,7 +167,7 @@ extern struct gas_cell_data
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION];
 #endif
-#ifdef TURB_DIFF_METALS
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     MyDouble Dyield_pending[NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION]; /*!< diffusive exchange received while inactive, applied at the next unpack */
 #endif
     

@@ -714,7 +714,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest, double r_neare
         CellP[j].MassTrue = mass_of_new_particle * CellP[i].MassTrue;
         CellP[i].MassTrue -= CellP[j].MassTrue;
 #endif
-#ifdef TURB_DIFF_METALS
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
         for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange stays with the parent */
 #endif
 #if defined(SINK_THERMALFEEDBACK)
@@ -1104,7 +1104,7 @@ int merge_particles_ij(int i, int j)
 #endif // CHIMES
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
-#ifdef TURB_DIFF_METALS
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
 #endif
 #if defined(SINK_THERMALFEEDBACK)
