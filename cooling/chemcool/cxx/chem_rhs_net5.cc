@@ -212,8 +212,14 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
                               &ylam, rates, 0, c);
     if (cferr) return CHEM_RHS_RECOVERABLE;           // Fortran ABORT(0)/(2) sites
 
+    // T_CMB floor
+    double ylam_floor, rates_floor[CHEM_NRATES];
+    if (cxx_cool_func(2.726 * (1.0 + c.redshift), yn, L_jeans, divv, c.G_dust, abundances,
+                      &ylam_floor, rates_floor, 1, c))
+        return CHEM_RHS_RECOVERABLE;
+
     // pdv_term is hard-zeroed in production (chemcool.cc:721) -- not carried.
-    ydot[itmp] = -(ylam + ylam_chem);
+    ydot[itmp] = -(ylam + ylam_chem - ylam_floor);
 
     // --- validate_output: NaN ydot (.F:502; unified recoverable, DEVIATIONS) ---
     for (int i = 0; i < nspec; i++) {

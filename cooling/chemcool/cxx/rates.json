@@ -5958,15 +5958,15 @@
    ]
   },
   {
-   "rate_id": "rate_eq_simple:ydot(I)@92",
+   "rate_id": "rate_eq_simple:ydot(I)@93",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    92,
-    92
+    93,
+    93
    ],
    "expression": [
     "ydot(I) = 0d0"
@@ -5974,15 +5974,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_h@232",
+   "rate_id": "rate_eq_simple:cdh2_h@233",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    232,
-    236
+    233,
+    237
    ],
    "expression": [
     "cdh2_h = (ch161 - (ch161 - ch163) / (1d0 + (yn * abHI / ch165)**ch166)) + (ch162 - (ch162 - ch164) / (1d0 + (yn * abHI / (1d1**(-1.164408e0) * ch165))**ch166))"
@@ -5990,15 +5990,15 @@
    "comment": "H2 collisional dissociation, as rate_eq_ulli.F: MSM96 CID + DT by H; He neutral"
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_h@237",
+   "rate_id": "rate_eq_simple:cdh2_h@238",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    237,
-    237
+    238,
+    238
    ],
    "expression": [
     "cdh2_h = 1d1**cdh2_h"
@@ -6006,15 +6006,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_h_dt@239",
+   "rate_id": "rate_eq_simple:cdh2_h_dt@240",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    239,
-    243
+    240,
+    244
    ],
    "expression": [
     "cdh2_h_dt = (ch167 - (ch167 - ch169) / (1d0 + (yn * abHI / ch171)**ch172)) + (ch168 - (ch168 - ch170) / (1d0 + (yn * abHI / (1d1**(-1.174242e0) * ch171))**ch172))"
@@ -6022,15 +6022,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_h_dt@244",
+   "rate_id": "rate_eq_simple:cdh2_h_dt@245",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    244,
-    244
+    245,
+    245
    ],
    "expression": [
     "cdh2_h_dt = 1d1**cdh2_h_dt"
@@ -6038,15 +6038,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_h@246",
+   "rate_id": "rate_eq_simple:cdh2_h@247",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    246,
-    246
+    247,
+    247
    ],
    "expression": [
     "cdh2_h = cdh2_h + cdh2_h_dt"
@@ -6054,23 +6054,7 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:ncrinv@248",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5
-   ],
-   "fortran_file": "rate_eq_simple.F",
-   "lines": [
-    248,
-    248
-   ],
-   "expression": [
-    "ncrinv   = ch5 + abhe * ch139"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "rate_eq_simple:h2var0@249",
+   "rate_id": "rate_eq_simple:ncrinv@249",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6081,12 +6065,12 @@
     249
    ],
    "expression": [
-    "h2var0   = 1d0 / ( 1d0 + yn * ncrinv)"
+    "ncrinv   = ch5 + abhe * ch139"
    ],
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:h2var2@250",
+   "rate_id": "rate_eq_simple:h2var0@250",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6097,12 +6081,12 @@
     250
    ],
    "expression": [
-    "h2var2   = ch4**h2var0"
+    "h2var0   = 1d0 / ( 1d0 + yn * ncrinv)"
    ],
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_h2@251",
+   "rate_id": "rate_eq_simple:h2var2@251",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6113,20 +6097,36 @@
     251
    ],
    "expression": [
-    "cdh2_h2  = ch2 * h2var2"
+    "h2var2   = ch4**h2var0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_he@253",
+   "rate_id": "rate_eq_simple:cdh2_h2@252",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    253,
-    253
+    252,
+    252
+   ],
+   "expression": [
+    "cdh2_h2  = ch2 * h2var2"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "rate_eq_simple:cdh2_he@254",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5
+   ],
+   "fortran_file": "rate_eq_simple.F",
+   "lines": [
+    254,
+    254
    ],
    "expression": [
     "cdh2_he = 1d-100"
@@ -6134,15 +6134,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:cdh2_he@255",
+   "rate_id": "rate_eq_simple:cdh2_he@256",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    255,
-    255
+    256,
+    256
    ],
    "expression": [
     "cdh2_he = ch138 * (ch137 / ch138)**h2var0"
@@ -6150,15 +6150,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:ykdis@267",
+   "rate_id": "rate_eq_simple:ykdis@268",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    267,
-    267
+    268,
+    268
    ],
    "expression": [
     "ykdis = phrates(1) * fshield"
@@ -6166,23 +6166,7 @@
    "comment": "call calc_H2_shielding_factor(fshield, temp, abh2, NH, rpar)"
   },
   {
-   "rate_id": "rate_eq_simple:gamma_co@273",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5
-   ],
-   "fortran_file": "rate_eq_simple.F",
-   "lines": [
-    273,
-    273
-   ],
-   "expression": [
-    "gamma_co = phrates(10)"
-   ],
-   "comment": "if (id_current .eq. 10) then\nprint*, \"phrates(1)=\", phrates(1), \"  fshield=\", fshield\nendif"
-  },
-  {
-   "rate_id": "rate_eq_simple:gamma_chx@274",
+   "rate_id": "rate_eq_simple:gamma_co@274",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6193,20 +6177,36 @@
     274
    ],
    "expression": [
-    "gamma_chx = 2.94d-10 * G_dust"
+    "gamma_co = phrates(10)"
    ],
-   "comment": ""
+   "comment": "if (id_current .eq. 10) then\nprint*, \"phrates(1)=\", phrates(1), \"  fshield=\", fshield\nendif"
   },
   {
-   "rate_id": "rate_eq_simple:phi@289",
+   "rate_id": "rate_eq_simple:gamma_chx@275",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    289,
-    289
+    275,
+    275
+   ],
+   "expression": [
+    "gamma_chx = 2.94d-10 * G_dust"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "rate_eq_simple:phi@290",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5
+   ],
+   "fortran_file": "rate_eq_simple.F",
+   "lines": [
+    290,
+    290
    ],
    "expression": [
     "phi = 1d20"
@@ -6214,15 +6214,15 @@
    "comment": "If the fractional ionization is zero, then there won't be any recombination,\nso the value we use for phi doesn't matter too much -- 1d20 is simply an\narbitrary large number"
   },
   {
-   "rate_id": "rate_eq_simple:phi@291",
+   "rate_id": "rate_eq_simple:phi@292",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    291,
-    291
+    292,
+    292
    ],
    "expression": [
     "phi = G_dust * sqrt(temp) / (yn * abe)"
@@ -6230,15 +6230,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:h_gr@297",
+   "rate_id": "rate_eq_simple:h_gr@298",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    297,
-    297
+    298,
+    298
    ],
    "expression": [
     "h_gr = 1.225d-13 * dust_to_gas_ratio"
@@ -6246,23 +6246,7 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:hgrvar1@299",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5
-   ],
-   "fortran_file": "rate_eq_simple.F",
-   "lines": [
-    299,
-    299
-   ],
-   "expression": [
-    "hgrvar1  = 8.074d-6 * phi**1.378d0"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "rate_eq_simple:hgrvar2@300",
+   "rate_id": "rate_eq_simple:hgrvar1@300",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6273,12 +6257,12 @@
     300
    ],
    "expression": [
-    "hgrvar2  = (1d0 + ch34 * phi**ch35)"
+    "hgrvar1  = 8.074d-6 * phi**1.378d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:h_gr@301",
+   "rate_id": "rate_eq_simple:hgrvar2@301",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6286,7 +6270,23 @@
    "fortran_file": "rate_eq_simple.F",
    "lines": [
     301,
-    302
+    301
+   ],
+   "expression": [
+    "hgrvar2  = (1d0 + ch34 * phi**ch35)"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "rate_eq_simple:h_gr@302",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5
+   ],
+   "fortran_file": "rate_eq_simple.F",
+   "lines": [
+    302,
+    303
    ],
    "expression": [
     "h_gr     = 1.225d-13 * dust_to_gas_ratio / (1d0 + hgrvar1 * hgrvar2)"
@@ -6294,15 +6294,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:h_gr@305",
+   "rate_id": "rate_eq_simple:h_gr@306",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    305,
-    305
+    306,
+    306
    ],
    "expression": [
     "h_gr = h_gr * dexp(-temp / 3d4)"
@@ -6310,15 +6310,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:ydot(ihp)@328",
+   "rate_id": "rate_eq_simple:ydot(ihp)@329",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    328,
-    333
+    329,
+    334
    ],
    "expression": [
     "ydot(ihp) = (ch11 * abe   * abHI -  ch13 * abhp  * abe -  h_gr * abhp  * 1d0) * yn +  cr1  * abHI + cr10  * abh2 + ph38  * abHI_ph"
@@ -6326,15 +6326,15 @@
    "comment": "Protons"
   },
   {
-   "rate_id": "rate_eq_simple:ydot(ih2)@337",
+   "rate_id": "rate_eq_simple:ydot(ih2)@338",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    337,
-    345
+    338,
+    346
    ],
    "expression": [
     "ydot(ih2) = (-ch25  * abe  * abh2 -   cdh2_h  * abHI * abh2 -   cdh2_h2 * abh2 * abh2 -   cdh2_he * abhe * abh2 +   Rdust * abHI * 1d0 ) * yn -   ykdis * abh2 - 0.5d0 * cr2 * abh2 -   cr10  * abh2 -   cr11  * abh2"
@@ -6342,23 +6342,7 @@
    "comment": "Molecular hydrogen"
   },
   {
-   "rate_id": "rate_eq_simple:k0@359",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5
-   ],
-   "fortran_file": "rate_eq_simple.F",
-   "lines": [
-    359,
-    359
-   ],
-   "expression": [
-    "k0 = 5d-16"
-   ],
-   "comment": "if (id_current .eq. 10) then\nprint*, \"Rdust=\", Rdust, \"  temp=\", temp,\n$        \"ykdis\", ykdis, \"  abh2=\", abh2\nendif\nCO -- from NL97"
-  },
-  {
-   "rate_id": "rate_eq_simple:k1@360",
+   "rate_id": "rate_eq_simple:k0@360",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6369,20 +6353,36 @@
     360
    ],
    "expression": [
-    "k1 = 5d-10"
+    "k0 = 5d-16"
    ],
-   "comment": ""
+   "comment": "if (id_current .eq. 10) then\nprint*, \"Rdust=\", Rdust, \"  temp=\", temp,\n$        \"ykdis\", ykdis, \"  abh2=\", abh2\nendif\nCO -- from NL97"
   },
   {
-   "rate_id": "rate_eq_simple:beta@368",
+   "rate_id": "rate_eq_simple:k1@361",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    368,
-    368
+    361,
+    361
+   ],
+   "expression": [
+    "k1 = 5d-10"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "rate_eq_simple:beta@369",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5
+   ],
+   "fortran_file": "rate_eq_simple.F",
+   "lines": [
+    369,
+    369
    ],
    "expression": [
     "beta = 0.0"
@@ -6390,15 +6390,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:beta@370",
+   "rate_id": "rate_eq_simple:beta@371",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    370,
-    370
+    371,
+    371
    ],
    "expression": [
     "beta = 1.0"
@@ -6406,15 +6406,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:beta@372",
+   "rate_id": "rate_eq_simple:beta@373",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    372,
-    373
+    373,
+    374
    ],
    "expression": [
     "beta = k1 * abo / (k1 * abo + gamma_chx / yn)"
@@ -6422,15 +6422,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:ydot(ico)@376",
+   "rate_id": "rate_eq_simple:ydot(ico)@377",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    376,
-    377
+    377,
+    378
    ],
    "expression": [
     "ydot(ico) = k0 * abcp * abh2 * beta * yn - gamma_co * abco"
@@ -6438,15 +6438,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(1)@409",
+   "rate_id": "rate_eq_simple:rates_chem(1)@410",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    409,
-    412
+    410,
+    413
    ],
    "expression": [
     "rates_chem(1) = 4.48d0 * eV * (cdh2_h  * abHI * abh2 + cdh2_h2 * abh2 * abh2 + cdh2_he * abhe * abh2 + ch25  * abe  * abh2 ) * yn**2"
@@ -6454,15 +6454,15 @@
    "comment": "H2 collisional dissociation cooling:"
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(2)@416",
+   "rate_id": "rate_eq_simple:rates_chem(2)@417",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    416,
-    416
+    417,
+    417
    ],
    "expression": [
     "rates_chem(2) = - 4d-1 * eV * abH2 * yn * ykdis"
@@ -6470,15 +6470,15 @@
    "comment": "H2 photodissociation heating -- 0.4eV per photodissociation:"
   },
   {
-   "rate_id": "rate_eq_simple:cdex@423",
+   "rate_id": "rate_eq_simple:cdex@424",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    423,
-    424
+    424,
+    425
    ],
    "expression": [
     "cdex = (1.4 * dexp(-1.81d4 / (temp + 1200)) * abH2 +  1.0 * dexp(-1d3 / temp) * abHI) * 1d-12 * dsqrt(temp) * yn"
@@ -6486,23 +6486,7 @@
    "comment": "Heating by UV pumping of H2 -- effective for n > n_crit\nWe assume 2 eV per UV photon (Burton, Hollenbach & Tielens 1990),\nand a pumping rate 6.94 times the dissociation rate (as rate_eq_ulli.F)."
   },
   {
-   "rate_id": "rate_eq_simple:rdex@425",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5
-   ],
-   "fortran_file": "rate_eq_simple.F",
-   "lines": [
-    425,
-    425
-   ],
-   "expression": [
-    "rdex = 2d-7"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "rate_eq_simple:fpheat@426",
+   "rate_id": "rate_eq_simple:rdex@426",
    "kind": "RHS_INLINE",
    "networks": [
     5
@@ -6513,20 +6497,36 @@
     426
    ],
    "expression": [
-    "fpheat = cdex / (cdex + rdex)"
+    "rdex = 2d-7"
    ],
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(3)@431",
+   "rate_id": "rate_eq_simple:fpheat@427",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    431,
-    431
+    427,
+    427
+   ],
+   "expression": [
+    "fpheat = cdex / (cdex + rdex)"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "rate_eq_simple:rates_chem(3)@432",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5
+   ],
+   "fortran_file": "rate_eq_simple.F",
+   "lines": [
+    432,
+    432
    ],
    "expression": [
     "rates_chem(3) = - 2d0 * eV * abH2 * yn * ykdis * 6.94d0 * fpheat"
@@ -6534,15 +6534,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:f_ex@446",
+   "rate_id": "rate_eq_simple:f_ex@447",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    446,
-    446
+    447,
+    447
    ],
    "expression": [
     "f_ex = f_ex * h2_form_ex"
@@ -6550,15 +6550,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:f_ex@448",
+   "rate_id": "rate_eq_simple:f_ex@449",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    448,
-    448
+    449,
+    449
    ],
    "expression": [
     "f_ex = 0d0"
@@ -6566,15 +6566,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:f_tot@450",
+   "rate_id": "rate_eq_simple:f_tot@451",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    450,
-    450
+    451,
+    451
    ],
    "expression": [
     "f_tot = h2_form_kin + f_ex"
@@ -6582,15 +6582,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(4)@452",
+   "rate_id": "rate_eq_simple:rates_chem(4)@453",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    452,
-    452
+    453,
+    453
    ],
    "expression": [
     "rates_chem(4) = - 4.48d0 * eV * f_tot * RH2"
@@ -6598,15 +6598,15 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(5)@456",
+   "rate_id": "rate_eq_simple:rates_chem(5)@457",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    456,
-    456
+    457,
+    457
    ],
    "expression": [
     "rates_chem(5) = 13.6d0 * eV * ch11 * abe * abHI * yn**2"
@@ -6614,15 +6614,15 @@
    "comment": "HI collisional ionization cooling -- 13.6eV per ionization:"
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(6)@462",
+   "rate_id": "rate_eq_simple:rates_chem(6)@463",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    462,
-    462
+    463,
+    463
    ],
    "expression": [
     "rates_chem(6) = kboltz * temp * abhp * (ch13 * abe + h_gr) * yn**2"
@@ -6630,15 +6630,15 @@
    "comment": "HII recombination cooling -- we assume that kT ergs is radiated\nper recombination and that this is independent of whether the\nrecombination occurs in the gas phase or on a grain surface"
   },
   {
-   "rate_id": "rate_eq_simple:rates_chem(6)@465",
+   "rate_id": "rate_eq_simple:rates_chem(6)@466",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    465,
-    465
+    466,
+    466
    ],
    "expression": [
     "rates_chem(6) = 0."
@@ -6646,18 +6646,18 @@
    "comment": ""
   },
   {
-   "rate_id": "rate_eq_simple:ydot(itmp)@536",
+   "rate_id": "rate_eq_simple:ydot(itmp)@541",
    "kind": "RHS_INLINE",
    "networks": [
     5
    ],
    "fortran_file": "rate_eq_simple.F",
    "lines": [
-    536,
-    536
+    541,
+    541
    ],
    "expression": [
-    "ydot(itmp) = -(ylam + ylam_chem) + pdv_term"
+    "ydot(itmp) = -(ylam + ylam_chem - ylam_floor) + pdv_term"
    ],
    "comment": ""
   },

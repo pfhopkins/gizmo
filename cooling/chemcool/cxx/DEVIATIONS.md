@@ -565,6 +565,20 @@ the SGCHEM_GONG17_TEST branch. abhe reaches the C++ builder as `ChemBuildConfig.
 it (`CHEMCOOL_FORTRAN_DIR` overrides). Consumers: ch9/ch17 in nets 3/15/16/17, ch18 in nets 3/17
 (zeroed while 2 NH x_HI < 1.6e17, i.e. always with dl = 0); net 5 reads none of them.
 
+## D-32. T_CMB cooling floor in nets 5 and 16, both backends
+Provenance: SGChem `rate_eq_simple.F:459-470`, `rate_eq_gong17.F:875-889`.
+* ydot(T) = -(ylam + ylam_chem - ylam_floor), ylam_floor = cool_func at T_CMB(z) = 2.726 (1+z) with
+  iflag_cmb = 1, at every z (as SGChem). Nets 3/17 keep their z > 0 gate (= SGChem rate_eq_primordial);
+  SGChem net 15 has no floor, ours neither.
+* cool_func publishes `lambda` only for the iflag_cmb = 0 call, so the floor call no longer overwrites the
+  diagnostic rates (also affected nets 3/17 at z > 0 before).
+
+## D-33. CMB heating of dust, all networks, both backends
+Provenance: SGChem `cool_util.F:780-804` (calc_dust_temp).
+* isrf_heat = max(c_isrf chi_isrf - 4.68e-31 2.726^6, 0) yn G0_dust/1.7 + 4.68e-31 T_CMB(z)^6 yn, then x DGR
+  (our DGR-multiplied convention); c_isrf = 5.8e-24 (isrf_option 1) or 5.73e-24. The z = 0 CMB share is moved
+  out of the ISRF coefficient and the CMB term follows T_CMB(z).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

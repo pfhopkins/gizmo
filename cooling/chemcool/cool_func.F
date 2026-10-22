@@ -1282,6 +1282,8 @@ c      print*, 'wss_rate_total = ', wss_rate_total
 
 
 
+c     the T_CMB floor call (iflag_cmb = 1) leaves the published rates alone
+      if (iflag_cmb .eq. 0) then
       lambda(1) = rates(1)
       lambda(2) = rates(2)
       lambda(3) = rates(3)
@@ -1310,6 +1312,7 @@ c      print*, 'wss_rate_total = ', wss_rate_total
       lambda(26) = rates(26)
       lambda(27) = rates(27)
       lambda(28) = rates(28)
+      endif
      
       ylam = rates(1)  + rates(2)  + rates(3)  + rates(4)  + rates(5)  +
      $       rates(6)  + rates(7)  + rates(8)  + rates(9)  + rates(10) +

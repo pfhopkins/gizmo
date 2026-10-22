@@ -23,6 +23,7 @@ c
       REAL abundances(nabn), rates(nrates), 
      $     rates_chem(nrates_chem),
      $     y_in(nspec)
+      REAL CMB_temp, ylam_floor, rates_floor(nrates)
 c
       REAL abe     , abhp    , abHI    , abh2    ,
      $     abcp    , abco    , abo     , abcos
@@ -533,7 +534,11 @@ c
      $               rates, 0, energy_dummy)
       
 c
-      ydot(itmp) = -(ylam + ylam_chem) + pdv_term
+c T_CMB floor
+      CMB_temp = 2.726d0 * (1d0 + redshift)
+      call cool_func(CMB_temp, yn, L_jeans, divv, G_dust, abundances,
+     $               ylam_floor, rates_floor, 1, energy_dummy)
+      ydot(itmp) = -(ylam + ylam_chem - ylam_floor) + pdv_term
 c
 #if 0
 c Useful for debugging if we can isolate problems to a single

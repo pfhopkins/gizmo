@@ -390,7 +390,13 @@ int chem_rhs_net16(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
                               &ylam, rates, 0, c);
     if (cferr) return CHEM_RHS_RECOVERABLE;
 
-    ydot[itmp] = -(ylam + ylam_chem);
+    // T_CMB floor
+    double ylam_floor, rates_floor[CHEM_NRATES];
+    if (cxx_cool_func(2.726 * (1.0 + c.redshift), yn, L_jeans, divv, c.G_dust, abundances,
+                      &ylam_floor, rates_floor, 1, c))
+        return CHEM_RHS_RECOVERABLE;
+
+    ydot[itmp] = -(ylam + ylam_chem - ylam_floor);
 
     for (int i = 0; i < nspec; i++) {
         if (ydot[i] != ydot[i]) {

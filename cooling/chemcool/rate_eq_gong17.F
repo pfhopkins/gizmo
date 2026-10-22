@@ -27,6 +27,7 @@ c
       integer itemp, i
       REAL abundances(nabn), rates(nrates),
      $     rates_chem(nrates_chem)
+      REAL CMB_temp, ylam_floor, rates_floor(nrates)
 c
       REAL abe     , abhp    , abHI    , abh2    ,
      $     abcp    , abco    , abheI   , abh3p   ,
@@ -658,7 +659,11 @@ c Local Jeans length and energy for cool_func, as in rate_eq_simple.F
       call cool_func(temp, yn, L_jeans, divv, G_dust, abundances, ylam,
      $               rates, 0, energy_dummy)
 c
-      ydot(itmp) = -(ylam + ylam_chem)
+c T_CMB floor
+      CMB_temp = 2.726d0 * (1d0 + redshift)
+      call cool_func(CMB_temp, yn, L_jeans, divv, G_dust, abundances,
+     $               ylam_floor, rates_floor, 1, energy_dummy)
+      ydot(itmp) = -(ylam + ylam_chem - ylam_floor)
 c
 #ifdef THERMAL_INFO_DUMP
       heat_accr   = 0.

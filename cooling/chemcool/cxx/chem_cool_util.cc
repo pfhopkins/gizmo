@@ -439,10 +439,16 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
 
         // ISRF heating (FUV 6-13.6 eV only)
         // cool_util.F:857 spells `1.7` without a D exponent -> DEFAULT REAL.
-        double field_strength = c.G0_dust * chi_isrf / (double)1.7f;
-        if (c.isrf_option == 1) isrf_heat = 5.8e-24  * yn * field_strength;
-        else                    isrf_heat = 5.73e-24 * yn * field_strength;
-        isrf_heat *= c.dust_to_gas_ratio;
+        // CMB share of the ISRF coefficient removed at z = 0, CMB added at T_CMB(z)
+        const double CMB_heat_z0 = 4.68e-31 * std::pow(2.726, 6.0);
+        double field_strength = c.G0_dust / (double)1.7f;
+        if (c.isrf_option == 1) isrf_heat = 5.8e-24  * chi_isrf - CMB_heat_z0;
+        else                    isrf_heat = 5.73e-24 * chi_isrf - CMB_heat_z0;
+        if (isrf_heat < 0.0) isrf_heat = 0.0;
+        isrf_heat = isrf_heat * yn * field_strength;
+        double CMB_temp = 2.726 * (1.0 + c.redshift);
+        double CMB_heat = 4.68e-31 * chem_fpowi(CMB_temp, 6) * yn;
+        isrf_heat = (isrf_heat + CMB_heat) * c.dust_to_gas_ratio;
 #ifdef DIFFUSE_DUST_EMISSION
         isrf_heat += c.diffuse_dust_heat;
 #endif

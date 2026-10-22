@@ -819,6 +819,7 @@ c=======================================================================
       REAL dust_h2_heat, F_nr, dF_nr, Rdust_rat
       REAL cl14, ch7, dtemp
       REAL field_strength
+      REAL CMB_temp, CMB_heat, CMB_heat_z0
       integer K, itemp, nocalc
 
       integer ndust_iter
@@ -870,13 +871,19 @@ c We assume that the visual/IR/sub-mm background scales linearly with the UV bac
 c In the future, we should make these independently configurable.
 c 
 c Dust ISRF heating from FUV only (6-13.6 eV)
-        field_strength = G0_dust * chi_isrf / 1.7
+c CMB share of the ISRF coefficient removed at z = 0, CMB added at T_CMB(z)
+        CMB_heat_z0 = 4.68d-31 * 2.726d0**6
+        field_strength = G0_dust / 1.7
         if (isrf_option .eq. 1) then
-           isrf_heat  = 5.8d-24 * yn * field_strength
+           isrf_heat  = 5.8d-24 * chi_isrf - CMB_heat_z0
         else
-           isrf_heat  = 5.73d-24 * yn * field_strength
+           isrf_heat  = 5.73d-24 * chi_isrf - CMB_heat_z0
         endif
-        isrf_heat = isrf_heat * dust_to_gas_ratio
+        if (isrf_heat .lt. 0d0) isrf_heat = 0d0
+        isrf_heat = isrf_heat * yn * field_strength
+        CMB_temp = 2.726d0 * (1d0 + redshift)
+        CMB_heat = 4.68d-31 * CMB_temp**6 * yn
+        isrf_heat = (isrf_heat + CMB_heat) * dust_to_gas_ratio
 c        print*, "isrf_heat = ", isrf_heat
 c        print*, "chi_isrf = ", chi_isrf
 c        print*, "yn = ", yn

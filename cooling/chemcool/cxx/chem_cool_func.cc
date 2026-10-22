@@ -662,7 +662,8 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
     rates[2] = cxx_wss_cie_rate(T, temp, c.Zmass) * (yn * yn);
 #endif
 
-    for (int k = 0; k < CHEM_NRATES; k++) c.lambda[k] = rates[k];
+    if (iflag_cmb == 0)   // the T_CMB floor call leaves the published rates alone
+        for (int k = 0; k < CHEM_NRATES; k++) c.lambda[k] = rates[k];
 
     double s = 0.0;
     for (int k = 0; k < CHEM_NRATES; k++) s += rates[k];
