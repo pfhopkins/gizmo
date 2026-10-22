@@ -559,6 +559,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_NONIDEAL_FLUX:	/* evolved non-ideal MHD field: restored on a snapshot restart; absent from the file -> zeros */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {CellP[offset + n].NonIdealMHDFluxPred[k] = *fp++;}}
+#endif
+            break;
+
         case IO_BFLD:		/* Magnetic field */
 #ifdef MAGNETIC
             for(n = 0; n < pc; n++)
@@ -1378,6 +1384,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
 #endif
             
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            if(blocknr == IO_NONIDEAL_FLUX && All.ICFormat != 3) {continue;} /* HDF5 only: legacy binary formats never carry it (it starts from zero) */
+#endif
 #ifdef CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_SLOPES) {continue;}
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==2)

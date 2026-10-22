@@ -5,6 +5,9 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+#include "nonideal_mhd_functions.h"
+#endif
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #include "../mesh/kernel.h"
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
@@ -444,6 +447,17 @@ void hydro_force_initial_operations_preloop(void)
         if(P[i].Type==0)
         {
             CellP[i].MaxSignalVel = MIN_REAL_NUMBER;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            {   /* the face fluxes must see the evolved non-ideal field relaxed toward the current from THIS step's gradients, as the
+                   standard solver uses them: the drift predicted it with the previous step's gradients, which lags the non-ideal
+                   EMF one step behind the ideal one. Re-predict it from the kicked value over the second half-step with the fresh
+                   gradients -- the same update the second half-step kick then applies to the kicked value. */
+                integertime ti_step = P[i].integertime_step();
+                double dt_second_half = (ti_step - ti_step/2) * unit_integertime_in_physical(i, P);
+                CellP[i].NonIdealMHDFluxPred = CellP[i].NonIdealMHDFlux;
+                nonideal_mhd_flux_update_driftkick(i, dt_second_half, 1, P, CellP);
+            }
+#endif
 #ifdef OUTPUT_SHOCK_MACH_NUMBER
             CellP[i].ShockMachNumber = 0;
 #endif

@@ -1123,6 +1123,27 @@
 #ifndef RT_SPEEDOFLIGHT_REDUCTION
 #define RT_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
+
+/* non-ideal MHD: MHD_NON_IDEAL (bare or =1) solves the non-ideal terms as diffusive fluxes; MHD_NON_IDEAL=2 instead evolves the
+   non-ideal electric field explicitly with a reduced speed of light. The reduced speed defaults to the one already used by an
+   explicit radiation solver, else by cosmic rays, else the true speed of light. */
+#ifdef MHD_NON_IDEAL
+#if !((MHD_NON_IDEAL+0 == 0) || (MHD_NON_IDEAL+0 == 1) || (MHD_NON_IDEAL+0 == 2))
+#error "MHD_NON_IDEAL must be set bare, =1 (diffusive non-ideal fluxes) or =2 (evolved non-ideal electric field)"
+#endif
+#if (MHD_NON_IDEAL+0 == 2)
+#define MHD_NON_IDEAL_EVOLVED_FLUX
+#if !defined(MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION)
+#if defined(RT_SOLVER_EXPLICIT)
+#define MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION (RT_SPEEDOFLIGHT_REDUCTION)
+#elif defined(COSMIC_RAY_FLUID)
+#define MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION (CRFLUID_SPEEDOFLIGHT_REDUCTION)
+#else
+#define MHD_NON_IDEAL_SPEEDOFLIGHT_REDUCTION (1.0)
+#endif
+#endif
+#endif
+#endif
 #ifndef RT_SOURCES
 #define RT_SOURCES 1+2+4+8+16+32 // default to allowing all types to act as sources //
 #endif

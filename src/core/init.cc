@@ -586,6 +586,10 @@ void init(void)
         CellP[i].Eta_MHD_OhmicResistivity_Coeff = 0;
         CellP[i].Eta_MHD_HallEffect_Coeff = 0;
         CellP[i].Eta_MHD_AmbiPolarDiffusion_Coeff = 0;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        if(RestartFlag != 2) {CellP[i].NonIdealMHDFluxPred = {};} /* starts from zero, except on a snapshot restart, which reads it back (zero if the snapshot lacks it) */
+        CellP[i].NonIdealMHDFluxPred *= gauss2gizmo; CellP[i].NonIdealMHDFlux = CellP[i].NonIdealMHDFluxPred; /* written in Gauss times physical code velocity */
+#endif
 #endif
 #ifdef MHD_BATTERY_MECHANISMS
         CellP[i].DtB_battery_magnitude = 0; /* the hydro pass fills this before the timestep reads it; zero here means no constraint on the first pass */

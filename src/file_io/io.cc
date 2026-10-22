@@ -1073,6 +1073,18 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif	    
             break;
 
+        case IO_NONIDEAL_FLUX:   /* evolved non-ideal MHD field (B x velocity: Gauss times physical code velocity) */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    for(k=0;k<3;k++) {fp[k] = (MyOutputFloat) (CellP[pindex].NonIdealMHDFluxPred[k] * gizmo2gauss);} /* the drifted value, at the same time as the written B */
+                    fp += 3;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_VDIV:		/* Divergence of Vel */
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -2022,6 +2034,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
+        case IO_NONIDEAL_FLUX:
         case IO_GRADPHI:
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
@@ -2434,6 +2447,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_ACCEL:
         case IO_HYDROACCEL:
         case IO_BFLD:
+        case IO_NONIDEAL_FLUX:
         case IO_GRADPHI:
         case IO_GRADRHO:
         case IO_RAD_ACCEL:
@@ -2799,6 +2813,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_BFLD:
         case IO_AMBIPOLAR:
         case IO_HALL:
+        case IO_NONIDEAL_FLUX:
         case IO_OHMIC:        
         case IO_VDIV:
         case IO_VORT:
@@ -3275,6 +3290,11 @@ int blockpresent(enum iofields blocknr)
             break;
         case IO_HALL:
 #if defined(MHD_NON_IDEAL) && defined(OUTPUT_MHD_RESISTIVITY)
+            return 1;
+#endif
+            break;
+        case IO_NONIDEAL_FLUX:  /* evolved state: always written (to HDF5 snapshots), so a snapshot restart can resume it */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
             return 1;
 #endif
             break;        
@@ -3845,6 +3865,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_HALL:
             strncpy(label, "HALL", 4);
+            break;
+        case IO_NONIDEAL_FLUX:
+            strncpy(label, "NIMF", 4);
             break;            
         case IO_VDIV:
             strncpy(label, "VDIV", 4);
@@ -4312,6 +4335,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;            
         case IO_HALL:
             strcpy(buf, "HallResistivity");
+            break;
+        case IO_NONIDEAL_FLUX:
+            strcpy(buf, "NonIdealMHDFlux");
             break;                        
         case IO_VDIV:
             strcpy(buf, "VelocityDivergence");
@@ -4746,6 +4772,9 @@ void write_file(char *fname, int writeTask, int lastTask)
             if(blocknr == IO_LASTENTRY)
                 break;
 
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            if(blocknr == IO_NONIDEAL_FLUX && All.SnapFormat != 3) {continue;} /* written to HDF5 snapshots only: legacy binary formats never carry it */
+#endif
             if(blockpresent(blocknr))
             {
                 bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
@@ -4802,6 +4831,9 @@ void write_file(char *fname, int writeTask, int lastTask)
         blocknr = (enum iofields) bnr;
         if(blocknr == IO_LASTENTRY) {break;}
 
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        if(blocknr == IO_NONIDEAL_FLUX && All.SnapFormat != 3) {continue;} /* written to HDF5 snapshots only: legacy binary formats never carry it */
+#endif
         if(blockpresent(blocknr))
         {
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);

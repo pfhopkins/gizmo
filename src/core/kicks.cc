@@ -12,6 +12,9 @@
 #ifdef CBE_INTEGRATOR
 #include "../sidm/sidm_gpu_decls.h"
 #endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+#include "../hydro/nonideal_mhd_functions.h"
+#endif
 
 /*!
  * This file was originally part of the GADGET3 code developed by
@@ -517,6 +520,9 @@ void set_predicted_quantities_for_extra_physics(int i)
 #endif
         }
 #endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        CellP[i].NonIdealMHDFluxPred = CellP[i].NonIdealMHDFlux;
+#endif
         
 #if defined(RT_EVOLVE_ENERGY)
         for(kf=0;kf<N_RT_FREQ_BINS;kf++)
@@ -609,6 +615,9 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifndef TRANSPORT_SUBCYCLE
     CosmicRay_Update_DriftKick(i,dt_entr,0,P,CellP);
 #endif
+#endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    nonideal_mhd_flux_update_driftkick(i,dt_entr,0,P,CellP);
 #endif
 
 #ifdef RADTRANSFER

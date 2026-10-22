@@ -1176,6 +1176,11 @@ int merge_particles_ij(int i, int j)
 #endif
     //CellP[j].DtB = CellP[i].DtB = {}; CellP[j].BPred = CellP[j].B; CellP[i].BPred = CellP[i].B; /* zero the time derivatives and cleaning terms: these will be re-calculated self-consistently from the new mesh configuration */
     CellP[j].divB += CellP[i].divB; // CellP[i].divB = CellP[j].divB = 0; /* this is a conserved quantity (volume-integrated) so can simply be added */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    { double wt_vol_i = volume_before_merger_i / (volume_before_merger_i + volume_before_merger_j), wt_vol_j = 1. - wt_vol_i; /* the evolved non-ideal field is intensive (not volume-integrated): volume-weighted mean */
+    CellP[j].NonIdealMHDFlux = wt_vol_j * CellP[j].NonIdealMHDFlux + wt_vol_i * CellP[i].NonIdealMHDFlux;
+    CellP[j].NonIdealMHDFluxPred = wt_vol_j * CellP[j].NonIdealMHDFluxPred + wt_vol_i * CellP[i].NonIdealMHDFluxPred; }
+#endif
 #ifdef DIVBCLEANING_DEDNER
     CellP[j].Phi += CellP[i].Phi; CellP[j].PhiPred += CellP[i].PhiPred; CellP[j].DtPhi += CellP[i].DtPhi; CellP[j].DtB_PhiCorr += CellP[i].DtB_PhiCorr; /* on a merge, can simply add all of these conservative quantities */
     //CellP[i].Phi = CellP[i].PhiPred = CellP[i].DtPhi = CellP[j].Phi = CellP[j].PhiPred = CellP[j].DtPhi = 0; CellP[i].DtB_PhiCorr = CellP[j].DtB_PhiCorr = {}; /* zero the time derivatives and cleaning terms: these will be re-calculated self-consistently from the new mesh configuration */

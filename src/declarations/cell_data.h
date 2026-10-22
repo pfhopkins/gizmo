@@ -329,6 +329,10 @@ extern struct gas_cell_data
     MyFloat Eta_MHD_OhmicResistivity_Coeff;     /*!< Ohmic resistivity coefficient [physical units of L^2/t] */
     MyFloat Eta_MHD_HallEffect_Coeff;           /*!< Hall effect coefficient [physical units of L^2/t] */
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;   /*!< Hall effect coefficient [physical units of L^2/t] */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    Vec3<MyFloat> NonIdealMHDFlux;              /*!< non-ideal MHD electric field times c [explicitly evolved; physical units of B*L/t; dB/dt = -curl of this] */
+    Vec3<MyFloat> NonIdealMHDFluxPred;          /*!< drift-predicted value of NonIdealMHDFlux */
+#endif
 #endif
 
 #ifdef MHD_BATTERY_MECHANISMS
