@@ -135,6 +135,8 @@ Consequences:
 
 A cell already marked HII this step by one model is skipped by the other, without spending photons. Stella PI already uses that rule between Stella stars (`Ionized==2`, resolvedism_photoion.cc:348); extend it to `DelayTimeHII>0`.
 
+**Risk (P4_DESIGN.md §1):** once TreeCol step 2 puts Stella's light on upstream RT bins (PHOTOELECTRIC, LYMAN_WERNER, NUV, OPTICAL_NIR, FUV_6_8EV; `RT_SOURCES 16+32`), combining them with FIRE-3 silently breaks six FIRE paths: the SSP light function fills those bins (double count), LONGRANGE radiation pressure loops all bins, the EUV fallback sums all bins, `get_FUV_G0`/molecular fraction/eos switch branch, the dust temperature sums all bins, and `RT_SOURCES 16+32` drops FIRE's non-cosmological Type 2/3 sources. Until P4 adds `GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY` and the owner fork in the light dispatcher, any of those bins in the mode is an `#error` (end of precompiler_logic.h).
+
 ### 4.7 Feedback loops
 
 - Separate files are kept: `mechanical_fb.cc` (FIRE + STARFORGE single-star branches) and `resolvedism_fb_thermal.cc`/`_momentum.cc`.

@@ -1728,3 +1728,8 @@
 #define KETJU_SINKS /* Type-5 sinks (STARFORGE stars or BHs) carry KETJU spin and PN class */
 #endif
 
+
+/* coupled mode: upstream RT bins next to FIRE-3 break FIRE's all-bins consumers (docs/stella_hybrid/P4_DESIGN.md) until P4 masks them */
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && !defined(GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY) && (defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_FUV_6_8EV))
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL with RT_PHOTOELECTRIC/LYMAN_WERNER/NUV/OPTICAL_NIR/FUV_6_8EV needs GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY (P4): FIRE's SSP light, LONGRANGE, EUV fallback, G0/H2/eos and dust-temperature paths would read Stella's bins"
+#endif
