@@ -217,7 +217,7 @@ c
         dtemp = 0d0
       elseif (temp .gt. tmax) then
         itemp = nmd
-        dtemp = temp - temptab(itemp)
+        dtemp = 0d0
       else
         itemp = dlog10(temp) / dtlog + 1
         if (itemp .le. 0 .or. itemp .gt. nmd) then

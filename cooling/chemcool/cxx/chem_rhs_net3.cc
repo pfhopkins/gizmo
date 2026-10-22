@@ -120,7 +120,7 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     const double ynsq = yn * yn;                             // yn**2
     const double yncb = chem_fpowi(yn, 3);                   // yn**3
 
-    // --- bounds (.F:250-268); above tmax dtemp is NOT zeroed in this network ---
+    // --- bounds (.F:250-268) ---
     ChemTIdx ti;
     ti.flag_bad = 0;
     if (temp <= 0.0) {
@@ -128,7 +128,7 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     } else if (temp <= T.tmin) {
         ti.itemp = 1; ti.dtemp = 0.0;
     } else if (temp >= T.tmax) {
-        ti.itemp = CHEM_NMD; ti.dtemp = temp - T.temptab[CHEM_NMD - 1];
+        ti.itemp = CHEM_NMD; ti.dtemp = 0.0;
     } else {
         ti.itemp = (int)(std::log10(temp) / T.dtlog) + 1;
         if (ti.itemp <= 0 || ti.itemp > CHEM_NMD) {

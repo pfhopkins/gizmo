@@ -479,7 +479,7 @@ Ported with the net-15 contract; driver policy from `evolve_abundances.F` (step 
 only, net-3 pool floors, atol, max abundances, pool projection, hot-gas state). As in the Fortran, the RHS calls
 `calc_photo` at every evaluation (live abh2/abco, abhd = 0); calc_photo now fills df09-df39/dfsp1 (both AV
 branches, RADTRANSFER/TREE_RAY overrides) and phrates 11-37, 52-54 for nets 3/7/8/11, plus 31/32 for net 3.
-Reproduced, not fixed: `ykdis = phrates(1)` without H2 self-shielding; dtemp is not zeroed above tmax; the
+Reproduced, not fixed: `ykdis = phrates(1)` without H2 self-shielding (dtemp above tmax: D-38); the
 14-species fixed point needs every species non-zero to converge early (otherwise 10 passes).
 Deviations (same classes as D-25): flagged input returns ydot = 0 and recoverable; temp <= 0 builds ydot at
 tmin and returns recoverable; NaN ydot returns recoverable. comp_equilib ABORT(9751/9752) and the bad-index
@@ -594,6 +594,11 @@ charging parameter) and cl76 (D-34). Set in `chemcool.cc`, `chem_backend_cxx.cc`
 
 ## D-37. PE electron cut-off x_e n < 1e-9 G_dust cl16, both backends
 Provenance: SGChem `cool_func.F:909`. Was 1e-20. Our DGR < 1e-8 cut (SGChem: DGR = 0) is kept.
+
+## D-38. No table extrapolation above tmax = 1e8 K in cool_func and net 3, both backends
+Provenance: SGChem `cool_func.F:217-219` (dtemp = 0). cool_func and rate_eq_mol (net 3) set dtemp =
+temp - temptab(nmd) above tmax, i.e. linear extrapolation of every cl/ch table with the last slope; now held at
+the tmax value, as the other rate_eq index paths already were.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

@@ -9,9 +9,8 @@
 //    float32-rounded; `kb` in fs_data.h is spelled 1.38066d0-16 and is a true
 //    double.  They are NOT the same number.  CHEM_KBOLTZ / CHEM_FS_KB below.
 //    (Same trap as DEVIATIONS.md D-10.)
-//  * cool_func's temperature index uses `temp .gt. tmax -> itemp = nmd,
-//    dtemp = temp - temptab(nmd)` -- it does NOT zero dtemp the way the
-//    rate_eq index does.  Extrapolation above 1e8 K is therefore linear in T.
+//  * cool_func's temperature index: `temp .gt. tmax -> itemp = nmd, dtemp = 0`
+//    (no extrapolation above 1e8 K, D-38).
 //  * rates(3) is unconditionally zeroed at cool_func.F:1223 and then (under
 //    WSS_CIE_COOL) overwritten by the WSS metal-line CIE rate.
 //  * integer powers use chem_fpowi (gfortran's association), real powers use
@@ -118,7 +117,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
     if (temp <= T.tmin) {
         itemp = 1; dtemp = 0.0;
     } else if (temp > T.tmax) {
-        itemp = CHEM_NMD; dtemp = temp - T.temptab[itemp - 1];
+        itemp = CHEM_NMD; dtemp = 0.0;      // no extrapolation above tmax
     } else {
         itemp = (int)(std::log10(temp) / T.dtlog) + 1;
         if (itemp <= 0 || itemp > CHEM_NMD) {
