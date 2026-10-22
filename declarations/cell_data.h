@@ -269,7 +269,7 @@ extern struct gas_cell_data
     MyFloat ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH]; /*!< angular bins for column density, per column species (gas cells only) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyFloat UV_flux[NPIX];                /*!< HEALPix FUV flux per pixel from stars, 8-13.6 eV */
+    MyFloat UV_flux[NPIX];                /*!< HEALPix FUV flux per pixel from stars, 6-13.6 eV (bins FUV_6_8EV + PHOTOELECTRIC) */
     MyFloat LW_flux[NPIX];               /*!< HEALPix LW flux per pixel from stars, 11.2-13.6 eV (subset of FUV) */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyFloat NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel from stars, 3.4-8 eV */
@@ -306,7 +306,7 @@ extern struct gas_cell_data
        stored + output, not thrown away — required to validate M1 FUV-heating/LW-H2
        against the subgrid (tree-column) reference. */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
-    MyFloat G0;                           /*!< FUV radiation field in Habing units, 8-13.6 eV */
+    MyFloat G0;                           /*!< FUV radiation field in Habing units, 6-13.6 eV (tree) or 8-13.6 eV (M1) */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units, 11.2-13.6 eV */
     MyFloat G0_atten;                     /*!< ATTENUATED FUV = G0 x f_dust: the effective FUV the chemistry
                                                sees. M1 (f_dust=1) -> = G0 already-attenuated field; tree columns

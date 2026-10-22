@@ -123,7 +123,7 @@ void gravity_tree(void)
      double lf[2]={G0DBG_fluxP,G0DBG_fluxN}, gf[2]; long long ln[2]={G0DBG_nN,G0DBG_nNzero}, gn[2];
      MPI_Reduce(lf,gf,2,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD); MPI_Reduce(ln,gn,2,MPI_LONG_LONG,MPI_SUM,0,MPI_COMM_WORLD);
      if(ThisTask==0) {printf("G0DBG_WALK t=%g root_uv=%g fluxP=%g fluxN=%g nN=%lld nNzero=%lld\n", All.Time,
-        (double)Nodes[All.MaxPart].uv_luminosity, gf[0], gf[1], gn[0], gn[1]); fflush(stdout);}
+        (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]), gf[0], gf[1], gn[0], gn[1]); fflush(stdout);}
      G0DBG_fluxP=G0DBG_fluxN=0; G0DBG_nN=G0DBG_nNzero=0;}
 #endif
 

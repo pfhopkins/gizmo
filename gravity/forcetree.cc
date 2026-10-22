@@ -455,7 +455,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     { /* G0DBG: root node must carry the total stellar FUV of the local tree */
       double plum=0; int ip_; for(ip_=0;ip_<NumPart;ip_++) {if(P[ip_].Type==4||P[ip_].Type==5) plum+=P[ip_].UV_luminosity;}
       printf("G0DBG_BUILD task=%d t=%g root_uv=%g sumP_uv=%g\n", ThisTask, All.Time,
-             (double)Nodes[All.MaxPart].uv_luminosity, plum); fflush(stdout); }
+             (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]), plum); fflush(stdout); }
 #endif
     
     if(last >= All.MaxPart)
@@ -600,22 +600,16 @@ static inline int treecol_angular_bin(const double d0, const double d1, const do
 #endif
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-/* per-particle Stella node moments: single source for force_update_node_recursive and force_refresh_node_moments */
-struct stella_pmom {double uv, lw, w_lum, nuv, opt, ion, nh, hei, heii;};
+/* per-particle Stella node moments (luminosity centroid weight, TREE_RAY_PI absorbers); band luminosities are in stellar_lum[] */
+struct stella_pmom {double w_lum, ion, nh, hei, heii;};
 static inline struct stella_pmom stella_particle_node_moments(int p)
 {
-    struct stella_pmom m = {0,0,0,0,0,0,0,0,0};
+    struct stella_pmom m = {0,0,0,0,0};
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     if(P[p].Type == 4 || P[p].Type == 5) {
-        m.uv = P[p].UV_luminosity; m.lw = P[p].LW_luminosity; m.w_lum = m.uv + m.lw;
+        m.w_lum = P[p].UV_luminosity + P[p].LW_luminosity;
 #ifdef TREE_RAY_PI
         m.ion = P[p].Ion_luminosity; m.w_lum += m.ion; /* ion-only sources (fixed-Q PI test) must anchor the centroid (2026-07-14) */
-#endif
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        m.nuv = P[p].NUV_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        m.opt = P[p].OPT_luminosity;
 #endif
     }
 #ifdef TREE_RAY_PI
@@ -683,15 +677,7 @@ void force_update_node_recursive(int no, int sib, int father)
         MyFloat treecol_mass[TREECOL_NSPECIES] = {0};
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        MyFloat uv_luminosity = 0;
-        MyFloat lw_luminosity = 0;
         MyFloat lum_s[3] = {0,0,0};
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        MyFloat nuv_luminosity = 0;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        MyFloat opt_luminosity = 0;
-#endif
 #ifdef TREE_RAY_PI
         MyFloat ion_luminosity = 0, neutral_h_mass = 0;
 #ifdef TREERAY_PI_HE
@@ -769,15 +755,7 @@ void force_update_node_recursive(int no, int sib, int father)
                         {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_mass[ks] += Nodes[p].treecol_mass[ks];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                        uv_luminosity += Nodes[p].uv_luminosity;
-                        lw_luminosity += Nodes[p].lw_luminosity;
                         {int kl; for(kl=0;kl<3;kl++) lum_s[kl] += Nodes[p].lum_s[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                        nuv_luminosity += Nodes[p].nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-                        opt_luminosity += Nodes[p].opt_luminosity;
-#endif
 #ifdef TREE_RAY_PI
                         ion_luminosity += Nodes[p].ion_luminosity;
                         neutral_h_mass += Nodes[p].neutral_h_mass;
@@ -856,14 +834,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                     {struct stella_pmom sm = stella_particle_node_moments(p);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                    uv_luminosity += sm.uv; lw_luminosity += sm.lw;
                     {int kl; for(kl=0;kl<3;kl++) lum_s[kl] += sm.w_lum * P[p].Pos[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                    nuv_luminosity += sm.nuv;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-                    opt_luminosity += sm.opt;
-#endif
 #ifdef TREE_RAY_PI
                     ion_luminosity += sm.ion; neutral_h_mass += sm.nh;
 #ifdef TREERAY_PI_HE
@@ -1026,15 +997,7 @@ void force_update_node_recursive(int no, int sib, int father)
         {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[no].treecol_mass[ks] = treecol_mass[ks];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        Nodes[no].uv_luminosity = uv_luminosity;
-        Nodes[no].lw_luminosity = lw_luminosity;
         {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = lum_s[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        Nodes[no].nuv_luminosity = nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        Nodes[no].opt_luminosity = opt_luminosity;
-#endif
 #ifdef TREE_RAY_PI
         Nodes[no].ion_luminosity = ion_luminosity;
         Nodes[no].neutral_h_mass = neutral_h_mass;
@@ -1158,25 +1121,12 @@ void force_exchange_pseudodata(void)
         MyFloat stellar_lum[N_RT_FREQ_BINS];
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        /* G0-FIX 2026-07-05: these were MISSING from the cross-domain pseudo-node
-         * exchange -> every off-rank top-level node carried ZERO FUV/LW luminosity
-         * -> tree-G0 far field ~11x low in production (74% of gas floor-pinned).
-         * M1's stellar_lum[] was exchanged; the G0 bands were not. */
-        MyFloat uv_luminosity, lw_luminosity;
-        MyFloat lum_s[3];
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        MyFloat nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        MyFloat opt_luminosity;
-#endif
+        MyFloat lum_s[3]; /* band luminosities travel in stellar_lum[] */
 #ifdef TREE_RAY_PI
         MyFloat ion_luminosity, neutral_h_mass;
 #ifdef TREERAY_PI_HE
         MyFloat hei_mass, heii_mass;
 #endif
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1250,15 +1200,7 @@ void force_exchange_pseudodata(void)
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {DomainMoment[i].stellar_lum[k] = Nodes[no].stellar_lum[k];}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-            DomainMoment[i].uv_luminosity = Nodes[no].uv_luminosity;
-            DomainMoment[i].lw_luminosity = Nodes[no].lw_luminosity;
             {int kl; for(kl=0;kl<3;kl++) DomainMoment[i].lum_s[kl] = Nodes[no].lum_s[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-            DomainMoment[i].nuv_luminosity = Nodes[no].nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-            DomainMoment[i].opt_luminosity = Nodes[no].opt_luminosity;
-#endif
 #ifdef TREE_RAY_PI
             DomainMoment[i].ion_luminosity = Nodes[no].ion_luminosity;
             DomainMoment[i].neutral_h_mass = Nodes[no].neutral_h_mass;
@@ -1266,8 +1208,6 @@ void force_exchange_pseudodata(void)
             DomainMoment[i].hei_mass = Nodes[no].hei_mass;
             DomainMoment[i].heii_mass = Nodes[no].heii_mass;
 #endif
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1357,15 +1297,7 @@ void force_exchange_pseudodata(void)
                     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = DomainMoment[i].stellar_lum[k];}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                    Nodes[no].uv_luminosity = DomainMoment[i].uv_luminosity;
-                    Nodes[no].lw_luminosity = DomainMoment[i].lw_luminosity;
                     {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = DomainMoment[i].lum_s[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                    Nodes[no].nuv_luminosity = DomainMoment[i].nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-                    Nodes[no].opt_luminosity = DomainMoment[i].opt_luminosity;
-#endif
 #ifdef TREE_RAY_PI
                     Nodes[no].ion_luminosity = DomainMoment[i].ion_luminosity;
                     Nodes[no].neutral_h_mass = DomainMoment[i].neutral_h_mass;
@@ -1373,8 +1305,6 @@ void force_exchange_pseudodata(void)
                     Nodes[no].hei_mass = DomainMoment[i].hei_mass;
                     Nodes[no].heii_mass = DomainMoment[i].heii_mass;
 #endif
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1443,20 +1373,12 @@ void force_treeupdate_pseudos(int no)
     MyFloat stellar_lum[N_RT_FREQ_BINS]={0};
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyFloat uv_luminosity_tp=0, lw_luminosity_tp=0, lum_s_tp[3]={0,0,0};
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-    MyFloat nuv_luminosity_tp=0;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-    MyFloat opt_luminosity_tp=0;
-#endif
+    MyFloat lum_s_tp[3]={0,0,0};
 #ifdef TREE_RAY_PI
     MyFloat ion_luminosity_tp=0, neutral_h_mass_tp=0;
 #ifdef TREERAY_PI_HE
     MyFloat hei_mass_tp=0, heii_mass_tp=0;
 #endif
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1528,15 +1450,7 @@ void force_treeupdate_pseudos(int no)
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += (Nodes[p].stellar_lum[k]);}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-            uv_luminosity_tp += Nodes[p].uv_luminosity;
-            lw_luminosity_tp += Nodes[p].lw_luminosity;
             {int kl; for(kl=0;kl<3;kl++) lum_s_tp[kl] += Nodes[p].lum_s[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-            nuv_luminosity_tp += Nodes[p].nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-            opt_luminosity_tp += Nodes[p].opt_luminosity;
-#endif
 #ifdef TREE_RAY_PI
             ion_luminosity_tp += Nodes[p].ion_luminosity;
             neutral_h_mass_tp += Nodes[p].neutral_h_mass;
@@ -1544,8 +1458,6 @@ void force_treeupdate_pseudos(int no)
             hei_mass_tp += Nodes[p].hei_mass;
             heii_mass_tp += Nodes[p].heii_mass;
 #endif
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1663,15 +1575,7 @@ void force_treeupdate_pseudos(int no)
     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = stellar_lum[k];}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    Nodes[no].uv_luminosity = uv_luminosity_tp;
-    Nodes[no].lw_luminosity = lw_luminosity_tp;
     {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = lum_s_tp[kl];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-    Nodes[no].nuv_luminosity = nuv_luminosity_tp;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-    Nodes[no].opt_luminosity = opt_luminosity_tp;
-#endif
 #ifdef TREE_RAY_PI
     Nodes[no].ion_luminosity = ion_luminosity_tp;
     Nodes[no].neutral_h_mass = neutral_h_mass_tp;
@@ -1679,8 +1583,6 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].hei_mass = hei_mass_tp;
     Nodes[no].heii_mass = heii_mass_tp;
 #endif
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
 #endif
 #ifdef RT_USE_GRAVTREE
@@ -1925,14 +1827,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #define TREERAY_SHELL_OF(r2q) ( ((r2q) <= 0) ? 0 : (int)DMAX(0, DMIN(TREE_RAY_NSHELL-1, \
         TREE_RAY_NSHELL-1 + (int)floor(0.5*log10((r2q)/(treeray_sl_com*treeray_sl_com)) * treeray_shell_fac) )) )
 #endif
-    double uv_lum = 0, lw_lum = 0;
     double g0_flux_dx = 0, g0_flux_dy = 0, g0_flux_dz = 0, g0_flux_r2 = 0; /* luminosity-centroid separation for node flux */
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-    double nuv_lum = 0;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-    double opt_lum = 0;
-#endif
 #endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<double> dv;
@@ -2210,8 +2105,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 TREECOL_PARTICLE_MASSES(no, colmass) /* set for every leaf; keep expanded here: a call changes bits via FMA contraction under -O3 -march=native */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                uv_lum = 0; lw_lum = 0;
-                if(P[no].Type == 4 || P[no].Type == 5) {uv_lum = P[no].UV_luminosity; lw_lum = P[no].LW_luminosity;
+                if(P[no].Type == 4 || P[no].Type == 5) {
 #ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
                     g0_flux_dx = rad_dr[0]; g0_flux_dy = rad_dr[1]; g0_flux_dz = rad_dr[2]; g0_flux_r2 = rad_r2;}
 #else
@@ -2229,12 +2123,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                      heii_m = m2; hei_m = DMAX(0.0, mtot - m2 - m3);}
 #endif
                 }
-#endif
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                nuv_lum = 0; if(P[no].Type == 4 || P[no].Type == 5) {nuv_lum = P[no].NUV_luminosity;}
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-                opt_lum = 0; if(P[no].Type == 4 || P[no].Type == 5) {opt_lum = P[no].OPT_luminosity;}
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
@@ -2614,8 +2502,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {colmass[ks] = nop->treecol_mass[ks];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                uv_lum = nop->uv_luminosity;
-                lw_lum = nop->lw_luminosity;
 #ifdef TREE_RAY_PI
                 ion_lum = nop->ion_luminosity;
                 nh_m = nop->neutral_h_mass;
@@ -2629,7 +2515,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * (windres single-star box) purely from the COM offset. lum_s is the
                  * unnormalized Sum (L_uv+L_lw)*pos over the node's stars. */
                 {
-                    double wl = uv_lum + lw_lum;
+                    double wl = (nop->stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + nop->stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) + nop->stellar_lum[RT_FREQ_BIN_LYMAN_WERNER];
 #ifdef TREE_RAY_PI
                     wl += ion_lum; /* include ionizing band: ion-only nodes (fixed-Q PI test) otherwise get no centroid (2026-07-14) */
 #endif
@@ -2643,12 +2529,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
                 g0dbg_node = 1;
-#endif
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                nuv_lum = nop->nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-                opt_lum = nop->opt_luminosity;
 #endif
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
@@ -2959,6 +2839,14 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+                const double uv_lum = mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] + mass_stellarlum[RT_FREQ_BIN_PHOTOELECTRIC]; /* 6-13.6 eV */
+                const double lw_lum = mass_stellarlum[RT_FREQ_BIN_LYMAN_WERNER];
+#ifdef RT_NUV
+                const double nuv_lum = mass_stellarlum[RT_FREQ_BIN_NUV];
+#endif
+#ifdef RT_OPTICAL_NIR
+                const double opt_lum = mass_stellarlum[RT_FREQ_BIN_OPTICAL_NIR];
+#endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
                 if(r2_col > 0) {
                     if(g0dbg_node) { if(uv_lum > 0) {G0DBG_fluxN += uv_lum/r2_col; G0DBG_nN++;} else {G0DBG_nNzero++;} }
@@ -4591,14 +4479,7 @@ void force_refresh_node_moments(void)
         Nodes[no].cr_injection = 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        Nodes[no].uv_luminosity = 0; {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = 0;}
-        Nodes[no].lw_luminosity = 0;
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        Nodes[no].nuv_luminosity = 0;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        Nodes[no].opt_luminosity = 0;
-#endif
+        {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = 0;}
 #ifdef TREE_RAY_PI
         Nodes[no].ion_luminosity = 0;
         Nodes[no].neutral_h_mass = 0;
@@ -4687,14 +4568,7 @@ void force_refresh_node_moments(void)
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         {struct stella_pmom sm = stella_particle_node_moments(i);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        Nodes[no].uv_luminosity += sm.uv; Nodes[no].lw_luminosity += sm.lw;
         for(k=0;k<3;k++) {Nodes[no].lum_s[k] += sm.w_lum * pa->Pos[k];}
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        Nodes[no].nuv_luminosity += sm.nuv;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        Nodes[no].opt_luminosity += sm.opt;
-#endif
 #ifdef TREE_RAY_PI
         Nodes[no].ion_luminosity += sm.ion; Nodes[no].neutral_h_mass += sm.nh;
 #ifdef TREERAY_PI_HE
@@ -4784,14 +4658,7 @@ void force_refresh_node_moments(void)
         Nodes[father].cr_injection += Nodes[no].cr_injection;
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-        Nodes[father].uv_luminosity += Nodes[no].uv_luminosity; for(k=0;k<3;k++) {Nodes[father].lum_s[k] += Nodes[no].lum_s[k];}
-        Nodes[father].lw_luminosity += Nodes[no].lw_luminosity;
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        Nodes[father].nuv_luminosity += Nodes[no].nuv_luminosity;
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-        Nodes[father].opt_luminosity += Nodes[no].opt_luminosity;
-#endif
+        for(k=0;k<3;k++) {Nodes[father].lum_s[k] += Nodes[no].lum_s[k];}
 #ifdef TREE_RAY_PI
         Nodes[father].ion_luminosity += Nodes[no].ion_luminosity;
         Nodes[father].neutral_h_mass += Nodes[no].neutral_h_mass;

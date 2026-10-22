@@ -1290,7 +1290,7 @@ extern struct gravdata_out
     double Chimes_fluxPhotIon[CHIMES_LOCAL_UV_NBINS];
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    MyDouble UV_flux[NPIX];               /*!< HEALPix FUV flux per pixel, 8-13.6 eV */
+    MyDouble UV_flux[NPIX];               /*!< HEALPix FUV flux per pixel, 6-13.6 eV (bins FUV_6_8EV + PHOTOELECTRIC) */
     MyDouble LW_flux[NPIX];               /*!< HEALPix LW flux per pixel, 11.2-13.6 eV (subset of FUV) */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-8 eV */
@@ -1712,15 +1712,7 @@ extern ALIGN(32) struct NODE
   MyFloat treecol_mass[TREECOL_NSPECIES]; /*!< column species masses in the node (TREECOL_GAS, _DUST, _H2, _CO) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-  MyFloat uv_luminosity;        /*!< total FUV luminosity in tree node, 8-13.6 eV */
-  MyFloat lum_s[3];             /*!< UV-luminosity-weighted position sum (Sum L*pos, unnormalized): flux from an accepted node is evaluated at the LUMINOSITY centroid, not the mass COM — a gas-dominated node's mass center can sit tens of pc from its stars, giving systematic 1/r^2 errors (measured 0.67x at 113 pc, windres) */
-  MyFloat lw_luminosity;        /*!< total LW luminosity in tree node, 11.2-13.6 eV (subset of FUV) */
-#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-  MyFloat nuv_luminosity;       /*!< total NUV luminosity in tree node, 3.4-8 eV */
-#endif
-#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-  MyFloat opt_luminosity;       /*!< total optical+NIR luminosity in tree node, 0.4-3.4 eV */
-#endif
+  MyFloat lum_s[3];             /*!< (6-13.6 eV FUV + LW)-weighted position sum, unnormalized: node flux is evaluated at this luminosity centroid; band luminosities are in stellar_lum[] */
 #ifdef TREE_RAY_PI
   MyFloat ion_luminosity;       /*!< total ionizing (>13.6 eV) luminosity in tree node [erg/s]; band split by the global blackbody fractions at deposit */
   MyFloat neutral_h_mass;       /*!< neutral-H mass in tree node (PI-band absorber; (1-x_HII)*X_H*m summed over gas) */

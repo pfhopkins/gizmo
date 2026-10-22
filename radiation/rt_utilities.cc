@@ -72,12 +72,12 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     active_check += rt_get_lum_band_singlestar(i,mode,lum, pp, cell); // get luminosities for individual star/sink particles assuming they are protostars or stars
 #endif
 #else
-#if defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+#if (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
     active_check += rt_get_lum_band_resolvedism(i,mode,lum, pp, cell); // get luminosities from single-star stellar tables
 #else
     active_check += rt_get_lum_band_stellarpopulation(i,mode,lum, pp, cell); // get luminosities for star particles assuming they represent IMF-averaged populations
 #endif
-#if defined(SINK_PARTICLES)
+#if defined(SINK_PARTICLES) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* sinks do not shine in the Stella G0 bands */
     active_check += rt_get_lum_band_agn(i,mode,lum, pp, cell); // get luminosities for BH/sink particles assuming they represent AGN
 #endif
 #endif
@@ -302,9 +302,23 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
 
 /* subroutine for 'rt_get_source_luminosity', using per-star luminosities from the resolvedism stellar tables.
    Band luminosities come directly from pre-tabulated Planck integrals over each RT frequency band. */
-#if defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+#if (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
 int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+    /* per-star band cache in erg/s (set each step in recompute_resolvedism_fuv_luminosities) */
+    if(pp[i].Type != 4 && pp[i].Type != 5) return 0;
+    lum[RT_FREQ_BIN_FUV_6_8EV] = pp[i].UV_luminosity - pp[i].PE_luminosity; /* not clipped: FUV_total - FUV_M1 restores the 6-13.6 eV total */
+    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity;
+    lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity;
+#ifdef RT_NUV
+    lum[RT_FREQ_BIN_NUV] = pp[i].NUV_luminosity;
+#endif
+#ifdef RT_OPTICAL_NIR
+    lum[RT_FREQ_BIN_OPTICAL_NIR] = pp[i].OPT_luminosity;
+#endif
+    return 1;
+#else
     if(pp[i].Type != 4) return 0;
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) return 0;
     int active_check = 0;
@@ -402,6 +416,7 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_da
 #endif
 
     return active_check;
+#endif
 }
 #endif /* GALSF_RESOLVEDISM_STELLAR_TABLES && RADTRANSFER */
 

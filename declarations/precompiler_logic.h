@@ -809,6 +809,23 @@
 
 /* ----- giant block of options for RHD modules ------ */
 
+/* Stella tree radiation field: band luminosities ride on the gravity-tree source arrays (no LEBRON flux or force) */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
+#define RT_USE_GRAVTREE
+#define RT_PHOTOELECTRIC
+#define RT_FUV_6_8EV
+#define RT_LYMAN_WERNER
+#if defined(GALSF_RESOLVEDISM_NUV_VARIABLE) || defined(GALSF_RESOLVEDISM_RADPRESSURE)
+#define RT_NUV
+#endif
+#if defined(GALSF_RESOLVEDISM_OPT_VARIABLE) || defined(GALSF_RESOLVEDISM_RADPRESSURE)
+#define RT_OPTICAL_NIR
+#endif
+#ifndef RT_SOURCES
+#define RT_SOURCES (16+32)
+#endif
+#endif
+
 /* options for FIRE RT method */
 #if defined(GALSF_FB_FIRE_RT_LONGRANGE)
 #define RT_LEBRON // this flag requires lebron for rhd

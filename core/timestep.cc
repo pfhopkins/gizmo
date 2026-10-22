@@ -496,7 +496,7 @@ integertime get_timestep(int p,		/*!< particle index */
 #endif
         
 #if defined(TIDAL_TIMESTEP_CRITERION)
-#if defined(RT_USE_GRAVTREE) && !defined(SINGLE_STAR_FB_RT_HEATING)
+#if defined(RT_USE_GRAVTREE) && !defined(SINGLE_STAR_FB_RT_HEATING) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* G0_VARIABLE tree adds no radiation force */
         if(P[p].Type>0) // strictly this is better for accuracy, but not necessary
 #endif
         ax = ay = az = 0.0; // we're getting our gravitational timestep criterion from the tidal tensor, but still want to do the accel criterion for other forces
