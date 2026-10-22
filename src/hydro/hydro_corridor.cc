@@ -223,6 +223,9 @@ void gizmo_hydro_corridor_begin(void)
      * symmetric, gas only, the default radius policy, both radii scaled by the
      * ghost safety factor); each consumer is checked against it. */
     g_corridor_query_radii.resize((size_t)gizmo_sym_num_active);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_sym_num_active >= 16)
+#endif
     for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
         g_corridor_query_radii[aa] = gsl_safety * (double)P[gizmo_sym_active_indices[aa]].KernelRadius;
     }
