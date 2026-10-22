@@ -450,6 +450,7 @@
 #RT_CHEM_PHOTOION=2                     # ionizing photons: 1=H-only [single-band], 2=H+He [four-band]
 #RT_LYMAN_WERNER                        # lyman-werner [narrow H2 dissociating] band
 #RT_PHOTOELECTRIC                       # far-uv (8-13.6eV): track photo-electric heating photons + their dust interactions
+#RT_FUV_6_8EV                           # far-uv 6-8 eV below the photo-electric band (with RT_PHOTOELECTRIC: the 6-13.6 eV Habing band)
 #RT_NUV                                 # near-UV: 1550-3600 Angstrom (where direct stellar emission dominates)
 #RT_OPTICAL_NIR                         # optical+near-ir: 3600 Angstrom-3 micron (where direct stellar emission dominates)
 #RT_FREEFREE                            # scattering from Thompson, absorption+emission from free-free, appropriate for fully-ionized plasma

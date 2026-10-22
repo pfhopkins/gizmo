@@ -653,6 +653,9 @@ void rt_define_effective_frequencies_in_bands(void)
 #ifdef RT_OPTICAL_NIR
     k=RT_FREQ_BIN_OPTICAL_NIR; rhd_bins_nu_min_ev[k]=0.4133; rhd_bins_nu_max_ev[k]=3.444;
 #endif
+#ifdef RT_FUV_6_8EV
+    k=RT_FREQ_BIN_FUV_6_8EV; rhd_bins_nu_min_ev[k]=6; rhd_bins_nu_max_ev[k]=8;
+#endif
 #ifdef RT_GENERIC_USER_FREQ
     k=RT_FREQ_BIN_GENERIC_USER_FREQ; rhd_bins_nu_min_ev[k]=0; rhd_bins_nu_max_ev[k]=MAX_REAL_NUMBER;
 #endif
