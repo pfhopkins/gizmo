@@ -1,7 +1,9 @@
 #ifndef ANEOS_H
 #define ANEOS_H
 
+#ifndef GIZMO_config_H
 #include "../GIZMO_config.h"
+#endif
 
 #ifdef EOS_ANEOS
 
@@ -31,33 +33,41 @@
 #define ANEOS_MAX_MATERIALS 7
 #endif
 
-/* Storage for one ANEOS material table (SESAME-format, pre-computed rho-T grid) */
+/* Storage for one ANEOS material table (SESAME-format, pre-computed rho-T grid).
+   The axes may be spaced arbitrarily -- real tables concentrate their points where
+   the EOS changes fastest -- so every lookup brackets a query against the actual
+   axis values. A coarse map per axis bounds that search. */
 struct aneos_table {
     int    mat_id;        /* SESAME material number */
     int    nrho;          /* number of density grid points */
     int    nT;            /* number of temperature grid points */
     int    loaded;        /* 0 = empty slot, 1 = loaded */
 
-    /* Grid axes in log10 space (CGS units: rho in g/cm^3, T in K) */
+    /* Grid axes in log10 space (CGS units: rho in g/cm^3, T in K), strictly increasing */
     double *logrho;       /* log10(rho), length nrho */
     double *logT;         /* log10(T),   length nT   */
 
-    /* Tabulated 2D arrays, row-major [irho * nT + iT], stored in log10 of CGS values */
+    /* Tabulated 2D arrays, row-major [irho * nT + iT] */
     double *log_pressure; /* log10(P [dyn/cm^2]) */
     double *log_energy;   /* log10(u [erg/g])    */
-    double *log_entropy;  /* log10(S [erg/g/K])  */
+    double *entropy;      /* S [erg/g/K], signed: its zero point is a convention, so it is stored and interpolated as a value */
     double *log_csound;   /* log10(cs [cm/s])    */
     int    *phase;        /* phase flag (integer, no interpolation) */
     int     has_csound;   /* 1 if sound speed column present in table */
     int     has_phase;    /* 1 if phase column present in table */
 
-    /* Grid bounds and spacing */
+    /* Grid bounds */
     double logrho_min, logrho_max;
     double logT_min, logT_max;
-    double d_logrho;      /* uniform spacing in log10(rho) */
-    double d_logT;        /* uniform spacing in log10(T)   */
-    double inv_d_logrho;  /* 1/d_logrho for fast indexing */
-    double inv_d_logT;    /* 1/d_logT   for fast indexing */
+
+    /* Coarse search maps: nmap equal-width bins span each axis, and map[b] is the lowest
+       interval bin b touches, so the interval enclosing any point of bin b lies in
+       [map[b], map[b+1]]. Built once at load; the size scales with the axis length,
+       never with its smallest spacing. */
+    int     nmap_rho, nmap_T;
+    int    *map_rho;      /* length nmap_rho + 1 */
+    int    *map_T;        /* length nmap_T + 1   */
+    double  inv_binwidth_rho, inv_binwidth_T;
 };
 
 /* Global table array -- one per material slot.
@@ -86,112 +96,91 @@ int aneos_cleanup(void);
    was given, because a device body that reached for the global would read the
    wrong memory with nothing to say so. */
 
-/* Bilinear interpolation on a uniform log-log grid.
-   Returns interpolated value of log10(Q) at (lr, lT).
-   The table stores log10 of the quantity in log_qty[irho * nT + iT]. */
-static KOKKOS_INLINE_FUNCTION double aneos_bilinear_interp(const struct aneos_table *tbl, const double *log_qty,
-                               double lr, double lT)
+/* A position on one table axis: the lower knot of the enclosing interval and the
+   fractional position inside it, t = (x - x_i) / (x_{i+1} - x_i). */
+struct aneos_axis_location {
+    int    i;
+    double t;
+};
+
+/* Locate x (clamped to the axis range) on a strictly increasing axis. The coarse map
+   gives the short range of candidate intervals and a binary search inside it finds the
+   enclosing one; the last two loops step at most an interval to absorb rounding in the
+   bin index, so the bracket is exact. */
+static KOKKOS_INLINE_FUNCTION struct aneos_axis_location aneos_locate(const double *axis, int n,
+                               const int *map, int nmap, double inv_binwidth, double x)
 {
-    /* Clamp to table bounds */
-    if(lr < tbl->logrho_min) lr = tbl->logrho_min;
-    if(lr > tbl->logrho_max) lr = tbl->logrho_max;
-    if(lT < tbl->logT_min) lT = tbl->logT_min;
-    if(lT > tbl->logT_max) lT = tbl->logT_max;
-
-    /* Find cell indices */
-    double fi = (lr - tbl->logrho_min) * tbl->inv_d_logrho;
-    double fj = (lT - tbl->logT_min) * tbl->inv_d_logT;
-    int i = (int)fi;
-    int j = (int)fj;
-
-    /* Clamp to valid cell range */
-    if(i < 0) i = 0;
-    if(i >= tbl->nrho - 1) i = tbl->nrho - 2;
-    if(j < 0) j = 0;
-    if(j >= tbl->nT - 1) j = tbl->nT - 2;
-
-    /* Local coordinates in [0,1] */
-    double t = fi - i;
-    double u = fj - j;
-    if(t < 0.0) t = 0.0; if(t > 1.0) t = 1.0;
-    if(u < 0.0) u = 0.0; if(u > 1.0) u = 1.0;
-
-    /* Four corner values */
-    int nT = tbl->nT;
-    double f00 = log_qty[i * nT + j];
-    double f10 = log_qty[(i+1) * nT + j];
-    double f01 = log_qty[i * nT + (j+1)];
-    double f11 = log_qty[(i+1) * nT + (j+1)];
-
-    return (1.0 - t) * (1.0 - u) * f00 + t * (1.0 - u) * f10
-         + (1.0 - t) * u * f01 + t * u * f11;
+    if(x < axis[0]) x = axis[0];
+    if(x > axis[n - 1]) x = axis[n - 1];
+    int b = (int)((x - axis[0]) * inv_binwidth);
+    if(b < 0) b = 0;
+    if(b > nmap - 1) b = nmap - 1;
+    int lo = map[b], hi = map[b + 1];
+    while(lo < hi) {
+        int mid = (lo + hi + 1) / 2;
+        if(axis[mid] <= x) {lo = mid;} else {hi = mid - 1;}
+    }
+    while(lo > 0 && axis[lo] > x) {lo--;}
+    while(lo < n - 2 && axis[lo + 1] <= x) {lo++;}
+    struct aneos_axis_location loc;
+    loc.i = lo;
+    loc.t = (x - axis[lo]) / (axis[lo + 1] - axis[lo]);
+    if(loc.t < 0.0) loc.t = 0.0;
+    if(loc.t > 1.0) loc.t = 1.0;
+    return loc;
 }
 
-/* Nearest-neighbor phase lookup */
-static KOKKOS_INLINE_FUNCTION int aneos_phase_lookup(const struct aneos_table *tbl, double lr, double lT)
+static KOKKOS_INLINE_FUNCTION struct aneos_axis_location aneos_locate_rho(const struct aneos_table *tbl, double lr)
+{
+    return aneos_locate(tbl->logrho, tbl->nrho, tbl->map_rho, tbl->nmap_rho, tbl->inv_binwidth_rho, lr);
+}
+
+static KOKKOS_INLINE_FUNCTION struct aneos_axis_location aneos_locate_T(const struct aneos_table *tbl, double lT)
+{
+    return aneos_locate(tbl->logT, tbl->nT, tbl->map_T, tbl->nmap_T, tbl->inv_binwidth_T, lT);
+}
+
+/* Bilinear interpolation of a tabulated quantity (stored as log10 of the value, or as
+   the value itself for entropy) at located density and temperature positions. */
+static KOKKOS_INLINE_FUNCTION double aneos_interp(const struct aneos_table *tbl, const double *qty,
+                               struct aneos_axis_location r, struct aneos_axis_location T)
+{
+    int nT = tbl->nT, i = r.i, j = T.i;
+    double t = r.t, u = T.t;
+    return (1.0 - t) * (1.0 - u) * qty[i * nT + j] + t * (1.0 - u) * qty[(i + 1) * nT + j]
+         + (1.0 - t) * u * qty[i * nT + (j + 1)] + t * u * qty[(i + 1) * nT + (j + 1)];
+}
+
+/* Phase flag of the nearest knot (in log10 rho, log10 T); a point exactly midway takes the upper knot */
+static KOKKOS_INLINE_FUNCTION int aneos_phase_at(const struct aneos_table *tbl,
+                               struct aneos_axis_location r, struct aneos_axis_location T)
 {
     if(!tbl->has_phase) return 0;
-
-    if(lr < tbl->logrho_min) lr = tbl->logrho_min;
-    if(lr > tbl->logrho_max) lr = tbl->logrho_max;
-    if(lT < tbl->logT_min) lT = tbl->logT_min;
-    if(lT > tbl->logT_max) lT = tbl->logT_max;
-
-    double fi = (lr - tbl->logrho_min) * tbl->inv_d_logrho;
-    double fj = (lT - tbl->logT_min) * tbl->inv_d_logT;
-    int i = (int)(fi + 0.5);
-    int j = (int)(fj + 0.5);
-    if(i < 0) i = 0; if(i >= tbl->nrho) i = tbl->nrho - 1;
-    if(j < 0) j = 0; if(j >= tbl->nT) j = tbl->nT - 1;
+    int i = r.i + ((r.t >= 0.5) ? 1 : 0);
+    int j = T.i + ((T.t >= 0.5) ? 1 : 0);
     return tbl->phase[i * tbl->nT + j];
 }
 
-/* Internal helper: get log10(u) at given (log10_rho, log10_T) */
-static KOKKOS_INLINE_FUNCTION double aneos_get_log_u(const struct aneos_table *tbl, double lr, double lT)
+/* Exact log-slopes of the interpolant inside the located cell: d log10(Q) / d log10(T) and
+   d log10(Q) / d log10(rho). At a knot the interpolant has no unique slope; the interval the
+   locator selected (the one above the knot, except at the last knot) decides it. With
+   Q = 10^(interpolated value), dQ/dT = (Q/T) * d log10(Q)/d log10(T), and likewise for rho. */
+static KOKKOS_INLINE_FUNCTION double aneos_dlogQ_dlogT(const struct aneos_table *tbl, const double *log_qty,
+                               struct aneos_axis_location r, struct aneos_axis_location T)
 {
-    return aneos_bilinear_interp(tbl, tbl->log_energy, lr, lT);
+    int nT = tbl->nT, i = r.i, j = T.i;
+    double dq = (1.0 - r.t) * (log_qty[i * nT + j + 1] - log_qty[i * nT + j])
+              + r.t * (log_qty[(i + 1) * nT + j + 1] - log_qty[(i + 1) * nT + j]);
+    return dq / (tbl->logT[j + 1] - tbl->logT[j]);
 }
 
-/* Internal helper: get du/dT numerically at given (log10_rho, log10_T).
-   Returns du/dT in CGS (erg/g/K). Uses centered finite difference on the
-   bilinear interpolant in log-log space. */
-static KOKKOS_INLINE_FUNCTION double aneos_get_du_dT(const struct aneos_table *tbl, double lr, double lT)
+static KOKKOS_INLINE_FUNCTION double aneos_dlogQ_dlogrho(const struct aneos_table *tbl, const double *log_qty,
+                               struct aneos_axis_location r, struct aneos_axis_location T)
 {
-    double dlT = 1.0e-4; /* step in log10(T) */
-    double lT_lo = lT - dlT;
-    double lT_hi = lT + dlT;
-
-    /* Clamp to bounds */
-    if(lT_lo < tbl->logT_min) { lT_lo = tbl->logT_min; lT_hi = lT_lo + 2.0 * dlT; }
-    if(lT_hi > tbl->logT_max) { lT_hi = tbl->logT_max; lT_lo = lT_hi - 2.0 * dlT; }
-
-    double log_u_lo = aneos_bilinear_interp(tbl, tbl->log_energy, lr, lT_lo);
-    double log_u_hi = aneos_bilinear_interp(tbl, tbl->log_energy, lr, lT_hi);
-
-    double u_lo = pow(10.0, log_u_lo);
-    double u_hi = pow(10.0, log_u_hi);
-    double T_lo = pow(10.0, lT_lo);
-    double T_hi = pow(10.0, lT_hi);
-
-    double du_dT = (u_hi - u_lo) / (T_hi - T_lo);
-    return du_dT;
-}
-
-/* Internal helper: get dP/dT numerically */
-
-static KOKKOS_INLINE_FUNCTION double aneos_get_dP_dT(const struct aneos_table *tbl, double lr, double lT)
-{
-    double dlT = 1.0e-4;
-    double lT_lo = lT - dlT;
-    double lT_hi = lT + dlT;
-    if(lT_lo < tbl->logT_min) { lT_lo = tbl->logT_min; lT_hi = lT_lo + 2.0 * dlT; }
-    if(lT_hi > tbl->logT_max) { lT_hi = tbl->logT_max; lT_lo = lT_hi - 2.0 * dlT; }
-
-    double P_lo = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_pressure, lr, lT_lo));
-    double P_hi = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_pressure, lr, lT_hi));
-    double T_lo = pow(10.0, lT_lo);
-    double T_hi = pow(10.0, lT_hi);
-    return (P_hi - P_lo) / (T_hi - T_lo);
+    int nT = tbl->nT, i = r.i, j = T.i;
+    double dq = (1.0 - T.t) * (log_qty[(i + 1) * nT + j] - log_qty[i * nT + j])
+              + T.t * (log_qty[(i + 1) * nT + j + 1] - log_qty[i * nT + j + 1]);
+    return dq / (tbl->logrho[i + 1] - tbl->logrho[i]);
 }
 
 /* ---- Direct (rho, T) lookup ---- */
@@ -207,19 +196,19 @@ int aneos_lookup_rhoT_P(const struct aneos_table *tables, int mat_index,
     const struct aneos_table *tbl = &tables[mat_index];
     if(!tbl->loaded) return 1;
 
-    double lr = log10(rho_cgs > 0 ? rho_cgs : 1e-30);
-    double lT = log10(T_cgs > 0 ? T_cgs : 1.0);
+    struct aneos_axis_location r = aneos_locate_rho(tbl, log10(rho_cgs > 0 ? rho_cgs : 1e-30));
+    struct aneos_axis_location T = aneos_locate_T(tbl, log10(T_cgs > 0 ? T_cgs : 1.0));
 
-    if(press_cgs)   *press_cgs   = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_pressure, lr, lT));
-    if(u_cgs)       *u_cgs       = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_energy, lr, lT));
-    if(entropy_cgs) *entropy_cgs = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_entropy, lr, lT));
+    if(press_cgs)   *press_cgs   = pow(10.0, aneos_interp(tbl, tbl->log_pressure, r, T));
+    if(u_cgs)       *u_cgs       = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, T));
+    if(entropy_cgs) *entropy_cgs = aneos_interp(tbl, tbl->entropy, r, T);
     if(cs_cgs) {
         if(tbl->has_csound)
-            *cs_cgs = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_csound, lr, lT));
+            *cs_cgs = pow(10.0, aneos_interp(tbl, tbl->log_csound, r, T));
         else
             *cs_cgs = 0;
     }
-    if(phase_out) *phase_out = aneos_phase_lookup(tbl, lr, lT);
+    if(phase_out) *phase_out = aneos_phase_at(tbl, r, T);
 
     return 0;
 }
@@ -245,6 +234,9 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     if(lr < tbl->logrho_min) lr = tbl->logrho_min;
     if(lr > tbl->logrho_max) lr = tbl->logrho_max;
 
+    /* density is fixed through the temperature solve: locate it once */
+    struct aneos_axis_location r = aneos_locate_rho(tbl, lr);
+
     double u_target = u_cgs;
     if(u_target <= 0) u_target = 1e-30;
 
@@ -267,8 +259,8 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     double lT_hi = tbl->logT_max;
 
     /* Check bracket: evaluate u at the endpoints */
-    double u_lo = pow(10.0, aneos_get_log_u(tbl, lr, lT_lo));
-    double u_hi = pow(10.0, aneos_get_log_u(tbl, lr, lT_hi));
+    double u_lo = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_lo)));
+    double u_hi = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_hi)));
 
     /* If u_target is outside the table range, clamp */
     if(u_target <= u_lo) {
@@ -278,8 +270,8 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     }
 
     for(int iter = 0; iter < max_iter && !converged; iter++) {
-        double log_u_here = aneos_get_log_u(tbl, lr, lT);
-        double u_here = pow(10.0, log_u_here);
+        struct aneos_axis_location Tl = aneos_locate_T(tbl, lT);
+        double u_here = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, Tl));
         double resid = u_here - u_target;
 
         /* Check convergence */
@@ -288,8 +280,8 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
         /* Update bracket */
         if(resid < 0) { lT_lo = lT; } else { lT_hi = lT; }
 
-        /* Newton step: du/dT */
-        double du_dT = aneos_get_du_dT(tbl, lr, lT);
+        /* Newton step: du/dT, the exact slope of the interpolant in this cell */
+        double du_dT = (u_here / pow(10.0, lT)) * aneos_dlogQ_dlogT(tbl, tbl->log_energy, r, Tl);
         double lT_new;
 
         if(du_dT > 0 && fabs(du_dT) > 1e-50) {
@@ -321,53 +313,40 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     if(T_guess) *T_guess = T;
 
     /* --- Look up all quantities at the converged (rho, T) --- */
-    if(press_cgs) *press_cgs = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_pressure, lr, lT));
-    if(entropy_cgs) *entropy_cgs = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_entropy, lr, lT));
+    struct aneos_axis_location Tloc = aneos_locate_T(tbl, lT);
+    if(press_cgs) *press_cgs = pow(10.0, aneos_interp(tbl, tbl->log_pressure, r, Tloc));
+    if(entropy_cgs) *entropy_cgs = aneos_interp(tbl, tbl->entropy, r, Tloc);
+
+    /* du/dT and dP/dT at the converged state, each evaluated once if any output needs it */
+    volatile int need_cs_estimate = (cs_cgs && !tbl->has_csound); /* volatile: nvc++ folds plain int gates in device code */
+    double du_dT = 0, dP_dT = 0;
+    double rho_here = pow(10.0, lr);
+    if(need_cs_estimate || cv_cgs || gruneisen) {du_dT = (pow(10.0, aneos_interp(tbl, tbl->log_energy, r, Tloc)) / T) * aneos_dlogQ_dlogT(tbl, tbl->log_energy, r, Tloc);}
+    if(need_cs_estimate || gruneisen) {dP_dT = (pow(10.0, aneos_interp(tbl, tbl->log_pressure, r, Tloc)) / T) * aneos_dlogQ_dlogT(tbl, tbl->log_pressure, r, Tloc);}
 
     if(cs_cgs) {
         if(tbl->has_csound)
-            *cs_cgs = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_csound, lr, lT));
+            *cs_cgs = pow(10.0, aneos_interp(tbl, tbl->log_csound, r, Tloc));
         else {
             /* Estimate cs from thermodynamic identity: cs^2 = (dP/drho)_S
                Approximate with (dP/drho)_T + T/rho^2 * (dP/dT)^2 / Cv */
-            double du_dT = aneos_get_du_dT(tbl, lr, lT);
             double Cv_local = (du_dT > 0) ? du_dT : 1e-10;
 
-            /* dP/drho at constant T */
-            double dlr = 1.0e-4;
-            double lr_lo = lr - dlr, lr_hi = lr + dlr;
-            if(lr_lo < tbl->logrho_min) { lr_lo = tbl->logrho_min; lr_hi = lr_lo + 2.0 * dlr; }
-            if(lr_hi > tbl->logrho_max) { lr_hi = tbl->logrho_max; lr_lo = lr_hi - 2.0 * dlr; }
-            double P_rlo = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_pressure, lr_lo, lT));
-            double P_rhi = pow(10.0, aneos_bilinear_interp(tbl, tbl->log_pressure, lr_hi, lT));
-            double rho_lo = pow(10.0, lr_lo), rho_hi = pow(10.0, lr_hi);
-            double dP_drho_T = (P_rhi - P_rlo) / (rho_hi - rho_lo);
+            /* dP/drho at constant T, the exact slope of the interpolant in this cell */
+            double dP_drho_T = (pow(10.0, aneos_interp(tbl, tbl->log_pressure, r, Tloc)) / rho_here) * aneos_dlogQ_dlogrho(tbl, tbl->log_pressure, r, Tloc);
 
-            double dP_dT_rho = aneos_get_dP_dT(tbl, lr, lT);
-            double rho_here = pow(10.0, lr);
-            double cs2 = dP_drho_T + T * dP_dT_rho * dP_dT_rho / (rho_here * rho_here * Cv_local);
+            double cs2 = dP_drho_T + T * dP_dT * dP_dT / (rho_here * rho_here * Cv_local);
             *cs_cgs = (cs2 > 0) ? sqrt(cs2) : 0.0;
         }
     }
 
     /* Cv = du/dT at constant rho */
-    if(cv_cgs) {
-        double du_dT = aneos_get_du_dT(tbl, lr, lT);
-        *cv_cgs = (du_dT > 0) ? du_dT : 0.0;
-    }
+    if(cv_cgs) *cv_cgs = (du_dT > 0) ? du_dT : 0.0;
 
     /* Gruneisen parameter: Gamma = (1/rho) * (dP/du)_rho = (dP/dT) / (rho * du/dT) */
-    if(gruneisen) {
-        double du_dT = aneos_get_du_dT(tbl, lr, lT);
-        double dP_dT = aneos_get_dP_dT(tbl, lr, lT);
-        double rho_here = pow(10.0, lr);
-        if(du_dT > 0 && rho_here > 0)
-            *gruneisen = dP_dT / (rho_here * du_dT);
-        else
-            *gruneisen = 0.0;
-    }
+    if(gruneisen) *gruneisen = (du_dT > 0 && rho_here > 0) ? dP_dT / (rho_here * du_dT) : 0.0;
 
-    if(phase_out) *phase_out = aneos_phase_lookup(tbl, lr, lT);
+    if(phase_out) *phase_out = aneos_phase_at(tbl, r, Tloc);
 
     return 0;
 }

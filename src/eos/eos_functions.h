@@ -977,10 +977,10 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
             double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
             double aneos_T_guess = cell[i].Temperature;
-            double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
+            double aneos_P, aneos_cs;
             int aneos_phase;
             int aneos_ierr = aneos_compute_P(eos_tables->aneos, aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                          &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+                          &aneos_P, &aneos_cs, NULL, NULL, NULL, &aneos_phase); /* entropy, Cv and Gruneisen not needed here */
             /* The cell's CompositionType names a material whose table was never
                loaded: a setup error, and the same for every cell of that type, so
                there is nothing to recover to. endrun requests a controlled stop on

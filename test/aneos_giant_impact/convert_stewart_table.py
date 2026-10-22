@@ -56,7 +56,8 @@ def read_stewart_table(fname):
 
 
 def downsample(rho, T, data, target_nrho, target_nT):
-    """Downsample by picking evenly-spaced indices in log space."""
+    """Downsample by keeping evenly spaced indices of the source axes (the source axes are
+    themselves irregular, so the kept points are too; GIZMO reads any strictly increasing axes)."""
     nrho_orig, nT_orig = len(rho), len(T)
 
     idx_rho = np.unique(np.linspace(0, nrho_orig - 1, target_nrho).astype(int))
@@ -94,7 +95,7 @@ def write_gizmo_sesame(fname, mat_id, rho, T, data):
 
                 P_cgs = max(P_si * PA_TO_DYNCM2, 1e-30)
                 u_cgs = max(u_si * JKG_TO_ERGG, 1e-30)
-                S_cgs = max(S_si * JKKG_TO_ERGKG, 1e-30)
+                S_cgs = S_si * JKKG_TO_ERGKG   # signed: the entropy zero point is a convention
                 cs_cgs = max(cs_si * MS_TO_CMS, 1e-30)
 
                 f.write(f"{r_cgs:.10e} {t:.10e} {P_cgs:.10e} {u_cgs:.10e} {S_cgs:.10e} {cs_cgs:.10e}\n")
