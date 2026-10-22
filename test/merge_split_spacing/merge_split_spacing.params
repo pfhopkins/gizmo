@@ -1,0 +1,15 @@
+% IC is generated locally by make_merge_split_spacing_ics.py
+InitCondFile               merge_split_spacing_ics
+OutputDir                  output
+TimeMax                    1.0e-4
+BoxSize                    1.0
+TimeBetSnapshot            2.0e-5
+TimeBetStatistics          1.0e-4
+MaxSizeTimestep            1.0e-5
+DesNumNgb                  32
+InitGasTemp                0
+UnitLength_in_cm           3.085678e21
+UnitMass_in_g              1.989e43
+UnitVelocity_in_cm_per_s   1.0e5
+MaxMemSize                 4000
+PartAllocFactor            3.0

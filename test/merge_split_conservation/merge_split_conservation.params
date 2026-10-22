@@ -1,0 +1,16 @@
+% IC is generated locally by make_turb_diff_metals_ics.py and read as a snapshot restart (RestartFlag=2),
+% so that its per-cell metallicities are kept rather than reset to InitMetallicity
+InitCondFile               turb_diff_metals_ics
+OutputDir                  output
+TimeMax                    0.05               % 50 Myr
+BoxSize                    0.5                % kpc
+TimeBetSnapshot            0.005
+TimeBetStatistics          0.05
+MaxSizeTimestep            0.005
+DesNumNgb                  32
+UnitLength_in_cm           3.085678e21        % 1 kpc
+UnitMass_in_g              1.989e43           % 1e10 Msun
+UnitVelocity_in_cm_per_s   1.0e5              % 1 km/s
+TurbDiffusionCoefficient   1.0
+MaxMemSize                 4000
+PartAllocFactor            3.0

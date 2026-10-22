@@ -314,7 +314,7 @@ void merge_and_split_particles(void)
     struct flags_merg_split {
         int flag; // 0 for nothing, -1 for clipping, 1 for merging, 2 for splitting, and 3 marked as merged
         int target_index;
-        double split_r_near; // distance to the nearest same-type neighbour when a split was flagged (valid for flag==2)
+        double r_nearest; // splits: nearest-neighbour distance before any cell moved
     } *Ptmp;
 
     int target_for_merger,dummy=0,numngb_inbox,startnode,i,j,n; double threshold_val;
@@ -327,7 +327,7 @@ void merge_and_split_particles(void)
     for (i = 0; i < NumPart; i++) {
       Ptmp[i].flag = 0;
       Ptmp[i].target_index = -1;
-      Ptmp[i].split_r_near = 0;
+      Ptmp[i].r_nearest = 0;
     }
 
     for (i = 0; i < NumPart; i++)
@@ -491,13 +491,8 @@ void merge_and_split_particles(void)
             }
             /* now ask if the particle needs to be split */
             else if(does_particle_need_to_be_split(i) && (Ptmp[i].flag == 0)) {
-                /* A cell without a valid density has no volume to divide: not split on this step. */
-                if((P[i].Type == 0) && !((CellP[i].Density > 0) && isfinite(CellP[i].Density))) {continue;}
-                /* The daughters are placed within a fraction of the distance to the nearest same-type neighbour,
-                   so that distance is taken over EVERY neighbour, including ones themselves flagged to split or
-                   merge (in a refinement cascade the nearest one usually is), and recorded now, before any cell is
-                   moved by the merges and splits applied below. With no neighbour, or one at the same position,
-                   the cell is not split on this step. (cf. kokkos 8271d055) */
+                /* if splitting: do a neighbor loop ON THE SAME DOMAIN to determine the nearest particle (so dont overshoot it);
+                   the distance is recorded now, before any cell is moved by the merges and splits applied below */
                 startnode=All.MaxPart;
                 numngb_inbox = ngb_treefind_variable_targeted(P[i].Pos,P[i].KernelRadius,-1,&startnode,0,&dummy,&dummy,Pi_BITFLAG); // search for particles of matching type
                 if(numngb_inbox>0)
@@ -506,15 +501,18 @@ void merge_and_split_particles(void)
                     for(n=0; n<numngb_inbox; n++)
                     {
                         j = Ngblist[n];
-                        if((j<0)||(j==i)||(P[j].Type!=P[i].Type)||!(P[j].Mass > 0)) {continue;}
-                        Vec3<double> dp = P[i].Pos - P[j].Pos;
-                        nearest_xyz(dp);
-                        double r2 = dp.norm_sq();
-                        if(r2<threshold_val) {threshold_val=r2;}
+                        /* make sure we're not taking the same particle */
+                        if((j>=0)&&(j!=i)&&(P[j].Type==P[i].Type) && (P[j].Mass > 0)) { /* flagged neighbours count too */
+                            Vec3<double> dp = P[i].Pos - P[j].Pos;
+                            nearest_xyz(dp);
+                            double r2 = dp.norm_sq();
+                            if(r2<threshold_val) {threshold_val=r2; target_for_merger=j;} // position-based //
+                        }
                     }
                     if((threshold_val < MAX_REAL_NUMBER) && (threshold_val > 0)) {
                         Ptmp[i].flag = 2; // mark for splitting
-                        Ptmp[i].split_r_near = sqrt(threshold_val);
+                        Ptmp[i].target_index = target_for_merger;
+                        Ptmp[i].r_nearest = sqrt(threshold_val);
                     }
                 }
             }
@@ -529,7 +527,7 @@ void merge_and_split_particles(void)
             if(did_merge == 1) {n_particles_merged++;}
         }
         if (Ptmp[i].flag == 2) {
-            int did_split = split_particle_i(i, n_particles_split, Ptmp[i].split_r_near);
+            int did_split = split_particle_i(i, n_particles_split, Ptmp[i].target_index, Ptmp[i].r_nearest);
             if(did_split == 1) {n_particles_split++; if(P[i].Type==0) {n_particles_gas_split++;}} else {failed_splits++;}
         }
     }
@@ -577,7 +575,8 @@ static int UnmetSplitDemand = 0;
 int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
 void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
 
-int split_particle_i(int i, int n_particles_split, double r_near)
+/* r_nearest_presplit: distance to i_nearest before this pass moved any cell (0: measure it here) */
+int split_particle_i(int i, int n_particles_split, int i_nearest, double r_nearest_presplit)
 {
     double mass_of_new_particle;
     if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) )
@@ -586,8 +585,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
            a request for slots, so it never needs to exceed what a rank could hold. */
         if(UnmetSplitDemand < All.MaxPartExpandable) {UnmetSplitDemand++;}
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
-        return 0;
-        endrun(8888);
+        return 0; /* the caller counts and reports failed splits */
     }
 #ifndef SPAWN_PARTICLES_VIA_SPLITTING
     if(P[i].Type != 0) {printf("Splitting Non-Gas Particle: i=%d ID=%llu Type=%d \n",i,(unsigned long long) P[i].ID,P[i].Type);} //fflush(stdout); endrun(8889);
@@ -600,6 +598,9 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     k=0;
     phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
     cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
+    Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
+    nearest_xyz(dp);
+    double r_near = (r_nearest_presplit > 0) ? r_nearest_presplit : dp.norm();
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
@@ -645,11 +646,13 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 
     /* assign masses to both particles (so they sum correctly), but first record some numbers in case we need them below */
     double mass_before_split = 0, density_before_split = 0, volume_before_split = 0; mass_before_split = P[i].Mass; // save for use below
-    if(P[i].Type==0) {density_before_split = CellP[i].Density; volume_before_split = mass_before_split/density_before_split;} // save for use below
-    P[j].Mass = mass_of_new_particle * P[i].Mass; CellP[j].Mass = P[j].Mass;
-    P[i].Mass -= P[j].Mass; CellP[i].Mass = P[i].Mass;
+    if(P[i].Type==0) {density_before_split = CellP[i].Density; volume_before_split = (density_before_split > 0) ? mass_before_split/density_before_split : pow(P[i].Get_Particle_Size(), NUMDIMS);} // save for use below; cell size if no density yet
+    P[j].Mass = mass_of_new_particle * P[i].Mass;
+    P[i].Mass -= P[j].Mass;
+    if(P[i].Type==0) {CellP[j].Mass = P[j].Mass; CellP[i].Mass = P[i].Mass;} /* CellP only exists for gas */
 #ifdef BOX_BND_PARTICLES
-    if(P[i].ID==0)  {P[j].ID=1; double m0=P[i].Mass+P[j].Mass; P[i].Mass=P[j].Mass=m0;} CellP[i].Mass = P[i].Mass;
+    if(P[i].ID==0)  {P[j].ID=1; double m0=P[i].Mass+P[j].Mass; P[i].Mass=P[j].Mass=m0;}
+    if(P[i].Type==0) {CellP[i].Mass = P[i].Mass; CellP[j].Mass = P[j].Mass;}
 #endif
 
     /* prepare to shift the particle locations according to the random number we drew above */
@@ -730,8 +733,11 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         CellP[j].MassTrue = mass_of_new_particle * CellP[i].MassTrue;
         CellP[i].MassTrue -= CellP[j].MassTrue;
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange stays with the parent */
+#endif
 #if defined(SINK_THERMALFEEDBACK)
-        CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* pending energy (not specific): partition with the mass */
+        CellP[j].Injected_Sink_Energy = mass_of_new_particle * CellP[i].Injected_Sink_Energy; CellP[i].Injected_Sink_Energy -= CellP[j].Injected_Sink_Energy; /* partition like other extensive fields */
 #endif
 #ifdef COSMIC_RAY_FLUID
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -863,12 +869,12 @@ int merge_particles_ij(int i, int j)
     int k;
     if(P[i].Mass <= 0)
     {
-        P[i].Mass = 0; CellP[i].Mass = P[i].Mass;
+        P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;} /* CellP only exists for gas */
         return 0;
     }
     if(P[j].Mass <= 0)
     {
-        P[j].Mass = 0; CellP[j].Mass = P[j].Mass;
+        P[j].Mass = 0; if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
         return 0;
     }
     double mtot = P[j].Mass + P[i].Mass;
@@ -932,8 +938,7 @@ int merge_particles_ij(int i, int j)
         }
 #endif
         /* finally zero out the particle mass so it will be deleted */
-        P[i].Mass = 0; CellP[i].Mass = P[i].Mass;
-        P[j].Mass = mtot; CellP[j].Mass = P[j].Mass;
+        P[i].Mass = 0; P[j].Mass = mtot; /* non-gas pair: CellP only exists for gas */
         /* momentum shift for passing to tree (so we know how to move it) */
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
         P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
@@ -1119,6 +1124,12 @@ int merge_particles_ij(int i, int j)
 #endif // CHIMES
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
+#endif
+#if defined(SINK_THERMALFEEDBACK)
+    CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* it adds */
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
@@ -1354,7 +1365,7 @@ void rearrange_particle_sequence(void)
     for(i = 0; i < NumPart; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
-            P[i].Mass = 0; CellP[i].Mass = P[i].Mass;
+            P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;} /* CellP only exists for gas */
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
 

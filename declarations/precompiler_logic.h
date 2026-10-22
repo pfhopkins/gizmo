@@ -1294,4 +1294,6 @@
 #define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
 #endif
 
-
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
+#error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif

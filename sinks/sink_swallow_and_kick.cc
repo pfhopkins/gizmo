@@ -1101,6 +1101,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #if defined(SINK_THERMALFEEDBACK)
         CellP[j].Injected_Sink_Energy = 0;
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] = 0;} /* the template's pending exchange stays with the template */
+#endif
 #ifdef RADTRANSFER
         for(k=0;k<N_RT_FREQ_BINS;k++)
         {
