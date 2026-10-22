@@ -491,6 +491,30 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
     return n_items >= thresh;
 }
 
+/* Host writeback of n evaluated actives, slots [first, first+n), from accums[0..n). A Spec whose
+ * writeback touches only its own particle (nlr_spec_writeback_writes_only_own_particle) runs it on
+ * several threads once there is enough work: the actives are distinct, so the writes are disjoint
+ * and their order cannot change the result. Every other Spec writes back serially in active order. */
+template <typename Spec>
+static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int first, int n,
+                                        const typename Spec::AccumData *accums)
+{
+    if constexpr (nlr_spec_writeback_writes_only_own_particle_v<Spec>) {
+        const bool threaded = nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads());
+        (void) threaded;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+        for(int kk = 0; kk < n; kk++) {
+            Spec::apply_active_writeback(args, first + kk, args.active_list[first + kk], accums[kk]);
+        }
+    } else {
+        for(int kk = 0; kk < n; kk++) {
+            Spec::apply_active_writeback(args, first + kk, args.active_list[first + kk], accums[kk]);
+        }
+    }
+}
+
 /* WHERE one batch of fused-walk sources runs: device, host threads, or one host
  * core. Every fused walk goes through here -- the source loop and the placement
  * decision exist once, and the five walks that use it (record and evaluate, from
@@ -942,11 +966,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     }
 
     /* Host writeback — same code path as Mode A's writeback. */
-    {
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
-        }
-    }
+    nlr_apply_active_writebacks<Spec>(args, 0, N, accums.data());
 }
 
 
@@ -1941,11 +1961,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
                                                        (N > 0) ? accums_self.data() : nullptr);
 
     /* Stage 12 final: writeback per active. */
-    {
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_self[aa]);
-        }
-    }
+    nlr_apply_active_writebacks<Spec>(args, 0, N, accums_self.data());
 
 }
 
@@ -2028,9 +2044,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
                 tree, accums.data());
         }
         if(evaluated) {
-            for(int aa = 0; aa < N; aa++) {
-                Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
-            }
+            nlr_apply_active_writebacks<Spec>(args, 0, N, accums.data());
         }
     }
     gpu_particles_arena_mark_clean_after_scatter(Spec::loop_name);
@@ -2687,11 +2701,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
          * host reads d_accums[0,n) directly. */
 
         /* (4) host writeback for [c0, c0+n) before the next chunk reuses arrays. */
-        {
-            for(int kk = 0; kk < n; kk++) {
-                Spec::apply_active_writeback(args, c0 + kk, args.active_list[c0 + kk], d_accums[kk]);
-            }
-        }
+        nlr_apply_active_writebacks<Spec>(args, c0, n, d_accums);
     }
 
 
