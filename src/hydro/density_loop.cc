@@ -24,6 +24,29 @@
 #include "density_loop.h"
 #include "../mesh/gpu_neighbor_list.h"      /* gizmo_mark_kernel_radius_dirty_indices */
 
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+/* Whether a particle of this type searches for gas neighbours as a feedback or radiation source: with a looser
+   neighbour-number tolerance (it needs only enough neighbours to couple to) and, with star formation, a cap on the
+   search radius so a source in very diffuse gas does not search ludicrously far. By default the star types 1-4; in
+   idealized grain or radiation problems without star formation, type 4 only; and with radiation, every type that
+   injects radiation, since the injection uses the kernel set here. Never gas (it searches to its own target, with
+   its own cap), sinks (capped by their accretion radius) or grains. */
+static inline int density_is_coupling_source_type(int type)
+{
+    int valid_types = 2+4+8+16, invalid_types = 1+32;
+#if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
+    valid_types = 16;
+#endif
+#ifdef RT_SOURCES
+    valid_types |= RT_SOURCES;
+#endif
+#ifdef GRAIN_FLUID
+    invalid_types |= GRAIN_PTYPES;
+#endif
+    return ((1 << type) & valid_types) && !((1 << type) & invalid_types);
+}
+#endif
+
 /* ====================================================================
  * density_isactive — hydro density active-particle predicate.
  *
@@ -475,15 +498,7 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
     double maxsoft = cs.max_kernel_radius;
 
 #ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    /* legacy density.cc:153-159 constants — Config-resolved at compile time */
-    int valid_stellar_types = 2+4+8+16, invalid_stellar_types = 1+32;
-  #if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
-    valid_stellar_types = 16; invalid_stellar_types = 1+2+4+8+32;
-    #ifdef RADTRANSFER
-    invalid_stellar_types = 64; valid_stellar_types = RT_SOURCES;
-    #endif
-  #endif
-    if (((1 << args.P[i].Type) & (valid_stellar_types)) && !((1 << args.P[i].Type) & (invalid_stellar_types))) {
+    if (density_is_coupling_source_type(args.P[i].Type)) {
         desnumngb = cs.des_num_ngb;
   #if defined(RT_SOURCE_INJECTION)
         if (desnumngb < 64.0) desnumngb = 64.0;
@@ -742,19 +757,6 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
                                   const struct global_data_all_processes* host_all)
 {
     const int N = (int)active_list_concat.size();
-
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
-    /* Legacy density.cc:153-159 type-validity constants. Config-resolved
-     * at compile time; needed for valid_stellar_types gate around the
-     * DensityAroundParticle / GradRho scatter. */
-    int valid_stellar_types = 2+4+8+16, invalid_stellar_types = 1+32;
-  #if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
-    valid_stellar_types = 16; invalid_stellar_types = 1+2+4+8+32;
-    #ifdef RADTRANSFER
-    invalid_stellar_types = 64; valid_stellar_types = RT_SOURCES;
-    #endif
-  #endif
-#endif
 
     /* Parallel-for: legacy uses #pragma omp parallel for schedule(dynamic)
      * around density.cc:629-795. Preserved here. */
@@ -1241,18 +1243,6 @@ void density(void)
      *       so the legacy `Left[i] = Right[i] = 0` is already covered. */
     gpu_particles_arena_invalidate();
     {
-#if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && defined(GALSF)
-        int valid_stellar_types   = 2+4+8+16;
-        int invalid_stellar_types = 1+32;
-#ifdef BLACK_HOLES
-        valid_stellar_types   = 16;
-        invalid_stellar_types = 1+2+4+8+32;
-#endif
-#ifdef RT_SOURCES
-        invalid_stellar_types = 64;
-        valid_stellar_types   = RT_SOURCES;
-#endif
-#endif
         for (int i : active_list_concat) {
 #ifdef SINK_PARTICLES
             P[i].SwallowID = 0;
@@ -1265,10 +1255,7 @@ void density(void)
 #endif
             double maxsoft = host_all->MaxKernelRadius;
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && defined(GALSF)
-            if (((1 << P[i].Type) & (valid_stellar_types)) &&
-                !((1 << P[i].Type) & (invalid_stellar_types))) {
-                maxsoft = 2.0 / (UNIT_LENGTH_IN_KPC * host_all->cf_atime);
-            }
+            if (density_is_coupling_source_type(P[i].Type)) {maxsoft = 2.0 / (UNIT_LENGTH_IN_KPC * host_all->cf_atime);}
 #endif
 #ifdef SINK_PARTICLES
             /* Enforce the recommended-policy invariant "nothing exceeds

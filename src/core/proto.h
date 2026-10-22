@@ -23,6 +23,12 @@ void write_header_attributes_in_hdf5(hid_t handle);
 void read_header_attributes_in_hdf5(char *fname);
 
 void output_compile_time_options(void);
+const char *compile_time_config_literal(void);              /* the Config.sh lines, one per line */
+const char *compile_time_effective_options(void);           /* every option defined in the build, NAME or NAME=value, one per line */
+unsigned long long compile_time_effective_options_fnv1a64(void);
+const char *compile_time_compiler_version(void);
+unsigned long long executable_fnv1a64(void);
+long long executable_size_in_bytes(void);
 
 void report_pinning(void);
 void pin_to_core_set(void);
@@ -56,7 +62,7 @@ int is_particle_a_special_zoom_target(int i);
 void update_tag_anchor_refinement_center(void);
 #endif
 int merge_particles_ij(int i, int j);
-int split_particle_i(int i, int n_particles_split, int i_nearest);
+int split_particle_i(int i, int n_particles_split, double r_near);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
@@ -143,21 +149,41 @@ GIZMO_GPU_FUNCTION static inline signed char min_work_bin(signed char a, signed 
 GIZMO_GPU_FUNCTION static inline int wakeup_flag_from_timebin(int bin) {return bin + 1;}
 GIZMO_GPU_FUNCTION static inline int wakeup_timebin_from_flag(int flag) {return flag - 1;}
 #ifdef MHD_MODIFIED_GRADIENT
+/* The MG face shift factor kappa: the correction moves both states of a face by (c_j - c_i) kappa A, and that face's coefficient in
+   the solve is kappa |A|^2, so the solve minimises sum_faces (flux change)^2 / (kappa |A|^2). By default kappa = r^2/8 (Tu et al.).
+   Under MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT, kappa = B_e^2 / <|B|^2> + 0.01, with B_e = (|B_i| + |B_j|)/2 the symmetric pair
+   field scale of the two cells (not a reconstructed face field) and <|B|^2> the mean over the cells of the solve (inv_mean_Bsq is its
+   inverse, 0 if the field is zero everywhere): the solve then minimises the flux changes relative to the symmetric field-flux scale
+   |A| B_e (not the normal flux |B.A|), with a floor of 0.1 times the rms field. Dividing by <|B|^2> leaves the correction (c kappa) unchanged in
+   exact arithmetic but makes the coefficients independent of the field's units and amplitude. Bsq_i and Bsq_j are the cells' |B|^2.
+   Every consumer (the solve's coefficients, the hydro face shift, the constrained-gradient face sum, the envelope cap) calls this. */
+GIZMO_GPU_FUNCTION static inline double mg_face_shift_factor(double r2, double Bsq_i, double Bsq_j, double inv_mean_Bsq)
+{
+#ifdef MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT
+    double Bmag_i = sqrt(Bsq_i), Bmag_j = sqrt(Bsq_j);
+    (void)r2;
+    return 0.25 * (Bmag_i + Bmag_j) * (Bmag_i + Bmag_j) * inv_mean_Bsq + 0.01;
+#else
+    (void)Bsq_i; (void)Bsq_j; (void)inv_mean_Bsq;
+    return 0.125 * r2;
+#endif
+}
 /* c_j - c_i of the last applied MG solve on a face, as the face applies it. Each connected piece of that solve fixed its
    own constant in c, so the difference is defined only between cells that shared a piece; across pieces (two cells that
    have come into contact since), or for a cell with no MG state (token 0), the face takes no MG correction. On a step
-   without the solve the cells have moved since c was computed, so the correction flux |c_j - c_i| r^2|A|^2/8 through the
-   face (at the current geometry) is capped at the smaller envelope of its two cells, the largest flux each put through any
-   of its faces at the solve: a reused correction never exceeds what the solve itself applied. A cell with no envelope (0)
-   takes none. Hydro and the constrained-gradient face sum both call this, so they apply the same correction. */
+   without the solve the cells have moved since c was computed, so the correction flux |c_j - c_i| kappa |A|^2 through the
+   face (kappa = mg_face_shift_factor at the current geometry and field) is capped at the smaller envelope of its two cells,
+   the largest flux each put through any of its faces at the solve: a reused correction never exceeds what the solve itself
+   applied. A cell with no envelope (0) takes none. Hydro and the constrained-gradient face sum both call this, so they apply
+   the same correction. */
 GIZMO_GPU_FUNCTION static inline double mg_face_coefficient_difference(double c_i, long long piece_token_i, double envelope_i,
                                                                        double c_j, long long piece_token_j, double envelope_j,
-                                                                       double r2, double face_area_sq, int without_solve)
+                                                                       double face_shift_factor, double face_area_sq, int without_solve)
 {
     if((piece_token_i == 0) || (piece_token_i != piece_token_j)) {return 0.0;}
     double dc = c_j - c_i;
     if(without_solve) {
-        double flux = fabs(dc) * 0.125 * r2 * face_area_sq, envelope = (envelope_i < envelope_j) ? envelope_i : envelope_j;
+        double flux = fabs(dc) * face_shift_factor * face_area_sq, envelope = (envelope_i < envelope_j) ? envelope_i : envelope_j;
         if(flux > envelope) {dc *= (envelope > 0) ? envelope / flux : 0.0;}
     }
     return dc;

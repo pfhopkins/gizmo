@@ -46,6 +46,8 @@ test/*/output/
 test/*/output_*/
 test/*/GIZMO
 test/*/GIZMO_*
+# the harness package source; on case-insensitive filesystems the binary patterns above also match it
+!test/harness/gizmo
 test/*/*.log
 test/*/*.bak
 test/*/*_ics.hdf5

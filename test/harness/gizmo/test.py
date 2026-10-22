@@ -1,6 +1,7 @@
 """General routines to build gizmo for a test and obtain ICs and params files"""
 
 import platform
+import shlex
 import subprocess
 from os import system, environ, path, chdir, cpu_count, remove, makedirs
 from urllib.error import HTTPError, URLError
@@ -285,6 +286,64 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
         )
 
 
+_MPIRUN_IS_OPEN_MPI = None
+
+
+def mpirun_is_open_mpi() -> bool:
+    """Whether the mpirun on PATH is Open MPI, whose placement flags (--use-hwthread-cpus, --bind-to,
+    --map-by) other MPI libraries (Intel MPI, MPICH) reject. Asked once per pytest process."""
+    global _MPIRUN_IS_OPEN_MPI
+    if _MPIRUN_IS_OPEN_MPI is None:
+        try:
+            version = subprocess.run(["mpirun", "--version"], capture_output=True, text=True, timeout=30)
+            _MPIRUN_IS_OPEN_MPI = "open mpi" in (version.stdout + version.stderr).lower()
+        except (OSError, subprocess.TimeoutExpired):
+            _MPIRUN_IS_OPEN_MPI = False
+    return _MPIRUN_IS_OPEN_MPI
+
+
+def mpi_launch_command(num_mpi_ranks: int, num_openmp_threads: int = 0) -> list:
+    """The launcher part of the command that runs GIZMO (everything before ./GIZMO), as an argument list.
+    Every test that starts GIZMO launches it with this, so one setting covers the whole suite.
+
+    GIZMO_TEST_MPI_LAUNCHER, if set, is used as written: for systems that require their own launcher,
+    e.g. "srun --ntasks={ranks} --cpus-per-task={threads}" or "ibrun -n {ranks}". {ranks} and {threads} are replaced
+    by the run's rank and thread counts. Otherwise Open MPI's mpirun is given its placement flags, and any
+    other mpirun (Intel MPI, MPICH) only -np. Also sets the OpenMP placement variables to match."""
+    threads = num_openmp_threads if num_openmp_threads > 0 else 1
+    launcher = environ.get("GIZMO_TEST_MPI_LAUNCHER")
+    bind_cores = (launcher is None and num_openmp_threads > 0 and environ.get("GIZMO_TEST_BIND_CORES")
+                  and mpirun_is_open_mpi() and num_mpi_ranks * num_openmp_threads <= physical_cores())
+    if bind_cores:
+        # Opt-in: give each rank its own set of cores and keep that rank's threads inside it.
+        # Measured worth 34% on a 48x2 Genoa node, but it is off by default because this
+        # machine routinely runs several independent tests at once from sibling checkouts,
+        # and pinned ranks from one of them contend with every other. PE=n also needs
+        # ranks*threads <= physical cores or the job fails to launch rather than merely
+        # running slowly, and it cannot be combined with --use-hwthread-cpus.
+        environ["OMP_PROC_BIND"] = "close"
+        environ["OMP_PLACES"] = "cores"
+        return ["mpirun", "-np", str(num_mpi_ranks), "--map-by", f"slot:PE={num_openmp_threads}", "--bind-to", "core"]
+    # Assigned, not setdefault: the bind branch above sets these for its own run, and
+    # a later unbound run in the same pytest process would otherwise inherit them.
+    # `false` is the documented unit-testing value, and leaving placement to the OS is
+    # what lets concurrent runs share the machine.
+    environ["OMP_PROC_BIND"] = "false"
+    environ["OMP_PLACES"] = "threads"
+    if launcher is not None:
+        try:
+            words = shlex.split(launcher)
+        except ValueError as err:
+            raise RuntimeError(f"GIZMO_TEST_MPI_LAUNCHER={launcher!r} cannot be parsed ({err}); "
+                               "check its quoting") from None
+        if not words:
+            raise RuntimeError("GIZMO_TEST_MPI_LAUNCHER is set but empty; unset it, or give the launcher command")
+        return [word.replace("{ranks}", str(num_mpi_ranks)).replace("{threads}", str(threads)) for word in words]
+    if mpirun_is_open_mpi():
+        return ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus", "--bind-to", "none"]
+    return ["mpirun", "-np", str(num_mpi_ranks)]
+
+
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0,
              timeout: float = None, param_overrides: dict = None,
              allow_nonzero_exit: bool = False, params_name: str = None):
@@ -312,27 +371,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     if param_overrides:
         paramsfile = write_params_with_overrides(paramsfile, param_overrides)
 
-    cmd = ["mpirun", "-np", str(num_mpi_ranks)]
-    if num_openmp_threads > 0 and environ.get("GIZMO_TEST_BIND_CORES") \
-            and num_mpi_ranks * num_openmp_threads <= physical_cores():
-        # Opt-in: give each rank its own set of cores and keep that rank's threads inside it.
-        # Measured worth 34% on a 48x2 Genoa node, but it is off by default because this
-        # machine routinely runs several independent tests at once from sibling checkouts,
-        # and pinned ranks from one of them contend with every other. PE=n also needs
-        # ranks*threads <= physical cores or the job fails to launch rather than merely
-        # running slowly, and it cannot be combined with --use-hwthread-cpus.
-        cmd += ["--map-by", f"slot:PE={num_openmp_threads}", "--bind-to", "core"]
-        environ["OMP_PROC_BIND"] = "close"
-        environ["OMP_PLACES"] = "cores"
-    else:
-        cmd += ["--use-hwthread-cpus", "--bind-to", "none"]
-        # Assigned, not setdefault: the bind branch above sets these for its own run, and
-        # a later unbound run in the same pytest process would otherwise inherit them.
-        # `false` is the documented unit-testing value, and leaving placement to the OS is
-        # what lets concurrent runs share the machine.
-        environ["OMP_PROC_BIND"] = "false"
-        environ["OMP_PLACES"] = "threads"
-    cmd += ["./GIZMO", paramsfile, "0"]
+    cmd = mpi_launch_command(num_mpi_ranks, num_openmp_threads) + ["./GIZMO", paramsfile, "0"]
 
     effective_timeout = _resolve_test_timeout(timeout)
     outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"

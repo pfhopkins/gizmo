@@ -1,6 +1,7 @@
-#![our mascot](gizmo_documentation_ims/gizmo_smaller.png) GIZMO Users Guide 
+#![newlogofromshivan](gizmo_documentation_ims/gizmo_newlogo.jpeg) GIZMO Users Guide 
 ***
-#Table of Contents
+<a name="toc"></a>
+##![our mascot](gizmo_documentation_ims/gizmo_smaller.png) Table of Contents
 1. [Code Overview](#codeoverview)
     + [Code Philosophy & Design](#codeoverview-philosophy)
 2. [Feature Set (Types of Physics Modules)](#features)
@@ -13,7 +14,12 @@
         + [Authorship Requirements & Acceptable Use](#requirements-authorship-use)
     + [Code Sharing Guidelines](#requirements-sharing)
     + [Code Development & Extensions (New Physics and Code)](#requirements-development)
+        + [Contributing Changes Back (Workflow)](#requirements-development-workflow)
         + [General Code-style Principles (Good Practices)](#requirements-development-style)
+        + [Development Principles (Physics, Numerics, Performance)](#requirements-development-principles)
+        + [Reuse the Existing Templates (Where New Code Goes)](#requirements-development-templates)
+            + [Writing a New Neighbor Loop (the Loop Template)](#requirements-development-neighborloops)
+        + [AI-Assisted Development](#requirements-development-ai)
 4. [Fluid (Hydro) Solvers](#hydro)
     + [Examples (Demonstrations, Animations, and Talks)](#hydro-examples)
     + [Mesh Structure: Overview of the Different Methods](#hydro-meshstructure)
@@ -170,6 +176,10 @@
     + [How do I Avoid Memory Errors/Crashes?](#faqs-memory)
     + [My Large Simulation Hangs, but Smaller Runs Work?](#faqs-big)
     + [Why Did Everything Drop to TimeBin=1?](#faqs-timebin)
+    + [A Parameter I Set Has No Effect?](#faqs-ignoredparams)
+    + [How do I Stop a Run Cleanly?](#faqs-stop)
+    + [Why Do Two Identical Runs Not Give Bit-for-Bit Identical Results?](#faqs-reproducibility)
+    + [Why Are Conserved Quantities Not Always Conserved to Machine Precision with Individual Timesteps?](#faqs-conservation)
     + [Are there Public ICs? Analysis Tools? Image/Movie-Makers?](#faqs-rscr)
     + [What Does this Variable Mean?](#faqs-variable)
     + [What are the Code Units?](#faqs-units)
@@ -356,58 +366,155 @@ You are encouraged to study and modify this code! Please, if you have ideas for 
 
 + **Always protect against conflicts.** Non-standard code extensions should always be written such that they can be switched off, if not needed, and have no side effects on existing code. Normally this means that they have to be enclosed in conditional compilation precompiler statements (#ifdef), especially if variables in the global structures of the code need to be allocated for the extension. However, if the extension's execution can also be controlled at run-time by simple variables, then consider introducing a parameterfile-variable to control the extension. In general, the number of Makefile symbols to control conditional compilation should be kept to a minimum.
 
-+ Do not place any substantial piece of code belonging to your extension into existing functions of the code. Write your own functions for the code extension, and only place a function call (if needed bracketed by an #ifdef) into the appropriate place of the primary code. Also, place your extension functions into separate source files. The source files for any new module should go into their own folder, with an appropriate name -- just like the existing modules in the code for things like hydro, gravity, galaxy formation, etc. Otherwise the code will quickly become impossible to manage.
++ **Keep code in the module that owns it.** A genuinely new module gets its own source files, in its own folder with an appropriate name, just like the existing modules for hydro, gravity, galaxy formation, etc., and is called from the main code at the appropriate place (if needed bracketed by an `#ifdef`). But a small, cohesive addition to an existing calculation belongs in the existing function or file, not in a new one; pull out a helper function when it is reused or makes the code clearer. Do not multiply files and functions, and never create a second, parallel version of something the code already computes (see the code-style principles below). Otherwise the code will quickly become impossible to manage.
 
 + If you're willing to push the changes back and share them, it adds incredibly to the value of the code and (likely) to your own citation rates. Consider it!
 
 
+<a name="requirements-development-workflow"></a>
+### _Contributing Changes Back (Workflow)_:
+
+Contributions come in as pull requests on the [GitHub repository](https://github.com/pfhopkins/gizmo), into the branch they were developed against. Each development branch has a maintainer who reviews pull requests into it -- for example PFH for `gpu_kokkos_unified` (the Kokkos CPU/GPU version of the code) and Mike Grudic for `starforge_dev`. Target the branch your change was developed against; carrying a feature over to other branches is coordinated separately with their maintainers, and can need substantial adaptation (for example to the Kokkos CPU/GPU structure of `gpu_kokkos_unified`). The workflow is:
+
+1. **Sync first.** Bring your branch up to date with the branch you want to contribute to, and resolve any conflicts on your side. Syncing often costs a little each time, but keeps every merge small and simple; a branch that has drifted far from its upstream can be very hard to merge back.
+
+2. **Make it work, and show that it works.** Build and run your change over the range of conditions and module combinations it is meant to support, including with it switched off (see the rules above: new features should compile out completely when not enabled). The checks you write to confirm a fix or a feature are part of the pull request: describe them, and what they showed, in its description. They do not by themselves belong in the code. The test problems shipped with the code (`test/`) are a curated set: each validates physics not otherwise tested, has pedagogical value for users, or sets up a real physics problem. If you think your feature warrants a new test problem by those criteria, propose it explicitly in the pull request -- it needs the maintainer's approval.
+
+3. **Run the existing tests.** Run at least the tests in the "blast radius" of your change (the test problems that exercise the modules and code paths you touched), and if that is not obvious, the full suite (see [Running Tests with pytest](#tests-pytest) and `test/how_to_run_tests.md`). Also compile the `Config.sh` combinations your change touches, including ones where the new code is compiled out. Tests should pass, or fail only for a reason you understand and state in the pull request.
+
+4. **Open a pull request** from your branch into the branch you synced with, and request a review from its maintainer. Say what changed and why, which modules and configurations it affects, and what you ran to check it. Keep each pull request to one logical change, and do not include run outputs, generated files, or temporary diagnostics.
+
+5. **Iterate with the reviewer** on any further checks or changes.
+
+6. **The maintainer merges** once satisfied.
+
+The code-style and development principles below apply to every contribution, including the specific rules for the Kokkos (CPU/GPU) branch and for AI-assisted development.
+
 <a name="requirements-development-style"></a>
 ### _General Code-style Principles (Good Practices)_:
 
-+ Code formatting: Try to be consistent with the code formatting of the main code, which is more or less GNU-style, with a few small differences. You can run the indent-command with the options: 
++ **Formatting:** match the file you are editing. The code uses 4-space indentation, braces on their own line for functions, and compact single-line statements where they read naturally (e.g. `if(dt > dt_max) {dt = dt_max;}`), with no fixed line-length limit.
 
-        indent -gnu -npsl -npcs -nbs -nsaf -nsai -nsaw -nprs -bap -pmt -l110 *.c
++ **Names:** name functions all in lower case as a "command" that is descriptive of what the function does, with words separated by underscores, e.g. `calculate_normal_vector_for_triangle(...)`. Global variables (which should be kept to a minimum!) start with an upper case character and are nouns, with words separated by mixed lower/upper case characters and no underscores, e.g. `NumForceCalculations`. Local variables start with lowercase and should have descriptive names: single letters are fine for loop indices or in a few-line block, but not in a long function, where `h` or `t` quickly becomes ambiguous. Narrow the scope of each variable as much as possible, and combine declaration and initialization where possible, e.g. `int n = get_particle_count();`.
 
-    on your source file(s) to make the indention consistent.
++ **Single source of truth.** This is a core principle of the code. Every physics equation, numerical assumption, limiter, unit conversion or eligibility rule should be implemented in exactly one place, or failing that in the fewest places possible, and everything that needs it should call that one implementation. Changing a piece of physics should never require hunting down several copies, hooks or CPU- and GPU-specific versions of it across the code: copies drift apart, and then one of them is wrong. So avoid repetition (write a function instead of copying code), and when you extend a calculation, extend the existing routine (or its loop over neighbors) rather than adding a second, parallel version of it. Small helpers go into the existing header for their module (or `core/proto.h`), not into new files; new source files and folders are for genuinely new modules.
 
-+ Name functions all in lower case as a "command" that is descriptive of what the function does. Words are separated by underscores, e.g. `calculate_normal_vector_for_triangle(...)`. For all functions, input arguments should come first, output arguments last.
++ **Compile-time flags and parameters:** keep their number to a minimum. Flags are fully capitalized, with the prefix of their module (e.g. all galaxy star-formation flags begin with `GALSF_`). Every flag or parameter you add, rename, or retire must be described correctly in `Template_Config.sh` and in this User Guide. Do not build function argument lists out of `#ifdef` blocks (a reordering silently passes the wrong values); pass a struct, or declare the optional arguments unconditionally.
 
-+ Global variables (which should be kept to a minimum!) start with an upper case character. They are nouns, with words separated by mixed lower/upper case characters, and contain no underscores. Use abbreviations that are clear, e.g. NumForceCalculations.
++ **Constants:** physical constants and unit conversions come from the shared definitions (`declarations/constants.h`, the `UNIT_*_IN_CGS` macros), never re-typed. Coefficients of fits and models can be written where they are used, with a comment saying what they are and where they come from (e.g. `// Ia rate: prompt Gaussian plus delayed component, Mannucci et al. 2006`).
 
-+ Local variables start with lowercase, and should have descriptive names too, except for simple loop iterators and the like. Try to narrow the scope of a variable as much as possible, for example by declaring them inside a block where they are needed. Declaration and initialization should be combined in one command where possible, e.g.
++ **Warnings:** new code should compile without new warnings (most machine blocks in the `Makefile` compile with `-Wall`). On GPU builds, treat any warning about calling a host function from device code (`nvcc`/`hipcc` warnings `#20011-D`, `#20014-D`) as an error: the device copy of that function is broken. A CPU-only build cannot produce these warnings at all, so changes that add device annotations need a GPU compile.
 
-        int n = get_particle_count();
++ **Comments:** explain what the code does and why, at the level of the physics or algorithm, and cite the paper or equation for any non-trivial formula; skip comments that only restate the code. The meaning of every global variable and structure member is commented where it is declared (`int MyGlobalCount; /*!< counts the number of timesteps */`). Comments must make sense to a reader who has only the code: do not rely on private notes, design documents, development "phases" or "stages", or the tools used to write the code. A reference to a published paper or a public issue can supplement the explanation, but never replace it. Do not leave comments saying something is "deferred" or "not yet done": state what the code does and does not do, and why.
 
-    instead of
++ **Nothing temporary in a commit:** debugging prints, counters, test switches and other diagnostics are removed before a change is committed; write them so they stay separate from the real code (their own block or function), never woven into it, so removing them cannot remove anything else. Never control the behavior of the code through environment variables: they are not recorded with a run's parameters, so nobody can tell later what a run did. A user-adjustable setting is a `Config.sh` flag or a parameterfile parameter, or it is fixed in the code.
 
-        int n;
-        n = get_particle_count();
+<a name="requirements-development-principles"></a>
+### _Development Principles (Physics, Numerics, Performance)_:
 
++ **Never silently remove or weaken physics or numerics.** A change may fix a bug or improve accuracy; it must not quietly compute less. That rules out: dropping an `#ifdef` branch your change did not handle; adding an `#error` to block a flag combination your change does not support; replacing a calculation with a constant or a simpler approximation; falling back to an older, less capable code path when the new one has a problem; and removing or neutralizing a limiter or safety check (even one that a rewrite makes look unnecessary). If you believe one of these is needed, say so explicitly in your pull request and discuss it with the maintainer first.
 
-+ Avoid repetition of code, write a function instead. Break up long functions into smaller more manageable pieces.
++ **Physics and numerics stay separate and modular.** Physics modules should not need to know how neighbor finding, communication, or the device kernels are organized, and those frameworks should not contain module-specific special cases. In particular, an optimization or dispatch decision should depend on structural properties (how many elements are active, the type of neighbor search, available memory), never on which module is calling, so that it benefits every module of the same kind.
 
-+ Preprocessor macros (compile-time flags) that have arguments should be avoided if possible (but do whatever you can to minimize the number of compile-time flags). If needed, their names should be fully capitalized. They should always be named with a consistent prefix naming scheme (as currently in the code, where for example all the galaxy star formation flags begin with `GALSF_`).
++ **Performance for both large and small active sets.** With individual timesteps, most steps advance only a small fraction of the elements. Work on such a step must scale with the number of active elements (and their neighbors), not with the total number of elements: a loop over all particles, or a copy of whole particle arrays to or from the GPU, added to every step can make the code orders of magnitude slower for production problems, even if it is invisible in a test where everything is active.
 
-+ Magic numbers (including numerical constants) in the code should be avoided and instead be replaced by a symbolic constant (all uppercase) declared with #ifdef in a header file.
++ **GPU and portability (Kokkos branch):** all device code is written through Kokkos, so the same source runs on NVIDIA, AMD and CPU-only machines; never write CUDA- or HIP-specific code, and test `GIZMO_GPU_COMPILER` (not `__CUDA_ARCH__`) where device and host code must differ. A function called from device code in another source file must be defined as `KOKKOS_INLINE_FUNCTION` in a header (the `*_functions.h` files) and included where it is used: relocatable device code is not used. Never guard a physics call out of the device build (`#ifndef GIZMO_GPU_COMPILER`) to make it compile: the run then silently skips that physics on the GPU. The device and CPU paths must give the same answer: on a fixed state, or after a few steps, they should agree to roundoff (or the method's stated tolerance), and larger differences are bugs to find, not compiler or floating-point effects. In long runs of chaotic systems, compare the early steps for agreement and the later evolution statistically.
 
-+ Address all warnings emitted by the compiler when compiled with "-Wall". Unless there are very or necessary good reasons, the code should compile without any warning (not without a crash, without a *warning*).
++ **Testing a change:**
+    - Run with at least 2 MPI tasks: a single task never exercises the exchange of data between tasks, where many bugs live.
+    - Build from scratch whenever headers or `Config.sh` change: the `Makefile` does not track header dependencies, so a partial rebuild can link old and new code together.
+    - Confirm that your change is actually exercised by the test you run (the flags are on, the particles involved exist, the code path executes); a passing test that never reaches your code proves nothing.
+    - Judge results against the known solution or a converged reference, not by whether the run finished: many bugs produce wrong answers without crashing. Read the run's standard error and output for warnings, and check `parameters-usedvalues` to confirm the parameters you set were actually used.
+    - When results change in a way you did not expect, the first hypothesis is a bug in the change, not that the new answer is somehow correct.
 
-+ Include consistent commenting in your code. The meaning of all global variables should be commented where they are introduced, ideally with doxygen syntax, e.g:
+<a name="requirements-development-templates"></a>
+### _Reuse the Existing Templates (Where New Code Goes)_:
 
-        int MyGlobalCount; /*!< counts the number of timesteps */
+Almost any new physics or numerical method needs one of a handful of kinds of computation, and the code already has a template for each. Before writing a new loop, find the one your problem belongs to and follow it. The point of the templates is that you write only the physics (what is computed, from what data, and what is returned), and the template owns everything else: which elements are active, finding neighbors, getting data to and from other MPI tasks, running on CPUs or GPUs, threading, and cleanup. If you find yourself re-creating any of that inside a physics module, stop: either the template already does it, or it is missing a genuinely general capability, which should then be added to the template once, for every module that uses it.
 
-    Functions should be preceded by a brief explanation of what the function does, including warnings/instructions, if any, about how the function may be used, e.g.:
++ **Local work on each active element** (nothing exchanged with neighbors), e.g. a cooling, chemistry or nuclear-network solve: follow `cooling_parent_routine()` in `cooling/cooling.cc` (or the burn loop in `nuclear/nuclear.cc`). The pattern is: list the eligible active elements; gather them into compact staging arrays (`particle_staging_gather`); launch the per-element physics, written once as a `KOKKOS_INLINE_FUNCTION` in the module's `*_functions.h` header, over those arrays (`gizmo_gpu_kernel_launch`); and scatter the results back (`particle_staging_scatter`).
 
-        /*!
-         * Insert the point P[i] into the list of active particles. Return 
-         * the new number of active paticles.
-        */
-        int insert_point_into_active_list(int i)
-        {
-        ...
-        }
++ **Interactions between neighboring elements** (density, gradients, hydrodynamic fluxes, diffusion, feedback deposition, sink accretion, dust drag, radiation injection, ...): use the neighbor-loop template, described in detail [below](#requirements-development-neighborloops).
 
-    You do not need to state here *how* the function achieves what it does, but this can be stated if appropriated in comments in the function body. There, avoid superfluous comments that just reflect what's obvious from the code anyway. Instead, focus on comments that help one to quickly understand/check what the code tries to do at an algorithmic level. If complicated formulae are implemented, try to include in a comment a reference to the equation that is implemented. Avoid c++ style comments in C-code.
++ **Long-range interactions** (anything summed over the tree like gravity: tidal tensors, column densities, long-range radiation, ...): add the new term to the existing gravity tree walk rather than writing a new walk. `gravity/gravtree_force_kernel.h` holds the single copy of the interaction physics shared by the CPU and GPU walks, and its header comment has a step-by-step checklist for adding a new quantity (per-target setup, source loading, the accumulation helper both walks call, storing the result, and building its node moments); per-source inputs are defined in one place in `gravity/gravtree_moment_sources.h`.
+
++ **Global transforms and solves:** for distributed FFTs, follow the particle-mesh gravity (`PMGRID`, `gravity/pm_periodic.cc`); for large sparse linear systems, follow the modified-gradient magnetic-field correction (`MHD_MODIFIED_GRADIENT`, `hydro/mg_gradient_correction.cc`, which uses HYPRE). Reuse their decomposition, communication and solver set-up rather than introducing a separate one.
+
+<a name="requirements-development-neighborloops"></a>
+#### _Writing a New Neighbor Loop (the Loop Template)_
+
+Every loop over pairs of neighboring elements in the code runs through one template, `run_neighbor_loop<Spec>()` in `mesh/neighbor_loop_runner.h`. A new loop supplies a **Spec**: a struct that describes its physics, in two small files, `<name>_loop.h` and `<name>_loop.cc`. The runner does the rest. It decides how to execute each call (building neighbor lists on the device when many elements are active, walking the tree only around the active elements when few are), finds the neighbors on the local task and on other tasks, moves the data between tasks, runs your physics on the CPU or GPU, and hands the results back. You should never need to modify the runner to add physics.
+
+The authoritative reference is the comment block "NeighborLoopSpec -- copy-pasteable skeleton for a new physics loop" in `mesh/neighbor_loop_runner.h`, which lists every required and optional member, with the pitfalls ("TRAPS") that are easy to get wrong. `sinks/sink_env1_loop.h` and `.cc` are a complete worked example, and every existing `*_loop.h` is a model for its kind: e.g. `galaxy_sf/thermal_fb_loop.h` for sources depositing into their gas neighbors, `hydro/density_loop.h` for an iterative loop, and `hydro/hydro_force_loop.h` for a symmetric loop that updates both members of a pair.
+
+What a Spec provides:
+
+1. **A name**, `loop_name`, used in diagnostics and timing output.
+
+2. **Which elements are the sources:** `is_active(i)` returns whether element `i` acts as a source on this step (the caller builds the list of sources with it).
+
+3. **How neighbors are found:**
+    - `search_mode`: `MODE_B_SEARCH_ONEWAY` finds neighbors inside the source's own search radius ($r_{ij} < h_i$), as for density or feedback; `MODE_B_SEARCH_SYMMETRIC` finds all pairs where either element's kernel reaches the other ($r_{ij} < \max(h_i, h_j)$), as for hydrodynamic fluxes.
+    - `neighbor_type_mask`: a bitmask of the particle types that count as neighbors, e.g. `(1u<<0)` for gas only, or all six types.
+    - `radius_policy`: in a symmetric search, which radius of the neighbor is used (usually its kernel length, `MODE_B_RADIUS_DEFAULT`).
+    - `search_radius(args, slot, i)`: each source's search radius, usually its kernel length.
+
+4. **The data**, as plain structs (they are copied to the GPU and between tasks, so they must be trivially copyable: no pointers to host memory, no `std::vector`):
+    - `CallScalars`: constants for this call (cosmological factors, unit conversions, parameters), filled once on the host by `populate_call_scalars()`. The device functions read global settings (`All.*`) only through this.
+    - `ActiveData`: what each source carries, filled from the source element by `load_active()`.
+    - `NeighborData`: what each neighbor contributes, filled by `load_neighbor()`. It is the same function whether the neighbor is local, an imported copy, or on another task, so the physics never needs to know where it came from.
+    - `AccumData`: what is summed up for each source. `zero_accum()` initializes it, and `merge_accum()` combines partial sums of one source computed on different tasks: each field must be combined the way `pair_kernel` accumulates it (sums added, maxima by maximum), or results silently depend on the number of tasks.
+    - `ScatterData`: results written to the neighbor, for loops that need them (otherwise `NoScatter`).
+
+5. **The physics**, `pair_kernel(active, neighbor, accum, scatter, call_scalars)`: the interaction between one source and one neighbor, written once for both members of the pair, as a `KOKKOS_INLINE_FUNCTION` in the header (it runs on the GPU, so device-safe code only: no I/O, no host-only functions).
+
+6. **The results:**
+    - `apply_active_writeback(args, slot, i, accum)`: after the sweep, on the host, writes each source's accumulated result into the particle data.
+    - `write_pattern` says what the kernel writes: only the source's own accumulator (`ActiveReduceOnly`, the usual case), both members of a pair (`SymmetricPairScatter`), only the neighbors (`NeighborScatter`), or neighbors that may live on other tasks (`GhostWritebackRequired`).
+    - When the kernel writes directly into its neighbors (e.g. feedback depositing mass or energy into gas cells), set `uses_ghost_writeback` and declare in the loop's `.cc` file a "writeback bundle" listing each such field and how the contributions from copies on other tasks are combined (`GHOST_WRITEBACK_GAS_ADD(field)`, `GHOST_WRITEBACK_PARTICLE_MAX(field)`, ...). The runner then returns those contributions to the tasks that own the neighbors.
+
+7. **Iteration**, if the loop repeats until a per-source condition is met (as density repeats until each kernel length encloses the desired number of neighbors): set `IterControl = Iterative` and provide `after_iter()`, which decides for each source whether it is done, needs a new search radius, or repeats; `max_iters`; and `IterScratch`, the per-source state kept between iterations (`AccumData` is re-zeroed each iteration). Otherwise `IterControl = NotIterative`.
+
+8. **How the work may be evaluated in parallel**, `modeb_eval_omp`: `BitwiseReadonly` if the kernel writes only its own source's accumulator (results identical whatever the order), `EpsilonAtomic` if it also writes to neighbors with atomic operations (order then affects only rounding).
+
+9. **Pre- and post-processing** belong to the routine that calls the runner: anything to prepare before the sweep (e.g. zeroing the fields the sweep will fill) and to finish after it (normalizations, derived quantities, timestep updates).
+
+10. **Registration:** one line instantiating the template in `mesh/neighbor_loop_runner.cc` (`template void run_neighbor_loop<MySpec>(const neighbor_loop_args&);`, together with the include of your header, inside the same `#ifdef` as the Spec), and the loop's object file in the `GPU_OBJS` list of the `Makefile`.
+
+The calling routine then follows the same short pattern as every other loop:
+
+    int *active_list = NULL, num_active = 0, num_global_active = 0;
+    if(!nlr_build_active_list(MySpec::is_active, &active_list, &num_active,
+                              &num_global_active, "my_loop_active_list")) {return;}  /* no sources on any task */
+    my_loop_preparation();                              /* physics before the sweep */
+    neighbor_loop_args args = nlr_default_args();
+    args.active_list = active_list;
+    args.num_active  = num_active;
+    run_neighbor_loop<MySpec>(args);
+    nlr_free_active_list(active_list);
+    my_loop_final_operations();                         /* physics after the sweep */
+
+The skip when nothing is active is decided over all tasks (`num_global_active`), and every task must still call the runner when any task has sources, since the runner communicates between tasks.
+
+<a name="requirements-development-ai"></a>
+### _AI-Assisted Development_:
+
+Using AI coding assistants and agents to develop **GIZMO** is fine, and can be very productive. But a human developer remains responsible for every change: you must understand what the code you submit does, review it yourself, and look at the test results yourself to confirm that they pass and that they test what they claim to. An agent's report that something is "fixed", "validated" or "passing" is not evidence; the evidence is the diff, the test output, and the comparison against the reference. The maintainer reviews AI-assisted pull requests exactly like any others.
+
+Agents tend to make some mistakes over and over, and they are worth checking for explicitly in every AI-assisted change:
+
++ "Fixing" a failure by weakening something: loosening a tolerance, simplifying the test or the configuration, disabling a module or a limiter, or adding a fallback path, instead of finding the bug. Everything under "Development Principles" above applies with extra force.
++ Comments that refer to their own working notes, plans, "phases" or "stages", or that describe the history of the change rather than the code; and "deferred"/"TODO" notes standing in for work that was silently left out.
++ Leftover scaffolding: debug prints, counters, environment-variable switches, temporary test harnesses, unused functions.
++ Committing things that do not belong in the repository: their own notes and scratch files, run outputs, binaries, plots. Stage files explicitly by name rather than adding everything.
++ Claims made without checking: confirm that the build was clean and current, that the test exercised the changed code, and that the reported numbers come from the run they are attributed to.
++ Edits that only partly applied: after an automated multi-file edit, read the complete diff rather than trusting the tool's report.
+
+Keep the agent inside safe limits:
+
++ Actions that discard work or are hard to undo (deleting files, `git reset`, force-pushes, rewriting pushed history) should need your explicit approval each time.
++ **Remote systems:** logging in, transferring files and submitting jobs on shared computing facilities have consequences beyond your own machine. Follow the facility's policies; if an agent does any of this, set it up deliberately (scoped credentials, supervision), and make sure it can never repeat failed log-in attempts: most centers use multi-factor authentication, and repeated failures can get an account, or a whole group's access, locked.
++ **Runs and processes:** put output where the machine's storage and quota policies intend it (not system temporary directories, which can fill and take the machine down), check there is room, and bound every run's length and output (e.g. `MaxSimulationWallTime_in_Seconds`, the snapshot spacing). Keep track of the processes an agent starts, and never let it stop work it did not start.
 
 ***
 
@@ -1036,6 +1143,7 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 #MHD_CONSTRAINED_GRADIENT=1     # use CG method (in addition to cleaning, optional!) to maintain low divB: set this value to control how aggressive the div-reduction is:
                                 # 0=minimal (safest), 1=intermediate (recommended), 2=aggressive (less stable), 3+=very aggressive (less stable+more expensive). [Please cite Hopkins, MNRAS, 2016, 462, 576]
 #MHD_MODIFIED_GRADIENT          # use Modified-Gradient (MG) method for machine-precision div(B)=0 via sparse matrix solve. Mutually exclusive with MHD_CONSTRAINED_GRADIENT. cite Tu, Wang, Gao & Tang 2026, arXiv:2603.04077
+#MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT # (experimental; requires MHD_MODIFIED_GRADIENT) weight the MG solve's faces by the local field instead of the cell separation
 ##-----------------------------------------------------------------------------------------------------
 ```
 
@@ -1054,6 +1162,8 @@ Note that these are not the only available equations-of-state in GIZMO, but just
 **MHD\_CONSTRAINED\_GRADIENT**: Activate this to use the hybrid constrained-gradient method of Hopkins 2015 to further reduce div-B errors (beyond the standard Dedner 2002 scheme described above, which is always enabled when you turn on MAGNETIC). This will perform an extra iteration over particles in the gradient step, to iteratively solve for the reconstruction at faces which goes through all particle-averaged central values and minimizes the divergence errors, while also minimizing the least-squares divergence from the default gradient estimator-based reconstruction at the faces. It is slightly more expensive, but nearly as accurate as constrained-transport methods (which preserve div-B to machine accuracy) in most problems. See the methods paper: Hopkins 2015. You can choose how aggressively you wish to control the errors by setting this value: 0=minimal (safest and most stable, but relatively diffusive formulation which does less to control divergences), 1=intermediate (recommended case), 2=aggressive (this will be somewhat more expensive, doing an additional iteration, and uses weaker slope-limiters, which allows more successful divergence control, but can sacrifice numerical stability on certain types of problems). Please cite Hopkins, MNRAS, 2016, 462, 576, if you use these methods, as they were first presented therein.
 
 **MHD\_MODIFIED\_GRADIENT**: Activate this to use the Modified-Gradient (MG) method of Tu, Wang, Gao & Tang (2026, arXiv:2603.04077) for machine-precision divergence-free magnetic field reconstruction. Unlike the CG method above, MG formulates the divergence constraint as a symmetric positive-definite sparse linear system and solves it using an algebraic multigrid (AMG) preconditioned conjugate gradient solver (via HYPRE, if available, or Intel MKL PARDISO). This achieves true machine-precision div(B)=0 at the cost of a global sparse solve per (active) timestep. The runtime parameter `ActiveFractionForMGSweep` (default: the tree/domain rebuild fraction; see its entry) limits the global solve to timesteps where at least that fraction of gas cells is active, with the retained MG correction plus the cheaper CG correction used on smaller steps; 0 solves on every step. MG enables `MHD_CONSTRAINED_GRADIENT` automatically (it is used on the steps without the global solve); do not set both. The global solve always spans *every* gas cell: on a step where only part of the gas is active, every gas cell is drifted to the current time and every gas cell's neighbourhood is imported across tasks, so such steps cost about as much as a fully-active step (set `ActiveFractionForMGSweep 1` to run the solve only when all gas is active). The solve is done separately on each connected piece of the gas; pieces whose divergence is already at roundoff relative to their magnetic flux are skipped. If the solver does not reach its tolerance (e.g. on a nearly-singular matrix), the code prints a warning and applies the partial solution when it lowers the divergence (otherwise it keeps the MG correction of the last accepted solve; that step has no CG correction, since its gradients were computed for a solve); Dedner cleaning and the Powell terms remain active throughout. The default solver is HYPRE (BoomerAMG-preconditioned CG); `MHD_MODIFIED_GRADIENT_USE_PARDISO` (Intel MKL) or `MHD_MODIFIED_GRADIENT_CG_ONLY` (built-in, no external library) select the alternatives. Please cite Tu, Wang, Gao & Tang 2026 if you use this method. When the MG sweep is skipped on a small step (active fraction below `ActiveFractionForMGSweep`), the previous MG solution is *retained* and the cheaper `MHD_CONSTRAINED_GRADIENT`-style local face correction runs *on top of* the stale MG state, correcting only the small drift accumulated for those cells that have advanced since the last MG solve (rather than starting from scratch). The retained correction is used between cells that belonged to the same connected piece of the gas at that solve; a face between cells that were in different pieces (e.g. two clumps that have since come into contact) takes no retained MG correction until the next solve. Because the cells move between solves, the retained correction on each face is limited: the correction flux through a face may not exceed the smaller of its two cells' largest single-face correction flux at the last solve (cells created or merged since that solve take no retained correction). The same limited correction is used by the hydro faces and by the local CG correction. In test problems, this MG+CG combination with adaptive `ActiveFractionForMGSweep` has been shown to reduce $|\nabla\cdot{\bf B}|$ by ~4 orders of magnitude compared to CG alone (which itself reduces $|\nabla\cdot{\bf B}|$ by ~2 orders of magnitude compared to pure Dedner cleaning) — so while not formally achieving machine-precision $\nabla\cdot{\bf B}=0$ on every step, the adaptive scheme captures most of the divergence-control benefit of the full MG solve at a small fraction of the cost.
+
+**MHD\_MODIFIED\_GRADIENT\_RELATIVE\_FIELD\_WEIGHT**: (Experimental; requires `MHD_MODIFIED_GRADIENT`.) Changes how the MG solve distributes its correction over the faces. By default (Tu et al.) a face's correction shifts both face states by $(c_j-c_i)\,(r_{ij}^2/8)\,{\bf A}_{ij}$, so the solve minimizes the face-flux changes weighted by the cell separation. With this flag the factor $r_{ij}^2/8$ is replaced by $B_e^2/\langle|{\bf B}|^2\rangle + 0.01$, where $B_e=(|{\bf B}_i|+|{\bf B}_j|)/2$ is the symmetric pair field scale of the two cells and $\langle|{\bf B}|^2\rangle$ the mean over the cells of the solve: the solve then minimizes the face-flux changes relative to the symmetric field-flux scale $|{\bf A}_{ij}|\,B_e$ of each face (not the normal flux $|{\bf B}\cdot{\bf A}|$; with a floor of 0.1 times the rms field), which puts the correction where the field is strong rather than spreading it by geometry. The normalization by $\langle|{\bf B}|^2\rangle$ makes the weights independent of the field's units and amplitude (the correction itself is unchanged by it in exact arithmetic); with no field anywhere every face takes the floor weight and the correction is zero. Exactness ($\nabla\cdot{\bf B}=0$ at the solve) and the matrix structure are unchanged; the solver iteration count can differ (between equal and ~30% more on the test problems, with no measurable change in wall time on the largest). On steps without the solve, the retained coefficients are applied with the current pair field scale and the normalization of the last accepted solve, under the same per-face limit as the default. The normalization is stored with the run state (restart files carry it); a rejected solve keeps the previous coefficients and normalization together.
 
 
 <a name="config-fluids-twotemperature"></a>
@@ -3260,7 +3370,7 @@ Here, we will list and describe some of these, but this will necessarily be an i
     %--- Modified-Gradient div(B) correction (MHD_MODIFIED_GRADIENT on)
     ActiveFractionForMGSweep   0.002  % fraction of active gas required to trigger the MG global solve (0=every step with active gas, 1=only fully-active steps)
 
-**ActiveFractionForMGSweep**: If `MHD_MODIFIED_GRADIENT` is enabled, this controls how frequently the global sparse-matrix div(B) correction is applied. At each sync-point, the code computes the fraction of all gas cells that are active at that timestep. If this fraction is greater than or equal to `ActiveFractionForMGSweep`, the full MG solve (via HYPRE BoomerAMG or the built-in SSOR-CG solver) is executed; otherwise the step is skipped and the cheaper CG-only correction is applied instead. The value is a compromise between accuracy (smaller: solve more often) and cost (larger: solve less often) with no universal best choice; it depends on the problem and its goals. Because the solve spans every gas cell, each MG step on a partially-active sync-point also drifts all gas and imports every gas cell's neighbourhood, so it costs about as much as a fully-active step whatever the number of active cells. Setting this to `0.0` applies the MG solve on every sync-point with any active gas, giving maximum div(B) control at the highest cost: affordable for small problems or shallow timestep hierarchies, but in a large simulation with a deep timestep hierarchy it can multiply the cost of the many small steps by orders of magnitude. `1.0` applies it only when every gas cell is active. If omitted, it defaults to the smaller of `TreeRebuild_ActiveFraction` and `DomainBuild_ActiveFraction`, i.e. the steps on which the code already does work over every element; this is a heuristic alignment with that cadence rather than an exact synchronization (those fractions count all active elements, this one active gas). The value used, and the two it was derived from, are printed at startup.
+**ActiveFractionForMGSweep**: If `MHD_MODIFIED_GRADIENT` is enabled, this controls how frequently the global sparse-matrix div(B) correction is applied. At each sync-point, the code computes the fraction of all gas cells that are active at that timestep. If this fraction is greater than or equal to `ActiveFractionForMGSweep`, the full MG solve (via HYPRE BoomerAMG or the built-in SSOR-CG solver) is executed; otherwise the step is skipped and the cheaper CG-only correction is applied instead. The value is a compromise between accuracy (smaller: solve more often) and cost (larger: solve less often) with no universal best choice; it depends on the problem and its goals. A good starting point is a value just above the fraction of gas cells in the smallest occupied timestep bin (printed in the `Occupied timebins` table each step): steps on which only that bin is active then use the constrained-gradient correction on top of the retained MG solution, and every step one or more levels above it runs the global solve. On standard MHD test problems (Brio-Wu, Orszag-Tang, MHD blast) this gives a median $|\nabla\cdot{\bf B}|\,h/|{\bf B}|$ several orders of magnitude below the constrained-gradient method alone; the largest remaining errors are in the smallest-timestep cells (typically at shocks) between solves, which carry constrained-gradient-level errors until the next solve. Because the solve spans every gas cell, each MG step on a partially-active sync-point also drifts all gas and imports every gas cell's neighbourhood, so it costs about as much as a fully-active step whatever the number of active cells. Setting this to `0.0` applies the MG solve on every sync-point with any active gas, giving maximum div(B) control at the highest cost: affordable for small problems or shallow timestep hierarchies, but in a large simulation with a deep timestep hierarchy it can multiply the cost of the many small steps by orders of magnitude. `1.0` applies it only when every gas cell is active. If omitted, it defaults to the smaller of `TreeRebuild_ActiveFraction` and `DomainBuild_ActiveFraction`, i.e. the steps on which the code already does work over every element; this is a heuristic alignment with that cadence rather than an exact synchronization (those fractions count all active elements, this one active gas). The value used, and the two it was derived from, are printed at startup.
 
 
     %---- Thermal Conduction (CONDUCTION on)
@@ -4150,6 +4260,13 @@ Newer versions of the code include a wide range of additional flags in the heade
     UnitVelocity_In_CGS = user-specified unit velocity in cgs (from parameterfile)
     UnitLength_In_CGS = user-specified unit length in cgs (from parameterfile)
     Internal_UnitB_In_Gauss = internal code B-units (not what is in the snapshot, but useful to check if desired setup is actually done, if MAGNETIC on) 
+    UnitMagneticField_In_Gauss = unit of the MagneticField dataset in Gauss, i.e. UnitMagneticField_in_gauss from the parameterfile (B[Gauss] = MagneticField * UnitMagneticField_In_Gauss; if MAGNETIC on)
+    Compile_Config_Options = the Config.sh options the code was compiled with, one per line (as printed at the top of stdout)
+    Compile_Effective_Options = every compile-time option in effect, one per line as NAME or NAME=value: the Config.sh options plus every default and derived option they switch on
+    Compile_Effective_Options_FNV1a64 = 64-bit hash of Compile_Effective_Options (equal for builds with the same effective options)
+    Build_Info = host, user, branch and commit of the build (the commit is followed by -tracked-dirty if tracked source files had uncommitted changes)
+    Compiler_Version = the compiler that built the code
+    Executable_FNV1a64, Executable_Size_In_Bytes = 64-bit hash and size of the executable that wrote the file (to check whether two runs used the same build; an identity check, not a security hash)
     Gravitational_Constant_In_Code_Inits = gravity constant G in code units
     
     Minimum_Mass_For_Cell_Merge = minimum mass below which cells are merged
@@ -4328,9 +4445,9 @@ If `TURB_DIFF_DYNAMIC` is active (localized dynamic Smagorinsky model):
 
 If the run includes magnetic fields:
 
-**MagneticField**: [N,3]-element array with B-field x,y,z components (units are Gauss and *physical*)
+**MagneticField**: [N,3]-element array with B-field x,y,z components (*physical*, in units of the parameterfile's `UnitMagneticField_in_gauss`, which is recorded in the header as `UnitMagneticField_In_Gauss`: multiply by it to get Gauss)
 
-**DivergenceOfMagneticField**: [N]-array, Div[B] (i.e. $\nabla\cdot{\bf B}$) at particle position (useful for testing div-cleaning). Units are Gauss/code length, and are *physical*. A common dimensionless measure of the divergence (which ideally would be zero) is $h\,|\nabla\cdot{\bf B}|/|{\bf B}|$, where $h=V_{i}/2$, $(V_{i}/\pi)^{1/2}$, $(3V_{i}/4\pi)^{1/3}$ in 1D, 2D, and 3D, respectively, and $V_{i}=m_{i}/\rho_{i}$ where $m_{i}$ and $\rho_{i}$ are the mass and density in *physical* units.
+**DivergenceOfMagneticField**: [N]-array, Div[B] (i.e. $\nabla\cdot{\bf B}$) at particle position (useful for testing div-cleaning). Units are those of **MagneticField** per code length, and are *physical*. A common dimensionless measure of the divergence (which ideally would be zero) is $h\,|\nabla\cdot{\bf B}|/|{\bf B}|$, where $h=V_{i}/2$, $(V_{i}/\pi)^{1/2}$, $(3V_{i}/4\pi)^{1/3}$ in 1D, 2D, and 3D, respectively, and $V_{i}=m_{i}/\rho_{i}$ where $m_{i}$ and $\rho_{i}$ are the mass and density in *physical* units.
 
 **DivBcleaningFunctionPhi**: [N]-array (only included if `DIVBCLEANING_DEDNER` and `OUTPUT_BFIELD_DIVCLEAN_INFO` are set): the scalar field $\psi$ (phi) of the Dedner divergence-cleaning scheme. It is written with a factor $a^{-3}$ and the same magnetic-unit conversion as **MagneticField**.
 
@@ -4729,7 +4846,7 @@ GIZMO includes a **pytest-based test suite** that automates building, running, a
 
 **Step 1: Install GIZMO as a Python package.** From the GIZMO source directory, run `pip install .` (or `pip install -e .` for an editable/development install). This installs the `gizmo` Python package, which includes test utilities and snapshot-reading tools. Dependencies include `pytest`, `h5py`, `numpy`, `scipy`, `matplotlib`, `astropy`, and `meshoid`.
 
-**Step 2: Ensure your build environment works.** Make sure `Makefile.systype` has the correct system type uncommented for your machine (e.g. `SYSTYPE=MacBookCellar` for a typical macOS homebrew setup).
+**Step 2: Ensure your build environment works.** Make sure `Makefile.systype` has the correct system type uncommented for your machine (e.g. `SYSTYPE=MacBookCellar` for a typical macOS homebrew setup). The tests launch GIZMO with `mpirun` (adding Open MPI's placement flags only when `mpirun` is Open MPI). If your system requires a different launcher, set the environment variable `GIZMO_TEST_MPI_LAUNCHER` to it, with `{ranks}` and `{threads}` for the rank and thread counts, e.g. `GIZMO_TEST_MPI_LAUNCHER="srun --ntasks={ranks} --cpus-per-task={threads}"` or `GIZMO_TEST_MPI_LAUNCHER="ibrun -n {ranks}"`.
 
 **Step 3: Run tests.** From the GIZMO source directory:
 
@@ -5625,7 +5742,7 @@ Good luck!
 <a name="faqs-startup"></a>
 ## My Run Won't Start, What Did I Do Wrong?
 
-Again, this is not something with a generic answer. If your run will not start, its almost never a code problem, but a setup problem. Common causes include: (1) code was compiled incorrectly, (2) cant find the libraries it needs, (3) memory settings (see below) are incorrect and ask for more memory than available, (4) the source code, parameterfile, other needed files (ICs, TREECOOL, etc) are not in the correct directories your run script thinks they should be in, (5) your run script was not written correctly for the machine you are running on, (6) your maximum/minimum timesteps are set much too high or low for the problem, (7) your end time or begin time of the run, or box size, or cosmological parameters are set incorrectly, (8) the initial conditions file is not in the correct format, or has data not in the format assumed (remember parameters like `INPUT_IN_DOUBLEPRECISION`, etc. are needed for those inputs to be read correctly if they are in those formats), (9) your settings (e.g. node number or multipledomains, or force softenings and smoothing length limits) are set such that the code spends its entire run-time in the 'overhead' calculations (reading in ICs, initial iteration to converge to smoothing lengths, etc). 
+Again, this is not something with a generic answer. If your run will not start, its almost never a code problem, but a setup problem. Common causes include: (1) code was compiled incorrectly, (2) cant find the libraries it needs, (3) memory settings (see below) are incorrect and ask for more memory than available, (4) the source code, parameterfile, other needed files (ICs, TREECOOL, etc) are not in the correct directories your run script thinks they should be in, (5) your run script was not written correctly for the machine you are running on, (6) your maximum/minimum timesteps are set much too high or low for the problem, (7) your end time or begin time of the run, or box size, or cosmological parameters are set incorrectly, (8) the initial conditions file is not in the correct format, or has data not in the format assumed (remember parameters like `INPUT_IN_DOUBLEPRECISION`, etc. are needed for those inputs to be read correctly if they are in those formats), (9) your settings (e.g. node number or multipledomains, or force softenings and smoothing length limits) are set such that the code spends its entire run-time in the 'overhead' calculations (reading in ICs, initial iteration to converge to smoothing lengths, etc). (10) the parameterfile is given by a long path: its name is limited to 255 characters, and a longer one stops the run at once with the message `The parameterfile name '...' is N characters long, but at most 255 are allowed.` Keep the parameterfile in the directory you run from and pass just its name (e.g. `mpirun -np 64 ./GIZMO params.txt`). 
 
 Always check all stdout and stderr and run-time output files (including outputs from the job script system if they include those). If no such outputs exist the problem is almost certainly in your job submission script. If outputs exist, search for the error codes. Outputs in stdout with error codes will be error codes in GIZMO -- search for them explicitly in the GIZMO source code (do a grep) to find out where the code exited if the description is unclear. Other error codes are machine or compiler-provided: a simple search online will usually find a more useful description. 
 
@@ -5665,6 +5782,28 @@ Look carefully at the stdout, and profiling info, to diagnose in which subroutin
 
 In my experience, this is usually caused by users setting inappropriate flags (flags not designed for the problem they are simulating, or mutually-incompatible flags), or having a units mistake in their ICs or parameter file (so the timesteps are wildly different from what the user 'thinks' they should be), or reading ICs with insufficient precision (so particles have identical positions at floating-point accuracy, solved by setting the input and output `Config.sh` flags to `DOUBLEPRECISION`). But obviously, if you think you've identified a bug, you should go to the user group and report it.
 
+<a name="faqs-ignoredparams"></a>
+## A Parameter I Set Has No Effect?
+
+Check the stdout for a line like `Tag 'X' was specified, but it is being ignored`. The code reads only the parameters that the compiled modules use: a parameter belonging to a module (or a `DEVELOPER_MODE` option) that is not enabled in `Config.sh`, or a misspelled name, is skipped with exactly this warning, and the run proceeds with the default. If a parameter appears twice in the parameterfile, the **first** occurrence is used and the second is reported as ignored. The file `parameters-usedvalues` in the output directory lists every value the run actually used: check it whenever you are varying a parameter between runs.
+
+<a name="faqs-stop"></a>
+## How do I Stop a Run Cleanly?
+
+Create an empty file named `stop` in the run's output directory (`touch output/stop`): at the end of the current timestep the code writes restart files and exits normally, so the run can be continued later (see [Restarting a run](#tutorial-restart)). To bound a run from the start, set `MaxSimulationWallTime_in_Seconds` in the parameterfile: the code stops in the same way once 85% of that wall-clock time has elapsed, leaving margin to write the restart files before a queue limit kills the job. Killing the job instead loses everything since the last restart file, and can leave files half-written.
+
+<a name="faqs-reproducibility"></a>
+## Why Do Two Identical Runs Not Give Bit-for-Bit Identical Results?
+
+Floating-point addition is not associative, so any change in the order of operations changes the last bits of a result: different numbers of MPI tasks or OpenMP threads, different domain decompositions, GPU versus CPU execution, and even the scheduling of threads from one run to the next all change the order in which neighbor or tree contributions are summed. Iterative steps (e.g. the kernel-length iteration, which stops anywhere within its tolerance) and any chaotic dynamics (turbulence, star formation, N-body interactions) then amplify those last-bit differences until individual elements differ visibly, while the statistical properties of the simulation agree. So compare runs statistically, or against known solutions, not element by element. This does not explain large differences that appear immediately (at the first steps) between runs with the same number of tasks and threads: chaotic amplification takes time to grow, so such differences should be investigated. (Note also that restart files, unlike snapshots, can only be used with the same executable and the same number of MPI tasks that wrote them.)
+
+<a name="faqs-conservation"></a>
+## Why Are Conserved Quantities Not Always Conserved to Machine Precision with Individual Timesteps?
+
+With adaptive (individual) timesteps, neighboring elements are generally advanced on different steps, and each applies its exchanges with its neighbors over its own timestep. Conserved quantities (momentum, energy, metal and other passive-scalar masses, magnetic flux, photon and cosmic-ray number, and so on) are then conserved to the accuracy of the time integration, not to machine precision: this exchange error converges away as the timesteps shrink, and vanishes when all elements share one timestep. This is an intentional and valid choice of method, not a fallback or a known deficiency: a deliberate trade of manifest conservation for lower memory and computational cost, made by essentially every astrophysics code that uses adaptive timesteps. The one quantity for which **GIZMO** enforces machine-accurate conservation with extra machinery is total mass (in the MFV method, where mass moves between cells), because some physics breaks badly if mass is not exactly conserved. For most problems the other errors are far below the uncertainties in the physics (yields, mixing rates, chemistry); in problems where they are not, the error can be reduced with smaller timesteps.
+
+When a global total changes in your run, separate three possibilities: (1) real sources, sinks or boundary fluxes (star formation, feedback injection, cooling losses, open boundaries, particles removed), which change it physically; (2) the adaptive-timestep exchange error described here, which shrinks with smaller timesteps and disappears if all elements are forced onto one timestep; and (3) a genuine problem, which does neither. Repeating the problem with smaller timesteps, and optionally with one shared timestep, is a useful diagnostic: the integration error should decrease systematically as the timesteps shrink. Its disappearing on a shared timestep alone does not prove that the adaptive-timestep behavior is correct.
+
 <a name="faqs-rscr"></a>
 ## Are there Public ICs? Analysis Tools? Image/Movie-Makers?
 
@@ -5680,7 +5819,7 @@ Example: if you are using radiation-hydrodynamics, and see the variable `PhotonE
 <a name="faqs-units"></a>
 ## What are the Code Units?
 
-See the section of this User Guide on [Units](#snaps-units). If you aren't sure whether something is in one unit or another (e.g. is this an absolute energy associated with a particle, or a specific energy, or an energy density?) check the units for sanity, and search for the variable in the source code to see where it is defined and written out.
+See the section of this User Guide on [Units](#snaps-units). Magnetic fields in snapshots are in units of the parameterfile's `UnitMagneticField_in_gauss`, recorded in the snapshot header as `UnitMagneticField_In_Gauss` (multiply by it to get Gauss). If you aren't sure whether something is in one unit or another (e.g. is this an absolute energy associated with a particle, or a specific energy, or an energy density?) check the units for sanity, and search for the variable in the source code to see where it is defined and written out.
 
 <a name="faqs-citation"></a>
 ## Can I use this Module? What should I cite?
@@ -5701,3 +5840,79 @@ Use this code at your own risk! It is provided without any guarantees of support
 Best of luck, enjoy!
 
 - Phil
+
+
+<!-- Navigation for the HTML version of this guide: a sidebar built from the Table of Contents (the list after the "toc" anchor at the top), highlighting the current section, plus a back-to-top button. It has no effect on the Markdown text, and does nothing where scripts are not run (e.g. viewing this file on GitHub). Keep it free of blank lines (so Markdown converters pass it through unchanged) and of double equals signs (which Marked 2 can turn into highlight marks, even here). -->
+<style>
+nav#gizmo-nav { position: fixed; top: 0; left: 0; bottom: 0; width: 300px; box-sizing: border-box; overflow-y: auto; padding: 12px 10px 40px 10px; background: #f6f7f9; border-right: 1px solid #d8dbe0; font: 13px/1.35 -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; z-index: 1000; }
+nav#gizmo-nav .gizmo-nav-title { display: block; font-weight: 700; font-size: 15px; margin: 2px 4px 10px 4px; color: #1f2328; text-decoration: none; }
+nav#gizmo-nav ol, nav#gizmo-nav ul { margin: 0; padding-left: 1.2em; }
+nav#gizmo-nav li { margin: 1px 0; }
+nav#gizmo-nav li > ul { display: none; }
+nav#gizmo-nav li.gizmo-open > ul { display: block; }
+nav#gizmo-nav a { color: #1f2328; text-decoration: none; display: block; padding: 2px 5px; border-radius: 4px; }
+nav#gizmo-nav a:hover { background: #e4e8ee; }
+nav#gizmo-nav a.gizmo-current { background: #d6e4f7; font-weight: 600; }
+nav#gizmo-nav a:focus-visible, button#gizmo-nav-toggle:focus-visible, button#gizmo-top:focus-visible { outline: 2px solid #2f6fd0; outline-offset: 1px; }
+body.gizmo-has-nav { margin-left: 320px !important; }
+button#gizmo-nav-toggle, button#gizmo-top { position: fixed; z-index: 1001; border: 1px solid #c4c9d0; background: #ffffff; color: #1f2328; border-radius: 6px; padding: 6px 10px; font: 13px -apple-system, "Helvetica Neue", Helvetica, Arial, sans-serif; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.12); }
+button#gizmo-nav-toggle { top: 10px; left: 10px; display: none; }
+button#gizmo-top { bottom: 16px; right: 16px; display: none; }
+@media (max-width: 1100px) {
+html { scroll-padding-top: 52px; }
+nav#gizmo-nav { display: none; width: 85vw; max-width: 340px; padding-top: 52px; box-shadow: 2px 0 12px rgba(0,0,0,0.2); }
+nav#gizmo-nav.gizmo-shown { display: block; }
+body.gizmo-has-nav { margin-left: auto !important; padding-top: 44px !important; }
+button#gizmo-nav-toggle { display: block; }
+}
+@media print {
+nav#gizmo-nav, button#gizmo-nav-toggle, button#gizmo-top { display: none !important; }
+body.gizmo-has-nav { margin-left: 0 !important; padding-top: 0 !important; }
+}
+</style>
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+  var marker = document.getElementsByName("toc")[0] || document.getElementById("toc");
+  if (!marker) { return; }
+  var lists = document.querySelectorAll("ol, ul"), toc = null;
+  for (var k = 0; k < lists.length && !toc; k++) {
+    if (marker.compareDocumentPosition(lists[k]) & Node.DOCUMENT_POSITION_FOLLOWING) { toc = lists[k]; }
+  }
+  if (!toc) { return; }
+  var nav = document.createElement("nav"); nav.id = "gizmo-nav"; nav.setAttribute("aria-label", "User guide contents");
+  var title = document.createElement("a"); title.className = "gizmo-nav-title"; title.href = "#"; title.textContent = "GIZMO User Guide";
+  nav.appendChild(title); nav.appendChild(toc.cloneNode(true)); document.body.appendChild(nav);
+  document.body.classList.add("gizmo-has-nav");
+  var toggle = document.createElement("button"); toggle.id = "gizmo-nav-toggle"; toggle.type = "button"; toggle.textContent = "☰ Contents";
+  toggle.setAttribute("aria-controls", "gizmo-nav"); toggle.setAttribute("aria-expanded", "false"); document.body.appendChild(toggle);
+  function show_nav(shown) { nav.classList.toggle("gizmo-shown", shown); toggle.setAttribute("aria-expanded", shown ? "true" : "false"); }
+  toggle.addEventListener("click", function () { show_nav(!nav.classList.contains("gizmo-shown")); });
+  document.addEventListener("keydown", function (e) { switch (e.key) { case "Escape": case "Esc": if (nav.classList.contains("gizmo-shown")) { show_nav(false); toggle.focus(); } } });
+  var top = document.createElement("button"); top.id = "gizmo-top"; top.type = "button"; top.textContent = "↑ Top"; document.body.appendChild(top);
+  top.addEventListener("click", function () { window.scrollTo(0, 0); });
+  var links = [], all = nav.querySelectorAll("a[href^='#']");
+  for (var i = 0; i < all.length; i++) {
+    var id = decodeURIComponent(all[i].getAttribute("href").slice(1)); if (!id) { continue; }
+    var target = document.getElementById(id) || document.getElementsByName(id)[0];
+    if (target) { links.push({ link: all[i], target: target }); }
+    all[i].addEventListener("click", function () { show_nav(false); });
+  }
+  var current = null, pending = false;
+  function update() {
+    pending = false;
+    top.style.display = (window.scrollY > 600) ? "block" : "none";
+    var found = null;
+    for (var j = 0; j < links.length; j++) { if (links[j].target.getBoundingClientRect().top <= 90) { found = links[j]; } else { break; } }
+    if (Object.is(found, current)) { return; }
+    var opened = nav.querySelectorAll(".gizmo-current, .gizmo-open");
+    for (var m = 0; m < opened.length; m++) { opened[m].classList.remove("gizmo-current"); opened[m].classList.remove("gizmo-open"); opened[m].removeAttribute("aria-current"); }
+    current = found; if (!found) { return; }
+    found.link.classList.add("gizmo-current"); found.link.setAttribute("aria-current", "location");
+    for (var p = found.link.parentNode; p && !Object.is(p, nav); p = p.parentNode) { if (/^LI$/.test(p.tagName)) { p.classList.add("gizmo-open"); } }
+    var r = found.link.getBoundingClientRect(), n = nav.getBoundingClientRect();
+    if (r.top < n.top + 40 || r.bottom > n.bottom - 40) { nav.scrollTop += r.top - n.top - n.height / 3; }
+  }
+  window.addEventListener("scroll", function () { if (!pending) { pending = true; window.requestAnimationFrame(update); } });
+  update();
+});
+</script>

@@ -851,6 +851,9 @@
 #endif
 
 
+#if defined(MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT) && !defined(MHD_MODIFIED_GRADIENT)
+#error "MHD_MODIFIED_GRADIENT_RELATIVE_FIELD_WEIGHT selects the face weighting of the MHD_MODIFIED_GRADIENT solve: enable MHD_MODIFIED_GRADIENT as well"
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC
@@ -975,7 +978,7 @@
 #endif
 
 
-#ifndef  GALSF_GENERATIONS
+#if defined(GALSF) && !defined(GALSF_GENERATIONS)
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
@@ -993,13 +996,13 @@
 #define CRFLUID_REDUCED_C_CODE(k) (return_CRbin_M1speed(k)) // allow for bin-to-bin variations in RSOL
 
 
+#if defined(FOF) || defined(SUBFIND) /* the group finders are the only users of the link types */
 #ifndef FOF_PRIMARY_LINK_TYPES
 #define FOF_PRIMARY_LINK_TYPES 2
 #endif
-
-
 #ifndef FOF_SECONDARY_LINK_TYPES
 #define FOF_SECONDARY_LINK_TYPES 0
+#endif
 #endif
 
 
@@ -1144,7 +1147,7 @@
 #endif
 #endif
 #endif
-#ifndef RT_SOURCES
+#if (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE) || defined(RT_SOURCE_INJECTION)) && !defined(RT_SOURCES) /* only radiation code reads the source types */
 #define RT_SOURCES 1+2+4+8+16+32 // default to allowing all types to act as sources //
 #endif
 
@@ -1665,14 +1668,14 @@
 /* Reduced speed-of-light factor for PIC dust dynamics. Global default so the
  * grain drag (solids/grain_drag.cc) and the PIC timestep limiter (core/timestep.cc)
  * use the same value; overridable from Config.sh. */
-#ifndef PIC_SPEEDOFLIGHT_REDUCTION
+#if defined(PIC_MHD) && !defined(PIC_SPEEDOFLIGHT_REDUCTION)
 #define PIC_SPEEDOFLIGHT_REDUCTION (1)
 #endif
 
 /* Fractional amount by which adaptive-gravity softening lengths are allowed to
  * vary in a single timestep. Global so the AGS radius solver (gravity/ags_rkern.cc)
  * and the AGS density loop (gravity/ags_density_loop.cc) share one tolerance. */
-#ifndef AGS_DSOFT_TOL
+#if defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && !defined(AGS_DSOFT_TOL)
 #define AGS_DSOFT_TOL (0.5)
 #endif
 

@@ -5115,7 +5115,33 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #ifdef MAGNETIC
     {double tmp=UNIT_B_IN_GAUSS; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Internal_UnitB_In_Gauss", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
         H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+    /* unit of the MagneticField dataset (not the internal unit above) */
+    {double tmp=All.UnitMagneticField_in_gauss; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitMagneticField_In_Gauss", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
+    /* how this run's code was built: the literal Config.sh, every option in effect (with the defaults and derived
+       options it switched on), a hash of those, the build and compiler, and a fingerprint of the executable */
+    {
+        auto write_string_attribute = [handle](const char *name, const char *value) {
+            hid_t string_type = H5Tcopy(H5T_C_S1); H5Tset_size(string_type, strlen(value) + 1);
+            hid_t space = H5Screate(H5S_SCALAR); hid_t attribute = H5Acreate(handle, name, string_type, space, H5P_DEFAULT);
+            H5Awrite(attribute, string_type, value); H5Aclose(attribute); H5Sclose(space); H5Tclose(string_type);};
+        write_string_attribute("Compile_Config_Options", compile_time_config_literal());
+        write_string_attribute("Compile_Effective_Options", compile_time_effective_options());
+        unsigned long long options_hash = compile_time_effective_options_fnv1a64();
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Compile_Effective_Options_FNV1a64", H5T_NATIVE_ULLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_ULLONG, &options_hash); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+#ifdef BUILDINFO
+        write_string_attribute("Build_Info", BUILDINFO);
+#endif
+        write_string_attribute("Compiler_Version", compile_time_compiler_version());
+        unsigned long long executable_hash = executable_fnv1a64(); long long executable_size = executable_size_in_bytes();
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Executable_FNV1a64", H5T_NATIVE_ULLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_ULLONG, &executable_hash); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Executable_Size_In_Bytes", H5T_NATIVE_LLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_LLONG, &executable_size); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+    }
+
     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Gravitational_Constant_In_Code_Inits", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.G); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 

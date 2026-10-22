@@ -1404,6 +1404,7 @@ KOKKOS_INLINE_FUNCTION double particle_ionizing_luminosity_in_cgs_core(long i, s
 
 KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    {int k; for(k=0;k<N_RT_FREQ_BINS;k++) {lum[k]=0;}} // bands below only set what applies to this source
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion (P[].Mass is the SSOT for particle mass; CellP[].Mass is gas-only and is uninitialized for non-gas types, which would silently filter Type 4/5 sources)
     int active_check = 0; // default to inactive //
@@ -1748,6 +1749,7 @@ KOKKOS_INLINE_FUNCTION double chimes_ion_luminosity(double stellar_age, double s
 
 KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity_chimes(int i, int mode, double *lum, double *chimes_lum_G0, double *chimes_lum_ion, struct particle_data *pp, struct gas_cell_data *cell)
 {
+    {int j; for(j=0;j<CHIMES_LOCAL_UV_NBINS;j++) {chimes_lum_G0[j]=0; chimes_lum_ion[j]=0;}} // callers use these for any active source, not only the stars set below
     int value_to_return = 0;
     value_to_return = rt_get_source_luminosity(i, mode, lum, pp, cell); // call routine as normal for all bands, before adding chimes-specific details
     if( is_galsf_stellar_candidate_type(pp[i].Type, All.ComovingIntegrationOn) && (pp[i].Mass>0) && (pp[i].KernelRadius>0) ) // (P[].Mass is SSOT for stars; CellP[].Mass is gas-only)
