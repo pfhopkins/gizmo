@@ -153,7 +153,7 @@ def readsnap(sdir,snum,ptype,
     # initialize variables to be read
     pos=np.zeros([npartTotal[ptype],3],dtype=np.float64)
     vel=np.copy(pos)
-    ids=np.zeros([npartTotal[ptype]],dtype=np.int64)
+    ids=None # allocated with the file's ID dtype (32- or 64-bit, signed or unsigned)
     mass=np.zeros([npartTotal[ptype]],dtype=np.float64)
     if (ptype==0):
         ugas=np.copy(mass)
@@ -199,6 +199,7 @@ def readsnap(sdir,snum,ptype,
             nR=nL + npart[ptype]
             pos[nL:nR,:]=input_struct[bname+"Coordinates"]
             vel[nL:nR,:]=input_struct[bname+"Velocities"]
+            if ids is None: ids=np.zeros([npartTotal[ptype]],dtype=input_struct[bname+"ParticleIDs"].dtype)
             ids[nL:nR]=input_struct[bname+"ParticleIDs"]
             mass[nL:nR]=massarr[ptype]
             if (massarr[ptype] <= 0.):
@@ -227,10 +228,8 @@ def readsnap(sdir,snum,ptype,
                 bhmdot[nL:nR]=input_struct[bname+"Sink_Mdot"]
             nL = nR # sets it for the next iteration	
 
-	## correct to same ID as original gas particle for new stars, if bit-flip applied
-    if ((np.min(ids)<0) | (np.max(ids)>1.e9)):
-        bad = (ids < 0) | (ids > 1.e9)
-        ids[bad] += (1 << 31)
+
+    if ids is None: ids=np.zeros([npartTotal[ptype]],dtype=np.int64)
 
     # do the cosmological conversions on final vectors as needed
     pos *= hinv*ascale # snapshot units are comoving
