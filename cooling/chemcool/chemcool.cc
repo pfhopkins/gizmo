@@ -467,7 +467,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
                It updates Dust_Temperature and Lambda_RadiativeCooling_toRHDBins[IR].
                CHEMCOOL already applied gas-dust coupling (R1) to the gas energy, so we do NOT
                apply the returned LambdaDust to the gas — only use it for Tdust + IR bookkeeping. */
-            rt_ir_lambdadust(target, temp);
+            rt_ir_lambdadust(target, temp, P, CellP);
             CellP[target].DustTemp = CellP[target].Dust_Temperature;
 #endif
         }
