@@ -95,7 +95,7 @@ ShieldingLength                 0.050             % 50 pc shielding length
 
 %---- CHEMCOOL (CHEMCOOL + CHEMISTRYNETWORK=5)
 G0                              1.7               % initial Habing FUV field (Draine 1978)
-CosmicRayIonRate                3.0e-19           % CR ionization rate [s^-1] (testing value)
+CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1], Milky-Way-like cloud value
 DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              1.0             % same as InitMetallicity
