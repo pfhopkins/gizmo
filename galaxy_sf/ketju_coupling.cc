@@ -2051,6 +2051,13 @@ void ketju_find_regions(void)
 
     /* allocate compute tasks across regions based on cost estimates */
     allocate_compute_tasks_for_regions();
+    /* A region given one compute task is integrated where its members live (its affected root, the lowest task holding
+     * members): no forwarding to and from a remote task, which would make the affected root wait idle on the remote MSTAR run. */
+    for(int k = 0; k < n_multi; k++) {
+        region_compute_info &ci = ActiveRegions[multi[k]].compute_info;
+        if(ci.first_task_index != ci.final_task_index) continue;
+        for(int t = 0; t < NTask; t++) {if(task_counts[(size_t)t * n_multi + k] > 0) {ci.first_task_index = ci.final_task_index = t; break;}}
+    }
 
     /* second pass: set up integrators */
     clk.lap(CPU_KETJUFIND);
