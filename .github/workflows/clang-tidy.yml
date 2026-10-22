@@ -1,0 +1,49 @@
+# Static analysis of the C++ a PR touches, with the error-class checks in .clang-tidy (null
+# dereference, uninitialised reads, use-after-free, sizeof/memset mistakes, ...). The changed .cc
+# files are analysed whole, but only findings on (or passing through) changed lines are reported,
+# so existing code is not re-litigated and the job stays at a few minutes.
+#
+# GIZMO's sources are config-driven, so the compile flags come from one test config
+# (gmc_cooling_rt: STARFORGE defaults + MHD + cooling + RT); code compiled out by that config is
+# not seen. Same check locally, for any Config.sh:
+#   python3 scripts/compile_commands.py      # writes compile_commands.json, builds nothing
+#   clang-tidy -p . <file.cc ...>            # whole files; clangd/IDEs pick up both automatically
+#   git diff -U0 origin/starforge_dev... | clang-tidy-diff.py -p1 -path . -iregex '.*\.cc'   # as CI
+
+name: clang-tidy
+
+on:
+  pull_request:
+    branches: ["starforge_dev"]
+
+concurrency:
+  group: clang-tidy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev clang-tidy
+          clang-tidy --version
+      - name: Configure
+        run: |
+          echo 'SYSTYPE="github-ubuntu"' > Makefile.systype
+          cp test/gmc_cooling_rt/Config.sh Config.sh
+          python3 scripts/compile_commands.py
+      - name: clang-tidy on changed lines
+        run: |
+          base="origin/${{ github.base_ref }}"
+          files=$(git diff --name-only --diff-filter=AMR "$base...HEAD" -- '*.cc' \
+                  | grep -xFf <(python3 -c "import json; print('\n'.join(e['file'] for e in json.load(open('compile_commands.json'))))") || true)
+          if [ -z "$files" ]; then echo "no changed .cc files compiled by this config"; exit 0; fi
+          echo "$files"
+          tidy_diff=$(ls /usr/bin/clang-tidy-diff*.py /usr/lib/llvm-*/share/clang/clang-tidy-diff.py 2>/dev/null | head -1)
+          git diff -U0 "$base...HEAD" -- $files | python3 "$tidy_diff" -p1 -path . -quiet -iregex '.*\.cc' -j 4
