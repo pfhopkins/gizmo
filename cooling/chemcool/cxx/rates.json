@@ -3151,7 +3151,7 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     253,
-    1183
+    1192
    ],
    "comment": "",
    "expression": [
@@ -3174,7 +3174,7 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     276,
-    1184
+    1193
    ],
    "comment": "",
    "expression": [
@@ -3197,7 +3197,7 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     293,
-    1185
+    1194
    ],
    "comment": "",
    "expression": [
@@ -3267,8 +3267,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1558,
-    1612
+    1567,
+    1621
    ],
    "comment": "",
    "expression": [],
@@ -3283,8 +3283,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    454,
-    454
+    463,
+    463
    ],
    "comment": "",
    "expression": [
@@ -3300,8 +3300,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    461,
-    461
+    470,
+    470
    ],
    "comment": "",
    "expression": [
@@ -3317,8 +3317,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    467,
-    467
+    476,
+    476
    ],
    "comment": "",
    "expression": [
@@ -3334,8 +3334,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    494,
-    505
+    503,
+    514
    ],
    "comment": "",
    "expression": [
@@ -3358,8 +3358,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    509,
-    509
+    518,
+    518
    ],
    "comment": "",
    "expression": [
@@ -3375,8 +3375,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    523,
-    523
+    532,
+    532
    ],
    "comment": "",
    "expression": [
@@ -3392,8 +3392,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    535,
-    537
+    544,
+    546
    ],
    "comment": "",
    "expression": [
@@ -3412,8 +3412,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    549,
-    549
+    558,
+    558
    ],
    "comment": "",
    "expression": [
@@ -3429,8 +3429,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    557,
-    557
+    566,
+    566
    ],
    "comment": "(cl15) --  OH cooling - non-lte\nlike water cooling: HM79 universal cooling law",
    "expression": [
@@ -3446,8 +3446,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    567,
-    567
+    576,
+    576
    ],
    "comment": "",
    "expression": [
@@ -3463,8 +3463,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    569,
-    569
+    578,
+    578
    ],
    "comment": "",
    "expression": [
@@ -3480,8 +3480,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    591,
-    611
+    600,
+    620
    ],
    "comment": "",
    "expression": [
@@ -3502,8 +3502,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    617,
-    637
+    626,
+    646
    ],
    "comment": "",
    "expression": [
@@ -3524,8 +3524,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    644,
-    656
+    653,
+    665
    ],
    "comment": "",
    "expression": [
@@ -3546,8 +3546,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    669,
-    669
+    678,
+    678
    ],
    "comment": "",
    "expression": [
@@ -3563,8 +3563,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    673,
-    673
+    682,
+    682
    ],
    "comment": "",
    "expression": [
@@ -3580,8 +3580,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    677,
-    677
+    686,
+    686
    ],
    "comment": "",
    "expression": [
@@ -3597,8 +3597,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    682,
-    682
+    691,
+    691
    ],
    "comment": "Electron rate -- from my fits to BBT98.\n1 -> 0",
    "expression": [
@@ -3614,8 +3614,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    684,
-    684
+    693,
+    693
    ],
    "comment": "2 -> 0",
    "expression": [
@@ -3631,8 +3631,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    686,
-    686
+    695,
+    695
    ],
    "comment": "2 -> 1",
    "expression": [
@@ -3648,8 +3648,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    692,
-    696
+    701,
+    705
    ],
    "comment": "",
    "expression": [
@@ -3670,8 +3670,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    700,
-    704
+    709,
+    713
    ],
    "comment": "",
    "expression": [
@@ -3692,8 +3692,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    708,
-    710
+    717,
+    719
    ],
    "comment": "",
    "expression": [
@@ -3712,8 +3712,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    724,
-    746
+    733,
+    755
    ],
    "comment": "",
    "expression": [
@@ -3734,8 +3734,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    753,
-    775
+    762,
+    784
    ],
    "comment": "",
    "expression": [
@@ -3756,8 +3756,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    781,
-    811
+    790,
+    820
    ],
    "comment": "",
    "expression": [
@@ -3780,8 +3780,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    824,
-    824
+    833,
+    833
    ],
    "comment": "",
    "expression": [
@@ -3797,8 +3797,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    831,
-    831
+    840,
+    840
    ],
    "comment": "",
    "expression": [
@@ -3814,8 +3814,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    838,
-    838
+    847,
+    847
    ],
    "comment": "",
    "expression": [
@@ -3831,8 +3831,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    856,
-    857
+    865,
+    866
    ],
    "comment": "",
    "expression": [
@@ -3848,8 +3848,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    871,
-    871
+    880,
+    880
    ],
    "comment": "",
    "expression": [
@@ -3865,8 +3865,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    885,
-    885
+    894,
+    894
    ],
    "comment": "",
    "expression": [
@@ -3882,8 +3882,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    900,
-    900
+    909,
+    909
    ],
    "comment": "",
    "expression": [
@@ -3899,8 +3899,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    912,
-    912
+    921,
+    921
    ],
    "comment": "",
    "expression": [
@@ -3916,8 +3916,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    924,
-    924
+    933,
+    933
    ],
    "comment": "",
    "expression": [
@@ -3933,8 +3933,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    932,
-    932
+    941,
+    941
    ],
    "comment": "(cl[42-43]) -- SiI fine structure lines\nCollisional de-excitation rates -- HI, protons from HM89\nHI:\n1 -> 0",
    "expression": [
@@ -3950,8 +3950,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    934,
-    934
+    943,
+    943
    ],
    "comment": "2 -> 0",
    "expression": [
@@ -3967,8 +3967,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    936,
-    936
+    945,
+    945
    ],
    "comment": "2 -> 1",
    "expression": [
@@ -3984,8 +3984,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    968,
-    970
+    977,
+    979
    ],
    "comment": "",
    "expression": [
@@ -4004,8 +4004,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    985,
-    985
+    994,
+    994
    ],
    "comment": "",
    "expression": [
@@ -4021,8 +4021,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    994,
-    996
+    1003,
+    1005
    ],
    "comment": "",
    "expression": [
@@ -4041,8 +4041,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1003,
-    1003
+    1012,
+    1012
    ],
    "comment": "Proton rate negligible below 10^4K, ignorable below 10^5K.\nFinally, cl48 holds f(1,LTE)",
    "expression": [
@@ -4058,8 +4058,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1011,
-    1011
+    1020,
+    1020
    ],
    "comment": "(cl[49-51]) -- SiII fine structure lines\nCollisional rates:\n(cl49) SiII - HI (fit by SCOG to data from R90).",
    "expression": [
@@ -4075,8 +4075,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1016,
-    1016
+    1025,
+    1025
    ],
    "comment": "(cl50) SiII - electron (DK91 -- extrapolated to T < 4000K,\nassuming constant collision strength)",
    "expression": [
@@ -4092,8 +4092,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1020,
-    1020
+    1029,
+    1029
    ],
    "comment": "cl51 holds f(1,LTE)",
    "expression": [
@@ -4109,8 +4109,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1038,
-    1565
+    1047,
+    1574
    ],
    "comment": "This rate includes cooling from HI, HeI, HeII excitation, so we set\nthe corresponding individual rates to zero to avoid double counting\nHI excitation cooling ('Lyman-alpha' cooling):",
    "expression": [
@@ -4130,8 +4130,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1120,
-    1124
+    1129,
+    1133
    ],
    "comment": "",
    "expression": [
@@ -4147,8 +4147,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1125,
-    1129
+    1134,
+    1138
    ],
    "comment": "",
    "expression": [
@@ -4164,8 +4164,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1130,
-    1134
+    1139,
+    1143
    ],
    "comment": "",
    "expression": [
@@ -4181,8 +4181,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1135,
-    1139
+    1144,
+    1148
    ],
    "comment": "",
    "expression": [
@@ -4198,8 +4198,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1140,
-    1144
+    1149,
+    1153
    ],
    "comment": "",
    "expression": [
@@ -4215,8 +4215,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1150,
-    1150
+    1159,
+    1159
    ],
    "comment": "(cl58) H2 collision-induced emission cooling.\nFrom RA04. Assumes that H2-H2 collisions dominate",
    "expression": [
@@ -4232,8 +4232,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1050,
-    1569
+    1059,
+    1578
    ],
    "comment": "HeI excitation cooling",
    "expression": [
@@ -4253,8 +4253,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1065,
-    1570
+    1074,
+    1579
    ],
    "comment": "",
    "expression": [
@@ -4274,8 +4274,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1076,
-    1574
+    1085,
+    1583
    ],
    "comment": "HeII excitation cooling",
    "expression": [
@@ -4295,8 +4295,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1094,
-    1094
+    1103,
+    1103
    ],
    "comment": "",
    "expression": [
@@ -4312,8 +4312,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1104,
-    1104
+    1113,
+    1113
    ],
    "comment": "",
    "expression": [
@@ -4359,9 +4359,9 @@
     "if (temp < 1d1):",
     "  cltab(65,itemp) = 0d0",
     "elseif (temp < 1d4):",
-    "  cltab(65,itemp) = (1d1**((((((-21.716699d0)+(1.3865783d0*dlog10(temp3)))-(0.37915285d0*(dlog10(temp3)**2)))+(0.11453688d0*(dlog10(temp3)**3)))-(0.23214154d0*(dlog10(temp3)**4)))+(0.058538864d0*(dlog10(temp3)**5))))",
+    "  cltab(65,itemp) = (1d1**((((((-22.089523d0)+(1.5714711d0*dlog10(temp3)))+(0.015391166d0*(dlog10(temp3)**2)))-(0.23619985d0*(dlog10(temp3)**3)))-(0.51002221d0*(dlog10(temp3)**4)))+(0.32168730d0*(dlog10(temp3)**5))))",
     "else:",
-    "  cltab(65,itemp) = (1d1**((((((-21.716699d0)+1.3865783d0)-0.37915285d0)+0.11453688d0)-0.23214154d0)+0.058538864d0))"
+    "  cltab(65,itemp) = (1d1**((((((-22.089523d0)+1.5714711d0)+0.015391166d0)-0.23619985d0)-0.51002221d0)+0.32168730d0))"
    ],
    "kind": "GENERATED"
   },
@@ -4374,18 +4374,18 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     406,
-    427
+    436
    ],
    "comment": "",
    "expression": [
-    "if (temp < 1d1):",
+    "if (temp < 1d2):",
     "  cltab(66,itemp) = 0d0",
-    "elseif (temp < 2d2):",
-    "  cltab(66,itemp) = (1d1**((((((-34.286155d0)-(48.537163d0*dlog10(temp3)))-(77.121176d0*(dlog10(temp3)**2)))-(51.352459d0*(dlog10(temp3)**3)))-(15.169160d0*(dlog10(temp3)**4)))-(0.98120322d0*(dlog10(temp3)**5))))",
+    "elseif (temp < 5d2):",
+    "  cltab(66,itemp) = (1d1**(((((((((-21.928796d0)+(16.815730d0*dlog10(temp3)))+(96.743155d0*(dlog10(temp3)**2)))+(343.19180d0*(dlog10(temp3)**3)))+(734.71651d0*(dlog10(temp3)**4)))+(983.67576d0*(dlog10(temp3)**5)))+(801.81247d0*(dlog10(temp3)**6)))+(364.14446d0*(dlog10(temp3)**7)))+(70.609154d0*(dlog10(temp3)**8))))",
     "elseif (temp < 1d4):",
-    "  cltab(66,itemp) = (1d1**((((((-22.190316)+(1.5728955*dlog10(temp3)))-(0.21335100*(dlog10(temp3)**2)))+(0.96149759*(dlog10(temp3)**3)))-(0.91023195*(dlog10(temp3)**4)))+(0.13749749*(dlog10(temp3)**5))))",
+    "  cltab(66,itemp) = (10.d0**(((((((((-22.921189d0)+(1.6802758d0*dlog10(temp3)))+(0.93310622d0*(dlog10(temp3)**2)))+(4.0406627d0*(dlog10(temp3)**3)))-(4.7274036d0*(dlog10(temp3)**4)))-(8.8077017d0*(dlog10(temp3)**5)))+(8.9167183d0*(dlog10(temp3)**6)))+(6.4380698d0*(dlog10(temp3)**7)))-(6.3701156d0*(dlog10(temp3)**8))))",
     "else:",
-    "  cltab(66,itemp) = (1d1**((((((-22.190316)+1.5728955)-0.21335100)+0.96149759)-0.91023195)+0.13749749))"
+    "  cltab(66,itemp) = (10.d0**(((((((((-22.921189d0)+1.6802758d0)+0.93310622d0)+4.0406627d0)-4.7274036d0)-8.8077017d0)+8.9167183d0)+6.4380698d0)-6.3701156d0))"
    ],
    "kind": "GENERATED"
   },
@@ -4397,8 +4397,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    433,
-    433
+    442,
+    442
    ],
    "comment": "(cl67): Equilibrium J=1/J=0 H2 ratio (used to compute heating/cooling\nfrom J = 0 <-> J=1 transitions in cool_func",
    "expression": [
@@ -4414,8 +4414,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1162,
-    1162
+    1171,
+    1171
    ],
    "comment": "",
    "expression": [
@@ -4431,8 +4431,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1164,
-    1165
+    1173,
+    1174
    ],
    "comment": "",
    "expression": [

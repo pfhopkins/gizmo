@@ -378,53 +378,62 @@ c
      $                    + 0.19191375d0)
         endif
 c
-c (cl65) -- H2-H+, low density rate: based on G90, K02; assumes 3:1 o:p ratio
+c (cl65) -- H2-H+, low density rate: based on G90, K02 and Honvault et al (2011,2012); assumes 3:1 o:p ratio
 c
 c Fit accurate to within 5%.
 c
         if (temp .lt. 1d1) then
           cltab(65,itemp) = 0d0
         elseif (temp .lt. 1d4) then
-          cltab(65,itemp) = 1d1**(-21.716699d0
-     $                    + 1.3865783d0   * dlog10(temp3)
-     $                    - 0.37915285d0  * dlog10(temp3)**2
-     $                    + 0.11453688d0  * dlog10(temp3)**3
-     $                    - 0.23214154d0  * dlog10(temp3)**4
-     $                    + 0.058538864d0 * dlog10(temp3)**5)
+         cltab(65,itemp) = 1d1**(-22.089523d0
+     $                   + 1.5714711d0   * dlog10(temp3)
+     $                   + 0.015391166d0 * dlog10(temp3)**2
+     $                   - 0.23619985d0  * dlog10(temp3)**3
+     $                   - 0.51002221d0  * dlog10(temp3)**4
+     $                   + 0.32168730d0  * dlog10(temp3)**5)
         else
-          cltab(65,itemp) = 1d1**(-21.716699d0
-     $                    + 1.3865783d0
-     $                    - 0.37915285d0
-     $                    + 0.11453688d0
-     $                    - 0.23214154d0
-     $                    + 0.058538864d0)
+         cltab(65,itemp) = 1d1**(-22.089523d0
+     $                   + 1.5714711d0   
+     $                   + 0.015391166d0 
+     $                   - 0.23619985d0  
+     $                   - 0.51002221d0  
+     $                   + 0.32168730d0)
         endif
 c
-c (cl66) -- H2-e, low density rate: based on DRD83, assumes 3:1 o:p ratio
+c (cl66) -- H2-e, low density rate: based on Yoon et al (2008), assumes 3:1 o:p ratio
 c
-        if (temp .lt. 1d1) then
+        if (temp .lt. 1d2) then
           cltab(66,itemp) = 0d0
-        elseif (temp .lt. 2d2) then
-          cltab(66,itemp) = 1d1**(-34.286155d0
-     $                    - 48.537163d0  * dlog10(temp3)
-     $                    - 77.121176d0  * dlog10(temp3)**2
-     $                    - 51.352459d0  * dlog10(temp3)**3
-     $                    - 15.169160d0  * dlog10(temp3)**4
-     $                    - 0.98120322d0 * dlog10(temp3)**5)
+        elseif (temp .lt. 5d2) then
+          cltab(66,itemp) = 1d1**(-21.928796d0
+     $                    + 16.815730d0 * dlog10(temp3)
+     $                    + 96.743155d0 * dlog10(temp3)**2
+     $                    + 343.19180d0 * dlog10(temp3)**3
+     $                    + 734.71651d0 * dlog10(temp3)**4
+     $                    + 983.67576d0 * dlog10(temp3)**5
+     $                    + 801.81247d0 * dlog10(temp3)**6
+     $                    + 364.14446d0 * dlog10(temp3)**7
+     $                    + 70.609154d0 * dlog10(temp3)**8)
         elseif (temp .lt. 1d4) then
-          cltab(66,itemp) = 1d1**(-22.190316
-     $                    + 1.5728955  * dlog10(temp3)
-     $                    - 0.21335100 * dlog10(temp3)**2
-     $                    + 0.96149759 * dlog10(temp3)**3
-     $                    - 0.91023195 * dlog10(temp3)**4
-     $                    + 0.13749749 * dlog10(temp3)**5)
+          cltab(66,itemp) = 10.d0**(-22.921189d0
+     $                    + 1.6802758d0  * dlog10(temp3)
+     $                    + 0.93310622d0 * dlog10(temp3)**2
+     $                    + 4.0406627d0  * dlog10(temp3)**3
+     $                    - 4.7274036d0  * dlog10(temp3)**4
+     $                    - 8.8077017d0  * dlog10(temp3)**5
+     $                    + 8.9167183d0  * dlog10(temp3)**6
+     $                    + 6.4380698d0  * dlog10(temp3)**7
+     $                    - 6.3701156d0  * dlog10(temp3)**8)
         else
-          cltab(66,itemp) = 1d1**(-22.190316
-     $                    + 1.5728955  
-     $                    - 0.21335100 
-     $                    + 0.96149759 
-     $                    - 0.91023195 
-     $                    + 0.13749749)
+          cltab(66,itemp) = 10.d0**(-22.921189d0
+     $                    + 1.6802758d0  
+     $                    + 0.93310622d0 
+     $                    + 4.0406627d0  
+     $                    - 4.7274036d0  
+     $                    - 8.8077017d0  
+     $                    + 8.9167183d0  
+     $                    + 6.4380698d0  
+     $                    - 6.3701156d0)
         endif
 c
 c (cl67): Equilibrium J=1/J=0 H2 ratio (used to compute heating/cooling 

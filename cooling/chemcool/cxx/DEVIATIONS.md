@@ -644,6 +644,10 @@ Provenance: SGChem `photoinit_ism.F:71, 108-110`, `cheminmo.F:414-418, 547-552, 
 * ch24 zero below 100 K, where the fit is not valid (nets 3, 17).
 * crtab(3) CR ionization of C 3.83 -> 3.85 zeta (nets 3, 15, 16).
 
+## D-45. H2 rovibrational cooling by H+ and e-, all networks, both backends
+Provenance: SGChem `coolinmo.F:451-506`. cl65 (H2-H+): G90/K02 fit -> fit including Honvault+11/12;
+cl66 (H2-e): DRD83 -> Yoon+08 (zero below 100 K, two fits split at 500 K, constant above 1e4 K).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
