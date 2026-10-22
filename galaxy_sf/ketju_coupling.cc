@@ -198,6 +198,7 @@ struct KetjuRegion {
     /* integrator state (only allocated on compute root) */
     struct ketju_system *integrator;
     std::vector<ketju_extra_data> extra_data;
+    std::vector<double> true_vel;  /* MSTAR end-of-step CoM-relative velocities before the second negative half-kick (compute tasks) */
 
     /* CoM frame data (stored at setup, used in scatter) */
     double com_pos[3];
@@ -1308,6 +1309,12 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         }
     }
 
+#ifdef KETJU_TYPE4_STARS
+    if(reg.compute_tasks.is_member() && reg.integrator) {
+        int n = reg.integrator->num_particles; reg.true_vel.resize(3 * n);
+        for(int i = 0; i < n; i++) for(int j = 0; j < 3; j++) reg.true_vel[3*i+j] = reg.integrator->physical_state->vel[i][j];
+    }
+#endif
     /* subtract second half of tree force */
     do_negative_halfstep_kick(reg, second_halfkick, 0);
 }
@@ -1530,6 +1537,7 @@ struct ketju_scatter_particle {
 #endif
 #ifdef KETJU_TYPE4_STARS
     double Sphere[4];    /* chain bounding sphere at end of step (comoving center, radius) */
+    double TrueVel[3];   /* CoM-relative velocity before the second negative half-kick */
 #endif
 };
 
@@ -1590,6 +1598,9 @@ static void scatter_results(KetjuRegion &reg)
                  * sp.Vel stores CoM-relative canonical momentum (com_vel added later in velocity trick).
                  * In non-cosmo: a_end=1, hubble_end=0, so sp.Vel = ps->vel (unchanged). */
                 sp.Vel[j] = (ps->vel[i][j] - hubble_end * ps->pos[i][j]) * a_end;
+#ifdef KETJU_TYPE4_STARS
+                sp.TrueVel[j] = (reg.true_vel[3*i+j] - hubble_end * ps->pos[i][j]) * a_end;
+#endif
             }
 #ifdef KETJU_SINKS
             sp.KetjuPNClass = reg.extra_data[i].KetjuPNClass;
@@ -1721,6 +1732,7 @@ static void scatter_results(KetjuRegion &reg)
         P[idx].Mass = sp.Mass;
 #ifdef KETJU_TYPE4_STARS
         for(int k = 0; k < 4; k++) {P[idx].KetjuChainSphere[k] = sp.Sphere[k];}
+        for(int k = 0; k < 3; k++) {P[idx].KetjuTrueVel[k] = sp.TrueVel[k] + reg.com_vel[k];}
 #endif
 
         /* skip velocity trick for merged particles (mass=0, will be removed) */
@@ -2221,6 +2233,19 @@ void ketju_run_integration(void)
         if(total_mergers > 0)
             printf("KETJU: %d merger(s) this step\n", total_mergers);
     }
+}
+
+/* Snapshots are written after the drift to the output time but before the step's end: a chain member whose step ends
+ * there still carries the velocity-trick chord velocity. Swap MSTAR's end-of-step velocity in for the write, and back.
+ * Members part-way through their step keep the chord state (no MSTAR state exists at the output time). */
+void ketju_swap_output_velocities(void)
+{
+#ifdef KETJU_TYPE4_STARS
+    for(int i = 0; i < NumPart; i++) {
+        if(!P[i].KetjuIntegrated || P[i].Mass <= 0 || P[i].Ti_begstep + P[i].dt_step != All.Ti_Current) continue;
+        for(int j = 0; j < 3; j++) {double v = P[i].Vel[j]; P[i].Vel[j] = P[i].KetjuTrueVel[j]; P[i].KetjuTrueVel[j] = v;}
+    }
+#endif
 }
 
 void ketju_set_final_velocities(void)

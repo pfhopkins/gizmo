@@ -1162,7 +1162,13 @@ void find_next_sync_point_and_drift(void)
 #endif
 #endif
 
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity, not the chord one */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities();
+#endif
 #ifdef SINK_TRIGGERED_FINE_OUTPUT
         if(FineOutputActive && ++FineOutputCount >= SINK_TRIGGERED_FINE_OUTPUT_COUNT)
           {
