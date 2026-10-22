@@ -818,7 +818,7 @@ static std::set<int> find_local_members(const std::vector<ketju_mpi_particle> &c
  * chain-eligibility filter. Used to gather "limiting particles" — non-chain
  * perturbers whose individual timesteps constrain the chain's macro step.
  * Pass `exclude` to skip members that are already in the chain itself. */
-static std::set<int> find_local_particles_in_radius(const std::vector<ketju_mpi_particle> &centers,
+__attribute__((unused)) static std::set<int> find_local_particles_in_radius(const std::vector<ketju_mpi_particle> &centers,
                                                     double radius,
                                                     const std::set<int> &exclude)
 {
@@ -1947,17 +1947,49 @@ void ketju_limit_timesteps(void)
 #else
         limited[r] = find_local_members(tsr_centers[r], limited_radius);
 #endif
-        std::set<int> limiting = find_local_particles_in_radius(tsr_centers[r], limiting_radius, limited[r]);
         for(int idx : limited[r]) {
             long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin);
             if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
             if(ti > 0 && ti < min_ti[2*r+1]) min_ti[2*r+1] = ti;
         }
+#if defined(KETJU_TYPE4_STARS) && !defined(BOX_PERIODIC)
+    }
+    { /* limiting particles: one pass over the local particles, each tested only against centres in neighbouring cells of
+       * size limiting_radius (was: a full particle scan per timestep region) */
+        std::unordered_map<long long, std::vector<std::pair<int, int>>> grid; /* cell -> (group, centre in group) */
+        auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
+        for(int r = 0; r < n_tsr; r++)
+            for(int c = 0; c < (int)tsr_centers[r].size(); c++) {
+                const double *x = tsr_centers[r][c].Pos;
+                grid[key((long long)floor(x[0] / limiting_radius), (long long)floor(x[1] / limiting_radius), (long long)floor(x[2] / limiting_radius))].push_back({r, c});
+            }
+        std::vector<int> last_group(n_tsr, -1); /* each particle counts once per group */
+        for(int i = 0; i < NumPart; i++) {
+            if(!is_synchronized(i)) continue;
+            if((P[i].Type != 4 && P[i].Type != 5) || is_chain_center(i)) continue; /* only stars outside chains limit a chain; gas and other chains do not */
+            long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[i].TimeBin);
+            long long cx = (long long)floor(P[i].Pos[0] / limiting_radius), cy = (long long)floor(P[i].Pos[1] / limiting_radius), cz = (long long)floor(P[i].Pos[2] / limiting_radius);
+            for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
+                auto it = grid.find(key(cx + dx, cy + dy, cz + dz));
+                if(it == grid.end()) continue;
+                for(const std::pair<int, int> &gc : it->second) {
+                    int r = gc.first;
+                    if(last_group[r] == i || limited[r].count(i)) continue;
+                    if(particle_distance(P[i].Pos.data_ptr(), const_cast<double*>(tsr_centers[r][gc.second].Pos)) >= limiting_radius) continue;
+                    last_group[r] = i;
+                    if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
+                }
+            }
+        }
+    }
+#else
+        std::set<int> limiting = find_local_particles_in_radius(tsr_centers[r], limiting_radius, limited[r]);
         for(int idx : limiting) {
             long long ti = GET_INTEGERTIME_FROM_TIMEBIN(P[idx].TimeBin);
             if(ti > 0 && ti < min_ti[2*r]) min_ti[2*r] = ti;
         }
     }
+#endif
     MPI_Allreduce(MPI_IN_PLACE, min_ti.data(), 2 * n_tsr, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
 
     long long counts[4] = {0, 0, 0, 0}; /* limited particles moved (down, up), timestep regions set by limiting particles, unsynchronised target bins */
