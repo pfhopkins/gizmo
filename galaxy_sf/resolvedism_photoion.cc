@@ -126,6 +126,25 @@
 /* case B recombination coefficient at T=10^4 K [cm^3/s] */
 #define PI_ALPHA_B 2.6e-13
 
+#ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
+#include "../cooling/chemcool/chemcool_consts.h"
+#include "../cooling/chemcool/chem_commons.h"
+/* chemistry's H+ case-B rate chtab(13) at T, rate_eq_simple.F table lookup */
+static double pi_chem_case_b_rate(double T)
+{
+    const double *ch = &COOLR.chtab[0][0], *dch = &COOLR.dtchtab[0][0];
+    int it = NMD; double dT = 0;
+    if(T < COOLR.tmax) {it = (int)(log10(T) / COOLR.dtlog) + 1; if(it < 1) {it = 1;} if(it > NMD) {it = NMD;} dT = T - COOLR.temptab[it-1];}
+    return ch[(it-1)*NCHTAB + 12] + dT * dch[(it-1)*NCHTAB + 12];
+}
+/* PI_ALPHA_B scaled by the chemistry's case-B T-dependence, T floored at 1e4 K */
+static double pi_alpha_b_cell(double T)
+{
+    if(!(T > 1.0e4)) return PI_ALPHA_B;
+    return PI_ALPHA_B * pi_chem_case_b_rate(T) / pi_chem_case_b_rate(1.0e4);
+}
+#endif
+
 /* Stromgren radius: Rs = (3 S_ly / (4 pi alpha_B n_H^2))^(1/3) */
 static double compute_stromgren_radius_cgs(double S_ly, double nH_cgs)
 {
@@ -349,8 +368,13 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                     int b = (int)(r * inv_dr); if(b >= PI_NBIN) {b = PI_NBIN - 1;}
                     double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
                     double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
+#ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
+                    double recomb  = pi_alpha_b_cell(CellP[j].Temp) * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
+                                     * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+#else
                     double recomb  = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
                                      * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+#endif
                     out.BinCost[ipix * PI_NBIN + b] += recomb;
                     if(out.BinRmin[ipix * PI_NBIN + b] <= 0 || r < out.BinRmin[ipix * PI_NBIN + b]) {out.BinRmin[ipix * PI_NBIN + b] = r;} /* v6: innermost cell of each bin */
                 }
