@@ -118,7 +118,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double ph42 = c.phrates[41];
 
     // --- grain recombination (.F:232-253) ---
-    double h_gr = chem_h_gr(temp, yn, abe, c.G_dust, c.dust_to_gas_ratio, ch34, ch35);
+    double h_gr = chem_h_gr_phi100(temp, yn, abe, c.G_dust, c.dust_to_gas_ratio, ch34, ch35);
 
     // --- dust temperature + H2 formation on grains (.F:255-264) ---
     double RH2, Rdust;

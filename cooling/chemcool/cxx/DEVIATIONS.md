@@ -620,6 +620,12 @@ Provenance: SGChem uses 6.94 in every network (`rate_eq_nl99.F:586-587`, `rate_e
 `rate_eq_simple.F:362`, `rate_eq_primordial.F:800`); nets 5/17 already did (D-27). Was 8.5 (1.22x more heating).
 Net 3 has no SGChem counterpart and follows the common value.
 
+## D-42. Grain recombination fit range in nets 5 and 15, both backends
+Provenance: SGChem `rate_eq_simple.F:241-257`, `rate_eq_nl99.F:334-348`. phi = G_dust sqrt(T)/(n x_e) is floored
+at 100 (fits valid for phi > 100); was a phi < 1e-6 (net 5) / phi < 1 (net 15) branch returning the
+phi = 0 limit. Net 15 also gains the hot-gas factor exp(-T/3e4) that net 5 had. Nets 3/17 keep their
+phi < 1e-6 branch (alignment scoped to nets 5 and 15).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

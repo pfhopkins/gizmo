@@ -235,16 +235,17 @@ c
         phi = G_dust * sqrt(temp) / (yn * abe)
       endif
 c
+c Grain recombination fits are valid for phi > 100 only
+      phi = max(phi, 1d2)
+c
 c H+:
 c
-      if (phi .lt. 1d0) then
-        h_gr = 1.225d-13 * dust_to_gas_ratio
-      else
-        hgrvar1  = 8.074d-6 * phi**1.378d0
-        hgrvar2  = (1d0 + ch34 * phi**ch35)
-        h_gr     = 1.225d-13 * dust_to_gas_ratio /
-     $             (1d0 + hgrvar1 * hgrvar2)
-      endif
+      hgrvar1  = 8.074d-6 * phi**1.378d0
+      hgrvar2  = (1d0 + ch34 * phi**ch35)
+      h_gr     = 1.225d-13 * dust_to_gas_ratio /
+     $           (1d0 + hgrvar1 * hgrvar2)
+c Hot gas is largely dust free
+      h_gr = h_gr * dexp(-temp / 3d4)
 c
 c H2 formation rate on dust -- we calculate this here, as this allows us to
 c vary tdust without needing to call cheminmo again

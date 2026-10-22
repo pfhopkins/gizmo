@@ -109,16 +109,8 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double ph50 = c.phrates[49];
     double ph51 = c.phrates[50];
 
-    // --- grain recombination (.F:215-234): phi < 1 threshold, no exp factor ---
-    double phi = (abe == 0.0) ? 1e20 : c.G_dust * std::sqrt(temp) / (yn * abe);
-    double h_gr;
-    if (phi < 1.0) {
-        h_gr = 1.225e-13 * c.dust_to_gas_ratio;
-    } else {
-        double hgrvar1 = 8.074e-6 * std::pow(phi, 1.378);
-        double hgrvar2 = 1.0 + ch34 * std::pow(phi, ch35);
-        h_gr = 1.225e-13 * c.dust_to_gas_ratio / (1.0 + hgrvar1 * hgrvar2);
-    }
+    // --- grain recombination: phi floored at 100, hot-gas suppression ---
+    double h_gr = chem_h_gr_phi100(temp, yn, abe, c.G_dust, c.dust_to_gas_ratio, ch34, ch35);
 
     // --- dust temperature + H2 formation on grains (.F:240-249) ---
     double RH2, Rdust;

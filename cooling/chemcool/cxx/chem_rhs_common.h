@@ -92,4 +92,16 @@ inline double chem_h_gr(double temp, double yn, double abe, double G_dust,
     return h_gr * std::exp(-temp / 3e4);
 }
 
+// as chem_h_gr with phi floored at 100, where the fits are valid (nets 5, 15)
+inline double chem_h_gr_phi100(double temp, double yn, double abe, double G_dust,
+                               double dust_to_gas_ratio, double ch34, double ch35)
+{
+    double phi = (abe == 0.0) ? 1e20 : G_dust * std::sqrt(temp) / (yn * abe);
+    if (phi < 1e2) phi = 1e2;
+    double hgrvar1 = 8.074e-6 * std::pow(phi, 1.378);
+    double hgrvar2 = 1.0 + ch34 * std::pow(phi, ch35);
+    double h_gr = 1.225e-13 * dust_to_gas_ratio / (1.0 + hgrvar1 * hgrvar2);
+    return h_gr * std::exp(-temp / 3e4);
+}
+
 #endif
