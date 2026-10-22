@@ -239,12 +239,12 @@
 #define CPU_IMPROVDIFFWAIT    44
 #define CPU_IMPROVDIFFCOMM    45
 #define CPU_RTNONFLUXOPS  46
-#define CPU_DUMMY00       47
-#define CPU_DUMMY01       48
-#define CPU_DUMMY02       49
-#define CPU_DUMMY03       50
-#define CPU_DUMMY04       51
-#define CPU_DUMMY05       52
+#define CPU_KETJULIMIT    47 /* KETJU timestep limiter (centre gather, limited/limiting search) */
+#define CPU_KETJUFIND     48 /* KETJU region finding and per-region bookkeeping */
+#define CPU_KETJUEXCH     49 /* KETJU member gather to compute tasks, communicator setup */
+#define CPU_KETJUMSTAR    50 /* KETJU negative kicks + MSTAR integration */
+#define CPU_KETJUSCATTER  51 /* KETJU write-back of MSTAR results */
+#define CPU_KETJUFINISH   52 /* KETJU end-of-step COM quantities, cache, final velocities, stats */
 #define CPU_DUMMY06       53
 #define CPU_DUMMY07       54
 #define CPU_DUMMY08       55

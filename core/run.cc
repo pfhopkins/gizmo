@@ -1639,6 +1639,15 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+#ifdef KETJU_REGULARIZATION
+          "ketju         %10.2f  %5.1f%%\n"
+          "   kj_limit   %10.2f  %5.1f%%\n"
+          "   kj_find    %10.2f  %5.1f%%\n"
+          "   kj_exch    %10.2f  %5.1f%%\n"
+          "   kj_mstar   %10.2f  %5.1f%%\n"
+          "   kj_scatter %10.2f  %5.1f%%\n"
+          "   kj_finish  %10.2f  %5.1f%%\n"
+#endif
           "misc          %10.2f  %5.1f%%\n",
 
     All.CPU_Sum[CPU_ALL], 100.0,
@@ -1721,6 +1730,16 @@ void write_cpu_log(void)
 #endif
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
+#ifdef KETJU_REGULARIZATION
+    All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH],
+    (All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJULIMIT], (All.CPU_Sum[CPU_KETJULIMIT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUFIND], (All.CPU_Sum[CPU_KETJUFIND]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUEXCH], (All.CPU_Sum[CPU_KETJUEXCH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUMSTAR], (All.CPU_Sum[CPU_KETJUMSTAR]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUSCATTER], (All.CPU_Sum[CPU_KETJUSCATTER]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUFINISH], (All.CPU_Sum[CPU_KETJUFINISH]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
     All.CPU_Sum[CPU_MISC], (All.CPU_Sum[CPU_MISC]) / All.CPU_Sum[CPU_ALL] * 100);
 

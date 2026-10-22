@@ -237,6 +237,15 @@ static int loop_scheduling_block_edge(int Nloop, int num_proc, int edge_index)
  *  Module-level state (persists within a timestep)
  * ============================================================ */
 static std::vector<KetjuRegion> ActiveRegions;
+
+/* Wall-clock laps into the KETJU cpu.txt categories; WallclockTime is advanced by the same amount so the
+ * enclosing GIZMO timer (gravity, drift) does not count it again. The destructor laps into `rest`. */
+struct KjClock {
+    double t; int rest;
+    explicit KjClock(int rest_cat) : t(my_second()), rest(rest_cat) {}
+    void lap(int cat) {double n = my_second(), dt = n - t; CPU_Step[cat] += dt; WallclockTime += dt; t = n;}
+    ~KjClock() {lap(rest);}
+};
 static std::set<int> AllKetjuParticleIndices; /* local indices of all particles in any region */
 
 /* ============================================================
@@ -2119,6 +2128,7 @@ static void move_particle_timebin(int i, int old_bin, int new_bin)
  * not depend on region order. */
 void ketju_limit_timesteps(void)
 {
+    KjClock clk(CPU_KETJULIMIT);
     CachedChainCentersValid = 0;
 
     if(All.KetjuRegionRadius <= 0) return;
@@ -2210,6 +2220,7 @@ static std::vector<CachedRegionKey> gather_sorted_region_keys(const std::set<int
 
 void ketju_find_regions(void)
 {
+    KjClock clk(CPU_KETJUFIND);
     /* Clear the chain flags of particles whose step has ended, and only theirs: a member of a region
      * on a longer bin is still inside the step MSTAR integrated, and its flags keep it out of Hermite
      * and mark it for the velocity swap at the end of that step. KetjuIntegrated is cleared here, not
@@ -2298,6 +2309,7 @@ void ketju_find_regions(void)
     allocate_compute_tasks_for_regions();
 
     /* second pass: set up integrators — reuse cached communicators where possible */
+    clk.lap(CPU_KETJUFIND);
     int n_reused = 0;
     for(int r = 0; r < n_regions; r++) {
         if(!region_changed[r]) {
@@ -2319,6 +2331,7 @@ void ketju_find_regions(void)
             setup_integrator(ActiveRegions[r]);
         }
     }
+    clk.lap(CPU_KETJUEXCH);
 
     /* Assign each chain member a shared KetjuChainID = global-min member ID
      * across the region. forcetree.cc uses this to skip Type-5 neighbors that
@@ -2366,6 +2379,7 @@ void ketju_find_regions(void)
 
 void ketju_run_integration(void)
 {
+    KjClock clk(CPU_KETJUFIND);
     if(ActiveRegions.empty()) return;
 
     /* Outer loop over sequential rounds. Within a round, regions run in
@@ -2411,12 +2425,16 @@ void ketju_run_integration(void)
         if(dt_physical <= 0 || !isfinite(dt_physical)) continue;
 
         /* integrate and scatter results */
+        clk.lap(CPU_KETJUFIND);
         integrate_region(reg, dt_physical);
+        clk.lap(CPU_KETJUMSTAR);
         scatter_results(reg);
+        clk.lap(CPU_KETJUSCATTER);
     }
     } /* end for(seq) */
 
     /* update cost estimates for next step's load balancing */
+    clk.rest = CPU_KETJUFINISH;
     update_region_costs();
 
     /* Cumulative MSTAR statistics, printed every 1024 steps and on the step that reaches the end of
@@ -2470,6 +2488,7 @@ void ketju_run_integration(void)
 
 void ketju_set_final_velocities(void)
 {
+    KjClock clk(CPU_KETJUFINISH);
     /* called after drift: swap in true physical velocities and correct dp[] momentum.
      * The velocity trick set Vel = delta_pos/dt_drift for the drift.
      * Now we replace it with the true MSTAR velocity and correct dp[].
@@ -2625,6 +2644,7 @@ void ketju_compute_com_quantities(void)
 
 void ketju_finish_step(void)
 {
+    KjClock clk(CPU_KETJUFINISH);
     /* chain-external field for members ending their step here, read by the next find_timesteps */
     ketju_compute_com_quantities();
 
