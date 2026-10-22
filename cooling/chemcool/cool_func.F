@@ -608,7 +608,8 @@ c
       rates(1) = 0d0
 c                                                                                                                                                                                             
 
-      if (yn * dust_to_gas_ratio .gt. 1d10) then
+      if (dust_to_gas_ratio .gt. 0d0 .and.
+     $    yn .gt. 1d8 / dust_to_gas_ratio**1.5d0) then
         if (iflag_cmb .eq. 0) then
 c Cap at the grain-sublimation bound, consistent with calc_dust_temp (cool_util.F):
 c this parallel branch was missed by the 2026-07-02 fix and leaked tdust=temp
@@ -647,7 +648,7 @@ c
 c Optically thick H2 cooling - we assume that this is unimportant at
 c low gas densities (i.e. below n = 10^8 cm^-3). 
 c
-        if (yn .lt. 1d9) then
+        if (yn .lt. 1d8) then
           H2_opacity_correction = 1d0
         else
 c Estimate #1 -- H2 column within local Jeans length

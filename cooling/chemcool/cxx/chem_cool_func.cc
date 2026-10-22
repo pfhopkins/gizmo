@@ -263,7 +263,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
 
     // ---- (R1) gas-grain cooling/heating ----
     rates[0] = 0.0;
-    if (yn * c.dust_to_gas_ratio > 1e10) {
+    if (c.dust_to_gas_ratio > 0.0 && yn > 1e8 / std::pow(c.dust_to_gas_ratio, 1.5)) {
         if (iflag_cmb == 0) {
             // Cap at the grain-sublimation bound, consistent with calc_dust_temp.
             c.tdust = (temp < 1.5e3) ? temp : 1.5e3;
@@ -283,7 +283,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         if (h2var0 < 1e-4 * cl[1]) rates[1] = h2var0 * ynh2;
         else                       rates[1] = ynh2 * cl[1] / (1.0 + cl[1] / h2var0);
 
-        if (yn >= 1e9) {
+        if (yn >= 1e8) {
             double vth = std::sqrt(kboltz * temp / CHEM_PROTONMASS);
             double N_H2_jeans = ynh2 / (vth / dl);
             double N_H2_LVG   = ynh2 / std::fabs(divv);

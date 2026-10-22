@@ -252,7 +252,7 @@ c vary tdust without needing to call cheminmo again
 c                  
 c     (no dust, e.g. hot gas: skip the coupling test, which divides by it)
       if (dust_to_gas_ratio .gt. 0d0) then
-        if (yn .gt. 1d9 / dust_to_gas_ratio**1.5d0) then
+        if (yn .gt. 1d8 / dust_to_gas_ratio**1.5d0) then
           tdust = temp
           call calc_dust_temp(yn, chi_isrf, temp, abHI, RH2, Rdust, 1)
         else

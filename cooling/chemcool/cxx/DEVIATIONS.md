@@ -648,6 +648,13 @@ Provenance: SGChem `photoinit_ism.F:71, 108-110`, `cheminmo.F:414-418, 547-552, 
 Provenance: SGChem `coolinmo.F:451-506`. cl65 (H2-H+): G90/K02 fit -> fit including Honvault+11/12;
 cl66 (H2-e): DRD83 -> Yoon+08 (zero below 100 K, two fits split at 500 K, constant above 1e4 K).
 
+## D-46. High-density thresholds as SGChem, both backends
+* Gas-dust coupling limit (tdust = T, rates(1) = dust emission): n > 1e8 / DGR^1.5 in cool_func (was n DGR > 1e10)
+  and net 15 (was 1e9 / DGR^1.5), as SGChem `cool_func.F:606-618`, `rate_eq_nl99.F:358` and our net 16. Our
+  tdust cap at 1.5e3 K is kept.
+* H2 line opacity (Clark+11 Sobolev, SGChem iflag_h2_opacity = 3) applied above n = 1e8 (was 1e9),
+  SGChem `cool_func.F:640-679`.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

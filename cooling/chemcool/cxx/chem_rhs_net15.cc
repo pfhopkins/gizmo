@@ -115,7 +115,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     // --- dust temperature + H2 formation on grains (.F:240-249) ---
     double RH2, Rdust;
     if (c.dust_to_gas_ratio > 0.0) {
-        if (yn > 1e9 / std::pow(c.dust_to_gas_ratio, 1.5)) {
+        if (yn > 1e8 / std::pow(c.dust_to_gas_ratio, 1.5)) {
             c.tdust = temp;
             cxx_calc_dust_temp(yn, c.chi_isrf, temp, abHI, &RH2, &Rdust, 1, c);
         } else {
