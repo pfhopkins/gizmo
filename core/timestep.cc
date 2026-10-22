@@ -1090,7 +1090,11 @@ integertime get_timestep(int p,		/*!< particle index */
 
     // add a 'stellar evolution timescale' criterion to the timestep, to prevent too-large jumps in feedback //
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || (defined(GALSF) && defined(RADTRANSFER))
-    if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
+    if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0)
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+       && !STELLA_OWNS_STAR(P[p]) /* Stella stars use the Stella limiter below */
+#endif
+      )
     {
         double star_age = evaluate_stellar_age_Gyr(p);
         double dt_stellar_evol;
@@ -1118,7 +1122,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
     /* Stellar timestep limiter for resolved single-star feedback */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-    if(P[p].Type == 4 && P[p].Mass > 0) {
+    if(STELLA_OWNS_STAR(P[p]) && P[p].Mass > 0) {
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
         if(P[p].sampled == 1 && P[p].MstarSampleIMF[0] > 0) {
             double Mstar = P[p].MstarSampleIMF[0];

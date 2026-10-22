@@ -671,6 +671,9 @@ void density(void)
                     maxsoft = 2.0 / unitlength_in_kpc;
 #if defined(GALSF_FB_FIRE_STELLAREVOLUTION) && defined(SINK_PARTICLES) && (defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL))
                     if((P[i].SNe_ThisTimeStep>0) || (P[i].MassReturn_ThisTimeStep>0) || (All.Time==All.TimeBegin)) {maxsoft=2.0/unitlength_in_kpc;} else {maxsoft=0.1/unitlength_in_kpc;};
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                    if(STELLA_OWNS_STAR(P[i]) && STELLA_FB_EVENT(P[i]) > 0) {maxsoft=2.0/unitlength_in_kpc;} /* Stella event this step */
+#endif
 #endif
 #endif
                     desnumngbdev = desnumngb / 2; // enforcing exact number not important

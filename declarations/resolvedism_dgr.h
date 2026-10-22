@@ -25,6 +25,8 @@ static inline double resolvedism_cell_DGR_solar(int p)
 #else
     dgr = All.DGRnormalized;
 #endif
+#elif defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(METALS)
+    dgr = P[p].Metallicity[0] / All.SolarAbundances[0]; /* FIRE-cooled mode: dust-to-metal ratio fixed at solar */
 #else
     dgr = 1.0; /* no chemistry: DGRnormalized not defined (pure N-body / non-Stella builds) */
 #endif

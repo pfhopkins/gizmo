@@ -609,7 +609,7 @@ void run(void)
             double local_mass[6] = {0,0,0,0,0,0};
             int local_nstars = 0;
             for(int ii = 0; ii < NumPart; ii++) {
-                if(P[ii].Type != 4 || P[ii].Mass <= 0) continue;
+                if(!STELLA_OWNS_STAR(P[ii]) || P[ii].Mass <= 0) continue;
                 local_nstars++;
                 double age_gyr = evaluate_stellar_age_Gyr(ii);
                 double age_myr = age_gyr * 1e3;

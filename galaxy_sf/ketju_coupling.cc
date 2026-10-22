@@ -522,7 +522,7 @@ static void update_region_costs(void)
 static int is_chain_center(int i)
 {
 #ifdef KETJU_TYPE4_STARS
-    if(P[i].Type == 4 && All.KetjuMinStarMass > 0 && P[i].Mass >= All.KetjuMinStarMass) return 1; /* Stella stars */
+    if(STELLA_OWNS_STAR(P[i]) && All.KetjuMinStarMass > 0 && P[i].Mass >= All.KetjuMinStarMass) return 1; /* Stella stars */
 #ifndef SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION
     if(P[i].Type == 5) {return (All.KetjuMinBHMass > 0 && P[i].Mass >= All.KetjuMinBHMass) ? 1 : 0;} /* Stella sinks are BHs/remnants */
 #endif
@@ -562,7 +562,7 @@ static int is_chain_eligible(int i)
     /* STARFORGE: every Type 5 sink is a chain-member candidate (regardless of stage) */
     if(P[i].Type == 5) return 1;
 #ifdef KETJU_TYPE4_STARS
-    if(P[i].Type == 4) return 1;
+    if(STELLA_OWNS_STAR(P[i])) return 1;
 #endif
     return 0;
 }

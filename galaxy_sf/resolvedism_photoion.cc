@@ -272,7 +272,7 @@ void out2particle_resolvedismPI(struct OUTPUT_STRUCT_NAME *out, int i, int mode,
 /* base eligibility: massive single star (the >=8 Msun activity gate) */
 static int resolvedismPI_base_check(int i)
 {
-    if(P[i].Type != 4) {return 0;}
+    if(!STELLA_OWNS_STAR(P[i])) {return 0;}
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     if(!P[i].sampled) {return 0;}
     if(P[i].MstarSampleIMF[0] < 8.0) {return 0;} /* single star must be massive to ionize */
@@ -415,7 +415,7 @@ void resolvedism_photoionize(void)
      * "every fine time-step for ALL sources" — this restores that. */
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 4) continue;
+        if(!STELLA_OWNS_STAR(P[i])) continue;
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
         P[i].Lyman_photons_per_sec = compute_single_star_S_ly(i);
 #endif
@@ -446,7 +446,7 @@ void resolvedism_photoionize(void)
      * biases nothing, because the front is solved from the per-cell integral. */
     int nslots = 0;
     for(i = 0; i < NumPart; i++) {
-        if(P[i].Type != 4) continue;
+        if(!STELLA_OWNS_STAR(P[i])) continue;
         if(!resolvedismPI_base_check(i)) continue;
         double S_ly = compute_single_star_S_ly(i);
         if(S_ly <= 0) continue;
@@ -663,7 +663,7 @@ void resolvedism_photoionize(void)
     if(iter > 1) {
         double local_max_r = 0, local_min_r = MAX_REAL_NUMBER;
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type == 4 && PISearchRadius != NULL && PISearchRadius[i] > 0) {
+            if(STELLA_OWNS_STAR(P[i]) && PISearchRadius != NULL && PISearchRadius[i] > 0) {
                 if(PISearchRadius[i] > local_max_r) local_max_r = PISearchRadius[i];
                 if(PISearchRadius[i] < local_min_r) local_min_r = PISearchRadius[i];
             }
@@ -683,7 +683,7 @@ void resolvedism_photoionize(void)
         double local_rfront_min = MAX_REAL_NUMBER, local_rfront_max = 0;
         double local_asym_max = 0;
         for(i = 0; i < NumPart; i++)  /* ALL sources every call (2026-07-31 fix; bodies gate on PISlot/Type) */ {
-            if(P[i].Type != 4) continue;
+            if(!STELLA_OWNS_STAR(P[i])) continue;
             if(PISearchRadius[i] <= 0) continue;
             npi_local++;
             double star_rmin = MAX_REAL_NUMBER, star_rmax = 0;

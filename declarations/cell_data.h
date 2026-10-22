@@ -261,9 +261,9 @@ extern struct gas_cell_data
     MyFloat Lambda[28];                   /*!< individual thermal cooling rates */
     MyFloat LambdaChem[6];                /*!< individual chemical cooling rates */
 #endif
+#endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     int Ionized;                          /*!< flag: 1 if particle is in HII region */
-#endif
 #endif
 /* total-H Projection[] is TREE_RAD-only (FUV-G0 dust column, M1's job); the H2/CO
  * columns run standalone under TREE_RAD_H2 for M1 line self-shielding. */

@@ -1633,6 +1633,7 @@ enum iofields
   IO_KETJU_SPIN,
   IO_KETJU_REMNANT_TYPE,
   IO_SHOCKMACHNUM,
+  IO_STAR_MODEL,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
