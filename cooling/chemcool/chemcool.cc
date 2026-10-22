@@ -38,13 +38,16 @@ void chemcool_init(void)
         fflush(stdout);
     }
 
-    /* Set COOLI flags before COOLINMO/CHEMINMO (they read these via common block).
-       Standard Glover & Clark values, matching gadget_tnt_new defaults. */
-    COOLI.iflag_mn   = 1;  /* GP98 mutual neutralization rate */
-    COOLI.iflag_ad   = 1;  /* GP98 H- associative detachment rate */
+    /* Set COOLI flags before COOLINMO/CHEMINMO (they read these via common block); rate options as SGChem */
+    COOLI.iflag_mn   = 4;  /* H- + H+ mutual neutralization (CDG99) */
+    COOLI.iflag_ad   = 6;  /* H- + H associative detachment */
     COOLI.iflag_atom = 2;  /* SD93 combined atomic cooling table */
-    COOLI.iflag_3bh2a = 1; /* three-body H2 formation channel a (PSS83) */
-    COOLI.iflag_3bh2b = 1; /* three-body H2 formation channel b (PSS83) */
+#if CHEMISTRYNETWORK == 1
+    COOLI.iflag_3bh2a = 6; /* H2+H: three-body formation (Forrey 2013) */
+#else
+    COOLI.iflag_3bh2a = 5; /* H2+H: high-density CID (MSM96), three-body formation (G07) */
+#endif
+    COOLI.iflag_3bh2b = 4; /* H2+H2: one-eighth of the H2+H rates */
     COOLI.iflag_h3pra = 1; /* H3+ dissociative recombination (GP98) */
     COOLI.iphoto     = 6;  /* TREECOL column densities (overridden per-particle) */
     COOLIC.irad_heat  = 0;  /* no external radiative heating (handled via G0) */

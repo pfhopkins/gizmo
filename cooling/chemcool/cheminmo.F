@@ -505,6 +505,15 @@ c Rate from PH80, based on experimental measurement of SFF67.
 c Half measured value -- from Daniel Savin; true value should lie 
 c somewhere between this and value given by iflag_ad = 2
           chtab(22,itemp) = 0.65d-9
+        elseif (iflag_ad .eq. 5) then
+c Fit by SLD98 to data from L91
+          chtab(22,itemp) = 1.5d-9 * temp3**(-0.1d0)
+        elseif (iflag_ad .eq. 6) then
+          chtab(22,itemp) = 1.35d-9 * (temp**9.8493d-2 + 3.2852d-1
+     $                    * temp**5.5610d-1 + 2.771d-7 * temp**2.1826d0)
+     $                    / (1d0 + 6.191d-3 * temp**1.0461d0
+     $                    + 8.9712d-11 * temp**3.0424d0
+     $                    + 3.2576d-14 * temp**3.7741d0)
         else
           print*, "Unknown value specified for iflag_ad:", iflag_ad
           ABORT(426)
@@ -1362,6 +1371,10 @@ c From FH07
         elseif (iflag_3bh2a .eq. 5) then
 c From G07
           chtab(108, itemp) = 7.7d-31 / temp**0.464d0
+        elseif (iflag_3bh2a .eq. 6) then
+c From Forrey (2013)
+          chtab(108, itemp) = (6d-32 / temp**0.25d0)
+     $                      + (2d-31 / temp**0.5d0)
         else
           print*, "Unknown value specified for iflag_3bh2a:", 
      $            iflag_3bh2a

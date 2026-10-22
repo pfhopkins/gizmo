@@ -626,6 +626,15 @@ at 100 (fits valid for phi > 100); was a phi < 1e-6 (net 5) / phi < 1 (net 15) b
 phi = 0 limit. Net 15 also gains the hot-gas factor exp(-T/3e4) that net 5 had. Nets 3/17 keep their
 phi < 1e-6 branch (alignment scoped to nets 5 and 15).
 
+## D-43. Rate options as SGChem: iflag_mn = 4, iflag_ad = 6, iflag_3bh2a = 5, iflag_3bh2b = 4, both backends
+Provenance: SGChem `init_chemistry_parameters.F:106-112`, `cheminmo.F:532-540` (iflag_ad 5/6), `:1414-1417`
+(iflag_3bh2a 6, Forrey 2013; only for CHEMISTRYNETWORK 1, ported for completeness).
+* ch1 (H2 + H CID, high-n limit): MSM96 instead of the inverse ABN02 rate; ch2 = ch1/8.
+* ch108/ch109 (three-body H2 formation): G07 7.7e-31 T^-0.464, ch109 = ch108/8 (was PSS83).
+* ch22 (H- + H associative detachment): option 6 fit; ch28 (H- + H+ mutual neutralization): CDG99.
+* Readers: ch2 net 5; ch1/ch2 nets 15/16; all six nets 3/17. Set in `chemcool.cc`, `chem_backend_cxx.cc` and the
+  golden harnesses (legacy `harness.F`/`test_harness.F` untouched).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

@@ -120,8 +120,8 @@ static double Zs = 0.1;
 
 static void init_commons(double G0, double zeta, int iphoto)
 {
-    COOLI.iflag_mn = 1; COOLI.iflag_ad = 1; COOLI.iflag_atom = 2;
-    COOLI.iflag_3bh2a = 1; COOLI.iflag_3bh2b = 1; COOLI.iflag_h3pra = 1;
+    COOLI.iflag_mn = 4; COOLI.iflag_ad = 6; COOLI.iflag_atom = 2;
+    COOLI.iflag_3bh2a = 5; COOLI.iflag_3bh2b = 4; COOLI.iflag_h3pra = 1;
     COOLI.iphoto = iphoto;
     COOLIC.irad_heat = 0; COOLI.isrf_option = 1; COOLIC.no_chem = 0;
     COOLIC.id_current = 1; COOLIC.index_current = 0;

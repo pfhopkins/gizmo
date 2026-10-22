@@ -57,8 +57,8 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
     c.nspec = c.trac_num + 1;
     c.abhe = 0.1;                            // chemcool_consts.h ABHE (nets 3/5/15/16/17)
     c.no_dchem = 0;                          // audit sec 3.1 item 4: explicit
-    c.iflag_mn = 1; c.iflag_ad = 1; c.iflag_atom = 2;
-    c.iflag_3bh2a = 1; c.iflag_3bh2b = 1; c.iflag_h3pra = 1;
+    c.iflag_mn = 4; c.iflag_ad = 6; c.iflag_atom = 2;
+    c.iflag_3bh2a = 5; c.iflag_3bh2b = 4; c.iflag_h3pra = 1;
     c.iflag_h2opc = 0;
     c.isrf_option = 1;
     c.iphoto = 0;
@@ -92,8 +92,8 @@ int chemcxx_pure_init(int net, int iflag_atom, int wss_cie,
     ChemBuildConfig cfg;
     cfg.net = net;
     cfg.iflag_atom = iflag_atom;
-    cfg.iflag_mn = 1; cfg.iflag_ad = 1;
-    cfg.iflag_3bh2a = 1; cfg.iflag_3bh2b = 1; cfg.iflag_h3pra = 1;
+    cfg.iflag_mn = 4; cfg.iflag_ad = 6;
+    cfg.iflag_3bh2a = 5; cfg.iflag_3bh2b = 4; cfg.iflag_h3pra = 1;
     cfg.wss_cie = wss_cie;
     cfg.deff = deff; cfg.phi_pah = phi_pah;
     cfg.dust_to_gas_ratio = dust_to_gas_ratio;

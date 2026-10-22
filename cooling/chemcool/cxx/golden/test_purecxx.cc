@@ -103,8 +103,8 @@ int main(int argc, char** argv)
 
     ChemBuildConfig cfg;
     cfg.net = net; cfg.iflag_atom = 2;
-    cfg.iflag_mn = 1; cfg.iflag_ad = 1;
-    cfg.iflag_3bh2a = 1; cfg.iflag_3bh2b = 1; cfg.iflag_h3pra = 1;
+    cfg.iflag_mn = 4; cfg.iflag_ad = 6;
+    cfg.iflag_3bh2a = 5; cfg.iflag_3bh2b = 4; cfg.iflag_h3pra = 1;
 #ifdef WSS_CIE_COOL
     cfg.wss_cie = 1;
 #else
