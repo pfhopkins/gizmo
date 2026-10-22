@@ -30,14 +30,11 @@ def test_zeldovich_mhd(num_mpi_ranks, num_omp_threads):
     with h5py.File(snaps[1], "r") as F:
         atime = F["Header"].attrs["Time"]
         B0 = F["PartType0/MagneticField"][:]*atime*atime # need to compensate for adiabatic evolution
-        rho0 = F["PartType0/Density"][:]*atime*atime*atime
     with h5py.File(snaps[-1], "r") as F:
         atime = F["Header"].attrs["Time"]
         Bf = F["PartType0/MagneticField"][:]*atime*atime # this is z=0
         rho_f = F["PartType0/Density"][:]*atime*atime*atime
         pos_f = F["PartType0/Coordinates"][:]*atime
-        mass_f = F["PartType0/Masses"][:]
-        boxsize = F["Header"].attrs["BoxSize"]
 
     # Plot density and |B| vs x
     x = pos_f[:, 0]

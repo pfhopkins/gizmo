@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 import h5py
 
 from meshoid import Meshoid
-from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot, variant_output_dir, assert_energy_conserved
+from gizmo.test import build_and_run_test, flush_colorbar, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot, assert_energy_conserved
 
 
 def plot_noh_density_slice(coords, rho, output_dir="."):
@@ -49,7 +49,6 @@ def test_noh(num_mpi_ranks, num_omp_threads):
     with h5py.File(final_snap, "r") as F:
         coords = F["PartType0/Coordinates"][:]
         rho_sim = F["PartType0/Density"][:]
-        vel = F["PartType0/Velocities"][:]
         time = F["Header"].attrs["Time"]
 
     # Compute radius from box center

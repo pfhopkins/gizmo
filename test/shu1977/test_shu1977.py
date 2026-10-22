@@ -16,8 +16,6 @@ import pytest
 import numpy as np
 from matplotlib import pyplot as plt
 import h5py
-import glob
-from os import path
 from meshoid import Meshoid
 from gizmo.test import (build_and_run_test, flush_colorbar, assert_final_time,
                         get_final_snapshot, default_omp_threads, clean_test_outputs,

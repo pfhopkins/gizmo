@@ -11,7 +11,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from gizmo.test import build_and_run_test
-from make_merge_split_spacing_ics import PAIR_SEPARATION, make_ics
+from make_merge_split_spacing_ics import make_ics
 
 TEST_NAME = "merge_split_spacing"
 TEST_DIR = f"test/{TEST_NAME}"

@@ -12,7 +12,7 @@ from gizmo.test import (
 
 from matplotlib import pyplot as plt
 import h5py
-from astropy import units as u, constants as c
+from astropy import units as u
 from scipy.stats import binned_statistic
 import numpy as np
 

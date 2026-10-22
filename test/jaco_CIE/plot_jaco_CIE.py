@@ -1,7 +1,6 @@
 """Plot jaco CIE test results against CHIANTI reference data."""
 import numpy as np
 import matplotlib.pyplot as plt
-import sys
 
 dat = np.loadtxt("test/jaco_CIE_results.dat")
 T = dat[:, 0]

@@ -34,13 +34,11 @@ def test_keplerian(num_mpi_ranks, num_omp_threads, extra_config_flags):
     with h5py.File(snaps[0], "r") as F:
         pos0 = F["PartType0/Coordinates"][:]
         vel0 = F["PartType0/Velocities"][:]
-        rho0 = F["PartType0/Density"][:]
         mass0 = F["PartType0/Masses"][:]
         boxsize = F["Header"].attrs["BoxSize"]
     with h5py.File(snaps[-1], "r") as F:
         pos_f = F["PartType0/Coordinates"][:]
         vel_f = F["PartType0/Velocities"][:]
-        rho_f = F["PartType0/Density"][:]
         mass_f = F["PartType0/Masses"][:]
 
     center = boxsize / 2.0

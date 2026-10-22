@@ -150,8 +150,7 @@ def plot_radial_profiles(snapshot, output_dir, label=""):
     fig, axes = plt.subplots(4, 2, figsize=(14, 16))
     for ax, (title, (key, ylabel)) in zip(axes.flat, profiles.items()):
         vals = data[key]
-        weights = data["masses"]
-        # Mass-weighted median in each bin
+        # Median in each bin
         medians = np.full(len(r_centers), np.nan)
         for j in range(len(r_centers)):
             mask = bin_idx == j
