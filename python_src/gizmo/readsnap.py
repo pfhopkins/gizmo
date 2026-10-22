@@ -206,7 +206,7 @@ def readsnap(sdir,snum,ptype,
             if (ptype==0):
                 ugas[nL:nR]=input_struct[bname+"InternalEnergy"]
                 rho[nL:nR]=input_struct[bname+"Density"]
-                hsml[nL:nR]=input_struct[bname+"SmoothingLength"]
+                hsml[nL:nR]=input_struct[bname+"KernelMaxRadius"]
                 if (flag_cooling > 0): 
                     nume[nL:nR]=input_struct[bname+"ElectronAbundance"]
                     numh[nL:nR]=input_struct[bname+"NeutralHydrogenAbundance"]
@@ -223,8 +223,8 @@ def readsnap(sdir,snum,ptype,
             if (ptype == 4) and (flag_sfr > 0) and (flag_stellarage > 0):
                 stellage[nL:nR]=input_struct[bname+"StellarFormationTime"]
             if (ptype == 5) and (skip_bh == 0):
-                bhmass[nL:nR]=input_struct[bname+"BH_Mass"]
-                bhmdot[nL:nR]=input_struct[bname+"BH_Mdot"]
+                bhmass[nL:nR]=input_struct[bname+"Sink_Mass"]
+                bhmdot[nL:nR]=input_struct[bname+"Sink_Mdot"]
             nL = nR # sets it for the next iteration	
 
 	## correct to same ID as original gas particle for new stars, if bit-flip applied
@@ -494,6 +494,6 @@ def load_gadget_format_binary_particledat(f, header, ptype, skip_bh=0):
                 f.read(4+4) # Read block size fields.
     
     return {'Coordinates':pos[n0:n1,:], 'Velocities':vel[n0:n1,:], 'ParticleIDs':id[n0:n1], \
-        'Masses':mm, 'Metallicity':zmet, 'StellarFormationTime':star_age, 'BH_Mass':bh_mass, \
-        'BH_Mdot':bh_mdot, 'InternalEnergy':gas_u, 'Density':gas_rho, 'SmoothingLength':gas_hsml, \
+        'Masses':mm, 'Metallicity':zmet, 'StellarFormationTime':star_age, 'Sink_Mass':bh_mass, \
+        'Sink_Mdot':bh_mdot, 'InternalEnergy':gas_u, 'Density':gas_rho, 'KernelMaxRadius':gas_hsml, \
         'ElectronAbundance':gas_ne, 'NeutralHydrogenAbundance':gas_nhi, 'StarFormationRate':gas_SFR}
