@@ -6,6 +6,10 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "resolvedism_dust_kernels.h"
+#ifdef CHEMCOOL
+#include "../cooling/chemcool/chemcool_consts.h"
+#endif
 
 /*
  * Resolved-ISM dust evolution model for single-star galaxy formation.
@@ -20,14 +24,11 @@
  * Silicate stoichiometry: FeMgSiO4 (M_w = 172 amu)
  *   O4 = 64/172, Mg = 24/172, Si = 28/172, Fe = 56/172
  *
- * Physics:
- *   - Thermal sputtering: Nozawa et al. 2006 polynomial fits
- *   - Dust production: condensation fractions applied to SN/AGB/Ia metal yields (in resolvedism_fb.cc)
- *   - SN shock destruction: McKee 1989 (in resolvedism_fb.cc)
- *   - CHEMCOOL coupling: per-particle DGR, gas-phase metal depletion (in chemcool.cc)
- *
- * This file handles the ISM dust processing (sputtering) which is operator-split
- * from the chemistry solver, called after cooling_parent_routine() each timestep.
+ * Physics (Hu+19/23/26, see galaxy_sf/resolvedism_dust_kernels.h):
+ *   - thermal + nonthermal sputtering (Nozawa+06), dust v_rel from drag, hydro acceleration, betatron
+ *   - ISM growth in cold gas
+ *   - stellar condensation yields (resolvedism_fb_thermal.cc / resolvedism_fb_momentum.cc)
+ *   - CHEMCOOL coupling via resolvedism_dgr.h and gas-phase C/O/Si
  */
 
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -39,123 +40,105 @@
 #define DUST_SIL_FRAC_FE (56.0 / 172.0)
 
 
-/* ---- Nozawa et al. 2006 thermal sputtering yield fits ---- */
-/* Returns sputtering rate in units of [micron yr^-1 cm^3] */
+/* ---- ISM dust evolution (Hu+19/23/26), operator-split after chemistry ---- */
 
-static double get_yield_therSput_C(double T)
+#define DUST_FSUB 0.1           /* subcycle factor (Hu+19 eq 13) */
+#define DUST_NSUB_MAX 100000
+
+static double dust_ledger[7];   /* cumulative code mass: sput_th C/Sil, sput_nth C/Sil, grow C/Sil, clamp */
+
+static void resolvedism_dust_ledger_write(void)
 {
-    if(T < 3e4) return 0;
-    if(T > 1e10) T = 1e10;
-    double x = log10(T);
-    double x2 = x*x, x3 = x2*x, x4 = x3*x, x5 = x4*x;
-    return pow(10, -2.34333937e+02 + 1.38485732e+02*x - 3.39021615e+01*x2
-                 + 4.17705353e+00*x3 - 2.58281473e-01*x4 + 6.38827523e-03*x5);
+    if(All.NumCurrentTiStep % 16) {return;}
+    double tot[7], mloc[2] = {0, 0}, mtot[2];
+    int i;
+    for(i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {
+        mloc[0] += P[i].Mass * CellP[i].Dust[0];
+        mloc[1] += P[i].Mass * (CellP[i].Dust[1] + CellP[i].Dust[2] + CellP[i].Dust[3] + CellP[i].Dust[4]);}}
+    MPI_Reduce(dust_ledger, tot, 7, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(mloc, mtot, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask != 0) {return;}
+    char path[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    snprintf(path, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/dust_processes.txt", All.OutputDir);
+    FILE *f = fopen(path, "a"); if(!f) {return;}
+    if(ftell(f) == 0) {fprintf(f, "# step time M_dust_C M_dust_Sil | cumulative [Msun]: sput_th_C sput_th_Sil sput_nth_C sput_nth_Sil grow_C grow_Sil clamp\n");}
+    fprintf(f, "%lld %.10e %.8e %.8e %.8e %.8e %.8e %.8e %.8e %.8e %.8e\n", (long long)All.NumCurrentTiStep, All.Time,
+            mtot[0]*UNIT_MASS_IN_SOLAR, mtot[1]*UNIT_MASS_IN_SOLAR, tot[0]*UNIT_MASS_IN_SOLAR, tot[1]*UNIT_MASS_IN_SOLAR,
+            tot[2]*UNIT_MASS_IN_SOLAR, tot[3]*UNIT_MASS_IN_SOLAR, tot[4]*UNIT_MASS_IN_SOLAR, tot[5]*UNIT_MASS_IN_SOLAR, tot[6]*UNIT_MASS_IN_SOLAR);
+    fclose(f);
 }
 
-static double get_yield_therSput_Sil(double T)
+static void resolvedism_dust_env(int i, struct dustk_env *e)
 {
-    if(T < 3e4) return 0;
-    if(T > 1e10) T = 1e10;
-    double x = log10(T);
-    double x2 = x*x, x3 = x2*x, x4 = x3*x, x5 = x4*x;
-    return pow(10, -2.34790500e+02 + 1.33208637e+02*x - 3.13027448e+01*x2
-                 + 3.71345730e+00*x3 - 2.21823668e-01*x4 + 5.31746427e-03*x5);
+    double rho_phys = CellP[i].Density * All.cf_a3inv;
+    e->nH = rho_phys * UNIT_DENSITY_IN_NHCGS;
+#ifdef CHEMCOOL
+    e->T = CellP[i].Temp;
+    e->x_e = DMAX(CellP[i].TracAbund[IHP], 0) + 1.4e-4 * DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0]; /* H+ plus C+ */
+#else
+    double ne = 1, nh0 = 0, nHe0, nHepp, nhp, nHeII, mu = 1;
+    e->T = ThermalProperties(CellP[i].InternalEnergyPred, rho_phys, i, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
+    e->x_e = ne;
+#endif
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
+    e->G0 = CellP[i].G0;
+#elif defined(CHEMCOOL)
+    e->G0 = All.G0;
+#else
+    e->G0 = 1.0;
+#endif
+    double a_conv = UNIT_VEL_IN_KMS * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS; /* code accel -> km/s/yr (non-comoving) */
+    for(int k = 0; k < 3; k++) {e->ahyd[k] = CellP[i].HydroAccel[k] * a_conv;}
+    e->divv = P[i].Particle_DivVel * All.cf_a2inv * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS;
+#ifdef GALSF_RESOLVEDISM_DUST_NO_BETATRON
+    e->betatron = 0;
+#else
+    e->betatron = 1;
+#endif
 }
-
-
-/* ---- Main ISM dust evolution routine ---- */
-/* Called once per timestep after cooling, operator-split from chemistry */
 
 void resolvedism_dust_evolve(void)
 {
-    int i;
-    double grain_size = 0.1; /* fiducial grain radius in microns */
-    /* conversion factor: sputtering rate is in yr^-1, need code time^-1 */
     double yr_to_code = UNIT_TIME_IN_CGS / SECONDS_PER_YEAR;
 
     for(int i : ActiveParticleList)
     {
         if(P[i].Type != 0) continue;
 
-        /* total dust content — skip if no dust */
         double dust_total = 0;
         int k;
         for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) dust_total += CellP[i].Dust[k];
-        if(dust_total <= 0) continue;
+        if(dust_total <= 0) {memset(CellP[i].DustVrel, 0, sizeof(CellP[i].DustVrel)); continue;}
 
-        /* physical quantities */
-        double rho_phys = CellP[i].Density * All.cf_a3inv;
-        double nH = rho_phys * UNIT_DENSITY_IN_NHCGS;
-#ifdef CHEMCOOL
-        double T = CellP[i].Temp;
-#else
-        double ne_dummy = 1, nh0_dummy = 0, nHe0_dummy, nHepp_dummy, nhp_dummy, nHeII_dummy, mu_dummy = 1;
-        double T = ThermalProperties(CellP[i].InternalEnergyPred, rho_phys, i, &mu_dummy, &ne_dummy, &nh0_dummy, &nhp_dummy, &nHe0_dummy, &nHeII_dummy, &nHepp_dummy);
-#endif
-
-        /* particle timestep in code units */
+        struct dustk_env env; resolvedism_dust_env(i, &env);
+        double nH = env.nH, T = env.T;
         double dt = get_particle_timestep_in_physical(i);
+        double dt_yr = dt * UNIT_TIME_IN_CGS / SECONDS_PER_YEAR;
 
-        /* ---- Thermal sputtering (Nozawa+ 2006) ---- */
-        /* tau_sput_inv = 3 * nH / a * Y(T), in yr^-1 */
-        double tau_sput_C_inv   = 3.0 * nH / grain_size * get_yield_therSput_C(T);
-        double tau_sput_Sil_inv = 3.0 * nH / grain_size * get_yield_therSput_Sil(T);
-
-        /* convert from yr^-1 to code time^-1 */
-        tau_sput_C_inv   *= yr_to_code;
-        tau_sput_Sil_inv *= yr_to_code;
-
-        /* exponential integrator for unconditional stability:
-           Dust_new = Dust_old * exp(-dt * tau_inv) */
-        if(tau_sput_C_inv > 0) {
-            double fac_C = exp(-dt * tau_sput_C_inv);
-            CellP[i].Dust[0] *= fac_C;
-        }
-        if(tau_sput_Sil_inv > 0) {
-            double fac_Sil = exp(-dt * tau_sput_Sil_inv);
-            CellP[i].Dust[1] *= fac_Sil;
-            CellP[i].Dust[2] *= fac_Sil;
-            CellP[i].Dust[3] *= fac_Sil;
-            CellP[i].Dust[4] *= fac_Sil;
-        }
-
-#ifdef GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION
-        /* ---- Shock-tracked SN dust destruction (2026-07-05) ----
-         * Replaces the injection-kernel McKee 1989 hook (see fb_thermal.cc), which is
-         * an UNRESOLVED-SNR estimator: in Stella's resolved regime it saturates at
-         * frac=1 over the ~32-cell kernel (measured 0.032 Msun vs ~1 Msun McKee intent
-         * in the n=1 A/B test), while thermal sputtering alone captures only ~0.008
-         * Msun (the bubble goes radiative in ~1 Myr; the real destroyer is KINETIC/
-         * betatron sputtering + shattering in the radiative shock, not modeled by the
-         * Nozawa thermal rates). Here we destroy grains IN CELLS THE RESOLVED SHOCK
-         * ACTUALLY SWEEPS: compression (divv<0) + signal-velocity excess over sound.
-         * Efficiency per shock crossing: saturating Slavin+2015-like form,
-         *   eps_sil(v_s) = 0.4 v_s^2/(v_s^2+100^2),  eps_C = 0.5 eps_sil
-         * applied as a rate over the kernel-crossing time h/v_s. Total destroyed =
-         * swept mass x DGR x eps -> the McKee-intended budget emerges from the
-         * resolved blast, with the correct spatial/anisotropic distribution. */
+        /* ---- thermal + nonthermal sputtering per MRN size bin (Hu+19 eqs 2, 12, 20) ---- */
+        double YthC = dustk_Yth_C(T), YthS = dustk_Yth_Sil(T);
+        double fC = 0, fS = 0, dthC = 0, dthS = 0, dnthC = 0, dnthS = 0;
+        for(int b = 0; b < NUM_RESOLVEDISM_DUST_BINS; b++)
         {
-            double cs_kms   = CellP[i].effective_soundspeed() * UNIT_VEL_IN_KMS;
-            double vsig_kms = CellP[i].MaxSignalVel * UNIT_VEL_IN_KMS;
-            double divv     = P[i].Particle_DivVel;   /* code 1/time; <0 = compression */
-            double v_shock  = 0.5 * (vsig_kms - 2.0 * cs_kms); /* pairwise approach speed */
-            if(divv < 0 && v_shock > 50.0)
-            {
-                double v2 = v_shock * v_shock;
-                double eps_sil = 0.4 * v2 / (v2 + 100.0*100.0);
-                double eps_C   = 0.5 * eps_sil;
-                double h_code  = Get_Particle_Size(i) * All.cf_atime;
-                double t_cross = h_code / (v_shock / UNIT_VEL_IN_KMS); /* code time for shock to cross the cell */
-                double fac_sil = exp(-dt * eps_sil / t_cross);
-                double fac_C   = exp(-dt * eps_C   / t_cross);
-                CellP[i].Dust[0] *= fac_C;
-                CellP[i].Dust[1] *= fac_sil; CellP[i].Dust[2] *= fac_sil;
-                CellP[i].Dust[3] *= fac_sil; CellP[i].Dust[4] *= fac_sil;
-            }
+            double a_b, w_b; dustk_size_bin(NUM_RESOLVEDISM_DUST_BINS, b, &a_b, &w_b);
+            double v[3] = {CellP[i].DustVrel[b][0], CellP[i].DustVrel[b][1], CellP[i].DustVrel[b][2]};
+            double InC, InS;
+            dustk_step_vrel(&env, a_b, dt_yr, v, &InC, &InS, DUST_FSUB, DUST_NSUB_MAX);
+            for(k = 0; k < 3; k++) {CellP[i].DustVrel[b][k] = v[k];}
+            double IthC = dt_yr * 3.0 * nH * YthC / a_b, IthS = dt_yr * 3.0 * nH * YthS / a_b;
+            double gC = exp(-(IthC + InC)), gS = exp(-(IthS + InS));
+            fC += w_b * gC; fS += w_b * gS;
+            if(IthC + InC > 0) {double lost = w_b * (1.0 - gC); dthC += lost * IthC / (IthC + InC); dnthC += lost * InC / (IthC + InC);}
+            if(IthS + InS > 0) {double lost = w_b * (1.0 - gS); dthS += lost * IthS / (IthS + InS); dnthS += lost * InS / (IthS + InS);}
         }
-#endif
+        double DSil = CellP[i].Dust[1] + CellP[i].Dust[2] + CellP[i].Dust[3] + CellP[i].Dust[4];
+        dust_ledger[0] += P[i].Mass * CellP[i].Dust[0] * dthC; dust_ledger[2] += P[i].Mass * CellP[i].Dust[0] * dnthC;
+        dust_ledger[1] += P[i].Mass * DSil * dthS;              dust_ledger[3] += P[i].Mass * DSil * dnthS;
+        CellP[i].Dust[0] *= fC;
+        for(k = 1; k <= 4; k++) {CellP[i].Dust[k] *= fS;}
 
         /* ---- ISM grain growth (accretion of gas-phase metals onto grains) ---- */
+        double grain_size = 0.1;
         /* Sticking efficiency S(T_gas, T_dust) = 1 / (1 + 0.04*sqrt(T_gas + T_dust))
            (Hirashita 2000).  Smoothly transitions from S~1 at low T to S~0 at high T. */
         /* Rates from Dwek 1998 / Draine 2009, same form as gizmo2017 evolve_abundances_dust.F */
@@ -222,8 +205,12 @@ void resolvedism_dust_evolve(void)
             }
         }
 
+        double Dpre = 0; for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) {Dpre += CellP[i].Dust[k];}
         resolvedism_dust_clamp_cell(i);
+        double Dpost = 0; for(k = 0; k < NUM_RESOLVEDISM_DUST; k++) {Dpost += CellP[i].Dust[k];}
+        dust_ledger[6] += P[i].Mass * (Dpre - Dpost);
     }
+    resolvedism_dust_ledger_write();
 }
 
 /* Dust cannot exceed its element pool; silicate is scaled as a whole to keep stoichiometry. */
@@ -257,6 +244,7 @@ void resolvedism_dust_seed_cell(int i)
     CellP[i].Dust[2] = sil * DUST_SIL_FRAC_MG;
     CellP[i].Dust[3] = sil * DUST_SIL_FRAC_SI;
     CellP[i].Dust[4] = sil * DUST_SIL_FRAC_FE;
+    memset(CellP[i].DustVrel, 0, sizeof(CellP[i].DustVrel));
 }
 
 
@@ -410,9 +398,9 @@ void resolvedism_dust_selftest(void)
     /* --- sputtering + growth yield functions over T --- */
     double Ts[] = {1.0e4, 3.0e4, 1.0e5, 3.0e5, 1.0e6, 1.0e7, 1.0e8};
     for(int a = 0; a < 7; a++) {
-        double T = Ts[a], stick = 1.0/(1.0 + 0.04*sqrt(T + 20.0));
-        printf("DUSTTEST_RATE T=%.4e sputY_C=%.6e sputY_Sil=%.6e sticking=%.6e\n",
-            T, get_yield_therSput_C(T), get_yield_therSput_Sil(T), stick);
+        double T = Ts[a], v = T / 1.0e3; /* v_rel sweep 10-1e5 km/s alongside T */
+        printf("DUSTTEST_RATE T=%.4e sputY_C=%.6e sputY_Sil=%.6e v=%.4e nthY_C=%.6e nthY_Sil=%.6e\n",
+            T, dustk_Yth_C(T), dustk_Yth_Sil(T), v, dustk_Ynth_C(v), dustk_Ynth_Sil(v));
     }
     printf("DUSTTEST_END\n"); fflush(stdout);
 }

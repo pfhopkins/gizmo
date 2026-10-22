@@ -604,6 +604,7 @@ void merge_and_split_particles(void)
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
             {int kd_sp; for(kd_sp=0;kd_sp<NUM_RESOLVEDISM_DUST;kd_sp++) {CellP[j_sp].Dust[kd_sp] = 0;}} /* fresh ejecta carry no grains */
+            memset(CellP[j_sp].DustVrel, 0, sizeof(CellP[j_sp].DustVrel));
 #endif
 #if defined(SINK_THERMALFEEDBACK)
             CellP[j_sp].Injected_Sink_Energy = 0;
@@ -1242,6 +1243,8 @@ int merge_particles_ij(int i, int j)
 #endif
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
+    {double dj = 0, di = 0; for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {dj += wt_j*CellP[j].Dust[k]; di += wt_i*CellP[i].Dust[k];}
+     int b; for(b=0;b<NUM_RESOLVEDISM_DUST_BINS;b++) {for(k=0;k<3;k++) {CellP[j].DustVrel[b][k] = (dj+di > 0) ? (dj*CellP[j].DustVrel[b][k] + di*CellP[i].DustVrel[b][k])/(dj+di) : 0;}}} /* dust-mass weighted */
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[j].Dust[k] = wt_j*CellP[j].Dust[k] + wt_i*CellP[i].Dust[k];} /* dust-mass conserving */
 #endif
 #if defined(CHEMCOOL)

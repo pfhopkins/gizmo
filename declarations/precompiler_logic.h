@@ -1423,6 +1423,14 @@
 #ifndef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 #error "GALSF_RESOLVEDISM_DUST requires GALSF_RESOLVEDISM_METALS_INDIVIDUAL"
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST_SIZE_BINS
+#define NUM_RESOLVEDISM_DUST_BINS (GALSF_RESOLVEDISM_DUST_SIZE_BINS)  /* MRN log bins, each with its own v_rel (Hu+19) */
+#else
+#define NUM_RESOLVEDISM_DUST_BINS 1  /* single MRN a_eff = 0.035 um (Hu+26) */
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION
+#error "GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION removed: nonthermal sputtering is now explicit (dust v_rel)"
+#endif
 #endif
 #ifndef GALSF_RESOLVEDISM_DUST
 #define NUM_RESOLVEDISM_DUST 0
