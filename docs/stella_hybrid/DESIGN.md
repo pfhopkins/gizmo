@@ -81,11 +81,26 @@ Gates are the macros `STELLA_OWNS_STAR(p)` (Type 4 with tag STELLA or STELLA_REM
 
 - Upstream's `is_particle_single_star_eligible` (stellar_evolution.cc:22-36) returns 0 unless `SINGLE_STAR_SINK_DYNAMICS`. Without sinks, the hybrid has no single-star side. Add `sf_channel_for_cell(i)` → {SSP, STELLA, SINK}, by cell mass vs `M_SSP` / `M_SINK`.
 - Fork point: FIRE criteria run first. `if(cell_can_be_singlestar==0) {return rateOfSF;}` (sfr_eff.cc:344) becomes `if(channel==SSP) return`. The Stella criteria (today chosen at compile time by `#if defined(GALSF_RESOLVEDISM)`, sfr_eff.cc:301-327) and the sink criteria below that line become runtime branches by channel.
-- Spawn: SSP gives Type 4 tag 0 (generic spawn); STELLA gives the Stella IMF path (tag 1); SINK gives Type 5.
+- Spawn: SSP gives Type 4 tag 1 (generic spawn); STELLA gives the Stella IMF path (tag 2); SINK gives Type 5.
 - Crossing the threshold is clean: Stella sampling completes within one step, no reservoir stays on the gas, and a star keeps its tag for life. Sinks keep their own reservoir.
 - Guards:
   - a cell with m > `M_SSP` is never a Stella accretion donor;
   - refinement must keep star-forming gas in the Stella band. Upstream leaves this criterion open; the audit cites merge_split.cc:158 *(unverified)*.
+
+As implemented in P3:
+- **Threshold.** The preset defines `GALSF_RESOLVEDISM_HYBRID_M_SSP` (= the preset value, Msun). It does **not** define `SINGLE_STAR_AND_SSP_HYBRID_MODEL`. Upstream's "single-star eligible" (`is_particle_single_star_eligible`, mass ≤ threshold, sinks only) is our SINK tier, so in P5 that macro belongs to `M_SINK`, not `M_SSP`. In the mode, `SINGLE_STAR_SINK_DYNAMICS` and `SINGLE_STAR_AND_SSP_HYBRID_MODEL` are an `#error` until P5. The mode without the preset is an `#error` (no `M_SSP`).
+- **Channel.** `sf_channel_for_cell(i)` (sfr_eff.cc) returns SSP if `P.Mass` > `M_SSP`, otherwise STELLA (SINK below `M_SINK` exists only behind the P5 `#error`). It is evaluated per cell when SF criteria are checked and again at spawn, with the same mass.
+- **Criteria per channel** (`get_starformation_rate`):
+  - Common to both: density threshold (`CritPhysDensity`, one parameter for both channels), Stella `Ionized` block, `IMFSpawnBlock`.
+  - SSP cells: FIRE-3's bits 0+1+2+64 in FIRE form: hard virial threshold, FIRE convergent flow, FIRE Jeans mass (`MJ_crit` ≥ 100 Msun).
+  - STELLA cells: no virial criterion; bits from `GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION` (default `(64)` = Stella production `GALSF_SFR_CRITERION=(64)`; only bits 2 and 64 have Stella versions, anything else is an `#error`) in Stella form (`Particle_DivVel`, `FacSfThreshMJ`).
+  - `GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF` acts on STELLA cells only.
+  - Both channels return before the sink-only criteria.
+- **Spawn.** STELLA: LYRA path (IMF draw, `P=(M_cell/M_*)·pfac`, accretion walk), tag 2. SSP: generic GIZMO spawn compiled alongside it (whole cell with `GALSF_GENERATIONS=1`, FIRE probability, no IMF draw, `assign_imf_properties_from_starforming_gas`), Type 4 tag 1. The SSP's `sampled`, `MstarSampleIMF` and `StellaFBEvent_ThisTimeStep` are zeroed.
+- **Donor guard.** The Stella accretion walk skips donors with m > `M_SSP` (resolvedism_imf_sampling.cc, both counting and removal passes).
+- **Refinement.** What upstream does under `SINGLE_STAR_AND_SSP_HYBRID_MODEL` (merge_split.cc): only inside `FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT`. There it sets a 10 pc instead of 700 pc de-refinement floor, Jeans refinement without the 1e4 K floor and at 0.01 M_J instead of 0.001 M_J, and sink-distance radii 0.1/1/10 kpc. `target_mass_renormalization_factor_for_mergesplit` sets `ref_factor = 1` with the comment "need to determine appropriate desired refinement criterion": upstream leaves it open (this is the line the audit cited). None of this is switched on by the mode. P3 adds one guard: a gas merge whose target is in the Stella band is refused if the merged mass would exceed `M_SSP`. Splits only lower mass; an SSP cell that splits into the Stella band forms Stella stars from then on.
+- **OPEN (Uli):** a refinement criterion keyed to `M_SSP`, e.g. splitting dense SSP-band gas into the Stella band, or a Jeans/`M_SSP` target in `target_mass_renormalization_factor_for_mergesplit`. Not implemented. Side effect of the guard to decide on: a cell below `MinMassForParticleMerger` whose only eligible neighbours are Stella-band cells just below `M_SSP` stays unmerged.
+- **Not separated:** `CritPhysDensity` and `SfEffPerFreeFall` are shared by both channels.
 
 ### 4.3 Stellar evolution
 
