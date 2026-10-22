@@ -162,7 +162,6 @@ static Violation check_h_pool(const Particle &p, const char *label, int iter = -
 {
     Violation v{0};
     // Sum of H atoms locked in species + free-H mass / X_H should = 1
-    double X_H = DMAX(p.X_H, 1e-10);
     double sum_locked = 2 * p.TracAbund[0] + p.TracAbund[1] + p.TracAbund[6];  // n_H atoms per n_H-nucleus
     if(sum_locked > 1.0 + 1e-10) {
         std::fprintf(stderr,
@@ -251,6 +250,7 @@ TEST_CASE("net 17: pack and unpack of identity flux preserves invariants") {
     p.TracAbund[6] = 1e-5;    // HD
 
     PackedMetallicity m = pack(p);
+    (void)m;
     double zero_trac[TRAC_NUM] = {0,0,0,0,0,0,0};
     unpack(p, 0, 0, 0, 0, 0, zero_trac);
 
