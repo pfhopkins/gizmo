@@ -287,6 +287,9 @@ def test_ppisn_pisn_boundary(tbl):
         # Should have at most one PPISN->PISN transition
         ppisn_to_pisn = [t for t in transitions if t[2] == "PPISN" and t[3] == "PISN"]
         pisn_to_ppisn = [t for t in transitions if t[2] == "PISN" and t[3] == "PPISN"]
+        check(len(ppisn_to_pisn) <= 1,
+              f"{len(ppisn_to_pisn)} PPISN->PISN transitions at Z={tbl['Z'][iz]:.4f}: {ppisn_to_pisn}",
+              "Type boundary should be monotonic in mass")
         check(len(pisn_to_ppisn) == 0,
               f"PISN->PPISN reverse transition at Z={tbl['Z'][iz]:.4f}: {pisn_to_ppisn}",
               "Type boundary should be monotonic in mass")
