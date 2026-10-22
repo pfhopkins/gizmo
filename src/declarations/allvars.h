@@ -39,7 +39,9 @@
 #include <omp.h>
 #endif
 
+#ifndef GIZMO_config_H /* the header defines it; a standalone build (e.g. a unit test) may define it to compile without a Config */
 #include "../GIZMO_config.h"
+#endif
 
 #include "precompiler_logic.h"
 

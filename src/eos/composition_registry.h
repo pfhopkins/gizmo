@@ -12,7 +12,9 @@
    simultaneously the dispatch in eos.cc selects exactly one branch
    (instead of running serial #ifdef blocks that would double-stomp). */
 
+#ifndef GIZMO_config_H
 #include "../GIZMO_config.h"
+#endif
 /* GIZMO_GPU_FUNCTION comes from here rather than from whatever an includer
    happened to pull in first. Every current include path reaches this header
    after macros.h, so nothing changes today, but a header whose bodies only
