@@ -176,16 +176,14 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #ifdef GALSF_RESOLVEDISM_DUST
     /* [orig chemcool.cc:274-280] */
     {
-        /* Per-particle DGR from evolved dust fields, normalized to solar (DGR_solar ~ 0.01) */
         double DGR_actual = 0;
         for(int kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) DGR_actual += CellP[target].Dust[kd];
-        in->dust_to_gas_ratio = DGR_actual / 0.01;
+        in->dust_to_gas_ratio = DGR_actual / RESOLVEDISM_DGR_MW_ABS; /* MW units, same anchor as the proxy branch */
     }
 #else
     /* [orig chemcool.cc:282-294]
        No evolved dust model: assume fixed dust-to-metal ratio, scale DGR with local metallicity.
-       DGRnormalized is the dust-to-metal efficiency (1.0 = MW-like ~40% depletion).
-       dust_to_gas_ratio is in solar units: 1.0 = DGR_solar ~ 0.01 */
+       DGRnormalized = DGR at solar Z in MW units (1.0 = RESOLVEDISM_DGR_MW_ABS). */
 #ifdef METALS
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     in->dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];

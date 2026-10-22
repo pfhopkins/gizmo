@@ -7,6 +7,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "resolvedism_dust_kernels.h"
+#include "../declarations/resolvedism_dgr.h"
 #ifdef CHEMCOOL
 #include "../cooling/chemcool/chemcool_consts.h"
 #endif
@@ -191,18 +192,17 @@ void resolvedism_dust_clamp_cell(int i)
     if(f < 1) for(k = 1; k <= 4; k++) CellP[i].Dust[k] *= f;
 }
 
-#define DUST_SEED_MAXDEPL_C   0.5 /* max fraction of a cell's C locked in seed dust */
-#define DUST_SEED_MAXDEPL_SIL 0.9 /* max fraction of a cell's Mg/Si/Fe/O locked in seed silicate */
-/* Fresh-start seed: DGR = 0.01 Z/0.014 split 30% C / 70% olivine, capped by the cell's own element pools. */
+#define DUST_SEED_MAXDEPL 0.9 /* max fraction of a cell's element pool locked in seed dust */
+/* Fresh-start seed: MW dust (C 1.9e-3 + silicate 3.5e-3, Hu+23) x Z/Zsun, capped by the cell's element pools. */
 void resolvedism_dust_seed_cell(int i)
 {
-    double DGR = 0.01 * (DMAX(P[i].Metallicity[0], 0) / 0.014);
-    double C_dust = DMIN(0.3 * DGR, DUST_SEED_MAXDEPL_C * DMAX(P[i].Metallicity[MET_OF(ELEM_C)], 0));
-    double sil = 0.7 * DGR; /* olivine mass fraction, limited by the scarcest constituent */
-    sil = DMIN(sil, DUST_SEED_MAXDEPL_SIL * DMAX(P[i].Metallicity[MET_OF(ELEM_O)],  0) / DUST_SIL_FRAC_O);
-    sil = DMIN(sil, DUST_SEED_MAXDEPL_SIL * DMAX(P[i].Metallicity[MET_OF(ELEM_Mg)], 0) / DUST_SIL_FRAC_MG);
-    sil = DMIN(sil, DUST_SEED_MAXDEPL_SIL * DMAX(P[i].Metallicity[MET_OF(ELEM_Si)], 0) / DUST_SIL_FRAC_SI);
-    sil = DMIN(sil, DUST_SEED_MAXDEPL_SIL * DMAX(P[i].Metallicity[MET_OF(ELEM_Fe)], 0) / DUST_SIL_FRAC_FE);
+    double Zp = DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0];
+    double C_dust = DMIN(RESOLVEDISM_DGR_MW_C_ABS * Zp, DUST_SEED_MAXDEPL * DMAX(P[i].Metallicity[MET_OF(ELEM_C)], 0));
+    double sil = RESOLVEDISM_DGR_MW_SIL_ABS * Zp;
+    sil = DMIN(sil, DUST_SEED_MAXDEPL * DMAX(P[i].Metallicity[MET_OF(ELEM_O)],  0) / DUST_SIL_FRAC_O);
+    sil = DMIN(sil, DUST_SEED_MAXDEPL * DMAX(P[i].Metallicity[MET_OF(ELEM_Mg)], 0) / DUST_SIL_FRAC_MG);
+    sil = DMIN(sil, DUST_SEED_MAXDEPL * DMAX(P[i].Metallicity[MET_OF(ELEM_Si)], 0) / DUST_SIL_FRAC_SI);
+    sil = DMIN(sil, DUST_SEED_MAXDEPL * DMAX(P[i].Metallicity[MET_OF(ELEM_Fe)], 0) / DUST_SIL_FRAC_FE);
     CellP[i].Dust[0] = C_dust;
     CellP[i].Dust[1] = sil * DUST_SIL_FRAC_O;
     CellP[i].Dust[2] = sil * DUST_SIL_FRAC_MG;
