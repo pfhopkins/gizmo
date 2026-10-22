@@ -41,14 +41,6 @@
 
 #ifdef KETJU_REGULARIZATION
 
-/* Ratio of the timestep-limiting radius to KetjuRegionRadius. Non-chain
- * particles within (factor * KetjuRegionRadius) of any chain center
- * constrain the chain's macro timebin (the chain's effective dt is the MIN
- * over its members and all such "limiting" particles). Ported from GADGET-4
- * KETJU's KETJU_TIMESTEP_LIMITING_RADIUS_FACTOR (their default = 100). */
-#ifndef KETJU_TIMESTEP_LIMITING_RADIUS_FACTOR
-#define KETJU_TIMESTEP_LIMITING_RADIUS_FACTOR 100.0
-#endif
 
 /* MSTAR is integrated in natural N-body units (pc, Msun, km/s) whatever the host units: its GBS convergence degrades
  * badly for e.g. kpc / 1e10 Msun states. Converted in place around ketju_run_integrator only; identity for pc/Msun/km/s hosts. */
@@ -2119,7 +2111,7 @@ static void move_particle_timebin(int i, int old_bin, int new_bin)
  * bin is the MIN over
  *   (a) the limited particles' own steps from find_timesteps, and
  *   (b) the steps of the "limiting" particles: synchronised particles of any type within
- *       KETJU_TIMESTEP_LIMITING_RADIUS_FACTOR * R, so the region resolves perturbers approaching it.
+ *       KetjuTimestepLimitingFactor * R, so the region resolves perturbers approaching it.
  * Every such step was assigned at this sync point and obeys the grow-only-when-synchronised rule,
  * so their minimum does too; moving a synchronised particle to it is always legal. A particle
  * that is not synchronised has a longer step than any bin chosen now, so leaving it out of (b)
@@ -2139,7 +2131,7 @@ void ketju_limit_timesteps(void)
     if(centers.empty()) return;
 
     const double limited_radius = 2.0 * All.KetjuRegionRadius;
-    const double limiting_radius = KETJU_TIMESTEP_LIMITING_RADIUS_FACTOR * All.KetjuRegionRadius;
+    const double limiting_radius = All.KetjuTimestepLimitingFactor * All.KetjuRegionRadius; /* GADGET-4 KETJU default 100 */
 #ifdef KETJU_TYPE4_STARS
     std::vector<std::vector<ketju_mpi_particle>> tsr_centers = build_orbit_regions(centers); (void)limited_radius;
 #else
