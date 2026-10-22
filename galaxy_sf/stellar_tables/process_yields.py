@@ -20,6 +20,8 @@ import numpy as np
 import os
 import sys
 from glob import glob
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from solar_abundances import Z_SUN
 
 # ═══════════════════════════════════════════════════════════════════════
 # Configuration — extend here to add new elements
@@ -249,7 +251,7 @@ def classify_remnant(M_init, Z, presn_models=None, wd_masses=None):
         return 0, min(m_wd, 1.4)
 
     # Core-collapse: NS or BH
-    feh = np.log10(max(Z, 1e-6) / 0.014)  # approximate [Fe/H]
+    feh = np.log10(max(Z, 1e-6) / Z_SUN)  # approximate [Fe/H]
     feh_grid = [0, -1, -2, -3]
     feh_nearest = min(feh_grid, key=lambda x: abs(x - feh))
 
@@ -329,7 +331,7 @@ def build_yield_tables(base_dir, output_file):
     source_flag = np.zeros((N_Z, N_M), dtype=int)   # 0=none, 1=Karakas, 2=C&L, 3=PISN
 
     for iz, Z in enumerate(all_Z):
-        feh = np.log10(max(Z, 1e-6) / 0.014)
+        feh = np.log10(max(Z, 1e-6) / Z_SUN)
         feh_nearest = min(cl_fehs, key=lambda x: abs(x - feh))
 
         for im, M in enumerate(all_masses):

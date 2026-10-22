@@ -32,8 +32,7 @@ from glob import glob
 
 # Reuse band definitions from the main builder
 from build_stellar_tables import (
-    ENERGY_BANDS, PHOTON_RATE_BANDS, COMBO_BANDS, RAD_KEYS,
-    h_planck, k_boltz, c_light, sigma_sb, eV_to_erg, L_sun, R_sun,
+    ENERGY_BANDS, PHOTON_RATE_BANDS, h_planck, c_light, eV_to_erg,
 )
 
 # ═══════════════════════════════════════════════════════════════
@@ -52,11 +51,12 @@ ATLAS9_MH_CODES = {
     'p05': +0.5, 'p02': +0.2, 'p00': 0.0,
     'm05': -0.5, 'm10': -1.0, 'm15': -1.5, 'm20': -2.0, 'm25': -2.5,
 }
-# Convert [M/H] to Z for our grid matching
+from solar_abundances import Z_SUN
+
+
 def mh_to_Z(mh):
-    """[M/H] → approximate Z (Asplund 2009)."""
-    Z_solar = 0.0134
-    return Z_solar * 10**mh
+    """[M/H] -> Z on the tables' scale (scaled-solar, Z_sun = solar_abundances.Z_SUN)"""
+    return Z_SUN * 10**mh
 
 # PHOENIX ACES grid (Goettingen mirror)
 PHOENIX_BASE_URL = 'https://phoenix.astro.physik.uni-goettingen.de/data/HiResFITS/PHOENIX-ACES-AGSS-COND-2011'
@@ -99,7 +99,7 @@ def download_atlas9(mh_codes=None):
         except Exception as e:
             print(f"    FAILED: {e}")
             # Try alternative: individual .dat files
-            print(f"    Trying individual flux files instead...")
+            print("    Trying individual flux files instead...")
             _download_atlas9_individual(mh_code, atlas9_dir)
 
 
@@ -146,7 +146,7 @@ def download_phoenix():
     wave_url = f'{PHOENIX_BASE_URL}/WAVE_PHOENIX-ACES-AGSS-COND-2011.fits'
     wave_file = os.path.join(phoenix_dir, 'WAVE_PHOENIX-ACES-AGSS-COND-2011.fits')
     if not os.path.exists(wave_file):
-        print(f"  Downloading PHOENIX wavelength grid...")
+        print("  Downloading PHOENIX wavelength grid...")
         try:
             urllib.request.urlretrieve(wave_url, wave_file)
         except Exception as e:
@@ -175,7 +175,7 @@ def download_phoenix():
                 except Exception:
                     pass  # Not all combinations exist
 
-    print(f"  PHOENIX download complete")
+    print("  PHOENIX download complete")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -267,6 +267,31 @@ def parse_atlas9_pck(filepath):
         n_models += 1
 
     return spectra
+
+
+def parse_atlas9_dat(filepath):
+    """Parse one ATLAS9 Castelli-Kurucz flux file (f{mh}t{Teff}g{logg}k2odfnew.dat).
+
+    Records "FLUX" I5 F9.2 then whitespace-separated nu, H_nu, H_nu_cont, ratio;
+    index and wavelength [nm] can touch, so they are read by column; 3-digit exponents lack the E.
+    Returns (wavelength_A, F_lambda_cgs) as parse_atlas9_pck, or None if unreadable.
+    """
+    wl_nm, h_nu = [], []
+    with open(filepath) as fh:
+        for line in fh:
+            if not line.startswith('FLUX') or len(line.strip()) <= 4:
+                continue
+            try:
+                wl_nm.append(float(line[9:18]))
+                h_nu.append(float(re.sub(r'(\d)([+-]\d{3})$', r'\1E\2', line[18:].split()[1])))
+            except (ValueError, IndexError):
+                return None
+    if not wl_nm:
+        return None
+    wl_A = np.array(wl_nm) * 10.0
+    lambda_cm = wl_A * 1e-8
+    F_lambda = 4.0 * np.pi * np.array(h_nu) * c_light / (lambda_cm**2) * 1e-8  # as parse_atlas9_pck
+    return wl_A, F_lambda
 
 
 def parse_phoenix_fits(filepath, wave_filepath):

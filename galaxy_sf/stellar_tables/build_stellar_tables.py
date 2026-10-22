@@ -61,6 +61,8 @@ ENERGY_BANDS = [
 PHOTON_RATE_BANDS = [
     ('Q_ion',     13.6,  None),   # total ionizing photon rate
     ('Q_ion_H0',  13.6,  24.6),   # H-only ionizing photon rate
+    ('Q_He0',     24.6,  None),   # He0-ionizing photon rate
+    ('Q_He1',     54.4,  None),   # He+-ionizing photon rate
 ]
 
 # Combination bands: name → list of atomic sub-band names to sum
@@ -101,6 +103,8 @@ RAD_DESCRIPTIONS = {
     'L_bol':       'log10(erg/s), bolometric',
     'Q_ion':       'log10(photons/s), > 13.6 eV, total ionizing photons',
     'Q_ion_H0':    'log10(photons/s), 13.6-24.6 eV, H ionizing photons',
+    'Q_He0':       'log10(photons/s), > 24.6 eV, He0 ionizing photons',
+    'Q_He1':       'log10(photons/s), > 54.4 eV, He+ ionizing photons',
 }
 
 # All band edges for HDF5 metadata (sorted, unique, eV)
@@ -138,17 +142,10 @@ ISOTOPE_TO_ELEMENT = {
     'Fe': 'Fe', 'Co': 'Co', 'Ni': 'Ni', 'Cu': 'Cu', 'Zn': 'Zn',
 }
 
-# Solar mass fractions (Asplund+ 2009) for scaling initial abundances
-Z_SOLAR = 0.0134
-SOLAR_MASS_FRAC = {  # Asplund+ 2009 proto-solar mass fractions
-    'H': 0.7381, 'He': 0.2485, 'C': 2.36e-3, 'N': 6.91e-4, 'O': 5.72e-3,
-    'F': 3.26e-7, 'Ne': 1.25e-3, 'Na': 2.98e-5, 'Mg': 5.91e-4,
-    'Al': 5.57e-5, 'Si': 6.65e-4, 'P': 5.16e-6, 'S': 3.10e-4,
-    'Cl': 3.15e-6, 'Ar': 7.37e-5, 'K': 2.93e-6, 'Ca': 6.44e-5,
-    'Sc': 3.48e-8, 'Ti': 3.59e-6, 'V': 2.30e-7, 'Cr': 1.37e-5,
-    'Mn': 9.17e-6, 'Fe': 1.17e-3, 'Co': 3.30e-6, 'Ni': 6.99e-5,
-    'Cu': 7.20e-7, 'Zn': 1.67e-6,
-}
+# Solar composition: single source shared with GIZMO (A09 ratios, metals sum to Z_SOLAR)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from solar_abundances import Z_SUN as Z_SOLAR, solar_pattern
+SOLAR_MASS_FRAC = solar_pattern()
 # Metal fractions relative to Z (for scaling to arbitrary Z)
 SOLAR_METAL_FRAC = {e: SOLAR_MASS_FRAC[e] / Z_SOLAR for e in TRACKED_ELEMENTS
                     if e not in ('H', 'He')}
@@ -207,19 +204,15 @@ MIST_SURFACE_ELEM = {
     'Fe': ['surface_fe56'],
 }
 
-# MIST [Fe/H] → approximate Z mapping (Asplund+ 2009)
-# Z = 0.751 * ZX / (1 + 2.5*ZX) where ZX = (Z/X)_solar * 10^[Fe/H]
-_ZX_SOLAR = Z_SOLAR / SOLAR_MASS_FRAC['H']
+# MIST v1.2 initial Z: the track headers give Zinit = 1.42857e-2 * 10^[Fe/H] (MIST's own protosolar scale)
+MIST_ZINIT_SOLAR = 1.42857e-2
 MIST_FEH_GRID = {
     'm4.00': -4.0, 'm3.50': -3.5, 'm3.00': -3.0, 'm2.50': -2.5,
     'm2.00': -2.0, 'm1.75': -1.75, 'm1.50': -1.5, 'm1.25': -1.25,
     'm1.00': -1.0, 'm0.75': -0.75, 'm0.50': -0.5, 'm0.25': -0.25,
     'p0.00': 0.0, 'p0.25': 0.25, 'p0.50': 0.5,
 }
-MIST_Z_GRID = {}
-for feh_str, feh_val in MIST_FEH_GRID.items():
-    ZX = _ZX_SOLAR * 10**feh_val
-    MIST_Z_GRID[feh_str] = 0.751 * ZX / (1.0 + 2.5 * ZX)
+MIST_Z_GRID = {feh_str: MIST_ZINIT_SOLAR * 10**feh_val for feh_str, feh_val in MIST_FEH_GRID.items()}
 
 # PARSEC v2 VMS surface columns → element mapping (from .TAB track files)
 # Only 7 surface elements available; rest use initial composition (solar-scaled)
@@ -247,6 +240,7 @@ PARSEC2_Z_GRID = [1e-11, 1e-6, 0.0001, 0.001, 0.002, 0.004, 0.006, 0.008,
 
 # Stitch: PARSEC v2 primary (M >= 2), MIST fallback (M < 2 or gaps), BoOST/PARSEC v1 last resort
 MASS_STITCH_P2_LO = 2.0       # PARSEC v2 primary above this (its min mass)
+MASS_STITCH_P2_FULL = 2.5     # MIST -> PARSEC v2 blend (linear in log M) over [P2_LO, P2_FULL]
 # Legacy BoOST stitch (fallback only)
 MASS_STITCH_BOOST_LO = 40.0   # BoOST fallback lower limit
 MASS_STITCH_BOOST_HI = 80.0   # BoOST fallback upper limit
@@ -380,155 +374,172 @@ def get_planck_lut():
         PLANCK_LUT = build_planck_lut()
     return PLANCK_LUT
 
-def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr=None, logZ_arr=None):
-    """Vectorized radiation computation.
+RADIATION_SOURCES = ('atlas9', 'planck', 'atlas9_nonionizing', 'hotstar_stack')
+IONIZING_BANDS = ('ion_H0', 'ion_He0', 'ion_He1', 'ion_He2')
+ATLAS9_LOOKUP = ('legacy', 'clamp', 'masked_planck')
+RADIATION = {'source': None, 'lookup': None}   # set from the command line; no default
+RAD_COVERAGE = {}   # track file -> {weight name: [sum per coverage class]}
+HOTSTAR_LUT_PATH = os.environ.get('STELLA_HOTSTAR_LUT', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data', 'lut', 'hotstar_lut.hdf5'))
+HOTSTAR_LUT = None
 
-    Uses spectral atmosphere LUT if available (ATLAS9/PHOENIX), otherwise
-    falls back to Planck blackbody. The spectral LUT captures line blanketing
-    that suppresses ionizing flux by 10-1000x for B-type stars.
 
-    Returns dict with keys from RAD_KEYS:
-      L_<band>  in erg/s (for energy bands and combinations)
-      Q_<band>  in photons/s (for photon-rate bands)
-      L_bol     in erg/s
-    """
-    # Try spectral atmosphere models first
-    spec = get_spectral_lut()
-    if spec is not None:
-        return compute_radiation_from_spectral_lut(logTeff_arr, logL_arr,
-                                                    logg_arr=logg_arr,
-                                                    logZ_arr=logZ_arr)
+def get_hotstar_lut():
+    global HOTSTAR_LUT
+    if HOTSTAR_LUT is None:
+        if not os.path.exists(HOTSTAR_LUT_PATH):
+            raise FileNotFoundError('radiation source hotstar_stack needs %s (build_hotstar_lut.py)' % HOTSTAR_LUT_PATH)
+        import hotstar_radiation
+        HOTSTAR_LUT = hotstar_radiation.HotLUT(HOTSTAR_LUT_PATH)
+    return HOTSTAR_LUT
 
-    # Fall back to Planck blackbody
+
+def _rad_track(surface, log_Mdot, R_cm):
+    """surface X, C, N mass fractions, mass-loss rate and radius of each track point (hotstar_stack WR phases)"""
+    t = {'X': surface[:, TRACKED_ELEMENTS.index('H')], 'C': surface[:, TRACKED_ELEMENTS.index('C')],
+         'N': surface[:, TRACKED_ELEMENTS.index('N')], 'R_cm': R_cm}
+    if log_Mdot is not None: t['log_Mdot'] = log_Mdot
+    return t
+
+
+def log_g(M_Msun, R_cm):
+    return np.log10(G_cgs * np.maximum(M_Msun, 1e-30) * M_sun_g) - 2.0 * np.log10(np.maximum(R_cm, 1.0))
+
+
+def planck_band_fractions(logTeff_arr):
+    """Planck L_band/L_bol and Q_band/L_bol at each log Teff"""
     log_T, energy_fracs, photon_rates_per_L = get_planck_lut()
+    ef = {n: np.interp(logTeff_arr, log_T, energy_fracs[n], left=0, right=0) for n, _, _ in ENERGY_BANDS}
+    qf = {n: np.interp(logTeff_arr, log_T, photon_rates_per_L[n], left=0, right=0) for n, _, _ in PHOTON_RATE_BANDS}
+    return ef, qf
+
+
+def compute_radiation_from_lut(logTeff_arr, logL_arr, logg_arr, logZ_arr, tag=None, track=None):
+    """Band luminosities [erg/s] and photon rates [1/s] for track points (log L in Lsun).
+
+    RADIATION['source'] = 'planck': blackbody at Teff.
+                          'atlas9_nonionizing': ionizing bands and photon rates blackbody; non-ionizing bands from the
+                                    LUT at the point's log g and Z, blackbody where the LUT has no model (as masked_planck).
+                          'atlas9': spectral LUT (ATLAS9 / PHOENIX), trilinear in (log Teff, log g, log Z), with
+    RADIATION['lookup'] = 'legacy': log g = 4 and Z = Z_sun for every point, LUT as built (gap cells nearest-neighbour
+                                    filled), linear extrapolation off the grid (all builds before this option)
+                          'clamp': the point's log g and Z, clamped to the grid edges; LUT as built
+                          'masked_planck': the point's log g and Z; Planck wherever an interpolation corner is a
+                                    gap-filled cell or the point is off the grid.
+                          'hotstar_stack': TLUSTY / ATLAS9 / PoWR OB He+ / PoWR WR / Gotberg, see hotstar_radiation.py;
+                                    track = dict(X, C, N surface mass fractions, log_Mdot [Msun/yr], R_cm) for WR phases.
+    tag: track file; its coverage counts go to RAD_COVERAGE.
+    """
+    src, look = RADIATION['source'], RADIATION['lookup']
+    if src not in RADIATION_SOURCES:
+        raise ValueError('radiation source not set (one of %s)' % (RADIATION_SOURCES,))
     L_erg = 10**logL_arr * L_sun
-
-    result = {}
-
-    # Atomic energy sub-bands
-    for name, _, _ in ENERGY_BANDS:
-        f = np.interp(logTeff_arr, log_T, energy_fracs[name], left=0, right=0)
-        result['L_' + name] = L_erg * f
-
-    # Photon rates
-    for name, _, _ in PHOTON_RATE_BANDS:
-        q = np.interp(logTeff_arr, log_T, photon_rates_per_L[name], left=0, right=0)
-        result[name] = L_erg * q
-
-    # Combination bands (sum of atomic sub-bands)
+    pe, pq = planck_band_fractions(logTeff_arr)
+    if src == 'planck':
+        ef, qf = pe, pq
+    elif src == 'hotstar_stack':
+        import hotstar_radiation as HS
+        dg = {}
+        E, Q, C = HS.hotstar_band_fractions(get_hotstar_lut(), logTeff_arr, logg_arr, logZ_arr, Z_SOLAR,
+                                            spectral_band_fractions, planck_band_fractions, track, dg)
+        ef = {n: E[:, i] for i, (n, _, _) in enumerate(ENERGY_BANDS)}
+        qf = {n: Q[:, i] for i, (n, _, _) in enumerate(PHOTON_RATE_BANDS)}
+        if tag is not None:
+            wts = {'track_points': np.ones_like(L_erg), 'Q_H0': L_erg * qf['Q_ion_H0'], 'Q_He0': L_erg * qf['Q_He0'],
+                   'Q_He1': L_erg * qf['Q_He1'], 'L_FUV': L_erg * (ef['NUV_hi'] + ef['FUV_mid']), 'L_LW': L_erg * ef['LW']}
+            col = {'track_points': HS.GROUPS.index('Q_H0')}
+            RAD_COVERAGE[tag] = {k: [float(np.sum(w[C[:, col.get(k, HS.GROUPS.index(k) if k in HS.GROUPS else 0)] == c])) for c in range(4)]
+                                 for k, w in wts.items()}
+            W = dg['cmfgen_W']          # share of Q_H0 taken from the CMFGEN wind models, and the rest
+            RAD_COVERAGE[tag]['Q_H0_cmfgen'] = [float(np.sum(W * wts['Q_H0'])), float(np.sum((1 - W) * wts['Q_H0']))]
+    elif src == 'atlas9_nonionizing':
+        ef, qf, cls = spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr)
+        use = cls == 0
+        ef = {n: (pe[n] if n in IONIZING_BANDS else np.where(use, v, pe[n])) for n, v in ef.items()}
+        qf = pq
+    else:
+        if look not in ATLAS9_LOOKUP:
+            raise ValueError('ATLAS9 lookup not set (one of %s)' % (ATLAS9_LOOKUP,))
+        if look == 'legacy':
+            logg_arr = np.full(len(logTeff_arr), 4.0)
+            logZ_arr = np.full(len(logTeff_arr), np.log10(Z_SOLAR))
+        ef, qf, cls = spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr, clamp=(look == 'clamp'))
+        if look == 'masked_planck':
+            use = cls == 0
+            ef = {n: np.where(use, v, pe[n]) for n, v in ef.items()}
+            qf = {n: np.where(use, v, pq[n]) for n, v in qf.items()}
+    if src not in ('planck', 'hotstar_stack') and tag is not None:
+        wts = {'track_points': np.ones_like(L_erg), 'Q_H0_planck': L_erg * pq['Q_ion_H0'],
+               'L_FUV': L_erg * (ef['NUV_hi'] + ef['FUV_mid']), 'L_LW': L_erg * ef['LW']}
+        RAD_COVERAGE[tag] = {k: [float(np.sum(w[cls == c])) for c in (0, 1, 2)] for k, w in wts.items()}
+    result = {'L_' + n: L_erg * ef[n] for n, _, _ in ENERGY_BANDS}
+    result.update({n: L_erg * qf[n] for n, _, _ in PHOTON_RATE_BANDS})
     for combo_name, sub_names in COMBO_BANDS.items():
         result['L_' + combo_name] = sum(result['L_' + s] for s in sub_names)
-
-    # Bolometric
     result['L_bol'] = L_erg.copy()
-
     return result
 
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 2b: Spectral atmosphere LUT (replaces Planck when available)
+# SECTION 2b: Spectral atmosphere LUT (radiation source atlas9)
 # ═══════════════════════════════════════════════════════════════
 
 SPECTRAL_LUT = None  # filled lazily
-SPECTRAL_LUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                  'spectral_band_lut.hdf5')
+SPECTRAL_LUT_PATH = os.environ.get('STELLA_SPECTRAL_LUT', os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                  'data', 'lut', 'spectral_band_lut.hdf5'))
 
 def load_spectral_lut():
-    """Load pre-computed spectral band fractions from atmosphere models.
-
-    Returns: (log_Teff, logg, log_Z, energy_fracs, photon_rates_per_L)
-      or None if the LUT file doesn't exist.
-    """
+    """Spectral band LUT: (log_Teff, logg, log_Z, energy_fracs, photon_rates_per_L, has_data). Missing file is an error."""
     if not os.path.exists(SPECTRAL_LUT_PATH):
-        return None
+        raise FileNotFoundError('radiation source atlas9 needs the spectral LUT %s (build_spectral_lut.py)' % SPECTRAL_LUT_PATH)
     import h5py
     print(f"  Loading spectral LUT from {SPECTRAL_LUT_PATH}...", flush=True)
     with h5py.File(SPECTRAL_LUT_PATH, 'r') as f:
         log_Teff = f['log_Teff'][:]
         logg_arr = f['logg'][:]
-        Z_arr = f['Z'][:]
-        log_Z = np.log10(np.maximum(Z_arr, 1e-12))
-
-        energy_fracs = {}
-        for name, _, _ in ENERGY_BANDS:
-            energy_fracs[name] = f[f'energy_fracs/{name}'][:]
-
-        photon_rates = {}
-        for name, _, _ in PHOTON_RATE_BANDS:
-            photon_rates[name] = f[f'photon_rates_per_L/{name}'][:]
-
+        log_Z = np.log10(Z_SOLAR) + f['metallicity_MH'][:]   # scaled-solar [M/H] on the tables' Z_sun (the LUT's own Z axis used 0.0134)
+        energy_fracs = {name: f[f'energy_fracs/{name}'][:] for name, _, _ in ENERGY_BANDS}
+        photon_rates = {name: f[f'photon_rates_per_L/{name}'][:] for name, _, _ in PHOTON_RATE_BANDS}
+        has_data = f['has_data'][:]
     print(f"    {len(log_Teff)} Teff x {len(logg_arr)} logg x {len(log_Z)} Z", flush=True)
-    return log_Teff, logg_arr, log_Z, energy_fracs, photon_rates
+    return log_Teff, logg_arr, log_Z, energy_fracs, photon_rates, has_data
 
 
 def get_spectral_lut():
-    """Lazy-load the spectral LUT. Returns None if not available."""
     global SPECTRAL_LUT
     if SPECTRAL_LUT is None:
         SPECTRAL_LUT = load_spectral_lut()
     return SPECTRAL_LUT
 
 
-def compute_radiation_from_spectral_lut(logTeff_arr, logL_arr, logg_arr=None, logZ_arr=None):
-    """Compute band luminosities from atmosphere-model spectral LUT.
+def spectral_coverage(points, axes, has_data):
+    """0 = all 8 interpolation corners are atmosphere models, 1 = a corner is a gap-filled LUT cell, 2 = off the grid"""
+    out = np.zeros(len(points), bool); idx = []
+    for d, g in enumerate(axes):
+        x = points[:, d]; out |= (x < g[0]) | (x > g[-1])
+        idx.append(np.clip(np.searchsorted(g, x) - 1, 0, len(g) - 2))
+    gap = np.zeros_like(out)
+    for i in (0, 1):
+        for j in (0, 1):
+            for k in (0, 1):
+                gap |= ~has_data[idx[0] + i, idx[1] + j, idx[2] + k]
+    return np.where(out, 2, np.where(gap, 1, 0))
 
-    Uses trilinear interpolation in (log_Teff, logg, log_Z) space.
-    Falls back to Planck for points outside the spectral grid.
 
-    Args:
-        logTeff_arr: log10(Teff/K) array
-        logL_arr:    log10(L/Lsun) array
-        logg_arr:    log10(g / cm/s^2) array (optional, default 4.0)
-        logZ_arr:    log10(Z) array (optional, default solar)
-
-    Returns: dict with same keys as compute_radiation_from_lut()
-    """
+def spectral_band_fractions(logTeff_arr, logg_arr, logZ_arr, clamp=False):
+    """LUT L_band/L_bol and Q_band/L_bol, trilinear in (log Teff, log g, log Z); off the grid linear extrapolation,
+    or the grid edge with clamp. Returns (energy_fracs, photon_rates_per_L, coverage class of the unclamped point)."""
     from scipy.interpolate import RegularGridInterpolator
-
-    spec = get_spectral_lut()
-    if spec is None:
-        return compute_radiation_from_lut(logTeff_arr, logL_arr)
-
-    log_Teff_grid, logg_grid, log_Z_grid, spec_efracs, spec_qrates = spec
-
-    N = len(logTeff_arr)
-    if logg_arr is None:
-        logg_arr = np.full(N, 4.0)
-    if logZ_arr is None:
-        logZ_arr = np.full(N, np.log10(Z_SOLAR))
-
-    L_erg = 10**logL_arr * L_sun
-    result = {}
-
-    # Build interpolation points
+    log_Teff_grid, logg_grid, log_Z_grid, spec_efracs, spec_qrates, has_data = get_spectral_lut()
+    axes = (log_Teff_grid, logg_grid, log_Z_grid)
     points = np.column_stack([logTeff_arr, logg_arr, logZ_arr])
-
-    # Interpolate energy fractions
-    for name, _, _ in ENERGY_BANDS:
-        interp = RegularGridInterpolator(
-            (log_Teff_grid, logg_grid, log_Z_grid),
-            spec_efracs[name],
-            method='linear', bounds_error=False, fill_value=None)
-        frac = interp(points)
-        frac = np.maximum(frac, 0.0)
-        result['L_' + name] = L_erg * frac
-
-    # Interpolate photon rates
-    for name, _, _ in PHOTON_RATE_BANDS:
-        interp = RegularGridInterpolator(
-            (log_Teff_grid, logg_grid, log_Z_grid),
-            spec_qrates[name],
-            method='linear', bounds_error=False, fill_value=None)
-        q_per_L = interp(points)
-        q_per_L = np.maximum(q_per_L, 0.0)
-        result[name] = L_erg * q_per_L
-
-    # Combination bands
-    for combo_name, sub_names in COMBO_BANDS.items():
-        result['L_' + combo_name] = sum(result['L_' + s] for s in sub_names)
-
-    result['L_bol'] = L_erg.copy()
-    return result
+    cls = spectral_coverage(points, axes, has_data)
+    if clamp:
+        points = np.column_stack([np.clip(points[:, d], g[0], g[-1]) for d, g in enumerate(axes)])
+    def interp(tab):
+        return np.maximum(RegularGridInterpolator(axes, tab, method='linear', bounds_error=False, fill_value=None)(points), 0.0)
+    ef = {name: interp(spec_efracs[name]) for name, _, _ in ENERGY_BANDS}
+    qf = {name: interp(spec_qrates[name]) for name, _, _ in PHOTON_RATE_BANDS}
+    return ef, qf, cls
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -726,7 +737,6 @@ def parsec_track_to_common(filepath):
     R_cm = 10**d['LOG_R']     # PARSEC LOG_R = log(R/cm)
     R_Rsun = R_cm / R_sun
 
-    rad = compute_radiation_from_lut(d['LOG_TE'], logL)
     v_wind = compute_v_wind(Teff, d['MASS'], R_Rsun)
 
     # Surface abundances: H, He, C, N, O from PARSEC; Ne, Mg, Si, S, Ca, Fe scaled from Z
@@ -755,6 +765,7 @@ def parsec_track_to_common(filepath):
     # Phase transition times (from raw track, full resolution)
     phase_transitions = extract_phase_transitions(d['AGE'], phase)
 
+    rad = compute_radiation_from_lut(d['LOG_TE'], logL, log_g(d['MASS'], R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, None, R_cm))
     result = {
         'age_yr': d['AGE'],
         'logL': logL,
@@ -809,7 +820,6 @@ def boost_track_to_common(filepath):
     log_Mdot = data[:, 5]      # log(Msun/yr)
 
     logTeff = np.log10(np.maximum(Teff, 1.0))
-    rad = compute_radiation_from_lut(logTeff, logL)
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun)
 
     # Surface abundances from BoOST isotope columns
@@ -846,6 +856,7 @@ def boost_track_to_common(filepath):
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
+    rad = compute_radiation_from_lut(logTeff, logL, log_g(M_cur, R_Rsun * R_sun), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, log_Mdot, R_Rsun * R_sun))
     result = {
         'age_yr': age_yr,
         'logL': logL,
@@ -920,7 +931,6 @@ def mist_track_to_common(filepath):
     Teff = 10**logTeff_arr
     R_Rsun_lin = 10**logR_Rsun
 
-    rad = compute_radiation_from_lut(logTeff_arr, logL)
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun_lin)
 
     # Surface abundances
@@ -949,6 +959,7 @@ def mist_track_to_common(filepath):
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
+    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, 10**logR_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, log_Mdot, 10**logR_cm))
     result = {
         'age_yr': age_yr,
         'logL': logL,
@@ -1052,7 +1063,6 @@ def parsec2_vms_track_to_common(filepath):
 
     Teff = 10**logTeff_arr
 
-    rad = compute_radiation_from_lut(logTeff_arr, logL)
     v_wind = compute_v_wind(Teff, M_cur, R_Rsun)
 
     # Surface abundances: 7 elements from .TAB, rest solar-scaled from initial Z
@@ -1121,6 +1131,7 @@ def parsec2_vms_track_to_common(filepath):
 
     phase_transitions = extract_phase_transitions(age_yr, phase)
 
+    rad = compute_radiation_from_lut(logTeff_arr, logL, log_g(M_cur, R_cm), np.full(len(logL), np.log10(max(Z_star, 1e-12))), tag=filepath, track=_rad_track(surface, log_Mdot, R_cm))
     result = {
         'age_yr': age_yr,
         'logL': logL,
@@ -1358,8 +1369,7 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
     f: interpolation weight (0 = t_lo, 1 = t_hi) in log-mass space.
     M_target: target initial mass (Msun) — used to convert M_frac back to M_current.
     """
-    N_TAU = 1024  # fine tau grid for interpolation
-    tau_grid = np.linspace(0.0, 1.0, N_TAU)
+    tau_grid = TAU_GRID
 
     r_lo = _resample_track_onto_tau_grid(t_lo, tau_grid)
     r_hi = _resample_track_onto_tau_grid(t_hi, tau_grid)
@@ -1371,7 +1381,14 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
     if r_hi is None:
         return resample_onto_age_grid(t_lo, log_age_grid)
 
-    # --- Interpolate all quantities at each tau point ---
+    return _tau_to_age(_blend_tau(r_lo, r_hi, f, M_target), tau_grid, log_age_grid)
+
+
+TAU_GRID = np.linspace(0.0, 1.0, 1024)  # fine fractional-lifetime grid for track interpolation
+
+
+def _blend_tau(r_lo, r_hi, f, M_target=None):
+    """Mix two tracks on the tau grid (f = 0 -> r_lo, 1 -> r_hi); result can be blended again or mapped to age."""
     interp = {}
 
     # Log-scale quantities (structural + radiation)
@@ -1440,10 +1457,16 @@ def _interpolate_two_tracks_tau(t_lo, t_hi, f, log_age_grid, M_target=None):
             pt_tau = np.exp(np.log(v_lo) + f * (np.log(v_hi) - np.log(v_lo)))
         else:
             pt_tau = v_lo + f * (v_hi - v_lo)
-        # Convert from fractional to physical age
-        pt[key] = pt_tau * lifetime
+        pt[key] = pt_tau
     interp['phase_transitions'] = pt
 
+    return interp
+
+
+def _tau_to_age(interp, tau_grid, log_age_grid):
+    """Map a tau-grid track back to physical age and resample onto log_age_grid."""
+    lifetime = interp['lifetime']
+    interp = dict(interp, phase_transitions={k: v * lifetime for k, v in interp['phase_transitions'].items()})
     # --- Map from tau-space back to physical age ---
     # Convert tau grid to physical age: age = tau * lifetime
     age_phys = tau_grid * lifetime
@@ -1671,6 +1694,45 @@ def interpolate_mist_to_mass(mist_index, feh_str, M_target, log_age_grid):
     return _interpolate_to_mass(
         mist_track_to_common, mist_index, feh_str, M_target,
         0.0, log_age_grid)
+
+
+def _tau_rep_at_mass(track_loader, index, key, M_target, M_min):
+    """Track at M_target on TAU_GRID (mass interpolation in log M); None outside the catalogue's mass range."""
+    avail = sorted(m for (k, m) in index if k == key and m >= M_min)
+    if not avail or M_target < avail[0] or M_target > avail[-1]:
+        return None
+    k = min(max(np.searchsorted(avail, M_target) - 1, 0), len(avail) - 2) if len(avail) > 1 else 0
+    def first_valid(masses):  # skip tracks the loader rejects (truncated catalogue models)
+        for m in masses:
+            t = track_loader(index[(key, m)])
+            r = _resample_track_onto_tau_grid(t, TAU_GRID) if t is not None else None
+            if r is not None:
+                return m, r
+        return None, None
+    M_lo, r_lo = first_valid(avail[k::-1])
+    M_hi, r_hi = first_valid(avail[k + 1:] if len(avail) > 1 else avail)
+    if r_lo is None or r_hi is None or not (M_lo <= M_target <= M_hi):
+        return None
+    f = 0.0 if M_hi == M_lo else (np.log10(M_target) - np.log10(M_lo)) / (np.log10(M_hi) - np.log10(M_lo))
+    return _blend_tau(r_lo, r_hi, f, M_target)
+
+
+def _tau_rep_at_Z_mass(track_loader, index, z_keys, Z, M_target, M_min):
+    """Track at (Z, M_target): log-Z interpolation between the bracketing catalogue metallicities
+    (z_keys = [(Z_value, key)], clamped at the grid edges)."""
+    z_keys = sorted(z_keys); lz = [np.log10(max(z, 1e-12)) for z, _ in z_keys]; x = np.log10(max(Z, 1e-12))
+    if x <= lz[0] or x >= lz[-1]:
+        return _tau_rep_at_mass(track_loader, index, z_keys[0 if x <= lz[0] else -1][1], M_target, M_min)
+    k = int(np.searchsorted(lz, x)) - 1
+    r_lo = _tau_rep_at_mass(track_loader, index, z_keys[k][1], M_target, M_min)
+    r_hi = _tau_rep_at_mass(track_loader, index, z_keys[k + 1][1], M_target, M_min)
+    if r_lo is None or r_hi is None:
+        if (r_lo is None) != (r_hi is None): Z_INTERP_ONE_SIDED.append((Z, M_target, z_keys[k][1] if r_lo is None else z_keys[k + 1][1]))
+        return r_lo if r_hi is None else r_hi
+    return _blend_tau(r_lo, r_hi, (x - lz[k]) / (lz[k + 1] - lz[k]), M_target)
+
+
+Z_INTERP_ONE_SIDED = []  # (Z, M, missing catalogue key): bracketing track absent, other side used
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2185,7 +2247,7 @@ def classify_remnant_initial(M_init, Z, presn, wd_masses):
         return 1, 1.25  # ECSN → low-mass NS
 
     # Core-collapse: NS vs BH from compactness
-    feh = np.log10(max(Z, 1e-6) / 0.014)
+    feh = np.log10(max(Z, 1e-6) / Z_SOLAR)
     feh_grid = [0, -1, -2, -3]
     feh_near = min(feh_grid, key=lambda x: abs(x - feh))
     best = None
@@ -2262,6 +2324,19 @@ def get_type_ia_yields():
     Type Ia SN yields from W7 model (Iwamoto+ 1999).
     Complete disruption of Chandrasekhar-mass C/O WD.
     Returns dict: element → yield in Msun.
+
+    Dropped-58Ni restored (Uli decision 2026-07-28): the original
+    27-element transcription summed to 1.2999999704 Msun, not the full
+    W7 ejecta mass of 1.378 Msun (= TYPE_IA_DTD['ejecta_mass_Msun'] =
+    the C code's IA_EJECTA_MASS). The 0.0780000296 Msun deficit was
+    traced to the Ni entry: the transcription had Ni = 0.0622 while the
+    true W7 elemental Ni (58Ni + 60Ni, Iwamoto+99) is ~0.14 — the 58Ni
+    contribution had been dropped. Fix: the missing mass is attributed
+    entirely to Ni (0.0622 + 0.0780000296 = 0.1402000296); every other
+    element keeps its original W7 transcription value (Fe stays 0.744),
+    and the dict sums to exactly 1.378 Msun as the C-side injector
+    (resolvedism_fb_thermal.cc) assumes when it rescales the vector by
+    Mej_actual/IA_EJECTA_MASS.
     """
     return {
         'H':  0.0,
@@ -2288,7 +2363,9 @@ def get_type_ia_yields():
         'Mn': 0.00763,  # W7 model (significant iron-peak)
         'Fe': 0.744,    # includes 56Ni → 56Fe decay
         'Co': 7.9e-4,   # W7 model
-        'Ni': 0.0622,   # stable 58Ni+60Ni (W7 model, significant!)
+        'Ni': 0.1402000296,  # 58Ni+60Ni; dropped-58Ni restored (was 0.0622,
+                             # + 0.0780000296 missing mass -> Sum = 1.378
+                             # exactly; Uli decision 2026-07-28)
         'Cu': 2.6e-6,   # trace
         'Zn': 1.6e-5,   # W7 model
     }
@@ -2528,7 +2605,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
         Z_p2 = min(p2_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if p2_Zs else None
         Z_ng = min(nugrid_Zs, key=lambda z: abs(np.log10(max(z, 1e-12)) - log_Z)) if nugrid_Zs else None
         Z_kar = min(kar_Z, key=lambda z: abs(np.log10(z) - np.log10(max(Z, 1e-6)))) if kar_Z else None
-        feh = np.log10(max(Z, 1e-6) / 0.014)
+        feh = np.log10(max(Z, 1e-6) / Z_SOLAR)
         feh_near = min(cl_fehs, key=lambda x: abs(x - feh))
 
         # PARSEC v2 masses at this Z (for remnant classification)
@@ -2587,7 +2664,7 @@ def build_yield_grid(Z_grid, M_grid, base_dir):
                         y_net = y_total - X_init_solar.get(elem, 0.0) * M_ej_lim
 
                         # Z-scaling from NuGrid for non-solar metallicities
-                        if Z_ng is not None and abs(log_Z - np.log10(0.014)) > 0.15:
+                        if Z_ng is not None and abs(log_Z - np.log10(Z_SOLAR)) > 0.15:
                             scale = nugrid_z_scale.get(Z_ng, {}).get(elem, 1.0)
                             y_net *= scale
                     else:
@@ -2738,15 +2815,13 @@ def build_all(base_dir, output_file):
         parts.append("PARSEC_v1(fallback)")
         print(f"  Z={Z:.5f} → {' + '.join(parts)}")
 
-    # ── Initialize radiation LUT ──
-    # Try spectral atmosphere models first; fall back to Planck blackbody
-    spec = get_spectral_lut()
-    if spec is not None:
-        print("  Using spectral atmosphere model LUT (ATLAS9/PHOENIX)")
-    else:
-        print("  spectral_band_lut.hdf5 not found — using Planck blackbody")
-        print("  (Run build_spectral_lut.py --download --build to use atmosphere models)")
-        get_planck_lut()
+    # ── Radiation source (explicit, no fallback) ──
+    print(f"  Radiation source: {RADIATION['source']}" + (f", ATLAS9 lookup: {RADIATION['lookup']}" if RADIATION['source'] == 'atlas9' else ''))
+    get_planck_lut()
+    if RADIATION['source'] != 'planck':
+        get_spectral_lut()
+    if RADIATION['source'] == 'hotstar_stack':
+        get_hotstar_lut()
 
     # ── Allocate output arrays ──
     shape = (N_Z, N_M, N_AGE)
@@ -2775,6 +2850,12 @@ def build_all(base_dir, output_file):
                   't_AGB_start', 't_AGB_end', 't_postAGB_start', 't_WR_start']
     phase_trans = {k: np.zeros((N_Z, N_M)) for k in TRANS_KEYS}
 
+    # catalogue metallicities for log-Z interpolation
+    mist_zkeys = [(MIST_Z_GRID[k], k) for k in MIST_FEH_GRID if any(key == k for key, _ in mist_index)]
+    p2_zkeys = sorted({(z, find_parsec2_Z_str_for_Z(z)) for z in PARSEC2_Z_GRID if any(key == find_parsec2_Z_str_for_Z(z) for key, _ in p2_index)})
+    print(f"  log-Z interpolation: MIST {len(mist_zkeys)} [Fe/H] grids, PARSEC v2 {len(p2_zkeys)} Z grids; "
+          f"MIST->PARSEC v2 blend {MASS_STITCH_P2_LO}-{MASS_STITCH_P2_FULL} Msun")
+
     # ── Fill evolution grid ──
     # Priority: PARSEC v2 (M >= 2) → MIST → BoOST → PARSEC v1
     n_total = N_Z * N_M
@@ -2794,13 +2875,26 @@ def build_all(base_dir, output_file):
             result = None
             src = 0  # default: PARSEC v1
 
-            # 1) PARSEC v2: primary for M >= 2 Msun
-            if M >= MASS_STITCH_P2_LO and p2_zstr is not None:
+            # 1) MIST (M < P2_LO) and PARSEC v2 (M >= P2_LO), each interpolated in log Z; blended over [P2_LO, P2_FULL]
+            w_p2 = 0.0 if M < MASS_STITCH_P2_LO else min(1.0, np.log10(M / MASS_STITCH_P2_LO) / np.log10(MASS_STITCH_P2_FULL / MASS_STITCH_P2_LO))
+            rep_p2 = _tau_rep_at_Z_mass(parsec2_vms_track_to_common, p2_index, p2_zkeys, Z, M, MASS_STITCH_P2_LO) if w_p2 > 0 else None
+            rep_mist = _tau_rep_at_Z_mass(mist_track_to_common, mist_index, mist_zkeys, Z, M, 0.0) if (w_p2 < 1 or rep_p2 is None) else None
+            if rep_p2 is not None and rep_mist is not None:
+                rep = _blend_tau(rep_mist, rep_p2, w_p2, M); src = 3 if w_p2 >= 0.5 else 2
+            elif rep_p2 is not None:
+                rep, src = rep_p2, 3
+            elif rep_mist is not None:
+                rep, src = rep_mist, 2
+            else:
+                rep = None
+            if rep is not None:
+                result = _tau_to_age(rep, TAU_GRID, log_age_grid)
+
+            # 2) edge fallback: nearest-Z catalogue track beyond the interpolation range
+            if result is None and M >= MASS_STITCH_P2_LO and p2_zstr is not None:
                 result = interpolate_parsec2_to_mass(p2_index, p2_zstr, M, log_age_grid)
                 if result is not None:
                     src = 3
-
-            # 2) MIST fallback: M < 2 or PARSEC v2 gap
             if result is None and mist_feh is not None:
                 result = interpolate_mist_to_mass(mist_index, mist_feh, M, log_age_grid)
                 if result is not None:
@@ -2847,6 +2941,9 @@ def build_all(base_dir, output_file):
             for k in TRANS_KEYS:
                 phase_trans[k][iz, im] = pt.get(k, 0.0)
 
+    if Z_INTERP_ONE_SIDED:
+        print(f"  WARNING: {len(Z_INTERP_ONE_SIDED)} log-Z interpolations used one bracket only; missing: "
+              f"{sorted(set(k for _, _, k in Z_INTERP_ONE_SIDED))}")
     print(f"\n  Track sources: PARSEC_v2={src_counts[3]}, MIST={src_counts[2]}, "
           f"BoOST={src_counts[1]}, PARSEC_v1={src_counts[0]}")
 
@@ -2960,6 +3057,95 @@ def build_all(base_dir, output_file):
     if n_fixed > 0:
         print(f"  Fixed {n_fixed} M_preSN/remnant_mass entries for mass conservation")
 
+    # ── Enforce SN-ejecta closure: Σ_k elem_ej_SN = M_preSN − rem_mass ──
+    # The runtime FB injection requires this invariant exactly: if it fails, cells
+    # receive bulk mass with mismatched elemental composition → ΣEA != 1 per cell.
+    # For FSN/DBH (failed SN, no envelope ejecta): force rem_mass = M_preSN.
+    # For ECSN/CCSN/PPISN/PISN: rescale per-element yields so Σ_k = (M_preSN − rem_mass).
+    n_fsn_pin = 0
+    n_yield_rescale = 0
+    for iz in range(N_Z):
+        for im in range(N_M):
+            rt = rem_type[iz, im]
+            if rt in (3, 6):  # FSN, DBH — no explosion ejecta
+                if M_preSN[iz, im] > 0 and rem_mass[iz, im] < M_preSN[iz, im]:
+                    rem_mass[iz, im] = M_preSN[iz, im]
+                    n_fsn_pin += 1
+                yields[iz, im, :] = 0.0
+            elif rt in (1, 2, 4, 5):  # ECSN, CCSN, PPISN, PISN
+                budget = M_preSN[iz, im] - rem_mass[iz, im]
+                if budget <= 0:
+                    yields[iz, im, :] = 0.0
+                    continue
+                SumSN = yields[iz, im, :].sum()
+                if SumSN <= 0:
+                    continue
+                if abs(SumSN - budget) / budget > 1.0e-9:
+                    yields[iz, im, :] *= (budget / SumSN)
+                    n_yield_rescale += 1
+    print(f"  FSN/DBH rem_mass pinned to M_preSN: {n_fsn_pin} entries")
+    print(f"  SN yields rescaled to (M_preSN-rem) budget: {n_yield_rescale} entries")
+
+    # ── Build cumulative wind ejecta BEFORE writing, then redefine M_current
+    # to satisfy the wind ledger M_init = M_current(t) + Σ_k cum_wind(t, k).
+    # The raw-track M_current carries noise from resampling + non-monotonic
+    # mass loss; reconciling here makes the wind-injection bookkeeping
+    # self-consistent at runtime (the FB code computes
+    #   cum_injected = M_init − P[i].Mass  vs  cum_table = Σ cum_wind(t),
+    # so the two must agree). ──
+    print("\nBuilding cumulative wind ejecta...", flush=True)
+    # tracked + solar-scaled surface fractions need not sum to 1; normalize so wind mass = track mass loss
+    ssum = surface.astype(np.float64).sum(axis=-1, keepdims=True)
+    surface = np.where(ssum > 0, surface / np.where(ssum > 0, ssum, 1.0), surface).astype(surface.dtype)
+    print(f"  surface abundances normalized: row sums were {ssum[ssum > 0].min():.4f}..{ssum[ssum > 0].max():.4f}")
+    elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
+    for iz in range(N_Z):
+        for im in range(N_M):
+            M_t = M_current[iz, im, :]
+            alive = (M_t[:-1] > 0) & (M_t[1:] > 0)
+            drop = np.maximum(0.0, M_t[:-1] - M_t[1:])
+            dM = np.zeros(N_AGE)
+            dM[1:] = np.where(alive, drop, 0.0)
+            if dM.sum() <= 0:
+                continue
+            cum = np.cumsum(surface[iz, im].astype(np.float64) * dM[:, None], axis=0)
+            alive_idx = np.where(M_t > 0)[0]
+            if alive_idx.size > 0:
+                last = alive_idx[-1]
+                cum[last+1:] = cum[last]
+            elem_ej_wind[iz, im, :, :] = cum.astype(np.float32)
+
+    # Redefine M_current = M_init − Σ_k cum_wind(t).  Preserve post-death
+    # sentinel (M_current == 0 marker) — elem_ej_wind plateaus past death so
+    # without this guard M_current would step from 0 to M_preSN at the plateau.
+    sum_cw_full = elem_ej_wind.sum(axis=3).astype(np.float64)
+    old_zero    = (M_current <= 0)
+    M_current   = np.where(old_zero, 0.0,
+                           M_grid[None, :, None] - sum_cw_full)
+    print(f"  Redefined M_current = M_init − Σ cum_wind (wind ledger now consistent)")
+
+    # ── Update M_preSN to match the redefined M_current at last alive index.
+    # Then Σ cum_wind(t_end) = M_init − M_preSN exactly. The yield-closure
+    # enforcement block above already rescaled elem_ej_SN to match
+    # (M_preSN − rem); since the writer's _absolute_ejecta also rescales to
+    # Mej = M_preSN − rem, Σ elem_ej_SN tracks any update to M_preSN here.
+    n_preSN_updated = 0
+    for iz in range(N_Z):
+        for im in range(N_M):
+            alive_idx = np.where(M_current[iz, im] > 0)[0]
+            if alive_idx.size > 0:
+                new_preSN = float(M_current[iz, im, alive_idx[-1]])
+                if abs(new_preSN - M_preSN[iz, im]) > 1e-9:
+                    M_preSN[iz, im] = new_preSN
+                    n_preSN_updated += 1
+                # FSN/DBH: rem must follow M_preSN
+                if int(rem_type[iz, im]) in (3, 6):
+                    rem_mass[iz, im] = M_preSN[iz, im]
+                # All others: rem cannot exceed M_preSN
+                elif rem_mass[iz, im] > M_preSN[iz, im]:
+                    rem_mass[iz, im] = M_preSN[iz, im]
+    print(f"  Updated M_preSN to match new M_current: {n_preSN_updated} entries")
+
     # ── Write HDF5 ──
     print(f"\nWriting {output_file}...", flush=True)
     with h5py.File(output_file, 'w') as f:
@@ -2980,6 +3166,8 @@ def build_all(base_dir, output_file):
             ds = f.create_dataset(ds_name, data=rad_data[key], **comp)
             ds.attrs['units'] = RAD_DESCRIPTIONS.get(key, 'log10')
             ds.attrs['shape'] = '(N_Z, N_M, N_age)'
+            if key == 'Q_He1' and RADIATION['source'] == 'hotstar_stack':
+                ds.attrs['note'] = 'order of magnitude: He+-ionizing output is set by the wind (PoWR OB Vd3 / WR grids)'
 
         # Structural evolution datasets
         # logL (log10 L/Lsun) and log_Mdot dropped: Gizmo doesn't load them —
@@ -3039,17 +3227,7 @@ def build_all(base_dir, output_file):
         f['M_He_core'].attrs['units'] = 'Msun, He core mass at end of life'
 
         # ── Absolute per-event element ejecta (preferred runtime path) ──
-        # Build X_init[Z, k]: Asplund09 proto-solar pattern x (Z/Z_solar) for metals,
-        # proto-solar X_He, X_H = remainder. Σ_k X_init = 1 per Z.
-        SOLAR_FRAC = {
-            'H': 0.7381, 'He': 0.2485, 'C': 2.36e-3, 'N': 6.91e-4, 'O': 5.72e-3,
-            'F': 3.26e-7, 'Ne': 1.25e-3, 'Na': 2.98e-5, 'Mg': 5.91e-4, 'Al': 5.57e-5,
-            'Si': 6.65e-4, 'P': 5.16e-6, 'S': 3.10e-4, 'Cl': 3.15e-6, 'Ar': 7.37e-5,
-            'K': 2.93e-6, 'Ca': 6.44e-5, 'Sc': 3.48e-8, 'Ti': 3.59e-6, 'V': 2.30e-7,
-            'Cr': 1.37e-5, 'Mn': 9.17e-6, 'Fe': 1.17e-3, 'Co': 3.30e-6, 'Ni': 6.99e-5,
-            'Cu': 7.20e-7, 'Zn': 1.67e-6,
-        }
-        Z_SOLAR_REF = 0.0134
+        # X_init[Z, k]: solar pattern x Z/Z_SOLAR for metals (sums to Z), solar He, H = remainder
         REM_WD = 0; REM_ECSN = 1; REM_CCSN = 2; REM_PPISN = 4; REM_PISN = 5
         SN_TYPES = {REM_ECSN, REM_CCSN, REM_PPISN, REM_PISN}
 
@@ -3061,8 +3239,8 @@ def build_all(base_dir, output_file):
             for k, e in enumerate(TRACKED_ELEMENTS):
                 if e in ('H', 'He'):
                     continue
-                X_init[iz, k] = SOLAR_FRAC[e] * (Zv / Z_SOLAR_REF)
-            X_init[iz, iHe] = SOLAR_FRAC['He']
+                X_init[iz, k] = SOLAR_MASS_FRAC[e] * (Zv / Z_SOLAR)
+            X_init[iz, iHe] = SOLAR_MASS_FRAC['He']
             X_init[iz, iH]  = 1.0 - X_init[iz, iHe] - X_init[iz, [k for k in range(N_ELEM) if k not in (iH, iHe)]].sum()
         assert np.allclose(X_init.sum(axis=1), 1.0, atol=1e-12), 'X_init rows must sum to 1'
 
@@ -3082,14 +3260,15 @@ def build_all(base_dir, output_file):
             for im in range(N_M):
                 rt = int(rem_type[iz, im])
                 rm = float(rem_mass[iz, im])
+                Mp = float(M_preSN[iz, im])
                 Mi = float(M_grid[im])
                 snw = yields[iz, im] - wind_yields[iz, im]
                 if rt in SN_TYPES:
-                    Mej = Mi if rt == REM_PISN else (Mi - rm)
+                    Mej = Mp - rm
                     if Mej > 0:
                         elem_ej_SN[iz, im] = _absolute_ejecta(X_init[iz], snw, Mej, iH)
                 elif rt == REM_WD:
-                    Mej = Mi - rm
+                    Mej = Mp - rm
                     if Mej > 0:
                         elem_ej_AGB[iz, im] = _absolute_ejecta(X_init[iz], yields[iz, im], Mej, iH)
 
@@ -3107,28 +3286,13 @@ def build_all(base_dir, output_file):
 
         ds = f.create_dataset('X_init', data=X_init, **comp)
         ds.attrs['units'] = 'mass_fraction'
-        ds.attrs['description'] = ('Assumed birth composition per Z (Asplund09 proto-solar '
-                                    'pattern x Z/Z_solar for metals, proto-solar X_He, X_H = remainder).')
+        ds.attrs['description'] = ('Assumed birth composition per Z (Asplund+09 photospheric ratios, '
+                                    'metals = pattern x Z/0.014 summing to Z, Y = 0.2485, X = remainder; '
+                                    'stellar/solar_abundances.py).')
 
     # ── Cumulative wind ejecta: split into a separate file to keep the main
-    # table small. Σ_k elem_ej_wind_cumulative = M_init - M_current(age) within
-    # lifetime; plateaus past death (M_current=0 sentinel).
-    elem_ej_wind = np.zeros((N_Z, N_M, N_AGE, N_ELEM), dtype=np.float32)
-    for iz in range(N_Z):
-        for im in range(N_M):
-            M_t = M_current[iz, im, :]
-            alive = (M_t[:-1] > 0) & (M_t[1:] > 0)
-            drop = np.maximum(0.0, M_t[:-1] - M_t[1:])
-            dM = np.zeros(N_AGE)
-            dM[1:] = np.where(alive, drop, 0.0)
-            if dM.sum() <= 0:
-                continue
-            cum = np.cumsum(surface[iz, im].astype(np.float64) * dM[:, None], axis=0)
-            alive_idx = np.where(M_t > 0)[0]
-            if alive_idx.size > 0:
-                last = alive_idx[-1]
-                cum[last+1:] = cum[last]
-            elem_ej_wind[iz, im, :, :] = cum.astype(np.float32)
+    # table small. elem_ej_wind was built upstream of M_current redefinition;
+    # by construction now Σ_k elem_ej_wind = M_init - M_current(age) exactly.
     wind_file = os.path.join(os.path.dirname(output_file), 'stellar_wind_cumulative.hdf5')
     print(f"Writing {wind_file}...", flush=True)
     with h5py.File(wind_file, 'w') as fw:
@@ -3172,7 +3336,11 @@ def build_all(base_dir, output_file):
         ds.attrs['units'] = 'Msun per event'
         ds.attrs['elements'] = TRACKED_ELEMENTS
         ds.attrs['source'] = 'Iwamoto+ 1999, W7 model'
-        ds.attrs['note'] = 'Complete disruption of Chandrasekhar-mass C/O WD'
+        ds.attrs['note'] = ('Complete disruption of Chandrasekhar-mass C/O WD. '
+                            'Dropped-58Ni restored (Ni 0.0622 -> 0.1402000296) '
+                            'so the vector sums to 1.378 Msun = IA_EJECTA_MASS; '
+                            'original transcription summed to 1.30 '
+                            '— Uli decision 2026-07-28.')
 
         # type_ia_dtd and magnetar groups dropped: Type Ia DTD is hardcoded
         # in C (IA_RATE_PER_MSUN etc.), and magnetar channel is not wired up.
@@ -3181,6 +3349,8 @@ def build_all(base_dir, output_file):
         f.attrs['description'] = 'Unified stellar evolution + yield tables for GIZMO'
         f.attrs['evolution_sources'] = ('PARSEC v2 VMS (M >= 2, primary) + MIST v1.2 (M < 2 + fallback) '
                                           '+ BoOST v1.3 (fallback) + PARSEC v1.2s (last resort)')
+        f.attrs['Z_sun'] = np.float64(Z_SOLAR)   # read by GIZMO as its solar Z; keep name and type
+        f.attrs['solar_abundance_source'] = 'Asplund+09 Table 1 photospheric log eps, metals C..Zn normalized to Z_sun (stellar/solar_abundances.py)'
         f.attrs['yield_sources'] = ('Karakas AGB [K&L(2016) Z>=0.007 + K(2010) Z<0.007] '
                                     '+ Limongi+(2025) 8-13Msun + NuGrid Z-scaling (8-13) '
                                     '+ PARSEC v2 14+Msun + Iwamoto(1999) Type Ia')
@@ -3191,10 +3361,33 @@ def build_all(base_dir, output_file):
         f.attrs['N_age'] = N_AGE
         f.attrs['N_elements'] = N_ELEM
         f.attrs['mass_stitch_p2_lo'] = MASS_STITCH_P2_LO
+        f.attrs['mass_stitch_p2_full'] = MASS_STITCH_P2_FULL
         f.attrs['mass_stitch_boost_lo'] = MASS_STITCH_BOOST_LO
         f.attrs['mass_stitch_boost_hi'] = MASS_STITCH_BOOST_HI
         f.attrs['band_edges_eV'] = ALL_BAND_EDGES_eV
-        f.attrs['radiation_source'] = 'Planck blackbody (TODO: replace with YBC atmosphere models)'
+        f.attrs['radiation_source'] = radiation_source_description()
+        f.attrs['radiation_source_option'] = RADIATION['source']
+        if RADIATION['source'] != 'planck':
+            if RADIATION['source'] == 'atlas9':
+                f.attrs['atlas9_lookup_option'] = RADIATION['lookup']
+            f.attrs['spectral_lut_sha256'] = file_sha256(SPECTRAL_LUT_PATH)
+            if RADIATION['source'] == 'hotstar_stack':
+                import hotstar_radiation as HS
+                f.attrs['hotstar_lut_sha256'] = file_sha256(HOTSTAR_LUT_PATH)
+                f.attrs['hotstar_rules'] = ('WR: X_surf < %g and log Teff > %g; PoWR WR (Rt, own v_inf and D) for Z >= %g Zsun, Gotberg+18 below; '
+                                            'TLUSTY >= %g K blended with ATLAS9 to %g K; Q_He1 from PoWR OB Vd3 (order of magnitude); '
+                                            'CMFGEN (Martins & Palacios 2017-2022, Martins+2025) for filled TLUSTY cells and the hot-edge blackbody share >= %g K '
+                                            '(radiation_coverage_Q_H0_cmfgen_frac = [CMFGEN share, rest] of Q_H0)'
+                                            % (HS.WR_X_MAX, HS.WR_LOGTEFF_MIN, HS.GOTBERG_BELOW_ZREL, HS.TLUSTY_SEAM[0], HS.TLUSTY_SEAM[1], HS.CMF_TMIN))
+                f.attrs['hotstar_cmfgen_sets'] = ', '.join('Z/Zsun %.3g: %d models' % (c['Z_rel'], len(c['log_Teff'])) for c in get_hotstar_lut().cm)
+            names = sorted({k for v in RAD_COVERAGE.values() for k in v})
+            cov = {k: np.sum([v[k] for v in RAD_COVERAGE.values()], axis=0) for k in names}
+            # share of catalogue track points (and of each weighted band) per coverage class
+            f.attrs['radiation_coverage_classes'] = ('model, blended, clamped, blackbody' if RADIATION['source'] == 'hotstar_stack'
+                                                     else 'model, gap-filled LUT cell, off grid')
+            for k in names:
+                if k == 'track_points': f.attrs['radiation_coverage_track_points'] = np.array(cov[k], dtype=np.int64)
+                else: f.attrs['radiation_coverage_%s_frac' % k] = cov[k] / max(cov[k].sum(), 1e-300)
         f.attrs['v_wind_prescription'] = 'Lamers+1995: 2.6*v_esc (T>21kK), 1.3*v_esc (10-21kK), 0.7*v_esc (cool)'
         f.attrs['E_ECSN_erg'] = 1e50       # weaker: degenerate O/Ne/Mg core
         f.attrs['E_CCSN_erg'] = 1e51       # canonical core-collapse
@@ -3307,8 +3500,52 @@ def verify(output_file):
                       f"M_CO={mco[iz, im120]:.1f}, M_He={mhe[iz, im120]:.1f}")
 
 
+def file_sha256(path):
+    import hashlib
+    with open(path, 'rb') as fh:
+        return hashlib.sha256(fh.read()).hexdigest()
+
+
+def radiation_source_description():
+    if RADIATION['source'] == 'planck':
+        return 'Planck blackbody at Teff'
+    if RADIATION['source'] == 'hotstar_stack':
+        return ('model atmospheres per band: TLUSTY BSTAR2006/OSTAR2002 15-55 kK (blended with ATLAS9 over 15-20 kK and into a '
+                'blackbody over 55-65 kK), ATLAS9 below, '
+                'PoWR OB Vd3 log Q(HeII) for He+-ionizing photons of O/B stars, PoWR WR grids (transformed radius) and Gotberg+2018 '
+                'stripped stars (Z < 0.1 Zsun) for WR phases, CMFGEN wind models (Martins & Palacios 2017-2022, Martins+2025) '
+                'for Eddington-limit holes of TLUSTY and above its 55 kK edge (0.01-1 Zsun), blackbody only off every grid; '
+                'see hotstar_radiation.py')
+    if RADIATION['source'] == 'atlas9_nonionizing':
+        return ('ionizing bands and photon rates (> 13.6 eV): Planck blackbody at Teff; non-ionizing bands: ATLAS9 '
+                '(Castelli-Kurucz) / PHOENIX-ACES band LUT stellar/data/lut/spectral_band_lut.hdf5, trilinear in (log Teff, '
+                'log g, log Z) at each track point\'s log g and Z where all interpolation corners are atmosphere models, '
+                'Planck blackbody elsewhere')
+    look = {'legacy': 'at log g = 4 and Z = Z_sun for every track point, gap cells nearest-neighbour filled, '
+                      'linear extrapolation off the grid',
+            'clamp': 'at each track point\'s log g and Z clamped to the grid, gap cells nearest-neighbour filled',
+            'masked_planck': 'at each track point\'s log g and Z where all interpolation corners are atmosphere models, '
+                             'Planck blackbody elsewhere'}
+    return ('ATLAS9 (Castelli-Kurucz) / PHOENIX-ACES band LUT stellar/data/lut/spectral_band_lut.hdf5, trilinear in '
+            '(log Teff, log g, log Z), ' + look[RADIATION['lookup']])
+
+
 if __name__ == '__main__':
-    base_dir = os.path.dirname(os.path.abspath(__file__))
-    output_file = os.path.join(base_dir, 'stellar_tables_unified.hdf5')
-    build_all(base_dir, output_file)
+    import argparse
+    ap = argparse.ArgumentParser(description='Build stellar_tables_unified.hdf5 (+ stellar_wind_cumulative.hdf5 next to it)')
+    ap.add_argument('data_root', help='mist/ parsec1.2/ parsec2_vms/ boost/ + yield dirs')
+    ap.add_argument('output', help='output HDF5')
+    ap.add_argument('--radiation-source', required=True, choices=RADIATION_SOURCES,
+                    help='band luminosities from atmosphere-model spectra (atlas9), a blackbody (planck), or blackbody '
+                         'for ionizing and atmospheres (masked as masked_planck) for non-ionizing bands (atlas9_nonionizing), '
+                         'or the hot-star atmosphere stack (hotstar_stack: TLUSTY, ATLAS9, PoWR OB/WR, Gotberg+18)')
+    ap.add_argument('--atlas9-lookup', choices=ATLAS9_LOOKUP,
+                    help='atlas9 only, required: legacy (log g = 4, Z_sun, extrapolate), clamp (point log g / Z, clamped '
+                         'to the grid), masked_planck (point log g / Z, Planck where the LUT has no model)')
+    a = ap.parse_args()
+    if (a.radiation_source == 'atlas9') != (a.atlas9_lookup is not None):
+        ap.error('--atlas9-lookup is required with --radiation-source atlas9 and not allowed otherwise')
+    RADIATION['source'], RADIATION['lookup'] = a.radiation_source, a.atlas9_lookup
+    output_file = a.output
+    build_all(a.data_root, output_file)
     verify(output_file)
