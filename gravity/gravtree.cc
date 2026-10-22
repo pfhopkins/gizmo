@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "./periodic_xy_images.h"
 #include "./analytic_gravity.h"
 
 /*! \file gravtree.c
@@ -535,6 +536,16 @@ void gravity_tree(void)
         } else {
             P[i].time_since_last_treeforce = dt;
         }
+#endif
+#ifdef GRAVITY_PERIODIC_XY_IMAGES /* the target's own x/y images: no net force, but they enter potential and tidal tensor */
+        gravity_periodic_xy_images(P[i].Mass, Vec3<double>{}, ForceSoftening_KernelRadius(i), [&](const Vec3<double>& d_im, double fac_accel_im, double fac2_tidal_im, double fac_pot_im) {
+#ifdef EVALPOTENTIAL
+            P[i].Potential += fac_pot_im;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+            for(int k1=0;k1<3;k1++) {for(int k2=k1;k2<3;k2++) {P[i].tidal_tensorps[k1][k2] += d_im[k1] * d_im[k2] * fac2_tidal_im - (k1==k2 ? fac_accel_im : 0);}}
+#endif
+        });
 #endif
         /* before anything: multiply by G for correct units [be sure operations above/below are aware of this!] */
         P[i].GravAccel *= All.G;

@@ -592,6 +592,9 @@ extern struct global_data_all_processes
   /* tree code opening criterion */
   double ErrTolTheta;		/*!< Barnes-Hut tree opening angle */
   double ErrTolForceAcc;	/*!< parameter for relative opening criterion in tree walk */
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+  int GravityPeriodicXYImages; /*!< image rings summed in x/y: (2N+1)^2-1 images per interaction */
+#endif
 
   /* adjusts accuracy of time-integration */
   double ErrTolIntAccuracy;	/*!< accuracy tolerance parameter \f$ \eta \f$ for timestep criterion. The timesteps is \f$ \Delta t = \sqrt{\frac{2 \eta eps}{a}} \f$ */

@@ -144,6 +144,7 @@
 #SELFGRAVITY_OFF                # turn off self-gravity (compatible with GRAVITY_ANALYTIC)
 #GRAVITY_NOT_PERIODIC           # self-gravity is not periodic, even though the rest of the box is periodic
 #TREE_RADIATION_WRAPS_WITHOUT_GRAVITY # with GRAVITY_NOT_PERIODIC: gravity-tree radiation and columns (RT_USE_GRAVTREE, RT_USE_TREECOL_FOR_NH) still use the nearest periodic image (e.g. BOX_LONG_Z tall boxes)
+#GRAVITY_PERIODIC_XY_IMAGES     # self-gravity periodic in x/y by explicit image sums (parameter GravityPeriodicXYImages = N rings, (2N+1)^2-1 images), open in z; needs BOX_PERIODIC + BOX_OUTFLOW_Z or BOX_REFLECT_Z, allows BOX_LONG_Z tall boxes; tree radiation/columns use the x/y nearest image
 ## -----------------------------------------------------------------------------------------------------
 #GRAVITY_ANALYTIC               # specific analytic gravitational force to use instead of or with self-gravity. If set to a numerical value
                                 #  > 0 (e.g. =1), then SINK_CALC_DISTANCES will be enabled, and it will use the nearest BH particle as the center for analytic gravity computations
