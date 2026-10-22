@@ -1542,7 +1542,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     Vec3<double> dv;
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    double gasmass;
+    double gasmass = 0;
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
     Vec3<double> jerk = {};
@@ -1790,6 +1790,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 m_j_eff_for_df = mass;
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+                gasmass = 0; // non-gas leaves carry no gas
                 if(P[no].Type == 0) {gasmass = P[no].Mass;}
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
                 if(P[no].Type == 5) {gasmass = P[no].Sink_Mass_Reservoir;} // gas at the inner edge of a disk should not see a hole due to the sink
