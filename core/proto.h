@@ -1039,10 +1039,13 @@ int rt_get_donation_target_bin(int bin);
 int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-#if defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+#if (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
 int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
 #endif
 void rt_define_effective_frequencies_in_bands(void);
+double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
+double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell);
 double rt_kappa(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
 int check_if_absorbed_photons_can_be_reemitted_into_same_band(int kfreq);
 double rt_absorb_frac_albedo(int j, int k_freq, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1100,9 +1103,6 @@ void get_background_isrf_urad(int i, double *urad);
 double background_isrf_cmb_Teff(void);
 #endif
 double slab_averaging_function(double x);
-double blackbody_lum_frac(double E_lower, double E_upper, double T_eff);
-double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
-double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struct gas_cell_data *cell);
 
 #ifdef RT_DIFFUSION_CG
 void rt_diffusion_cg_solve(void);
