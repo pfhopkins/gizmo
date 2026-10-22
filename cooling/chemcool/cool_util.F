@@ -577,7 +577,7 @@ c
 #include "cool.h"
 #include "h2heat.h"
       REAL T, n, xh2, frac
-      REAL logT, logn, dT, dn, nscale, dh2
+      REAL logT, logn, dT, dn, nscale, dh2, xh2c
       REAL f1, f2, f3, f4, fr1, fr2, frac1, frac2
       integer idx1, idx2, idx3, offset
 
@@ -609,12 +609,21 @@ c
         nscale = 1d0
       endif
 
-      if (xh2 .eq. 0.5d0) then
+c table covers xh2 in [0, 0.5]
+      xh2c = xh2
+      if (xh2c .lt. 0d0) xh2c = 0d0
+      if (xh2c .gt. 0.5d0) xh2c = 0.5d0
+      if (xh2c .eq. 0.5d0) then
         idx3 = 6
         dh2  = 0d0
       else
-        idx3 = 1 + int(xh2 / 1d-1)
-        dh2  = xh2 / 1d-1 - (idx3 - 1)
+        idx3 = 1 + int(xh2c / 1d-1)
+        dh2  = xh2c / 1d-1 - (idx3 - 1)
+c last row: no idx3+1 read
+        if (idx3 .ge. 6) then
+          idx3 = 6
+          dh2  = 0d0
+        endif
       endif
 c
 c Compute frac for idx3

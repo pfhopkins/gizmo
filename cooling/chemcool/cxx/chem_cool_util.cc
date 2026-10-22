@@ -333,10 +333,12 @@ double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
         nscale = 1.0;
     }
 
+    xh2 = (xh2 < 0.0) ? 0.0 : (xh2 > 0.5) ? 0.5 : xh2;   // table covers xh2 in [0, 0.5]
     if (xh2 == 0.5) { idx3 = 6; dh2 = 0.0; }
     else {
         idx3 = 1 + f_int(xh2 / 1e-1);
         dh2  = xh2 / 1e-1 - (idx3 - 1);
+        if (idx3 >= 6) { idx3 = 6; dh2 = 0.0; }               // last row: no idx3+1 read
     }
 
     offset = 319 * (idx3 - 1) + 29 * (idx1 - 1) + idx2;
