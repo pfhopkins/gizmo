@@ -13,7 +13,9 @@
 #define DUSTK_EV         1.602176634e-12
 #define DUSTK_UMAX_EV    10.0           /* grain potential cap (photoelectric limit) */
 #define DUSTK_VCOUPLE    30.0           /* km/s: below this v_rel and m_d decouple (Hu+19 2.5.2) */
+#ifndef DUSTK_SHOCK_EPS
 #define DUSTK_SHOCK_EPS  0.1            /* smeared-shock limiter: drag rate capped at this x |div v| */
+#endif
 
 static inline double dustk_poly5_pow10(double x, double a0, double a1, double a2, double a3, double a4, double a5)
 {
