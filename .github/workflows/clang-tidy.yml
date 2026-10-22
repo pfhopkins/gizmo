@@ -3,8 +3,8 @@
 # files are analysed whole, but only findings on (or passing through) changed lines are reported,
 # so existing code is not re-litigated and the job stays at a few minutes.
 #
-# GIZMO's sources are config-driven, so the compile flags come from one test config
-# (gmc_cooling_rt: STARFORGE defaults + MHD + cooling + RT); code compiled out by that config is
+# GIZMO's sources are config-driven, so the compile flags come from a few test configs, one per
+# physics family (STARFORGE, FIRE-3, FIRE-2, Forged in FIRE); code compiled out by all of them is
 # not seen. Same check locally, for any Config.sh:
 #   python3 scripts/compile_commands.py      # writes compile_commands.json, builds nothing
 #   clang-tidy -p . <file.cc ...>            # whole files; clangd/IDEs pick up both automatically
@@ -24,6 +24,15 @@ jobs:
   clang-tidy:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: STARFORGE,      test: gmc_cooling_rt, fire: "" }  # + MHD, cooling, RT
+          - { name: FIRE-3,         test: fire,           fire: "" }
+          - { name: FIRE-2,         test: fire,           fire: "2" } # same config, FIRE_PHYSICS_DEFAULTS=2
+          - { name: Forged in FIRE, test: forgedinfire,   fire: "" }  # single-star + SSP hybrid
+    name: ${{ matrix.name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -31,12 +40,15 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev clang-tidy
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev \
+                                  libfftw3-dev libfftw3-mpi-dev clang-tidy
           clang-tidy --version
       - name: Configure
         run: |
           echo 'SYSTYPE="github-ubuntu"' > Makefile.systype
-          cp test/gmc_cooling_rt/Config.sh Config.sh
+          cp "test/${{ matrix.test }}/Config.sh" Config.sh
+          if [ -n "${{ matrix.fire }}" ]; then sed -i 's/^\( *FIRE_PHYSICS_DEFAULTS\)=.*/\1=${{ matrix.fire }}/' Config.sh; fi
+          echo "=== effective Config.sh ==="; grep -vE '^\s*#|^\s*$' Config.sh
           python3 scripts/compile_commands.py
       - name: clang-tidy on changed lines
         run: |
