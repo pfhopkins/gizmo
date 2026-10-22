@@ -16,8 +16,8 @@ import numpy as np
 import h5py
 import subprocess
 import sys
-from os import chdir, getcwd
-from os.path import isfile, dirname, abspath, join
+from os import chdir
+from os.path import isfile, join
 
 from gizmo.test import (
     build_gizmo_for_test,
@@ -74,7 +74,6 @@ def setup_ics(test_dir):
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 def test_aneos_giant_impact(num_mpi_ranks, num_omp_threads):
     test_name = "aneos_giant_impact"
-    test_dir = abspath(join(dirname(__file__)))
 
     clean_test_outputs(test_name)
     build_gizmo_for_test(test_name, num_omp_threads)
@@ -107,7 +106,7 @@ def test_aneos_giant_impact(num_mpi_ranks, num_omp_threads):
         # All values should be finite
         assert np.all(np.isfinite(rho)), f"Non-finite densities: {np.sum(~np.isfinite(rho))} particles"
         assert np.all(np.isfinite(u)), f"Non-finite internal energies: {np.sum(~np.isfinite(u))} particles"
-        assert np.all(np.isfinite(coords)), f"Non-finite coordinates"
+        assert np.all(np.isfinite(coords)), "Non-finite coordinates"
 
         # Densities and internal energies should be positive
         assert np.all(rho > 0), f"Non-positive densities: {np.sum(rho <= 0)} particles"

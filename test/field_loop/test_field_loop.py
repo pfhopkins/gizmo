@@ -137,7 +137,6 @@ def test_field_loop(variant, num_mpi_ranks, num_omp_threads):
 
 
 def flout():
-    test_name = "field_loop"
     for variant in ["Base", "CG", "MG"]:
         outputdir = f"./output_{variant}"
         snaps = sorted(glob.glob(outputdir + "/snapshot_*.hdf5"))

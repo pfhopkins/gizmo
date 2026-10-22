@@ -12,7 +12,7 @@ import h5py
 from os import chdir
 from os.path import isfile
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, run_test, download_test_files, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
+from gizmo.test import build_gizmo_for_test, run_test, clean_test_outputs, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"
@@ -34,7 +34,6 @@ def test_shocktube(num_mpi_ranks, num_omp_threads):
     run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
-    outputdir = f"test/{test_name}/output"
     final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 

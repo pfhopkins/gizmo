@@ -13,7 +13,6 @@ import h5py
 
 from meshoid import Meshoid
 from gizmo.test import (
-    variant_output_dir,
     assert_energy_conserved,
     build_and_run_test,
     default_mpi_ranks,
@@ -51,7 +50,6 @@ def test_sedov(num_mpi_ranks, num_omp_threads):
     test_name = "sedov"
     build_and_run_test(test_name, num_mpi_ranks, num_omp_threads)
 
-    outputdir = f"test/{test_name}/output"
     final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 

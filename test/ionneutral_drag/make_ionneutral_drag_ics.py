@@ -89,4 +89,4 @@ if __name__ == "__main__":
     f = make_IC()
     print(f"Wrote {f}: {2*N_PER_FLUID} particles, {N_PER_FLUID} ions + {N_PER_FLUID} neutrals.")
     print(f"  initial Δv = v_ion - v_neutral = {DV0:.1e} (code velocity)")
-    print(f"  analytic t_damp = 1 (code time) with γ_AD_code = 1 and ρ_total = 1")
+    print("  analytic t_damp = 1 (code time) with γ_AD_code = 1 and ρ_total = 1")

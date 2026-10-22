@@ -71,7 +71,7 @@ for field in sorted(fields_checked):
     print(f"    max|cpu|={max_cpu:.4e}  max|diff|={max_diff:.4e}  reldiff={reldiff:.2e}  [{status}]")
     print(f"    non-zero: CPU={n_nonzero_cpu}  GPU={n_nonzero_gpu}")
     if max_cpu == 0 and n_nonzero_cpu == 0:
-        print(f"    WARNING: all zero — stellar sources not emitting?"); all_pass = False
+        print("    WARNING: all zero — stellar sources not emitting?"); all_pass = False
 
 print()
 if all_pass:

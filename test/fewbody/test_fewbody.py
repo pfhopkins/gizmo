@@ -47,7 +47,6 @@ import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from os import path
 
-import h5py
 import numpy as np
 import pytest
 from matplotlib import pyplot as plt

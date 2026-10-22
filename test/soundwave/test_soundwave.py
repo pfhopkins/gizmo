@@ -5,7 +5,6 @@ from gizmo.test import (
     build_and_run_test,
     assert_snapshots_are_close,
     plot_1D_snapshot_comparison,
-    default_mpi_ranks,
     assert_final_time,
     get_final_snapshot,
 )

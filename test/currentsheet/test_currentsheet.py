@@ -10,7 +10,7 @@ import h5py
 import glob
 from os import path, chdir
 from urllib.request import urlretrieve
-from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, assert_final_time, default_omp_threads
+from gizmo.test import build_gizmo_for_test, run_test, default_mpi_ranks, clean_test_outputs, assert_final_time, default_omp_threads
 
 
 WEBSITE = "http://www.tapir.caltech.edu/~phopkins/sims/"

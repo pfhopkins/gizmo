@@ -29,7 +29,6 @@ def test_kh_wengen(num_mpi_ranks, num_omp_threads):
 
     # Load initial and final snapshots
     with h5py.File(snaps[0], "r") as F:
-        rho0 = F["PartType0/Density"][:]
         mass0 = F["PartType0/Masses"][:]
     with h5py.File(snaps[-1], "r") as F:
         rho_f = F["PartType0/Density"][:]
