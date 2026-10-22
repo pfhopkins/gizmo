@@ -78,7 +78,7 @@ static void resolvedism_dust_env(int i, struct dustk_env *e)
     e->x_e = DMAX(CellP[i].TracAbund[IHP], 0) + 1.4e-4 * DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0]; /* H+ plus C+ */
 #else
     double ne = 1, nh0 = 0, nHe0, nHepp, nhp, nHeII, mu = 1;
-    e->T = ThermalProperties(CellP[i].InternalEnergyPred, rho_phys, i, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp);
+    e->T = ThermalProperties(CellP[i].InternalEnergyPred, rho_phys, i, &mu, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, P, CellP);
     e->x_e = ne;
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
