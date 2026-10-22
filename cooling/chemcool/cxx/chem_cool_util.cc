@@ -312,7 +312,7 @@ double cxx_compute_h2_opacity(const ChemTables& T, double temp, double N_H2_eff)
 // ===========================================================================
 double cxx_compute_h2_heating_fraction(double T, double n, double xh2)
 {
-    auto h2_rv_heat = [](int k) { return dat_h2_rv_heat[k - 1]; };   // Fortran 1-based
+    auto h2_rv_heat = [](int k) { return dat_h2_rv_heat[k - 1]; };   // Fortran 1-based; NOLINT(clang-analyzer-core.uninitialized.UndefReturn): analyzer cannot track dT == 0.0
     double logT = std::log10(T);
     double logn = std::log10(n);
     int idx1, idx2, idx3, offset;
