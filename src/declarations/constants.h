@@ -107,25 +107,35 @@
 #endif
 #endif
 
+#ifndef ARENA_SHARE_OF_TASK_MEMORY
 #define ARENA_SHARE_OF_TASK_MEMORY          0.90 /* most of a task's memory share the working pool may take when the code has to bring its own size down to fit the machine; the rest is for the particle arrays and the tree, which are not allocated from the pool */
+#endif
 #define REDUC_FAC_FOR_MEMORY_IN_DOMAIN      0.98 /* used to pad memory in domain decomposition structures, should be slightly less than unity */
 
+#ifndef TREE_ALLOC_FACTOR_START
 #define TREE_ALLOC_FACTOR_START             0.45 /* tree nodes allocated per particle at startup, before the run ratchets it upward to fit the particle distribution.  Named here because the startup memory projection has to use it before init() assigns it */
+#endif
 
 /* Cushion on the particle storage a rank holds for the coming epoch, as a fraction of the particles
  * per rank.  It covers the amount by which the next epoch's worst ghost import may exceed the one
  * just measured; on a galaxy-scale zoom that overshoot is a few percent of the per-rank count at the
  * median and around an eighth of it at the ninetieth percentile, so this covers the common case with
  * room to spare.  The rare import that exceeds it is met by growing the storage when it arrives. */
+#ifndef DOMAIN_CAPACITY_SAFETY_FRACTION
 #define DOMAIN_CAPACITY_SAFETY_FRACTION     0.15
+#endif
 
 /* Releasing storage means migrating every particle array, so it is only worth doing for a saving that
  * is a real proportion of the capacity AND a real amount of memory.  The second test is expressed
  * against the particles per rank rather than as a slot count, so that it means the same thing on a
  * small problem as on a large one; a fixed count would silently forbid ever releasing anything on a
  * problem whose whole per-rank capacity is smaller than that count. */
+#ifndef DOMAIN_CAPACITY_SHRINK_FRACTION
 #define DOMAIN_CAPACITY_SHRINK_FRACTION     0.10
+#endif
+#ifndef DOMAIN_CAPACITY_SHRINK_MIN_FRAC
 #define DOMAIN_CAPACITY_SHRINK_MIN_FRAC     0.10
+#endif
 
 /* these are tolerances for the slope-limiters. we define them here, because the gradient constraint routine needs to be sure to use the -same- values in both the gradients and reimann solver routines */
 #if MHD_CONSTRAINED_GRADIENT
@@ -153,17 +163,27 @@
    distribute; they cost more top-tree refinement, one more pseudo-particle all-gather each, and a
    more spatially fragmented rank territory.  The segment count is therefore chosen automatically at
    every full decomposition to hold roughly this many particles, which is where the balance gain
-   stops paying for those costs. */
+   stops paying for those costs.  The best value depends on the problem and the machine (a nearly
+   uniform problem with many particles per rank balances well with far fewer, larger segments), so
+   all four values below may be set in Config.sh. */
+#ifndef  DOMAIN_TARGET_PARTICLES_PER_SEGMENT
 #define  DOMAIN_TARGET_PARTICLES_PER_SEGMENT   10000
+#endif
+#ifndef  DOMAIN_MIN_SEGMENTS_PER_RANK
 #define  DOMAIN_MIN_SEGMENTS_PER_RANK          1
+#endif
+#ifndef  DOMAIN_MAX_SEGMENTS_PER_RANK
 #define  DOMAIN_MAX_SEGMENTS_PER_RANK          256   /* every segment posts its own pseudo-particle
                                                         all-gather, so this bounds the message count
                                                         on a large problem spread over few ranks */
+#endif
 /* A small problem gets a single segment per rank, which on its own would leave the decomposition
    almost nothing to balance with.  This is the floor on how many top-tree leaves each rank is
    refined towards regardless -- a feasibility floor, not a tuned optimum; it sits below every
    measured landing point, so it binds only in the small-problem regime it exists for. */
+#ifndef  DOMAIN_MIN_TOPLEAVES_PER_RANK
 #define  DOMAIN_MIN_TOPLEAVES_PER_RANK         16
+#endif
 
 /* Change the segment count by this factor relative to the automatic choice above.  The result is
    still held to DOMAIN_MAX_SEGMENTS_PER_RANK, so raising this has no effect once the automatic

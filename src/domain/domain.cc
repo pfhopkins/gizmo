@@ -199,7 +199,9 @@ static int UseAllParticles;
 static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviving between domain decompositions, used by lightweight repartition */
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
+#ifndef MAX_LIGHT_REPARTITIONS
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+#endif
 /* A lightweight repartition keeps the top tree, so it cannot split a top leaf that carries too much of a balanced quantity.
    It gives way to a full decomposition, which refines the top tree with the work recorded so far, when all of these hold:
    a refinable leaf holds more than LIGHT_REPARTITION_LEAF_SHARE_LIMIT times the fair share 1/NTask; that leaf is what limits
@@ -215,9 +217,15 @@ static int LightRepartitionCount = 0; /*!< number of consecutive lightweight rep
  * DomainNodeIndex, LET subtree headers, routing band checks) without improving load balance.
  * Count-driven refinement is unaffected. Internal constant, not a user parameter. */
 static const int DOMAIN_COST_REFINE_MIN_COUNT = 16;
+#ifndef LIGHT_REPARTITION_LEAF_SHARE_LIMIT
 #define LIGHT_REPARTITION_LEAF_SHARE_LIMIT 20.0
+#endif
+#ifndef LIGHT_REPARTITION_LEAF_LIMITED_FRACTION
 #define LIGHT_REPARTITION_LEAF_LIMITED_FRACTION 0.85
+#endif
+#ifndef LIGHT_REPARTITION_LEAF_SHARE_GROWTH
 #define LIGHT_REPARTITION_LEAF_SHARE_GROWTH 2.0
+#endif
 static double domain_assigned_objective = -1;      /*!< largest share of a balanced quantity any task holds after the last work-balanced assignment, -1 if none */
 static double domain_leaf_share_after_full = -1;   /*!< largest share of a balanced quantity in one refinable top leaf, after the last full decomposition */
 static double domain_largest_refinable_leaf_share(void);
@@ -225,7 +233,9 @@ static void domain_light_free_work_arrays(void);
 static int domain_light_keep_owners(int multipledomains, const int *prev_start, const int *prev_end, const int *prev_owner);
 /* Share of a rank's particle (and gas-cell) capacity a domain assignment may fill, leaving room for what arrives before the next one. */
 static const double DOMAIN_MEMORY_SAFETY_FRACTION = 0.9;
+#ifndef MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS
 #define MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS 20 /*!< re-establish Peano-Hilbert order at most this far apart. The reorder moves nearly every element of P and CellP and is expensive, especially where those arrays are device-accessible, but particle exchange decays the ordering that the SFC tiles and the tree build rely on, so it cannot be dropped entirely */
+#endif
 static int DomainCallsSincePeanoOrder = MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS; /*!< domain decompositions, full or lightweight, since the last ordering. Starts at the interval so the first decomposition of a run always orders, including after a restart, which does not take the startup one */
 
 /*! How much particle storage this rank should hold for the coming epoch.
