@@ -235,6 +235,48 @@
 #define IN2HP UNUSED
 #endif
 
+#if CHEMISTRYNETWORK == 18  /* RTZ metal ions (C++ only): layout in cxx/chem_net18_layout.h */
+#define TRAC_NUM 113
+#define NSPEC 114
+#define IH2   0
+#define IHP   1
+#define ICO   2
+#define ITMP  113
+#define IDP   UNUSED
+#define IHD   UNUSED
+#define IHEP  UNUSED
+#define IHEPP UNUSED
+#define IC    UNUSED
+#define ISi   UNUSED
+#define IO    UNUSED
+#define IC2   UNUSED
+#define IOH   UNUSED
+#define IH2O  UNUSED
+#define IO2   UNUSED
+#define IHCOP UNUSED
+#define ICH   UNUSED
+#define ICH2  UNUSED
+#define ISIPP UNUSED
+#define ICH3P UNUSED
+#define IMGP  UNUSED
+#define ITD   UNUSED
+#define ICH3  UNUSED
+#define ICH4  UNUSED
+#define ICO2  UNUSED
+#define ICOS  UNUSED
+#define IH2OS UNUSED
+#define IO2S  UNUSED
+#define ICH4S UNUSED
+#define ICHX  UNUSED
+#define IOHX  UNUSED
+#define IMP   UNUSED
+#define IH3OP UNUSED
+#define IO2P  UNUSED
+#define INO   UNUSED
+#define IN2   UNUSED
+#define IN2HP UNUSED
+#endif
+
 #if CHEMISTRYNETWORK == 20  /* TIGRESS-NCR (C++ only): H2, H+ evolved; CO slot holds the equilibrium value */
 #define TRAC_NUM 3
 #define NSPEC 4
@@ -652,6 +694,9 @@
 #endif
 #if CHEMISTRYNETWORK == 20
 #define  NRATES_CHEM 7
+#endif
+#if CHEMISTRYNETWORK == 18
+#define  NRATES_CHEM 5
 #endif
 
 #define  NRATES_TOT NRATES+NRATES_CHEM

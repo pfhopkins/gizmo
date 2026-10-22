@@ -363,6 +363,15 @@ struct ChemCell {
     double n20_xe;               // last solved x_e (fixed-point start and output)
     double n20_T, n20_xcp, n20_xc, n20_xco, n20_xo, n20_xop, n20_xmhp;  // last solved state
 
+    // ---- network 18 (RTZ metal ions) ----
+    double n18_pool[10];         // gas-phase element pools per H: H He C N O Ne Mg Si S Fe
+    int    n18_flags;            // N18_* switches (chem_net18.h)
+    int    n18_ref[10];          // per element: stage derived from the pool (ODE holds the others)
+    double n18_fixT;             // T held under N18_FIXT [K]
+    double n18_rtol, n18_atol;   // CVODE rtol; atol per unit element pool
+    double n18_df25;             // pixel-averaged exp(-2.5 A_V) for the FUV field
+    double n18_T, n18_xe;        // last evaluated T and x_e
+
     const ChemTables* tab;
 };
 

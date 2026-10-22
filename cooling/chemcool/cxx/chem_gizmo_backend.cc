@@ -14,6 +14,7 @@
 
 #include "chem_types.h"
 #include "chem_net20.h"
+#include "chem_net18.h"
 #include "cooling/chemcool/chem_interface.h"
 #include <algorithm>
 #include <cstdlib>
@@ -21,8 +22,8 @@
 
 extern "C" void chemcool_fatal_(int* code);
 
-#if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17 && CHEMISTRYNETWORK != 20
-#error "CHEMCOOL_CXX currently supports CHEMISTRYNETWORK 3, 5, 15, 16, 17 and 20 only. \
+#if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17 && CHEMISTRYNETWORK != 18 && CHEMISTRYNETWORK != 20
+#error "CHEMCOOL_CXX currently supports CHEMISTRYNETWORK 3, 5, 15, 16, 17, 18 and 20 only. \
 Build without CHEMCOOL_CXX (the Fortran path) for the other networks."
 #endif
 
@@ -125,6 +126,13 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #ifdef RT_TREECOL_H2_CO
     for (int k = 0; k < NPIX; k++) { c.col_h2[k] = in->column_density_projection_h2[k]; c.col_co[k] = in->column_density_projection_co[k]; }
 #endif
+#if CHEMISTRYNETWORK == 18
+    {
+        const double pool[N18_NEL] = {1.0, c.abhe, in->abundc, in->abundN, in->abundo, in->abundNe, in->abundMg, in->abundsi, in->abundS, in->abundFe};
+        for (int e = 0; e < N18_NEL; e++) c.n18_pool[e] = std::max(pool[e], 0.0);
+        if (in->n18_uvb) c.n18_flags |= N18_UVB;
+    }
+#endif
 #if CHEMISTRYNETWORK == 20
     c.Zg = c.abundo / 3.2e-4;
     c.dvdr = in->dvdr_cgs;
@@ -162,6 +170,18 @@ void chem_cxx_read_outputs(struct ChemOutputs* out)
     out->photorates[4] = c.fac_shield_h2;
 #endif
 }
+
+#if CHEMISTRYNETWORK == 18
+double chem_cxx_net18_temp(const double* abundances, double energy, double yn, double abhe)
+{
+    return energy / (1.5 * 1.380649E-16 * yn * n18_particles_trac(abundances, abhe));
+}
+
+void chem_cxx_net18_finish(const double* abundances, double energy, double* temp)
+{
+    *temp = chem_cxx_net18_temp(abundances, energy, tl_cell.yn, tl_cell.abhe);
+}
+#endif
 
 #if CHEMISTRYNETWORK == 20
 // final temperature, equilibrium x_e and CO for the (evolved or forced) state of this thread's cell

@@ -24,6 +24,7 @@
 #include "chem_types.h"
 #include "chem_net20.h"
 #include "chem_tables_data.h"
+#include "chem_net18.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -474,6 +475,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #endif
     c.fac_shield_h2 = fshield;     // OUTPUT_SHIELD_FAC diagnostics (calc_photo.F)
     c.fac_shield_dust = f_dust;
+    if (c.net == 18) { c.n18_df25 = df25; goto done; }   // net 18: dust factors and fshield_CO only
 
     if (c.net == 4) goto done;
 

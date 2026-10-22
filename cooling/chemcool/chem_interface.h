@@ -138,6 +138,7 @@ struct ChemInputs {
     double abundN;             /* -> COOLRC.abundN [commit: GALSF_RESOLVEDISM_METALS_INDIVIDUAL] */
     double abundM;             /* -> COOLRC.abundM: NL99 low-IP metal "M" (network 15) */
     double abundD;             /* -> COOLRC.abundD                            */
+    double abundNe, abundMg, abundS, abundFe;  /* gas-phase Ne, Mg, S, Fe per H (network 18) */
     double Zmass[12];          /* -> COOLRC.Zmass  [commit: WSS_CIE_COOL && METALS_INDIVIDUAL]
                                   gadget_tnt_new ordering:
                                   He,C,Mg,O,Fe,Si,H,N,Ne,S,Ca,Zn (orig:220-231) */
@@ -195,6 +196,9 @@ struct ChemInputs {
 #if CHEMISTRYNETWORK == 20
     double dvdr_cgs;           /* mean |dv_i/dx_i| [s^-1]: CO LVG column (net 20) */
 #endif
+#if CHEMISTRYNETWORK == 18
+    int    n18_uvb;            /* HM12 UV background on (cosmological runs) */
+#endif
 };
 
 
@@ -232,6 +236,10 @@ double chem_cxx_calc_temp(double abh2, double abhe, double ekn);
 void chem_cxx_begin_cell(const struct ChemInputs *in, double temp, double abh2, double abhd, double abco);
 void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double *energy, double *abundances);
 void chem_cxx_read_outputs(struct ChemOutputs *out);
+#if CHEMISTRYNETWORK == 18
+double chem_cxx_net18_temp(const double *abundances, double energy, double yn, double abhe);
+void chem_cxx_net18_finish(const double *abundances, double energy, double *temp);
+#endif
 #if CHEMISTRYNETWORK == 20
 void chem_cxx_net20_finish(double *abundances, double energy, double *temp);
 double chem_cxx_net20_electrons(void);

@@ -6,6 +6,9 @@
 
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20   /* H2, H+, CO (net 20: CO is the equilibrium value) */
 static const double chemcool_trac_molwt[] = {2.0, 1.0, 28.0};
+#elif CHEMISTRYNETWORK == 18     /* H2, H+, CO, He0-He2, then every stage of C N O Ne Mg Si S Fe */
+#include "cxx/chem_net18_layout.h"
+static const double chemcool_trac_molwt[] = {2.0, 1.0, 28.0, 4.0, 4.0, 4.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 12.0, 14.0, 14.0, 14.0, 14.0, 14.0, 14.0, 14.0, 14.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 16.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 20.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 24.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 28.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 32.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0, 56.0};
 #elif CHEMISTRYNETWORK == 17     /* H2, H+, CO, He+, He++, D+, HD */
 static const double chemcool_trac_molwt[] = {2.0, 1.0, 28.0, 4.0, 4.0, 2.0, 3.0};
 #elif CHEMISTRYNETWORK == 15     /* H2, H+, C+, CHx, OHx, CO, HCO+, He+, M+ (M: generic low-IP metal, taken as Mg) */
@@ -24,7 +27,10 @@ static_assert(sizeof(chemcool_trac_molwt)/sizeof(chemcool_trac_molwt[0]) == TRAC
 /* electrons per H; species not tracked by the network count as singly ionized at their full pool */
 static inline double chemcool_electrons(const double *ab, const struct ChemInputs *in)
 {
-#if CHEMISTRYNETWORK == 20
+#if CHEMISTRYNETWORK == 18
+    (void)in;
+    return n18_electrons_trac(ab);
+#elif CHEMISTRYNETWORK == 20
     (void)ab; (void)in;
     return chem_cxx_net20_electrons();   /* equilibrium x_e of the cell just finished */
 #elif CHEMISTRYNETWORK == 5
@@ -49,6 +55,13 @@ static inline void chemcool_set_ionized(double *ab, const struct ChemInputs *in)
     ab[IHEPP] = 0.0;          /* He++ negligible for most O stars */
     ab[IDP]   = in->abundD;   /* D -> D+ (same IP as H) */
     ab[IHD]   = 0.0;          /* HD dissociated */
+#elif CHEMISTRYNETWORK == 18
+    {   /* He -> He+, metals singly ionized */
+        const double pool[N18_NEL] = {1.0, in->abhe, in->abundc, in->abundN, in->abundo, in->abundNe, in->abundMg, in->abundsi, in->abundS, in->abundFe};
+        int e, j;
+        ab[N18_T_HE] = 0.0; ab[N18_T_HE + 1] = in->abhe; ab[N18_T_HE + 2] = 0.0;
+        for(e = 2; e < N18_NEL; e++) for(j = 0; j <= n18_Z[e]; j++) ab[n18_toff[e] + j] = (j == 1) ? pool[e] : 0.0;
+    }
 #elif CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
     ab[IC] = in->abundc; ab[ICHX] = 0.0; ab[IOHX] = 0.0; ab[IHCOP] = 0.0;
     ab[IHEP] = in->abhe; ab[IMP] = in->abundM;

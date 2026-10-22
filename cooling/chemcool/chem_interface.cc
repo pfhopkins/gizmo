@@ -22,6 +22,9 @@
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
 #include "chem_interface.h"
+#if CHEMISTRYNETWORK == 18
+#include "cxx/chem_net18_layout.h"
+#endif
 #include "../../declarations/resolvedism_dgr.h"
 #include "../../declarations/resolvedism_depletion.h"
 #include "../../galaxy_sf/resolvedism_selfcheck.h"
@@ -88,6 +91,17 @@ void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/
         in->abundsi = (1 - DMIN(RESOLVEDISM_DEPL_SI * g_dep, RESOLVEDISM_DEPL_MAX)) * (P[target].Metallicity[MET_OF(ELEM_Si)] / 28.0) / X_H;
 #endif
         in->abundN  = (P[target].Metallicity[MET_OF(ELEM_N)]  / 14.0) / X_H;   /* [orig chemcool.cc:216] */
+#if CHEMISTRYNETWORK == 18
+        in->abundNe = (P[target].Metallicity[MET_OF(ELEM_Ne)] / 20.0) / X_H;
+        in->abundS  = (P[target].Metallicity[MET_OF(ELEM_S)]  / 32.0) / X_H;
+#ifdef GALSF_RESOLVEDISM_DUST
+        in->abundMg = (DMAX(P[target].Metallicity[MET_OF(ELEM_Mg)] - CellP[target].Dust[2], 0) / 24.0) / X_H;
+        in->abundFe = (DMAX(P[target].Metallicity[MET_OF(ELEM_Fe)] - CellP[target].Dust[4], 0) / 56.0) / X_H;
+#else
+        in->abundMg = (P[target].Metallicity[MET_OF(ELEM_Mg)] / 24.0) / X_H;
+        in->abundFe = (P[target].Metallicity[MET_OF(ELEM_Fe)] / 56.0) / X_H;
+#endif
+#endif
 
 #ifdef WSS_CIE_COOL
         /* [orig chemcool.cc:218-231] Map Metallicity[28] -> Zmass[12] (gadget_tnt_new ordering) */
@@ -124,6 +138,9 @@ void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/
                 in->abundo  *= s;
                 in->abundsi *= s;
                 in->abundN  *= s;
+#if CHEMISTRYNETWORK == 18
+                in->abundNe *= s; in->abundMg *= s; in->abundS *= s; in->abundFe *= s;
+#endif
 #ifdef WSS_CIE_COOL
                 in->Zmass[1] *= s; in->Zmass[2] *= s; in->Zmass[3]  *= s;
                 in->Zmass[4] *= s; in->Zmass[5] *= s; in->Zmass[7]  *= s;
@@ -144,6 +161,14 @@ void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/
     in->abundo  = All.InitialMetallicity * 3.2e-4;
     in->abundsi = All.InitialMetallicity * 1.5e-5;
     in->abundM  = All.InitialMetallicity * CHEMCOOL_ABUNDM_SOLAR;
+#if CHEMISTRYNETWORK == 18
+    /* RTZ solar x Milky-Way gas-phase fraction */
+    in->abundN  = All.InitialMetallicity * n18_zsun[3] * n18_depl[3];
+    in->abundNe = All.InitialMetallicity * n18_zsun[5] * n18_depl[5];
+    in->abundMg = All.InitialMetallicity * n18_zsun[6] * n18_depl[6];
+    in->abundS  = All.InitialMetallicity * n18_zsun[8] * n18_depl[8];
+    in->abundFe = All.InitialMetallicity * n18_zsun[9] * n18_depl[9];
+#endif
 #endif
 }
 
@@ -238,6 +263,18 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
      * unphysical in fresh ejecta anyway (no condensation yet). Applies to the
      * evolved-dust branch too (same certified-domain argument). */
     if(in->dust_to_gas_ratio > 10.0) {in->dust_to_gas_ratio = 10.0;}
+#if CHEMISTRYNETWORK == 18 && defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && !defined(GALSF_RESOLVEDISM_DUST)
+    {   /* no dust model: RTZ depletion, scaled with the dust-to-gas ratio (MW = 1) */
+        double yd = DMIN(DMAX(in->dust_to_gas_ratio, 0), 1);
+        in->abundc  *= 1 - (1 - n18_depl[2]) * yd; in->abundN  *= 1 - (1 - n18_depl[3]) * yd;
+        in->abundo  *= 1 - (1 - n18_depl[4]) * yd; in->abundNe *= 1 - (1 - n18_depl[5]) * yd;
+        in->abundMg *= 1 - (1 - n18_depl[6]) * yd; in->abundsi *= 1 - (1 - n18_depl[7]) * yd;
+        in->abundS  *= 1 - (1 - n18_depl[8]) * yd; in->abundFe *= 1 - (1 - n18_depl[9]) * yd;
+    }
+#endif
+#if CHEMISTRYNETWORK == 18
+    in->n18_uvb = All.ComovingIntegrationOn ? 1 : 0;
+#endif
 
 
 
@@ -624,7 +661,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     /* [orig chemcool.cc:620-621] entry temperature (CALC_TEMP is a pure
      * lookup: init-time temp/gamma tables + explicit arguments only) */
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
-#ifdef CHEMCOOL_CXX
+#if CHEMISTRYNETWORK == 18
+    temp = chem_cxx_net18_temp(in->abundances, energy, yn, in->abhe);  /* all ions and electrons */
+#elif defined(CHEMCOOL_CXX)
     temp = chem_cxx_calc_temp(abh2, in->abhe, ekn);  /* this cell's abhe (Fortran reads the last committed one) */
 #else
     CALC_TEMP(&abh2, &ekn, &temp);

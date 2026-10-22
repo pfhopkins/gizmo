@@ -578,14 +578,14 @@ c    //////////              R A T E _ E Q                \\\\\\\\\\
 c
 c=======================================================================
 #endif /* CHEMISTRYNETWORK == 4 || 5 || 6 */
-#if CHEMISTRYNETWORK == 20
-c Network 20 exists only in the C++ backend (CHEMCOOL_CXX); this stub satisfies the link.
+#if CHEMISTRYNETWORK == 20 || CHEMISTRYNETWORK == 18
+c Networks 18 and 20 exist only in the C++ backend (CHEMCOOL_CXX); this stub satisfies the link.
       subroutine rate_eq(neq, time, y, ydot, rpar, ipar)
       implicit NONE
       integer neq, ipar(*), code
       real*8 time, y(*), ydot(*), rpar(*)
-      code = 20
+      code = CHEMISTRYNETWORK
       call chemcool_fatal(code)
       return
       end
-#endif /* CHEMISTRYNETWORK == 20 */
+#endif /* CHEMISTRYNETWORK == 20 || 18 */

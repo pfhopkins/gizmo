@@ -329,7 +329,10 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
     abe  = abundances[IHP];
 
     /* Compute final temperature */
-#if CHEMISTRYNETWORK == 20
+#if CHEMISTRYNETWORK == 18
+    (void)ekn; (void)abe;
+    chem_cxx_net18_finish(abundances, energy, &temp);  /* T from all ions and electrons */
+#elif CHEMISTRYNETWORK == 20
     (void)ekn; (void)abe;
     chem_cxx_net20_finish(abundances, energy, &temp);  /* T with the equilibrium x_e; writes CO */
 #elif defined(CHEMCOOL_CXX)

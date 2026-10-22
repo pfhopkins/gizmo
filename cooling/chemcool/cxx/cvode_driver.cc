@@ -26,6 +26,7 @@
 
 #include "chem_types.h"
 #include "chem_net20.h"
+#include "chem_net18.h"
 #include <cvode/cvode.h>
 #include <nvector/nvector_serial.h>
 #include <sunmatrix/sunmatrix_dense.h>
@@ -341,6 +342,10 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     const int ico = chem_net_nl99(c.net) ? C15_ICO : (c.net == 3) ? C3_ICO : CICO;   // unused for net 20 (no CO in the ODE)
 
     if (time < 0.0) return 0;                                // .F:72-74
+    if (c.net == 18) {   // own driver: whole interval in one CVODE solve, no hot bypass
+        c.yn = yn; c.dl = dl; c.divv = divv;
+        return n18_evolve(time, non_eq_abundances, energy, c);
+    }
 
     cxx_stat_calls++;
     c.yn = yn; c.dl = dl; c.divv = divv;

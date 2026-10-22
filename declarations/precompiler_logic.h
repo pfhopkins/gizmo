@@ -1536,6 +1536,11 @@
 #define TRAC_NUM 9
 #elif CHEMISTRYNETWORK == 17
 #define TRAC_NUM 7
+#elif CHEMISTRYNETWORK == 18
+#define TRAC_NUM 113 /* H2, H+, CO and every ion stage of He C N O Ne Mg Si S Fe (cxx/chem_net18_layout.h) */
+#ifndef CHEMCOOL_CXX
+#error "CHEMISTRYNETWORK=18 (RTZ metal ions) exists only in the C++ backend: enable CHEMCOOL_CXX"
+#endif
 #elif CHEMISTRYNETWORK == 20
 #define TRAC_NUM 3   /* H2, H+ evolved; CO = equilibrium value written back */
 #ifndef CHEMCOOL_CXX

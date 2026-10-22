@@ -19,6 +19,7 @@
 
 #include "chem_types.h"
 #include "chem_net20.h"
+#include "chem_net18.h"
 #include <cstring>
 #include <cstdio>
 
@@ -53,8 +54,8 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
 {
     std::memset(&c, 0, sizeof(ChemCell));
     c.net = net;
-    c.trac_num = chem_trac_num(net);
-    c.nspec = c.trac_num + 1;
+    c.trac_num = (net == 18) ? N18_NTRAC : chem_trac_num(net);
+    c.nspec = (net == 18) ? N18_NODE + 1 : c.trac_num + 1;
     c.abhe = 0.1;                            // chemcool_consts.h ABHE (nets 3/5/15/16/17)
     c.no_dchem = 0;                          // audit sec 3.1 item 4: explicit
     c.iflag_mn = 4; c.iflag_ad = 6; c.iflag_atom = 2;
@@ -71,6 +72,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
     c.npix = CHEM_NPIX;
     for (int k = 0; k < CHEM_NPIX; k++) { c.fac_uv[k] = 1.0 / CHEM_NPIX; c.pix_att[k] = 1.0; }
     n20_cell_defaults(c);
+    n18_cell_defaults(c);
     c.tab = &T;
 }
 
