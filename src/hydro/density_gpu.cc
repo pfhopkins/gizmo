@@ -300,6 +300,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.Eta_MHD_OhmicResistivity_Coeff = kc[ii].Eta_MHD_OhmicResistivity_Coeff;
             local.Eta_MHD_HallEffect_Coeff = kc[ii].Eta_MHD_HallEffect_Coeff;
             local.Eta_MHD_AmbiPolarDiffusion_Coeff = kc[ii].Eta_MHD_AmbiPolarDiffusion_Coeff;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+            local.NonIdealMHDFlux = kc[ii].NonIdealMHDFluxPred;
+#endif
 #endif
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
             local.Balpha = kc[ii].Balpha;

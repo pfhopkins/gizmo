@@ -770,6 +770,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
 #ifdef MHD_NON_IDEAL
         CellP[j].Eta_MHD_OhmicResistivity_Coeff = 0; CellP[j].Eta_MHD_HallEffect_Coeff = 0; CellP[j].Eta_MHD_AmbiPolarDiffusion_Coeff = 0;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        CellP[j].NonIdealMHDFlux = {}; CellP[j].NonIdealMHDFluxPred = {};
+#endif
 #endif
 #ifdef VISCOSITY
         CellP[j].Eta_ShearViscosity = 0; CellP[j].Zeta_BulkViscosity = 0;

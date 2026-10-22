@@ -164,6 +164,9 @@ struct hydro_data_in
     MyFloat Eta_MHD_OhmicResistivity_Coeff;
     MyFloat Eta_MHD_HallEffect_Coeff;
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    Vec3<MyFloat> NonIdealMHDFlux;
+#endif
 #endif
 
 #ifdef VISCOSITY

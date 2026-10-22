@@ -830,7 +830,7 @@ struct particle_motion_in_arrays {
     KOKKOS_INLINE_FUNCTION void add_reflected_momentum(int j, double mass_for_dp, double vel_before) const {pp[i].dp[j]+=(pp[i].Vel[j]-vel_before)*mass_for_dp;}
     KOKKOS_INLINE_FUNCTION void zero_momentum() const {pp[i].dp[0]=pp[i].dp[1]=pp[i].dp[2]=0;}
     KOKKOS_INLINE_FUNCTION void outflow_removed_mass() const {if(pp[i].Type==0) {cell[i].Mass=0;}}
-    /* A gas cell's radiation and cosmic-ray fluxes are mirrored with it: their normal components change sign. */
+    /* A gas cell's radiation and cosmic-ray fluxes, and its evolved non-ideal MHD field, are mirrored with it: their normal components change sign. */
     KOKKOS_INLINE_FUNCTION void reflect_normal_fluxes(int j) const
     {
         (void)j;
@@ -839,6 +839,9 @@ struct particle_motion_in_arrays {
 #endif
 #ifdef COSMIC_RAY_FLUID
         if(pp[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {cell[i].CosmicRayFlux[kf][j]=-cell[i].CosmicRayFlux[kf][j]; cell[i].CosmicRayFluxPred[kf][j]=cell[i].CosmicRayFlux[kf][j];}}
+#endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        if(pp[i].Type==0) {cell[i].NonIdealMHDFlux[j]=-cell[i].NonIdealMHDFlux[j]; cell[i].NonIdealMHDFluxPred[j]=cell[i].NonIdealMHDFlux[j];}
 #endif
     }
 };

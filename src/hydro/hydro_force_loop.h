@@ -321,6 +321,9 @@ struct HydroForceSpec
         local.Eta_MHD_OhmicResistivity_Coeff  = kc[i].Eta_MHD_OhmicResistivity_Coeff;
         local.Eta_MHD_HallEffect_Coeff        = kc[i].Eta_MHD_HallEffect_Coeff;
         local.Eta_MHD_AmbiPolarDiffusion_Coeff = kc[i].Eta_MHD_AmbiPolarDiffusion_Coeff;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        local.NonIdealMHDFlux = kc[i].NonIdealMHDFluxPred;
+#endif
 #endif
 #if defined(SPH_TP12_ARTIFICIAL_RESISTIVITY)
         local.Balpha = kc[i].Balpha;
