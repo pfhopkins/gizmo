@@ -842,12 +842,10 @@ static void forward_com_to_affected_root(KetjuRegion &reg)
     }
 }
 
-static void setup_integrator(KetjuRegion &reg)
+/* counts[t] = members of this region on task t (gathered for all regions at once in ketju_find_regions) */
+static void setup_integrator(KetjuRegion &reg, const int *counts)
 {
-    /* gather particle counts per task */
     int n_local = reg.local_member_indices.size();
-    std::vector<int> counts(NTask);
-    MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
 
     reg.total_particle_count = 0;
     for(int t = 0; t < NTask; t++) reg.total_particle_count += counts[t];
@@ -2012,15 +2010,26 @@ void ketju_find_regions(void)
         reg.local_member_indices = find_local_members(reg.centers, All.KetjuRegionRadius);
 #endif
 
-        int n_local = reg.local_member_indices.size();
-        MPI_Allreduce(&n_local, &reg.total_particle_count, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-
-        /* regions with fewer than 2 particles stay as placeholders: nothing to integrate */
-        if(reg.total_particle_count >= 2) {
-            for(int idx : reg.local_member_indices)
-                AllKetjuParticleIndices.insert(idx);
-        }
         ActiveRegions.push_back(std::move(reg));
+    }
+
+    /* member totals of all regions in one reduction, then per-task counts of the multi-member ones in one gather */
+    std::vector<int> region_counts(n_regions);
+    for(int r = 0; r < n_regions; r++) region_counts[r] = (int)ActiveRegions[r].local_member_indices.size();
+    MPI_Allreduce(MPI_IN_PLACE, region_counts.data(), n_regions, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    std::vector<int> multi; /* regions with >= 2 members; the rest stay as placeholders with nothing to integrate */
+    for(int r = 0; r < n_regions; r++) {
+        ActiveRegions[r].total_particle_count = region_counts[r];
+        if(region_counts[r] < 2) continue;
+        multi.push_back(r);
+        for(int idx : ActiveRegions[r].local_member_indices) AllKetjuParticleIndices.insert(idx);
+    }
+    const int n_multi = (int)multi.size();
+    std::vector<int> task_counts((size_t)NTask * n_multi); /* [t * n_multi + k] */
+    if(n_multi > 0) {
+        std::vector<int> mine(n_multi);
+        for(int k = 0; k < n_multi; k++) mine[k] = (int)ActiveRegions[multi[k]].local_member_indices.size();
+        MPI_Allgather(mine.data(), n_multi, MPI_INT, task_counts.data(), n_multi, MPI_INT, MPI_COMM_WORLD);
     }
 
     /* allocate compute tasks across regions based on cost estimates */
@@ -2028,7 +2037,13 @@ void ketju_find_regions(void)
 
     /* second pass: set up integrators */
     clk.lap(CPU_KETJUFIND);
-    for(int r = 0; r < n_regions; r++) setup_integrator(ActiveRegions[r]);
+    {
+        std::vector<int> counts(NTask);
+        for(int k = 0; k < n_multi; k++) {
+            for(int t = 0; t < NTask; t++) counts[t] = task_counts[(size_t)t * n_multi + k];
+            setup_integrator(ActiveRegions[multi[k]], counts.data());
+        }
+    }
     clk.lap(CPU_KETJUEXCH);
 
     /* Assign each chain member a shared KetjuChainID = global-min member ID
@@ -2077,6 +2092,22 @@ void ketju_run_integration(void)
     /* Outer loop over sequential rounds. Within a round, regions run in
      * parallel on disjoint task ranges; rounds run back-to-back so that
      * expensive regions can use all tasks first before smaller regions. */
+    /* Members are synchronised and share one bin (ketju_limit_timesteps), and MSTAR substeps
+     * internally, so the region step is that bin's. Check the sharing: a member on another bin
+     * would be drifted over a different interval than the one the velocity trick was set for.
+     * One reduction for all regions, so no world collective separates the regions' integrations. */
+    const int n_act = (int)ActiveRegions.size();
+    std::vector<long long> ti_range(2 * n_act); /* {-min, max} over members, per region */
+    for(int r = 0; r < n_act; r++) {
+        ti_range[2*r] = -(long long)TIMEBASE; ti_range[2*r+1] = 0;
+        for(int idx : ActiveRegions[r].local_member_indices) {
+            long long ti_i = P[idx].dt_step;
+            if(-ti_i > ti_range[2*r]) ti_range[2*r] = -ti_i;
+            if(ti_i > ti_range[2*r+1]) ti_range[2*r+1] = ti_i;
+        }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, ti_range.data(), 2 * n_act, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+
     int n_rounds = g_ketju_num_sequential_runs > 0 ? g_ketju_num_sequential_runs : 1;
     for(int seq = 0; seq < n_rounds; seq++) {
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
@@ -2084,21 +2115,11 @@ void ketju_run_integration(void)
         if(reg.compute_info.compute_sequence_position != seq) continue;
         if(reg.total_particle_count < 2) continue;
 
-        /* Members are synchronised and share one bin (ketju_limit_timesteps), and MSTAR substeps
-         * internally, so the region step is that bin's. Check the sharing: a member on another bin
-         * would be drifted over a different interval than the one the velocity trick was set for. */
-        long long ti_range[2] = {-(long long)TIMEBASE, 0}; /* {-min, max} over members */
-        for(int idx : reg.local_member_indices) {
-            long long ti_i = P[idx].dt_step;
-            if(-ti_i > ti_range[0]) ti_range[0] = -ti_i;
-            if(ti_i > ti_range[1]) ti_range[1] = ti_i;
-        }
-        MPI_Allreduce(MPI_IN_PLACE, ti_range, 2, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
-        integertime global_max_ti = ti_range[1];
+        integertime global_max_ti = ti_range[2*r+1];
         if(global_max_ti <= 0 || global_max_ti > TIMEBASE) continue;
-        if(-ti_range[0] != ti_range[1] && ThisTask == 0) {
+        if(-ti_range[2*r] != ti_range[2*r+1] && ThisTask == 0) {
             PRINT_WARNING("KETJU: region of %d particles has members on steps %lld..%lld; integrating over the longest",
-                          reg.total_particle_count, -ti_range[0], ti_range[1]);
+                          reg.total_particle_count, -ti_range[2*r], ti_range[2*r+1]);
         }
 
         reg.ti_step = global_max_ti;
