@@ -248,66 +248,6 @@ struct KjClock {
 };
 static std::set<int> AllKetjuParticleIndices; /* local indices of all particles in any region */
 
-/* ============================================================
- *  Region persistence: cached regions across steps
- *  Communicators are preserved when membership is unchanged.
- * ============================================================ */
-struct CachedRegionKey {
-    MyIDType ID;
-    int Task;
-    int Index; /* local P[] index — stable between domain decompositions */
-    bool operator==(const CachedRegionKey &o) const { return ID == o.ID && Task == o.Task && Index == o.Index; }
-    bool operator<(const CachedRegionKey &o) const {
-        if(ID != o.ID) return ID < o.ID;
-        if(Task != o.Task) return Task < o.Task;
-        return Index < o.Index;
-    }
-};
-
-struct CachedRegionInfo {
-    std::vector<CachedRegionKey> sorted_particle_keys; /* sorted (ID,Task) for staleness check */
-    KetjuTaskGroup affected_tasks;
-    KetjuTaskGroup compute_tasks;
-    std::vector<int> affected_sim_indices;
-    std::vector<int> particle_counts_on_affected;
-    region_compute_info compute_info;
-    int total_particle_count;
-
-    CachedRegionInfo() : total_particle_count(0) {}
-    ~CachedRegionInfo() {
-        affected_tasks.free_comms();
-        compute_tasks.free_comms();
-    }
-    /* move-only to protect MPI handles */
-    CachedRegionInfo(CachedRegionInfo &&o) noexcept
-        : sorted_particle_keys(std::move(o.sorted_particle_keys)),
-          affected_sim_indices(std::move(o.affected_sim_indices)),
-          particle_counts_on_affected(std::move(o.particle_counts_on_affected)),
-          compute_info(o.compute_info),
-          total_particle_count(o.total_particle_count)
-    {
-        affected_tasks = o.affected_tasks; o.affected_tasks.comm = MPI_COMM_NULL; o.affected_tasks.group = MPI_GROUP_NULL;
-        compute_tasks = o.compute_tasks; o.compute_tasks.comm = MPI_COMM_NULL; o.compute_tasks.group = MPI_GROUP_NULL;
-    }
-    CachedRegionInfo &operator=(CachedRegionInfo &&o) noexcept {
-        if(this != &o) {
-            affected_tasks.free_comms(); compute_tasks.free_comms();
-            sorted_particle_keys = std::move(o.sorted_particle_keys);
-            affected_sim_indices = std::move(o.affected_sim_indices);
-            particle_counts_on_affected = std::move(o.particle_counts_on_affected);
-            compute_info = o.compute_info; total_particle_count = o.total_particle_count;
-            affected_tasks = o.affected_tasks; o.affected_tasks.comm = MPI_COMM_NULL; o.affected_tasks.group = MPI_GROUP_NULL;
-            compute_tasks = o.compute_tasks; o.compute_tasks.comm = MPI_COMM_NULL; o.compute_tasks.group = MPI_GROUP_NULL;
-        }
-        return *this;
-    }
-    CachedRegionInfo(const CachedRegionInfo &) = delete;
-    CachedRegionInfo &operator=(const CachedRegionInfo &) = delete;
-};
-
-static std::vector<CachedRegionInfo> CachedRegions;
-static int KetjuRegionsStale = 1; /* 1 = force rebuild (after domain decomp or first call) */
-
 /* Cache for gather_chain_centers result — shared between ketju_limit_timesteps
  * and ketju_find_regions to avoid a redundant MPI_Allgatherv on COMM_WORLD */
 static std::vector<ketju_mpi_particle> CachedChainCenters;
@@ -1110,182 +1050,6 @@ static void setup_integrator(KetjuRegion &reg)
     }
 
     /* broadcast CoM data to all tasks that need it (affected group for scatter) */
-    forward_com_to_affected_root(reg);
-    if(reg.affected_tasks.is_member()) {
-        MPI_Bcast(reg.com_pos, 3, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
-        MPI_Bcast(reg.com_vel, 3, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
-    }
-}
-
-/* Setup integrator reusing existing communicators (region persistence).
- * Skips MPI_Comm_create_group — the expensive part — but still gathers
- * particle data and builds the integrator state for this step. */
-static void setup_integrator_reuse(KetjuRegion &reg)
-{
-    if(reg.total_particle_count < 2) return;
-
-    int n_local = reg.local_member_indices.size();
-
-    /* fill local particle data */
-    std::vector<ketju_mpi_particle> local_parts(n_local);
-    int k = 0;
-    for(int idx : reg.local_member_indices) {
-        ketju_mpi_particle &mp = local_parts[k];
-        mp.ID = P[idx].ID;
-        mp.Type = P[idx].Type;
-        mp.Task = ThisTask;
-        mp.Index = idx;
-        mp.Mass = P[idx].Mass;
-        for(int j = 0; j < 3; j++) {
-            mp.Pos[j] = P[idx].Pos[j];
-            mp.Vel[j] = P[idx].Vel[j];
-        }
-#ifdef KETJU_SINKS
-        mp.KetjuPNClass = (P[idx].Type == 5) ? KETJU_PN_CLASS(idx) : -1;
-        for(int j = 0; j < 3; j++) mp.Spin[j] = (P[idx].Type == 5) ? P[idx].KetjuSpin[j] : 0;
-#endif
-#ifdef KETJU_PN_REMNANT_TAG
-            mp.RemnantType = (P[idx].Type == 4) ? P[idx].RemnantType : -1;
-#endif
-#ifdef KETJU_TYPE4_STARS
-        for(int k = 0; k < 2; k++) {mp.SoftGrav[k] = P[idx].KetjuTreeSoft[k]; mp.ZetaGrav[k] = P[idx].KetjuTreeZeta[k];}
-        tree_pair_softening(idx, mp.SoftNow, mp.ZetaNow);
-#endif
-        k++;
-    }
-
-    /* gather all particles on affected root (reusing existing communicator) */
-    if(reg.affected_tasks.is_member()) {
-        int n_aff = reg.affected_tasks.size;
-        std::vector<int> aff_counts(n_aff), byte_counts(n_aff), byte_displs(n_aff);
-        MPI_Allgather(&n_local, 1, MPI_INT, aff_counts.data(), 1, MPI_INT, reg.affected_tasks.comm);
-        int total_bytes = 0;
-        for(int t = 0; t < n_aff; t++) {
-            byte_counts[t] = aff_counts[t] * sizeof(ketju_mpi_particle);
-            byte_displs[t] = total_bytes;
-            total_bytes += byte_counts[t];
-        }
-        if(reg.affected_tasks.is_root()) {
-            reg.all_particles.resize(reg.total_particle_count);
-        }
-        MPI_Gatherv(local_parts.data(), n_local * sizeof(ketju_mpi_particle), MPI_BYTE,
-                    reg.all_particles.data(), byte_counts.data(), byte_displs.data(),
-                    MPI_BYTE, reg.affected_tasks.root, reg.affected_tasks.comm);
-    }
-
-    /* forward from affected root to compute root if they differ */
-    if(reg.affected_tasks.root_sim != reg.compute_tasks.root_sim) {
-        if(ThisTask == reg.affected_tasks.root_sim) {
-            MPI_Send(reg.all_particles.data(), reg.total_particle_count * sizeof(ketju_mpi_particle),
-                     MPI_BYTE, reg.compute_tasks.root_sim, 999, MPI_COMM_WORLD);
-        }
-        if(ThisTask == reg.compute_tasks.root_sim) {
-            reg.all_particles.resize(reg.total_particle_count);
-            MPI_Recv(reg.all_particles.data(), reg.total_particle_count * sizeof(ketju_mpi_particle),
-                     MPI_BYTE, reg.affected_tasks.root_sim, 999, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-        }
-    }
-
-    /* broadcast to all compute tasks */
-    if(reg.compute_tasks.is_member()) {
-        if(!reg.compute_tasks.is_root()) reg.all_particles.resize(reg.total_particle_count);
-        MPI_Bcast(reg.all_particles.data(), reg.total_particle_count * sizeof(ketju_mpi_particle),
-                  MPI_BYTE, reg.compute_tasks.root, reg.compute_tasks.comm);
-    }
-
-    /* set up integrator on compute tasks (same as setup_integrator from here) */
-    if(reg.compute_tasks.is_member()) {
-        reg.num_pn_particles = 0;
-        for(int i = 0; i < reg.total_particle_count; i++) {
-            if(is_pn_particle(&reg.all_particles[i])) reg.num_pn_particles++;
-        }
-
-        std::stable_sort(reg.all_particles.begin(), reg.all_particles.end(),
-            [](const ketju_mpi_particle &a, const ketju_mpi_particle &b) {
-                int a_pn = 0, b_pn = 0;
-#ifdef KETJU_SINKS
-                if(a.Type == 5 && a.KetjuPNClass == 0) a_pn = 1;
-                if(b.Type == 5 && b.KetjuPNClass == 0) b_pn = 1;
-#endif
-#ifdef KETJU_PN_COMPACT_OBJECTS
-                if(a.Type == 5 && a.KetjuPNClass == 1) a_pn = 1;
-                if(b.Type == 5 && b.KetjuPNClass == 1) b_pn = 1;
-#endif
-                if(is_pn_remnant_type4(&a)) a_pn = 1;
-                if(is_pn_remnant_type4(&b)) b_pn = 1;
-                return a_pn > b_pn;
-            });
-
-        double total_mass = 0;
-        for(int j = 0; j < 3; j++) { reg.com_pos[j] = 0; reg.com_vel[j] = 0; }
-        for(int i = 0; i < reg.total_particle_count; i++) {
-            for(int j = 0; j < 3; j++) {
-                reg.com_pos[j] += reg.all_particles[i].Mass * reg.all_particles[i].Pos[j];
-                reg.com_vel[j] += reg.all_particles[i].Mass * reg.all_particles[i].Vel[j];
-            }
-            total_mass += reg.all_particles[i].Mass;
-        }
-        for(int j = 0; j < 3; j++) { reg.com_pos[j] /= total_mass; reg.com_vel[j] /= total_mass; }
-
-        reg.integrator = (struct ketju_system *)calloc(1, sizeof(struct ketju_system));
-        int n_other = reg.total_particle_count - reg.num_pn_particles;
-        ketju_create_system(reg.integrator, reg.num_pn_particles, n_other, reg.compute_tasks.comm);
-
-        reg.integrator->constants->G = All.G * KJ_LEN_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT / KJ_MASS_TO_NAT;
-#if defined(C_LIGHT_CODE)
-        reg.integrator->constants->c = C_LIGHT_CODE * KJ_VEL_TO_NAT;
-#else
-        reg.integrator->constants->c = 2.9979e10 / All.UnitVelocity_in_cm_per_s * KJ_VEL_TO_NAT;
-#endif
-        reg.integrator->options->PN_flags = parse_pn_terms();
-        reg.integrator->options->gbs_relative_tolerance = All.KetjuIntegrationTolerance;
-        reg.integrator->options->enable_bh_mergers = (All.KetjuEnableBHMergerKicks >= 0);
-        reg.integrator->options->enable_bh_merger_kicks = All.KetjuEnableBHMergerKicks;
-        if(All.KetjuMaxStepCount > 0) reg.integrator->options->max_step_count = All.KetjuMaxStepCount;
-        if(All.KetjuUseStarStarSoftening) {
-            double h = All.ForceSoftening[4] * All.cf_atime;
-#ifdef KETJU_SINKS
-            if(All.ForceSoftening[5] > 0) h = DMIN(h, All.ForceSoftening[5] * All.cf_atime);
-#endif
-            reg.integrator->options->star_star_softening = h * KJ_LEN_TO_NAT;
-        }
-
-        reg.extra_data.resize(reg.total_particle_count);
-        struct ketju_system_physical_state *ps = reg.integrator->physical_state;
-        ps->time = 0;
-        double a = All.cf_atime;
-        for(int i = 0; i < reg.total_particle_count; i++) {
-            ps->mass[i] = reg.all_particles[i].Mass;
-            for(int j = 0; j < 3; j++) {
-                ps->pos[i][j] = (reg.all_particles[i].Pos[j] - reg.com_pos[j]) * a;
-                double v_pec_rel = (reg.all_particles[i].Vel[j] - reg.com_vel[j]) / a;
-                ps->vel[i][j] = v_pec_rel;
-                if(All.ComovingIntegrationOn)
-                    ps->vel[i][j] += hubble_function(a) * ps->pos[i][j];
-            }
-            reg.extra_data[i].ID = reg.all_particles[i].ID;
-            reg.extra_data[i].Task = reg.all_particles[i].Task;
-            reg.extra_data[i].Index = reg.all_particles[i].Index;
-            reg.extra_data[i].Type = reg.all_particles[i].Type;
-#ifdef KETJU_SINKS
-            reg.extra_data[i].KetjuPNClass = reg.all_particles[i].KetjuPNClass;
-            if(i < reg.num_pn_particles) {
-                for(int j = 0; j < 3; j++) ps->spin[i][j] = reg.all_particles[i].Spin[j];
-            }
-#endif
-        }
-        reg.integrator->particle_extra_data = reg.extra_data.data();
-        reg.integrator->particle_extra_data_elem_size = sizeof(ketju_extra_data);
-
-#ifdef KETJU_VERBOSE_INTEGRATION
-        if(reg.compute_tasks.is_root() && ThisTask == 0) {
-            printf("KETJU: Region with %d particles (%d PN), compute tasks %d-%d [cached comms]\n",
-                   reg.total_particle_count, reg.num_pn_particles,
-                   reg.compute_info.first_task_index, reg.compute_info.final_task_index);
-        }
-#endif
-    }
-
     forward_com_to_affected_root(reg);
     if(reg.affected_tasks.is_member()) {
         MPI_Bcast(reg.com_pos, 3, MPI_DOUBLE, reg.affected_tasks.root, reg.affected_tasks.comm);
@@ -2191,33 +1955,6 @@ void ketju_limit_timesteps(void)
     if(counts[3]) {PRINT_WARNING("KETJU: %lld timestep-region bins were not synchronised and were lowered", counts[3]);}
 }
 
-/* Collect sorted (ID,Task) keys for a region across all tasks (for staleness check).
- * Uses (ID,Task) pairs instead of bare IDs to handle duplicate star IDs correctly. */
-static std::vector<CachedRegionKey> gather_sorted_region_keys(const std::set<int> &local_members)
-{
-    int n_local = local_members.size();
-    std::vector<CachedRegionKey> local_keys(n_local);
-    int k = 0;
-    for(int idx : local_members) { local_keys[k].ID = P[idx].ID; local_keys[k].Task = ThisTask; local_keys[k].Index = idx; k++; }
-
-    std::vector<int> counts(NTask), displs(NTask);
-    MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
-    int n_total = 0;
-    for(int t = 0; t < NTask; t++) { displs[t] = n_total; n_total += counts[t]; }
-
-    std::vector<CachedRegionKey> all_keys(n_total);
-    std::vector<int> byte_counts(NTask), byte_displs(NTask);
-    for(int t = 0; t < NTask; t++) {
-        byte_counts[t] = counts[t] * sizeof(CachedRegionKey);
-        byte_displs[t] = displs[t] * sizeof(CachedRegionKey);
-    }
-    MPI_Allgatherv(local_keys.data(), n_local * sizeof(CachedRegionKey), MPI_BYTE,
-                   all_keys.data(), byte_counts.data(), byte_displs.data(),
-                   MPI_BYTE, MPI_COMM_WORLD);
-    std::sort(all_keys.begin(), all_keys.end());
-    return all_keys;
-}
-
 void ketju_find_regions(void)
 {
     KjClock clk(CPU_KETJUFIND);
@@ -2253,7 +1990,7 @@ void ketju_find_regions(void)
     } else {
         centers = gather_chain_centers();
     }
-    if(centers.empty()) { CachedRegions.clear(); return; }
+    if(centers.empty()) return;
 
     /* merge overlapping regions */
     double merge_radius = 2.0 * All.KetjuRegionRadius;
@@ -2263,14 +2000,8 @@ void ketju_find_regions(void)
     std::vector<std::vector<ketju_mpi_particle>> region_centers = merge_overlapping_regions(centers, merge_radius);
 #endif
 
-    /* build regions (first pass: find members, collect IDs, check staleness) */
+    /* build regions (first pass: find members) */
     int n_regions = region_centers.size();
-    int n_cached = CachedRegions.size();
-    int any_changed = KetjuRegionsStale || (n_regions != n_cached);
-
-    /* per-region: collect sorted (ID,Task) keys and compare to cache */
-    std::vector<std::vector<CachedRegionKey>> new_keys(n_regions);
-    std::vector<int> region_changed(n_regions, 1); /* 1 = needs rebuild */
 
     for(int r = 0; r < n_regions; r++) {
         KetjuRegion reg;
@@ -2284,53 +2015,20 @@ void ketju_find_regions(void)
         int n_local = reg.local_member_indices.size();
         MPI_Allreduce(&n_local, &reg.total_particle_count, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
-        /* skip regions with fewer than 2 particles — nothing to integrate */
-        if(reg.total_particle_count < 2) {
-            ActiveRegions.push_back(std::move(reg)); /* placeholder to keep indexing aligned with cache */
-            new_keys[r] = {};
-            continue;
+        /* regions with fewer than 2 particles stay as placeholders: nothing to integrate */
+        if(reg.total_particle_count >= 2) {
+            for(int idx : reg.local_member_indices)
+                AllKetjuParticleIndices.insert(idx);
         }
-
-        for(int idx : reg.local_member_indices)
-            AllKetjuParticleIndices.insert(idx);
-
         ActiveRegions.push_back(std::move(reg));
-
-        /* collect sorted (ID,Task) keys for staleness comparison */
-        new_keys[r] = gather_sorted_region_keys(ActiveRegions[r].local_member_indices);
-
-        /* check if this region matches a cached one */
-        if(!any_changed && r < n_cached && new_keys[r] == CachedRegions[r].sorted_particle_keys) {
-            region_changed[r] = 0; /* unchanged — can reuse communicators */
-        }
     }
 
     /* allocate compute tasks across regions based on cost estimates */
     allocate_compute_tasks_for_regions();
 
-    /* second pass: set up integrators — reuse cached communicators where possible */
+    /* second pass: set up integrators */
     clk.lap(CPU_KETJUFIND);
-    int n_reused = 0;
-    for(int r = 0; r < n_regions; r++) {
-        if(!region_changed[r]) {
-            /* reuse cached communicators — transfer ownership to ActiveRegion */
-            ActiveRegions[r].affected_tasks = CachedRegions[r].affected_tasks;
-            CachedRegions[r].affected_tasks.comm = MPI_COMM_NULL;
-            CachedRegions[r].affected_tasks.group = MPI_GROUP_NULL;
-            ActiveRegions[r].compute_tasks = CachedRegions[r].compute_tasks;
-            CachedRegions[r].compute_tasks.comm = MPI_COMM_NULL;
-            CachedRegions[r].compute_tasks.group = MPI_GROUP_NULL;
-            ActiveRegions[r].affected_sim_indices = std::move(CachedRegions[r].affected_sim_indices);
-            ActiveRegions[r].particle_counts_on_affected = std::move(CachedRegions[r].particle_counts_on_affected);
-            ActiveRegions[r].compute_info = CachedRegions[r].compute_info;
-            /* still need to gather particles and set up integrator state, but skip MPI_Comm_create */
-            setup_integrator_reuse(ActiveRegions[r]);
-            n_reused++;
-        } else {
-            /* full rebuild */
-            setup_integrator(ActiveRegions[r]);
-        }
-    }
+    for(int r = 0; r < n_regions; r++) setup_integrator(ActiveRegions[r]);
     clk.lap(CPU_KETJUEXCH);
 
     /* Assign each chain member a shared KetjuChainID = global-min member ID
@@ -2351,10 +2049,6 @@ void ketju_find_regions(void)
         for(int idx : reg.local_member_indices) P[idx].KetjuChainID = chain_id;
     }
 
-    /* clear old cache (frees any remaining communicators not transferred) */
-    CachedRegions.clear();
-    KetjuRegionsStale = 0;
-
     /* Region-set summary: only print when the set actually changed (otherwise
      * we emit ~1+N_region lines per step, which dominates IO). The per-region
      * listing is only printed when the topology changed; silence it otherwise. */
@@ -2362,15 +2056,13 @@ void ketju_find_regions(void)
         static int last_n_regions = -1, last_n_centers = -1;
         int n_centers = (int)centers.size();
         if(n_regions != last_n_regions || n_centers != last_n_centers) {
-            printf("KETJU: Found %d region(s) from %d center(s) at t=%g (%d reused from cache)\n",
-                   n_regions, n_centers, All.Time, n_reused);
+            printf("KETJU: Found %d region(s) from %d center(s) at t=%g\n", n_regions, n_centers, All.Time);
             last_n_regions = n_regions;
             last_n_centers = n_centers;
 #ifdef KETJU_VERBOSE_INTEGRATION
             for(int r = 0; r < n_regions; r++) {
-                printf("KETJU:   region %d: %d particles, %d centers%s\n",
-                       r, ActiveRegions[r].total_particle_count, (int)ActiveRegions[r].centers.size(),
-                       region_changed[r] ? "" : " [cached]");
+                printf("KETJU:   region %d: %d particles, %d centers\n",
+                       r, ActiveRegions[r].total_particle_count, (int)ActiveRegions[r].centers.size());
             }
 #endif
         }
@@ -2652,34 +2344,7 @@ void ketju_finish_step(void)
      * ketju_find_regions() at the start of the next step, so that guard checks
      * in kicks.cc/predict.cc/gravtree.cc can see which particles were KETJU-integrated */
 
-    /* cache region communicators for reuse next step */
-    CachedRegions.clear();
-    for(size_t r = 0; r < ActiveRegions.size(); r++) {
-        CachedRegionInfo ci;
-        /* Collect sorted (ID,Task,Index) keys for staleness check next step.
-         * MUST be globally consistent on every task — using ActiveRegions[r].all_particles
-         * is wrong because it is only populated on the affected_root after Gatherv,
-         * leaving the cached keys empty on every other task and causing split decisions
-         * (some tasks setup_integrator_reuse, others setup_integrator) → MPI deadlock. */
-        ci.sorted_particle_keys = gather_sorted_region_keys(ActiveRegions[r].local_member_indices);
-
-        /* transfer communicator ownership — avoid free in KetjuRegion destructor */
-        ci.affected_tasks = ActiveRegions[r].affected_tasks;
-        ActiveRegions[r].affected_tasks.comm = MPI_COMM_NULL;
-        ActiveRegions[r].affected_tasks.group = MPI_GROUP_NULL;
-        ci.compute_tasks = ActiveRegions[r].compute_tasks;
-        ActiveRegions[r].compute_tasks.comm = MPI_COMM_NULL;
-        ActiveRegions[r].compute_tasks.group = MPI_GROUP_NULL;
-
-        ci.affected_sim_indices = std::move(ActiveRegions[r].affected_sim_indices);
-        ci.particle_counts_on_affected = std::move(ActiveRegions[r].particle_counts_on_affected);
-        ci.compute_info = ActiveRegions[r].compute_info;
-        ci.total_particle_count = ActiveRegions[r].total_particle_count;
-
-        CachedRegions.push_back(std::move(ci));
-    }
-
-    /* free region data (integrators, particle arrays — but comms are now in cache) */
+    /* free region data (integrators, particle arrays, communicators) */
     ActiveRegions.clear();
     AllKetjuParticleIndices.clear();
 }
@@ -2689,10 +2354,7 @@ int ketju_is_particle_in_region(int i)
     return (AllKetjuParticleIndices.find(i) != AllKetjuParticleIndices.end()) ? 1 : 0;
 }
 
-void ketju_mark_regions_stale(void)
-{
-    KetjuRegionsStale = 1;
-}
+void ketju_mark_regions_stale(void) {} /* regions are rebuilt every step; kept for the domain/merge-split call sites */
 
 /* ============================================================
  *  Phase C: HDF5 output for KETJU diagnostics
