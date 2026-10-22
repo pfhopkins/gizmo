@@ -54,7 +54,7 @@ int main(int argc, char **argv)
             std::vector<std::string> fields;
             std::string field;
             while(std::getline(stream, field, '\t')) {fields.push_back(field);}
-            if(fields.size() != 14 || fields[0] != "union") {continue;}
+            if(fields.size() < 14 || fields[0] != "union") {continue;}
             ++position;
             if(fields[2] == "main" && fields[3] == "A") {parent_position = position;}
             if(fields[2] == "main" && fields[3] == "A::Child") {child_position = position;}

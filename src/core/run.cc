@@ -216,6 +216,7 @@ void run(void)
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
+        gizmo_timers_step_begin();
         GIZMO_TIMER_SCOPE("Step"); // closes on break, return, and normal iteration exit
 
         if((All.Ti_Current >= TIMEBASE) || (All.Time > All.TimeMax)) /* check whether we reached the final time */
@@ -447,6 +448,7 @@ void run(void)
            drain the request here instead of carrying a broken tree into the force computation. */
         gizmo_exit_bad_stop_if_requested("run:after_tree_update");
 
+        gizmo_timers_step_context();  /* workload after repartition, before physics can change particle counts */
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
 #ifdef DM_DISPERSION_LOOP_ACTIVE

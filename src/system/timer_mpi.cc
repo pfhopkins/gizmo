@@ -1,6 +1,7 @@
 #include "timer_mpi.h"
 #include "timer.h"
 
+#include <algorithm>
 #include <climits>
 #include <map>
 #include <set>
@@ -15,6 +16,11 @@ struct Totals {
     std::uint64_t calls = 0, completed = 0, active = 0;
     double inclusive = 0, exclusive = 0;
 };
+
+double imbalance(double sum, double maximum, int ranks)
+{
+    return sum > 0 ? maximum / (sum / ranks) : 1.0;
+}
 
 /* Compare path components so a sibling named "A!" cannot appear between "A"
  * and "A::child" in the readable tree. The lane is part of the first component. */
@@ -47,6 +53,48 @@ std::vector<std::string> lines(const std::string &text)
     }
     return result;
 }
+
+std::vector<int> sorted_tree_indices(const std::vector<std::string> &keys,
+                                     const std::vector<double> &metric)
+{
+    std::map<std::string, int> indices;
+    for(int i = 0; i < static_cast<int>(keys.size()); ++i) {indices.emplace(keys[i], i);}
+    std::vector<std::vector<int>> children(keys.size());
+    std::map<std::string, std::vector<int>> roots;
+    for(int i = 0; i < static_cast<int>(keys.size()); ++i) {
+        const auto parent_end = keys[i].rfind("::");
+        if(parent_end != std::string::npos) {
+            const auto parent = indices.find(keys[i].substr(0, parent_end));
+            if(parent != indices.end()) {
+                children[parent->second].push_back(i);
+                continue;
+            }
+        }
+        roots[keys[i].substr(0, keys[i].find('\t'))].push_back(i);
+    }
+    const auto hotter = [&](int a, int b) {
+        if(metric[2 * a] != metric[2 * b]) {return metric[2 * a] > metric[2 * b];}
+        return keys[a] < keys[b];
+    };
+    for(auto &group : children) {std::sort(group.begin(), group.end(), hotter);}
+    std::vector<int> result, pending;
+    result.reserve(keys.size());
+    // Keep the main/worker lanes separate and emit each parent before its
+    // complete subtree. Use an explicit stack so deeply nested scopes are safe.
+    for(auto &lane : roots) {
+        auto &group = lane.second;
+        std::sort(group.begin(), group.end(), hotter);
+        pending.insert(pending.end(), group.rbegin(), group.rend());
+        while(!pending.empty()) {
+            const int i = pending.back();
+            pending.pop_back();
+            result.push_back(i);
+            const auto &nested = children[i];
+            pending.insert(pending.end(), nested.rbegin(), nested.rend());
+        }
+    }
+    return result;
+}
 } // namespace
 
 void TimerWriteTSVHeader(FILE *stream)
@@ -54,17 +102,24 @@ void TimerWriteTSVHeader(FILE *stream)
     if(stream) {
         std::fprintf(stream, "label\tstep\tlane\tpath\tranks_present\tcalls_sum\tcompleted_sum\tactive_sum"
                      "\tinclusive_min_s\tinclusive_mean_s\tinclusive_max_s"
-                     "\texclusive_min_s\texclusive_mean_s\texclusive_max_s\n");
+                     "\texclusive_min_s\texclusive_mean_s\texclusive_max_s"
+                     "\tinclusive_imbalance\texclusive_imbalance\tmode"
+                     "\tsimulation_time\tsimulation_dt\tparticles_total"
+                     "\tactive_particles_sum\tactive_particles_mean\tactive_particles_max"
+                     "\tactive_gas_sum\tactive_gas_mean\tactive_gas_max\thighest_active_bin\n");
     }
 }
 
-bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, long long step)
+bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, long long step,
+                    TimerTreeSort sort, const std::vector<TimerRecord> *snapshot,
+                    const TimerReportContext *context)
 {
     int rank, ranks;
     MPI_Comm_rank(comm, &rank);
     MPI_Comm_size(comm, &ranks);
     std::map<std::string, Totals> local;
-    for(const auto &record : TimerSnapshot()) {
+    const auto captured = snapshot ? std::vector<TimerRecord>() : TimerSnapshot();
+    for(const auto &record : snapshot ? *snapshot : captured) {
         auto &sum = local[std::string(record.thread == 0 ? "main\t" : "workers\t") + record.path];
         sum.calls += record.calls;
         sum.completed += record.completed;
@@ -133,41 +188,73 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
     const std::uint64_t errors = TimerErrorCount();
     std::uint64_t error_sum = 0;
     MPI_Reduce(&errors, &error_sum, 1, MPI_UINT64_T, MPI_SUM, 0, comm);
+    const TimerReportContext empty_context;
+    const auto &info = context ? *context : empty_context;
+    const long long work[2] = {info.active_particles_local, info.active_gas_local};
+    long long work_sum[2], work_max[2];
+    MPI_Reduce(work, work_sum, 2, MPI_LONG_LONG, MPI_SUM, 0, comm);
+    MPI_Reduce(work, work_max, 2, MPI_LONG_LONG, MPI_MAX, 0, comm);
     if(rank != 0) {return true;}
+    for(int i = 0; i < 2; ++i) {if(work_sum[i] < 0) {work_sum[i] = work_max[i] = -1;}}
+    const double active_mean = work_sum[0] >= 0 ? static_cast<double>(work_sum[0]) / ranks : -1;
+    const double gas_mean = work_sum[1] >= 0 ? static_cast<double>(work_sum[1]) / ranks : -1;
 
     if(tree) {
-        std::fprintf(tree, "\nTimer snapshot: %s step=%lld ranks=%d errors=%llu (cumulative)\n"
+        std::fprintf(tree, "\nTimer snapshot: %s step=%lld ranks=%d errors(total)=%llu (%s)\n"
                      "Main rows: host elapsed seconds. Worker rows: summed thread seconds.\n"
                      "Rank means include zero for absent regions; row maxima need not add up.\n"
-                     "%-8s %12s %12s %12s %12s %12s %8s %8s  %s\n",
+                     "Imbalance = max/mean (1 = balanced; 1 for zero time).\n"
+                     "Sibling order: descending %s, preserving each subtree.\n",
                      label, step, ranks, static_cast<unsigned long long>(error_sum),
-                     "lane", "incl_mean", "incl_max", "self_mean", "self_max", "calls_sum",
+                     info.mode, sort == TimerTreeSort::InclusiveMean ? "incl_mean" : "incl_max");
+        std::fprintf(tree, "Workload: time=%.17g dt=%.17g particles=%lld active=%lld gas_active=%lld "
+                     "active_rank_mean=%.6g active_rank_max=%lld highest_active_bin=%d (-1 = unavailable)\n",
+                     info.simulation_time, info.simulation_dt, info.particles_total,
+                     work_sum[0], work_sum[1], active_mean, work_max[0], info.highest_active_bin);
+        std::fprintf(tree, "%-8s %12s %12s %12s %12s %10s %10s %12s %8s %8s  %s\n",
+                     "lane", "incl_mean", "incl_max", "self_mean", "self_max", "incl_imb", "self_imb", "calls_sum",
                      "ranks", "active", "region");
+        // Ranking by sums is equivalent to ranking by means: the divisor is
+        // the same number of MPI ranks for every row.
+        const auto order = sorted_tree_indices(keys, sort == TimerTreeSort::InclusiveMean ? sums : maxima);
+        for(const int i : order) {
+            const auto tab = keys[i].find('\t');
+            const auto lane = keys[i].substr(0, tab);
+            const auto path = keys[i].substr(tab + 1);
+            int depth = 0;
+            for(std::size_t p = 0; (p = path.find("::", p)) != std::string::npos; p += 2) {++depth;}
+            const auto last = path.rfind("::");
+            const char *leaf = path.c_str() + (last == std::string::npos ? 0 : last + 2);
+            const auto *c = &count_sums[4 * i];
+            std::fprintf(tree, "%-8s %12.6g %12.6g %12.6g %12.6g %10.4g %10.4g %12llu %8llu %8llu  %*s%s\n",
+                         lane.c_str(), sums[2 * i] / ranks, maxima[2 * i],
+                         sums[2 * i + 1] / ranks, maxima[2 * i + 1],
+                         imbalance(sums[2 * i], maxima[2 * i], ranks),
+                         imbalance(sums[2 * i + 1], maxima[2 * i + 1], ranks),
+                         static_cast<unsigned long long>(c[0]), static_cast<unsigned long long>(c[3]),
+                         static_cast<unsigned long long>(c[2]), 2 * depth, "", leaf);
+        }
     }
     for(int i = 0; i < n; ++i) {
         const auto tab = keys[i].find('\t');
         const auto lane = keys[i].substr(0, tab);
         const auto path = keys[i].substr(tab + 1);
-        int depth = 0;
-        for(std::size_t p = 0; (p = path.find("::", p)) != std::string::npos; p += 2) {++depth;}
-        const auto last = path.rfind("::");
-        const char *leaf = path.c_str() + (last == std::string::npos ? 0 : last + 2);
         const auto *c = &count_sums[4 * i];
-        if(tree) {
-            std::fprintf(tree, "%-8s %12.6g %12.6g %12.6g %12.6g %12llu %8llu %8llu  %*s%s\n",
-                         lane.c_str(), sums[2 * i] / ranks, maxima[2 * i],
-                         sums[2 * i + 1] / ranks, maxima[2 * i + 1],
-                         static_cast<unsigned long long>(c[0]), static_cast<unsigned long long>(c[3]),
-                         static_cast<unsigned long long>(c[2]), 2 * depth, "", leaf);
-        }
         if(tsv) {
             std::fprintf(tsv, "%s\t%lld\t%s\t%s\t%llu\t%llu\t%llu\t%llu"
-                         "\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\n",
+                         "\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g"
+                         "\t%.17g\t%.17g\t%s\t%.17g\t%.17g\t%lld"
+                         "\t%lld\t%.17g\t%lld\t%lld\t%.17g\t%lld\t%d\n",
                          label, step, lane.c_str(), path.c_str(),
                          static_cast<unsigned long long>(c[3]), static_cast<unsigned long long>(c[0]),
                          static_cast<unsigned long long>(c[1]), static_cast<unsigned long long>(c[2]),
                          minima[2 * i], sums[2 * i] / ranks, maxima[2 * i],
-                         minima[2 * i + 1], sums[2 * i + 1] / ranks, maxima[2 * i + 1]);
+                         minima[2 * i + 1], sums[2 * i + 1] / ranks, maxima[2 * i + 1],
+                         imbalance(sums[2 * i], maxima[2 * i], ranks),
+                         imbalance(sums[2 * i + 1], maxima[2 * i + 1], ranks), info.mode,
+                         info.simulation_time, info.simulation_dt, info.particles_total,
+                         work_sum[0], active_mean, work_max[0], work_sum[1], gas_mean,
+                         work_max[1], info.highest_active_bin);
         }
     }
     if(tree) {std::fflush(tree);}

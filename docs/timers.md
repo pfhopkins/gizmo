@@ -20,13 +20,16 @@ GIZMO_TIMERS=1 mpiexec -n 4 ./src/GIZMO parameters.txt
 | `GIZMO_TIMERS` | off | `1` or `true` enables timers. |
 | `GIZMO_TIMERS_INTERVAL` | `1` | Report at CPU log boundaries whose step number is a multiple of this positive integer. |
 | `GIZMO_TIMERS_KOKKOS` | off | `1` or `true` also forwards regions to Kokkos profiling tools. Requires timers to be enabled. |
+| `GIZMO_TIMERS_SORT` | `max` | Sort `timers.txt` siblings by descending inclusive rank maximum (`max`) or mean (`mean`). |
+| `GIZMO_TIMERS_MODE` | `cumulative` | Write cumulative reports, individual timestep reports (`step`), or both (`both`). |
 
 Rank zero broadcasts these settings once during initialization, so differing
 rank environments cannot make reporting collectives diverge. A final report is
 written regardless of the interval on normal completion or a controlled stop.
 
 Rank zero appends `timers.txt` (readable tree) and `timers.tsv` (tab separated
-records) to `OutputDir`. Each process launch adds a session marker and TSV header;
+records) to `OutputDir` in cumulative mode. Step mode writes `timers-step.txt`
+and `timers-step.tsv`; `both` writes both pairs. Each process launch adds a session marker and TSV header;
 restarts begin a new session with fresh totals. The TSV header can therefore recur
 between sessions. No timing state is loaded from restart files.
 
@@ -83,7 +86,140 @@ control flow: it closes on block exit, early return, and exception unwinding.
 Scope objects cannot be copied or moved and must be destroyed on their creating
 thread. Do not manually stop a scope owned by a `TimerScope` object.
 
+## Find finer-grained costs
+
+Start with `timers.txt` and find an expensive region with a large **self** time.
+Add smaller scopes around distinct work inside that region, rebuild GIZMO, and
+rerun the same workload. For example, inside the already-instrumented
+`gravity_tree()` function in `src/gravity/gravtree.cc`, add blocks like:
+
+```cpp
+{
+    GIZMO_TIMER_SCOPE("PrepareWalk");
+    // existing preparation work
+}
+{
+    GIZMO_TIMER_SCOPE("EvaluateWalk");
+    // existing walk work
+}
+{
+    GIZMO_TIMER_SCOPE("ExchangeResults");
+    // existing communication work
+}
+```
+
+Each timer lasts until the end of its block. These names are automatically
+reported under the active path, for example
+`Step::Tree::TreeSolve::EvaluateWalk`. No enum, registration table or report
+format needs to be edited. Add another nested block to investigate a child.
+Wrapping a function call includes all synchronous work in that call.
+
+For explicit boundaries, `TimerStart("PrepareWalk")` and
+`TimerStop("PrepareWalk")` measure only the statements between them. Scope timers
+are preferable when the region has early exits. Start with batches or phases to
+keep instrumentation overhead small. Device function bodies need GPU profiling;
+host scope timers belong outside the kernel, around its dispatch.
+
+For an investigation, report at every step boundary:
+
+```sh
+GIZMO_TIMERS=1 GIZMO_TIMERS_INTERVAL=1 \
+  mpiexec -n 4 ./src/GIZMO parameters.txt
+```
+
+Reports are cumulative by default. Use timestep mode below to compare individual
+steps. Do not subtract successive rank maxima: the slowest rank may change, so
+correct interval maxima require differences on each rank before MPI aggregation.
+Increase the reporting interval again for large production runs.
+The TSV `path` column allows filtering a subtree;
+`inclusive_mean_s`, `inclusive_max_s`, and `exclusive_mean_s` distinguish a
+region's overall cost, rank imbalance, and time not attributed to its children.
+
+## Compare individual timesteps
+
+To retain aggregate totals and also write one-step measurements:
+
+```sh
+export GIZMO_TIMERS=1
+export GIZMO_TIMERS_MODE=both
+export GIZMO_TIMERS_INTERVAL=1
+```
+
+`timers.txt` / `timers.tsv` remain cumulative. `timers-step.txt` /
+`timers-step.tsv` contain differences for each individual run-loop iteration,
+including the timers nested under `Step`. Differences are computed separately
+for each thread/path on each MPI rank before reduction. Timer counters are not
+reset and live scopes keep their nesting. Calls and completions count events in
+the interval; `active` remains the number of scopes open at its end.
+
+The interval starts just after CPU-log reporting at the beginning of a run-loop
+iteration, and ends at the next CPU-log reporting boundary. It includes the
+iteration's work and the following statistics calculation. Startup work is
+excluded from ordinary step rows. A forced final/controlled-stop report is
+marked `partial`, or `startup` if no step interval began. For `INTERVAL > 1`,
+the selected output is still one step, not an accumulation over skipped steps.
+Use interval 1 when investigating timestep-to-timestep changes.
+
+Each report also records the simulation time and system timestep, total particle
+count, global active-particle and active-gas counts, per-rank active count means
+and maxima, and highest active time bin. Workload is captured after domain
+repartition and active-list construction, before the main force/physics work.
+Active particles use the live active-list size; active gas uses the scheduled
+active time-bin gas counts. These are timestep workload descriptors, not exact
+per-kernel input sizes (imports and neighbour counts can differ). In cumulative
+reports they describe the latest step, not a cumulative particle-update count.
+Unavailable counts use -1, including startup and finalization before a workload
+was captured. Metadata is repeated on each TSV timer row to allow filtering by
+path and plotting `inclusive_max_s` against `active_particles_sum` or
+`active_gas_sum` directly.
+
+Per-step snapshots and MPI reporting add overhead. Mode `step` omits cumulative
+reporting; mode `both` performs both MPI aggregations at each selected boundary.
+
 ## Read the measurements
+
+The readable tree's time columns are seconds summed across calls in the selected
+window (session totals for cumulative mode, one iteration for step mode).
+`mean` and `max` refer to MPI ranks, not individual calls:
+
+| Column | Meaning |
+| --- | --- |
+| `incl_mean` | Mean across ranks of a region's elapsed time, including nested timers. |
+| `incl_max` | Largest inclusive time on any rank. |
+| `self_mean` | Mean across ranks of elapsed time excluding nested timers. |
+| `self_max` | Largest self time on any rank. |
+| `incl_imb` | Inclusive max / mean across ranks; 1 means balanced. |
+| `self_imb` | Self max / mean across ranks; 1 means balanced. |
+
+An imbalance of 2 means the slowest rank took twice the mean rank time. Zero-time
+rows use 1. Missing regions contribute zero to the mean, so a region executed on
+one of N ranks can show an imbalance of N. These ratios describe elapsed-time
+imbalance; MPI waits can mask differences in computation. TSV columns are named
+`inclusive_imbalance` and `exclusive_imbalance`.
+
+For example, a region taking 10 seconds on a rank, with 7 seconds inside child
+timers, contributes 10 seconds inclusive and 3 seconds self on that rank. Self
+time includes uninstrumented work, MPI waiting, and GPU completion waiting within
+the region; it is not necessarily CPU compute time.
+
+Both readable trees sort top-level regions and each parent's immediate children by
+descending `incl_max` by default. Parents stay before their complete subtrees;
+the `main` and `workers` lanes remain separate. Ties use path names. Max ordering
+highlights slowest-rank costs for MPI performance work. Compare max against mean
+to identify imbalance; a large self time suggests where to add finer scopes.
+Maxima in separate rows can come from different ranks and are not a reconstructed
+critical path through the program.
+
+To order by average rank cost instead, set this runtime variable before launch:
+
+```sh
+export GIZMO_TIMERS_SORT=mean
+```
+
+Mean and sum ordering are equivalent at fixed rank count, so mean ordering also
+highlights aggregate rank time. TSV rows retain canonical path order for analysis.
+Sorting changes output order only; timer collection and MPI reductions use the
+same canonical paths in both modes.
 
 - **Inclusive:** elapsed time in a region, including its nested regions.
 - **Exclusive / self:** elapsed time excluding direct children. Time not covered
@@ -91,8 +227,9 @@ thread. Do not manually stop a scope owned by a `TimerScope` object.
 - **Calls:** started invocations, including active invocations.
 - **Completed / active:** completed and still-open invocation counts.
 
-Every snapshot is cumulative within a process launch. Do not add snapshots to
-obtain totals. Live invocations contribute elapsed time up to the snapshot,
+The timer core's snapshots are cumulative within a process launch. Cumulative
+reports must not be added to obtain totals; step reports contain separate
+interval differences. Live invocations contribute elapsed time up to the snapshot,
 without being stopped or double counted at their eventual stop. Their changing
 self time can include gaps between instrumentation points.
 
