@@ -609,7 +609,7 @@ static void spatialpartition(struct ketju_system *R, int max_leaf_size) {
 static int get_longest_edge(double w[3], int id[3]) {
 
     double L = -1;
-    int ind = -1;
+    int ind = 0;
     for (int m = 0; m < 3; m++) {
         if (w[m] > L) {
             L = w[m];
