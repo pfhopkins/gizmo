@@ -747,6 +747,24 @@ void resolvedism_photoionize(void)
      * The global reset already cleared 1->0 at the top.
      * Now transition 2->1 (confirm newly ionized) and wake them.
      * Cells not re-ionized remain at 0 and recombine via CHEMCOOL. */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    {   /* photon ledger: recombination cost of the cells marked this call vs total Q */
+        double led[2] = {0, 0}, led_g[2] = {0, 0};
+        for(i = 0; i < NumPart; i++) {if(PISlot[i] >= 0) {led[0] += compute_single_star_S_ly(i);}}
+        for(j = 0; j < N_gas; j++) {
+            if(P[j].Type != 0 || P[j].Mass <= 0 || CellP[j].Ionized != 2) continue;
+            double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS, M_cgs = P[j].Mass * UNIT_MASS_IN_CGS;
+#ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
+            double alpha = pi_alpha_b_cell(CellP[j].Temp);
+#else
+            double alpha = PI_ALPHA_B;
+#endif
+            led[1] += alpha * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+        }
+        MPI_Allreduce(led, led_g, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && led_g[0] > 0) {printf("RESOLVEDISM PI LEDGER: t=%g Q=%g recomb=%g ratio=%.4f\n", All.Time, led_g[0], led_g[1], led_g[1] / led_g[0]);}
+    }
+#endif
     int sum_ionized = 0, n_woken = 0;
     for(j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;
