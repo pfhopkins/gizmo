@@ -71,7 +71,7 @@ void resolvedism_dust_evolve(void)
     int i;
     double grain_size = 0.1; /* fiducial grain radius in microns */
     /* conversion factor: sputtering rate is in yr^-1, need code time^-1 */
-    double yr_to_code = SECONDS_PER_YEAR / UNIT_TIME_IN_CGS;
+    double yr_to_code = UNIT_TIME_IN_CGS / SECONDS_PER_YEAR;
 
     for(int i : ActiveParticleList)
     {
