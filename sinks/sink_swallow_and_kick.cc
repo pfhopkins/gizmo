@@ -209,7 +209,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 MyIDType OriginallyMarkedSwallowID; OriginallyMarkedSwallowID = P[j].SwallowID; // record this to help prevent double-counting below
-                double Mass_j, Vel_j[3], InternalEnergy_j; // velocity kicks to apply to 'j's, accumulate here to apply at bottom of code
+                double Mass_j, Vel_j[3], InternalEnergy_j = 0; // velocity kicks to apply to 'j's, accumulate here to apply at bottom of code
                 #pragma omp atomic read
                 Mass_j = P[j].Mass; // this can get modified -a lot- below, so we need to read it carefully right now
                 if(P[j].Type==0)

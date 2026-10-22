@@ -209,6 +209,7 @@ long long report_comittable_memory(long long *MemTotal,
 {
   FILE *fd;
   char buf[1024];
+  *MemTotal = *Committed_AS = *SwapTotal = *SwapFree = 0;
 
   if((fd = fopen("/proc/meminfo", "r")))
     {
