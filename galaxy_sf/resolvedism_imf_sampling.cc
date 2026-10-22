@@ -644,10 +644,10 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                     for(k = 0; k < NUM_RESOLVEDISM_ELEMENTS; k++) {out.elem_accreted[k] += dM * X_j[k];}
 #endif
 #ifdef STELLA_SELFCHECK
-                    { static long n_don = 0, n_low = 0; n_don++;   /* donor drained below the accretion floor */
+                    { static long n_low = 0;   /* donor drained below the accretion floor */
                       if(P[j].Mass < (1 - 1.0e-9) * 0.01 * All.MinMassForParticleMerger && ++n_low <= 50)
                           STELLA_CHECK("donor_mass_floor", 0, "donor ID=%llu M_left=%.3e M_merge=%.3e (code) n_low=%ld", (unsigned long long)P[j].ID, (double)P[j].Mass, All.MinMassForParticleMerger, n_low);
-                      if(n_don == 1 || n_don % 1000 == 0) STELLA_CHECK_RAN("donor_mass_floor", 1);}
+                      STELLA_CHECK_RAN("donor_mass_floor", 1);}
 #endif
                     out.mass_accreted += dM;
                     if(r2 > out.r_max_donor * out.r_max_donor) {out.r_max_donor = sqrt(r2);}
