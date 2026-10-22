@@ -194,7 +194,11 @@ void init(void)
 
 #ifdef METALS
     for(j=0;j<NUM_METAL_SPECIES;j++) {All.SolarAbundances[j]=0;} // initialize all to zero
-    All.SolarAbundances[0]=0.014;       // Asplund+ 2009 present-day solar Z, matches hardcoded value in resolvedism_stellar_tables.cc and chemcool
+#if defined(GALSF_RESOLVEDISM) || defined(CHEMCOOL)
+    All.SolarAbundances[0]=0.014;       // Stella/CHEMCOOL: Asplund+ 2009 present-day solar Z, as in resolvedism_stellar_tables.cc and chemcool
+#else
+    All.SolarAbundances[0]=0.02;        // all metals (by mass); present photospheric abundances from Asplund et al. 2009 (Z=0.0134, proto-solar=0.0142) in notes;
+#endif
     //   also Anders+Grevesse 1989 (older, but hugely-cited compilation; their Z=0.0201, proto-solar=0.0213)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     All.SolarAbundances[1]=0.28;    // He  (10.93 in units where log[H]=12, so photospheric mass fraction -> Y=0.2485 [Hydrogen X=0.7381]; Anders+Grevesse Y=0.2485, X=0.7314), with proto-solar Y=0.27
