@@ -14,6 +14,7 @@
 #include <cmath>
 #include <vector>
 #include <Kokkos_Core.hpp>
+#include "../system/timer.h"
 
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
@@ -763,6 +764,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  * ==================================================================== */
 void density(void)
 {
+    GIZMO_TIMER_SCOPE("Density");
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
     if (host_all->TotN_gas <= 0) return;
 

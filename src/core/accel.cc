@@ -6,6 +6,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/timer.h"
 #include "../hydro/hydro_corridor.h" /* gizmo_hydro_corridor_mg_step */
 
 /*! \file accel.c
@@ -32,6 +33,7 @@
 
 void compute_grav_accelerations(void)
 {
+  GIZMO_TIMER_SCOPE("Tree");
   CPU_Step[CPU_MISC] += measure_time();
   PRINT_STATUS("Start gravity force computation...");
 
@@ -61,6 +63,7 @@ void compute_grav_accelerations(void)
 
 void compute_hydro_densities_and_forces(void)
 {
+  GIZMO_TIMER_SCOPE("Hydro");
   if(All.TotN_gas > 0)
     {
         PRINT_STATUS("Start hydrodynamics computation...");

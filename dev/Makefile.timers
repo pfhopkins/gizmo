@@ -1,0 +1,25 @@
+# Run from the repository root. Standalone: no GIZMO configuration or Kokkos.
+CXX = c++
+MPICXX = mpicxx
+MPIEXEC = mpiexec
+CXXFLAGS = -std=c++17 -O1 -g -Wall -Wextra -Werror -pthread
+TIMER_BUILD ?= /tmp/gizmo-timers
+
+.PHONY: check check-mpi
+check: $(TIMER_BUILD)/test_timers
+	$(TIMER_BUILD)/test_timers
+	$(TIMER_BUILD)/test_timers --disabled
+	$(TIMER_BUILD)/test_timers --main-hooks
+
+check-mpi: $(TIMER_BUILD)/test_timers_mpi
+	$(MPIEXEC) -n 1 $(TIMER_BUILD)/test_timers_mpi
+	$(MPIEXEC) -n 3 $(TIMER_BUILD)/test_timers_mpi
+
+$(TIMER_BUILD):
+	mkdir -p $@
+
+$(TIMER_BUILD)/test_timers: dev/test_timers.cc src/system/timer.cc src/system/timer.h | $(TIMER_BUILD)
+	$(CXX) $(CXXFLAGS) dev/test_timers.cc src/system/timer.cc -o $@
+
+$(TIMER_BUILD)/test_timers_mpi: dev/test_timers_mpi.cc src/system/timer.cc src/system/timer_mpi.cc src/system/timer.h src/system/timer_mpi.h | $(TIMER_BUILD)
+	$(MPICXX) $(CXXFLAGS) dev/test_timers_mpi.cc src/system/timer.cc src/system/timer_mpi.cc -o $@

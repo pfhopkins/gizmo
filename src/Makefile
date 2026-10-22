@@ -940,6 +940,7 @@ CORE_OBJS =	core/main.o core/accel.o core/timestep.o core/init.o file_io/restart
 			core/transport_subcycle.o
 
 SYSTEM_OBJS =   system/system.o \
+                system/timer.o system/timer_mpi.o system/timer_gizmo.o \
 				system/allocate.o \
 				system/mymalloc.o \
 				system/parallel_sort.o \
@@ -975,6 +976,7 @@ HYDRO_OBJS = 	hydro/hydro_toplevel.o \
 ## Get_Gas_Molecular_Mass_Fraction which are called from device cooling functions.
 GPU_OBJS = core/gpu_drift.o cooling/cooling.o eos/eos.o hydro/density_gpu.o hydro/density_loop.o hydro/cellcorrections_loop.o hydro/gradients_loop.o hydro/hydro_force_loop.o hydro/mg_gradient_correction.o mesh/gpu_neighbor_list.o mesh/neighbor_loop_runner.o radiation/rt_chem.o turb/turb_driving.o turb/difffilter_loop.o solids/grain_drag.o galaxy_sf/dm_dispersion.o galaxy_sf/dm_dispersion_loop.o gravity/ags_density_loop.o gravity/ags_force_loop.o sidm/dm_fuzzy_loop.o sidm/cbe_integrator_gpu.o sidm/cbe_integrator_gradients.o radiation/rt_source_injection_loop.o galaxy_sf/thermal_fb.o galaxy_sf/thermal_fb_loop.o sinks/sink_feed.o sinks/sink_feed_loop.o sinks/sink_environment.o sinks/sink_env1_loop.o sinks/sink_env2_loop.o galaxy_sf/mechfb_loop.o solids/grain_physics_loop.o sinks/sink_swallow_and_kick.o sinks/sink_swk_loop.o galaxy_sf/radfb_rp_loop.o system/gpu_particles_arena.o system/kokkos_mem_telemetry.o gravity/gpu_gravity_tree.o gravity/gpu_gravtree.o gravity/gpu_moment_refresh.o gravity/gpu_nextnode_thread.o gravity/gpu_morton.o gravity/gpu_peano_walk.o gravity/gpu_topology_build.o gravity/gpu_topology_finalize.o gravity/gpu_pseudo_update.o gravity/gpu_force_drift.o gravity/gpu_force_update.o
 ## Nuclear network files are added to GPU_OBJS below (conditional on NUCLEAR_NETWORK)
+GPU_OBJS += system/timer_kokkos.o
 EOSCOOL_OBJS =  \
 				cooling/grackle.o \
 				cooling/simple_chemistry.o \
@@ -1070,6 +1072,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) $(GR_OBJS) \
 ## include files needed at compile time for the above objects
 INCL    += gr/gr.h gr/gr_functions.h gr/gr_con2prim_functions.h gr/gr_riemann_functions.h gr/gr_kick_functions.h gr/gr_source_functions.h
 INCL    += 	declarations/allvars.h \
+            system/timer.h system/timer_mpi.h system/timer_gizmo.h \
 			core/proto.h \
 			gravity/forcetree.h \
 			gravity/myfftw3.h \
@@ -1187,6 +1190,7 @@ endif
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) \
 	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(SKYNETLIBS) $(TORCHLIBS) $(HYPRE_LIBS) $(MKL_LIBS)
+LIBS += -pthread  # std::mutex in the host timer core
 
 
 $(EXEC): $(OBJS) $(GPU_OBJS)
@@ -1290,6 +1294,8 @@ galaxy_sf/radfb_rp_loop.o: galaxy_sf/radfb_rp_loop.cc $(INCL) $(CONFIG) compile_
 system/gpu_particles_arena.o: system/gpu_particles_arena.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 system/kokkos_mem_telemetry.o: system/kokkos_mem_telemetry.cc $(CONFIG) compile_time_info.cc
+	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
+system/timer_kokkos.o: system/timer_kokkos.cc system/timer.h $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 gravity/gpu_gravity_tree.o: gravity/gpu_gravity_tree.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@

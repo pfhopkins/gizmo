@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../system/timer.h"
 #include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
 #if defined(DM_SIDM)
@@ -38,6 +39,7 @@ static double dt_displacement = 0;
  */
 void find_timesteps(void)
 {
+    GIZMO_TIMER_SCOPE("FindTimesteps");
     CPU_Step[CPU_MISC] += measure_time();
 
     int i, bin, binold, prev, next;

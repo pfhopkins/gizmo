@@ -29,6 +29,7 @@
 #include <cmath>
 #include <vector>
 #include <Kokkos_Core.hpp>
+#include "../system/timer.h"
 
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
@@ -457,6 +458,7 @@ void GradientsIterSpec::apply_active_writeback(const neighbor_loop_args& args,
  * ========================================================================== */
 void hydro_gradient_calc(void)
 {
+    GIZMO_TIMER_SCOPE("Gradients");
     CPU_Step[CPU_DENSMISC] += measure_time();
     double t0 = my_second();
     /* The per-active host loops below each write only their own particle, so they thread over the

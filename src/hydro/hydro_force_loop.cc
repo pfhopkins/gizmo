@@ -30,6 +30,7 @@
 #include <cstring>
 #include <cmath>
 #include <Kokkos_Core.hpp>
+#include "../system/timer.h"
 
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
 #include "../declarations/allvars.h"
@@ -422,6 +423,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 
 void hydro_force(void)
 {
+    GIZMO_TIMER_SCOPE("HydroForce");
     CPU_Step[CPU_MISC] += measure_time();
     double t00_truestart = my_second();
     double t_preloop_start = my_second();

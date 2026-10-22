@@ -8,6 +8,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../system/timer.h"
 #include "../mesh/kernel.h"
 #include "forcetree.h"               /* GIZMO_EWALD_EN + Ewald-table accessor decls */
 #include "gravtree_force_kernel.h"   /* shared CPU/GPU accepted-source contribution physics (SSOT) */
@@ -398,6 +399,7 @@ static const double LET_FOREIGN_PAD_FRACTION = 0.5;
 
 int force_treebuild(int npart, struct unbind_data *mp)
 {
+    GIZMO_TIMER_SCOPE("TreeBuild");
     int flag;
     /* Adaptive LET foreign-arena retry: force_treebuild owns the rebuild loop (same
      * idiom as the TreeAllocFactor-overflow retry below). On a retryable LET overflow

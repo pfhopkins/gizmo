@@ -7,6 +7,7 @@
 #include <math.h>
 #include <string>
 #include <Kokkos_Core.hpp>
+#include "../system/timer_gizmo.h"
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
@@ -2931,6 +2932,7 @@ int gizmo_gpu_device_memory(size_t *free_bytes, size_t *total_bytes)
 }
 void gizmo_kokkos_finalize(void)
 {
+    gizmo_timers_shutdown();  /* close forwarded regions before Kokkos is torn down */
     /* Persistent device-side state is handed back before Kokkos is torn down;
        finalizing with allocations still tracked is what this ordering avoids.
        This is the single chokepoint every shutdown path already routes through. */

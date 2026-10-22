@@ -25,10 +25,12 @@
 #include <utility>
 #include <type_traits>
 #include "gpu_error_check.h"
+#include "../system/timer.h"
 
 template<typename F>
 inline void gizmo_gpu_kernel_launch(const char *tag, int N, F&& f, int batch_start = -1)
 {
+    GIZMO_TIMER_SCOPE(tag);
     Kokkos::parallel_for(tag, N, std::forward<F>(f));
     Kokkos::fence();
     gizmo_gpu_check_last_error(tag, N, batch_start);
@@ -40,6 +42,7 @@ inline void gizmo_gpu_kernel_launch(const char *tag, int N, F&& f, int batch_sta
 template<typename F>
 inline int gizmo_gpu_kernel_launch_count(const char *tag, int N, F&& f, int batch_start = -1)
 {
+    GIZMO_TIMER_SCOPE(tag);
     int total = 0;
     Kokkos::parallel_reduce(tag, N, std::forward<F>(f), total);
     Kokkos::fence();
@@ -71,6 +74,7 @@ inline int gizmo_gpu_kernel_launch_count(const char *tag, int N, F&& f, int batc
 template<typename F>
 inline void gizmo_gpu_team_kernel_launch(const char *tag, int league, int team_size, F&& f)
 {
+    GIZMO_TIMER_SCOPE(tag);
     Kokkos::TeamPolicy<> policy(league, team_size, 1);
     Kokkos::parallel_for(tag, policy, std::forward<F>(f));
     Kokkos::fence();
@@ -91,6 +95,7 @@ inline int gizmo_gpu_team_size_max(const F& f)
 template<typename F>
 inline void gizmo_gpu_team_kernel_launch(const char *tag, int league, int team_size, size_t scratch_bytes, F&& f)
 {
+    GIZMO_TIMER_SCOPE(tag);
     Kokkos::TeamPolicy<> policy(league, team_size, 1);
     policy.set_scratch_size(0, Kokkos::PerTeam(scratch_bytes));
     Kokkos::parallel_for(tag, policy, std::forward<F>(f));

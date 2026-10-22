@@ -9,6 +9,8 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/timer.h"
+#include "../system/timer_gizmo.h"
 #include "../gravity/gpu_gravity_tree.h"   /* gpu_gravity_tree_mark_born_current */
 #include "../mesh/neighbor_list.h"
 #include "../mesh/gpu_neighbor_list.h"
@@ -108,6 +110,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
                r ? r : "(reason set on other rank only)");
         fflush(stdout);
     }
+    gizmo_timers_report("controlled-stop", (long long) All.NumCurrentTiStep, true);
     gizmo_kokkos_finalize();  /* must precede MPI_Finalize */
     MPI_Finalize();
     exit(1);                  /* small fixed nonzero; full code/reason printed above */
@@ -212,6 +215,8 @@ void run(void)
         CPU_Step[CPU_LOGMSG] += measure_time();
 
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
+
+        GIZMO_TIMER_SCOPE("Step"); // closes on break, return, and normal iteration exit
 
         if((All.Ti_Current >= TIMEBASE) || (All.Time > All.TimeMax)) /* check whether we reached the final time */
         {
@@ -1264,6 +1269,7 @@ extern "C" int  gizmo_cpu_log_consume_force_print(void) { int v = g_cpu_log_forc
 
 void write_cpu_log(void)
 {
+  gizmo_timers_report("step", (long long) All.NumCurrentTiStep);
   double max_CPU_Step[CPU_PARTS], avg_CPU_Step[CPU_PARTS], t0, t1, tsum; int i; t0=0; t1=0; tsum=0;
   CPU_Step[CPU_MISC] += measure_time();
 

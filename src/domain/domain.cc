@@ -11,6 +11,7 @@
 #include "../core/proto.h"
 #include "domain_key_functions.h"
 #include "../declarations/gpu_rng.h"
+#include "../system/timer.h"
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
@@ -532,6 +533,7 @@ int domain_segments_per_rank_for_particles(long long total_particles, int *lower
  *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
+    GIZMO_TIMER_SCOPE("Domain");
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition")) {return;}
     /* The kept neighbour indexes will not be read again before the layout changes, so
      * their memory is returned now, before this decomposition's own allocations and

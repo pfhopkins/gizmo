@@ -23,6 +23,8 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../system/timer.h"
+#include "../system/timer_gizmo.h"
 /* Kokkos lifecycle wrappers declared in proto.h, defined in cooling/cooling.cc */
 
 static unsigned long long ExecutableFNV1a64 = 0; /*!< 64-bit FNV-1a hash of the running executable (0 if it could not be read) */
@@ -89,6 +91,7 @@ int main(int argc, char **argv)
   gizmo_node_comm_init();  /* persistent node-local communicator, used for node-scoped memory reporting */
   gizmo_kokkos_initialize(argc, argv);  /* must come after MPI_Init; sets up CUDA device and thread pool */
   gizmo_kokkos_mem_register();  /* observe Kokkos allocations from here on (after Kokkos init, before GIZMO allocations) */
+  gizmo_timers_initialize();    /* rank-zero environment, broadcast to every rank */
   /* Check if CUDA/Kokkos init changed CPU floating-point mode (FTZ/DAZ).
      On ARM (aarch64), check FPCR bits 24 (FZ) and 19 (FZ16).
      On x86, check MXCSR bits 15 (FZ) and 6 (DAZ). */
@@ -224,7 +227,10 @@ int main(int argc, char **argv)
   CPUThisRun = 0;
   cpu_chain_sync(my_second());
 
-  begrun();			/* set-up run  */
+  {
+    GIZMO_TIMER_SCOPE("Setup");
+    begrun();			/* set-up run  */
+  }
 
   report_memory_ledger("startup");  /* all ranks reach this point after begrun(); its node-scoped reduce is collective */
 
@@ -253,6 +259,7 @@ int main(int argc, char **argv)
    * exit statuses). Node still releases cleanly: MPI_Finalize, not MPI_Abort. */
   int badstop_exit = (gizmo_controlled_stop_code() != 0) ? 1 : 0;
 
+  gizmo_timers_report("final", (long long) All.NumCurrentTiStep, true);
   gizmo_kokkos_finalize();  /* must come before MPI_Finalize */
   MPI_Finalize();		/* clean up & finalize MPI */
 
