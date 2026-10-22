@@ -31,7 +31,7 @@ jobs:
         python -m pip install .
     - name: Lint with ruff
       run: |
-        python -m pip install ruff
+        python -m pip install ruff==0.17.2
         ruff check python_src test
     - name: Compile all Python sources
       run: python -m compileall -q python_src test
