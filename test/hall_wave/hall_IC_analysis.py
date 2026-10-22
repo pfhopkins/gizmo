@@ -8,7 +8,7 @@
 ## load libraries we will use 
 import numpy as np
 import h5py as h5py
-from gizmopy import *
+from gizmo import load_from_snapshot
 import matplotlib
 import matplotlib.pylab as pylab
 matplotlib.use('Agg') ## this calls matplotlib without a X-windows GUI
