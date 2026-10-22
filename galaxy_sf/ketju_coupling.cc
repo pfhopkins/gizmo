@@ -252,6 +252,7 @@ static std::set<int> AllKetjuParticleIndices; /* local indices of all particles 
  * and ketju_find_regions to avoid a redundant MPI_Allgatherv on COMM_WORLD */
 static std::vector<ketju_mpi_particle> CachedChainCenters;
 static int CachedChainCentersValid = 0;
+static std::vector<std::vector<ketju_mpi_particle>> CachedCenterGroups; /* the limiter's orbit grouping of the same centres */
 
 /* ketju_limit_timesteps tallies since the last KETJU STATS reduction: limited particles moved to a
  * shorter / longer bin, timestep regions set, and those whose bin a limiting particle set (the
@@ -704,6 +705,7 @@ static std::vector<std::vector<ketju_mpi_particle>> merge_overlapping_regions(
  *  pericentre < r_region inside an anticipatory window); only those centres become members,
  *  so a dense cluster does not merge into one geometric super-region.
  * ============================================================ */
+static const double KJ_CAPTURE_K = 16.0; /* capture window in units of r_ngb; no pair beyond it forms a subsystem */
 static int pair_forms_subsystem(const ketju_mpi_particle &a, const ketju_mpi_particle &b)
 {
     const double r_ngb = All.KetjuRegionRadius;
@@ -738,7 +740,7 @@ static int pair_forms_subsystem(const ketju_mpi_particle &a, const ketju_mpi_par
      * The EXPLICIT distance bound is essential: for fast HYPERBOLIC encounters (v_rel set by the
      * cluster dispersion, not by the pair potential) r/v < tau alone fires at huge distances
      * (~0.1 pc for r_ngb=500 AU), chaining hundreds of stars into giant merged subsystems. */
-    const double K = 16.0;
+    const double K = KJ_CAPTURE_K;
     if(r >= K * r_ngb) return 0;
     double tau = K * sqrt(K) * r_ngb * sqrt(r_ngb) / sqrt(2.0 * GM);
     if(r / sqrt(v2) < tau) return 1;
@@ -757,9 +759,22 @@ static std::vector<std::vector<ketju_mpi_particle>> build_orbit_regions(
     };
     auto unite = [&](int a, int b) { a = find(a); b = find(b); if(a != b) group[a] = b; };
 
+    /* only pairs closer than KJ_CAPTURE_K * r_ngb can form a subsystem (bound ones with a < r_ngb lie within 2 r_ngb):
+     * test pairs from neighbouring cells of that size, O(n) instead of O(n^2); the partition does not depend on pair order */
+    const double cell = KJ_CAPTURE_K * All.KetjuRegionRadius;
+    std::unordered_map<long long, std::vector<int>> grid;
+    auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
+    std::vector<long long> ci(3 * n);
+    for(int i = 0; i < n; i++) {
+        for(int k = 0; k < 3; k++) ci[3*i+k] = (long long)floor(centers[i].Pos[k] / cell);
+        grid[key(ci[3*i], ci[3*i+1], ci[3*i+2])].push_back(i);
+    }
     for(int i = 0; i < n; i++)
-        for(int j = i + 1; j < n; j++)
-            if(pair_forms_subsystem(centers[i], centers[j])) unite(i, j);
+        for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
+            auto it = grid.find(key(ci[3*i] + dx, ci[3*i+1] + dy, ci[3*i+2] + dz));
+            if(it == grid.end()) continue;
+            for(int j : it->second) if(j > i && pair_forms_subsystem(centers[i], centers[j])) unite(i, j);
+        }
 
     std::vector<std::vector<ketju_mpi_particle>> regions;
     std::vector<int> root_to_region(n, -1);
@@ -1906,6 +1921,7 @@ void ketju_limit_timesteps(void)
     const double limiting_radius = All.KetjuTimestepLimitingFactor * All.KetjuRegionRadius; /* GADGET-4 KETJU default 100 */
 #ifdef KETJU_TYPE4_STARS
     std::vector<std::vector<ketju_mpi_particle>> tsr_centers = build_orbit_regions(centers); (void)limited_radius;
+    CachedCenterGroups = tsr_centers;
 #else
     std::vector<std::vector<ketju_mpi_particle>> tsr_centers = merge_overlapping_regions(centers, 2.0 * limited_radius);
 #endif
@@ -1982,6 +1998,7 @@ void ketju_find_regions(void)
 
     /* reuse chain centers from ketju_limit_timesteps if available, else gather fresh */
     std::vector<ketju_mpi_particle> centers;
+    const int reuse_groups = CachedChainCentersValid; /* same centres as the limiter, so the same orbit groups */
     if(CachedChainCentersValid) {
         centers = std::move(CachedChainCenters);
         CachedChainCentersValid = 0;
@@ -1993,9 +2010,9 @@ void ketju_find_regions(void)
     /* merge overlapping regions */
     double merge_radius = 2.0 * All.KetjuRegionRadius;
 #ifdef KETJU_TYPE4_STARS
-    std::vector<std::vector<ketju_mpi_particle>> region_centers = build_orbit_regions(centers); (void)merge_radius;
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = reuse_groups ? std::move(CachedCenterGroups) : build_orbit_regions(centers); (void)merge_radius;
 #else
-    std::vector<std::vector<ketju_mpi_particle>> region_centers = merge_overlapping_regions(centers, merge_radius);
+    std::vector<std::vector<ketju_mpi_particle>> region_centers = merge_overlapping_regions(centers, merge_radius); (void)reuse_groups;
 #endif
 
     /* build regions (first pass: find members) */
