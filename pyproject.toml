@@ -25,3 +25,13 @@ where = ["python_src"]
 [tool.pytest.ini_options]
 timeout = 0  # opt-in: no global timeout. Use @pytest.mark.timeout(seconds) per test, or GIZMO_TEST_TIMEOUT=N for the subprocess timeout.
 python_files = ["test_*.py"]
+
+[tool.ruff]
+target-version = "py310"
+# ruff also honours .gitignore, so test outputs and build products are skipped
+extend-exclude = ["python_src/gizmo.egg-info", "build"]
+
+[tool.ruff.lint]
+# error-class only: syntax errors (E9) and pyflakes (F: undefined names, unused imports/variables,
+# redefinitions); no style rules
+select = ["E9", "F"]
