@@ -1428,6 +1428,9 @@
 #else
 #define NUM_RESOLVEDISM_DUST_BINS 1  /* single MRN a_eff = 0.035 um (Hu+26) */
 #endif
+#ifdef GALSF_RESOLVEDISM_DUST_NO_MCKEE
+#error "GALSF_RESOLVEDISM_DUST_NO_MCKEE removed: swept-mass SN destruction is off unless GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION"
+#endif
 #ifdef GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION
 #error "GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION removed: nonthermal sputtering is now explicit (dust v_rel)"
 #endif

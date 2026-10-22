@@ -558,15 +558,8 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 }
 
 #ifdef GALSF_RESOLVEDISM_DUST
-#if !defined(GALSF_RESOLVEDISM_DUST_NO_MCKEE) && !defined(GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION)
-                /* SN shock destruction of pre-existing dust.
-                 * REGIME NOTE (2026-07-05): McKee 1989 is an SNR-lifetime-integrated
-                 * estimator for an UNRESOLVED remnant. Stella resolves the Sedov phase,
-                 * and the resolved hot bubble sputters dust explicitly (dust_evolve)
-                 * -> potential double-count. Also: per-cell application saturates at
-                 * frac=1 in ~Msun cells (kernel holds far less than the 984*wk Msun the
-                 * formula wants to shock). GALSF_RESOLVEDISM_DUST_NO_MCKEE disables this
-                 * hook for the destruction-accounting A/B test (dust_mckee_on/off). */
+#ifdef GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION
+                /* McKee89 swept-mass destruction: unresolved-SNR estimator for coarse cells; double counts resolved sputtering */
                 if(local.Esne > 0) {
                     double E_into_cell = wk * local.Esne;
                     double Rho_j;
@@ -580,7 +573,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         }
                     }
                 }
-#endif /* !GALSF_RESOLVEDISM_DUST_NO_MCKEE */
+#endif
                 /* Inject new dust from SN/Ia ejecta */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;
