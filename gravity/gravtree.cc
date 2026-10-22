@@ -367,7 +367,7 @@ void gravity_tree(void)
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
                 GravDataIn[j].Soft = P[place].AGS_KernelRadius;
-                GravDataIn[j].AGS_zeta = (P[place].AGS_KernelRadius > All.ForceSoftening[P[place].Type]) ? P[place].AGS_zeta : 0; /* same floor rule as a local target */
+                GravDataIn[j].AGS_zeta = P[place].AGS_zeta; /* same zeta as the source side */
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
                 GravDataIn[j].tidal_tensorps_prevstep=P[place].tidal_tensorps_prevstep;
