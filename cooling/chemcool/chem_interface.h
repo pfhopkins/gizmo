@@ -149,10 +149,10 @@ struct ChemInputs {
     double tdust;              /* -> COOLRC.tdust (cell DustTemp or M1
                                   Dust_Temperature)                          */
 
-    /* --- radiation field (orig chemcool.cc:267-269,312-483) ------------- */
+    /* --- radiation field ------------------------------------------------- */
     double G0;                 /* -> COOLRC.G0    [Habing]                    */
     double G0_LW;              /* -> COOLRC.G0_LW [Habing]                    */
-    double G0_dust;            /* -> COOLRC.G0_dust [commit: GALSF_RESOLVEDISM_G0_VARIABLE || RADTRANSFER] */
+    double G0_dust;            /* -> COOLRC.G0_dust [commit: G0_VARIABLE || GHOSTD_G0_CR || RADTRANSFER] */
     double rt_phot_HI;         /* -> COOLRC.rt_phot_HI   [s^-1]               */
     double rt_phot_HeI;        /* -> COOLRC.rt_phot_HeI  [s^-1]               */
     double rt_phot_HeII;       /* -> COOLRC.rt_phot_HeII [s^-1]               */
@@ -160,11 +160,9 @@ struct ChemInputs {
     double rt_heat_HeI;        /* -> COOLRC.rt_heat_HeI                       */
     double rt_heat_HeII;       /* -> COOLRC.rt_heat_HeII                      */
 
-    /* --- cosmic rays (orig chemcool.cc:270,350-360,369-379,470-481) ----- */
+    /* --- cosmic rays ----------------------------------------------------- */
     double cosmic_ray_ion_rate; /* -> COOLRC.cosmic_ray_ion_rate [s^-1]       */
-    double cr_energy_density;   /* -> COOLRC.cr_energy_density [erg cm^-3]
-                                   [commit: COSMIC_RAY_FLUID && (G0_VARIABLE
-                                    || G0_SCALE_SFR || RADTRANSFER)]         */
+    double cr_energy_density;   /* -> COOLRC.cr_energy_density [erg cm^-3] [commit: COSMIC_RAY_FLUID && (G0_VARIABLE || GHOSTD_G0_CR || RADTRANSFER)] */
 
     /* --- composition (orig chemcool.cc:592-602) ------------------------- */
     double abhe;               /* -> CHEM_COMP.abhe [commit: GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE];

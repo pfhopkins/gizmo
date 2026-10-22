@@ -1010,6 +1010,9 @@ void calculate_non_standard_physics(void)
     recompute_resolvedism_fuv_luminosities(); // BUGFIX: re-evaluate stellar FUV/LW at current age each step (else stuck at PMS-zero -> G0 floor)
 #endif
 #endif
+#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
+    ghostd_update_factor_g0(); // GHOSTD: SFR-scaled uniform G0 / CR rate for the next cooling step
+#endif
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
     MCBAL_LOG("post_starform_FB");
 #endif

@@ -42,8 +42,8 @@ GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [auto
 #GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from TREE_RAD fluxes  [auto by G0_VARIABLE without RADTRANSFER]
-#GALSF_RESOLVEDISM_G0_SCALE_SFR          % scale G0 with total SFR instead of stellar sources
-TREE_RAD                                 % tree column densities for shielding  [req G0_VARIABLE] [excl RT_USE_TREECOL_FOR_NH]
+#GALSF_RESOLVEDISM_GHOSTD_G0_CR          % GHOSTD defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
+TREE_RAD                                 % tree column densities for shielding  [req G0_VARIABLE or GHOSTD_G0_CR] [excl RT_USE_TREECOL_FOR_NH]
 TREE_RAD_H2                              % H2 column for self-shielding
 TREE_RAD_CO                              % CO column for self-shielding
 NSIDE=1                                  % HEALPix resolution of the column tree

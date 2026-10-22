@@ -245,7 +245,7 @@
 #GALSF_RESOLVEDISM_SAMPLE_IMF   # full Kroupa IMF sampling into N_STELLAR_MASS slots (mutually exclusive with STOCHASTIC_IMF)
 #N_STELLAR_MASS=300             # number of individual stellar mass slots per star particle (default=300)
 #GALSF_RESOLVEDISM_G0_VARIABLE  # per-star UV luminosity tracked in tree walk for spatially-varying G0
-#GALSF_RESOLVEDISM_G0_SCALE_SFR # scale G0 with total SFR instead of individual stars
+#GALSF_RESOLVEDISM_GHOSTD_G0_CR # GHOSTD defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
 #GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF # instant SF above nHcutoffSF density (prob=1)
 #GALSF_RESOLVEDISM_INSTANT_SN  # all SNe fire instantly before TimeInstantSN
 ## note: convergent flow (bit 2) and Jeans mass (bit 64) criteria use GALSF_SFR_CRITERION bitflag

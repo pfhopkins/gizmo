@@ -568,8 +568,9 @@ extern struct global_data_all_processes
   double IMFSampleStellarMassCut; /*!< minimum stellar mass to record in IMF sampling */
   double IMFSampleMinMass;        /*!< lower bound of IMF sampling [Msun]: 0.08 = full IMF, higher = truncated (LYRA-style) */
 #endif
-#ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
-  double FactorG0;              /*!< scaling factor for G0 from total SFR */
+#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
+  double FactorG0;              /*!< GHOSTD: G0 and CR-rate scale factor, SFR(<30 Myr) / (Mgas0 / 4 Gyr) */
+  double Mgas0;                 /*!< GHOSTD: global gas mass at start [code] */
 #endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
   char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */

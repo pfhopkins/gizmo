@@ -119,6 +119,7 @@ double resolvedism_radp_starside_dp_code(int i)
          * radiation-field attenuation see identical per-band optical depths.
          * (Old form: f_abs(sigma_UV) x L_BOL — UV opacity on bolometric light
          * over-coupled the un-absorbed optical/NIR remainder of L_bol.) */
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         double L_FUV = P[i].UV_luminosity; /* erg/s (tables store cgs band luminosities) */
         double L_NUV = 0, L_OPT = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
@@ -126,6 +127,10 @@ double resolvedism_radp_starside_dp_code(int i)
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         L_OPT = P[i].OPT_luminosity;
+#endif
+#else
+        double L_FUV = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age)); /* no stored band lums without G0_VARIABLE */
+        double L_NUV = pow(10., stellar_log_L_NUV(logM, logZ, log_age)), L_OPT = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
 #endif
         double f_FUV = 1.0 - exp(-(2.0e-21 * DGR) * NH);
         double f_NUV = 1.0 - exp(-(1.3e-21 * DGR) * NH);

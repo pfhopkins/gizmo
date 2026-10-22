@@ -1331,6 +1331,13 @@
 #endif
 #endif
 
+#ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
+#error "GALSF_RESOLVEDISM_G0_SCALE_SFR was renamed: use GALSF_RESOLVEDISM_GHOSTD_G0_CR"
+#endif
+#if defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) && !(defined(CHEMCOOL) && defined(GALSF))
+#error "GALSF_RESOLVEDISM_GHOSTD_G0_CR requires CHEMCOOL and GALSF"
+#endif
+
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && defined(RADTRANSFER)
 #error "GALSF_RESOLVEDISM_PHOTOION and RADTRANSFER are mutually exclusive: use RT_CHEM_PHOTOION instead"
 #endif
@@ -1342,6 +1349,9 @@
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 #ifndef N_STELLAR_MASS
 #define N_STELLAR_MASS 300
+#endif
+#if defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) && defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && (N_STELLAR_MASS < 5)
+#error "GALSF_RESOLVEDISM_GHOSTD_G0_CR stores the birth mass in MstarSampleIMF[4]: needs N_STELLAR_MASS >= 5"
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
 #error "GALSF_RESOLVEDISM_SAMPLE_IMF and GALSF_RESOLVEDISM_STOCHASTIC_IMF are mutually exclusive"
@@ -1573,11 +1583,9 @@
 #error "GALSF_RESOLVEDISM_WINDS_THERMAL and _THERMAL_ONLY are mutually exclusive wind energy modes"
 #endif
 
-/* GALSF_RESOLVEDISM_G0_VARIABLE and TREE_RAD are a matched pair (Uli, 2026-07-06):
- * used together or not at all. The forward direction is enforced constructively
- * (G0_VARIABLE auto-#defines TREE_RAD above); this guard closes the reverse. */
-#if defined(TREE_RAD) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE)
-#error "TREE_RAD requires GALSF_RESOLVEDISM_G0_VARIABLE in Stella (treecol shielding pairs with the variable ISRF)"
+/* TREE_RAD shielding pairs with an ISRF model: G0_VARIABLE (auto-defines TREE_RAD) or GHOSTD */
+#if defined(TREE_RAD) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR)
+#error "TREE_RAD requires GALSF_RESOLVEDISM_G0_VARIABLE or GALSF_RESOLVEDISM_GHOSTD_G0_CR in Stella (treecol shielding pairs with an ISRF model)"
 #endif
 
 /* ---- TREE_RAY: reverse-ray progressive dust attenuation IN the gravity walk ----

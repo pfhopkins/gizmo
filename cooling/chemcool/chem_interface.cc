@@ -214,12 +214,22 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
 
 
+#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
+    { /* GHOSTD baseline: uniform G0 and zeta scaled by the global young-star SFR; dynamic fields below override */
+        double g0 = DMAX(All.FactorG0 * All.G0, 0.324e-2);
+        in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
+#if defined(COSMIC_RAY_FLUID)
+        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target); /* transported CRs win over the SFR scaling */
+        in->cosmic_ray_ion_rate = 3e-17 * (ecr_cgs / 1.602e-12);
+        in->cr_energy_density = ecr_cgs;
+#elif defined(CR_SCALE_WITH_G0)
+        in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
+#endif
+    }
+#endif
+
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    /* [orig chemcool.cc:312-361]
-       Habing/ISRF energy densities [erg/cm^3] (Draine 1978, Mathis+ 1983).
-       FUV (6-13.6 eV):  5.29e-14  (Habing 1968, used for tree-ray PE heating)
-       LW  (11.2-13.6):  2.11e-14  (H2 photodissociation band, from Draine spectrum)
-       NUV and OPT: computed on tree but not used for heating currently. */
+    /* Habing energy densities [erg/cm^3]: FUV 6-13.6 eV 5.29e-14, LW 11.2-13.6 eV 2.11e-14 */
     double u_Hab_FUV = 5.29e-14;
     double u_Hab_LW  = 2.11e-14;
     double fac_flux2energy = All.cf_a2inv / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)); /* luminosity flux to energy density */
@@ -265,26 +275,6 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #endif
     CellP[target].CR_ionization_rate = in->cosmic_ray_ion_rate;
 #endif /* GALSF_RESOLVEDISM_G0_VARIABLE */
-
-
-#ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
-    /* [orig chemcool.cc:364-380] */
-    double g0 = All.FactorG0 * All.G0;
-    if(g0 < 0.324e-2) g0 = 0.324e-2;
-    in->G0 = g0;
-    in->G0_LW = g0; /* no separate LW in SFR-scaled mode */
-#if defined(COSMIC_RAY_FLUID)
-    { /* CR fluid active: zeta from the LIVE local CR energy density (same normalization as the
-         G0_VARIABLE and M1 branches: 3e-17 s^-1 per eV/cm^3, Brugaletta+24/Cummings+16) — the
-         SFR-scaled subgrid guess must never override the transported CR field. */
-      double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target); /* [erg cm^-3] */
-      in->cosmic_ray_ion_rate = 3e-17 * (ecr_cgs / 1.602e-12);
-      in->cr_energy_density = ecr_cgs;
-    }
-#elif defined(CR_SCALE_WITH_G0)
-    in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
-#endif
-#endif
 
     /* [orig chemcool.cc:382-384] Default RT photoionization rates to zero */
     in->rt_phot_HI = in->rt_phot_HeI = in->rt_phot_HeII = 0;
@@ -735,15 +725,15 @@ void chem_commit_to_fortran(const struct ChemInputs *in)
     COOLRC.abundD = in->abundD;                           /* [orig chemcool.cc:267] */
     COOLRC.abundM = in->abundM;
 
-    COOLRC.G0    = in->G0;                                /* [orig chemcool.cc:268,344,367,420] */
-    COOLRC.G0_LW = in->G0_LW;                             /* [orig chemcool.cc:269,346,368,422] */
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
-    COOLRC.G0_dust = in->G0_dust;                         /* [orig chemcool.cc:348,428] */
+    COOLRC.G0    = in->G0;
+    COOLRC.G0_LW = in->G0_LW;
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(RADTRANSFER)
+    COOLRC.G0_dust = in->G0_dust;
 #endif
 
-    COOLRC.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate; /* [orig chemcool.cc:270,354,358,374,378,476,479] */
-#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(RADTRANSFER))
-    COOLRC.cr_energy_density = in->cr_energy_density;     /* [orig chemcool.cc:355,375,477] */
+    COOLRC.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate;
+#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(RADTRANSFER))
+    COOLRC.cr_energy_density = in->cr_energy_density;
 #endif
 
     COOLRC.rt_phot_HI   = in->rt_phot_HI;                 /* [orig chemcool.cc:383-384,447-465,515-518,559-564] */
@@ -795,5 +785,38 @@ void chem_read_outputs(struct ChemOutputs *out)
     out->fac_shield_dust = COOLRC.fac_shield_dust;        /* [orig chemcool.cc:931] */
 #endif
 }
+
+
+#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
+/* GHOSTD: FactorG0 = SFR over the last 30 Myr / (Mgas0 / 4 Gyr) */
+void ghostd_update_factor_g0(void)
+{
+    const double t_window_Gyr = 0.03, t_depletion_Gyr = 4.0;
+    double m_young = 0, m_young_tot = 0;
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 4 || P[i].Mass <= 0) {continue;}
+        double m_birth = P[i].Mass;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+        if(P[i].sampled != 1) {continue;} /* only finalized IMF-sampled stars */
+        if(P[i].MstarSampleIMF[4] > 0) {m_birth = P[i].MstarSampleIMF[4];}
+        else if(P[i].MstarSampleIMF[0] > 0) {m_birth = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;} /* stars read without a birth-mass slot */
+#endif
+        if(evaluate_stellar_age_Gyr(i) < t_window_Gyr) {m_young += m_birth;}
+    }
+    MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    All.FactorG0 = (All.Mgas0 > 0) ? (m_young_tot / t_window_Gyr) / (All.Mgas0 / t_depletion_Gyr) : 0;
+    if(ThisTask == 0) {printf("GHOSTD: Time=%g M_young=%g Msun Mgas0=%g Msun FactorG0=%g\n", All.Time, m_young_tot * UNIT_MASS_IN_SOLAR, All.Mgas0 * UNIT_MASS_IN_SOLAR, All.FactorG0);}
+}
+
+/* GHOSTD: reference gas mass from the initial conditions, then the initial FactorG0 */
+void ghostd_set_reference_gas_mass(void)
+{
+    double m_gas = 0;
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0) {m_gas += P[i].Mass;}}
+    MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    ghostd_update_factor_g0();
+}
+#endif
 
 #endif /* CHEMCOOL */

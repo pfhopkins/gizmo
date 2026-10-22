@@ -100,6 +100,9 @@ void finalize_sampled_star(int i, double M_drawn)
 
     /* Clear temporary storage */
     P[i].MstarSampleIMF[1] = P[i].MstarSampleIMF[2] = P[i].MstarSampleIMF[3] = P[i].MstarSampleIMF[4] = 0;
+#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
+    P[i].MstarSampleIMF[4] = P[i].Mass; /* birth mass [code] for the GHOSTD SFR */
+#endif
 
     /* Compute luminosity from the single drawn star */
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
