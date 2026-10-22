@@ -664,7 +664,7 @@
 #else
 #define  NCHTAB 173
 #endif
-#define  NCRTAB 12
+#define  NCRTAB 13
 #if CHEMISTRYNETWORK == 16
 #define  NCRPHOT 13
 #else

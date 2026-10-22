@@ -1926,84 +1926,91 @@ double rate_cr12(double temp, const ChemGlobals& g) {
     return v_crtab_12;
 }
 
-/* crphot1  cheminmo.F:1960-1960  nets:- */
+/* cr13  cheminmo.F:1956-1956  nets:- */
+double rate_cr13(double temp, const ChemGlobals& g) {
+    double v_crtab_13 = GUARD_NAN;
+    v_crtab_13 = 1e1;
+    return v_crtab_13;
+}
+
+/* crphot1  cheminmo.F:1964-1964  nets:- */
 double rate_crphot1(double temp, const ChemGlobals& g) {
     double v_crphot_1 = GUARD_NAN;
     v_crphot_1 = 2.8e3;
     return v_crphot_1;
 }
 
-/* crphot2  cheminmo.F:1963-1963  nets:- */
+/* crphot2  cheminmo.F:1967-1967  nets:- */
 double rate_crphot2(double temp, const ChemGlobals& g) {
     double v_crphot_2 = GUARD_NAN;
     v_crphot_2 = 4e3;
     return v_crphot_2;
 }
 
-/* crphot3  cheminmo.F:1965-1965  nets:- */
+/* crphot3  cheminmo.F:1969-1969  nets:- */
 double rate_crphot3(double temp, const ChemGlobals& g) {
     double v_crphot_3 = GUARD_NAN;
     v_crphot_3 = 9.6e2;
     return v_crphot_3;
 }
 
-/* crphot4  cheminmo.F:1967-1967  nets:- */
+/* crphot4  cheminmo.F:1971-1971  nets:- */
 double rate_crphot4(double temp, const ChemGlobals& g) {
     double v_crphot_4 = GUARD_NAN;
     v_crphot_4 = 2.7e3;
     return v_crphot_4;
 }
 
-/* crphot5  cheminmo.F:1969-1969  nets:- */
+/* crphot5  cheminmo.F:1973-1973  nets:- */
 double rate_crphot5(double temp, const ChemGlobals& g) {
     double v_crphot_5 = GUARD_NAN;
     v_crphot_5 = 2.7e3;
     return v_crphot_5;
 }
 
-/* crphot6  cheminmo.F:1971-1971  nets:- */
+/* crphot6  cheminmo.F:1975-1975  nets:- */
 double rate_crphot6(double temp, const ChemGlobals& g) {
     double v_crphot_6 = GUARD_NAN;
     v_crphot_6 = 1.3e3;
     return v_crphot_6;
 }
 
-/* crphot7  cheminmo.F:1973-1973  nets:- */
+/* crphot7  cheminmo.F:1977-1977  nets:- */
 double rate_crphot7(double temp, const ChemGlobals& g) {
     double v_crphot_7 = GUARD_NAN;
     v_crphot_7 = 2.8e3;
     return v_crphot_7;
 }
 
-/* crphot8  cheminmo.F:1975-1975  nets:- */
+/* crphot8  cheminmo.F:1979-1979  nets:- */
 double rate_crphot8(double temp, const ChemGlobals& g) {
     double v_crphot_8 = GUARD_NAN;
     v_crphot_8 = 5.3e3;
     return v_crphot_8;
 }
 
-/* crphot9  cheminmo.F:1977-1977  nets:- */
+/* crphot9  cheminmo.F:1981-1981  nets:- */
 double rate_crphot9(double temp, const ChemGlobals& g) {
     double v_crphot_9 = GUARD_NAN;
     v_crphot_9 = 4.1e3;
     return v_crphot_9;
 }
 
-/* crphot10  cheminmo.F:1979-1979  nets:- */
+/* crphot10  cheminmo.F:1983-1983  nets:- */
 double rate_crphot10(double temp, const ChemGlobals& g) {
     double v_crphot_10 = GUARD_NAN;
     v_crphot_10 = 6.4e2;
     return v_crphot_10;
 }
 
-/* crphot11  cheminmo.F:1984-1984  nets:- */
+/* crphot11  cheminmo.F:1988-1988  nets:- */
 double rate_crphot11(double temp, const ChemGlobals& g) {
     double v_crphot_11 = GUARD_NAN;
     v_crphot_11 = 0.21e0;
     return v_crphot_11;
 }
 
-/* crphot12  cheminmo.F:1990-1990  nets:- */
+/* crphot12  cheminmo.F:1994-1994  nets:- */
 double rate_crphot12(double temp, const ChemGlobals& g) {
     double v_crphot_12 = GUARD_NAN;
     v_crphot_12 = 5.2e3;
@@ -3996,21 +4003,21 @@ double rate16_cr2(double temp, const ChemGlobals& g) {
     return v_crtab_2;
 }
 
-/* crphot1  cheminmo.F:1958-1958  nets:16 */
+/* crphot1  cheminmo.F:1962-1962  nets:16 */
 double rate16_crphot1(double temp, const ChemGlobals& g) {
     double v_crphot_1 = GUARD_NAN;
     v_crphot_1 = 5.6e2;
     return v_crphot_1;
 }
 
-/* crphot11  cheminmo.F:1982-1982  nets:16 */
+/* crphot11  cheminmo.F:1986-1986  nets:16 */
 double rate16_crphot11(double temp, const ChemGlobals& g) {
     double v_crphot_11 = GUARD_NAN;
     v_crphot_11 = 9e1;
     return v_crphot_11;
 }
 
-/* crphot13  cheminmo.F:1993-1993  nets:16 */
+/* crphot13  cheminmo.F:1997-1997  nets:16 */
 double rate16_crphot13(double temp, const ChemGlobals& g) {
     double v_crphot_13 = GUARD_NAN;
     v_crphot_13 = 8.4e3;

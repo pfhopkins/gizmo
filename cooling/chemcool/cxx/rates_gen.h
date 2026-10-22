@@ -195,6 +195,7 @@ double rate_cr9(double temp, const ChemGlobals& g);
 double rate_cr10(double temp, const ChemGlobals& g);
 double rate_cr11(double temp, const ChemGlobals& g);
 double rate_cr12(double temp, const ChemGlobals& g);
+double rate_cr13(double temp, const ChemGlobals& g);
 double rate_crphot1(double temp, const ChemGlobals& g);
 double rate_crphot2(double temp, const ChemGlobals& g);
 double rate_crphot3(double temp, const ChemGlobals& g);

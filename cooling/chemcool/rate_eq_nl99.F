@@ -49,21 +49,22 @@ c
 c
       REAL phi     , h_gr    , hgrvar1 , hgrvar2, dii_gr
 c
-      REAL cr1     , cr2     , cr6
+      REAL cr1     , cr2     , cr6     , cr3     , cr13 ,
+     $     cp1     , cp11
 c
       REAL ch1     , ch2     , ch3     , ch4     , ch5  ,
      $     ch6     , ch9     , ch11    , ch13 , 
      $     ch17    , ch25    , ch34    , ch35    , ch40 ,
-     $     ch56    , ch92    , ch105   , ch106   , ch146,
+     $     ch87    , ch92    , ch105   , ch106   , ch146,
      $     ch147
 c
       REAL dtch1   , dtch2   , dtch3   , dtch4   , dtch5  ,
      $     dtch6   , dtch9   , dtch11  , dtch13 , 
      $     dtch17  , dtch25  , dtch34  , dtch35  , dtch40 ,
-     $     dtch56  , dtch92  , dtch105 , dtch106 , dtch146,
+     $     dtch87  , dtch92  , dtch105 , dtch106 , dtch146,
      $     dtch147
 c
-      REAL ch106a
+      REAL ch106a, ch87a, ch87b
       REAL rho_lj, cs2_lj, L_jeans, energy_dummy, fh3p_den
 c
       REAL cdex, rdex, fpheat
@@ -155,7 +156,7 @@ c
       dtch34 = dtchtab(34, itemp)
       dtch35 = dtchtab(35, itemp)
       dtch40 = dtchtab(40, itemp)
-      dtch56 = dtchtab(56, itemp)
+      dtch87 = dtchtab(87, itemp)
       dtch92 = dtchtab(92, itemp)
       dtch105 = dtchtab(105, itemp)
       dtch106 = dtchtab(106, itemp)
@@ -176,7 +177,7 @@ c
       ch34 = chtab(34, itemp) + dtemp * dtch34
       ch35 = chtab(35, itemp) + dtemp * dtch35
       ch40 = chtab(40, itemp) + dtemp * dtch40
-      ch56 = chtab(56, itemp) + dtemp * dtch56
+      ch87 = chtab(87, itemp) + dtemp * dtch87
       ch92 = chtab(92, itemp) + dtemp * dtch92
       ch105 = chtab(105, itemp) + dtemp * dtch105
       ch106 = chtab(106, itemp) + dtemp * dtch106
@@ -188,15 +189,26 @@ c based on MAC04
 c
       ch106a = (2.34d0 / 6.7d0) * ch106   ! H2 + H
 c
+c HCO+ dissociative recombination: rate and branching from Geppert et al (2005)
+c
+      ch87a = 0.92d0 * ch87       ! CO + H
+      ch87b = 0.08d0 * ch87       ! OH + C
+c
 c H2 collisional dissociation rates -- need special handling because of
 c density dependence
 c
-      ncrinv   = (2d0 * abh2 * (ch6 - ch5) + ch5)
-      h2var0   = 1d0 / ( 1d0 + yn * ncrinv)
-      h2var1   = ch3**h2var0
-      h2var2   = ch4**h2var0
-      ykdh     = ch1 * h2var1
-      ykdh2    = ch2 * h2var2
+      if (temp .lt. 5d2) then
+c At this temperature, H2 collisional dissociation should be negligible
+        ykdh  = 0d0
+        ykdh2 = 0d0
+      else
+        ncrinv   = (2d0 * abh2 * (ch6 - ch5) + ch5)
+        h2var0   = 1d0 / ( 1d0 + yn * ncrinv)
+        h2var1   = ch3**h2var0
+        h2var2   = ch4**h2var0
+        ykdh     = ch1 * h2var1
+        ykdh2    = ch2 * h2var2
+      endif
 c
 c Photodissociation:
 c
@@ -256,6 +268,13 @@ c HI:
       cr2 = crtab(2) * cosmic_ray_ion_rate
 c HeI:
       cr6 = crtab(6) * cosmic_ray_ion_rate
+c C ionization, CO dissociation; CR-induced photoionization of C and
+c photodissociation of CO (SGChem rate_eq_nl99.F)
+      cr3  = crtab(3)  * cosmic_ray_ion_rate
+      cr13 = crtab(13) * cosmic_ray_ion_rate
+      cp1  = crphot(1) * cosmic_ray_ion_rate
+      cp11 = crphot(11) * cosmic_ray_ion_rate * dsqrt(temp) * abH2
+     $     * dsqrt(abco)
 c
 c H3+ equilibrium abundance
 c
@@ -280,6 +299,7 @@ c Protons
 c 
       ydot(ihp) = (ch11 * abe   * abHI          ! Collisional ion: H  + e-
      $          -  ch13 * abhp  * abe           ! Gas-phase H recomb. (case B)
+     $          -  h_gr * abhp  * 1d0           ! Grain H recomb.
      $          + (1d0 - fh3p)  * cst(75) * abhep * abh2
      $          +  ch9  * abhep * abh2) * yn    ! DCT: He+ + H2 
      $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
@@ -311,6 +331,8 @@ c
      $          -cst(82) * abcp * abh2
      $          -cst(83) * abcp * abohx) * yn
      $          +    ph2 * abcI
+     $          +    cr3 * abcI
+     $          +    cp1 * abcI
 c
 c CHx
 c
@@ -323,6 +345,7 @@ c
 c OHx
 c
       ydot(iohx) = (cst(86) * aboI * abh3p
+     $           +    ch87b * abhcop * abe
      $           -    ch147 * abcI * abohx
      $           -  cst(83) * abcp * abohx) * yn
      $           -     ph49 * abohx
@@ -331,18 +354,20 @@ c HCO+
 c
       ydot(ihcop) = (cst(59) * abh3p  * abco
      $            +  cst(83) * abcp   * abohx
-     $            -     ch56 * abhcop * abe) * yn
+     $            -     ch87 * abhcop * abe) * yn
      $            -     ph50 * abhcop
 c
 c CO
 c
       ydot(ico) = (cst(85) * abchx  * aboI
      $          +    ch147 * abohx  * abcI
-     $          +     ch56 * abhcop * abe
+     $          +    ch87a * abhcop * abe
      $          -  cst(59) * abh3p  * abco
      $          -     ch92 * abhep  * abco) * yn
      $          -     ph10 * abco
      $          +     ph50 * abhcop      ! produces H+       
+     $          -     cr13 * abco
+     $          -     cp11
 c
 c M+
 c

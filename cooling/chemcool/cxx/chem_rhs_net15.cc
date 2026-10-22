@@ -78,7 +78,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     const double ch34  = chem_CH(T, 34,  ti);
     const double ch35  = chem_CH(T, 35,  ti);
     const double ch40  = chem_CH(T, 40,  ti);
-    const double ch56  = chem_CH(T, 56,  ti);
+    const double ch87  = chem_CH(T, 87,  ti);
     const double ch92  = chem_CH(T, 92,  ti);
     const double ch105 = chem_CH(T, 105, ti);
     const double ch106 = chem_CH(T, 106, ti);
@@ -87,14 +87,17 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // H3+ dissociative recombination branch to H2 + H (.F:188)
     const double ch106a = (2.34 / 6.7) * ch106;
+    const double ch87a  = 0.92 * ch87;      // HCO+ + e -> CO + H (Geppert+05)
+    const double ch87b  = 0.08 * ch87;      // HCO+ + e -> OH + C
 
     // --- H2 collisional dissociation, density-dependent (.F:193-198) ---
-    double ncrinv = 2.0 * abh2 * (ch6 - ch5) + ch5;
-    double h2var0 = 1.0 / (1.0 + yn * ncrinv);
-    double h2var1 = std::pow(ch3, h2var0);
-    double h2var2 = std::pow(ch4, h2var0);
-    double ykdh  = ch1 * h2var1;
-    double ykdh2 = ch2 * h2var2;
+    double ykdh = 0.0, ykdh2 = 0.0;          // negligible below 500 K
+    if (temp >= 5e2) {
+        double ncrinv = 2.0 * abh2 * (ch6 - ch5) + ch5;
+        double h2var0 = 1.0 / (1.0 + yn * ncrinv);
+        ykdh  = ch1 * std::pow(ch3, h2var0);
+        ykdh2 = ch2 * std::pow(ch4, h2var0);
+    }
 
     // --- photodissociation (.F:202-209); shielding called for every iphoto ---
     double fshield = cxx_calc_H2_shielding_factor(temp, abh2, NH, c);
@@ -134,6 +137,12 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double cr1 = T.crtab[0] * c.cosmic_ray_ion_rate;
     double cr2 = T.crtab[1] * c.cosmic_ray_ion_rate;
     double cr6 = T.crtab[5] * c.cosmic_ray_ion_rate;
+    // C ionization, CO dissociation; CR-induced C photoionization and CO photodissociation
+    double cr3  = T.crtab[2]  * c.cosmic_ray_ion_rate;
+    double cr13 = T.crtab[12] * c.cosmic_ray_ion_rate;
+    double cp1  = T.crphot[0] * c.cosmic_ray_ion_rate;
+    double cp11 = T.crphot[10] * c.cosmic_ray_ion_rate * std::sqrt(temp) * abh2
+                * std::sqrt(abco);
 
     const double cst1  = T.cst[0],  cst54 = T.cst[53], cst59 = T.cst[58],
                  cst75 = T.cst[74], cst81 = T.cst[80], cst82 = T.cst[81],
@@ -154,6 +163,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     // --- protons (.F:278-284) ---
     ydot[ihp] = (ch11 * abe   * abHI
               -  ch13 * abhp  * abe
+              -  h_gr * abhp  * 1.0
               + (1.0 - fh3p)  * cst75 * abhep * abh2
               +  ch9  * abhep * abh2) * yn
               +  cr1  * abHI
@@ -182,7 +192,9 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
              -   ch40 * abcp * abe
              -  cst82 * abcp * abh2
              -  cst83 * abcp * abohx) * yn
-             +    ph2 * abcI;
+             +    ph2 * abcI
+             +    cr3 * abcI
+             +    cp1 * abcI;
 
     // --- CHx (.F:314-318) ---
     ydot[ichx] = (cst84 * abcI * abh3p
@@ -193,6 +205,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- OHx (.F:322-325) ---
     ydot[iohx] = (cst86 * aboI * abh3p
+               +  ch87b * abhcop * abe
                -  ch147 * abcI * abohx
                -  cst83 * abcp * abohx) * yn
                -   ph49 * abohx;
@@ -200,17 +213,19 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     // --- HCO+ (.F:329-332) ---
     ydot[ihcop] = (cst59 * abh3p  * abco
                 +  cst83 * abcp   * abohx
-                -   ch56 * abhcop * abe) * yn
+                -   ch87 * abhcop * abe) * yn
                 -   ph50 * abhcop;
 
     // --- CO (.F:336-342) ---
     ydot[ico] = (cst85 * abchx  * aboI
               +  ch147 * abohx  * abcI
-              +   ch56 * abhcop * abe
+              +  ch87a * abhcop * abe
               -  cst59 * abh3p  * abco
               -   ch92 * abhep  * abco) * yn
               -   ph10 * abco
-              +   ph50 * abhcop;
+              +   ph50 * abhcop
+              -   cr13 * abco
+              -   cp11;
 
     // --- M+ (.F:346-348) ---
     ydot[imp] = (cst81 * abh3p * abmI

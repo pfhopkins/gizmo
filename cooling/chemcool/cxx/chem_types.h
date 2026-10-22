@@ -28,7 +28,7 @@
 #define CHEM_NCRPHOT 12
 #define CHEM_NCONST  91
 #endif
-#define CHEM_NCRTAB  12
+#define CHEM_NCRTAB  13
 #define CHEM_NPHTAB  54
 #define CHEM_NRATES  28      /* cool_func radiative rates */
 #define CHEM_NPIX    12      /* RT_USE_TREECOL_FOR_NH=12 HEALPix, as one-zone/production */

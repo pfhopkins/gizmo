@@ -258,7 +258,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #endif
 #if CHEMISTRYNETWORK == 15
             df15 = std::exp(-1.5 * AV);
-            df17 = std::exp(-1.5 * AV);   // 1.5 as in calc_photo.F (Glover code)
+            df17 = std::exp(-1.7 * AV);
 #endif
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
             df187 = std::exp(-1.87 * AV);
@@ -343,7 +343,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #endif
 #if CHEMISTRYNETWORK == 15
             df15 += fac_uv_pix * std::exp(-1.5 * AV);
-            df17 += fac_uv_pix * std::exp(-1.5 * AV);
+            df17 += fac_uv_pix * std::exp(-1.7 * AV);
 #endif
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
             df187 += fac_uv_pix * std::exp(-1.87 * AV);

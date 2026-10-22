@@ -224,7 +224,7 @@ c
 #endif
 #if CHEMISTRYNETWORK == 15
             df15   = dexp(-1.5d0 * AV)
-            df17   = dexp(-1.5d0 * AV)
+            df17   = dexp(-1.7d0 * AV)
 #endif
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
             df187  = dexp(-1.87d0 * AV)
@@ -367,7 +367,7 @@ c           the other dust factors, per pixel as in the single-AV branch
 #endif
 #if CHEMISTRYNETWORK == 15
             df15 = df15 + fac_uv_pix * exp(-1.5d0 * AV)
-            df17 = df17 + fac_uv_pix * exp(-1.5d0 * AV)
+            df17 = df17 + fac_uv_pix * exp(-1.7d0 * AV)
 #endif
 #if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
             df187 = df187 + fac_uv_pix * exp(-1.87d0 * AV)

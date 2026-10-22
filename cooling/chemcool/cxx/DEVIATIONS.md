@@ -422,8 +422,8 @@ cell's lambda, as the Fortran path does.
 
 ## D-24. (Gate 4) calc_photo, net 15 and RT overrides
 Net 15 fills only phrates 48-51 beyond the shared set (rate_eq_nl99 reads 1, 2, 10, 48-51); the
-Fortran also fills 11-37 and 52-54 from df factors never assigned for net 15. df17 = exp(-1.5 AV)
-for net 15 as in calc_photo.F. Fixed: the TreeCol pixel loop never accumulated df05/df19 (net-17
+Fortran also fills 11-37 and 52-54 from df factors never assigned for net 15. df17 = exp(-1.7 AV)
+for net 15 (D-40). Fixed: the TreeCol pixel loop never accumulated df05/df19 (net-17
 phrates 4, 5, 8, 9 were zero in TreeCol mode), and the RADTRANSFER/TREE_RAY overrides did not reset
 df05/df19.
 
@@ -603,6 +603,17 @@ the tmax value, as the other rate_eq index paths already were.
 ## D-39. CO and H2O vibrational cooling: LTE term uses the collider density neff, both backends
 Provenance: SGChem `cool_func.F:770-775, 839-845`. `1/L0 + yn/L_LTE` -> `1/L0 + neff/L_LTE` for CO, 13CO, C18O,
 H2O and H2(18)O, with the neff each block already uses for its rotational/L0 term.
+
+## D-40. Network 15 aligned with SGChem `rate_eq_nl99.F`, both backends
+* H+ recombination on grains, `- h_gr x_H+` in ydot(H+) (S:417). The matching cooling term (rates_chem(6))
+  was already applied, so ionization and energy were inconsistent.
+* HCO+ dissociative recombination uses ch87 (Geppert+05, 3.0e-7 (T/300)^-0.64) with branches 0.92 -> CO + H,
+  0.08 -> OH + C (S:250-255, 484, 491). Was ch56 (the HOC+ rate) with a single CO branch.
+* Cosmic rays on C and CO (S:370-379, 459-460, 498-499): C+ gains cr3 x_C + cp1 x_C (direct and CR-induced
+  photoionization); CO loses cr13 x_CO (crtab(13) = 10 zeta, KIDA; NCRTAB 12 -> 13) and
+  cp11 = crphot(11) zeta sqrt(T) x_H2 sqrt(x_CO).
+* OHx photodissociation dust factor exp(-1.7 AV) (SGChem ph49); was exp(-1.5 AV).
+* H2 collisional dissociation (ykdh, ykdh2) zero below 500 K (S:259-283).
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

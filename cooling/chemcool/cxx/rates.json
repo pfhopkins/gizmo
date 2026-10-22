@@ -1,6 +1,6 @@
 {
  "counts": {
-  "generated": 348,
+  "generated": 349,
   "TABLE": 8,
   "SPECIAL": 0,
   "RHS_INLINE": 211,
@@ -2953,12 +2953,26 @@
    "kind": "GENERATED"
   },
   {
+   "rate_id": "cr13",
+   "networks": [],
+   "fortran_file": "cheminmo.F",
+   "lines": [
+    1956,
+    1956
+   ],
+   "comment": "CO: direct dissociation by cosmic rays (KIDA)",
+   "expression": [
+    "crtab(13) = 1d1"
+   ],
+   "kind": "GENERATED"
+  },
+  {
    "rate_id": "crphot1",
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1960,
-    1960
+    1964,
+    1964
    ],
    "comment": "Cosmic-ray induced photoprocesses\nC -> C+ + e-",
    "expression": [
@@ -2971,8 +2985,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1963,
-    1963
+    1967,
+    1967
    ],
    "comment": "CH -> C + H",
    "expression": [
@@ -2985,8 +2999,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1965,
-    1965
+    1969,
+    1969
    ],
    "comment": "CH+ -> C+ + H",
    "expression": [
@@ -2999,8 +3013,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1967,
-    1967
+    1971,
+    1971
    ],
    "comment": "CH2 -> CH2+ + e",
    "expression": [
@@ -3013,8 +3027,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1969,
-    1969
+    1973,
+    1973
    ],
    "comment": "CH2 -> CH + H",
    "expression": [
@@ -3027,8 +3041,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1971,
-    1971
+    1975,
+    1975
    ],
    "comment": "C2 -> C + C",
    "expression": [
@@ -3041,8 +3055,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1973,
-    1973
+    1977,
+    1977
    ],
    "comment": "OH -> O + H",
    "expression": [
@@ -3055,8 +3069,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1975,
-    1975
+    1979,
+    1979
    ],
    "comment": "H2O -> OH + H",
    "expression": [
@@ -3069,8 +3083,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1977,
-    1977
+    1981,
+    1981
    ],
    "comment": "O2 -> O + O",
    "expression": [
@@ -3083,8 +3097,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1979,
-    1979
+    1983,
+    1983
    ],
    "comment": "O2 -> O2+ + e",
    "expression": [
@@ -3097,8 +3111,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1984,
-    1984
+    1988,
+    1988
    ],
    "comment": "CO -> C + O",
    "expression": [
@@ -3111,8 +3125,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1990,
-    1990
+    1994,
+    1994
    ],
    "comment": "NO -> N + O\nNote: this is actually the sum of two processes, direct photodissoc.\nand photoionization to NO+, which we assume then dissociatively\nrecombines to yield N + O...",
    "expression": [
@@ -5886,8 +5900,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1958,
-    1958
+    1962,
+    1962
    ],
    "comment": "Cosmic-ray induced photoprocesses\nC -> C+ + e-",
    "kind": "GENERATED",
@@ -5902,8 +5916,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1982,
-    1982
+    1986,
+    1986
    ],
    "comment": "CO -> C + O",
    "kind": "GENERATED",
@@ -5918,8 +5932,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1993,
-    1993
+    1997,
+    1997
    ],
    "comment": "Si -> Si+ + e",
    "kind": "GENERATED",

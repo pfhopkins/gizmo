@@ -1951,6 +1951,10 @@ c  CO: [NB. Direct ionization by cosmic rays]
 c
       crtab(9) = 6.52d0
 c
+c  CO: direct dissociation by cosmic rays (KIDA)
+c
+      crtab(13) = 1d1
+c
 c Cosmic-ray induced photoprocesses
 c
 c C -> C+ + e-

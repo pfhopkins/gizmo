@@ -182,6 +182,7 @@
     {"cr10", "cr", 10, rate_cr10, 0},
     {"cr11", "cr", 11, rate_cr11, 0},
     {"cr12", "cr", 12, rate_cr12, 0},
+    {"cr13", "cr", 13, rate_cr13, 0},
     {"crphot1", "crphot", 1, rate_crphot1, 0},
     {"crphot2", "crphot", 2, rate_crphot2, 0},
     {"crphot3", "crphot", 3, rate_crphot3, 0},
