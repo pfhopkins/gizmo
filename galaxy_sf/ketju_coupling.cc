@@ -1639,7 +1639,7 @@ static void handle_mergers(KetjuRegion &reg,
     const int n_met = 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-    const int buf_size = n_met + 1; /* last slot: victim's sampled IMF mass */
+    const int buf_size = n_met + 2; /* last slots: victim's sampled IMF mass and birth mass */
 #else
     const int buf_size = n_met;
 #endif
@@ -1657,6 +1657,9 @@ static void handle_mergers(KetjuRegion &reg,
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                 merged_buf[n_met] = (P[act.idx_merged].Type == 4) ? P[act.idx_merged].MstarSampleIMF[0] : 0;
+#if (N_STELLAR_MASS >= 5)
+                merged_buf[n_met + 1] = (P[act.idx_merged].Type == 4) ? P[act.idx_merged].MstarSampleIMF[4] : 0;
+#endif
 #endif
             }
 
@@ -1683,6 +1686,9 @@ static void handle_mergers(KetjuRegion &reg,
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                 if(P[act.idx_survivor].Type == 4 && merged_buf[n_met] > 0) {P[act.idx_survivor].MstarSampleIMF[0] += merged_buf[n_met];} /* survivor carries the merged stellar mass; keeps its age */
+#if (N_STELLAR_MASS >= 5)
+                if(P[act.idx_survivor].Type == 4 && merged_buf[n_met + 1] > 0) {P[act.idx_survivor].MstarSampleIMF[4] += merged_buf[n_met + 1];} /* birth mass too: wind closure reference */
+#endif
 #endif
             }
         }
