@@ -118,7 +118,7 @@ def readsnap(sdir,snum,ptype,
         header_topdict = file["Header"] # Load header dictionary (to parse below)
         header_toparse = header_topdict.attrs
     else:
-        file = open(fname) # Open binary snapshot file
+        file = open(fname,"rb") # Open binary snapshot file
         header_toparse = load_gadget_format_binary_header(file)
 
     npart = header_toparse["NumPart_ThisFile"]
@@ -181,7 +181,7 @@ def readsnap(sdir,snum,ptype,
             if(fname_ext=='.hdf5'):
                 file = h5py.File(fname,'r') # Open hdf5 snapshot file
             else:
-                file = open(fname) # Open binary snapshot file
+                file = open(fname,"rb") # Open binary snapshot file
                 header_toparse = load_gadget_format_binary_header(file)
                 
         if (fname_ext=='.hdf5'):
@@ -483,7 +483,7 @@ def load_gadget_format_binary_particledat(f, header, ptype, skip_bh=0):
                 if (ptype==4): zmet=np.reshape(star_z,(-1,header['Flag_Metals']))
         
         if (Npart[5]>0):
-            if (skip_bh > 0):
+            if (skip_bh == 0):
                 ## BH mass (same as code units, but this is the separately-tracked BH mass from particle mass)
                 bh_mass = array.array('f')
                 bh_mass.fromfile(f, Npart[5])
