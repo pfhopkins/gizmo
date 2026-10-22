@@ -1,11 +1,10 @@
 # Stella tallbox configuration (Hu+21 stratified box): the Stella default (net 5 on the C++ chemistry backend,
 # no dust model, subgrid photoionization and FUV) plus a periodic x/y, outflow-z long box and the tallbox
-# external potential, GHOSTD defaults for G0 and CR rate. Shielding columns (and opt-in dynamic G0) wrap in x/y via BOX_PERIODIC.
+# external potential, GHOSTD defaults for G0 and CR rate. Gravity, shielding columns and (opt-in) dynamic G0 are periodic in x/y, open in z.
 BOX_PERIODIC
 BOX_LONG_Z=20
 BOX_OUTFLOW_Z
-GRAVITY_NOT_PERIODIC              % required: no periodic gravity for stretched boxes
-TREE_RADIATION_WRAPS_WITHOUT_GRAVITY % tree radiation and columns still wrap in x/y
+GRAVITY_PERIODIC_XY_IMAGES        % x/y-periodic self-gravity by image sums (GravityPeriodicXYImages), open z; tree radiation/columns use the x/y nearest image
 GALSF_RESOLVEDISM_TALLBOX         % Hu+21 stellar-disk + vertical NFW potential (gravity/analytic_gravity.h)
 #!/bin/bash
 # Config.sh for resolved-ISM single-star galaxy formation (gizmo-cpp)
