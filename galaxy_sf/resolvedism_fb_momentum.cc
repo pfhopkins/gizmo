@@ -113,7 +113,7 @@ double resolvedism_radp_starside_dp_code(int i)
          * vs the chemistry/tree convention. Mirror chemcool: dust-to-metal
          * efficiency x local Z / Zsun, capped at the certified 10x-solar domain. */
         double DGR = All.DGRnormalized;
-#ifdef METALS
+#if defined(METALS) && !defined(CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY)
         DGR = All.DGRnormalized * P[i].Metallicity[0] / All.SolarAbundances[0];
 #endif
 #endif

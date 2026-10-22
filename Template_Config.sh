@@ -265,6 +265,7 @@
 #CHEMCOOL_CXX                   # use the C++/CVODE chemistry backend (cooling/chemcool/cxx/) instead
 #CHEMCOOL_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
 #CHEMCOOL_KEEP_IC_ABUNDANCES  # keep ChemcoolTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
+#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY # no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the
                                 #   integrator + RHS assembly + driver policy; the RHS leaf kernels and

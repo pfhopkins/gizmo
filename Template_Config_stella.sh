@@ -80,6 +80,7 @@ GALSF_RESOLVEDISM_METALS_INDIVIDUAL      % 27 elements H-Zn in Metallicity[]
 #GALSF_RESOLVEDISM_METALS_ISOTOPES       % NOT IMPLEMENTED (#error): 40 isotopes instead of 27 elements
 TURB_DIFF_METALS                         % turbulent metal diffusion
 GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS_INDIVIDUAL]
+#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY % no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
 #GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION % shock-tracked SN dust destruction
 #GALSF_RESOLVEDISM_DUST_NO_MCKEE         % disable McKee SN dust destruction
 #GALSF_RESOLVEDISM_DUST_SELFTEST         % TEST-ONLY: dust physics self-test dump
