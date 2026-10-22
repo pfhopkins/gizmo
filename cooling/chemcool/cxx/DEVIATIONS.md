@@ -691,10 +691,15 @@ chemcool_consts.h, precompiler_logic.h (`#error` without CHEMCOOL_CXX), rate_eq_
   the f89713d Gamma/n_H2 in the CO branching (n = n_H used), all RTZ integrator code.
 - Solver: H2, H+, CO, He+, He++ and stages 1..Z of each metal + energy density in one BDF system (104 + 1);
   neutral stages = pool - sum(ions) (- CO for C, O), n_e = sum of ion charges, so elements and charge close by
-  construction; every process enters as a pairwise flux.  Jacobian: species columns by differences with the rate
-  coefficients frozen at T, plus a dF/dT column times dT/dy (T = e / (1.5 k n_H n_tot)).  One CVODE solve per cell
-  call (no substep loop, no TNOCHEM hot bypass), rtol 1e-4, atol 1e-10 x element pool (H+ 1e-12, energy 0);
-  after the solve negative ions are zeroed and over-full elements scaled down (projection).
+  construction; every process enters as a pairwise flux.  The derived (reference) species of each element is its most
+  abundant one at entry (H: HI, H+ or H2); a CVODE root stops the solve when it falls 1e3 below the element's most
+  abundant species and the solve continues with re-selected references (a stale reference is pure cancellation noise:
+  neutral-to-ionized transients took 2e4-2e5 steps or failed).  Evolving all stages instead (no derived species) was
+  tried: transients fine, but near equilibrium Newton fails at long steps (2.4e5 steps, all Newton failures, for one
+  1.8e22 s chunk at T = 1e4 K), consistent with the unit eigenvalue per conserved element in I - gamma J.  Jacobian: species columns by
+  differences with the rate coefficients frozen at T, plus a dF/dT column times dT/dy (T = e / (1.5 k n_H n_tot)).
+  One CVODE solve per cell call (no substep loop, no TNOCHEM hot bypass), rtol 1e-4, atol 1e-10 x element pool (H+
+  1e-12, energy 0); after the solve negative ions are zeroed and over-full elements scaled down (projection).
 - RTZ quirks not reproduced: T = T2*mu at constant T, per-sweep malloc, ss_factor slot index (fixed on mem_opt),
   stopping rule.  The n_ion > 1e-10 cm^-3 gate of the fine-structure terms is dropped (continuity); the
   n_element gates of the high-T, CR and photoheating sums are kept (constant during a solve).

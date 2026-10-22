@@ -368,7 +368,7 @@ const CTH CTHEAT[] = {
 // ---------------------------------------------------------------- per-thread state
 thread_local Coef tl_k, tl_k2;
 thread_local double tl_uvb_z = -1.0, tl_uvb_pi[N18_NTRAC + 1], tl_uvb_ph[N18_NTRAC + 1];   // H stage 0 at N18_NTRAC
-thread_local long st_calls = 0, st_steps = 0, st_rhs = 0, st_jac = 0;
+thread_local long st_calls = 0, st_steps = 0, st_rhs = 0, st_jac = 0, st_roots = 0;
 thread_local double tl_fsh = -1.0;   // H2 self-shielding held fixed while the Jacobian is built (< 0: live)
 
 void uvb_update(double z)   // photoionization_UVB.c update_UVB
@@ -399,13 +399,22 @@ const Coef& coef_at(double T, double z, int exact)
 inline int stage_of(int k, int r) { return k < r ? k : k + 1; }
 inline double elem_pool(const ChemCell& c, int e, double xco) { return (e == 1 ? c.abhe : c.n18_pool[e]) - ((e == 2 || e == 4) ? xco : 0.0); }
 
-// H+ and HI per H; ODE slot 1 holds the less abundant of the two (n18_ref[0] = 0: H+, 1: HI)
-inline void hydrogen(const double* y, const ChemCell& c, double* xHI, double* xHp)
+// hydrogen ODE slots 0, 1 by n18_ref[0]: 0 (H2, H+; HI derived), 1 (H2, HI; H+ derived), 2 (HI, H+; H2 derived)
+inline void hraw(const double* y, const ChemCell& c, double* h2, double* hi, double* hp)
 {
-    const double h2 = std::fmax(y[0], 0.0), v = std::fmin(std::fmax(y[1], 0.0), 1.0);
-    if (c.n18_ref[0] == 0) { *xHp = v; *xHI = std::fmax(1.0 - 2.0 * h2 - v, 0.0); }
-    else                   { *xHI = v; *xHp = std::fmax(1.0 - 2.0 * h2 - v, 0.0); }
+    switch (c.n18_ref[0]) {
+    case 0:  *h2 = y[0]; *hp = y[1]; *hi = 1.0 - 2.0 * y[0] - y[1]; break;
+    case 1:  *h2 = y[0]; *hi = y[1]; *hp = 1.0 - 2.0 * y[0] - y[1]; break;
+    default: *hi = y[0]; *hp = y[1]; *h2 = 0.5 * (1.0 - y[0] - y[1]); break;
+    }
 }
+inline void hspec(const double* y, const ChemCell& c, double* h2, double* hi, double* hp)
+{
+    hraw(y, c, h2, hi, hp);
+    *h2 = std::fmin(std::fmax(*h2, 0.0), 0.5); *hi = std::fmin(std::fmax(*hi, 0.0), 1.0); *hp = std::fmin(std::fmax(*hp, 0.0), 1.0);
+}
+inline void hydrogen(const double* y, const ChemCell& c, double* xHI, double* xHp) { double h2; hspec(y, c, &h2, xHI, xHp); }
+inline double h2_of(const double* y, const ChemCell& c) { double h2, hi, hp; hspec(y, c, &h2, &hi, &hp); return h2; }
 
 // stage abundances per H of He..Fe (TracAbund slots), clipped at 0; returns x_e
 double stages(const double* y, const ChemCell& c, double* s)
@@ -427,7 +436,7 @@ double particles(const double* y, const ChemCell& c, double* xe_out)
     double s[N18_NTRAC], xe = stages(y, c, s), met = 0;
     for (int e = 2; e < N18_NEL; e++) met += c.n18_pool[e];
     if (xe_out) *xe_out = xe;
-    return 1.0 - std::fmax(y[0], 0.0) + c.abhe + met - std::fmax(y[2], 0.0) + xe;
+    return 1.0 - h2_of(y, c) + c.abhe + met - std::fmax(y[2], 0.0) + xe;
 }
 
 // species and energy derivatives at state y, rates at temperature T (coefficients k)
@@ -439,7 +448,7 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
 
     // state: stage abundances per H (TracAbund layout), neutral stages from the pools
     double s[N18_NTRAC];
-    const double xH2 = std::fmax(y[0], 0.0), xCO = std::fmax(y[2], 0.0);
+    const double xH2 = h2_of(y, c), xCO = std::fmax(y[2], 0.0);
     double xHI, xHp;
     hydrogen(y, c, &xHI, &xHp);
     s[N18_T_H2] = xH2; s[N18_T_HP] = xHp; s[N18_T_CO] = xCO;
@@ -511,7 +520,7 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
         hprim = k.k1 * k.k2 * xe * xHI / (coll + crp);
         h2_form = (fdg * k.adust + hprim) * xHI * nH;
         h2_dest = k.bH * nHI + k.bH2 * nH2 + k.be * ne + k.bHe * s[slot(1, 0)] * nH + kdiss + zH2;
-        if (!(c.n18_flags & N18_NOH2)) f[0] = h2_form - h2_dest * xH2;
+        if (!(c.n18_flags & N18_NOH2)) f[0] = h2_form - h2_dest * xH2;   // dH2/dt, mapped below
     }
     // CO (molecules.c alpha_CO / beta_CO; CHx branching with n_H)
     double co_form = 0.0, co_dest = 0.0;
@@ -524,7 +533,12 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
         f[2] = co_form - co_dest;
         ds[slot(2, 1)] += co_dest - co_form;
     }
-    f[1] = (c.n18_ref[0] == 0) ? dHp : -dHp - 2.0 * f[0];
+    {
+        const double dH2 = f[0], dHI = -dHp - 2.0 * dH2;
+        if (c.n18_ref[0] == 0)      { f[0] = dH2; f[1] = dHp; }
+        else if (c.n18_ref[0] == 1) { f[0] = dH2; f[1] = dHI; }
+        else                        { f[0] = dHI; f[1] = dHp; }
+    }
     for (int e = 1; e < N18_NEL; e++) for (int k = 0; k < n18_Z[e]; k++) f[n18_ooff[e] + k] = ds[slot(e, stage_of(k, c.n18_ref[e]))];
 
     // ---- heating and cooling [erg cm^-3 s^-1] (cooling.c all_cooling) ----
@@ -667,7 +681,7 @@ int cv_jac(sunrealtype, N_Vector yy, N_Vector fy, SUNMatrix J, void* ud, N_Vecto
     double lam0[CHEM_NRATES], lamc0[CHEM_NRATES_CHEM_MAX], td0 = c.tdust;
     std::memcpy(lam0, c.lambda, sizeof(lam0)); std::memcpy(lamc0, c.lambda_chem, sizeof(lamc0));
     double fa[N18_NODE + 1], fb[N18_NODE + 1];
-    tl_fsh = (c.iphoto == 0) ? 1.0 : cxx_calc_H2_shielding_factor(Tr, std::fmax(y[0], 0.0), c.dl * c.yn, c);
+    tl_fsh = (c.iphoto == 0) ? 1.0 : cxx_calc_H2_shielding_factor(Tr, h2_of(y, c), c.dl * c.yn, c);
     assemble(y, Tr, k, c, fa);   // f at frozen T (equals f0 up to the clamp)
 
     // d f / d T at fixed composition
@@ -682,9 +696,11 @@ int cv_jac(sunrealtype, N_Vector yy, N_Vector fy, SUNMatrix J, void* ud, N_Vecto
     double dTdy[N18_NODE + 1];
     for (int i = 0; i < n; i++) dTdy[i] = 0.0;
     if (!fixT && T0 > T_MIN && T0 < T_MAX) {
-        // d n_tot / d y: H2 -1, H+ +1, CO -1 - (charge of the C and O reference stages), stage j of element e: j - ref
-        if (c.n18_ref[0] == 0) { dTdy[0] = T0 / ntot; dTdy[1] = -T0 / ntot; }
-        else                   { dTdy[0] = 3.0 * T0 / ntot; dTdy[1] = T0 / ntot; }
+        // d n_tot / d y (n_tot = 1 - H2 + H+ + ...): ref 0 (H2 -1, H+ +1), ref 1 (H2 -3, HI -1), ref 2 (HI +1/2, H+ +3/2);
+        // CO -1 - (charge of the C and O reference stages), stage j of element e: j - ref
+        if (c.n18_ref[0] == 0)      { dTdy[0] = T0 / ntot; dTdy[1] = -T0 / ntot; }
+        else if (c.n18_ref[0] == 1) { dTdy[0] = 3.0 * T0 / ntot; dTdy[1] = T0 / ntot; }
+        else                        { dTdy[0] = -0.5 * T0 / ntot; dTdy[1] = -1.5 * T0 / ntot; }
         dTdy[2] = (1.0 + c.n18_ref[2] + c.n18_ref[4]) * T0 / ntot;
         for (int e = 1; e < N18_NEL; e++) for (int k = 0; k < n18_Z[e]; k++) dTdy[n18_ooff[e] + k] = -(stage_of(k, c.n18_ref[e]) - c.n18_ref[e]) * T0 / ntot;
         dTdy[N18_NODE] = T0 / y[N18_NODE];
@@ -694,7 +710,7 @@ int cv_jac(sunrealtype, N_Vector yy, N_Vector fy, SUNMatrix J, void* ud, N_Vecto
         int e = 0;
         if (col >= 5) { e = 2; while (e + 1 < N18_NEL && col >= n18_ooff[e + 1]) e++; }
         else if (col >= 3) e = 1;
-        double pool = (col == 0) ? 0.5 : (col == 1) ? 1.0 : (col == 2) ? std::fmin(c.n18_pool[2], c.n18_pool[4]) : elem_pool(c, e, 0.0);
+        double pool = (col == 0) ? (c.n18_ref[0] == 2 ? 1.0 : 0.5) : (col == 1) ? 1.0 : (col == 2) ? std::fmin(c.n18_pool[2], c.n18_pool[4]) : elem_pool(c, e, 0.0);
         double h = 1e-7 * std::fmax(std::fabs(y[col]), 1e-4 * pool);
         if (h <= 0) h = 1e-30;
         double s0 = y[col];
@@ -713,6 +729,25 @@ int cv_jac(sunrealtype, N_Vector yy, N_Vector fy, SUNMatrix J, void* ud, N_Vecto
 }
 
 void cv_err(int, const char*, const char*, char*, void*) {}
+
+// root e: the derived (reference) species of element e drops 1e3 below the element's most abundant species
+const double REF_SWITCH = 1e-3;
+int cv_root(sunrealtype, N_Vector yy, sunrealtype* g, void* ud)
+{
+    const ChemCell& c = *(const ChemCell*)ud;
+    const double* y = N_VGetArrayPointer(yy);
+    double h2, hi, hp;
+    hraw(y, c, &h2, &hi, &hp);
+    const double hr = (c.n18_ref[0] == 0) ? hi : (c.n18_ref[0] == 1) ? hp : 2.0 * h2;
+    g[0] = hr - REF_SWITCH * std::fmax(std::fmax(hi, hp), 2.0 * h2);
+    for (int e = 1; e < N18_NEL; e++) {
+        double sum = 0, mx = 0;
+        for (int k = 0; k < n18_Z[e]; k++) { sum += y[n18_ooff[e] + k]; mx = std::fmax(mx, y[n18_ooff[e] + k]); }
+        const double xr = elem_pool(c, e, y[2]) - sum;
+        g[e] = (elem_pool(c, e, 0.0) > 0.0) ? xr - REF_SWITCH * std::fmax(mx, xr) : 1.0;
+    }
+    return 0;
+}
 
 struct Work {
     SUNContext ctx = nullptr;
@@ -739,15 +774,32 @@ Work* work_get(const double* y0)
         w.LS = SUNLinSol_Dense(w.y, w.A, w.ctx);
         CVodeSetLinearSolver(w.mem, w.LS, w.A);
         CVodeSetJacFn(w.mem, cv_jac);
+        CVodeRootInit(w.mem, N18_NEL, cv_root);
     }
     return &w;
+}
+
+void set_atol(Work* w, const ChemCell& c)
+{
+    double* at = N_VGetArrayPointer(w->atol);
+    at[0] = (c.n18_ref[0] == 2 ? 1e-2 : 0.5) * c.n18_atol; at[1] = 1e-2 * c.n18_atol;
+    at[2] = std::fmax(c.n18_atol * std::fmin(c.n18_pool[2], c.n18_pool[4]), 1e-30);
+    for (int e = 1; e < N18_NEL; e++) for (int k = 0; k < n18_Z[e]; k++) at[n18_ooff[e] + k] = std::fmax(c.n18_atol * elem_pool(c, e, 0.0), 1e-30);
+    at[N18_NODE] = 0.0;
+    CVodeSVtolerances(w->mem, c.n18_rtol, w->atol);
 }
 
 // element-wise projection onto the pools (negative ions -> 0, oversubscribed elements scaled down)
 void project(double* y, const ChemCell& c)
 {
-    y[0] = std::fmax(y[0], 0.0); y[1] = std::fmax(y[1], 0.0); y[2] = std::fmax(y[2], 0.0);
-    if (2.0 * y[0] + y[1] > 1.0) { double f = 1.0 / (2.0 * y[0] + y[1]); y[0] *= f; y[1] *= f; }
+    {
+        double h2, hi, hp;
+        hspec(y, c, &h2, &hi, &hp);
+        const double sh = 2.0 * h2 + hi + hp;
+        if (sh > 0.0) { h2 /= sh; hi /= sh; hp /= sh; } else hi = 1.0;
+        if (c.n18_ref[0] == 0) { y[0] = h2; y[1] = hp; } else if (c.n18_ref[0] == 1) { y[0] = h2; y[1] = hi; } else { y[0] = hi; y[1] = hp; }
+    }
+    y[2] = std::fmax(y[2], 0.0);
     y[2] = std::fmin(y[2], std::fmin(c.n18_pool[2], c.n18_pool[4]));
     for (int e = 1; e < N18_NEL; e++) {
         double sum = 0;
@@ -796,8 +848,9 @@ void n18_trac_to_ode(const double* tr, double energy, double* y, ChemCell& c)
     if (2.0 * xH2 + xHp > 1.0) { double f = 1.0 / (2.0 * xH2 + xHp); xH2 *= f; xHp *= f; }
     double xCO = std::fmin(std::fmax(tr[N18_T_CO], 0.0), std::fmin(c.n18_pool[2], c.n18_pool[4]));
     double xHI = std::fmax(1.0 - 2.0 * xH2 - xHp, 0.0);
-    c.n18_ref[0] = (xHI >= xHp) ? 0 : 1;
-    y[0] = xH2; y[1] = (c.n18_ref[0] == 0) ? xHp : xHI; y[2] = xCO;
+    c.n18_ref[0] = (xHI >= xHp && xHI >= 2.0 * xH2) ? 0 : (xHp >= 2.0 * xH2) ? 1 : 2;   // derive the dominant one
+    if (c.n18_ref[0] == 0) { y[0] = xH2; y[1] = xHp; } else if (c.n18_ref[0] == 1) { y[0] = xH2; y[1] = xHI; } else { y[0] = xHI; y[1] = xHp; }
+    y[2] = xCO;
     for (int e = 1; e < N18_NEL; e++) {
         double sum = 0;
         for (int j = 0; j <= n18_Z[e]; j++) sum += std::fmax(tr[slot(e, j)], 0.0);
@@ -814,7 +867,7 @@ void n18_ode_to_trac(const double* y, double* tr, const ChemCell& c)
 {
     double xHI, xHp;
     hydrogen(y, c, &xHI, &xHp);
-    tr[N18_T_H2] = y[0]; tr[N18_T_HP] = xHp; tr[N18_T_CO] = y[2];
+    tr[N18_T_H2] = h2_of(y, c); tr[N18_T_HP] = xHp; tr[N18_T_CO] = y[2];
     for (int e = 1; e < N18_NEL; e++) {
         const int r = c.n18_ref[e];
         double sum = 0;
@@ -836,24 +889,29 @@ int n18_evolve(double dt, double* trac, double* energy, ChemCell& c)
     Work* w = work_get(y);
     if (!w) return 3;
     for (int i = 0; i < n; i++) NV_Ith_S(w->y, i) = y[i];
-    double* at = N_VGetArrayPointer(w->atol);
-    at[0] = 0.5 * c.n18_atol; at[1] = 1e-2 * c.n18_atol;
-    at[2] = std::fmax(c.n18_atol * std::fmin(c.n18_pool[2], c.n18_pool[4]), 1e-30);
-    for (int e = 1; e < N18_NEL; e++) for (int k = 0; k < n18_Z[e]; k++) at[n18_ooff[e] + k] = std::fmax(c.n18_atol * elem_pool(c, e, 0.0), 1e-30);
-    at[N18_NODE] = 0.0;
     if (CVodeReInit(w->mem, 0.0, w->y) < 0) return 3;
-    CVodeSVtolerances(w->mem, c.n18_rtol, w->atol);
+    set_atol(w, c);
     CVodeSetUserData(w->mem, &c);
     CVodeSetMaxNumSteps(w->mem, 200000);
     CVodeSetInitStep(w->mem, 0.0);
     CVodeSetMaxStep(w->mem, 0.0);
 
-    int rc = 1;
+    int rc = 1, nroot = 0;
     double t = 0.0;
     for (int attempt = 0; attempt < 8; attempt++) {
         double tret = t;
         int flag = CVode(w->mem, dt, w->y, &tret, CV_NORMAL);
         long ns = 0; CVodeGetNumSteps(w->mem, &ns); st_steps += ns;
+        if (flag == CV_ROOT_RETURN && tret < dt && nroot < 1000) {   // re-select the reference species and go on
+            double* yy = N_VGetArrayPointer(w->y), tr[N18_NTRAC];
+            n18_ode_to_trac(yy, tr, c);
+            n18_trac_to_ode(tr, yy[N18_NODE], yy, c);
+            t = tret; nroot++; st_roots++; attempt--;
+            for (int i = 0; i < n; i++) y[i] = yy[i];
+            set_atol(w, c);
+            if (CVodeReInit(w->mem, t, w->y) < 0) return 3;
+            continue;
+        }
         if (flag >= 0) { rc = 0; break; }
         rc = (flag == CV_TOO_MUCH_WORK) ? 1 : 100;
         // restart from the last accepted state (or the previous restart point) with a small first step
