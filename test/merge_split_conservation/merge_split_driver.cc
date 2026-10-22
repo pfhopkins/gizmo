@@ -383,6 +383,13 @@ int main(int argc, char **argv)
     All.Timebase_interval = (All.TimeMax - All.TimeBegin) / TIMEBASE;
     random_generator = gsl_rng_alloc(gsl_rng_ranlxd1); gsl_rng_set(random_generator, 42);
     set_softenings();
+#ifdef METALS /* as init() sets them: the cooling chain divides by these */
+    for(int k=0;k<NUM_METAL_SPECIES;k++) {All.SolarAbundances[k]=0;}
+    All.SolarAbundances[0]=0.02;
+#ifdef COOL_METAL_LINES_BY_SPECIES
+    {const double sa[11]={0.02,0.28,3.26e-3,1.32e-3,8.65e-3,2.22e-3,9.31e-4,1.08e-3,6.44e-4,1.01e-4,1.73e-3}; for(int k=1;k<11 && k<NUM_METAL_SPECIES;k++) {All.SolarAbundances[k]=sa[k];}}
+#endif
+#endif
 #if defined(COOLING) && !defined(CHEMCOOL)
     InitCool(); /* the merge calls set_eos_pressure, which reads the cooling tables */
 #endif

@@ -2,7 +2,8 @@
 
 A periodic box with a metallicity step (0.1 Zsun cold | 60 Zsun hot) puts neighbouring cells in different
 timebins, which is where a one-sided or timestep-mismatched diffusive exchange creates or destroys metals.
-Each case checks, from the OUTPUT_TURB_DIFF_METALS_BUDGET line printed after every hydro step, that
+Each case builds with TURB_DIFF_METALS_EXACT_CONSERVATION (set here, not in Config.sh, so one case can run the
+default exchange and check that it still drifts) and checks, from the OUTPUT_TURB_DIFF_METALS_BUDGET line, that
 sum(M*Z) + sum(pending exchange) stays at its initial value to round-off, and that sum(M*Z) alone is back
 at that value in the final, synchronized snapshot.
 """
@@ -24,6 +25,7 @@ from make_turb_diff_metals_ics import make_ics
 TEST_NAME = "turb_diff_metals"
 TEST_DIR = f"test/{TEST_NAME}"
 RTOL_CONSERVATION = 1e-12
+EXACT = ("TURB_DIFF_METALS_EXACT_CONSERVATION",)
 
 _last_build = None
 
@@ -37,9 +39,9 @@ def _build(num_openmp_threads=0, extra_config_flags=()):
         _last_build = key
 
 
-def run_case(tag, num_mpi_ranks=4, num_openmp_threads=0, extra_config_flags=(), ic_kwargs=None, param_overrides=None):
+def run_case(tag, num_mpi_ranks=4, num_openmp_threads=0, extra_config_flags=(), ic_kwargs=None, param_overrides=None, exact=True):
     """Builds, writes the IC, runs; returns (initial metal mass, budget rows, output dir)."""
-    _build(num_openmp_threads, extra_config_flags)
+    _build(num_openmp_threads, (EXACT if exact else ()) + tuple(extra_config_flags))
     cwd = os.getcwd()
     os.chdir(TEST_DIR)
     try:
@@ -135,6 +137,16 @@ def test_turb_diff_metals_merge_split():
         n_final = f["Header"].attrs["NumPart_Total"][0]
     assert n_final != 20**3, "no cell merged or split: merge/split path not exercised"
     assert_conserved(MZ0, budget, outdir)
+
+
+def test_turb_diff_metals_default_exchange_drifts():
+    """The default one-sided exchange loses metal with individual timesteps (3e-5 here), which is what the
+    flag exists to fix. Guards against the two code paths silently becoming the same."""
+    MZ0, budget, outdir = run_case("default", exact=False)
+    assert max_timebins(outdir) >= 2
+    MZ_final, _ = metal_mass(snapshots(outdir)[-1])
+    drift = abs(MZ_final - MZ0) / MZ0
+    assert 1e-7 < drift < 1e-3, f"default exchange drifted by {drift:.2e}; expected ~1e-5 (0 would mean the flag no longer changes anything)"
 
 
 def metals_exchanged(tag, time, n_side=20):
