@@ -381,7 +381,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
         /* Attenuated FUV field the chemistry actually used = G0 x f_dust (2026-07-04).
          * M1: f_dust=1 (dust column zeroed, transport did the attenuation) -> G0_atten=G0.
-         * TREE_RAD: G0 is UNATTENUATED and f_dust=exp(-AV...) applies the dust attenuation,
+         * HEALPix tree columns: G0 is UNATTENUATED and f_dust=exp(-AV...) applies the dust attenuation,
          * so G0_atten is the effective FUV -> directly comparable to M1's G0. */
 #ifdef OUTPUT_SHIELD_FAC
         CellP[target].ShieldFacDust = chem_out.fac_shield_dust;

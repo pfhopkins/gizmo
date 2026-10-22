@@ -265,17 +265,8 @@ extern struct gas_cell_data
     int Ionized;                          /*!< flag: 1 if particle is in HII region */
 #endif
 #endif
-/* total-H Projection[] is TREE_RAD-only (FUV-G0 dust column, M1's job); the H2/CO
- * columns run standalone under TREE_RAD_H2 for M1 line self-shielding. */
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifdef TREE_RAD
-    MyFloat Projection[NPIX];             /*!< HEALPix column density per pixel */
-    MyFloat ProjectionDust[NPIX];         /*!< HEALPix DGR-weighted column per pixel (solar-DGR units): with variable dust the DGR stays INSIDE the path integral (Uli 2026-07-28) */
-#endif
-#ifdef TREE_RAD_H2
-    MyFloat ProjectionH2[NPIX];           /*!< HEALPix H2 column density per pixel */
-    MyFloat ProjectionCO[NPIX];           /*!< HEALPix CO column density per pixel */
-#endif
+#ifdef RT_TREECOL_GAS_TARGETS_ONLY
+    MyFloat ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH]; /*!< angular bins for column density, per column species (gas cells only) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyFloat UV_flux[NPIX];                /*!< HEALPix FUV flux per pixel from stars, 8-13.6 eV */
@@ -313,12 +304,12 @@ extern struct gas_cell_data
     /* G0 / G0_LW are set by EITHER the subgrid G0_VARIABLE path OR the M1 RADTRANSFER
        path (2026-07-04). Keep them alive in both branches so the M1 FUV/LW field is
        stored + output, not thrown away — required to validate M1 FUV-heating/LW-H2
-       against the subgrid (TREE_RAD) reference. */
+       against the subgrid (tree-column) reference. */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
     MyFloat G0;                           /*!< FUV radiation field in Habing units, 8-13.6 eV */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units, 11.2-13.6 eV */
     MyFloat G0_atten;                     /*!< ATTENUATED FUV = G0 x f_dust: the effective FUV the chemistry
-                                               sees. M1 (f_dust=1) -> = G0 already-attenuated field; TREE_RAD
+                                               sees. M1 (f_dust=1) -> = G0 already-attenuated field; tree columns
                                                -> = G0_unatten x f_dust. Directly comparable across schemes. */
     MyFloat ShieldFacDust;                /*!< dust shielding factor f_dust used this step (1 under M1) */
 #endif

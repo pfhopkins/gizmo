@@ -282,10 +282,10 @@ c
             print*, yn, dl, divv
             print*, y
 	    print*, ydot
-#ifdef TREE_RAD
+#ifdef RT_TREECOL_DUST_WEIGHTED
             print*, "Tree rad totals: ", column_density_projection
 #endif
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
             print*, "Tree rad h2: ", column_density_projection_h2
             if (nchem_network .ne. 1 .and. nchem_network .ne. 4) then
               print*, "Tree rad co: ", column_density_projection_co

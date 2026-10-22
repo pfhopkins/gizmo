@@ -41,13 +41,13 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     double yn, abh2, abhd, abco, abe;
     double dl = in->dl_code;
 
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     double columni;
 #endif
-#ifdef TREE_RAD
+#ifdef RT_TREECOL_DUST_WEIGHTED
     double NH;
 #endif
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
     double NH2, NCO;
 #endif
     int i;
@@ -315,25 +315,25 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #endif
         /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
            molecular photochemistry (H2/CO dissociation, C ionization).
-           FLOOR (2026-07-04, Uli): use the SAME floor as the TREE_RAD/G0_VARIABLE path
+           FLOOR (2026-07-04, Uli): use the SAME floor as the tree-column/G0_VARIABLE path
            (0.324e-2 * All.G0 = 5.508e-3 for All.G0=1.7; see UV_flux_min_pix above), so
            M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
            the diffuse field is represented by this floor, identically in both schemes. */
         double G0_floor_treerad = 0.324e-2 * All.G0;
         in->G0    = DMAX(u_PE_cgs / u_Hab_FUV_M1, G0_floor_treerad);
-        /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; TREE_RAD floors LW at 10% of the FUV floor */
+        /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; the tree path floors LW at 10% of the FUV floor */
         in->G0_LW = DMAX(u_LW_cgs / u_Hab_LW, 0.1 * G0_floor_treerad);
         /* G0_dust: GRAIN photoelectric heating field (Bakes & Tielens gas PE heating in
            cool_func) = FUV(8-13.6) + NUV(3.4-8), each with its own Habing conversion.
            NUV photons above the grain work function eject grain photoelectrons -> heat gas.
            Optical (0.4-3.4 eV) is below the work function (no PE heating); its grain-heating
            role is carried by the M1 IR/dust solver, not here. */
-        in->G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, G0_floor_treerad); /* same TREE_RAD floor (G0_dust=G0_tot there) */
+        in->G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, G0_floor_treerad); /* same tree-path floor (G0_dust=G0_tot there) */
 
         /* Store the M1 FUV/LW field back to the cell so it is OUTPUT and inspectable,
            mirroring the subgrid G0_VARIABLE path (CellP.G0/.G0_LW at orig lines 345/347).
            Without this the M1 G0/G0_LW were computed, fed to the chemistry, and thrown
-           away — invisible in snapshots and impossible to validate against TREE_RAD
+           away — invisible in snapshots and impossible to validate against the tree path
            (2026-07-04). Fields live under G0_VARIABLE||RADTRANSFER (cell_data.h). */
         CellP[target].G0    = in->G0;
         CellP[target].G0_LW = in->G0_LW;
@@ -585,10 +585,10 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #endif
 
 
-#ifdef TREE_RAD
+#ifdef RT_TREECOL_DUST_WEIGHTED
     /* [orig chemcool.cc:637-684] */
     for(i = 0; i < NPIX; i++) {
-        columni = CellP[target].Projection[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
+        columni = TREECOL_BINS(target)[TREECOL_GAS][i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
 #ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
         NH = columni * in->X_H_chem / PROTONMASS_CGS;
 #else
@@ -611,13 +611,13 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         /* VARIABLE-DGR FIX (Uli 2026-07-28): calc_photo computes AV = conv x
          * dust_to_gas_ratio x N -- but the LOCAL DGR cannot multiply the PATH
          * column when DGR varies along the ray (it stays inside the integral).
-         * The tree now accumulates the DGR-weighted column (ProjectionDust,
+         * The tree now accumulates the DGR-weighted column (TREECOL_DUST,
          * solar-DGR units, same per-cell DGR recipe as this file via
          * resolvedism_cell_DGR_solar); passing N_eff = N_dust/DGR_local makes
          * the Fortran product exactly conv x N_dust. When the T>1e5 sputter
          * gate (or zero dust) disables dust terms, the value is inert. */
         if(in->dust_to_gas_ratio > 1.0e-10) {
-            double coldust_ = CellP[target].ProjectionDust[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
+            double coldust_ = TREECOL_BINS(target)[TREECOL_DUST][i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
             double NH_dust_;
 #ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
             NH_dust_ = coldust_ * in->X_H_chem / PROTONMASS_CGS;
@@ -635,27 +635,27 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     }
 #endif
 
-#if defined(TREE_RAD_H2) && !defined(TREE_RAD)
+#if defined(RT_TREECOL_H2_CO) && !defined(RT_TREECOL_DUST_WEIGHTED)
     /* [orig chemcool.cc:686-693]
        M1 (RADTRANSFER) + standalone H2/CO line self-shielding: there is NO total-H
-       TreeCol column (TREE_RAD off -- the FUV-G0 dust walk is M1's job, and M1 already
+       TreeCol dust column (off -- the FUV-G0 dust walk is M1's job, and M1 already
        dust-attenuated the continuum). Zero the dust column so calc_photo's f_dust and
        the df* dust factors compute at AV=0 (no double-counting). The H2/CO line-shield
        columns are populated below and DO drive the target-side self-shielding. */
     for(i = 0; i < NPIX; i++) { in->column_density_projection[i] = 0.0; }
 #endif
 
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
     /* [orig chemcool.cc:695-713] */
     for(i = 0; i < NPIX; i++) {
-        columni = CellP[target].ProjectionH2[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
+        columni = TREECOL_BINS(target)[TREECOL_H2][i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
         NH2 = columni / (2.0 * PROTONMASS_CGS);
         in->column_density_projection_h2[i] = NH2;
     }
 
 #if CHEMISTRYNETWORK != 1 && CHEMISTRYNETWORK != 4
     for(i = 0; i < NPIX; i++) {
-        columni = CellP[target].ProjectionCO[i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
+        columni = TREECOL_BINS(target)[TREECOL_CO][i] * UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv;
         NCO = columni / (28.0 * PROTONMASS_CGS);
         in->column_density_projection_co[i] = NCO;
     }
@@ -664,7 +664,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         in->column_density_projection_co[i] = 0.0;
     }
 #endif
-#endif /* TREE_RAD_H2 */
+#endif /* RT_TREECOL_H2_CO */
 
 
     /* [orig chemcool.cc:716-721] Switch off chemistry for high-density particles */
@@ -756,13 +756,13 @@ void chem_commit_to_fortran(const struct ChemInputs *in)
     CHEM_COMP.abhe     = in->abhe;
 #endif
 
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     for(i = 0; i < NPIX; i++) {PROJECT.column_density_projection[i] = in->column_density_projection[i];}  /* [orig chemcool.cc:657/675/677/692] */
-#if defined(TREE_RAD) && defined(GALSF_RESOLVEDISM_G0_VARIABLE)
+#if defined(RT_TREECOL_DUST_WEIGHTED) && defined(GALSF_RESOLVEDISM_G0_VARIABLE)
     for(i = 0; i < NPIX; i++) {PROJECT.fac_uv[i] = in->fac_uv[i];}                                        /* [orig chemcool.cc:681] */
 #endif
 #endif
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
     for(i = 0; i < NPIX; i++) {PROJECT.column_density_projection_h2[i] = in->column_density_projection_h2[i];}  /* [orig chemcool.cc:699] */
     for(i = 0; i < NPIX; i++) {PROJECT.column_density_projection_co[i] = in->column_density_projection_co[i];}  /* [orig chemcool.cc:706/710] */
 #endif

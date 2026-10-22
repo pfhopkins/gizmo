@@ -2440,7 +2440,7 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
+#ifdef RT_TREECOL_SHIELDINGLENGTH
       strcpy(tag[nt], "ShieldingLength");
       addr[nt] = &All.ShieldingLength;
       id[nt++] = REAL;

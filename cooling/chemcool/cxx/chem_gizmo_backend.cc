@@ -28,8 +28,8 @@ Build without CHEMCOOL_CXX (the Fortran path) for the other networks."
 
 void chem_bind_build_config(ChemBuildConfig& cfg, int net);  // chem_backend_fortran.cc
 
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
-static_assert(NPIX <= CHEM_NPIX, "ChemCell pixel arrays are sized for NSIDE=1");
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
+static_assert(NPIX <= CHEM_NPIX, "ChemCell pixel arrays are sized for RT_USE_TREECOL_FOR_NH=12");
 #endif
 
 static ChemCell g_tmpl;                                   // init-time constants of every cell
@@ -61,7 +61,7 @@ void chem_cxx_tables_init(void)
 #ifdef WSS_CIE_COOL
     for (int k = 0; k < 12; k++) c.Zmass[k] = COOLRC.Zmass[k];
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     c.npix = NPIX;
     for (int k = 0; k < NPIX; k++) c.fac_uv[k] = 1.0 / NPIX;
 #else
@@ -112,13 +112,13 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
     c.abhe = in->abhe;
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     for (int k = 0; k < NPIX; k++) c.col_tot[k] = in->column_density_projection[k];
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     for (int k = 0; k < NPIX; k++) c.fac_uv[k] = in->fac_uv[k];
 #endif
 #endif
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
     for (int k = 0; k < NPIX; k++) { c.col_h2[k] = in->column_density_projection_h2[k]; c.col_co[k] = in->column_density_projection_co[k]; }
 #endif
 #if CHEMISTRYNETWORK == 20

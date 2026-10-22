@@ -609,8 +609,8 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_TREE_RAD_PROJECTION:
-#ifdef TREE_RAD
-            for(n = 0; n < pc; n++) {for(k = 0; k < NPIX; k++) {CellP[offset + n].Projection[k] = *fp++;}}
+#if defined(RT_TREECOL_GAS_TARGETS_ONLY) && defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* gas column per pixel */
+            for(n = 0; n < pc; n++) {for(k = 0; k < NPIX; k++) {CellP[offset + n].ColumnDensityBins[TREECOL_GAS][k] = *fp++;}}
 #endif
             break;
 

@@ -15,7 +15,7 @@ set -e
 SRC=$(readlink -f "$1"); OUT=$(readlink -f -m "$2"); NET=$3
 SUN=${4:-/orion/ptmp/uli/orion/fb_tests/_sundials/install}
 SUNLIB=$(ls -d "$SUN/lib64" "$SUN/lib" 2>/dev/null | head -1)
-CANON_CONFIG=/orion/ptmp/uli/orion/test/gizmo/Config.sh
+CANON_CONFIG=${CANON_CONFIG:-/orion/ptmp/uli/orion/test/gizmo/Config.sh}
 FC=gfortran; CXX=g++
 J=${JOBS:-2}
 

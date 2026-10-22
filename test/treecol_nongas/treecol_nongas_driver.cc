@@ -21,7 +21,7 @@ int main(int argc, char **argv)
     set_non_standard_physics_for_current_time();
     compute_grav_accelerations();
     for(int i = 0; i < NumPart; i++)
-        if(P[i].Type == 0) {for(int k = 0; k < RT_USE_TREECOL_FOR_NH; k++) {printf("COL %llu %d %.17g\n", (unsigned long long)P[i].ID, k, (double)P[i].ColumnDensityBins[k]);}}
+        if(P[i].Type == 0) {for(int k = 0; k < RT_USE_TREECOL_FOR_NH; k++) {printf("COL %llu %d %.17g\n", (unsigned long long)P[i].ID, k, (double)P[i].ColumnDensityBins[TREECOL_GAS][k]);}}
     fflush(stdout);
     MPI_Finalize();
     return 0;

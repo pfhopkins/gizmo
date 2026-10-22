@@ -774,16 +774,11 @@ void init(void)
             CellP[i].Ionized = 0;
 #endif
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifdef TREE_RAD
-            {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].Projection[kp] = 0;}}
-#endif
-#ifdef TREE_RAD_H2
-            {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].ProjectionH2[kp] = 0; CellP[i].ProjectionCO[kp] = 0;}}
+#ifdef RT_TREECOL_GAS_TARGETS_ONLY
+            {int ks, kp; for(ks = 0; ks < TREECOL_NSPECIES; ks++) {for(kp = 0; kp < NPIX; kp++) {CellP[i].ColumnDensityBins[ks][kp] = 0;}}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             {int kp; for(kp = 0; kp < NPIX; kp++) {CellP[i].UV_flux[kp] = 0;}}
-#endif
 #endif
 #ifdef SINK_COMPTON_HEATING
             CellP[i].Rad_Flux_AGN = 0;

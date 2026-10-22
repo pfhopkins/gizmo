@@ -974,11 +974,11 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             break;
 
         case IO_TREE_RAD_PROJECTION:
-#ifdef TREE_RAD
+#if defined(RT_TREECOL_GAS_TARGETS_ONLY) && defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* gas column per pixel */
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    for(k = 0; k < NPIX; k++) {fp[k] = (MyOutputFloat) CellP[pindex].Projection[k];}
+                    for(k = 0; k < NPIX; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ColumnDensityBins[TREECOL_GAS][k];}
                     fp += NPIX;
                     n++;
                 }
@@ -2578,7 +2578,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 
         case IO_TREE_RAD_PROJECTION:
-#ifdef TREE_RAD
+#if defined(RT_TREECOL_GAS_TARGETS_ONLY) && defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* gas column per pixel */
             if(mode) bytes_per_blockelement = NPIX * sizeof(MyInputFloat);
             else bytes_per_blockelement = NPIX * sizeof(MyOutputFloat);
 #endif
@@ -3003,7 +3003,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_TREE_RAD_PROJECTION:
-#ifdef TREE_RAD
+#if defined(RT_TREECOL_GAS_TARGETS_ONLY) && defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* gas column per pixel */
             values = NPIX;
 #endif
             break;
@@ -3690,7 +3690,7 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_TREE_RAD_PROJECTION:
-#ifdef TREE_RAD
+#if defined(RT_TREECOL_GAS_TARGETS_ONLY) && defined(GALSF_RESOLVEDISM_G0_VARIABLE) /* gas column per pixel */
             return 1;
 #endif
             break;

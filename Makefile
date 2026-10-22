@@ -832,7 +832,7 @@ KETJU_INCL =
 KETJU_LIBS =
 endif
 
-# HEALPix library for TREE_RAD angular column density binning
+# HEALPix library for the RT_USE_TREECOL_FOR_NH angular column bins
 ifeq (NEED_HEALPIX,$(findstring NEED_HEALPIX,$(CONFIGVARS)))
 HEALPIXINCL =
 HEALPIXLIBS =

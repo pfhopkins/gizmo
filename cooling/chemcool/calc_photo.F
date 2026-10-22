@@ -68,7 +68,7 @@ c in density_profile(.c). Each particle has its column density intergrated
 c from its radial location. 
 c
 c iphoto == 6: Estimate using the column densites obtained during the tree-walk
-c Compile option is TREE_RAD and resolution of angular sky coverage is set by NSIDE
+c Needs HEALPix tree columns; RT_USE_TREECOL_FOR_NH sets the sky resolution
 c
       subroutine calc_photo(temp, rpar, abh2, abhd, abco, phrates, 
      $                      G_dust, chi_isrf)
@@ -287,11 +287,11 @@ c
             chi_isrf = 1d0
          endif
       elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then
-c iphoto=6 (TreeCol) also runs standalone under M1 (TREE_RAD_H2 without TREE_RAD):
+c iphoto=6 (TreeCol) also runs under M1 (H2/CO columns without the dust column):
 c the df*/f_dust dust factors must still be INITIALISED and summed here (they come
 c out ~1 because column_density_projection is zeroed under M1), then the RADTRANSFER
 c override below pins the key ones -- M1 already applied continuum dust attenuation.
-#if defined RAYTRACE || defined TREE_RAD || defined TREE_RAD_H2
+#if defined RAYTRACE || defined RT_TREECOL_DUST_WEIGHTED || defined RT_TREECOL_H2_CO
          sigma_dust = 2d-21 * dust_to_gas_ratio
          f_dust     = 0d0
          f_simp     = 0d0
@@ -347,7 +347,7 @@ c override below pins the key ones -- M1 already applied continuum dust attenuat
 #ifdef RAYTRACE
                print*, AV_ext, I, col_tot(I)
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
                print*, AV_ext, I, column_density_projection(I)
 #endif
                ABORT(124)
@@ -402,12 +402,12 @@ c           the other dust factors, per pixel as in the single-AV branch
 #endif
 
          enddo
-#endif /* RAYTRACE or TREE_RAD */
+#endif /* RAYTRACE or tree columns */
       endif
 c
 c When M1 radiation transport is active, dust attenuation is already
 c handled by the RT solver. Override all dust shielding factors to unity
-c so only molecular self-shielding (H2, CO) from TREE_RAD remains.
+c so only molecular self-shielding (H2, CO) from the tree columns remains.
 c
 #ifdef RADTRANSFER
       f_dust   = 1d0
@@ -522,7 +522,7 @@ c
         endif
         fshield_CO = theta_H2 * theta_CO
       elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then
-#if defined RAYTRACE || defined TREE_RAD_H2
+#if defined RAYTRACE || defined RT_TREECOL_H2_CO
         nray = NPIX
         nray_start = 0
         nray_end = NPIX-1
@@ -901,10 +901,10 @@ c
 c
 c nray = number of TreeCol pixels averaged over. The iphoto=6 loop below runs over
 c all NPIX pixels using fac_uv_pix = 1/nray (when G0_VARIABLE is off), so nray MUST
-c equal NPIX for the correct pixel average -- this holds for the standalone TREE_RAD_H2
-c (M1) path too, NOT only TREE_RAD. (Uli, 2026-07-08: was TREE_RAD-only -> nray=1 under
+c equal NPIX for the correct pixel average -- this holds for the H2/CO-only
+c (M1) path too, NOT only with the dust column. (Uli, 2026-07-08: was dust-column-only -> nray=1 under
 c M1 -> H2 self-shielding over-counted by a factor NPIX.)
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
       nray = NPIX
 #else
       nray = 1
@@ -932,12 +932,12 @@ c
         ABORT(121)
 #endif
       elseif (iphoto .eq. 6) then
-#ifndef TREE_RAD_H2
+#ifndef RT_TREECOL_H2_CO
         write(*,'(A)') 'CALC_PHOTO: invalid photodissociation option'
-        write(*,'(A)') 'CALC_PHOTO: recompile with TREE_RAD_H2 enabled'
+        write(*,'(A)') 'CALC_PHOTO: needs HEALPix tree columns'
         ABORT(122)
 #endif
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
         do I = 0, NPIX-1
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
           fac_uv_pix = fac_uv(I)
@@ -983,7 +983,7 @@ c
       parameter (mh  = PROTONMASS)
       integer I
 c
-c Currently, HD is not included in the RAYTRACE or TREE_RAD code, so
+c Currently, HD is not included in the RAYTRACE or tree-column code, so
 c we assume that the HD column density is a scaled version of the
 c H2 column density, using the local abundances as a guide to the
 c fractionation. This is a very crude approximation, and should be
@@ -1007,7 +1007,7 @@ c
 c
       if (iphoto .eq. 2) then
       elseif (iphoto .eq. 6) then
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
         do I = 0, NPIX-1
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
           fac_uv_pix = fac_uv(I)
@@ -1038,7 +1038,7 @@ c
         enddo
 c        fshield_hd = fshield_hd / (1d0 * NPIX)
         return
-#endif /* TREE_RAD_H2 */
+#endif /* RT_TREECOL_H2_CO */
       else
         hddis0 = NHD_local / 5d14
         hddis1 = dsqrt(1d0 + hddis0)

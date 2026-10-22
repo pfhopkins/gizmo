@@ -878,7 +878,7 @@ c
 c This is the heating from the surrounding dust, assuming its optically
 c thin to its own emission (i.e. no column attenuation between emitter and 
 c receiver). The term 'diffuse_dust_heat' is stored in the 'project/PROJECT.' 
-c common block / external structure. It is always there if TREE_RAD is defined
+c common block / external structure. It is always there with the HEALPix tree columns
 c and so without #def DIFFUSE_DUST_EMISSION it will contain junk!
 c
         isrf_heat = isrf_heat + diffuse_dust_heat

@@ -547,8 +547,8 @@ extern struct global_data_all_processes
   double TestFixedWindMdot;     /*!< >0: PIN the stellar wind mass-loss rate [Msun/yr] constant (bypasses tables+PMS delay) — clean Weaver-bubble test; 0 = off (table wind) */
   double TestFixedWindVel;      /*!< with TestFixedWindMdot: constant wind velocity [km/s]; L_w = 0.5*Mdot*v^2 known analytically for the Weaver comparison */
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-  double ShieldingLength;       /*!< maximum distance for column density integration in tree walk (shared by TREE_RAD FUV-G0 and the standalone TREE_RAD_H2/CO line-shielding walks) */
+#ifdef RT_TREECOL_SHIELDINGLENGTH
+  double ShieldingLength;       /*!< maximum distance for the tree column integration (physical) */
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
   double MinMassIMF;            /*!< minimum mass for stochastic IMF sampling [Msun] */
@@ -1166,6 +1166,11 @@ All;
 
 #include "particle_data.h"
 #include "cell_data.h"
+#ifdef RT_TREECOL_GAS_TARGETS_ONLY
+#define TREECOL_BINS(i) (CellP[i].ColumnDensityBins) /* tree column bins [species][bin] of gas cell i */
+#elif defined(RT_USE_TREECOL_FOR_NH)
+#define TREECOL_BINS(i) (P[i].ColumnDensityBins)
+#endif
 
 static_assert(std::is_trivially_copyable<particle_data>::value, "particle_data must be trivially copyable for MPI");
 static_assert(std::is_trivially_copyable<gas_cell_data>::value, "gas_cell_data must be trivially copyable for MPI");
@@ -1259,7 +1264,7 @@ extern struct gravdata_out
 {
     Vec3<MyDouble> Acc;
 #ifdef RT_USE_TREECOL_FOR_NH
-    MyDouble ColumnDensityBins[RT_USE_TREECOL_FOR_NH];
+    MyDouble ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH];
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyDouble TreeMass;
@@ -1283,19 +1288,6 @@ extern struct gravdata_out
 #ifdef CHIMES_STELLAR_FLUXES
     double Chimes_G0[CHIMES_LOCAL_UV_NBINS];
     double Chimes_fluxPhotIon[CHIMES_LOCAL_UV_NBINS];
-#endif
-/* TreeCol column-density exports: total-H Projection[] is TREE_RAD-only (FUV-G0 dust
- * shielding, M1's job); the H2/CO columns run standalone under TREE_RAD_H2 (M1 line
- * self-shielding), so they must be packed/exported whenever TREE_RAD_H2 is on. */
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifdef TREE_RAD
-    MyDouble Projection[NPIX];            /*!< HEALPix column density per pixel */
-    MyDouble ProjectionDust[NPIX];        /*!< HEALPix DGR-weighted column per pixel (solar-DGR units; exact variable-dust attenuation) */
-#endif
-#ifdef TREE_RAD_H2
-    MyDouble ProjectionH2[NPIX];          /*!< HEALPix H2 column density per pixel */
-    MyDouble ProjectionCO[NPIX];          /*!< HEALPix CO column density per pixel */
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyDouble UV_flux[NPIX];               /*!< HEALPix FUV flux per pixel, 8-13.6 eV */
@@ -1621,7 +1613,7 @@ enum iofields
   IO_RESOLVEDISM_DUST,
   IO_RESOLVEDISM_G0,
   IO_RESOLVEDISM_G0_LW,
-  IO_RESOLVEDISM_G0_ATTEN,   /* attenuated FUV = G0 x f_dust (M1 vs TREE_RAD comparison) */
+  IO_RESOLVEDISM_G0_ATTEN,   /* attenuated FUV = G0 x f_dust (M1 vs tree-column comparison) */
   IO_RESOLVEDISM_SHIELDFAC_DUST, /* dust shielding factor f_dust (=1 under M1) */
   IO_RESOLVEDISM_G0_NUV,
   IO_RESOLVEDISM_G0_OPT,
@@ -1716,17 +1708,8 @@ extern ALIGN(32) struct NODE
     integertime Ti_current;
     long N_part;   /*!< number of particles+cells in the tree node */
     MyFloat maxsoft;        /*!< hold the maximum gravitational softening of particle in the node */
-#if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
-  MyFloat gasmass;
-#ifdef TREE_RAD
-  MyFloat dustmass;             /*!< DGR-weighted gas mass in node (solar-DGR units): variable dust cannot be pulled out of the column integral (Uli 2026-07-28) */
-#endif
-#ifdef TREE_RAD_H2
-  MyFloat h2mass;               /*!< H2 mass in tree node */
-#endif
-#ifdef TREE_RAD_CO
-  MyFloat comass;               /*!< CO mass in tree node */
-#endif
+#ifdef RT_USE_TREECOL_FOR_NH
+  MyFloat treecol_mass[TREECOL_NSPECIES]; /*!< column species masses in the node (TREECOL_GAS, _DUST, _H2, _CO) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
   MyFloat uv_luminosity;        /*!< total FUV luminosity in tree node, 8-13.6 eV */

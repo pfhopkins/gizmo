@@ -89,7 +89,7 @@ BiniX                           1.0e-8            % ~10 nG initial B-field (code
 BiniY                           0
 BiniZ                           0
 
-%---- TreeRad column density (TREE_RAD)
+%---- Tree column density (RT_USE_TREECOL_FOR_NH)
 ShieldingLength                 0.050             % 50 pc shielding length
 
 %---- CHEMCOOL (CHEMCOOL + CHEMISTRYNETWORK=5)

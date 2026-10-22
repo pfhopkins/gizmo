@@ -276,11 +276,9 @@
                                 #   NOT thread-safe -- do not combine with OPENMP until Gate 3.
                                 #   Acceptance results: cooling/chemcool/cxx/GATE2_ACCEPTANCE.md
 ## ----------------------------------------------------------------------------------------------------
-# ----- TREE_RAD: HEALPix column density in gravity tree walk (replaces RT_USE_TREECOL_FOR_NH) ------
-#TREE_RAD                       # HEALPix angular binning for column density (mutually exclusive with RT_USE_TREECOL_FOR_NH)
-#TREE_RAD_H2                    # H2 column density per HEALPix pixel
-#TREE_RAD_CO                    # CO column density per HEALPix pixel
-#NSIDE=1                        # HEALPix resolution: NPIX = 12*NSIDE^2 (default=1, giving 12 pixels)
+# ----- tree column densities for CHEMCOOL: RT_USE_TREECOL_FOR_NH=12*NSIDE^2 (HEALPix, see the RT section). With CHEMCOOL
+#       the columns are cut at ShieldingLength, stored per gas cell, and carry H2 and CO (plus a dust-weighted column with
+#       GALSF_RESOLVEDISM_G0_VARIABLE). TREE_RAD, TREE_RAD_H2, TREE_RAD_CO and NSIDE were removed.
 ############################################################################################################################
 
 
@@ -466,7 +464,7 @@
 # ----------- alternative, test-problem, or special behavior options
 ## ----------------------------------------------------------------------------------------------------
 #RT_SELFGRAVITY_OFF                     # turn off gravity: if using an RT method that needs the gravity tree (FIRE, OTVET), use this -instead- of SELFGRAVITY_OFF to safely turn off gravitational forces
-#RT_USE_TREECOL_FOR_NH=6                # uses the TreeCol method to estimate effective optical depth using non-local information from the gravity tree; cite Clark, Glover & Klessen 2012 MNRAS 420 754. Value specifies the number of angular bins on the sky for ray-tracing column density.
+#RT_USE_TREECOL_FOR_NH=6                # uses the TreeCol method to estimate effective optical depth using non-local information from the gravity tree; cite Clark, Glover & Klessen 2012 MNRAS 420 754. Value specifies the number of angular bins on the sky for ray-tracing column density: 6 = cube faces, 12*NSIDE^2 = HEALPix (NSIDE 1-8).
 #RT_INJECT_PHOTONS_DISCRETELY           # do photon injection in discrete packets, instead of sharing a continuous source function. works better with adaptive timestepping (default with GALSF)
 #RT_USE_GRAVTREE_SAVE_RAD_FLUX          # save radiative fluxes incident on each cell if using RHD methods that propagate fluxes through the gravity tree when these wouldn't be saved by default
 #RT_REPROCESS_INJECTED_PHOTONS          # re-process photon energy while doing the discrete injection operation conserving photon energy, put only the un-absorbed component of the current band into that band, putting the rest in its "donation" bin (ionizing->optical, all others->IR). This would happen anyway during the routine for resolved absorption, but this may more realistically handle situations where e.g. your dust destruction front is at totally unresolved scales and you don't want to spuriously ionize stuff on larger scales. Assume isotropic re-radiation, so inject only energy for the donated bin and not net flux/momentum. follows STARFORGE methods (Grudic+ arXiv:2010.11254) - cite this

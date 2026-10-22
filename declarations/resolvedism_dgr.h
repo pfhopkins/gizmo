@@ -2,7 +2,7 @@
 #define RESOLVEDISM_DGR_H
 /* Single source of truth for the per-cell dust-to-gas ratio in SOLAR units
  * (1.0 = MW-like DGR_solar ~ 0.01 absolute), shared by chemistry (chemcool.cc),
- * the TREE_RAD dust-weighted column (forcetree.cc) and radiation pressure
+ * the dust-weighted tree column (forcetree.cc) and radiation pressure
  * (resolvedism_fb_momentum.cc), so attenuation, absorption and heating all see
  * the SAME dust field. Mirrors the chemcool.cc convention exactly (2026-07-28):
  * evolved-dust branch sums Dust[]/0.01; no-dust branch scales the dust-to-metal

@@ -1252,7 +1252,7 @@ void resolvedism_inject_fb_energy(void)
     FB_ZERO_AWS();
     resolvedism_fb_momentum_calc(-2);   /* weighting pre-pass for radpressure */
     resolvedism_fb_momentum_calc(1);    /* radpressure injection (IR-trapping boost; DIRECT term
-                                         * offloaded to the per-cell TREE_RAD pass below) */
+                                         * offloaded to the per-cell tree-flux pass below) */
     resolvedism_fb_apply_recoil();
     /* channel-3 ledger, ONCE per local star (LEDGER FIX 2026-07-28: the old
      * accumulation inside particle2in counted once per export entry too). */
@@ -1262,7 +1262,7 @@ void resolvedism_inject_fb_energy(void)
         if(dp_code_led > 0) {RadPressure_dp_thisStep += dp_code_led * (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);}
     }
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
-    /* LEBRON-style DIRECT radp: per gas cell, from the TREE_RAD attenuated per-pixel
+    /* LEBRON-style DIRECT radp: per gas cell, from the tree attenuated per-pixel
      * fluxes finalized in the gravity walk (deposited locally in the absorbing cell,
      * with correct direction + shadowing). Also accumulates into RadPressure_dp_thisStep
      * so channel-3 (radpres) of the FeedbackBudget ledger stays complete. */

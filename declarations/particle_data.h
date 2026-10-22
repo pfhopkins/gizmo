@@ -104,8 +104,10 @@ extern ALIGN(32) struct particle_data
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) || defined(COOLING)
     Vec3<MyFloat> GradRho;          /*!< gas density gradient evaluated simply from the neighboring particles, for collisionless centers */
 #endif
-#ifdef RT_USE_TREECOL_FOR_NH
-    MyFloat ColumnDensityBins[RT_USE_TREECOL_FOR_NH];     /*!< angular bins for column density */
+#if defined(RT_USE_TREECOL_FOR_NH) && !defined(RT_TREECOL_GAS_TARGETS_ONLY)
+    MyFloat ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH];     /*!< angular bins for column density, per column species */
+#endif
+#ifdef RT_TREECOL_EFFECTIVE_COLUMN_FOR_NH
     MyFloat SigmaEff;              /*!< effective column density -log(avg(exp(-sigma))) averaged over column density bins from the gravity tree (does not include the self-contribution) */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE

@@ -188,8 +188,8 @@ void recompute_resolvedism_fuv_luminosities(void)
     /* TestFUVZero=1: silence ALL stellar radiation (UV/LW/NUV/OPT + Lyman) for
      * quiescent-medium experiments (e.g. clean KO15 terminal-momentum ladder:
      * progenitor FUV photoheating drives a ~10 km/s box-wide flow otherwise).
-     * Keeps the TREE_RAD columns/chemistry stack fully compiled and valid —
-     * stripping TREE_RAD_H2 from a net-17 build is an invalid config (CALC_PHOTO
+     * Keeps the tree-column/chemistry stack fully compiled and valid —
+     * dropping the H2/CO columns from a net-17 build is an invalid config (CALC_PHOTO
      * aborts). Test-tag only; no effect in production builds. */
     /* TestFixedQion>0: clean StarBench PI ionization-front test. PIN the ionizing
      * photon rate to a CONSTANT (Q [phot/s], no aging drift) and zero every

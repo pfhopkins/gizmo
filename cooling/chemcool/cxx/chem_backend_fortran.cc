@@ -24,13 +24,7 @@ extern "C" {
 #include "GIZMO_config.h"
 #include "cooling/chemcool/f2c.h"
 #include "cooling/chemcool/chemcool_consts.h"
-
-#ifndef NSIDE
-#define NSIDE 1
-#endif
-#ifndef NPIX
-#define NPIX (12 * NSIDE * NSIDE)
-#endif
+#include "declarations/treecol_config.h"
 
 // ---- /coolr/ : layout copied verbatim from onezone2.c (which is itself the
 // ---- cool.h common-block order); must stay byte-compatible.
@@ -42,7 +36,7 @@ extern CHEM_TLS_VARCOMP struct { double abhe; double X_H_chem; } CHEM_COMP;
 // /current_photo/ -- the frozen photorate cache (audit §1.5)
 extern CHEM_TLS struct { double G_dust, chi_isrf, phrates[NPHTAB]; } current_photo_;
 
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
 extern CHEM_TLS struct {
     double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
@@ -284,7 +278,7 @@ void chem_bind_cell(ChemCell& c, const ChemTables& T, int net)
 
     c.fshield_CO = 1.0;
     c.npix = 0;
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     c.npix = NPIX;
     for (int k = 0; k < NPIX && k < CHEM_NPIX; k++) {
         c.col_h2[k]  = PROJECT.column_density_projection_h2[k];

@@ -316,7 +316,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         {int k_rt; for(k_rt=0;k_rt<N_RT_FREQ_BINS;k_rt++) {CellP[i].Lambda_RadiativeCooling_toRHDBins[k_rt]=0;}} /* prevent stale values from affecting RT solver */
 #endif
         double u_before_chemcool = CellP[i].InternalEnergy;
-        do_chemcool_step(i, dtime, 0, 0); /* dl=0: shielding columns come from TREE_RAD/TREE_RAD_H2, not local approx */
+        do_chemcool_step(i, dtime, 0, 0); /* dl=0: shielding columns come from the tree columns, not local approx */
         if(CellP[i].InternalEnergy < All.MinEgySpec) { CellP[i].InternalEnergy = All.MinEgySpec; CellP[i].InternalEnergyPred = All.MinEgySpec; }
 
 #if defined(RADTRANSFER)

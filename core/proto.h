@@ -850,7 +850,7 @@ void resolvedism_fb_thermal_calc(int loop_iteration);
 void resolvedism_fb_momentum_calc(int fb_loop_iteration);
 extern MyIDType FB_SerialEventID; /* per-event FB serialization token (resolvedism_fb.cc); 0 = unrestricted */
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
-void resolvedism_radpressure_treerad(void); /* LEBRON-style per-cell direct radp from TREE_RAD fluxes (Uli 2026-07-08) */
+void resolvedism_radpressure_treerad(void); /* LEBRON-style per-cell direct radp from tree per-pixel fluxes (Uli 2026-07-08) */
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION

@@ -2,7 +2,7 @@
  * Provides accurate N-body dynamics near massive stars and BHs
  * using the MSTAR integrator (Rantala+ 2020) with chain regularization.
  *
- * Key design: particles stay in the tree (TREE_RAD / G0 / PI remain correct).
+ * Key design: particles stay in the tree (tree columns / G0 / PI remain correct).
  * Internal chain gravity is subtracted via negative half-step kicks,
  * then replaced by MSTAR's accurate unsoftened integration.
  */

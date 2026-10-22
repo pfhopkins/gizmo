@@ -9,11 +9,11 @@
 #include "../declarations/resolvedism_dgr.h"
 #include "../mesh/kernel.h"
 #include "tree_pair_kernel.h"
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#include "healpix_utils.h"     /* HEALPix pixel geometry: shared by FUV-G0 (TREE_RAD) and standalone H2/CO column walks */
-#ifdef TREE_RAD_H2
-#include "../cooling/chemcool/chemcool_consts.h"
+#ifdef RT_TREECOL_HEALPIX
+#include "healpix_utils.h"     /* HEALPix pixel geometry: tree columns and per-pixel fluxes */
 #endif
+#ifdef RT_TREECOL_H2_CO
+#include "../cooling/chemcool/chemcool_consts.h"
 #endif
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -145,7 +145,7 @@ static double fac_intp;
 #else
 #define RADIATION_NEAREST_XYZ(x,y,z,sign)
 #endif
-#if defined(BOX_PERIODIC) && defined(GRAVITY_NOT_PERIODIC) && (defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO) || defined(GALSF_RESOLVEDISM_G0_VARIABLE))
+#if defined(BOX_PERIODIC) && defined(GRAVITY_NOT_PERIODIC) && (defined(RT_TREECOL_SHIELDINGLENGTH) || defined(GALSF_RESOLVEDISM_G0_VARIABLE))
 #define TREE_RADIATION_WRAPS_WITHOUT_GRAVITY /* radiation needs its own min-image vector and node opening */
 #endif
 
@@ -559,23 +559,52 @@ void force_insert_pseudo_particles(void)
  *  decomposition, while Bit 1 signals whether the top-level node is
  *  dependent on local mass/resolution elements.
  */
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(TREE_RAD) || defined(TREE_RAD_H2)
+#ifdef RT_USE_TREECOL_FOR_NH
+/* per-particle column species masses into m[]: one definition for walk leaves and node moments; its expansion sites are FMA-sensitive under -O3 -march=native */
+#if defined(SINK_ALPHADISK_ACCRETION) && !defined(RT_TREECOL_SHIELDINGLENGTH)
+#define TREECOL_SINK_RESERVOIR_MASS_(p, m) if(P[p].Type == 5) {m[TREECOL_GAS] = P[p].Sink_Mass_Reservoir;} /* gas at the inner edge of a disk should not see a hole due to the sink */
+#else
+#define TREECOL_SINK_RESERVOIR_MASS_(p, m)
+#endif
+#ifdef RT_TREECOL_DUST_WEIGHTED
+#define TREECOL_DUST_MASS_(p, m) m[TREECOL_DUST] = 0; if(P[p].Type == 0) {m[TREECOL_DUST] = resolvedism_cell_DGR_solar(p) * P[p].Mass;}
+#else
+#define TREECOL_DUST_MASS_(p, m)
+#endif
+#if defined(RT_TREECOL_H2_CO) && (CHEMISTRYNETWORK != 1) && (CHEMISTRYNETWORK != 2) && (CHEMISTRYNETWORK != 4)
+#define TREECOL_CO_MASS_(p, m) m[TREECOL_CO] = 28.0 * CellP[p].TracAbund[ICO] * HYDROGEN_MASSFRAC * P[p].Mass;
+#else
+#define TREECOL_CO_MASS_(p, m)
+#endif
+#ifdef RT_TREECOL_H2_CO
+#define TREECOL_H2_CO_MASS_(p, m) m[TREECOL_H2] = 0; m[TREECOL_CO] = 0; if(P[p].Type == 0) {m[TREECOL_H2] = 2.0 * CellP[p].TracAbund[IH2] * HYDROGEN_MASSFRAC * P[p].Mass; TREECOL_CO_MASS_(p, m)}
+#else
+#define TREECOL_H2_CO_MASS_(p, m)
+#endif
+#define TREECOL_PARTICLE_MASSES(p, m) {m[TREECOL_GAS] = 0; if(P[p].Type == 0) {m[TREECOL_GAS] = P[p].Mass;} TREECOL_SINK_RESERVOIR_MASS_(p, m) TREECOL_DUST_MASS_(p, m) TREECOL_H2_CO_MASS_(p, m)}
+
+/* keep noinline: inlining or moving it changes bits via FMA contraction under -O3 -march=native */
+static __attribute__((noinline)) void treecol_particle_masses(int p, double *m) TREECOL_PARTICLE_MASSES(p, m)
+
+/* angular bin of direction d: cube faces (strict > tie-breaking) or HEALPix ring pixel */
+static inline int treecol_angular_bin(const double d0, const double d1, const double d2)
+{
+#ifdef RT_TREECOL_HEALPIX
+    long ipix; double v[3] = {d0, d1, d2}; vec2pix_ring(NSIDE, v, &ipix); return (int)ipix;
+#else
+    if((fabs(d0) > fabs(d1)) && (fabs(d0)>fabs(d2))) {if (d0 > 0) {return 0;} else {return 1;}}
+    else if (fabs(d1)>fabs(d2)) {if (d1 > 0) {return 2;} else {return 3;}}
+    else {if (d2 > 0) {return 4;} else {return 5;}}
+#endif
+}
+#endif
+
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 /* per-particle Stella node moments: single source for force_update_node_recursive and force_refresh_node_moments */
-struct stella_pmom {double dust, h2, co, uv, lw, w_lum, nuv, opt, ion, nh, hei, heii;};
+struct stella_pmom {double uv, lw, w_lum, nuv, opt, ion, nh, hei, heii;};
 static inline struct stella_pmom stella_particle_node_moments(int p)
 {
-    struct stella_pmom m = {0,0,0,0,0,0,0,0,0,0,0,0};
-#ifdef TREE_RAD
-    if(P[p].Type == 0) {m.dust = resolvedism_cell_DGR_solar(p) * P[p].Mass;}
-#endif
-#ifdef TREE_RAD_H2
-    if(P[p].Type == 0) {
-        m.h2 = 2.0 * CellP[p].TracAbund[IH2] * HYDROGEN_MASSFRAC * P[p].Mass;
-#if defined(TREE_RAD_CO) && CHEMISTRYNETWORK != 1 && CHEMISTRYNETWORK != 4
-        m.co = 28.0 * CellP[p].TracAbund[ICO] * HYDROGEN_MASSFRAC * P[p].Mass;
-#endif
-    }
-#endif
+    struct stella_pmom m = {0,0,0,0,0,0,0,0,0};
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     if(P[p].Type == 4 || P[p].Type == 5) {
         m.uv = P[p].UV_luminosity; m.lw = P[p].LW_luminosity; m.w_lum = m.uv + m.lw;
@@ -650,14 +679,8 @@ void force_update_node_recursive(int no, int sib, int father)
         
         last = no;
         
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        MyFloat gasmass = 0;
-#endif
-#ifdef TREE_RAD
-        MyFloat dustmass = 0;
-#endif
-#ifdef TREE_RAD_H2
-        MyFloat h2mass = 0, comass = 0;
+#ifdef RT_USE_TREECOL_FOR_NH
+        MyFloat treecol_mass[TREECOL_NSPECIES] = {0};
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         MyFloat uv_luminosity = 0;
@@ -742,15 +765,8 @@ void force_update_node_recursive(int no, int sib, int father)
                         mass += (Nodes[p].u.d.mass);
                         s += Nodes[p].u.d.mass * Nodes[p].u.d.s;
                         vs += Nodes[p].u.d.mass * Extnodes[p].vs;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                        gasmass += Nodes[p].gasmass;
-#endif
-#ifdef TREE_RAD
-                        dustmass += Nodes[p].dustmass;
-#endif
-#ifdef TREE_RAD_H2
-                        h2mass += Nodes[p].h2mass;
-                        comass += Nodes[p].comass;
+#ifdef RT_USE_TREECOL_FOR_NH
+                        {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_mass[ks] += Nodes[p].treecol_mass[ks];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                         uv_luminosity += Nodes[p].uv_luminosity;
@@ -834,20 +850,11 @@ void force_update_node_recursive(int no, int sib, int father)
                     mass += (pa->Mass);
                     s += pa->Mass * pa->Pos;
                     vs += pa->Mass * pa->Vel;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                    if(pa->Type == 0) gasmass += pa->Mass;
-#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-                    if(pa->Type == 5) gasmass += P[p].Sink_Mass_Reservoir; // gas at the inner edge of a disk should not see a hole due to the sink
+#ifdef RT_USE_TREECOL_FOR_NH
+                    {double cm[TREECOL_NSPECIES]; treecol_particle_masses(p, cm); int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_mass[ks] += cm[ks];}}
 #endif
-#endif
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(TREE_RAD) || defined(TREE_RAD_H2)
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                     {struct stella_pmom sm = stella_particle_node_moments(p);
-#ifdef TREE_RAD
-                    dustmass += sm.dust;
-#endif
-#ifdef TREE_RAD_H2
-                    h2mass += sm.h2; comass += sm.co;
-#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                     uv_luminosity += sm.uv; lw_luminosity += sm.lw;
                     {int kl; for(kl=0;kl<3;kl++) lum_s[kl] += sm.w_lum * P[p].Pos[kl];}
@@ -1015,15 +1022,8 @@ void force_update_node_recursive(int no, int sib, int father)
         Nodes[no].u.d.mass = mass;
         Nodes[no].u.d.s = s;
         Nodes[no].GravCost = 0;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        Nodes[no].gasmass = gasmass;
-#endif
-#ifdef TREE_RAD
-        Nodes[no].dustmass = dustmass;
-#endif
-#ifdef TREE_RAD_H2
-        Nodes[no].h2mass = h2mass;
-        Nodes[no].comass = comass;
+#ifdef RT_USE_TREECOL_FOR_NH
+        {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[no].treecol_mass[ks] = treecol_mass[ks];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[no].uv_luminosity = uv_luminosity;
@@ -1143,8 +1143,8 @@ void force_exchange_pseudodata(void)
         Vec3<MyFloat> s;
         Vec3<MyFloat> vs;
         MyFloat mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        MyFloat gasmass;
+#ifdef RT_USE_TREECOL_FOR_NH
+        MyFloat treecol_mass[TREECOL_NSPECIES];
 #endif
         MyFloat hmax;
         MyFloat vmax;
@@ -1156,17 +1156,6 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
         MyFloat stellar_lum[N_RT_FREQ_BINS];
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        /* TREE_RAD-FIX 2026-07-06: column node masses were also missing from the
-         * pseudo-node exchange (same bug class as the G0 fields below) — remote/top
-         * nodes carried ZERO gas/H2/CO mass for the treecol column integrals. */
-#ifdef TREE_RAD
-        MyFloat dustmass;
-#endif
-#ifdef TREE_RAD_H2
-        MyFloat h2mass, comass;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         /* G0-FIX 2026-07-05: these were MISSING from the cross-domain pseudo-node
@@ -1245,8 +1234,8 @@ void force_exchange_pseudodata(void)
             DomainMoment[i].s = Nodes[no].u.d.s;
             DomainMoment[i].vs = Extnodes[no].vs;
             DomainMoment[i].mass = Nodes[no].u.d.mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            DomainMoment[i].gasmass = Nodes[no].gasmass;
+#ifdef RT_USE_TREECOL_FOR_NH
+            {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {DomainMoment[i].treecol_mass[ks] = Nodes[no].treecol_mass[ks];}}
 #endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
             DomainMoment[i].vmax = Extnodes[no].vmax;
@@ -1259,14 +1248,6 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {DomainMoment[i].stellar_lum[k] = Nodes[no].stellar_lum[k];}
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#ifdef TREE_RAD
-            DomainMoment[i].dustmass = Nodes[no].dustmass;
-#endif
-#ifdef TREE_RAD_H2
-            DomainMoment[i].h2mass = Nodes[no].h2mass; DomainMoment[i].comass = Nodes[no].comass;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             DomainMoment[i].uv_luminosity = Nodes[no].uv_luminosity;
@@ -1360,8 +1341,8 @@ void force_exchange_pseudodata(void)
                     Nodes[no].u.d.s = DomainMoment[i].s;
                     Extnodes[no].vs = DomainMoment[i].vs;
                     Nodes[no].u.d.mass = DomainMoment[i].mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                    Nodes[no].gasmass = DomainMoment[i].gasmass;
+#ifdef RT_USE_TREECOL_FOR_NH
+                    {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[no].treecol_mass[ks] = DomainMoment[i].treecol_mass[ks];}}
 #endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
                     Extnodes[no].vmax = DomainMoment[i].vmax;
@@ -1374,14 +1355,6 @@ void force_exchange_pseudodata(void)
 #endif
 #ifdef RT_USE_GRAVTREE
                     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = DomainMoment[i].stellar_lum[k];}
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#ifdef TREE_RAD
-                    Nodes[no].dustmass = DomainMoment[i].dustmass;
-#endif
-#ifdef TREE_RAD_H2
-                    Nodes[no].h2mass = DomainMoment[i].h2mass; Nodes[no].comass = DomainMoment[i].comass;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                     Nodes[no].uv_luminosity = DomainMoment[i].uv_luminosity;
@@ -1459,8 +1432,8 @@ void force_treeupdate_pseudos(int no)
     MyFloat hmax, vmax;
     MyFloat divVmax;
     Vec3<MyFloat> s, vs; MyFloat mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    MyFloat gasmass = 0;
+#ifdef RT_USE_TREECOL_FOR_NH
+    MyFloat treecol_mass[TREECOL_NSPECIES] = {0};
 #endif
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1468,15 +1441,6 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
     MyFloat stellar_lum[N_RT_FREQ_BINS]={0};
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    MyFloat gasmass_tp=0;
-#ifdef TREE_RAD
-    MyFloat dustmass_tp=0;
-#endif
-#ifdef TREE_RAD_H2
-    MyFloat h2mass_tp=0, comass_tp=0;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyFloat uv_luminosity_tp=0, lw_luminosity_tp=0, lum_s_tp[3]={0,0,0};
@@ -1553,8 +1517,8 @@ void force_treeupdate_pseudos(int no)
             if(Nodes[p].u.d.bitflags & (1 << BITFLAG_INTERNAL_TOPLEVEL)) {force_treeupdate_pseudos(p);}
             
             mass += (Nodes[p].u.d.mass);
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            gasmass += Nodes[p].gasmass;
+#ifdef RT_USE_TREECOL_FOR_NH
+            {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_mass[ks] += Nodes[p].treecol_mass[ks];}}
 #endif
             s += Nodes[p].u.d.mass * Nodes[p].u.d.s;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1562,15 +1526,6 @@ void force_treeupdate_pseudos(int no)
 #endif
 #ifdef RT_USE_GRAVTREE
             int k; for(k=0;k<N_RT_FREQ_BINS;k++) {stellar_lum[k] += (Nodes[p].stellar_lum[k]);}
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-            gasmass_tp += Nodes[p].gasmass;
-#ifdef TREE_RAD
-            dustmass_tp += Nodes[p].dustmass;
-#endif
-#ifdef TREE_RAD_H2
-            h2mass_tp += Nodes[p].h2mass; comass_tp += Nodes[p].comass;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             uv_luminosity_tp += Nodes[p].uv_luminosity;
@@ -1698,23 +1653,14 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.s = s;
     Extnodes[no].vs = vs;
     Nodes[no].u.d.mass = mass;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    Nodes[no].gasmass = gasmass;
+#ifdef RT_USE_TREECOL_FOR_NH
+    {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[no].treecol_mass[ks] = treecol_mass[ks];}}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     Nodes[no].cr_injection = cr_injection;
 #endif
 #ifdef RT_USE_GRAVTREE
     int k; for(k=0;k<N_RT_FREQ_BINS;k++) {Nodes[no].stellar_lum[k] = stellar_lum[k];}
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    Nodes[no].gasmass = gasmass_tp;
-#ifdef TREE_RAD
-    Nodes[no].dustmass = dustmass_tp;
-#endif
-#ifdef TREE_RAD_H2
-    Nodes[no].h2mass = h2mass_tp; Nodes[no].comass = comass_tp;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     Nodes[no].uv_luminosity = uv_luminosity_tp;
@@ -1935,17 +1881,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     Vec3<double> rad_dr; double rad_r2 = 0; /* min-image separation for radiation */
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
-    double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[RT_USE_TREECOL_FOR_NH] = {0};
-#endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifdef TREE_RAD
-    double treecol_Projection[NPIX] = {0};   /* total-H column: FUV-G0 dust shielding (TREE_RAD only) */
-    double treecol_ProjectionDust[NPIX] = {0}; /* DGR-weighted column (solar-DGR units): variable dust stays inside the path integral */
-    double dustmass = 0;
-#endif
-#ifdef TREE_RAD_H2
-    double treecol_ProjectionH2[NPIX] = {0}, treecol_ProjectionCO[NPIX] = {0};
-    double h2mass = 0, comass = 0;
+    double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH] = {};
+    double colmass[TREECOL_NSPECIES] = {}; /* column species masses of the current leaf or node */
+    (void)angular_bin_size;
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double treecol_UV_flux[NPIX] = {0};
@@ -1996,12 +1934,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     double opt_lum = 0;
 #endif
 #endif
-#endif
 #if defined(COMPUTE_JERK_IN_GRAVTREE) || defined(SINK_DYNFRICTION_FROMTREE)
     Vec3<double> dv;
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-    double gasmass = 0;
 #endif
 #ifdef COMPUTE_JERK_IN_GRAVTREE
     Vec3<double> jerk = {};
@@ -2272,35 +2206,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
 #endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                /* BUGFIX 2026-07-13: gasmass MUST be reset for every single-particle
-                 * interaction. It was only assigned for Type==0, so a star/BH leaf
-                 * inherited the STALE gasmass of the previously processed gas
-                 * particle/node (inherited upstream pattern). Any star within the
-                 * shielding length then deposited that phantom gas mass into the
-                 * TREE_RAD/TREE_RAY column arrays at ITS OWN r2 — a star roundoff-
-                 * coincident with its birth cell (r2~1e-25) produced a 1e40 cm^-2
-                 * poisoned column pixel -> CHEMCOOL DVODE code-100 fatal. Also the
-                 * likely root of the rank-dependent TreeRay/M1 column corruption
-                 * (stale value depends on walk order). */
-                gasmass = 0;
-                if(P[no].Type == 0) {gasmass = P[no].Mass;}
-#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-                if(P[no].Type == 5) {gasmass = P[no].Sink_Mass_Reservoir;} // gas at the inner edge of a disk should not see a hole due to the sink
-#endif
-#endif
-#ifdef TREE_RAD
-                dustmass = 0;
-                if(P[no].Type == 0) {dustmass = resolvedism_cell_DGR_solar(no) * P[no].Mass;}
-#endif
-#ifdef TREE_RAD_H2
-                h2mass = 0; comass = 0;
-                if(P[no].Type == 0) {
-                    h2mass = 2.0 * CellP[no].TracAbund[IH2] * HYDROGEN_MASSFRAC * P[no].Mass;
-#if defined(TREE_RAD_CO) && CHEMISTRYNETWORK != 1 && CHEMISTRYNETWORK != 4
-                    comass = 28.0 * CellP[no].TracAbund[ICO] * HYDROGEN_MASSFRAC * P[no].Mass;
-#endif
-                }
+#ifdef RT_USE_TREECOL_FOR_NH
+                TREECOL_PARTICLE_MASSES(no, colmass) /* set for every leaf; keep expanded here: a call changes bits via FMA contraction under -O3 -march=native */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = 0; lw_lum = 0;
@@ -2703,15 +2610,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 /* ok we will be using this node, can now set variables that depend on it */
                 h_p = nop->maxsoft;
                 zeta_sec = 0; ptype_sec = -1; /* set secondary softening and zeta terms */
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-                gasmass = nop->gasmass;
-#endif
-#ifdef TREE_RAD
-                dustmass = nop->dustmass;
-#endif
-#ifdef TREE_RAD_H2
-                h2mass = nop->h2mass;
-                comass = nop->comass;
+#ifdef RT_USE_TREECOL_FOR_NH
+                {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {colmass[ks] = nop->treecol_mass[ks];}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 uv_lum = nop->uv_luminosity;
@@ -3026,40 +2926,28 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef COUNT_MASS_IN_GRAVTREE
                 tree_mass += mass;
 #endif
-#ifdef RT_USE_TREECOL_FOR_NH
-                if(gasmass>0)
+#if defined(RT_USE_TREECOL_FOR_NH) && !defined(RT_TREECOL_SHIELDINGLENGTH)
+                if(colmass[TREECOL_GAS]>0)
                 {
-                    int bin; // Here we do a simple six-bin angular binning scheme
-                    if((fabs(dr[0]) > fabs(dr[1])) && (fabs(dr[0])>fabs(dr[2]))) {if (dr[0] > 0) {bin = 0;} else {bin=1;}
-                    } else if (fabs(dr[1])>fabs(dr[2])){if (dr[1] > 0) {bin = 2;} else {bin=3;}
-                    } else {if (dr[2] > 0) {bin = 4;} else {bin = 5;}}
-                    treecol_angular_bins[bin] += fac_accel*gasmass*r / (angular_bin_size*mass); // in our binning scheme, we stretch the gas mass over a patch  of the sphere located at radius r subtending solid angle equal to the bin size - thus the area is r^2 * angular_bin_size, so sigma = m/(r^2 * angular bin size) = fac_accel/r / angular bin size. Factor of gasmass / mass corrects the gravitational mass to the gas mass
+                    int bin = treecol_angular_bin(dr[0], dr[1], dr[2]), ks;
+                    for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_angular_bins[ks][bin] += fac_accel*colmass[ks]*r / (angular_bin_size*mass);} // in our binning scheme, we stretch the gas mass over a patch  of the sphere located at radius r subtending solid angle equal to the bin size - thus the area is r^2 * angular_bin_size, so sigma = m/(r^2 * angular bin size) = fac_accel/r / angular bin size. Factor of gasmass / mass corrects the gravitational mass to the gas mass
                 }
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
+#ifdef RT_TREECOL_SHIELDINGLENGTH
 #ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
                 const Vec3<double> &dr_col = rad_dr; const double r2_col = rad_r2, r_col = sqrt(rad_r2);
 #else
                 const Vec3<double> &dr_col = dr; const double r2_col = r2, r_col = r;
 #endif
-                if(gasmass > 0 && r_col > 0 && r_col < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
+                if(colmass[TREECOL_GAS] > 0 && r_col > 0 && r_col < All.ShieldingLength / All.cf_atime) /* physical shielding length in comoving coords */
                 {
-                    long iheal;
-                    double vec_hp[3] = {dr_col[0], dr_col[1], dr_col[2]};
-                    vec2pix_ring(NSIDE, vec_hp, &iheal);
+                    int iheal = treecol_angular_bin(dr_col[0], dr_col[1], dr_col[2]), ks;
                     double area = (4.0*M_PI / NPIX) * r2_col;
-#ifdef TREE_RAD
-                    treecol_Projection[iheal] += gasmass / area;   /* total-H column: TREE_RAD (FUV-G0) only */
-                    treecol_ProjectionDust[iheal] += dustmass / area;
-#endif
-#ifdef TREE_RAD_H2
-                    treecol_ProjectionH2[iheal] += h2mass / area;
-                    treecol_ProjectionCO[iheal] += comass / area;
-#endif
+                    for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_angular_bins[ks][iheal] += colmass[ks] / area;}
 #ifdef TREE_RAY
                     /* absorber deposit: same Sigma contribution, binned by COM distance */
                     {int is_col = iheal*TREE_RAY_NSHELL + TREERAY_SHELL_OF(r2_col);
-                     treeray_shell_col[is_col] += gasmass / area;
+                     treeray_shell_col[is_col] += colmass[TREECOL_GAS] / area;
 #ifdef TREE_RAY_PI
                      treeray_shell_nh[is_col] += nh_m / area;
 #ifdef TREERAY_PI_HE
@@ -3289,14 +3177,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     {
         P[target].GravAccel = acc;
 #ifdef RT_USE_TREECOL_FOR_NH
-        int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target].ColumnDensityBins[k] = treecol_angular_bins[k];
+#ifdef RT_TREECOL_GAS_TARGETS_ONLY
+        if(P[target].Type == 0)
 #endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifdef TREE_RAD
-        if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].Projection[kp] = treecol_Projection[kp]; CellP[target].ProjectionDust[kp] = treecol_ProjectionDust[kp];}}
-#endif
-#ifdef TREE_RAD_H2
-        if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; CellP[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
+        {int ks, k; for(ks=0; ks<TREECOL_NSPECIES; ks++) {for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) {TREECOL_BINS(target)[ks][k] = treecol_angular_bins[ks][k];}}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         if(P[target].Type == 0) {int kp; for(kp=0; kp<NPIX; kp++) {CellP[target].UV_flux[kp] = treecol_UV_flux[kp]; CellP[target].LW_flux[kp] = treecol_LW_flux[kp];
@@ -3328,7 +3212,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 CellP[target].TreeRay_ShellHeII[ks2] = treeray_shell_heii[ks2];
 #endif
             }}
-#endif
 #endif
 #endif
 #endif
@@ -3411,14 +3294,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         GravDataResult[target].TreeMass = tree_mass;
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
-        {int k; for(k=0;k<RT_USE_TREECOL_FOR_NH;k++) GravDataResult[target].ColumnDensityBins[k] = treecol_angular_bins[k];}
-#endif
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifdef TREE_RAD
-        {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].Projection[kp] = treecol_Projection[kp]; GravDataResult[target].ProjectionDust[kp] = treecol_ProjectionDust[kp];}}
-#endif
-#ifdef TREE_RAD_H2
-        {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].ProjectionH2[kp] = treecol_ProjectionH2[kp]; GravDataResult[target].ProjectionCO[kp] = treecol_ProjectionCO[kp];}}
+        {int ks, k; for(ks=0; ks<TREECOL_NSPECIES; ks++) {for(k=0;k<RT_USE_TREECOL_FOR_NH;k++) {GravDataResult[target].ColumnDensityBins[ks][k] = treecol_angular_bins[ks][k];}}}
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].UV_flux[kp] = treecol_UV_flux[kp]; GravDataResult[target].LW_flux[kp] = treecol_LW_flux[kp];
@@ -3450,7 +3326,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 GravDataResult[target].TreeRay_ShellHeII[ks2] = treeray_shell_heii[ks2];
 #endif
             }}
-#endif
 #endif
 #endif
 #endif
@@ -4709,22 +4584,11 @@ void force_refresh_node_moments(void)
 #endif
         Extnodes[no].Ti_lastkicked = All.Ti_Current;
         Extnodes[no].Flag = GlobFlag;
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        Nodes[no].gasmass = 0;
+#ifdef RT_USE_TREECOL_FOR_NH
+        {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[no].treecol_mass[ks] = 0;}}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         Nodes[no].cr_injection = 0;
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#ifdef TREE_RAD
-        Nodes[no].dustmass = 0;
-#endif
-#ifdef TREE_RAD_H2
-        Nodes[no].h2mass = 0;
-#endif
-#ifdef TREE_RAD_CO
-        Nodes[no].comass = 0;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[no].uv_luminosity = 0; {int kl; for(kl=0;kl<3;kl++) Nodes[no].lum_s[kl] = 0;}
@@ -4814,28 +4678,14 @@ void force_refresh_node_moments(void)
             if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
         }
 
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        if(pa->Type == 0) {Nodes[no].gasmass += pa->Mass;}
-#if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
-        if(pa->Type == 5) {Nodes[no].gasmass += P[i].Sink_Mass_Reservoir;}
-#endif
+#ifdef RT_USE_TREECOL_FOR_NH
+        {double cm[TREECOL_NSPECIES]; treecol_particle_masses(i, cm); int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[no].treecol_mass[ks] += cm[ks];}}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         Nodes[no].cr_injection += cr_get_source_injection_rate(i, P, CellP);
 #endif
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(TREE_RAD) || defined(TREE_RAD_H2)
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         {struct stella_pmom sm = stella_particle_node_moments(i);
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#ifdef TREE_RAD
-        Nodes[no].dustmass += sm.dust;
-#endif
-#ifdef TREE_RAD_H2
-        Nodes[no].h2mass += sm.h2;
-#endif
-#ifdef TREE_RAD_CO
-        Nodes[no].comass += sm.co;
-#endif
-#endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[no].uv_luminosity += sm.uv; Nodes[no].lw_luminosity += sm.lw;
         for(k=0;k<3;k++) {Nodes[no].lum_s[k] += sm.w_lum * pa->Pos[k];}
@@ -4927,22 +4777,11 @@ void force_refresh_node_moments(void)
         if(Extnodes[no].vmax > Extnodes[father].vmax) {Extnodes[father].vmax = Extnodes[no].vmax;}
         if(Extnodes[no].divVmax > Extnodes[father].divVmax) {Extnodes[father].divVmax = Extnodes[no].divVmax;}
         if(Nodes[no].maxsoft > Nodes[father].maxsoft) {Nodes[father].maxsoft = Nodes[no].maxsoft;}
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        Nodes[father].gasmass += Nodes[no].gasmass;
+#ifdef RT_USE_TREECOL_FOR_NH
+        {int ks; for(ks=0; ks<TREECOL_NSPECIES; ks++) {Nodes[father].treecol_mass[ks] += Nodes[no].treecol_mass[ks];}}
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
         Nodes[father].cr_injection += Nodes[no].cr_injection;
-#endif
-#ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#ifdef TREE_RAD
-        Nodes[father].dustmass += Nodes[no].dustmass;
-#endif
-#ifdef TREE_RAD_H2
-        Nodes[father].h2mass += Nodes[no].h2mass;
-#endif
-#ifdef TREE_RAD_CO
-        Nodes[father].comass += Nodes[no].comass;
-#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         Nodes[father].uv_luminosity += Nodes[no].uv_luminosity; for(k=0;k<3;k++) {Nodes[father].lum_s[k] += Nodes[no].lum_s[k];}

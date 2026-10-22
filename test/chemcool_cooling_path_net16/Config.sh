@@ -43,10 +43,7 @@ WSS_CIE_COOL
 TURB_DIFF_METALS
 
 ## -- TreeRad column density --
-TREE_RAD
-TREE_RAD_H2
-TREE_RAD_CO
-NSIDE=1
+RT_USE_TREECOL_FOR_NH=12
 NEED_HEALPIX
 
 ## -- Metals & MHD --
@@ -92,7 +89,7 @@ MHD_B_SET_IN_PARAMS
 ## -- Gravity & density --
 ADAPTIVE_GRAVSOFT_FORALL=1+16    % adaptive softening for gas (Type 0) + stars (Type 4)
 TIDAL_TIMESTEP_CRITERION         % tidal tensor timestep (more accurate for few-body, Grudic+2021)
-#ADAPTIVE_TREEFORCE_UPDATE=0.0625 % disabled — incompatible with TREE_RAD (stales radiation fields)
+#ADAPTIVE_TREEFORCE_UPDATE=0.0625 % disabled — stales the tree columns and radiation fields
 DO_DENSITY_AROUND_NONGAS_PARTICLES
 
 ## -- KETJU regularized integrator for close encounters --

@@ -1,4 +1,4 @@
-/* Minimal HEALPix utility for TREE_RAD angular binning.
+/* Minimal HEALPix utility for tree-column angular binning.
  * Provides vec2pix_ring() - maps a 3D direction vector to a HEALPix pixel index (ring ordering).
  * This avoids requiring the external chealpix library for this single function.
  */
@@ -50,7 +50,7 @@ static inline void vec2pix_ring(long nside, const double *vec, long *ipix)
 }
 
 /* pix2vec_ring(): return the CENTER unit vector of RING-ordered pixel ipix.
- * Consistency requirement (Uli 2026-07-08): the per-cell TREE_RAD radiation-
+ * Consistency requirement (Uli 2026-07-08): the per-cell tree radiation-
  * pressure force multiplies the flux binned into each pixel by that pixel's
  * direction, so the returned centroid MUST match how vec2pix_ring() binned the
  * flux — NOT an independent analytic HEALPix center that could differ by the

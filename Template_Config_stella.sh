@@ -37,16 +37,13 @@ GALSF_RESOLVEDISM_WINDS_THERMAL          % inelastic-residual heating (adopted 2
 
 ########## Radiation: FUV / photoionisation / radiation pressure (subgrid) ##########
 GALSF_RESOLVEDISM_PHOTOION               % subgrid Stromgren photoionisation (pisub)  [excl RADTRANSFER]
-GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [auto TREE_RAD, RADPRESSURE_TREERAD] [excl RADTRANSFER]
+GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req HEALPix RT_USE_TREECOL_FOR_NH, auto RADPRESSURE_TREERAD] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_NUV_VARIABLE          % NUV band field  [auto by RADPRESSURE]
 #GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
-#GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from TREE_RAD fluxes  [auto by G0_VARIABLE without RADTRANSFER]
+#GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from tree per-pixel fluxes  [auto by G0_VARIABLE without RADTRANSFER]
 #GALSF_RESOLVEDISM_GHOSTD_G0_CR          % GHOSTD defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
-TREE_RAD                                 % tree column densities for shielding  [req G0_VARIABLE or GHOSTD_G0_CR] [excl RT_USE_TREECOL_FOR_NH]
-TREE_RAD_H2                              % H2 column for self-shielding
-TREE_RAD_CO                              % CO column for self-shielding
-NSIDE=1                                  % HEALPix resolution of the column tree
+RT_USE_TREECOL_FOR_NH=12                 % tree columns, 12*NSIDE^2 HEALPix bins: gas + dust-weighted (G0_VARIABLE), H2 + CO (CHEMCOOL), cut at ShieldingLength
 NEED_HEALPIX                             % HEALPix support
 
 ########## Alternative: TreeRay photoionisation ##########
@@ -95,7 +92,7 @@ GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS
 ########## Gravity / N-body / KETJU ##########
 ADAPTIVE_GRAVSOFT_FORALL=1+16            % adaptive softening for gas + stars
 TIDAL_TIMESTEP_CRITERION                 % tidal-tensor timestep criterion
-#ADAPTIVE_TREEFORCE_UPDATE=0.0625        % stale tree forces — incompatible with TREE_RAD fields
+#ADAPTIVE_TREEFORCE_UPDATE=0.0625        % stale tree forces — incompatible with the tree columns and fluxes
 KETJU_REGULARIZATION                     % MSTAR chain regularisation for stellar encounters  [excl FORCE_EQUAL_TIMESTEPS]
 KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req KETJU_REGULARIZATION]
 #KETJU_MERGE_BH                          % BH mergers  [req KETJU_REGULARIZATION]

@@ -69,7 +69,7 @@ extern "C" {
         double X_H_chem;
     } CHEM_COMP;
 
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     extern CHEM_TLS struct {
         double diffuse_dust_heat;
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
@@ -178,13 +178,13 @@ struct ChemInputs {
                                   else keeps the init value 0)               */
 
     /* --- per-pixel TREECOL columns -> PROJECT (orig chemcool.cc:637-713) - */
-#if defined(TREE_RAD) || defined(TREE_RAD_H2)
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     double column_density_projection[NPIX];   /* total-H (or effective-dust) column [cm^-2] */
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    double fac_uv[NPIX];       /* per-pixel FUV flux fraction [commit: TREE_RAD && G0_VARIABLE] */
+    double fac_uv[NPIX];       /* per-pixel FUV flux fraction [dust column && G0_VARIABLE] */
 #endif
 #endif
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
     double column_density_projection_h2[NPIX]; /* N_H2 [cm^-2] */
     double column_density_projection_co[NPIX]; /* N_CO [cm^-2] */
 #endif

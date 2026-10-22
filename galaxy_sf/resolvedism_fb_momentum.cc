@@ -113,7 +113,7 @@ double resolvedism_radp_starside_dp_code(int i)
         double NH = rho_phys * UNIT_DENSITY_IN_NHCGS * h_phys * UNIT_LENGTH_IN_CGS;
 
         /* RADP CORRECTNESS PASS (2026-07-08, Uli review): band-resolved direct term,
-         * CONSISTENT WITH THE TREE_RAD LIMIT — the same band split and dust
+         * CONSISTENT WITH THE TREE-COLUMN LIMIT — the same band split and dust
          * cross-sections the tree attenuation uses (sigma_FUV/NUV/OPT =
          * 2.0/1.3/0.5e-21 cm^2/H x DGR), so the momentum coupling and the
          * radiation-field attenuation see identical per-band optical depths.
@@ -141,7 +141,7 @@ double resolvedism_radp_starside_dp_code(int i)
 
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
         /* DIRECT (UV/NUV/OPT) single-scattering radp is computed PER GAS CELL from
-         * the TREE_RAD attenuated per-pixel fluxes in resolvedism_radpressure_treerad()
+         * the tree attenuated per-pixel fluxes in resolvedism_radpressure_treerad()
          * (LEBRON-style, deposited locally in the absorbing cell). Zero the star-side
          * direct term here so radp is not double-counted; ONLY the IR-trapping boost
          * below (local-Sigma approximation) is retained in the star-side path. */
@@ -812,7 +812,7 @@ void resolvedism_fb_momentum_calc(int fb_loop_iteration)
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
 /* ============================================================================
  * LEBRON-style DIRECT radiation-pressure force, computed PER GAS CELL from the
- * TREE_RAD attenuated per-pixel band fluxes (Uli 2026-07-08).
+ * tree attenuated per-pixel band fluxes (Uli 2026-07-08).
  *
  * Every gas cell already carries CellP[i].{UV,LW,NUV,OPT}_flux[NPIX]: the flux
  * ARRIVING from each HEALPix pixel direction, stored WITHOUT the 1/4pi (i.e.
@@ -844,10 +844,10 @@ void resolvedism_radpressure_treerad(void)
     const double area_conv = 1.0 / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* cm^2 -> code_len^2 */
     const double p_conv = 1.0 / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s); /* cgs p -> code p */
     int i;
-    /* ---- Photon-conservation cap for the TREE_RAD deposit (2026-07-28) ----
+    /* ---- Photon-conservation cap for the tree-flux deposit (2026-07-28) ----
      * Each target's pixel rays are independent, so Sum_cells(implied absorbed L)
      * has no constraint to stay <= Sum_stars L (the TREE_RAY sweep has this cap;
-     * the TREE_RAD path did not -- radp_set measured 16x over-deposit at tau=12).
+     * the tree-flux path did not -- radp_set measured 16x over-deposit at tau=12).
      * Pre-pass: implied absorbed luminosity with the SAME per-pixel dust
      * attenuation as the deposit below; scale all deposits by L_emit/A_abs. */
     double fcons = 1.0;
@@ -876,7 +876,7 @@ void resolvedism_radpressure_treerad(void)
             int pfx_pp;
             for(pfx_pp = 0; pfx_pp < NPIX; pfx_pp++)
             {
-                double att_pp = 1.0; /* matches deposit: no ProjectionDust attenuation (see REVISION note) */
+                double att_pp = 1.0; /* matches deposit: no dust-column attenuation (see REVISION note) */
                 A_abs += se_uv_pp * att_pp * ((double)CellP[i].UV_flux[pfx_pp] + (double)CellP[i].LW_flux[pfx_pp]) * inv4pi;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 A_abs += (sig_nuv * DGR_pp * NH_cell_pp * area_conv) * att_pp * (double)CellP[i].NUV_flux[pfx_pp] * inv4pi;
@@ -909,7 +909,7 @@ void resolvedism_radpressure_treerad(void)
          * from the tree's attenuation. */
         /* PER-CELL DGR (Uli sign-off 2026-07-28): the cell's own absorption uses its
          * own dust content -- consistent with the tree's dust-weighted column
-         * (ProjectionDust leaf weighting) and the conservation cap (gravtree.cc),
+         * (dust-column leaf weighting) and the conservation cap (gravtree.cc),
          * replacing the global slice-1 approximation documented above. */
         double DGR = resolvedism_cell_DGR_solar(i);
         double NH_cell = P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS; /* # H atoms */
@@ -922,14 +922,14 @@ void resolvedism_radpressure_treerad(void)
         for(pfx = 0; pfx < NPIX; pfx++)
         {
             /* THICK-LIMIT FIX (2026-07-28, radp_set measurement: deposit 16x physical
-             * at tau=12): under TREE_RAD the stored per-pixel fluxes are UNATTENUATED
+             * at tau=12): under the tree path the stored per-pixel fluxes are UNATTENUATED
              * 1/r^2 (the attenuation sweep is TREE_RAY-only; chemistry attenuates
              * target-side from the columns). Attenuate the DEPOSIT here, per pixel,
-             * with the DGR-weighted dust column (ProjectionDust carries the DGR
+             * with the DGR-weighted dust column (the dust column carries the DGR
              * inside the path integral) -- stored fluxes stay raw so chemistry does
              * not double-attenuate. */
             /* REVISION (2026-07-29, radp2 control-subtracted measurement): the first
-             * fix attenuated deposits with ProjectionDust -- WRONG GEOMETRY: TREE_RAD
+             * fix attenuated deposits with the dust column -- WRONG GEOMETRY: tree
              * columns run cell->box-edge (direction-total), not star->cell, so in the
              * thick regime every deposit was killed (measured ~0 vs L t/c). Proper
              * source-segmented attenuation needs TreeRay (v2). The photon-conservation

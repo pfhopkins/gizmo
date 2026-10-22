@@ -433,7 +433,7 @@ double evaluate_NH_from_GradRho(MyFloat gradrho[3], double rkern, double rho, do
     double gradrho_mag=0;
     if(rho>0)
     {
-#ifdef RT_USE_TREECOL_FOR_NH
+#ifdef RT_TREECOL_EFFECTIVE_COLUMN_FOR_NH
         gradrho_mag = include_h * rho * rkern / numngb_ndim; if(target>=0) {gradrho_mag += pp[target].SigmaEff;}
 #else             
         gradrho_mag = sqrt(gradrho[0]*gradrho[0]+gradrho[1]*gradrho[1]+gradrho[2]*gradrho[2]);

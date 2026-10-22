@@ -224,7 +224,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
 #ifdef GALSF_RESOLVEDISM_FROZEN_TEST_STARS
     /* FUV-field test ONLY (gated flag, set exclusively in the fuv_*_build Config, never
-     * in production): pin the single-star sources so TREE_RAD — whose column/source walk
+     * in production): pin the single-star sources so the tree columns — whose column/source walk
      * rides the gravity-tree force loop and therefore needs SELFGRAVITY *on* — can be
      * tested against a static source configuration. Zero the star's accel + velocity so
      * it never drifts; gas is left free. */

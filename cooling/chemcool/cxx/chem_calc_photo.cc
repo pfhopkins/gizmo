@@ -83,14 +83,14 @@ double cxx_calc_H2_shielding_factor(double temp, double abh2, double NH,
         return 1.0;
 #endif
     } else if (c.iphoto == 6) {
-#ifndef TREE_RAD_H2
+#ifndef RT_TREECOL_H2_CO
         std::printf("CALC_PHOTO: invalid photodissociation option\n");
-        std::printf("CALC_PHOTO: recompile with TREE_RAD_H2 enabled\n");
+        std::printf("CALC_PHOTO: needs HEALPix tree columns\n");
         c.cool_func_failed = 1;              // ABORT(122)
         return 1.0;
 #else
         // nray MUST be NPIX for the pixel average -- this holds for the
-        // standalone TREE_RAD_H2 (M1) path too (Uli, 2026-07-08).
+        // H2/CO-only (M1) path too (Uli, 2026-07-08).
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
@@ -133,7 +133,7 @@ double cxx_calc_HD_shielding_factor(double temp, double abh2, double abhd,
     if (c.iphoto == 2) {
         /* no-op in the Fortran */
     } else if (c.iphoto == 6) {
-#ifdef TREE_RAD_H2
+#ifdef RT_TREECOL_H2_CO
         for (int I = 0; I < c.npix; I++) {
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
             double fac_uv_pix = c.fac_uv[I];
@@ -295,7 +295,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
             c.chi_isrf = 1.0;
         }
     } else {    // iphoto == 2 (six-ray) or 6 (TreeCol)
-#if defined RAYTRACE || defined TREE_RAD || defined TREE_RAD_H2
+#if defined RAYTRACE || defined RT_TREECOL_DUST_WEIGHTED || defined RT_TREECOL_H2_CO
         double sigma_dust = 2e-21 * c.dust_to_gas_ratio;
         f_dust = 0.0; f_simp = 0.0;
         df05 = 0.0; df19 = 0.0; df25 = 0.0; df30 = 0.0;
@@ -417,7 +417,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
                                            IOFF_H2, 1);
         fshield_CO = theta_H2 * theta_CO;
     } else {
-#if defined RAYTRACE || defined TREE_RAD_H2
+#if defined RAYTRACE || defined RT_TREECOL_H2_CO
         double theta_CO = 0.0, theta_H2 = 0.0;
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {

@@ -645,12 +645,6 @@
 
 
 
-#ifdef RT_USE_TREECOL_FOR_NH
-#if !defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
-#define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#endif
-#endif
-
 
 #if (defined(SINGLE_STAR_FB_SNE) || defined(SINGLE_STAR_FB_WINDS)) && !defined(SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT)
 #define SINGLE_STAR_FB_SNE_N_EJECTA_QUADRANT 2 // determines the maximum number of ejecta particles spawned per timestep, see below
@@ -1326,9 +1320,6 @@
 #ifdef RADTRANSFER
 #error "GALSF_RESOLVEDISM_G0_VARIABLE and RADTRANSFER are mutually exclusive: M1 RT handles FUV via RT_PHOTOELECTRIC/RT_LYMAN_WERNER"
 #endif
-#ifndef TREE_RAD
-#define TREE_RAD
-#endif
 #endif
 
 #ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
@@ -1399,9 +1390,9 @@
 #ifndef GALSF_RESOLVEDISM_OPT_VARIABLE
 #define GALSF_RESOLVEDISM_OPT_VARIABLE
 #endif
-/* ---- Direct radiation-pressure force from the TREE_RAD per-cell fluxes
+/* ---- Direct radiation-pressure force from the tree per-cell fluxes
  * (LEBRON-style, Uli 2026-07-08) ----
- * When the variable ISRF is available (G0_VARIABLE auto-#defines TREE_RAD, so
+ * When the variable ISRF is available (G0_VARIABLE turns on the HEALPix tree columns, so
  * every gas cell carries the attenuated per-pixel UV/LW/NUV/OPT_flux) and M1 RT
  * is off, close the subgrid radiation-pressure model by computing the DIRECT
  * single-scattering radp momentum PER GAS CELL from those attenuated fluxes and
@@ -1411,7 +1402,7 @@
  * auto-enable it here. MUTUALLY EXCLUSIVE with the star-side DIRECT radp term:
  * that block in resolvedism_fb_momentum.cc is #ifdef'd out when this is set, so
  * radp is not double-counted; the IR-trapping boost (local-Sigma approximation)
- * is DELIBERATELY RETAINED in the star-side path (TREE_RAD does the DIRECT
+ * is DELIBERATELY RETAINED in the star-side path (the per-cell path does the DIRECT
  * UV/NUV/OPT term only). */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
 #ifndef GALSF_RESOLVEDISM_RADPRESSURE_TREERAD
@@ -1516,53 +1507,8 @@
 #endif /* CHEMCOOL */
 
 
-/* ---- M1 (RADTRANSFER) + H2/CO LINE self-shielding matched pair (Uli, 2026-07-08) ----
- * M1 transports the FUV/LW continuum WITH dust attenuation (G0/dust = M1's job),
- * but the H2/CO LINE self-shielding is a curve-of-growth on the molecular column,
- * NOT a continuum opacity, so it stays TARGET-SIDE in the chemistry and still needs
- * the TreeCol H2/CO columns. Auto-#define the STANDALONE column walk whenever M1 runs
- * with the chemistry -- exactly analogous to the GALSF_RESOLVEDISM_G0_VARIABLE ->
- * TREE_RAD matched pair below, so no M1 Config.sh can ship without H2 self-shielding.
- * This does NOT drag in TREE_RAD / G0_VARIABLE (those #error against RADTRANSFER):
- * TREE_RAD_H2/CO stand alone. */
-#if defined(RADTRANSFER) && defined(CHEMCOOL)
-#ifndef TREE_RAD_H2
-#define TREE_RAD_H2   /* H2 tracked (IH2) in every CHEMCOOL network */
-#endif
-#if (CHEMISTRYNETWORK != 1) && (CHEMISTRYNETWORK != 2) && (CHEMISTRYNETWORK != 4)
-#ifndef TREE_RAD_CO   /* CO (ICO) real only for the molecular-metal networks */
-#define TREE_RAD_CO
-#endif
-#endif
-#endif /* RADTRANSFER && CHEMCOOL */
-
-/* TREE_RAD_CO carries its column in the ProjectionH2/CO field pair (cell_data.h /
- * GravData), which is gated on TREE_RAD_H2 -- so CO shielding requires the H2 walk. */
-#if defined(TREE_RAD_CO) && !defined(TREE_RAD_H2)
-#define TREE_RAD_H2
-#endif
-
-/* ---- TREE_RAD: HEALPix column density in gravity tree ---- */
-#ifdef TREE_RAD
-#if defined(RT_USE_TREECOL_FOR_NH)
-#error "TREE_RAD and RT_USE_TREECOL_FOR_NH are mutually exclusive column density methods"
-#endif
-#endif /* TREE_RAD */
-/* The TreeCol HEALPix machinery (pixel geometry + per-node gas mass) is SHARED by
- * the FUV-G0 walk (TREE_RAD) AND the H2/CO line-shielding column walks
- * (TREE_RAD_H2/CO, which run standalone under M1). Enable it for ANY of the three. */
-#if defined(TREE_RAD) || defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#ifndef NEED_HEALPIX
-#define NEED_HEALPIX
-#endif
-#ifndef NSIDE
-#define NSIDE 1
-#endif
-#define NPIX (12*NSIDE*NSIDE)
-#if !defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
-#define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-#endif
-#endif /* TREE_RAD || TREE_RAD_H2 || TREE_RAD_CO */
+/* tree columns: bins, deposit scheme and species (shared with the chemistry Fortran) */
+#include "treecol_config.h"
 
 
 #if defined(COOLING) && defined(GALSF_EFFECTIVE_EQS)
@@ -1583,18 +1529,13 @@
 #error "GALSF_RESOLVEDISM_WINDS_THERMAL and _THERMAL_ONLY are mutually exclusive wind energy modes"
 #endif
 
-/* TREE_RAD shielding pairs with an ISRF model: G0_VARIABLE (auto-defines TREE_RAD) or GHOSTD */
-#if defined(TREE_RAD) && !defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR)
-#error "TREE_RAD requires GALSF_RESOLVEDISM_G0_VARIABLE or GALSF_RESOLVEDISM_GHOSTD_G0_CR in Stella (treecol shielding pairs with an ISRF model)"
-#endif
-
 /* ---- TREE_RAY: reverse-ray progressive dust attenuation IN the gravity walk ----
  * (Wunsch+2021 TreeRay onion shells; Stella third radiation branch, 2026-07-07.)
  * Per (HEALPix pixel x log-radial shell): sources deposit L/4pi r^2 at the
  * luminosity-centroid geometry, absorbers deposit gas mass at COM geometry; a
  * post-walk prefix sweep attenuates shell-by-shell -> attenuated UV/LW/NUV/OPT.
- * HIERARCHY, not exclusivity: requires G0_VARIABLE (which auto-enables TREE_RAD);
- * TREE_RAD_H2/CO stay untouched — H2/CO LINE self-shielding remains target-side
+ * HIERARCHY, not exclusivity: requires G0_VARIABLE (which turns on the HEALPix tree columns);
+ * the H2/CO tree columns stay untouched — H2/CO LINE self-shielding remains target-side
  * in chemistry, applied ONCE (curve-of-growth, not exponential; see the
  * h2-double-shield fix 2026-07-07). TreeRay takes over ONLY the stellar-band dust
  * continuum (calc_photo f_dust -> 1 for point sources under TREE_RAY; isotropic
