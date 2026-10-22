@@ -1381,6 +1381,9 @@
 #if defined(GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW)
 #error "GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW is not implemented yet"
 #endif
+#if defined(GALSF_RESOLVEDISM_SN_SPAWN)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL: the SN spawn payload carries the 27-element layout (SpawnEjZ), not the FIRE slots: disable GALSF_RESOLVEDISM_SN_SPAWN"
+#endif
 #endif /* GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL */
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
