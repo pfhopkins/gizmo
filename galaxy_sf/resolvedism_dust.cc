@@ -72,7 +72,7 @@ static void resolvedism_dust_ledger_write(void)
 static void resolvedism_dust_env(int i, struct dustk_env *e)
 {
     double rho_phys = CellP[i].Density * All.cf_a3inv;
-    e->nH = rho_phys * UNIT_DENSITY_IN_NHCGS;
+    e->nH = rho_phys * UNIT_DENSITY_IN_NHCGS * DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 0); /* hydrogen number density (Hu+19/23) */
 #ifdef CHEMCOOL
     e->T = CellP[i].Temp;
     e->x_e = DMAX(CellP[i].TracAbund[IHP], 0) + 1.4e-4 * DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0]; /* H+ plus C+ */
