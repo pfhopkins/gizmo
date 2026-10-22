@@ -12,6 +12,26 @@
 #endif
 
 
+#if defined(GALSF_RESOLVEDISM) && defined(METALS)
+/* Asplund+09 present-day photospheric mass fractions in StellarElement order (H..Zn); metals sum to 0.014, same values as the stellar tables X_init */
+static const double solar_elem[27] = {
+    7.3750000000e-01, /*  0: H  */    2.4850000000e-01, /*  1: He */
+    2.4765351227e-03, /*  2: C  */    7.2545495820e-04, /*  3: N  */
+    6.0028592850e-03, /*  4: O  */    5.2841265250e-07, /*  5: F  */
+    1.3157897125e-03, /*  6: Ne */    3.0605839462e-05, /*  7: Na */
+    7.4124358876e-04, /*  8: Mg */    5.8255839166e-05, /*  9: Al */
+    6.9620919184e-04, /* 10: Si */    6.0990559675e-06, /* 11: P  */
+    3.2376421296e-04, /* 12: S  */    8.5877929305e-06, /* 13: Cl */
+    7.6870616805e-05, /* 14: Ar */    3.2093705781e-06, /* 15: K  */
+    6.7169384016e-05, /* 16: Ca */    4.8646655463e-08, /* 17: Sc */
+    3.2681466346e-06, /* 18: Ti */    3.3215539907e-07, /* 19: V  */
+    1.7387424601e-05, /* 20: Cr */    1.1327606908e-05, /* 21: Mn */
+    1.3528499188e-03, /* 22: Fe */    4.4118818564e-06, /* 23: Co */
+    7.4619379442e-05, /* 24: Ni */    7.5396909229e-07, /* 25: Cu */
+    1.8184871682e-06, /* 26: Zn */
+};
+#endif
+
 /*! \file init.c
  *  \brief code for initialisation of a simulation from initial conditions
  */
@@ -211,10 +231,18 @@ void init(void)
     All.SolarAbundances[8]=6.44e-4; // S   (7.12 -> 3.12e-4, AG=3.80e-4); PS=7.16->3.31e-4
     All.SolarAbundances[9]=1.01e-4; // Ca  (6.34 -> 0.65e-4, AG=0.67e-4); PS=6.38->6.87e-5
     All.SolarAbundances[10]=1.73e-3; // Fe (7.50 -> 1.31e-3, AG=1.92e-3); PS=7.54->1.38e-3
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) // new default abundances; using Asplund et al. 2009 proto-solar abundances
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && !(defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)) // new default abundances; using Asplund et al. 2009 proto-solar abundances
     All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES>=10) {
         All.SolarAbundances[1]=0.27030; All.SolarAbundances[2]=2.53e-3; All.SolarAbundances[3]=7.41e-4; All.SolarAbundances[4]=6.13e-3; All.SolarAbundances[5]=1.34e-3;
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
+#endif
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+    { /* coupled mode: Stella table solar (Asplund+09 present-day) for FIRE slots He..Fe, metals scaled to SolarAbundances[0] */
+        static const int el[11] = {-1, ELEM_He, ELEM_C, ELEM_N, ELEM_O, ELEM_Ne, ELEM_Mg, ELEM_Si, ELEM_S, ELEM_Ca, ELEM_Fe};
+        double zsum = 0; for(j = ELEM_C; j < 27; j++) {zsum += solar_elem[j];}
+        All.SolarAbundances[1] = solar_elem[ELEM_He];
+        for(j = 2; j <= 10; j++) {All.SolarAbundances[j] = solar_elem[el[j]] * All.SolarAbundances[0] / zsum;}
+    }
 #endif
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -505,23 +533,7 @@ void init(void)
                Solar mass fractions: Asplund+ 2009 photospheric ratios (stella-tables stellar/solar_abundances.py).
                In isotope mode (40 species), first 27 slots are elements, rest zeroed
                — isotope splitting done at first feedback event or from IC file. */
-            /* Asplund+09 photospheric ratios, metals sum to 0.014 = All.SolarAbundances[0]; same values as the stellar tables X_init */
-            static const double solar_elem[27] = {
-                7.3750000000e-01, /*  0: H  */    2.4850000000e-01, /*  1: He */
-                2.4765351227e-03, /*  2: C  */    7.2545495820e-04, /*  3: N  */
-                6.0028592850e-03, /*  4: O  */    5.2841265250e-07, /*  5: F  */
-                1.3157897125e-03, /*  6: Ne */    3.0605839462e-05, /*  7: Na */
-                7.4124358876e-04, /*  8: Mg */    5.8255839166e-05, /*  9: Al */
-                6.9620919184e-04, /* 10: Si */    6.0990559675e-06, /* 11: P  */
-                3.2376421296e-04, /* 12: S  */    8.5877929305e-06, /* 13: Cl */
-                7.6870616805e-05, /* 14: Ar */    3.2093705781e-06, /* 15: K  */
-                6.7169384016e-05, /* 16: Ca */    4.8646655463e-08, /* 17: Sc */
-                3.2681466346e-06, /* 18: Ti */    3.3215539907e-07, /* 19: V  */
-                1.7387424601e-05, /* 20: Cr */    1.1327606908e-05, /* 21: Mn */
-                1.3528499188e-03, /* 22: Fe */    4.4118818564e-06, /* 23: Co */
-                7.4619379442e-05, /* 24: Ni */    7.5396909229e-07, /* 25: Cu */
-                1.8184871682e-06, /* 26: Zn */
-            };
+            /* Asplund+09 photospheric ratios: solar_elem[] at file scope */
             double Zfrac = All.InitMetallicityinSolar; /* fraction of solar metallicity */
             double Zmetal = 0;
             /* 28-slot FIRE-pattern layout:
