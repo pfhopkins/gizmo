@@ -1543,7 +1543,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
         if(LambdaCompton<0) {Heat -= LambdaCompton;} /* Compton heating rather than cooling */
 
-#if defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_PHOTOELECTRIC) || defined(RT_ISRF_BACKGROUND)
+#if defined(GALSF_FB_FIRE_RT_LONGRANGE) || (defined(RT_PHOTOELECTRIC) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY))) || defined(RT_ISRF_BACKGROUND)
         /* Photoelectric heating following Bakes & Thielens 1994 (also Wolfire 1995); now with 'update' from Wolfire 2005 for PAH [fudge factor 0.5 below] */
         if((target >= 0) && (T < 1.0e6))
         {
@@ -1585,7 +1585,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
 #endif
 
 
-#if defined(RT_NUV)
+#if defined(RT_NUV) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY)) /* band evolved as a radiation field */
     double Lambda_rad_NUV = LambdaMetal; // most of LambdaMetal coming out in the NUV, as we define it
     Lambda_rad_NUV += LambdaNeb; // Kim+23 nebular forbidden-line emission from photoionized gas (computed above under RT_CHEM_PHOTOION; zero otherwise): reprocess it into the NUV band when that band is available, instead of losing it as pure cooling
     Lambda_rad_NUV += LambdaExc; // this represents gas kinetic energy lost to collisional excitation. but each is assumed to produce a cascade back to the ground state, which should emit. note collisional ionization is not included here since the thermal energy is lost to the ionization energy, not to radiation, and the recombination luminosity is tallied separately.
@@ -2298,7 +2298,7 @@ void update_explicit_molecular_fraction(int i, double dtime_cgs, struct particle
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     urad_G0 = DMAX(cell[i].Rad_Flux_UV, 1.e-10); // note this is ALREADY self-shielded by dust, so we need to be careful about 2x-counting the self-shielding approximation below; hence limit this to a rather sizeable value  //
 #endif
-#if defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER)
+#if (defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY))
     int whichbin = RT_FREQ_BIN_LYMAN_WERNER;
 #if !defined(RT_LYMAN_WERNER)
     whichbin = RT_FREQ_BIN_PHOTOELECTRIC; // use photo-electric bin as proxy (very close) if don't evolve LW explicitly
@@ -2556,7 +2556,7 @@ MyFloat get_FUV_G0(int target, MyFloat shieldfac, int mode, struct particle_data
     if(gJH0 > 0 && shieldfac > 0) {G0 += sqrt(shieldfac) * (gJH0 / 2.29e-10);} // uvb contribution //
 #endif
     double column = evaluate_NH_from_GradRho(pp[target].GradRho, pp[target].KernelRadius, cell[target].Density, pp[target].NumNgb, 1, target, pp) * UNIT_SURFDEN_IN_CGS; // converts to cgs
-#ifdef RT_PHOTOELECTRIC
+#if defined(RT_PHOTOELECTRIC) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY))
     G0 += cell[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC] * (cell[target].Density * All.cf_a3inv / cell[target].Mass) * UNIT_EGY_DENSITY_IN_HABING; // convert to Habing field //
 #endif
 #if defined(RT_ISRF_BACKGROUND) && (!defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))                                                                        // latter flag decides whether we do treecol/sobolev here to get the background intensity // add a constant assumed FUV background, for isolated ISM simulations that don't get FUV from local sources self-consistently    

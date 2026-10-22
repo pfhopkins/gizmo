@@ -323,7 +323,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     urad_G0 = DMAX(cell[i].Rad_Flux_UV, 1.e-10); // note this is ALREADY self-shielded, so we need to be careful about 2x-counting the self-shielding approximation below; hence limit this to a rather sizeable value  //
 #endif
-#if defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER)
+#if (defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE_SAVE_RAD_ENERGY))
     int whichbin = RT_FREQ_BIN_LYMAN_WERNER;
 #if !defined(RT_LYMAN_WERNER)
     whichbin = RT_FREQ_BIN_PHOTOELECTRIC; // use photo-electric bin as proxy (very close) if don't evolve LW explicitly
