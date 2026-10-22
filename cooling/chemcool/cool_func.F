@@ -746,11 +746,12 @@ c
         rates(6) = 0d0
       else
         h2o_vib_L0_rate = cl8 * abh2 + cl9 * abHI
-        h2o_vib_inv = (1d0 / h2o_vib_L0_rate) + (yn / h2o_vib_lte_rate)
+        h2o_vib_inv = (1d0 / h2o_vib_L0_rate) +
+     $                (neff / h2o_vib_lte_rate)
         rates(5) = abh2o * yn * neff * (1d0 / h2o_vib_inv)
 c
         h2o_vib_inv = (1d0 / h2o_vib_L0_rate) + 
-     $                (yn / h2o18_vib_lte_rate)
+     $                (neff / h2o18_vib_lte_rate)
         rates(6) = 2d-3 * abh2o * yn * neff * (1d0 / h2o_vib_inv)
       endif
 c
@@ -814,13 +815,13 @@ c
         rates(24) = 0d0
       else
         co_vib_L0_rate = cl12 * abh2 + cl13 * abHI
-        co_vib_inv = (1d0 / co_vib_L0_rate) + (yn / co_vib_lte_rate)
+        co_vib_inv = (1d0 / co_vib_L0_rate) + (neff / co_vib_lte_rate)
         rates(8) = abco * yn * neff * (1d0 / co_vib_inv)
 c
-        co_vib_inv = (1d0 / co_vib_L0_rate) + (yn / c13o_vib_lte_rate)
+        co_vib_inv = (1d0 / co_vib_L0_rate) + (neff / c13o_vib_lte_rate)
         rates(9) = 1d-2 * abco * yn * neff * (1d0 / co_vib_inv)
 c
-        co_vib_inv = (1d0 / co_vib_L0_rate) + (yn / co18_vib_lte_rate)
+        co_vib_inv = (1d0 / co_vib_L0_rate) + (neff / co18_vib_lte_rate)
         rates(24) = 2d-3 * abco * yn * neff * (1d0 / co_vib_inv)
       endif
 #ifdef NO_CO_COOL

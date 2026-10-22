@@ -600,6 +600,10 @@ Provenance: SGChem `cool_func.F:217-219` (dtemp = 0). cool_func and rate_eq_mol 
 temp - temptab(nmd) above tmax, i.e. linear extrapolation of every cl/ch table with the last slope; now held at
 the tmax value, as the other rate_eq index paths already were.
 
+## D-39. CO and H2O vibrational cooling: LTE term uses the collider density neff, both backends
+Provenance: SGChem `cool_func.F:770-775, 839-845`. `1/L0 + yn/L_LTE` -> `1/L0 + neff/L_LTE` for CO, 13CO, C18O,
+H2O and H2(18)O, with the neff each block already uses for its rotational/L0 term.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

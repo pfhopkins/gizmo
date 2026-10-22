@@ -333,9 +333,9 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         rates[4] = 0.0; rates[5] = 0.0;
     } else {
         double L0rate = cl[8] * abh2 + cl[9] * abhI;
-        double inv = (1.0 / L0rate) + (yn / h2o_vib_lte_rate);
+        double inv = (1.0 / L0rate) + (neff / h2o_vib_lte_rate);
         rates[4] = abh2o * yn * neff * (1.0 / inv);
-        inv = (1.0 / L0rate) + (yn / h2o18_vib_lte_rate);
+        inv = (1.0 / L0rate) + (neff / h2o18_vib_lte_rate);
         rates[5] = 2e-3 * abh2o * yn * neff * (1.0 / inv);
     }
 
@@ -379,11 +379,11 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         rates[7] = 0.0; rates[8] = 0.0; rates[23] = 0.0;
     } else {
         double L0rate = cl[12] * abh2 + cl[13] * abhI;
-        double inv = (1.0 / L0rate) + (yn / co.vib_lte);
+        double inv = (1.0 / L0rate) + (neff / co.vib_lte);
         rates[7] = abco * yn * neff * (1.0 / inv);
-        inv = (1.0 / L0rate) + (yn / c13o.vib_lte);
+        inv = (1.0 / L0rate) + (neff / c13o.vib_lte);
         rates[8] = 1e-2 * abco * yn * neff * (1.0 / inv);
-        inv = (1.0 / L0rate) + (yn / co18.vib_lte);
+        inv = (1.0 / L0rate) + (neff / co18.vib_lte);
         rates[23] = 2e-3 * abco * yn * neff * (1.0 / inv);
     }
 #ifdef NO_CO_COOL
