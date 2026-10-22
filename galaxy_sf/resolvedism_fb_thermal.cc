@@ -98,7 +98,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
             if(k >= ELEM_C) metal_mass_solar += y_k;
         }
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
-#ifdef GALSF_RESOLVEDISM_DUST
+#if defined(GALSF_RESOLVEDISM_DUST) && defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION)
         {
             double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
             for(int kk = 0; kk < STBL_NELEM; kk++) metal_yields_solar[kk] = in->ElemYields[kk] * UNIT_MASS_IN_SOLAR;
@@ -192,7 +192,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     }
 #endif
 
-#ifdef GALSF_RESOLVEDISM_DUST
+#if defined(GALSF_RESOLVEDISM_DUST) && defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION) /* off: Hu+23 has no SN dust */
     {
         double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
         for(k = 0; k < STBL_NELEM; k++) metal_yields_solar[k] = in->ElemYields[k] * UNIT_MASS_IN_SOLAR;

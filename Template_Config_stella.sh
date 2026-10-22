@@ -83,6 +83,7 @@ GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS
 #GALSF_RESOLVEDISM_DUST_SIZE_BINS=8      % MRN log size bins with own v_rel (Hu+19); default 1 (a_eff=0.035 um, Hu+26)
 #GALSF_RESOLVEDISM_DUST_NO_BETATRON       % drop betatron acceleration of dust v_rel (Hu+26 unmagnetized)
 #GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION % McKee89 swept-mass SN dust destruction (coarse cells only; double counts resolved sputtering)
+#GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION % inject Choban+22 SN/Ia condensation dust into the hot deposit (off: Hu+23 has no SN dust)
 #GALSF_RESOLVEDISM_DUST_SELFTEST         % TEST-ONLY: dust physics self-test dump
 
 ########## Cosmic rays ##########
