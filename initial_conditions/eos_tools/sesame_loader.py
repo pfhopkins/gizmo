@@ -121,6 +121,54 @@ class SesameTable:
         cs2 = dP_drho + T_c * dP_dT * dP_dT / (rho_c * rho_c * cv)
         return np.sqrt(cs2) if cs2 > 0 else 0.0
 
+    # ---- vectorised forms (arrays of points), same interpolation as the scalar ones above ----
+    @staticmethod
+    def _locate_v(axis, x):
+        x = np.clip(x, axis[0], axis[-1])
+        i = np.clip(np.searchsorted(axis, x, side="right") - 1, 0, len(axis) - 2)
+        t = np.clip((x - axis[i]) / (axis[i + 1] - axis[i]), 0.0, 1.0)
+        return i, t
+
+    def _cell_v(self, rho, T):
+        i, t = self._locate_v(self.logrho, np.log10(rho))
+        j, u = self._locate_v(self.logT, np.log10(T))
+        return i, t, j, u
+
+    def pressure_v(self, rho, T):
+        return 10.0 ** self._interp(self.logP, *self._cell_v(rho, T))
+
+    def internal_energy_v(self, rho, T):
+        return 10.0 ** self._interp(self.logu, *self._cell_v(rho, T))
+
+    def entropy_v(self, rho, T):
+        return self._interp(self.S, *self._cell_v(rho, T))
+
+    def rho_from_PT_v(self, P, T, n_iter=64):
+        """rho with P(rho, T) = P for arrays of (P, T): bisection in log10(rho) over the table axis. P is
+        non-decreasing in rho at fixed T, so this converges to the upper edge of the set P(rho) < P -- the
+        condensed-side root when P lies above a flat (two-phase or floored) stretch."""
+        P = np.asarray(P, float); T = np.broadcast_to(np.asarray(T, float), P.shape)
+        lo = np.full(P.shape, self.logrho[0]); hi = np.full(P.shape, self.logrho[-1])
+        for _ in range(n_iter):
+            mid = 0.5 * (lo + hi)
+            below = self.pressure_v(10.0 ** mid, T) < P
+            lo = np.where(below, mid, lo); hi = np.where(below, hi, mid)
+        return 10.0 ** (0.5 * (lo + hi))
+
+    def isentrope_T(self, rho_grid, S0, n_iter=64):
+        """T on the isentrope S = S0 at each density of rho_grid. At fixed density the entropy rises with T
+        (Cv > 0), so a bisection in log10(T) over the whole table axis finds the unique solution -- including
+        inside a two-phase region, which in a (rho, T) table is just an interior point. Also returns whether
+        S0 lies within [S(rho, T_min), S(rho, T_max)] at each density (otherwise the result is pinned to an end)."""
+        rho_grid = np.asarray(rho_grid, float)
+        lo = np.full(rho_grid.shape, self.logT[0]); hi = np.full(rho_grid.shape, self.logT[-1])
+        bracketed = (self.entropy_v(rho_grid, 10.0 ** lo) <= S0) & (S0 <= self.entropy_v(rho_grid, 10.0 ** hi))
+        for _ in range(n_iter):
+            mid = 0.5 * (lo + hi)
+            below = self.entropy_v(rho_grid, 10.0 ** mid) < S0
+            lo = np.where(below, mid, lo); hi = np.where(below, hi, mid)
+        return 10.0 ** (0.5 * (lo + hi)), bracketed
+
     def rho_from_PT(self, P, T, rho_lo=None, rho_hi=None, tol=1e-8, maxit=80):
         """Invert P(rho, T) at fixed T via bisection. Monotone in rho on the
         compressive branch; clamps to table range."""
