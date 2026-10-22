@@ -1646,6 +1646,9 @@
 
 
 /* ---- KETJU regularized integrator ---- */
+#if defined(KETJU_REGULARIZATION) && !defined(OUTPUT_STAR_ENERGY_DIRECT_SUM)
+#define OUTPUT_STAR_ENERGY_DIRECT_SUM /* KETJU validation reads ETOT_INCODE */
+#endif
 #if defined(KETJU_REGULARIZATION)
 #if defined(FORCE_EQUAL_TIMESTEPS)
 #error "KETJU_REGULARIZATION is not compatible with FORCE_EQUAL_TIMESTEPS"

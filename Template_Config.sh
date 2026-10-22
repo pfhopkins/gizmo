@@ -100,6 +100,7 @@
 # --------------------------------------- Users of these modules should cite Hopkins et al. 2017 (arXiv:1702.06148) and Colbrook et al. (arXiv:1610.06590)
 #TURB_DIFF_METALS               # turbulent diffusion of metals (passive scalars); requires METALS
 #OUTPUT_TURB_DIFF_METALS_BUDGET # print the global metal budget (sum of M*Z, plus diffusive exchange still pending in inactive cells) after every hydro step [diagnostic]
+#OUTPUT_STAR_ENERGY_DIRECT_SUM # print direct-sum total energy of star particles (ETOT_INCODE) at every sync; O(N^2), skipped for N>4096; on by default with KETJU_REGULARIZATION [diagnostic]
 #TURB_DIFF_ENERGY               # turbulent diffusion of internal energy (conduction with effective turbulent coefficients)
 #TURB_DIFF_VELOCITY             # turbulent diffusion of momentum (viscosity with effective turbulent coefficients)
 #TURB_DIFF_DYNAMIC              # replace Smagorinsky-style eddy diffusion with the 'dynamic localized Smagorinsky' model from Rennehan et al. (arXiv:1807.11509 and 2104.07673): cite those papers for all methods. more accurate but more complex and expensive.

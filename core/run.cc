@@ -274,6 +274,7 @@ void energy_budget_gravity_report(void)
  */
 
 
+#ifdef OUTPUT_STAR_ENERGY_DIRECT_SUM
 #ifndef KETJU_REGULARIZATION
 #define KETJU_ETOT_PTYPE(i) (P[(i)].Type == 4)
 #else
@@ -418,6 +419,7 @@ static void incode_total_energy(void)
     }
     have0 = 1; if(do_print) last_t = All.Time;  /* keep print throttle in sync on all ranks */
 }
+#endif /* OUTPUT_STAR_ENERGY_DIRECT_SUM */
 
 
 /*! Seconds between stop-file checks; 0 checks every step, which is the historical behaviour.
@@ -470,7 +472,9 @@ void run(void)
 
     while(1)			/* main timestep iteration loop */
     {
+#ifdef OUTPUT_STAR_ENERGY_DIRECT_SUM
         incode_total_energy();	/* DIAGNOSTIC: true KETJU-aware energy at sync point (prints on full syncs) */
+#endif
         compute_statistics();	/* regular statistics outputs (like total energy) */
 #if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
         eos_gamma_probe_report();
