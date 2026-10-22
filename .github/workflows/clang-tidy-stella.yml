@@ -1,0 +1,47 @@
+# clang-tidy (.clang-tidy, error-class checks) for stella_dev: same as clang-tidy.yml, but the
+# compile flags come from Config_stella_default.sh, so the Stella modules (galaxy_sf/resolvedism_*)
+# and the C++ chemistry backend (cooling/chemcool/cxx, CHEMCOOL_CXX net 5) are analysed. Only
+# findings on (or passing through) changed lines are reported. Locally:
+#   cp Config_stella_default.sh Config.sh && python3 scripts/compile_commands.py
+#   git diff -U0 stella_dev... | clang-tidy-diff.py -p1 -path . -iregex '.*\.cc'
+
+name: clang-tidy-stella
+
+on:
+  push:
+    branches: ["stella_dev"]
+  pull_request:
+    branches: ["stella_dev"]
+
+concurrency:
+  group: clang-tidy-stella-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clang-tidy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev libsundials-dev clang-tidy
+          clang-tidy --version
+      - name: Configure
+        run: |
+          echo 'SYSTYPE="github-ubuntu"' > Makefile.systype
+          cp Config_stella_default.sh Config.sh
+          python3 scripts/compile_commands.py SUNDIALS_DIR=/usr
+      - name: clang-tidy on changed lines
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then base="origin/${{ github.base_ref }}"; range="$base...HEAD"
+          else base="${{ github.event.before }}"; git cat-file -e "$base^{commit}" 2>/dev/null || base="HEAD~1"; range="$base..HEAD"; fi
+          files=$(git diff --name-only --diff-filter=AMR "$range" -- '*.cc' \
+                  | grep -xFf <(python3 -c "import json; print('\n'.join(e['file'] for e in json.load(open('compile_commands.json'))))") || true)
+          if [ -z "$files" ]; then echo "no changed .cc files compiled by this config"; exit 0; fi
+          echo "$files"
+          tidy_diff=$(ls /usr/bin/clang-tidy-diff*.py /usr/lib/llvm-*/share/clang/clang-tidy-diff.py 2>/dev/null | head -1)
+          git diff -U0 "$range" -- $files | python3 "$tidy_diff" -p1 -path . -quiet -iregex '.*\.cc' -j 4
