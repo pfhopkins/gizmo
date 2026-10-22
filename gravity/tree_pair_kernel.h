@@ -70,8 +70,8 @@ static inline void tree_pair_gravity_factors(double r, double r2, double mass, d
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
                     if(ptype != 0 || ptype_sec != 0) {add_ags_zeta_terms_primary=0; add_ags_zeta_terms_secondary=0;} // primary and secondary must be gas for ab side or ba side
 #else
-                    if(!((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
-                    if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
+                    if((ptype_sec < 0) || !((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
+                    if((ptype_sec < 0) || !((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
 #endif
                     if(add_ags_zeta_terms_primary) // ab side
                     {
