@@ -936,10 +936,10 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
     d_r = DMIN(P[i].SinkRadius, d_r); //launch close to the sink
 #endif
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && defined(PARTICLE_EXCISION)
-    if(is_particle_a_special_zoom_target(i)) {double rmin=All.ForceSoftening[3], r=sqrt(r2), r0=0.5*(rmin+r)*(1.+0.1*get_random_number(i+j)); d_r=r0;} // make sure to spawn OUTSIDE of the excision radius!
+    if(is_particle_a_special_zoom_target(i)) {double rmin=All.ForceSoftening[3], r=sqrt(r2), r0=0.5*(rmin+r)*(1.+0.1*get_random_number(i+NumPart+num_already_spawned)); d_r=r0;} // make sure to spawn OUTSIDE of the excision radius!
 #endif
 #if defined(SNE_NONSINK_SPAWN)
-    if(P[i].Type == 4) {double rmin=All.ForceSoftening[4], r=sqrt(r2), r0=0.5*(rmin+r)*(0.5+1.5*get_random_number(i+j)); d_r=r0;} // need a generous padding to ensure no overlaps
+    if(P[i].Type == 4) {double rmin=All.ForceSoftening[4], r=sqrt(r2), r0=0.5*(rmin+r)*(0.5+1.5*get_random_number(i+NumPart+num_already_spawned)); d_r=r0;} // need a generous padding to ensure no overlaps
 #endif
     long bin, bin_0; for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin] > 0) break;} /* gives minimum active timebin of any particle */
     bin_0 = bin; int i0 = i; /* save minimum timebin, also save ID of sink particle for use below */
