@@ -920,10 +920,13 @@ void assign_stellar_masses(void)
         finalize_sampled_star(i, M_drawn);
         force_add_element_to_tree(iparent, i); /* deferred tree insertion beside the parent cell */
 #ifdef STELLA_SELFCHECK
-        { /* star must lie inside the tree node it was linked into */
-            int no = Father[i]; double dmax = 0;
-            if(no >= All.MaxPart) {for(k = 0; k < 3; k++) {dmax = DMAX(dmax, fabs(P[i].Pos[k] - Nodes[no].center[k]) / (0.5 * Nodes[no].len));}}
-            STELLA_CHECK("tree_insert", no >= All.MaxPart && dmax <= 1.5, "ID=%llu parent=%d node=%d dist_over_halflen=%g", (unsigned long long)P[i].ID, iparent, no, dmax);
+        { /* star linked beside its co-located parent; the parent itself may have drifted out of its build-time leaf */
+            int no = Father[i], same = (no >= All.MaxPart && no == Father[iparent]); double dmax = 0;
+            for(k = 0; k < 3 && same; k++) {
+                if(P[i].Pos[k] != P[iparent].Pos[k]) {same = 0;}
+                dmax = DMAX(dmax, fabs(P[i].Pos[k] - Nodes[no].center[k]) / (0.5 * Nodes[no].len));
+            }
+            STELLA_CHECK("tree_insert", same, "ID=%llu parent=%d node=%d parent_node=%d dist_over_halflen=%g", (unsigned long long)P[i].ID, iparent, no, Father[iparent], dmax);
             n_selfcheck_tree++;
         }
 #endif
