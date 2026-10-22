@@ -397,7 +397,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         /* Operator-split CR energy losses (hadronic, Coulomb, catastrophic).
            Gas heating from these losses is handled self-consistently inside
            CHEMCOOL (cool_func.F R11), so we only remove energy from the CR fluid here. */
-        CR_cooling_and_losses(i, CellP[i].TracAbund[1], CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS);
+        CR_cooling_and_losses(i, CellP[i].TracAbund[1], CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS, P, CellP);
 #endif
         set_eos_pressure(i, pp, cell);
         return;
