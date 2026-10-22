@@ -1153,6 +1153,10 @@
 #endif
 #endif
 
+#if defined(GHOSTD_G0_CR) && !(defined(GALSF) && defined(RT_ISRF_BACKGROUND))
+#error "GHOSTD_G0_CR scales the RT_ISRF_BACKGROUND field and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND"
+#endif
+
 
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */

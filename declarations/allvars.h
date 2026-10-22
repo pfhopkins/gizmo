@@ -133,6 +133,12 @@ extern short int special_boundary_condition_xyz_def_reflect[3];
 extern short int special_boundary_condition_xyz_def_outflow[3];
 #endif
 
+#ifdef GHOSTD_G0_CR /* GHOSTD (Hu+21): background ISRF scaled by FactorG0, floored at G0 = 0.324e-2 Habing */
+#define ISRF_BACKGROUND_STRENGTH (DMAX(All.FactorG0 * All.InterstellarRadiationFieldStrength, 0.324e-2/1.7))
+#else
+#define ISRF_BACKGROUND_STRENGTH (All.InterstellarRadiationFieldStrength)
+#endif
+
 template<typename T> inline void nearest_xyz(Vec3<T>& v, int sign=1) { NEAREST_XYZ(v[0], v[1], v[2], sign); }
 
 
@@ -691,6 +697,10 @@ extern struct global_data_all_processes
 #ifdef RT_ISRF_BACKGROUND
     double InterstellarRadiationFieldStrength;
     double RadiationBackgroundRedshift;
+#endif
+#ifdef GHOSTD_G0_CR
+    double Mgas0;     /*!< GHOSTD: total gas mass in the initial conditions */
+    double FactorG0;  /*!< GHOSTD: ISRF and CR-rate scale factor, SFR(<30 Myr) / (Mgas0 / 4 Gyr) */
 #endif
 #ifdef RT_INFRARED
     double InitRadiationTemp;
