@@ -69,6 +69,8 @@ static void fb_death_rows_flush(void)
 #ifdef GALSF_RESOLVEDISM_FB
 
 double CumulFeedbackEnergy = 0;  /* cumulative feedback energy injected, all channels [erg] */
+double CumulFeedbackCoupled = 0; /* cumulative measured coupled energy, channels 0-5 [erg] */
+double CumulSFEnergyRemoved = 0; /* gas thermal+kinetic energy removed by star formation [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
 double CumulFeedbackMetals = 0;  /* cumulative metals returned to gas by feedback [Msun] */
 int CumulSNe = 0, CumulAGB = 0, CumulIa = 0; /* cumulative event counts */
@@ -633,6 +635,18 @@ int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars
  * the per-iteration winner and retry decisions are agreed by MPI_Allreduce. */
 /* Star recoil from a momentum walk, applied once with the final star mass: v -= Σdp / M_final
  * (ejecta carry v_star into the gas, so this conserves momentum; isotropic sources give Σdp = 0). */
+/* local gas thermal + all-particle kinetic energy [erg]; brackets each deposit pass */
+double resolvedism_mech_energy_local(void)
+{
+    double e = 0, a2inv = 1. / (All.cf_atime * All.cf_atime);
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Mass <= 0) continue;
+        e += 0.5 * P[i].Mass * (P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2]) * a2inv;
+        if(P[i].Type == 0) {e += P[i].Mass * CellP[i].InternalEnergy;}
+    }
+    return e * UNIT_ENERGY_IN_CGS;
+}
+
 static void resolvedism_fb_apply_recoil(void)
 {
     int ii, k;
@@ -807,6 +821,7 @@ void resolvedism_inject_fb_energy(void)
 #endif
 
     for(int ii : ActiveParticleList) {if(P[ii].Type == 4) {P[ii].FB_Deposited = 0;}}
+    double E_mech0 = resolvedism_mech_energy_local(), E_mech1 = E_mech0, E_mech2, E_mech3;
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
      *      winds happen before the star explodes as SN. Serialized per event. ---- */
@@ -816,6 +831,7 @@ void resolvedism_inject_fb_energy(void)
      * walk pair per step for ALL wind stars together (tiny parcels, stale-weight
      * error nil; O(1) walks/step regardless of the number of blowing stars). */
     resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 2);
+    E_mech1 = resolvedism_mech_energy_local();
     FB_WindBatchOnly = 1;
     FB_ZERO_AWS();
     resolvedism_fb_momentum_calc(-1);
@@ -832,19 +848,22 @@ void resolvedism_inject_fb_energy(void)
     resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 3);
 #endif
     MBARY_STEP("post_fb_mom_p0");
+    E_mech2 = resolvedism_mech_energy_local();
 
     /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals). Serialized per event. ---- */
     MBARY_STEP("pre_fb_thermal");
     resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
     MBARY_STEP("post_fb_thermal");
 
-    /* Budget tracking: [0]=SN, [1]=AGB, [2]=wind, [3]=radpressure, [4]=Ia, [5]=failed SN / no-gas attempt (E=M=0) */
-    double n_events[6] = {0,0,0,0,0,0};
-    double M_injected[6] = {0,0,0,0,0,0};   /* ejecta mass [Msun] */
-    double M_removed[6] = {0,0,0,0,0,0};    /* mass removed from star [Msun] */
-    double E_injected[6] = {0,0,0,0,0,0};   /* energy [erg] */
-    double dp_injected[6] = {0,0,0,0,0,0};  /* |momentum| [g*cm/s] */
-    double Z_injected[6] = {0,0,0,0,0,0};   /* metals injected [Msun] */
+    /* Budget tracking: [0]=SN, [1]=AGB, [2]=wind, [3]=radpressure, [4]=Ia, [5]=failed SN / no-gas attempt (E=M=0), [6]=subgrid PI heating */
+#define NFBCH 7
+    double n_events[NFBCH] = {0};
+    double M_injected[NFBCH] = {0};   /* ejecta mass [Msun] */
+    double M_removed[NFBCH] = {0};    /* mass removed from star [Msun] */
+    double E_injected[NFBCH] = {0};   /* energy [erg] */
+    double dp_injected[NFBCH] = {0};  /* |momentum| [g*cm/s] */
+    double Z_injected[NFBCH] = {0};   /* metals injected [Msun] */
+    double E_coupled[NFBCH] = {0};    /* measured gas+star energy change of the deposit pass [erg] */
 
     /* Wind event logging buffers */
     int n_wind_logged = 0, n_wind_alloc = 1; /* sized to this step's wind events (was a fixed 64 that dropped rows) */
@@ -1245,6 +1264,7 @@ void resolvedism_inject_fb_energy(void)
 
     /* ---- Pass 2: radiation pressure (momentum) ---- */
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
+    E_mech3 = resolvedism_mech_energy_local();
     RadPressure_dp_thisStep = 0;
     /* Radpressure is mass-neutral but go through the same brackets for safety;
      * any FB_M_coupled_pending should stay 0 (no P[j].Mass += dM happens). */
@@ -1283,28 +1303,49 @@ void resolvedism_inject_fb_energy(void)
         if(Mstar_rp >= 2.0) n_events[3] += 1;
     }
     dp_injected[3] = RadPressure_dp_thisStep; /* exact dp from particle2in */
+    E_coupled[3] = resolvedism_mech_energy_local() - E_mech3;
+#else
+    E_mech3 = resolvedism_mech_energy_local();
+#endif
+    /* split a shared pass's measured coupling by booked energy (else by events) */
+    auto fb_split = [&](double dE, int a, int b) {
+        double wa = E_injected[a], wb = E_injected[b];
+        if(wa + wb <= 0) {wa = n_events[a]; wb = n_events[b];}
+        if(wa + wb <= 0) {wa = 1; wb = 0;}
+        E_coupled[a] += dE * wa / (wa + wb); E_coupled[b] += dE * wb / (wa + wb);
+    };
+#ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+    E_coupled[1] += E_mech1 - E_mech0; E_coupled[2] += E_mech2 - E_mech1;
+#else
+    fb_split(E_mech2 - E_mech0, 2, 1);
+#endif
+    fb_split(E_mech3 - E_mech2, 0, 4);
+#ifdef CHEMCOOL
+    n_events[6] = PIHeatPendingCells; E_injected[6] = E_coupled[6] = PIHeatPendingErg; /* heated by the chemistry since the last row */
+    PIHeatPendingErg = PIHeatPendingCells = 0;
 #endif
 
     fb_death_rows_flush();
 
     /* ---- MPI reduce and write feedback budget ---- */
-    double glob_n[6], glob_Mi[6], glob_Mr[6], glob_E[6], glob_dp[6], glob_Z[6];
-    MPI_Reduce(n_events,    glob_n,  6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(M_injected,  glob_Mi, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(M_removed,   glob_Mr, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(E_injected,  glob_E,  6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(dp_injected, glob_dp, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(Z_injected,  glob_Z,  6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double glob_n[NFBCH], glob_Mi[NFBCH], glob_Mr[NFBCH], glob_E[NFBCH], glob_dp[NFBCH], glob_Z[NFBCH], glob_Ec[NFBCH];
+    MPI_Reduce(n_events, glob_n, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(M_injected, glob_Mi, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(M_removed, glob_Mr, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(E_injected, glob_E, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(dp_injected, glob_dp, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(Z_injected, glob_Z, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(E_coupled, glob_Ec, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
     if(ThisTask == 0) {
-        for(int ch = 0; ch < 6; ch++) {
-            if(glob_n[ch] > 0) {
-                /* Radpressure (ch=3): only log on full (domain decomp) steps to avoid flooding */
-                if(ch == 3 && All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) continue;
-                fprintf(FdFeedbackBudget, "%12.6f  %d  %6.0f  %12.4f  %12.4f  %12.4e  %12.4e  %12.4f\n",
+        for(int ch = 0; ch < NFBCH; ch++) {
+            if(glob_n[ch] > 0 || glob_Ec[ch] != 0) {
+                fprintf(FdFeedbackBudget, "%12.6f  %d  %6.0f  %12.4f  %12.4f  %12.4e  %12.4e  %12.4f  %12.4e\n",
                     All.Time, ch, glob_n[ch], glob_Mi[ch], glob_Mr[ch],
-                    glob_E[ch], glob_dp[ch], glob_Z[ch]);
+                    glob_E[ch], glob_dp[ch], glob_Z[ch], glob_Ec[ch]);
+                if(ch == 6) continue; /* PI cumulated per rank by the chemistry (CumulPIHeatErg) */
                 CumulFeedbackEnergy += glob_E[ch];
+                CumulFeedbackCoupled += glob_Ec[ch];
                 CumulFeedbackMass += glob_Mi[ch];
                 CumulFeedbackMetals += glob_Z[ch];
                 if(ch == 0) CumulSNe += (int)glob_n[ch];
@@ -1315,8 +1356,8 @@ void resolvedism_inject_fb_energy(void)
         fflush(FdFeedbackBudget);
         /* Print budget summary to stdout (domain decomp steps only) */
         if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {
-            const char *chname[6] = {"SN", "AGB", "wind", "radpres", "Ia", "failed"};
-            for(int ch = 0; ch < 6; ch++) {
+            const char *chname[NFBCH] = {"SN", "AGB", "wind", "radpres", "Ia", "failed", "PI"};
+            for(int ch = 0; ch < NFBCH; ch++) {
                 if(glob_n[ch] > 0) {
                     printf("RESOLVEDISM BUDGET: ch=%s n=%.0f M_inj=%.4f M_rem=%.4f E=%.2e dp=%.2e Z_inj=%.4f [Msun/erg/cgs] at t=%g\n",
                         chname[ch], glob_n[ch], glob_Mi[ch], glob_Mr[ch], glob_E[ch], glob_dp[ch], glob_Z[ch], All.Time);

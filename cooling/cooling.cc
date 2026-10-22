@@ -57,6 +57,7 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 double CumulCoolingEnergyLoss = 0; /* cumulative cooling energy loss on this rank [code energy units] */
+double ChemcoolPIHeatErg = 0, ChemcoolPIHeatCells = 0, CumulPIHeatErg = 0, PIHeatPendingErg = 0, PIHeatPendingCells = 0;
 
 /* forward declarations for functions used before their definitions (needed because pp/cell params changed signatures) */
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -152,6 +153,7 @@ void cooling_parent_routine(void)
        on the compact copies: cool in place with global indices (pp/cell = the global arrays, same data). */
     double *u_before_cool = (double *) malloc(N_active * sizeof(double));
     for(int j = 0; j < N_active; j++) {u_before_cool[j] = CellP[cool_indices[j]].InternalEnergy;}
+    ChemcoolPIHeatErg = ChemcoolPIHeatCells = 0;
 #ifdef CHEMCOOL_OMP_CROSSCHECK
     /* serial reference on the same inputs, then the threaded pass must reproduce it byte for byte */
     struct particle_data *xin_P = (struct particle_data *) mymalloc("xin_P", N_active * sizeof(struct particle_data));
@@ -161,6 +163,7 @@ void cooling_parent_routine(void)
     for(int j = 0; j < N_active; j++) {xin_P[j] = P[cool_indices[j]]; xin_C[j] = CellP[cool_indices[j]];}
     for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
     for(int j = 0; j < N_active; j++) {int i = cool_indices[j]; xref_P[j] = P[i]; xref_C[j] = CellP[i]; P[i] = xin_P[j]; CellP[i] = xin_C[j];}
+    ChemcoolPIHeatErg = ChemcoolPIHeatCells = 0; /* count the threaded pass only */
 #endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
@@ -205,7 +208,9 @@ void cooling_parent_routine(void)
         if(nH_i < nH_min) nH_min = nH_i;
         if(nH_i > nH_max) nH_max = nH_i;
     }
+    dE_cool_step += ChemcoolPIHeatErg / UNIT_ENERGY_IN_CGS; /* PI heating is booked as feedback, not as negative cooling */
     CumulCoolingEnergyLoss += dE_cool_step;
+    CumulPIHeatErg += ChemcoolPIHeatErg; PIHeatPendingErg += ChemcoolPIHeatErg; PIHeatPendingCells += ChemcoolPIHeatCells;
     PRINT_STATUS("CHEMCOOL_DIAG: N_active=%d  dE_cool=%.4e[code]  E_cool_cum=%.4e[code]  T=[%.2e,%.2e]K  nH=[%.2e,%.2e]cm^-3",
         N_active, dE_cool_step, CumulCoolingEnergyLoss, T_min, T_max, nH_min, nH_max);
     free(u_before_cool);

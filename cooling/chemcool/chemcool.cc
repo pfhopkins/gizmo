@@ -163,7 +163,16 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
     if(CellP[target].Ionized == 1) {
         skip_evolve_abundances = 1;
         chemcool_set_ionized(abundances, &chem_in);
-        if(energy < energy_HII) energy = energy_HII;
+        if(energy < energy_HII) {
+            if(mode == 0) { /* PI heating ledger: floor raise [erg] */
+                double dE_PI = (energy_HII - energy) / rho * P[target].Mass * UNIT_MASS_IN_CGS;
+                #pragma omp atomic
+                ChemcoolPIHeatErg += dE_PI;
+                #pragma omp atomic
+                ChemcoolPIHeatCells += 1;
+            }
+            energy = energy_HII;
+        }
     }
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     /* StarBench BENCHMARK-MODE thermodynamics (TestStarBenchIso > 0, 2026-07-31):

@@ -997,12 +997,20 @@ void calculate_non_standard_physics(void)
 #ifdef GALSF /* star/sink particle formation */
     MCBAL_LOG("pre_starform_FB");
     MBARY_STEP("pre_sf_spawn");
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+    double E_pre_sf = resolvedism_mech_energy_local(); /* SF energy sink for ENERGYinfo */
+#endif
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
     MBARY_STEP("post_sf_spawn");
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     MBARY_STEP("pre_imf_accrete");
     assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
     MBARY_STEP("post_imf_accrete");
+#endif
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+    CumulSFEnergyRemoved += E_pre_sf - resolvedism_mech_energy_local();
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && (defined(RADTRANSFER) || defined(TREE_RAY_PI))
     resolvedism_update_ion_photon_energy(); // BUGFIX 2026-07-29: table-driven <hnu>_ion (was hard-wired 27.2 eV -> 3x photoheating); before recompute so TreeRay Ion_luminosity uses fresh value
 #endif
@@ -1778,6 +1786,9 @@ void energy_statistics(void)
     compute_global_quantities_of_system(); /* ensure SysState is populated for conservation budget */
     double cool_glob = 0;
     MPI_Reduce(&CumulCoolingEnergyLoss, &cool_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double pi_glob = 0, sf_glob = 0;
+    MPI_Reduce(&CumulPIHeatErg, &pi_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(&CumulSFEnergyRemoved, &sf_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 
     /* min/max metallicity for gas (Type 0) and stars (Type 4) */
     double Zmin_gas_loc = 1e30, Zmax_gas_loc = -1e30, Zmin_star_loc = 1e30, Zmax_star_loc = -1e30;
@@ -1801,13 +1812,13 @@ void energy_statistics(void)
       double E_pot = SysState.EnergyPot;
       double E_total = E_therm + E_kin + E_pot;
       double cool_erg = cool_glob * UNIT_ENERGY_IN_CGS;
-      double fb_erg = CumulFeedbackEnergy;
+      double fb_erg = CumulFeedbackEnergy + pi_glob, fbc_erg = CumulFeedbackCoupled + pi_glob;
       printf("BUDGET t=%.16g  M_gas=%.16g M_star=%.16g M_tot=%.16g  E_therm=%.16g E_kin=%.16g E_pot=%.16g E_tot=%.16g  E_cool_cum=%.16e[erg]  E_fb_cum=%.16e[erg]  M_fb_ret=%.16g[Msun]\n",
         All.Time, M_gas, M_star, M_total, E_therm, E_kin, E_pot, E_total, cool_erg, fb_erg, CumulFeedbackMass);
-      fprintf(FdENERGYinfo, "%12.6f  %14.6e %14.6e %14.6e  %14.6e %14.6e %14.6e %14.6e  %14.6e  %14.6e  %14.6e\n",
+      fprintf(FdENERGYinfo, "%12.6f  %14.6e %14.6e %14.6e  %14.6e %14.6e %14.6e %14.6e  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e\n",
         All.Time, M_gas*UNIT_MASS_IN_SOLAR, M_star*UNIT_MASS_IN_SOLAR, M_total*UNIT_MASS_IN_SOLAR,
         E_therm*UNIT_ENERGY_IN_CGS, E_kin*UNIT_ENERGY_IN_CGS, E_pot*UNIT_ENERGY_IN_CGS, E_total*UNIT_ENERGY_IN_CGS,
-        cool_erg, fb_erg, CumulFeedbackMass);
+        cool_erg, fb_erg, CumulFeedbackMass, fbc_erg, pi_glob, sf_glob);
       fflush(FdENERGYinfo);
       printf("BUDGET_Z t=%.16g  Z_gas=[%.16e,%.16e]", All.Time, Zmin_gas, Zmax_gas);
       if(M_star > 0) printf("  Z_star=[%.16e,%.16e]", Zmin_star, Zmax_star);

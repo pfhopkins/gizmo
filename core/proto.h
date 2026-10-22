@@ -822,9 +822,15 @@ void chemcool_init(void);
 double do_chemcool_step(int target, double dt, double dl, int mode);
 double chemcool_cool_cell(int target, double u_old, double dt);
 extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code energy units] */
+extern double ChemcoolPIHeatErg, ChemcoolPIHeatCells; /* subgrid-PI floor heating in the current cooling pass [erg], cells */
+extern double CumulPIHeatErg;                         /* cumulative subgrid-PI heating on this rank [erg] */
+extern double PIHeatPendingErg, PIHeatPendingCells;   /* PI heating not yet written to FeedbackBudget */
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
 extern double CumulFeedbackEnergy;   /* cumulative feedback energy [erg] */
+extern double CumulFeedbackCoupled;  /* cumulative measured coupled feedback energy [erg] */
+double resolvedism_mech_energy_local(void); /* local gas thermal + kinetic energy [erg] */
+extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by star formation on this rank [erg] */
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 #endif

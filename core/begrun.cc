@@ -812,7 +812,7 @@ void open_outputfiles(void)
   if(!(FdFeedbackBudget = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdFeedbackBudget,"%s Per-timestep feedback budget [GALSF_RESOLVEDISM_FB]. Columns:\n",prefix_char);
-      fprintf(FdFeedbackBudget,"%s   (1) time  (2) channel [0=SN,1=AGB,2=wind,3=radpressure,4=Ia,5=failed SN or no-gas attempt (E=M=0)]  (3) N_events  (4) M_injected[Msun]  (5) M_removed_from_stars[Msun]  (6) E_injected[erg]  (7) |dp_injected|[g*cm/s]  (8) Z_injected[Msun]\n",prefix_char);
+      fprintf(FdFeedbackBudget,"%s   (1) time  (2) channel [0=SN,1=AGB,2=wind,3=radpressure,4=Ia,5=failed SN or no-gas attempt (E=M=0),6=subgrid PI heating (N=heated cells, booked since the previous row)]  (3) N_events  (4) M_injected[Msun]  (5) M_removed_from_stars[Msun]  (6) E_injected[erg]  (7) |dp_injected|[g*cm/s]  (8) Z_injected[Msun]  (9) E_coupled[erg] (measured gas thermal+kinetic and star kinetic change of the deposit pass; SN/Ia and non-continuous wind/AGB passes split by booked E)\n",prefix_char);
   }
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "WINDinfo.txt");
   if(!(FdWINDinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
@@ -824,7 +824,7 @@ void open_outputfiles(void)
   if(!(FdENERGYinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
       fprintf(FdENERGYinfo,"%s Energy conservation log [GALSF_RESOLVEDISM_FB + CHEMCOOL]. Columns:\n",prefix_char);
-      fprintf(FdENERGYinfo,"%s   (1) time  (2) M_gas[Msun]  (3) M_star[Msun]  (4) M_total[Msun]  (5) E_therm[erg]  (6) E_kin[erg]  (7) E_pot[erg]  (8) E_total[erg]  (9) E_cool_cumul[erg]  (10) E_fb_cumul[erg]  (11) M_fb_returned[Msun]\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   (1) time  (2) M_gas[Msun]  (3) M_star[Msun]  (4) M_total[Msun]  (5) E_therm[erg]  (6) E_kin[erg]  (7) E_pot[erg]  (8) E_total[erg]  (9) E_cool_cumul[erg] (net chemistry loss, PI heating excluded)  (10) E_fb_cumul[erg] (booked, incl. PI)  (11) M_fb_returned[Msun]  (12) E_fb_coupled_cumul[erg] (measured, incl. PI)  (13) E_PI_cumul[erg]  (14) E_sf_removed_cumul[erg] (thermal+kinetic lost to star formation)\n",prefix_char);
   }
 #endif
 #ifdef GALSF_RESOLVEDISM
