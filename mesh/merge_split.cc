@@ -600,7 +600,10 @@ void merge_and_split_particles(void)
 #endif
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-            {int kd_sp; for(kd_sp=0;kd_sp<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;kd_sp++) {CellP[j_sp].Dyield_pending[kd_sp] = 0; CellP[j_sp].Dyield[kd_sp] = 0;}}
+            {int kd_sp; for(kd_sp=0;kd_sp<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;kd_sp++) {CellP[j_sp].Dyield[kd_sp] = 0;}}
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            {int kd_sp; for(kd_sp=0;kd_sp<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;kd_sp++) {CellP[j_sp].Dyield_pending[kd_sp] = 0;}}
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
             {int kd_sp; for(kd_sp=0;kd_sp<NUM_RESOLVEDISM_DUST;kd_sp++) {CellP[j_sp].Dust[kd_sp] = 0;}} /* fresh ejecta carry no grains */
@@ -810,7 +813,7 @@ int split_particle_i(int i, int n_particles_split, int i_nearest, double r_neare
         CellP[j].MassTrue = mass_of_new_particle * CellP[i].MassTrue;
         CellP[i].MassTrue -= CellP[j].MassTrue;
 #endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
         for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] = 0;} /* pending exchange stays with the parent */
 #endif
 #if defined(SINK_THERMALFEEDBACK)
@@ -1211,7 +1214,7 @@ int merge_particles_ij(int i, int j)
     double X_H_i_premerge = DMAX(particle_hydrogen_massfrac(i), 1e-10), X_H_j_premerge = DMAX(particle_hydrogen_massfrac(j), 1e-10); /* before j's metallicity is overwritten */
 #endif
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
 #endif
 #if defined(SINK_THERMALFEEDBACK)

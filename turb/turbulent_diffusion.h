@@ -84,34 +84,22 @@
                 double dmet = (Z_j-local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_hydrostep;
                 cmag = MINMOD(dmet,cmag); // limiter based on mass exchange from MFV HLLC solver //
 #endif
-                /* Symmetric per-pair donor cap: limit |cmag| so the donor cannot
-                 * lose more than 10% of its element-k mass in a single pair.  Sign
-                 * of cmag tells us the donor: cmag > 0 → element flows from j to i
-                 * (donor = j), cmag < 0 → donor = i.  Applied to BOTH sides since
-                 * the same cmag is used in Dyield_i and Dyield_j below — strictly
-                 * symmetric, preserves per-element pairwise mass conservation. */
-                double donor_mass_k = (cmag > 0) ? P[j].Mass * Z_j
-                                                 : local.Mass * local.Metallicity[k_species];
-                double pair_cap = 0.01 * donor_mass_k;  /* 1% per pair; ~50-80 pairs/cell → ≤80% cumulative drain */
+                /* symmetric per-pair donor cap: the donor loses at most 1% of its element-k mass per pair */
+                double donor_mass_k = (cmag > 0) ? P[j].Mass * Z_j : local.Mass * local.Metallicity[k_species];
+                double pair_cap = 0.01 * donor_mass_k;
                 if(fabs(cmag) > pair_cap) cmag = (cmag > 0 ? pair_cap : -pair_cap);
-                cmag *= dt_hydrostep_i / dt_hydrostep; // this walk covers its own timestep
-
-                /* Dual-walk Dyield_pending scatter: each perspective contributes
-                 * 0.5*cmag.  Per pair both walks happen, so totals across walks
-                 * apply +cmag to i (via Dyield) and −cmag to j (via Dyield_pending).
-                 * The pending buffer lets the j-side write survive across timebins:
-                 * an inactive cell j accumulates contributions from active neighbors'
-                 * walks until j eventually unpacks.  Bit-exact pair conservation. */
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+                /* each side moves half the exchange over its own timestep; j's share waits in its pending buffer */
+                cmag *= 0.5 * dt_hydrostep_i / dt_hydrostep; // limiters above used dt_hydrostep >= dt_hydrostep_i
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                if(k_species < NUM_METAL_SPECIES) {cmag_slotbuf[k_species] = cmag;} else {
-                    out.Dyield[k_species]               += 0.5 * cmag;
-                    #pragma omp atomic
-                    CellP[j].Dyield_pending[k_species]  -= 0.5 * cmag;
-                }
-#else
-                out.Dyield[k_species]               += 0.5 * cmag;
+                if(k_species < NUM_METAL_SPECIES) {cmag_slotbuf[k_species] = cmag; continue;} /* applied after the closure below */
+#endif
+                out.Dyield[k_species] += cmag;
                 #pragma omp atomic
-                CellP[j].Dyield_pending[k_species]  -= 0.5 * cmag;
+                CellP[j].Dyield_pending[k_species] -= cmag;
+#else
+                out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag;
+                if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag;}
 #endif
             }
         }
@@ -122,7 +110,7 @@
          *   (I1) residual of element-slot fluxes absorbed into H (the ~0.7
          *        reservoir; residual is O(1e-6) of the fluxes) → Σ fluxes = 0
          *        → per-cell ΣX = 1 preserved through the unpack.
-         * Both ride the same antisymmetric ±0.5·cmag scatter, so pairwise and
+         * Both ride the same antisymmetric (half-exchange) scatter, so pairwise and
          * global per-element conservation remain bit-exact. */
         {
             int kk; double sum_metal = 0, resid = 0;
@@ -132,9 +120,9 @@
             cmag_slotbuf[1] -= resid;
             for(kk = 0; kk < NUM_METAL_SPECIES; kk++) {
                 if(cmag_slotbuf[kk] != 0) {
-                    out.Dyield[kk]              += 0.5 * cmag_slotbuf[kk];
+                    out.Dyield[kk]              += cmag_slotbuf[kk];
                     #pragma omp atomic
-                    CellP[j].Dyield_pending[kk] -= 0.5 * cmag_slotbuf[kk];
+                    CellP[j].Dyield_pending[kk] -= cmag_slotbuf[kk];
                 }
             }
         }

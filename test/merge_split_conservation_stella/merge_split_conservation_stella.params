@@ -1,0 +1,116 @@
+%---- Stella: resolved single-star galaxy formation model
+%---- Config: gizmo-cpp / uli-singlestar-galaxy branch
+%---- Units: kpc, 1e10 Msun, km/s (standard GIZMO galactic)
+
+%---- Files
+InitCondFile                    /orion/ptmp/uli/orion/iso_tests/diffusion_test/snap_000   % step-gradient IC
+OutputDir                       output
+
+%---- Output
+TimeBetSnapshot                 0.005             % 10 snaps over the run
+TimeBetStatistics               0.0005             % energy budget printed at every snapshot
+TimeOfFirstSnapshot             0.0
+SnapFormat                      3                 % HDF5
+
+%---- Box & simulation time
+BoxSize                         0.5               % 0.5 kpc — matches IC
+TimeBegin                       0.0
+TimeMax                         0.05              % 50 Myr
+ComovingIntegrationOn           0                 % non-cosmological
+
+%---- Timestep control
+MaxSizeTimestep                 0.005             % large cap — let adaptive fire
+MinSizeTimestep                 0
+
+%---- Tree & domain
+TreeDomainUpdateFrequency       0.05
+PartAllocFactor                 5.0
+BufferSize                      100
+
+%---- Units
+UnitLength_in_cm                3.085678e21       % 1 kpc
+UnitMass_in_g                   1.989e43          % 1e10 Msun
+UnitVelocity_in_cm_per_s        1.0e5             % 1 km/s
+UnitMagneticField_in_gauss      1.0
+
+%---- Gravity softening (ADAPTIVE_GRAVSOFT_FORALL for gas+stars)
+%---- These are MINIMUM softenings when adaptive softening is on
+SofteningGas                    1.0e-10           % sub-floor; ADAPTIVE_GRAVSOFT_FORGAS handles real value
+SofteningHalo                   0.050             % 50 pc DM (Type 1)
+SofteningDisk                   0.020             % 20 pc disk stars (Type 2)
+SofteningBulge                  0.020             % 20 pc bulge (Type 3)
+SofteningStars                  1.0e-4            % 0.1 pc min for spawned stars (Type 4)
+SofteningBndry                  0.005             % 5 pc sink/BH (Type 5)
+
+%---- Kernel
+DesNumNgb                       32
+AGS_DesNumNgb                   32
+MaxKernelRadius                 2000              % must be large enough for halo cells to find neighbors (gizmo2017 used 2000)
+
+%---- Temperature
+InitGasTemp                     1.0e4             % 10^4 K
+MinGasTemp                      10.0              % 10 K floor
+
+%---- CPU
+TimeLimitCPU                    8500000             % ~23.6 hr wall-clock limit
+CpuTimeBetRestartFile           7200               % restart file every 2 min (debugging)
+
+%---- Cosmology (non-cosmological, but must be set)
+Omega0                          1.0
+OmegaLambda                     0.0
+OmegaBaryon                     0.0
+HubbleParam                     1.0
+
+%---- Star formation (GALSF + GALSF_RESOLVEDISM, Hu & Sternberg 2023)
+CritPhysDensity                 100.              % SF threshold [cm^-3] — Jeans criterion is the binding one
+SfEffPerFreeFall                0.5               % eps_ff = 0.5 (Hu 2023)
+FacSfThreshMJ                   1.0               % M_J < N_ngb * m_gas (kernel mass)
+
+%---- Resolved ISM SF cutoff (GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF) — disabled
+%nHcutoffSF                     1.0e5             % not used with pure Jeans criterion
+
+%---- Instant SN (GALSF_RESOLVEDISM_INSTANT_SN)
+TimeInstantSN                   0.0               % disabled: all stars live their full table lifetime
+
+%---- IMF sampling (GALSF_RESOLVEDISM_SAMPLE_IMF)
+IMFSampleMinMass                0.08              % full IMF: sample down to hydrogen burning limit
+IMFSampleStellarMassCut         0.5               % skip UV/LW computation for M < 0.5 Msun (perf only)
+
+%---- Stellar tables (GALSF_RESOLVEDISM_STELLAR_TABLES)
+StellarTablesFile               gizmo/galaxy_sf/stellar_tables/stellar_tables_unified.hdf5
+MaxStellarTimestep              10000.0           % 50 kyr max stellar evolution timestep [yr]
+
+%---- Initial metallicity (METALS + INIT_STELLAR_METALS_AGES_DEFINED)
+InitMetallicity                 0.1               % 0.1 Z_solar for all particles at startup
+InitStellarAge                  10.0              % pre-existing stars: 10 Gyr old
+
+%---- MHD (MAGNETIC + MHD_B_SET_IN_PARAMS)
+BiniX                           1.0e-8            % ~10 nG initial B-field (code units)
+BiniY                           0
+BiniZ                           0
+
+%---- Tree column density (RT_USE_TREECOL_FOR_NH)
+ShieldingLength                 0.050             % 50 pc shielding length
+
+%---- CHEMCOOL (CHEMCOOL + CHEMISTRYNETWORK=5)
+G0                              1.7               % initial Habing FUV field (Draine 1978)
+CosmicRayIonRate                3.0e-19           % CR ionization rate [s^-1] (testing value)
+DGRnormalized                   0.01              % linear DGR vs Z: 0.1% MW at 0.1 Z_sun, 1% MW at solar (ostensibly Dwek-like, low end)
+TestStarMass                    0.0               % no star — diffusion only
+DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
+InitialMetallicity              0.1               % CHEMCOOL fallback (dead code with METALS_INDIVIDUAL, but required param)
+MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
+ShieldingLength                 0.05              % max distance for self-shielding column density [kpc] (50 pc)
+
+%---- KETJU regularized integrator (KETJU_REGULARIZATION — all commented out)
+%KetjuRegionRadius              0.01              % physical radius of KETJU regions [kpc] (10 pc)
+%KetjuMinStarMass               0                 % min Type 4 mass for region center [code units] (0=off)
+%KetjuMinBHMass                 0                 % min Type 5 mass for region center [code units] (0=off)
+%KetjuIntegrationTolerance      1.0e-9            % GBS relative tolerance for MSTAR
+%KetjuExpandBinariesFactor      0.1               % expand tight binaries if period < 0.1*dt (0=off)
+%KetjuMinParticlesPerTask       10                % min particles per compute task for load balancing
+%KetjuMaxStepCount              100000            % max MSTAR steps before bail-out (0=unlimited)
+%KetjuEnableBHMergerKicks       1                 % enable GW recoil kicks for BH mergers
+%KetjuUseStarStarSoftening      0                 % keep softening between stars inside chain (0=unsoftened)
+%KetjuPNTerms                   all               % PN term flags: "all", "none", "no_spin"
+%KetjuTimestepLimitingFactor    100               % radius factor for timestep limiting

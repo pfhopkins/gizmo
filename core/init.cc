@@ -892,7 +892,7 @@ void init(void)
 #if defined(SINK_THERMALFEEDBACK)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
         for(j=0;j<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;j++) {CellP[i].Dyield_pending[j] = 0;}
 #endif
     }

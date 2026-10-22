@@ -1,6 +1,6 @@
 # turb_diff_metals
 
-Conservation test for the turbulent metal diffusion (`TURB_DIFF_METALS`) with individual timesteps.
+Conservation test for the turbulent metal diffusion (`TURB_DIFF_METALS`) with individual timesteps, built with the opt-in `TURB_DIFF_METALS_EXACT_CONSERVATION`. Without that flag the default exchange conserves metal mass to integration accuracy only, and the 1e-12 checks below do not apply.
 
 A periodic MFM box of 20^3 cells carries a metallicity step: 0.1 Zsun at 1e4 K for x < L/2 and 60 Zsun at 1e6 K for x > L/2, at equal density. The temperature contrast puts the two sides in different timebins. The pressure jump drives the shear that sets the Smagorinsky diffusivity. The IC is generated locally (`make_turb_diff_metals_ics.py`) and read as a snapshot restart, so its metallicities are not reset to `InitMetallicity`.
 
