@@ -366,6 +366,7 @@ double rate16_ch178(double temp, const ChemGlobals& g);
 double rate16_ch179(double temp, const ChemGlobals& g);
 double rate16_ch180(double temp, const ChemGlobals& g);
 double rate16_ch181(double temp, const ChemGlobals& g);
+double rate16_cr2(double temp, const ChemGlobals& g);
 double rate16_crphot1(double temp, const ChemGlobals& g);
 double rate16_crphot11(double temp, const ChemGlobals& g);
 double rate16_crphot13(double temp, const ChemGlobals& g);

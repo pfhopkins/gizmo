@@ -8,6 +8,7 @@
     {"ch179", "ch", 179, rate16_ch179, 0},
     {"ch180", "ch", 180, rate16_ch180, 0},
     {"ch181", "ch", 181, rate16_ch181, 0},
+    {"cr2", "cr", 2, rate16_cr2, 0},
     {"crphot1", "crphot", 1, rate16_crphot1, 0},
     {"crphot11", "crphot", 11, rate16_crphot11, 0},
     {"crphot13", "crphot", 13, rate16_crphot13, 0},
