@@ -22,7 +22,7 @@ GALSF_RESOLVEDISM_SAMPLE_IMF
 N_STELLAR_MASS=5
 #GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF    % disabled — using pure Jeans criterion (Hu 2023)
 GALSF_RESOLVEDISM_INSTANT_SN
-GALSF_RESOLVEDISM_GHOSTD_G0_CR   % GHOSTD defaults: uniform G0 and CR rate scaled with the 30 Myr SFR (gizmo2017 tallbox)
+GHOSTD_G0_CR                     % GHOSTD defaults: uniform G0 and CR rate scaled with the 30 Myr SFR (gizmo2017 tallbox)
 #GALSF_RESOLVEDISM_G0_VARIABLE   % opt in: Stella dynamic G0 overrides GHOSTD
 #GALSF_RESOLVEDISM_NUV_VARIABLE
 #GALSF_RESOLVEDISM_OPT_VARIABLE

@@ -1172,9 +1172,6 @@
 #endif
 #endif
 
-#if defined(GHOSTD_G0_CR) && !(defined(GALSF) && defined(RT_ISRF_BACKGROUND))
-#error "GHOSTD_G0_CR scales the RT_ISRF_BACKGROUND field and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND"
-#endif
 
 
 /* TALLBOX: periodic in X and Y, open (non-periodic) in Z. Used for isolated disk galaxy simulations
@@ -1367,11 +1364,11 @@
 #endif
 #endif
 
-#ifdef GALSF_RESOLVEDISM_G0_SCALE_SFR
-#error "GALSF_RESOLVEDISM_G0_SCALE_SFR was renamed: use GALSF_RESOLVEDISM_GHOSTD_G0_CR"
+#if defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR)
+#error "GALSF_RESOLVEDISM_G0_SCALE_SFR and GALSF_RESOLVEDISM_GHOSTD_G0_CR were renamed: use GHOSTD_G0_CR"
 #endif
-#if defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) && !(defined(CHEMCOOL) && defined(GALSF))
-#error "GALSF_RESOLVEDISM_GHOSTD_G0_CR requires CHEMCOOL and GALSF"
+#if defined(GHOSTD_G0_CR) && !(defined(GALSF) && (defined(RT_ISRF_BACKGROUND) || defined(CHEMCOOL)))
+#error "GHOSTD_G0_CR scales the RT_ISRF_BACKGROUND field (or the CHEMCOOL G0) and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND or CHEMCOOL"
 #endif
 
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && defined(RADTRANSFER)
@@ -1386,8 +1383,8 @@
 #ifndef N_STELLAR_MASS
 #define N_STELLAR_MASS 300
 #endif
-#if (defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(GALSF_RESOLVEDISM_WINDS)) && defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && (N_STELLAR_MASS < 5)
-#error "GALSF_RESOLVEDISM_GHOSTD_G0_CR / GALSF_RESOLVEDISM_WINDS use the birth mass in MstarSampleIMF[4]: needs N_STELLAR_MASS >= 5"
+#if defined(GALSF_RESOLVEDISM_WINDS) && defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && (N_STELLAR_MASS < 5)
+#error "GALSF_RESOLVEDISM_WINDS uses the birth mass in MstarSampleIMF[4]: needs N_STELLAR_MASS >= 5"
 #endif
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
 #error "GALSF_RESOLVEDISM_SAMPLE_IMF and GALSF_RESOLVEDISM_STOCHASTIC_IMF are mutually exclusive"

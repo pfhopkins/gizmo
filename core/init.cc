@@ -1004,9 +1004,6 @@ void init(void)
 
 
     /* HELLO! This here is where you should insert custom code for hard-wiring the ICs of various test problems */
-#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
-    ghostd_set_reference_gas_mass(); // GHOSTD: Mgas0 from the ICs (restart files carry it in All)
-#endif
 #ifdef GHOSTD_G0_CR
     {double m_gas = 0; for(i = 0; i < N_gas; i++) {m_gas += P[i].Mass;}
     MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); All.FactorG0 = 0;}

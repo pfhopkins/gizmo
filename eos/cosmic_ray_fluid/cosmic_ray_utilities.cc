@@ -1782,7 +1782,7 @@ double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *p
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     return cell[i].SubGrid_CosmicRayEnergyDensity*All.cf_a3inv * UNIT_PRESSURE_IN_CGS;
 #endif
-#ifdef GHOSTD_G0_CR
+#if defined(GHOSTD_G0_CR) && !defined(CHEMCOOL) /* CHEMCOOL sets its CR rate in chem_fill_inputs */
     return All.FactorG0 * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; /* GHOSTD: uniform, linear in FactorG0 */
 #endif
 #ifdef RT_ISRF_BACKGROUND

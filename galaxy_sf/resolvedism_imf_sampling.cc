@@ -103,7 +103,7 @@ void finalize_sampled_star(int i, double M_drawn)
     /* Clear temporary storage */
     P[i].MstarSampleIMF[1] = P[i].MstarSampleIMF[2] = P[i].MstarSampleIMF[3] = P[i].MstarSampleIMF[4] = 0;
 #if (N_STELLAR_MASS >= 5)
-    P[i].MstarSampleIMF[4] = P[i].Mass; /* birth mass after IMF accretion [code]: wind closure reference, GHOSTD SFR */
+    P[i].MstarSampleIMF[4] = P[i].Mass; /* birth mass after IMF accretion [code]: wind closure reference */
 #endif
 
     /* Compute luminosity from the single drawn star */

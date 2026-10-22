@@ -55,7 +55,7 @@
 #endif
 
 /* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSTD ISRF; H2 and CO for CHEMCOOL */
-#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR))
+#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSTD_G0_CR) && defined(CHEMCOOL)))
 #define RT_TREECOL_DUST_WEIGHTED
 #endif
 #if defined(RT_TREECOL_HEALPIX) && defined(CHEMCOOL)

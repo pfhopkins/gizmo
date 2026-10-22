@@ -864,10 +864,6 @@ void resolvedism_radpressure_treerad(void); /* LEBRON-style per-cell direct radp
 #ifdef GALSF_RESOLVEDISM_PHOTOION
 void resolvedism_photoionize(void);
 #endif
-#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
-void ghostd_set_reference_gas_mass(void);
-void ghostd_update_factor_g0(void);
-#endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 void assign_stellar_masses(void);
 double draw_one_mass_from_kroupa_IMF(void);

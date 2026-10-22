@@ -214,8 +214,8 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
 
 
-#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
-    { /* GHOSTD baseline: uniform G0 and zeta scaled by the global young-star SFR; dynamic fields below override */
+#ifdef GHOSTD_G0_CR
+    { /* GHOSTD (gizmo2017 G0_SCALE_WITH_TOTAL_SFR + CR_SCALE_WITH_G0): uniform G0 and zeta from FactorG0; dynamic fields below override */
         double g0 = DMAX(All.FactorG0 * All.G0, 0.324e-2);
         in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
 #if defined(COSMIC_RAY_FLUID)
@@ -727,12 +727,12 @@ void chem_commit_to_fortran(const struct ChemInputs *in)
 
     COOLRC.G0    = in->G0;
     COOLRC.G0_LW = in->G0_LW;
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(RADTRANSFER)
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSTD_G0_CR) || defined(RADTRANSFER)
     COOLRC.G0_dust = in->G0_dust;
 #endif
 
     COOLRC.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate;
-#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(RADTRANSFER))
+#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSTD_G0_CR) || defined(RADTRANSFER))
     COOLRC.cr_energy_density = in->cr_energy_density;
 #endif
 
@@ -786,37 +786,5 @@ void chem_read_outputs(struct ChemOutputs *out)
 #endif
 }
 
-
-#ifdef GALSF_RESOLVEDISM_GHOSTD_G0_CR
-/* GHOSTD: FactorG0 = SFR over the last 30 Myr / (Mgas0 / 4 Gyr) */
-void ghostd_update_factor_g0(void)
-{
-    const double t_window_Gyr = 0.03, t_depletion_Gyr = 4.0;
-    double m_young = 0, m_young_tot = 0;
-    for(int i = 0; i < NumPart; i++)
-    {
-        if(P[i].Type != 4 || P[i].Mass <= 0) {continue;}
-        double m_birth = P[i].Mass;
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-        if(P[i].sampled != 1) {continue;} /* only finalized IMF-sampled stars */
-        if(P[i].MstarSampleIMF[4] > 0) {m_birth = P[i].MstarSampleIMF[4];}
-        else if(P[i].MstarSampleIMF[0] > 0) {m_birth = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;} /* stars read without a birth-mass slot */
-#endif
-        if(evaluate_stellar_age_Gyr(i) < t_window_Gyr) {m_young += m_birth;}
-    }
-    MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    All.FactorG0 = (All.Mgas0 > 0) ? (m_young_tot / t_window_Gyr) / (All.Mgas0 / t_depletion_Gyr) : 0;
-    if(ThisTask == 0) {printf("GHOSTD: Time=%g M_young=%g Msun Mgas0=%g Msun FactorG0=%g\n", All.Time, m_young_tot * UNIT_MASS_IN_SOLAR, All.Mgas0 * UNIT_MASS_IN_SOLAR, All.FactorG0);}
-}
-
-/* GHOSTD: reference gas mass from the initial conditions, then the initial FactorG0 */
-void ghostd_set_reference_gas_mass(void)
-{
-    double m_gas = 0;
-    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0) {m_gas += P[i].Mass;}}
-    MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-    ghostd_update_factor_g0();
-}
-#endif
 
 #endif /* CHEMCOOL */
