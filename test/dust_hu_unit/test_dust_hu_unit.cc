@@ -15,7 +15,7 @@ static void check(const char *name, double got, double want, double rtol)
 static struct dustk_env make_env(double nH, double T, double x_e, double ahx, double divv, int beta)
 {
     struct dustk_env e; e.nH = nH; e.T = T; e.x_e = x_e; e.G0 = 1.0;
-    e.ahyd[0] = ahx; e.ahyd[1] = e.ahyd[2] = 0; e.divv = divv; e.betatron = beta; return e;
+    e.ahyd[0] = ahx; e.ahyd[1] = e.ahyd[2] = 0; e.divv = divv; e.betatron = beta; e.shock_limit = 0; return e;
 }
 
 /* RK4 reference for (v, I_C, I_Sil) with the same physics, tiny steps */
@@ -90,6 +90,21 @@ int main(void)
         double vr[3] = {0,0,0}, ICr, ISr; reference(&e, 0.035, 100.0, vr, &ICr, &ISr, 200000);
         check("shock kick v_rel vs RK4", v[0], vr[0], 0.02);
         check("shock kick I_nth,C vs RK4", IC, ICr, 0.03);
+    }
+
+    /* 6b. smeared shock: gas gains dv=300 km/s over t_ramp >> t_drag; limiter recovers the sharp-shock lag */
+    {
+        double dvs = 300.0, tramp = 2.0e4;
+        for(int lim = 0; lim < 2; lim++) {
+            struct dustk_env e = make_env(4.0, 1.0e6, 1.2, dvs/tramp, -1.0/tramp, 0); e.shock_limit = lim;
+            double v[3] = {0,0,0}, vmax = 0, IC, IS; int n = 200;
+            for(int j = 0; j < n; j++) {dustk_step_vrel(&e, 0.035, tramp/n, v, &IC, &IS, 0.1, 100000); if(fabs(v[0]) > vmax) {vmax = fabs(v[0]);}}
+            if(lim) {check("smeared shock, limiter: peak |v_rel| ~ dv", vmax, dvs, 0.15);}
+            else {printf("%-44s peak |v_rel| = %.1f km/s of dv=%.0f (no limiter, info)\n", "smeared shock, no limiter", vmax, dvs);}
+        }
+        struct dustk_env e = make_env(1.0, 100.0, 1.0e-3, 1.0e-8, -1.0e-9, 0); e.shock_limit = 1; /* slow flow: |a|/|divv| = 10 km/s */
+        struct dustk_env e2 = make_env(1.0, 100.0, 1.0e-3, 1.0e-8, -1.0e-9, 0);
+        check("limiter off when |a_h|/|divv| < 30 km/s", dustk_trel_inv(&e, 0.035, 0, 0), dustk_trel_inv(&e2, 0.035, 0, 0), 0);
     }
 
     /* 7. logistic growth: exact vs fine RK4 of dm/dt = r m (1-m/K) */

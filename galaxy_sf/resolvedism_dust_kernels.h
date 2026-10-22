@@ -13,6 +13,7 @@
 #define DUSTK_EV         1.602176634e-12
 #define DUSTK_UMAX_EV    10.0           /* grain potential cap (photoelectric limit) */
 #define DUSTK_VCOUPLE    30.0           /* km/s: below this v_rel and m_d decouple (Hu+19 2.5.2) */
+#define DUSTK_SHOCK_EPS  0.1            /* smeared-shock limiter: drag rate capped at this x |div v| */
 
 static inline double dustk_poly5_pow10(double x, double a0, double a1, double a2, double a3, double a4, double a5)
 {
@@ -59,7 +60,10 @@ struct dustk_env {
     double ahyd[3];   /* gas hydro acceleration [km/s/yr] */
     double divv;      /* gas velocity divergence [1/yr] */
     int betatron;     /* 1: Hu+19 eq 11 (B ~ rho) */
+    int shock_limit;  /* 1: drag rate capped by the compression rate in converging flow (smeared-shock correction) */
 };
+
+static inline double dustk_norm3(const double v[3]) {return sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);}
 
 /* plasma-drag coefficient x_ion phi^2 ln Lambda of Hu+19 eq 9, grain charge from eq 10 */
 static inline double dustk_plasma_coeff(const struct dustk_env *e, double a_um)
@@ -86,11 +90,11 @@ static inline double dustk_trel_inv(const struct dustk_env *e, double a_um, doub
     double G = 1.5 * sqrt(1.0 + 0.44*s*s) + plasma / (1.3 + s*s*s);
     double tdrag_s = 2.0 * sqrt(2.0) * (a_um*1.0e-4) * DUSTK_RHO_GR * cs / (3.0 * e->nH * DUSTK_KB * e->T * G);
     double r = DUSTK_SEC_PER_YR / tdrag_s;
+    if(e->shock_limit && e->divv < 0 && dustk_norm3(e->ahyd) >= DUSTK_VCOUPLE * (-e->divv)) {r = r / (1.0 + r / (DUSTK_SHOCK_EPS * (-e->divv)));}
     if(e->betatron) {r += 0.5 * e->divv;}
     return r;
 }
 
-static inline double dustk_norm3(const double v[3]) {return sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);}
 
 /* Advance v_rel of one size bin over dt and return int 3 nH Y_nth / a dt for C and silicate (Hu+19 2.5) */
 static inline void dustk_step_vrel(const struct dustk_env *e, double a_um, double dt, double v[3],
