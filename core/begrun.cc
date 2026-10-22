@@ -2360,6 +2360,16 @@ void read_parameter_file(char *fname)
 #endif
 #endif  // CHIMES
 
+#ifdef GALSF_RESOLVEDISM_DUST
+      strcpy(tag[nt], "DustGrowthTimescaleGyr");
+      addr[nt] = &All.DustGrowthTimescaleGyr;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "DustGrowthCoulombFactor");
+      addr[nt] = &All.DustGrowthCoulombFactor;
+      id[nt++] = REAL;
+#endif
+
 #ifdef CHEMCOOL
       strcpy(tag[nt], "G0");
       addr[nt] = &All.G0;
@@ -2927,6 +2937,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("TestFixedLbol",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: bolometric L from tables as normal (variable; =0)\n",tag[i]); continue;}
                 if(strcmp("TestFixedWindMdot",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: wind Mdot from tables as normal (variable; =0)\n",tag[i]); continue;}
                 if(strcmp("TestFixedWindVel",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: wind velocity from tables as normal (=0)\n",tag[i]); continue;}
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST
+                if(strcmp("DustGrowthTimescaleGyr",tag[i])==0) {*((double *)addr[i])=1.5; printf("Tag %s not set: dust growth time 1.5 Gyr at n=1, T=100 K (Hu+26)\n",tag[i]); continue;}
+                if(strcmp("DustGrowthCoulombFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s not set: no Coulomb enhancement of growth, D_eff=1 (Hu+26)\n",tag[i]); continue;}
 #endif
                 if(strcmp("TimeBetStatistics",tag[i])==0) {*((double *)addr[i])=1.0e10; printf("Tag %s (%s) not set in parameter file: ENERGYinfo.txt will get only the t=0 row (=%g) \n",tag[i],alternate_tag[i],All.TimeBetStatistics); continue;}
 #ifdef EOS_ANEOS

@@ -528,6 +528,12 @@ extern struct global_data_all_processes
   double G0;                    /*!< UV radiation field strength in Habing units */
   double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
   double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST
+  double DustGrowthTimescaleGyr;  /*!< ISM growth time at n_H=1, T=100 K, Z'=1, a_eff=0.035 um (Hu+26 eq 4) */
+  double DustGrowthCoulombFactor; /*!< area-weighted Coulomb enhancement D_eff (Hu+23: 10, Hu+26: 1) */
+#endif
+#ifdef CHEMCOOL
   double DeutAbund;             /*!< primordial deuterium abundance D/H by number */
   double InitialMetallicity;    /*!< initial metallicity in solar units */
 #endif

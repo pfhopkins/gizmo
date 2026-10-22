@@ -99,8 +99,6 @@ static void resolvedism_dust_env(int i, struct dustk_env *e)
 
 void resolvedism_dust_evolve(void)
 {
-    double yr_to_code = UNIT_TIME_IN_CGS / SECONDS_PER_YEAR;
-
     for(int i : ActiveParticleList)
     {
         if(P[i].Type != 0) continue;
@@ -137,71 +135,37 @@ void resolvedism_dust_evolve(void)
         CellP[i].Dust[0] *= fC;
         for(k = 1; k <= 4; k++) {CellP[i].Dust[k] *= fS;}
 
-        /* ---- ISM grain growth (accretion of gas-phase metals onto grains) ---- */
-        double grain_size = 0.1;
-        /* Sticking efficiency S(T_gas, T_dust) = 1 / (1 + 0.04*sqrt(T_gas + T_dust))
-           (Hirashita 2000).  Smoothly transitions from S~1 at low T to S~0 at high T. */
-        /* Rates from Dwek 1998 / Draine 2009, same form as gizmo2017 evolve_abundances_dust.F */
-#ifdef CHEMCOOL
-        double T_dust = CellP[i].DustTemp;
+        /* ---- ISM growth (Hu+23/26 eq 4): T < 300 K only, total-Z single (1-f), CO-bound C/O excluded, exact logistic ---- */
+        double r0 = dustk_growth_rate0(nH, T, All.DustGrowthTimescaleGyr, All.DustGrowthCoulombFactor);
+        if(r0 > 0)
+        {
+            double Zp = DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0];
+            double C_CO = 0, O_CO = 0;
+#if defined(CHEMCOOL) && (ICO != UNUSED)
+            {
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+                double X_H = DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 1e-10);
 #else
-        double T_dust = DMIN(T, 100.); /* no chemcool dust-temp solve in cooling-off test builds */
+                double X_H = 1.0 / (1.0 + 4.0 * ABHE);
 #endif
-        double sticking = 1.0 / (1.0 + 0.04 * sqrt(T + T_dust));
-        if(sticking > 1e-4 && dust_total > 0) {
-            double sqrtT = sqrt(T);
-            /* gas-phase metal mass fractions */
-            double Z_C  = DMAX(P[i].Metallicity[MET_OF(ELEM_C)]  - CellP[i].Dust[0], 0);
-            double Z_O  = DMAX(P[i].Metallicity[MET_OF(ELEM_O)]  - CellP[i].Dust[1], 0);
-            double Z_Mg = DMAX(P[i].Metallicity[MET_OF(ELEM_Mg)] - CellP[i].Dust[2], 0);
-            double Z_Si = DMAX(P[i].Metallicity[MET_OF(ELEM_Si)] - CellP[i].Dust[3], 0);
-            double Z_Fe = DMAX(P[i].Metallicity[MET_OF(ELEM_Fe)] - CellP[i].Dust[4], 0);
-
-            /* condensation fractions: fraction of element already in dust */
-            double f_C  = (P[i].Metallicity[MET_OF(ELEM_C)]  > 0) ? CellP[i].Dust[0] / P[i].Metallicity[MET_OF(ELEM_C)]  : 1.0;
-            double f_Si = (P[i].Metallicity[MET_OF(ELEM_Si)] > 0) ? CellP[i].Dust[3] / P[i].Metallicity[MET_OF(ELEM_Si)] : 1.0;
-            f_C = DMIN(f_C, 1.0); f_Si = DMIN(f_Si, 1.0);
-
-            /* accretion timescale^{-1} [yr^-1] (gizmo2017 formula) */
-            /* t_accr_inv = prefactor * nH / grain_size * sqrt(T) * (Z_elem / Z_solar) * sticking * (1 - f) */
-            double t_accr_C_inv  = 2.15e-12 * nH / grain_size * sqrtT * (Z_C  / 2.07e-3) * sticking * (1.0 - f_C);
-            double t_accr_Si_inv = 2.01e-12 * nH / grain_size * sqrtT * (Z_Si / 6.83e-4) * sticking * (1.0 - f_Si);
-
-            /* convert to code time^-1 */
-            t_accr_C_inv  *= yr_to_code;
-            t_accr_Si_inv *= yr_to_code;
-
-            /* Carbonaceous: grow C dust from gas-phase C */
-            if(t_accr_C_inv > 0 && Z_C > 0) {
-                double dDust_C = CellP[i].Dust[0] * (exp(dt * t_accr_C_inv) - 1.0);
-                dDust_C = DMIN(dDust_C, Z_C); /* can't exceed available gas-phase C */
-                CellP[i].Dust[0] += dDust_C;
+                double xco = DMAX(CellP[i].TracAbund[ICO], 0);
+                C_CO = 12.0 * xco * X_H; O_CO = 16.0 * xco * X_H; /* same X_H convention as chem_interface.cc */
             }
+#endif
+            double D0 = CellP[i].Dust[0];
+            double D1 = dustk_grow_carbon(D0, DMAX(P[i].Metallicity[MET_OF(ELEM_C)], 0), C_CO, Zp, r0, dt_yr);
+            CellP[i].Dust[0] = D1;
+            dust_ledger[4] += P[i].Mass * (D1 - D0);
 
-            /* Silicate: grow from gas-phase O, Mg, Si, Fe in stoichiometric ratios */
-            /* Si is key element; grow silicate limited by Si, then check other elements */
-            if(t_accr_Si_inv > 0 && Z_Si > 0) {
-                double dDust_Si = CellP[i].Dust[3] * (exp(dt * t_accr_Si_inv) - 1.0);
-                dDust_Si = DMIN(dDust_Si, Z_Si); /* can't exceed available gas-phase Si */
-
-                /* stoichiometric amounts of other elements needed */
-                double dSil_total = dDust_Si / DUST_SIL_FRAC_SI; /* total silicate mass */
-                double dDust_O  = dSil_total * DUST_SIL_FRAC_O;
-                double dDust_Mg = dSil_total * DUST_SIL_FRAC_MG;
-                double dDust_Fe = dSil_total * DUST_SIL_FRAC_FE;
-
-                /* limit by available gas-phase metals */
-                if(dDust_O  > Z_O)  { dSil_total *= Z_O  / dDust_O;  }
-                if(dDust_Mg > Z_Mg) { dSil_total = DMIN(dSil_total, Z_Mg / DUST_SIL_FRAC_MG * DUST_SIL_FRAC_SI / dDust_Si * dSil_total); }
-                if(dDust_Fe > Z_Fe) { dSil_total = DMIN(dSil_total, Z_Fe / DUST_SIL_FRAC_FE * DUST_SIL_FRAC_SI / dDust_Si * dSil_total); }
-
-                /* re-derive stoichiometric amounts from limited total */
-                if(dSil_total > 0) {
-                    CellP[i].Dust[1] += dSil_total * DUST_SIL_FRAC_O;
-                    CellP[i].Dust[2] += dSil_total * DUST_SIL_FRAC_MG;
-                    CellP[i].Dust[3] += dSil_total * DUST_SIL_FRAC_SI;
-                    CellP[i].Dust[4] += dSil_total * DUST_SIL_FRAC_FE;
-                }
+            double S0 = CellP[i].Dust[3] / DUST_SIL_FRAC_SI; /* stoichiometric silicate, keyed on Si */
+            double Fe_free = DMAX(CellP[i].Dust[4] - S0 * DUST_SIL_FRAC_FE, 0); /* non-silicate Fe */
+            double pool[4] = {DMAX(P[i].Metallicity[MET_OF(ELEM_O)] - O_CO, 0), DMAX(P[i].Metallicity[MET_OF(ELEM_Mg)], 0),
+                              DMAX(P[i].Metallicity[MET_OF(ELEM_Si)], 0), DMAX(P[i].Metallicity[MET_OF(ELEM_Fe)] - Fe_free, 0)};
+            double frac[4] = {DUST_SIL_FRAC_O, DUST_SIL_FRAC_MG, DUST_SIL_FRAC_SI, DUST_SIL_FRAC_FE};
+            double dS = dustk_grow_silicate(S0, pool, frac, Zp, r0, dt_yr) - S0;
+            if(dS > 0) {
+                for(k = 0; k < 4; k++) {CellP[i].Dust[k+1] += dS * frac[k];}
+                dust_ledger[5] += P[i].Mass * dS;
             }
         }
 
