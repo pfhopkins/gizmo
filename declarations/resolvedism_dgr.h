@@ -10,7 +10,8 @@
  * certified one-zone domain — fresh unmixed ejecta would otherwise reach ~50x). */
 #define RESOLVEDISM_DGR_SOLAR_ABS 0.01  /* absolute MW dust-to-gas mass ratio at DGR=1 (solar units) */
 
-static inline double resolvedism_cell_DGR_solar(int p)
+/* raw DGR formula, no cap/gate (chemistry applies its own cap and solve-T sputter gate) */
+static inline double resolvedism_cell_DGR_solar_raw(int p)
 {
     double dgr;
 #ifdef GALSF_RESOLVEDISM_DUST
@@ -28,6 +29,12 @@ static inline double resolvedism_cell_DGR_solar(int p)
 #else
     dgr = 1.0; /* no chemistry: DGRnormalized not defined (pure N-body / non-Stella builds) */
 #endif
+    return dgr;
+}
+
+static inline double resolvedism_cell_DGR_solar(int p)
+{
+    double dgr = resolvedism_cell_DGR_solar_raw(p);
     if(dgr > 10.0) {dgr = 10.0;}
     if(dgr < 0) {dgr = 0;}
 #ifdef CHEMCOOL

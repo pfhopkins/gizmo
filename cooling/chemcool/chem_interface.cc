@@ -225,29 +225,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
     in->id_current = P[target].ID;   /* [orig chemcool.cc:272] (same int truncation as COOLIC.id_current) */
 
-#ifdef GALSF_RESOLVEDISM_DUST
-    /* [orig chemcool.cc:274-280] */
-    {
-        /* Per-particle DGR from evolved dust fields, normalized to solar (DGR_solar ~ 0.01) */
-        double DGR_actual = 0;
-        for(int kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) DGR_actual += CellP[target].Dust[kd];
-        in->dust_to_gas_ratio = DGR_actual / 0.01;
-    }
-#else
-    /* [orig chemcool.cc:282-294]
-       No evolved dust model: assume fixed dust-to-metal ratio, scale DGR with local metallicity.
-       DGRnormalized is the dust-to-metal efficiency (1.0 = MW-like ~40% depletion).
-       dust_to_gas_ratio is in solar units: 1.0 = DGR_solar ~ 0.01 */
-#ifdef METALS
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-    in->dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];
-#else
-    in->dust_to_gas_ratio = All.DGRnormalized * P[target].Metallicity[0] / All.SolarAbundances[0];
-#endif
-#else
-    in->dust_to_gas_ratio = All.DGRnormalized;
-#endif
-#endif
+    in->dust_to_gas_ratio = resolvedism_cell_DGR_solar_raw(target); /* solar units; shared formula (resolvedism_dgr.h) */
     /* --- Chemistry-input DGR cap (2026-07-04) -----------------------------------
      * [orig chemcool.cc:295-308]
      * Companion to the CHEM_ZMAX metal-abundance cap above, which protected
