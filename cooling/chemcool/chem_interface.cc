@@ -229,9 +229,8 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #endif
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    /* Habing energy densities [erg/cm^3]: FUV 6-13.6 eV 5.29e-14, LW 11.2-13.6 eV 2.11e-14 */
-    double u_Hab_FUV = 5.29e-14;
-    double u_Hab_LW  = 2.11e-14;
+    double u_Hab_FUV = HABING_EGY_DENSITY_6_13P6EV_CGS;
+    double u_Hab_LW  = HABING_EGY_DENSITY_11P2_13P6EV_CGS;
     double fac_flux2energy = All.cf_a2inv / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)); /* luminosity flux to energy density */
 
     double UV_flux_tot = 0.0;
@@ -291,7 +290,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double rho_code = CellP[target].Density * All.cf_a3inv;
         /* Habing normalizations for M1 RT bands [erg/cm^3].
            FUV = 8-13.6 eV (narrower than tree-ray 6-13.6), LW = 11.2-13.6 eV */
-        double u_Hab_FUV_M1 = 5.03e-14, u_Hab_LW = 2.11e-14, u_Hab_NUV = 3.85e-14; /* NUV(3.4-8eV): std ISRF = 0.024 eV/cm^3 */
+        double u_Hab_FUV_M1 = HABING_EGY_DENSITY_8_13P6EV_CGS, u_Hab_LW = HABING_EGY_DENSITY_11P2_13P6EV_CGS, u_Hab_NUV = ISRF_EGY_DENSITY_3P4_8EV_CGS;
 
         /* Convert Rad_E_gamma (extensive: total energy per particle) to physical energy density (erg/cm^3):
            u_rad = Rad_E_gamma / V_i = Rad_E_gamma * Density / Mass  [code energy/volume]
