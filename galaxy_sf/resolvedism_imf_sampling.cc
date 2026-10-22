@@ -96,6 +96,7 @@ void finalize_sampled_star(int i, double M_drawn)
     P[i].FB_Deposited = 0;
     P[i].FB_NoDepositCount = 0;
     {int k_; for(k_ = 0; k_ < 3; k_++) {P[i].FB_RecoilAccum[k_] = 0; P[i].FB_VecSum[k_] = 0;}}
+    P[i].FB_QnormSum = 0;
 #endif
 
     /* Clear temporary storage */

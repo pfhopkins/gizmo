@@ -22,6 +22,9 @@ extern struct gas_cell_data
     MyDouble InternalEnergyPred;    /*!< predicted value of the specific internal energy at the current time */
     MyDouble DtInternalEnergy;      /*!< rate of change of specific internal energy */
 
+#ifdef GALSF_RESOLVEDISM_FB
+    MyDouble FB_WeightMass;         /*!< cell mass frozen at the wind/AGB weighting pass: same weights in every pass of one batch */
+#endif
 #ifdef FB_G17_BOUNDARY_INJECTION
     /* gizmo2017-mimicry (2026-07-10): set by the FB thermal walk on every receiver
      * (mirrors gizmo2017 SphP.flagFBinj); consumed by the conditional hydro recompute

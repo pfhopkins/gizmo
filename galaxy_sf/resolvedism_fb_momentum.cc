@@ -26,6 +26,8 @@
 double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
 #endif
 
+#define FB_QNORM_MIN 1.0e-6 /* Σ|q| below this: neighbours collinear, no isotropic split exists */
+
 struct kernel_resolvedismFB_momentum {double dp[3], r, wk, dwk, hinv, hinv3, hinv4;};
 
 #define CORE_FUNCTION_NAME resolvedismFB_momentum_evaluate
@@ -41,6 +43,7 @@ struct INPUT_STRUCT_NAME
     /* Bit-exact normalizer measured by the weighting pre-pass; see resolvedism_fb_thermal.cc */
     MyDouble FB_Area_weighted_sum_in;
     MyDouble FB_VecSum_in[3];
+    MyDouble FB_QnormSum_in;
     MyDouble StarVel[3];
     MyDouble WindMomentum;
     MyDouble MetalMass;
@@ -173,8 +176,10 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     in->KernelRadius = P[i].KernelRadius;
     in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
     /* Load measured AWS from prior weighting pass (or 0 if this IS the weighting pass). */
-    in->FB_Area_weighted_sum_in = (loop_iteration >= 0) ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
-    for(k=0;k<3;k++) {in->FB_VecSum_in[k] = (loop_iteration >= 0) ? P[i].FB_VecSum[k] : 0;}
+    int load_ = (loop_iteration >= 0 || loop_iteration <= -3); /* -3/-4: wind/AGB normalisation passes */
+    in->FB_Area_weighted_sum_in = load_ ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
+    for(k=0;k<3;k++) {in->FB_VecSum_in[k] = load_ ? P[i].FB_VecSum[k] : 0;}
+    in->FB_QnormSum_in = load_ ? P[i].FB_QnormSum : 0;
     for(k=0;k<3;k++) {in->StarVel[k] = P[i].Vel[k];}
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
     {int hp_; for(hp_=0;hp_<12;hp_++) {in->HpxCount[hp_] = P[i].FB_HpxCount[hp_];}}
@@ -380,6 +385,7 @@ struct OUTPUT_STRUCT_NAME
     /* Weighting-pass accumulator: Σ_j (Mass_j × kernel.wk) over neighbors walked. */
     MyDouble FB_Area_weighted_sum_accum;
     MyDouble FB_VecSum_accum[3];
+    MyDouble FB_Qnorm_accum;
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
     MyFloat HpxCount[12];
 #endif
@@ -388,6 +394,8 @@ struct OUTPUT_STRUCT_NAME
 
 void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
 {
+    if(loop_iteration == -3) {int k_; for(k_=0;k_<3;k_++) {ASSIGN_ADD(P[i].FB_VecSum[k_], out->FB_VecSum_accum[k_], mode);} return;}
+    if(loop_iteration == -4) {ASSIGN_ADD(P[i].FB_QnormSum, out->FB_Qnorm_accum, mode); return;}
     if(loop_iteration < 0) {
         /* Weighting pass: accumulate measured kernel sum onto the star. */
         P[i].FB_Area_weighted_sum += out->FB_Area_weighted_sum_accum;
@@ -424,7 +432,7 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
 
     /* Pair (-1, 0) for wind/AGB; pair (-2, 1) for radpressure.  STARFORGE pattern:
      * the weighting pre-pass uses the same active_check criterion as its injection. */
-    if(loop_iteration == 0 || loop_iteration == -1) {
+    if(loop_iteration == 0 || loop_iteration == -1 || loop_iteration == -3 || loop_iteration == -4) {
         /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
          * when the token is set, only that single event is active. Radpressure pair
          * (-2,1) below is deliberately NOT gated — it stays batched (momentum-only,
@@ -463,7 +471,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
     if(local.Mej <= 0 && local.WindMomentum <= 0) return 0;
     if(local.KernelRadius <= 0) return 0;
     /* Injection pass needs the AWS measured by the weighting pre-pass. */
-    if(loop_iteration >= 0 && local.FB_Area_weighted_sum_in <= 0) return 0;
+    if((loop_iteration >= 0 || loop_iteration <= -3) && local.FB_Area_weighted_sum_in <= 0) return 0;
     h2 = local.KernelRadius * local.KernelRadius;
     kernel_hinv(local.KernelRadius, &kernel.hinv, &kernel.hinv3, &kernel.hinv4);
 
@@ -495,12 +503,16 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 if(u<1) {kernel_main(u, kernel.hinv3, kernel.hinv4, &kernel.wk, &kernel.dwk, 0);} else {kernel.wk=kernel.dwk=0;}
                 if((kernel.wk <= 0)||(isnan(kernel.wk))) {continue;}
 
-                /* STARFORGE two-pass pattern: weighting pre-pass (loop_iteration<0) just
+                /* wind/AGB passes weight with the cell mass frozen at the weighting pass (batch-consistent) */
+                double Mass_w = (loop_iteration == 0 || loop_iteration == -1 || loop_iteration <= -3) ? (double)CellP[j].FB_WeightMass : Mass_j;
+                double rhat[3]; for(k=0;k<3;k++) {rhat[k] = -kernel.dp[k] / kernel.r;}
+
+                /* STARFORGE two-pass pattern: weighting pre-pass (loop_iteration -1/-2) just
                  * measures Σ_j (Mass_j × kernel.wk); injection pass uses that measured sum
                  * as the bit-exact normalizer → Σ wk_j = 1 by construction. */
-                if(loop_iteration < 0) {
-                    out.FB_Area_weighted_sum_accum += Mass_j * kernel.wk;
-                    for(k=0;k<3;k++) {out.FB_VecSum_accum[k] += Mass_j * kernel.wk * (-kernel.dp[k] / kernel.r);}
+                if(loop_iteration == -1 || loop_iteration == -2) {
+                    out.FB_Area_weighted_sum_accum += Mass_w * kernel.wk;
+                    for(k=0;k<3;k++) {out.FB_VecSum_accum[k] += Mass_w * kernel.wk * rhat[k];}
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
                 {double v_hp[3]; long ip_hp; v_hp[0]=-kernel.dp[0]; v_hp[1]=-kernel.dp[1]; v_hp[2]=-kernel.dp[2];
                  vec2pix_ring(1, v_hp, &ip_hp); out.HpxCount[(int)ip_hp] += 1;}
@@ -508,7 +520,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     continue;
                 }
                 /* STARFORGE-style normalizer with MIN_REAL_NUMBER+fabs() guard. */
-                double wk = (Mass_j * kernel.wk) / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));
+                double wk = (Mass_w * kernel.wk) / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
                 /* solid-angle-uniform weight: 1/(N_occupied_pixels * N_gas_in_this_pixel) */
                 {double v_hp[3]; long ip_hp; int hp_, nocc_=0;
@@ -518,6 +530,27 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                  if(nocc_ > 0 && local.HpxCount[(int)ip_hp] > 0) {wk = 1.0/((double)nocc_ * (double)local.HpxCount[(int)ip_hp]);}
                  else {wk = 0;}}
 #endif
+                if(loop_iteration == -3) {for(k=0;k<3;k++) {out.FB_VecSum_accum[k] += wk * rhat[k];} continue;} /* HEALPIX mean direction */
+
+                /* kick direction: r̂_j minus the weighted mean direction m, so Σ_j wk_j dir_j = 0 */
+                double mdir[3], dir_[3];
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+                for(k=0;k<3;k++) {mdir[k] = (loop_iteration == 1) ? 0 : local.FB_VecSum_in[k];}
+#else
+                for(k=0;k<3;k++) {mdir[k] = local.FB_VecSum_in[k] / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));}
+#endif
+                for(k=0;k<3;k++) {dir_[k] = rhat[k] - mdir[k];}
+                double qn = wk * sqrt(dir_[0]*dir_[0] + dir_[1]*dir_[1] + dir_[2]*dir_[2]);
+                if(loop_iteration == -4) {out.FB_Qnorm_accum += qn; continue;}
+                if(loop_iteration == 0) {
+                    /* vector weights q_j = wk_j (r̂_j - m), normalised by Σ|q|: share |q_j|/Σ|q| along q̂_j,
+                     * so Σ dp = 0, Σ|dp| = p_ej and Σ ½ dM v_w² = ½ M_ej v_w² exactly */
+                    if(local.FB_QnormSum_in > FB_QNORM_MIN) {
+                        if(qn > 0) {for(k=0;k<3;k++) {dir_[k] *= wk / qn;}}
+                        wk = qn / local.FB_QnormSum_in;
+                    } else {for(k=0;k<3;k++) {dir_[k] = rhat[k];}} /* all gas along one ray: radial, star recoils */
+                    if(wk <= 0) {continue;}
+                }
 
                 /* concurrent wind events can share a receiver: the whole mix (incl. the H closure and kick) is one step */
                 #pragma omp critical (fb_mom_receiver)
@@ -709,11 +742,6 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     double dv_mag2 = 0;
                     double v_prekick[3]; /* pre-kick velocity: residual must use it (2026-07-18 fix 3) */
                     for(k = 0; k < 3; k++) {v_prekick[k] = P[j].Vel[k];}
-                    double dir_[3]; /* r̂_j minus the weighted mean direction: Σ_j wk_j dir_j = 0, no net momentum from an isotropic source */
-                    for(k = 0; k < 3; k++) {dir_[k] = -kernel.dp[k] / kernel.r;}
-#ifndef GALSF_RESOLVEDISM_FB_HEALPIX
-                    for(k = 0; k < 3; k++) {dir_[k] -= local.FB_VecSum_in[k] / (MIN_REAL_NUMBER + fabs(local.FB_Area_weighted_sum_in));}
-#endif
                     for(k = 0; k < 3; k++) {
                         double dp_k = dp_share * dir_[k];
                         /* momentum-CONSERVING kick (2026-07-18 fix 2): the added mass must not
@@ -820,12 +848,26 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 }
 
 
-void resolvedism_fb_momentum_calc(int fb_loop_iteration)
+static void resolvedism_fb_momentum_walk(int fb_loop_iteration)
 {
     #include "../system/code_block_xchange_perform_ops_malloc.h"
     loop_iteration = fb_loop_iteration;
     #include "../system/code_block_xchange_perform_ops.h"
     #include "../system/code_block_xchange_perform_ops_demalloc.h"
+}
+
+/* -1 (wind/AGB weighting) also runs the normalisation passes: -3 HEALPIX mean direction, -4 Σ|q| */
+void resolvedism_fb_momentum_calc(int fb_loop_iteration)
+{
+    if(fb_loop_iteration == -1) {for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].FB_WeightMass = P[i].Mass;}}}
+    resolvedism_fb_momentum_walk(fb_loop_iteration);
+    if(fb_loop_iteration != -1) return;
+#ifdef GALSF_RESOLVEDISM_FB_HEALPIX
+    for(int i : ActiveParticleList) {if(P[i].Type == 4) {P[i].FB_VecSum[0] = P[i].FB_VecSum[1] = P[i].FB_VecSum[2] = 0;}}
+    resolvedism_fb_momentum_walk(-3);
+#endif
+    for(int i : ActiveParticleList) {if(P[i].Type == 4) {P[i].FB_QnormSum = 0;}}
+    resolvedism_fb_momentum_walk(-4);
 }
 
 #include "../system/code_block_xchange_finalize.h"

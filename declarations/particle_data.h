@@ -169,6 +169,7 @@ extern ALIGN(32) struct particle_data
      * residual (~0).  Reset to -1 when bookkeeping is done. */
     MyFloat M_at_SN_trigger;
     MyDouble FB_VecSum[3];  /* Σ_j Mass_j W_j r̂_j from the momentum weighting pass (direction symmetrisation) */
+    MyDouble FB_QnormSum;   /* Σ_j |w_j (r̂_j - m)| from the wind/AGB normalisation pass */
     MyDouble FB_RecoilAccum[3]; /* momentum deposited this walk (all returns); applied once after the walk */
     char FB_Deposited;      /* this step's flagged event reached gas (set by the FB passes) */
     short FB_NoDepositCount; /* consecutive steps an event found no gas; reset on success */
