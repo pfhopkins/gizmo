@@ -84,10 +84,12 @@
                 double dmet = (Z_j-local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_hydrostep;
                 cmag = MINMOD(dmet,cmag); // limiter based on mass exchange from MFV HLLC solver //
 #endif
+#ifdef GALSF_RESOLVEDISM
                 /* symmetric per-pair donor cap: the donor loses at most 1% of its element-k mass per pair */
                 double donor_mass_k = (cmag > 0) ? P[j].Mass * Z_j : local.Mass * local.Metallicity[k_species];
                 double pair_cap = 0.01 * donor_mass_k;
                 if(fabs(cmag) > pair_cap) cmag = (cmag > 0 ? pair_cap : -pair_cap);
+#endif
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
                 /* each side moves half the exchange over its own timestep; j's share waits in its pending buffer */
                 cmag *= 0.5 * dt_hydrostep_i / dt_hydrostep; // limiters above used dt_hydrostep >= dt_hydrostep_i
