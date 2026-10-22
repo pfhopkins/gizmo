@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "resolvedism_star_age.h"
 #include "../mesh/kernel.h"
 #include "resolvedism_selfcheck.h"
 #include "resolvedism_fb_shared.h"
@@ -122,7 +123,7 @@ void resolvedism_determine_SNe(void)
         if(!get_star_info(i, &Mstar, &logM, &logZ)) continue;
         if(Mstar < 8.0) continue; /* only massive stars have significant winds */
 
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         if(star_age_yr <= 0) continue;
         double lifetime_yr = get_star_lifetime(Mstar, logM, logZ);
         if(star_age_yr >= lifetime_yr) continue; /* dead — handled in death loop below */
@@ -189,7 +190,7 @@ void resolvedism_determine_SNe(void)
     for(int i : ActiveParticleList)
     {
         if(P[i].Type != 4 || P[i].Mass <= 0 || P[i].SNe_ThisTimeStep != 0) continue;
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         if(star_age_yr <= 0) continue;
         double Mstar, logM, logZ;
         if(!get_star_info(i, &Mstar, &logM, &logZ)) continue;
@@ -231,7 +232,7 @@ void resolvedism_determine_SNe(void)
     for(int i : ActiveParticleList)
     {
         if(P[i].Type != 4 || P[i].Mass <= 0 || P[i].SNe_ThisTimeStep != 0) continue;
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         if(star_age_yr <= 0) continue;
         double Mstar, logM, logZ;
         if(!get_star_info(i, &Mstar, &logM, &logZ)) continue;
@@ -503,7 +504,7 @@ void resolvedism_determine_SNe(void)
                 continue;
             }
 
-            double star_age_Gyr = evaluate_stellar_age_Gyr(i);
+            double star_age_Gyr = resolvedism_star_age_yr(i) * 1.0e-9;
             if(star_age_Gyr < IA_T_MIN_GYR) continue; /* below minimum delay time */
 
             /* DTD probability: P = (IA_DTD_NORM / t) * M_drawn * dt */
@@ -556,7 +557,7 @@ void resolvedism_determine_SNe(void)
                     ia_rho[n_ia_logged] = P[i].DensityAroundParticle;
                     ia_mstar[n_ia_logged] = P[i].MstarSampleIMF[0];
                     ia_id[n_ia_logged] = (long long)P[i].ID;
-                    ia_age[n_ia_logged] = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                    ia_age[n_ia_logged] = resolvedism_star_age_yr(i);
                     n_ia_logged++;
                 }
             }
@@ -963,7 +964,7 @@ void resolvedism_inject_fb_energy(void)
                     const double y0[6] = {0,0,0,0,0,0}; double Ms0_, lM0_, lZ0_; int rt0_ = (P[i].SNe_ThisTimeStep == 4) ? 7 : 0;
                     if(P[i].SNe_ThisTimeStep != 4 && get_star_info(i, &Ms0_, &lM0_, &lZ0_)) {rt0_ = stellar_remnant_type(lM0_, lZ0_);}
                     n_events[5] += 1;
-                    fb_death_row_push(i, P[i].SNe_ThisTimeStep == 2, rt0_, FB_LOG_NOGAS, 0.0, y0, evaluate_stellar_age_Gyr(i) * 1.0e9, 0.0);
+                    fb_death_row_push(i, P[i].SNe_ThisTimeStep == 2, rt0_, FB_LOG_NOGAS, 0.0, y0, resolvedism_star_age_yr(i), 0.0);
                 }
                 printf("RESOLVEDISM FB: event flag=%d ID=%llu deposited nothing (no gas); not booked, retry %d\n",
                        (int)P[i].SNe_ThisTimeStep, (unsigned long long)P[i].ID, (int)P[i].FB_NoDepositCount);
@@ -1015,7 +1016,7 @@ void resolvedism_inject_fb_energy(void)
             /* Wind metals: estimate from surface abundances */
             double Mstar_w, logM_w, logZ_w;
             if(get_star_info(i, &Mstar_w, &logM_w, &logZ_w)) {
-                double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                double star_age_yr = resolvedism_star_age_yr(i);
                 double table_age_w = get_star_table_age(star_age_yr, logM_w, logZ_w);
                 double log_age_w = log10(DMAX(table_age_w, 100.0));
                 double Z_wind = 0;
@@ -1030,7 +1031,7 @@ void resolvedism_inject_fb_energy(void)
                 double Z_w_log = 0;
                 double Mstar_wl, logM_wl, logZ_wl;
                 if(get_star_info(i, &Mstar_wl, &logM_wl, &logZ_wl)) {
-                    double age_wl = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                    double age_wl = resolvedism_star_age_yr(i);
                     double table_age_wl = get_star_table_age(age_wl, logM_wl, logZ_wl);
                     double lage_wl = log10(DMAX(table_age_wl, 100.0));
                     for(int kk = ELEM_C; kk < STBL_NELEM; kk++)
@@ -1056,7 +1057,7 @@ void resolvedism_inject_fb_energy(void)
             /* Advance the cumulative-table pointer so the next wind FB call
              * injects only what the table integrated since this moment. */
             {
-                double age_yr_now = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                double age_yr_now = resolvedism_star_age_yr(i);
                 double Mstar_log = P[i].MstarSampleIMF[0];
                 double logM_log  = log10(DMAX(Mstar_log, 0.08));
                 double logZ_log  = log10(DMAX(P[i].BirthMetallicity, 1e-10));
@@ -1086,7 +1087,7 @@ void resolvedism_inject_fb_energy(void)
             Z_injected[4] += Z_ia;
             {double yia[6] = {M_WD, Z_ia, stellar_type_ia_yield(ELEM_C) * yield_rescale, stellar_type_ia_yield(ELEM_O) * yield_rescale,
                               stellar_type_ia_yield(ELEM_Si) * yield_rescale, stellar_type_ia_yield(ELEM_Fe) * yield_rescale};
-             fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, evaluate_stellar_age_Gyr(i) * 1.0e9, 0.0);}
+             fb_death_row_push(i, 0, 7, FB_LOG_EXPLODED, IA_ENERGY_ERG, yia, resolvedism_star_age_yr(i), 0.0);}
             printf("RESOLVEDISM TYPE_IA: Task=%d ID=%llu M_WD=%.3f E=%.2e[erg]\n",
                 ThisTask, (unsigned long long)P[i].ID, M_WD, IA_ENERGY_ERG);
             /* Do NOT set P[i].Mass = 0 here — the fb_thermal walk's out2particle
@@ -1162,7 +1163,7 @@ void resolvedism_inject_fb_energy(void)
 #endif
                     yl[2 + q] = m_q * scale_diag;
                 }
-                double age_l = evaluate_stellar_age_Gyr(i) * 1.0e9;
+                double age_l = resolvedism_star_age_yr(i);
                 fb_death_row_push(i, channel == 1, (channel == 1) ? REM_WD : rem_type, (channel == 5) ? FB_LOG_FAILED : FB_LOG_EXPLODED,
                                   (channel == 0) ? 1.0e51 : 0.0, yl, age_l, get_star_lifetime(Mstar, logM, logZ));
             }

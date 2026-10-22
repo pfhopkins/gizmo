@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "resolvedism_star_age.h"
 #if defined(GALSF_RESOLVEDISM_FB_HEALPIX) || defined(GALSF_RESOLVEDISM_RADPRESSURE_TREERAD)
 #include "../gravity/healpix_utils.h"
 #endif
@@ -85,7 +86,7 @@ double resolvedism_radp_starside_dp_code(int i)
 #else
         #define RP_TRACE(reason, val) do {} while(0)
 #endif
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         if(star_age_yr <= 0) {RP_TRACE("age<=0", star_age_yr); return 0;}
         double lifetime_yr = get_star_lifetime(Mstar, logM, logZ);
         if(star_age_yr >= lifetime_yr) {RP_TRACE("dead", star_age_yr); return 0;}
@@ -228,7 +229,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         double dp_cgs = P[i].WindMomentumAccum * SOLAR_MASS_CGS * 1.0e5;
         in->WindMomentum = dp_cgs / (UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s);
 
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         double table_age = get_star_table_age(star_age_yr, logM, logZ);
         double log_age_now  = log10(DMAX(table_age, 100.0));
         double log_age_prev = P[i].last_wind_log_age;

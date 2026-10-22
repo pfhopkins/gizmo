@@ -7,6 +7,7 @@
 #include <gsl/gsl_rng.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "resolvedism_star_age.h"
 #include "resolvedism_selfcheck.h"
 #include "resolvedism_fb_shared.h"
 #include "../mesh/kernel.h"
@@ -114,7 +115,7 @@ void finalize_sampled_star(int i, double M_drawn)
     P[i].Lyman_photons_per_sec = 0;
 #endif
     if(M_drawn > All.IMFSampleStellarMassCut) {
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         if(star_age_yr < get_lifetime(M_drawn, P[i].BirthMetallicity)) {
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             double logM = log10(M_drawn);
@@ -288,7 +289,7 @@ void recompute_resolvedism_fuv_luminosities(void)
         P[i].Ion_luminosity = 0;
 #endif
         if(M_drawn <= All.IMFSampleStellarMassCut) continue;
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
 #if defined(STELLA_SELFCHECK) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES) && defined(GALSF_RESOLVEDISM_FB)
         { /* radiation and death must use the same lifetime */
             double lM_ = log10(DMAX(M_drawn, 0.09)), lZ_ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
@@ -378,7 +379,7 @@ void resolvedism_update_ion_photon_energy(void)
         if(P[i].Type != 4 || P[i].sampled != 1) continue;
         double M_drawn = P[i].MstarSampleIMF[0];
         if(M_drawn <= DMAX(All.IMFSampleStellarMassCut, 8.0)) continue; /* only ionizing stars matter */
-        double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+        double star_age_yr = resolvedism_star_age_yr(i);
         if(star_age_yr >= get_lifetime(M_drawn, P[i].BirthMetallicity)) continue;
         double logM = log10(M_drawn);
         double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));

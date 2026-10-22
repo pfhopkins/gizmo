@@ -9,6 +9,7 @@
 #include "../mesh/kernel.h"
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
 #include "../galaxy_sf/resolvedism_stellar_tables.h"
+#include "../galaxy_sf/resolvedism_star_age.h"
 #endif
 #include "../system/bracketed_rootfind_functions.h"
 
@@ -360,7 +361,7 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_da
     double logZ = log10(0.014);
 #endif
 
-    double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+    double star_age_yr = resolvedism_star_age_yr(i);
     if(star_age_yr <= 0) return 0;
     double log_age = log10(DMAX(star_age_yr, 100.0));
 

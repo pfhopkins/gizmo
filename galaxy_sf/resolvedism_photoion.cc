@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "resolvedism_star_age.h"
 #include "../mesh/kernel.h"
 #include "../gravity/healpix_utils.h"
 
@@ -174,7 +175,7 @@ static double compute_single_star_S_ly(int i)
     if(All.TestFixedQion > 0) {return All.TestFixedQion;}
 #endif
     double S_ly = 0, Mstar = 0;
-    double star_age_yr = evaluate_stellar_age_Gyr(i) * 1.0e9;
+    double star_age_yr = resolvedism_star_age_yr(i);
     if(star_age_yr <= 0) return 0;
 
 #ifdef GALSF_RESOLVEDISM_STOCHASTIC_IMF
