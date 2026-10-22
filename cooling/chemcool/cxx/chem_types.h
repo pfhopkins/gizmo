@@ -18,7 +18,7 @@
 
 // ---- dimensions (mirror cooling/chemcool/chemcool_consts.h) ----
 #define CHEM_NMD     10000
-#define CHEM_NCLTAB  67
+#define CHEM_NCLTAB  76
 #if CHEMISTRYNETWORK == 16  /* Gong+17 adds chtab 174-181, crphot 13, cst 92-94 */
 #define CHEM_NCHTAB  181
 #define CHEM_NCRPHOT 13

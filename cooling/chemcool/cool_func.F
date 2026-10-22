@@ -179,6 +179,7 @@ c
      $         , cl56      , cl57    , cl58    , cl59    , cl60
      $         , cl61      , cl62    , cl63    , cl64    , cl65
      $         , cl66      , cl67
+      REAL       cl75      , cl76
 c
       REAL       dtcl1     , dtcl2   , dtcl3   , dtcl4   , dtcl5
      $         , dtcl6     , dtcl7   , dtcl8   , dtcl9   , dtcl10
@@ -889,7 +890,7 @@ c
       if (G_dust .eq. 0d0 .or. dust_to_gas_ratio .lt. 1d-8 
      $                .or. iflag_cmb .eq. 1) then
         rates(12) = 0d0
-      elseif (yne .lt. 1d-20 * G_dust * cl16) then
+      elseif (yne .lt. 1d-9 * G_dust * cl16) then
         rates(12) = 0d0
       else
         PEvar0 = G_dust * cl16 / yne
@@ -900,6 +901,13 @@ c
 c        eps = 8.6d-2
         
         rates(12) = -1.3d-24 * eps * G_dust * yn * dust_to_gas_ratio
+#ifndef CHEMCOOL_PE_K23
+c       grain recombination cooling (SGChem rates(29)), kept in the PE rate
+        cl75 = cltab(75,itemp) + dtemp * dtcltab(75,itemp)
+        cl76 = cltab(76,itemp) + dtemp * dtcltab(76,itemp)
+        rates(12) = rates(12) + dust_to_gas_ratio * cl76
+     $            * PEvar0**cl75 * abe * yn**2
+#endif
 #ifdef CHEMCOOL_PE_K23
 c       Kim+2023 Eqs. 30-31 (psi + 50), plus WD01 Eq. 45 recombination cooling (R_V=3.1, b_C=4, ISRF)
         PEvar0 = G_dust * dsqrt(temp) / yne + 5d1

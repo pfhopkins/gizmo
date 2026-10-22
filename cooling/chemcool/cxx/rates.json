@@ -1,9 +1,9 @@
 {
  "counts": {
-  "generated": 346,
+  "generated": 348,
   "TABLE": 8,
   "SPECIAL": 0,
-  "RHS_INLINE": 210,
+  "RHS_INLINE": 211,
   "generated_net16": 18
  },
  "records": [
@@ -3129,7 +3129,7 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     253,
-    1164
+    1183
    ],
    "comment": "",
    "expression": [
@@ -3152,7 +3152,7 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     276,
-    1165
+    1184
    ],
    "comment": "",
    "expression": [
@@ -3175,7 +3175,7 @@
    "fortran_file": "coolinmo.F",
    "lines": [
     293,
-    1166
+    1185
    ],
    "comment": "",
    "expression": [
@@ -3245,8 +3245,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1539,
-    1593
+    1558,
+    1612
    ],
    "comment": "",
    "expression": [],
@@ -3424,12 +3424,12 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    561,
-    561
+    567,
+    567
    ],
-   "comment": "(cl[16-17]) -- Photoelectric heating",
+   "comment": "",
    "expression": [
-    "cltab(16,itemp) = (dsqrt(temp)/phi_pah)"
+    "cltab(16,itemp) = (dsqrt(tfix)/phi_pah)"
    ],
    "kind": "GENERATED"
   },
@@ -3441,12 +3441,12 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    563,
-    563
+    569,
+    569
    ],
    "comment": "",
    "expression": [
-    "cltab(17,itemp) = (3.7d-2*((temp/1d4)**0.7d0))"
+    "cltab(17,itemp) = (3.7d-2*((tfix/1d4)**0.7d0))"
    ],
    "kind": "GENERATED"
   },
@@ -3458,8 +3458,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    585,
-    605
+    591,
+    611
    ],
    "comment": "",
    "expression": [
@@ -3480,8 +3480,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    611,
-    631
+    617,
+    637
    ],
    "comment": "",
    "expression": [
@@ -3502,8 +3502,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    638,
-    650
+    644,
+    656
    ],
    "comment": "",
    "expression": [
@@ -3524,8 +3524,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    663,
-    663
+    669,
+    669
    ],
    "comment": "",
    "expression": [
@@ -3541,8 +3541,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    667,
-    667
+    673,
+    673
    ],
    "comment": "",
    "expression": [
@@ -3558,8 +3558,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    671,
-    671
+    677,
+    677
    ],
    "comment": "",
    "expression": [
@@ -3575,8 +3575,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    676,
-    676
+    682,
+    682
    ],
    "comment": "Electron rate -- from my fits to BBT98.\n1 -> 0",
    "expression": [
@@ -3592,8 +3592,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    678,
-    678
+    684,
+    684
    ],
    "comment": "2 -> 0",
    "expression": [
@@ -3609,8 +3609,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    680,
-    680
+    686,
+    686
    ],
    "comment": "2 -> 1",
    "expression": [
@@ -3626,8 +3626,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    686,
-    690
+    692,
+    696
    ],
    "comment": "",
    "expression": [
@@ -3648,8 +3648,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    694,
-    698
+    700,
+    704
    ],
    "comment": "",
    "expression": [
@@ -3670,8 +3670,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    702,
-    704
+    708,
+    710
    ],
    "comment": "",
    "expression": [
@@ -3690,8 +3690,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    718,
-    740
+    724,
+    746
    ],
    "comment": "",
    "expression": [
@@ -3712,8 +3712,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    747,
-    769
+    753,
+    775
    ],
    "comment": "",
    "expression": [
@@ -3734,8 +3734,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    775,
-    805
+    781,
+    811
    ],
    "comment": "",
    "expression": [
@@ -3758,8 +3758,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    818,
-    818
+    824,
+    824
    ],
    "comment": "",
    "expression": [
@@ -3775,8 +3775,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    825,
-    825
+    831,
+    831
    ],
    "comment": "",
    "expression": [
@@ -3792,8 +3792,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    832,
-    832
+    838,
+    838
    ],
    "comment": "",
    "expression": [
@@ -3809,8 +3809,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    850,
-    851
+    856,
+    857
    ],
    "comment": "",
    "expression": [
@@ -3826,8 +3826,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    865,
-    865
+    871,
+    871
    ],
    "comment": "",
    "expression": [
@@ -3843,8 +3843,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    879,
-    879
+    885,
+    885
    ],
    "comment": "",
    "expression": [
@@ -3860,8 +3860,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    894,
-    894
+    900,
+    900
    ],
    "comment": "",
    "expression": [
@@ -3877,8 +3877,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    906,
-    906
+    912,
+    912
    ],
    "comment": "",
    "expression": [
@@ -3894,8 +3894,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    918,
-    918
+    924,
+    924
    ],
    "comment": "",
    "expression": [
@@ -3911,8 +3911,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    926,
-    926
+    932,
+    932
    ],
    "comment": "(cl[42-43]) -- SiI fine structure lines\nCollisional de-excitation rates -- HI, protons from HM89\nHI:\n1 -> 0",
    "expression": [
@@ -3928,8 +3928,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    928,
-    928
+    934,
+    934
    ],
    "comment": "2 -> 0",
    "expression": [
@@ -3945,8 +3945,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    930,
-    930
+    936,
+    936
    ],
    "comment": "2 -> 1",
    "expression": [
@@ -3962,8 +3962,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    962,
-    964
+    968,
+    970
    ],
    "comment": "",
    "expression": [
@@ -3982,8 +3982,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    979,
-    979
+    985,
+    985
    ],
    "comment": "",
    "expression": [
@@ -3999,8 +3999,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    988,
-    990
+    994,
+    996
    ],
    "comment": "",
    "expression": [
@@ -4019,8 +4019,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    997,
-    997
+    1003,
+    1003
    ],
    "comment": "Proton rate negligible below 10^4K, ignorable below 10^5K.\nFinally, cl48 holds f(1,LTE)",
    "expression": [
@@ -4036,8 +4036,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1005,
-    1005
+    1011,
+    1011
    ],
    "comment": "(cl[49-51]) -- SiII fine structure lines\nCollisional rates:\n(cl49) SiII - HI (fit by SCOG to data from R90).",
    "expression": [
@@ -4053,8 +4053,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1010,
-    1010
+    1016,
+    1016
    ],
    "comment": "(cl50) SiII - electron (DK91 -- extrapolated to T < 4000K,\nassuming constant collision strength)",
    "expression": [
@@ -4070,8 +4070,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1014,
-    1014
+    1020,
+    1020
    ],
    "comment": "cl51 holds f(1,LTE)",
    "expression": [
@@ -4087,8 +4087,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1032,
-    1546
+    1038,
+    1565
    ],
    "comment": "This rate includes cooling from HI, HeI, HeII excitation, so we set\nthe corresponding individual rates to zero to avoid double counting\nHI excitation cooling ('Lyman-alpha' cooling):",
    "expression": [
@@ -4108,8 +4108,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1114,
-    1118
+    1120,
+    1124
    ],
    "comment": "",
    "expression": [
@@ -4125,8 +4125,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1119,
-    1123
+    1125,
+    1129
    ],
    "comment": "",
    "expression": [
@@ -4142,8 +4142,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1124,
-    1128
+    1130,
+    1134
    ],
    "comment": "",
    "expression": [
@@ -4159,8 +4159,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1129,
-    1133
+    1135,
+    1139
    ],
    "comment": "",
    "expression": [
@@ -4176,8 +4176,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1134,
-    1138
+    1140,
+    1144
    ],
    "comment": "",
    "expression": [
@@ -4193,8 +4193,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1144,
-    1144
+    1150,
+    1150
    ],
    "comment": "(cl58) H2 collision-induced emission cooling.\nFrom RA04. Assumes that H2-H2 collisions dominate",
    "expression": [
@@ -4210,8 +4210,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1044,
-    1550
+    1050,
+    1569
    ],
    "comment": "HeI excitation cooling",
    "expression": [
@@ -4231,8 +4231,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1059,
-    1551
+    1065,
+    1570
    ],
    "comment": "",
    "expression": [
@@ -4252,8 +4252,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1070,
-    1555
+    1076,
+    1574
    ],
    "comment": "HeII excitation cooling",
    "expression": [
@@ -4273,8 +4273,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1088,
-    1088
+    1094,
+    1094
    ],
    "comment": "",
    "expression": [
@@ -4290,8 +4290,8 @@
    ],
    "fortran_file": "coolinmo.F",
    "lines": [
-    1098,
-    1098
+    1104,
+    1104
    ],
    "comment": "",
    "expression": [
@@ -4381,6 +4381,40 @@
    "comment": "(cl67): Equilibrium J=1/J=0 H2 ratio (used to compute heating/cooling\nfrom J = 0 <-> J=1 transitions in cool_func",
    "expression": [
     "cltab(67,itemp) = (9d0*exp((-(170.5d0/temp))))"
+   ],
+   "kind": "GENERATED"
+  },
+  {
+   "rate_id": "cl75",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "coolinmo.F",
+   "lines": [
+    1162,
+    1162
+   ],
+   "comment": "",
+   "expression": [
+    "cltab(75,itemp) = (0.74/(tfix**0.068d0))"
+   ],
+   "kind": "GENERATED"
+  },
+  {
+   "rate_id": "cl76",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "coolinmo.F",
+   "lines": [
+    1164,
+    1165
+   ],
+   "comment": "",
+   "expression": [
+    "cltab(76,itemp) = ((4.65d-30*(tfix**0.94d0))*phi_pah)"
    ],
    "kind": "GENERATED"
   },
@@ -8246,7 +8280,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(1)@607",
+   "rate_id": "cool_func:rates(1)@608",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8254,8 +8288,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    607,
-    607
+    608,
+    608
    ],
    "expression": [
     "rates(1) = 0d0"
@@ -8263,7 +8297,7 @@
    "comment": "Compute heating/cooling rates\n(R1) -- gas-grain cooling-heating"
   },
   {
-   "rate_id": "cool_func:rates(1)@617",
+   "rate_id": "cool_func:rates(1)@618",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8271,8 +8305,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    617,
-    617
+    618,
+    618
    ],
    "expression": [
     "rates(1) = 4.68d-31 * tdust**6 * yn * dust_to_gas_ratio"
@@ -8280,7 +8314,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(1)@621",
+   "rate_id": "cool_func:rates(1)@622",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8288,8 +8322,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    621,
-    621
+    622,
+    622
    ],
    "expression": [
     "rates(1) = cl14 * (temp - tdust) * yn**2 * dust_to_gas_ratio"
@@ -8297,7 +8331,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(2)@629",
+   "rate_id": "cool_func:rates(2)@630",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8305,8 +8339,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    629,
-    629
+    630,
+    630
    ],
    "expression": [
     "rates(2) = 0d0"
@@ -8314,7 +8348,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:h2var0@631",
+   "rate_id": "cool_func:h2var0@632",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8322,8 +8356,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    631,
-    632
+    632,
+    633
    ],
    "expression": [
     "h2var0   = ynh * cl4 + ynh2 * cl5 + ynhe * cl64 + ynhp * cl65 + yne * cl66"
@@ -8331,7 +8365,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(2)@634",
+   "rate_id": "cool_func:rates(2)@635",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8339,8 +8373,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    634,
-    634
+    635,
+    635
    ],
    "expression": [
     "rates(2) = h2var0 * ynh2"
@@ -8348,7 +8382,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(2)@636",
+   "rate_id": "cool_func:rates(2)@637",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8356,8 +8390,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    636,
-    636
+    637,
+    637
    ],
    "expression": [
     "rates(2) = ynh2 * cl1 / (1d0 + cl1 / h2var0)"
@@ -8365,7 +8399,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(2)@664",
+   "rate_id": "cool_func:rates(2)@665",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8373,8 +8407,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    664,
-    664
+    665,
+    665
    ],
    "expression": [
     "rates(2) = rates(2) * H2_opacity_correction"
@@ -8382,24 +8416,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(3)@678",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5,
-    17
-   ],
-   "fortran_file": "cool_func.F",
-   "lines": [
-    678,
-    678
-   ],
-   "expression": [
-    "rates(3)  = cl6 * yn**2"
-   ],
-   "comment": "(R3)  -- atomic cooling, table-based; depending on the value of iflag_atom,\nmay include some or all of R25 - R28 (in which case the coefficients\nfor these rates will have been set to zero, to avoid double counting)\n(R25) -- HI electronic excitation cooling [aka Lyman-alpha cooling]\n(R26) -- HeI electronic excitation cooling\n(N.B. Note the dependence of the HeII metastable rate (cl60) on\nthe HeII n"
-  },
-  {
-   "rate_id": "cool_func:rates(25)@679",
+   "rate_id": "cool_func:rates(3)@679",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8411,12 +8428,12 @@
     679
    ],
    "expression": [
-    "rates(25) = cl52 * ynh  * yne"
+    "rates(3)  = cl6 * yn**2"
    ],
-   "comment": ""
+   "comment": "(R3)  -- atomic cooling, table-based; depending on the value of iflag_atom,\nmay include some or all of R25 - R28 (in which case the coefficients\nfor these rates will have been set to zero, to avoid double counting)\n(R25) -- HI electronic excitation cooling [aka Lyman-alpha cooling]\n(R26) -- HeI electronic excitation cooling\n(N.B. Note the dependence of the HeII metastable rate (cl60) on\nthe HeII n"
   },
   {
-   "rate_id": "cool_func:rates(26)@680",
+   "rate_id": "cool_func:rates(25)@680",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8428,12 +8445,12 @@
     680
    ],
    "expression": [
-    "rates(26) = cl59 * ynhe * yne + cl60 * abheII * yn * yne**2"
+    "rates(25) = cl52 * ynh  * yne"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(27)@681",
+   "rate_id": "cool_func:rates(26)@681",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8445,12 +8462,12 @@
     681
    ],
    "expression": [
-    "rates(27) = cl61 * abheII * yn * yne"
+    "rates(26) = cl59 * ynhe * yne + cl60 * abheII * yn * yne**2"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(28)@682",
+   "rate_id": "cool_func:rates(27)@682",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8459,7 +8476,24 @@
    "fortran_file": "cool_func.F",
    "lines": [
     682,
-    683
+    682
+   ],
+   "expression": [
+    "rates(27) = cl61 * abheII * yn * yne"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "cool_func:rates(28)@683",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "cool_func.F",
+   "lines": [
+    683,
+    684
    ],
    "expression": [
     "rates(28) = cl62 * (abhp + abheII) * yn * yne + cl63 * abheIII * yn * yne"
@@ -8467,7 +8501,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(28)@686",
+   "rate_id": "cool_func:rates(28)@687",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8475,8 +8509,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    686,
-    686
+    687,
+    687
    ],
    "expression": [
     "rates(28) = 0."
@@ -8484,24 +8518,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(4)@694",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5,
-    17
-   ],
-   "fortran_file": "cool_func.F",
-   "lines": [
-    694,
-    694
-   ],
-   "expression": [
-    "rates(4)  = 0d0"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "cool_func:rates(23)@695",
+   "rate_id": "cool_func:rates(4)@695",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8513,12 +8530,12 @@
     695
    ],
    "expression": [
-    "rates(23) = 0d0"
+    "rates(4)  = 0d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(4)@706",
+   "rate_id": "cool_func:rates(23)@696",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8526,8 +8543,25 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    706,
-    706
+    696,
+    696
+   ],
+   "expression": [
+    "rates(23) = 0d0"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "cool_func:rates(4)@707",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "cool_func.F",
+   "lines": [
+    707,
+    707
    ],
    "expression": [
     "rates(4) = f_ortho_h2o * abh2o * neff * yn / h2o_rot_inv"
@@ -8535,7 +8569,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(4)@714",
+   "rate_id": "cool_func:rates(4)@715",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8543,8 +8577,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    714,
-    715
+    715,
+    716
    ],
    "expression": [
     "rates(4) = rates(4) + f_para_h2o * abh2o * neff * yn / h2o_rot_inv"
@@ -8552,7 +8586,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(23)@725",
+   "rate_id": "cool_func:rates(23)@726",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8560,8 +8594,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    725,
-    726
+    726,
+    727
    ],
    "expression": [
     "rates(23) = 2d-3 * f_ortho_h2o * abh2o * neff * yn / h2o_rot_inv"
@@ -8569,7 +8603,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(23)@734",
+   "rate_id": "cool_func:rates(23)@735",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8577,8 +8611,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    734,
-    735
+    735,
+    736
    ],
    "expression": [
     "rates(23) = rates(23) + 2d-3 * f_para_h2o * abh2o * neff * yn / h2o_rot_inv"
@@ -8586,24 +8620,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(5)@744",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5,
-    17
-   ],
-   "fortran_file": "cool_func.F",
-   "lines": [
-    744,
-    744
-   ],
-   "expression": [
-    "rates(5) = 0d0"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "cool_func:rates(6)@745",
+   "rate_id": "cool_func:rates(5)@745",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8615,12 +8632,12 @@
     745
    ],
    "expression": [
-    "rates(6) = 0d0"
+    "rates(5) = 0d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(5)@749",
+   "rate_id": "cool_func:rates(6)@746",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8628,8 +8645,25 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    749,
-    749
+    746,
+    746
+   ],
+   "expression": [
+    "rates(6) = 0d0"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "cool_func:rates(5)@750",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "cool_func.F",
+   "lines": [
+    750,
+    750
    ],
    "expression": [
     "rates(5) = abh2o * yn * neff * (1d0 / h2o_vib_inv)"
@@ -8637,7 +8671,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(6)@753",
+   "rate_id": "cool_func:rates(6)@754",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8645,8 +8679,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    753,
-    753
+    754,
+    754
    ],
    "expression": [
     "rates(6) = 2d-3 * abh2o * yn * neff * (1d0 / h2o_vib_inv)"
@@ -8654,24 +8688,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(7)@762",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5,
-    17
-   ],
-   "fortran_file": "cool_func.F",
-   "lines": [
-    762,
-    762
-   ],
-   "expression": [
-    "rates(7)  = 0d0"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "cool_func:rates(21)@763",
+   "rate_id": "cool_func:rates(7)@763",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8683,12 +8700,12 @@
     763
    ],
    "expression": [
-    "rates(21) = 0d0"
+    "rates(7)  = 0d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(22)@764",
+   "rate_id": "cool_func:rates(21)@764",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8700,12 +8717,12 @@
     764
    ],
    "expression": [
-    "rates(22) = 0d0"
+    "rates(21) = 0d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(7)@773",
+   "rate_id": "cool_func:rates(22)@765",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8713,8 +8730,25 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    773,
-    773
+    765,
+    765
+   ],
+   "expression": [
+    "rates(22) = 0d0"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "cool_func:rates(7)@774",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "cool_func.F",
+   "lines": [
+    774,
+    774
    ],
    "expression": [
     "rates(7) = abco * neff * yn / co_rot_inv"
@@ -8722,7 +8756,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(21)@781",
+   "rate_id": "cool_func:rates(21)@782",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8730,8 +8764,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    781,
-    781
+    782,
+    782
    ],
    "expression": [
     "rates(21) = 1d-2 * abco * neff * yn / co_rot_inv"
@@ -8739,7 +8773,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(22)@788",
+   "rate_id": "cool_func:rates(22)@789",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8747,8 +8781,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    788,
-    788
+    789,
+    789
    ],
    "expression": [
     "rates(22) = 2d-3 * abco * neff * yn / co_rot_inv"
@@ -8756,24 +8790,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(7)@793",
-   "kind": "RHS_INLINE",
-   "networks": [
-    5,
-    17
-   ],
-   "fortran_file": "cool_func.F",
-   "lines": [
-    793,
-    793
-   ],
-   "expression": [
-    "rates(7)  = rates(7)  * low_T_adjust"
-   ],
-   "comment": ""
-  },
-  {
-   "rate_id": "cool_func:rates(21)@794",
+   "rate_id": "cool_func:rates(7)@794",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8785,12 +8802,12 @@
     794
    ],
    "expression": [
-    "rates(21) = rates(21) * low_T_adjust"
+    "rates(7)  = rates(7)  * low_T_adjust"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(22)@795",
+   "rate_id": "cool_func:rates(21)@795",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8802,12 +8819,12 @@
     795
    ],
    "expression": [
-    "rates(22) = rates(22) * low_T_adjust"
+    "rates(21) = rates(21) * low_T_adjust"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(8)@811",
+   "rate_id": "cool_func:rates(22)@796",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8815,16 +8832,16 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    811,
-    811
+    796,
+    796
    ],
    "expression": [
-    "rates(8)  = 0d0"
+    "rates(22) = rates(22) * low_T_adjust"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(9)@812",
+   "rate_id": "cool_func:rates(8)@812",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8836,12 +8853,12 @@
     812
    ],
    "expression": [
-    "rates(9)  = 0d0"
+    "rates(8)  = 0d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(24)@813",
+   "rate_id": "cool_func:rates(9)@813",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8853,12 +8870,12 @@
     813
    ],
    "expression": [
-    "rates(24) = 0d0"
+    "rates(9)  = 0d0"
    ],
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(8)@817",
+   "rate_id": "cool_func:rates(24)@814",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8866,8 +8883,25 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    817,
-    817
+    814,
+    814
+   ],
+   "expression": [
+    "rates(24) = 0d0"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "cool_func:rates(8)@818",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "cool_func.F",
+   "lines": [
+    818,
+    818
    ],
    "expression": [
     "rates(8) = abco * yn * neff * (1d0 / co_vib_inv)"
@@ -8875,7 +8909,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(9)@820",
+   "rate_id": "cool_func:rates(9)@821",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8883,8 +8917,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    820,
-    820
+    821,
+    821
    ],
    "expression": [
     "rates(9) = 1d-2 * abco * yn * neff * (1d0 / co_vib_inv)"
@@ -8892,7 +8926,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(24)@823",
+   "rate_id": "cool_func:rates(24)@824",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8900,8 +8934,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    823,
-    823
+    824,
+    824
    ],
    "expression": [
     "rates(24) = 2d-3 * abco * yn * neff * (1d0 / co_vib_inv)"
@@ -8909,7 +8943,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(10)@833",
+   "rate_id": "cool_func:rates(10)@834",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8917,8 +8951,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    833,
-    833
+    834,
+    834
    ],
    "expression": [
     "rates(10) = cl15 * aboh * neff"
@@ -8926,7 +8960,7 @@
    "comment": "(R10) -- OH cooling"
   },
   {
-   "rate_id": "cool_func:rates(11)@859",
+   "rate_id": "cool_func:rates(11)@860",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8934,8 +8968,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    859,
-    859
+    860,
+    860
    ],
    "expression": [
     "rates(11) =  -3.2d-11 * (ynh2 + ynh) * cosmic_ray_ion_rate"
@@ -8943,7 +8977,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(11)@872",
+   "rate_id": "cool_func:rates(11)@873",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8951,8 +8985,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    872,
-    876
+    873,
+    877
    ],
    "expression": [
     "rates(11) = rates(11) - (0.87d0 * 6.37d-16 / 6d0 + 0.53d0 * 3.09d-16 * abe / (1d0 + 4d0 * abhe)) * cr_energy_density * yn"
@@ -8960,7 +8994,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(11)@879",
+   "rate_id": "cool_func:rates(11)@880",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8968,8 +9002,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    879,
-    879
+    880,
+    880
    ],
    "expression": [
     "rates(11) = 0d0"
@@ -8977,7 +9011,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(12)@891",
+   "rate_id": "cool_func:rates(12)@892",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -8985,8 +9019,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    891,
-    891
+    892,
+    892
    ],
    "expression": [
     "rates(12) = 0d0"
@@ -8994,7 +9028,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(12)@893",
+   "rate_id": "cool_func:rates(12)@894",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9002,8 +9036,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    893,
-    893
+    894,
+    894
    ],
    "expression": [
     "rates(12) = 0d0"
@@ -9011,7 +9045,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(12)@902",
+   "rate_id": "cool_func:rates(12)@903",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9019,8 +9053,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    902,
-    902
+    903,
+    903
    ],
    "expression": [
     "rates(12) = -1.3d-24 * eps * G_dust * yn * dust_to_gas_ratio"
@@ -9028,7 +9062,7 @@
    "comment": "eps = 8.6d-2"
   },
   {
-   "rate_id": "cool_func:rates(13)@925",
+   "rate_id": "cool_func:rates(12)@908",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9036,8 +9070,25 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    925,
-    925
+    908,
+    909
+   ],
+   "expression": [
+    "rates(12) = rates(12) + dust_to_gas_ratio * cl76 * PEvar0**cl75 * abe * yn**2"
+   ],
+   "comment": ""
+  },
+  {
+   "rate_id": "cool_func:rates(13)@933",
+   "kind": "RHS_INLINE",
+   "networks": [
+    5,
+    17
+   ],
+   "fortran_file": "cool_func.F",
+   "lines": [
+    933,
+    933
    ],
    "expression": [
     "rates(13) = 0d0"
@@ -9045,7 +9096,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(13)@928",
+   "rate_id": "cool_func:rates(13)@936",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9053,8 +9104,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    928,
-    928
+    936,
+    936
    ],
    "expression": [
     "rates(13) = 0d0"
@@ -9062,7 +9113,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(13)@987",
+   "rate_id": "cool_func:rates(13)@995",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9070,8 +9121,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    987,
-    987
+    995,
+    995
    ],
    "expression": [
     "rates(13) = (oxlam1 - oxlam2) * abo * yn"
@@ -9079,7 +9130,7 @@
    "comment": "Net cooling rate is emission - absorption; note that if the latter\nterm is larger, we have heating"
   },
   {
-   "rate_id": "cool_func:rates(14)@999",
+   "rate_id": "cool_func:rates(14)@1007",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9087,8 +9138,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    999,
-    999
+    1007,
+    1007
    ],
    "expression": [
     "rates(14) = 0d0"
@@ -9096,7 +9147,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(14)@1002",
+   "rate_id": "cool_func:rates(14)@1010",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9104,8 +9155,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1002,
-    1002
+    1010,
+    1010
    ],
    "expression": [
     "rates(14) = 0d0"
@@ -9113,7 +9164,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(14)@1049",
+   "rate_id": "cool_func:rates(14)@1057",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9121,8 +9172,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1049,
-    1049
+    1057,
+    1057
    ],
    "expression": [
     "rates(14) = (cIlam1 - cIlam2) * abcI * yn"
@@ -9130,7 +9181,7 @@
    "comment": "Net cooling rate is emission - absorption; note that if the latter\nterm is larger, we have heating"
   },
   {
-   "rate_id": "cool_func:rates(15)@1062",
+   "rate_id": "cool_func:rates(15)@1070",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9138,8 +9189,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1062,
-    1062
+    1070,
+    1070
    ],
    "expression": [
     "rates(15) = 0d0"
@@ -9147,7 +9198,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(15)@1065",
+   "rate_id": "cool_func:rates(15)@1073",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9155,8 +9206,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1065,
-    1065
+    1073,
+    1073
    ],
    "expression": [
     "rates(15) = 0d0"
@@ -9164,7 +9215,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(15)@1112",
+   "rate_id": "cool_func:rates(15)@1120",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9172,8 +9223,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1112,
-    1112
+    1120,
+    1120
    ],
    "expression": [
     "rates(15) = (siIlam1 - siIlam2) * absiI * yn"
@@ -9181,7 +9232,7 @@
    "comment": "Net cooling rate is emission - absorption; note that if the latter\nterm is larger, we have heating"
   },
   {
-   "rate_id": "cool_func:rates(16)@1121",
+   "rate_id": "cool_func:rates(16)@1129",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9189,8 +9240,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1121,
-    1121
+    1129,
+    1129
    ],
    "expression": [
     "rates(16) = 0d0"
@@ -9198,7 +9249,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(16)@1163",
+   "rate_id": "cool_func:rates(16)@1171",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9206,8 +9257,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1163,
-    1163
+    1171,
+    1171
    ],
    "expression": [
     "rates(16) = (cIIvar2 - cIIvar3) * abcII * yn"
@@ -9215,7 +9266,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(17)@1172",
+   "rate_id": "cool_func:rates(17)@1180",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9223,8 +9274,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1172,
-    1172
+    1180,
+    1180
    ],
    "expression": [
     "rates(17) = 0d0"
@@ -9232,7 +9283,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(17)@1186",
+   "rate_id": "cool_func:rates(17)@1194",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9240,8 +9291,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1186,
-    1186
+    1194,
+    1194
    ],
    "expression": [
     "rates(17) = (siIIvar2 - siIIvar3) * siIIe10 * absiII * yn"
@@ -9249,7 +9300,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(18)@1192",
+   "rate_id": "cool_func:rates(18)@1200",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9257,8 +9308,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1192,
-    1192
+    1200,
+    1200
    ],
    "expression": [
     "rates(18) = compvar1 * (temp - CMB_temp) * yne"
@@ -9266,7 +9317,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(19)@1209",
+   "rate_id": "cool_func:rates(19)@1217",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9274,8 +9325,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1209,
-    1210
+    1217,
+    1218
    ],
    "expression": [
     "rates(19) = 1d1**(cl53 + lnh * (cl54 + lnh * (cl55 + lnh * (cl56 + lnh * cl57)))) * ynhd"
@@ -9283,7 +9334,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(19)@1211",
+   "rate_id": "cool_func:rates(19)@1219",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9291,8 +9342,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1211,
-    1211
+    1219,
+    1219
    ],
    "expression": [
     "rates(19) = rates(19) * r19scale"
@@ -9300,7 +9351,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(19)@1213",
+   "rate_id": "cool_func:rates(19)@1221",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9308,8 +9359,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1213,
-    1213
+    1221,
+    1221
    ],
    "expression": [
     "rates(19) = 0d0"
@@ -9317,7 +9368,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(20)@1222",
+   "rate_id": "cool_func:rates(20)@1230",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9325,8 +9376,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1222,
-    1222
+    1230,
+    1230
    ],
    "expression": [
     "rates(20) = cl58 * yn * (2d0 * ynh2)"
@@ -9334,7 +9385,7 @@
    "comment": "CMB effects: see note above for molecular coolants\n(R20) -- H2 CIE cooling: assumes molecular fraction ~ 1, although this\nshould always be true at the densities at which CIE cooling is\nsignificant"
   },
   {
-   "rate_id": "cool_func:rates(20)@1228",
+   "rate_id": "cool_func:rates(20)@1236",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9342,8 +9393,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1228,
-    1228
+    1236,
+    1236
    ],
    "expression": [
     "rates(20) = rates(20) * min((1d0 - dexp(-tau_CIE)) / tau_CIE, 1d0)"
@@ -9351,7 +9402,7 @@
    "comment": ""
   },
   {
-   "rate_id": "cool_func:rates(3)@1255",
+   "rate_id": "cool_func:rates(3)@1263",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9359,8 +9410,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1255,
-    1255
+    1263,
+    1263
    ],
    "expression": [
     "rates(3) = 0."
@@ -9368,7 +9419,7 @@
    "comment": "Benchmarking suggests that writing this out explicitly is more efficient\nthan using a loop (although this is probably only true if the compiler\noptimization is poor)."
   },
   {
-   "rate_id": "cool_func:rates(3)@1280",
+   "rate_id": "cool_func:rates(3)@1288",
    "kind": "RHS_INLINE",
    "networks": [
     5,
@@ -9376,8 +9427,8 @@
    ],
    "fortran_file": "cool_func.F",
    "lines": [
-    1280,
-    1280
+    1288,
+    1288
    ],
    "expression": [
     "rates(3) = wss_rate_total *yn**2"

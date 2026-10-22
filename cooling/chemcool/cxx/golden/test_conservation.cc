@@ -253,7 +253,7 @@ static void init_commons()
     COOLIC.id_current = 1; COOLIC.index_current = 0;
     COOLI.iflag_h2opc = 0; COOLI.idma_mass_option = 1;
     COOLR.h2_form_ex = 0.84; COOLR.h2_form_kin = 0.12;
-    COOLR.deff = 1.0; COOLR.phi_pah = 1.0;
+    COOLR.deff = 1.0; COOLR.phi_pah = 0.5;
     COOLR.AV_conversion_factor = 5.348e-22;
     COOLR.AV_ext = 0.0; COOLR.dm_density = 0.0;
     COOLRC.tdust = 10.0;

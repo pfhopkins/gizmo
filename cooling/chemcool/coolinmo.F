@@ -556,11 +556,17 @@ c like water cooling: HM79 universal cooling law
 c
          cltab(15,itemp) = 2.84d-28 * temp * tsqrt
 c
-c (cl[16-17]) -- Photoelectric heating
+c (cl[16-17]) -- Photoelectric heating; BT94 fits held constant above 1e4 K
 c
-         cltab(16,itemp) = dsqrt(temp) / phi_pah
+         if (temp .gt. 1d4) then
+           tfix = 1d4
+         else
+           tfix = temp
+         endif
 c
-         cltab(17,itemp) = 3.7d-2 * (temp / 1d4)**0.7d0
+         cltab(16,itemp) = dsqrt(tfix) / phi_pah
+c
+         cltab(17,itemp) = 3.7d-2 * (tfix / 1d4)**0.7d0
 c
 c Fine structure cooling -- three-level atoms
 c
@@ -1144,6 +1150,19 @@ c
          cltab(58,itemp) = 2.289d-49 * temp**4
 c
 c (cl59 - cl63): See above
+c
+c (cl75 - cl76): grain recombination cooling
+c
+         if (temp .gt. 1d4) then
+           tfix = 1d4
+         else
+           tfix = temp
+         endif
+c
+         cltab(75,itemp) = 0.74 / tfix**0.068d0
+c
+         cltab(76,itemp) = 4.65d-30 * tfix**0.94d0
+     $                   * phi_pah
 c
  200  continue
 c

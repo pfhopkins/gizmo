@@ -579,6 +579,22 @@ Provenance: SGChem `cool_util.F:780-804` (calc_dust_temp).
   (our DGR-multiplied convention); c_isrf = 5.8e-24 (isrf_option 1) or 5.73e-24. The z = 0 CMB share is moved
   out of the ISRF coefficient and the CMB term follows T_CMB(z).
 
+## D-34. Grain recombination cooling (SGChem rates(29)), all networks, both backends
+Provenance: SGChem `cool_func.F:1239-1248`, `coolinmo.F` cl75/cl76.
+* cl75 = 0.74 / tfix^0.068, cl76 = 4.65e-30 tfix^0.94 phi_pah (tfix = min(T, 1e4)); NCLTAB 67 -> 76.
+* Added to rates(12) (PE slot) as DGR cl76 PEvar0^cl75 x_e n^2 wherever the BT94 PE rate is evaluated
+  (zero when PE is zero, as SGChem). Not added with CHEMCOOL_PE_K23, which carries WD01 recombination cooling.
+
+## D-35. BT94 photoelectric fits held at T = 1e4 K above 1e4 K, all networks, both backends
+Provenance: SGChem `coolinmo.F:639-651`. cl16 = sqrt(tfix)/phi_pah, cl17 = 3.7e-2 (tfix/1e4)^0.7.
+
+## D-36. phi_pah = 0.5, both backends
+Provenance: SGChem `init_chemistry_parameters.F:86`. Was 1.0 (gadget_tnt_new value). Enters cl16 (PE
+charging parameter) and cl76 (D-34). Set in `chemcool.cc`, `chem_backend_cxx.cc` and the golden harnesses.
+
+## D-37. PE electron cut-off x_e n < 1e-9 G_dust cl16, both backends
+Provenance: SGChem `cool_func.F:909`. Was 1e-20. Our DGR < 1e-8 cut (SGChem: DGR = 0) is kept.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

@@ -62,7 +62,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
     c.iflag_h2opc = 0;
     c.isrf_option = 1;
     c.iphoto = 0;
-    c.deff = 1.0; c.phi_pah = 1.0;
+    c.deff = 1.0; c.phi_pah = 0.5;
     c.h2_form_ex = 0.84; c.h2_form_kin = 0.12;
     c.f_rsc = 1.0;                           // photoinit_ism.F:310
     c.AV_conversion_factor = 5.348e-22;

@@ -110,7 +110,7 @@ int main(int argc, char** argv)
 #else
     cfg.wss_cie = 1;      // Stella production always has WSS_CIE_COOL on
 #endif
-    cfg.deff = 1.0; cfg.phi_pah = 1.0;
+    cfg.deff = 1.0; cfg.phi_pah = 0.5;
     cfg.dust_to_gas_ratio = 0.1; cfg.cosmic_ray_ion_rate = 3e-17;
     cfg.abhe = (double)0.1f;   // as coolinmo (ABHE default-REAL)
 

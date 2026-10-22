@@ -432,7 +432,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
     // ---- (R12) photoelectric heating (Bakes & Tielens 94 / Wolfire+03) ----
     if (G_dust == 0.0 || c.dust_to_gas_ratio < 1e-8 || iflag_cmb == 1) {
         rates[11] = 0.0;
-    } else if (yne < 1e-20 * G_dust * cl[16]) {
+    } else if (yne < 1e-9 * G_dust * cl[16]) {
         rates[11] = 0.0;
     } else {
         double PEvar0 = G_dust * cl[16] / yne;
@@ -440,6 +440,11 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         double PEvar2 = 1.0 + 2e-4 * PEvar0;
         double eps = (4.9e-2 / PEvar1) + (cl[17] / PEvar2);
         rates[11] = -1.3e-24 * eps * G_dust * yn * c.dust_to_gas_ratio;
+#ifndef CHEMCOOL_PE_K23
+        // grain recombination cooling (SGChem rates(29)), kept in the PE rate
+        rates[11] = rates[11] + c.dust_to_gas_ratio * cl[76]
+                  * std::pow(PEvar0, cl[75]) * abe * (yn * yn);
+#endif
 #ifdef CHEMCOOL_PE_K23
         {   // Kim+2023 Eqs. 30-31 (psi + 50), plus WD01 Eq. 45 recombination cooling (R_V=3.1, b_C=4, ISRF)
             double psi = G_dust * std::sqrt(temp) / yne + 50.0;

@@ -658,7 +658,7 @@
 #define  NH2DATA 41
 
 #define  COOL_EPS 1d-6
-#define  NCLTAB 67
+#define  NCLTAB 76
 #if CHEMISTRYNETWORK == 16  /* Gong+17 adds chtab 174-181, crphot 13, cst 92-94 */
 #define  NCHTAB 181
 #else

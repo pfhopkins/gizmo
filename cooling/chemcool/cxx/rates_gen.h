@@ -266,6 +266,8 @@ double rate_cl64(double temp, const ChemGlobals& g);
 double rate_cl65(double temp, const ChemGlobals& g);
 double rate_cl66(double temp, const ChemGlobals& g);
 double rate_cl67(double temp, const ChemGlobals& g);
+double rate_cl75(double temp, const ChemGlobals& g);
+double rate_cl76(double temp, const ChemGlobals& g);
 double rate_cst1(double temp, const ChemGlobals& g);
 double rate_cst2(double temp, const ChemGlobals& g);
 double rate_cst3(double temp, const ChemGlobals& g);

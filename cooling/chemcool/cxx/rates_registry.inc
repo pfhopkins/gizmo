@@ -253,6 +253,8 @@
     {"cl65", "cl", 65, rate_cl65, 0},
     {"cl66", "cl", 66, rate_cl66, 0},
     {"cl67", "cl", 67, rate_cl67, 0},
+    {"cl75", "cl", 75, rate_cl75, 0},
+    {"cl76", "cl", 76, rate_cl76, 0},
     {"cst1", "cst", 1, rate_cst1, 0},
     {"cst2", "cst", 2, rate_cst2, 0},
     {"cst3", "cst", 3, rate_cst3, 0},

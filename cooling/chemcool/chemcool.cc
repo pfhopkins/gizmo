@@ -55,7 +55,7 @@ void chemcool_init(void)
     COOLR.h2_form_ex  = 0.84;       /* fraction of H2 binding energy → vibrational excitation */
     COOLR.h2_form_kin = 0.12;       /* fraction → kinetic energy of H2 molecule */
     COOLR.deff        = 1.0;        /* H2 formation on dust efficiency factor */
-    COOLR.phi_pah     = 1.0;        /* PAH photoelectric heating efficiency */
+    COOLR.phi_pah     = 0.5;        /* PAH charging parameter in the PE and grain-recombination fits */
     COOLR.AV_conversion_factor = 5.348e-22; /* N_H to A_V conversion (Bohlin+ 1978) */
     COOLR.AV_ext      = 0.0;        /* no external dust extinction */
     COOLR.dm_density  = 0.0;        /* no dark matter annihilation heating */
