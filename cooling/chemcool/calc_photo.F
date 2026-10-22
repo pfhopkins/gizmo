@@ -91,8 +91,7 @@ c
       external chi
 
 #if defined CO_SHIELDING && defined NEEDS_CO_RATES
-      integer ipos
-      REAL theta_H2, theta_CO, dth, DNact, NCO, NH2
+      REAL NCO, NH2, fshield_ray
 #endif
 
       REAL fshield_HD
@@ -480,55 +479,24 @@ c
       df266    = 1d0
 #endif
 c
-c CO self-shielding, shielding by H2.
-c
-c Our treatment here is based on L96.
-c
       fshield_CO = 1d0
 #ifdef NEEDS_CO_RATES
 #ifdef CO_SHIELDING
+c CO self-shielding and shielding by H2, Visser et al (2009)
       if (iphoto .ne. 2 .and. iphoto .ne. 6) then
         NCO = abco * NH
-        if (NCO .le. NCO_shield_min) then
-          theta_CO = 1d0
-        elseif (NCO .ge. NCO_shield_max) then
-          theta_CO = CO_self_shielding(imax_COss)
-        else
-          ipos  = int(dlog10(NCO) / dNshield) - ioff_co
-          dth   = CO_self_shielding(ipos+1) - CO_self_shielding(ipos)
-          dNact = dlog10(NCO) - (ipos + ioff_co) * dNshield
-          theta_CO = CO_self_shielding(ipos) 
-     $             + dth * (dNact / dNshield)
-        endif
-c
         NH2 = abh2 * NH
 #ifdef H2_FORM_TEST
         NH2 = rpar(5)
 #endif
-        if (NH2 .le. NH2_shield_min) then
-          theta_H2 = 1d0
-        elseif (NH2 .ge. NH2_shield_max) then
-          theta_H2 = CO_H2_shielding(imax_COH2)
-        else
-          ipos  = int(dlog10(NH2) / dNshield) - ioff_h2
-          if (ipos .eq. 0) then
-            theta_H2 = 1d0
-          else
-            dth   = CO_H2_shielding(ipos+1) - CO_H2_shielding(ipos)
-            dNact = dlog10(NH2) - (ipos + ioff_h2) * dNshield
-            theta_H2 = CO_H2_shielding(ipos) 
-     $               + dth * (dNact / dNshield)
-          endif
-        endif
-        fshield_CO = theta_H2 * theta_CO
+        call co_shielding_visser(NCO, NH2, fshield_CO)
       elseif (iphoto .eq. 2 .or. iphoto .eq. 6) then
 #if defined RAYTRACE || defined RT_TREECOL_H2_CO
         nray = NPIX
         nray_start = 0
         nray_end = NPIX-1
 
-        theta_CO   = 0d0
-        theta_H2   = 0d0
+        fshield_CO = 0d0
         do I = nray_start, nray_end
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
           fac_uv_pix = fac_uv(I)
@@ -536,59 +504,14 @@ c
           fac_uv_pix = 1d0 / nray
 #endif
           NCO = column_density_projection_CO(I)
-#ifdef DEBUG_CALC_PHOTO
-          if (NCO .ne. NCO) then
-            write(*,'(A)') 'CALC_PHOTO: invalid CO column -- NCO is NaN'
-#ifdef RAYTRACE
-            print*, I, col_CO(I)
-#endif
-            ABORT(124)
-          endif
-#endif
-          if (NCO .le. NCO_shield_min) then
-            theta_CO = theta_CO + fac_uv_pix
-          elseif (NCO .ge. NCO_shield_max) then
-            theta_CO = theta_CO + fac_uv_pix
-     $               * CO_self_shielding(imax_COss)
-          else
-            ipos  = int(dlog10(NCO) / dNshield) - ioff_co
-            if (ipos .eq. 0) then
-              theta_CO = theta_CO + fac_uv_pix
-            else
-              dth = CO_self_shielding(ipos+1) - 
-     $              CO_self_shielding(ipos)
-              dNact = dlog10(NCO) - (ipos + ioff_co) * dNshield
-              theta_CO = theta_CO + fac_uv_pix
-     $                 * (CO_self_shielding(ipos) 
-     $                 + dth * (dNact / dNshield))
-            endif
-          endif
-c
 #ifdef RAYTRACE
           NH2 = col_H2(I)
 #else
           NH2 = column_density_projection_h2(I)
 #endif
-          if (NH2 .le. NH2_shield_min) then
-            theta_H2 = theta_H2 + fac_uv_pix
-          elseif (NH2 .ge. NH2_shield_max) then
-            theta_H2 = theta_H2 + fac_uv_pix 
-     $               * CO_H2_shielding(imax_COH2)
-          else
-            ipos  = int(dlog10(NH2) / dNshield) - ioff_h2
-            if (ipos .eq. 0) then
-              theta_H2 = theta_H2 + fac_uv_pix
-            else
-              dth   = CO_H2_shielding(ipos+1) - 
-     $                CO_H2_shielding(ipos)
-              dNact = dlog10(NH2) - (ipos + ioff_h2) * dNshield
-              theta_H2 = theta_H2 + fac_uv_pix
-     $                 * (CO_H2_shielding(ipos) 
-     $                 + dth * (dNact / dNshield))
-            endif
-          endif
+          call co_shielding_visser(NCO, NH2, fshield_ray)
+          fshield_CO = fshield_CO + fac_uv_pix * fshield_ray
         enddo
-        fshield_CO = theta_H2 * theta_CO
 #endif /* RAYTRACE */
       endif
 #endif /* CO_SHIELDING */
@@ -1080,4 +1003,89 @@ c
 c
       return
 #endif
+      end
+c=======================================================================
+c
+c CO self-shielding and shielding of CO by H2, Visser et al (2009):
+c log-linear interpolation in the (N_CO, N_H2) grid, as SGChem calc_shield.F
+c
+c=======================================================================
+      subroutine co_shielding_visser(NCO, NH2, fshield_CO)
+#ifdef CHEMCOOL
+      implicit NONE
+#include "cool.h"
+#include "shield_data_visser.h"
+      REAL NCO, NH2, fshield_CO
+      REAL factor_CO, factor_H2, fsh_1, fsh_2
+      integer CO_index, H2_index, ipos, ipos2
+c
+      if (NCO .le. vis_NCO_min) then
+        if (NH2 .lt. vis_NH2_min) then
+          fshield_CO = 1d0
+        elseif (NH2 .eq. vis_NH2_min) then
+          fshield_CO = vis_co_factors(nvis_co+1)
+        elseif (NH2 .ge. vis_NH2_max) then
+          ipos = nvis_co * (nvis_h2 - 1) + 1
+          fshield_CO = vis_co_factors(ipos)
+        else
+          H2_index = 2 + int((log10(NH2) - 15d0) / 0.2d0)
+          factor_H2 = (log10(NH2) - log10(vis_h2_columns(H2_index)))
+     $              / 0.2d0
+          ipos  = nvis_co * (H2_index - 1) + 1
+          ipos2 = nvis_co * (H2_index - 0) + 1
+          fshield_CO = (1d0-factor_H2) * log10(vis_co_factors(ipos))
+     $               +      factor_H2  * log10(vis_co_factors(ipos2))
+          fshield_CO = 1d1**(fshield_CO)
+        endif
+      elseif (NCO .ge. vis_NCO_max) then
+        if (NH2 .le. vis_NH2_min) then
+          fshield_CO = vis_co_factors(nvis_co)
+        elseif (NH2 .ge. vis_NH2_max) then
+          fshield_CO = vis_co_factors(nvis_fac)
+        else
+          H2_index = 2 + int((log10(NH2) - 15d0) / 0.2d0)
+          factor_H2 = (log10(NH2) - log10(vis_h2_columns(H2_index)))
+     $              / 0.2d0
+          ipos  = nvis_co * (H2_index - 0)
+          ipos2 = nvis_co * (H2_index + 1)
+          fshield_CO = (1d0-factor_H2) * log10(vis_co_factors(ipos))
+     $               +      factor_H2  * log10(vis_co_factors(ipos2))
+          fshield_CO = 1d1**(fshield_CO)
+        endif
+      else
+        CO_index = 2 + int((log10(NCO) - 10d0) / 0.2d0)
+        factor_CO = (log10(NCO) - log10(vis_co_columns(CO_index)))
+     $            / 0.2d0
+c
+        if (NH2 .le. vis_NH2_min) then
+          ipos = CO_index
+          fshield_CO = (1d0-factor_CO)* log10(vis_co_factors(ipos))
+     $               +      factor_CO * log10(vis_co_factors(ipos+1))
+          fshield_CO = 1d1**(fshield_CO)
+        elseif (NH2 .ge. vis_NH2_max) then
+          ipos = nvis_co * (nvis_h2 - 1) + CO_index
+          fshield_CO = (1d0-factor_CO)* log10(vis_co_factors(ipos))
+     $               +      factor_CO * log10(vis_co_factors(ipos+1))
+          fshield_CO = 1d1**(fshield_CO)
+        else
+          H2_index = 2 + int((log10(NH2) - 15d0) / 0.2d0)
+          factor_H2 = (log10(NH2) - log10(vis_h2_columns(H2_index)))
+     $              / 0.2d0
+c
+          ipos  = nvis_co * (H2_index - 1) + CO_index
+          ipos2 = nvis_co * (H2_index - 0) + CO_index
+          fsh_1 = (1d0 - factor_H2) * log10(vis_co_factors(ipos))
+     $          +        factor_H2  * log10(vis_co_factors(ipos2))
+c
+          ipos  = nvis_co * (H2_index - 1) + CO_index + 1
+          ipos2 = nvis_co * (H2_index - 0) + CO_index + 1
+          fsh_2 = (1d0 - factor_H2) * log10(vis_co_factors(ipos))
+     $          +        factor_H2  * log10(vis_co_factors(ipos2))
+c
+          fshield_CO = (1d0 - factor_CO) * fsh_1 + factor_CO * fsh_2
+          fshield_CO = 1d1**(fshield_CO)
+        endif
+      endif
+#endif /* CHEMCOOL */
+      return
       end

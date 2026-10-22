@@ -655,6 +655,13 @@ cl66 (H2-e): DRD83 -> Yoon+08 (zero below 100 K, two fits split at 500 K, consta
 * H2 line opacity (Clark+11 Sobolev, SGChem iflag_h2_opacity = 3) applied above n = 1e8 (was 1e9),
   SGChem `cool_func.F:640-679`.
 
+## D-47. CO self-shielding and shielding by H2 from Visser et al (2009), all networks, both backends
+Provenance: SGChem `calc_shield.F:244-275, 334-420` (default; Lee+96 only under OLD_CO_SELF_SHIELDING) and
+`shield_data.h` (47 N_CO x 42 N_H2 grid, copied verbatim into `shield_data_visser.h`, extracted for C++ by
+`tables_extract.py`). Log-linear interpolation in both columns; in TreeCol mode the factor is evaluated per
+pixel and pixel-averaged (SGChem per ray), where the Lee+96 path averaged theta_CO and theta_H2 separately
+and multiplied the averages. The Lee+96 tables are still built (cheminmo, chem_tables_build) but not read.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

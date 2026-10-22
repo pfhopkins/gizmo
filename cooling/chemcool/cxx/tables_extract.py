@@ -11,6 +11,7 @@ Arrays extracted (no hand retyping, per Gate-2 rules):
   coolinmo.F : coolatom(81), ca2(76)          (DATA statements)
                HeI_tbl(51), HeII_tbl(51)      (array-constructor assignments)
   h2heat.h   : h2_rv_heat(1914)               (compute_h2_heating_fraction, net 15)
+  shield_data_visser.h : vis_co_columns(47), vis_h2_columns(42), vis_co_factors(1974)
 """
 import re, sys, os, struct
 
@@ -101,6 +102,7 @@ def main():
     coo = strip_source(os.path.join(CANON, "coolinmo.F"))
     isrf = strip_source(os.path.join(CANON, "isrf.h"))
     shd  = strip_source(os.path.join(CANON, "shield_data.h"))
+    vis  = strip_source(os.path.join(CANON, "shield_data_visser.h"))
     hng  = strip_source(os.path.join(CANON, "highn_gamma.h"))
     h2h  = strip_source(os.path.join(CANON, "h2heat.h"))
 
@@ -151,6 +153,10 @@ def main():
         emit(f, "dat_CO_shield_factors", extract_data(shd, "CO_shield_factors"), 51)
         emit(f, "dat_H2_shield_columns", extract_data(shd, "H2_shield_columns"), 43)
         emit(f, "dat_H2_shield_factors", extract_data(shd, "H2_shield_factors"), 43)
+        # ---- Visser et al (2009) CO shielding grid (calc_photo co_shielding_visser) ----
+        emit(f, "dat_vis_co_columns", extract_data(vis, "vis_co_columns"), 47)
+        emit(f, "dat_vis_h2_columns", extract_data(vis, "vis_h2_columns"), 42)
+        emit(f, "dat_vis_co_factors", extract_data(vis, "vis_co_factors"), 1974)
         # ---- Gate 3: high-n gamma table (compute_gamma.F) ----
         emit(f, "dat_hng", extract_data(hng, "hng"), 125)
         # ---- net 15: H2 formation-heating fraction (cool_util.F) ----

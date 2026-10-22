@@ -23,18 +23,10 @@
 #include "../../../GIZMO_config.h"
 #include "chem_types.h"
 #include "chem_net20.h"
+#include "chem_tables_data.h"
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
-
-// shield_data.h parameters
-#define NCO_SHIELD_MIN 1e12
-#define NCO_SHIELD_MAX 1e20
-#define NH2_SHIELD_MIN 1e13
-#define NH2_SHIELD_MAX 1e22
-#define DNSHIELD       0.05
-#define IOFF_H2        259
-#define IOFF_CO        239
 
 // ===========================================================================
 // chi(AV) -- ISRF attenuation factor (calc_photo.F:683-735)
@@ -178,20 +170,63 @@ double cxx_calc_HD_shielding_factor(double temp, double abh2, double abhd,
     return fshield_hd;
 }
 
-// helper: the L96 CO / H2 shielding-curve lookup shared by the two branches
-static inline double co_shield_lookup(const double* tab, int imax, double N,
-                                      double Nmin, double Nmax, int ioff,
-                                      int zero_index_is_unity)
+// CO self-shielding and shielding of CO by H2, Visser et al (2009): log-linear
+// interpolation in the (N_CO, N_H2) grid (calc_photo.F co_shielding_visser)
+static double co_shielding_visser(double NCO, double NH2)
 {
-    if (N <= Nmin) return 1.0;
-    if (N >= Nmax) return tab[imax - 1];
-    int ipos = (int)(std::log10(N) / DNSHIELD) - ioff;
-    if (zero_index_is_unity && ipos == 0) return 1.0;
-    double dth   = tab[ipos] - tab[ipos - 1];
-    double dNact = std::log10(N) - (ipos + ioff) * DNSHIELD;
-    return tab[ipos - 1] + dth * (dNact / DNSHIELD);
+    const int nco = 47, nh2 = 42, nfac = nco * nh2;
+    const double NCO_min = 1e10, NCO_max = 1e19, NH2_min = 1e15, NH2_max = 1e23;
+    const double* col = dat_vis_co_columns;   // Fortran 1-based: X(k) = x[k-1]
+    const double* h2c = dat_vis_h2_columns;
+    const double* f   = dat_vis_co_factors;
+    if (NCO <= NCO_min) {
+        if (NH2 < NH2_min)  return 1.0;
+        if (NH2 == NH2_min) return f[nco];
+        if (NH2 >= NH2_max) return f[nco * (nh2 - 1)];
+        int H2_index = 2 + (int)((std::log10(NH2) - 15.0) / 0.2);
+        double factor_H2 = (std::log10(NH2) - std::log10(h2c[H2_index - 1])) / 0.2;
+        int ipos  = nco * (H2_index - 1) + 1;
+        int ipos2 = nco * (H2_index - 0) + 1;
+        double fs = (1.0 - factor_H2) * std::log10(f[ipos - 1])
+                  +        factor_H2  * std::log10(f[ipos2 - 1]);
+        return std::pow(10.0, fs);
+    } else if (NCO >= NCO_max) {
+        if (NH2 <= NH2_min) return f[nco - 1];
+        if (NH2 >= NH2_max) return f[nfac - 1];
+        int H2_index = 2 + (int)((std::log10(NH2) - 15.0) / 0.2);
+        double factor_H2 = (std::log10(NH2) - std::log10(h2c[H2_index - 1])) / 0.2;
+        int ipos  = nco * (H2_index - 0);
+        int ipos2 = nco * (H2_index + 1);
+        double fs = (1.0 - factor_H2) * std::log10(f[ipos - 1])
+                  +        factor_H2  * std::log10(f[ipos2 - 1]);
+        return std::pow(10.0, fs);
+    }
+    int CO_index = 2 + (int)((std::log10(NCO) - 10.0) / 0.2);
+    double factor_CO = (std::log10(NCO) - std::log10(col[CO_index - 1])) / 0.2;
+    if (NH2 <= NH2_min) {
+        int ipos = CO_index;
+        double fs = (1.0 - factor_CO) * std::log10(f[ipos - 1])
+                  +        factor_CO  * std::log10(f[ipos]);
+        return std::pow(10.0, fs);
+    }
+    if (NH2 >= NH2_max) {
+        int ipos = nco * (nh2 - 1) + CO_index;
+        double fs = (1.0 - factor_CO) * std::log10(f[ipos - 1])
+                  +        factor_CO  * std::log10(f[ipos]);
+        return std::pow(10.0, fs);
+    }
+    int H2_index = 2 + (int)((std::log10(NH2) - 15.0) / 0.2);
+    double factor_H2 = (std::log10(NH2) - std::log10(h2c[H2_index - 1])) / 0.2;
+    int ipos  = nco * (H2_index - 1) + CO_index;
+    int ipos2 = nco * (H2_index - 0) + CO_index;
+    double fsh_1 = (1.0 - factor_H2) * std::log10(f[ipos - 1])
+                 +        factor_H2  * std::log10(f[ipos2 - 1]);
+    ipos  = nco * (H2_index - 1) + CO_index + 1;
+    ipos2 = nco * (H2_index - 0) + CO_index + 1;
+    double fsh_2 = (1.0 - factor_H2) * std::log10(f[ipos - 1])
+                 +        factor_H2  * std::log10(f[ipos2 - 1]);
+    return std::pow(10.0, (1.0 - factor_CO) * fsh_1 + factor_CO * fsh_2);
 }
-
 // ===========================================================================
 // calc_photo (calc_photo.F:73-666).  Fills c.phrates / c.G_dust / c.chi_isrf /
 // c.fshield_CO.  Called once per cell call (audit R5).
@@ -407,23 +442,15 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #endif
 #endif
 
-    // ---- CO self-shielding + shielding by H2 (L96) ----
+    // ---- CO self-shielding + shielding by H2 (Visser et al 2009) ----
     double fshield_CO = 1.0;
 #if CHEMISTRYNETWORK != 1 && CHEMISTRYNETWORK != 4
 #ifdef CO_SHIELDING
     if (c.iphoto != 2 && c.iphoto != 6) {
-        double NCO = abco * NH;
-        double theta_CO = co_shield_lookup(T.CO_self_shielding, CHEM_IMAX_COSS,
-                                           NCO, NCO_SHIELD_MIN, NCO_SHIELD_MAX,
-                                           IOFF_CO, 0);
-        double NH2 = abh2 * NH;
-        double theta_H2 = co_shield_lookup(T.CO_H2_shielding, CHEM_IMAX_COH2,
-                                           NH2, NH2_SHIELD_MIN, NH2_SHIELD_MAX,
-                                           IOFF_H2, 1);
-        fshield_CO = theta_H2 * theta_CO;
+        fshield_CO = co_shielding_visser(abco * NH, abh2 * NH);
     } else {
 #if defined RAYTRACE || defined RT_TREECOL_H2_CO
-        double theta_CO = 0.0, theta_H2 = 0.0;
+        fshield_CO = 0.0;
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
@@ -431,16 +458,8 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 #else
             double fac_uv_pix = 1.0 / nray;
 #endif
-            theta_CO += fac_uv_pix
-                      * co_shield_lookup(T.CO_self_shielding, CHEM_IMAX_COSS,
-                                         c.col_co[I], NCO_SHIELD_MIN,
-                                         NCO_SHIELD_MAX, IOFF_CO, 1);
-            theta_H2 += fac_uv_pix
-                      * co_shield_lookup(T.CO_H2_shielding, CHEM_IMAX_COH2,
-                                         c.col_h2[I], NH2_SHIELD_MIN,
-                                         NH2_SHIELD_MAX, IOFF_H2, 1);
+            fshield_CO += fac_uv_pix * co_shielding_visser(c.col_co[I], c.col_h2[I]);
         }
-        fshield_CO = theta_H2 * theta_CO;
 #endif
     }
 #endif /* CO_SHIELDING */
