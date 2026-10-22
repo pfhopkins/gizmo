@@ -15,7 +15,8 @@
 
 /* Stella x FIRE-3 coupled-mode preset: FIRE-3 SSPs above the cell-mass threshold [Msun], Stella single stars below */
 #ifdef GALSF_RESOLVEDISM_HYBRID_DEFAULTS
-#define GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL /* the cell-mass SF switch (SINGLE_STAR_AND_SSP_HYBRID_MODEL) is not wired yet: all SF is Stella */
+#define GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+#define GALSF_RESOLVEDISM_HYBRID_M_SSP (GALSF_RESOLVEDISM_HYBRID_DEFAULTS) /* cells above this mass [Msun] form FIRE SSPs, at or below it Stella stars */
 #ifndef FIRE_PHYSICS_DEFAULTS
 #define FIRE_PHYSICS_DEFAULTS 3
 #endif
@@ -1380,6 +1381,18 @@
 #endif
 #if defined(GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW)
 #error "GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW is not implemented yet"
+#endif
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL has no STARFORGE sink tier yet: disable SINGLE_STAR_SINK_DYNAMICS and SINGLE_STAR_AND_SSP_HYBRID_MODEL"
+#endif
+#if !defined(GALSF_RESOLVEDISM_HYBRID_M_SSP)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL needs the SSP/Stella cell-mass threshold: set GALSF_RESOLVEDISM_HYBRID_DEFAULTS=(M_SSP)"
+#endif
+#ifndef GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION
+#define GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION (64) /* SF criteria of Stella-channel cells, bits as GALSF_SFR_CRITERION; default = Stella production (Jeans mass only) */
+#endif
+#if (GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & ~(2+64)) || ((GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & ~(SINGLE_STAR_SINK_FORMATION)) & (2+64))
+#error "GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION: only bits 2 (convergent flow) and 64 (Jeans mass) have Stella versions"
 #endif
 #endif /* GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL */
 

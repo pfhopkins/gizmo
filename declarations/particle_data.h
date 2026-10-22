@@ -524,6 +524,9 @@ extern ALIGN(32) struct particle_data
 #define STAR_MODEL_STELLA_REMNANT 4   /* Stella remnant, gravity only */
 #define STELLA_OWNS_STAR(p) ((p).Type == 4 && ((p).StarModel == STAR_MODEL_STELLA || (p).StarModel == STAR_MODEL_STELLA_REMNANT))
 #define STELLA_FB_EVENT(p) ((p).StellaFBEvent_ThisTimeStep)
+#define SF_CHANNEL_SSP 1              /* cell forms a FIRE-3 SSP */
+#define SF_CHANNEL_STELLA 2           /* cell forms Stella stars by IMF sampling */
+#define SF_CHANNEL_SINK 3             /* cell forms a STARFORGE sink (not implemented) */
 #else
 #define STELLA_OWNS_STAR(p) ((p).Type == 4)
 #define STELLA_FB_EVENT(p) ((p).SNe_ThisTimeStep)
