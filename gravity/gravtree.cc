@@ -742,14 +742,14 @@ void gravity_tree(void)
         {
             double L_emit_uv = 0, A_abs_uv = 0;
             for(i = 0; i < NumPart; i++) {
-                if(P[i].Type == 4 && P[i].Mass > 0) {L_emit_uv += P[i].UV_luminosity + P[i].LW_luminosity;}
+                if(P[i].Type == 4 && P[i].Mass > 0) {L_emit_uv += P[i].UV_luminosity;} /* LW is inside UV */
             }
             for(int i : ActiveParticleList) {
                 if(P[i].Type != 0 || P[i].Mass <= 0) continue;
                 /* implied absorbed luminosity of this cell, code units:
                  * L_abs = F_tot(code L/len^2) * sigma_eff(code len^2), with
                  * sigma_eff = sigma_cgs*DGR * N_H(cell) / UNIT_LENGTH^2 */
-                double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2] + CellP[i].LW_flux[pfx2];}
+                double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2];}
                 double NH_cell = P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
                 /* per-cell DGR (2026-07-28): the implied absorption of each cell uses ITS
                  * OWN dust content, consistent with the per-cell leaf weighting in the

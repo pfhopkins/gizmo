@@ -2843,7 +2843,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 const double uv_lum = (mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] + mass_stellarlum[RT_FREQ_BIN_PHOTOELECTRIC]) * UNIT_LUM_IN_CGS; /* 6-13.6 eV */
                 const double lw_lum = mass_stellarlum[RT_FREQ_BIN_LYMAN_WERNER] * UNIT_LUM_IN_CGS;
 #ifdef RT_NUV
-                const double nuv_lum = mass_stellarlum[RT_FREQ_BIN_NUV] * UNIT_LUM_IN_CGS;
+                const double nuv_lum = DMAX(0., mass_stellarlum[RT_FREQ_BIN_NUV] - mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV]) * UNIT_LUM_IN_CGS; /* 3.4-6 eV: 6-8 eV is in uv_lum */
 #endif
 #ifdef RT_OPTICAL_NIR
                 const double opt_lum = mass_stellarlum[RT_FREQ_BIN_OPTICAL_NIR] * UNIT_LUM_IN_CGS;

@@ -1293,7 +1293,7 @@ extern struct gravdata_out
     MyDouble UV_flux[NPIX];               /*!< HEALPix FUV flux per pixel, 6-13.6 eV (bins FUV_6_8EV + PHOTOELECTRIC) */
     MyDouble LW_flux[NPIX];               /*!< HEALPix LW flux per pixel, 11.2-13.6 eV (subset of FUV) */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-    MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-8 eV */
+    MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-6 eV (6-8 eV is in UV_flux) */
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyDouble OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
