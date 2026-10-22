@@ -41,6 +41,9 @@ struct INPUT_STRUCT_NAME
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    MyDouble FireYields[STELLA_FIRE_YIELD_SLOTS];
+#endif
 #ifdef GALSF_RESOLVEDISM_DUST
     MyDouble DustYields[NUM_RESOLVEDISM_DUST];
 #endif
@@ -64,6 +67,9 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     in->fb_channel = DMAX(STELLA_FB_EVENT(P[i]) - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    for(k=0; k<STELLA_FIRE_YIELD_SLOTS; k++) in->FireYields[k] = 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_DUST
     for(k=0; k<NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = 0;
@@ -90,14 +96,26 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         double Mej_actual_solar = MIa_solar;
         double yield_rescale = Mej_actual_solar / stellar_type_ia_yield_total(); /* yields sum to the ejecta mass */
         double metal_mass_solar = 0;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        double y_fire[STBL_NELEM];
+#endif
         for(int k = 0; k < STBL_NELEM; k++) {
             double y_k = stellar_type_ia_yield(k) * yield_rescale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             in->ElemYields[k] = y_k / UNIT_MASS_IN_SOLAR;
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+            y_fire[k] = y_k / UNIT_MASS_IN_SOLAR;
+#endif
             if(k >= ELEM_C) metal_mass_solar += y_k;
         }
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
+#ifdef STELLA_SELFCHECK
+        if(loop_iteration >= 0) {stella_fire_yields_log("Ia", P[i].ID, y_fire, in->FireYields);}
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_DUST
         {
             double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
@@ -168,15 +186,27 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     double scale = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
 
     double metal_mass_solar = 0;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    double y_fire[STBL_NELEM];
+#endif
     for(k = 0; k < STBL_NELEM; k++) {
         double m_k = m_k_table[k] * scale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        y_fire[k] = m_k / UNIT_MASS_IN_SOLAR;
+#endif
         if(k >= ELEM_C) metal_mass_solar += m_k;
     }
     in->Mej = Mej_actual / UNIT_MASS_IN_SOLAR;
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
+#ifdef STELLA_SELFCHECK
+    if(loop_iteration >= 0) {stella_fire_yields_log("SN", P[i].ID, y_fire, in->FireYields);}
+#endif
+#endif
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     {
@@ -427,6 +457,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #else
                     double yield_metals = local.MetalMass;
 #endif
+#if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
+                    double X_fire_old[STELLA_FIRE_YIELD_SLOTS]; for(k = 0; k < STELLA_FIRE_YIELD_SLOTS; k++) {X_fire_old[k] = P[j].Metallicity[k];}
+#endif
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
@@ -450,6 +483,12 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                             CellP[j].MetalMassFrom[c] += dF;
                         }
                     }
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields); /* FIRE layout: no H slot, no closure */
+#ifdef STELLA_SELFCHECK
+                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, (MyIDType)FB_SerialEventID);
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                     /* 28-slot layout: write yield Y[k] for table element k (0..26)

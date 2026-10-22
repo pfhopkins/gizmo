@@ -837,6 +837,21 @@ void resolvedism_inject_fb_energy(void)
     MBARY_STEP("pre_fb_thermal");
     resolvedism_fb_serialized_pass(resolvedism_fb_thermal_calc, 1, 4);
     MBARY_STEP("post_fb_thermal");
+#if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
+    { /* every step: each gas cell keeps sum(C..Fe) <= Z and non-negative FIRE slots */
+        int ibad = -1, nbad = 0, ngas = 0;
+        for(int ig = 0; ig < N_gas; ig++) {
+            if(P[ig].Type != 0 || P[ig].Mass <= 0) continue;
+            double sub = 0; int s, neg = 0; ngas++;
+            for(s = 0; s < NUM_METAL_SPECIES; s++) {if(P[ig].Metallicity[s] < 0) {neg = 1;}}
+            for(s = 2; s < STELLA_FIRE_YIELD_SLOTS; s++) {sub += P[ig].Metallicity[s];}
+            if(neg || !(sub <= P[ig].Metallicity[0])) {nbad++; if(ibad < 0) {ibad = ig;}}
+        }
+        STELLA_CHECK("fire_slot_invariant", nbad == 0, "t=%.10g %d of %d cells, first cell=%llu Z=%.17g C=%.17g Fe=%.17g", All.Time, nbad, ngas,
+                     (unsigned long long)(ibad >= 0 ? P[ibad].ID : 0), ibad >= 0 ? P[ibad].Metallicity[0] : 0., ibad >= 0 ? P[ibad].Metallicity[2] : 0., ibad >= 0 ? P[ibad].Metallicity[10] : 0.);
+        STELLA_CHECK_RAN("fire_slot_invariant", ngas);
+    }
+#endif
 
     /* Budget tracking: [0]=SN, [1]=AGB, [2]=wind, [3]=radpressure, [4]=Ia, [5]=failed SN / no-gas attempt (E=M=0) */
     double n_events[6] = {0,0,0,0,0,0};
