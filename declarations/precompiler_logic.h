@@ -205,8 +205,9 @@
 #else
 #define COSMIC_RAY_FLUID            /*! use 'explicit' CR integration in one of the code formulations */
 #endif // closes whether to do cr fluid or subgrid
+#if defined(COSMIC_RAY_FLUID) /*! spectrum and diffusion defaults apply only to explicit CRs, not the sub-grid model */
 #if !defined(CRFLUID_EVOLVE_SPECTRUM) /*! check to enable flags for which CR spectrum or single-bin to evolve */
-#if (FIRE_CRS >= 0) || (FIRE_CRS <= 1)
+#if (FIRE_CRS >= 0) && (FIRE_CRS <= 1)
 #define CRFLUID_EVOLVE_SPECTRUM 1   /*! evolve proton + electron spectrum */
 #endif
 #if (FIRE_CRS >= 2)
@@ -223,6 +224,7 @@
 //#define CRFLUID_SET_ET_MODEL (-1)   /*! set mode for ET model using best-estimate of fturb from Alfven-wave scattering */
 #endif
 #endif // closes which diffusion model[s] to enable
+#endif // COSMIC_RAY_FLUID
 #endif // FIRE_CRS
 
 #if defined(FIRE_BHS)
