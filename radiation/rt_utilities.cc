@@ -306,16 +306,16 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
 int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    /* per-star band cache in erg/s (set each step in recompute_resolvedism_fuv_luminosities) */
+    /* per-star band cache is erg/s; lum[] is code units */
     if(pp[i].Type != 4 && pp[i].Type != 5) return 0;
-    lum[RT_FREQ_BIN_FUV_6_8EV] = pp[i].UV_luminosity - pp[i].PE_luminosity; /* not clipped: FUV_total - FUV_M1 restores the 6-13.6 eV total */
-    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity;
-    lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity;
+    lum[RT_FREQ_BIN_FUV_6_8EV] = (pp[i].UV_luminosity - pp[i].PE_luminosity) / UNIT_LUM_IN_CGS; /* not clipped: FUV_total - FUV_M1 restores the 6-13.6 eV total */
+    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity / UNIT_LUM_IN_CGS;
 #ifdef RT_NUV
-    lum[RT_FREQ_BIN_NUV] = pp[i].NUV_luminosity;
+    lum[RT_FREQ_BIN_NUV] = pp[i].NUV_luminosity / UNIT_LUM_IN_CGS;
 #endif
 #ifdef RT_OPTICAL_NIR
-    lum[RT_FREQ_BIN_OPTICAL_NIR] = pp[i].OPT_luminosity;
+    lum[RT_FREQ_BIN_OPTICAL_NIR] = pp[i].OPT_luminosity / UNIT_LUM_IN_CGS;
 #endif
     return 1;
 #else
