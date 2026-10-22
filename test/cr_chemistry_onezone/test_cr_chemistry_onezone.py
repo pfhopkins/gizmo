@@ -1,6 +1,6 @@
 """Cosmic-ray heating, ionisation and losses in CHEMCOOL network 5 with the CR fluid (Stella cloud Config + COSMIC_RAY_FLUID).
 The driver evolves a real cell to equilibrium at fixed nH and fixed CR energy density for (nH, zeta) points and the test checks:
-zeta in the cell = 3e-17 (e_CR / eV cm^-3); chemistry CR heating = 20 eV per ionisation x (n_HI + n_H2) (Goldsmith & Langer 1978,
+zeta in the cell = 3e-17 e_CR / (1.8 eV cm^-3) (SGChem); chemistry CR heating = 20 eV per ionisation x (n_HI + n_H2) (Goldsmith & Langer 1978,
 as SGChem) plus hadronic and Coulomb heating; CR fluid loss per step = the hadronic + Coulomb rate; equilibrium T in the dark-cloud range.
 """
 
@@ -59,7 +59,7 @@ def check_rows(rows):
         d = {k: float(v) for k, v in d.items()}
         n, z, ecr, ne, xhi, xh2 = d["nH"], d["zeta_in"], d["ecr"], d["ne"], d["xHI"], d["xH2"]
         tag = "nH=%g zeta=%g" % (n, z)
-        if abs(d["zeta_cell"] / z - 1) > 1e-6:
+        if abs(d["zeta_cell"] / z - 1) > 1e-6 or abs(z * 1.8 / 3e-17 * 1.602e-12 / ecr - 1) > 1e-6:
             fails.append("%s: zeta in the cell %g" % (tag, d["zeta_cell"]))
         gam = 3.2e-11 * z * n * (xhi + xh2) + (0.87 * 6.37e-16 / 6 + 0.53 * 3.09e-16 * (ne + 0.57 * xhi) / (1 + 4 * ABHE)) * ecr * n
         if abs(d["gamCR"] / gam - 1) > 2e-2:

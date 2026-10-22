@@ -28,7 +28,7 @@ static void run_point(double nH, double zeta, double t_end_myr, double dt_myr)
     double dt = dt_myr * (1e6*SECONDS_PER_YEAR) / UNIT_TIME_IN_CGS;
     P[c].dt_step = (integertime) llround(dt / All.Timebase_interval);
     CellP[c].DtInternalEnergy = 0;
-    double e_cgs = (zeta / 3e-17) * 1.602e-12; /* zeta = 3e-17 (e_CR / eV cm^-3), chem_interface.cc */
+    double e_cgs = (zeta / CR_IONRATE_SOLCIRC) * CR_ENDEN_SOLCIRC * 1.602e-12; /* zeta = 3e-17 e_CR / (1.8 eV cm^-3), as SGChem */
     int nstep = (int) llround(t_end_myr / dt_myr);
     double loss_frac = 0;
     for(int s = 0; s < nstep; s++)

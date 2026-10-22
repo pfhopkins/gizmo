@@ -694,5 +694,9 @@
 #define NCOL 128
 #endif
 
+/* CR ionisation rate from the CR energy density, as SGChem (set_local_abundances.F, cool.h; Webber 1998) */
+#define CR_IONRATE_SOLCIRC 3e-17 /* zeta at the solar circle [s^-1] */
+#define CR_ENDEN_SOLCIRC   1.8   /* CR energy density at the solar circle [eV cm^-3] */
+
 #endif /* CHEMCOOL_H */
 #endif /* CHEMCOOL */
