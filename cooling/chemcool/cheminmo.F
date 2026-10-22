@@ -148,6 +148,7 @@ c
       REAL h2_low_n, h2_high_n, alpha    , f1       , f2
 c
       REAL heii_rec_di, heii_rec_gs, heii_rec_A, heii_rec_B 
+      REAL yfac
 c
       REAL si2p_rec_rr, si2p_rec_dr
       REAL rr_alpha, rr_beta, rr_gamma, cp_rr, cp_dr
@@ -338,9 +339,9 @@ c Rate from B84. WFP04 cite a rate that is roughly a factor of two
 c larger at all temperatures.
 c
         if (temp .ge. 3d0) then
-          chtab(9, itemp) = 3.7d-14 * dexp(-3.5d1 / temp)
+          chtab(9, itemp) = 1.26d-13 * dexp(-2.25d1 / temp)
         else
-          chtab(9, itemp) = 3.7d-14 * dexp(-3.5d1 / 3d0)
+          chtab(9, itemp) = 1.26d-13 * dexp(-2.25d1 / 3d0)
         endif
 c
 c (ch10) -- see HeII recombination below
@@ -432,16 +433,17 @@ c Optically thin rate
 c
         chtab(16,itemp) = heii_rec_di + heii_rec_A
 c
-c Optically thick rate
+c Optically thick rate; yfac = fraction of ground-state recombination photons
+c absorbed by HI (He/H ratio as abhe)
 c
-        chtab(17,itemp) = 0.677d0 * heii_rec_gs + heii_rec_B 
+        yfac = 0.677d0 - (0.054d0 * (abhe - 0.079d0) / 0.021d0)
+        chtab(17,itemp) = yfac * heii_rec_gs + heii_rec_B
      $                  + heii_rec_di
 c
 c HI ionization due to HeII recombination emission.
 c (NB This assumes gas is optically thick to ionizing radiation)
 c
-        chtab(18,itemp) = 0.96d0 * chtab(17,itemp) + 0.677d0 * 
-     $                    heii_rec_gs
+        chtab(18,itemp) = 0.96d0 * heii_rec_B + yfac * heii_rec_gs
 c
 c (NB For the derivation of these formulae, and a detailed discussion,
 c     see Osterbrock, 1989, 'Astrophysics of Gaseous Nebulae and AGN')

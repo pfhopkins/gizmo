@@ -552,6 +552,18 @@ and He (`abheI`) photoionization, collisional ionization.
   abort (net 17, n 1, T0 1e6 K, G0 1e4, Z 3: CVODE at the He++ reject wall, flag -10). Below it t + h does not advance t; CVODE's first-step lower
   bound is 100 uround |tout|. A floor of 1e-12 x substep was tried and rejected: it clamped legitimate steps in
   hot dense gas (net 17, T0 1e6 K, n 1e6, dt 1e14 s; 99 one-zone states changed). Fortran DVODE path unchanged.
+## D-32. SGChem rate updates ch9, ch17, ch18, both backends
+Provenance: Arepo SGChem `cheminmo.F:347-349` (ch9) and `:451-470` (yfac, ch17, ch18).
+* ch9 (He+ + H2 -> He + H + H+): 3.7e-14 exp(-35/T) -> 1.26e-13 exp(-22.5/T), same T < 3 K floor.
+* ch17: the fixed 0.677 becomes yfac = 0.677 - 0.054 (abhe - 0.079)/0.021, abhe = /chem_comp/
+  at CHEMINMO (ABHE, 0.1 for nets 5/15/16/17; per-cell abhe does not enter the tables).
+* ch18: 0.96 ch17 + 0.677 gs -> 0.96 heii_rec_B + yfac gs (the old form counted ground-state
+  photons twice and included 0.96 x dielectronic).
+Not ported: SGChem chtab(148) (our slot 148 is a different reaction; neither is read here) and
+the SGCHEM_GONG17_TEST branch. abhe reaches the C++ builder as `ChemBuildConfig.abhe` ->
+`ChemGlobals.abhe` (`extract_rates.py` GLOBALS_MAP); the generator now reads the Fortran next to
+it (`CHEMCOOL_FORTRAN_DIR` overrides). Consumers: ch9/ch17 in nets 3/15/16/17, ch18 in nets 3/17
+(zeroed while 2 NH x_HI < 1.6e17, i.e. always with dl = 0); net 5 reads none of them.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

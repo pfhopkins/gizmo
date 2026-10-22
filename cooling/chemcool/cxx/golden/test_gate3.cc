@@ -575,6 +575,7 @@ int main(int argc, char** argv)
     cfg.deff = COOLR.deff; cfg.phi_pah = COOLR.phi_pah;
     cfg.dust_to_gas_ratio = COOLRC.dust_to_gas_ratio;
     cfg.cosmic_ray_ion_rate = COOLRC.cosmic_ray_ion_rate;
+    cfg.abhe = CHEM_COMP.abhe;
 
     ChemTables Cx;
     if (chem_tables_build(Cx, cfg, datadir)) {

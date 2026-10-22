@@ -228,6 +228,7 @@ void chem_bind_build_config(ChemBuildConfig& cfg, int net)
     cfg.phi_pah = COOLR.phi_pah;
     cfg.dust_to_gas_ratio = COOLRC.dust_to_gas_ratio;
     cfg.cosmic_ray_ion_rate = COOLRC.cosmic_ray_ion_rate;
+    cfg.abhe = CHEM_COMP.abhe;
 }
 
 void chem_bind_cell(ChemCell& c, const ChemTables& T, int net)

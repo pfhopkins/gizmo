@@ -434,6 +434,7 @@ struct ChemBuildConfig {
     int iflag_3bh2a, iflag_3bh2b, iflag_h3pra;
     int wss_cie;             // WSS_CIE_COOL
     double deff, phi_pah, dust_to_gas_ratio, cosmic_ray_ion_rate;
+    double abhe;             // /chem_comp/ abhe at table build (cheminmo chtab 17/18)
 };
 int  chem_tables_build(ChemTables& T, const ChemBuildConfig& cfg,
                        const char* datadir);

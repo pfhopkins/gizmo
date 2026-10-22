@@ -382,6 +382,7 @@ int chem_tables_build(ChemTables& T, const ChemBuildConfig& cfg,
     g.iflag_h3pra = cfg.iflag_h3pra;
     g.deff = cfg.deff; g.dust_to_gas_ratio = cfg.dust_to_gas_ratio;
     g.phi_pah = cfg.phi_pah; g.cosmic_ray_ion_rate = cfg.cosmic_ray_ion_rate;
+    g.abhe = cfg.abhe;
 
     // ---- temperature grid (coolinmo.F:209-215) ----
     const int nmd = CHEM_NMD;

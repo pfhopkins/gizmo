@@ -7,6 +7,7 @@
 struct ChemGlobals {
     int iflag_mn, iflag_ad, iflag_atom, iflag_3bh2a, iflag_3bh2b, iflag_h3pra;
     double deff, dust_to_gas_ratio, phi_pah, cosmic_ray_ion_rate;
+    double abhe;             /* /chem_comp/ abhe as cheminmo sees it */
     double dtlog, tmin, tmax;
 };
 

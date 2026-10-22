@@ -98,6 +98,7 @@ int chemcxx_pure_init(int net, int iflag_atom, int wss_cie,
     cfg.deff = deff; cfg.phi_pah = phi_pah;
     cfg.dust_to_gas_ratio = dust_to_gas_ratio;
     cfg.cosmic_ray_ion_rate = cosmic_ray_ion_rate;
+    cfg.abhe = (double)0.1f;                 // ABHE: a default-REAL literal in coolinmo
     if (chem_cxx_tables_init(cfg, datadir)) return 1;
     return 0;
 }

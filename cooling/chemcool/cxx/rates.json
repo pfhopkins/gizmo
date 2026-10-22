@@ -14,8 +14,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    200,
-    232
+    201,
+    233
    ],
    "comment": "Inverse of PSS83 three-body rate",
    "expression": [
@@ -46,8 +46,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    273,
-    281
+    274,
+    282
    ],
    "comment": "From PSS83",
    "expression": [
@@ -69,8 +69,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    257,
-    259
+    258,
+    260
    ],
    "comment": "",
    "expression": [
@@ -89,8 +89,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    291,
-    293
+    292,
+    294
    ],
    "comment": "",
    "expression": [
@@ -109,8 +109,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    309,
-    309
+    310,
+    310
    ],
    "comment": "",
    "expression": [
@@ -125,8 +125,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    311,
-    311
+    312,
+    312
    ],
    "comment": "",
    "expression": [
@@ -142,8 +142,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    321,
-    321
+    322,
+    322
    ],
    "comment": "(ch7) -- from HM79\ndeff is a free parameter, representing the efficiency of\nH_2 reformation on dust. Remainder of HM79 expression is calculated\nwhen we actually use the rate. [We can't pre-calculate it as it depends\non tdust, which may vary]\nper unit dust_to_gas_ratio: calc_dust_temp applies the cell's value",
    "expression": [
@@ -158,8 +158,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    328,
-    332
+    329,
+    333
    ],
    "comment": "",
    "expression": [
@@ -177,15 +177,15 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    341,
-    343
+    342,
+    344
    ],
    "comment": "",
    "expression": [
     "if (temp >= 3d0):",
-    "  chtab(9,itemp) = (3.7d-14*dexp((-(3.5d1/temp))))",
+    "  chtab(9,itemp) = (1.26d-13*dexp((-(2.25d1/temp))))",
     "else:",
-    "  chtab(9,itemp) = (3.7d-14*dexp((-(3.5d1/3d0))))"
+    "  chtab(9,itemp) = (1.26d-13*dexp((-(2.25d1/3d0))))"
    ],
    "kind": "GENERATED"
   },
@@ -196,8 +196,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    413,
-    413
+    414,
+    414
    ],
    "comment": "Dielectronic recombination of HeII at high T can be a significant source\nof cooling, so we need to store this part of the rate, as well as the total\nrate below.",
    "expression": [
@@ -213,8 +213,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    351,
-    359
+    352,
+    360
    ],
    "comment": "(ch10) -- see HeII recombination below\nCollisional ionization of HI (H + e => H+ + 2e)\nFrom A97; based on data from J87",
    "expression": [
@@ -227,8 +227,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    367,
-    368
+    368,
+    369
    ],
    "comment": "Recombination of HII  (H+ + e => H)\nFrom F92.\nCase A:",
    "expression": [
@@ -244,8 +244,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    372,
-    373
+    373,
+    374
    ],
    "comment": "Case B:",
    "expression": [
@@ -260,8 +260,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    379,
-    387
+    380,
+    388
    ],
    "comment": "Collisional ionization of HeI\nFrom A97; based on data from J87",
    "expression": [
@@ -276,8 +276,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    392,
-    400
+    393,
+    401
    ],
    "comment": "Collisional ionization of HeII\nFrom A97; based on data from J87",
    "expression": [
@@ -290,8 +290,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    433,
-    433
+    434,
+    434
    ],
    "comment": "Optically thin rate",
    "expression": [
@@ -306,12 +306,12 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    437,
-    438
+    440,
+    441
    ],
-   "comment": "Optically thick rate",
+   "comment": "",
    "expression": [
-    "chtab(17,itemp) = (((0.677d0*heii_rec_gs)+heii_rec_b)+heii_rec_di)"
+    "chtab(17,itemp) = (((yfac*heii_rec_gs)+heii_rec_b)+heii_rec_di)"
    ],
    "kind": "GENERATED"
   },
@@ -322,12 +322,12 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    443,
-    444
+    446,
+    446
    ],
    "comment": "HI ionization due to HeII recombination emission.\n(NB This assumes gas is optically thick to ionizing radiation)",
    "expression": [
-    "chtab(18,itemp) = ((0.96d0*chtab(17,itemp))+(0.677d0*heii_rec_gs))"
+    "chtab(18,itemp) = ((0.96d0*heii_rec_b)+(yfac*heii_rec_gs))"
    ],
    "kind": "GENERATED"
   },
@@ -336,8 +336,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    452,
-    454
+    454,
+    456
    ],
    "comment": "(NB For the derivation of these formulae, and a detailed discussion,\nsee Osterbrock, 1989, 'Astrophysics of Gaseous Nebulae and AGN')\nRecombination of HeIII -- appropriately scaled versions of HII rates\nCase A:",
    "expression": [
@@ -352,8 +352,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    458,
-    460
+    460,
+    462
    ],
    "comment": "Case B:",
    "expression": [
@@ -368,8 +368,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    476,
-    484
+    478,
+    486
    ],
    "comment": "",
    "expression": [
@@ -387,8 +387,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    492,
-    505
+    494,
+    507
    ],
    "comment": "Largest theoretical value -- from Daniel Savin",
    "expression": [
@@ -414,8 +414,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    514,
-    517
+    516,
+    519
    ],
    "comment": "H_2+ formation from HI (H + H+ => H_2+)\nFit by GP98, data from RP76",
    "expression": [
@@ -430,8 +430,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    533,
-    543
+    535,
+    545
    ],
    "comment": "",
    "expression": [
@@ -450,8 +450,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    550,
-    551
+    552,
+    553
    ],
    "comment": "CID of H_2 by electrons (H_2 + e => 2H + e)\nv=0 rate from TT02a",
    "expression": [
@@ -466,8 +466,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    556,
-    564
+    558,
+    566
    ],
    "comment": "Destruction of H- by electrons (H- + e => H + 2e)\nFit by A97, data from J87",
    "expression": [
@@ -482,8 +482,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    570,
-    581
+    572,
+    583
    ],
    "comment": "",
    "expression": [
@@ -501,8 +501,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    588,
-    598
+    590,
+    600
    ],
    "comment": "From GP98, based on data from MAP70.",
    "expression": [
@@ -525,8 +525,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    608,
-    610
+    610,
+    612
    ],
    "comment": "",
    "expression": [
@@ -544,8 +544,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    628,
-    630
+    630,
+    632
    ],
    "comment": "",
    "expression": [
@@ -563,8 +563,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    636,
-    636
+    638,
+    638
    ],
    "comment": "H- electron detachment by He (H- + He -> H + He + e)\nFrom H82.",
    "expression": [
@@ -579,8 +579,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    643,
-    643
+    645,
+    645
    ],
    "comment": "Charge transfer, helium to hydrogen: (He+ + H -> He + H+)\nFit by SLD98 to data by Z89.\nWe assume that CT with DI has same rate as with HI",
    "expression": [
@@ -595,8 +595,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    652,
-    655
+    654,
+    657
    ],
    "comment": "",
    "expression": [
@@ -615,8 +615,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    677,
-    677
+    679,
+    679
    ],
    "comment": "Grain assisted recombination. Rate from WD01.\nWD01 quote an accuracy of 20% for 10 < T < 10^3 K, 10^2 < phi < 10^6\n[where phi = G0 * sqrt(T) / ne]\nThe WD01 fitting formula is:\nalpha_g = 1e-14 * C0 * (1 + C1 * phi^C2 * (1 + C3 * T^C4 * phi *\n(- C5 - C6 ln T)))^-1\nWe tabulate (C3*T^C4) and (- C5 - C6 ln T) for each ion of interest\n(currently HII, HeII, CII, SiII). The other portions of the fit need to be\ncomputed on the fly in the chemistry routine, as they depend on the\nelectron density.\nThe grain recombination rate for OII can be obtained from that for\nHII by a simple rescaling and so we need ",
    "expression": [
@@ -632,8 +632,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    679,
-    679
+    681,
+    681
    ],
    "comment": "",
    "expression": [
@@ -646,8 +646,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    683,
-    683
+    685,
+    685
    ],
    "comment": "CII:",
    "expression": [
@@ -660,8 +660,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    685,
-    685
+    687,
+    687
    ],
    "comment": "",
    "expression": [
@@ -674,8 +674,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    689,
-    689
+    691,
+    691
    ],
    "comment": "SiII:",
    "expression": [
@@ -688,8 +688,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    691,
-    691
+    693,
+    693
    ],
    "comment": "",
    "expression": [
@@ -702,8 +702,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    729,
-    735
+    731,
+    737
    ],
    "comment": "",
    "expression": [
@@ -721,8 +721,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    755,
-    761
+    757,
+    763
    ],
    "comment": "",
    "expression": [
@@ -742,8 +742,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    773,
-    778
+    775,
+    780
    ],
    "comment": "",
    "expression": [
@@ -759,8 +759,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    788,
-    791
+    790,
+    793
    ],
    "comment": "",
    "expression": [
@@ -776,8 +776,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    799,
-    802
+    801,
+    804
    ],
    "comment": "",
    "expression": [
@@ -793,8 +793,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    810,
-    813
+    812,
+    815
    ],
    "comment": "",
    "expression": [
@@ -810,8 +810,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    820,
-    821
+    822,
+    823
    ],
    "comment": "Charge transfer:\nOII + HI  -> OI  + HII  -- from SS99; total for all three J states of OI",
    "expression": [
@@ -824,8 +824,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    831,
-    833
+    833,
+    835
    ],
    "comment": "OI  + HII -> OII + HI  -- from SS99.\nAssumes LTE level populations; note that depopulating the upper levels\nrelative to LTE will alter the rate coefficient by 50%, at most -- the\nrate is significantly altered only if the upper levels can be\noverpopulated at low T (i.e. at temperatures where the 223K endothermicity\nof the CT reaction is a significant barrier).",
    "expression": [
@@ -838,8 +838,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    840,
-    844
+    842,
+    846
    ],
    "comment": "",
    "expression": [
@@ -855,8 +855,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    858,
-    860
+    860,
+    862
    ],
    "comment": "",
    "expression": [
@@ -872,8 +872,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    865,
-    865
+    867,
+    867
    ],
    "comment": "O + H  -> OH + gamma -- rate from UMIST99",
    "expression": [
@@ -886,8 +886,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    869,
-    869
+    871,
+    871
    ],
    "comment": "H + OH -> H2O + gamma -- rate from UMIST99, based on FAS80",
    "expression": [
@@ -900,8 +900,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    873,
-    873
+    875,
+    875
    ],
    "comment": "O + H2 -> OH + H -- rate from UMIST99, based on NR87",
    "expression": [
@@ -914,8 +914,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    877,
-    877
+    879,
+    879
    ],
    "comment": "H + OH  -> O + H2 -- rate from UMIST99, based on TH86",
    "expression": [
@@ -928,8 +928,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    881,
-    881
+    883,
+    883
    ],
    "comment": "H2 + OH -> H2O + H -- rate from UMIST99, based on OLD92",
    "expression": [
@@ -942,8 +942,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    885,
-    885
+    887,
+    887
    ],
    "comment": "H + H2O -> OH + H2 -- rate from UMIST99, based on CW79",
    "expression": [
@@ -956,8 +956,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    895,
-    895
+    897,
+    897
    ],
    "comment": "Dissociative recombination of HOC+:  HOC+ + e -> CO + H\nRate from UMIST99, who assume that CO + H is the only outcome.\nGEP05 mention that it may also produce OH + C, but give no rate\nfor HOC+ DR (they're concerned only with HCO+ DR).\ncf. HCO+ dissociative recombination (ch87).",
    "expression": [
@@ -970,8 +970,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    902,
-    905
+    904,
+    907
    ],
    "comment": "",
    "expression": [
@@ -987,8 +987,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    913,
-    914
+    915,
+    916
    ],
    "comment": "C+ + H -> C + H+\nRate coefficient from SH98, with typo corrected. Claimed to be\naccurate to within 50%.",
    "expression": [
@@ -1001,8 +1001,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    920,
-    920
+    922,
+    922
    ],
    "comment": "CH2+ formation by radiative association: C+ + H2 -> CH2+ + gamma\nRate from H85",
    "expression": [
@@ -1015,8 +1015,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    926,
-    926
+    928,
+    928
    ],
    "comment": "CH+ formation from endothermic reaction between C+ and H2: C+ + H2 -> CH+ + H\nRate from ASM84.",
    "expression": [
@@ -1029,8 +1029,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    932,
-    932
+    934,
+    934
    ],
    "comment": "CH+ dissociative recombination: CH+ + e- -> C + H\nRate from OSU2005; based on T91",
    "expression": [
@@ -1043,8 +1043,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    938,
-    938
+    940,
+    940
    ],
    "comment": "CH2+ destruction by reaction with H: CH2+ + H -> CH+ + H2\nRate from UMIST99",
    "expression": [
@@ -1057,8 +1057,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    946,
-    946
+    948,
+    948
    ],
    "comment": "CH2+ dissociative recombination\nFrom UMIST06, based on L98.\nXXX: Now that T dependence is the same, we could merge these rates",
    "expression": [
@@ -1071,8 +1071,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    947,
-    947
+    949,
+    949
    ],
    "comment": "",
    "expression": [
@@ -1085,8 +1085,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    948,
-    948
+    950,
+    950
    ],
    "comment": "",
    "expression": [
@@ -1099,8 +1099,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    954,
-    954
+    956,
+    956
    ],
    "comment": "CH3+ destruction by atomic H: CH3+ + H -> CH2+ + H2\nRate from UMIST99",
    "expression": [
@@ -1113,8 +1113,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    961,
-    961
+    963,
+    963
    ],
    "comment": "CH3+ dissociative recombination:\nRates for ch67, ch68 are from UMIST99, based on M90; rate for ch69 is\nfrom UMIST99 with no other source cited",
    "expression": [
@@ -1127,8 +1127,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    962,
-    962
+    964,
+    964
    ],
    "comment": "",
    "expression": [
@@ -1141,8 +1141,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    963,
-    963
+    965,
+    965
    ],
    "comment": "",
    "expression": [
@@ -1155,8 +1155,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    970,
-    970
+    972,
+    972
    ],
    "comment": "CH2 formation from CH:  CH + H2 -> CH2 + H\nFrom UMIST99, based on data from the NIST chemical kinetics database\n(exact source or sources unclear)",
    "expression": [
@@ -1169,8 +1169,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    976,
-    976
+    978,
+    978
    ],
    "comment": "H3O+ dissociative recombination, total rate; branching ratios in rate_eq\nRate from UMIST06, based on JBS00.",
    "expression": [
@@ -1183,8 +1183,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    982,
-    982
+    984,
+    984
    ],
    "comment": "OH+ dissociative recombination:  OH+ + e- -> O + H\nFrom OSU2005, based on G95.",
    "expression": [
@@ -1197,8 +1197,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    988,
-    988
+    990,
+    990
    ],
    "comment": "H2O+ dissociative recombination, total rate; branching ratios in rate_eq\nRates from UMIST06, based on RDS00",
    "expression": [
@@ -1211,8 +1211,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    994,
-    994
+    996,
+    996
    ],
    "comment": "SiH+ dissociative recombination: SiH+ + e -> Si + H\nRate from UMIST99",
    "expression": [
@@ -1225,8 +1225,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1000,
-    1000
+    1002,
+    1002
    ],
    "comment": "SiH2+ dissociative recombination, total rate; branching ratios in rate_eq\nCurrently not used.",
    "expression": [
@@ -1239,8 +1239,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1004,
-    1004
+    1006,
+    1006
    ],
    "comment": "ch76 -- formerly collisional dissoc. of OH by HI; currently unused",
    "expression": [
@@ -1253,8 +1253,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1012,
-    1014
+    1014,
+    1016
    ],
    "comment": "",
    "expression": [
@@ -1270,8 +1270,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1021,
-    1021
+    1023,
+    1023
    ],
    "comment": "CH formation from C and H2:  C + H2 -> CH + H\nRate from DDH91",
    "expression": [
@@ -1284,8 +1284,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1027,
-    1028
+    1029,
+    1030
    ],
    "comment": "C2 formation by RA of carbon: C + C -> C2 + gamma\nRate from AS97",
    "expression": [
@@ -1298,8 +1298,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1034,
-    1034
+    1036,
+    1036
    ],
    "comment": "CH destruction by atomic H: CH + H -> C + H2\nRate from HGS93",
    "expression": [
@@ -1312,8 +1312,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1046,
-    1048
+    1048,
+    1050
    ],
    "comment": "",
    "expression": [
@@ -1329,8 +1329,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1055,
-    1055
+    1057,
+    1057
    ],
    "comment": "O2 formation by RA of oxygen:  O + O -> O2 + gamma\nRate from PH80",
    "expression": [
@@ -1343,8 +1343,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1063,
-    1066
+    1065,
+    1068
    ],
    "comment": "",
    "expression": [
@@ -1360,8 +1360,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1073,
-    1073
+    1075,
+    1075
    ],
    "comment": "O2+ dissociative recombination:  O2+ + e- -> O + O\nRate from UMIST99, based on AAS83.",
    "expression": [
@@ -1374,8 +1374,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1080,
-    1080
+    1082,
+    1082
    ],
    "comment": "O2 destruction by atomic hydrogen: O2 + H -> OH + O\nRate from UMIST99, based on NIST chemical kinetics database\n(exact sources unclear)",
    "expression": [
@@ -1388,8 +1388,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1086,
-    1086
+    1088,
+    1088
    ],
    "comment": "O2 destruction by H2:  O2 + H2 -> OH + OH\nRate from AAT75.",
    "expression": [
@@ -1402,8 +1402,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1092,
-    1092
+    1094,
+    1094
    ],
    "comment": "HCO+ dissociative recombination: HCO+ + e -> products.\nRate from GEP05. Branching ratios are given in rate_eq().",
    "expression": [
@@ -1416,8 +1416,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1106,
-    1106
+    1108,
+    1108
    ],
    "comment": "Mutual neutralization, generic rate.\nTaken from UMIST99.\nUsed for:\n1) H+   + C- -> C + H\n2) H+   + O- -> O  + H\n3) Mg+  + H- -> Mg + H  (currently unused)\nMutual neutralzation of H- with +ve ions such as O+, C+,\nHCO+, H3O+ etc. assumed negligible compared to MN with\nH+ or He+ & compared to DR of the +ve ions in question.",
    "expression": [
@@ -1430,8 +1430,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1112,
-    1113
+    1114,
+    1115
    ],
    "comment": "CO destruction by atomic hydrogen:  CO + H -> C + OH\nRate from UMIST99",
    "expression": [
@@ -1444,8 +1444,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1124,
-    1126
+    1126,
+    1128
    ],
    "comment": "",
    "expression": [
@@ -1461,8 +1461,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1149,
-    1153
+    1151,
+    1155
    ],
    "comment": "",
    "expression": [
@@ -1480,8 +1480,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1162,
-    1164
+    1164,
+    1166
    ],
    "comment": "Dissociative charge transfer of CO:\nCO + He+ -> C+ + O + He\nRate from PDAN89",
    "expression": [
@@ -1496,8 +1496,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1171,
-    1171
+    1173,
+    1173
    ],
    "comment": "CO + He+ -> C + O+ + He\nRate from PDAN89",
    "expression": [
@@ -1510,8 +1510,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1180,
-    1184
+    1182,
+    1186
    ],
    "comment": "",
    "expression": [
@@ -1529,8 +1529,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1193,
-    1197
+    1195,
+    1199
    ],
    "comment": "",
    "expression": [
@@ -1548,8 +1548,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1206,
-    1211
+    1208,
+    1213
    ],
    "comment": "",
    "expression": [
@@ -1567,8 +1567,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1225,
-    1231
+    1227,
+    1233
    ],
    "comment": "",
    "expression": [
@@ -1588,8 +1588,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1253,
-    1258
+    1255,
+    1260
    ],
    "comment": "",
    "expression": [
@@ -1609,8 +1609,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1266,
-    1267
+    1268,
+    1269
    ],
    "comment": "D+ + H -> D + H+\nAlso from S02. This fit does not suffer from the same problems as the\nprevious one, and so does not need to be modified.",
    "expression": [
@@ -1625,8 +1625,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1275,
-    1276
+    1277,
+    1278
    ],
    "comment": "HD formation:\nD+ + H2 -> HD + H+\nFrom G82, as quoted by GP02.",
    "expression": [
@@ -1641,8 +1641,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1282,
-    1282
+    1284,
+    1284
    ],
    "comment": "HD + H+ -> H2 + D+\nFrom G82, as quoted by GP02.",
    "expression": [
@@ -1657,8 +1657,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1289,
-    1295
+    1291,
+    1297
    ],
    "comment": "",
    "expression": [
@@ -1676,8 +1676,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1305,
-    1308
+    1307,
+    1310
    ],
    "comment": "",
    "expression": [
@@ -1693,8 +1693,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1315,
-    1316
+    1317,
+    1318
    ],
    "comment": "CH+ formation by RA: C+ + H -> CH+ + gamma\nRate from BvH06. Fit accurate to within 2% for 5 < T < 1000K",
    "expression": [
@@ -1707,8 +1707,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1322,
-    1323
+    1324,
+    1325
    ],
    "comment": "H3+ formation: H2+ + H2 -> H3+ + H\nRate from SLD98, based on cross-section from LJB95",
    "expression": [
@@ -1721,8 +1721,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1330,
-    1330
+    1332,
+    1332
    ],
    "comment": "H3+ destruction: H3+ DR  (total)\nFit from UMIST06, based on data from MAC04.\nBranching fractions are in rate_eq_mol.F",
    "expression": [
@@ -1735,8 +1735,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1336,
-    1336
+    1338,
+    1338
    ],
    "comment": "H3+ destruction:  H3+ + H -> H2+ + H2\nRate from GP98, fit to SMT92",
    "expression": [
@@ -1751,8 +1751,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1347,
-    1362
+    1349,
+    1364
    ],
    "comment": "From PSS83, based on JGC67",
    "expression": [
@@ -1780,8 +1780,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1373,
-    1383
+    1375,
+    1385
    ],
    "comment": "From PSS83, based on JGC67",
    "expression": [
@@ -1804,8 +1804,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1396,
-    1396
+    1398,
+    1398
    ],
    "comment": "Three-body H2 formation: H + H + He -> H2 + He\nRate is from WK75, based on measurements between 77K and 298K.\nThe value quoted by MR77 at 297K is approx. 18% lower, but this\nis within the quoted errors on the latter measurement.",
    "expression": [
@@ -1818,8 +1818,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1416,
-    1420
+    1418,
+    1422
    ],
    "comment": "",
    "expression": [
@@ -1835,8 +1835,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1432,
-    1436
+    1434,
+    1438
    ],
    "comment": "",
    "expression": [
@@ -1852,8 +1852,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1443,
-    1443
+    1445,
+    1445
    ],
    "comment": "Three-body OH formation: H + O + M -> OH + M\nRate from NIST chemical kinetics database, based on TH86",
    "expression": [
@@ -1866,8 +1866,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1449,
-    1449
+    1451,
+    1451
    ],
    "comment": "Three-body H2O formation: H + OH + M -> H2O + M\nRate from BAU92. (NB Assumes a bath gas of Argon)",
    "expression": [
@@ -1880,8 +1880,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1461,
-    1464
+    1463,
+    1466
    ],
    "comment": "",
    "expression": [
@@ -1897,8 +1897,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1474,
-    1474
+    1476,
+    1476
    ],
    "comment": "Three-body formation of O2: O + O + M -> O2 + M\nRate from NIST chemical kinetics database, based on WAR84.\nNote that this process is generally unimportant in comparison\nto ch113, unless the HI fraction of the gas is very small,\nbut we include it here for completeness.",
    "expression": [
@@ -1911,8 +1911,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1480,
-    1480
+    1482,
+    1482
    ],
    "comment": "HCO+ formation: O + CH -> HCO+ + e-\nRate from UMIST99, based on MB73",
    "expression": [
@@ -1925,8 +1925,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1486,
-    1487
+    1488,
+    1489
    ],
    "comment": "H2O formation from OH-OH collisions: OH + OH -> H2O + O\nRate from SHC04.",
    "expression": [
@@ -1939,8 +1939,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1493,
-    1493
+    1495,
+    1495
    ],
    "comment": "CO+ dissociative recombination:  CO+ + e -> C + O\nRate from OSU2005, based on R98",
    "expression": [
@@ -1953,8 +1953,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1501,
-    1501
+    1503,
+    1503
    ],
    "comment": "C2+ formation from CH:  C+ + CH -> C2+ + H\nRate from UMIST06. OSU2005 quotes a rate that is ~ 10x larger at all T\nCurrently, we don't account for C2+ so we don't include this, but we now\nhave the rate handy should we choose to do so in the future.",
    "expression": [
@@ -1967,8 +1967,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1514,
-    1514
+    1516,
+    1516
    ],
    "comment": "",
    "expression": [
@@ -1981,8 +1981,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1520,
-    1520
+    1522,
+    1522
    ],
    "comment": "SiH+ formation by radiative association: Si+ + H -> SiH+ + gamma\nRate from STA00",
    "expression": [
@@ -1995,8 +1995,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1524,
-    1524
+    1526,
+    1526
    ],
    "comment": "Mg+ recombination -- currently unused",
    "expression": [
@@ -2009,8 +2009,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1531,
-    1534
+    1533,
+    1536
    ],
    "comment": "",
    "expression": [
@@ -2026,8 +2026,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1543,
-    1547
+    1545,
+    1549
    ],
    "comment": "",
    "expression": [
@@ -2045,8 +2045,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1560,
-    1561
+    1562,
+    1563
    ],
    "comment": "Dissociative attachment: H2 + e- -> H + H-\nRate from GP98, based on data from SA67.\nAssumes that the H2 is in its vibrational ground state and so\nunderestimates rate at high densities; however, since the\nelectron fraction will generally be very small at high n, this\nis probably not a major problem\nNot included in main molecular chem. network",
    "expression": [
@@ -2061,8 +2061,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1569,
-    1569
+    1571,
+    1571
    ],
    "comment": "Neutralization of H2+ with H-:  H2+ + H- -> H2 + H\n-> H + H + H\nSLD98 quote the same rate for both processes, taken from DL87\nProbably unimportant in comparison to DR",
    "expression": [
@@ -2075,8 +2075,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1575,
-    1576
+    1577,
+    1578
    ],
    "comment": "HD+ formation from H2+ and D: H2+ + D -> HD+ + H\nRate from SLD98, based on cross-section of LJB95",
    "expression": [
@@ -2089,8 +2089,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1586,
-    1586
+    1588,
+    1588
    ],
    "comment": "HD+ dissociative recombination:  HD+ + e -> H + D\nRate from GP98, fit to cross-section of SSS95. Note that SLD98\nprovide an alternative fit to the same cross-section which\ndiffers by ~ 50-70% at low T, ~ 15% at high T. WFP04 quote a\nrate with a shallower T dependence that differs from the GP98\nrate by ~20% at 200K, but is almost the same at 3000K.",
    "expression": [
@@ -2103,8 +2103,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1592,
-    1592
+    1594,
+    1594
    ],
    "comment": "H2+ formation from HD+ and H: HD+ + H -> H2+ + D\nRate from DM56, but scaled by D reduced mass",
    "expression": [
@@ -2117,8 +2117,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1598,
-    1598
+    1600,
+    1600
    ],
    "comment": "Collisional dissociation of OH by H: OH + H -> O + H + H\nRate from UMIST06.",
    "expression": [
@@ -2131,8 +2131,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1604,
-    1604
+    1606,
+    1606
    ],
    "comment": "Collisional dissociation of OH by H2: OH + H2 -> O + H + H2\nRate from UMIST06.",
    "expression": [
@@ -2145,8 +2145,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1610,
-    1610
+    1612,
+    1612
    ],
    "comment": "Collisional dissociation of H2O by H: H2O + H -> OH + H + H\nRate from UMIST06.",
    "expression": [
@@ -2159,8 +2159,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1616,
-    1616
+    1618,
+    1618
    ],
    "comment": "Collisional dissociation of H2O by H2: H2O + H2 -> OH + H + H2\nRate from UMIST06.",
    "expression": [
@@ -2173,8 +2173,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    695,
-    695
+    697,
+    697
    ],
    "comment": "HeII:",
    "expression": [
@@ -2187,8 +2187,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    697,
-    697
+    699,
+    699
    ],
    "comment": "",
    "expression": [
@@ -2204,8 +2204,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1634,
-    1643
+    1636,
+    1645
    ],
    "comment": "",
    "expression": [
@@ -2224,8 +2224,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1631,
-    1631
+    1633,
+    1633
    ],
    "comment": "ch135--ch136: used for HeII grain-surface recombination rate; see above\nH2 collisional dissociation by He: H2 + He -> H + H + He\nRate from DRCM87. ch137, ch138 & ch139 are low n limit,\nhigh n limit and critical density resp. Data valid for\n2000 < T < 10000K, but fit behaves OK at lower T; at higher\nT, we just use the 10000K value.\nNB. We now use rate for LTE limit determined by detailed balance\napplied to reverse reaction",
    "expression": [
@@ -2241,8 +2241,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1638,
-    1650
+    1640,
+    1652
    ],
    "comment": "chtab(138, itemp) = 1d1**(-1.75 * log10(temp) - 2.729 -\n$                         2.3474d4 / temp)",
    "expression": [
@@ -2259,8 +2259,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1654,
-    1655
+    1656,
+    1657
    ],
    "comment": "CH3 formation from CH2: CH2 + H2 -> CH3 + H",
    "expression": [
@@ -2273,8 +2273,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1659,
-    1659
+    1661,
+    1661
    ],
    "comment": "CH3 destruction: CH3 + H -> CH2 + H2",
    "expression": [
@@ -2287,8 +2287,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1663,
-    1663
+    1665,
+    1665
    ],
    "comment": "CH4 formation from CH3: CH3 + H2 -> CH4 + H",
    "expression": [
@@ -2301,8 +2301,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1667,
-    1668
+    1669,
+    1670
    ],
    "comment": "CH4 destruction: CH4 + H -> CH3 + H2",
    "expression": [
@@ -2317,8 +2317,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1674,
-    1674
+    1676,
+    1676
    ],
    "comment": "HI collisional ionization by HI: H + H -> H + H+ + e\nRate from GVZ87, as quoted by LCS91",
    "expression": [
@@ -2331,8 +2331,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1681,
-    1681
+    1683,
+    1683
    ],
    "comment": "Surface chem:\nAccretion rate of CO (assuming standard dust properties); rates for other\nspecies then follow from simple rescaling (mco/mx)^1/2",
    "expression": [
@@ -2345,8 +2345,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1685,
-    1685
+    1687,
+    1687
    ],
    "comment": "Gas phase recombination of representative trace metal M (used in NL99 network)",
    "expression": [
@@ -2359,8 +2359,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1694,
-    1694
+    1696,
+    1696
    ],
    "comment": "Formation of CO from OHx [NL99]: C + OHx -> CO + H",
    "expression": [
@@ -2373,8 +2373,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1701,
-    1701
+    1703,
+    1703
    ],
    "comment": "Collisional ionization of H by H: H + H -> H+ + e- + H\n(Dominates when fractional ionization v. small or zero)\nRate from Omukai, 2001; assumes only ground-state populated",
    "expression": [
@@ -2387,8 +2387,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1709,
-    1709
+    1711,
+    1711
    ],
    "comment": "High-temperature collisional dissociation of H2+ into H + H+.\nApproximate rate (factor of a few uncertainty at least), based\non McClure, 1965, Phys. Rev. A, 140, 770. Not really important\nfor the H2+ chemistry itself, but useful for stabilizing the\nsolver at high T",
    "expression": [
@@ -2401,8 +2401,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1715,
-    1715
+    1717,
+    1717
    ],
    "comment": "Formation of NO:  N + OH -> NO + H\nRate from Smith, Herbst & Chang (2004)",
    "expression": [
@@ -2415,8 +2415,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1721,
-    1721
+    1723,
+    1723
    ],
    "comment": "Formation of N2 from NO: NO + N -> N2 + O\nRate from NIST database",
    "expression": [
@@ -2429,8 +2429,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1733,
-    1733
+    1735,
+    1735
    ],
    "comment": "Dissociative recombination of N2H+:  N2H+ + e -> N2 + H\nRate from Geppert et al (2004).\nNB: This rate is actually for the total DR rate: N2H+ + e -> products\nGeppert et al find a branching ratio of 36% to N2 + H, 64% to NH + H\nBecause our v. simple N chem. doesn't include NH, we assume that all\nof it is converted back to N2 by reactions with atomic N. In reality,\nsome will be photodissociated, and so will react with C to form CN...",
    "expression": [
@@ -2445,8 +2445,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1740,
-    1740
+    1742,
+    1742
    ],
    "comment": "HeH+ + e- -> He + H\nRate from G94. SLD98 recommend this rate (without rescaling) for\nHeD+ DR too.",
    "expression": [
@@ -2461,8 +2461,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1744,
-    1744
+    1746,
+    1746
    ],
    "comment": "He + H2+  -> HeH+ + H",
    "expression": [
@@ -2477,8 +2477,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1750,
-    1751
+    1752,
+    1753
    ],
    "comment": "He + H+  -> HeH+ + PHOTON\nFit by SLD98 to JSK95.",
    "expression": [
@@ -2493,8 +2493,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1757,
-    1758
+    1759,
+    1760
    ],
    "comment": "HeH+ + H -> H2+ + He\nRate from SLD98, based on cross-section from LJB95.",
    "expression": [
@@ -2509,8 +2509,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1771,
-    1775
+    1773,
+    1777
    ],
    "comment": "",
    "expression": [
@@ -2525,8 +2525,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1780,
-    1780
+    1782,
+    1782
    ],
    "comment": "Collisional ionization of H by He\nFrom Lenzuni et al (1991), based on Van Zyl et al (1981)",
    "expression": [
@@ -2541,8 +2541,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1785,
-    1785
+    1787,
+    1787
    ],
    "comment": "Collisional dissociation of H2+ by H, low density limit\nMy fit, based on cross-sections from Krstic & Janev (2003)",
    "expression": [
@@ -2557,8 +2557,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1790,
-    1791
+    1792,
+    1793
    ],
    "comment": "Collisional dissociation of H2+ by H, LTE limit\nFrom Coppola et al (2011), based on Krstic & Janev (2003)",
    "expression": [
@@ -2574,8 +2574,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1806,
-    1810
+    1808,
+    1812
    ],
    "comment": "High n CID rate",
    "expression": [
@@ -2591,8 +2591,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1811,
-    1811
+    1813,
+    1813
    ],
    "comment": "",
    "expression": [
@@ -2608,8 +2608,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1813,
-    1816
+    1815,
+    1818
    ],
    "comment": "Low n CID rate",
    "expression": [
@@ -2625,8 +2625,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1817,
-    1817
+    1819,
+    1819
    ],
    "comment": "",
    "expression": [
@@ -2642,8 +2642,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1819,
-    1822
+    1821,
+    1824
    ],
    "comment": "ncrit (CID)",
    "expression": [
@@ -2659,8 +2659,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1823,
-    1825
+    1825,
+    1827
    ],
    "comment": "",
    "expression": [
@@ -2676,8 +2676,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1827,
-    1831
+    1829,
+    1833
    ],
    "comment": "High n DT rate",
    "expression": [
@@ -2693,8 +2693,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1832,
-    1832
+    1834,
+    1834
    ],
    "comment": "",
    "expression": [
@@ -2710,8 +2710,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1834,
-    1837
+    1836,
+    1839
    ],
    "comment": "Low n DT rate",
    "expression": [
@@ -2727,8 +2727,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1838,
-    1838
+    1840,
+    1840
    ],
    "comment": "",
    "expression": [
@@ -2744,8 +2744,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1840,
-    1843
+    1842,
+    1845
    ],
    "comment": "ncrit (DT)",
    "expression": [
@@ -2761,8 +2761,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1844,
-    1846
+    1846,
+    1848
    ],
    "comment": "",
    "expression": [
@@ -2777,8 +2777,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1850,
-    1851
+    1852,
+    1853
    ],
    "comment": "H2 + H+ -> H2+ + H, LTE limit; from Coppola et al 2011",
    "expression": [
@@ -2794,8 +2794,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1915,
-    1915
+    1917,
+    1917
    ],
    "comment": "Primary cosmic ray ionization rates - calculated as scale factor * HI\ncosmic ray ion. rate. For cr3, cr4 we use scaling factors from\nLiszt (2003, A&A, 398, 621), based on data from the UMIST database.\nFor cr5 & cr7, we use L67, L78. For cr6, we use the scaling relative to\nthe HI rate given by UMIST.\n[NB Does not include photoionizations caused by CR-induced photons\n(i.e photons produced by excitation of HI or H2 by collisions with\nenergetic primary and secondary electrons)]\ncrtab, crphot: per unit cosmic_ray_ion_rate; rate_eq applies the cell's\nHI:",
    "expression": [
@@ -2811,8 +2811,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1920,
-    1920
+    1922,
+    1922
    ],
    "comment": "H2:",
    "expression": [
@@ -2825,8 +2825,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1930,
-    1930
+    1932,
+    1932
    ],
    "comment": "CI:",
    "expression": [
@@ -2839,8 +2839,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1934,
-    1934
+    1936,
+    1936
    ],
    "comment": "OI:",
    "expression": [
@@ -2853,8 +2853,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1938,
-    1938
+    1940,
+    1940
    ],
    "comment": "SiI:",
    "expression": [
@@ -2869,8 +2869,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1942,
-    1942
+    1944,
+    1944
    ],
    "comment": "HeI:",
    "expression": [
@@ -2883,8 +2883,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1946,
-    1946
+    1948,
+    1948
    ],
    "comment": "Si+:",
    "expression": [
@@ -2897,8 +2897,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1950,
-    1950
+    1952,
+    1952
    ],
    "comment": "CO: [NB. Direct ionization by cosmic rays]",
    "expression": [
@@ -2913,8 +2913,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1924,
-    1924
+    1926,
+    1926
    ],
    "comment": "",
    "expression": [
@@ -2929,8 +2929,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1925,
-    1925
+    1927,
+    1927
    ],
    "comment": "",
    "expression": [
@@ -2943,8 +2943,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1926,
-    1926
+    1928,
+    1928
    ],
    "comment": "",
    "expression": [
@@ -2957,8 +2957,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1958,
-    1958
+    1960,
+    1960
    ],
    "comment": "Cosmic-ray induced photoprocesses\nC -> C+ + e-",
    "expression": [
@@ -2971,8 +2971,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1961,
-    1961
+    1963,
+    1963
    ],
    "comment": "CH -> C + H",
    "expression": [
@@ -2985,8 +2985,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1963,
-    1963
+    1965,
+    1965
    ],
    "comment": "CH+ -> C+ + H",
    "expression": [
@@ -2999,8 +2999,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1965,
-    1965
+    1967,
+    1967
    ],
    "comment": "CH2 -> CH2+ + e",
    "expression": [
@@ -3013,8 +3013,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1967,
-    1967
+    1969,
+    1969
    ],
    "comment": "CH2 -> CH + H",
    "expression": [
@@ -3027,8 +3027,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1969,
-    1969
+    1971,
+    1971
    ],
    "comment": "C2 -> C + C",
    "expression": [
@@ -3041,8 +3041,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1971,
-    1971
+    1973,
+    1973
    ],
    "comment": "OH -> O + H",
    "expression": [
@@ -3055,8 +3055,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1973,
-    1973
+    1975,
+    1975
    ],
    "comment": "H2O -> OH + H",
    "expression": [
@@ -3069,8 +3069,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1975,
-    1975
+    1977,
+    1977
    ],
    "comment": "O2 -> O + O",
    "expression": [
@@ -3083,8 +3083,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1977,
-    1977
+    1979,
+    1979
    ],
    "comment": "O2 -> O2+ + e",
    "expression": [
@@ -3097,8 +3097,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1982,
-    1982
+    1984,
+    1984
    ],
    "comment": "CO -> C + O",
    "expression": [
@@ -3111,8 +3111,8 @@
    "networks": [],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1988,
-    1988
+    1990,
+    1990
    ],
    "comment": "NO -> N + O\nNote: this is actually the sum of two processes, direct photodissoc.\nand photoionization to NO+, which we assume then dissociatively\nrecombines to yield N + O...",
    "expression": [
@@ -5673,8 +5673,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    718,
-    718
+    720,
+    720
    ],
    "comment": "",
    "kind": "GENERATED",
@@ -5689,8 +5689,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1691,
-    1692
+    1693,
+    1694
    ],
    "comment": "Formation of CO from OHx [NL99]: C + OHx -> CO + H\nFrom GONG17, based on Zanchet et al 2009 and Wakelam et al 2010",
    "kind": "GENERATED",
@@ -5705,8 +5705,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1855,
-    1855
+    1857,
+    1857
    ],
    "comment": "Gong et al (2017) network: rates as in SGChem\nO + H3+ -> products [from GONG17, based on de Ruette et al 2015]",
    "kind": "GENERATED",
@@ -5721,8 +5721,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1857,
-    1857
+    1859,
+    1859
    ],
    "comment": "H2O+ dissociative recombination: rate in GONG17, from Wakelam et al 2010",
    "kind": "GENERATED",
@@ -5737,8 +5737,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1859,
-    1860
+    1861,
+    1862
    ],
    "comment": "C+ + H2 -> products: rate from GONG17, taken from Wakelam et al 2010",
    "kind": "GENERATED",
@@ -5753,8 +5753,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1862,
-    1862
+    1864,
+    1864
    ],
    "comment": "C+ + OHx -> HCO+: rate from GONG17, based on Wakelam",
    "kind": "GENERATED",
@@ -5769,8 +5769,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1864,
-    1864
+    1866,
+    1866
    ],
    "comment": "CHx + H -> H2 + C: from GONG17, based on Wakelam et al 2010",
    "kind": "GENERATED",
@@ -5785,8 +5785,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1866,
-    1866
+    1868,
+    1868
    ],
    "comment": "OHx + He+ -> O+ + He + H: from GONG17, based on Wakelam et al 2010",
    "kind": "GENERATED",
@@ -5801,8 +5801,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1868,
-    1872
+    1870,
+    1874
    ],
    "comment": "C + H3+ -> CHx + H2:  rate from Vissapragada et al (2016)",
    "kind": "GENERATED",
@@ -5817,8 +5817,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1875,
-    1877
+    1877,
+    1879
    ],
    "comment": "",
    "kind": "GENERATED",
@@ -5836,8 +5836,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1922,
-    1922
+    1924,
+    1924
    ],
    "comment": "H2:",
    "kind": "GENERATED",
@@ -5852,8 +5852,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1956,
-    1956
+    1958,
+    1958
    ],
    "comment": "Cosmic-ray induced photoprocesses\nC -> C+ + e-",
    "kind": "GENERATED",
@@ -5868,8 +5868,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1980,
-    1980
+    1982,
+    1982
    ],
    "comment": "CO -> C + O",
    "kind": "GENERATED",
@@ -5884,8 +5884,8 @@
    ],
    "fortran_file": "cheminmo.F",
    "lines": [
-    1991,
-    1991
+    1993,
+    1993
    ],
    "comment": "Si -> Si+ + e",
    "kind": "GENERATED",

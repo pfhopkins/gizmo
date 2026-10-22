@@ -112,6 +112,7 @@ int main(int argc, char** argv)
 #endif
     cfg.deff = 1.0; cfg.phi_pah = 1.0;
     cfg.dust_to_gas_ratio = 0.1; cfg.cosmic_ray_ion_rate = 3e-17;
+    cfg.abhe = (double)0.1f;   // as coolinmo (ABHE default-REAL)
 
     if (chem_cxx_tables_init(cfg, datadir)) {
         std::printf("FATAL: table init failed (datadir=%s)\n", datadir);
