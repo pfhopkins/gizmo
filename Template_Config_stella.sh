@@ -128,4 +128,5 @@ OUTPUT_INDIVIDUAL_COOLRATES              % output per-process cooling rates
 
 ########## Test-only ##########
 #GALSF_RESOLVEDISM_ISOLATED_FB_TEST      % TEST-ONLY: isolated-star FB test hooks
+#TEST_DUMP_STATE_AROUND_WIND_DEPOSIT     % TEST-ONLY: append raw double state of all particles before/after each wind batch to output/wind_dep_dump.<task>.bin
 #STELLA_SELFCHECK                        % TEST-ONLY: runtime invariant checks (harness)

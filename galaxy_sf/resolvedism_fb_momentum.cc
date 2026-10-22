@@ -22,6 +22,10 @@
 
 #ifdef GALSF_RESOLVEDISM_FB
 
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+double FB_TestWindPabs = 0, FB_TestWindPvec[3] = {0, 0, 0}, FB_TestWindMcoupled = 0; /* test: wind momentum/mass delivered by the walk (code units) */
+#endif
+
 struct kernel_resolvedismFB_momentum {double dp[3], r, wk, dwk, hinv, hinv3, hinv4;};
 
 #define CORE_FUNCTION_NAME resolvedismFB_momentum_evaluate
@@ -652,6 +656,12 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     /* Accumulate actual deposition for measured-coupling reduction
                      * on the dying star (FIRE pattern); see out2particle. */
                     out.M_coupled += dM;
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    if(loop_iteration == 0 && local.fb_channel == 2) {
+                        #pragma omp atomic
+                        FB_TestWindMcoupled += dM;
+                    }
+#endif
                     P[j].wakeup = -1;
                     NeedToWakeupParticles_local = 1;
                 }
@@ -718,6 +728,17 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         out.MomentumInjected[k] += dp_k;
                         dv_mag2 += dv_k * dv_k;
                     }
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+                    if(loop_iteration == 0 && local.fb_channel == 2) {
+                        double dpa = 0; for(k = 0; k < 3; k++) {dpa += (dp_share * dir_[k]) * (dp_share * dir_[k]);}
+                        #pragma omp atomic
+                        FB_TestWindPabs += sqrt(dpa);
+                        for(k = 0; k < 3; k++) {
+                            #pragma omp atomic
+                            FB_TestWindPvec[k] += dp_share * dir_[k];
+                        }
+                    }
+#endif
 #ifdef GALSF_RESOLVEDISM_WINDS_THERMAL
                     /* GRIFFIN-style inelastic residual (Lahen+23 eq. 3, 2026-07-05):
                      * the momentum kick transfers only ~dM/m of the wind KE to bulk

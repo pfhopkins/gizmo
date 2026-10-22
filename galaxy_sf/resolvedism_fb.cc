@@ -620,6 +620,27 @@ MyIDType FB_SerialEventID = 0;
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
 int FB_WindBatchOnly = 0;   /* 1 = momentum walk admits ONLY flag-3 (wind) stars, batch mode */
 #endif
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+extern double FB_TestWindPabs, FB_TestWindPvec[3], FB_TestWindMcoupled;
+#endif
+#ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
+/* test: raw double state of all local particles (ID,type,m,v,u) appended to <OutputDir>/wind_dep_dump.<task>.bin */
+static void fb_test_state_dump(int phase)
+{
+    static long long ncall = 0;
+    char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+    snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/wind_dep_dump.%d.bin", All.OutputDir, ThisTask);
+    FILE *fd = fopen(fn, "ab"); if(!fd) {return;}
+    long long n = NumPart, rec = ncall / 2; double t = All.Time;
+    fwrite(&phase, sizeof(int), 1, fd); fwrite(&rec, sizeof(long long), 1, fd); fwrite(&t, sizeof(double), 1, fd); fwrite(&n, sizeof(long long), 1, fd);
+    for(int i = 0; i < NumPart; i++) {
+        unsigned long long id = P[i].ID; int ty = P[i].Type;
+        double row[5] = {(double)P[i].Mass, (double)P[i].Vel[0], (double)P[i].Vel[1], (double)P[i].Vel[2], (P[i].Type == 0) ? (double)CellP[i].InternalEnergy : 0.0};
+        fwrite(&id, sizeof(unsigned long long), 1, fd); fwrite(&ty, sizeof(int), 1, fd); fwrite(row, sizeof(double), 5, fd);
+    }
+    fclose(fd); ncall++;
+}
+#endif
 
 /* Serialized weight+inject driver for one FB pass (2026-07-03).
  * WHY: the batched pattern (weight ALL donors, then inject ALL donors) leaves
@@ -832,6 +853,12 @@ void resolvedism_inject_fb_energy(void)
      * error nil; O(1) walks/step regardless of the number of blowing stars). */
     resolvedism_fb_serialized_pass(resolvedism_fb_momentum_calc, 2, 2);
     E_mech1 = resolvedism_mech_energy_local();
+#ifdef TEST_DUMP_STATE_AROUND_WIND_DEPOSIT
+    int fb_test_nwind = 0, fb_test_nwind_glob = 0;
+    for(int ii : ActiveParticleList) {if(P[ii].Type == 4 && P[ii].SNe_ThisTimeStep == 3) {fb_test_nwind++;}}
+    MPI_Allreduce(&fb_test_nwind, &fb_test_nwind_glob, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    if(fb_test_nwind_glob > 0) {fb_test_state_dump(0);}
+#endif
     FB_WindBatchOnly = 1;
     FB_ZERO_AWS();
     resolvedism_fb_momentum_calc(-1);
@@ -849,6 +876,37 @@ void resolvedism_inject_fb_energy(void)
 #endif
     MBARY_STEP("post_fb_mom_p0");
     E_mech2 = resolvedism_mech_energy_local();
+#if defined(TEST_DUMP_STATE_AROUND_WIND_DEPOSIT) && defined(GALSF_RESOLVEDISM_WINDS_CONTINUOUS)
+    if(fb_test_nwind_glob > 0) {fb_test_state_dump(1);}
+#endif
+#if defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST) && defined(GALSF_RESOLVEDISM_WINDS_CONTINUOUS)
+    { /* test: booked vs delivered for this step's wind batch, full precision */
+        double loc[11] = {0}, glob[11];
+        const double pconv = UNIT_MASS_IN_CGS * All.UnitVelocity_in_cm_per_s / (SOLAR_MASS_CGS * 1.0e5); /* code p -> Msun km/s */
+        for(int ii : ActiveParticleList) {
+            if(P[ii].Type != 4 || P[ii].SNe_ThisTimeStep != 3 || !P[ii].FB_Deposited) continue;
+            double dMs = P[ii].WindMassAccum, ps = P[ii].WindMomentumAccum;
+            loc[0] += 1; loc[1] += dMs; loc[2] += ps;
+            if(dMs > 0) {loc[3] += 0.5 * ps * ps / dMs * SOLAR_MASS_CGS * 1.0e10;}
+            double aws = P[ii].FB_Area_weighted_sum, m2 = 0; int k_;
+            if(aws > 0) {for(k_ = 0; k_ < 3; k_++) {m2 += (P[ii].FB_VecSum[k_] / aws) * (P[ii].FB_VecSum[k_] / aws);}}
+            loc[4] += m2;
+        }
+        loc[5] = E_mech2 - E_mech1;
+        loc[6] = FB_TestWindPabs * pconv;
+        for(int k_ = 0; k_ < 3; k_++) {loc[7 + k_] = FB_TestWindPvec[k_] * pconv;}
+        loc[10] = FB_TestWindMcoupled * UNIT_MASS_IN_SOLAR;
+        MPI_Allreduce(loc, glob, 11, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && glob[0] > 0) {
+            double pv = sqrt(glob[7]*glob[7] + glob[8]*glob[8] + glob[9]*glob[9]);
+            printf("WINDLEDGER t=%.17e n=%g M_book=%.17e M_coupled=%.17e p_book=%.17e p_abs=%.17e p_vec=%.17e E_book=%.17e E_coupled=%.17e m2=%.17e dE_rel=%.6e dP_rel=%.6e\n",
+                   All.Time, glob[0], glob[1], glob[10], glob[2], glob[6], pv, glob[3], glob[5], glob[4],
+                   (glob[3] > 0) ? glob[5] / glob[3] - 1 : 0.0, (glob[2] > 0) ? glob[6] / glob[2] - 1 : 0.0);
+            fflush(stdout);
+        }
+        FB_TestWindPabs = FB_TestWindMcoupled = 0; FB_TestWindPvec[0] = FB_TestWindPvec[1] = FB_TestWindPvec[2] = 0;
+    }
+#endif
 
     /* ---- Pass 1: SN + Type Ia (mass + thermal energy + metals). Serialized per event. ---- */
     MBARY_STEP("pre_fb_thermal");
