@@ -14,7 +14,7 @@ import numpy as np
 from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
-from os import chdir, getcwd
+from os import chdir
 from os.path import isfile
 from urllib.request import urlretrieve
 import subprocess
@@ -75,7 +75,6 @@ def test_aneos_shocktube(num_mpi_ranks, num_omp_threads):
     run_test(test_name, num_mpi_ranks, num_omp_threads)
     chdir("../../")
 
-    outputdir = f"test/{test_name}/output"
     final_snap = get_final_snapshot(test_name)
     assert_final_time(final_snap, test_name)
 

@@ -6,7 +6,6 @@ Success = no compile errors for any configuration.
 """
 
 import subprocess
-import sys
 import os
 import pytest
 from pathlib import Path

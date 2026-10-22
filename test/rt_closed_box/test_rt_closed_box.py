@@ -401,7 +401,7 @@ def check_starforge(flags, n_h, star):
           f"{o['E_thermal'][0]:.4g}")
     if star:
         print(f"  injected {injected[-1]:.6g} = (1 {injected[-1] / o['lum_injected'][-1] - 1:+.2e}) x c_tilde/c L dt")
-    print(f"  budget bands + gas thermal - injected, and the flows that move it (cumulative; band units unless noted):")
+    print("  budget bands + gas thermal - injected, and the flows that move it (cumulative; band units unless noted):")
     print("     time      budget/b0-1   IR gas share  cooling return  gas emission routed (c/c_tilde x offered)  "
           "cooling-step gas dE   kick sources")
     for t_out in np.arange(0, o["t"][-1] + 1e-9, 0.024):

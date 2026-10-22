@@ -31,7 +31,6 @@ def test_kh_mcnally_2d(num_mpi_ranks, num_omp_threads):
     with h5py.File(snaps[0], "r") as F:
         rho0 = F["PartType0/Density"][:]
         mass0 = F["PartType0/Masses"][:]
-        pos0 = F["PartType0/Coordinates"][:]
     with h5py.File(snaps[-1], "r") as F:
         rho_f = F["PartType0/Density"][:]
         mass_f = F["PartType0/Masses"][:]

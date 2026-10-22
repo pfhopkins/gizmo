@@ -165,7 +165,6 @@ def test_mhd_blast(num_mpi_ranks, num_omp_threads, extra_config_flags):
         mass = F["PartType0/Masses"][:]
         B = F["PartType0/MagneticField"][:]
         vel = F["PartType0/Velocities"][:]
-        boxsize = F["Header"].attrs["BoxSize"]
 
     plot_mhd_blast_density_slice(pos, rho, output_dir=f"test/{test_name}")
 

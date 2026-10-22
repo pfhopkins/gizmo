@@ -14,7 +14,6 @@ so no permanent modifications are made to the source tree.
 
 import pytest
 import shutil
-import numpy as np
 from os import path
 from os.path import isfile
 from urllib.request import urlretrieve, HTTPError

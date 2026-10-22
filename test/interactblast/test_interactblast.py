@@ -10,7 +10,7 @@ from scipy.interpolate import interp1d
 from matplotlib import pyplot as plt
 import h5py
 
-from gizmo.test import build_and_run_test, assert_final_time, default_mpi_ranks, default_omp_threads, get_final_snapshot, assert_energy_conserved
+from gizmo.test import build_and_run_test, assert_final_time, get_final_snapshot, assert_energy_conserved
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (1,)) #default_mpi_ranks(),))

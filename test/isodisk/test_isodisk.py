@@ -10,7 +10,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import h5py
 import glob
-from os import path, chdir, getcwd
+from os import chdir, getcwd
 from meshoid import Meshoid
 from gizmo.test import build_gizmo_for_test, download_test_files, run_test, default_mpi_ranks, clean_test_outputs, get_cooling_tables, flush_colorbar, assert_final_time, default_omp_threads, variant_output_dir, stash_baseline_output, finalize_variant_output
 
@@ -51,7 +51,6 @@ def test_isodisk(num_mpi_ranks, num_omp_threads, extra_config_flags):
     with h5py.File(snaps[0], "r") as F:
         pos0 = F["PartType0/Coordinates"][:]
         mass0 = F["PartType0/Masses"][:]
-        boxsize = F["Header"].attrs["BoxSize"]
     with h5py.File(snaps[-1], "r") as F:
         pos_f = F["PartType0/Coordinates"][:]
         mass_f = F["PartType0/Masses"][:]

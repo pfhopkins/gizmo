@@ -11,7 +11,7 @@ in isolation.
 
 import subprocess
 import sys
-from os.path import isfile, dirname, abspath, join
+from os.path import dirname, abspath, join
 
 
 def test_aneos_unit():

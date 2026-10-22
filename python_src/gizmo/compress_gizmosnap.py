@@ -3,14 +3,13 @@ import sys
 import h5py
 import argparse
 import functools
-import tempfile
 
 ## this is the core compression subroutine
 def copy_level0(fs, fd, name, node):
     if isinstance(node, h5py.Dataset):
         # create the new dataset, defaulting to gzip level 4 compression,
         #  including chunking/shuffle options, which work well.
-        dnew = fd.create_dataset(name, data=node, dtype=node.dtype, chunks=True,
+        fd.create_dataset(name, data=node, dtype=node.dtype, chunks=True,
             shuffle=True, compression="gzip", compression_opts=4, fletcher32=True);
         print('   ..dataset {} ({}) compressed'.format(name,node.dtype));
     elif isinstance(node, h5py.Group) and name == 'Header':

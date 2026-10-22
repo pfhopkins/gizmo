@@ -35,7 +35,7 @@ import sys as _sys
 # orbit it claims to be.
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                                   "..", "..", "python_src"))
-from gizmo.units import G_CODE, AU_PER_PC  # noqa: E402
+from gizmo.units import G_CODE  # noqa: E402
 
 SALPETER_ALPHA = -2.35   # dN/dm ~ m^alpha
 

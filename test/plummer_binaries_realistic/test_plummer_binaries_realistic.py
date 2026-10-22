@@ -117,7 +117,7 @@ def _potential_energy(pos, mass):
 
 
 def _trajectory(snaps):
-    t, energy, drift, bound = [], [], [], []
+    t, energy, drift = [], [], []
     e0 = p0 = None
     for s in snaps:
         ti, m, pos, vel, ids, synced = _load(s)

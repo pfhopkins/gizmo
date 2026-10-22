@@ -31,8 +31,6 @@ from gizmo.units import G_CODE, AU_PER_PC
 from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
-    default_mpi_ranks,
-    default_omp_threads,
     variant_output_dir,
     assert_final_time,
     parse_params,
