@@ -134,7 +134,7 @@ def test_crash_conditions():
     print(f"  Equilibrium H+ = {hp_eq:.6f}")
     print(f"  Stiffness: H+ must jump {stiff:.1f} orders of magnitude")
     print(f"  Ionization timescale: {t_ion:.2e} s = {t_ion/3.15e7:.2e} yr")
-    print(f"  eps_max = 1e-4, overshoot was 1.4e-4")
+    print("  eps_max = 1e-4, overshoot was 1.4e-4")
     print()
 
     # The solver needs to go from 2e-6 to 1.0 — that's extreme
@@ -227,7 +227,7 @@ def test_critical_overshoot_margin():
     hp_crit = equilibrium_hp(T_crit, n_H)
     print(f"  H+ = 1 - eps_max at T ~ {T_crit:.2e} K")
     print(f"  hp_eq(T_crit) = {hp_crit:.8f}")
-    print(f"  Above this T, any solver overshoot risks exceeding 1 + eps_max")
+    print("  Above this T, any solver overshoot risks exceeding 1 + eps_max")
     print()
 
     # All SN should heat above this

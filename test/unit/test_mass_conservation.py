@@ -139,7 +139,6 @@ def test_fsn_dbh_zero_sn_yields(tbl):
     """FSN and DBH should have zero net yields (zeroed in table builder).
     Therefore sn_yield = -wind_yield for these types."""
     print("\n--- FSN/DBH: net_yields = 0 ---")
-    nelem = len(tbl["elems"])
     for iz in range(len(tbl["Z"])):
         for im in range(len(tbl["M"])):
             rt = int(tbl["rem_type"][iz, im])

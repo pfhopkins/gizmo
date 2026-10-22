@@ -371,7 +371,6 @@ def test_remnants_and_yields(tbl):
     mp = tbl['M_preSN']
     net = tbl['net_yields']
     wind = tbl['wind_yields']
-    ysrc = tbl['yield_source']
 
     RN = {0: 'WD', 1: 'ECSN', 2: 'CCSN', 3: 'FSN', 4: 'PPISN', 5: 'PISN', 6: 'DBH'}
 

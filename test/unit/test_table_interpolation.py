@@ -86,7 +86,7 @@ def test_ppisn_remnant_massive(tbl):
             if rt == REM_PPISN:
                 check(rm > 30.0,
                       f"PPISN with rem_mass={rm:.2f} at M={tbl['M'][im]:.1f} Z={tbl['Z'][iz]:.4f}",
-                      f"Expected >30 Msun for pulsational pair-instability BH")
+                      "Expected >30 Msun for pulsational pair-instability BH")
     print("  done")
 
 
