@@ -401,11 +401,11 @@ c
      $                        - 3.16558106d-6 * (lnte**8))
 c
 c Recombination of He II
-c Dielectronic: (from AP73)
+c Dielectronic: (from B06)
 c
-        heii_rec_di = 1.9d-3 * dexp(-473421d0 / temp) 
-     $              * (1d0 + 0.3d0 * dexp(-94684d0 / temp))
-     $              / temp**1.5d0
+        heii_rec_di = (5.966d-4 * exp(-4.556d5 / temp)
+     $              +  1.613d-4 * exp(-5.552d5 / temp)
+     $              -  2.223d-5 * exp(-8.982d5 / temp)) / temp**1.5d0
 c
 c Dielectronic recombination of HeII at high T can be a significant source
 c of cooling, so we need to store this part of the rate, as well as the total
@@ -520,12 +520,12 @@ c Fit by SLD98 to data from L91
         endif
 c
 c H_2+ formation from HI (H + H+ => H_2+)
-c Fit by GP98, data from RP76 
+c From Latif et al 2015, based on Coppola et al 2011
 c
-        chtab(23,itemp) = 10d0**(-19.38d0 
-     $                    - 1.523d0 * dlog10(temp) 
-     $                    + 1.118d0 * dlog10(temp)**2 
-     $                    - 0.1269d0 * dlog10(temp)**3 )
+        chtab(23,itemp) = 10d0**(-18.20d0
+     $                    - 3.194d0 * dlog10(temp)
+     $                    + 1.786d0 * dlog10(temp)**2
+     $                    - 0.2072d0 * dlog10(temp)**3 )
 c
 c No point in tabulating rate for H2+ + H => H2 + H+, as it is
 c temperature independent. For reference, the rate is 6.4d-10
@@ -540,7 +540,11 @@ c we therefore assume a rate that is a constant prefactor * the
 c exp(-1.83eV/T) exponential dependence, with the prefactor chosen
 c such that the rate remains continuous at 3e4 K.
 c
-        if (temp .le. 3d4) then
+c The fit is set to zero below 100 K.
+c
+        if (temp .lt. 1d2) then
+          chtab(24,itemp) = 0d0
+        elseif (temp .le. 3d4) then
           chtab(24,itemp) = (- 3.3232183d-7
      $                       + 3.3735382d-7  * dlog(temp)
      $                       - 1.4491368d-7  * dlog(temp)**2
@@ -1942,7 +1946,7 @@ c
 c
 c  CI:
 c
-      crtab(3) = 3.83d0
+      crtab(3) = 3.85d0
 c
 c  OI:
 c

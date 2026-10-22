@@ -64,7 +64,7 @@ c (ph3) -- SiI ionization
 c
 c  Rate from UMIST99, based on vD88.
 c
-      phtab(3) = 1.824d-9
+      phtab(3) = 2.647d-9
 c
 c (ph4) -- H- photodissociation: 
 c
@@ -101,9 +101,9 @@ c (ph9) -- H2+ photodissociation:
 c
       phtab(9) = 0d0
 c
-c (ph10) -- CO photodissociation -- from vDB88
+c (ph10) -- CO photodissociation -- from Heays et al 2017
 c
-      phtab(10) = 1.235d-10
+      phtab(10) = 1.411d-10
 c
 c (ph11) -- OH photodissociation: OH + gamma -> O + H
 c

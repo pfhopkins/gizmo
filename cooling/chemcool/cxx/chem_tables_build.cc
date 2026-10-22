@@ -237,11 +237,11 @@ static void build_phtab(std::vector<double>& p)
     p.assign(CHEM_NPHTAB, 0.0);
     p[0]  = 3.3e-11;    // H2 photodissociation (DB96 table 2, 3:1 o:p)
     p[1]  = 1.765e-10;  // CI ionization
-    p[2]  = 1.824e-9;   // SiI ionization
+    p[2]  = 2.647e-9;   // SiI ionization
     p[3]  = 4.2e-7;     // H- photodissociation
     p[4]  = 6.5e-10;    // H2+ photodissociation
     p[5]  = 0.0; p[6] = 0.0; p[7] = 0.0; p[8] = 0.0;   // heating rates: unset
-    p[9]  = 1.235e-10;  // CO photodissociation (vDB88)
+    p[9]  = 1.411e-10;  // CO photodissociation (Heays+17)
     p[10] = 2.235e-10;  // OH  -> O + H
     p[11] = 3.47e-10;   // H2O -> OH + H
     p[13] = 1.47e-10;   // CH+ photodissociation

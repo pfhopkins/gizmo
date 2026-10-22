@@ -34,181 +34,181 @@ Counts: `{"generated": 349, "TABLE": 8, "SPECIAL": 0, "RHS_INLINE": 211, "genera
 | ch20 | GENERATED | 17 | cheminmo.F:460-462 | - | - | chtab(20,itemp) = (((2d0*2.753d-14)*(((4d0*315614d0)*tinv)**1.5d0))/((1d0+(((4d0*115188d0)*tinv)**0.407d0))**2.242d0)) | Case B: |
 | ch21 | GENERATED | 17 | cheminmo.F:478-486 | - | - | if (temp <= 6000):<br>chtab(21,itemp) = (10d0**((((-17.845d0)+(0.762d0*dlog10(temp)))+(0.1523d0*(dlog10(temp)**2)))-(3.274d-2*(dlog10(temp)**3))))<br>else:<br>chtab(21,itemp) = (10d0**((((-16.4199d0)+(0.1998d0*(dlog10(temp)**2)))-(5.447d-3*(dlog10(temp)**4)))+(4.0415d-5*(dlog10(temp)**6)))) |  |
 | ch22 | GENERATED | 17 | cheminmo.F:494-516 | - | - | if (iflag_ad == 1):<br>if (temp <= 3d2):<br>chtab(22,itemp) = 1.5d-9<br>else:<br>chtab(22,itemp) = (4.0d-9/(temp**0.17d0))<br>elseif (iflag_ad == 2):<br>chtab(22,itemp) = 5.0d-9<br>elseif (iflag_ad == 3):<br>chtab(22,itemp) = 1.3d-9<br>elseif (iflag_ad == 4):<br>chtab(22,itemp) = 0.65d-9<br>elseif (iflag_ad == 5):<br>chtab(22,itemp) = (1.5d-9*(temp3**(-0.1d0)))<br>elseif (iflag_ad == 6):<br>chtab(22,itemp) = ((1.35d-9*(((temp**9.8493d-2)+(3.2852d-1*(temp**5.5610d-1)))+(2.771d-7*(temp**2.1826d0)) | Largest theoretical value -- from Daniel Savin |
-| ch23 | GENERATED | 17 | cheminmo.F:525-528 | - | - | chtab(23,itemp) = (10d0**((((-19.38d0)-(1.523d0*dlog10(temp)))+(1.118d0*(dlog10(temp)**2)))-(0.1269d0*(dlog10(temp)**3)))) | H_2+ formation from HI (H + H+ => H_2+) |
-| ch24 | GENERATED | 17 | cheminmo.F:544-554 | - | - | if (temp <= 3d4):<br>chtab(24,itemp) = (((((((((-3.3232183d-7)+(3.3735382d-7*dlog(temp)))-(1.4491368d-7*(dlog(temp)**2)))+(3.4172805d-8*(dlog(temp)**3)))-(4.7813720d-9*(dlog(temp)**4)))+(3.9731542d-10*(dlog(temp)**5)))-(1.8171411d-11*(dlog(temp)**6)))+(3.5311932d-13*(dlog(temp)**7)))*dexp((-(2.1237150d4/temp))))<br>else:<br>chtab(24,itemp) = (3.7289d-10*dexp((-(2.1237150d4/temp)))) |  |
-| ch25 | GENERATED | 5,17 | cheminmo.F:561-562 | - | - | chtab(25,itemp) = ((4.4886d-9*(temp**0.109127d0))*dexp((-(1.01858d5/temp)))) | CID of H_2 by electrons (H_2 + e => 2H + e) |
-| ch26 | GENERATED | 17 | cheminmo.F:567-575 | - | - | chtab(26,itemp) = exp((((((((((-18.01849334d0)+(2.3608522d0*lnte))-(0.28274430d0*(lnte**2)))+(1.62331664d-2*(lnte**3)))-(3.36501203d-2*(lnte**4)))+(1.17832978d-2*(lnte**5)))-(1.65619470d-3*(lnte**6)))+(1.06827520d-4*(lnte**7)))-(2.63128581d-6*(lnte**8)))) | Destruction of H- by electrons (H- + e => H + 2e) |
-| ch27 | GENERATED | 17 | cheminmo.F:581-592 | - | - | if (te <= 1d-1):<br>chtab(27,itemp) = (2.5634d-9*(te**1.78186d0))<br>else:<br>chtab(27,itemp) = exp(((((((((((-20.37260896d0)+(1.13944933d0*lnte))-(0.14210135d0*(lnte**2)))+(8.4644554d-3*(lnte**3)))-(1.4327641d-3*(lnte**4)))+(2.0122503d-4*(lnte**5)))+(8.6639632d-5*(lnte**6)))-(2.5850097d-5*(lnte**7)))+(2.4555012d-6*(lnte**8)))-(8.0683825d-8*(lnte**9)))) |  |
-| ch28 | GENERATED | 17 | cheminmo.F:599-609 | - | - | if (iflag_mn == 1):<br>chtab(28,itemp) = ((((5.7d-6/dsqrt(temp))+6.3d-8)-(9.2d-11*dsqrt(temp)))+(4.4d-13*temp))<br>elseif (iflag_mn == 2):<br>chtab(28,itemp) = (7d-7/dsqrt(temp))<br>elseif (iflag_mn == 3):<br>chtab(28,itemp) = (4d-6/dsqrt(temp))<br>elseif (iflag_mn == 4):<br>chtab(28,itemp) = ((2.4d-6*(1d0+(temp/2d4)))/dsqrt(temp))<br>else: | From GP98, based on data from MAP70. |
-| ch29 | GENERATED | 17 | cheminmo.F:619-621 | - | - | if (temp <= 8d3):<br>chtab(29,itemp) = (6.9d-9/(temp**0.35d0))<br>else:<br>chtab(29,itemp) = (9.6d-7/(temp**0.9d0)) |  |
-| ch30 | GENERATED | 17 | cheminmo.F:639-641 | - | - | if (temp <= 6.17d2):<br>chtab(30,itemp) = 1d-8<br>else:<br>chtab(30,itemp) = (1.32d-6/(temp**0.76d0)) |  |
-| ch31 | GENERATED | 17 | cheminmo.F:647-647 | - | - | chtab(31,itemp) = ((4.1d-17*(temp**2))*dexp((-(19870d0/temp)))) | H- electron detachment by He (H- + He -> H + He + e) |
-| ch32 | GENERATED | 17 | cheminmo.F:654-654 | - | - | chtab(32,itemp) = (1.2d-15*((temp/3d2)**0.25d0)) | Charge transfer, helium to hydrogen: (He+ + H -> He + H+) |
-| ch33 | GENERATED | 17 | cheminmo.F:663-666 | - | - | if (temp <= 1d4):<br>chtab(33,itemp) = ((1.26d-9*exp((-(1.275d5/temp))))/(temp**0.75d0))<br>else:<br>chtab(33,itemp) = (4d-37*(temp**4.74d0)) |  |
-| ch34 | GENERATED | 5,17 | cheminmo.F:688-688 | - | - | chtab(34,itemp) = (5.087d2*(temp**1.586d-2)) | Grain assisted recombination. Rate from WD01. |
-| ch35 | GENERATED | 5,17 | cheminmo.F:690-690 | - | - | chtab(35,itemp) = ((-0.4723d0)-(1.102d-5*log(temp))) |  |
-| ch36 | GENERATED | - | cheminmo.F:694-694 | - | - | chtab(36,itemp) = (4.331d2*(temp**4.845d-2)) | CII: |
-| ch37 | GENERATED | - | cheminmo.F:696-696 | - | - | chtab(37,itemp) = ((-0.8120d0)-(1.333d-4*log(temp))) |  |
-| ch38 | GENERATED | - | cheminmo.F:700-700 | - | - | chtab(38,itemp) = (4.375d4*(temp**1.635d-6)) | SiII: |
-| ch39 | GENERATED | - | cheminmo.F:702-702 | - | - | chtab(39,itemp) = ((-0.8964d0)-(7.538d-5*log(temp))) |  |
-| ch40 | GENERATED | - | cheminmo.F:740-746 | - | - | if (temp <= 7.95d3):<br>chtab(40,itemp) = (4.67d-12*(temp3**(-0.6d0)))<br>elseif (temp <= 2.114d4):<br>chtab(40,itemp) = ((1.23d-17*(temp3**2.49d0))*exp((2.18456d4/temp)))<br>else:<br>chtab(40,itemp) = ((9.62d-8*(temp3**(-1.37d0)))*exp((-(1.157862d5/temp)))) |  |
-| ch41 | GENERATED | - | cheminmo.F:766-772 | - | - | if (temp <= 2d3):<br>chtab(41,itemp) = (7.50d-12/(temp3**0.55))<br>elseif (temp <= 1d4):<br>chtab(41,itemp) = (4.86d-12/(temp3**0.32))<br>elseif (temp <= 7.9d4):<br>chtab(41,itemp) = (9.08d-14*(temp3**0.818))<br>else:<br>chtab(41,itemp) = (5.89d-9/(temp3**1.17)) |  |
-| ch42 | GENERATED | - | cheminmo.F:784-789 | - | - | if (temp <= 4d2):<br>chtab(42,itemp) = (1.30d-10/(temp**0.64d0))<br>else:<br>chtab(42,itemp) = ((1.41d-10/(temp**0.66d0))+(((7.4d-4*dexp((-(1.75d5/temp))))*(1d0+(6.2d-2*dexp((-(1.45d5/temp))))))/(temp**1.5))) |  |
-| ch43 | GENERATED | - | cheminmo.F:799-802 | - | - | if (u > 1d2):<br>chtab(43,itemp) = 0d0<br>else:<br>chtab(43,itemp) = (((6.85d-8/(0.193d0+u))*(u**0.25d0))*dexp((-u))) |  |
-| ch44 | GENERATED | - | cheminmo.F:810-813 | - | - | if (u > 1d2):<br>chtab(44,itemp) = 0d0<br>else:<br>chtab(44,itemp) = ((((1.88d-7*(1d0+dsqrt(u)))/(0.376d0+u))*(u**0.25d0))*dexp((-u))) |  |
-| ch45 | GENERATED | - | cheminmo.F:821-824 | - | - | if (u > 1d2):<br>chtab(45,itemp) = 0d0<br>else:<br>chtab(45,itemp) = (((3.59d-8/(0.073d0+u))*(u**0.34d0))*dexp((-u))) |  |
-| ch46 | GENERATED | - | cheminmo.F:831-832 | - | - | chtab(46,itemp) = ((2.08d-9*((temp/1d4)**0.405d0))+(1.11d-11*((temp/1d4)**(-0.458d0)))) | Charge transfer: |
-| ch47 | GENERATED | - | cheminmo.F:842-844 | - | - | chtab(47,itemp) = (((1.26d-9*((temp/1d4)**0.517d0))+(4.25d-10*((temp/1d4)**6.69d-3)))*dexp((-(227d0/temp)))) | OI  + HII -> OII + HI  -- from SS99. |
-| ch48 | GENERATED | - | cheminmo.F:851-855 | - | - | if (temp <= 1d5):<br>chtab(48,itemp) = (2.80d-15*((temp/1d4)**0.213d0))<br>else:<br>chtab(48,itemp) = ((2.80d-15*((temp/1d4)**0.213d0))+((1.28d-15*((temp/1d4)**3.08d0))*dexp((-(2.19d6/temp))))) |  |
-| ch49 | GENERATED | - | cheminmo.F:869-871 | - | - | if (temp <= 1d4):<br>chtab(49,itemp) = (5.88d-13*(temp**0.848d0))<br>else:<br>chtab(49,itemp) = (1.45d-13*temp) |  |
-| ch50 | GENERATED | - | cheminmo.F:876-876 | - | - | chtab(50,itemp) = (9.90d-19/(temp3**0.38)) | O + H  -> OH + gamma -- rate from UMIST99 |
-| ch51 | GENERATED | - | cheminmo.F:880-880 | - | - | chtab(51,itemp) = ((5.26d-18/(temp3**5.22))*exp((-(9d1/temp)))) | H + OH -> H2O + gamma -- rate from UMIST99, based on FAS80 |
-| ch52 | GENERATED | - | cheminmo.F:884-884 | - | - | chtab(52,itemp) = ((3.14d-13*(temp3**2.7))*exp((-(3.15d3/temp)))) | O + H2 -> OH + H -- rate from UMIST99, based on NR87 |
-| ch53 | GENERATED | - | cheminmo.F:888-888 | - | - | chtab(53,itemp) = ((6.99d-14*(temp3**2.8))*exp((-(1.95d3/temp)))) | H + OH  -> O + H2 -- rate from UMIST99, based on TH86 |
-| ch54 | GENERATED | - | cheminmo.F:892-892 | - | - | chtab(54,itemp) = ((2.05d-12*(temp3**1.52))*exp((-(1.736d3/temp)))) | H2 + OH -> H2O + H -- rate from UMIST99, based on OLD92 |
-| ch55 | GENERATED | - | cheminmo.F:896-896 | - | - | chtab(55,itemp) = ((1.59d-11*(temp3**1.2))*exp((-(9.61d3/temp)))) | H + H2O -> OH + H2 -- rate from UMIST99, based on CW79 |
-| ch56 | GENERATED | - | cheminmo.F:906-906 | - | - | chtab(56,itemp) = (1.1d-7/temp3) | Dissociative recombination of HOC+:  HOC+ + e -> CO + H |
-| ch57 | GENERATED | - | cheminmo.F:913-916 | - | - | if (temp <= 3d2):<br>chtab(57,itemp) = 2.1d-19<br>else:<br>chtab(57,itemp) = ((3.09d-17*(temp3**0.33))*exp((-(1.629d3/temp)))) |  |
-| ch58 | GENERATED | - | cheminmo.F:924-925 | - | - | chtab(58,itemp) = ((6.08d-14*((temp/1d4)**1.96d0))*exp((-(1.7d5/temp)))) | C+ + H -> C + H+ |
-| ch59 | GENERATED | - | cheminmo.F:931-931 | - | - | chtab(59,itemp) = (4.0d-16/(temp3**0.2d0)) | CH2+ formation by radiative association: C+ + H2 -> CH2+ + gamma |
-| ch60 | GENERATED | - | cheminmo.F:937-937 | - | - | chtab(60,itemp) = (1.0d-10*exp((-(4.64d3/temp)))) | CH+ formation from endothermic reaction between C+ and H2: C+ + H2 -> CH+ + H |
-| ch61 | GENERATED | - | cheminmo.F:943-943 | - | - | chtab(61,itemp) = (7.0d-8/(temp3**0.5d0)) | CH+ dissociative recombination: CH+ + e- -> C + H |
-| ch62 | GENERATED | - | cheminmo.F:949-949 | - | - | chtab(62,itemp) = (1.0d-9*exp((-(7.08d3/temp)))) | CH2+ destruction by reaction with H: CH2+ + H -> CH+ + H2 |
-| ch63 | GENERATED | - | cheminmo.F:957-957 | - | - | chtab(63,itemp) = (1.60d-7/(temp3**0.60d0)) | CH2+ dissociative recombination |
-| ch64 | GENERATED | - | cheminmo.F:958-958 | - | - | chtab(64,itemp) = (4.03d-7/(temp3**0.60d0)) |  |
-| ch65 | GENERATED | - | cheminmo.F:959-959 | - | - | chtab(65,itemp) = (7.68d-8/(temp3**0.60d0)) |  |
-| ch66 | GENERATED | - | cheminmo.F:965-965 | - | - | chtab(66,itemp) = (7d-10*exp((-(1.056d4/temp)))) | CH3+ destruction by atomic H: CH3+ + H -> CH2+ + H2 |
-| ch67 | GENERATED | - | cheminmo.F:972-972 | - | - | chtab(67,itemp) = (7.75d-8/dsqrt(temp3)) | CH3+ dissociative recombination: |
-| ch68 | GENERATED | - | cheminmo.F:973-973 | - | - | chtab(68,itemp) = (1.95d-7/dsqrt(temp3)) |  |
-| ch69 | GENERATED | - | cheminmo.F:974-974 | - | - | chtab(69,itemp) = (2.00d-7/(temp3**0.4d0)) |  |
-| ch70 | GENERATED | - | cheminmo.F:981-981 | - | - | chtab(70,itemp) = (5.46d-10*exp((-(1.943d3/temp)))) | CH2 formation from CH:  CH + H2 -> CH2 + H |
-| ch71 | GENERATED | - | cheminmo.F:987-987 | - | - | chtab(71,itemp) = (4.318d-7/dsqrt(temp3)) | H3O+ dissociative recombination, total rate; branching ratios in rate_eq |
-| ch72 | GENERATED | - | cheminmo.F:993-993 | - | - | chtab(72,itemp) = (6.3d-9*(temp3**(-0.48d0))) | OH+ dissociative recombination:  OH+ + e- -> O + H |
-| ch73 | GENERATED | - | cheminmo.F:999-999 | - | - | chtab(73,itemp) = (4.3d-7/dsqrt(temp3)) | H2O+ dissociative recombination, total rate; branching ratios in rate_eq |
-| ch74 | GENERATED | - | cheminmo.F:1005-1005 | - | - | chtab(74,itemp) = (2d-7/dsqrt(temp3)) | SiH+ dissociative recombination: SiH+ + e -> Si + H |
-| ch75 | GENERATED | - | cheminmo.F:1011-1011 | - | - | chtab(75,itemp) = (5d-7/dsqrt(temp3)) | SiH2+ dissociative recombination, total rate; branching ratios in rate_eq |
-| ch76 | GENERATED | - | cheminmo.F:1015-1015 | - | - | chtab(76,itemp) = 0d0 | ch76 -- formerly collisional dissoc. of OH by HI; currently unused |
-| ch77 | GENERATED | - | cheminmo.F:1023-1025 | - | - | if (temp <= 2d3):<br>chtab(77,itemp) = 6.6d-11<br>else:<br>chtab(77,itemp) = (1.02d-10*exp((-(914d0/temp)))) |  |
-| ch78 | GENERATED | - | cheminmo.F:1032-1032 | - | - | chtab(78,itemp) = (6.64d-10*exp((-(1.17d4/temp)))) | CH formation from C and H2:  C + H2 -> CH + H |
-| ch79 | GENERATED | - | cheminmo.F:1038-1039 | - | - | chtab(79,itemp) = ((4.36d-18*(temp3**0.35d0))*exp((-(1.613d2/temp)))) | C2 formation by RA of carbon: C + C -> C2 + gamma |
-| ch80 | GENERATED | - | cheminmo.F:1045-1045 | - | - | chtab(80,itemp) = (1.31d-10*exp((-(8d1/temp)))) | CH destruction by atomic H: CH + H -> C + H2 |
-| ch81 | GENERATED | - | cheminmo.F:1057-1059 | - | - | if (temp <= 2.61d2):<br>chtab(81,itemp) = 3.5d-11<br>else:<br>chtab(81,itemp) = (1.77d-11*exp((1.78d2/temp))) |  |
-| ch82 | GENERATED | - | cheminmo.F:1066-1066 | - | - | chtab(82,itemp) = (4.9d-20*(temp3**1.58d0)) | O2 formation by RA of oxygen:  O + O -> O2 + gamma |
-| ch83 | GENERATED | - | cheminmo.F:1074-1077 | - | - | if (temp <= 2.95d2):<br>chtab(83,itemp) = (4.7d-11*(temp3**(-0.34)))<br>else:<br>chtab(83,itemp) = ((2.48d-12*(temp3**1.54d0))*exp((6.13d2/temp))) |  |
-| ch84 | GENERATED | - | cheminmo.F:1084-1084 | - | - | chtab(84,itemp) = (1.95d-7/(temp3**0.7d0)) | O2+ dissociative recombination:  O2+ + e- -> O + O |
-| ch85 | GENERATED | - | cheminmo.F:1091-1091 | - | - | chtab(85,itemp) = (2.61d-10*exp((-(8.156d3/temp)))) | O2 destruction by atomic hydrogen: O2 + H -> OH + O |
-| ch86 | GENERATED | - | cheminmo.F:1097-1097 | - | - | chtab(86,itemp) = (3.16d-10*exp((-(2.189d4/temp)))) | O2 destruction by H2:  O2 + H2 -> OH + OH |
-| ch87 | GENERATED | - | cheminmo.F:1103-1103 | - | - | chtab(87,itemp) = (3.0d-7/(temp3**0.64)) | HCO+ dissociative recombination: HCO+ + e -> products. |
-| ch88 | GENERATED | - | cheminmo.F:1117-1117 | - | - | chtab(88,itemp) = (2.3d-7/dsqrt(temp3)) | Mutual neutralization, generic rate. |
-| ch89 | GENERATED | - | cheminmo.F:1123-1124 | - | - | chtab(89,itemp) = ((1.1d-10*dsqrt(temp3))*exp((-(7.77d4/temp)))) | CO destruction by atomic hydrogen:  CO + H -> C + OH |
-| ch90 | GENERATED | - | cheminmo.F:1135-1137 | - | - | if (temp <= 3d2):<br>chtab(90,itemp) = (5d-11*dsqrt(temp3))<br>else:<br>chtab(90,itemp) = (5d-11*(temp3**0.757d0)) |  |
-| ch91 | GENERATED | - | cheminmo.F:1160-1164 | - | - | if (temp > 7d0):<br>chtab(91,itemp) = ((3.9d-19*((temp/3d2)**1.8d0))*exp((2d1/temp)))<br>else:<br>chtab(91,itemp) = ((3.9d-19*((7d0/3d2)**1.8d0))*exp((2d1/7d0))) |  |
-| ch92 | GENERATED | 17 | cheminmo.F:1173-1175 | - | - | chtab(92,itemp) = (1.4d-9/dsqrt(temp3))<br>if (chtab(92,itemp) > 1.6d-9):<br>chtab(92,itemp) = 1.6d-9 | Dissociative charge transfer of CO: |
-| ch93 | GENERATED | - | cheminmo.F:1182-1182 | - | - | chtab(93,itemp) = (1.4d-16/dsqrt(temp3)) | CO + He+ -> C + O+ + He |
-| ch94 | GENERATED | - | cheminmo.F:1191-1195 | - | - | if (temp <= 2d2):<br>chtab(94,itemp) = (8.58d-17*(temp**0.757d0))<br>elseif (temp <= 2d3):<br>chtab(94,itemp) = (3.25d-17*(temp**0.968d0))<br>else:<br>chtab(94,itemp) = (2.77d-19*(temp**1.597d0)) |  |
-| ch95 | GENERATED | - | cheminmo.F:1204-1208 | - | - | if (temp <= 1d6):<br>chtab(95,itemp) = ((1.23d-9*((temp/1d4)**0.24d0))*(1d0+(3.17d0*exp((4.18d-7*temp)))))<br>else:<br>chtab(95,itemp) = chtab(95,ifix)<br>_T>fit-range handled by re-evaluating at the fixed table temperature 10^6d0-ish (Fortran row-copy at ifix)_ |  |
-| ch96 | GENERATED | - | cheminmo.F:1217-1222 | - | - | if (temp <= 1d6):<br>chtab(96,itemp) = (((4.10d-10*((temp/1d4)**0.24d0))*(1d0+(3.17d0*exp((4.18d-7*temp)))))*exp((-(3.178d0/te))))<br>else:<br>chtab(96,itemp) = chtab(96,ifix)<br>_T>fit-range handled by re-evaluating at the fixed table temperature 10^6d0-ish (Fortran row-copy at ifix)_ |  |
-| ch97 | GENERATED | - | cheminmo.F:1236-1242 | - | - | if (temp <= 1d6):<br>chtab(97,itemp) = (((4.991d-15*((temp/1d4)**0.3794d0))*exp((-(temp/1.121d6))))+((2.780d-15*((temp/1d4)**(-0.2163d0)))*exp((temp/8.158d5))))<br>else:<br>chtab(97,itemp) = chtab(97,ifix)<br>_T>fit-range handled by re-evaluating at the fixed table temperature 10^6d0-ish (Fortran row-copy at ifix)_ |  |
-| ch98 | GENERATED | 17 | cheminmo.F:1264-1269 | - | - | if (temp <= 2.7d0):<br>chtab(98,itemp) = ((2d-10*(temp**0.402d0))*exp((-(37.1d0/temp))))<br>elseif (temp <= 2d5):<br>chtab(98,itemp) = (((2d-10*(temp**0.402d0))*exp((-(37.1d0/temp))))-(3.31d-17*(temp**1.48d0)))<br>else:<br>chtab(98,itemp) = (3.44d-10*(temp**0.35d0)) |  |
-| ch99 | GENERATED | 17 | cheminmo.F:1277-1278 | - | - | chtab(99,itemp) = (((2.06d-10*(temp**0.396d0))*exp((-(33d0/temp))))+(2.03d-9*(temp**(-0.332d0)))) | D+ + H -> D + H+ |
-| ch100 | GENERATED | 17 | cheminmo.F:1286-1287 | - | - | chtab(100,itemp) = (((0.417d0+(0.846d0*log10(temp)))-(0.137d0*(log10(temp)**2)))*1d-9) | HD formation: |
-| ch101 | GENERATED | 17 | cheminmo.F:1293-1293 | - | - | chtab(101,itemp) = (1.1d-9*exp((-(4.88d2/temp)))) | HD + H+ -> H2 + D+ |
-| ch102 | GENERATED | 17 | cheminmo.F:1300-1306 | - | - | if (temp <= 2d3):<br>chtab(102,itemp) = (1d1**((((((-5.64737d1)+(5.88886*dlog10(temp)))+(7.19692d0*(dlog10(temp)**2)))+(2.25069d0*(dlog10(temp)**3)))-(2.16903d0*(dlog10(temp)**4)))+(3.17887d-1*(dlog10(temp)**5))))<br>else:<br>chtab(102,itemp) = (3.17d-10*exp((-(5.207d3/temp)))) |  |
-| ch103 | GENERATED | 17 | cheminmo.F:1316-1319 | - | - | if (temp <= 2d2):<br>chtab(103,itemp) = (5.25d-11*exp((-(4.43d3/temp))))<br>else:<br>chtab(103,itemp) = (5.25d-11*exp(((-(4.43d3/temp))+(1.739d5/(temp**2))))) |  |
-| ch104 | GENERATED | - | cheminmo.F:1326-1327 | - | - | chtab(104,itemp) = ((4.46d-16*exp((-(4.93d0*(temp**(-(2d0/3d0)))))))/dsqrt(temp)) | CH+ formation by RA: C+ + H -> CH+ + gamma |
-| ch105 | GENERATED | - | cheminmo.F:1333-1334 | - | - | chtab(105,itemp) = ((2.24d-9*(temp3**0.042d0))*dexp((-(temp/4.66d4)))) | H3+ formation: H2+ + H2 -> H3+ + H |
-| ch106 | GENERATED | - | cheminmo.F:1341-1341 | - | - | chtab(106,itemp) = (6.7e-8/(temp3**0.52)) | H3+ destruction: H3+ DR  (total) |
-| ch107 | GENERATED | - | cheminmo.F:1347-1347 | - | - | chtab(107,itemp) = (7.7d-9*exp((-(1.756d4/temp)))) | H3+ destruction:  H3+ + H -> H2+ + H2 |
-| ch108 | GENERATED | 17 | cheminmo.F:1358-1377 | - | - | if (iflag_3bh2a == 1):<br>if (temp <= 3d2):<br>chtab(108,itemp) = (1.3d-32/(temp3**0.38d0))<br>else:<br>chtab(108,itemp) = (1.3d-32/temp3)<br>elseif (iflag_3bh2a == 2):<br>chtab(108,itemp) = (5.5d-29/temp)<br>elseif (iflag_3bh2a == 3):<br>chtab(108,itemp) = 8.8d-33<br>elseif (iflag_3bh2a == 4):<br>chtab(108,itemp) = (1.44d-26/(temp**1.54d0))<br>elseif (iflag_3bh2a == 5):<br>chtab(108,itemp) = (7.7d-31/(temp**0.464d0))<br>elseif (iflag_3bh2a == 6):<br>chtab(108,itemp) = ((6d-32/(temp**0.25d0))+(2 | From PSS83, based on JGC67 |
-| ch109 | GENERATED | 17 | cheminmo.F:1388-1398 | - | - | if (iflag_3bh2b == 1):<br>chtab(109,itemp) = (6.875d-30/temp)<br>elseif (iflag_3bh2b == 2):<br>chtab(109,itemp) = (2.8d-31/(temp**0.6d0))<br>elseif (iflag_3bh2b == 3):<br>chtab(109,itemp) = (1.8d-27/(temp**1.54d0))<br>elseif (iflag_3bh2b == 4):<br>chtab(109,itemp) = (chtab(108,itemp)/8d0)<br>else: | From PSS83, based on JGC67 |
-| ch110 | GENERATED | 17 | cheminmo.F:1411-1411 | - | - | chtab(110,itemp) = (6.9d-32*(temp**(-0.4d0))) | Three-body H2 formation: H + H + He -> H2 + He |
-| ch111 | GENERATED | - | cheminmo.F:1431-1435 | - | - | if (temp <= 2d3):<br>chtab(111,itemp) = ((2.14d-29*(temp3**(-3.08d0)))*exp(1.057d0))<br>else:<br>chtab(111,itemp) = ((2.14d-29*(temp3**(-3.08d0)))*exp((2.114d3/temp))) |  |
-| ch112 | GENERATED | - | cheminmo.F:1447-1451 | - | - | if (temp <= 2d3):<br>chtab(112,itemp) = ((2.14d-27*(temp3**(-3.08d0)))*exp(1.057d0))<br>else:<br>chtab(112,itemp) = ((2.14d-27*(temp3**(-3.08d0)))*exp((2.114d3/temp))) |  |
-| ch113 | GENERATED | - | cheminmo.F:1458-1458 | - | - | chtab(113,itemp) = (4.33d-32/temp3) | Three-body OH formation: H + O + M -> OH + M |
-| ch114 | GENERATED | - | cheminmo.F:1464-1464 | - | - | chtab(114,itemp) = (2.56d-31*(temp3**(-2.0d0))) | Three-body H2O formation: H + OH + M -> H2O + M |
-| ch115 | GENERATED | - | cheminmo.F:1476-1479 | - | - | if (temp <= 5d3):<br>chtab(115,itemp) = (5.99d-33*((temp/5d3)**(-1.6)))<br>else:<br>chtab(115,itemp) = ((5.99d-33*((temp/5d3)**(-0.64)))*exp((5.255d3/temp))) |  |
-| ch116 | GENERATED | - | cheminmo.F:1489-1489 | - | - | chtab(116,itemp) = (9.2d-34/temp3) | Three-body formation of O2: O + O + M -> O2 + M |
-| ch117 | GENERATED | - | cheminmo.F:1495-1495 | - | - | chtab(117,itemp) = (2d-11*(temp3**0.44)) | HCO+ formation: O + CH -> HCO+ + e- |
-| ch118 | GENERATED | - | cheminmo.F:1501-1502 | - | - | chtab(118,itemp) = ((1.65d-12*(temp3**1.14))*exp((-(5d1/temp)))) | H2O formation from OH-OH collisions: OH + OH -> H2O + O |
-| ch119 | GENERATED | - | cheminmo.F:1508-1508 | - | - | chtab(119,itemp) = (2.75d-7*(temp3**(-0.55d0))) | CO+ dissociative recombination:  CO+ + e -> C + O |
-| ch120 | GENERATED | - | cheminmo.F:1516-1516 | - | - | chtab(120,itemp) = (3.8d-10/dsqrt(temp3)) | C2+ formation from CH:  C+ + CH -> C2+ + H |
-| ch121 | GENERATED | - | cheminmo.F:1529-1529 | - | - | chtab(121,itemp) = (si2p_rec_rr+si2p_rec_dr) |  |
-| ch122 | GENERATED | - | cheminmo.F:1535-1535 | - | - | chtab(122,itemp) = (1.17d-17*(temp3**(-0.14))) | SiH+ formation by radiative association: Si+ + H -> SiH+ + gamma |
-| ch123 | GENERATED | - | cheminmo.F:1539-1539 | - | - | chtab(123,itemp) = (2.8d-12/(temp3**0.86)) | Mg+ recombination -- currently unused |
-| ch124 | GENERATED | - | cheminmo.F:1546-1549 | - | - | if (temp <= 3d2):<br>chtab(124,itemp) = 2.5d-18<br>else:<br>chtab(124,itemp) = ((3.14d-18*(temp3**(-0.15d0)))*exp((6.8d1/temp))) |  |
-| ch125 | GENERATED | - | cheminmo.F:1558-1562 | - | - | if (temp <= 1d5):<br>chtab(125,itemp) = ((2.7d-10*(temp3**(-0.485d0)))*dexp((temp/3.12d4)))<br>else:<br>chtab(125,itemp) = ((2.7d-10*((1d5/3d2)**(-0.485d0)))*dexp((1d5/3.12d4))) |  |
-| ch126 | GENERATED | 17 | cheminmo.F:1575-1576 | - | - | chtab(126,itemp) = ((2.7d-8*(temp**(-1.27d0)))*dexp((-(4.3d4/temp)))) | Dissociative attachment: H2 + e- -> H + H- |
-| ch127 | GENERATED | 17 | cheminmo.F:1584-1584 | - | - | chtab(127,itemp) = (1.4d-7/dsqrt(temp3)) | Neutralization of H2+ with H-:  H2+ + H- -> H2 + H |
-| ch128 | GENERATED | - | cheminmo.F:1590-1591 | - | - | chtab(128,itemp) = ((1.07d-9*(temp3**0.062d0))*exp((-(temp/4.14d4)))) | HD+ formation from H2+ and D: H2+ + D -> HD+ + H |
-| ch129 | GENERATED | - | cheminmo.F:1601-1601 | - | - | chtab(129,itemp) = (7.2d-8/sqrt(temp)) | HD+ dissociative recombination:  HD+ + e -> H + D |
-| ch130 | GENERATED | - | cheminmo.F:1607-1607 | - | - | chtab(130,itemp) = (1.0d-9*exp((-(1.54d2/temp)))) | H2+ formation from HD+ and H: HD+ + H -> H2+ + D |
-| ch131 | GENERATED | - | cheminmo.F:1613-1613 | - | - | chtab(131,itemp) = (6d-9*exp((-(5.09d4/temp)))) | Collisional dissociation of OH by H: OH + H -> O + H + H |
-| ch132 | GENERATED | - | cheminmo.F:1619-1619 | - | - | chtab(132,itemp) = (6d-9*exp((-(5.09d4/temp)))) | Collisional dissociation of OH by H2: OH + H2 -> O + H + H2 |
-| ch133 | GENERATED | - | cheminmo.F:1625-1625 | - | - | chtab(133,itemp) = (5.8d-9*exp((-(5.29d4/temp)))) | Collisional dissociation of H2O by H: H2O + H -> OH + H + H |
-| ch134 | GENERATED | - | cheminmo.F:1631-1631 | - | - | chtab(134,itemp) = (5.8d-9*exp((-(5.29d4/temp)))) | Collisional dissociation of H2O by H2: H2O + H2 -> OH + H + H2 |
-| ch135 | GENERATED | - | cheminmo.F:706-706 | - | - | chtab(135,itemp) = (5.115d3*(temp**3.903d-7)) | HeII: |
-| ch136 | GENERATED | - | cheminmo.F:708-708 | - | - | chtab(136,itemp) = ((-0.4956d0)-(5.494d-7*log(temp))) |  |
-| ch137 | GENERATED | 5,17 | cheminmo.F:1649-1658 | - | - | if (temp <= 1d4):<br>chtab(137,itemp) = (1d1**(((3.801*log10(temp))-27.029)-(2.9487d4/temp)))<br>else:<br>chtab(137,itemp) = (1d1**(((3.801*log10(tfix))-27.029)-(2.9487d4/tfix))) |  |
-| ch138 | GENERATED | 5,17 | cheminmo.F:1646-1646 | - | - | chtab(138,itemp) = ((6.6d-10*(temp**0.115))*dexp((-(5.2d4/temp)))) | ch135--ch136: used for HeII grain-surface recombination rate; see above |
-| ch139 | GENERATED | 5,17 | cheminmo.F:1653-1665 | - | - | if (temp <= 1d4):<br>chtab(139,itemp) = (1d1**(5.0792d0*(1d0-(1.23d-5*(temp-2d3)))))<br>else:<br>chtab(139,itemp) = (1d1**(5.0792d0*(1d0-(1.23d-5*(tfix-2d3)))))<br>chtab(139,itemp) = (1d0/chtab(139,itemp)) | chtab(138, itemp) = 1d1**(-1.75 * log10(temp) - 2.729 - |
-| ch140 | GENERATED | - | cheminmo.F:1669-1670 | - | - | chtab(140,itemp) = ((5.18d-11*(temp3**0.17d0))*exp((-(6.4d3/temp)))) | CH3 formation from CH2: CH2 + H2 -> CH3 + H |
-| ch141 | GENERATED | - | cheminmo.F:1674-1674 | - | - | chtab(141,itemp) = (1.0d-10*exp((-(7.6d3/temp)))) | CH3 destruction: CH3 + H -> CH2 + H2 |
-| ch142 | GENERATED | - | cheminmo.F:1678-1678 | - | - | chtab(142,itemp) = ((6.86d-14*(temp3**2.74))*exp((-(4.74d3/temp)))) | CH4 formation from CH3: CH3 + H2 -> CH4 + H |
-| ch143 | GENERATED | - | cheminmo.F:1682-1683 | - | - | chtab(143,itemp) = ((5.82d-13*(temp3**3.00))*exp((-(4.045d3/temp)))) | CH4 destruction: CH4 + H -> CH3 + H2 |
-| ch144 | GENERATED | 17 | cheminmo.F:1689-1689 | - | - | chtab(144,itemp) = ((1.2d-17*(temp**1.2))*dexp((-(1.578d5/temp)))) | HI collisional ionization by HI: H + H -> H + H+ + e |
-| ch145 | GENERATED | - | cheminmo.F:1696-1696 | - | - | chtab(145,itemp) = (1.1d-17*dsqrt(temp)) | Surface chem: |
-| ch146 | GENERATED | - | cheminmo.F:1700-1700 | - | - | chtab(146,itemp) = (3.8d-10/(temp**0.65)) | Gas phase recombination of representative trace metal M (used in NL99 network) |
-| ch147 | GENERATED | - | cheminmo.F:1709-1709 | - | - | chtab(147,itemp) = (5.8d-12*dsqrt(temp)) | Formation of CO from OHx [NL99]: C + OHx -> CO + H |
-| ch148 | GENERATED | - | cheminmo.F:1716-1716 | - | - | chtab(148,itemp) = ((1.2d-17*(temp**1.2d0))*exp((-(1.5782d5/temp)))) | Collisional ionization of H by H: H + H -> H+ + e- + H |
-| ch149 | GENERATED | - | cheminmo.F:1724-1724 | - | - | chtab(149,itemp) = ((1d-12*dsqrt(temp))*exp((-(3.1d4/temp)))) | High-temperature collisional dissociation of H2+ into H + H+. |
-| ch150 | GENERATED | - | cheminmo.F:1730-1730 | - | - | chtab(150,itemp) = (7.5d-11/(temp3**0.18)) | Formation of NO:  N + OH -> NO + H |
-| ch151 | GENERATED | - | cheminmo.F:1736-1736 | - | - | chtab(151,itemp) = (3.75d-11*dexp((-(26d0/temp)))) | Formation of N2 from NO: NO + N -> N2 + O |
-| ch152 | GENERATED | - | cheminmo.F:1748-1748 | - | - | chtab(152,itemp) = (1d-6/(temp3**0.51d0)) | Dissociative recombination of N2H+:  N2H+ + e -> N2 + H |
-| ch153 | GENERATED | 17 | cheminmo.F:1755-1755 | - | - | chtab(153,itemp) = (3.0d-8*((temp/3d2)**(-0.47d0))) | HeH+ + e- -> He + H |
-| ch154 | GENERATED | 17 | cheminmo.F:1759-1759 | - | - | chtab(154,itemp) = (3.0d-10*dexp((-(6.72d3/temp)))) | He + H2+  -> HeH+ + H |
-| ch155 | GENERATED | 17 | cheminmo.F:1765-1766 | - | - | chtab(155,itemp) = ((8.0d-20*((temp/3d2)**(-0.24d0)))*dexp((-(temp/4000)))) | He + H+  -> HeH+ + PHOTON |
-| ch156 | GENERATED | 17 | cheminmo.F:1772-1773 | - | - | chtab(156,itemp) = ((1.04d-9*((temp/3d2)**0.13d0))*exp((-(temp/3.31d4)))) | HeH+ + H -> H2+ + He |
-| ch157 | GENERATED | 17 | cheminmo.F:1786-1790 | - | - | chtab(157,itemp) = (1d6*(((((4.2278d-14-(2.3088d-17*tfix))+(7.3428d-21*(tfix**2)))-(7.5474d-25*(tfix**3)))+(3.3468d-29*(tfix**4)))-(5.5280d-34*(tfix**5)))) |  |
-| ch158 | GENERATED | 17 | cheminmo.F:1795-1795 | - | - | chtab(158,itemp) = ((1.75d-17*(temp**1.3))*dexp((-(1.578d5/temp)))) | Collisional ionization of H by He |
-| ch159 | GENERATED | 17 | cheminmo.F:1800-1800 | - | - | chtab(159,itemp) = ((1.54d-12*(temp**0.45))*dexp((-(3.1d4/temp)))) | Collisional dissociation of H2+ by H, low density limit |
-| ch160 | GENERATED | 17 | cheminmo.F:1805-1806 | - | - | chtab(160,itemp) = dexp(((((-32.912)+(6.9498d-5*temp))-(3.3248d4/temp))-(4.08d-9*(temp**2)))) | Collisional dissociation of H2+ by H, LTE limit |
-| ch161 | GENERATED | 5,17 | cheminmo.F:1821-1825 | - | - | chtab(161,itemp) = (((((-178.4239d0)-(68.42243d0*log10(temp_msm)))+(43.20243d0*(dlog10(temp_msm)**2)))-(4.633167d0*(dlog10(temp_msm)**3)))+(69.70086d0*dlog10((1d0+(4.087038d4/temp_msm))))) | High n CID rate |
-| ch162 | GENERATED | 5,17 | cheminmo.F:1826-1826 | - | - | chtab(162,itemp) = (-(2.370570d4/temp_msm)) |  |
-| ch163 | GENERATED | 5,17 | cheminmo.F:1828-1831 | - | - | chtab(163,itemp) = (((1.288953d2-(5.391334d1*log10(temp_msm)))+(5.315517d0*(dlog10(temp_msm)**2)))-(1.973427d1*dlog10((1d0+(1.678095d4/temp_msm))))) | Low n CID rate |
-| ch164 | GENERATED | 5,17 | cheminmo.F:1832-1832 | - | - | chtab(164,itemp) = (-(2.578611d4/temp_msm)) |  |
-| ch165 | GENERATED | 5,17 | cheminmo.F:1834-1837 | - | - | chtab(165,itemp) = (1d1**(((1.482123d1-(4.890915d0*dlog10(temp_msm)))+(4.749030d-1*(dlog10(temp_msm)**2)))-(1.338283d2/temp_msm))) | ncrit (CID) |
-| ch166 | GENERATED | 5,17 | cheminmo.F:1838-1840 | - | - | chtab(166,itemp) = ((8.227443d-1+(5.864073d-1*dexp((-(temp_msm/1.85d3)))))-(2.056313d0*dexp((-(temp_msm/4.4d2))))) |  |
-| ch167 | GENERATED | 5,17 | cheminmo.F:1842-1846 | - | - | chtab(167,itemp) = (((((-142.7664d0)+(42.70741d0*dlog10(temp_msm)))-(2.027365d0*(dlog10(temp_msm)**2)))-(2.582097d-1*(dlog10(temp_msm)**3)))+(2.136094d1*dlog10((1d0+(2.753531d4/temp_msm))))) | High n DT rate |
-| ch168 | GENERATED | 5,17 | cheminmo.F:1847-1847 | - | - | chtab(168,itemp) = (-(2.146779d4/temp_msm)) |  |
-| ch169 | GENERATED | 5,17 | cheminmo.F:1849-1852 | - | - | chtab(169,itemp) = (((60.34928d0-(27.43096d0*dlog10(temp_msm)))+(2.676150d0*(dlog10(temp_msm)**2)))-(11.28215d0*dlog10((1d0+(1.425455d4/temp_msm))))) | Low n DT rate |
-| ch170 | GENERATED | 5,17 | cheminmo.F:1853-1853 | - | - | chtab(170,itemp) = (-(23125.2d0/temp_msm)) |  |
-| ch171 | GENERATED | 5,17 | cheminmo.F:1855-1858 | - | - | chtab(171,itemp) = (1d1**(((9.305564d0-(2.464009d0*dlog10(temp_msm)))+(0.1985955d0*(dlog10(temp_msm)**2)))+(743.0600d0/temp_msm))) | ncrit (DT) |
-| ch172 | GENERATED | 5,17 | cheminmo.F:1859-1861 | - | - | chtab(172,itemp) = ((7.502286d-1+(2.358848d-1*dexp((-(temp_msm/1.85d3)))))+(2.937507d0*dexp((-(temp_msm/4d2))))) |  |
-| ch173 | GENERATED | 17 | cheminmo.F:1865-1866 | - | - | chtab(173,itemp) = (1d6*dexp(((((-33.081)+(6.3173d-5*temp))-(2.3478d4/temp))-(1.8691d-9*(temp**2))))) | H2 + H+ -> H2+ + H, LTE limit; from Coppola et al 2011 |
-| cr1 | GENERATED | 5,17 | cheminmo.F:1930-1930 | - | - | crtab(1) = 1d0 | Primary cosmic ray ionization rates - calculated as scale factor * HI |
-| cr2 | GENERATED | 5,17 | cheminmo.F:1935-1935 | - | - | crtab(2) = 1d0 | H2: |
-| cr3 | GENERATED | - | cheminmo.F:1945-1945 | - | - | crtab(3) = 3.83d0 | CI: |
-| cr4 | GENERATED | - | cheminmo.F:1949-1949 | - | - | crtab(4) = 5.67d0 | OI: |
-| cr5 | GENERATED | - | cheminmo.F:1953-1953 | - | - | crtab(5) = 6.5d0 | SiI: |
-| cr6 | GENERATED | 17 | cheminmo.F:1957-1957 | - | - | crtab(6) = 1.09d0 | HeI: |
-| cr7 | GENERATED | - | cheminmo.F:1961-1961 | - | - | crtab(7) = 2.5d0 | Si+: |
-| cr9 | GENERATED | - | cheminmo.F:1965-1965 | - | - | crtab(9) = 6.52d0 | CO: [NB. Direct ionization by cosmic rays] |
-| cr10 | GENERATED | 5 | cheminmo.F:1939-1939 | - | - | crtab(10) = 3.7d-2 |  |
-| cr11 | GENERATED | 5 | cheminmo.F:1940-1940 | - | - | crtab(11) = 2.2d-1 |  |
-| cr12 | GENERATED | - | cheminmo.F:1941-1941 | - | - | crtab(12) = 6.5d-4 |  |
-| cr13 | GENERATED | - | cheminmo.F:1969-1969 | - | - | crtab(13) = 1d1 | CO: direct dissociation by cosmic rays (KIDA) |
-| crphot1 | GENERATED | - | cheminmo.F:1977-1977 | - | - | crphot(1) = 2.8d3 | Cosmic-ray induced photoprocesses |
-| crphot2 | GENERATED | - | cheminmo.F:1980-1980 | - | - | crphot(2) = 4d3 | CH -> C + H |
-| crphot3 | GENERATED | - | cheminmo.F:1982-1982 | - | - | crphot(3) = 9.6d2 | CH+ -> C+ + H |
-| crphot4 | GENERATED | - | cheminmo.F:1984-1984 | - | - | crphot(4) = 2.7d3 | CH2 -> CH2+ + e |
-| crphot5 | GENERATED | - | cheminmo.F:1986-1986 | - | - | crphot(5) = 2.7d3 | CH2 -> CH + H |
-| crphot6 | GENERATED | - | cheminmo.F:1988-1988 | - | - | crphot(6) = 1.3d3 | C2 -> C + C |
-| crphot7 | GENERATED | - | cheminmo.F:1990-1990 | - | - | crphot(7) = 2.8d3 | OH -> O + H |
-| crphot8 | GENERATED | - | cheminmo.F:1992-1992 | - | - | crphot(8) = 5.3d3 | H2O -> OH + H |
-| crphot9 | GENERATED | - | cheminmo.F:1994-1994 | - | - | crphot(9) = 4.1d3 | O2 -> O + O |
-| crphot10 | GENERATED | - | cheminmo.F:1996-1996 | - | - | crphot(10) = 6.4d2 | O2 -> O2+ + e |
-| crphot11 | GENERATED | - | cheminmo.F:2001-2001 | - | - | crphot(11) = 0.21d0 | CO -> C + O |
-| crphot12 | GENERATED | - | cheminmo.F:2007-2007 | - | - | crphot(12) = 5.2d3 | NO -> N + O |
+| ch23 | GENERATED | 17 | cheminmo.F:525-528 | - | - | chtab(23,itemp) = (10d0**((((-18.20d0)-(3.194d0*dlog10(temp)))+(1.786d0*(dlog10(temp)**2)))-(0.2072d0*(dlog10(temp)**3)))) | H_2+ formation from HI (H + H+ => H_2+) |
+| ch24 | GENERATED | 17 | cheminmo.F:546-558 | - | - | if (temp < 1d2):<br>chtab(24,itemp) = 0d0<br>elseif (temp <= 3d4):<br>chtab(24,itemp) = (((((((((-3.3232183d-7)+(3.3735382d-7*dlog(temp)))-(1.4491368d-7*(dlog(temp)**2)))+(3.4172805d-8*(dlog(temp)**3)))-(4.7813720d-9*(dlog(temp)**4)))+(3.9731542d-10*(dlog(temp)**5)))-(1.8171411d-11*(dlog(temp)**6)))+(3.5311932d-13*(dlog(temp)**7)))*dexp((-(2.1237150d4/temp))))<br>else:<br>chtab(24,itemp) = (3.7289d-10*dexp((-(2.1237150d4/temp)))) |  |
+| ch25 | GENERATED | 5,17 | cheminmo.F:565-566 | - | - | chtab(25,itemp) = ((4.4886d-9*(temp**0.109127d0))*dexp((-(1.01858d5/temp)))) | CID of H_2 by electrons (H_2 + e => 2H + e) |
+| ch26 | GENERATED | 17 | cheminmo.F:571-579 | - | - | chtab(26,itemp) = exp((((((((((-18.01849334d0)+(2.3608522d0*lnte))-(0.28274430d0*(lnte**2)))+(1.62331664d-2*(lnte**3)))-(3.36501203d-2*(lnte**4)))+(1.17832978d-2*(lnte**5)))-(1.65619470d-3*(lnte**6)))+(1.06827520d-4*(lnte**7)))-(2.63128581d-6*(lnte**8)))) | Destruction of H- by electrons (H- + e => H + 2e) |
+| ch27 | GENERATED | 17 | cheminmo.F:585-596 | - | - | if (te <= 1d-1):<br>chtab(27,itemp) = (2.5634d-9*(te**1.78186d0))<br>else:<br>chtab(27,itemp) = exp(((((((((((-20.37260896d0)+(1.13944933d0*lnte))-(0.14210135d0*(lnte**2)))+(8.4644554d-3*(lnte**3)))-(1.4327641d-3*(lnte**4)))+(2.0122503d-4*(lnte**5)))+(8.6639632d-5*(lnte**6)))-(2.5850097d-5*(lnte**7)))+(2.4555012d-6*(lnte**8)))-(8.0683825d-8*(lnte**9)))) |  |
+| ch28 | GENERATED | 17 | cheminmo.F:603-613 | - | - | if (iflag_mn == 1):<br>chtab(28,itemp) = ((((5.7d-6/dsqrt(temp))+6.3d-8)-(9.2d-11*dsqrt(temp)))+(4.4d-13*temp))<br>elseif (iflag_mn == 2):<br>chtab(28,itemp) = (7d-7/dsqrt(temp))<br>elseif (iflag_mn == 3):<br>chtab(28,itemp) = (4d-6/dsqrt(temp))<br>elseif (iflag_mn == 4):<br>chtab(28,itemp) = ((2.4d-6*(1d0+(temp/2d4)))/dsqrt(temp))<br>else: | From GP98, based on data from MAP70. |
+| ch29 | GENERATED | 17 | cheminmo.F:623-625 | - | - | if (temp <= 8d3):<br>chtab(29,itemp) = (6.9d-9/(temp**0.35d0))<br>else:<br>chtab(29,itemp) = (9.6d-7/(temp**0.9d0)) |  |
+| ch30 | GENERATED | 17 | cheminmo.F:643-645 | - | - | if (temp <= 6.17d2):<br>chtab(30,itemp) = 1d-8<br>else:<br>chtab(30,itemp) = (1.32d-6/(temp**0.76d0)) |  |
+| ch31 | GENERATED | 17 | cheminmo.F:651-651 | - | - | chtab(31,itemp) = ((4.1d-17*(temp**2))*dexp((-(19870d0/temp)))) | H- electron detachment by He (H- + He -> H + He + e) |
+| ch32 | GENERATED | 17 | cheminmo.F:658-658 | - | - | chtab(32,itemp) = (1.2d-15*((temp/3d2)**0.25d0)) | Charge transfer, helium to hydrogen: (He+ + H -> He + H+) |
+| ch33 | GENERATED | 17 | cheminmo.F:667-670 | - | - | if (temp <= 1d4):<br>chtab(33,itemp) = ((1.26d-9*exp((-(1.275d5/temp))))/(temp**0.75d0))<br>else:<br>chtab(33,itemp) = (4d-37*(temp**4.74d0)) |  |
+| ch34 | GENERATED | 5,17 | cheminmo.F:692-692 | - | - | chtab(34,itemp) = (5.087d2*(temp**1.586d-2)) | Grain assisted recombination. Rate from WD01. |
+| ch35 | GENERATED | 5,17 | cheminmo.F:694-694 | - | - | chtab(35,itemp) = ((-0.4723d0)-(1.102d-5*log(temp))) |  |
+| ch36 | GENERATED | - | cheminmo.F:698-698 | - | - | chtab(36,itemp) = (4.331d2*(temp**4.845d-2)) | CII: |
+| ch37 | GENERATED | - | cheminmo.F:700-700 | - | - | chtab(37,itemp) = ((-0.8120d0)-(1.333d-4*log(temp))) |  |
+| ch38 | GENERATED | - | cheminmo.F:704-704 | - | - | chtab(38,itemp) = (4.375d4*(temp**1.635d-6)) | SiII: |
+| ch39 | GENERATED | - | cheminmo.F:706-706 | - | - | chtab(39,itemp) = ((-0.8964d0)-(7.538d-5*log(temp))) |  |
+| ch40 | GENERATED | - | cheminmo.F:744-750 | - | - | if (temp <= 7.95d3):<br>chtab(40,itemp) = (4.67d-12*(temp3**(-0.6d0)))<br>elseif (temp <= 2.114d4):<br>chtab(40,itemp) = ((1.23d-17*(temp3**2.49d0))*exp((2.18456d4/temp)))<br>else:<br>chtab(40,itemp) = ((9.62d-8*(temp3**(-1.37d0)))*exp((-(1.157862d5/temp)))) |  |
+| ch41 | GENERATED | - | cheminmo.F:770-776 | - | - | if (temp <= 2d3):<br>chtab(41,itemp) = (7.50d-12/(temp3**0.55))<br>elseif (temp <= 1d4):<br>chtab(41,itemp) = (4.86d-12/(temp3**0.32))<br>elseif (temp <= 7.9d4):<br>chtab(41,itemp) = (9.08d-14*(temp3**0.818))<br>else:<br>chtab(41,itemp) = (5.89d-9/(temp3**1.17)) |  |
+| ch42 | GENERATED | - | cheminmo.F:788-793 | - | - | if (temp <= 4d2):<br>chtab(42,itemp) = (1.30d-10/(temp**0.64d0))<br>else:<br>chtab(42,itemp) = ((1.41d-10/(temp**0.66d0))+(((7.4d-4*dexp((-(1.75d5/temp))))*(1d0+(6.2d-2*dexp((-(1.45d5/temp))))))/(temp**1.5))) |  |
+| ch43 | GENERATED | - | cheminmo.F:803-806 | - | - | if (u > 1d2):<br>chtab(43,itemp) = 0d0<br>else:<br>chtab(43,itemp) = (((6.85d-8/(0.193d0+u))*(u**0.25d0))*dexp((-u))) |  |
+| ch44 | GENERATED | - | cheminmo.F:814-817 | - | - | if (u > 1d2):<br>chtab(44,itemp) = 0d0<br>else:<br>chtab(44,itemp) = ((((1.88d-7*(1d0+dsqrt(u)))/(0.376d0+u))*(u**0.25d0))*dexp((-u))) |  |
+| ch45 | GENERATED | - | cheminmo.F:825-828 | - | - | if (u > 1d2):<br>chtab(45,itemp) = 0d0<br>else:<br>chtab(45,itemp) = (((3.59d-8/(0.073d0+u))*(u**0.34d0))*dexp((-u))) |  |
+| ch46 | GENERATED | - | cheminmo.F:835-836 | - | - | chtab(46,itemp) = ((2.08d-9*((temp/1d4)**0.405d0))+(1.11d-11*((temp/1d4)**(-0.458d0)))) | Charge transfer: |
+| ch47 | GENERATED | - | cheminmo.F:846-848 | - | - | chtab(47,itemp) = (((1.26d-9*((temp/1d4)**0.517d0))+(4.25d-10*((temp/1d4)**6.69d-3)))*dexp((-(227d0/temp)))) | OI  + HII -> OII + HI  -- from SS99. |
+| ch48 | GENERATED | - | cheminmo.F:855-859 | - | - | if (temp <= 1d5):<br>chtab(48,itemp) = (2.80d-15*((temp/1d4)**0.213d0))<br>else:<br>chtab(48,itemp) = ((2.80d-15*((temp/1d4)**0.213d0))+((1.28d-15*((temp/1d4)**3.08d0))*dexp((-(2.19d6/temp))))) |  |
+| ch49 | GENERATED | - | cheminmo.F:873-875 | - | - | if (temp <= 1d4):<br>chtab(49,itemp) = (5.88d-13*(temp**0.848d0))<br>else:<br>chtab(49,itemp) = (1.45d-13*temp) |  |
+| ch50 | GENERATED | - | cheminmo.F:880-880 | - | - | chtab(50,itemp) = (9.90d-19/(temp3**0.38)) | O + H  -> OH + gamma -- rate from UMIST99 |
+| ch51 | GENERATED | - | cheminmo.F:884-884 | - | - | chtab(51,itemp) = ((5.26d-18/(temp3**5.22))*exp((-(9d1/temp)))) | H + OH -> H2O + gamma -- rate from UMIST99, based on FAS80 |
+| ch52 | GENERATED | - | cheminmo.F:888-888 | - | - | chtab(52,itemp) = ((3.14d-13*(temp3**2.7))*exp((-(3.15d3/temp)))) | O + H2 -> OH + H -- rate from UMIST99, based on NR87 |
+| ch53 | GENERATED | - | cheminmo.F:892-892 | - | - | chtab(53,itemp) = ((6.99d-14*(temp3**2.8))*exp((-(1.95d3/temp)))) | H + OH  -> O + H2 -- rate from UMIST99, based on TH86 |
+| ch54 | GENERATED | - | cheminmo.F:896-896 | - | - | chtab(54,itemp) = ((2.05d-12*(temp3**1.52))*exp((-(1.736d3/temp)))) | H2 + OH -> H2O + H -- rate from UMIST99, based on OLD92 |
+| ch55 | GENERATED | - | cheminmo.F:900-900 | - | - | chtab(55,itemp) = ((1.59d-11*(temp3**1.2))*exp((-(9.61d3/temp)))) | H + H2O -> OH + H2 -- rate from UMIST99, based on CW79 |
+| ch56 | GENERATED | - | cheminmo.F:910-910 | - | - | chtab(56,itemp) = (1.1d-7/temp3) | Dissociative recombination of HOC+:  HOC+ + e -> CO + H |
+| ch57 | GENERATED | - | cheminmo.F:917-920 | - | - | if (temp <= 3d2):<br>chtab(57,itemp) = 2.1d-19<br>else:<br>chtab(57,itemp) = ((3.09d-17*(temp3**0.33))*exp((-(1.629d3/temp)))) |  |
+| ch58 | GENERATED | - | cheminmo.F:928-929 | - | - | chtab(58,itemp) = ((6.08d-14*((temp/1d4)**1.96d0))*exp((-(1.7d5/temp)))) | C+ + H -> C + H+ |
+| ch59 | GENERATED | - | cheminmo.F:935-935 | - | - | chtab(59,itemp) = (4.0d-16/(temp3**0.2d0)) | CH2+ formation by radiative association: C+ + H2 -> CH2+ + gamma |
+| ch60 | GENERATED | - | cheminmo.F:941-941 | - | - | chtab(60,itemp) = (1.0d-10*exp((-(4.64d3/temp)))) | CH+ formation from endothermic reaction between C+ and H2: C+ + H2 -> CH+ + H |
+| ch61 | GENERATED | - | cheminmo.F:947-947 | - | - | chtab(61,itemp) = (7.0d-8/(temp3**0.5d0)) | CH+ dissociative recombination: CH+ + e- -> C + H |
+| ch62 | GENERATED | - | cheminmo.F:953-953 | - | - | chtab(62,itemp) = (1.0d-9*exp((-(7.08d3/temp)))) | CH2+ destruction by reaction with H: CH2+ + H -> CH+ + H2 |
+| ch63 | GENERATED | - | cheminmo.F:961-961 | - | - | chtab(63,itemp) = (1.60d-7/(temp3**0.60d0)) | CH2+ dissociative recombination |
+| ch64 | GENERATED | - | cheminmo.F:962-962 | - | - | chtab(64,itemp) = (4.03d-7/(temp3**0.60d0)) |  |
+| ch65 | GENERATED | - | cheminmo.F:963-963 | - | - | chtab(65,itemp) = (7.68d-8/(temp3**0.60d0)) |  |
+| ch66 | GENERATED | - | cheminmo.F:969-969 | - | - | chtab(66,itemp) = (7d-10*exp((-(1.056d4/temp)))) | CH3+ destruction by atomic H: CH3+ + H -> CH2+ + H2 |
+| ch67 | GENERATED | - | cheminmo.F:976-976 | - | - | chtab(67,itemp) = (7.75d-8/dsqrt(temp3)) | CH3+ dissociative recombination: |
+| ch68 | GENERATED | - | cheminmo.F:977-977 | - | - | chtab(68,itemp) = (1.95d-7/dsqrt(temp3)) |  |
+| ch69 | GENERATED | - | cheminmo.F:978-978 | - | - | chtab(69,itemp) = (2.00d-7/(temp3**0.4d0)) |  |
+| ch70 | GENERATED | - | cheminmo.F:985-985 | - | - | chtab(70,itemp) = (5.46d-10*exp((-(1.943d3/temp)))) | CH2 formation from CH:  CH + H2 -> CH2 + H |
+| ch71 | GENERATED | - | cheminmo.F:991-991 | - | - | chtab(71,itemp) = (4.318d-7/dsqrt(temp3)) | H3O+ dissociative recombination, total rate; branching ratios in rate_eq |
+| ch72 | GENERATED | - | cheminmo.F:997-997 | - | - | chtab(72,itemp) = (6.3d-9*(temp3**(-0.48d0))) | OH+ dissociative recombination:  OH+ + e- -> O + H |
+| ch73 | GENERATED | - | cheminmo.F:1003-1003 | - | - | chtab(73,itemp) = (4.3d-7/dsqrt(temp3)) | H2O+ dissociative recombination, total rate; branching ratios in rate_eq |
+| ch74 | GENERATED | - | cheminmo.F:1009-1009 | - | - | chtab(74,itemp) = (2d-7/dsqrt(temp3)) | SiH+ dissociative recombination: SiH+ + e -> Si + H |
+| ch75 | GENERATED | - | cheminmo.F:1015-1015 | - | - | chtab(75,itemp) = (5d-7/dsqrt(temp3)) | SiH2+ dissociative recombination, total rate; branching ratios in rate_eq |
+| ch76 | GENERATED | - | cheminmo.F:1019-1019 | - | - | chtab(76,itemp) = 0d0 | ch76 -- formerly collisional dissoc. of OH by HI; currently unused |
+| ch77 | GENERATED | - | cheminmo.F:1027-1029 | - | - | if (temp <= 2d3):<br>chtab(77,itemp) = 6.6d-11<br>else:<br>chtab(77,itemp) = (1.02d-10*exp((-(914d0/temp)))) |  |
+| ch78 | GENERATED | - | cheminmo.F:1036-1036 | - | - | chtab(78,itemp) = (6.64d-10*exp((-(1.17d4/temp)))) | CH formation from C and H2:  C + H2 -> CH + H |
+| ch79 | GENERATED | - | cheminmo.F:1042-1043 | - | - | chtab(79,itemp) = ((4.36d-18*(temp3**0.35d0))*exp((-(1.613d2/temp)))) | C2 formation by RA of carbon: C + C -> C2 + gamma |
+| ch80 | GENERATED | - | cheminmo.F:1049-1049 | - | - | chtab(80,itemp) = (1.31d-10*exp((-(8d1/temp)))) | CH destruction by atomic H: CH + H -> C + H2 |
+| ch81 | GENERATED | - | cheminmo.F:1061-1063 | - | - | if (temp <= 2.61d2):<br>chtab(81,itemp) = 3.5d-11<br>else:<br>chtab(81,itemp) = (1.77d-11*exp((1.78d2/temp))) |  |
+| ch82 | GENERATED | - | cheminmo.F:1070-1070 | - | - | chtab(82,itemp) = (4.9d-20*(temp3**1.58d0)) | O2 formation by RA of oxygen:  O + O -> O2 + gamma |
+| ch83 | GENERATED | - | cheminmo.F:1078-1081 | - | - | if (temp <= 2.95d2):<br>chtab(83,itemp) = (4.7d-11*(temp3**(-0.34)))<br>else:<br>chtab(83,itemp) = ((2.48d-12*(temp3**1.54d0))*exp((6.13d2/temp))) |  |
+| ch84 | GENERATED | - | cheminmo.F:1088-1088 | - | - | chtab(84,itemp) = (1.95d-7/(temp3**0.7d0)) | O2+ dissociative recombination:  O2+ + e- -> O + O |
+| ch85 | GENERATED | - | cheminmo.F:1095-1095 | - | - | chtab(85,itemp) = (2.61d-10*exp((-(8.156d3/temp)))) | O2 destruction by atomic hydrogen: O2 + H -> OH + O |
+| ch86 | GENERATED | - | cheminmo.F:1101-1101 | - | - | chtab(86,itemp) = (3.16d-10*exp((-(2.189d4/temp)))) | O2 destruction by H2:  O2 + H2 -> OH + OH |
+| ch87 | GENERATED | - | cheminmo.F:1107-1107 | - | - | chtab(87,itemp) = (3.0d-7/(temp3**0.64)) | HCO+ dissociative recombination: HCO+ + e -> products. |
+| ch88 | GENERATED | - | cheminmo.F:1121-1121 | - | - | chtab(88,itemp) = (2.3d-7/dsqrt(temp3)) | Mutual neutralization, generic rate. |
+| ch89 | GENERATED | - | cheminmo.F:1127-1128 | - | - | chtab(89,itemp) = ((1.1d-10*dsqrt(temp3))*exp((-(7.77d4/temp)))) | CO destruction by atomic hydrogen:  CO + H -> C + OH |
+| ch90 | GENERATED | - | cheminmo.F:1139-1141 | - | - | if (temp <= 3d2):<br>chtab(90,itemp) = (5d-11*dsqrt(temp3))<br>else:<br>chtab(90,itemp) = (5d-11*(temp3**0.757d0)) |  |
+| ch91 | GENERATED | - | cheminmo.F:1164-1168 | - | - | if (temp > 7d0):<br>chtab(91,itemp) = ((3.9d-19*((temp/3d2)**1.8d0))*exp((2d1/temp)))<br>else:<br>chtab(91,itemp) = ((3.9d-19*((7d0/3d2)**1.8d0))*exp((2d1/7d0))) |  |
+| ch92 | GENERATED | 17 | cheminmo.F:1177-1179 | - | - | chtab(92,itemp) = (1.4d-9/dsqrt(temp3))<br>if (chtab(92,itemp) > 1.6d-9):<br>chtab(92,itemp) = 1.6d-9 | Dissociative charge transfer of CO: |
+| ch93 | GENERATED | - | cheminmo.F:1186-1186 | - | - | chtab(93,itemp) = (1.4d-16/dsqrt(temp3)) | CO + He+ -> C + O+ + He |
+| ch94 | GENERATED | - | cheminmo.F:1195-1199 | - | - | if (temp <= 2d2):<br>chtab(94,itemp) = (8.58d-17*(temp**0.757d0))<br>elseif (temp <= 2d3):<br>chtab(94,itemp) = (3.25d-17*(temp**0.968d0))<br>else:<br>chtab(94,itemp) = (2.77d-19*(temp**1.597d0)) |  |
+| ch95 | GENERATED | - | cheminmo.F:1208-1212 | - | - | if (temp <= 1d6):<br>chtab(95,itemp) = ((1.23d-9*((temp/1d4)**0.24d0))*(1d0+(3.17d0*exp((4.18d-7*temp)))))<br>else:<br>chtab(95,itemp) = chtab(95,ifix)<br>_T>fit-range handled by re-evaluating at the fixed table temperature 10^6d0-ish (Fortran row-copy at ifix)_ |  |
+| ch96 | GENERATED | - | cheminmo.F:1221-1226 | - | - | if (temp <= 1d6):<br>chtab(96,itemp) = (((4.10d-10*((temp/1d4)**0.24d0))*(1d0+(3.17d0*exp((4.18d-7*temp)))))*exp((-(3.178d0/te))))<br>else:<br>chtab(96,itemp) = chtab(96,ifix)<br>_T>fit-range handled by re-evaluating at the fixed table temperature 10^6d0-ish (Fortran row-copy at ifix)_ |  |
+| ch97 | GENERATED | - | cheminmo.F:1240-1246 | - | - | if (temp <= 1d6):<br>chtab(97,itemp) = (((4.991d-15*((temp/1d4)**0.3794d0))*exp((-(temp/1.121d6))))+((2.780d-15*((temp/1d4)**(-0.2163d0)))*exp((temp/8.158d5))))<br>else:<br>chtab(97,itemp) = chtab(97,ifix)<br>_T>fit-range handled by re-evaluating at the fixed table temperature 10^6d0-ish (Fortran row-copy at ifix)_ |  |
+| ch98 | GENERATED | 17 | cheminmo.F:1268-1273 | - | - | if (temp <= 2.7d0):<br>chtab(98,itemp) = ((2d-10*(temp**0.402d0))*exp((-(37.1d0/temp))))<br>elseif (temp <= 2d5):<br>chtab(98,itemp) = (((2d-10*(temp**0.402d0))*exp((-(37.1d0/temp))))-(3.31d-17*(temp**1.48d0)))<br>else:<br>chtab(98,itemp) = (3.44d-10*(temp**0.35d0)) |  |
+| ch99 | GENERATED | 17 | cheminmo.F:1281-1282 | - | - | chtab(99,itemp) = (((2.06d-10*(temp**0.396d0))*exp((-(33d0/temp))))+(2.03d-9*(temp**(-0.332d0)))) | D+ + H -> D + H+ |
+| ch100 | GENERATED | 17 | cheminmo.F:1290-1291 | - | - | chtab(100,itemp) = (((0.417d0+(0.846d0*log10(temp)))-(0.137d0*(log10(temp)**2)))*1d-9) | HD formation: |
+| ch101 | GENERATED | 17 | cheminmo.F:1297-1297 | - | - | chtab(101,itemp) = (1.1d-9*exp((-(4.88d2/temp)))) | HD + H+ -> H2 + D+ |
+| ch102 | GENERATED | 17 | cheminmo.F:1304-1310 | - | - | if (temp <= 2d3):<br>chtab(102,itemp) = (1d1**((((((-5.64737d1)+(5.88886*dlog10(temp)))+(7.19692d0*(dlog10(temp)**2)))+(2.25069d0*(dlog10(temp)**3)))-(2.16903d0*(dlog10(temp)**4)))+(3.17887d-1*(dlog10(temp)**5))))<br>else:<br>chtab(102,itemp) = (3.17d-10*exp((-(5.207d3/temp)))) |  |
+| ch103 | GENERATED | 17 | cheminmo.F:1320-1323 | - | - | if (temp <= 2d2):<br>chtab(103,itemp) = (5.25d-11*exp((-(4.43d3/temp))))<br>else:<br>chtab(103,itemp) = (5.25d-11*exp(((-(4.43d3/temp))+(1.739d5/(temp**2))))) |  |
+| ch104 | GENERATED | - | cheminmo.F:1330-1331 | - | - | chtab(104,itemp) = ((4.46d-16*exp((-(4.93d0*(temp**(-(2d0/3d0)))))))/dsqrt(temp)) | CH+ formation by RA: C+ + H -> CH+ + gamma |
+| ch105 | GENERATED | - | cheminmo.F:1337-1338 | - | - | chtab(105,itemp) = ((2.24d-9*(temp3**0.042d0))*dexp((-(temp/4.66d4)))) | H3+ formation: H2+ + H2 -> H3+ + H |
+| ch106 | GENERATED | - | cheminmo.F:1345-1345 | - | - | chtab(106,itemp) = (6.7e-8/(temp3**0.52)) | H3+ destruction: H3+ DR  (total) |
+| ch107 | GENERATED | - | cheminmo.F:1351-1351 | - | - | chtab(107,itemp) = (7.7d-9*exp((-(1.756d4/temp)))) | H3+ destruction:  H3+ + H -> H2+ + H2 |
+| ch108 | GENERATED | 17 | cheminmo.F:1362-1381 | - | - | if (iflag_3bh2a == 1):<br>if (temp <= 3d2):<br>chtab(108,itemp) = (1.3d-32/(temp3**0.38d0))<br>else:<br>chtab(108,itemp) = (1.3d-32/temp3)<br>elseif (iflag_3bh2a == 2):<br>chtab(108,itemp) = (5.5d-29/temp)<br>elseif (iflag_3bh2a == 3):<br>chtab(108,itemp) = 8.8d-33<br>elseif (iflag_3bh2a == 4):<br>chtab(108,itemp) = (1.44d-26/(temp**1.54d0))<br>elseif (iflag_3bh2a == 5):<br>chtab(108,itemp) = (7.7d-31/(temp**0.464d0))<br>elseif (iflag_3bh2a == 6):<br>chtab(108,itemp) = ((6d-32/(temp**0.25d0))+(2 | From PSS83, based on JGC67 |
+| ch109 | GENERATED | 17 | cheminmo.F:1392-1402 | - | - | if (iflag_3bh2b == 1):<br>chtab(109,itemp) = (6.875d-30/temp)<br>elseif (iflag_3bh2b == 2):<br>chtab(109,itemp) = (2.8d-31/(temp**0.6d0))<br>elseif (iflag_3bh2b == 3):<br>chtab(109,itemp) = (1.8d-27/(temp**1.54d0))<br>elseif (iflag_3bh2b == 4):<br>chtab(109,itemp) = (chtab(108,itemp)/8d0)<br>else: | From PSS83, based on JGC67 |
+| ch110 | GENERATED | 17 | cheminmo.F:1415-1415 | - | - | chtab(110,itemp) = (6.9d-32*(temp**(-0.4d0))) | Three-body H2 formation: H + H + He -> H2 + He |
+| ch111 | GENERATED | - | cheminmo.F:1435-1439 | - | - | if (temp <= 2d3):<br>chtab(111,itemp) = ((2.14d-29*(temp3**(-3.08d0)))*exp(1.057d0))<br>else:<br>chtab(111,itemp) = ((2.14d-29*(temp3**(-3.08d0)))*exp((2.114d3/temp))) |  |
+| ch112 | GENERATED | - | cheminmo.F:1451-1455 | - | - | if (temp <= 2d3):<br>chtab(112,itemp) = ((2.14d-27*(temp3**(-3.08d0)))*exp(1.057d0))<br>else:<br>chtab(112,itemp) = ((2.14d-27*(temp3**(-3.08d0)))*exp((2.114d3/temp))) |  |
+| ch113 | GENERATED | - | cheminmo.F:1462-1462 | - | - | chtab(113,itemp) = (4.33d-32/temp3) | Three-body OH formation: H + O + M -> OH + M |
+| ch114 | GENERATED | - | cheminmo.F:1468-1468 | - | - | chtab(114,itemp) = (2.56d-31*(temp3**(-2.0d0))) | Three-body H2O formation: H + OH + M -> H2O + M |
+| ch115 | GENERATED | - | cheminmo.F:1480-1483 | - | - | if (temp <= 5d3):<br>chtab(115,itemp) = (5.99d-33*((temp/5d3)**(-1.6)))<br>else:<br>chtab(115,itemp) = ((5.99d-33*((temp/5d3)**(-0.64)))*exp((5.255d3/temp))) |  |
+| ch116 | GENERATED | - | cheminmo.F:1493-1493 | - | - | chtab(116,itemp) = (9.2d-34/temp3) | Three-body formation of O2: O + O + M -> O2 + M |
+| ch117 | GENERATED | - | cheminmo.F:1499-1499 | - | - | chtab(117,itemp) = (2d-11*(temp3**0.44)) | HCO+ formation: O + CH -> HCO+ + e- |
+| ch118 | GENERATED | - | cheminmo.F:1505-1506 | - | - | chtab(118,itemp) = ((1.65d-12*(temp3**1.14))*exp((-(5d1/temp)))) | H2O formation from OH-OH collisions: OH + OH -> H2O + O |
+| ch119 | GENERATED | - | cheminmo.F:1512-1512 | - | - | chtab(119,itemp) = (2.75d-7*(temp3**(-0.55d0))) | CO+ dissociative recombination:  CO+ + e -> C + O |
+| ch120 | GENERATED | - | cheminmo.F:1520-1520 | - | - | chtab(120,itemp) = (3.8d-10/dsqrt(temp3)) | C2+ formation from CH:  C+ + CH -> C2+ + H |
+| ch121 | GENERATED | - | cheminmo.F:1533-1533 | - | - | chtab(121,itemp) = (si2p_rec_rr+si2p_rec_dr) |  |
+| ch122 | GENERATED | - | cheminmo.F:1539-1539 | - | - | chtab(122,itemp) = (1.17d-17*(temp3**(-0.14))) | SiH+ formation by radiative association: Si+ + H -> SiH+ + gamma |
+| ch123 | GENERATED | - | cheminmo.F:1543-1543 | - | - | chtab(123,itemp) = (2.8d-12/(temp3**0.86)) | Mg+ recombination -- currently unused |
+| ch124 | GENERATED | - | cheminmo.F:1550-1553 | - | - | if (temp <= 3d2):<br>chtab(124,itemp) = 2.5d-18<br>else:<br>chtab(124,itemp) = ((3.14d-18*(temp3**(-0.15d0)))*exp((6.8d1/temp))) |  |
+| ch125 | GENERATED | - | cheminmo.F:1562-1566 | - | - | if (temp <= 1d5):<br>chtab(125,itemp) = ((2.7d-10*(temp3**(-0.485d0)))*dexp((temp/3.12d4)))<br>else:<br>chtab(125,itemp) = ((2.7d-10*((1d5/3d2)**(-0.485d0)))*dexp((1d5/3.12d4))) |  |
+| ch126 | GENERATED | 17 | cheminmo.F:1579-1580 | - | - | chtab(126,itemp) = ((2.7d-8*(temp**(-1.27d0)))*dexp((-(4.3d4/temp)))) | Dissociative attachment: H2 + e- -> H + H- |
+| ch127 | GENERATED | 17 | cheminmo.F:1588-1588 | - | - | chtab(127,itemp) = (1.4d-7/dsqrt(temp3)) | Neutralization of H2+ with H-:  H2+ + H- -> H2 + H |
+| ch128 | GENERATED | - | cheminmo.F:1594-1595 | - | - | chtab(128,itemp) = ((1.07d-9*(temp3**0.062d0))*exp((-(temp/4.14d4)))) | HD+ formation from H2+ and D: H2+ + D -> HD+ + H |
+| ch129 | GENERATED | - | cheminmo.F:1605-1605 | - | - | chtab(129,itemp) = (7.2d-8/sqrt(temp)) | HD+ dissociative recombination:  HD+ + e -> H + D |
+| ch130 | GENERATED | - | cheminmo.F:1611-1611 | - | - | chtab(130,itemp) = (1.0d-9*exp((-(1.54d2/temp)))) | H2+ formation from HD+ and H: HD+ + H -> H2+ + D |
+| ch131 | GENERATED | - | cheminmo.F:1617-1617 | - | - | chtab(131,itemp) = (6d-9*exp((-(5.09d4/temp)))) | Collisional dissociation of OH by H: OH + H -> O + H + H |
+| ch132 | GENERATED | - | cheminmo.F:1623-1623 | - | - | chtab(132,itemp) = (6d-9*exp((-(5.09d4/temp)))) | Collisional dissociation of OH by H2: OH + H2 -> O + H + H2 |
+| ch133 | GENERATED | - | cheminmo.F:1629-1629 | - | - | chtab(133,itemp) = (5.8d-9*exp((-(5.29d4/temp)))) | Collisional dissociation of H2O by H: H2O + H -> OH + H + H |
+| ch134 | GENERATED | - | cheminmo.F:1635-1635 | - | - | chtab(134,itemp) = (5.8d-9*exp((-(5.29d4/temp)))) | Collisional dissociation of H2O by H2: H2O + H2 -> OH + H + H2 |
+| ch135 | GENERATED | - | cheminmo.F:710-710 | - | - | chtab(135,itemp) = (5.115d3*(temp**3.903d-7)) | HeII: |
+| ch136 | GENERATED | - | cheminmo.F:712-712 | - | - | chtab(136,itemp) = ((-0.4956d0)-(5.494d-7*log(temp))) |  |
+| ch137 | GENERATED | 5,17 | cheminmo.F:1653-1662 | - | - | if (temp <= 1d4):<br>chtab(137,itemp) = (1d1**(((3.801*log10(temp))-27.029)-(2.9487d4/temp)))<br>else:<br>chtab(137,itemp) = (1d1**(((3.801*log10(tfix))-27.029)-(2.9487d4/tfix))) |  |
+| ch138 | GENERATED | 5,17 | cheminmo.F:1650-1650 | - | - | chtab(138,itemp) = ((6.6d-10*(temp**0.115))*dexp((-(5.2d4/temp)))) | ch135--ch136: used for HeII grain-surface recombination rate; see above |
+| ch139 | GENERATED | 5,17 | cheminmo.F:1657-1669 | - | - | if (temp <= 1d4):<br>chtab(139,itemp) = (1d1**(5.0792d0*(1d0-(1.23d-5*(temp-2d3)))))<br>else:<br>chtab(139,itemp) = (1d1**(5.0792d0*(1d0-(1.23d-5*(tfix-2d3)))))<br>chtab(139,itemp) = (1d0/chtab(139,itemp)) | chtab(138, itemp) = 1d1**(-1.75 * log10(temp) - 2.729 - |
+| ch140 | GENERATED | - | cheminmo.F:1673-1674 | - | - | chtab(140,itemp) = ((5.18d-11*(temp3**0.17d0))*exp((-(6.4d3/temp)))) | CH3 formation from CH2: CH2 + H2 -> CH3 + H |
+| ch141 | GENERATED | - | cheminmo.F:1678-1678 | - | - | chtab(141,itemp) = (1.0d-10*exp((-(7.6d3/temp)))) | CH3 destruction: CH3 + H -> CH2 + H2 |
+| ch142 | GENERATED | - | cheminmo.F:1682-1682 | - | - | chtab(142,itemp) = ((6.86d-14*(temp3**2.74))*exp((-(4.74d3/temp)))) | CH4 formation from CH3: CH3 + H2 -> CH4 + H |
+| ch143 | GENERATED | - | cheminmo.F:1686-1687 | - | - | chtab(143,itemp) = ((5.82d-13*(temp3**3.00))*exp((-(4.045d3/temp)))) | CH4 destruction: CH4 + H -> CH3 + H2 |
+| ch144 | GENERATED | 17 | cheminmo.F:1693-1693 | - | - | chtab(144,itemp) = ((1.2d-17*(temp**1.2))*dexp((-(1.578d5/temp)))) | HI collisional ionization by HI: H + H -> H + H+ + e |
+| ch145 | GENERATED | - | cheminmo.F:1700-1700 | - | - | chtab(145,itemp) = (1.1d-17*dsqrt(temp)) | Surface chem: |
+| ch146 | GENERATED | - | cheminmo.F:1704-1704 | - | - | chtab(146,itemp) = (3.8d-10/(temp**0.65)) | Gas phase recombination of representative trace metal M (used in NL99 network) |
+| ch147 | GENERATED | - | cheminmo.F:1713-1713 | - | - | chtab(147,itemp) = (5.8d-12*dsqrt(temp)) | Formation of CO from OHx [NL99]: C + OHx -> CO + H |
+| ch148 | GENERATED | - | cheminmo.F:1720-1720 | - | - | chtab(148,itemp) = ((1.2d-17*(temp**1.2d0))*exp((-(1.5782d5/temp)))) | Collisional ionization of H by H: H + H -> H+ + e- + H |
+| ch149 | GENERATED | - | cheminmo.F:1728-1728 | - | - | chtab(149,itemp) = ((1d-12*dsqrt(temp))*exp((-(3.1d4/temp)))) | High-temperature collisional dissociation of H2+ into H + H+. |
+| ch150 | GENERATED | - | cheminmo.F:1734-1734 | - | - | chtab(150,itemp) = (7.5d-11/(temp3**0.18)) | Formation of NO:  N + OH -> NO + H |
+| ch151 | GENERATED | - | cheminmo.F:1740-1740 | - | - | chtab(151,itemp) = (3.75d-11*dexp((-(26d0/temp)))) | Formation of N2 from NO: NO + N -> N2 + O |
+| ch152 | GENERATED | - | cheminmo.F:1752-1752 | - | - | chtab(152,itemp) = (1d-6/(temp3**0.51d0)) | Dissociative recombination of N2H+:  N2H+ + e -> N2 + H |
+| ch153 | GENERATED | 17 | cheminmo.F:1759-1759 | - | - | chtab(153,itemp) = (3.0d-8*((temp/3d2)**(-0.47d0))) | HeH+ + e- -> He + H |
+| ch154 | GENERATED | 17 | cheminmo.F:1763-1763 | - | - | chtab(154,itemp) = (3.0d-10*dexp((-(6.72d3/temp)))) | He + H2+  -> HeH+ + H |
+| ch155 | GENERATED | 17 | cheminmo.F:1769-1770 | - | - | chtab(155,itemp) = ((8.0d-20*((temp/3d2)**(-0.24d0)))*dexp((-(temp/4000)))) | He + H+  -> HeH+ + PHOTON |
+| ch156 | GENERATED | 17 | cheminmo.F:1776-1777 | - | - | chtab(156,itemp) = ((1.04d-9*((temp/3d2)**0.13d0))*exp((-(temp/3.31d4)))) | HeH+ + H -> H2+ + He |
+| ch157 | GENERATED | 17 | cheminmo.F:1790-1794 | - | - | chtab(157,itemp) = (1d6*(((((4.2278d-14-(2.3088d-17*tfix))+(7.3428d-21*(tfix**2)))-(7.5474d-25*(tfix**3)))+(3.3468d-29*(tfix**4)))-(5.5280d-34*(tfix**5)))) |  |
+| ch158 | GENERATED | 17 | cheminmo.F:1799-1799 | - | - | chtab(158,itemp) = ((1.75d-17*(temp**1.3))*dexp((-(1.578d5/temp)))) | Collisional ionization of H by He |
+| ch159 | GENERATED | 17 | cheminmo.F:1804-1804 | - | - | chtab(159,itemp) = ((1.54d-12*(temp**0.45))*dexp((-(3.1d4/temp)))) | Collisional dissociation of H2+ by H, low density limit |
+| ch160 | GENERATED | 17 | cheminmo.F:1809-1810 | - | - | chtab(160,itemp) = dexp(((((-32.912)+(6.9498d-5*temp))-(3.3248d4/temp))-(4.08d-9*(temp**2)))) | Collisional dissociation of H2+ by H, LTE limit |
+| ch161 | GENERATED | 5,17 | cheminmo.F:1825-1829 | - | - | chtab(161,itemp) = (((((-178.4239d0)-(68.42243d0*log10(temp_msm)))+(43.20243d0*(dlog10(temp_msm)**2)))-(4.633167d0*(dlog10(temp_msm)**3)))+(69.70086d0*dlog10((1d0+(4.087038d4/temp_msm))))) | High n CID rate |
+| ch162 | GENERATED | 5,17 | cheminmo.F:1830-1830 | - | - | chtab(162,itemp) = (-(2.370570d4/temp_msm)) |  |
+| ch163 | GENERATED | 5,17 | cheminmo.F:1832-1835 | - | - | chtab(163,itemp) = (((1.288953d2-(5.391334d1*log10(temp_msm)))+(5.315517d0*(dlog10(temp_msm)**2)))-(1.973427d1*dlog10((1d0+(1.678095d4/temp_msm))))) | Low n CID rate |
+| ch164 | GENERATED | 5,17 | cheminmo.F:1836-1836 | - | - | chtab(164,itemp) = (-(2.578611d4/temp_msm)) |  |
+| ch165 | GENERATED | 5,17 | cheminmo.F:1838-1841 | - | - | chtab(165,itemp) = (1d1**(((1.482123d1-(4.890915d0*dlog10(temp_msm)))+(4.749030d-1*(dlog10(temp_msm)**2)))-(1.338283d2/temp_msm))) | ncrit (CID) |
+| ch166 | GENERATED | 5,17 | cheminmo.F:1842-1844 | - | - | chtab(166,itemp) = ((8.227443d-1+(5.864073d-1*dexp((-(temp_msm/1.85d3)))))-(2.056313d0*dexp((-(temp_msm/4.4d2))))) |  |
+| ch167 | GENERATED | 5,17 | cheminmo.F:1846-1850 | - | - | chtab(167,itemp) = (((((-142.7664d0)+(42.70741d0*dlog10(temp_msm)))-(2.027365d0*(dlog10(temp_msm)**2)))-(2.582097d-1*(dlog10(temp_msm)**3)))+(2.136094d1*dlog10((1d0+(2.753531d4/temp_msm))))) | High n DT rate |
+| ch168 | GENERATED | 5,17 | cheminmo.F:1851-1851 | - | - | chtab(168,itemp) = (-(2.146779d4/temp_msm)) |  |
+| ch169 | GENERATED | 5,17 | cheminmo.F:1853-1856 | - | - | chtab(169,itemp) = (((60.34928d0-(27.43096d0*dlog10(temp_msm)))+(2.676150d0*(dlog10(temp_msm)**2)))-(11.28215d0*dlog10((1d0+(1.425455d4/temp_msm))))) | Low n DT rate |
+| ch170 | GENERATED | 5,17 | cheminmo.F:1857-1857 | - | - | chtab(170,itemp) = (-(23125.2d0/temp_msm)) |  |
+| ch171 | GENERATED | 5,17 | cheminmo.F:1859-1862 | - | - | chtab(171,itemp) = (1d1**(((9.305564d0-(2.464009d0*dlog10(temp_msm)))+(0.1985955d0*(dlog10(temp_msm)**2)))+(743.0600d0/temp_msm))) | ncrit (DT) |
+| ch172 | GENERATED | 5,17 | cheminmo.F:1863-1865 | - | - | chtab(172,itemp) = ((7.502286d-1+(2.358848d-1*dexp((-(temp_msm/1.85d3)))))+(2.937507d0*dexp((-(temp_msm/4d2))))) |  |
+| ch173 | GENERATED | 17 | cheminmo.F:1869-1870 | - | - | chtab(173,itemp) = (1d6*dexp(((((-33.081)+(6.3173d-5*temp))-(2.3478d4/temp))-(1.8691d-9*(temp**2))))) | H2 + H+ -> H2+ + H, LTE limit; from Coppola et al 2011 |
+| cr1 | GENERATED | 5,17 | cheminmo.F:1934-1934 | - | - | crtab(1) = 1d0 | Primary cosmic ray ionization rates - calculated as scale factor * HI |
+| cr2 | GENERATED | 5,17 | cheminmo.F:1939-1939 | - | - | crtab(2) = 1d0 | H2: |
+| cr3 | GENERATED | - | cheminmo.F:1949-1949 | - | - | crtab(3) = 3.85d0 | CI: |
+| cr4 | GENERATED | - | cheminmo.F:1953-1953 | - | - | crtab(4) = 5.67d0 | OI: |
+| cr5 | GENERATED | - | cheminmo.F:1957-1957 | - | - | crtab(5) = 6.5d0 | SiI: |
+| cr6 | GENERATED | 17 | cheminmo.F:1961-1961 | - | - | crtab(6) = 1.09d0 | HeI: |
+| cr7 | GENERATED | - | cheminmo.F:1965-1965 | - | - | crtab(7) = 2.5d0 | Si+: |
+| cr9 | GENERATED | - | cheminmo.F:1969-1969 | - | - | crtab(9) = 6.52d0 | CO: [NB. Direct ionization by cosmic rays] |
+| cr10 | GENERATED | 5 | cheminmo.F:1943-1943 | - | - | crtab(10) = 3.7d-2 |  |
+| cr11 | GENERATED | 5 | cheminmo.F:1944-1944 | - | - | crtab(11) = 2.2d-1 |  |
+| cr12 | GENERATED | - | cheminmo.F:1945-1945 | - | - | crtab(12) = 6.5d-4 |  |
+| cr13 | GENERATED | - | cheminmo.F:1973-1973 | - | - | crtab(13) = 1d1 | CO: direct dissociation by cosmic rays (KIDA) |
+| crphot1 | GENERATED | - | cheminmo.F:1981-1981 | - | - | crphot(1) = 2.8d3 | Cosmic-ray induced photoprocesses |
+| crphot2 | GENERATED | - | cheminmo.F:1984-1984 | - | - | crphot(2) = 4d3 | CH -> C + H |
+| crphot3 | GENERATED | - | cheminmo.F:1986-1986 | - | - | crphot(3) = 9.6d2 | CH+ -> C+ + H |
+| crphot4 | GENERATED | - | cheminmo.F:1988-1988 | - | - | crphot(4) = 2.7d3 | CH2 -> CH2+ + e |
+| crphot5 | GENERATED | - | cheminmo.F:1990-1990 | - | - | crphot(5) = 2.7d3 | CH2 -> CH + H |
+| crphot6 | GENERATED | - | cheminmo.F:1992-1992 | - | - | crphot(6) = 1.3d3 | C2 -> C + C |
+| crphot7 | GENERATED | - | cheminmo.F:1994-1994 | - | - | crphot(7) = 2.8d3 | OH -> O + H |
+| crphot8 | GENERATED | - | cheminmo.F:1996-1996 | - | - | crphot(8) = 5.3d3 | H2O -> OH + H |
+| crphot9 | GENERATED | - | cheminmo.F:1998-1998 | - | - | crphot(9) = 4.1d3 | O2 -> O + O |
+| crphot10 | GENERATED | - | cheminmo.F:2000-2000 | - | - | crphot(10) = 6.4d2 | O2 -> O2+ + e |
+| crphot11 | GENERATED | - | cheminmo.F:2005-2005 | - | - | crphot(11) = 0.21d0 | CO -> C + O |
+| crphot12 | GENERATED | - | cheminmo.F:2011-2011 | - | - | crphot(12) = 5.2d3 | NO -> N + O |
 | cl1 | TABLE | 5,17 | coolinmo.F:253-1183 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(1,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(1,itemp) = max(f,1d-60)<br>elseif (temp > 1d4):<br>cltab(1,itemp) = (1d1**(-18.253d0)) |  |
 | cl2 | TABLE | 5,17 | coolinmo.F:276-1184 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(2,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(2,itemp) = ((((fpara*h2q02)*h2e20)+((fortho*h2q13)*h2e31))*kboltz)<br>elseif (temp > 1d4):<br>cltab(2,itemp) = (1d1**(-21.943d0)) |  |
 | cl3 | TABLE | 5,17 | coolinmo.F:293-1185 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(3,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(3,itemp) = ((((fpara*h2q02)*h2e20)+((fortho*h2q13)*h2e31))*kboltz)<br>elseif (temp > 1d4):<br>cltab(3,itemp) = (1d1**(-22.758d0)) |  |
@@ -369,20 +369,20 @@ Counts: `{"generated": 349, "TABLE": 8, "SPECIAL": 0, "RHS_INLINE": 211, "genera
 | cst89 | GENERATED | - | const_rates.F:603-603 | - | - | cst(89) = 9d-11 | CO formation from NO:  C + NO -> CO + N |
 | cst90 | GENERATED | - | const_rates.F:609-609 | - | - | cst(90) = 5.2d-10 | Charge transfer from C+ to NO: C+ + NO -> C + NO+ |
 | cst91 | GENERATED | - | const_rates.F:613-613 | - | - | cst(91) = 1.1d-9 | Proton transfer from N2H+ to C:  N2H+ + C -> N2 + CH+ |
-| ch40@net16 | GENERATED | 16 | cheminmo.F:729-729 | - | - | chtab(40,itemp) = (cp_rr+cp_dr) |  |
-| ch147@net16 | GENERATED | 16 | cheminmo.F:1706-1707 | - | - | chtab(147,itemp) = ((7.95d-10*(temp**(-0.339)))*dexp((0.108/temp))) | Formation of CO from OHx [NL99]: C + OHx -> CO + H |
-| ch174@net16 | GENERATED | 16 | cheminmo.F:1870-1870 | - | - | chtab(174,itemp) = (1.99d-9*(temp**(-0.19d0))) | Gong et al (2017) network: rates as in SGChem |
-| ch175@net16 | GENERATED | 16 | cheminmo.F:1872-1872 | - | - | chtab(175,itemp) = (5.3d-6/dsqrt(temp)) | H2O+ dissociative recombination: rate in GONG17, from Wakelam et al 2010 |
-| ch176@net16 | GENERATED | 16 | cheminmo.F:1874-1875 | - | - | chtab(176,itemp) = ((3.3d-13*(temp**(-1.3d0)))*dexp((-(2.3d1/temp)))) | C+ + H2 -> products: rate from GONG17, taken from Wakelam et al 2010 |
-| ch177@net16 | GENERATED | 16 | cheminmo.F:1877-1877 | - | - | chtab(177,itemp) = (9.15d-10*(0.62+(45.41/dsqrt(temp)))) | C+ + OHx -> HCO+: rate from GONG17, based on Wakelam |
-| ch178@net16 | GENERATED | 16 | cheminmo.F:1879-1879 | - | - | chtab(178,itemp) = (2.81d-11*(temp**0.26)) | CHx + H -> H2 + C: from GONG17, based on Wakelam et al 2010 |
-| ch179@net16 | GENERATED | 16 | cheminmo.F:1881-1881 | - | - | chtab(179,itemp) = (1.35d-9*(0.62+(45.41/dsqrt(temp)))) | OHx + He+ -> O+ + He + H: from GONG17, based on Wakelam et al 2010 |
-| ch180@net16 | GENERATED | 16 | cheminmo.F:1883-1887 | - | - | chtab(180,itemp) = ((1.04d-9*(temp3**(-0.00231)))+((temp**(-1.5d0))*((((3.40d-8*dexp((-(7.62d0/temp))))+(6.97d-9*dexp((-(1.38d0/temp)))))+(1.31d-7*dexp((-(2.66d1/temp)))))+(1.51d-4*dexp((-(8.11d3/temp))))))) | C + H3+ -> CHx + H2:  rate from Vissapragada et al (2016) |
-| ch181@net16 | GENERATED | 16 | cheminmo.F:1890-1892 | - | - | if (temp > 41000):<br>chtab(181,itemp) = (1.1d-9/dsqrt((4.1d4/3d2)))<br>else:<br>chtab(181,itemp) = (1.1d-9*(temp3**(-0.5d0))) |  |
-| cr2@net16 | GENERATED | 16 | cheminmo.F:1937-1937 | - | - | crtab(2) = 2d0 | H2: |
-| crphot1@net16 | GENERATED | 16 | cheminmo.F:1975-1975 | - | - | crphot(1) = 5.6d2 | Cosmic-ray induced photoprocesses |
-| crphot11@net16 | GENERATED | 16 | cheminmo.F:1999-1999 | - | - | crphot(11) = 9d1 | CO -> C + O |
-| crphot13@net16 | GENERATED | 16 | cheminmo.F:2010-2010 | - | - | crphot(13) = 8.4d3 | Si -> Si+ + e |
+| ch40@net16 | GENERATED | 16 | cheminmo.F:733-733 | - | - | chtab(40,itemp) = (cp_rr+cp_dr) |  |
+| ch147@net16 | GENERATED | 16 | cheminmo.F:1710-1711 | - | - | chtab(147,itemp) = ((7.95d-10*(temp**(-0.339)))*dexp((0.108/temp))) | Formation of CO from OHx [NL99]: C + OHx -> CO + H |
+| ch174@net16 | GENERATED | 16 | cheminmo.F:1874-1874 | - | - | chtab(174,itemp) = (1.99d-9*(temp**(-0.19d0))) | Gong et al (2017) network: rates as in SGChem |
+| ch175@net16 | GENERATED | 16 | cheminmo.F:1876-1876 | - | - | chtab(175,itemp) = (5.3d-6/dsqrt(temp)) | H2O+ dissociative recombination: rate in GONG17, from Wakelam et al 2010 |
+| ch176@net16 | GENERATED | 16 | cheminmo.F:1878-1879 | - | - | chtab(176,itemp) = ((3.3d-13*(temp**(-1.3d0)))*dexp((-(2.3d1/temp)))) | C+ + H2 -> products: rate from GONG17, taken from Wakelam et al 2010 |
+| ch177@net16 | GENERATED | 16 | cheminmo.F:1881-1881 | - | - | chtab(177,itemp) = (9.15d-10*(0.62+(45.41/dsqrt(temp)))) | C+ + OHx -> HCO+: rate from GONG17, based on Wakelam |
+| ch178@net16 | GENERATED | 16 | cheminmo.F:1883-1883 | - | - | chtab(178,itemp) = (2.81d-11*(temp**0.26)) | CHx + H -> H2 + C: from GONG17, based on Wakelam et al 2010 |
+| ch179@net16 | GENERATED | 16 | cheminmo.F:1885-1885 | - | - | chtab(179,itemp) = (1.35d-9*(0.62+(45.41/dsqrt(temp)))) | OHx + He+ -> O+ + He + H: from GONG17, based on Wakelam et al 2010 |
+| ch180@net16 | GENERATED | 16 | cheminmo.F:1887-1891 | - | - | chtab(180,itemp) = ((1.04d-9*(temp3**(-0.00231)))+((temp**(-1.5d0))*((((3.40d-8*dexp((-(7.62d0/temp))))+(6.97d-9*dexp((-(1.38d0/temp)))))+(1.31d-7*dexp((-(2.66d1/temp)))))+(1.51d-4*dexp((-(8.11d3/temp))))))) | C + H3+ -> CHx + H2:  rate from Vissapragada et al (2016) |
+| ch181@net16 | GENERATED | 16 | cheminmo.F:1894-1896 | - | - | if (temp > 41000):<br>chtab(181,itemp) = (1.1d-9/dsqrt((4.1d4/3d2)))<br>else:<br>chtab(181,itemp) = (1.1d-9*(temp3**(-0.5d0))) |  |
+| cr2@net16 | GENERATED | 16 | cheminmo.F:1941-1941 | - | - | crtab(2) = 2d0 | H2: |
+| crphot1@net16 | GENERATED | 16 | cheminmo.F:1979-1979 | - | - | crphot(1) = 5.6d2 | Cosmic-ray induced photoprocesses |
+| crphot11@net16 | GENERATED | 16 | cheminmo.F:2003-2003 | - | - | crphot(11) = 9d1 | CO -> C + O |
+| crphot13@net16 | GENERATED | 16 | cheminmo.F:2014-2014 | - | - | crphot(13) = 8.4d3 | Si -> Si+ + e |
 | cst85@net16 | GENERATED | 16 | const_rates.F:580-580 | - | - | cst(85) = 7.7d-11 | Formation of CO from CHx |
 | cst92@net16 | GENERATED | 16 | const_rates.F:616-616 | - | - | cst(92) = 6d-10 | H2O+ + H2 -- from GONG17, used as part of OHx formation calc. |
 | cst93@net16 | GENERATED | 16 | const_rates.F:618-618 | - | - | cst(93) = 1.6d-9 | O+ +  H2 --> products [from GONG17, based on Wakelam et al 2010] |

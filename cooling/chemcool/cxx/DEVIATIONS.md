@@ -635,6 +635,15 @@ Provenance: SGChem `init_chemistry_parameters.F:106-112`, `cheminmo.F:532-540` (
 * Readers: ch2 net 5; ch1/ch2 nets 15/16; all six nets 3/17. Set in `chemcool.cc`, `chem_backend_cxx.cc` and the
   golden harnesses (legacy `harness.F`/`test_harness.F` untouched).
 
+## D-44. SGChem rate-coefficient updates, both backends
+Provenance: SGChem `photoinit_ism.F:71, 108-110`, `cheminmo.F:414-418, 547-552, 565-571, 2004`.
+* phtab(3) Si photoionization 1.824e-9 -> 2.647e-9 (read by nets 3 and 16).
+* phtab(10) CO photodissociation 1.235e-10 (vDB88) -> 1.411e-10 (Heays+17), all networks.
+* HeII dielectronic recombination: AP73 -> Badnell (2006) three-term fit; enters ch10, ch16 and ch17.
+* ch23 (H + H+ -> H2+ radiative association): GP98/RP76 fit -> Latif+15 / Coppola+11 (nets 3, 17).
+* ch24 zero below 100 K, where the fit is not valid (nets 3, 17).
+* crtab(3) CR ionization of C 3.83 -> 3.85 zeta (nets 3, 15, 16).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
