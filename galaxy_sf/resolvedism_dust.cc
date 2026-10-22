@@ -91,11 +91,6 @@ static void resolvedism_dust_env(int i, struct dustk_env *e)
     double a_conv = UNIT_VEL_IN_KMS * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS; /* code accel -> km/s/yr (non-comoving) */
     for(int k = 0; k < 3; k++) {e->ahyd[k] = CellP[i].HydroAccel[k] * a_conv;}
     e->divv = P[i].Particle_DivVel * All.cf_a2inv * SECONDS_PER_YEAR / UNIT_TIME_IN_CGS;
-#ifdef GALSF_RESOLVEDISM_DUST_SHOCK_DRAG_LIMITER
-    e->shock_limit = 1;
-#else
-    e->shock_limit = 0;
-#endif
 #ifdef GALSF_RESOLVEDISM_DUST_NO_BETATRON
     e->betatron = 0;
 #else
