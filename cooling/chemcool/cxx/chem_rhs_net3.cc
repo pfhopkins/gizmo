@@ -932,7 +932,7 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 #ifdef CONST_NCRIT_UVPUMP
     fpheat = 1.0 / (1.0 + 1e4 / yn);
 #endif
-    rc[3] = -(2.0 * CHEM_EV * abh2 * yn * ykdis * 8.5 * fpheat);
+    rc[3] = -(2.0 * CHEM_EV * abh2 * yn * ykdis * 6.94 * fpheat);
     double f_ex;
     if (RH2 > 0.0) {
         f_ex = cxx_compute_h2_heating_fraction(temp, yn, abh2);

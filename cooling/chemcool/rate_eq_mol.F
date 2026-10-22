@@ -1583,7 +1583,7 @@ c rate_eq_simple.F (nets 5, 15)
 #ifdef CONST_NCRIT_UVPUMP
       fpheat = 1.0 / (1.0 + 1e4 / yn)
 #endif
-      rates_chem(4) = - 2d0 * eV * abH2 * yn * ykdis * 8.5d0 * fpheat
+      rates_chem(4) = - 2d0 * eV * abH2 * yn * ykdis * 6.94d0 * fpheat
 c
 c H2 formation heating -- we assume a similar depedence on n / n_crit to 
 c the collisional dissociation rates, although ideally one would like to

@@ -615,6 +615,11 @@ H2O and H2(18)O, with the neff each block already uses for its rotational/L0 ter
 * OHx photodissociation dust factor exp(-1.7 AV) (SGChem ph49); was exp(-1.5 AV).
 * H2 collisional dissociation (ykdh, ykdh2) zero below 500 K (S:259-283).
 
+## D-41. UV-pumping heating 6.94 x the H2 dissociation rate in nets 3, 15 and 16, both backends
+Provenance: SGChem uses 6.94 in every network (`rate_eq_nl99.F:586-587`, `rate_eq_gong17.F:775-776`,
+`rate_eq_simple.F:362`, `rate_eq_primordial.F:800`); nets 5/17 already did (D-27). Was 8.5 (1.22x more heating).
+Net 3 has no SGChem counterpart and follows the common value.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

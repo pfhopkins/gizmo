@@ -396,7 +396,7 @@ c
 c Heating by UV pumping of H2 -- effective for n > n_crit
 c
 c We assume 2 eV per UV photon (Burton, Hollenbach & Tielens 1990),
-c and adopt a pumping rate 8.5 times larger than the dissociation rate
+c and adopt a pumping rate 6.94 times larger than the dissociation rate
 c (Draine & Bertoldi 1996, table 2). 
 c
       cdex = (1.4 * dexp(-1.81d4 / (temp + 1200)) * abH2
@@ -404,7 +404,7 @@ c
       rdex = 2d-7
       fpheat = cdex / (cdex + rdex)
 
-      rates_chem(3) = - 2d0 * eV * abH2 * yn * ykdis * 8.5d0 * fpheat
+      rates_chem(3) = - 2d0 * eV * abH2 * yn * ykdis * 6.94d0 * fpheat
 c
 c H2 formation heating -- we assume a similar depedence on n / n_crit to 
 c the collisional dissociation rates, although ideally one would like to

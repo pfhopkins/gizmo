@@ -251,7 +251,7 @@ int chem_rhs_net15(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
                  + 1.0 * std::exp(-1e3 / temp) * abHI) * 1e-12 * std::sqrt(temp) * yn;
     double rdex = 2e-7;
     double fpheat = cdex / (cdex + rdex);
-    rc[2] = -(2.0 * CHEM_EV * abh2 * yn * ykdis * 8.5 * fpheat);
+    rc[2] = -(2.0 * CHEM_EV * abh2 * yn * ykdis * 6.94 * fpheat);
 
     double f_ex;
     if (RH2 > 0.0) {
