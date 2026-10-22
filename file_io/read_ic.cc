@@ -698,7 +698,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 
         case IO_RESOLVEDISM_UV_LUM:
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-            for(n = 0; n < pc; n++) {P[offset + n].UV_luminosity = *fp++;}
+            for(n = 0; n < pc; n++) {P[offset + n].UV_luminosity = *fp++; P[offset + n].PE_luminosity = P[offset + n].UV_luminosity;} /* PE recomputed at the next luminosity update */
 #endif
             break;
 

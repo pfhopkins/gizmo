@@ -107,6 +107,7 @@ void finalize_sampled_star(int i, double M_drawn)
     /* Compute luminosity from the single drawn star */
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     P[i].UV_luminosity = 0;
+    P[i].PE_luminosity = 0;
     P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     P[i].Lyman_photons_per_sec = 0;
@@ -126,6 +127,7 @@ void finalize_sampled_star(int i, double M_drawn)
 #else
                 /* Tree-ray: FUV = 6-13.6 eV (PE heating + LW), NUV = 3.4-8 eV, OPT = 0.4-3.4 eV */
                 P[i].UV_luminosity  = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
+                P[i].PE_luminosity  = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
 #endif
                 P[i].LW_luminosity  = pow(10., stellar_log_L_LW(logM, logZ, log_age));
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
@@ -140,6 +142,7 @@ void finalize_sampled_star(int i, double M_drawn)
             } /* else PMS: luminosities stay at zero (initialized above) */
 #else
             P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
+            P[i].PE_luminosity = P[i].UV_luminosity;
             P[i].LW_luminosity = P[i].UV_luminosity;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0;
@@ -199,7 +202,7 @@ void recompute_resolvedism_fuv_luminosities(void)
     if(All.TestFixedQion > 0) {
         for(int i : ActiveParticleList) {
             if(P[i].Type != 4) continue;
-            P[i].UV_luminosity = 0; P[i].LW_luminosity = 0;
+            P[i].UV_luminosity = 0; P[i].PE_luminosity = 0; P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0;
 #endif
@@ -226,7 +229,7 @@ void recompute_resolvedism_fuv_luminosities(void)
         double L = All.TestFixedLbol;
         for(int i : ActiveParticleList) {
             if(P[i].Type != 4) continue;
-            P[i].UV_luminosity = 0.5 * L; P[i].LW_luminosity = 0.15 * L;
+            P[i].UV_luminosity = 0.5 * L; P[i].PE_luminosity = P[i].UV_luminosity; P[i].LW_luminosity = 0.15 * L;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0.2 * L;
 #endif
@@ -245,7 +248,7 @@ void recompute_resolvedism_fuv_luminosities(void)
     if(All.TestFUVZero) {
         for(int i : ActiveParticleList) {
             if(P[i].Type != 4) continue;
-            P[i].UV_luminosity = 0; P[i].LW_luminosity = 0;
+            P[i].UV_luminosity = 0; P[i].PE_luminosity = 0; P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0;
 #endif
@@ -272,6 +275,7 @@ void recompute_resolvedism_fuv_luminosities(void)
         double M_drawn = P[i].MstarSampleIMF[0];     /* ZAMS mass (table index) */
 
         P[i].UV_luminosity = 0;
+        P[i].PE_luminosity = 0;
         P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         P[i].NUV_luminosity = 0;
@@ -303,6 +307,7 @@ void recompute_resolvedism_fuv_luminosities(void)
             P[i].UV_luminosity = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
 #else
             P[i].UV_luminosity = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age));
+            P[i].PE_luminosity = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
 #endif
             P[i].LW_luminosity = pow(10., stellar_log_L_LW(logM, logZ, log_age));
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
@@ -323,11 +328,13 @@ void recompute_resolvedism_fuv_luminosities(void)
         } /* else PMS: stays 0 */
 #else
         P[i].UV_luminosity = pow(10., get_logL_pe(M_drawn));
+        P[i].PE_luminosity = P[i].UV_luminosity;
         P[i].LW_luminosity = P[i].UV_luminosity;
 #endif
         /* Defensive guard: never let a non-finite/negative luminosity reach the
          * gravity-tree FUV walk (rare transient edge case ~1e-6 of stars). */
         if(!isfinite(P[i].UV_luminosity) || P[i].UV_luminosity < 0) P[i].UV_luminosity = 0;
+        if(!isfinite(P[i].PE_luminosity) || P[i].PE_luminosity < 0 || P[i].UV_luminosity == 0) P[i].PE_luminosity = 0;
         if(!isfinite(P[i].LW_luminosity) || P[i].LW_luminosity < 0) P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         if(!isfinite(P[i].NUV_luminosity) || P[i].NUV_luminosity < 0) P[i].NUV_luminosity = 0;

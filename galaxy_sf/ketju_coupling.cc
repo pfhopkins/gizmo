@@ -1695,7 +1695,7 @@ static void handle_mergers(KetjuRegion &reg,
             P[act.idx_merged].MstarSampleIMF[0] = 0; /* inert ghost: no FB from the merged star */
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-            P[act.idx_merged].UV_luminosity = 0; P[act.idx_merged].LW_luminosity = 0;
+            P[act.idx_merged].UV_luminosity = 0; P[act.idx_merged].PE_luminosity = 0; P[act.idx_merged].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[act.idx_merged].NUV_luminosity = 0;
 #endif

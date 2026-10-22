@@ -1160,6 +1160,7 @@ void resolvedism_inject_fb_energy(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
         P[i].UV_luminosity = 0;
+        P[i].PE_luminosity = 0;
         P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
         P[i].NUV_luminosity = 0;

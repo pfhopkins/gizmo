@@ -112,6 +112,7 @@ extern ALIGN(32) struct particle_data
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     MyFloat UV_luminosity;                /*!< FUV luminosity [erg/s], 6-13.6 eV (tree-ray) or 8-13.6 eV (M1 RT) */
+    MyFloat PE_luminosity;                /*!< FUV luminosity [erg/s], 8-13.6 eV (RT_PHOTOELECTRIC bin; UV - PE = 6-8 eV bin) */
     MyFloat LW_luminosity;                /*!< Lyman-Werner luminosity [erg/s], 11.2-13.6 eV (for H2 photodissociation) */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyFloat NUV_luminosity;               /*!< near-UV luminosity [erg/s], 3.4-8 eV */

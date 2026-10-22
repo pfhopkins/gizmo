@@ -848,6 +848,7 @@ void star_formation_parent_routine(void)
                                     P[i_star].Mstar = pow(pow(xmin, -1.3) + nor * y, -1.0/1.3);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                                     P[i_star].UV_luminosity = pow(10., get_logL_pe(P[i_star].Mstar));
+                                    P[i_star].PE_luminosity = P[i_star].UV_luminosity;
                                     P[i_star].LW_luminosity = P[i_star].UV_luminosity;
 #ifdef GALSF_RESOLVEDISM_PHOTOION
                                     P[i_star].Lyman_photons_per_sec = pow(10., get_logS_ly(P[i_star].Mstar));
