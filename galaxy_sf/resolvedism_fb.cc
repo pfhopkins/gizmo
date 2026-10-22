@@ -94,6 +94,15 @@ extern double resolvedism_radp_starside_dp_code(int i); /* fb_momentum.cc: singl
 /*    M <  8: WD (AGB end-of-life mass dump, no energy)                       */
 /*  SNe_ThisTimeStep: 1=explosive SN, 2=AGB death, 3=wind, 4=Ia, -1=done    */
 /* =========================================================================== */
+/* wind closure reference: birth mass after IMF accretion [Msun]; the IMF draw for stars without the slot (older ICs/restarts) */
+static inline double resolvedism_birth_mass_solar(int i)
+{
+#if (N_STELLAR_MASS >= 5)
+    if(P[i].MstarSampleIMF[4] > 0) {return P[i].MstarSampleIMF[4] * UNIT_MASS_IN_SOLAR;}
+#endif
+    return P[i].MstarSampleIMF[0];
+}
+
 void resolvedism_determine_SNe(void)
 {
     if(All.Time <= 0) return;
@@ -152,7 +161,7 @@ void resolvedism_determine_SNe(void)
             v_w = stellar_v_wind(logM, logZ, log_age);
             if(v_w < 10.0) v_w = 10.0;
         }
-        double M_init_solar = P[i].MstarSampleIMF[0];
+        double M_init_solar = resolvedism_birth_mass_solar(i);
         double cum_injected = M_init_solar - P[i].Mass * UNIT_MASS_IN_SOLAR;
         double dM_pending = cum_now_total - cum_injected;
         if(dM_pending < 0) dM_pending = 0; /* interp noise — wait for table to catch up */
@@ -276,7 +285,7 @@ void resolvedism_determine_SNe(void)
                 double cum_now_total = 0;
                 for(int kk = 0; kk < STBL_NELEM; kk++)
                     cum_now_total += stellar_elem_ej_wind_cumulative(logM, logZ, log_age_end, kk);
-                double M_init_solar = P[i].MstarSampleIMF[0];
+                double M_init_solar = resolvedism_birth_mass_solar(i);
                 double cum_injected = M_init_solar - P[i].Mass * UNIT_MASS_IN_SOLAR;
                 double dM_pending = cum_now_total - cum_injected;
                 if(dM_pending < 0) dM_pending = 0;
