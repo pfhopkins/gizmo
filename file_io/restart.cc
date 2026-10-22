@@ -18,7 +18,11 @@
 /* Restartfile layout sentinel (see restart()). The magic distinguishes a sentinel from the leading
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
+#ifdef GALSF_RESOLVEDISM_FB
+#define RESTARTFILE_LAYOUT_VERSION 2u /* + Stella cumulative ledger totals */
+#else
 #define RESTARTFILE_LAYOUT_VERSION 1u
+#endif
 struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
 
 static FILE *fd;
@@ -325,6 +329,25 @@ void restart(int modus)
 	  byten(&TreeReconstructFlag, sizeof(TreeReconstructFlag), modus);
 	  byten(&TreeMomentsStaleFlag, sizeof(TreeMomentsStaleFlag), modus);
 	  byten(&DomainReconstructFlag, sizeof(DomainReconstructFlag), modus);
+
+#ifdef GALSF_RESOLVEDISM_FB
+	  /* per-rank cumulative ledger totals (ENERGYinfo, feedback log) */
+	  byten(&CumulFeedbackEnergy, sizeof(double), modus);
+	  byten(&CumulFeedbackCoupled, sizeof(double), modus);
+	  byten(&CumulSFEnergyRemoved, sizeof(double), modus);
+	  byten(&CumulFeedbackMass, sizeof(double), modus);
+	  byten(&CumulFeedbackMetals, sizeof(double), modus);
+	  byten(&CumulStarMassFormed, sizeof(double), modus);
+	  in(&CumulSNe, modus);
+	  in(&CumulAGB, modus);
+	  in(&CumulIa, modus);
+#ifdef CHEMCOOL
+	  byten(&CumulCoolingEnergyLoss, sizeof(double), modus);
+	  byten(&CumulPIHeatErg, sizeof(double), modus);
+	  byten(&PIHeatPendingErg, sizeof(double), modus);
+	  byten(&PIHeatPendingCells, sizeof(double), modus);
+#endif
+#endif
 
 	  /* write flags for active timebins */
 	  byten(TimeBinActive, TIMEBINS * sizeof(int), modus);

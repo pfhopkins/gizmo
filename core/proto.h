@@ -833,6 +833,8 @@ double resolvedism_mech_energy_local(void); /* local gas thermal + kinetic energ
 extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by star formation on this rank [erg] */
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
+extern double CumulFeedbackMetals;   /* cumulative metals returned to gas [Msun] */
+extern int CumulSNe, CumulAGB, CumulIa; /* cumulative event counts */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
 double get_lifetime(double mass, double Z);
