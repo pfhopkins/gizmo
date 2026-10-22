@@ -68,6 +68,7 @@ MHD_B_SET_IN_PARAMS
 #COSMIC_RAY_FLUID
 #CRFLUID_DIFFUSION_MODEL=0       % constant diffusivity (set CosmicRayDiffusionCoeff in params)
 #INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (CR transport tests; default zeroes it)
+#CHEMCOOL_KEEP_IC_ABUNDANCES     % keep ChemcoolTracAbund from the IC on fresh starts (molecular cloud ICs; default zeroes it)
 
 ## -- Turbulent metal diffusion --
 #TURB_DIFF_METALS

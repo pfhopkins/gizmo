@@ -766,8 +766,10 @@ void init(void)
 	    int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[i].Chimes_fluxPhotIon[kc] = 0; CellP[i].Chimes_G0[kc] = 0;}
 #endif
 #ifdef CHEMCOOL
+#ifndef CHEMCOOL_KEEP_IC_ABUNDANCES /* opt-in: keep ChemcoolTracAbund read from the IC on fresh starts */
             {int ka; for(ka = 0; ka < TRAC_NUM; ka++) {CellP[i].TracAbund[ka] = 0;}}
             CellP[i].TracAbund[IHP] = 1.0e-4; /* initial ionization fraction */
+#endif
             CellP[i].DustTemp = 10.0; /* initial dust temperature [K] */
             CellP[i].Temp = 100.0; /* initial gas temperature [K] */
 #ifdef GALSF_RESOLVEDISM_PHOTOION

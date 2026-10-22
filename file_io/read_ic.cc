@@ -1095,6 +1095,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_COSMICRAYENERGY
                    && blocknr != IO_COSMICRAY_ENERGY
 #endif
+#ifdef CHEMCOOL_KEEP_IC_ABUNDANCES
+                   && blocknr != IO_CHEMCOOL_TRACABUND
+#endif
                    /* Temperature is derived output, not input: blockpresent() is keyed off
                     * OUTPUT_TEMPERATURE (implicit for any COOLING run), so this demanded a
                     * Temperature block in the ICs. The HDF5 reader probes with H5Dopen and skips

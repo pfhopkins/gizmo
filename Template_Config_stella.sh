@@ -88,6 +88,7 @@ GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS
 #COSMIC_RAY_FLUID                        % CR fluid (alternative to constant rate)
 #CRFLUID_DIFFUSION_MODEL=0               % constant CR diffusivity
 #INPUT_READ_COSMICRAYENERGY              % keep IC CR energy on fresh starts
+#CHEMCOOL_KEEP_IC_ABUNDANCES             % keep IC ChemcoolTracAbund on fresh starts
 
 ########## Gravity / N-body / KETJU ##########
 ADAPTIVE_GRAVSOFT_FORALL=1+16            % adaptive softening for gas + stars

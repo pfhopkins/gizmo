@@ -268,6 +268,7 @@
 #CHEMCOOL_H2SHIELD_B5=3       # Doppler b [km/s] for H2 self-shielding (Kim+2023/GOW17: 3) instead of thermal
 #CHEMCOOL_GASDUST_K23         # gas-dust coupling alpha_gd = 3.2e-34 Z'_d (Kim+2023 Eq. 45, Goldsmith 2001)
 #CHEMCOOL_CR_ATTEN_K23        # CR ionization attenuated as 1/N_eff above 9.35e20 cm^-2 (Kim+2023 Eq. 55)
+#CHEMCOOL_KEEP_IC_ABUNDANCES  # keep ChemcoolTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the
                                 #   integrator + RHS assembly + driver policy; the RHS leaf kernels and
