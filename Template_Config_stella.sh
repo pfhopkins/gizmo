@@ -109,7 +109,8 @@ MHD_B_SET_IN_PARAMS                      % initial B from params
 #PMGRID=256                              % PM long-range gravity grid
 #SHIFT_BY_HALF_BOX                       % shift IC by half a box on read
 #SHIFTBACK_ON_OUTPUT                     % undo the half-box shift in outputs
-#TALLBOX                                 % Hu+21 tall-box geometry hook
+#GRAVITY_PERIODIC_XY_IMAGES              % tall boxes: x/y-periodic gravity by image sums, open z  [req BOX_PERIODIC + BOX_OUTFLOW_Z]
+#GALSF_RESOLVEDISM_TALLBOX               % Hu+21 stellar-disk + vertical NFW external potential
 
 ########## Sinks ##########
 #SINK_PARTICLES                          % sink particles  [auto by BH_PROMOTION]

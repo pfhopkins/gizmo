@@ -88,12 +88,11 @@ MHD_B_SET_IN_PARAMS
 ## -- Stellar-mass BH promotion (dead stars -> accreting Type 5 sinks) --
 #GALSF_RESOLVEDISM_BH_PROMOTION    % auto-enables SINK_PARTICLES + SINK_GRAVCAPTURE_GAS
 
-## -- Box geometry & PM grid (for zoom-ins, molecular clouds, or TALLBOX runs) --
+## -- Box geometry & PM grid (for zoom-ins, molecular clouds) --
 #BOX_PERIODIC
 #PMGRID=256
 #SHIFT_BY_HALF_BOX
 #SHIFTBACK_ON_OUTPUT
-#TALLBOX
 
 ## -- Gravity & density --
 ADAPTIVE_GRAVSOFT_FORALL=1+16    % adaptive softening for gas (Type 0) + stars (Type 4)

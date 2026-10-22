@@ -1174,20 +1174,8 @@
 
 
 
-/* TALLBOX: periodic in X and Y, open (non-periodic) in Z. Used for isolated disk galaxy simulations
-   where PMGRID handles in-plane long-range gravity but boundaries are open vertically.
-   Auto-enables BOX_PERIODIC for boxSize/boxHalf variables, PM grid, etc. The Z-axis non-periodicity
-   is handled by explicit overrides in macros.h (not via BOX_OUTFLOW_Z, to avoid side effects in
-   apply_special_boundary_conditions -- TALLBOX has its own Z-boundary handling via BoxTallHalf). */
 #ifdef TALLBOX
-#ifndef BOX_PERIODIC
-#define BOX_PERIODIC
-#endif
-#endif // TALLBOX
-
-/* Stella stretched tallbox: no periodic gravity for BOX_LONG boxes; tree radiation still wraps in x/y (forcetree.cc) */
-#if defined(GALSF_RESOLVEDISM_TALLBOX) && defined(BOX_PERIODIC) && (defined(BOX_LONG_X) || defined(BOX_LONG_Y) || defined(BOX_LONG_Z)) && !defined(GRAVITY_NOT_PERIODIC) && !defined(SELFGRAVITY_OFF)
-#error "GALSF_RESOLVEDISM_TALLBOX with BOX_PERIODIC and BOX_LONG_X/Y/Z requires GRAVITY_NOT_PERIODIC (stretched boxes have no periodic gravity solver)"
+#error "TALLBOX was removed: use BOX_PERIODIC + BOX_OUTFLOW_Z (+ BOX_LONG_Z) with GRAVITY_PERIODIC_XY_IMAGES"
 #endif
 
 

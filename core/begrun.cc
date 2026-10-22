@@ -1093,13 +1093,6 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.BoxSize;
       id[nt++] = REAL;
 
-#ifdef TALLBOX
-      strcpy(tag[nt], "BoxTallHalf");
-      strcpy(alternate_tag[nt], "BoxTallHalf");
-      addr[nt] = &All.BoxTallHalf;
-      id[nt++] = REAL;
-#endif
-
 #ifdef GRAVITY_PERIODIC_XY_IMAGES
       strcpy(tag[nt], "GravityPeriodicXYImages");
       addr[nt] = &All.GravityPeriodicXYImages;
@@ -3274,17 +3267,6 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 
-#ifdef TALLBOX
-#if !defined(PMGRID) && !defined(SELFGRAVITY_OFF) && !defined(GRAVITY_NOT_PERIODIC)
-    if(ThisTask == 0)
-    {
-        printf("TALLBOX is designed for use with PMGRID (periodic PM in X/Y, open Z boundaries).\n");
-        printf("Without PMGRID, the Ewald correction assumes full 3D periodicity which is incorrect for TALLBOX.\n");
-        printf("Enable PMGRID, or set SELFGRAVITY_OFF or GRAVITY_NOT_PERIODIC to proceed.\n");
-        endrun(1);
-    }
-#endif
-#endif
 
 #ifdef GR_TABULATED_COSMOLOGY_W
 #ifndef GR_TABULATED_COSMOLOGY
