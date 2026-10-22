@@ -1154,6 +1154,28 @@
 #endif
 #endif // BOX_SHEARING
 
+#ifdef GRAVITY_PERIODIC_XY_IMAGES /* self-gravity periodic in x/y by explicit image sums, open in z (e.g. tall boxes): no Ewald or PM */
+#if !defined(BOX_PERIODIC) || defined(BOX_OUTFLOW_X) || defined(BOX_REFLECT_X) || defined(BOX_OUTFLOW_Y) || defined(BOX_REFLECT_Y)
+#error "GRAVITY_PERIODIC_XY_IMAGES requires BOX_PERIODIC with periodic x and y boundaries"
+#endif
+#if !defined(BOX_OUTFLOW_Z) && !defined(BOX_REFLECT_Z)
+#error "GRAVITY_PERIODIC_XY_IMAGES requires a non-periodic z boundary (BOX_OUTFLOW_Z or BOX_REFLECT_Z)"
+#endif
+#if defined(BOX_SHEARING) || defined(PMGRID) || defined(GRAVITY_SPHERICAL_SYMMETRY) || defined(SUBFIND)
+#error "GRAVITY_PERIODIC_XY_IMAGES is not compatible with BOX_SHEARING, PMGRID, GRAVITY_SPHERICAL_SYMMETRY or SUBFIND"
+#endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY is redundant with GRAVITY_PERIODIC_XY_IMAGES: tree radiation and columns already use the x/y nearest image"
+#endif
+#ifndef GRAVITY_NOT_PERIODIC
+#define GRAVITY_NOT_PERIODIC /* switches off the cubic-periodic (Ewald) solver; the tree wraps x/y itself */
+#endif
+#endif
+
+#if defined(GHOSTD_G0_CR) && !(defined(GALSF) && defined(RT_ISRF_BACKGROUND))
+#error "GHOSTD_G0_CR scales the RT_ISRF_BACKGROUND field and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND"
+#endif
+
 
 /* TALLBOX: periodic in X and Y, open (non-periodic) in Z. Used for isolated disk galaxy simulations
    where PMGRID handles in-plane long-range gravity but boundaries are open vertically.

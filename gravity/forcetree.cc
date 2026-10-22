@@ -9,6 +9,7 @@
 #include "../declarations/resolvedism_dgr.h"
 #include "../mesh/kernel.h"
 #include "tree_pair_kernel.h"
+#include "./periodic_xy_images.h"
 #ifdef RT_TREECOL_HEALPIX
 #include "healpix_utils.h"     /* HEALPix pixel geometry: tree columns and per-pixel fluxes */
 #endif
@@ -128,7 +129,7 @@ static double fac_intp;
 #endif
 
 
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
+#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES) /* need to do box-wrapping, just refer to our standard box-wrapping macros */
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) NGB_PERIODIC_BOX_LONG_X(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign)
@@ -140,13 +141,19 @@ static double fac_intp;
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Z(x,y,z,sign) (fabs(z))
 #endif
 
-#if defined(BOX_PERIODIC) /* Stella tree radiation (columns, fluxes, TreeRay) wraps with the box, independent of gravity */
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY /* tree radiation and columns use the nearest periodic image even though gravity does not */
+#if !defined(BOX_PERIODIC) || !defined(GRAVITY_NOT_PERIODIC)
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY requires BOX_PERIODIC and GRAVITY_NOT_PERIODIC"
+#endif
+#ifdef PMGRID
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY is not compatible with PMGRID"
+#endif
+#if !defined(RT_USE_GRAVTREE) && !defined(RT_USE_TREECOL_FOR_NH)
+#error "TREE_RADIATION_WRAPS_WITHOUT_GRAVITY requires RT_USE_GRAVTREE or RT_USE_TREECOL_FOR_NH"
+#endif
 #define RADIATION_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
 #else
-#define RADIATION_NEAREST_XYZ(x,y,z,sign)
-#endif
-#if defined(BOX_PERIODIC) && defined(GRAVITY_NOT_PERIODIC) && (defined(RT_TREECOL_SHIELDINGLENGTH) || defined(GALSF_RESOLVEDISM_G0_VARIABLE))
-#define TREE_RADIATION_WRAPS_WITHOUT_GRAVITY /* radiation needs its own min-image vector and node opening */
+#define RADIATION_NEAREST_XYZ(x,y,z,sign) GRAVITY_NEAREST_XYZ(x,y,z,sign) /* radiation follows the gravity image */
 #endif
 
 /*! This function is a driver routine for constructing the gravitational
@@ -1779,9 +1786,6 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
     int g0dbg_node = 0;   /* per-interaction: 1 = accepted-node (multipole) interaction */
 #endif
-#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
-    Vec3<double> rad_dr; double rad_r2 = 0; /* min-image separation for radiation */
-#endif
 #ifdef RT_USE_TREECOL_FOR_NH
     double angular_bin_size = 4*M_PI / RT_USE_TREECOL_FOR_NH, treecol_angular_bins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH] = {};
     double colmass[TREECOL_NSPECIES] = {}; /* column species masses of the current leaf or node */
@@ -1869,6 +1873,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_PHOTONMOMENTUM
     double mass_sinklumwt_forradfb=0; // convert bh luminosity to our tree units
+#endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+    Vec3<double> dr_rad = {}; double r2_rad = 0; int rad_target = 0; /* nearest-image separation for radiation and columns */
 #endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     double incident_flux_uv=0, incident_flux_euv=0;
@@ -2001,6 +2008,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
     }
 #endif
 #endif
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+#ifdef RT_USE_TREECOL_FOR_NH
+    rad_target = 1; /* columns are computed for every target */
+#else
+    rad_target = valid_gas_particle_for_rt;
+#endif
+#endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     double m_enc_in_rcrit = 0, r_for_total_menclosed = soft; r_for_total_menclosed = DMAX( r_for_total_menclosed , 0.1/(UNIT_LENGTH_IN_KPC*All.cf_atime) ); /* set a baseline Rcrit_min, otherwise we get statistics that are very noisy */
 #endif
@@ -2096,7 +2110,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 }
 #endif
 #ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
-                rad_dr = dr; RADIATION_NEAREST_XYZ(rad_dr[0],rad_dr[1],rad_dr[2],-1); rad_r2 = rad_dr.norm_sq();
+                dr_rad = dr; RADIATION_NEAREST_XYZ(dr_rad[0],dr_rad[1],dr_rad[2],-1); r2_rad = dr_rad.norm_sq();
 #endif
 #if defined(SINK_DYNFRICTION_FROMTREE)
                 m_j_eff_for_df = mass;
@@ -2107,7 +2121,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
                 if(P[no].Type == 4 || P[no].Type == 5) {
 #ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
-                    g0_flux_dx = rad_dr[0]; g0_flux_dy = rad_dr[1]; g0_flux_dz = rad_dr[2]; g0_flux_r2 = rad_r2;}
+                    g0_flux_dx = dr_rad[0]; g0_flux_dy = dr_rad[1]; g0_flux_dz = dr_rad[2]; g0_flux_r2 = r2_rad;}
 #else
                     g0_flux_dx = dr[0]; g0_flux_dy = dr[1]; g0_flux_dz = dr[2]; g0_flux_r2 = r2;}
 #endif
@@ -2213,7 +2227,11 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef RT_USE_GRAVTREE
                     if(valid_gas_particle_for_rt)    /* we have a (valid) gas particle as target */
                     {
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                        d_stellarlum=dr_rad;
+#else
                         d_stellarlum=dr;
+#endif
                         double lum[N_RT_FREQ_BINS];
 #ifdef CHIMES_STELLAR_FLUXES
                         double chimes_lum_G0[CHIMES_LOCAL_UV_NBINS], chimes_lum_ion[CHIMES_LOCAL_UV_NBINS];
@@ -2234,9 +2252,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                         {
                             double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].Sink_Specific_AngMom, dr[0],dr[1],dr[2]);
+                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].Sink_Specific_AngMom, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
 #else
-                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].GradRho, dr[0],dr[1],dr[2]);
+                            mass_sinklumwt_forradfb = sink_fb_angleweight(bhlum_t, P[no].GradRho, d_stellarlum[0],d_stellarlum[1],d_stellarlum[2]);
 #endif
                         }
 #endif
@@ -2467,27 +2485,26 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     }
                 
 #ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
-                /* re-apply the opening criteria at the min-image distance: a node near only through the wrap is opened */
-                rad_dr = dr; RADIATION_NEAREST_XYZ(rad_dr[0],rad_dr[1],rad_dr[2],-1); rad_r2 = rad_dr.norm_sq();
+                dr_rad = dr; RADIATION_NEAREST_XYZ(dr_rad[0],dr_rad[1],dr_rad[2],-1); r2_rad = dr_rad.norm_sq();
+                if(rad_target && (r2_rad < r2)) /* node is nearer through the periodic wrap: re-apply the opening criteria at that distance */
                 {
                     int open_for_radiation = 0;
 #ifdef NEIGHBORS_MUST_BE_COMPUTED_EXPLICITLY_IN_FORCETREE
-                    Vec3<double> d_nc_rad = nop->center - pos;
-                    RADIATION_NEAREST_XYZ(d_nc_rad[0],d_nc_rad[1],d_nc_rad[2],-1);
+                    Vec3<double> d_nc_rad = nop->center - pos; RADIATION_NEAREST_XYZ(d_nc_rad[0],d_nc_rad[1],d_nc_rad[2],-1);
                     double dist_to_open_rad = DMAX(soft , nop->maxsoft) + nop->len*1.73205/2.0;
                     if(d_nc_rad.norm_sq() < dist_to_open_rad*dist_to_open_rad) {open_for_radiation = 1;}
 #else
-                    if((h < nop->maxsoft) && (rad_r2 < nop->maxsoft * nop->maxsoft)) {open_for_radiation = 1;}
+                    if((h < nop->maxsoft) && (r2_rad < nop->maxsoft * nop->maxsoft)) {open_for_radiation = 1;}
 #endif
-                    if(All.ErrTolTheta) {if(nop->len * nop->len > rad_r2 * All.ErrTolTheta * All.ErrTolTheta) {open_for_radiation = 1;}}
+                    if(All.ErrTolTheta) {if(nop->len * nop->len > r2_rad * All.ErrTolTheta * All.ErrTolTheta) {open_for_radiation = 1;}}
 #ifndef GRAVITY_HYBRID_OPENING_CRIT
                     else
 #else
                     if(!(All.Ti_Current == 0 && RestartFlag != 1))
 #endif
                     {
-                        if((rad_r2 < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (rad_r2 < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len))) {open_for_radiation = 1;}
-                        if(mass * nop->len * nop->len > rad_r2 * rad_r2 * aold) {open_for_radiation = 1;}
+                        if((r2_rad < (soft+0.6*nop->len)*(soft+0.6*nop->len)) || (r2_rad < (nop->maxsoft+0.6*nop->len)*(nop->maxsoft+0.6*nop->len))) {open_for_radiation = 1;}
+                        if(mass * nop->len * nop->len > r2_rad * r2_rad * aold) {open_for_radiation = 1;}
                         if((NGB_PERIODIC_BOX_LONG_X(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len) &&
                            (NGB_PERIODIC_BOX_LONG_Y(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len) &&
                            (NGB_PERIODIC_BOX_LONG_Z(nop->center[0] - pos[0], nop->center[1] - pos[1], nop->center[2] - pos[2], -1) < 0.60 * nop->len)) {open_for_radiation = 1;}
@@ -2554,7 +2571,13 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
                     d_stellarlum = nop->rt_source_lum_s - pos;
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                    RADIATION_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
+#else
                     GRAVITY_NEAREST_XYZ(d_stellarlum[0],d_stellarlum[1],d_stellarlum[2],-1);
+#endif
+#elif defined(TREE_RADIATION_WRAPS_WITHOUT_GRAVITY)
+                    d_stellarlum = dr_rad;
 #else
                     d_stellarlum = dr;
 #endif
@@ -2681,6 +2704,23 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     
                     /* actually add the accelerations, now that we've corrected for the ewald and other terms */
                     acc += fac_accel * dr;
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+                    gravity_periodic_xy_images(mass, dr, DMAX(h, h_p), [&](const Vec3<double>& d_im, double fac_accel_im, double fac2_tidal_im, double fac_pot_im) {
+                        acc += fac_accel_im * d_im;
+#ifdef EVALPOTENTIAL
+                        pot += fac_pot_im;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                        for(int k1=0;k1<3;k1++) {for(int k2=k1;k2<3;k2++) {tidal_tensorps[k1][k2] += d_im[k1] * d_im[k2] * fac2_tidal_im - (k1==k2 ? fac_accel_im : 0);}}
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+#ifndef ADAPTIVE_TREEFORCE_UPDATE
+                        if(ptype > 0)
+#endif
+                        {jerk += fac_accel_im * dv - dot(dv, d_im) * fac2_tidal_im * d_im;}
+#endif
+                    });
+#endif
                     
                     
 #if defined(SINK_DYNFRICTION_FROMTREE)
@@ -2807,6 +2847,16 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                 tree_mass += mass;
 #endif
 #if defined(RT_USE_TREECOL_FOR_NH) && !defined(RT_TREECOL_SHIELDINGLENGTH)
+#ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
+                if((colmass[TREECOL_GAS]>0) && (r2_rad < r2)) /* nearer through the periodic wrap: same column, at the nearest-image separation */
+                {
+                    double r_col = sqrt(r2_rad), h_col = DMAX(h, h_p), fac_col = 1./r2_rad;
+                    if(r_col < h_col) {double h_col_inv = 1./h_col; fac_col = r_col * kernel_gravity(r_col*h_col_inv, h_col_inv, h_col_inv*h_col_inv*h_col_inv, 1);}
+                    int bin = treecol_angular_bin(dr_rad[0], dr_rad[1], dr_rad[2]), ks;
+                    for(ks=0; ks<TREECOL_NSPECIES; ks++) {treecol_angular_bins[ks][bin] += fac_col*colmass[ks] / angular_bin_size;}
+                }
+                else
+#endif
                 if(colmass[TREECOL_GAS]>0)
                 {
                     int bin = treecol_angular_bin(dr[0], dr[1], dr[2]), ks;
@@ -2815,7 +2865,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef RT_TREECOL_SHIELDINGLENGTH
 #ifdef TREE_RADIATION_WRAPS_WITHOUT_GRAVITY
-                const Vec3<double> &dr_col = rad_dr; const double r2_col = rad_r2, r_col = sqrt(rad_r2);
+                const Vec3<double> &dr_col = dr_rad; const double r2_col = r2_rad, r_col = sqrt(r2_rad);
 #else
                 const Vec3<double> &dr_col = dr; const double r2_col = r2, r_col = r;
 #endif
@@ -3887,6 +3937,9 @@ int force_treeevaluate_potential(int target, int mode, int *nexport, int *nsend_
                     pot += ( fac_pot * mass * kernel_gravity(u, h_inv, 1, -1) );
                 }
             }
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+            {Vec3<double> d0 = {dx, dy, dz}; gravity_periodic_xy_images(mass, d0, h, [&](const Vec3<double>&, double, double, double fac_pot_im) {pot += fac_pot_im;});}
+#endif
 #if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
             pot += (mass * ewald_pot_corr(dx, dy, dz));
 #endif

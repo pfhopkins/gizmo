@@ -4,7 +4,8 @@
 BOX_PERIODIC
 BOX_LONG_Z=20
 BOX_OUTFLOW_Z
-GRAVITY_NOT_PERIODIC              % required: no periodic gravity for stretched boxes; tree radiation still wraps in x/y
+GRAVITY_NOT_PERIODIC              % required: no periodic gravity for stretched boxes
+TREE_RADIATION_WRAPS_WITHOUT_GRAVITY % tree radiation and columns still wrap in x/y
 GALSF_RESOLVEDISM_TALLBOX         % Hu+21 stellar-disk + vertical NFW potential (gravity/analytic_gravity.h)
 #!/bin/bash
 # Config.sh for resolved-ISM single-star galaxy formation (gizmo-cpp)

@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "./periodic_xy_images.h"
 
 /*! \file star_direct_gravity.cc
  *  \brief exact direct-summation gravity between star (type-5) particles.
@@ -26,7 +27,7 @@
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
 
 /* same guard forcetree.cc uses: wrap separations only when gravity itself is periodic */
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+#if (defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)) || defined(GRAVITY_PERIODIC_XY_IMAGES)
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign) NEAREST_XYZ(x,y,z,sign)
 #else
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign) /* no box-wrapping needed */
@@ -213,6 +214,20 @@ void star_direct_gravity_compute(void)
             tidal[1][1] += (-fac_tidal + dr[1]*dr[1]*fac2_tidal);
             tidal[1][2] += (dr[1]*dr[2]*fac2_tidal);
             tidal[2][2] += (-fac_tidal + dr[2]*dr[2]*fac2_tidal);
+#endif
+#ifdef GRAVITY_PERIODIC_XY_IMAGES
+            gravity_periodic_xy_images(mass, dr, h, [&](const Vec3<double>& d_im, double fac_accel_im, double fac2_tidal_im, double fac_pot_im) {
+                acc += fac_accel_im * d_im;
+#ifdef EVALPOTENTIAL
+                pot += fac_pot_im;
+#endif
+#ifdef COMPUTE_JERK_IN_GRAVTREE
+                jerk += fac_accel_im * dv - dot(dv, d_im) * fac2_tidal_im * d_im;
+#endif
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+                for(int k1=0;k1<3;k1++) {for(int k2=k1;k2<3;k2++) {tidal[k1][k2] += d_im[k1] * d_im[k2] * fac2_tidal_im - (k1==k2 ? fac_accel_im : 0);}}
+#endif
+            });
 #endif
 #ifdef SINK_CALC_DISTANCES
             /* the tree normally supplies these for star targets from the sink nodes it visits; those
