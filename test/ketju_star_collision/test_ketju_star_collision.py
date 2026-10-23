@@ -49,3 +49,17 @@ def test_ketju_star_collision(case, expect_merge):
         assert np.linalg.norm(v1[k] - vcom) < 0.05 * np.linalg.norm(v0[0] - v0[1])
     else:
         assert len(i1) == len(i0)
+
+
+def test_ketju_star_collision_energy():
+    """KETJU ENERGY ledger: the head-on collision removes the pair's internal energy, so the direct-sum total energy
+    changes by exactly the booked collision energy; MSTAR's own error stays at round-off."""
+    subprocess.run([sys.executable, "make_ketju_star_collision_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    build_and_run_test(TEST_NAME, 1, 1)
+    lines = [l for l in open(f"{TEST_DIR}/test_{TEST_NAME}.out") if l.startswith("KETJU ENERGY")]
+    assert lines, "no KETJU ENERGY line"
+    f = dict(kv.split("=") for kv in lines[-1].split() if "=" in kv and not kv.startswith("t="))
+    de_coll, de_tot, de_mstar = float(f["collisions-dE"]), float(f["dE"]), float(f["MSTAR-dE"])
+    print(f"collisions {de_coll:.6e} ETOT {de_tot:.6e} MSTAR {de_mstar:.2e} (units |E0|)")
+    assert de_coll < 0 and abs(de_tot - de_coll) < 1e-3 * abs(de_coll) and abs(de_mstar) < 1e-8

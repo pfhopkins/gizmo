@@ -408,7 +408,11 @@ static void incode_total_energy(void)
 
             double E = KE + PE, E_prop = KE + PE_prop;
             static double E0_prop = 0; if(!have0) { E0 = E; E0_prop = E_prop; have0 = 1; }
+
             if(do_print) {
+#ifdef KETJU_REGULARIZATION
+                ketju_note_total_energy(E, E0); /* printed evaluations only: those are at full syncs, mid-step members carry chord velocities */
+#endif
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
                        (E_prop - E0_prop - ledger)/fabs(E0_prop), ledger, n_int, KE, PE, PE_prop);
