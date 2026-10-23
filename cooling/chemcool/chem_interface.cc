@@ -23,6 +23,7 @@
 #include "../../core/proto.h"
 #include "chem_interface.h"
 #include "../../declarations/resolvedism_dgr.h"
+#include "../../declarations/resolvedism_depletion.h"
 #include "../../galaxy_sf/resolvedism_selfcheck.h"
 
 #ifdef CHEMCOOL
@@ -102,10 +103,11 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         in->abundo  = (O_gas  / 16.0) / X_H;
         in->abundsi = (Si_gas / 28.0) / X_H;
 #else
-        /* [orig chemcool.cc:212-214] */
-        in->abundc  = (P[target].Metallicity[MET_OF(ELEM_C)]  / 12.0) / X_H;
-        in->abundo  = (P[target].Metallicity[MET_OF(ELEM_O)]  / 16.0) / X_H;
-        in->abundsi = (P[target].Metallicity[MET_OF(ELEM_Si)] / 28.0) / X_H;
+        /* Gas-phase C/O/Si: MW grain-locked fractions scaled by DGRnormalized, as the dust seed */
+        double g_dep = DMAX(All.DGRnormalized, 0);
+        in->abundc  = (1 - DMIN(RESOLVEDISM_DEPL_C  * g_dep, RESOLVEDISM_DEPL_MAX)) * (P[target].Metallicity[MET_OF(ELEM_C)]  / 12.0) / X_H;
+        in->abundo  = (1 - DMIN(RESOLVEDISM_DEPL_O  * g_dep, RESOLVEDISM_DEPL_MAX)) * (P[target].Metallicity[MET_OF(ELEM_O)]  / 16.0) / X_H;
+        in->abundsi = (1 - DMIN(RESOLVEDISM_DEPL_SI * g_dep, RESOLVEDISM_DEPL_MAX)) * (P[target].Metallicity[MET_OF(ELEM_Si)] / 28.0) / X_H;
 #endif
         in->abundN  = (P[target].Metallicity[MET_OF(ELEM_N)]  / 14.0) / X_H;   /* [orig chemcool.cc:216] */
 
