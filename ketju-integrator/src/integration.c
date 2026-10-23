@@ -98,6 +98,7 @@ static inline double separation_and_r2(const struct ketju_system *R, int i,
     return r2;
 }
 
+
 static void compute_U(struct ketju_system *R) {
 
     timer_start(&R->perf->time_force);
@@ -1290,6 +1291,12 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
     allocate_state_backup(&old_state, R->num_particles, R->num_pn_particles);
     store_state_backup(&old_state, R);
 
+    double *pair_rv = NULL; // r.v per pair at the last collision check
+    if (R->collision_radius) {
+        pair_rv = malloc(sizeof(double) * R->num_particles * R->num_particles);
+        ketju_pair_rv(R, pair_rv);
+    }
+
     bool finished = false;
     do {
         // Check mergers between BHs (PN particles)
@@ -1307,9 +1314,30 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
                 }
                 ketju_construct_MST(R);
                 steps_since_reconstruction = 0;
+                if (pair_rv) ketju_pair_rv(R, pair_rv);
                 compute_total_energy(R);
                 store_state_backup(&old_state, R);
                 gbs_storage.num_vars -= num_merged * 9; // pos, vel, spin
+                free_gbs_extrapolation_inds(&gbs_indices);
+                init_gbs_extrapolation_indices(
+                    &gbs_indices, R->internal_state->task_info->main_group_size,
+                    gbs_storage.num_vars);
+            }
+        }
+        // Contact collisions of non-PN particles, checked on each accepted state
+        if (pair_rv && Hstep > 0) {
+            int num_coll = ketju_do_star_collisions(R, pair_rv);
+            if (num_coll) {
+                if (R->num_particles < 2) {
+                    trivial_propagation(R, time_interval
+                                               - R->physical_state->time);
+                    break;
+                }
+                ketju_construct_MST(R);
+                steps_since_reconstruction = 0;
+                compute_total_energy(R);
+                store_state_backup(&old_state, R);
+                gbs_storage.num_vars -= num_coll * 6; // pos, vel
                 free_gbs_extrapolation_inds(&gbs_indices);
                 init_gbs_extrapolation_indices(
                     &gbs_indices, R->internal_state->task_info->main_group_size,
@@ -1432,10 +1460,16 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
 
     } while (!finished);
 
+    // a pericentre passed in the last step is not seen by the next call
+    if (pair_rv && time_interval > 0 && R->num_particles >= 2) {
+        ketju_do_star_collisions(R, pair_rv);
+    }
+
     // Restore the initial physical time offset
     R->physical_state->time += t_start;
 
     // free temp storage
+    free(pair_rv);
     free_state_backup(&old_state);
     free_gbs_storage(&gbs_storage);
     free_gbs_extrapolation_inds(&gbs_indices);

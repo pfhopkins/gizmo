@@ -445,6 +445,7 @@ static void merge_bhs(struct ketju_system *R, int i, int j) {
     info->v_kick = vector_norm(res.vkick);
     info->extra_index1 = i;
     info->extra_index2 = R->num_particles - 1;
+    info->is_collision = 0;
 
     // Update extra_index1 for previous mergers, index2 won't change (see below)
     for (int k = 0; k < R->num_mergers; ++k) {
@@ -485,8 +486,164 @@ static void merge_bhs(struct ketju_system *R, int i, int j) {
                 elem_size);
     }
 
+    if (R->collision_radius) {
+        memmove(&R->collision_radius[j], &R->collision_radius[j + 1],
+                sizeof(double) * (R->num_particles - (j + 1)));
+    }
+
     R->num_particles -= 1;
     R->num_pn_particles -= 1;
+}
+
+// Merge non-PN particle j into i at their CoM (mass and momentum conserved)
+static void merge_stars(struct ketju_system *R, int i, int j) {
+    assert(i >= R->num_pn_particles && j >= R->num_pn_particles && i < j);
+    struct ketju_system_physical_state *ps = R->physical_state;
+    if (ps->mass[j] > ps->mass[i]) {
+        // the heavier star survives: it takes slot i (CoM state is symmetric)
+        size_t es = R->particle_extra_data_elem_size;
+        char *ed = R->particle_extra_data;
+        if (ed) {
+            char tmp[es];
+            memcpy(tmp, ed + i * es, es);
+            memcpy(ed + i * es, ed + j * es, es);
+            memcpy(ed + j * es, tmp, es);
+        }
+        double t = R->collision_radius[i];
+        R->collision_radius[i] = R->collision_radius[j];
+        R->collision_radius[j] = t;
+        t = ps->mass[i]; ps->mass[i] = ps->mass[j]; ps->mass[j] = t;
+        for (int k = 0; k < 3; ++k) {
+            t = ps->pos[i][k]; ps->pos[i][k] = ps->pos[j][k]; ps->pos[j][k] = t;
+            t = ps->vel[i][k]; ps->vel[i][k] = ps->vel[j][k]; ps->vel[j][k] = t;
+        }
+        for (int k = 0; k < R->num_mergers; ++k) {
+            int *e1 = &R->merger_infos[k].extra_index1;
+            if (*e1 == i) *e1 = j; else if (*e1 == j) *e1 = i;
+        }
+    }
+    const double m1 = ps->mass[i], m2 = ps->mass[j], M = m1 + m2;
+    double r2 = 0, v2 = 0;
+    for (int k = 0; k < 3; ++k) {
+        r2 += (ps->pos[j][k] - ps->pos[i][k]) * (ps->pos[j][k] - ps->pos[i][k]);
+        v2 += (ps->vel[j][k] - ps->vel[i][k]) * (ps->vel[j][k] - ps->vel[i][k]);
+    }
+    const double E_pair = 0.5 * m1 * m2 / M * v2 - R->constants->G * m1 * m2 / sqrt(r2);
+    for (int k = 0; k < 3; ++k) {
+        ps->pos[i][k] = (m1 * ps->pos[i][k] + m2 * ps->pos[j][k]) / M;
+        ps->vel[i][k] = (m1 * ps->vel[i][k] + m2 * ps->vel[j][k]) / M;
+    }
+    ps->mass[i] = M;
+    // contact radius of the product: the larger one (the caller resets it next step)
+    if (R->collision_radius[j] > R->collision_radius[i]) {
+        R->collision_radius[i] = R->collision_radius[j];
+    }
+
+    R->merger_infos =
+        realloc(R->merger_infos,
+                sizeof(struct ketju_bh_merger_info[R->num_mergers + 1]));
+    struct ketju_bh_merger_info *info = &R->merger_infos[R->num_mergers];
+    memset(info, 0, sizeof(*info));
+    info->t_merger = ps->time;
+    info->m1 = m1;
+    info->m2 = m2;
+    info->m_remnant = M;
+    info->extra_index1 = i;
+    info->extra_index2 = R->num_particles - 1;
+    info->is_collision = 1;
+    info->dE_collision = -E_pair;
+    for (int k = 0; k < R->num_mergers; ++k) {
+        struct ketju_bh_merger_info *old_info = &R->merger_infos[k];
+        if (old_info->extra_index1 == j) {
+            old_info->extra_index1 = info->extra_index2;
+        } else if (old_info->extra_index1 > j
+                   && old_info->extra_index1 < R->num_particles) {
+            old_info->extra_index1 -= 1;
+        }
+    }
+    R->num_mergers += 1;
+
+    const int tail = R->num_particles - (j + 1);
+    memmove(&ps->mass[j], &ps->mass[j + 1], sizeof(double) * tail);
+    memmove(&ps->pos[j], &ps->pos[j + 1], sizeof(double[3]) * tail);
+    memmove(&ps->vel[j], &ps->vel[j + 1], sizeof(double[3]) * tail);
+    memmove(&R->collision_radius[j], &R->collision_radius[j + 1],
+            sizeof(double) * tail);
+    size_t elem_size = R->particle_extra_data_elem_size;
+    char *extra_data = R->particle_extra_data;
+    if (extra_data) {
+        char rem_extra_data[elem_size];
+        memmove(rem_extra_data, extra_data + j * elem_size, elem_size);
+        memmove(extra_data + j * elem_size, extra_data + (j + 1) * elem_size,
+                elem_size * tail);
+        memmove(extra_data + (R->num_particles - 1) * elem_size, rem_extra_data,
+                elem_size);
+    }
+    R->num_particles -= 1;
+}
+
+// r.v of each non-PN pair, row-major [n * n]; the caller keeps it between checks
+void ketju_pair_rv(const struct ketju_system *R, double *rv) {
+    const struct ketju_system_physical_state *ps = R->physical_state;
+    const int n = R->num_particles;
+    for (int i = 0; i < n; ++i) {
+        for (int j = i + 1; j < n; ++j) {
+            double s = 0;
+            for (int k = 0; k < 3; ++k) {
+                s += (ps->pos[j][k] - ps->pos[i][k])
+                     * (ps->vel[j][k] - ps->vel[i][k]);
+            }
+            rv[i * n + j] = s;
+        }
+    }
+}
+
+// Contact collisions of non-PN particles with collision_radius > 0: r < R_i + R_j
+// now, or a pericentre passed since the last check (r.v from < 0 to >= 0) whose
+// two-body pericentre distance is below R_i + R_j. rv_prev holds the last
+// check's ketju_pair_rv; it is refreshed here.
+int ketju_do_star_collisions(struct ketju_system *R, double *rv_prev) {
+    if (!R->collision_radius) return 0;
+    int num_merged = 0;
+    const double G = R->constants->G;
+    const int n_entry = R->num_particles;
+    bool again = true;
+    while (again) {
+        again = false;
+        const int n = R->num_particles;
+        const struct ketju_system_physical_state *ps = R->physical_state;
+        for (int i = R->num_pn_particles; i < n && !again; ++i) {
+            if (!(R->collision_radius[i] > 0)) continue;
+            for (int j = i + 1; j < n; ++j) {
+                if (!(R->collision_radius[j] > 0)) continue;
+                const double rc = R->collision_radius[i] + R->collision_radius[j];
+                double dr[3], dv[3], r2 = 0, v2 = 0, rv = 0;
+                for (int k = 0; k < 3; ++k) {
+                    dr[k] = ps->pos[j][k] - ps->pos[i][k];
+                    dv[k] = ps->vel[j][k] - ps->vel[i][k];
+                    r2 += dr[k] * dr[k];
+                    v2 += dv[k] * dv[k];
+                    rv += dr[k] * dv[k];
+                }
+                bool hit = r2 < rc * rc;
+                if (!hit && rv_prev && n == n_entry && rv_prev[i * n + j] < 0 && rv >= 0) {
+                    const double mu = G * (ps->mass[i] + ps->mass[j]);
+                    const double h2 = r2 * v2 - rv * rv;
+                    const double e2 = 1 + (v2 - 2 * mu / sqrt(r2)) * h2 / (mu * mu);
+                    const double rp = (h2 / mu) / (1 + sqrt(e2 > 0 ? e2 : 0));
+                    hit = rp < rc;
+                }
+                if (hit) {
+                    merge_stars(R, i, j);
+                    num_merged += 1;
+                    again = true; // indices shifted: rescan
+                    break;
+                }
+            }
+        }
+    }
+    if (rv_prev) ketju_pair_rv(R, rv_prev);
+    return num_merged;
 }
 
 int ketju_do_bh_mergers(struct ketju_system *R) {

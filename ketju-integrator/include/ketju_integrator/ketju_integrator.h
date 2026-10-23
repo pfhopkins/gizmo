@@ -233,6 +233,8 @@ struct ketju_bh_merger_info {
     double v_kick;                  // magnitude of kick velocity
     int extra_index1,
         extra_index2; // Indices of the components in particle_extra_data
+    int is_collision; // 1: non-PN contact collision (collision_radius), 0: BH merger
+    double dE_collision; // energy change of a collision: minus the pair's internal energy
 };
 
 struct ketju_system {
@@ -265,6 +267,11 @@ struct ketju_system {
 
     size_t particle_extra_data_elem_size;
     //< Size of the extra data for a single particle.
+
+    double *collision_radius;
+    //< Optional contact radius per particle (NULL: no collisions). Two non-PN
+    // particles merge at their CoM when they come within the sum of their
+    // radii. Caller-managed, reordered on mergers like particle_extra_data.
 
     int num_mergers; //< How many mergers there have been
     struct ketju_bh_merger_info *merger_infos; //< contains num_mergers elements

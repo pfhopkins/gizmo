@@ -41,6 +41,12 @@
 
 #ifdef KETJU_REGULARIZATION
 
+#if defined(KETJU_MERGE_STARS) && defined(KETJU_TYPE4_STARS)
+#define KJ_STAR_COLLISIONS /* Type-4 stars merge on contact (R1 + R2) inside MSTAR */
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+#include "resolvedism_star_age.h"
+#endif
+#endif
 
 /* MSTAR is integrated in natural N-body units (pc, Msun, km/s) whatever the host units: its GBS convergence degrades
  * badly for e.g. kpc / 1e10 Msun states. Converted in place around ketju_run_integrator only; identity for pc/Msun/km/s hosts. */
@@ -98,6 +104,9 @@ struct ketju_mpi_particle {
 #ifdef KETJU_TYPE4_STARS
     double SoftGrav[2], ZetaGrav[2]; /* tree softening/zeta of the last gravity call ([0] target, [1] secondary) */
     double SoftNow[2], ZetaNow[2];   /* values the next gravity call will use */
+#endif
+#ifdef KJ_STAR_COLLISIONS
+    double CollRadius; /* contact radius, physical code length (0: never collides) */
 #endif
 };
 
@@ -199,6 +208,7 @@ struct KetjuRegion {
     struct ketju_system *integrator;
     std::vector<ketju_extra_data> extra_data;
     std::vector<double> true_vel;  /* MSTAR end-of-step CoM-relative velocities before the second negative half-kick (compute tasks) */
+    std::vector<double> coll_radius; /* MSTAR contact radii in its natural units (compute tasks) */
 
     /* CoM frame data (stored at setup, used in scatter) */
     double com_pos[3];
@@ -858,6 +868,31 @@ static void forward_com_to_affected_root(KetjuRegion &reg)
     }
 }
 
+#ifdef KJ_STAR_COLLISIONS
+/* Contact radius of a live Type-4 star, physical code length; 0 for remnants and dead or unsampled stars.
+ * Stella: the table radius at the star's ZAMS mass, birth Z and table age (PMS stars: the ZAMS radius, a lower bound).
+ * Otherwise: main-sequence R/Rsun = M^0.8 (M < 1 Msun), M^0.57 above (Demircan & Kahraman 1991). */
+static double ketju_star_contact_radius(int i)
+{
+    if(P[i].Type != 4 || P[i].Mass <= 0) return 0;
+#ifdef KETJU_PN_REMNANT_TAG
+    if(P[i].RemnantType >= 0) return 0;
+#endif
+    double R_cm;
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+    if(!P[i].sampled || P[i].MstarSampleIMF[0] <= 0) return 0;
+    double logM = log10(P[i].MstarSampleIMF[0]), logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
+    double age_tab = resolvedism_star_age_yr(i) - stellar_t_PMS(logM, logZ);
+    if(age_tab >= stellar_lifetime(logM, logZ)) return 0;
+    R_cm = pow(10.0, stellar_log_R_cm(logM, logZ, log10(DMAX(age_tab, 100.0))));
+#else
+    double M = P[i].Mass * UNIT_MASS_IN_SOLAR;
+    R_cm = 6.957e10 * ((M < 1) ? pow(M, 0.8) : pow(M, 0.57));
+#endif
+    return R_cm / UNIT_LENGTH_IN_CGS; /* physical */
+}
+#endif
+
 /* counts[t] = members of this region on task t (gathered for all regions at once in ketju_find_regions) */
 static void setup_integrator(KetjuRegion &reg, const int *counts)
 {
@@ -914,6 +949,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #ifdef KETJU_TYPE4_STARS
         for(int k = 0; k < 2; k++) {mp.SoftGrav[k] = P[idx].KetjuTreeSoft[k]; mp.ZetaGrav[k] = P[idx].KetjuTreeZeta[k];}
         tree_pair_softening(idx, mp.SoftNow, mp.ZetaNow);
+#endif
+#ifdef KJ_STAR_COLLISIONS
+        mp.CollRadius = ketju_star_contact_radius(idx);
 #endif
         k++;
     }
@@ -1053,6 +1091,15 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         }
         reg.integrator->particle_extra_data = reg.extra_data.data();
         reg.integrator->particle_extra_data_elem_size = sizeof(ketju_extra_data);
+#ifdef KJ_STAR_COLLISIONS
+        {
+            int any = 0; reg.coll_radius.assign(reg.total_particle_count, 0.0);
+            for(int i = reg.num_pn_particles; i < reg.total_particle_count; i++) {
+                reg.coll_radius[i] = reg.all_particles[i].CollRadius * KJ_LEN_TO_NAT; if(reg.coll_radius[i] > 0) any = 1;
+            }
+            if(any) reg.integrator->collision_radius = reg.coll_radius.data();
+        }
+#endif
 
 #ifdef KETJU_VERBOSE_INTEGRATION
         if(reg.compute_tasks.is_root() && ThisTask == 0) {
@@ -1283,6 +1330,17 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
         ketju_run_integrator(reg.integrator, dt_physical * KJ_TIME_TO_NAT);
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 0);
+        if(reg.integrator->num_particles < reg.total_particle_count) {
+            /* MSTAR removed merged particles by shifting the arrays: the tail slots hold stale copies in its natural units.
+             * Zero them, and put all_particles in the order of extra_data, which MSTAR permuted the same way. */
+            struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+            for(int i = reg.integrator->num_particles; i < reg.total_particle_count; i++) {
+                ps->mass[i] = 0; for(int j = 0; j < 3; j++) {ps->pos[i][j] = 0; ps->vel[i][j] = 0;}
+            }
+            std::unordered_map<MyIDType, ketju_mpi_particle> by_id;
+            for(const ketju_mpi_particle &q : reg.all_particles) by_id[q.ID] = q;
+            for(int i = 0; i < reg.total_particle_count; i++) reg.all_particles[i] = by_id[reg.extra_data[i].ID];
+        }
 
         int n_steps = reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
         double dE = reg.integrator->perf->relative_energy_error;
@@ -1311,7 +1369,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 
 #ifdef KETJU_TYPE4_STARS
     if(reg.compute_tasks.is_member() && reg.integrator) {
-        int n = reg.integrator->num_particles; reg.true_vel.resize(3 * n);
+        int n = reg.integrator->num_particles; reg.true_vel.assign(3 * reg.total_particle_count, 0.0);
         for(int i = 0; i < n; i++) for(int j = 0; j < 3; j++) reg.true_vel[3*i+j] = reg.integrator->physical_state->vel[i][j];
     }
 #endif
@@ -1339,10 +1397,36 @@ struct ketju_merger_action {
 };
 
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
+#if defined(KJ_STAR_COLLISIONS) && defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+#define KJ_STELLA_PRODUCT /* collision products get Stella table state (Hurley+2002 rejuvenation) */
+/* formation time (StellarAge convention) of a star that is age_yr old now */
+static double ketju_formation_time_for_age(double age_yr)
+{
+    double age_gyr = age_yr * 1e-9;
+    if(!All.ComovingIntegrationOn) return All.Time - age_gyr / UNIT_TIME_IN_GYR;
+    double lo = 1e-6, hi = All.Time; /* time since a decreases with a */
+    if(evaluate_time_since_t_initial_in_Gyr(lo) <= age_gyr) return lo;
+    for(int it = 0; it < 80; it++) {double mid = 0.5 * (lo + hi); if(evaluate_time_since_t_initial_in_Gyr(mid) > age_gyr) lo = mid; else hi = mid;}
+    return 0.5 * (lo + hi);
+}
+/* main-sequence fraction used for the rejuvenation */
+static double ketju_ms_fraction(double M0, double Zb, double age_yr)
+{
+    double logM = log10(M0), logZ = log10(DMAX(Zb, 1e-10));
+    double tab = age_yr - stellar_t_PMS(logM, logZ), t0 = stellar_t_MS_start(logM, logZ), t1 = stellar_t_MS_end(logM, logZ);
+    if(!(t1 > t0)) return 1;
+    return DMIN(DMAX((tab - t0) / (t1 - t0), 0.0), 1.0);
+}
+#endif
+
+/* Survivor of each merged particle (final_mass 0): the particle MSTAR merged it into (merged_into, followed to a particle
+ * still alive), else the nearest survivor (sink coalescences found after the integration). Each survivor receives the
+ * metal mass of all its victims at once, so several mergers into one survivor conserve metals. */
 static void handle_mergers(KetjuRegion &reg,
                            const std::vector<double> &final_abs_pos,
                            const std::vector<double> &final_mass,
-                           const std::vector<double> &original_mass)
+                           const std::vector<double> &original_mass,
+                           const std::vector<MyIDType> &merged_into)
 {
     if(!reg.affected_tasks.is_member()) return;
 
@@ -1352,22 +1436,30 @@ static void handle_mergers(KetjuRegion &reg,
 
     if(reg.affected_tasks.is_root()) {
         int n = reg.total_particle_count;
+        std::unordered_map<MyIDType, int> slot;
+        for(int i = 0; i < n; i++) slot[reg.extra_data[i].ID] = i;
         for(int i = 0; i < n; i++) {
             if(final_mass[i] > 0) continue;
 
             int type_merged = reg.extra_data[i].Type;
-
-            /* find nearest surviving particle */
             int survivor = -1;
-            double min_dist2 = 1e60;
-            for(int j = 0; j < n; j++) {
-                if(j == i || final_mass[j] <= 0) continue;
-                double d2 = 0;
-                for(int k = 0; k < 3; k++) {
-                    double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
-                    d2 += dx * dx;
+            if(merged_into[i]) {
+                int j = i;
+                for(int hop = 0; hop < n && merged_into[j] && final_mass[j] <= 0; hop++) {
+                    auto it = slot.find(merged_into[j]); if(it == slot.end()) break; j = it->second;
                 }
-                if(d2 < min_dist2) { min_dist2 = d2; survivor = j; }
+                if(final_mass[j] > 0) survivor = j;
+            } else {
+                double min_dist2 = 1e60;
+                for(int j = 0; j < n; j++) {
+                    if(j == i || final_mass[j] <= 0) continue;
+                    double d2 = 0;
+                    for(int k = 0; k < 3; k++) {
+                        double dx = final_abs_pos[3*i + k] - final_abs_pos[3*j + k];
+                        d2 += dx * dx;
+                    }
+                    if(d2 < min_dist2) { min_dist2 = d2; survivor = j; }
+                }
             }
             if(survivor < 0) continue;
 
@@ -1417,65 +1509,46 @@ static void handle_mergers(KetjuRegion &reg,
     MPI_Bcast(actions.data(), n_mergers * sizeof(ketju_merger_action), MPI_BYTE,
               reg.affected_tasks.root, reg.affected_tasks.comm);
 
-    /* ---- Phase 3: each task executes its local part ---- */
+    /* ---- Phase 3: victims send their data to the survivors' tasks ---- */
 #ifdef METALS
     const int n_met = NUM_METAL_SPECIES;
 #else
     const int n_met = 0;
 #endif
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-    const int buf_size = n_met + 2; /* last slots: victim's sampled IMF mass and birth mass */
-#else
-    const int buf_size = n_met;
-#endif
+    /* [metals][MstarSampleIMF 0][MstarSampleIMF 4][birth Z][age yr] */
+    const int buf_size = n_met + 4;
+    struct survivor_acc {double M_old; std::vector<double> buf_sum; std::vector<std::vector<double>> victims; std::vector<double> victim_mass;};
+    std::unordered_map<int, survivor_acc> acc; /* by local survivor index */
 
     for(int m = 0; m < n_mergers; m++) {
         ketju_merger_action &act = actions[m];
-
-        if(buf_size > 0) {
-            std::vector<double> merged_buf(buf_size, 0.0);
-
-            if(act.task_merged == ThisTask) {
+        std::vector<double> buf(buf_size, 0.0);
+        if(act.task_merged == ThisTask) {
+            int v = act.idx_merged; (void)v;
 #ifdef METALS
-                for(int k = 0; k < NUM_METAL_SPECIES; k++)
-                    merged_buf[k] = P[act.idx_merged].Metallicity[k];
+            for(int k = 0; k < NUM_METAL_SPECIES; k++) buf[k] = P[v].Metallicity[k];
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-                merged_buf[n_met] = (P[act.idx_merged].Type == 4) ? P[act.idx_merged].MstarSampleIMF[0] : 0;
+            if(P[v].Type == 4) {
+                buf[n_met] = P[v].MstarSampleIMF[0];
 #if (N_STELLAR_MASS >= 5)
-                merged_buf[n_met + 1] = (P[act.idx_merged].Type == 4) ? P[act.idx_merged].MstarSampleIMF[4] : 0;
-#endif
-#endif
-            }
-
-            /* point-to-point transfer of metals */
-            if(act.task_merged != act.task_survivor) {
-                if(act.task_merged == ThisTask)
-                    MPI_Send(merged_buf.data(), buf_size, MPI_DOUBLE,
-                             act.task_survivor, 997, MPI_COMM_WORLD);
-                if(act.task_survivor == ThisTask)
-                    MPI_Recv(merged_buf.data(), buf_size, MPI_DOUBLE,
-                             act.task_merged, 997, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-            }
-
-            if(act.task_survivor == ThisTask) {
-#ifdef METALS
-                for(int k = 0; k < NUM_METAL_SPECIES; k++)
-                    P[act.idx_survivor].Metallicity[k] =
-                        (act.M_survivor_old * P[act.idx_survivor].Metallicity[k] +
-                         act.M_merged * merged_buf[k]) / act.M_survivor_new;
-#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
-                {double X_H_new = 1.0 - P[act.idx_survivor].Metallicity[0] - P[act.idx_survivor].Metallicity[MET_OF(ELEM_He)]; /* close sum(Met[1..]) = 1 via H */
-                 P[act.idx_survivor].Metallicity[MET_OF(ELEM_H)] = (MyFloat)DMAX(X_H_new, 0);}
-#endif
-#endif
-#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-                if(P[act.idx_survivor].Type == 4 && merged_buf[n_met] > 0) {P[act.idx_survivor].MstarSampleIMF[0] += merged_buf[n_met];} /* survivor carries the merged stellar mass; keeps its age */
-#if (N_STELLAR_MASS >= 5)
-                if(P[act.idx_survivor].Type == 4 && merged_buf[n_met + 1] > 0) {P[act.idx_survivor].MstarSampleIMF[4] += merged_buf[n_met + 1];} /* birth mass too: wind closure reference */
-#endif
+                buf[n_met + 1] = P[v].MstarSampleIMF[4];
 #endif
             }
+#endif
+#ifdef KJ_STELLA_PRODUCT
+            if(P[v].Type == 4) {buf[n_met + 2] = P[v].BirthMetallicity; buf[n_met + 3] = resolvedism_star_age_yr(v);}
+#endif
+        }
+        if(act.task_merged != act.task_survivor) {
+            if(act.task_merged == ThisTask) MPI_Send(buf.data(), buf_size, MPI_DOUBLE, act.task_survivor, 997, MPI_COMM_WORLD);
+            if(act.task_survivor == ThisTask) MPI_Recv(buf.data(), buf_size, MPI_DOUBLE, act.task_merged, 997, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+        }
+        if(act.task_survivor == ThisTask) {
+            survivor_acc &a = acc[act.idx_survivor];
+            if(a.buf_sum.empty()) {a.M_old = act.M_survivor_old; a.buf_sum.assign(n_met, 0.0);}
+            for(int k = 0; k < n_met; k++) a.buf_sum[k] += act.M_merged * buf[k];
+            a.victims.push_back(buf); a.victim_mass.push_back(act.M_merged);
         }
 
         /* mark merged particle for removal */
@@ -1495,6 +1568,62 @@ static void handle_mergers(KetjuRegion &reg,
 #endif
 #endif
         }
+    }
+
+    /* ---- Phase 4: each survivor takes its victims' metal mass and (Stella) the merger-product state ---- */
+    for(auto &it : acc) {
+        int s_idx = it.first; survivor_acc &a = it.second; (void)s_idx;
+        double M_sum = a.M_old; for(double mv : a.victim_mass) M_sum += mv;
+#ifdef METALS
+        for(int k = 0; k < NUM_METAL_SPECIES; k++) P[s_idx].Metallicity[k] = (a.M_old * P[s_idx].Metallicity[k] + a.buf_sum[k]) / M_sum;
+#ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+        {double X_H_new = 1.0 - P[s_idx].Metallicity[0] - P[s_idx].Metallicity[MET_OF(ELEM_He)]; /* close sum(Met[1..]) = 1 via H */
+         P[s_idx].Metallicity[MET_OF(ELEM_H)] = (MyFloat)DMAX(X_H_new, 0);}
+#endif
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+        if(P[s_idx].Type != 4) continue;
+#ifdef KJ_STELLA_PRODUCT
+        if(P[s_idx].sampled && P[s_idx].MstarSampleIMF[0] > 0) {
+            /* Product: a main-sequence star of the merged mass at the CoM, birth Z mass-weighted, rejuvenated after Hurley,
+             * Pols & Tout 2002 eq. 80: its MS fraction is 0.1 sum_i M_i f_i / M (f_i the components' MS fractions). The wind
+             * closure reference (MstarSampleIMF[4]) is reset so the product's cumulative wind table starts at its new age. */
+            double Ms = a.M_old * UNIT_MASS_IN_SOLAR, Mnew = P[s_idx].Mass * UNIT_MASS_IN_SOLAR;
+            double Zsum = Ms * P[s_idx].BirthMetallicity, fsum = Ms * ketju_ms_fraction(P[s_idx].MstarSampleIMF[0], P[s_idx].BirthMetallicity, resolvedism_star_age_yr(s_idx));
+            for(size_t v = 0; v < a.victims.size(); v++) {
+                const std::vector<double> &b = a.victims[v]; double Mv = a.victim_mass[v] * UNIT_MASS_IN_SOLAR;
+                Zsum += Mv * b[n_met + 2];
+                if(b[n_met] > 0) fsum += Mv * ketju_ms_fraction(b[n_met], b[n_met + 2], b[n_met + 3]); else fsum += Mv;
+            }
+            double Mtot = Ms; for(double mv : a.victim_mass) Mtot += mv * UNIT_MASS_IN_SOLAR;
+            double Zb = Zsum / Mtot, logM = log10(Mnew), logZ = log10(DMAX(Zb, 1e-10));
+            double t0 = stellar_t_MS_start(logM, logZ), t1 = stellar_t_MS_end(logM, logZ);
+            double tab = t0 + 0.1 * (fsum / Mtot) * DMAX(t1 - t0, 0.0);
+            P[s_idx].BirthMetallicity = Zb;
+            P[s_idx].MstarSampleIMF[0] = Mnew;
+            P[s_idx].StellarAge = ketju_formation_time_for_age(stellar_t_PMS(logM, logZ) + tab);
+#ifdef GALSF_RESOLVEDISM_WINDS
+            {
+                double lage = log10(DMAX(tab, 100.0)), cum = 0;
+                for(int kk = 0; kk < STBL_NELEM; kk++) cum += stellar_elem_ej_wind_cumulative(logM, logZ, lage, kk);
+                P[s_idx].MstarSampleIMF[4] = (Mnew + cum) / UNIT_MASS_IN_SOLAR; /* closure: pending wind = cum(age) - (birth - M) = 0 now */
+                P[s_idx].last_wind_log_age = lage; P[s_idx].M_current_old = Mnew; P[s_idx].WindMassAccum = 0; P[s_idx].WindMomentumAccum = 0;
+            }
+#elif (N_STELLAR_MASS >= 5)
+            for(const std::vector<double> &b : a.victims) P[s_idx].MstarSampleIMF[4] += b[n_met + 1];
+#endif
+            printf("KETJU STAR MERGER PRODUCT: ID %llu M=%g Msun Zb=%g MS fraction %g -> age %g yr\n", (unsigned long long)P[s_idx].ID,
+                   Mnew, Zb, 0.1 * fsum / Mtot, stellar_t_PMS(logM, logZ) + tab);
+            continue;
+        }
+#endif
+        for(const std::vector<double> &b : a.victims) {
+            if(b[n_met] > 0) P[s_idx].MstarSampleIMF[0] += b[n_met]; /* survivor carries the merged stellar mass; keeps its age */
+#if (N_STELLAR_MASS >= 5)
+            if(b[n_met + 1] > 0) P[s_idx].MstarSampleIMF[4] += b[n_met + 1]; /* birth mass too: wind closure reference */
+#endif
+        }
+#endif
     }
 }
 #endif /* KETJU_MERGE_STARS || KETJU_MERGE_BH */
@@ -1529,6 +1658,7 @@ struct ketju_scatter_particle {
     double Vel[3];       /* CoM-relative peculiar velocity */
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     double OriginalMass;
+    MyIDType MergedInto; /* ID of the particle MSTAR merged this one into (0: none) */
 #endif
 #ifdef KETJU_SINKS
     short int KetjuPNClass;
@@ -1590,6 +1720,7 @@ static void scatter_results(KetjuRegion &reg)
             sp.Mass  = ps->mass[i];
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
             sp.OriginalMass = reg.all_particles[i].Mass;
+            sp.MergedInto = 0;
 #endif
             for(int j = 0; j < 3; j++) {
                 /* physical -> comoving: use a_end since positions are at end of step */
@@ -1611,9 +1742,9 @@ static void scatter_results(KetjuRegion &reg)
         }
 #ifdef KETJU_TYPE4_STARS
         { /* chain sphere from the end positions the members drift to; the end-of-step tree opens nodes overlapping it */
-            double c[3] = {0,0,0}, rmax2 = 0;
-            for(int i = 0; i < n; i++) for(int j = 0; j < 3; j++) c[j] += ps->pos[i][j] / (a_end * n);
-            for(int i = 0; i < n; i++) {double d2 = 0; for(int j = 0; j < 3; j++) {double d = ps->pos[i][j] / a_end - c[j]; d2 += d * d;} if(d2 > rmax2) rmax2 = d2;}
+            double c[3] = {0,0,0}, rmax2 = 0; int n_live = reg.integrator->num_particles; /* merged ones sit in the tail */
+            for(int i = 0; i < n_live; i++) for(int j = 0; j < 3; j++) c[j] += ps->pos[i][j] / (a_end * n_live);
+            for(int i = 0; i < n_live; i++) {double d2 = 0; for(int j = 0; j < 3; j++) {double d = ps->pos[i][j] / a_end - c[j]; d2 += d * d;} if(d2 > rmax2) rmax2 = d2;}
             for(int i = 0; i < n; i++) {for(int j = 0; j < 3; j++) {scatter_buf[i].Sphere[j] = reg.com_pos[j] + c[j];} scatter_buf[i].Sphere[3] = 1.01 * sqrt(rmax2) + MIN_REAL_NUMBER;}
         }
 #endif
@@ -1622,6 +1753,16 @@ static void scatter_results(KetjuRegion &reg)
         if(reg.integrator->num_mergers > 0) {
             for(int m = 0; m < reg.integrator->num_mergers; m++) {
                 struct ketju_bh_merger_info *info = &reg.integrator->merger_infos[m];
+#if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
+                scatter_buf[info->extra_index2].MergedInto = reg.extra_data[info->extra_index1].ID;
+#endif
+                if(info->is_collision) {
+                    double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
+                    printf("KETJU STAR COLLISION: ID %llu (M=%g) + ID %llu (M=%g) at t=%g, dE=%g\n",
+                           (unsigned long long)reg.extra_data[info->extra_index1].ID, info->m1 / mu,
+                           (unsigned long long)reg.extra_data[info->extra_index2].ID, info->m2 / mu, All.Time, info->dE_collision / eu);
+                    continue;
+                }
                 printf("KETJU BH MERGER [region]: m1=%g m2=%g -> m_rem=%g, chi1=%g chi2=%g -> chi_rem=%g, v_kick=%g\n",
                        info->m1, info->m2, info->m_remnant,
                        info->chi1, info->chi2, info->chi_remnant, info->v_kick);
@@ -1685,6 +1826,7 @@ static void scatter_results(KetjuRegion &reg)
     std::vector<double> final_abs_pos, final_rel_vel, final_mass;
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     std::vector<double> original_mass;
+    std::vector<MyIDType> merged_into;
 #endif
 
     /* affected root keeps the sorted scatter_buf for collision/merger checks */
@@ -1693,7 +1835,7 @@ static void scatter_results(KetjuRegion &reg)
         final_rel_vel.resize(3 * n);
         final_mass.resize(n);
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-        original_mass.resize(n);
+        original_mass.resize(n); merged_into.resize(n);
 #endif
         /* also rebuild extra_data and all_particles on root from scatter_buf for collision/merger code */
         reg.extra_data.resize(n);
@@ -1707,7 +1849,7 @@ static void scatter_results(KetjuRegion &reg)
             final_rel_vel[3*i+2] = scatter_buf[i].Vel[2];
             final_mass[i] = scatter_buf[i].Mass;
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-            original_mass[i] = scatter_buf[i].OriginalMass;
+            original_mass[i] = scatter_buf[i].OriginalMass; merged_into[i] = scatter_buf[i].MergedInto;
 #endif
             reg.extra_data[i].ID    = scatter_buf[i].ID;
             reg.extra_data[i].Task  = scatter_buf[i].Task;
@@ -1854,7 +1996,7 @@ static void scatter_results(KetjuRegion &reg)
     /* handle mergers (integrator mergers + stellar collisions) — merger decisions
      * are made on affected root then broadcast to all affected tasks for execution */
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-    handle_mergers(reg, final_abs_pos, final_mass, original_mass);
+    handle_mergers(reg, final_abs_pos, final_mass, original_mass, merged_into);
 #endif
 }
 
