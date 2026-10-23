@@ -829,6 +829,9 @@ extern double CumulPIHeatErg;                         /* cumulative subgrid-PI h
 extern double PIHeatPendingErg, PIHeatPendingCells;   /* PI heating not yet written to FeedbackBudget */
 #ifdef COSMIC_RAY_FLUID
 extern double CumulCRLossEnergy;                      /* CR energy removed by the loss operator on this rank [code energy units] */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+extern double CumulCRShockEnergy;                     /* CR energy injected at shocks on this rank [code energy units] */
+#endif
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_FB

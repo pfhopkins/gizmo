@@ -1816,8 +1816,11 @@ void energy_statistics(void)
     MPI_Reduce(&CumulPIHeatErg, &pi_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&CumulSFEnergyRemoved, &sf_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #ifdef COSMIC_RAY_FLUID
-    double cr_loc[2] = {resolvedism_cr_energy_local(), CumulCRLossEnergy * UNIT_ENERGY_IN_CGS}, cr_glob[2] = {0, 0};
-    MPI_Reduce(cr_loc, cr_glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double cr_loc[3] = {resolvedism_cr_energy_local(), CumulCRLossEnergy * UNIT_ENERGY_IN_CGS, 0}, cr_glob[3] = {0, 0, 0};
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+    cr_loc[2] = CumulCRShockEnergy * UNIT_ENERGY_IN_CGS;
+#endif
+    MPI_Reduce(cr_loc, cr_glob, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
 #ifdef MAGNETIC
     double emag_loc = 0, emag_glob = 0;
@@ -1856,6 +1859,9 @@ void energy_statistics(void)
         cool_erg, fb_erg, CumulFeedbackMass, fbc_erg, pi_glob, sf_glob);
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo, "  %.16e  %.16e  %.16e", cr_glob[0], CumulCRInjectedErg, cr_glob[1]);
+#endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+      fprintf(FdENERGYinfo, "  %.16e", cr_glob[2]);
 #endif
 #ifdef MAGNETIC
       fprintf(FdENERGYinfo, "  %14.6e", emag_glob * UNIT_ENERGY_IN_CGS);

@@ -848,7 +848,15 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     if(cell[i].DtCREgyNewInjectionFromShocks > 0) /* now perform the actual CR injection using the rates estimated in the hydro solver */
     {
         Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        double ecr_shock_before = 0; for(int kk=0;kk<N_CR_PARTICLE_BINS;kk++) {ecr_shock_before += cell[i].CosmicRayEnergy[kk];}
+#endif
         inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], cell); /* inject the energy */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        {double ecr_shock_after = 0; for(int kk=0;kk<N_CR_PARTICLE_BINS;kk++) {ecr_shock_after += cell[i].CosmicRayEnergy[kk];}
+         #pragma omp atomic
+         CumulCRShockEnergy += ecr_shock_after - ecr_shock_before;} /* Stella ledger: CR energy delivered at shocks */
+#endif
         cell[i].DtCREgyNewInjectionFromShocks = 0; // reset to nil, we've successfully injected the energy
     }
 #endif
