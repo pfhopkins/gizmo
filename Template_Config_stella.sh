@@ -87,7 +87,7 @@ GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS
 ########## Cosmic rays ##########
 #COSMIC_RAY_FLUID                        % CR fluid (alternative to constant rate)
 #CRFLUID_DIFFUSION_MODEL=0               % constant CR diffusivity
-#CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s CR transport speed (default c); transport along B needs B != 0
+#CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s CR transport speed (default c); transport along B, no isotropic fallback at B = 0 (Stella setups carry a field)
 #INPUT_READ_COSMICRAYENERGY              % keep IC CR energy on fresh starts
 #CHEMCOOL_KEEP_IC_ABUNDANCES             % keep IC ChemcoolTracAbund on fresh starts
 
