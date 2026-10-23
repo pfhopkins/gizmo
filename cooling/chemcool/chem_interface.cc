@@ -223,6 +223,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #if defined(COSMIC_RAY_FLUID)
         double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* transported CRs win over the SFR scaling */
         in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC;
+#ifdef CRFLUID_ADD_BACKGROUND_IONRATE
+        in->cosmic_ray_ion_rate += All.CosmicRayIonRate; /* background zeta, chemistry only */
+#endif
         in->cr_energy_density = ecr_cgs;
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
@@ -270,6 +273,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
         double ecr_eVcm3 = ecr_cgs / 1.602e-12; /* convert to [eV cm^-3] */
         in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * ecr_eVcm3 / CR_ENDEN_SOLCIRC;
+#ifdef CRFLUID_ADD_BACKGROUND_IONRATE
+        in->cosmic_ray_ion_rate += All.CosmicRayIonRate; /* background zeta, chemistry only */
+#endif
         in->cr_energy_density = ecr_cgs; /* [erg cm^-3], for hadronic+Coulomb heating in cool_func */
     }
 #elif defined(CR_SCALE_WITH_G0)
@@ -379,6 +385,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #if defined(COSMIC_RAY_FLUID)
         { double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
           in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC; /* zeta from e_CR [eV cm^-3] */
+#ifdef CRFLUID_ADD_BACKGROUND_IONRATE
+          in->cosmic_ray_ion_rate += All.CosmicRayIonRate; /* background zeta, chemistry only */
+#endif
           in->cr_energy_density = ecr_cgs; }
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));

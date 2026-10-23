@@ -42,8 +42,12 @@ static void run_point(double nH, double zeta, double t_end_myr, double dt_myr)
     double yn = nH;
     double xh2 = CellP[c].TracAbund[IH2], xhp = CellP[c].TracAbund[IHP], xhi = 1. - 2.*xh2 - xhp;
     double gam_cr = -CellP[c].Lambda[10] * yn * yn; /* chemistry R11 [erg cm^-3 s^-1], heating > 0 */
-    fprintf(out, "ROW nH=%.6e zeta_in=%.6e zeta_cell=%.6e T=%.6e xH2=%.6e xHp=%.6e xHI=%.6e ne=%.6e gamCR=%.6e ecr=%.6e lossfrac=%.6e dt_s=%.6e\n",
-            nH, zeta, CellP[c].CR_ionization_rate, CellP[c].Temp, xh2, xhp, xhi, CellP[c].Ne, gam_cr, e_cgs, loss_frac, dt_myr * (1e6*SECONDS_PER_YEAR));
+    double zeta_bg = 0;
+#ifdef CRFLUID_ADD_BACKGROUND_IONRATE
+    zeta_bg = All.CosmicRayIonRate;
+#endif
+    fprintf(out, "ROW zeta_bg=%.6e nH=%.6e zeta_in=%.6e zeta_cell=%.6e T=%.6e xH2=%.6e xHp=%.6e xHI=%.6e ne=%.6e gamCR=%.6e ecr=%.6e lossfrac=%.6e dt_s=%.6e\n",
+            zeta_bg, nH, zeta, CellP[c].CR_ionization_rate, CellP[c].Temp, xh2, xhp, xhi, CellP[c].Ne, gam_cr, e_cgs, loss_frac, dt_myr * (1e6*SECONDS_PER_YEAR));
     fflush(out);
 }
 
