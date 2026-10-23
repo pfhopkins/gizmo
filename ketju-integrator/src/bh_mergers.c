@@ -529,6 +529,22 @@ static void merge_stars(struct ketju_system *R, int i, int j) {
         v2 += (ps->vel[j][k] - ps->vel[i][k]) * (ps->vel[j][k] - ps->vel[i][k]);
     }
     const double E_pair = 0.5 * m1 * m2 / M * v2 - R->constants->G * m1 * m2 / sqrt(r2);
+    // potential energy change with the other particles as the pair moves to its CoM
+    double dE_others = 0;
+    {
+        double xc[3];
+        for (int k = 0; k < 3; ++k) xc[k] = (m1 * ps->pos[i][k] + m2 * ps->pos[j][k]) / M;
+        for (int q = 0; q < R->num_particles; ++q) {
+            if (q == i || q == j) continue;
+            double d1 = 0, d2 = 0, dc = 0;
+            for (int k = 0; k < 3; ++k) {
+                d1 += (ps->pos[q][k] - ps->pos[i][k]) * (ps->pos[q][k] - ps->pos[i][k]);
+                d2 += (ps->pos[q][k] - ps->pos[j][k]) * (ps->pos[q][k] - ps->pos[j][k]);
+                dc += (ps->pos[q][k] - xc[k]) * (ps->pos[q][k] - xc[k]);
+            }
+            dE_others += R->constants->G * ps->mass[q] * (m1 / sqrt(d1) + m2 / sqrt(d2) - M / sqrt(dc));
+        }
+    }
     for (int k = 0; k < 3; ++k) {
         ps->pos[i][k] = (m1 * ps->pos[i][k] + m2 * ps->pos[j][k]) / M;
         ps->vel[i][k] = (m1 * ps->vel[i][k] + m2 * ps->vel[j][k]) / M;
@@ -551,7 +567,7 @@ static void merge_stars(struct ketju_system *R, int i, int j) {
     info->extra_index1 = i;
     info->extra_index2 = R->num_particles - 1;
     info->is_collision = 1;
-    info->dE_collision = -E_pair;
+    info->dE_collision = -E_pair + dE_others;
     for (int k = 0; k < R->num_mergers; ++k) {
         struct ketju_bh_merger_info *old_info = &R->merger_infos[k];
         if (old_info->extra_index1 == j) {

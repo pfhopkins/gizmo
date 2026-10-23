@@ -241,7 +241,8 @@ struct ketju_bh_merger_info {
     int extra_index1,
         extra_index2; // Indices of the components in particle_extra_data
     int is_collision; // 1: non-PN contact collision (collision_radius), 0: BH merger
-    double dE_collision; // energy change of a collision: minus the pair's internal energy
+    double dE_collision; // energy change of a collision: minus the pair's internal energy, plus the change of its
+                         // potential energy with the other particles as it moves to its CoM
 };
 
 struct ketju_system {
