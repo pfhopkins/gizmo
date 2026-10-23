@@ -37,6 +37,7 @@ c
       parameter (eqtol = 1d-3)
 c
       REAL    dtemp
+      REAL    yhp_in, abHI_ph
       REAL    f_ex, f_tot
       integer itemp, I
 c
@@ -169,6 +170,7 @@ c
       yn = (1d0 - 0.5d0 * tffc * dsqrt(n0) * time)**(-2d0) * n0 
 #endif
 c
+      yhp_in = y(ihp)
       call validate_input(y, ipar)
       if (ipar(1) .eq. 1) then
         do I = 1, nspec
@@ -209,6 +211,9 @@ c
       abHI = 1d0 - 2d0 * abH2 - abhp - abhd - aboh 
      $     - 2d0 * abh2o - abhcop - abch - 2d0 * abch2 - 3d0 * abch3p
       abHI = max(0d0, abHI)
+c H+ above 1 (clipped by validate_input) stays a restoring PI sink
+      abHI_ph = 1d0 - 2d0 * abH2 - max(yhp_in, abhp) - abhd - aboh
+     $     - 2d0 * abh2o - abhcop - abch - 2d0 * abch2 - 3d0 * abch3p
 c
       abDI  = max(0d0, abundD - abdp - abhd)
 c
@@ -1111,7 +1116,7 @@ c
      $          + ph33b * abh2op                ! Photodissoc:   H2O+ + PH
      $          + ph34a * abh3op                ! Photodissoc:   H3O+ + PH
      $          + ph36  * abh3p                 ! Photodissoc:   H3+ + PH
-     $          + ph38  * abHI                  ! Photoionization
+     $          + ph38  * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
 c
 c Molecular hydrogen
 c
