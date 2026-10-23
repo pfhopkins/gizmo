@@ -485,6 +485,9 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #ifdef COOLING
     double ne=1, nh0=0, nHe0=0, nHepp, nhp, nHeII, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs, u0=cell[i].InternalEnergyPred;
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); rho_cgs=rho*UNIT_DENSITY_IN_CGS; // get thermodynamic properties
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
+    nh0 = DMAX(0., 1. - Get_Gas_Ionized_Fraction(i, pp, cell)); /* Stella: neutral H nuclei incl. H2 (ThermalProperties gives atomic H only), for ion-neutral damping */
+#endif
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
 #endif
     M_A = Get_AlfvenMachNumber_Local(i,vA_noion,0, cell); /* get turbulent Alfven Mach number estimate. 0 or 1 to turn on shear-correction */
