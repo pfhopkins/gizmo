@@ -52,6 +52,7 @@ static inline void grain_promotion_init_cellp(int i)
     CellP[i].Density               = rho0;
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     CellP[i].Density_ExplicitInt   = rho0;
+    CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the next density pass */
 #endif
     CellP[i].InternalEnergy        = 0.01 * u_s;
     CellP[i].InternalEnergyPred    = 0.01 * u_s;

@@ -1078,17 +1078,18 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR)
             CellP[i].Density /= CellP[i].FaceClosureError;
-            CellP[i].FaceClosureError = (MyFloat)Volume_0;
 #endif
+            /* FaceClosureError stays a dimensionless closure diagnostic: the face reconstruction reads it as a leak
+               fraction, so it must not be overwritten with a cell volume (that forced first-order faces everywhere) */
 
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
             Volume_0 = (double)P[i].Mass / (double)CellP[i].Density;
+            CellP[i].KernelDensityForVolumeRelaxation = CellP[i].Density;
             if (host_all->Time == host_all->TimeBegin) {
                 CellP[i].Density_ExplicitInt = CellP[i].Density;
             } else {
                 CellP[i].Density = CellP[i].Density_ExplicitInt;
             }
-            CellP[i].FaceClosureError = (MyFloat)Volume_0;
 #endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
