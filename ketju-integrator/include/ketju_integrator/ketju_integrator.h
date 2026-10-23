@@ -132,6 +132,11 @@ struct ketju_integration_options {
     //< Include the merger kick in BH mergers.
     // If disabled the merger remnant moves at the CoM velocity of the merged
     // BHs.
+    bool enable_external_tide;
+    //< Add the linear tide a_i = T (x_i - x_origin) of an external field, in
+    // the system's frame. Its work changes the binding energy B in each kick.
+    double external_tidal_tensor[6];
+    //< T for enable_external_tide: xx, yy, zz, xy, yz, xz.
 };
 
 // Default values applied when creating the system
@@ -158,6 +163,8 @@ static const struct ketju_integration_options
         .enable_bh_mergers = true,
         .bh_merger_distance_in_Rs = 12,
         .enable_bh_merger_kicks = true,
+        .enable_external_tide = false,
+        .external_tidal_tensor = {0, 0, 0, 0, 0, 0},
 };
 
 // The unit system used by the integrator is specified by setting the values of
@@ -233,6 +240,9 @@ struct ketju_bh_merger_info {
     double v_kick;                  // magnitude of kick velocity
     int extra_index1,
         extra_index2; // Indices of the components in particle_extra_data
+    int is_collision; // 1: non-PN contact collision (collision_radius), 0: BH merger
+    double dE_collision; // energy change of a collision: minus the pair's internal energy, plus the change of its
+                         // potential energy with the other particles as it moves to its CoM
 };
 
 struct ketju_system {
@@ -265,6 +275,11 @@ struct ketju_system {
 
     size_t particle_extra_data_elem_size;
     //< Size of the extra data for a single particle.
+
+    double *collision_radius;
+    //< Optional contact radius per particle (NULL: no collisions). Two non-PN
+    // particles merge at their CoM when they come within the sum of their
+    // radii. Caller-managed, reordered on mergers like particle_extra_data.
 
     int num_mergers; //< How many mergers there have been
     struct ketju_bh_merger_info *merger_infos; //< contains num_mergers elements

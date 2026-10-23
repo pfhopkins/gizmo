@@ -98,6 +98,26 @@ static inline double separation_and_r2(const struct ketju_system *R, int i,
     return r2;
 }
 
+// External linear tide a_i = T x_i, added to acc. It stays out of U, which sets the time transformation; its work
+// updates B in kick() instead, as for velocity-dependent forces (Mikkola & Aarseth 2002). Returns its potential
+// energy term (1/2) sum_i m_i x_i.T.x_i for diagnostics.
+static double external_tide(struct ketju_system *R, double (*acc)[3]) {
+    if (!R->options->enable_external_tide) return 0;
+    const double *t = R->options->external_tidal_tensor;
+    const double T[3][3] = {{t[0], t[3], t[5]}, {t[3], t[1], t[4]}, {t[5], t[4], t[2]}};
+    const struct ketju_system_physical_state *ps = R->physical_state;
+    double U = 0;
+    for (int i = 0; i < R->num_particles; i++) {
+        double a[3];
+        for (int k = 0; k < 3; k++) {
+            a[k] = T[k][0] * ps->pos[i][0] + T[k][1] * ps->pos[i][1] + T[k][2] * ps->pos[i][2];
+            if (acc) acc[i][k] += a[k];
+        }
+        U += 0.5 * ps->mass[i] * (a[0] * ps->pos[i][0] + a[1] * ps->pos[i][1] + a[2] * ps->pos[i][2]);
+    }
+    return U;
+}
+
 static void compute_U(struct ketju_system *R) {
 
     timer_start(&R->perf->time_force);
@@ -360,6 +380,7 @@ static void compute_U_and_Newtonian_Acc(struct ketju_system *R) {
     timer_stop(&R->perf->time_force_comm);
 
     timer_start(&R->perf->time_force);
+    external_tide(R, is->acc);
     int hi, lo;
     for (int i = 0; i < R->num_particles - 1; i++) {
 
@@ -636,6 +657,15 @@ static void kick(double ds, struct ketju_system *R) {
     compute_U_and_Newtonian_Acc(R);
     double dt = ds / is->U;
 
+    const int tide = R->options->enable_external_tide;
+    double(*v_old)[3] = NULL, (*a_tide)[3] = NULL;
+    if (tide) {
+        v_old = malloc(sizeof(double[R->num_particles][3]));
+        a_tide = calloc(R->num_particles, sizeof(double[3]));
+        memcpy(v_old, R->physical_state->vel, sizeof(double[R->num_particles][3]));
+        external_tide(R, a_tide);
+    }
+
     if (!R->options->PN_flags) {
         // no velocity dependent forces (only PN for now), just the newtonian
         // part needed
@@ -654,6 +684,17 @@ static void kick(double ds, struct ketju_system *R) {
         auxiliary_kick(dt / 2, R);
     }
     update_vel(R, PHYSICAL);
+    if (tide) { // B = U - T loses the tide's work over the kick, at the mean velocity
+        double W = 0;
+        for (int i = 0; i < R->num_particles; i++) {
+            for (int k = 0; k < 3; k++) {
+                W += R->physical_state->mass[i] * 0.5 * (v_old[i][k] + R->physical_state->vel[i][k]) * a_tide[i][k];
+            }
+        }
+        is->B -= W * dt;
+        free(v_old);
+        free(a_tide);
+    }
 }
 
 static void compute_total_energy(struct ketju_system *R) {
@@ -1290,6 +1331,12 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
     allocate_state_backup(&old_state, R->num_particles, R->num_pn_particles);
     store_state_backup(&old_state, R);
 
+    double *pair_rv = NULL; // r.v per pair at the last collision check
+    if (R->collision_radius) {
+        pair_rv = malloc(sizeof(double) * R->num_particles * R->num_particles);
+        ketju_pair_rv(R, pair_rv);
+    }
+
     bool finished = false;
     do {
         // Check mergers between BHs (PN particles)
@@ -1307,9 +1354,30 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
                 }
                 ketju_construct_MST(R);
                 steps_since_reconstruction = 0;
+                if (pair_rv) ketju_pair_rv(R, pair_rv);
                 compute_total_energy(R);
                 store_state_backup(&old_state, R);
                 gbs_storage.num_vars -= num_merged * 9; // pos, vel, spin
+                free_gbs_extrapolation_inds(&gbs_indices);
+                init_gbs_extrapolation_indices(
+                    &gbs_indices, R->internal_state->task_info->main_group_size,
+                    gbs_storage.num_vars);
+            }
+        }
+        // Contact collisions of non-PN particles, checked on each accepted state
+        if (pair_rv && Hstep > 0) {
+            int num_coll = ketju_do_star_collisions(R, pair_rv);
+            if (num_coll) {
+                if (R->num_particles < 2) {
+                    trivial_propagation(R, time_interval
+                                               - R->physical_state->time);
+                    break;
+                }
+                ketju_construct_MST(R);
+                steps_since_reconstruction = 0;
+                compute_total_energy(R);
+                store_state_backup(&old_state, R);
+                gbs_storage.num_vars -= num_coll * 6; // pos, vel
                 free_gbs_extrapolation_inds(&gbs_indices);
                 init_gbs_extrapolation_indices(
                     &gbs_indices, R->internal_state->task_info->main_group_size,
@@ -1432,10 +1500,16 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
 
     } while (!finished);
 
+    // a pericentre passed in the last step is not seen by the next call
+    if (pair_rv && time_interval > 0 && R->num_particles >= 2) {
+        ketju_do_star_collisions(R, pair_rv);
+    }
+
     // Restore the initial physical time offset
     R->physical_state->time += t_start;
 
     // free temp storage
+    free(pair_rv);
     free_state_backup(&old_state);
     free_gbs_storage(&gbs_storage);
     free_gbs_extrapolation_inds(&gbs_indices);

@@ -231,6 +231,8 @@ static inline void loop_scheduling_N2(int N, int Nt, int task, int *istart,
 void ketju_binary_PN_CoM_velocity(struct ketju_system *R, int i, int j,
                                   double CoM_vel[3]);
 int ketju_do_bh_mergers(struct ketju_system *R);
+int ketju_do_star_collisions(struct ketju_system *R, double *rv_prev);
+void ketju_pair_rv(const struct ketju_system *R, double *rv);
 
 void ketju_init_gbs_comms(struct ketju_system *R);
 void ketju_free_gbs_comms(struct ketju_system *R);

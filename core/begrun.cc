@@ -2505,6 +2505,30 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "KetjuMaxStepCount");
       addr[nt] = &All.KetjuMaxStepCount;
       id[nt++] = INT;
+
+      strcpy(tag[nt], "KetjuRegionMotionCapFactor");
+      addr[nt] = &All.KetjuRegionMotionCapFactor;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuTidalStepRes");
+      addr[nt] = &All.KetjuTidalStepRes;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuTidalErrorBudget");
+      addr[nt] = &All.KetjuTidalErrorBudget;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "KetjuSmoothTide");
+      addr[nt] = &All.KetjuSmoothTide;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "KetjuKeplerPairs");
+      addr[nt] = &All.KetjuKeplerPairs;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "KetjuFlybyStepEta");
+      addr[nt] = &All.KetjuFlybyStepEta;
+      id[nt++] = REAL;
 #endif
 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
@@ -2967,6 +2991,12 @@ void read_parameter_file(char *fname)
 #endif
                 if(strcmp("KetjuTimestepLimitingFactor",tag[i])==0) {*((double *)addr[i])=100.; printf("Tag %s not set: defaulting to 100\n",tag[i]); continue;}
                 if(strcmp("KetjuMaxStepCount",tag[i])==0) {*((int *)addr[i])=100000; printf("Tag %s not set: defaulting to 100000\n",tag[i]); continue;}
+                if(strcmp("KetjuRegionMotionCapFactor",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (Mannerkoski+ 2023 caps)\n",tag[i]); continue;}
+                if(strcmp("KetjuTidalStepRes",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+                if(strcmp("KetjuTidalErrorBudget",tag[i])==0) {*((double *)addr[i])=1e-5; printf("Tag %s not set: defaulting to 1e-5\n",tag[i]); continue;}
+                if(strcmp("KetjuSmoothTide",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+                if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+                if(strcmp("KetjuFlybyStepEta",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;

@@ -408,7 +408,11 @@ static void incode_total_energy(void)
 
             double E = KE + PE, E_prop = KE + PE_prop;
             static double E0_prop = 0; if(!have0) { E0 = E; E0_prop = E_prop; have0 = 1; }
+
             if(do_print) {
+#ifdef KETJU_REGULARIZATION
+                ketju_note_total_energy(E, E0); /* printed evaluations only: those are at full syncs, mid-step members carry chord velocities */
+#endif
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
                        (E_prop - E0_prop - ledger)/fabs(E0_prop), ledger, n_int, KE, PE, PE_prop);
@@ -1159,7 +1163,13 @@ void find_next_sync_point_and_drift(void)
 #endif
 #endif
 
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity, not the chord one */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef KETJU_REGULARIZATION
+        ketju_swap_output_velocities();
+#endif
 #ifdef SINK_TRIGGERED_FINE_OUTPUT
         if(FineOutputActive && ++FineOutputCount >= SINK_TRIGGERED_FINE_OUTPUT_COUNT)
           {
@@ -1636,6 +1646,15 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+#ifdef KETJU_REGULARIZATION
+          "ketju         %10.2f  %5.1f%%\n"
+          "   kj_limit   %10.2f  %5.1f%%\n"
+          "   kj_find    %10.2f  %5.1f%%\n"
+          "   kj_exch    %10.2f  %5.1f%%\n"
+          "   kj_mstar   %10.2f  %5.1f%%\n"
+          "   kj_scatter %10.2f  %5.1f%%\n"
+          "   kj_finish  %10.2f  %5.1f%%\n"
+#endif
           "misc          %10.2f  %5.1f%%\n",
 
     All.CPU_Sum[CPU_ALL], 100.0,
@@ -1718,6 +1737,16 @@ void write_cpu_log(void)
 #endif
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
+#ifdef KETJU_REGULARIZATION
+    All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH],
+    (All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJULIMIT], (All.CPU_Sum[CPU_KETJULIMIT]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUFIND], (All.CPU_Sum[CPU_KETJUFIND]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUEXCH], (All.CPU_Sum[CPU_KETJUEXCH]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUMSTAR], (All.CPU_Sum[CPU_KETJUMSTAR]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUSCATTER], (All.CPU_Sum[CPU_KETJUSCATTER]) / All.CPU_Sum[CPU_ALL] * 100,
+    All.CPU_Sum[CPU_KETJUFINISH], (All.CPU_Sum[CPU_KETJUFINISH]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
     All.CPU_Sum[CPU_MISC], (All.CPU_Sum[CPU_MISC]) / All.CPU_Sum[CPU_ALL] * 100);
 

@@ -81,9 +81,11 @@ void ketju_set_final_velocities(void);
 void ketju_finish_step(void);
 int ketju_is_particle_in_region(int i);
 void ketju_mark_regions_stale(void);
+void ketju_swap_output_velocities(void);
 void ketju_open_output_file(void);
 void ketju_close_output_file(void);
 void ketju_write_output(void);
+void ketju_note_total_energy(double E, double E0);
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
