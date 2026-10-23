@@ -29,6 +29,7 @@
 #include <cfloat>
 #include <queue>
 #include <functional>
+#include <array>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -2127,6 +2128,78 @@ static void move_particle_timebin(int i, int old_bin, int new_bin)
     P[i].TimeBin = new_bin;
 }
 
+/* Caps on each timestep group's step, integer time (TIMEBASE: none); only groups of >= 2 centres are integrated.
+ * Motion (Mannerkoski+ 2023 sec. 2.4.2, eqs. 4 and 6): dt <= 0.1 r_region / v_CoM and dt <= r_region / (6 sigma), so stars
+ * cannot cross a region in one step. v_CoM and sigma (1D) are taken relative to the stars around the group (all Type 4/5
+ * within the timestep-limiting radius, other groups' centres included) rather than the simulation frame: a cluster moving
+ * through a galaxy at 100 km/s is no reason to shorten its regions' steps. */
+static long long CapTally = 0; /* groups whose bin the motion cap set (task 0) */
+static std::vector<long long> region_step_caps(const std::vector<std::vector<ketju_mpi_particle>> &groups)
+{
+    const int n = (int)groups.size();
+    std::vector<long long> caps(n, (long long)TIMEBASE);
+    const double R = All.KetjuRegionRadius, Rlim = DMAX(All.KetjuTimestepLimitingFactor, 2.0) * R; /* physical */
+    const double a = All.cf_atime, Rlim_c = Rlim / a;
+    auto to_ti = [](double dt) {double t = dt * All.cf_hubble_a / All.Timebase_interval; return (t >= (double)TIMEBASE) ? (long long)TIMEBASE : (long long)DMAX(t, 1.0);};
+
+    /* field statistics: N, sum v, sum v^2 of the stars within Rlim of a group's centres, not counting its own centres */
+    std::vector<double> st(5 * n, 0.0);
+    std::unordered_map<long long, std::vector<std::pair<int, std::array<double, 3>>>> grid; /* cell -> (group, centre position or image) */
+    auto key = [](long long x, long long y, long long z) {return (x & 0x1fffff) | ((y & 0x1fffff) << 21) | ((z & 0x1fffff) << 42);};
+    auto cell = [Rlim_c](double x) {return (long long)floor(x / Rlim_c);};
+    std::unordered_map<int, int> own; /* local index of a centre -> its group */
+    for(int r = 0; r < n; r++) {
+        if(groups[r].size() < 2) continue;
+        for(const ketju_mpi_particle &c : groups[r]) {
+            if(c.Task == ThisTask) own[c.Index] = r;
+            int nim[3] = {1, 1, 1}; double sh[3][3];
+            for(int k = 0; k < 3; k++) {sh[k][0] = 0; (void)nim;}
+#ifdef BOX_PERIODIC
+            double box[3] = {boxSize_X, boxSize_Y, boxSize_Z};
+            for(int k = 0; k < 3; k++) {nim[k] = 1; if(c.Pos[k] < Rlim_c) sh[k][nim[k]++] = box[k]; if(c.Pos[k] > box[k] - Rlim_c) sh[k][nim[k]++] = -box[k];}
+#endif
+            for(int ix = 0; ix < nim[0]; ix++) for(int iy = 0; iy < nim[1]; iy++) for(int iz = 0; iz < nim[2]; iz++) {
+                std::array<double, 3> x = {c.Pos[0] + sh[0][ix], c.Pos[1] + sh[1][iy], c.Pos[2] + sh[2][iz]};
+                grid[key(cell(x[0]), cell(x[1]), cell(x[2]))].push_back({r, x});
+            }
+        }
+    }
+    std::vector<int> last(n, -1);
+    for(int i = 0; i < NumPart; i++) {
+        if((P[i].Type != 4 && P[i].Type != 5) || P[i].Mass <= 0) continue;
+        auto ow = own.find(i); int mine = (ow == own.end()) ? -1 : ow->second;
+        long long cx = cell(P[i].Pos[0]), cy = cell(P[i].Pos[1]), cz = cell(P[i].Pos[2]);
+        for(int dx = -1; dx <= 1; dx++) for(int dy = -1; dy <= 1; dy++) for(int dz = -1; dz <= 1; dz++) {
+            auto it = grid.find(key(cx + dx, cy + dy, cz + dz)); if(it == grid.end()) continue;
+            for(const auto &gc : it->second) {
+                int r = gc.first; if(r == mine || last[r] == i) continue;
+                double d2 = 0; for(int k = 0; k < 3; k++) {double d = P[i].Pos[k] - gc.second[k]; d2 += d * d;}
+                if(d2 >= Rlim_c * Rlim_c) continue;
+                last[r] = i; st[5*r] += 1;
+                for(int k = 0; k < 3; k++) {double v = P[i].Vel[k] / a; st[5*r+1+k] += v; st[5*r+4] += v * v;}
+            }
+        }
+    }
+    MPI_Allreduce(MPI_IN_PLACE, st.data(), 5 * n, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+
+    for(int r = 0; r < n; r++) {
+        const std::vector<ketju_mpi_particle> &g = groups[r];
+        if(g.size() < 2) continue;
+        double N = st[5*r];
+        if(N >= 1) {
+            double M = 0, vc[3] = {0, 0, 0}, vf[3], vrel2 = 0;
+            for(const ketju_mpi_particle &c : g) {M += c.Mass; for(int k = 0; k < 3; k++) vc[k] += c.Mass * c.Vel[k] / a;}
+            for(int k = 0; k < 3; k++) {vf[k] = st[5*r+1+k] / N; double d = vc[k] / M - vf[k]; vrel2 += d * d;}
+            double dt = MAX_REAL_NUMBER;
+            if(vrel2 > 0) dt = 0.1 * R / sqrt(vrel2);
+            double sig2 = (st[5*r+4] / N - (vf[0]*vf[0] + vf[1]*vf[1] + vf[2]*vf[2])) / 3.0;
+            if(N >= 2 && sig2 > 0) dt = DMIN(dt, R / (6.0 * sqrt(sig2)));
+            if(dt < MAX_REAL_NUMBER) caps[r] = to_ti(dt);
+        }
+    }
+    return caps;
+}
+
 /* PHASE 6: put every chain region on one timebin, changing only particles synchronised this step.
  *
  * The velocity trick needs every member of a region to start and end its step with the region: the
@@ -2227,6 +2300,10 @@ void ketju_limit_timesteps(void)
     }
 #endif
     MPI_Allreduce(MPI_IN_PLACE, min_ti.data(), 2 * n_tsr, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+    { /* motion caps (identical on all tasks) */
+        std::vector<long long> caps = region_step_caps(tsr_centers);
+        for(int r = 0; r < n_tsr; r++) if(caps[r] < min_ti[2*r] && caps[r] < (long long)TIMEBASE) {min_ti[2*r] = caps[r]; if(ThisTask == 0) CapTally++;}
+    }
 
     long long counts[4] = {0, 0, 0, 0}; /* limited particles moved (down, up), timestep regions set by limiting particles, unsynchronised target bins */
     for(int r = 0; r < n_tsr; r++) {
@@ -2500,6 +2577,7 @@ void ketju_run_integration(void)
                 /* coupling energy check: if the direct-sum drift is the kick work, the coupling (impulsive external field) dominates;
                  * if it is the MSTAR term, the integrator does. Normalised by |E0| of the direct sum when that is computed. */
                 double norm = (KetjuEtotSet && KetjuEtot0 != 0) ? fabs(KetjuEtot0) : 1;
+                printf("KETJU CAPS: t=%g timestep-regions set by motion cap=%lld\n", All.Time, CapTally);
                 printf("KETJU ENERGY: t=%g units=%s kick-work-internal net=%.4e abs=%.4e MSTAR-dE=%.4e collisions-dE=%.4e ETOT dE=%.4e\n",
                        All.Time, (norm != 1) ? "|E0|" : "code", cum_energy[0] / norm, cum_energy[1] / norm, cum_energy[2] / norm, cum_energy[3] / norm,
                        KetjuEtotSet ? (KetjuEtot - KetjuEtot0) / norm : 0.0);
