@@ -1819,6 +1819,11 @@ void energy_statistics(void)
     double cr_loc[2] = {resolvedism_cr_energy_local(), CumulCRLossEnergy * UNIT_ENERGY_IN_CGS}, cr_glob[2] = {0, 0};
     MPI_Reduce(cr_loc, cr_glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
+#ifdef MAGNETIC
+    double emag_loc = 0, emag_glob = 0;
+    for(int ii = 0; ii < NumPart; ii++) {if(P[ii].Type == 0 && P[ii].Mass > 0) {emag_loc += 0.5 * (CellP[ii].Bfield() * All.cf_a2inv).norm_sq() * P[ii].Mass / (CellP[ii].Density * All.cf_a3inv);}}
+    MPI_Reduce(&emag_loc, &emag_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
 
     /* min/max metallicity for gas (Type 0) and stars (Type 4) */
     double Zmin_gas_loc = 1e30, Zmax_gas_loc = -1e30, Zmin_star_loc = 1e30, Zmax_star_loc = -1e30;
@@ -1851,6 +1856,9 @@ void energy_statistics(void)
         cool_erg, fb_erg, CumulFeedbackMass, fbc_erg, pi_glob, sf_glob);
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo, "  %.16e  %.16e  %.16e", cr_glob[0], CumulCRInjectedErg, cr_glob[1]);
+#endif
+#ifdef MAGNETIC
+      fprintf(FdENERGYinfo, "  %14.6e", emag_glob * UNIT_ENERGY_IN_CGS);
 #endif
       fprintf(FdENERGYinfo, "\n");
       fflush(FdENERGYinfo);

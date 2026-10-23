@@ -831,6 +831,9 @@ void open_outputfiles(void)
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo,"%s   (15) E_CR[erg]  (16) E_CR_injected_cumul[erg] (measured at the feedback deposit)  (17) E_CR_loss_cumul[erg] (hadronic+Coulomb, removed from the CR fluid); (15)-(15)[t=0]-(16)+(17) = CR-gas exchange (adiabatic work, streaming losses)\n",prefix_char);
 #endif
+#ifdef MAGNETIC
+      fprintf(FdENERGYinfo,"%s   (last) E_B[erg] magnetic energy, not in (8)\n",prefix_char);
+#endif
   }
 #endif
 #ifdef GALSF_RESOLVEDISM
