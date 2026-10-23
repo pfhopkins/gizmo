@@ -336,7 +336,6 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
             )
             plt.loglog(t_plot, R_weaver_plot, "r:", linewidth=1.0,
                        label=rf"Weaver 1977 (radiative), $\alpha$={ALPHA_RADIATIVE:.2f} (n/a here)")
-        #        plt.loglog(t_plot, A * t_plot**alpha, "b--", label=f"Best fit ($t^{{{alpha:.2f}}}$)")
         plt.xlabel("t (code units)")
         plt.ylabel("R_shell (pc)")
         plt.legend()
