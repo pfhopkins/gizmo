@@ -399,7 +399,7 @@ static const double LET_FOREIGN_PAD_FRACTION = 0.5;
 
 int force_treebuild(int npart, struct unbind_data *mp)
 {
-    GIZMO_TIMER_SCOPE("TreeBuild");
+    GIZMO_TIMER_FUNCTION();
     int flag;
     /* Adaptive LET foreign-arena retry: force_treebuild owns the rebuild loop (same
      * idiom as the TreeAllocFactor-overflow retry below). On a retryable LET overflow

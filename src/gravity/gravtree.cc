@@ -248,7 +248,7 @@ void hermite_ghost_table_release(void)
 
 void gravity_tree(void)
 {
-    GIZMO_TIMER_SCOPE("TreeSolve");
+    GIZMO_TIMER_FUNCTION();
     /* initialize variables */
     int i, j, iter; i = 0; j = 0; iter = 0;
     double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timewait2 = 0;

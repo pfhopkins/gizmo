@@ -533,7 +533,7 @@ int domain_segments_per_rank_for_particles(long long total_particles, int *lower
  *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
-    GIZMO_TIMER_SCOPE("Domain");
+    GIZMO_TIMER_FUNCTION();
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition")) {return;}
     /* The kept neighbour indexes will not be read again before the layout changes, so
      * their memory is returned now, before this decomposition's own allocations and
@@ -842,6 +842,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     same step. */
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key)
 {
+    GIZMO_TIMER_FUNCTION();
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition_light")) {return;}
     gpu_step_sidx_invalidate_full();   /* as in domain_Decomposition: released before any allocation here */
     int i; size_t bytes; double t0, t1;

@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 
+#include "../system/timer.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -82,6 +83,7 @@ void long_range_init_regionsize(void)
  */
 void long_range_force(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i;
 #ifndef BOX_PERIODIC
     double fac;

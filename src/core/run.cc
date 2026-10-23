@@ -131,6 +131,7 @@ void gizmo_exit_bad_stop_if_requested(const char *poll_site)
 
 void run(void)
 {
+    GIZMO_TIMER_FUNCTION();
     CPU_Step[CPU_MISC] += measure_time();
 
     if(RestartFlag != 1)		/* need to compute forces at initial synchronization time, unless we restarted from restart files */
@@ -806,6 +807,7 @@ void calculate_non_standard_physics(void)
 
 void compute_statistics(void)
 {
+    GIZMO_TIMER_FUNCTION();
     if((All.Time - All.TimeLastStatistics) >= All.TimeBetStatistics)
     {
         /* Lazy-drift global-read sync: energy_statistics sums predicted state
@@ -852,6 +854,7 @@ void execute_resubmit_command(void)
  */
 void find_next_sync_point_and_drift(void)
 {
+    GIZMO_TIMER_FUNCTION();
   int n, i, prev;
   integertime dt_bin, ti_next_for_bin, ti_next_kick, ti_next_kick_global;
   int highest_active_bin, highest_occupied_bin;

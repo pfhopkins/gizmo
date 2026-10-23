@@ -7,6 +7,7 @@
 #include <math.h>
 #include <string>
 #include <Kokkos_Core.hpp>
+#include "../system/timer.h"
 #include "../system/timer_gizmo.h"
 
 #include "../declarations/gpu_all_mirror.h"
@@ -360,6 +361,7 @@ static inline void finish_cooling_host_deferred_dust_updates(int i, double dtime
    indexed 0..N_active-1, enabling future GPU offloading. */
 void cooling_parent_routine(void)
 {
+    GIZMO_TIMER_FUNCTION();
     PRINT_STATUS("Cooling and Chemistry update");
     /* Step 1: Determine indices of active gas particles eligible for cooling. */
     std::vector<int> cool_indices;

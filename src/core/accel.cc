@@ -33,7 +33,7 @@
 
 void compute_grav_accelerations(void)
 {
-  GIZMO_TIMER_SCOPE("Tree");
+  GIZMO_TIMER_FUNCTION();
   CPU_Step[CPU_MISC] += measure_time();
   PRINT_STATUS("Start gravity force computation...");
 
@@ -63,7 +63,7 @@ void compute_grav_accelerations(void)
 
 void compute_hydro_densities_and_forces(void)
 {
-  GIZMO_TIMER_SCOPE("Hydro");
+  GIZMO_TIMER_FUNCTION();
   if(All.TotN_gas > 0)
     {
         PRINT_STATUS("Start hydrodynamics computation...");
@@ -241,6 +241,7 @@ static void shearing_sheet_coriolis_boris(void)
 
 void compute_additional_forces_for_all_particles(void)
 {
+    GIZMO_TIMER_FUNCTION();
 #if defined(DM_FUZZY)
     DMGrad_gradient_calc();
 #endif
@@ -271,6 +272,7 @@ void compute_additional_forces_for_all_particles(void)
 #ifdef GALSF
 void compute_stellar_feedback(void)
 {
+    GIZMO_TIMER_FUNCTION();
     CPU_Step[CPU_MISC] += measure_time();
 #ifdef GALSF_LIMIT_FBTIMESTEPS_FROM_BELOW
     if(All.Dt_Since_LastFBCalc_Gyr > All.Dt_Min_Between_FBCalc_Gyr) {All.Dt_Since_LastFBCalc_Gyr = 0;}

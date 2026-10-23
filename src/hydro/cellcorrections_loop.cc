@@ -51,7 +51,7 @@ void CellcorrectionsSpec::apply_active_writeback(const neighbor_loop_args& /*arg
  * the final closure (Density / Pressure) call. */
 void cellcorrections_calc(void)
 {
-    GIZMO_TIMER_SCOPE("CellCorrections");
+    GIZMO_TIMER_FUNCTION();
     CPU_Step[CPU_DENSMISC] += measure_time();
     double t00 = my_second();  const double child0_span = CPU_ChildCharged;
     PRINT_STATUS(" ..calculating first-order corrections to cell sizes/faces");

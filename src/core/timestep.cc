@@ -39,7 +39,7 @@ static double dt_displacement = 0;
  */
 void find_timesteps(void)
 {
-    GIZMO_TIMER_SCOPE("FindTimesteps");
+    GIZMO_TIMER_FUNCTION();
     CPU_Step[CPU_MISC] += measure_time();
 
     int i, bin, binold, prev, next;

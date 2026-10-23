@@ -764,7 +764,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
  * ==================================================================== */
 void density(void)
 {
-    GIZMO_TIMER_SCOPE("Density");
+    GIZMO_TIMER_FUNCTION();
     const struct global_data_all_processes *host_all = nlr_host_all_ptr();
     if (host_all->TotN_gas <= 0) return;
 

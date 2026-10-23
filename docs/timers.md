@@ -33,6 +33,41 @@ and `timers-step.tsv`; `both` writes both pairs. Each process launch adds a sess
 restarts begin a new session with fresh totals. The TSV header can therefore recur
 between sessions. No timing state is loaded from restart files.
 
+## Naming and coverage convention
+
+The runtime reports should provide a readable breakdown of the simulation and
+make expensive regions easy to locate in the source. Whole-function scopes use
+the actual function name, supplied automatically by `GIZMO_TIMER_FUNCTION()`.
+Place it immediately inside the function definition, before early returns.
+The macro expands to `GIZMO_TIMER_SCOPE(__func__)`; it does not automatically
+instrument other functions.
+
+Use `GIZMO_TIMER_SCOPE("phase_name")` for a portion of a function, such as the
+`Step` iteration or a communication/packing phase. Kernel launch scopes normally
+use the Kokkos kernel label. A distinct label such as `ewald_kernel` identifies
+the kernel subset of an enclosing function with the same name as the Kokkos
+label. An unusually cumbersome function name may use a short explicit alias,
+with a source comment stating the function and measured boundaries.
+
+Each scope must cover the work its name describes. A whole-function timer ends
+on function exit; a phase timer needs its own block if it ends before the
+function. Avoid wrapping a call and instrumenting the callee with the same name,
+which creates two indistinguishable levels. Missing child coverage remains in
+self time, so the report must not be read as a complete function call graph.
+
+The instrumented entry functions cover setup/run, timestep selection and drift,
+statistics, full/light domain decomposition, gravity and tree build/walk,
+long-range gravity, hydro phases, cooling, additional forces and stellar
+feedback. Shared GPU launch helpers automatically time their named launches
+with the helpers' existing fences; explicit direct-launch scopes cover selected
+gravity kernels. This is a runtime summary whose finer breakdown can be extended
+at large self-time regions. The timers add no GPU fences.
+
+This naming convention replaces earlier aliases such as `Tree`, `TreeSolve`,
+`TreeBuild`, `Density` and `PrimaryWalk` with source function names. Downstream
+filters should use the new paths for new runs; previously written sessions keep
+their original labels.
+
 ## Instrument a host region
 
 Include `system/timer.h` using the relative path appropriate for the source file.
@@ -41,40 +76,45 @@ The header has no Kokkos, MPI, or GIZMO configuration dependency.
 ```cpp
 #include "../system/timer.h"
 
-void solve()
+void small_function()
 {
-    GIZMO_TIMER_SCOPE("Tree");
-    prepare();
-    {
-        GIZMO_TIMER_SCOPE("TreeSolve");
-        {
-            GIZMO_TIMER_SCOPE("small_function");
-            small_function();
-        }
-        finish_solve();
-    }
-    finish_tree();
+    GIZMO_TIMER_FUNCTION();
+    // work
+}
+
+void gravity_tree()
+{
+    GIZMO_TIMER_FUNCTION();
+    small_function();
+}
+
+void compute_grav_accelerations()
+{
+    GIZMO_TIMER_FUNCTION();
+    gravity_tree();
 }
 ```
 
-These regions appear as `Tree`, `Tree::TreeSolve`, and
-`Tree::TreeSolve::small_function`. If the caller is already inside `Step`, the
-paths begin with `Step::Tree`. The active stack determines the parent every time;
+These regions appear as `compute_grav_accelerations`,
+`compute_grav_accelerations::gravity_tree`, and
+`compute_grav_accelerations::gravity_tree::small_function`. In the main loop,
+the paths begin with `run::Step::compute_grav_accelerations`.
+The active stack determines the parent every time;
 a shared function called in different contexts gets separate records.
 
 Explicit boundaries are also supported:
 
 ```cpp
-TimerStart("Tree");
-TimerStart("Tree::TreeSolve");
+TimerStart("prepare_walk");
+TimerStart("prepare_walk::pack_targets");
 // work
-TimerStop("Tree::TreeSolve");
-TimerStop("Tree");
+TimerStop("prepare_walk::pack_targets");
+TimerStop("prepare_walk");
 ```
 
 Use short names when possible. A qualified name must identify an immediate child
 of the full active path; it does not create missing ancestors. For example, inside
-`Step::Tree`, use `TreeSolve` or `Step::Tree::TreeSolve`. Names must be nonempty and
+`prepare_walk`, use `pack_targets` or `prepare_walk::pack_targets`. Names must be nonempty and
 cannot contain tabs or newlines; colons are reserved for `::` path separators. Avoid
 embedding particle IDs, timestep numbers, or other unbounded values in names.
 
@@ -95,27 +135,27 @@ rerun the same workload. For example, inside the already-instrumented
 
 ```cpp
 {
-    GIZMO_TIMER_SCOPE("PrepareWalk");
+    GIZMO_TIMER_SCOPE("prepare_walk");
     // existing preparation work
 }
 {
-    GIZMO_TIMER_SCOPE("EvaluateWalk");
+    GIZMO_TIMER_SCOPE("evaluate_walk");
     // existing walk work
 }
 {
-    GIZMO_TIMER_SCOPE("ExchangeResults");
+    GIZMO_TIMER_SCOPE("exchange_results");
     // existing communication work
 }
 ```
 
 Each timer lasts until the end of its block. These names are automatically
 reported under the active path, for example
-`Step::Tree::TreeSolve::EvaluateWalk`. No enum, registration table or report
+`run::Step::compute_grav_accelerations::gravity_tree::evaluate_walk`. No enum, registration table or report
 format needs to be edited. Add another nested block to investigate a child.
 Wrapping a function call includes all synchronous work in that call.
 
-For explicit boundaries, `TimerStart("PrepareWalk")` and
-`TimerStop("PrepareWalk")` measure only the statements between them. Scope timers
+For explicit boundaries, `TimerStart("prepare_walk")` and
+`TimerStop("prepare_walk")` measure only the statements between them. Scope timers
 are preferable when the region has early exits. Start with batches or phases to
 keep instrumentation overhead small. Device function bodies need GPU profiling;
 host scope timers belong outside the kernel, around its dispatch.

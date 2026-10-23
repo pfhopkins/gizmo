@@ -2592,7 +2592,7 @@ static int gpu_grav_answer_node_claims(integertime ti, const char *walk)
 
 extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
 {
-    GIZMO_TIMER_SCOPE("PrimaryWalk");
+    GIZMO_TIMER_FUNCTION();
     GIZMO_GPU_ENSURE_ALL_FRESH();
     int num_active_total = (int) ActiveParticleList.size();
     /* Cleared before any early return, so the shape reported for THIS call is this call's: a
@@ -3391,7 +3391,7 @@ gpu_ewald_walk_one(int target,
 
 extern "C" int gpu_ewald_walk_primary(void)
 {
-    GIZMO_TIMER_SCOPE("EwaldWalk");
+    GIZMO_TIMER_FUNCTION();
     GIZMO_GPU_ENSURE_ALL_FRESH();
     if(Ewald_iter == 0) {return 0;}
 #ifdef PMGRID
@@ -3469,7 +3469,7 @@ extern "C" int gpu_ewald_walk_primary(void)
     g_inv_fterm_aggregate = 0; g_unship_aggregate = 0;
 
     {
-    GIZMO_TIMER_SCOPE("gpu_ewald_walk_primary");
+    GIZMO_TIMER_SCOPE("ewald_kernel"); // kernel subset of gpu_ewald_walk_primary()
     Kokkos::parallel_for("gpu_ewald_walk_primary", num_active, KOKKOS_LAMBDA(int a) {
         int target = d_idx[a];
         Vec3<double> acc;

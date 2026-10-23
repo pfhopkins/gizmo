@@ -423,7 +423,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 
 void hydro_force(void)
 {
-    GIZMO_TIMER_SCOPE("HydroForce");
+    GIZMO_TIMER_FUNCTION();
     CPU_Step[CPU_MISC] += measure_time();
     double t00_truestart = my_second();
     double t_preloop_start = my_second();

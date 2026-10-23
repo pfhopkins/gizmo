@@ -9,6 +9,7 @@
 #include <ctype.h>
 #include <limits.h>
 
+#include "../system/timer.h"
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
@@ -44,6 +45,7 @@ void report_parameters_a_restart_cannot_change(const void *from_file);
 
 void begrun(void)
 {
+  GIZMO_TIMER_FUNCTION();
   struct global_data_all_processes all;
   memset(&All, 0, sizeof(struct global_data_all_processes));
 #ifdef _OPENMP

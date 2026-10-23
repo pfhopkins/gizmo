@@ -227,10 +227,7 @@ int main(int argc, char **argv)
   CPUThisRun = 0;
   cpu_chain_sync(my_second());
 
-  {
-    GIZMO_TIMER_SCOPE("Setup");
-    begrun();			/* set-up run  */
-  }
+  begrun();			/* set-up run; begrun() owns its function timer */
 
   report_memory_ledger("startup");  /* all ranks reach this point after begrun(); its node-scoped reduce is collective */
 

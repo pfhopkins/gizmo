@@ -67,4 +67,8 @@ using gizmo::timing::TimerStop;
 #define GIZMO_TIMER_SCOPE(name) \
     const ::gizmo::timing::TimerScope GIZMO_TIMER_JOIN(gizmo_timer_scope_, __LINE__)(name)
 
+/* Place at function entry. __func__ keeps the report aligned with source names;
+ * use GIZMO_TIMER_SCOPE for phases or an explicitly documented short alias. */
+#define GIZMO_TIMER_FUNCTION() GIZMO_TIMER_SCOPE(__func__)
+
 #endif
