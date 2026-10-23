@@ -1750,6 +1750,28 @@ void put_symbol(double t0, double t1, char c)
  */
 void energy_statistics(void)
 {
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+  { /* test: global E_th, E_kin, E_pot, E_B and cumulative MHD energy ledger [erg] to mhd_energy_ledger.txt */
+    compute_global_quantities_of_system();
+    double loc[2+MHD_ENERGY_LEDGER_N]={0}, glob[2+MHD_ENERGY_LEDGER_N]={0};
+    for(int ii=0;ii<NumPart;ii++) {if(P[ii].Type==0 && P[ii].Mass>0 && CellP[ii].Density>0) {
+        loc[0] += 0.5 * (CellP[ii].Bfield() * All.cf_a2inv).norm_sq() * P[ii].Mass / (CellP[ii].Density * All.cf_a3inv);
+#ifdef DIVBCLEANING_DEDNER
+        loc[1] += fabs(CellP[ii].divB);
+#endif
+    }}
+    for(int kl=0;kl<MHD_ENERGY_LEDGER_N;kl++) {loc[2+kl] = MHDEnergyLedger[kl];}
+    MPI_Reduce(loc, glob, 2+MHD_ENERGY_LEDGER_N, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask==0) {
+        static FILE *fd_ledger = NULL; char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; double ue = UNIT_ENERGY_IN_CGS;
+        if(!fd_ledger) {snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%smhd_energy_ledger.txt", All.OutputDir); fd_ledger = fopen(fn, "w");
+            fprintf(fd_ledger, "# time E_th E_kin E_pot E_B [erg] sum|divB| | cumul [erg]: clip(limiter+floor) Powell DednerFace DednerPhiCorr closure halfB2dV_booked BdVB_booked\n");}
+        fprintf(fd_ledger, "%.8g %.8e %.8e %.8e %.8e %.4e", All.Time, SysState.EnergyIntComp[0]*ue, SysState.EnergyKinComp[0]*ue, SysState.EnergyPot*ue, glob[0]*ue, glob[1]);
+        for(int kl=0;kl<MHD_ENERGY_LEDGER_N;kl++) {fprintf(fd_ledger, " %+.8e", glob[2+kl]*ue);}
+        fprintf(fd_ledger, "\n"); fflush(fd_ledger);
+    }
+  }
+#endif
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
   compute_global_quantities_of_system();
 

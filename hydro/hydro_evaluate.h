@@ -395,12 +395,18 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #else
                 double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_i);
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                out.DtE_MHDLedger[4] += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 for(k=0; k<3; k++)
                 {
                     out.DtB_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_db * Face_Area_Vec[k];
                     out.DtB[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
                     out.DtInternalEnergy += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                    out.DtE_MHDLedger[1] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+#endif
                 }
 #endif
 #ifdef MHD_NON_IDEAL
@@ -438,12 +444,18 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #else
                     double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_j);
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                    CellP[j].DtE_MHDLedger[4] -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                     for(k=0; k<3; k++)
                     {
                         CellP[j].DtB_PhiCorr[k] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_db * Face_Area_Vec[k];
                         CellP[j].DtB[k] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
                         CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * BPred_j[k]*All.cf_a2inv;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                        CellP[j].DtE_MHDLedger[1] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * BPred_j[k]*All.cf_a2inv;
+#endif
                     }
 #endif
 #ifdef MHD_NON_IDEAL

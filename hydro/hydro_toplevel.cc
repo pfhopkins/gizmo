@@ -360,6 +360,9 @@ struct OUTPUT_STRUCT_NAME
     Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MyDouble DtE_MHDLedger[5];
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
@@ -651,6 +654,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     /* can't just do DtB += out-> DtB, because for some hydro methods, the induction equation is solved in the density loop; need to simply add it here */
     CellP[i].DtB += out->DtB; CellP[i].Face_Area += out->Face_Area;
     CellP[i].divB += out->divB;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] += out->DtE_MHDLedger[kl];}
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     CellP[i].DtPhi += out->DtPhi;
@@ -734,10 +740,17 @@ void hydro_final_operations_and_cleanup(void)
                 Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
 #ifndef HYDRO_SPH
                 /* this part of the induction equation has to do with advection of div-B, it is not present in SPH */
+#ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].DtB -= CellP[i].divB * (CellP[i].VelPred/All.cf_atime);
 #endif
+#endif
+#ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                CellP[i].DtE_MHDLedger[0] -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#endif
+#endif
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
@@ -765,6 +778,9 @@ void hydro_final_operations_and_cleanup(void)
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
                 CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                CellP[i].DtE_MHDLedger[2] += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
+#endif
             }
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
@@ -805,6 +821,9 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
             CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            CellP[i].DtE_MHDLedger[3] += (magnorm_closure-1.) * dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
             CellP[i].DtB *= magnorm_closure;
 #endif
@@ -1035,6 +1054,9 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].HydroAccel = {};
 #ifdef MAGNETIC
                 CellP[i].DtB = {};
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 CellP[i].DtB_PhiCorr = {};
                 CellP[i].DtPhi = 0;
@@ -1123,6 +1145,9 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 #ifdef MAGNETIC
             CellP[i].divB = 0; CellP[i].Face_Area = {};
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};
 #endif

@@ -213,6 +213,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
 
 
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+double MHDEnergyLedger[MHD_ENERGY_LEDGER_N]; /* cumulative code energy: clip, Powell, Dedner face, Dedner PhiCorr, closure, B^2 dV/2, B.d(VB) */
+#endif
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
@@ -303,6 +306,12 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {du_tot=0;} /* cooling in unsplit, so zero contribution here */
 #endif
             double dEnt = CellP[i].InternalEnergy + du_tot;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            double u_ledger_target = dEnt;
+#if defined(MAGNETIC) && !defined(HYDRO_SPH)
+            for(int kl=0;kl<5;kl++) {MHDEnergyLedger[kl+1] += CellP[i].DtE_MHDLedger[kl] * dt_hydrokick;}
+#endif
+#endif
             
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             /* if we're using a Riemann solver, we include an energy/entropy-type switch to ensure
@@ -384,6 +393,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
             rt_diag_sc(RT_DIAG_SC_KICK_DU, (CellP[i].InternalEnergy - rt_diag_u0) * P[i].Mass);
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            MHDEnergyLedger[0] += (CellP[i].InternalEnergy - u_ledger_target) * P[i].Mass;
 #endif
         }
         
@@ -537,6 +549,9 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifdef MAGNETIC
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MHDEnergyLedger[6] += dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) * dt_entr;
+#endif
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi-fluxes (otherwise is just "1")

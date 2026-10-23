@@ -1073,7 +1073,9 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
+#ifndef TEST_MHD_NO_DEDNER_CLEANING /* test only: disables div-cleaning */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
+#endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
