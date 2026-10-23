@@ -681,6 +681,11 @@
 #endif
 
 
+#if defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(TREE_STAR_STAR_EXCLUDED_TYPE)
+#define TREE_STAR_STAR_EXCLUDED_TYPE 5 /* the tree leaves star-star pairs to star_direct_gravity.cc */
+#endif
+
+
 #ifdef MHD_CONSTRAINED_GRADIENT
 /* make sure mid-point gradient calculation for cleaning terms is enabled */
 #ifndef MHD_CONSTRAINED_GRADIENT_MIDPOINT
