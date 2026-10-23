@@ -52,14 +52,15 @@ thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
 
 // CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
-// t + h no longer advances t; CVODE's own first-step lower bound is 100 x that. 102 = fatal code.
+// t + h no longer advances t; CVODE's own first-step lower bound is 100 x that. A failure at the floor
+// is logged with the cell context and rejected like any failed substep (halve and retry, fatal 100 below 1e-8 s).
 static const double CHEM_HMIN_EPS = 10.0 * DBL_EPSILON;
 
 // full context of the cell handed to the solver, for the fatal paths
 static void chem_print_cell_context(const char* why, double time, double yn, double dl, double divv,
                                     const double* y, int nspec, const ChemCell& c)
 {
-    std::fprintf(stderr, "cxx_evolve FATAL: %s (ID %ld): dt=%g yn=%g dl=%g divv=%g net=%d\n",
+    std::fprintf(stderr, "cxx_evolve: %s (ID %ld): dt=%g yn=%g dl=%g divv=%g net=%d\n",
                  why, c.id_current, time, yn, dl, divv, c.net);
     std::fprintf(stderr, "  state (species..., energy):");
     for (int i = 0; i < nspec; i++) std::fprintf(stderr, " %.9e", y[i]);
@@ -329,7 +330,7 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
 // non_eq_abundances has c.trac_num entries; energy in/out [erg cm^-3].
 // Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0));
 // 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
-// 101 = non-finite input state; 102 = CVODE step reached the CHEM_HMIN_EPS time-resolution floor.
+// 101 = non-finite input state.
 // Net 3: an RHS ABORT (comp_equilib 9751/9752, index 1) returns that code.
 int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                           double* energy, double* non_eq_abundances, ChemCell& c)
@@ -355,12 +356,13 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
         int bad = !std::isfinite(yn) || !std::isfinite(time);
         for (int i = 0; i < nspec; i++) bad |= !std::isfinite(y[i]);
         if (bad) {
-            chem_print_cell_context("non-finite input state", time, yn, dl, divv, y, nspec, c);
+            chem_print_cell_context("FATAL non-finite input state (code 101)", time, yn, dl, divv, y, nspec, c);
             return 101;
         }
     }
     const long nan_states0 = chem_nan_states;   // NaN trial states rejected during this solve
     double nan_h = 0.0, nan_t = 0.0, nan_dt = 0.0;
+    long floor_hits = 0;
 
     double atol[CHEM_NSPEC_MAX];
     chem_atol(c.net, atol);
@@ -566,11 +568,10 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
             if (flag < 0) {
                 double hcur = 0.0;
                 CVodeGetCurrentStep(w->mem, &hcur);
-                if (std::fabs(hcur) <= hmin * (1.0 + 1e-6)) {
-                    std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (time resolution at t=%g, substep dt=%g, flag %d) of %g\n",
+                if (std::fabs(hcur) <= hmin * (1.0 + 1e-6) && floor_hits++ == 0) {
+                    std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (time resolution at t=%g, substep dt=%g, flag %d) of %g; substep rejected\n",
                                  hcur, t_start + dt, dt, flag, t_end);
                     chem_print_cell_context("CVODE step-size floor", time, yn, dl, divv, y_old, nspec, c);
-                    retcode = 102; goto out;
                 }
             }
 
@@ -630,6 +631,9 @@ out:
         }
     }
 out_nocopy:
+    if (floor_hits > 0)
+        std::fprintf(stderr, "cxx_evolve: CVODE step floor reached in %ld substeps (ID %ld); solve rc=%d\n",
+                     floor_hits, c.id_current, retcode);
     if (chem_nan_states > nan_states0) {
         std::fprintf(stderr, "cxx_evolve: %ld NaN trial states rejected by CVODE (ID %ld; first in substep t=%g dt=%g, CVODE h=%g); solve rc=%d\n",
                      chem_nan_states - nan_states0, c.id_current, nan_t, nan_dt, nan_h, retcode);
