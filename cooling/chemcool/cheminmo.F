@@ -1916,7 +1916,11 @@ c
 c
 c  H2: 
 c
+#if CHEMISTRYNETWORK == 5
+      crtab(2) = 1d0   ! H2 -> H2+ + e-, zeta per H2 as SGChem
+#else
       crtab(2) = 2d0   ! H2 -> H2+ + e-
+#endif
       crtab(10) = 3.7d-2 ! H2 -> H + H+ + e
       crtab(11) = 2.2d-1 ! H2 -> H + H
       crtab(12) = 6.5d-4 ! H2 -> H+ + H-
