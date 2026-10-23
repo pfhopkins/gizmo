@@ -47,6 +47,9 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     // --- conservation-law species (.F:106-113) ---
     double abHI = 1.0 - 2.0 * abh2 - abhp; if (abHI < 0.0) abHI = 0.0;
+    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink
+    const double abHI_ph = 1.0 - 2.0 * abh2 - ((y_in[ihp] > abhp) ? y_in[ihp] : abhp);
+    const double abHI_ph_rate = (abHI_ph < 0.0) ? abHI_ph : abHI;
     double abcp = c.abundc - abco;         if (abcp < 0.0) abcp = 0.0;
     double abe  = abhp + abcp + c.abundsi;
 
@@ -133,7 +136,7 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               -  h_gr * abhp * 1.0) * yn
               +  cr1  * abHI
               +  cr10 * abh2
-              +  ph38 * abHI;
+              +  ph38 * abHI_ph_rate;
 
     // --- molecular hydrogen (.F:285-292) ---
     ydot[ih2] = (-ch25  * abe  * abh2

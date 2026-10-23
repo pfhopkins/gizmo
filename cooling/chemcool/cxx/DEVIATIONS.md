@@ -531,6 +531,13 @@ chem_interface; `#error` for net 20 without CHEMCOOL_CXX; Fortran gets only a `r
   rec., 24 Lya, 25 CIE x S, 27 ff; lambda_chem: 0 H2 cd, 1-3 H2 diss/pump/form (heat), 4 H ci, 5 H rr, 6 PI (heat).
 - Benchmarks B1-B4: /orion/ptmp/uli/orion/chem_closeout/net20/bench/out/RESULTS20.md (sigma_LW 1.5e-21 run kept in out_sig1.5e-21).
 
+## D-30. (2026-10-23) net 5: H+ photoionization stays restoring above x_H+ = 1, C++ only
+`ph38 * abHI` uses `1 - 2 x_H2 - y_H+` with the unclipped y_H+ when that is negative (validate_input clips
+y_H+ to 1 and abHI to 0, so the term was flat above 1). Under a strong M1 field (Gamma_HI ~ 1e-7 s^-1) the
+equilibrium lies within ~1e-5 of x = 1; CVODE's unclipped state drifted above 1 to the 1 + EPS_MAX reject
+wall, h collapsed to ~1e-276 s and the dense DQ Jacobian produced NaN trial states (B2 cell 3782).
+Unchanged whenever x_H+ <= 1 or ph38 = 0 (no RT, no TreeRay-PI, no comoving UVB). Fortran rate_eq_simple.F not changed.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
