@@ -363,7 +363,7 @@ struct OUTPUT_STRUCT_NAME
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     MyDouble DtE_MHDLedger[5];
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
     MyDouble DtEB_facevol;
 #endif
 #if defined(DIVBCLEANING_DEDNER)
@@ -660,7 +660,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] += out->DtE_MHDLedger[kl];}
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
     CellP[i].DtEB_facevol += out->DtEB_facevol;
 #endif
 #if defined(DIVBCLEANING_DEDNER)
@@ -828,7 +828,7 @@ void hydro_final_operations_and_cleanup(void)
 #ifndef HYDRO_SPH
             CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
-#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && !defined(HYDRO_SPH)
+#if (defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)) && !defined(HYDRO_SPH)
             CellP[i].DtEB_booked = dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) - CellP[i].DtEB_facevol; /* dE_B/dt the u equation assumes */
 #endif
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
@@ -1066,7 +1066,7 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
                 CellP[i].DtEB_facevol = 0;
 #endif
 #ifdef DIVBCLEANING_DEDNER
@@ -1160,7 +1160,7 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
             CellP[i].DtEB_facevol = 0;
 #endif
 #ifdef DIVBCLEANING_DEDNER

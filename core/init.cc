@@ -753,7 +753,7 @@ void init(void)
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             CellP[i].LedgerEB = -1;
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
             CellP[i].EB_last = -1;
 #endif
 #ifdef COOLING

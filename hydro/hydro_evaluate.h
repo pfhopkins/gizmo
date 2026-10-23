@@ -398,7 +398,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 out.DtE_MHDLedger[4] += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
                 out.DtEB_facevol += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #endif
 #ifdef DIVBCLEANING_DEDNER
@@ -450,7 +450,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                     CellP[j].DtE_MHDLedger[4] -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #endif
-#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
                     CellP[j].DtEB_facevol -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #endif
 #ifdef DIVBCLEANING_DEDNER

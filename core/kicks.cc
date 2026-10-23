@@ -297,6 +297,16 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#if defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+            { /* rescale |VB| so the cell E_B after this kick equals the E_B the u equation booked (kernel-volume changes then move no energy) */
+                double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
+                Vec3<double> dVB = CellP[i].DtB * (dt_hydrokick / All.cf_atime), VB_new = CellP[i].B + dVB;
+                double eb_new = 0.5 * VB_new.norm_sq() * rho_over_m / All.cf_atime;
+                double eb_target = CellP[i].EB_last + CellP[i].DtEB_booked * dt_hydrokick;
+                if(CellP[i].EB_last >= 0 && eb_target > 0 && eb_new > 0) {CellP[i].B = VB_new * sqrt(eb_target / eb_new) - dVB; CellP[i].EB_last = eb_target;}
+                else {CellP[i].EB_last = eb_new;}
+            }
+#endif
 #if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
             { /* charge u with the actual E_B change (kernel volume since last kick + this kick's dVB) minus what the u equation booked */
                 double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
