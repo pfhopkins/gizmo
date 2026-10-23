@@ -48,7 +48,7 @@ typedef struct
 typedef struct
 {
   int Len;
-  unsigned int Offset;
+  long long Offset;   /* into the global ID list, which spans every rank */
   MyIDType MinID;
   MyIDType MinIDTask;
   int GrNr;
