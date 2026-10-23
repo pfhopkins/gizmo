@@ -79,6 +79,8 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     // METAL-ELECTRON FIX (2026-07-28): + abundsi
     double abe  = abhp + abhep + 2.0 * abhepp + abcp + abdp + c.abundsi;
     double abHI = 1.0 - 2.0 * abh2 - abhp - abhd; if (abHI < 0.0) abHI = 0.0;
+    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink (D-30)
+    const double abHI_ph = 1.0 - 2.0 * abh2 - ((y_in[ihp] > abhp) ? y_in[ihp] : abhp) - abhd;
     double abheI = c.abhe - abhep - abhepp; if (abheI < 0.0) abheI = 0.0;
 
     // --- energy / temperature with NaN guards (.F:181-218) ---
@@ -321,7 +323,7 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               +  ch9  * abhep * abh2) * yn
               +  ph5  * abh2p
               +  cr1  * abHI
-              +  ph38 * abHI;
+              +  ph38 * ((abHI_ph < 0.0) ? abHI_ph : abHI);
     if (c.no_dchem == 0 && c.abundD > 0.0) {
         ydot[ihp] += (ch99  * abdp * abHI
                    -  ch98  * abhp * abDI

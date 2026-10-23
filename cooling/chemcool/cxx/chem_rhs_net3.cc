@@ -96,6 +96,9 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double abHI = 1.0 - 2.0 * abh2 - abhp - abhd - aboh
                 - 2.0 * abh2o - abhcop - abch - 2.0 * abch2 - 3.0 * abch3p;
     if (abHI < 0.0) abHI = 0.0;
+    // H+ above 1 (clipped by validate_input) still sees photoionization as a restoring sink (D-30)
+    const double abHI_ph = 1.0 - 2.0 * abh2 - ((y_in[ihp] > abhp) ? y_in[ihp] : abhp) - abhd - aboh
+                         - 2.0 * abh2o - abhcop - abch - 2.0 * abch2 - 3.0 * abch3p;
     double abDI = abundD - abdp - abhd;
     if (abDI < 0.0) abDI = 0.0;
     double abheI = abhe - abhep - abhepp;
@@ -518,7 +521,7 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
              +  ph33b * abh2op
              +  ph34a * abh3op
              +  ph36  * abh3p
-             +  ph38  * abHI;
+             +  ph38  * ((abHI_ph < 0.0) ? abHI_ph : abHI);
 
     // --- molecular hydrogen (.F:1118-1185) ---
     ydot[ih2] = (ch108 * chem_fpowi(abHI, 3)

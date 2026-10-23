@@ -58,6 +58,7 @@ c
       REAL abM
 
       REAL ph4, ph5, ph8, ph9, ph35, ph38, ph39, ph40, ph41
+      REAL abHI_ph
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
       integer nfdbg_ulli
       save nfdbg_ulli
@@ -174,6 +175,8 @@ c share), grain PE-heating charging phi, grain recombination, H- formation.
 c
       abHI = 1d0 - 2d0 * abH2 - abhp - abhd
       abHI = max(0d0, abHI)
+c H+ above 1 (clipped by validate_input) stays a restoring PI sink
+      abHI_ph = 1d0 - 2d0 * abH2 - max(y_in(ihp), abhp) - abhd
 c
       abheI = max(0d0, abhe - abhep - abhepp)
 c
@@ -729,7 +732,7 @@ c
      $          + ch9 * abhep * abh2) * yn      ! DiCT: He+ + H2
      $          +  ph5  * abh2p                 ! Photodissoc:    H2+ + PH
      $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
-     $          + ph38  * abHI                  ! Photoionization: H + PH
+     $          + ph38  * merge(abHI_ph, abHI, abHI_ph .lt. 0d0)
 c
 c D coupling to H+
 c

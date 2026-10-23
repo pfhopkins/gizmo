@@ -66,7 +66,7 @@ c
 c M1 RT photoionization (ph38) + photoheating (ph42) of HI; mirrors net-17.
 c Both are 0 unless RADTRANSFER is active (calc_photo adds the C-side rates
 c into phrates(38)/phrates(42)), so subgrid-net-5 behaviour is unchanged.
-      REAL ph38, ph42
+      REAL ph38, ph42, abHI_ph
 c
       REAL mh
       parameter (mh  = PROTONMASS)
@@ -111,6 +111,9 @@ c
 c Non-equilibrium species computed using conservation laws
 c
       abHI = max(1d0 - 2d0 * abh2 - abhp, 0d0)
+c H+ above 1 (clipped by validate_input) stays a restoring PI sink
+      abHI_ph = 1d0 - 2d0 * abh2 - max(y_in(ihp), abhp)
+      if (abHI_ph .ge. 0d0) abHI_ph = abHI
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
       abcp = max(0d0, abundc - abco - abcos)
       abe  = abhp + abcp + abundsi
@@ -327,7 +330,7 @@ c
      $          -  h_gr * abhp  * 1d0) * yn     ! Grain H recomb.
      $          +  cr1  * abHI                  ! Cosmic ray ion.:  H + CR
      $          + cr10  * abh2
-     $          + ph38  * abHI                  ! M1 RT photoionization: H + gamma(>13.6eV)
+     $          + ph38  * abHI_ph               ! M1 RT photoionization: H + gamma(>13.6eV)
 c
 c Molecular hydrogen
 c

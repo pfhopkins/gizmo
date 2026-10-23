@@ -531,12 +531,27 @@ chem_interface; `#error` for net 20 without CHEMCOOL_CXX; Fortran gets only a `r
   rec., 24 Lya, 25 CIE x S, 27 ff; lambda_chem: 0 H2 cd, 1-3 H2 diss/pump/form (heat), 4 H ci, 5 H rr, 6 PI (heat).
 - Benchmarks B1-B4: /orion/ptmp/uli/orion/chem_closeout/net20/bench/out/RESULTS20.md (sigma_LW 1.5e-21 run kept in out_sig1.5e-21).
 
-## D-30. (2026-10-23) net 5: H+ photoionization stays restoring above x_H+ = 1, C++ only
-`ph38 * abHI` uses `1 - 2 x_H2 - y_H+` with the unclipped y_H+ when that is negative (validate_input clips
-y_H+ to 1 and abHI to 0, so the term was flat above 1). Under a strong M1 field (Gamma_HI ~ 1e-7 s^-1) the
-equilibrium lies within ~1e-5 of x = 1; CVODE's unclipped state drifted above 1 to the 1 + EPS_MAX reject
-wall, h collapsed to ~1e-276 s and the dense DQ Jacobian produced NaN trial states (B2 cell 3782).
-Unchanged whenever x_H+ <= 1 or ph38 = 0 (no RT, no TreeRay-PI, no comoving UVB). Fortran rate_eq_simple.F not changed.
+## D-30. (2026-10-23) nets 5, 17, 3: H+ photoionization stays restoring above x_H+ = 1, both backends
+`ph38 * abHI` uses the conserved HI fraction with the unclipped H+ (`1 - 2 x_H2 - y_H+ - ...`) when that is
+negative (validate_input clips y_H+ to 1 and abHI is floored at 0, so the term was flat above 1). Under a strong
+M1 field (Gamma_HI ~ 1e-7 s^-1) the equilibrium lies within ~1e-5 of x = 1; CVODE's unclipped state drifted
+above 1 to the 1 + EPS_MAX reject wall, h collapsed to ~1e-276 s and the dense DQ Jacobian produced NaN trial
+states (B2 cells 3782, 9151). Unchanged whenever that HI fraction is >= 0 or ph38 = 0 (no RT, no TreeRay-PI,
+no comoving UVB). C++ chem_rhs_net5/17/3, Fortran rate_eq_simple/ulli/mol (net 3 saves y(ihp) before
+validate_input). Not changed: unbuilt rate_eq.F, rate_eq_GMC.F, rate_eq_primordial.F; D+ (`ph38 * abDI`)
+and He (`abheI`) photoionization, collisional ionization.
+
+## D-31. (2026-10-23) C++ driver fails loudly instead of collapsing
+- Non-finite abundances, energy, yn or dt on entry: full cell context, return 101 (fatal). Previously the
+  state reached return 100 only after the substep had been halved below 1e-8 s.
+- validate_input no longer prints per NaN; it counts, and the driver prints one line per solve with the
+  number of NaN trial states CVODE rejected, the substep and the CVODE step size at the first one.
+- CVodeSetMinStep(10 DBL_EPSILON x (t_start + dt)) before every CVode call; a failure with h at that floor
+  prints the cell context (first per solve) and a per-solve count, and is rejected like any failed substep
+  (halve, retry; fatal 100 below 1e-8 s). Making it fatal turned a solve that the retry completes into an
+  abort (net 17, n 1, T0 1e6 K, G0 1e4, Z 3: CVODE at the He++ reject wall, flag -10). Below it t + h does not advance t; CVODE's first-step lower
+  bound is 100 uround |tout|. A floor of 1e-12 x substep was tried and rejected: it clamped legitimate steps in
+  hot dense gas (net 17, T0 1e6 K, n 1e6, dt 1e14 s; 99 one-zone states changed). Fortran DVODE path unchanged.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
