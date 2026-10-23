@@ -707,6 +707,9 @@ double CR_get_streaming_loss_rate_coefficient(int target, int k_CRegy, struct ga
     double streamfac = 0;
     if((cell[target].CosmicRayEnergy[k_CRegy] <= MIN_REAL_NUMBER) || (cell[target].CosmicRayEnergy[k_CRegy] <= MIN_REAL_NUMBER)) {return 0;}
     double vA = Get_Gas_ion_Alfven_speed_i(target, cell); /* define Alfven speed, which is what appears in the proper formulation here */
+#if defined(GALSF_RESOLVEDISM)
+    vA = DMIN(vA, CRFLUID_REDUCED_C_CODE(k_CRegy)); /* Stella: streaming losses cannot outrun the CR transport speed */
+#endif
     double v_flux_eff=cell[target].CosmicRayFluxPred[k_CRegy].norm_sq(); int k; // need magnitude of flux vector
     if(v_flux_eff > 0) {v_flux_eff=sqrt(v_flux_eff) / (MIN_REAL_NUMBER + cell[target].CosmicRayEnergyPred[k_CRegy]);} else {v_flux_eff=0;} // effective speed of CRs = |F|/E
     int target_for_cr_gamma = target; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = target, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
