@@ -446,8 +446,14 @@ void domain_init_timebin_costs(void)
         }
     }
 
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(MPI_IN_PLACE, GravCostPerListedTimeBin, NumTimeBinsToBeBalanced, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(MPI_IN_PLACE, HydroCostPerListedTimeBin, NumTimeBinsToBeBalanced, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
 
     /* Normalization: each timebin's total cost normalizes to ~1, so all timebins
        contribute equally to the composite cost used for tree splitting */
@@ -744,7 +750,10 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
       myfree(toGoGas);
       myfree(toGo);
 
+      {
+          GIZMO_TIMER_SCOPE("MPI_Allreduce");
       MPI_Allreduce(&ret, &retsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+      }
       if(retsum)
       {
         myfree(Key);
@@ -884,7 +893,10 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 #endif
 
     t_tmp2 = my_second();
+    {
+        GIZMO_TIMER_SCOPE("MPI_Barrier");
     MPI_Barrier(MPI_COMM_WORLD);
+    }
     t_light_barrier = timediff(t_tmp2, my_second());
     const double t_light_end = my_second();
     double t_light_total = cpu_minus_children(timediff(t_light_start, t_light_end), child0_light);
@@ -923,7 +935,10 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
         }
     }
     int extent_outgrown = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&extent_outgrown_local, &extent_outgrown, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
     if(extent_outgrown)
     {
         if(ThisTask == 0) {printf("Domain: the particles have moved outside the bounds the domain was built on, so the Peano keys the lightweight repartition reuses are no longer valid there; forcing a full decomposition. If this fires often, widen the margin domain_findExtent() puts around the particles.\n"); fflush(stdout);}
@@ -981,8 +996,14 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     domain_compute_particle_costs();
     sumup_large_ints(6, NtypeLocal, Ntype);
     for(i = 0, totpartcount = 0; i < 6; i++) {totpartcount += Ntype[i];}
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
 
 #if (DOMAIN_TIMEBINS == 1)
     domain_init_timebin_costs();
@@ -1562,6 +1583,7 @@ static double domain_a_priori_cost_multiplier(int i)
 
 static void domain_compute_particle_costs(void)
 {
+    GIZMO_TIMER_FUNCTION();
     /* global sums: [0] sum(w * GravWork) over stars, [1] sum(ExtraWorkEstimate), [2] sum(0.1 + GravWork), [3] sum(hydro),
        [4] all recorded work */
     double sums[5] = {0, 0, 0, 0, 0};
@@ -1584,7 +1606,10 @@ static void domain_compute_particle_costs(void)
         if(P[i].ExtraWorkEstimate > 0) {sums[0] += domain_star_age_work_weight(i) * (double) P[i].GravWork; sums[1] += (double) P[i].ExtraWorkEstimate;}
 #endif
     }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(MPI_IN_PLACE, sums, 5, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
     if(sums[4] <= 0)
     {
         /* Nothing has been recorded yet: weight each particle by the a-priori estimate of its work, (1 + multiplier) times
@@ -1635,6 +1660,7 @@ static void domain_compute_particle_costs(void)
  *  following the GADGET-4 approach. Uses exponential moving average with smoothing factor alpha. */
 void domain_update_adaptive_weights(void)
 {
+    GIZMO_TIMER_FUNCTION();
     double alpha = 0.3; /* smoothing factor: 0 = keep old weights, 1 = fully replace */
     double imbal_work = 0, imbal_load = 0, imbal_workgas = 0;
     double sumwork = 0, sumload = 0, sumworkgas = 0;
@@ -1689,6 +1715,7 @@ void domain_update_adaptive_weights(void)
  */
 int domain_decompose(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i, no, status;
     long long sumtogo, sumload, sumloadgas;
     int maxload, maxloadgas, multipledomains = All.DomainSegmentsPerRank;
@@ -1705,8 +1732,14 @@ int domain_decompose(void)
 
     for(i = 0, totpartcount = 0; i < 6; i++) {totpartcount += Ntype[i];}
 
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    }
 
 #if (DOMAIN_TIMEBINS == 1)
     domain_init_timebin_costs(); /* compute per-timebin normalization before tree building / cost accumulation */
@@ -1892,6 +1925,7 @@ int domain_decompose(void)
 
 int domain_check_memory_bound(int multipledomains)
 {
+    GIZMO_TIMER_FUNCTION();
   int ta, m, i;
   long long load, gasload, max_load, max_gasload;   /* sums of leaf counts for a candidate assignment: checked before any is narrowed */
   double work, workgas;
@@ -1936,8 +1970,11 @@ int domain_check_memory_bound(int multipledomains)
 	      if(P[i].Type == 0) {gasload++;}
 	    }
 	  }
+      {
+          GIZMO_TIMER_SCOPE("MPI_Allreduce");
       MPI_Allreduce(&load, &max_load, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
       MPI_Allreduce(&gasload, &max_gasload, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    }
     }
 #endif
 
@@ -1961,6 +1998,7 @@ int domain_check_memory_bound(int multipledomains)
 
 void domain_exchange(void)
 {
+    GIZMO_TIMER_FUNCTION();
   if(ghost_require_no_live_pool_for_layout_change("domain_exchange")) {return;}
   long count_togo = 0, count_togo_gas = 0, count_get = 0, count_get_gas = 0;
   long *count, *count_gas, *offset, *offset_gas;
@@ -2026,6 +2064,8 @@ void domain_exchange(void)
   for(i = 0; i < NTask; i++) {count[i] = count_gas[i] = 0;}
 
 
+  {
+      GIZMO_TIMER_SCOPE("pack_outgoing_particles");
   for(n = 0; n < NumPart; n++)
     {
       if((P[n].Type & (32 + 16)) == (32 + 16)) /* flagged with both 16 and 32 */
@@ -2099,6 +2139,7 @@ void domain_exchange(void)
 	    }
 	}
     }
+  }
 
 #ifdef CHIMES 
   free(tempAbundanceArray); 
@@ -2106,6 +2147,8 @@ void domain_exchange(void)
 
   long count_totget;
 
+  {
+      GIZMO_TIMER_SCOPE("prepare_receive_layout");
   count_totget = count_get_gas;
 
   if(count_totget)
@@ -2131,8 +2174,10 @@ void domain_exchange(void)
 
   for(i = 1; i < NTask; i++)
     {offset_recv[i] = offset_recv[i - 1] + count_recv[i - 1];}
+  }
 
-
+  {
+      GIZMO_TIMER_SCOPE("exchange_particle_payloads");
   for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
     {
       target = ThisTask ^ ngrp;
@@ -2197,6 +2242,7 @@ void domain_exchange(void)
 	    }
 	}
     }
+  }
 
 #ifdef CHIMES 
   /* Loop through received gas cells and read in abundances from the buffer. */ 
@@ -2854,6 +2900,7 @@ void domain_findSplit_load_balanced(int ncpu, int ndomain)
  */
 int domain_countToGo(size_t nlimit)
 {
+    GIZMO_TIMER_FUNCTION();
     int n, no, ret, retsum; size_t package;
 
     for(n = 0; n < NTask; n++)
@@ -2893,26 +2940,47 @@ int domain_countToGo(size_t nlimit)
         }
     }
 
+    {
+        GIZMO_TIMER_SCOPE("MPI_Alltoall");
     MPI_Alltoall(toGo, 1, MPI_INT, toGet, 1, MPI_INT, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Alltoall");
     MPI_Alltoall(toGoGas, 1, MPI_INT, toGetGas, 1, MPI_INT, MPI_COMM_WORLD);
+    }
 
     if(package >= nlimit) {ret = 1;} else {ret = 0;}
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&ret, &retsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    }
 
     if(retsum)
     {
         /* in this case, we are not guaranteed that the temporary state after the partial exchange will actually observe the particle limits on all
          processors... we need to test this explicitly and rework the exchange such that this is guaranteed. This is actually a rather non-trivial constraint. */
         
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allgather");
         MPI_Allgather(&NumPart, 1, MPI_INT, list_NumPart, 1, MPI_INT, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allgather");
         MPI_Allgather(&N_gas, 1, MPI_INT, list_N_gas, 1, MPI_INT, MPI_COMM_WORLD);
+        }
         /* Capacities are per-rank, so the question "can task ta receive this many?" has to be asked of
            ta's own capacity. Every other input to the overflow test below is already synchronized --
            the counts by Bcast from ta, the loads by the two gathers above -- so reading the LOCAL
            capacity instead would be the one term that differs between ranks, and it feeds both the
            iteration count of the Bcast loops and the outer convergence flag. */
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allgather");
         MPI_Allgather(&All.MaxPart, 1, MPI_INT, list_MaxPart, 1, MPI_INT, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allgather");
         MPI_Allgather(&All.MaxPartGas, 1, MPI_INT, list_MaxPartGas, 1, MPI_INT, MPI_COMM_WORLD);
+        }
         int flag, flagsum, ntoomany, ta, i, target;
         int count_togo, count_toget, count_togo_gas, count_toget_gas;
         
@@ -2936,10 +3004,22 @@ int domain_countToGo(size_t nlimit)
                             count_toget_gas += toGetGas[i];
                         }
                     }
+                    {
+                        GIZMO_TIMER_SCOPE("MPI_Bcast");
                     MPI_Bcast(&count_togo, 1, MPI_INT, ta, MPI_COMM_WORLD);
+                    }
+                    {
+                        GIZMO_TIMER_SCOPE("MPI_Bcast");
                     MPI_Bcast(&count_toget, 1, MPI_INT, ta, MPI_COMM_WORLD);
+                    }
+                    {
+                        GIZMO_TIMER_SCOPE("MPI_Bcast");
                     MPI_Bcast(&count_togo_gas, 1, MPI_INT, ta, MPI_COMM_WORLD);
+                    }
+                    {
+                        GIZMO_TIMER_SCOPE("MPI_Bcast");
                     MPI_Bcast(&count_toget_gas, 1, MPI_INT, ta, MPI_COMM_WORLD);
+                    }
                     
                     int ifntoomany;
                     ntoomany = list_N_gas[ta] + count_toget_gas - count_togo_gas - list_MaxPartGas[ta];
@@ -2970,9 +3050,18 @@ int domain_countToGo(size_t nlimit)
                                     }
                             }
                             
+                            {
+                                GIZMO_TIMER_SCOPE("MPI_Bcast");
                             MPI_Bcast(&ntoomany, 1, MPI_INT, i, MPI_COMM_WORLD);
+                            }
+                            {
+                                GIZMO_TIMER_SCOPE("MPI_Bcast");
                             MPI_Bcast(&count_toget, 1, MPI_INT, i, MPI_COMM_WORLD);
+                            }
+                            {
+                                GIZMO_TIMER_SCOPE("MPI_Bcast");
                             MPI_Bcast(&count_toget_gas, 1, MPI_INT, i, MPI_COMM_WORLD);
+                            }
                             i++;
                             if(i >= NTask) {i = 0;}
                             
@@ -3005,8 +3094,14 @@ int domain_countToGo(size_t nlimit)
                                 }
                             }
                             
+                            {
+                                GIZMO_TIMER_SCOPE("MPI_Bcast");
                             MPI_Bcast(&ntoomany, 1, MPI_INT, i, MPI_COMM_WORLD);
+                            }
+                            {
+                                GIZMO_TIMER_SCOPE("MPI_Bcast");
                             MPI_Bcast(&count_toget, 1, MPI_INT, i, MPI_COMM_WORLD);
+                            }
                             
                             i++;
                             if(i >= NTask) {i = 0;}
@@ -3021,8 +3116,14 @@ int domain_countToGo(size_t nlimit)
                  * all-rank poll (error-branch only, no normal-path cost) drains here
                  * instead of re-entering the inner do/while forever. */
                 if(flagsum > 100) {if(ThisTask==0) {printf("Failed to converge in domain.c, flagsum=%d",flagsum); fflush(stdout);} endrun(90000018); gizmo_exit_bad_stop_if_requested("domain:countToGo_converge");}
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Alltoall");
                 MPI_Alltoall(toGo, 1, MPI_INT, toGet, 1, MPI_INT, MPI_COMM_WORLD);
+                }
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Alltoall");
                 MPI_Alltoall(toGoGas, 1, MPI_INT, toGetGas, 1, MPI_INT, MPI_COMM_WORLD);
+            }
             }
             while(flag);
             
@@ -3073,8 +3174,14 @@ int domain_countToGo(size_t nlimit)
                     toGoGas[n] = local_toGoGas[n];
                 }
                 
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Alltoall");
                 MPI_Alltoall(toGo, 1, MPI_INT, toGet, 1, MPI_INT, MPI_COMM_WORLD);
+                }
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Alltoall");
                 MPI_Alltoall(toGoGas, 1, MPI_INT, toGetGas, 1, MPI_INT, MPI_COMM_WORLD);
+                }
                 myfree(local_toGoGas);
                 myfree(local_toGo);
             }
@@ -3236,21 +3343,27 @@ int domain_recursively_combine_topTree(int start, int ncpu)
 	    {recvTask = domainkey_top_left;}
 
 	  /* inform each other about the length of the trees */
+          {
+              GIZMO_TIMER_SCOPE("MPI_Sendrecv");
 	  MPI_Sendrecv(&NTopnodes, 1, MPI_INT, recvTask, TAG_GRAV_A,
 		       &ntopnodes_import, 1, MPI_INT, recvTask, TAG_GRAV_A, MPI_COMM_WORLD,
 		       MPI_STATUS_IGNORE);
+          }
 
 
 	  topNodes_import = (struct local_topnode_data *) mymalloc("topNodes_import",
 						   IMAX(ntopnodes_import, NTopnodes) * sizeof(struct local_topnode_data));
 
 	  /* exchange the trees */
+          {
+              GIZMO_TIMER_SCOPE("MPI_Sendrecv");
 	  MPI_Sendrecv(topNodes,
 		       NTopnodes * sizeof(struct local_topnode_data), MPI_BYTE,
 		       recvTask, TAG_GRAV_B,
 		       topNodes_import,
 		       ntopnodes_import * sizeof(struct local_topnode_data), MPI_BYTE,
 		       recvTask, TAG_GRAV_B, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	}
 	}
 
       if(ThisTask == domainkey_top_left)
@@ -3365,6 +3478,7 @@ int domain_recursively_combine_topTree(int start, int ncpu)
  */
 int domain_determineTopTree(void)
 {
+    GIZMO_TIMER_FUNCTION();
   int i, count, j, sub, ngrp;
   int recvTask, sendTask, ntopnodes_import, errflag, errsum;
   struct local_topnode_data *topNodes_import, *topNodes_temp;
@@ -3447,7 +3561,10 @@ int domain_determineTopTree(void)
 
   /* errsum COUNTS FAILING RANKS -- it is a tally, never a status code.  Handing it back
    * directly leaves a two-rank capacity failure indistinguishable from a refinement one. */
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(&errflag, &errsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
   if(errsum)
     {
       if(ThisTask == 0) printf("We are out of Topnodes. We'll try to repeat with a higher value than All.TopNodeAllocFactor=%g\n", All.TopNodeAllocFactor);
@@ -3467,8 +3584,11 @@ int domain_determineTopTree(void)
 	  if(recvTask < NTask)
 	    {
 	      /* inform each other about the length of the trees */
+              {
+                  GIZMO_TIMER_SCOPE("MPI_Sendrecv");
 	      MPI_Sendrecv(&NTopnodes, 1, MPI_INT, recvTask, TAG_GRAV_A,
 			   &ntopnodes_import, 1, MPI_INT, recvTask, TAG_GRAV_A, MPI_COMM_WORLD, &status);
+              }
 
 
 	      topNodes_import =
@@ -3477,12 +3597,15 @@ int domain_determineTopTree(void)
 							    NTopnodes) * sizeof(struct local_topnode_data));
 
 	      /* exchange the trees */
+              {
+                  GIZMO_TIMER_SCOPE("MPI_Sendrecv");
 	      MPI_Sendrecv(topNodes,
 			   NTopnodes * sizeof(struct local_topnode_data), MPI_BYTE,
 			   recvTask, TAG_GRAV_B,
 			   topNodes_import,
 			   ntopnodes_import * sizeof(struct local_topnode_data), MPI_BYTE,
 			   recvTask, TAG_GRAV_B, MPI_COMM_WORLD, &status);
+              }
 
 	      if(sendTask > recvTask)	/* swap the two trees so that result will be equal on all cpus */
 		{
@@ -3520,7 +3643,10 @@ int domain_determineTopTree(void)
       errflag = domain_recursively_combine_topTree(0, NTask);
     }
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(&errflag, &errsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
 
   if(errsum) {if(ThisTask == 0) printf("Can't combine trees due to lack of storage. Will try again.\n"); return errsum;}
 
@@ -3559,7 +3685,10 @@ int domain_determineTopTree(void)
 	    }
     }
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(&errflag, &errsum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
   if(errsum) {return errsum;}
 
   PRINT_STATUS(" ..NTopnodes after=%d", NTopnodes);
@@ -3719,15 +3848,33 @@ void domain_sumCost(void)
 #endif
 #undef DOMAIN_SUMCOST_PARTICLE_BODY
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(local_domainWork, domainWork, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(local_domainWorkGas, domainWorkGas, NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(local_domainCount, domainCount, NTopleaves, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(local_domainCountGas, domainCountGas, NTopleaves, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  }
 
 #if (DOMAIN_TIMEBINS == 1)
   /* Allreduce per-timebin cost arrays in-place (they use malloc, not mymalloc) */
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(MPI_IN_PLACE, domainBinGravCost, ntb * NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(MPI_IN_PLACE, domainBinHydroCost, ntb * NTopleaves, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+  }
 #endif
 
   myfree(local_domainCountGas);
@@ -3757,6 +3904,7 @@ static const double DOMAIN_EXTENT_PADDING_FACTOR = 1.01;
  */
 void domain_findExtent(void)
 {
+    GIZMO_TIMER_FUNCTION();
   int i, j;
   double len, xmin[3], xmax[3], xmin_glob[3], xmax_glob[3];
 
@@ -3780,8 +3928,14 @@ void domain_findExtent(void)
 	}
     }
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(xmin, xmin_glob, 3, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(xmax, xmax_glob, 3, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+  }
 
   len = 0;
   for(j = 0; j < 3; j++) {if(xmax_glob[j] - xmin_glob[j] > len) {len = xmax_glob[j] - xmin_glob[j];}}
@@ -4026,6 +4180,7 @@ static void parallel_sort_phdata_domain(struct peano_hilbert_data *arr, size_t n
 
 void mysort_domain(void *b, size_t n, size_t s)
 {
+    GIZMO_TIMER_FUNCTION();
   struct peano_hilbert_data *arr = (struct peano_hilbert_data *)b;
 #ifdef _OPENMP
   #pragma omp parallel

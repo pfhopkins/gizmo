@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -147,6 +148,7 @@ extern "C" integertime gizmo_full_drift_ti(void) { return g_last_full_drift_Ti; 
  *    (output, restart, box-wrapping) */
 void gizmo_full_drift_to(integertime time1)
 {
+    GIZMO_TIMER_FUNCTION();
     if(time1 <= g_last_full_drift_Ti) return; /* already drifted — no h change */
     /* The stamp is a CLAIM that every local particle stands at time1, and readers act
        on it by skipping work: the neighbour pool sweep treats the pool as uniform, and
@@ -170,6 +172,7 @@ void gizmo_full_drift_to(integertime time1)
 
 void move_particles(integertime time1)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Tiny-N corridor counter: increments on API entry, including the
      * cache-hit early-return below. Mode B paths in run_neighbor_loop must
      * NOT enter this function regardless of whether it would do work. See

@@ -61,6 +61,8 @@ void find_timesteps(void)
         double fastwavespeed = 0.0;
         double fastwavedecay = 0.0;
         double fac_magnetic_pressure = 1. / All.cf_atime;
+        {
+            GIZMO_TIMER_SCOPE("scan_fast_wave_speeds");
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) reduction(max:fastwavespeed,fastwavedecay)
 #endif
@@ -79,11 +81,19 @@ void find_timesteps(void)
                 if(vsig0/hsig0 > fastwavedecay) fastwavedecay = vsig0 / hsig0; // physical unit
             }
         }
+        }
+
         /* if desired, can just do this by domain; otherwise we use an MPI call over all domains to collect */
         double fastwavespeed_max_glob=fastwavespeed;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce_fast_wave_speeds");
         MPI_Allreduce(&fastwavespeed, &fastwavespeed_max_glob, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        }
         double fastwavedecay_max_glob=fastwavedecay;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce_fast_wave_speeds");
         MPI_Allreduce(&fastwavedecay, &fastwavedecay_max_glob, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        }
         /* now set the variables */
         All.FastestWaveSpeed = fastwavespeed_max_glob;
         All.FastestWaveDecay = fastwavedecay_max_glob;
@@ -113,8 +123,14 @@ void find_timesteps(void)
     ti_stepmax = TIMEBASE;
     while(ti_stepmax > ti_max) {ti_stepmax >>= 1;}
     integertime ti_min_glob, ti_max_glob;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&ti_step, &ti_min_glob, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&ti_stepmax, &ti_max_glob, 1, MPI_TYPE_TIME, MPI_MAX, MPI_COMM_WORLD);
+    }
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
     ti_min_glob <<= 2; // 2^N times min timestep - shift to N bins higher
@@ -126,6 +142,8 @@ void find_timesteps(void)
 #endif
 
 
+    {
+        GIZMO_TIMER_SCOPE("assign_particle_timesteps");
     /* This step's work, before any timebin below changes.  Each record reads and writes only its own particle,
        and nothing in the loop below writes a field a record reads, so when there are enough of them they all
        come first, on all threads; otherwise each is made in the loop. */
@@ -257,12 +275,19 @@ void find_timesteps(void)
 #endif
         
     }
+    }
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
-    MPI_Allreduce(xyz_local, xyz_global, 3*SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); // broadcast the new position of the special particle
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
+        MPI_Allreduce(xyz_local, xyz_global, 3*SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    } // broadcast the new position of the special particle
     double mass_to_sum_local[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM],  mass_to_sum_global[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM]={0}; // define mass variables for passing
     int k; for(k=0;k<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;k++) {mass_to_sum_local[k] = All.Mass_Accreted_By_SpecialParticle[k];}
-    MPI_Allreduce(mass_to_sum_local, mass_to_sum_global, SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); // broadcast the mass update of the special particle
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
+        MPI_Allreduce(mass_to_sum_local, mass_to_sum_global, SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    } // broadcast the mass update of the special particle
     for(k=0;k<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;k++)
     {
         if(xyz_global[k][0] > -1.e10) { // this indicates that the special particle was active on one task
@@ -271,7 +296,10 @@ void find_timesteps(void)
             All.Mass_Accreted_By_SpecialParticle[k] = 0; // reset this variable on all processors because we have added it now to the special particle, to conserve mass properly
         }
     }
-    MPI_Allreduce(special_particle_mass_local, special_particle_mass_global, SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); // broadcast the mass of the special particle
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
+        MPI_Allreduce(special_particle_mass_local, special_particle_mass_global, SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    } // broadcast the mass of the special particle
     for(k=0;k<SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM;k++) {if(special_particle_mass_global[k] > 0) {All.Mass_of_SpecialParticle[k] = special_particle_mass_global[k];}} // update the mass of the special particle for everyone to use
     // ???
 #endif
@@ -1390,6 +1418,7 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
  */
 void find_dt_displacement_constraint(double hfac /*!<  should be  a^2*H(a)  */ )
 {
+    GIZMO_TIMER_FUNCTION();
     int i, type;
     int count[6];
     long long count_sum[6];
@@ -1408,6 +1437,8 @@ void find_dt_displacement_constraint(double hfac /*!<  should be  a^2*H(a)  */ )
             mnm[type] = 0;
         }
 
+        {
+            GIZMO_TIMER_SCOPE("scan_displacement_constraints");
         for(i = 0; i < NumPart; i++)
         {
             if(P[i].Mass > 0)
@@ -1421,10 +1452,20 @@ void find_dt_displacement_constraint(double hfac /*!<  should be  a^2*H(a)  */ )
                 }
             }
         }
+        }
 
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(v, v_sum, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(mim, min_mass, 6, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(mnm, mean_mass, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        }
         sumup_large_ints(6, count, count_sum);
         if(mean_mass[0] > 0) {v_sum[0] /= mean_mass[0];} /* for gas use a weighted average to deal with extreme cell-mass difference situations */
 
@@ -1519,6 +1560,7 @@ int get_timestep_bin(integertime ti_step)
  * index mapping changed (domain decomp / rearrange / init) or on first use. */
 void wakeup_sidecar_rebuild(void)
 {
+    GIZMO_TIMER_FUNCTION();
     if(WakeupDirty) {
         for(int i = 0; i < NumPart; i++) { WakeupDirty[i] = (P[i].wakeup != 0) ? 1 : 0; }
     }
@@ -1530,6 +1572,7 @@ static std::vector<int> WokenParticles;
 
 void process_wake_ups(void)
 {
+    GIZMO_TIMER_FUNCTION();
     WokenParticles.clear();
 #ifdef FORCE_EQUAL_TIMESTEPS
     return; /* no wakeups if all particles are on the same timestep */
@@ -1552,7 +1595,10 @@ void process_wake_ups(void)
         }
     }
 
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+    }
 
     PRINT_STATUS("Predicting next timestep: %g", (ti_next_kick_global - All.Ti_Current) * All.Timebase_interval);
     max_time_bin_active = 0;
@@ -1567,7 +1613,10 @@ void process_wake_ups(void)
     bin = 0; for(n = 0; n < TIMEBINS; n++) {if(TimeBinCount[n] > 0) {bin = n; break;}}
     n = 0;
 
-    MPI_Allreduce(&NeedToWakeupParticles_local, &NeedToWakeupParticles, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process processes wakeups then they all should, just in case a woke particle gets swapped to another process before we get here
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
+        MPI_Allreduce(&NeedToWakeupParticles_local, &NeedToWakeupParticles, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    } // if one process processes wakeups then they all should, just in case a woke particle gets swapped to another process before we get here
 
     int wakeup_bin_offset = 0;
     while(((integertime)1 << wakeup_bin_offset) < (integertime)WAKEUP) wakeup_bin_offset++;
@@ -1588,8 +1637,11 @@ void process_wake_ups(void)
 	    }
 	}
 	int lowest_occupied_active_bin = TIMEBINS;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
 	MPI_Allreduce(&local_lowest_occupied_active_bin, &lowest_occupied_active_bin,
 	              1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
 
 	/* Dirty-sidecar scan: reject on the contiguous WakeupDirty byte array
 	 * instead of striding the fat P[] struct. Rebuild from P[] if the index

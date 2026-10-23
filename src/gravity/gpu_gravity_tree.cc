@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 /* gpu_gravity_tree.cc
  *
  * See gpu_gravity_tree.h for design notes.
@@ -340,6 +341,7 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
                                           struct NODE    * /*Nodes_host*/,
                                           struct extNODE * /*Extnodes_host*/)
 {
+    GIZMO_TIMER_FUNCTION();
     if(min_nodes <= 0) {min_nodes = 1;}
 
     /* Extend SoA capacity to cover the foreign-node storage that currently exists,
@@ -388,6 +390,7 @@ extern "C" void gpu_gravity_tree_acquire(int min_nodes,
  * Returns 1 on success, 0 on failure. */
 extern "C" int gpu_gravity_tree_grow_foreign(int min_nodes)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Enough node slots is not enough on its own: the sidecar mirror is sized separately, from
      * AllocatedForeignNodes, so it has to be checked on its own terms or a grow that only widened
      * the foreign range would leave the install's mirror copy silently dropping leaf identities. */
@@ -507,6 +510,7 @@ extern "C" int gpu_gravity_tree_grow_foreign(int min_nodes)
 
 extern "C" void gpu_gravity_tree_release(void)
 {
+    GIZMO_TIMER_FUNCTION();
     free_arrays_();   /* invalidates the drift stamp (SSOT inside free_arrays_) */
     soa_capacity_ = 0;
     soa_valid_    = 0;
@@ -586,6 +590,7 @@ extern "C" int gpu_gravity_tree_mirror_slot(int no)
  * just refresh the contents from current AoS. */
 extern "C" void gpu_nextnode_backup_suns(int n)
 {
+    GIZMO_TIMER_FUNCTION();
     if(n <= 0) {return;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -619,6 +624,8 @@ extern "C" void gpu_nextnode_backup_suns(int n)
        the topnode range carries garbage node_ti through the first post-build walks
        and the widening reads a time that was never written. */
     integertime             *ti_soa      = soa_.node_ti;
+    {
+        GIZMO_TIMER_SCOPE("seed_topnode_geom");
     Kokkos::parallel_for("seed_topnode_geom", n, KOKKOS_LAMBDA(int k) {
         for(int j = 0; j < 8; j++) {
             suns_soa[(long)k * 8 + j] = Nodes_uvm[k].u.suns[j];
@@ -629,6 +636,7 @@ extern "C" void gpu_nextnode_backup_suns(int n)
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("seed_topnode_geom", n);
+    }
 }
 
 

@@ -106,6 +106,7 @@ static std::vector<unsigned char> TreeforceCandidateFrozen;
 
 void gravity_freeze_treeforce_candidates(void)
 {
+    GIZMO_TIMER_FUNCTION();
     TreeforceCandidateFrozen.assign(ActiveParticleList.size(), 0);
     for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++)
     {
@@ -122,6 +123,7 @@ int gravity_treeforce_candidate_frozen(int ii)
 
 void refresh_old_acceleration_for_tree_opening(void)
 {
+    GIZMO_TIMER_FUNCTION();
     /* OldAcc is overloaded on a 2lpt start: the IC reader leaves the particle masses in it, and
      * init.cc deliberately does not zero it for that reason.  Nothing has been staged yet either,
      * so promoting here would replace those masses with zeros before the first evaluation is done
@@ -357,7 +359,10 @@ void gravity_tree(void)
        all-node pass on the smallest steps. A build is forced once insertions pass 1% of the particles. */
     {
         int TreeMomentsStaleFlag_global;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce_stale_moments");
         MPI_Allreduce(&TreeMomentsStaleFlag, &TreeMomentsStaleFlag_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         if(TreeMomentsStaleFlag_global)
         {
             CPU_Step[CPU_MISC] += measure_time();
@@ -470,6 +475,8 @@ gravity_walk_attempt:
             iter++;
             BufferFullFlag = 0; Nexport = 0; tstart = my_second();
 
+            {
+                GIZMO_TIMER_SCOPE("host_gravity_walk");
 #ifdef _OPENMP
 #pragma omp parallel
 #endif
@@ -481,6 +488,8 @@ gravity_walk_attempt:
 #endif
                 gravity_primary_loop(&mainthreadid);	/* do local particles and prepare export list */
             }
+            }
+
             tend = my_second(); timetree1 += timediff(tstart, tend);
 
             /* ============================================================
@@ -529,7 +538,10 @@ gravity_walk_attempt:
              * cargo-cult invalidate. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
             tstart = my_second();
-            MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allreduce_walk_completion");
+                MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            } /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
             tend = my_second(); timewait2 += timediff(tstart, tend);
             gizmo_exit_bad_stop_if_requested("gravtree:tree_export_loop"); /* drain a buffer-too-small bad-stop here instead of retrying the export with zero progress */
         }
@@ -546,7 +558,10 @@ gravity_walk_attempt:
         long long unshippable_local = gravity_unshippable_import_count();
         long long tally[3] = {shortfall_local, (shortfall_local > 0) ? 1 : 0, unshippable_local};
         long long total[3] = {0, 0, 0};
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(tally, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        }
         if(total[0] > 0)
         {
             /* A shortfall is worth a rebuild only if a rebuild could answer it.  Where the walk
@@ -563,7 +578,10 @@ gravity_walk_attempt:
             char example[256]; example[0] = '\0';
             int have = gravity_incomplete_import_example(example, (int) sizeof(example));
             int pick[2] = {have ? ThisTask : NTask, ThisTask}, chosen[2] = {NTask, 0};
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allreduce");
             MPI_Allreduce(pick, chosen, 1, MPI_2INT, MPI_MINLOC, MPI_COMM_WORLD);
+            }
             if(chosen[0] < NTask) {MPI_Bcast(example, (int) sizeof(example), MPI_CHAR, chosen[0], MPI_COMM_WORLD);}
             else {example[0] = '\0';}
             if(ThisTask == 0)

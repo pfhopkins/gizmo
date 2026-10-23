@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 /* gpu_peano_walk.cc
  *
  * Host-side mirror lifecycle for the device Peano walk.  See
@@ -44,6 +45,7 @@ static int                  g_domain_task_cap   = 0;
 
 extern "C" int gpu_peano_walk_acquire(void)
 {
+    GIZMO_TIMER_FUNCTION();
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Grow the TopNodes mirror if needed. */

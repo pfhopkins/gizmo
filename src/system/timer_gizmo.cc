@@ -28,6 +28,7 @@ std::vector<gizmo::timing::TimerRecord> step_baseline;
 bool baseline_valid = false, context_valid = false;
 bool initial_window = false;
 long long window_start_sync_point = -1;
+long long previous_active_particles = -1, previous_active_gas = -1;
 gizmo::timing::TimerReportContext step_context;
 
 bool env_enabled(const char *name)
@@ -150,6 +151,11 @@ void gizmo_timers_step_begin(bool initial_sync_point)
     if(!gizmo::timing::TimerEnabled()) {return;}
     initial_window = initial_sync_point;
     window_start_sync_point = static_cast<long long>(All.NumCurrentTiStep);
+    previous_active_particles = static_cast<long long>(ActiveParticleList.size());
+    previous_active_gas = 0;
+    for(int bin = 0; bin < TIMEBINS; ++bin) {
+        if(TimeBinActive[bin]) {previous_active_gas += TimeBinCountGas[bin];}
+    }
     step_context = current_context();
     context_valid = false;
     if(report_mode != ReportMode::Cumulative) {
@@ -179,6 +185,8 @@ void gizmo_timers_report(const char *label, long long step, bool force)
     const char *event = initial_boundary ? "initial-sync-point" : label;
     const auto current = gizmo::timing::TimerSnapshot();
     auto context = context_valid ? step_context : current_context();
+    context.previous_active_particles_local = previous_active_particles;
+    context.previous_active_gas_local = previous_active_gas;
     if(report_mode != ReportMode::Step) {
         write_report(cumulative_output, "timers", event, step, current, context);
     }

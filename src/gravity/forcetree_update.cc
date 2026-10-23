@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -67,6 +68,7 @@ integertime force_host_lazy_drift_ti(void)
  *  serve however few elements are active. */
 void force_update_tree(void)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Two tests.  The count: the device path must drift every node in the tree before its
      * parallel kick walk is race-free, and that sweep is sized by the tree, not by how much work
      * this call has to do.  And once any node has been drifted lazily at this time the update
@@ -434,6 +436,7 @@ void gravity_note_set_positions(const int *idx, int n)
  * anything drifts; other ranks' copies of the top-level tree receive it at the flush that follows, still before the drift, as raised speeds do. */
 void gravity_note_radius_growth_rates(const int *idx, int n)
 {
+    GIZMO_TIMER_FUNCTION();
 #ifdef USE_TIMESTEP_DILATION_FOR_ZOOMS
     if(n <= 0 || !idx || !Father || !Nodes || !Extnodes) {return;}
     pending_topnodes_ensure();
@@ -458,11 +461,15 @@ void gravity_note_radius_growth_rates(const int *idx, int n)
 
 void gravity_flush_pending_motion_bounds(void)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Every rank enters, with or without pending nodes of its own. */
     pending_topnodes_ensure();
     int *counts = (int *) mymalloc("mb_counts", sizeof(int) * NTask);
     int n_local = g_pending_topnode_n;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allgather");
     MPI_Allgather(&n_local, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+    }
     int total = 0;
     for(int ta = 0; ta < NTask; ta++) {total += counts[ta];}
     if(total > 0)
@@ -489,7 +496,10 @@ void gravity_flush_pending_motion_bounds(void)
             counts_b[ta] = counts[ta] * (int) sizeof(struct NodeBound);
             offset_b[ta] = (ta == 0) ? 0 : offset_b[ta - 1] + counts_b[ta - 1];
         }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allgatherv");
         MPI_Allgatherv(loc, n_local * (int) sizeof(struct NodeBound), MPI_BYTE, all, counts_b, offset_b, MPI_BYTE, MPI_COMM_WORLD);
+        }
         for(int r = 0; r < total; r++)
         {
             int no = all[r].node;
@@ -536,7 +546,10 @@ void force_finish_kick_nodes(void)
    * totDomainNumChanged==0 every rank's payload is empty, so all that work is
    * mathematically a no-op; the early-out is exact, and symmetric across ranks
    * (totDomainNumChanged is the same global sum on every rank). */
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allgather");
   MPI_Allgather(&DomainNumChanged, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+  }
 
   for(ta = 0, totDomainNumChanged = 0; ta < NTask; ta++)
     totDomainNumChanged += counts[ta];
@@ -589,8 +602,11 @@ void force_finish_kick_nodes(void)
     PRINT_STATUS(" ..exchanged kick momenta for %d top-level nodes out of %d", totDomainNumChanged, NTopleaves);
     struct DomainKickPacked *rec_all = (struct DomainKickPacked *)
         mymalloc("fut_rec_all", totDomainNumChanged * sizeof(struct DomainKickPacked));
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allgatherv");
     MPI_Allgatherv(rec_loc, DomainNumChanged * (int) sizeof(struct DomainKickPacked), MPI_BYTE,
                    rec_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
+    }
     /* Apply every rank's records to this rank's copy of the top-level tree. A
      * node's total is its own records plus everything its children received, so
      * each record is added once at its own node and the sums are carried upward
@@ -763,6 +779,7 @@ void force_drift_node(int no, integertime time1)
  *  out just before the hydrodynamical forces are computed, i.e. after density(). */
 void force_update_hmax(void)
 {
+    GIZMO_TIMER_FUNCTION();
   int i, no, ta, totDomainNumChanged;
   int *domainList_all;
   int *counts, *offset_list, *offset_hmax;
@@ -888,7 +905,10 @@ void force_update_hmax(void)
     }
 
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allgather");
   MPI_Allgather(&DomainNumChanged, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
+  }
 
   for(ta = 0, totDomainNumChanged = 0, offset_list[0] = 0, offset_hmax[0] = 0; ta < NTask; ta++)
     {
@@ -904,14 +924,20 @@ void force_update_hmax(void)
   domainHmax_all = (MyFloat *) mymalloc("domainHmax_all", totDomainNumChanged * OffsetSIZE * sizeof(MyFloat));
   domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allgatherv");
   MPI_Allgatherv(DomainList, DomainNumChanged, MPI_INT,
 		 domainList_all, counts, offset_list, MPI_INT, MPI_COMM_WORLD);
+  }
 
   for(ta = 0; ta < NTask; ta++)
     {counts[ta] *= OffsetSIZE * sizeof(MyFloat);}
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allgatherv");
   MPI_Allgatherv(domainHmax_loc, OffsetSIZE * DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
 		 domainHmax_all, counts, offset_hmax, MPI_BYTE, MPI_COMM_WORLD);
+  }
 
 
   for(i = 0; i < totDomainNumChanged; i++)

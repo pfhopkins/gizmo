@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,6 +34,7 @@ void apply_long_range_kick(integertime tstart, integertime tend);
 
 void do_first_halfstep_kick(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i; integertime ti_step, tstart=0, tend=0;
     
 #ifdef TURB_DRIVING
@@ -48,6 +50,8 @@ void do_first_halfstep_kick(void)
         apply_long_range_kick(tstart, tend);
     }
 #endif
+    {
+        GIZMO_TIMER_SCOPE("kick_particles");
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
 #endif
@@ -70,6 +74,8 @@ void do_first_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
+    }
+
 #if defined(CBE_INTEGRATOR)
     {
         int n = (int)ActiveParticleList.size();
@@ -93,6 +99,7 @@ void do_first_halfstep_kick(void)
 
 void do_second_halfstep_kick(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i; integertime ti_step, tstart=0, tend=0;
 
 #if defined(CBE_INTEGRATOR)
@@ -128,6 +135,8 @@ void do_second_halfstep_kick(void)
         apply_long_range_kick(tstart, tend);
     }
 #endif
+    {
+        GIZMO_TIMER_SCOPE("kick_particles");
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
 #endif
@@ -150,6 +159,8 @@ void do_second_halfstep_kick(void)
             }
         }
     } // for(i = 0; i < NumPart; i++) //
+    }
+
 #if defined(CBE_INTEGRATOR)
     /* Resync predicted CBE state to conserved AFTER the gravity half-kick. The
      * CBE kick (above, before gravity) reset pred=conserved in the pre-gravity
@@ -188,6 +199,7 @@ static void mark_hermite_positions_written(void)
 // Note: the below routines only account for gravitational acceleration - only appropriate for stars or collisionless particles
 void do_hermite_prediction(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i; integertime ti_step, tstart=0, tend=0;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
@@ -216,6 +228,7 @@ void do_hermite_prediction(void)
 
 void do_hermite_correction(void) // corrector step
 {
+    GIZMO_TIMER_FUNCTION();
     int i; integertime ti_step, tstart=0, tend=0;
     int gas_corrected = 0; /* the corrector writes positions, which the kept gas neighbour index must see */
 #ifdef _OPENMP
@@ -250,6 +263,7 @@ void do_hermite_correction(void) // corrector step
 #ifdef PMGRID
 void apply_long_range_kick(integertime tstart, integertime tend)
 {
+    GIZMO_TIMER_FUNCTION();
     int i;
     double dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
 #ifdef _OPENMP

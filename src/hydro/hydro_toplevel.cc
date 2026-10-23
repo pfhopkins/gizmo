@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -132,6 +133,7 @@ static double fac_magnetic_pressure;
 /* --------------------------------------------------------------------------------- */
 void hydro_final_operations_and_cleanup(void)
 {
+    GIZMO_TIMER_FUNCTION();
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -455,6 +457,7 @@ void hydro_final_operations_and_cleanup(void)
 /* this function exists to loop over the hydro variables and do any needed 'pre-processing' before they enter the primary hydro force loop */
 void hydro_force_initial_operations_preloop(void)
 {
+    GIZMO_TIMER_FUNCTION();
     // Set global factors for comoving integration of hydro //
     fac_mu = 1 / (All.cf_atime); // code_vel * fac_mu = sqrt[code_pressure/code_density] = code_soundspeed //
     fac_vsic_fix = All.cf_hubble_a ; // note also that signal_vel in forms below should be in units of code_soundspeed //

@@ -6,6 +6,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -59,6 +60,7 @@ using GxTreeHostRange = Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>;
 
 extern "C" int gpu_topology_finalize_father(int n)
 {
+    GIZMO_TIMER_FUNCTION();
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -97,15 +99,21 @@ extern "C" int gpu_topology_finalize_father(int n)
      * (TOPLEVEL|DEPENDS|INTERNAL_TOPLEVEL))) and break force_treeupdate_pseudos.
      * force_flag_localnodes runs later and ORs the correct flags onto the
      * right nodes from this clean baseline. */
-    Kokkos::parallel_for("topo_father_init_nodes", n, KOKKOS_LAMBDA(int k) {
-        father_soa[k]   = -1;
-        bitflags_soa[k] = 0u;
-    });
-    Kokkos::fence();
-    Kokkos::parallel_for("topo_father_init_parts", GxTreeHostRange(0, tree_slots), KOKKOS_LAMBDA(int i) {
-        Father_uvm[i] = -1;
-    });
-    Kokkos::fence();   /* the device passes below must see the host writes */
+    {
+        GIZMO_TIMER_SCOPE("topo_father_init_nodes");
+        Kokkos::parallel_for("topo_father_init_nodes", n, KOKKOS_LAMBDA(int k) {
+            father_soa[k]   = -1;
+            bitflags_soa[k] = 0u;
+        });
+        Kokkos::fence();
+    }
+    {
+        GIZMO_TIMER_SCOPE("topo_father_init_parts");
+        Kokkos::parallel_for("topo_father_init_parts", GxTreeHostRange(0, tree_slots), KOKKOS_LAMBDA(int i) {
+            Father_uvm[i] = -1;
+        });
+        Kokkos::fence();
+    }   /* the device passes below must see the host writes */
     gizmo_gpu_check_last_error("topo_father_init", n);
 
     /* Main pass: one thread per internal node.  For each occupied child slot,
@@ -115,26 +123,29 @@ extern "C" int gpu_topology_finalize_father(int n)
      * Pseudo-particle children (>= tree_base + MaxNodes) carry no per-particle
      * Father[] entry; Father[] is written only for real particle slots (no < tree_slots). */
     int MaxNodes_ = MaxNodes;
-    Kokkos::parallel_for("topo_father_main", n, KOKKOS_LAMBDA(int k) {
-        int parent_abs = tree_base + k;
-        long base = (long)k * 8;
-        for(int s = 0; s < 8; s++) {
-            int c = suns_backup[base + s];
-            if(c < 0) {continue;}
-            if(c < tree_slots) {
-                /* particle: the head of its leaf.  Any further members of a multi-particle leaf are
-                 * given the same father by gpu_leaf_chain_assign_fathers, which divides each leaf
-                 * across threads rather than walking it here in one. */
-                Father_uvm[c] = parent_abs;
-            } else if(c >= tree_base && c < tree_base + MaxNodes_) {
-                /* internal node */
-                father_soa[c - tree_base] = parent_abs;
+    {
+        GIZMO_TIMER_SCOPE("topo_father_main");
+        Kokkos::parallel_for("topo_father_main", n, KOKKOS_LAMBDA(int k) {
+            int parent_abs = tree_base + k;
+            long base = (long)k * 8;
+            for(int s = 0; s < 8; s++) {
+                int c = suns_backup[base + s];
+                if(c < 0) {continue;}
+                if(c < tree_slots) {
+                    /* particle: the head of its leaf.  Any further members of a multi-particle leaf are
+                     * given the same father by gpu_leaf_chain_assign_fathers, which divides each leaf
+                     * across threads rather than walking it here in one. */
+                    Father_uvm[c] = parent_abs;
+                } else if(c >= tree_base && c < tree_base + MaxNodes_) {
+                    /* internal node */
+                    father_soa[c - tree_base] = parent_abs;
+                }
+                /* else: pseudo-particle — no Father[] entry */
             }
-            /* else: pseudo-particle — no Father[] entry */
-        }
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("topo_father_main", n);
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("topo_father_main", n);
+    }
 
 
     return 0;
@@ -142,6 +153,7 @@ extern "C" int gpu_topology_finalize_father(int n)
 
 extern "C" int gpu_topology_finalize_sibling(int n)
 {
+    GIZMO_TIMER_FUNCTION();
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -168,44 +180,48 @@ extern "C" int gpu_topology_finalize_sibling(int n)
      * runs depth maxes around 30-50; per-thread work is bounded and uniform
      * enough for good GPU occupancy.  All reads are from suns_backup and
      * father_soa, both SharedSpace UVM. */
-    Kokkos::parallel_for("topo_sibling_walk", n, KOKKOS_LAMBDA(int k) {
-        int cur_abs = tree_base + k;
-        int found = -1;
-        for(int safety = 0; safety < 64; safety++) {
-            int parent_abs = father_soa[cur_abs - tree_base];
-            if(parent_abs < tree_base) {
-                /* Reached root or hit an unset father (defensive). */
-                break;
+    {
+        GIZMO_TIMER_SCOPE("topo_sibling_walk");
+        Kokkos::parallel_for("topo_sibling_walk", n, KOKKOS_LAMBDA(int k) {
+            int cur_abs = tree_base + k;
+            int found = -1;
+            for(int safety = 0; safety < 64; safety++) {
+                int parent_abs = father_soa[cur_abs - tree_base];
+                if(parent_abs < tree_base) {
+                    /* Reached root or hit an unset father (defensive). */
+                    break;
+                }
+                long pb = (long)(parent_abs - tree_base) * 8;
+                /* Locate cur_abs in parent's suns. */
+                int slot = -1;
+                for(int s = 0; s < 8; s++) {
+                    if(suns_backup[pb + s] == cur_abs) {slot = s; break;}
+                }
+                if(slot < 0) {
+                    /* Topology corruption — bail. */
+                    break;
+                }
+                /* Scan for next occupied slot. */
+                for(int j = slot + 1; j < 8; j++) {
+                    int v = suns_backup[pb + j];
+                    if(v >= 0) {found = v; break;}
+                }
+                if(found >= 0) {break;}
+                /* Ascend. */
+                cur_abs = parent_abs;
             }
-            long pb = (long)(parent_abs - tree_base) * 8;
-            /* Locate cur_abs in parent's suns. */
-            int slot = -1;
-            for(int s = 0; s < 8; s++) {
-                if(suns_backup[pb + s] == cur_abs) {slot = s; break;}
-            }
-            if(slot < 0) {
-                /* Topology corruption — bail. */
-                break;
-            }
-            /* Scan for next occupied slot. */
-            for(int j = slot + 1; j < 8; j++) {
-                int v = suns_backup[pb + j];
-                if(v >= 0) {found = v; break;}
-            }
-            if(found >= 0) {break;}
-            /* Ascend. */
-            cur_abs = parent_abs;
-        }
-        sibling_soa[k] = found;
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("topo_sibling_walk", n);
+            sibling_soa[k] = found;
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("topo_sibling_walk", n);
+    }
 
     return 0;
 }
 
 extern "C" int gpu_topology_writeback_d_to_aos(int n)
 {
+    GIZMO_TIMER_FUNCTION();
     if(n <= 0) {return 0;}
 
     struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
@@ -223,17 +239,21 @@ extern "C" int gpu_topology_writeback_d_to_aos(int n)
      * synchronization needed.  The legacy CPU tree-walks (gravtree.cc) read
      * Nodes[].u.d.sibling/.father; they pull pages back to host on first
      * post-build touch. */
-    Kokkos::parallel_for("topo_writeback_d_to_aos", n, KOKKOS_LAMBDA(int k) {
-        Nodes_uvm[k].u.d.sibling = sibling_soa[k];
-        Nodes_uvm[k].u.d.father  = father_soa[k];
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("topo_writeback_d_to_aos", n);
+    {
+        GIZMO_TIMER_SCOPE("topo_writeback_d_to_aos");
+        Kokkos::parallel_for("topo_writeback_d_to_aos", n, KOKKOS_LAMBDA(int k) {
+            Nodes_uvm[k].u.d.sibling = sibling_soa[k];
+            Nodes_uvm[k].u.d.father  = father_soa[k];
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("topo_writeback_d_to_aos", n);
+    }
     return 0;
 }
 
 extern "C" int gpu_node_reset_ephemeral(int n)
 {
+    GIZMO_TIMER_FUNCTION();
     if(n <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -249,28 +269,31 @@ extern "C" int gpu_node_reset_ephemeral(int n)
     struct extNODE *Extnodes_uvm = Extnodes_base;
 
     Kokkos::fence();
-    Kokkos::parallel_for("node_reset_ephemeral", GxTreeHostRange(0, n), KOKKOS_LAMBDA(int k) {
-        /* k is the SoA index; absolute Nodes[] index is All.TreeNodeIndexBase + k.
-         * Nodes_base/Extnodes_base are the unshifted arrays (Nodes ==
-         * Nodes_base - All.TreeNodeIndexBase), so we index directly with k. */
-        Nodes_uvm[k].Ti_current        = ti_current;
-        Extnodes_uvm[k].dp             = {};
-        Extnodes_uvm[k].Ti_lastkicked  = ti_current;
-        Extnodes_uvm[k].Flag           = glob_flag;
+    {
+        GIZMO_TIMER_SCOPE("node_reset_ephemeral");
+        Kokkos::parallel_for("node_reset_ephemeral", GxTreeHostRange(0, n), KOKKOS_LAMBDA(int k) {
+            /* k is the SoA index; absolute Nodes[] index is All.TreeNodeIndexBase + k.
+             * Nodes_base/Extnodes_base are the unshifted arrays (Nodes ==
+             * Nodes_base - All.TreeNodeIndexBase), so we index directly with k. */
+            Nodes_uvm[k].Ti_current        = ti_current;
+            Extnodes_uvm[k].dp             = {};
+            Extnodes_uvm[k].Ti_lastkicked  = ti_current;
+            Extnodes_uvm[k].Flag           = glob_flag;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Extnodes_uvm[k].rt_source_lum_dp = {};
+            Extnodes_uvm[k].rt_source_lum_dp = {};
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        Extnodes_uvm[k].dp_dm          = {};
+            Extnodes_uvm[k].dp_dm          = {};
 #endif
 #ifdef SINK_NODE_MOTION_TRACKED
-        /* the UVM arena is not zeroed at allocation, so without this the first fold divides
-           garbage into sink_vel and from there into the sink timestep criteria */
-        Extnodes_uvm[k].sink_dp        = {};
+            /* the UVM arena is not zeroed at allocation, so without this the first fold divides
+               garbage into sink_vel and from there into the sink timestep criteria */
+            Extnodes_uvm[k].sink_dp        = {};
 #endif
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("node_reset_ephemeral", n);
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("node_reset_ephemeral", n);
+    }
     return 0;
 }
 
@@ -424,6 +447,7 @@ extern "C" void gizmo_gpu_prepare_shared_for_free(void *ptr)
  *  pages there is no measurement to say a prefetch would help rather than cost. */
 extern "C" void gizmo_gpu_prefetch_shared_to_device(int n, void *const *ptrs, const size_t *bytes, const char *what)
 {
+    GIZMO_TIMER_FUNCTION();
 #if defined(KOKKOS_ENABLE_HIP)
     int dev = 0;
     hipError_t refusal = hipGetDevice(&dev);

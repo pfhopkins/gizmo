@@ -4,6 +4,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -79,6 +80,7 @@ extern "C" void gpu_particles_arena_refresh_from_host(int min_capacity,
 
 extern "C" int particle_staging_acquire(struct ParticleStagingBatch *batch, int capacity)
 {
+    GIZMO_TIMER_FUNCTION();
     if(!batch) {return 0;}
     /* Free anything the batch is already holding, so re-acquiring cannot strand the
        previous buffers. Requires the caller to have zero-initialised it once. */
@@ -122,6 +124,7 @@ using UmDevC  = Kokkos::View<struct gas_cell_data*, GIZMO_KOKKOS_DEVICE_SPACE, K
 extern "C" int particle_staging_gather(struct ParticleStagingBatch *batch, const int *idx, int n,
                                        struct particle_data *pp, struct gas_cell_data *cell)
 {
+    GIZMO_TIMER_FUNCTION();
     if(!batch) {return 0;}
     batch->count = batch->gas_count = 0;
     if(!idx || !pp || n <= 0) {return 0;}
@@ -181,6 +184,7 @@ extern "C" int particle_staging_gather(struct ParticleStagingBatch *batch, const
 extern "C" void particle_staging_scatter(struct ParticleStagingBatch *batch,
                                         struct particle_data *pp, struct gas_cell_data *cell)
 {
+    GIZMO_TIMER_FUNCTION();
     if(!batch || !pp || batch->count <= 0) {return;}
     const int n = batch->count, n_gas = batch->gas_count;
     if(n_gas > 0 && !cell) {return;}   /* gather refuses this state; never reached */
@@ -454,6 +458,7 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
 
 extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_t particle_arena_bytes)
 {
+    GIZMO_TIMER_FUNCTION();
     if(nbytes == 0) {return NULL;}
     /* kokkos_malloc THROWS on host-OOM; catch -> NULL so the caller's NULL-check
        (allocate.cc alloc_fail_local) fires instead of a hard terminate. The label
@@ -513,6 +518,7 @@ extern "C" int gizmo_particle_storage_device_reads_in_place(void)
    call site into a different bucket. */
 extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label)
 {
+    GIZMO_TIMER_FUNCTION();
     try { return label ? Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label, nbytes)
                        : Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(nbytes); }
     catch(const std::exception &) { return NULL; }
@@ -563,6 +569,7 @@ extern "C" void gizmo_gpu_place_shared(void *p, size_t nbytes, int placement, co
 
 extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label)
 {
+    GIZMO_TIMER_FUNCTION();
     try { return label ? Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(label, nbytes)
                        : Kokkos::kokkos_malloc<GIZMO_KOKKOS_DEVICE_SPACE>(nbytes); }
     catch(const std::exception &) { return NULL; }
@@ -575,6 +582,7 @@ extern "C" void gizmo_gpu_free_device(void *ptr)
 
 extern "C" void gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes)
 {
+    GIZMO_TIMER_FUNCTION();
     if(nbytes == 0) {return;}
     Kokkos::deep_copy(Kokkos::View<char*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>((char *) dst_device, nbytes),
                       Kokkos::View<const char*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>((const char *) src_host, nbytes));
@@ -582,6 +590,7 @@ extern "C" void gizmo_gpu_copy_to_device(void *dst_device, const void *src_host,
 
 extern "C" void gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, size_t nbytes)
 {
+    GIZMO_TIMER_FUNCTION();
     if(nbytes == 0) {return;}
     Kokkos::fence("gizmo_gpu_copy_to_host");   /* device-wide: the source may have been written by a library on its own stream */
     Kokkos::deep_copy(Kokkos::View<char*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>((char *) dst_host, nbytes),

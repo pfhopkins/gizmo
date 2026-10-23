@@ -63,6 +63,38 @@ with the helpers' existing fences; explicit direct-launch scopes cover selected
 gravity kernels. This is a runtime summary whose finer breakdown can be extended
 at large self-time regions. The timers add no GPU fences.
 
+Bulk phases now have the following child coverage. Whole-function rows retain
+their source names; phase rows describe loops or batches within those functions.
+
+| Region | Child costs exposed |
+| --- | --- |
+| Evolution loop | First/second kicks, particle kick loops, motion-bound updates, active-list construction, drift, logging and controlled-stop polls. |
+| Timestep selection | Fast-wave scan, displacement-constraint scan, particle timestep assignment, wakeups and their MPI reductions. |
+| Hydro | Corridor preparation/ghost refresh, active-list/subgroup preparation, neighbour-runner routes, convergence/compaction and finalization. |
+| Neighbour runner | Candidate collection, drift/filter, pair evaluation, arena/context preparation, local/remote CPU and GPU dispatch routes, ghost exchange and convergence reductions. |
+| Gravity/tree | Tree build, topology preparation/build/finalization, Morton-sort batches, moment precomputation, moment kernel pipeline, copies/writeback, LET packing/encoding/exchange/install and walk completion reductions. |
+| Domain decomposition | Extent and cost calculation, top-tree construction, sorting, memory checks, particle packing, receive layout and payload exchange. |
+| Data movement | Particle staging gather/scatter, device/shared allocations, explicit host/device copies and shared-memory prefetch. |
+
+Blocking MPI calls are measured under their caller, for example
+`gravity_tree::MPI_Allreduce_walk_completion` and
+`force_exchange_pseudodata_complete::MPI_Waitall`. Their elapsed time includes
+both arrival skew and communication/progress time. A long wait identifies where
+a rank waits; compare it with the preceding computation and packing regions to
+investigate why other ranks arrive later. It is not a direct measurement of
+network transfer time or proof that the collective itself is the bottleneck.
+Nonblocking submission rows end in `_post`; `MPI_Waitall` measures the remaining
+wait after any intervening work. These scopes add no MPI operations.
+
+Tree kernels that already fence individually have a child named after the
+kernel. The moment-refresh kernels share a single existing completion fence, so
+they are measured together as `refresh_moments_kernels`; no extra fence is added
+to separate them. Use GPU profiling to break down that asynchronous pipeline.
+`pack_peer_LETs` measures the caller's wall time across the OpenMP packing loop;
+packing/encoding on other threads appears separately in the worker lane as
+thread-seconds. Per-particle and per-pair functions are deliberately left inside
+their enclosing batch timer to keep overhead manageable.
+
 This naming convention replaces earlier aliases such as `Tree`, `TreeSolve`,
 `TreeBuild`, `Density` and `PrimaryWalk` with source function names. Downstream
 filters should use the new paths for new runs; previously written sessions keep
@@ -239,6 +271,16 @@ Unavailable counts use -1, including startup and finalization before a workload
 was captured. Metadata is repeated on each TSV timer row to allow filtering by
 path and plotting `inclusive_max_s` against `active_particles_sum` or
 `active_gas_sum` directly.
+
+The `Interval-entry workload` line and appended TSV
+`previous_active_particles_{sum,mean,max}` / `previous_active_gas_{sum,mean,max}`
+fields describe the active set at the start of the interval, before timestep
+selection and the first half-kick. The ordinary `Workload` line describes the
+new force set after the advance. These sets can differ substantially: a sparse
+new force set does not imply a cheap preceding timestep selection or kick.
+Some algorithms also scan all particles regardless of active count; for example,
+MFV kick loops scan `NumPart` and update active particles or gas. In cumulative
+reports both workload descriptions refer to the latest interval.
 
 Per-step snapshots and MPI reporting add overhead. Mode `step` omits cumulative
 reporting; mode `both` performs both MPI aggregations at each selected boundary.

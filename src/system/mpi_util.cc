@@ -8,6 +8,7 @@
  * couple others added, and updated in various places to properly interact with newer
  * libraries and compilers) by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "timer.h"
 
 #include <mpi.h>
 #include <string.h>
@@ -38,7 +39,10 @@ void gizmo_node_comm_init(void)
     MPI_Comm_rank(GizmoNodeComm, &GizmoNodeRankOfTask);
     MPI_Comm_size(GizmoNodeComm, &GizmoRanksThisNode);
     int is_node_lead = (GizmoNodeRankOfTask == 0) ? 1 : 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&is_node_lead, &GizmoNodeCount, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    }
 }
 
 /** Number of unique -nodes- (shared memory machine structures), not MPI tasks, on
@@ -57,6 +61,7 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
                              MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
                              MPI_Status *status)
 {
+    GIZMO_TIMER_FUNCTION();
     int iter = 0, size_sendtype, size_recvtype, send_now, recv_now;
     char *sendbuf = (char *)sendbuf0;
     char *recvbuf = (char *)recvbuf0;
@@ -91,8 +96,11 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
         else
             recv_now = recvcount;
         
+        {
+            GIZMO_TIMER_SCOPE("MPI_Sendrecv");
         MPI_Sendrecv(sendbuf, send_now, sendtype, dest, sendtag,
                      recvbuf, recv_now, recvtype, source, recvtag, comm, status);
+        }
         
         sendcount -= send_now;
         recvcount -= recv_now;
@@ -134,6 +142,7 @@ int MPI_Sendrecv_into_particle_storage(void *sendbuf0, size_t sendcount, MPI_Dat
                                        MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
                                        MPI_Status *status, int size_limited)
 {
+    GIZMO_TIMER_FUNCTION();
     if(!gizmo_particle_storage_needs_staged_mpi_receive()) {
         if(size_limited) {
             return MPI_Sizelimited_Sendrecv(sendbuf0, sendcount, sendtype, dest, sendtag, recvbuf0, recvcount,
@@ -168,8 +177,11 @@ int MPI_Sendrecv_into_particle_storage(void *sendbuf0, size_t sendcount, MPI_Dat
     {
         const int send_now = (int) ((sendcount > count_limit) ? count_limit : sendcount);
         const int recv_now = (int) ((recvcount > count_limit) ? count_limit : recvcount);
+        {
+            GIZMO_TIMER_SCOPE("MPI_Sendrecv");
         MPI_Sendrecv(sendbuf, send_now, sendtype, dest, sendtag,
                      ParticleReceiveStaging, recv_now, recvtype, source, recvtag, comm, status);
+        }
         if(recv_now > 0) {memcpy(recvbuf, ParticleReceiveStaging, (size_t) recv_now * (size_t) size_recvtype);}
         sendcount -= send_now;
         recvcount -= recv_now;

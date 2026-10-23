@@ -20,6 +20,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <cstdarg>                                   /* va_list, vfprintf for nlr_warn_once_rank0 */
@@ -594,6 +595,7 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
                                           DispatchPath backend,
                                           std::vector<std::vector<int>>& per_active_cands)
 {
+    GIZMO_TIMER_FUNCTION();
     /* neighbor_type_mask is an explicit caller parameter (mask-threading
      * refactor). Non-iter callers pass Spec::neighbor_type_mask (unchanged
      * behavior); iter dispatch passes sg.j_type_bitmask for per-subgroup walks. */
@@ -763,6 +765,7 @@ static void drift_and_filter_candidates(std::vector<std::vector<int>>& per_activ
                                         unsigned int neighbor_type_mask,
                                         QueryAt query_at)
 {
+    GIZMO_TIMER_FUNCTION();
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
     const size_t n_queries = per_active_cands.size();
     std::vector<double> queries(4 * n_queries);   /* pos[3], h_q per query */
@@ -796,6 +799,7 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                                        const typename Spec::CallScalars& cs,
                                        EvalOMPPolicy eval_policy)
 {
+    GIZMO_TIMER_FUNCTION();
     using NeighborData = typename Spec::NeighborData;
     using ScatterData  = typename Spec::ScatterData;
     const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
@@ -909,6 +913,7 @@ static void build_self_actives_host_pre_drift(
 template <typename Spec>
 static void run_mode_b_local(const neighbor_loop_args& args, const double *radii)
 {
+    GIZMO_TIMER_FUNCTION();
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
     using DeviceCtx  = typename Spec::DeviceContext;
@@ -1676,7 +1681,10 @@ static void mode_b_remote_evaluate_into_buffer(
          * draining. */
         int ndone_flag = (cursor >= N) ? 1 : 0;
         {
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allreduce");
             MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        }
         }
     } while(ndone < NTask);
 
@@ -1698,6 +1706,7 @@ static void mode_b_remote_evaluate_into_buffer(
 template <typename Spec>
 static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double *radii)
 {
+    GIZMO_TIMER_FUNCTION();
     using AccumData    = typename Spec::AccumData;
     using DeviceCtx    = typename Spec::DeviceContext;
 
@@ -1759,6 +1768,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
 
 template <typename Spec>
 static void run_mode_b_remote(const neighbor_loop_args& args, const double *radii) {
+    GIZMO_TIMER_FUNCTION();
     run_mode_b_remote_impl<Spec>(args, radii);
 }
 
@@ -1781,6 +1791,7 @@ template <typename Spec>
 static void run_mode_d(const neighbor_loop_args& args, const double *radii, ModeDCallLease &lease,
                        const GxDeviceTreeView& tree)
 {
+    GIZMO_TIMER_FUNCTION();
     using AccumData = typename Spec::AccumData;
     using DeviceCtx = typename Spec::DeviceContext;
 
@@ -2233,6 +2244,7 @@ static int nlr_mode_a_team_width(const Functor& f)
 template <typename Spec>
 static void run_mode_a(const neighbor_loop_args& args, const double *radii)
 {
+    GIZMO_TIMER_FUNCTION();
     using ActiveData   = typename Spec::ActiveData;
     using AccumData    = typename Spec::AccumData;
     using ScatterData  = typename Spec::ScatterData;
@@ -3359,6 +3371,7 @@ static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active, in
 template <typename Spec>
 void run_neighbor_loop(const neighbor_loop_args& args_in)
 {
+    GIZMO_TIMER_FUNCTION();
     /* The one live argument view for this call.  A ghost import can raise the particle
      * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
      * object below; every later reader sees the current values.  There is deliberately no
@@ -3426,11 +3439,14 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     NlrMode selected_mode = force_b ? NlrMode::B : NlrMode::A;
     long long global_num_active = -1;       /* -1 = not computed on this path */
     if(!force_a && !force_b) {
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         const int local_act = args.num_active;
         const long long local_act_64 = local_act;
         long long sum_act = 0; int max_act = 0;
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         global_num_active = sum_act;
         selected_mode = nlr_select_mode<Spec>(sum_act, max_act);
         select_mode_b = (selected_mode == NlrMode::B);
@@ -3846,6 +3862,7 @@ NlrIterDriver<Spec>::~NlrIterDriver()
 template <typename Spec>
 void NlrIterDriver<Spec>::initialize_device_context_mode_b()
 {
+    GIZMO_TIMER_FUNCTION();
     using DeviceCtx = typename Spec::DeviceContext;
     static_assert(std::is_base_of<NeighborLoopDeviceContextBase, DeviceCtx>::value,
                   "Spec::DeviceContext must publicly derive from NeighborLoopDeviceContextBase");
@@ -3957,6 +3974,7 @@ template <typename Spec>
 void nlr_import_union_ghosts(unsigned int mask_union, const std::vector<int> &actives,
                              const std::vector<double> &radii, double ghost_safety_factor)
 {
+    GIZMO_TIMER_FUNCTION();
     std::vector<double> padded(radii.size());
     for (size_t k = 0; k < radii.size(); k++) {padded[k] = radii[k] * Spec::mode_a_csr_buffer_factor;}
     const int n = (int)actives.size();
@@ -3969,6 +3987,7 @@ void nlr_import_union_ghosts(unsigned int mask_union, const std::vector<int> &ac
 template <typename Spec>
 void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
 {
+    GIZMO_TIMER_FUNCTION();
     if (arena_acquired) {
         if (ThisTask == 0) {
             fprintf(stderr,
@@ -4057,6 +4076,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
 template <typename Spec>
 void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_d()
 {
+    GIZMO_TIMER_FUNCTION();
     if (arena_acquired) {return;}
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -4093,6 +4113,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_d()
 template <typename Spec>
 void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union()
 {
+    GIZMO_TIMER_FUNCTION();
     if (NTask <= 1) {
         /* Single rank: no ghost pool to manage. Just invalidate all CSR
          * caches; per-subgroup dispatch will rebuild local CSRs on first
@@ -4236,6 +4257,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, int sg)
 {
+    GIZMO_TIMER_FUNCTION();
     using AccumData = typename Spec::AccumData;
 
     const NlrSubgroup& sgr = drv.args.subgroups[sg];
@@ -6067,6 +6089,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
 {
+    GIZMO_TIMER_FUNCTION();
     using ActiveData   = typename Spec::ActiveData;
     using AccumData    = typename Spec::AccumData;
     using ScatterData  = typename Spec::ScatterData;
@@ -6341,6 +6364,7 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_b_local(NlrIterDriver<Spec>& drv, int sg)
 {
+    GIZMO_TIMER_FUNCTION();
     using ActiveData  = typename Spec::ActiveData;
     using AccumData   = typename Spec::AccumData;
 
@@ -6463,6 +6487,7 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
 {
+    GIZMO_TIMER_FUNCTION();
     using AccumData = typename Spec::AccumData;
 
     const NlrSubgroup& sgr = drv.args.subgroups[sg];
@@ -6820,6 +6845,7 @@ static int nlr_mode_d_after_iter_on_device(NlrIterDriver<Spec>& drv)
 template <typename Spec>
 void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Everything a Mode D call holds, released on every way out, exactly as in the
      * non-iterative runner.  Declared first so it outlives the driver, which walks the tree
      * the lease prepared.  Without the release the touched-set recorder stays held after the
@@ -6956,11 +6982,14 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
          * (= union across subgroups). */
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         const int local_act = args.num_active;
         const long long local_act_64 = local_act;
         long long sum_act = 0; int max_act = 0;
         MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         global_active_sum = sum_act;
         const NlrMode mode = nlr_select_mode<Spec>(sum_act, max_act);
         path = (mode == NlrMode::B) ? DispatchPath::ModeB_HostWalker : DispatchPath::ModeA_GPU_NGL;
@@ -7189,7 +7218,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
              * collectives below (a lone asserting rank would otherwise desync). */
             int global_partition_bad = local_partition_bad;
             if (NTask > 1) {
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(&local_partition_bad, &global_partition_bad, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            }
             }
             if (global_partition_bad) {
                 endrun(90001020);
@@ -7236,8 +7268,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             }
             int global_needs_rebuild = local_needs_rebuild;
             if (NTask > 1) {
+                {
+                    GIZMO_TIMER_SCOPE("MPI_Allreduce");
                 MPI_Allreduce(&local_needs_rebuild, &global_needs_rebuild, 1,
                               MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            }
             }
             if (global_needs_rebuild) {
                 drv.rebuild_mode_a_arena_and_ctx_for_current_active_union();
@@ -7386,9 +7421,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                 }
             }
         }
+        }
 
         /* (c) Spec::after_iter_global — host-only, no-MPI (TRAP 7). */
         if constexpr (nlr_spec_has_after_iter_global_v<Spec>) {
+            GIZMO_TIMER_SCOPE("after_iter_global");
             Spec::after_iter_global(args, drv);
         }
 

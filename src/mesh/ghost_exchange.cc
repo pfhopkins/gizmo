@@ -22,6 +22,7 @@
  *    requested by ANY task is sent to ALL requesting tasks. Per-task leaf request lists
  *    would reduce traffic.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -474,6 +475,7 @@ static void ghost_exchange_impl(const struct ghost_exchange_spec_t *spec)
  * (explicit query list, or search_mode == NGB_SEARCH_ONEWAY). */
 extern "C" void ghost_exchange_run(const struct ghost_exchange_spec_t *spec)
 {
+    GIZMO_TIMER_FUNCTION();
     ghost_exchange_impl(spec);
 }
 
@@ -737,6 +739,7 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                                                   struct gas_cell_data *dst_CellP,
                                                   const int *recv_count, const int *recv_disp)
 {
+    GIZMO_TIMER_FUNCTION();
     const size_t slot_bytes = sizeof(struct particle_data) + sizeof(struct gas_cell_data);
     /* Where the particle storage is CUDA managed memory, MPI does not write it directly: each round is received
        into host staging and copied in (gizmo_particle_storage_needs_staged_mpi_receive).  Elsewhere the round is
@@ -766,7 +769,10 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
         /* The room left on the tightest rank rides along with the agreement, so
            reporting it costs no collective of its own. */
         long long want[2] = {affordable, (long long) FreeBytes}, least[2] = {1, 0};
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(want, least, 2, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
+        }
         slots_per_peer = (least[0] > 0) ? (int) least[0] : 1;
         tightest_free  = least[1];
     }
@@ -809,7 +815,10 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
            them all, together, before a byte is taken. */
         long long mine[3] = {longest_run, carried * (long long) slot_bytes, short_local};
         long long most[3] = {0, 0, 0};
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(mine, most, 3, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        }
         rounds = (int) ((most[0] + slots_per_peer - 1) / slots_per_peer);
         if(rounds < 1) {rounds = 1;}
         heaviest_rank_bytes = most[1];
@@ -1051,6 +1060,7 @@ static void gx_walk_export_discover(
     struct ghost_send_set *send_set,
     struct gx_walk_export_result *res)
 {
+    GIZMO_TIMER_FUNCTION();
     if(res) memset(res, 0, sizeof(*res));
     /* The walk searches with the SAME j-side reach the accept admits with.
      * The accept uses gx_policy_scaled_h = radius(j,policy) * j_radius_scale *
@@ -1064,7 +1074,10 @@ static void gx_walk_export_discover(
      * envelope Alltoallv below / the caller's compare Allreduce). */
     int ok_local = (All.TreeNodeIndexBase > 0 && Nodes != NULL && Nextnode != NULL) ? 1 : 0;
     int ok_all = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&ok_local, &ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    }
     if(!ok_all) { if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE; return; }
 
     /* (b) SENDER: build per-peer envelope lists (export is a byproduct of the walk).
@@ -1132,12 +1145,18 @@ static void gx_walk_export_discover(
     if(!sc || !sd || !rc || !rd) {
         /* index-array alloc failure is per-rank; make it collective before the Alltoall. */
         int a_ok_local = 0, a_ok_all = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         free(sc); free(sd); free(rc); free(rd);
         if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return;
     } else {
         int a_ok_local = 1, a_ok_all = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     }
     /* Per-peer counts are bounded by this rank's query set, but the prefix sums and
@@ -1154,7 +1173,10 @@ static void gx_walk_export_discover(
         if(n > INT_MAX) { env_range_ok = 0; n = 0; }
         sc[t] = (int)n;
     }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Alltoall");
     MPI_Alltoall(sc, 1, MPI_INT, rc, 1, MPI_INT, MPI_COMM_WORLD);
+    }
     for(int t = 0; t < NTask; t++) {
         if(tot_s <= INT_MAX) sd[t] = (int)tot_s; else { sd[t] = 0; env_range_ok = 0; }
         if(tot_r <= INT_MAX) rd[t] = (int)tot_r; else { rd[t] = 0; env_range_ok = 0; }
@@ -1164,7 +1186,10 @@ static void gx_walk_export_discover(
     if(tot_s > INT_MAX || tot_r > INT_MAX) env_range_ok = 0;
     {
         int range_ok_all = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&env_range_ok, &range_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         if(!range_ok_all) {
             if(ThisTask == 0) {
                 printf("ERROR: walk-export envelope counts exceed int MPI transport range (caller=%s)\n",
@@ -1180,7 +1205,10 @@ static void gx_walk_export_discover(
     struct gx_export_envelope_t *recv    = (struct gx_export_envelope_t *) malloc((size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t));
     /* buffer alloc — collective before the Alltoallv (a NULL recv would fault the collective). */
     int buf_ok_local = (sendbuf && recv) ? 1 : 0, buf_ok_all = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&buf_ok_local, &buf_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    }
     if(!buf_ok_all) { free(sendbuf); free(recv); free(sc); free(sd); free(rc); free(rd);
                       if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     for(int t = 0; t < NTask; t++)
@@ -1282,7 +1310,10 @@ static void gx_walk_export_discover(
      * now.  Agree it here, where every rank arrives whichever backend it used, before
      * the count and payload exchanges that follow. */
     int receiver_ok_all = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&receiver_ok, &receiver_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    }
     if(!receiver_ok_all) {
         if(receiver_ok) {gx_send_set_abandon(send_set);}
         if(res) res->status = GX_WALK_EXPORT_RECEIVER_FAIL;
@@ -1541,7 +1572,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     int *send_disp  = (int *) mymalloc("gx_rd_sd", NTask * sizeof(int));
     int *recv_disp  = (int *) mymalloc("gx_rd_rd", NTask * sizeof(int));
     for(int t = 0; t < NTask; t++) { send_count[t] = send_set->count[t]; recv_count[t] = 0; }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Alltoall");
     MPI_Alltoall(send_count, 1, MPI_INT, recv_count, 1, MPI_INT, MPI_COMM_WORLD);
+    }
     /* CHECKED int64 totals + prefix displacements (same rationale as the tile
      * impl). Request-driven is the last-resort Mode-A discovery — there is NO
      * further fallback — so both a representation overflow and a particle-slot
@@ -1752,6 +1786,7 @@ void ghost_exchange_hydro_oneway(double safety_factor)
  */
 void ghost_exchange_cleanup(void)
 {
+    GIZMO_TIMER_FUNCTION();
     if(NumPart_before_ghost < 0) return;
     /* Ghost slots are about to leave scope (NumPart shrinks back to local): the
      * neighbour indexes built over them go first (gpu_sidx_ghost_pool_cleanup). */
@@ -1849,6 +1884,7 @@ static inline void ghost_refresh_make_device_visible(int ghost_base, int ghost_c
 
 int ghost_refresh_values(void)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Fail-closed guards (production callers fall back to full cleanup+reimport).
        A non-NULL ghost_send_home_idx already implies an import happened with no
        cleanup since (cleanup NULLs it). */
@@ -1870,7 +1906,10 @@ int ghost_refresh_values(void)
     /* The transport below is collective, and so is the caller's fallback (a
        cleanup + re-import): every rank refreshes or none does. */
     int any_failed = (rc != GHOST_REFRESH_OK) ? 1 : 0, any_failed_global = any_failed;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&any_failed, &any_failed_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
     if(any_failed_global) {return (rc != GHOST_REFRESH_OK) ? rc : GHOST_REFRESH_FAIL_ON_PEER;}
 
     int ns = ghost_send_home_count;

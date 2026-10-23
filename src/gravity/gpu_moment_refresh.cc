@@ -52,6 +52,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -182,6 +183,7 @@ static void precompute_free_(precomputed_t& pre);   /* defined just below */
  * On allocation failure frees the whole pool and leaves capacity invalid (0). */
 static int precompute_ensure_(int N)
 {
+    GIZMO_TIMER_FUNCTION();
     if(pre_cap_ >= N) {return 0;}        /* capacity already sufficient: reuse */
     precompute_free_(pre_persist_);      /* drop the smaller pool before growing */
 #if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
@@ -215,6 +217,7 @@ static int precompute_ensure_(int N)
  * unchanged (source sparsification is a separate, profiling-gated change). */
 static void precompute_fill_(int N)
 {
+    GIZMO_TIMER_FUNCTION();
 #if defined(RT_USE_GRAVTREE) || defined(SINK_PHOTONMOMENTUM) || defined(COSMIC_RAY_SUBGRID_LEBRON)
     precomputed_t& pre = pre_persist_;
 #ifdef RT_USE_GRAVTREE
@@ -295,6 +298,7 @@ static int  fmirror_cap_     = 0;   /* current capacity in particles */
 
 static int *father_mirror_ensure_(int N)
 {
+    GIZMO_TIMER_FUNCTION();
     /* At least one entry: a rank holding no particles (a few-body run decomposed over more ranks than it
      * has busy particles) still builds a tree, and NULL is this function's failure signal. */
     if(fmirror_cap_ < N || !fmirror_persist_) {
@@ -789,6 +793,7 @@ static void mr_pending_init_launch_(Kokkos::View<int*, MrMemSpace, MrUnmanaged> 
 /* =================================================================== */
 extern "C" int gpu_moment_refresh(int active_root_node)
 {
+    GIZMO_TIMER_FUNCTION();
     (void) active_root_node; /* reserved hook, currently unused */
     if(Numnodestree <= 0) {return 0;}
     /* Defensive idempotent sync of AllDevice before any device-side All.* read. */
@@ -834,6 +839,8 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     unsigned int *bitflags_soa = soa->bitflags;
     Vec3<MyFloat> *center_soa  = soa->center;
 
+    {
+        GIZMO_TIMER_SCOPE("refresh_moments_kernels");
     /* ---------------- Kernel 1: zero scratch + pending ----------------- */
     /* pending is initialized to 1 (resident-thread slot); Kernel 2 adds
      * one more for each internal-node child.  In Kernel 4 each thread
@@ -948,7 +955,10 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 
     Kokkos::fence();
     gizmo_gpu_check_last_error("mr_moment_refresh", n);
+    }
 
+    {
+        GIZMO_TIMER_SCOPE("copy_moments_to_shared_soa");
     /* ---------------- Bulk deep-copy scratch → SharedSpace SoA -------- */
     /* Wrap raw SoA pointers in unmanaged Views and deep_copy. */
     using UV_unmanaged = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
@@ -1013,6 +1023,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
 #endif
 
     Kokkos::fence();
+    }
 
     /* ---------------- AoS write-back ---------------------------------- */
     gpu_moment_writeback_to_aos(n);
@@ -1053,6 +1064,7 @@ extern "C" void gpu_moment_refresh_release(void)
 KOKKOS_INLINE_FUNCTION static void mr_writeback_node_(const struct gpu_gravity_tree_soa_t &soa, struct NODE *nodes,
                                                       struct extNODE *extnodes, int k)
 {
+    GIZMO_TIMER_FUNCTION();
     /* The host stamped every node current before this refresh (forcetree.cc, the reset
      * that mirrors the build's moment pass), and the kernel above just recomputed vmax.
      * The device walk widens a node's stored length from the time that length describes,

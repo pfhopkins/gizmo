@@ -1,3 +1,4 @@
+#include "../system/timer.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -1683,6 +1684,7 @@ void remove_particle_from_treewalk(int i){
  */
 void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Under MAINTAIN_TREE_IN_REARRANGE every slot move repairs the standing tree's walk links, and finding the links into
        one slot means walking the whole tree -- so a call that moves many particles costs that many full-tree walks. When
        the caller frees or rebuilds the tree before anything walks it again, those repairs are discarded unread, and only

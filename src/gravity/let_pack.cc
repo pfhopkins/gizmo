@@ -32,6 +32,7 @@
  *  A graceful-shrink fallback to the legacy export path is not implemented; add it only if
  *  practical memory limits ever require it.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -82,7 +83,10 @@ static void let_compute_tree_lifetime(void)
 {
     long long local_bin_count[TIMEBINS], global_bin_count[TIMEBINS];
     for(int bin = 0; bin < TIMEBINS; bin++) {local_bin_count[bin] = (long long) TimeBinCount[bin];}
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(local_bin_count, global_bin_count, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    }
 
     double rebuild_threshold = All.TreeRebuild_ActiveFraction * (double) All.TotNumPart;
     long long cumulative = 0, occupied_total = 0;
@@ -278,6 +282,7 @@ static struct LETOrphanRecord *let_my_orphan_for_topleaf(int t)
  * ---------------------------------------------------------------------- */
 extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 {
+    GIZMO_TIMER_FUNCTION();
     /* bbox: union of OUR topleaf bboxes (each topleaf's [center-len/2, center+len/2]).
      * NOTE: as of the per-topleaf cover fix the bbox COORDS no longer feed LET
      * essentiality (the pack walks the receiver's per-topleaf cover TREE, built
@@ -470,6 +475,7 @@ extern "C" void let_compute_local_payload(struct LETPerRankPayload *out)
 extern "C" int let_exchange_payloads(const struct LETPerRankPayload *local,
                                       struct LETPerRankPayload *all_ranks)
 {
+    GIZMO_TIMER_FUNCTION();
     return MPI_Allgather(local, sizeof(struct LETPerRankPayload), MPI_BYTE,
                          all_ranks, sizeof(struct LETPerRankPayload), MPI_BYTE,
                          MPI_COMM_WORLD);
@@ -600,6 +606,7 @@ static int let_pack_workers(void)
  * left alone so they carry over between exchanges. */
 static int let_pack_contexts_prepare(int want)
 {
+    GIZMO_TIMER_FUNCTION();
     if(want < 1) {want = 1;}
     if(want > g_pack_ctx_n)
     {
@@ -1899,6 +1906,7 @@ static int let_wire_leaf_eligible(const struct LETNodeWire *w)
 static long long let_wire_encode_destination(struct LETPackContext *pk, const struct LETNodeWire *full, int n,
                                              unsigned char **out)
 {
+    GIZMO_TIMER_FUNCTION();
     *out = NULL;
     if(n <= 0) {return 0;}
     if(pk->wire_kinds_cap < (size_t) n)
@@ -1981,6 +1989,7 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                                   int *out_hdr_capacity,
                                   int *out_hdr_count)
 {
+    GIZMO_TIMER_FUNCTION();
     int count = 0;
     int hdr_count = 0;
     /* No-real-receiver guard: ship nothing to a receiver with no local cover at all (no owned
@@ -2162,6 +2171,7 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
                                    const int *send_hdr_count_per_rank,
                                    long long *foreign_needed_out)
 {
+    GIZMO_TIMER_FUNCTION();
     /* First exchange the record counts, the encoded sizes and the header counts.  Records decide the
      * foreign slots and capacity; the encoded sizes decide the transport and its rounds. */
     int *send_counts_int = (int *) mymalloc("LET_send_counts",     NTask * sizeof(int));
@@ -2179,7 +2189,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
             both[3 * r + 1] = send_units_per_rank[r];
             both[3 * r + 2] = send_hdr_count_per_rank[r];
         }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Alltoall");
         MPI_Alltoall(both, 3, MPI_INT, both + 3 * NTask, 3, MPI_INT, MPI_COMM_WORLD);
+        }
         for(int r = 0; r < NTask; r++)
         {
             send_counts_int[r] = send_count_per_rank[r]; recv_counts_int[r] = both[3 * NTask + 3 * r + 0];
@@ -2208,7 +2221,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
     if(foreign_needed_out) *foreign_needed_out = foreign_needed;
     int foreign_short_local = (foreign_needed > (long long) MaxForeignNodes) ? 1 : 0;
     int foreign_short_any   = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&foreign_short_local, &foreign_short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
     if(foreign_short_any)
     {
         myfree(recv_hdr_counts); myfree(send_hdr_counts);
@@ -2251,7 +2267,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
     }
 #endif
     int grow_failed_any   = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&grow_failed_local, &grow_failed_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
     if(grow_failed_any)
     {
         myfree(recv_hdr_counts); myfree(send_hdr_counts);
@@ -2370,7 +2389,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
          * shortest any rank can manage.  Reducing it costs one small collective that replaces the
          * two count exchanges a round needed when the receive side was not predictable. */
         int steps_this_round = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&steps_here, &steps_this_round, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         if(steps_this_round < 1) steps_this_round = 1;
         if(step + steps_this_round > n_steps) steps_this_round = n_steps - step;
 
@@ -2429,7 +2451,10 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
          * hard floor this check exists to keep the run away from. */
         int short_local = gizmo_alloc_fits_this_rank((size_t) round_bytes, 4) ? 0 : 1;
         int short_any   = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&short_local, &short_any, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         if(short_any)
         {
             if(short_local)
@@ -2512,9 +2537,18 @@ extern "C" let_exchange_status_t let_exchange_nodes(unsigned char **send_buf_per
         long long local[3]  = {largest_round_bytes, largest_pair_bytes, (long long) FreeBytes};
         long long global[3] = {0, 0, 0};
         long long leaves_local[2] = {g_let_leaves_compact, g_let_leaves_full}, leaves[2] = {0, 0};
+        {
+            GIZMO_TIMER_SCOPE("MPI_Reduce");
         MPI_Reduce(local, global, 2, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Reduce");
         MPI_Reduce(&local[2], &global[2], 1, MPI_LONG_LONG, MPI_MIN, 0, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Reduce");
         MPI_Reduce(leaves_local, leaves, 2, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+        }
         if(ThisTask == 0)
         {
             /* Report a changed round count, and also whenever the largest round has grown by a
@@ -2753,6 +2787,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const unsigned char *rec
                                        int recv_hdr_count_total,
                                        const int *foreign_slot_prefix)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Pass 1: check every sender's stream and cut it into blocks (one byte per record, in order), then
      * decode all blocks of all senders in parallel -- each record decoded, its links checked against its subtree
      * and resolved, stored and mirrored in one visit.  The stream is its record count of kind bytes, then
@@ -2882,6 +2917,7 @@ extern "C" let_exchange_status_t let_unpack_and_install(const unsigned char *rec
  * ---------------------------------------------------------------------- */
 extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 {
+    GIZMO_TIMER_FUNCTION();
     if(foreign_needed_out) *foreign_needed_out = 0;
     /* Defensive no-op if no foreign-node index range has been established yet -- before the
      * first tree allocation, or from a restart file that carries none. */
@@ -2959,8 +2995,11 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
             if(g_my_clusters_n > 0)
                 memcpy((char *) g_cluster_all + ro[ThisTask], g_my_clusters,
                        (size_t) g_my_clusters_n * sizeof(struct LETCoverLeaf));
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allgatherv");
             MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
                            g_cluster_all, rc, ro, MPI_BYTE, MPI_COMM_WORLD);
+            }
             myfree(ro); myfree(rc);
         }
     }
@@ -3000,8 +3039,11 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
             if(g_my_orphans_n > 0)
                 memcpy((char *) g_orphan_all + ro[ThisTask], g_my_orphans,
                        (size_t) g_my_orphans_n * sizeof(struct LETOrphanRecord));
+            {
+                GIZMO_TIMER_SCOPE("MPI_Allgatherv");
             MPI_Allgatherv(MPI_IN_PLACE, rc[ThisTask], MPI_BYTE,
                            g_orphan_all, rc, ro, MPI_BYTE, MPI_COMM_WORLD);
+            }
             myfree(ro); myfree(rc);
         }
     }
@@ -3012,7 +3054,10 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * cover extension. This guard is the real-corruption backstop, NOT a fold-into-every-leaf downgrade. */
     {
         long long unbuck_max = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&g_let_unbucketable, &unbuck_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        }
         if(unbuck_max > 0)
         {
             if(g_let_unbucketable > 0)
@@ -3068,6 +3113,7 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     }
     else
     {
+    GIZMO_TIMER_SCOPE("pack_peer_LETs");
 #ifdef _OPENMP
     /* Exactly as many workers as there are contexts, so a worker's number indexes its own scratch
      * and no two can land on the same one. */
@@ -3139,7 +3185,10 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
      * precedes its writer reads zero forever. */
     {
         long long local[2] = {g_let_malformed_singleton, g_let_kicked_records}, any[2] = {0, 0};
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(local, any, 2, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        }
         if(any[0] > 0 || any[1] > 0)
         {
             if(g_let_malformed_singleton > 0)

@@ -6,6 +6,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -31,6 +32,7 @@
 
 extern "C" int gpu_force_flag_localnodes(void)
 {
+    GIZMO_TIMER_FUNCTION();
     GIZMO_GPU_ENSURE_ALL_FRESH();
     if(NTopleaves <= 0) {return 0;}
 
@@ -90,50 +92,59 @@ extern "C" int gpu_force_flag_localnodes(void)
      * Mirrors CPU: while(no >= 0) { if(already_set) break; set; no = father; }
      * father_soa[k] stores the ABSOLUTE parent index (>= tree_base) or -1 for
      * the root, so `k_abs < tree_base` is the termination condition. */
-    Kokkos::parallel_for("flag_toplevel", n_leaves, KOKKOS_LAMBDA(int i) {
-        int k_abs = dom_d(i);
-        while(k_abs >= tree_base) {
-            int k = k_abs - tree_base;
-            unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], TOPLEVEL_BIT);
-            if(old & TOPLEVEL_BIT) {break;}   /* all ancestors already set */
-            k_abs = father_soa[k];
-        }
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("flag_toplevel", n_leaves);
+    {
+        GIZMO_TIMER_SCOPE("flag_toplevel");
+        Kokkos::parallel_for("flag_toplevel", n_leaves, KOKKOS_LAMBDA(int i) {
+            int k_abs = dom_d(i);
+            while(k_abs >= tree_base) {
+                int k = k_abs - tree_base;
+                unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], TOPLEVEL_BIT);
+                if(old & TOPLEVEL_BIT) {break;}   /* all ancestors already set */
+                k_abs = father_soa[k];
+            }
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("flag_toplevel", n_leaves);
+    }
 
     /* Pass 2: BITFLAG_INTERNAL_TOPLEVEL — walk from *parent* of each
      * DomainNodeIndex[i] to root.  Marks all strict ancestors of topleaves
      * as internal-toplevel.  Topleaves themselves get only TOPLEVEL (pass 1),
      * not INTERNAL_TOPLEVEL. */
-    Kokkos::parallel_for("flag_internal_toplevel", n_leaves, KOKKOS_LAMBDA(int i) {
-        int k_abs = dom_d(i);
-        if(k_abs < tree_base) {return;}
-        k_abs = father_soa[k_abs - tree_base];   /* start one level above topleaf */
-        while(k_abs >= tree_base) {
-            int k = k_abs - tree_base;
-            unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], INTERNAL_BIT);
-            if(old & INTERNAL_BIT) {break;}
-            k_abs = father_soa[k];
-        }
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("flag_internal_toplevel", n_leaves);
-
-    /* Pass 3: BITFLAG_DEPENDS_ON_LOCAL_ELEMENT — walk from each topleaf
-     * owned by ThisTask to root. */
-    if(n_local > 0) {
-        Kokkos::parallel_for("flag_depends_local", n_local, KOKKOS_LAMBDA(int j) {
-            int k_abs = local_d(j);
+    {
+        GIZMO_TIMER_SCOPE("flag_internal_toplevel");
+        Kokkos::parallel_for("flag_internal_toplevel", n_leaves, KOKKOS_LAMBDA(int i) {
+            int k_abs = dom_d(i);
+            if(k_abs < tree_base) {return;}
+            k_abs = father_soa[k_abs - tree_base];   /* start one level above topleaf */
             while(k_abs >= tree_base) {
                 int k = k_abs - tree_base;
-                unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], DEPENDS_BIT);
-                if(old & DEPENDS_BIT) {break;}
+                unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], INTERNAL_BIT);
+                if(old & INTERNAL_BIT) {break;}
                 k_abs = father_soa[k];
             }
         });
         Kokkos::fence();
-        gizmo_gpu_check_last_error("flag_depends_local", n_local);
+        gizmo_gpu_check_last_error("flag_internal_toplevel", n_leaves);
+    }
+
+    /* Pass 3: BITFLAG_DEPENDS_ON_LOCAL_ELEMENT — walk from each topleaf
+     * owned by ThisTask to root. */
+    if(n_local > 0) {
+        {
+            GIZMO_TIMER_SCOPE("flag_depends_local");
+            Kokkos::parallel_for("flag_depends_local", n_local, KOKKOS_LAMBDA(int j) {
+                int k_abs = local_d(j);
+                while(k_abs >= tree_base) {
+                    int k = k_abs - tree_base;
+                    unsigned int old = Kokkos::atomic_fetch_or(&bitflags_soa[k], DEPENDS_BIT);
+                    if(old & DEPENDS_BIT) {break;}
+                    k_abs = father_soa[k];
+                }
+            });
+            Kokkos::fence();
+            gizmo_gpu_check_last_error("flag_depends_local", n_local);
+        }
     }
 
     /* AoS writeback: mirror bitflags_soa[0..NTopnodes) → Nodes[].u.d.bitflags.
@@ -213,6 +224,7 @@ static inline void tree_mirror_put_moments(struct gpu_gravity_tree_soa_t *m, lon
 
 extern "C" int gpu_scatter_pseudo_to_soa(void)
 {
+    GIZMO_TIMER_FUNCTION();
     GIZMO_GPU_ENSURE_ALL_FRESH();
     if(NTopleaves <= 0) {return 0;}
 
@@ -654,6 +666,7 @@ static double topnode_resum_node_(int no_abs,
 
 extern "C" int gpu_topnode_moment_resum(void)
 {
+    GIZMO_TIMER_FUNCTION();
     GIZMO_GPU_ENSURE_ALL_FRESH();
     if(NTopnodes <= 0) {return 0;}
 

@@ -5,6 +5,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <cstdio>
@@ -255,11 +256,13 @@ static int sidx_particles_still_ordered(int owned_end, integertime t_now)
  * or their motion is written -- so it is released, and the first sink call of the sync point rebuilds it. */
 void gpu_step_sidx_invalidate(void)
 {
+    GIZMO_TIMER_FUNCTION();
     gpu_spatial_index_free(&g_step_sidx_alltypes);
 }
 
 void gpu_step_sidx_invalidate_full(void)
 {
+    GIZMO_TIMER_FUNCTION();
     gpu_spatial_index_free(&g_step_sidx_alltypes);
     gpu_spatial_index_free(&g_step_sidx);
 }
@@ -1712,6 +1715,7 @@ static int sidx_raise_members(gpu_spatial_index_t *idx, const int *list, int n, 
  * of a particle's velocity through gizmo_motion_bound_raise.  Costs the list and the paths above it. */
 void gpu_step_sidx_raise_motion(const int *idx_host, int n)
 {
+    GIZMO_TIMER_FUNCTION();
     gpu_spatial_index_t *idx = &g_step_sidx;
     if(!idx->owned.valid || n <= 0 || !idx_host) {return;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
@@ -3256,6 +3260,7 @@ void gx_motion_target_release(void)
 
 void gizmo_motion_bound_raise(const int *idx, int n)
 {
+    GIZMO_TIMER_FUNCTION();
     if(n <= 0 || !idx) {return;}
     /* The tree records which top-level nodes changed, for the exchange after
      * the step's kick. */

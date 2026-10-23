@@ -1,3 +1,4 @@
+#include "timer.h"
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -176,6 +177,7 @@ void minimum_large_ints(int n, long long *src, long long *res)   /* src may be r
 /* Sums over ranks of per-rank integers, at 64 bits: one reduction, with no buffer or scan sized by the rank count. */
 void sumup_large_ints(int n, int *src, long long *res)
 {
+    GIZMO_TIMER_FUNCTION();
   for(int j = 0; j < n; j++) {res[j] = src[j];}   /* widened in place: nothing is allocated before the collective */
   MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 }

@@ -16,6 +16,7 @@ struct TimerReportContext {
     long long active_particles_local = -1, active_gas_local = -1;
     int highest_active_bin = -1;
     long long from_sync_point = -1; // interval start; -1 for cumulative/startup reports
+    long long previous_active_particles_local = -1, previous_active_gas_local = -1;
 };
 
 /* Collective on comm, from its main thread only. Streams are used only on rank

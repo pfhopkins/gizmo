@@ -125,6 +125,7 @@ double ForceSoftening_KernelRadius(int p)
  * loaded from the IC file or spawned mid-run. */
 void compute_all_force_softening(int mode)
 {
+    GIZMO_TIMER_FUNCTION();
     /* mode = 0 : active particles only (FirstActiveParticle list)
      * mode = 1 : every particle in [0, NumPart) -- used at startup / after restart  */
     if(mode == 1)
@@ -194,6 +195,7 @@ static int node_arrays_foreign_slots = 0;   /* foreign slots the node arrays wer
 int force_tree_remembered_foreign_slots(void) {return (int) ((remembered_foreign_slots < (long long) INT_MAX) ? remembered_foreign_slots : INT_MAX);}
 int force_treebuild_gravity(void)
 {
+    GIZMO_TIMER_FUNCTION();
     building_gravity_tree = 1;
     const int status = force_treebuild(NumPart, NULL);
     building_gravity_tree = 0;
@@ -287,6 +289,7 @@ double force_hmax_per_type_particle_radius(int i)
 
 static void force_refresh_hmax_per_type_host(int Numnodestree)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Step 1: zero per-type bands in all internal nodes. */
     for(int no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
         for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = 0;
@@ -450,7 +453,10 @@ int force_treebuild(int npart, struct unbind_data *mp)
     counts_local[1] = unrecovered_local;
     counts_local[2] = whole_tree_local ? 0 : 1;
     counts_local[3] = outside_extent_local;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(counts_local, counts_any, 4, MPI_LONG, MPI_MAX, MPI_COMM_WORLD);
+    }
     if(counts_any[2] > 0)
     {
         gpu_topology_forget_prepared();   /* not the whole tree somewhere: this build keeps nothing */
@@ -502,7 +508,10 @@ let_build_attempt:
     do
     {
         Numnodestree = force_treebuild_single(npart, mp);
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&Numnodestree, &flag, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        }
         if(flag < 0 && flag != FORCE_TREEBUILD_OUT_OF_NODES)
         {
             /* A cause that reserving more nodes cannot address.  The rank that hit it has already
@@ -642,8 +651,14 @@ let_build_attempt:
        collective. Any rank answering "not the whole set" vetoes, hence MAX of the negation. */
     flags_local[2] = (mp == NULL && npart == NumPart) ? 0 : 1;
     long long need_max = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(flags_local, flags_any, 3, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&foreign_needed, &need_max, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    }
     int overflow_any = flags_any[0], hardfail_any = flags_any[1], not_whole_tree_any = flags_any[2];
 
     if(hardfail_any)
@@ -794,6 +809,7 @@ static const char *force_emit_bfs_reason(int rc)
 
 int force_treebuild_single(int npart, struct unbind_data *mp)
 {
+    GIZMO_TIMER_FUNCTION();
     int i, j, k, subnode = 0, shift, parent, numnodes, rep, nfree, th, nn, no;
     struct NODE *nfreep;
     MyFloat lenhalf;
@@ -1036,6 +1052,7 @@ int force_create_empty_nodes(int no, int topnode, int bits, peano1D x, peano1D y
  */
 void force_insert_pseudo_particles(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i, index;
     
     for(i = 0; i < NTopleaves; i++)
@@ -1139,6 +1156,7 @@ void force_exchange_pseudodata_issue(void) {force_exchange_pseudodata_post(0);}
  * in the same places either way. */
 static void force_exchange_pseudodata_post(int blocking)
 {
+    GIZMO_TIMER_FUNCTION();
     int i, no, m;
     /* Re-entrant issue() (a prior issue had no matching complete()): soft
      * bad-stop + return BEFORE allocating/posting a second exchange, so the
@@ -1277,6 +1295,7 @@ static void force_exchange_pseudodata_post(int blocking)
  *  refresh calls the sync wrapper force_exchange_pseudodata() below. */
 int force_exchange_pseudodata_complete(void)
 {
+    GIZMO_TIMER_FUNCTION();
     /* Unmatched complete (pending==NULL = complete without a matching issue, or a
      * double-complete): symmetric control-flow invariant. Soft bad-stop + status-return
      * (1) so the caller skips the foreign-moment scatter/finalize/resum -- which would run
@@ -1286,7 +1305,10 @@ int force_exchange_pseudodata_complete(void)
     struct DomainNODE *DomainMoment = DomainMoment_pending;
 
     const int n_requests_issued = pseudo_n_requests_pending;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Waitall");
     MPI_Waitall(pseudo_n_requests_pending, pseudo_requests_pending, MPI_STATUSES_IGNORE);
+    }
 
     /* Free request/count buffers (LIFO order: ro, rc, requests). */
     myfree(pseudo_recvoffset_pending);
@@ -3568,6 +3590,7 @@ int subfind_force_treeevaluate_potential(int target)
  */
 void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_slots_exact, int foreign_storage_slots)
 {
+    GIZMO_TIMER_FUNCTION();
     int i;
     size_t bytes;
     double allbytes = 0, allbytes_topleaves = 0;
@@ -4061,6 +4084,7 @@ void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *
  */
 void force_treefree(void)
 {
+    GIZMO_TIMER_FUNCTION();
     if(tree_allocated_flag)
     {
         /* SharedSpace (UVM) frees for GPU-addressable tree
@@ -4204,10 +4228,22 @@ void ewald_init(void)
             len = size;
             if(task == (NTask - 1))
                 len = (EN + 1) * (EN + 1) * (EN + 1) - beg;
+            {
+                GIZMO_TIMER_SCOPE("MPI_Bcast");
             MPI_Bcast(&fcorrx[0][0][beg], len * sizeof(MyFloat), MPI_BYTE, task, MPI_COMM_WORLD);
+            }
+            {
+                GIZMO_TIMER_SCOPE("MPI_Bcast");
             MPI_Bcast(&fcorry[0][0][beg], len * sizeof(MyFloat), MPI_BYTE, task, MPI_COMM_WORLD);
+            }
+            {
+                GIZMO_TIMER_SCOPE("MPI_Bcast");
             MPI_Bcast(&fcorrz[0][0][beg], len * sizeof(MyFloat), MPI_BYTE, task, MPI_COMM_WORLD);
+            }
+            {
+                GIZMO_TIMER_SCOPE("MPI_Bcast");
             MPI_Bcast(&potcorr[0][0][beg], len * sizeof(MyFloat), MPI_BYTE, task, MPI_COMM_WORLD);
+        }
         }
         
         if(ThisTask == 0)
@@ -4346,6 +4382,7 @@ void ewald_force(int iii, int jjj, int kkk, double x[3], double force[3])
  *  moved, e.g. after star formation or sink SN events. */
 void force_refresh_node_moments(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int i, k, no;
     PRINT_STATUS("Refreshing tree node moments (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
 

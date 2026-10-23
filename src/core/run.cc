@@ -73,8 +73,12 @@ void gizmo_request_controlled_stop(int code, const char *reason,
 
 void gizmo_collect_controlled_stop(void)
 {
+    GIZMO_TIMER_FUNCTION();
     int local = ControlledStop_LocalCode, global = 0;
+    {
+        GIZMO_TIMER_SCOPE("MPI_Allreduce");
     MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
     ControlledStop_GlobalCode = global;
 }
 
@@ -99,6 +103,7 @@ int gizmo_poll_controlled_stop(void) { gizmo_collect_controlled_stop(); return g
  * MPI_Finalize + nonzero exit) -- never MPI_Abort. No-op return otherwise. */
 void gizmo_exit_bad_stop_if_requested(const char *poll_site)
 {
+    GIZMO_TIMER_FUNCTION();
     gizmo_collect_controlled_stop();
     if(gizmo_controlled_stop_code() == 0) { return; }
     report_memory_ledger("controlled-stop");  /* all ranks past the code!=0 check; show memory state at the stop */
@@ -273,8 +278,11 @@ void run(void)
          * Mass+CoM remain conserved so the bound is conservative; tighten
          * if a workload exposes drift in moment-sensitive diagnostics. */
         long long add_elem_calls_global = 0;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&ForceAddElementToTree_CallsSinceBuild, &add_elem_calls_global,
                       1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        }
         if(add_elem_calls_global > (long long)(0.01 * All.TotNumPart))
         {
             if(ThisTask == 0)
@@ -351,12 +359,18 @@ void run(void)
            the flag with that older copy, which would leave the reuse branch updating a tree that is
            no longer there. */
         if(TreeReconstructFlag) {TreeReconstructFlag_local = 1;}
-        MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD); // if one process reconstructs the tree then everbody has to
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
+            MPI_Allreduce(&TreeReconstructFlag_local, &TreeReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        } // if one process reconstructs the tree then everbody has to
         /* A particle drifted outside the domain extent needs the full decomposition, which re-measures it.
            Raised as 2 rather than 1 so the MAX reduction below also says whether this was the reason;
            every reader of the flag only tests it for nonzero. */
         if(DomainExtentOutgrownLocal) {DomainReconstructFlag = 2;}
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(MPI_IN_PLACE, &DomainReconstructFlag, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        }
         if(DomainReconstructFlag == 2 && ThisTask == 0) {printf("Domain: a particle has drifted outside the extent the domain was built on; doing a full decomposition.\n"); fflush(stdout);}
         const int domain_cadence_reached = (GlobNumForceUpdate > All.DomainBuild_ActiveFraction * All.TotNumPart);
 #ifdef RANDOMIZE_GRAVTREE
@@ -544,7 +558,10 @@ void run(void)
             }
         }
 
+        {
+            GIZMO_TIMER_SCOPE("MPI_Bcast");
         MPI_Bcast(&stopflag, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        }
 
         if(stopflag)
         {
@@ -552,7 +569,10 @@ void run(void)
             rearrange_particle_sequence(); /* fold this step's promoted grains into the gas block, so the restart carries their cells */
 #endif
             restart(0);		/* write restart file */
+            {
+                GIZMO_TIMER_SCOPE("MPI_Barrier");
             MPI_Barrier(MPI_COMM_WORLD);
+            }
 
             if(stopflag == 2 && ThisTask == 0)
             {
@@ -580,7 +600,10 @@ void run(void)
                 stopflag = 0;
         }
 
+        {
+            GIZMO_TIMER_SCOPE("MPI_Bcast");
         MPI_Bcast(&stopflag, 1, MPI_INT, 0, MPI_COMM_WORLD);
+        }
 
         if(stopflag == 3)
         {
@@ -602,6 +625,7 @@ void run(void)
 
 void set_non_standard_physics_for_current_time(void)
 {
+    GIZMO_TIMER_FUNCTION();
 #if defined(COOLING) && !defined(CHIMES)
     /* set UV background for the current time */
     IonizeParams();
@@ -621,6 +645,7 @@ void set_non_standard_physics_for_current_time(void)
 
 void calculate_non_standard_physics(void)
 {
+    GIZMO_TIMER_FUNCTION();
 #ifdef PARTICLE_EXCISION
     apply_excision();
 #endif
@@ -640,7 +665,10 @@ void calculate_non_standard_physics(void)
         sink_accretion();
 #ifdef SINK_WIND_SPAWN
         double Max_Unspawned_MassUnits_fromSink_global;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&Max_Unspawned_MassUnits_fromSink, &Max_Unspawned_MassUnits_fromSink_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        }
         if(Max_Unspawned_MassUnits_fromSink_global > 1)
         {
             spawn_sink_wind_feedback();
@@ -675,8 +703,14 @@ void calculate_non_standard_physics(void)
             max_hydro_dt_local = DMAX(max_hydro_dt_local, hydro_dt);
         }
         double min_transport_dt_global, max_hydro_dt_global;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&min_transport_dt_local, &min_transport_dt_global, 1, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+        }
+        {
+            GIZMO_TIMER_SCOPE("MPI_Allreduce");
         MPI_Allreduce(&max_hydro_dt_local, &max_hydro_dt_global, 1, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+        }
         All.Transport_Subcycle_N = 1;
         if(min_transport_dt_global > 0 && min_transport_dt_global < MAX_REAL_NUMBER && max_hydro_dt_global > min_transport_dt_global)
             All.Transport_Subcycle_N = IMIN((int)ceil(max_hydro_dt_global / min_transport_dt_global), TRANSPORT_SUBCYCLE);
@@ -891,7 +925,10 @@ void find_next_sync_point_and_drift(void)
 	}
     }
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+  }
 
   while(ti_next_kick_global >= All.Ti_nextoutput && All.Ti_nextoutput >= 0)
     {
@@ -958,8 +995,14 @@ void find_next_sync_point_and_drift(void)
 
   sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastTreeBuild += GlobNumForceUpdate;
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Allreduce");
   MPI_Allreduce(&highest_occupied_bin, &All.HighestOccupiedTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+  }
 
   if(GlobNumForceUpdate == All.TotNumPart)
     {
@@ -1000,6 +1043,7 @@ void find_next_sync_point_and_drift(void)
 
 void make_list_of_active_particles(void)
 {
+    GIZMO_TIMER_FUNCTION();
     ActiveParticleList.clear();
     for(int n = 0; n < TIMEBINS; n++)
     {
@@ -1151,6 +1195,7 @@ integertime find_next_outputtime(integertime ti_curr)
  */
 void output_log_messages(void)
 {
+    GIZMO_TIMER_FUNCTION();
   double z;
   int i, j;
   long long tot, tot_gas;
@@ -1279,6 +1324,7 @@ extern "C" int  gizmo_cpu_log_consume_force_print(void) { int v = g_cpu_log_forc
 
 void write_cpu_log(void)
 {
+    GIZMO_TIMER_FUNCTION();
   gizmo_timers_report("sync-point", (long long) All.NumCurrentTiStep);
   double max_CPU_Step[CPU_PARTS], avg_CPU_Step[CPU_PARTS], t0, t1, tsum; int i; t0=0; t1=0; tsum=0;
   CPU_Step[CPU_MISC] += measure_time();
@@ -1300,7 +1346,10 @@ void write_cpu_log(void)
         struct {double v; int r;} loss_loc, loss_max;
         const double elapsed = wall_now - wall_prev;
         loss_loc.v = elapsed - CPU_Step[0]; loss_loc.r = ThisTask;
+        {
+            GIZMO_TIMER_SCOPE("MPI_Reduce");
         MPI_Reduce(&loss_loc, &loss_max, 1, MPI_DOUBLE_INT, MPI_MAXLOC, 0, MPI_COMM_WORLD);
+        }
         if(ThisTask == 0 && loss_max.v > 1.0 && loss_max.v > 0.05 * elapsed)
           {
             printf("WARNING: timing ledger lost %.2f s (%.0f%% of the step) on task %d: "
@@ -1314,8 +1363,14 @@ void write_cpu_log(void)
     wall_prev = wall_now;
   }
 
+  {
+      GIZMO_TIMER_SCOPE("MPI_Reduce");
   MPI_Reduce(CPU_Step, max_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+  }
+  {
+      GIZMO_TIMER_SCOPE("MPI_Reduce");
   MPI_Reduce(CPU_Step, avg_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+  }
 
   if(ThisTask == 0)
     {

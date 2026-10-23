@@ -118,7 +118,9 @@ void TimerWriteTSVHeader(FILE *stream)
                      "\tinclusive_imbalance\texclusive_imbalance\tmode"
                      "\tsimulation_time\tsimulation_dt\tparticles_total"
                      "\tactive_particles_sum\tactive_particles_mean\tactive_particles_max"
-                     "\tactive_gas_sum\tactive_gas_mean\tactive_gas_max\thighest_active_bin\tfrom_sync_point\n");
+                     "\tactive_gas_sum\tactive_gas_mean\tactive_gas_max\thighest_active_bin\tfrom_sync_point"
+                     "\tprevious_active_particles_sum\tprevious_active_particles_mean\tprevious_active_particles_max"
+                     "\tprevious_active_gas_sum\tprevious_active_gas_mean\tprevious_active_gas_max\n");
     }
 }
 
@@ -202,14 +204,17 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
     MPI_Reduce(&errors, &error_sum, 1, MPI_UINT64_T, MPI_SUM, 0, comm);
     const TimerReportContext empty_context;
     const auto &info = context ? *context : empty_context;
-    const long long work[2] = {info.active_particles_local, info.active_gas_local};
-    long long work_sum[2], work_max[2];
-    MPI_Reduce(work, work_sum, 2, MPI_LONG_LONG, MPI_SUM, 0, comm);
-    MPI_Reduce(work, work_max, 2, MPI_LONG_LONG, MPI_MAX, 0, comm);
+    const long long work[4] = {info.active_particles_local, info.active_gas_local,
+                              info.previous_active_particles_local, info.previous_active_gas_local};
+    long long work_sum[4], work_max[4];
+    MPI_Reduce(work, work_sum, 4, MPI_LONG_LONG, MPI_SUM, 0, comm);
+    MPI_Reduce(work, work_max, 4, MPI_LONG_LONG, MPI_MAX, 0, comm);
     if(rank != 0) {return true;}
-    for(int i = 0; i < 2; ++i) {if(work_sum[i] < 0) {work_sum[i] = work_max[i] = -1;}}
+    for(int i = 0; i < 4; ++i) {if(work_sum[i] < 0) {work_sum[i] = work_max[i] = -1;}}
     const double active_mean = work_sum[0] >= 0 ? static_cast<double>(work_sum[0]) / ranks : -1;
     const double gas_mean = work_sum[1] >= 0 ? static_cast<double>(work_sum[1]) / ranks : -1;
+    const double previous_active_mean = work_sum[2] >= 0 ? static_cast<double>(work_sum[2]) / ranks : -1;
+    const double previous_gas_mean = work_sum[3] >= 0 ? static_cast<double>(work_sum[3]) / ranks : -1;
 
     if(tree) {
         const std::string mode(info.mode);
@@ -234,6 +239,9 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
                      "active_rank_mean=%.6g active_rank_max=%lld highest_active_bin=%d (-1 = unavailable)\n",
                      info.simulation_time, info.simulation_dt, info.particles_total,
                      work_sum[0], work_sum[1], active_mean, work_max[0], info.highest_active_bin);
+        std::fprintf(tree, "Interval-entry workload: active=%lld gas_active=%lld active_rank_mean=%.6g "
+                     "active_rank_max=%lld (before timestep selection and first half-kick)\n",
+                     work_sum[2], work_sum[3], previous_active_mean, work_max[2]);
         // Ranking by sums is equivalent to ranking by means: the divisor is
         // the same number of MPI ranks for every row.
         const auto rows = sorted_tree_rows(keys, sort == TimerTreeSort::InclusiveMean ? sums : maxima);
@@ -273,7 +281,8 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
             std::fprintf(tsv, "%s\t%lld\t%s\t%s\t%llu\t%llu\t%llu\t%llu"
                          "\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g"
                          "\t%.17g\t%.17g\t%s\t%.17g\t%.17g\t%lld"
-                         "\t%lld\t%.17g\t%lld\t%lld\t%.17g\t%lld\t%d\t%lld\n",
+                         "\t%lld\t%.17g\t%lld\t%lld\t%.17g\t%lld\t%d\t%lld"
+                         "\t%lld\t%.17g\t%lld\t%lld\t%.17g\t%lld\n",
                          label, step, lane.c_str(), path.c_str(),
                          static_cast<unsigned long long>(c[3]), static_cast<unsigned long long>(c[0]),
                          static_cast<unsigned long long>(c[1]), static_cast<unsigned long long>(c[2]),
@@ -283,7 +292,9 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
                          imbalance(sums[2 * i + 1], maxima[2 * i + 1], ranks), info.mode,
                          info.simulation_time, info.simulation_dt, info.particles_total,
                          work_sum[0], active_mean, work_max[0], work_sum[1], gas_mean,
-                         work_max[1], info.highest_active_bin, info.from_sync_point);
+                         work_max[1], info.highest_active_bin, info.from_sync_point,
+                         work_sum[2], previous_active_mean, work_max[2], work_sum[3],
+                         previous_gas_mean, work_max[3]);
         }
     }
     if(tree) {std::fflush(tree);}

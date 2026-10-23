@@ -50,6 +50,7 @@
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
+#include "../system/timer.h"
 
 #include <mpi.h>
 #include <stdio.h>
@@ -68,6 +69,7 @@
 
 extern "C" int gpu_nextnode_thread(void)
 {
+    GIZMO_TIMER_FUNCTION();
     if(Numnodestree <= 0) {return 0;}
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
@@ -103,75 +105,81 @@ extern "C" int gpu_nextnode_thread(void)
     int          *aux_soa     = soa->nextnode_aux;
 
 
-    Kokkos::parallel_for("nx_thread", n, KOKKOS_LAMBDA(int k) {
-        /* k is the SoA index (0..n).  Internal-node id = tree_base + k. */
-        long base = (long)k * 8;
-        /* Find first non-empty sun. */
-        int first = -1, first_pos = -1;
-        for(int j = 0; j < 8; j++) {
-            int s = suns_backup[base + j];
-            if(s >= 0) {first = s; first_pos = j; break;}
-        }
-        if(first < 0) {
-            /* Empty internal node — degenerate; use sibling[N] as fallback. */
-            nextnode_soa[k] = sibling_soa[k];
-            return;
-        }
-        nextnode_soa[k] = first;
-
-        /* Walk through non-empty entries in order, threading each entry's
-         * post-subtree successor.  For internal-node children we don't
-         * write anything (their last descendant is reached via their own
-         * thread plus the sibling pointer). */
-        int prev_pos = first_pos;
-        while(true) {
-            /* Find next non-empty position after prev_pos. */
-            int next = -1, next_pos = -1;
-            for(int j = prev_pos + 1; j < 8; j++) {
+    {
+        GIZMO_TIMER_SCOPE("nx_thread");
+        Kokkos::parallel_for("nx_thread", n, KOKKOS_LAMBDA(int k) {
+            /* k is the SoA index (0..n).  Internal-node id = tree_base + k. */
+            long base = (long)k * 8;
+            /* Find first non-empty sun. */
+            int first = -1, first_pos = -1;
+            for(int j = 0; j < 8; j++) {
                 int s = suns_backup[base + j];
-                if(s >= 0) {next = s; next_pos = j; break;}
+                if(s >= 0) {first = s; first_pos = j; break;}
             }
-            int prev_id = suns_backup[base + prev_pos];
-            int succ = (next >= 0) ? next : sibling_soa[k];
-            /* Write successor for prev_id based on its type. */
-            if(prev_id < part_slots) {
-                /* Particle child.  A leaf holding several particles is represented here by its head
-                 * alone: the successor written now is moved onto the leaf's last member, and the
-                 * members are linked, by gpu_leaf_chain_materialize once this pass has run. */
-                aux_soa[prev_id] = succ;
-            } else if(prev_id >= tree_base + MaxNodes_ + MaxForeignNodes_) {
-                /* pseudo-particle (the foreign-node range sits below pseudos in the index
-                 * space but occupies no slots): the pseudo segment starts after the
-                 * part_slots physical particle slots. */
-                int idx = part_slots + (prev_id - tree_base - MaxNodes_ - MaxForeignNodes_);
-                if(idx >= 0 && idx < part_slots + NTopnodes_) {aux_soa[idx] = succ;}
+            if(first < 0) {
+                /* Empty internal node — degenerate; use sibling[N] as fallback. */
+                nextnode_soa[k] = sibling_soa[k];
+                return;
             }
-            /* Foreign nodes (prev_id in [tree_base+MaxNodes, tree_base+MaxNodes+MaxForeignNodes))
-             * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
-             * directly from LET unpack.  An id between part_slots and tree_base cannot occur in a
-             * well-formed tree and matches no branch here, so it writes nothing; that is deliberate.
-             * This is a write-side classifier, so dropping such an id is already safe, and the walks
-             * that would DEREFERENCE it stop on it explicitly. */
-            /* internal node: skip — its own thread sets nextnode_soa, and
-             * its last DFS descendant gets `succ` via the chain of
-             * sibling pointers (already set by force_update_node_recursive). */
-            if(next < 0) {break;}  /* no more non-empty siblings */
-            prev_pos = next_pos;
-        }
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("nx_thread", n);
+            nextnode_soa[k] = first;
+
+            /* Walk through non-empty entries in order, threading each entry's
+             * post-subtree successor.  For internal-node children we don't
+             * write anything (their last descendant is reached via their own
+             * thread plus the sibling pointer). */
+            int prev_pos = first_pos;
+            while(true) {
+                /* Find next non-empty position after prev_pos. */
+                int next = -1, next_pos = -1;
+                for(int j = prev_pos + 1; j < 8; j++) {
+                    int s = suns_backup[base + j];
+                    if(s >= 0) {next = s; next_pos = j; break;}
+                }
+                int prev_id = suns_backup[base + prev_pos];
+                int succ = (next >= 0) ? next : sibling_soa[k];
+                /* Write successor for prev_id based on its type. */
+                if(prev_id < part_slots) {
+                    /* Particle child.  A leaf holding several particles is represented here by its head
+                     * alone: the successor written now is moved onto the leaf's last member, and the
+                     * members are linked, by gpu_leaf_chain_materialize once this pass has run. */
+                    aux_soa[prev_id] = succ;
+                } else if(prev_id >= tree_base + MaxNodes_ + MaxForeignNodes_) {
+                    /* pseudo-particle (the foreign-node range sits below pseudos in the index
+                     * space but occupies no slots): the pseudo segment starts after the
+                     * part_slots physical particle slots. */
+                    int idx = part_slots + (prev_id - tree_base - MaxNodes_ - MaxForeignNodes_);
+                    if(idx >= 0 && idx < part_slots + NTopnodes_) {aux_soa[idx] = succ;}
+                }
+                /* Foreign nodes (prev_id in [tree_base+MaxNodes, tree_base+MaxNodes+MaxForeignNodes))
+                 * are not threaded by this kernel — they carry their own NODE.u.d.nextnode pointers
+                 * directly from LET unpack.  An id between part_slots and tree_base cannot occur in a
+                 * well-formed tree and matches no branch here, so it writes nothing; that is deliberate.
+                 * This is a write-side classifier, so dropping such an id is already safe, and the walks
+                 * that would DEREFERENCE it stop on it explicitly. */
+                /* internal node: skip — its own thread sets nextnode_soa, and
+                 * its last DFS descendant gets `succ` via the chain of
+                 * sibling pointers (already set by force_update_node_recursive). */
+                if(next < 0) {break;}  /* no more non-empty siblings */
+                prev_pos = next_pos;
+            }
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("nx_thread", n);
+    }
 
 
     /* Nextnode[] aliases soa->nextnode_aux (same UVM buffer).
      * Internal-node Nodes[].u.d.nextnode writeback runs on the
      * device now that Nodes_base is UVM. */
     struct NODE *Nodes_uvm = Nodes_base;
-    Kokkos::parallel_for("nx_writeback_aos", n, KOKKOS_LAMBDA(int k) {
-        Nodes_uvm[k].u.d.nextnode = nextnode_soa[k];
-    });
-    Kokkos::fence();
-    gizmo_gpu_check_last_error("nx_writeback_aos", n);
+    {
+        GIZMO_TIMER_SCOPE("nx_writeback_aos");
+        Kokkos::parallel_for("nx_writeback_aos", n, KOKKOS_LAMBDA(int k) {
+            Nodes_uvm[k].u.d.nextnode = nextnode_soa[k];
+        });
+        Kokkos::fence();
+        gizmo_gpu_check_last_error("nx_writeback_aos", n);
+    }
 
     return 0;
 }
