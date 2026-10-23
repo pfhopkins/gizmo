@@ -21,7 +21,7 @@ GIZMO_TIMERS=1 mpiexec -n 4 ./src/GIZMO parameters.txt
 | `GIZMO_TIMERS_INTERVAL` | `1` | Report at CPU log boundaries whose step number is a multiple of this positive integer. |
 | `GIZMO_TIMERS_KOKKOS` | off | `1` or `true` also forwards regions to Kokkos profiling tools. Requires timers to be enabled. |
 | `GIZMO_TIMERS_SORT` | `max` | Sort `timers.txt` siblings by descending inclusive rank maximum (`max`) or mean (`mean`). |
-| `GIZMO_TIMERS_MODE` | `cumulative` | Write cumulative reports, individual timestep reports (`step`), or both (`both`). |
+| `GIZMO_TIMERS_MODE` | `cumulative` | Write cumulative reports, individual sync-point interval reports (`step`), or both (`both`). |
 
 Rank zero broadcasts these settings once during initialization, so differing
 rank environments cannot make reporting collectives diverge. A final report is
@@ -43,7 +43,7 @@ The macro expands to `GIZMO_TIMER_SCOPE(__func__)`; it does not automatically
 instrument other functions.
 
 Use `GIZMO_TIMER_SCOPE("phase_name")` for a portion of a function, such as the
-`Step` iteration or a communication/packing phase. Kernel launch scopes normally
+`evolution_step` iteration or a communication/packing phase. Kernel launch scopes normally
 use the Kokkos kernel label. A distinct label such as `ewald_kernel` identifies
 the kernel subset of an enclosing function with the same name as the Kokkos
 label. An unusually cumbersome function name may use a short explicit alias,
@@ -98,7 +98,7 @@ void compute_grav_accelerations()
 These regions appear as `compute_grav_accelerations`,
 `compute_grav_accelerations::gravity_tree`, and
 `compute_grav_accelerations::gravity_tree::small_function`. In the main loop,
-the paths begin with `run::Step::compute_grav_accelerations`.
+the paths begin with `run::evolution_step::compute_grav_accelerations`.
 The active stack determines the parent every time;
 a shared function called in different contexts gets separate records.
 
@@ -150,7 +150,7 @@ rerun the same workload. For example, inside the already-instrumented
 
 Each timer lasts until the end of its block. These names are automatically
 reported under the active path, for example
-`run::Step::compute_grav_accelerations::gravity_tree::evaluate_walk`. No enum, registration table or report
+`run::evolution_step::compute_grav_accelerations::gravity_tree::evaluate_walk`. No enum, registration table or report
 format needs to be edited. Add another nested block to investigate a child.
 Wrapping a function call includes all synchronous work in that call.
 
@@ -187,18 +187,45 @@ export GIZMO_TIMERS_INTERVAL=1
 
 `timers.txt` / `timers.tsv` remain cumulative. `timers-step.txt` /
 `timers-step.tsv` contain differences for each individual run-loop iteration,
-including the timers nested under `Step`. Differences are computed separately
+including the timers nested under `evolution_step`. Differences are computed separately
 for each thread/path on each MPI rank before reduction. Timer counters are not
 reset and live scopes keep their nesting. Calls and completions count events in
-the interval; `active` remains the number of scopes open at its end.
+the interval; `open_scopes` (TSV `active_sum`) remains the number of scopes open at its end.
 
 The interval starts just after CPU-log reporting at the beginning of a run-loop
 iteration, and ends at the next CPU-log reporting boundary. It includes the
 iteration's work and the following statistics calculation. Startup work is
-excluded from ordinary step rows. A forced final/controlled-stop report is
-marked `partial`, or `startup` if no step interval began. For `INTERVAL > 1`,
+excluded from ordinary evolution intervals. A separate initial interval covers
+`run()`'s initial force evaluation (or restart tree restoration), before the
+evolution loop. It is marked `initial` in the TSV and shown as "initial
+sync-point work" in the tree; the earlier `begrun()` setup remains in cumulative
+reports. Initial work is reported even when the counter is not an interval
+multiple. A forced final/controlled-stop report is marked `partial`, or `startup`
+if no interval began. For `INTERVAL > 1`,
 the selected output is still one step, not an accumulation over skipped steps.
 Use interval 1 when investigating timestep-to-timestep changes.
+
+### Sync-point numbering
+
+Reports use GIZMO's existing `All.NumCurrentTiStep` counter and the same
+`Sync-Point` terminology as the simulation log. A fresh run starts at sync-point
+0: initialization and the initial force evaluation happen there, before the
+evolution loop. Sync-point 1 is the first evolution advance and can have only a
+few active particles. It is not a label for the large startup calculation.
+Restart files retain their restored counter; timers do not renumber it.
+
+Evolution interval headers show both endpoints, for example:
+
+```text
+Timer report: evolution interval | Sync-Point 1 | ranks=8 | errors(total)=0
+Window: Sync-Point 0 -> 1
+```
+
+The TSV counter column is named `sync_point` (formerly `step`), and the appended
+`from_sync_point` column identifies the interval's beginning. Initial work can
+have equal endpoints, such as 0 -> 0, because no evolution advance occurred.
+`from_sync_point=-1` denotes a cumulative or unbounded startup report. Parse each
+session's TSV header when combining files written by different timer versions.
 
 Each report also records the simulation time and system timestep, total particle
 count, global active-particle and active-gas counts, per-rank active count means
@@ -244,7 +271,10 @@ the region; it is not necessarily CPU compute time.
 
 Both readable trees sort top-level regions and each parent's immediate children by
 descending `incl_max` by default. Parents stay before their complete subtrees;
-the `main` and `workers` lanes remain separate. Ties use path names. Max ordering
+the main/worker thread sections remain separate. ASCII branches show which rows
+share a parent. The entire time column is not globally descending: a child stays
+with its parent even if another subtree contains a more expensive child.
+Ties use path names. Max ordering
 highlights slowest-rank costs for MPI performance work. Compare max against mean
 to identify imbalance; a large self time suggests where to add finer scopes.
 Maxima in separate rows can come from different ranks and are not a reconstructed
@@ -265,7 +295,10 @@ same canonical paths in both modes.
 - **Exclusive / self:** elapsed time excluding direct children. Time not covered
   by child timers remains in the parent's self time.
 - **Calls:** started invocations, including active invocations.
-- **Completed / active:** completed and still-open invocation counts.
+- **Completed / open scopes:** completed and still-open invocation counts.
+  These count timer invocations, not particles. An interval can show
+  `calls_sum=0` and `open_scopes=8` for `run`: its scope began before the interval
+  and remains open on all eight ranks.
 
 The timer core's snapshots are cumulative within a process launch. Cumulative
 reports must not be added to obtain totals; step reports contain separate
@@ -283,8 +316,11 @@ rank counts; increase `GIZMO_TIMERS_INTERVAL` when needed.
 
 Each host thread has its own stack. Thread zero is the thread that initializes
 timing. Worker threads start with an independent root; they do not inherit the
-main thread's active region. The report keeps `main` rows separate from `workers`
-rows, which sum worker thread seconds on each rank. Worker sums are not wall time
+main thread's active region. Readable reports use one "Main threads" section and,
+when present, one "Worker threads" section instead of repeating a lane on every
+row. The TSV retains `lane=main` / `lane=workers` for machine processing. Main
+means the initializing host thread on each MPI rank, not MPI rank zero or a GPU
+execution stream. Worker rows sum worker thread seconds on each rank. Worker sums are not wall time
 and must not be subtracted from main-thread timers. Snapshots are synchronized
 with worker updates; retired workers' statistics remain available until exit.
 

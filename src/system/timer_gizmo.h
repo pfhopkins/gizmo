@@ -6,7 +6,7 @@
 void gizmo_timers_initialize();
 /* Local hooks: begin a fresh step measurement after CPU-log reporting and
  * capture workload after repartition/active-list construction, before forces. */
-void gizmo_timers_step_begin();
+void gizmo_timers_step_begin(bool initial_sync_point = false);
 void gizmo_timers_step_context();
 void gizmo_timers_report(const char *label, long long step, bool force = false);
 void gizmo_timers_shutdown();

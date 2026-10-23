@@ -54,8 +54,13 @@ std::vector<std::string> lines(const std::string &text)
     return result;
 }
 
-std::vector<int> sorted_tree_indices(const std::vector<std::string> &keys,
-                                     const std::vector<double> &metric)
+struct TreeRow {
+    int index;
+    std::string prefix;
+};
+
+std::vector<TreeRow> sorted_tree_rows(const std::vector<std::string> &keys,
+                                      const std::vector<double> &metric)
 {
     std::map<std::string, int> indices;
     for(int i = 0; i < static_cast<int>(keys.size()); ++i) {indices.emplace(keys[i], i);}
@@ -77,20 +82,27 @@ std::vector<int> sorted_tree_indices(const std::vector<std::string> &keys,
         return keys[a] < keys[b];
     };
     for(auto &group : children) {std::sort(group.begin(), group.end(), hotter);}
-    std::vector<int> result, pending;
+    struct PendingRow { int index; std::string parent_prefix; bool last; };
+    std::vector<TreeRow> result;
+    std::vector<PendingRow> pending;
     result.reserve(keys.size());
     // Keep the main/worker lanes separate and emit each parent before its
     // complete subtree. Use an explicit stack so deeply nested scopes are safe.
     for(auto &lane : roots) {
         auto &group = lane.second;
         std::sort(group.begin(), group.end(), hotter);
-        pending.insert(pending.end(), group.rbegin(), group.rend());
+        for(int j = static_cast<int>(group.size()) - 1; j >= 0; --j) {
+            pending.push_back({group[j], "", j == static_cast<int>(group.size()) - 1});
+        }
         while(!pending.empty()) {
-            const int i = pending.back();
+            const auto row = pending.back();
             pending.pop_back();
-            result.push_back(i);
-            const auto &nested = children[i];
-            pending.insert(pending.end(), nested.rbegin(), nested.rend());
+            result.push_back({row.index, row.parent_prefix + (row.last ? "`-- " : "|-- ")});
+            const auto child_prefix = row.parent_prefix + (row.last ? "    " : "|   ");
+            const auto &nested = children[row.index];
+            for(int j = static_cast<int>(nested.size()) - 1; j >= 0; --j) {
+                pending.push_back({nested[j], child_prefix, j == static_cast<int>(nested.size()) - 1});
+            }
         }
     }
     return result;
@@ -100,13 +112,13 @@ std::vector<int> sorted_tree_indices(const std::vector<std::string> &keys,
 void TimerWriteTSVHeader(FILE *stream)
 {
     if(stream) {
-        std::fprintf(stream, "label\tstep\tlane\tpath\tranks_present\tcalls_sum\tcompleted_sum\tactive_sum"
+        std::fprintf(stream, "label\tsync_point\tlane\tpath\tranks_present\tcalls_sum\tcompleted_sum\tactive_sum"
                      "\tinclusive_min_s\tinclusive_mean_s\tinclusive_max_s"
                      "\texclusive_min_s\texclusive_mean_s\texclusive_max_s"
                      "\tinclusive_imbalance\texclusive_imbalance\tmode"
                      "\tsimulation_time\tsimulation_dt\tparticles_total"
                      "\tactive_particles_sum\tactive_particles_mean\tactive_particles_max"
-                     "\tactive_gas_sum\tactive_gas_mean\tactive_gas_max\thighest_active_bin\n");
+                     "\tactive_gas_sum\tactive_gas_mean\tactive_gas_max\thighest_active_bin\tfrom_sync_point\n");
     }
 }
 
@@ -200,39 +212,56 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
     const double gas_mean = work_sum[1] >= 0 ? static_cast<double>(work_sum[1]) / ranks : -1;
 
     if(tree) {
-        std::fprintf(tree, "\nTimer snapshot: %s step=%lld ranks=%d errors(total)=%llu (%s)\n"
-                     "Main rows: host elapsed seconds. Worker rows: summed thread seconds.\n"
-                     "Rank means include zero for absent regions; row maxima need not add up.\n"
-                     "Imbalance = max/mean (1 = balanced; 1 for zero time).\n"
-                     "Sibling order: descending %s, preserving each subtree.\n",
-                     label, step, ranks, static_cast<unsigned long long>(error_sum),
-                     info.mode, sort == TimerTreeSort::InclusiveMean ? "incl_mean" : "incl_max");
+        const std::string mode(info.mode);
+        const char *description = mode == "step" ? "evolution interval" :
+                                  mode == "initial" ? "initial sync-point work" :
+                                  mode == "partial" ? "partial interval" : info.mode;
+        std::fprintf(tree, "\nTimer report: %s | Sync-Point %lld | ranks=%d | errors(total)=%llu",
+                     description, step, ranks, static_cast<unsigned long long>(error_sum));
+        if(std::string(label) != "sync-point" && std::string(label) != "initial-sync-point") {
+            std::fprintf(tree, " | event=%s", label);
+        }
+        std::fprintf(tree, "\n");
+        if(info.from_sync_point >= 0) {
+            std::fprintf(tree, "Window: Sync-Point %lld -> %lld\n", info.from_sync_point, step);
+        } else if(mode == "cumulative") {
+            std::fprintf(tree, "Window: process startup through this sync-point (includes initialization).\n");
+        }
+        std::fprintf(tree, "Means include absent ranks as zero; row maxima need not add up. Imbalance = max/mean.\n"
+                     "Siblings sorted by descending %s; branches preserve each subtree.\n",
+                     sort == TimerTreeSort::InclusiveMean ? "incl_mean" : "incl_max");
         std::fprintf(tree, "Workload: time=%.17g dt=%.17g particles=%lld active=%lld gas_active=%lld "
                      "active_rank_mean=%.6g active_rank_max=%lld highest_active_bin=%d (-1 = unavailable)\n",
                      info.simulation_time, info.simulation_dt, info.particles_total,
                      work_sum[0], work_sum[1], active_mean, work_max[0], info.highest_active_bin);
-        std::fprintf(tree, "%-8s %12s %12s %12s %12s %10s %10s %12s %8s %8s  %s\n",
-                     "lane", "incl_mean", "incl_max", "self_mean", "self_max", "incl_imb", "self_imb", "calls_sum",
-                     "ranks", "active", "region");
         // Ranking by sums is equivalent to ranking by means: the divisor is
         // the same number of MPI ranks for every row.
-        const auto order = sorted_tree_indices(keys, sort == TimerTreeSort::InclusiveMean ? sums : maxima);
-        for(const int i : order) {
+        const auto rows = sorted_tree_rows(keys, sort == TimerTreeSort::InclusiveMean ? sums : maxima);
+        std::string displayed_lane;
+        for(const auto &row : rows) {
+            const int i = row.index;
             const auto tab = keys[i].find('\t');
             const auto lane = keys[i].substr(0, tab);
             const auto path = keys[i].substr(tab + 1);
-            int depth = 0;
-            for(std::size_t p = 0; (p = path.find("::", p)) != std::string::npos; p += 2) {++depth;}
+            if(lane != displayed_lane) {
+                displayed_lane = lane;
+                std::fprintf(tree, "\n%s\n", lane == "main" ?
+                             "Main threads: host elapsed seconds per MPI rank" :
+                             "Worker threads: summed thread-seconds per MPI rank");
+                std::fprintf(tree, "%12s %12s %12s %12s %10s %10s %12s %8s %11s  %s\n",
+                             "incl_mean", "incl_max", "self_mean", "self_max", "incl_imb", "self_imb", "calls_sum",
+                             "ranks", "open_scopes", "region");
+            }
             const auto last = path.rfind("::");
             const char *leaf = path.c_str() + (last == std::string::npos ? 0 : last + 2);
             const auto *c = &count_sums[4 * i];
-            std::fprintf(tree, "%-8s %12.6g %12.6g %12.6g %12.6g %10.4g %10.4g %12llu %8llu %8llu  %*s%s\n",
-                         lane.c_str(), sums[2 * i] / ranks, maxima[2 * i],
+            std::fprintf(tree, "%12.6g %12.6g %12.6g %12.6g %10.4g %10.4g %12llu %8llu %11llu  %s%s\n",
+                         sums[2 * i] / ranks, maxima[2 * i],
                          sums[2 * i + 1] / ranks, maxima[2 * i + 1],
                          imbalance(sums[2 * i], maxima[2 * i], ranks),
                          imbalance(sums[2 * i + 1], maxima[2 * i + 1], ranks),
                          static_cast<unsigned long long>(c[0]), static_cast<unsigned long long>(c[3]),
-                         static_cast<unsigned long long>(c[2]), 2 * depth, "", leaf);
+                         static_cast<unsigned long long>(c[2]), row.prefix.c_str(), leaf);
         }
     }
     for(int i = 0; i < n; ++i) {
@@ -244,7 +273,7 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
             std::fprintf(tsv, "%s\t%lld\t%s\t%s\t%llu\t%llu\t%llu\t%llu"
                          "\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g\t%.17g"
                          "\t%.17g\t%.17g\t%s\t%.17g\t%.17g\t%lld"
-                         "\t%lld\t%.17g\t%lld\t%lld\t%.17g\t%lld\t%d\n",
+                         "\t%lld\t%.17g\t%lld\t%lld\t%.17g\t%lld\t%d\t%lld\n",
                          label, step, lane.c_str(), path.c_str(),
                          static_cast<unsigned long long>(c[3]), static_cast<unsigned long long>(c[0]),
                          static_cast<unsigned long long>(c[1]), static_cast<unsigned long long>(c[2]),
@@ -254,7 +283,7 @@ bool TimerReportMPI(MPI_Comm comm, FILE *tree, FILE *tsv, const char *label, lon
                          imbalance(sums[2 * i + 1], maxima[2 * i + 1], ranks), info.mode,
                          info.simulation_time, info.simulation_dt, info.particles_total,
                          work_sum[0], active_mean, work_max[0], work_sum[1], gas_mean,
-                         work_max[1], info.highest_active_bin);
+                         work_max[1], info.highest_active_bin, info.from_sync_point);
         }
     }
     if(tree) {std::fflush(tree);}

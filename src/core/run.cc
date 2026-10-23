@@ -134,14 +134,17 @@ void run(void)
     GIZMO_TIMER_FUNCTION();
     CPU_Step[CPU_MISC] += measure_time();
 
+    gizmo_timers_step_begin(true);  /* initial/restart sync-point work precedes evolution */
     if(RestartFlag != 1)		/* need to compute forces at initial synchronization time, unless we restarted from restart files */
     {
+        GIZMO_TIMER_SCOPE("initial_sync_point");
         output_log_messages();
 
         domain_Decomposition(0, 0, 0, 0);
 
         set_non_standard_physics_for_current_time();
 
+        gizmo_timers_step_context();
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 
 #if !(defined(GENERAL_RELATIVITY) && defined(GR_TEST_PARTICLE)) /* GR geodesic test particles: no hydro */
@@ -155,6 +158,7 @@ void run(void)
     }
     else
     {
+        GIZMO_TIMER_SCOPE("restart_tree_restore");
         /* The restart files carry the authoritative state -- particles, domains, the integer
          * timeline -- but not the tree the gravity walk actually reads: its GPU node mirror and
          * its installed foreign nodes are derived from that state and are rebuilt, never stored.
@@ -205,6 +209,7 @@ void run(void)
          * current -- not even for the few statements before the poll exits. */
         gizmo_exit_bad_stop_if_requested("run:restart_treebuild");
         if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
+        gizmo_timers_step_context();
     }
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
     eos_limits_emit(1); /* what startup needed, before any step */
@@ -218,7 +223,7 @@ void run(void)
         write_cpu_log();		/* output some CPU usage log-info (accounts for everything needed up to the current sync-point) */
 
         gizmo_timers_step_begin();
-        GIZMO_TIMER_SCOPE("Step"); // closes on break, return, and normal iteration exit
+        GIZMO_TIMER_SCOPE("evolution_step"); // closes on break, return, and normal iteration exit
 
         if((All.Ti_Current >= TIMEBASE) || (All.Time > All.TimeMax)) /* check whether we reached the final time */
         {
@@ -1274,7 +1279,7 @@ extern "C" int  gizmo_cpu_log_consume_force_print(void) { int v = g_cpu_log_forc
 
 void write_cpu_log(void)
 {
-  gizmo_timers_report("step", (long long) All.NumCurrentTiStep);
+  gizmo_timers_report("sync-point", (long long) All.NumCurrentTiStep);
   double max_CPU_Step[CPU_PARTS], avg_CPU_Step[CPU_PARTS], t0, t1, tsum; int i; t0=0; t1=0; tsum=0;
   CPU_Step[CPU_MISC] += measure_time();
 
