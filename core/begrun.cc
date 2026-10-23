@@ -406,6 +406,9 @@ void begrun(void)
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE) || defined(COSMIC_RAY_FLUID) /* 2026-07-04: match the tag registration guard */
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        All.CosmicRay_ShockAccelEfficiency = all.CosmicRay_ShockAccelEfficiency;
+#endif
 
 #ifdef GALSF_ISMDUSTCHEM_MODEL
         All.ISMDustChem_SNeIIDustScaling = all.ISMDustChem_SNeIIDustScaling;
@@ -830,6 +833,9 @@ void open_outputfiles(void)
       fprintf(FdENERGYinfo,"%s   (1) time  (2) M_gas[Msun]  (3) M_star[Msun]  (4) M_total[Msun]  (5) E_therm[erg]  (6) E_kin[erg]  (7) E_pot[erg]  (8) E_total[erg]  (9) E_cool_cumul[erg] (net chemistry loss, PI heating excluded)  (10) E_fb_cumul[erg] (booked, incl. PI)  (11) M_fb_returned[Msun]  (12) E_fb_coupled_cumul[erg] (measured, incl. PI)  (13) E_PI_cumul[erg]  (14) E_sf_removed_cumul[erg] (thermal+kinetic lost to star formation)\n",prefix_char);
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo,"%s   (15) E_CR[erg]  (16) E_CR_injected_cumul[erg] (measured at the feedback deposit)  (17) E_CR_loss_cumul[erg] (hadronic+Coulomb, removed from the CR fluid); (15)-(15)[t=0]-(16)+(17) = CR-gas exchange (adiabatic work, streaming losses)\n",prefix_char);
+#endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+      fprintf(FdENERGYinfo,"%s   (18) E_CR_shock_cumul[erg] (CR energy injected at shocks)\n",prefix_char);
 #endif
 #ifdef MAGNETIC
       fprintf(FdENERGYinfo,"%s   (last) E_B[erg] magnetic energy, not in (8)\n",prefix_char);
@@ -1451,6 +1457,12 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "CosmicRay_SNeFraction");
         strcpy(alternate_tag[nt], "CosmicRay_SNeEnergyFraction");
         addr[nt] = &All.CosmicRay_SNeFraction;
+        id[nt++] = REAL;
+#endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        strcpy(tag[nt], "CosmicRay_ShockAccelEfficiency");
+        strcpy(alternate_tag[nt], "-");
+        addr[nt] = &All.CosmicRay_ShockAccelEfficiency;
         id[nt++] = REAL;
 #endif
         
@@ -2869,6 +2881,7 @@ void read_parameter_file(char *fname)
 #if defined(CRFLUID_DIFFUSION_MODEL) && (CRFLUID_DIFFUSION_MODEL == 0)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
+                if(strcmp("CosmicRay_ShockAccelEfficiency",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s not set in parameter file: CR acceleration at shocks takes 10 percent of the dissipated energy flux (=0.1) \n",tag[i]); continue;}
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)

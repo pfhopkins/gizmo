@@ -585,6 +585,9 @@ extern struct global_data_all_processes
 
 #if defined(COSMIC_RAY_FLUID) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION) /* complement of the FIRE declaration; begrun registers it under COSMIC_RAY_FLUID */
   double CosmicRay_SNeFraction;   /*!< fraction of SN energy injected as CRs (typically 0.1) */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+  double CosmicRay_ShockAccelEfficiency; /*!< Stella: fraction of the dissipated shock energy flux into CRs (default 0.1) */
+#endif
 #endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */

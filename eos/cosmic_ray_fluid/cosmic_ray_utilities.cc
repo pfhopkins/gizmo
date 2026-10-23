@@ -848,7 +848,15 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     if(cell[i].DtCREgyNewInjectionFromShocks > 0) /* now perform the actual CR injection using the rates estimated in the hydro solver */
     {
         Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        double ecr_shock_before = 0; for(int kk=0;kk<N_CR_PARTICLE_BINS;kk++) {ecr_shock_before += cell[i].CosmicRayEnergy[kk];}
+#endif
         inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], cell); /* inject the energy */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        {double ecr_shock_after = 0; for(int kk=0;kk<N_CR_PARTICLE_BINS;kk++) {ecr_shock_after += cell[i].CosmicRayEnergy[kk];}
+         #pragma omp atomic
+         CumulCRShockEnergy += ecr_shock_after - ecr_shock_before;} /* Stella ledger: CR energy delivered at shocks */
+#endif
         cell[i].DtCREgyNewInjectionFromShocks = 0; // reset to nil, we've successfully injected the energy
     }
 #endif
@@ -1897,7 +1905,9 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
         if(divv_p*divv_f > 0) {if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_p;} else {divv_u=divv_f;}} // if both agree in sign here, use -larger- since more accurately captures CR-dominated limit
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change
         if(fabs(d_CR) > fabs(dtI_hydro)) {d_CR = dtI_hydro;} // do not allow this to exceed the sum (since all terms have the same sign here, in a well-ordered smooth flow)
+#if !defined(CRFLUID_EXCHANGE_PDV_ONLY) /* Stella opt-in: CRs exchange only their own P dV work; shock heating stays in the gas (CRs from shocks via CRFLUID_INJECTION_AT_SHOCKS) */
         if(fabs(d_CR) < fac_P*fabs(dtI_hydro)) {d_CR = fac_P*dtI_hydro;} // but also do not allow CR term to be -below- CR pressure fraction times total term, since that should be attributed to the CR (as this is all a quasi-adiabatic term)
+#endif
     } else { // both divv terms agree with each other, but dis-agree with the sign of the total change. can't assume anything about smoothness-of-the-flow
         if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_f;} else {divv_u=divv_p;} // pick the divv estimator with the smaller absolute magnitude, since it deviates
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change

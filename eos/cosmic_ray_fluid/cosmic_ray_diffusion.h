@@ -122,9 +122,16 @@ if(j_is_active_for_fluxes) {CellP[j].Face_DivVel_ForAdOps -= -(All.cf_a3inv/V_j)
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
 /* use a simple pairwise shock-detection algorithm */
 double min_shockvel_for_accel = 100., min_machnum_for_accel = 5., machnum_estimator = 0, min_machnum_for_pressurecrit = 1.3, saturation_fraction_for_craccel=(double)(CRFLUID_INJECTION_AT_SHOCKS);
+#if defined(GALSF_RESOLVEDISM)
+saturation_fraction_for_craccel = All.CosmicRay_ShockAccelEfficiency; /* Stella: efficiency as a parameter */
+#endif
 double vdotf2_phys = face_vel_i - face_vel_j, vdotr2_phys = kernel.vdotr2 / (kernel.r * All.cf_atime);
 if(All.ComovingIntegrationOn) {vdotr2_phys -= All.cf_hubble_a2 * kernel.r / All.cf_atime;}
-if(vdotr2_phys < 0 && vdotf2_phys < 0 && (DMAX(vdotf2_phys, vdotr2_phys)*UNIT_VEL_IN_KMS > min_shockvel_for_accel)) { // particles must be approaching, with some normal to face, above some relative velocity
+#if defined(GALSF_RESOLVEDISM)
+if(vdotr2_phys < 0 && vdotf2_phys < 0 && (-DMAX(vdotf2_phys, vdotr2_phys)*UNIT_VEL_IN_KMS > min_shockvel_for_accel)) { /* Stella: approach speeds are negative, so compare the slower one's magnitude (the upstream DMAX(...) > 100 can never pass) */
+#else
+if(vdotr2_phys < 0 && vdotf2_phys < 0 && (DMAX(vdotf2_phys, vdotr2_phys)*UNIT_VEL_IN_KMS > min_shockvel_for_accel)) {
+#endif // particles must be approaching, with some normal to face, above some relative velocity
     if((local.InternalEnergyPred - CellP[j].InternalEnergyPred)*(local.Density - CellP[j].Density) > 0) { // sign of temperature and density jump must be consistent (help filtering contact discontinuities)
         if((local.Pressure - CellP[j].Pressure)*(local.InternalEnergyPred - CellP[j].InternalEnergyPred) > 0) { // consistent pressure and temperature jump
             double gamma_touse = 5./3., m2 = min_machnum_for_accel*min_machnum_for_accel, gplus = gamma_touse+1., gminus = gamma_touse-1., pjump_crit = (2.*gamma_touse*min_machnum_for_pressurecrit*min_machnum_for_pressurecrit - gminus)/gplus, tjump_crit = (2.*gamma_touse*m2 - gminus)*(gminus*m2 + 2.)/(gplus*gplus*m2); // various critical definitions
