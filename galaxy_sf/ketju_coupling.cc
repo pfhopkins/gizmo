@@ -111,6 +111,7 @@ struct ketju_mpi_particle {
 #endif
     double GravAcc[3]; /* comoving GravAccel of the gravity call whose kick started this step */
     double TidalNorm;  /* physical |T| of the field external to its chain at its last step end (0: not known) */
+    double Tidal[6];   /* tree tidal tensor of the gravity call that started this step (xx yy zz xy yz xz, comoving, with G) */
 };
 
 /* ============================================================
@@ -212,6 +213,7 @@ struct KetjuRegion {
     std::vector<ketju_extra_data> extra_data;
     std::vector<double> true_vel;  /* MSTAR end-of-step CoM-relative velocities before the second negative half-kick (compute tasks) */
     std::vector<double> coll_radius; /* MSTAR contact radii in its natural units (compute tasks) */
+    int tide_on = 0; double tide_T[6] = {0, 0, 0, 0, 0, 0}; /* KetjuSmoothTide: the region's external tidal tensor (physical, xx yy zz xy yz xz) */
 
     /* CoM frame data (stored at setup, used in scatter) */
     double com_pos[3];
@@ -968,6 +970,10 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
         mp.CollRadius = ketju_star_contact_radius(idx);
 #endif
         for(int j = 0; j < 3; j++) mp.GravAcc[j] = P[idx].GravAccel[j];
+        for(int j = 0; j < 6; j++) mp.Tidal[j] = 0;
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+        for(int j = 0; j < 6; j++) mp.Tidal[j] = P[idx].tidal_tensorps.data[j];
+#endif
         k++;
     }
 
@@ -1358,6 +1364,17 @@ static void record_midstep_output_state(KetjuRegion &reg)
 }
 #endif
 
+/* kick the members by the region's linear tide T x (x relative to the CoM, physical) over dt */
+static void ketju_region_tide_kick(KetjuRegion &reg, double dt)
+{
+    struct ketju_system_physical_state *ps = reg.integrator->physical_state; const double *t = reg.tide_T;
+    for(int i = 0; i < reg.integrator->num_particles; i++) {
+        const double *x = ps->pos[i];
+        ps->vel[i][0] += dt * (t[0]*x[0] + t[3]*x[1] + t[5]*x[2]);
+        ps->vel[i][1] += dt * (t[3]*x[0] + t[1]*x[1] + t[4]*x[2]);
+        ps->vel[i][2] += dt * (t[5]*x[0] + t[4]*x[1] + t[2]*x[2]);
+    }
+}
 
 /* Exact two-body drift (KetjuKeplerPairs): universal variables with Stumpff functions, Laguerre-Conway iteration (Danby
  * 1992 sec. 6.9; Conway 1986). r, v are the relative separation and velocity, advanced in place over dt; returns 0 if the
@@ -1399,7 +1416,7 @@ static int kepler_drift(double r[3], double v[3], double mu, double dt)
 static int kepler_pair_step(KetjuRegion &reg, double dt)
 {
     struct ketju_system *R = reg.integrator; struct ketju_system_physical_state *ps = R->physical_state;
-    if(!All.KetjuKeplerPairs || R->num_particles != 2 || R->num_pn_particles != 0) return 0;
+    if(!All.KetjuKeplerPairs || R->num_particles != 2 || R->num_pn_particles != 0 || R->options->enable_external_tide) return 0;
     double m0 = ps->mass[0], m1 = ps->mass[1], M = m0 + m1, mu = All.G * M, r[3], v[3], rc[3], vc[3];
     for(int k = 0; k < 3; k++) {r[k] = ps->pos[1][k] - ps->pos[0][k]; v[k] = ps->vel[1][k] - ps->vel[0][k]; rc[k] = (m0 * ps->pos[0][k] + m1 * ps->pos[1][k]) / M; vc[k] = (m0 * ps->vel[0][k] + m1 * ps->vel[1][k]) / M;}
     if(R->collision_radius) {
@@ -1445,13 +1462,48 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     /* subtract first half of tree force */
     std::vector<double> pair_dv;
     do_negative_halfstep_kick(reg, first_halfkick, 1, &pair_dv);
+#if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) && defined(KETJU_TYPE4_STARS)
+    if(All.KetjuSmoothTide && reg.compute_tasks.is_member() && reg.integrator && reg.integrator->num_particles >= 2) {
+        /* Smooth tide: T = mass-weighted mean over members of (tree tidal tensor - the other members' pair tides, with the
+         * tree's kernel and softening of that gravity call). MSTAR applies T (x - x_CoM) during the step; the host's kicks
+         * by it are removed here and, at the end positions, with the second negative half-kick, so the host kicks the
+         * members by the CoM field and the nonlinear rest only. */
+        int n = reg.integrator->num_particles; struct ketju_system_physical_state *ps = reg.integrator->physical_state;
+        double M = 0, T[6] = {0, 0, 0, 0, 0, 0};
+        for(int i = 0; i < n; i++) {
+            const ketju_mpi_particle &me = reg.all_particles[i]; double Ti[6]; for(int k = 0; k < 6; k++) Ti[k] = me.Tidal[k];
+            for(int j = 0; j < n; j++) {
+                if(j == i) continue; const ketju_mpi_particle &it = reg.all_particles[j];
+                double dr[3]; for(int k = 0; k < 3; k++) dr[k] = it.Pos[k] - me.Pos[k];
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC)
+                NEAREST_XYZ(dr[0], dr[1], dr[2], 1);
+#endif
+                double r2 = dr[0]*dr[0] + dr[1]*dr[1] + dr[2]*dr[2], r = sqrt(r2), fa, fp, ft, ft2; if(r <= 0) continue;
+                tree_pair_gravity_factors(r, r2, it.Mass, me.SoftGrav[0], it.SoftGrav[1], me.Type, it.Type, me.ZetaGrav[0], it.ZetaGrav[1], me.Mass, ags_gravity_kernel_shared_BITFLAG(me.Type), fa, fp, ft, ft2);
+                Ti[0] -= All.G * (ft2 * dr[0]*dr[0] - ft); Ti[1] -= All.G * (ft2 * dr[1]*dr[1] - ft); Ti[2] -= All.G * (ft2 * dr[2]*dr[2] - ft);
+                Ti[3] -= All.G * ft2 * dr[0]*dr[1]; Ti[4] -= All.G * ft2 * dr[1]*dr[2]; Ti[5] -= All.G * ft2 * dr[0]*dr[2];
+                (void)fa; (void)fp;
+            }
+            for(int k = 0; k < 6; k++) T[k] += ps->mass[i] * Ti[k];
+            M += ps->mass[i];
+        }
+        reg.tide_on = 1;
+        for(int k = 0; k < 6; k++) reg.tide_T[k] = T[k] / M * All.cf_a3inv;
+        double tn = 1.0 / (KJ_TIME_TO_NAT * KJ_TIME_TO_NAT);
+        reg.integrator->options->enable_external_tide = true;
+        for(int k = 0; k < 6; k++) reg.integrator->options->external_tidal_tensor[k] = reg.tide_T[k] * tn;
+        ketju_region_tide_kick(reg, -first_halfkick);
+    }
+#endif
     if(reg.compute_tasks.is_root() && reg.integrator) {
         /* energy the host's first half-kick put into the internal motion: its external part (tree kick minus the pair kick
          * just removed) relative to its mass-weighted mean, against the CoM-relative velocities it produced */
         int n = reg.integrator->num_particles; struct ketju_system_physical_state *ps = reg.integrator->physical_state;
         double a = All.cf_atime, mtot = 0, mean[3] = {0, 0, 0}; std::vector<double> ext(3 * n);
         for(int i = 0; i < n; i++) {
-            for(int k = 0; k < 3; k++) {ext[3*i+k] = reg.all_particles[i].GravAcc[k] * first_halfkick / (a * a) + pair_dv[3*i+k]; mean[k] += ps->mass[i] * ext[3*i+k];}
+            double tr[3] = {0, 0, 0};
+            if(reg.tide_on) {const double *t = reg.tide_T; const double *x = ps->pos[i]; tr[0] = t[0]*x[0] + t[3]*x[1] + t[5]*x[2]; tr[1] = t[3]*x[0] + t[1]*x[1] + t[4]*x[2]; tr[2] = t[5]*x[0] + t[4]*x[1] + t[2]*x[2];}
+            for(int k = 0; k < 3; k++) {ext[3*i+k] = reg.all_particles[i].GravAcc[k] * first_halfkick / (a * a) + pair_dv[3*i+k] - tr[k] * first_halfkick; mean[k] += ps->mass[i] * ext[3*i+k];}
             mtot += ps->mass[i];
         }
         double W = 0;
@@ -1535,6 +1587,7 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
 #endif
     /* subtract second half of tree force */
     do_negative_halfstep_kick(reg, second_halfkick, 0);
+    if(reg.tide_on) ketju_region_tide_kick(reg, -second_halfkick); /* the host's end kick by the linear tide, pre-subtracted */
 }
 
 /* ============================================================

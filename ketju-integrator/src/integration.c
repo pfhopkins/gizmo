@@ -98,6 +98,23 @@ static inline double separation_and_r2(const struct ketju_system *R, int i,
     return r2;
 }
 
+// External linear tide: a_i += T x_i, U += (1/2) sum_i m_i x_i.T.x_i (U = -potential)
+static double external_tide(struct ketju_system *R, double (*acc)[3]) {
+    if (!R->options->enable_external_tide) return 0;
+    const double *t = R->options->external_tidal_tensor;
+    const double T[3][3] = {{t[0], t[3], t[5]}, {t[3], t[1], t[4]}, {t[5], t[4], t[2]}};
+    const struct ketju_system_physical_state *ps = R->physical_state;
+    double U = 0;
+    for (int i = 0; i < R->num_particles; i++) {
+        double a[3];
+        for (int k = 0; k < 3; k++) {
+            a[k] = T[k][0] * ps->pos[i][0] + T[k][1] * ps->pos[i][1] + T[k][2] * ps->pos[i][2];
+            if (acc) acc[i][k] += a[k];
+        }
+        U += 0.5 * ps->mass[i] * (a[0] * ps->pos[i][0] + a[1] * ps->pos[i][1] + a[2] * ps->pos[i][2]);
+    }
+    return U;
+}
 
 static void compute_U(struct ketju_system *R) {
 
@@ -165,6 +182,7 @@ after_loops:
     }
 
     is->U *= R->constants->G;
+    is->U += external_tide(R, NULL);
 }
 
 // To support optional softening and ignoring of star-star interactions we need
@@ -361,6 +379,7 @@ static void compute_U_and_Newtonian_Acc(struct ketju_system *R) {
     timer_stop(&R->perf->time_force_comm);
 
     timer_start(&R->perf->time_force);
+    is->U += external_tide(R, is->acc);
     int hi, lo;
     for (int i = 0; i < R->num_particles - 1; i++) {
 

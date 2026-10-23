@@ -132,6 +132,11 @@ struct ketju_integration_options {
     //< Include the merger kick in BH mergers.
     // If disabled the merger remnant moves at the CoM velocity of the merged
     // BHs.
+    bool enable_external_tide;
+    //< Add the linear tide a_i = T (x_i - x_origin) of an external field, and
+    // its potential to the energy, in the system's frame.
+    double external_tidal_tensor[6];
+    //< T for enable_external_tide: xx, yy, zz, xy, yz, xz.
 };
 
 // Default values applied when creating the system
@@ -158,6 +163,8 @@ static const struct ketju_integration_options
         .enable_bh_mergers = true,
         .bh_merger_distance_in_Rs = 12,
         .enable_bh_merger_kicks = true,
+        .enable_external_tide = false,
+        .external_tidal_tensor = {0, 0, 0, 0, 0, 0},
 };
 
 // The unit system used by the integrator is specified by setting the values of
