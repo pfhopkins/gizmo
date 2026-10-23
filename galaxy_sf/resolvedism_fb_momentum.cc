@@ -47,6 +47,9 @@ struct INPUT_STRUCT_NAME
     MyDouble FB_QnormSum_in;
     MyDouble StarVel[3];
     MyDouble WindMomentum;
+#ifdef COSMIC_RAY_FLUID
+    MyDouble WindCREnergy; /* CR energy of a fast wind (FIRE-3: f_CR of the ejecta KE above 1000 km/s) */
+#endif
     MyDouble MetalMass;
     MyIDType StarID;
     MyDouble StarMass; /* initial mass in Msun, for diagnostics */
@@ -176,6 +179,9 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     int k; for(k=0;k<3;k++) {in->Pos[k]=P[i].Pos[k];}
     in->KernelRadius = P[i].KernelRadius;
     in->Mej = 0; in->MetalMass = 0; in->WindMomentum = 0;
+#ifdef COSMIC_RAY_FLUID
+    in->WindCREnergy = 0;
+#endif
     /* Load measured AWS from prior weighting pass (or 0 if this IS the weighting pass). */
     int load_ = (loop_iteration >= 0 || loop_iteration <= -3); /* -3/-4: wind/AGB normalisation passes */
     in->FB_Area_weighted_sum_in = load_ ? (MyDouble)P[i].FB_Area_weighted_sum : 0;
@@ -290,6 +296,13 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
         in->Mej = dM_wind_solar / UNIT_MASS_IN_SOLAR;
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+#ifdef COSMIC_RAY_FLUID
+        if(in->Mej > 0 && in->WindMomentum > in->Mej * 1000. / UNIT_VEL_IN_KMS) { /* fast wind: f_CR of the ejecta KE into CRs, ejecta speed x sqrt(1-f_CR), as FIRE-3 */
+            double v_w = in->WindMomentum / in->Mej;
+            in->WindCREnergy = All.CosmicRay_SNeFraction * 0.5 * in->Mej * v_w * v_w;
+            in->WindMomentum *= sqrt(1. - All.CosmicRay_SNeFraction);
+        }
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
         {
             double sum_y_code = 0;
@@ -815,6 +828,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                     NeedToWakeupParticles_local = 1;
                 }
 #endif /* GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY (kick block ends here) */
+#ifdef COSMIC_RAY_FLUID
+                if(loop_iteration == 0 && local.WindCREnergy > 0) {inject_cosmic_rays(wk * local.WindCREnergy, local.WindMomentum / local.Mej, 0, j, rhat, CellP);}
+#endif
 
                 } /* critical (fb_mom_receiver) */
 

@@ -870,6 +870,9 @@ void resolvedism_inject_fb_energy(void)
 
     for(int ii : ActiveParticleList) {if(P[ii].Type == 4) {P[ii].FB_Deposited = 0;}}
     double E_mech0 = resolvedism_mech_energy_local(), E_mech1 = E_mech0, E_mech2, E_mech3;
+#ifdef COSMIC_RAY_FLUID
+    double E_cr0 = resolvedism_cr_energy_local(), E_cr3 = E_cr0; /* CR injection by winds and SNe */
+#endif
 
     /* ---- Pass 0: wind + AGB (momentum + mass + metals).  Fires first so final
      *      winds happen before the star explodes as SN. Serialized per event. ---- */
@@ -903,9 +906,6 @@ void resolvedism_inject_fb_energy(void)
 #endif
     MBARY_STEP("post_fb_mom_p0");
     E_mech2 = resolvedism_mech_energy_local();
-#ifdef COSMIC_RAY_FLUID
-    double E_cr2 = resolvedism_cr_energy_local(), E_cr3 = E_cr2;
-#endif
 #if defined(TEST_DUMP_STATE_AROUND_WIND_DEPOSIT) && defined(GALSF_RESOLVEDISM_WINDS_CONTINUOUS)
     if(fb_test_nwind_glob > 0) {fb_test_state_dump(1);}
 #endif
@@ -1042,6 +1042,9 @@ void resolvedism_inject_fb_energy(void)
              * residual in WINDS_THERMAL, none in momentum-only). Was never booked —
              * FeedbackBudget E column read 0 for winds in all modes (2026-07-06). */
             if(dM_wind > 0) {E_injected[2] += 0.5 * dp_wind * dp_wind / (dM_wind * SOLAR_MASS_CGS);}
+#ifdef COSMIC_RAY_FLUID
+            if(dM_wind > 0 && P[i].WindMomentumAccum > 1000. * dM_wind) {dp_injected[2] -= dp_wind * (1. - sqrt(1. - All.CosmicRay_SNeFraction));} /* fast wind: f_CR of the KE went to CRs */
+#endif
             /* Wind metals: estimate from surface abundances */
             double Mstar_w, logM_w, logZ_w;
             if(get_star_info(i, &Mstar_w, &logM_w, &logZ_w)) {
@@ -1429,7 +1432,7 @@ void resolvedism_inject_fb_energy(void)
     MPI_Reduce(Z_injected, glob_Z, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(E_coupled, glob_Ec, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #ifdef COSMIC_RAY_FLUID
-    {double dcr = E_cr3 - E_cr2, dcr_glob = 0; MPI_Reduce(&dcr, &dcr_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); if(ThisTask == 0) {CumulCRInjectedErg += dcr_glob;}}
+    {double dcr = E_cr3 - E_cr0, dcr_glob = 0; MPI_Reduce(&dcr, &dcr_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); if(ThisTask == 0) {CumulCRInjectedErg += dcr_glob;}}
 #endif
 
     if(ThisTask == 0) {
