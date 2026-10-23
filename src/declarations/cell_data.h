@@ -40,6 +40,7 @@ extern struct gas_cell_data
 
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
+    MyDouble KernelDensityForVolumeRelaxation; /*!< kernel (surface-corrected, if enabled) density from the last density pass: the value Density_ExplicitInt relaxes toward */
 #endif
     
 #ifdef HYDRO_VOLUME_CORRECTIONS

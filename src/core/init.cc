@@ -559,6 +559,9 @@ void init(void)
         CellP[i].ConditionNumber = 1;
         CellP[i].DtInternalEnergy = 0;
         CellP[i].FaceClosureError = 0;
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+        CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
 #endif

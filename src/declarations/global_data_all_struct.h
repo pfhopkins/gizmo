@@ -21,7 +21,9 @@
 #endif
 #endif
 
+#ifndef GIZMO_config_H
 #include "../GIZMO_config.h"
+#endif
 #include "precompiler_logic.h"
 #include "constants.h"
 #include "macros.h"

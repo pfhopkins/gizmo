@@ -12,7 +12,9 @@
 
 #ifdef NUCLEAR_NETWORK
 
+#ifndef GIZMO_config_H
 #include "../GIZMO_config.h"
+#endif
 #include "../declarations/allvars.h"
 
 #ifndef NUCLEAR_NETWORK_NSPECIES

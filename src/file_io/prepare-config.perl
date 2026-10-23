@@ -19,6 +19,9 @@ else
 open(OUTFILE, ">GIZMO_config.h");
 open(COUTF,   ">compile_time_info.cc");
 
+# include guard: lets a standalone build (e.g. a unit test) define GIZMO_config_H to compile without this Config
+print OUTFILE "#ifndef GIZMO_config_H\n#define GIZMO_config_H\n";
+
 print COUTF "#include <stdio.h>\n";
 print COUTF "void output_compile_time_options(void)\n\{\n";
 print COUTF "printf(\n";
@@ -45,6 +48,8 @@ while($line=<FILE>)
 	}
     }
 }
+
+print OUTFILE "#endif\n";
 
 print COUTF "\"\\n\");\n";
 print COUTF "\}\n";

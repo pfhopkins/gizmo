@@ -1104,7 +1104,7 @@ ifeq ($(SYSTYPE),"Vista")
 galaxy_sf/mechanical_fb.o: CFLAGS := $(subst -O2,-O1,$(CFLAGS))
 endif
 
-compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h Template_Config.sh
+compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h Template_Config.sh file_io/prepare-config.perl
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:

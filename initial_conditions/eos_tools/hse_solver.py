@@ -5,14 +5,17 @@ Equations (CGS):
     dP/dr   = -G m rho / r^2
     dm/dr   =  4 pi r^2 rho
 Adiabatic closure within a zone (T_profile='adiabatic'):
-    du/dr   =  P/rho^2 * drho/dr   (first law at ds=0)
+    analytic (Tillotson) materials: du/dr = P/rho^2 * drho/dr   (first law at ds=0)
+    tabulated (SESAME) materials: the zone follows the table's own isentrope through its
+        entry state (surface (P_surface, T_surface), or the boundary (P, T)), tabulated once
+        per zone, so rho(P) is an interpolation rather than a nested inversion. The entry
+        density is the condensed-side root at the entry (P, T).
 Isothermal zone (T_profile='isothermal'):
     T(r) = T_zone fixed; u recovered from material EOS as needed.
 
-Material boundaries: T is held continuous across the boundary. For an
-adiabatic outer zone, the boundary T is computed from the local (rho,u) of
-the outer-zone integrator and reused as the entry T of the inner zone (i.e.,
-each zone runs on its own adiabat starting from the boundary T — standard
+Material boundaries: P and T are held continuous across the boundary; the
+outer zone's boundary state is the entry state of the inner zone, so each
+zone runs on its own adiabat starting from the boundary T (standard
 layered-planet practice).
 
 Outer iteration: bisect on body radius R such that integrating inward from
@@ -47,9 +50,9 @@ class Zone:
         self.T_iso = T_iso
 
 
-def _state_deriv(r, P, m, val, mode, mat):
-    """Return (dP/dr, dm/dr, dval/dr, rho) where val is u (adiabatic) or T (isothermal)."""
-    rho = mat.rho_from_P(P, val, mode)
+def _state_deriv(r, P, m, val, mode, mat, isen=None):
+    """Return (dP/dr, dm/dr, dval/dr, rho) where val is u (adiabatic), T (isothermal), or unused (isentrope)."""
+    rho = isen.rho(P) if mode == "isentrope" else mat.rho_from_P(P, val, mode)
     if r <= 0:
         return 0.0, 0.0, 0.0, rho
     dPdr = -G_CGS * m * rho / (r * r)
@@ -65,22 +68,23 @@ def _state_deriv(r, P, m, val, mode, mat):
     return dPdr, dmdr, dvaldr, rho
 
 
-def _rk4_step(r, P, m, val, dr, mode, mat):
-    k1P, k1m, k1v, _ = _state_deriv(r, P, m, val, mode, mat)
+def _rk4_step(r, P, m, val, dr, mode, mat, isen=None):
+    k1P, k1m, k1v, _ = _state_deriv(r, P, m, val, mode, mat, isen)
     k2P, k2m, k2v, _ = _state_deriv(r + 0.5 * dr, P + 0.5 * dr * k1P,
-                                    m + 0.5 * dr * k1m, val + 0.5 * dr * k1v, mode, mat)
+                                    m + 0.5 * dr * k1m, val + 0.5 * dr * k1v, mode, mat, isen)
     k3P, k3m, k3v, _ = _state_deriv(r + 0.5 * dr, P + 0.5 * dr * k2P,
-                                    m + 0.5 * dr * k2m, val + 0.5 * dr * k2v, mode, mat)
+                                    m + 0.5 * dr * k2m, val + 0.5 * dr * k2v, mode, mat, isen)
     k4P, k4m, k4v, _ = _state_deriv(r + dr, P + dr * k3P, m + dr * k3m,
-                                    val + dr * k3v, mode, mat)
+                                    val + dr * k3v, mode, mat, isen)
     Pn = P + (dr / 6.0) * (k1P + 2 * k2P + 2 * k3P + k4P)
     mn = m + (dr / 6.0) * (k1m + 2 * k2m + 2 * k3m + k4m)
     vn = val + (dr / 6.0) * (k1v + 2 * k2v + 2 * k3v + k4v)
     return Pn, mn, vn
 
 
-def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000):
-    """Integrate (P, m, val) inward from r=R to r=0. Returns dict of arrays."""
+def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000, surface_isentrope=None):
+    """Integrate (P, m, val) inward from r=R to r=0. Returns dict of arrays.
+    surface_isentrope: the outer zone's isentrope, if it is a tabulated adiabatic zone (the same for every R)."""
     r = np.linspace(R, 0.0, n_steps + 1)
     dr = r[1] - r[0]  # negative
     P = np.zeros_like(r); m = np.zeros_like(r); rho = np.zeros_like(r)
@@ -92,15 +96,21 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000):
     mat = z.material
     P[0] = P_surface
     m[0] = M_total
-    if z.T_profile == "adiabatic":
-        u[0] = mat.u_from_T(mat.rho_ref, T_surface); val = u[0]; mode = "u"
+    isen = None; isentropes = []
+    if z.T_profile == "adiabatic" and mat.kind == "sesame":
+        isen = surface_isentrope if surface_isentrope is not None else mat.isentrope(P_surface, T_surface)
+        val = 0.0; mode = "isentrope"; isen.n_beyond = 0; isentropes.append(isen)
+        rho[0], T[0], u[0] = isen.state(P[0])
     else:
-        T[0] = z.T_iso; val = z.T_iso; mode = "T"
-    rho[0] = mat.rho_from_P(P[0], val, mode)
-    if z.T_profile == "isothermal":
-        u[0] = mat.u_from_T(rho[0], z.T_iso); T[0] = z.T_iso
-    else:
-        T[0] = mat.T_from_u(rho[0], u[0])
+        if z.T_profile == "adiabatic":
+            u[0] = mat.u_from_T(mat.rho_ref, T_surface); val = u[0]; mode = "u"
+        else:
+            T[0] = z.T_iso; val = z.T_iso; mode = "T"
+        rho[0] = mat.rho_from_P(P[0], val, mode)
+        if z.T_profile == "isothermal":
+            u[0] = mat.u_from_T(rho[0], z.T_iso); T[0] = z.T_iso
+        else:
+            T[0] = mat.T_from_u(rho[0], u[0])
     zone_id[0] = 0
 
     iz = 0
@@ -113,16 +123,19 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000):
             P[k + 1:], m[k + 1:], u[k + 1:], T[k + 1:], rho[k + 1:] = P[k], 0.0, u[k], T[k], rho[k]
             zone_id[k + 1:] = iz
             break
-        P_n, m_n, val_n = _rk4_step(r[k], P[k], m[k], val, dr, mode, mat)
+        P_n, m_n, val_n = _rk4_step(r[k], P[k], m[k], val, dr, mode, mat, isen)
         # Floor pressure to keep EOS inversion sane.
         if P_n < P_surface * 1e-6: P_n = P_surface * 1e-6
         if m_n < 0: m_n = 0.0
         P[k + 1] = P_n; m[k + 1] = m_n; val = val_n
-        rho[k + 1] = mat.rho_from_P(P_n, val_n, mode)
-        if mode == "u":
-            u[k + 1] = val_n; T[k + 1] = mat.T_from_u(rho[k + 1], val_n)
+        if mode == "isentrope":
+            rho[k + 1], T[k + 1], u[k + 1] = isen.state(P_n)
         else:
-            T[k + 1] = val_n; u[k + 1] = mat.u_from_T(rho[k + 1], val_n)
+            rho[k + 1] = mat.rho_from_P(P_n, val_n, mode)
+            if mode == "u":
+                u[k + 1] = val_n; T[k + 1] = mat.T_from_u(rho[k + 1], val_n)
+            else:
+                T[k + 1] = val_n; u[k + 1] = mat.u_from_T(rho[k + 1], val_n)
         zone_id[k + 1] = iz
 
         # Zone transition: leave the active zone when m drops below its
@@ -132,7 +145,19 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000):
             T_boundary = T[k + 1]; P_boundary = P[k + 1]
             iz += 1
             z = zones[iz]; mat = z.material
-            if z.T_profile == "adiabatic":
+            if z.T_profile == "adiabatic" and mat.kind == "sesame":
+                try:
+                    isen = mat.isentrope(P_boundary, T_boundary); val = 0.0; mode = "isentrope"; isentropes.append(isen)
+                except ValueError:
+                    # no valid isentrope through this boundary state in the table (the trial body is compressed
+                    # beyond it): report this R as over-compressed, i.e. mass runs out before the centre
+                    r_at_mzero = r[k + 1]
+                    m[k + 1:] = 0.0; P[k + 2:], u[k + 2:], T[k + 2:], rho[k + 2:] = P[k + 1], u[k + 1], T[k + 1], rho[k + 1]
+                    zone_id[k + 1:] = iz
+                    return {"r": r, "P": P, "m": m, "rho": rho, "u": u, "T": T,
+                            "zone_id": zone_id, "r_at_mzero": r_at_mzero,
+                            "n_beyond_isentrope": sum(s.n_beyond for s in isentropes), "n_dropped_isentrope": 0}
+            elif z.T_profile == "adiabatic":
                 rho_b = mat.rho_from_P(P_boundary, T_boundary, "T")
                 val = mat.u_from_T(rho_b, T_boundary); mode = "u"
             else:
@@ -140,23 +165,31 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000):
             zone_id[k + 1] = iz
 
     return {"r": r, "P": P, "m": m, "rho": rho, "u": u, "T": T,
-            "zone_id": zone_id, "r_at_mzero": r_at_mzero}
+            "zone_id": zone_id, "r_at_mzero": r_at_mzero,
+            "n_beyond_isentrope": sum(s.n_beyond for s in isentropes),
+            "n_dropped_isentrope": sum(s.n_dropped for s in isentropes)}
 
 
 def solve_hse(M_total, T_surface, P_surface, zones,
-              R_lo=None, R_hi=None, tol=1e-3, maxit=40, n_steps=2000, verbose=False):
+              R_lo=None, R_hi=None, tol=1e-7, maxit=80, n_steps=2000, verbose=False):
     """Bisect on body radius R such that m(r=0) = 0. Returns the converged
-    integrated profile dict from `_integrate_inward`, plus 'R'."""
+    integrated profile dict from `_integrate_inward`, plus 'R'. The mass left at the
+    centre acts as a point mass on the innermost steps (dP/dr = -G m rho / r^2), so tol
+    (the fraction of M_total allowed to remain) must be small: 1e-3 left the central
+    pressure of an Earth-mass body ~20x too high."""
     # Auto-bracket if not supplied: use the outer-zone reference density to
     # estimate a uniform-density radius and search 0.2x .. 5x around it.
+    z0 = zones[0]
+    surface_isentrope = (z0.material.isentrope(P_surface, T_surface)
+                         if (z0.T_profile == "adiabatic" and z0.material.kind == "sesame") else None)
     if R_lo is None or R_hi is None:
-        rho_ref = zones[0].material.rho_ref
+        rho_ref = surface_isentrope.rho(P_surface) if surface_isentrope is not None else zones[0].material.rho_ref
         R_uniform = (3.0 * M_total / (4.0 * np.pi * rho_ref)) ** (1.0 / 3.0)
         R_lo = R_lo if R_lo is not None else 0.2 * R_uniform
         R_hi = R_hi if R_hi is not None else 5.0 * R_uniform
 
     def residual(R):
-        prof = _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps)
+        prof = _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps, surface_isentrope)
         # Signed residual:
         #   R too small (over-compressed) -> m hits 0 at r_at_mzero > 0;
         #     residual = -r_at_mzero/R   (negative)
@@ -193,6 +226,14 @@ def solve_hse(M_total, T_surface, P_surface, zones,
         else:
             R_lo = R_mid; res_lo = res_mid; prof_lo = prof_mid
         if abs(res_mid) < tol: break
+    else:
+        print(f"  WARNING: radius bisection did not reach tol={tol:.1e} in {maxit} iterations "
+              f"(final residual {res_mid:+.3e}); the leftover central mass inflates the central pressure")
+    if prof_mid["n_dropped_isentrope"] > 0:
+        print(f"  NOTE: {prof_mid['n_dropped_isentrope']} isentrope points dropped where the interpolated pressure did not rise")
+    if prof_mid["n_beyond_isentrope"] > 0:
+        print(f"  WARNING: {prof_mid['n_beyond_isentrope']} profile points lay beyond a tabulated isentrope's range "
+              "(its end state was used); the table may not reach the central pressure")
     prof_mid["R"] = R_mid
     prof_mid["M_total"] = M_total
     return prof_mid
