@@ -308,6 +308,9 @@ void init(void)
 #endif
             }
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+            P[i].RumiIntegrated = 0; P[i].RumiTiStart = P[i].RumiTiEnd = 0;
+#endif
 #ifdef HERMITE_INTEGRATION
             /* the retained start-of-step state, normally written by the first half-step kick; seed it
                here so anything that reads it before that kick -- the IO_HERMITE_SYNC output blocks of a

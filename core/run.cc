@@ -501,12 +501,18 @@ void run(void)
 #if defined(KETJU_REGULARIZATION)  /* STARFORGE scheme: after find_timesteps */
         ketju_limit_timesteps();    /* force chain particles to shared timebin */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_limit_timesteps();     /* all stars onto one bin */
+#endif
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_integrate();           /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
+#endif
 
 
 #ifdef KETJU_REGULARIZATION
@@ -1166,7 +1172,13 @@ void find_next_sync_point_and_drift(void)
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity, not the chord one */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();   /* stars ending their step here: RUMI++'s position and velocity, not the chord ones */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();
+#endif
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities();
 #endif
@@ -1243,6 +1255,9 @@ void find_next_sync_point_and_drift(void)
 
 #ifdef KETJU_REGULARIZATION
   ketju_set_final_velocities(); /* swap in true physical velocities after drift (velocity trick) */
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_finish_drift();          /* stars ending their RUMI++ step: its position and velocity */
 #endif
 
 }

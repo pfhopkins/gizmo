@@ -378,6 +378,13 @@ extern ALIGN(32) struct particle_data
 #endif
 #endif
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+    Vec3<MyDouble> RumiTargetPos;  /* RUMI++ end-of-step position (the chord drift reaches it to roundoff) */
+    Vec3<MyDouble> RumiTrueVel;    /* RUMI++ end-of-step velocity, swapped in after the drift */
+    Vec3<MyDouble> RumiStartVel;   /* velocity at the start of the step (outputs there) */
+    integertime RumiTiStart, RumiTiEnd; /* the RUMI++ step this star is on */
+    short int RumiIntegrated;      /* 1 while on a RUMI++ step */
+#endif
 #ifdef KETJU_REGULARIZATION
     MyDouble KetjuFinalVel[3];  /* true physical velocity from KETJU, swapped in after drift */
     short int KetjuIntegrated;  /* 1 if this particle was KETJU-integrated this step */

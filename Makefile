@@ -1069,6 +1069,25 @@ KETJU_INCL =
 KETJU_LIBS =
 endif
 
+# RUMI++ collisional N-body library integrating the Type-4 stars (STARS_INTEGRATED_BY_RUMI): build RUMI++ with
+# -DBUILD_RUMI_LIBRARY=ON and install it; RUMI_LIB_DIR is that prefix, whose rumi-lib.mk holds the include and link
+# flags of the Kokkos backend it was built for (OpenMP, CUDA or HIP)
+ifeq (STARS_INTEGRATED_BY_RUMI,$(findstring STARS_INTEGRATED_BY_RUMI,$(CONFIGVARS)))
+ifeq ($(MAKECMDGOALS),clean)
+RUMI_LIB_INCL =
+RUMI_LIB_LIBS =
+else
+ifeq ($(RUMI_LIB_DIR),)
+$(error STARS_INTEGRATED_BY_RUMI: set RUMI_LIB_DIR to the RUMI++ library install prefix)
+endif
+include $(RUMI_LIB_DIR)/rumi-lib.mk
+endif
+OBJS    += galaxy_sf/rumi_coupling.o
+else
+RUMI_LIB_INCL =
+RUMI_LIB_LIBS =
+endif
+
 # HEALPix library for the RT_USE_TREECOL_FOR_NH angular column bins
 ifeq (NEED_HEALPIX,$(findstring NEED_HEALPIX,$(CONFIGVARS)))
 HEALPIXINCL =
@@ -1087,7 +1106,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL) $(KETJU_INCL) $(SUNDIALS_INCL) $(HYPRE_INCL) $(MKL_INCL)
+         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL) $(KETJU_INCL) $(RUMI_LIB_INCL) $(SUNDIALS_INCL) $(HYPRE_INCL) $(MKL_INCL)
 
 
 
@@ -1113,7 +1132,7 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS) $(KETJU_LIBS) $(SUNDIALS_LIBS) $(HYPRE_LIBS) $(MKL_LIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS) $(KETJU_LIBS) $(RUMI_LIB_LIBS) $(SUNDIALS_LIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 FFLAGS = $(FOPTIONS) -Icooling/chemcool
 

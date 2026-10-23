@@ -73,6 +73,14 @@ int eligible_for_hermite(int i);
 void do_hermite_prediction(void);
 void do_hermite_correction(int final_pass);
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+void rumi_init(void);
+void rumi_finalize(void);
+void rumi_limit_timesteps(void);
+void rumi_integrate(void);
+void rumi_finish_drift(void);
+void rumi_swap_output_state(void);
+#endif
 #ifdef KETJU_REGULARIZATION
 void ketju_limit_timesteps(void);
 void ketju_find_regions(void);
