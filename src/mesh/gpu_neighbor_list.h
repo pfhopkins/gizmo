@@ -464,6 +464,29 @@ char *gx_mode_d_staging_slab(int role, int which);
 /* Released once at shutdown, before Kokkos is finalized. */
 void  gx_mode_d_staging_release(void);
 
+/* Which top leaf each node of this rank's tree is, for a device walk that decides where a query must be
+   sent: node offset (node index minus the tree's node base) -> top-leaf id, or -1 for a node that is not
+   a top leaf.  Only that map is held here; a leaf's owner and node index are read from the domain mirrors
+   (gpu_peano_walk_domain_task / gpu_peano_walk_domain_node_index), which are refreshed by every build.
+   Built on the device the first time a Mode D call needs it after a build, and kept until the next one.
+   Status of an acquire: */
+enum {GX_TOP_LEAF_MAP_OK = 0, GX_TOP_LEAF_MAP_REFUSED = 1, GX_TOP_LEAF_MAP_MALFORMED = 2};
+struct GxTopLeafMapView {
+    const int *leaf_of_node;        /* [span] in device memory */
+    int        span;                /* node offsets [0, span) are mapped */
+    const int *domain_task;         /* [n_topleaves], the owner of each top leaf */
+    const int *domain_node_index;   /* [n_topleaves], the node each top leaf is */
+    int        n_topleaves;
+};
+/* Rank-local; the caller votes on the status.  REFUSED: the device would not hold the map; it is not asked
+   for again until the next build.  MALFORMED: the domain mirrors do not describe this tree (a top leaf
+   outside the node range, not a top-level node, mapped twice, or owned by no task). */
+int  gx_top_leaf_map_acquire(const struct GxDeviceTreeView *tree, struct GxTopLeafMapView *out);
+/* Every rank gives the map up for the rest of this tree's life (a refusal anywhere, or a malformed map). */
+void gx_top_leaf_map_discard_for_tree(void);
+void gx_top_leaf_map_tree_rebuilt(void);   /* a build began: the map no longer describes the tree */
+void gx_top_leaf_map_release(void);        /* the tree is freed, or shutdown */
+
 /* Raise the motion bound of particles idx[0..n) in the gravity tree's nodes,
  * with the top-level part carried to the other ranks at the next tree-update
  * phase.  Called by whoever changed a particle's velocity outside the kick,

@@ -127,6 +127,82 @@ private:
 /* A group's reply count differs from the queries it received: a caller bug, stopped hard. */
 void bounded_peer_exchange_reply_count_mismatch(int peer, size_t have, int want);
 
+/* ----------------------------------------------------------------------------------------------------------
+ * ModeDSegmentStream -- the same round, carried in fixed-size segments through a fixed set of staging slots.
+ *
+ * A device-resident call cannot stage a whole round's payload: it moves it through a small fixed staging budget,
+ * so every peer's queries and replies are cut into segments of at most `segment_records` records, each led by a
+ * header.  The round's count exchange tells both sides every peer's count, so both derive the same segments and
+ * nothing about a segment needs to be discovered: receives are posted from ANY source into free slots, each
+ * completed one is checked against its header and its sender, and segments from one sender are handed to the
+ * caller strictly in index order (one sender's messages are matched in the order sent, so a segment that
+ * completes ahead of its predecessor is simply held until the predecessor is taken; the hold is bounded by the
+ * slot count).  Segments to one destination are sent in increasing index, which is what makes that bound hold.
+ *
+ * Liveness: receives of both kinds are posted whenever a slot is free, never conditioned on anything this rank
+ * still has to send, so every message any rank sends finds a home once its receiver has done local work; the
+ * caller must likewise never make taking a received query wait on an outbound send.
+ *
+ * A segment whose length is impossible (not a header plus whole records) is a broken protocol and stops hard; one
+ * whose header disagrees with what is expected is handed over marked erroneous, so the caller can answer it and
+ * keep draining while the run is stopped collectively.  The stream owns no payload storage and allocates nothing
+ * after reserve(). */
+struct alignas(32) ModeDSegmentHeader {
+    int round, source, index, records, status;   /* status: 0 = clean, 1 = erroneous (replies only) */
+};
+static_assert(sizeof(ModeDSegmentHeader) == 32, "the segment header is one fixed 32-byte block ahead of the records");
+
+class ModeDSegmentStream {
+public:
+    static constexpr int SLOTS = 8;   /* per role */
+    enum Role {QUERIES_OUT, QUERIES_IN, REPLIES_OUT, REPLIES_IN, ROLES};
+    struct Segment {int slot, source, index, records, status;};
+
+    /* Per-peer cursors for ntask peers; 0 when granted.  Nothing allocates after this. */
+    int  reserve(int ntask);
+    void release_storage();
+    /* Each role's SLOTS slots of slot_bytes each, contiguous from base[role]. */
+    void attach(char *const base[ROLES], size_t slot_bytes);
+    /* Open round `round`: exchange counts (a negative count from any rank is an anomaly every rank learns),
+       and derive every segment.  Returns 1 when some rank reported an anomaly: then no payload moves this round. */
+    int  begin_round(int round, const int *counts_to_peer, int segment_records, size_t query_bytes, size_t reply_bytes);
+    int  sent_count(int p) const {return core.sent_counts[p];}
+    int  recv_count(int p) const {return core.recv_counts[p];}
+    int  segments_to(int p) const;     /* query segments this rank sends to p (= reply segments back) */
+    int  segments_from(int p) const;   /* query segments this rank receives from p */
+    int  records_in_segment(int count, int index) const;
+
+    void progress();   /* complete what has completed, post receives into free slots */
+    char *payload(int role, int slot) const {return base_[role] + (size_t) slot * slot_bytes_ + sizeof(ModeDSegmentHeader);}
+
+    int  free_slots(int role, int *out);   /* every outbound slot whose last send has completed, in slot order; returns how many */
+    void send_query_segment(int slot, int dest, int index, int records);
+    void send_reply_segment(int slot, int dest, int index, int records, int status);
+    /* The next query or reply segment, in each sender's order; false when none is ready. */
+    bool next_query_segment(Segment &s) {return next_ready(QUERIES_IN, s);}
+    bool next_reply_segment(Segment &s) {return next_ready(REPLIES_IN, s);}
+    void release(int role, int slot);   /* an inbound slot the caller has finished copying out of */
+
+    bool round_complete() const;        /* every segment sent, received and released */
+    int  errors_seen() const {return errors_;}
+
+private:
+    struct Slot {MPI_Request req = MPI_REQUEST_NULL; int state = 0; int source = -1; int bytes = 0;};   /* 0 free, 1 posted/in flight, 2 completed, held */
+    bool next_ready(int role, Segment &s);
+    void post_receives(int role, int expected_total);
+    BoundedPeerExchangeCore core;       /* the count exchange */
+    char  *base_[ROLES] = {nullptr, nullptr, nullptr, nullptr};
+    size_t slot_bytes_ = 0;
+    Slot   slots_[ROLES][SLOTS];
+    int    round_ = 0, segment_records_ = 0, errors_ = 0;
+    size_t record_bytes_[ROLES] = {0, 0, 0, 0};
+    int    expected_[ROLES] = {0, 0, 0, 0};   /* inbound: segments this round; outbound: segments to send */
+    int    posted_[ROLES]   = {0, 0, 0, 0};   /* inbound receives posted / outbound sends issued */
+    int    taken_[ROLES]    = {0, 0, 0, 0};   /* inbound segments handed to the caller */
+    std::vector<int> next_query_from_, next_reply_from_;   /* per sender: the index to hand over next */
+    std::vector<int> next_query_to_, next_reply_to_;       /* per destination: the index to send next */
+};
+
 template <typename TQuery, typename TReply>
 class ModeBBoundedExchange {
     static_assert(std::is_trivially_copyable<TQuery>::value,

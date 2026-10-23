@@ -1743,6 +1743,7 @@ struct NlrIterDriver {
      * verdict, and by the time a subgroup is being dispatched that decision has
      * already been acted on. */
     GxDeviceTreeView mode_d_tree{};
+    struct ModeDCallLease *mode_d_lease = nullptr;   /* the call's Mode D storage, when the call was admitted */
 
     /* Per-subgroup state (DYNAMICALLY SIZED to args.num_subgroups).
      *
