@@ -30,6 +30,9 @@ void GravAccel_SpecialCustomNuclearZoomBoundaryConditions(void);
 void GravAccel_GMCTurbInit(void);
 void GravAccel_FilamentTurbInit(void);
 void GravAccel_HuTallbox(void);
+#ifdef TEST_GRAVITY_STATIC_PLUMMER
+void GravAccel_TestStaticPlummer(void);
+#endif
 
 /* parent routine which decides which (if any) analytic gravitational forces are applied */
 void add_analytic_gravitational_forces()
@@ -45,6 +48,9 @@ void add_analytic_gravitational_forces()
     //GravAccel_StaticHernquist();        // hernquist-profile sphere
     //GravAccel_StaticIsothermalSphere(); // singular (but finite) isothermal sphere
     //GravAccel_KeplerianOrbit();         // keplerian disk (2D or 3D)
+#ifdef TEST_GRAVITY_STATIC_PLUMMER
+    GravAccel_TestStaticPlummer();      // fixed Plummer sphere at the origin (stand-in for a static gas potential)
+#endif
 #ifdef GRAVITY_TESTPROBLEM_KEPLERIAN
     GravAccel_KeplerianTestProblem();   // keplerian disk with special boundaries for test problem
 #endif
@@ -214,6 +220,30 @@ void GravAccel_StaticPlummerSphere()
 }
 
 
+
+#ifdef TEST_GRAVITY_STATIC_PLUMMER
+/* fixed Plummer potential phi = -G M / sqrt(r^2 + a^2) at the origin, M [Msun] and a [pc] set by the flag's companions
+   (defaults 1000 Msun, 0.5 pc): the static-potential test of STARS_INTEGRATED_BY_RUMI (E_stars + sum m phi conserved) */
+#ifndef TEST_GRAVITY_STATIC_PLUMMER_MSUN
+#define TEST_GRAVITY_STATIC_PLUMMER_MSUN 1000.
+#endif
+#ifndef TEST_GRAVITY_STATIC_PLUMMER_PC
+#define TEST_GRAVITY_STATIC_PLUMMER_PC 0.5
+#endif
+void GravAccel_TestStaticPlummer()
+{
+    double M = TEST_GRAVITY_STATIC_PLUMMER_MSUN / UNIT_MASS_IN_SOLAR, a = TEST_GRAVITY_STATIC_PLUMMER_PC / UNIT_LENGTH_IN_PC;
+    for (int i : ActiveParticleList)
+    {
+        Vec3<double> dp = P[i].Pos;
+        double r2 = dp.norm_sq(), q = r2 + a*a, f = pow(q, 1.5), f2 = pow(q, 2.5);
+        P[i].GravAccel += dp * (-All.G * M / f);
+#ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE
+        for(int k=0;k<3;k++) {P[i].tidal_tensorps[k][k] -= All.G * M / f; for(int j=k;j<3;j++) {P[i].tidal_tensorps[k][j] += 3 * All.G * M * dp[k]*dp[j] / f2;}}
+#endif
+    }
+}
+#endif
 
 /* static Hernquist Profile (parameters specified in the routine below) */
 void GravAccel_StaticHernquist()
