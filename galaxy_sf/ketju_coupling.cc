@@ -1298,6 +1298,60 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
            min_period, min_period * 2.0 * sqrt(2.0), dt_physical, n);
 }
 
+#ifdef KETJU_TYPE4_STARS
+/* Snapshot state of members part-way through their step: for each output time inside a region's step (and at its start,
+ * where the first output after the IC falls: written after this integration), a copy of the region's MSTAR system is
+ * integrated to it (collisions off) and its state is kept by particle ID until the output, so the region's own
+ * integration is unchanged. The state is that of the host scheme at that time: the CoM drifting with its velocity after
+ * the first half-kick, the internal motion from MSTAR. With an output list only the next output time is covered. */
+struct ketju_output_state {MyIDType ID; integertime ti; double pos[3], vel[3];};
+static std::vector<ketju_output_state> KetjuOutputStates; /* compute roots, until gathered at the output */
+static void record_midstep_output_state(KetjuRegion &reg)
+{
+    if(!reg.compute_tasks.is_member() || !reg.integrator) return;
+    integertime t0 = All.Ti_Current, t1 = All.Ti_Current + reg.ti_step;
+    std::vector<integertime> outs;
+    for(integertime to = All.Ti_nextoutput; to >= t0 && to < t1; to = find_next_outputtime(to + 1)) {outs.push_back(to); if(All.OutputListOn) break;}
+    if(outs.empty()) return;
+    struct ketju_system *R = reg.integrator, C;
+    int n = R->num_particles;
+    memset(&C, 0, sizeof(C));
+    ketju_create_system(&C, R->num_pn_particles, n - R->num_pn_particles, reg.compute_tasks.comm);
+    *C.options = *R->options; *C.constants = *R->constants;
+    for(int i = 0; i < n; i++) {
+        C.physical_state->mass[i] = R->physical_state->mass[i];
+        for(int k = 0; k < 3; k++) {C.physical_state->pos[i][k] = R->physical_state->pos[i][k]; C.physical_state->vel[i][k] = R->physical_state->vel[i][k];}
+    }
+    for(int i = 0; i < R->num_pn_particles; i++) for(int k = 0; k < 3; k++) C.physical_state->spin[i][k] = R->physical_state->spin[i][k];
+    C.physical_state->time = 0;
+    double t_done = 0; /* physical time C has been integrated */
+    for(integertime to : outs) {
+        double t_out, a_out = All.cf_atime, hub = 0;
+        if(All.ComovingIntegrationOn) {
+            t_out = get_gravkick_factor(t0, to, -1, 0) * All.cf_atime * exp(0.5 * (to - t0) * All.Timebase_interval);
+            a_out = All.cf_atime * exp((to - t0) * All.Timebase_interval); hub = hubble_function(a_out);
+        } else {t_out = (to - t0) * All.Timebase_interval;}
+        if(t_out > t_done) {
+            kj_state_change_units(C.physical_state, n, 1);
+            ketju_run_integrator(&C, (t_out - t_done) * KJ_TIME_TO_NAT);
+            kj_state_change_units(C.physical_state, n, 0);
+            t_done = t_out;
+        }
+        if(!reg.compute_tasks.is_root()) continue;
+        double drift = (to > t0) ? get_drift_factor(t0, to, 0, 0) : 0;
+        for(int i = 0; i < n; i++) {
+            ketju_output_state o; o.ID = reg.extra_data[i].ID; o.ti = to;
+            for(int k = 0; k < 3; k++) {
+                o.pos[k] = reg.com_pos[k] + reg.com_vel[k] * drift + C.physical_state->pos[i][k] / a_out;
+                o.vel[k] = reg.com_vel[k] + (C.physical_state->vel[i][k] - hub * C.physical_state->pos[i][k]) * a_out;
+            }
+            KetjuOutputStates.push_back(o);
+        }
+    }
+    ketju_free_system(&C);
+}
+#endif
+
 /* Run the full integration step for one region.
  * Uses proper cosmological kick factors for comoving integration
  * (based on public GADGET4-KETJU, Mannerkoski+ 2023). */
@@ -1349,6 +1403,9 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
                   reg.compute_tasks.root, reg.compute_tasks.comm);
     }
 
+#ifdef KETJU_TYPE4_STARS
+    record_midstep_output_state(reg);
+#endif
     /* run MSTAR integrator (all compute tasks participate via compute_tasks.comm) */
     auto E_internal = [&reg]() { /* unsoftened internal energy of the live members, host units */
         struct ketju_system_physical_state *ps = reg.integrator->physical_state; int n = reg.integrator->num_particles; double E = 0;
@@ -2462,15 +2519,37 @@ void ketju_run_integration(void)
 }
 
 /* Snapshots are written after the drift to the output time but before the step's end: a chain member whose step ends
- * there still carries the velocity-trick chord velocity. Swap MSTAR's end-of-step velocity in for the write, and back.
- * Members part-way through their step keep the chord state (no MSTAR state exists at the output time). */
+ * there still carries the velocity-trick chord velocity, so MSTAR's end-of-step velocity is swapped in for the write, and
+ * back. A member part-way through its step sits on the chord: its position and velocity are swapped with the state
+ * record_midstep_output_state integrated to this time. Called before and after the write (each call swaps). */
 void ketju_swap_output_velocities(void)
 {
 #ifdef KETJU_TYPE4_STARS
-    for(int i = 0; i < NumPart; i++) {
-        if(!P[i].KetjuIntegrated || P[i].Mass <= 0 || P[i].Ti_begstep + P[i].dt_step != All.Ti_Current) continue;
-        for(int j = 0; j < 3; j++) {double v = P[i].Vel[j]; P[i].Vel[j] = P[i].KetjuTrueVel[j]; P[i].KetjuTrueVel[j] = v;}
+    static std::vector<ketju_output_state> here; /* this output's states, kept between the two calls */
+    static int swapped = 0;
+    if(!swapped) {
+        int nl = 0; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti == All.Ti_Current) nl++;
+        std::vector<ketju_output_state> mine; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti == All.Ti_Current) mine.push_back(o);
+        std::vector<int> cnt(NTask), bc(NTask), bd(NTask); MPI_Allgather(&nl, 1, MPI_INT, cnt.data(), 1, MPI_INT, MPI_COMM_WORLD);
+        int nt = 0; for(int t = 0; t < NTask; t++) {bc[t] = cnt[t] * sizeof(ketju_output_state); bd[t] = nt * sizeof(ketju_output_state); nt += cnt[t];}
+        here.resize(nt);
+        MPI_Allgatherv(mine.data(), nl * sizeof(ketju_output_state), MPI_BYTE, here.data(), bc.data(), bd.data(), MPI_BYTE, MPI_COMM_WORLD);
+        std::vector<ketju_output_state> keep; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti > All.Ti_Current) keep.push_back(o);
+        KetjuOutputStates.swap(keep);
     }
+    std::unordered_map<MyIDType, int> by_id; for(size_t q = 0; q < here.size(); q++) by_id[here[q].ID] = (int)q;
+    for(int i = 0; i < NumPart; i++) {
+        if(!P[i].KetjuIntegrated || P[i].Mass <= 0) continue;
+        if(P[i].Ti_begstep + P[i].dt_step == All.Ti_Current) {
+            for(int j = 0; j < 3; j++) {double v = P[i].Vel[j]; P[i].Vel[j] = P[i].KetjuTrueVel[j]; P[i].KetjuTrueVel[j] = v;}
+            continue;
+        }
+        auto it = by_id.find(P[i].ID); if(it == by_id.end()) continue;
+        ketju_output_state &o = here[it->second];
+        for(int j = 0; j < 3; j++) {double x = P[i].Pos[j], v = P[i].Vel[j]; P[i].Pos[j] = o.pos[j]; P[i].Vel[j] = o.vel[j]; o.pos[j] = x; o.vel[j] = v;}
+    }
+    swapped = !swapped;
+    if(!swapped) here.clear();
 #endif
 }
 
