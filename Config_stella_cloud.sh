@@ -71,6 +71,7 @@ MHD_B_SET_IN_PARAMS
 #CRFLUID_SPEEDOFLIGHT_REDUCTION=(3.e7/C_LIGHT_CGS) % 300 km/s CR transport speed as STARFORGE for clouds (galaxy/FIRE-3 default: 1000 km/s); transport runs along B; no isotropic fallback at B = 0
 CR_BACKGROUND_IONRATE_ATTENUATED  % chemistry zeta = CosmicRayIonRate x f(TreeCol N_H, STARFORGE) [+ zeta(e_CR)]; no background CR energy or pressure
 #CRFLUID_EXCHANGE_PDV_ONLY        % CRs exchange only their P dV work with the gas, not a pressure-fraction share of shock heating
+#CRFLUID_INJECTION_AT_SHOCKS=(0.1) % upstream CR acceleration at resolved shocks; Stella reads the efficiency from CosmicRay_ShockAccelEfficiency (default 0.1)
 #INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (CR transport tests; default zeroes it)
 CHEMCOOL_KEEP_IC_ABUNDANCES      % CLOUD: start from the molecular IC abundances
 OUTPUT_SHIELD_FAC                % CLOUD: write the dust-shielded G0 (G0_FUV_atten, ShieldFac_Dust), output only
