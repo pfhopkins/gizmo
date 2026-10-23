@@ -35,3 +35,11 @@ By default no timeout is applied — each test runs to completion regardless of 
 - Globally: set `timeout = <seconds>` under `[tool.pytest.ini_options]` in `pyproject.toml` (currently `0` = disabled)
 
 If you set both, keep `GIZMO_TEST_TIMEOUT` below the pytest-timeout so the inner one fires first and you get a skip, not a failure.
+## Optional tests (external libraries)
+
+Some modules need libraries that are not part of GIZMO. Their tests are skipped (not failed) when the library is not found,
+and the skip message says how to enable them:
+
+- `grackle_onezone`: `COOL_GRACKLE` with `COOL_GRACKLE_APIVERSION=3` (Grackle 3.x). Needs `GRACKLE_PATH=<Grackle install prefix>`
+  (or Grackle's `grackle.pc` on `PKG_CONFIG_PATH`) and `GRACKLE_DATA_DIR=<grackle repository>/input`. See
+  [test/grackle_onezone/README.md](grackle_onezone/README.md).

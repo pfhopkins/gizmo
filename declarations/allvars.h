@@ -643,7 +643,7 @@ extern struct global_data_all_processes
     RestartFile[100], ResubmitCommand[100], OutputListFilename[100];
 
 #ifdef COOL_GRACKLE
-    char GrackleDataFile[100];
+    char GrackleDataFile[DEFAULT_PATH_BUFFERSIZE_TOUSE]; /* full path to a Grackle table; the parameter parser copies up to this many chars */
 #endif
     /*! table with desired output times */
     double OutputListTimes[MAXLEN_OUTPUTLIST];

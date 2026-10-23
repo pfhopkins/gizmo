@@ -1888,15 +1888,15 @@ Grackle is an alternative chemical network using external libraries for solving 
 ## ---- GRACKLE: alternative chemical network 
 #COOL_GRACKLE                   # enable Grackle: cooling+chemistry package
 #COOL_GRACKLE_CHEMISTRY=1       # choose Grackle cooling chemistry
-#COOL_GRACKLE_APIVERSION=1      # set the version of the grackle api
+#COOL_GRACKLE_APIVERSION=3      # set the version of the grackle api: must be =3 (Grackle 3.x)
 ##---------------------------------------
 ```
 
-**COOL_GRACKLE**: Enables Grackle. This replaces the default cooling routines with the public cooling and chemistry package available at the url given. Note that this requires the separate installation of the Grackle libraries - these are independent, open source code which is not in any way affiliated with GIZMO. You can get them at: [`https://grackle.readthedocs.org/en/latest`](https://grackle.readthedocs.org/en/latest). Once the libraries are installed, and all the relevant paths are appropriately linked (see the lines activated in the Makefile when COOL_GRACKLE is active), this will turn on the relevant code to compile with those libraries and build a set of wrappers to those routines, using them instead of the otherwise default cooling routines. In addition to the standard GIZMO methods paper[s], users of these modules should cite the Grackle methods papers.
+**COOL_GRACKLE**: Enables Grackle. This replaces the default cooling routines with the public cooling and chemistry package available at the url given. Note that this requires the separate installation of the Grackle libraries - these are independent, open source code which is not in any way affiliated with GIZMO. You can get them at: [`https://grackle.readthedocs.org/en/latest`](https://grackle.readthedocs.org/en/latest). Once the libraries are installed, and all the relevant paths are appropriately linked (see the lines activated in the Makefile when COOL_GRACKLE is active), this will turn on the relevant code to compile with those libraries and build a set of wrappers to those routines, using them instead of the otherwise default cooling routines. This requires Grackle 3.x (tested with 3.4.1) and `COOL_GRACKLE_APIVERSION=3`. Install Grackle with its CMake build, then set `GRACKLE_PATH` to the Grackle install directory (in your `SYSTYPE` block of the `Makefile`, or on the make line), or add its `pkgconfig` directory to `PKG_CONFIG_PATH`: the Makefile takes the compile and link flags from Grackle's `grackle.pc`. The optional test `test/grackle_onezone` checks an installation (see its README). In addition to the standard GIZMO methods paper[s], users of these modules should cite the Grackle methods papers.
 
 **COOL_GRACKLE\_CHEMISTRY**: Chooses the cooling chemistry to be used for the Grackle package. 0=tabular (just use pre-computed cooling tables as a function of temperature and density; the simplest option). 1=Assume atomic chemistry (i.e. actually compute ionization, but not molecular chemistry). 2=atomic plus limited molecular chemistry. 3=atomic plus more extended molecular chemistry (still limited to primordial species). Any cooling associated with metal species requires METALS be enabled and particles have a defined metallicity field. In addition to the standard GIZMO methods paper[s], users of these modules should cite the Grackle methods papers.
 
-**COOL\_GRACKLE\_APIVERSION**: This sets the version of the Grackle API to assume is installed and linked at compile-time. The default value here (=1) will work with versions of Grackle before 2.2. After this version, some substantial changes were made to the Grackle API including names and definitions and numbers of variables for core functions, types of pointers/structures which can be passed, etc. So if you are using more recent Grackle versions, you need to set this to a larger integer (=2). Note the newest API is only partially-tested, so you may need to change one or two settings for the modules to compile correctly.
+**COOL\_GRACKLE\_APIVERSION**: Sets the version of the Grackle API. This must be =3 (Grackle 3.x): the older Grackle APIs are no longer supported, and with any other value (or none) the run stops at start-up.
 
 
 <a name="config-fluids-cooling-chimes"></a>
@@ -3075,7 +3075,7 @@ These parameters control the sub-grid models for super-massive black hole partic
     %-------------- Grackle UVB file (COOL_GRACKLE on)
     GrackleDataFile		     CloudyData_UVB=HM2012.h5
 
-**GrackleDataFile**: If the COOL_GRACKLE cooling modules are enabled, the user needs to specify the relevant data file for the pre-compiled UV background files used by Grackle. Additional flags may be needed for more advanced Grackle options.
+**GrackleDataFile**: If the COOL_GRACKLE cooling modules are enabled, the user needs to specify the relevant data file for the pre-compiled UV background files used by Grackle. Additional flags may be needed for more advanced Grackle options. Give the full path to a table in Grackle's `input/` directory; the `*_shielded.h5` tables also enable Grackle's UV self-shielding.
 
 
 <a name="params-optional-turb"></a>
