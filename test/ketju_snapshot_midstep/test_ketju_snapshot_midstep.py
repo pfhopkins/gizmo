@@ -2,7 +2,8 @@
 
 An isolated binary in a region whose steps (1e-5) span ~40 orbits, written every 3.3e-6, i.e. mostly inside steps. Each
 snapshot's relative separation must match the exact two-body orbit from the IC state as GIZMO reads it (float32). Before
-the fix mid-step members were written on the drift chord, O(1) off; now ~1e-4 (the start-state and float32 floor)."""
+the fix mid-step members were written on the drift chord, O(1) off; now ~1e-4 (the start-state and float32 floor).
+Variant: KetjuKeplerPairs = 1 advances the pair by the exact Kepler drift instead of MSTAR, to the same accuracy."""
 
 import glob
 import subprocess
@@ -10,6 +11,7 @@ import sys
 
 import h5py
 import numpy as np
+import pytest
 from scipy.integrate import solve_ivp
 
 from gizmo.test import build_and_run_test, clean_test_outputs
@@ -19,10 +21,11 @@ TEST_DIR = f"test/{TEST_NAME}"
 G = 4.300710573e-6
 
 
-def test_ketju_snapshot_midstep():
+@pytest.mark.parametrize("kepler", [0, 1])
+def test_ketju_snapshot_midstep(kepler):
     subprocess.run([sys.executable, "make_ketju_snapshot_midstep_ics.py"], cwd=TEST_DIR, check=True)
     clean_test_outputs(TEST_NAME)
-    build_and_run_test(TEST_NAME, 1, 1)
+    build_and_run_test(TEST_NAME, 1, 1, param_overrides={"KetjuKeplerPairs": kepler})
     with h5py.File(f"{TEST_DIR}/ketju_snapshot_midstep_ics.hdf5", "r") as f:
         g = f["PartType4"]; x = np.array(g["Coordinates"], dtype=np.float32).astype(float); v = np.array(g["Velocities"], dtype=np.float32).astype(float)
         m = np.array(g["Masses"], dtype=np.float32).astype(float) * 1e10
@@ -35,5 +38,5 @@ def test_ketju_snapshot_midstep():
             p = np.array(g["Coordinates"])[o]
         y = solve_ivp(rhs, (0, t), y0, method="DOP853", rtol=1e-13, atol=1e-22).y[:3, -1]
         worst = max(worst, np.linalg.norm(p[1] - p[0] - y) / np.linalg.norm(y))
-    print(f"worst snapshot |dr|/r = {worst:.2e}")
+    print(f"KetjuKeplerPairs={kepler}: worst snapshot |dr|/r = {worst:.2e}")
     assert worst < 2e-3
