@@ -833,6 +833,86 @@ static void report_probes()
 #endif
 }
 
+// ===========================================================================
+// PHASE M -- M1-like HI photoionization on hot, fully ionised cells (DEVIATIONS D-30):
+// RHS parity with H+ at and just above 1, and Fortran vs C++ one-zone solves
+// ===========================================================================
+extern thread_local long cxx_stat_rhs_evals;
+static int phase_M(const ChemTables& TT)
+{
+    const double TOL = 1e-12;
+    const double eps_ion = 5.776e-19 / 9.526e-8;   // heating per ionization of the M1 band [erg] (B2 cell 3782)
+    const double Gs[]  = {1e-8, 1e-7, 1e-6};
+    const double yns[] = {0.1, 4.4, 100.0};
+    const double Ts[]  = {1.5e4, 5e4, 1.6e5};
+    const double xps[] = {0.99999, 1.0, 1.00002, 1.00008};
+    std::vector<Acc> acc(NSPEC);
+    Acc rfl;
+    set_cell_commons(1.7, 1.0);
+    for (double G : Gs) for (double yn : yns) for (double T0 : Ts) for (double xp : xps) {
+        std::snprintf(g_where, sizeof(g_where), "M Gamma=%g nH=%g T=%g xH+=%g", G, yn, T0, xp);
+        COOLRC.rt_phot_HI = G; COOLRC.rt_heat_HI = G * eps_ion;
+        double y[NSPEC];
+        initial_state(2, y);
+        y[IH2] = 0.0; y[IHP] = xp;
+        y[ITMP] = energy_at(TT, yn, T0, y);
+        double tguess = temp_of(TT, yn, y[ITMP], y);
+        set_columns(yn, 0.0, y[ICO]);
+        double rpar[NRPAR]; std::memset(rpar, 0, sizeof(rpar));
+        rpar[0] = yn;
+        double a2 = 0.0, ahd = 0.0, aco = std::max(y[ICO], 0.0);
+        COOLRC.cosmic_ray_ion_rate = g_zeta;
+        CALC_PHOTO_WRAPPER(&tguess, rpar, &a2, &ahd, &aco);
+        ChemCell c; chem_bind_cell(c, TT, NET);
+        c.yn = yn; c.dl = 0.0; c.divv = 0.0;
+        c.tdust = 17.3; COOLRC.tdust = 17.3;
+        double yF[NSPEC], ydF[NSPEC], ydC[NSPEC];
+        for (int i = 0; i < NSPEC; i++) { yF[i] = y[i]; ydF[i] = -7.0; ydC[i] = -9.0; }
+        int neq = NSPEC, ipar[NIPAR] = {0, 0};
+        double t0 = 0.0;
+        int aborted = 0;
+        g_fatal_armed = 1;
+        if (setjmp(g_fatal_jmp) == 0) RATE_EQ(&neq, &t0, yF, ydF, rpar, ipar);
+        else aborted = 1;
+        g_fatal_armed = 0;
+        int rc = rhs_cxx(y, ydC, c);
+        int fF = (ipar[0] != 0) || aborted, fC = rc != 0;
+        rfl.add(fF, fC, 0.0);
+        if (fF && fC) continue;
+        for (int i = 0; i < NSPEC; i++) acc[i].add(ydF[i], ydC[i], TOL);
+    }
+    std::printf("\nPHASE M -- M1 HI photoionization, hot ionised cells, H+ in [0.99999, 1.00008]: RHS parity, tol %.0e\n", TOL);
+    int ok = 1;
+    for (int i = 0; i < NSPEC; i++) {
+        int pass = acc[i].npass == acc[i].n; ok &= pass;
+        std::printf("  ydot(%-6s) %5ld/%-5ld %s worst rel = %.3e\n", i == ITMP ? "energy" : SP[i].name,
+                    acc[i].npass, acc[i].n, pass ? "PASS" : "FAIL", acc[i].worst);
+    }
+    { int pass = rfl.npass == rfl.n; ok &= pass; std::printf("  flag (0/1)   %5ld/%-5ld %s\n", rfl.npass, rfl.n, pass ? "PASS" : "FAIL"); }
+    // one-zone: the B2 cell 3782 solve (n 4.4, 1.65e5 K, x_H+ 0.9999951, dt 1.017e11 s) at three Gamma_HI
+    std::printf("  one-zone (n=4.4, T0=1.65e5 K, dt=1.017e11 s), Fortran DVODE vs C++ CVODE, gate final T and x_H+ within 1%%:\n");
+    for (double G : Gs) {
+        COOLRC.rt_phot_HI = G; COOLRC.rt_heat_HI = G * eps_ion;
+        double y0[NSPEC]; initial_state(2, y0); y0[IH2] = 0.0; y0[IHP] = 0.9999951259;
+        const double yn = 4.412544250, dt = 1.017008130e11;
+        double e0 = energy_at(*g_cx, yn, 1.6515e5, y0);
+        double yF[NSPEC], yC[NSPEC];
+        for (int i = 0; i < NSPEC; i++) { yF[i] = y0[i]; yC[i] = y0[i]; }
+        double eF = e0, eC = e0, tdF = 34.2, tdC = 34.2;
+        int rcF = run_fortran(dt, yn, &eF, yF, &tdF);
+        long n0 = cxx_stat_rhs_evals;
+        int rcC = run_cxx(dt, yn, &eC, yC, &tdC);
+        long nrhs = cxx_stat_rhs_evals - n0;
+        double TF = temp_of(*g_cx, yn, eF, yF), TC = temp_of(*g_cx, yn, eC, yC);
+        double dT = std::fabs(TF - TC) / TF, dx = std::fabs(yF[IHP] - yC[IHP]) / yF[IHP];
+        int pass = !rcF && !rcC && std::isfinite(TC) && dT < 1e-2 && dx < 1e-2; ok &= pass;
+        std::printf("  Gamma_HI=%.0e  rc f77/cxx %d/%d  T %.6e / %.6e (rel %.2e)  x_H+ %.9f / %.9f  C++ RHS evals %ld  %s\n",
+                    G, rcF, rcC, TF, TC, dT, yF[IHP], yC[IHP], nrhs, pass ? "PASS" : "FAIL");
+    }
+    COOLRC.rt_phot_HI = COOLRC.rt_heat_HI = 0.0;
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     const char* csv = (argc > 1) ? argv[1] : "conservation.csv";
@@ -869,6 +949,7 @@ int main(int argc, char** argv)
     if (want('C')) phase_C(csv);
     if (want('O')) { std::printf("\nPHASE O -- one-zone trajectories to 300 Myr\n"); ok &= phase_O(); }
     if (want('I')) phase_I();
+    if (want('M')) ok &= phase_M(Cx);
     report_probes();
     std::printf("\n=== PARITY: %s ===\n", ok ? "ALL PASS" : "FAILURES PRESENT");
     chem_tables_free(Cx);
