@@ -1601,8 +1601,7 @@ void process_wake_ups(void)
         if(TimeBinActive[bin]) {NumForceUpdate++;}
 		n++;
 
-		/* reverse part of the last second-half kick this particle received
-		   (to correct it back to its new active time) */
+		/* re-kick the particle from its old step midpoint to the midpoint of its new step */
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
 		WakeRev_nmoved++;
 #endif
@@ -1618,7 +1617,14 @@ void process_wake_ups(void)
 		       this case, and sets the new time consistent with the system time instead -- done below. */
 		    set_predicted_quantities_for_extra_physics(i);
 #else
-		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
+		    { /* kick 1 skips woken cells (not in ActiveParticleList): undo the old half-kick back to now, then apply the new one here */
+			integertime dt_new = GET_INTEGERTIME_FROM_TIMEBIN(bin), dt_eff = (All.Ti_Current / dt_new + 1) * dt_new - All.Ti_Current; /* new step ends when bin is next active */
+			int bin_was_active = TimeBinActive[bin]; TimeBinActive[bin] = 1; /* do_the_kick only kicks active bins */
+			do_the_kick(i, P[i].Ti_begstep + P[i].integertime_step() / 2, All.Ti_Current, P[i].Ti_current, 1);
+			do_the_kick(i, All.Ti_Current, All.Ti_Current + dt_eff / 2, P[i].Ti_current, 0);
+			TimeBinActive[bin] = bin_was_active;
+			P[i].dt_step = dt_eff;
+		    }
 		    set_predicted_quantities_for_extra_physics(i);
 #endif
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
@@ -1641,7 +1647,7 @@ void process_wake_ups(void)
 		}
 #else
 		P[i].Ti_begstep = All.Ti_Current;
-		P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
+		if(!(tend < tstart)) {P[i].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);} /* else set with the kicks above */
 #endif
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
 	    }
