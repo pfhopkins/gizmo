@@ -866,7 +866,7 @@ void resolvedism_photoionize(void);
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
 void assign_stellar_masses(void);
-double draw_one_mass_from_kroupa_IMF(void);
+double draw_one_mass_from_kroupa_IMF(unsigned long long *rng);
 void finalize_sampled_star(int i, double M_drawn);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 void recompute_resolvedism_fuv_luminosities(void);

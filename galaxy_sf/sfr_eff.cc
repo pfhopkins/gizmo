@@ -10,6 +10,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#ifdef GALSF_RESOLVEDISM
+#include "resolvedism_rng.h"
+#endif
 
 /* CellP[].Temp exists only under CHEMCOOL; SFinfo logging stores 0 without it */
 #ifdef CHEMCOOL
@@ -505,7 +508,8 @@ void star_formation_parent_routine(void)
                  * P = (M_cell / M_star) * pfac  (Gutcke+ 2021, eq. 3).
                  * Massive stars have low P; low-mass stars have high P.
                  * SFR is conserved on average: <M_star * P> = M_cell * pfac. */
-                double M_drawn_imf = draw_one_mass_from_kroupa_IMF();
+                unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_IMF_MASS); /* rank-independent per-event stream */
+                double M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
@@ -529,7 +533,7 @@ void star_formation_parent_routine(void)
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
                     /* forced formation skips the 1/M acceptance: redraw by number (accept mass-weighted draw with M_min/M) */
                     double m_lo = DMAX(All.IMFSampleMinMass, 0.08);
-                    do {M_drawn_imf = draw_one_mass_from_kroupa_IMF();} while(gsl_rng_uniform(random_generator) > m_lo / M_drawn_imf);
+                    do {M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);} while(resolvedism_rng_uniform(&imf_rng) > m_lo / M_drawn_imf);
                     m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
 #endif
                     prob = 2.0;}}
@@ -541,7 +545,12 @@ void star_formation_parent_routine(void)
                 if(NUM_METAL_SPECIES>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += w * All.SolarAbundances[k] * pfac;}}
 #endif
                 
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                unsigned long long sf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_SF_ACCEPT);
+                if(resolvedism_rng_uniform(&sf_rng) < prob)    /* ok, make a star */
+#else
                 if(get_random_number(P[i].ID + 1) < prob)    /* ok, make a star */
+#endif
                 {
                     
 #ifdef SINK_SEED_FROM_LOCALGAS
@@ -841,9 +850,10 @@ void star_formation_parent_routine(void)
                                 double mass_solar = P[i_star].Mass * UNIT_MASS_IN_SOLAR;
                                 double prob_massive = mass_solar / All.MassPerStarIMF;
                                 P[i_star].Mstar = 0;
-                                if(gsl_rng_uniform(random_generator) < prob_massive) {
+                                unsigned long long stoch_rng = resolvedism_rng_seed(i_star, RESOLVEDISM_RNG_SALT_STOCH_IMF);
+                                if(resolvedism_rng_uniform(&stoch_rng) < prob_massive) {
                                     double xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
-                                    double y = gsl_rng_uniform(random_generator);
+                                    double y = resolvedism_rng_uniform(&stoch_rng);
                                     double nor = pow(xmax, -1.3) - pow(xmin, -1.3);
                                     P[i_star].Mstar = pow(pow(xmin, -1.3) + nor * y, -1.0/1.3);
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE

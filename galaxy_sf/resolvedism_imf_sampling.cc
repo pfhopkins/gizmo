@@ -10,6 +10,7 @@
 #include "resolvedism_star_age.h"
 #include "resolvedism_selfcheck.h"
 #include "resolvedism_fb_shared.h"
+#include "resolvedism_rng.h"
 #include "../mesh/kernel.h"
 
 /* LYRA-style single-star IMF sampling (Gutcke+ 2021).
@@ -58,8 +59,8 @@ static inline double envelope_function(double x)
 /* Public function: draw a single stellar mass from the mass-weighted Kroupa IMF via rejection sampling.
  * The mass-weighting is cancelled by the LYRA probability P = M_cell/M_star * pfac,
  * giving the correct number-weighted Kroupa distribution for formed stars.
- * Lower bound from All.IMFSampleMinMass (default 0.08), upper bound 350 Msun. */
-double draw_one_mass_from_kroupa_IMF(void)
+ * Lower bound from All.IMFSampleMinMass (default 0.08), upper bound 350 Msun. All uniforms come from the per-event stream rng. */
+double draw_one_mass_from_kroupa_IMF(unsigned long long *rng)
 {
     double M_min = All.IMFSampleMinMass;
     if(M_min < 0.08) M_min = 0.08;
@@ -67,9 +68,9 @@ double draw_one_mass_from_kroupa_IMF(void)
     double M_drawn;
     do {
         /* Proposal from CDF inversion of envelope M^{-0.3}: integral gives M^{0.7} */
-        M_drawn = pow((pow(M_max, 0.7) - pow(M_min, 0.7)) * gsl_rng_uniform(random_generator)
+        M_drawn = pow((pow(M_max, 0.7) - pow(M_min, 0.7)) * resolvedism_rng_uniform(rng)
                       + pow(M_min, 0.7), 1.0 / 0.7);
-    } while(gsl_rng_uniform(random_generator) > (drawMassFromIMF(M_drawn) / envelope_function(M_drawn)));
+    } while(resolvedism_rng_uniform(rng) > (drawMassFromIMF(M_drawn) / envelope_function(M_drawn)));
     return M_drawn;
 }
 

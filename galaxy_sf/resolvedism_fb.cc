@@ -9,6 +9,7 @@
 #include "../mesh/kernel.h"
 #include "resolvedism_selfcheck.h"
 #include "resolvedism_fb_shared.h"
+#include "resolvedism_rng.h"
 #include <vector>
 
 /* Death-event log rows (SNinfo/AGBinfo), written when the outcome is known (booking), so failed
@@ -530,7 +531,8 @@ void resolvedism_determine_SNe(void)
 #endif
 
             /* Stochastic check */
-            double rn = get_random_number(P[i].ID + 7 * ThisTask + 13 * All.NumCurrentTiStep);
+            unsigned long long ia_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_IA); /* rank-independent */
+            double rn = resolvedism_rng_uniform(&ia_rng);
             if(rn < P_Ia) {
                 P[i].SNe_ThisTimeStep = 4; /* Type Ia */
                 P[i].M_at_SN_trigger = (MyFloat)(P[i].Mass * UNIT_MASS_IN_SOLAR);
