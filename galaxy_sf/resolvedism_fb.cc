@@ -1410,7 +1410,8 @@ void resolvedism_inject_fb_energy(void)
 #else
     fb_split(E_mech2 - E_mech0, 2, 1);
 #endif
-    fb_split(E_mech3 - E_mech2, 0, 4);
+    if(E_injected[0] + E_injected[4] + n_events[0] + n_events[4] <= 0 && n_events[5] > 0) {E_coupled[5] += E_mech3 - E_mech2;} /* failed SNe deposit ejecta: their own channel */
+    else {fb_split(E_mech3 - E_mech2, 0, 4);}
 #ifdef CHEMCOOL
     n_events[6] = PIHeatPendingCells; E_injected[6] = E_coupled[6] = PIHeatPendingErg; /* heated by the chemistry since the last row */
     PIHeatPendingErg = PIHeatPendingCells = 0;
