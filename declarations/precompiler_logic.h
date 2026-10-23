@@ -1352,6 +1352,9 @@
 #endif
 #endif
 
+#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && (!defined(CHEMCOOL) || !defined(RT_USE_TREECOL_FOR_NH) || defined(CR_SCALE_WITH_G0))
+#error "CR_BACKGROUND_IONRATE_ATTENUATED needs CHEMCOOL and the TreeCol column (RT_USE_TREECOL_FOR_NH), and replaces CR_SCALE_WITH_G0"
+#endif
 #if defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR)
 #error "GALSF_RESOLVEDISM_G0_SCALE_SFR and GALSF_RESOLVEDISM_GHOSTD_G0_CR were renamed: use GHOSTD_G0_CR"
 #endif
