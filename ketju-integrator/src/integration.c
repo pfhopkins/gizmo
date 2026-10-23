@@ -98,7 +98,9 @@ static inline double separation_and_r2(const struct ketju_system *R, int i,
     return r2;
 }
 
-// External linear tide: a_i += T x_i, U += (1/2) sum_i m_i x_i.T.x_i (U = -potential)
+// External linear tide a_i = T x_i, added to acc. It stays out of U, which sets the time transformation; its work
+// updates B in kick() instead, as for velocity-dependent forces (Mikkola & Aarseth 2002). Returns its potential
+// energy term (1/2) sum_i m_i x_i.T.x_i for diagnostics.
 static double external_tide(struct ketju_system *R, double (*acc)[3]) {
     if (!R->options->enable_external_tide) return 0;
     const double *t = R->options->external_tidal_tensor;
@@ -182,7 +184,6 @@ after_loops:
     }
 
     is->U *= R->constants->G;
-    is->U += external_tide(R, NULL);
 }
 
 // To support optional softening and ignoring of star-star interactions we need
@@ -379,7 +380,7 @@ static void compute_U_and_Newtonian_Acc(struct ketju_system *R) {
     timer_stop(&R->perf->time_force_comm);
 
     timer_start(&R->perf->time_force);
-    is->U += external_tide(R, is->acc);
+    external_tide(R, is->acc);
     int hi, lo;
     for (int i = 0; i < R->num_particles - 1; i++) {
 
@@ -656,6 +657,15 @@ static void kick(double ds, struct ketju_system *R) {
     compute_U_and_Newtonian_Acc(R);
     double dt = ds / is->U;
 
+    const int tide = R->options->enable_external_tide;
+    double(*v_old)[3] = NULL, (*a_tide)[3] = NULL;
+    if (tide) {
+        v_old = malloc(sizeof(double[R->num_particles][3]));
+        a_tide = calloc(R->num_particles, sizeof(double[3]));
+        memcpy(v_old, R->physical_state->vel, sizeof(double[R->num_particles][3]));
+        external_tide(R, a_tide);
+    }
+
     if (!R->options->PN_flags) {
         // no velocity dependent forces (only PN for now), just the newtonian
         // part needed
@@ -674,6 +684,17 @@ static void kick(double ds, struct ketju_system *R) {
         auxiliary_kick(dt / 2, R);
     }
     update_vel(R, PHYSICAL);
+    if (tide) { // B = U - T loses the tide's work over the kick, at the mean velocity
+        double W = 0;
+        for (int i = 0; i < R->num_particles; i++) {
+            for (int k = 0; k < 3; k++) {
+                W += R->physical_state->mass[i] * 0.5 * (v_old[i][k] + R->physical_state->vel[i][k]) * a_tide[i][k];
+            }
+        }
+        is->B -= W * dt;
+        free(v_old);
+        free(a_tide);
+    }
 }
 
 static void compute_total_energy(struct ketju_system *R) {

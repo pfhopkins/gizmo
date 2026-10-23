@@ -133,8 +133,8 @@ struct ketju_integration_options {
     // If disabled the merger remnant moves at the CoM velocity of the merged
     // BHs.
     bool enable_external_tide;
-    //< Add the linear tide a_i = T (x_i - x_origin) of an external field, and
-    // its potential to the energy, in the system's frame.
+    //< Add the linear tide a_i = T (x_i - x_origin) of an external field, in
+    // the system's frame. Its work changes the binding energy B in each kick.
     double external_tidal_tensor[6];
     //< T for enable_external_tide: xx, yy, zz, xy, yz, xz.
 };
