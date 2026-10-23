@@ -628,6 +628,24 @@
 #endif
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Type-4 stars: 4th-order Hermite, exact direct star-star gravity (and jerk), Aarseth steps */
+#if defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(PMGRID)
+#error "STARS_HERMITE_DIRECT_GRAVITY takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, another HERMITE_INTEGRATION mask, other SINK_CALC_DISTANCES users or PMGRID"
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && ((ADAPTIVE_GRAVSOFT_FORALL) & 16)
+#error "STARS_HERMITE_DIRECT_GRAVITY needs fixed Type-4 softening: adaptive softening changes between Hermite force evaluations and collapses the steps"
+#endif
+#define HERMITE_INTEGRATION 16
+#define SINGLE_STAR_DIRECT_GRAVITY
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#ifndef STARS_HERMITE_AARSETH_ETA
+#define STARS_HERMITE_AARSETH_ETA 0.02 /* Aarseth (1985) step parameter */
+#endif
+#endif
+#if defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(STAR_DIRECT_GRAVITY_TYPE)
+#define STAR_DIRECT_GRAVITY_TYPE 5
+#endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
 #ifndef HERMITE_CORRECTOR_ITERATIONS

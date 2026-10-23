@@ -2031,7 +2031,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
                 /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
                    here as well would double every such force */
-                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+                if((ptype == STAR_DIRECT_GRAVITY_TYPE) && (P[no].Type == STAR_DIRECT_GRAVITY_TYPE)) {no = Nextnode[no]; continue;}
 #endif
                 /* the index of the node is the index of the particle */
                 if(P[no].Ti_current != ti_Current)
@@ -2329,7 +2329,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                    Nodes made entirely of stars vanish and are skipped; everything else stays usable at
                    monopole level, so a star target keeps the tree's O(log N) walk instead of having to
                    open every node that happens to contain a star. */
-                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;} /* pure-star node: nothing here for us. Checked before the drift below so we never bother drifting a node we discard; the COM shift itself has to wait until after it. */
+                if((ptype == STAR_DIRECT_GRAVITY_TYPE) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;} /* pure-star node: nothing here for us. Checked before the drift below so we never bother drifting a node we discard; the COM shift itself has to wait until after it. */
 #endif
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
@@ -2378,7 +2378,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                    contains a star, costs an extra O(N_star log N) node visits per star target.
                    Note mass is reduced here, before the opening criteria below, so they judge the node on
                    the mass actually being used. */
-                if((ptype == 5) && (nop->sink_mass > 0))
+                if((ptype == STAR_DIRECT_GRAVITY_TYPE) && (nop->sink_mass > 0))
                 {
                     double mass_nosink = mass - nop->sink_mass;
                     dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;

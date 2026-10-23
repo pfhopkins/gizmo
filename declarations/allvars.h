@@ -1791,6 +1791,9 @@ extern struct star_direct_data
 #ifdef KETJU_REGULARIZATION
     MyIDType KetjuChainID; /* same-chain pairs within the region radius do not set dt_2body, as in the tree walk */
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    MyFloat AGS_zeta; /* source zeta, so the pair force is the tree's (tree_pair_gravity_factors) */
+#endif
 }
  *StarDirect;
 extern int N_StarDirect;

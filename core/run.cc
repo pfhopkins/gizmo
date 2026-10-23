@@ -505,6 +505,10 @@ void run(void)
         HermiteOnlyFlag = 1;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
+#if defined(STARS_HERMITE_DIRECT_GRAVITY) && defined(KETJU_TYPE4_STARS)
+        for(int i : ActiveParticleList) /* this pass set the kick a new KETJU member's start subtraction cancels */
+            if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}}
+#endif
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
 
