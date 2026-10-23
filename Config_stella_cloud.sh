@@ -84,7 +84,8 @@ OUTPUT_SHIELD_FAC                % CLOUD: write the dust-shielded G0 (G0_FUV_att
 #GALSF_RESOLVEDISM_BH_PROMOTION    % auto-enables SINK_PARTICLES + SINK_GRAVCAPTURE_GAS
 
 ## -- Box geometry & PM grid (for zoom-ins, molecular clouds) --
-#BOX_PERIODIC
+BOX_PERIODIC                     % as STARFORGE: MakeCloud's warm medium fills the box, so B threads it without an open edge
+GRAVITY_NOT_PERIODIC             % as STARFORGE: isolated cloud gravity
 #PMGRID=256
 #SHIFT_BY_HALF_BOX
 #SHIFTBACK_ON_OUTPUT

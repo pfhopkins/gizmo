@@ -14,7 +14,7 @@ TimeOfFirstSnapshot             0
 SnapFormat                      3                 % HDF5
 
 %---- Box & simulation time
-BoxSize                         0.07            % 70 pc = MakeCloud 10 R, open box (cloud + background)
+BoxSize                         0.07            % 70 pc = MakeCloud 10 R, periodic box (cloud + box-filling warm medium), as STARFORGE
 TimeBegin                       0.0
 TimeMax                         0.005           % ~4.9 Myr
 ComovingIntegrationOn           0                 % non-cosmological
