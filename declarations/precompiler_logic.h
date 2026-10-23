@@ -299,6 +299,11 @@
 
 /* set default modules for different cosmic ray transport settings/packages */
 #ifdef COSMIC_RAY_FLUID
+#if defined(GALSF_RESOLVEDISM)
+#ifndef CRFLUID_EXCHANGE_PDV_ONLY
+#define CRFLUID_EXCHANGE_PDV_ONLY /* Stella default: CRs take only their own P dV work, no share of shock heating */
+#endif
+#endif
 #if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION)
 #define CRFLUID_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
