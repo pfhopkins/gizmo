@@ -413,6 +413,9 @@ static void incode_total_energy(void)
 #ifdef KETJU_REGULARIZATION
                 ketju_note_total_energy(E, E0); /* printed evaluations only: those are at full syncs, mid-step members carry chord velocities */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+                rumi_note_total_energy(E0); /* the collision energy RUMI++ booked, over |E0| (as KETJU ENERGY's collisions-dE) */
+#endif
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
                        (E_prop - E0_prop - ledger)/fabs(E0_prop), ledger, n_int, KE, PE, PE_prop);
@@ -1661,6 +1664,9 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+          "rumi          %10.2f  %5.1f%%\n"
+#endif
 #ifdef KETJU_REGULARIZATION
           "ketju         %10.2f  %5.1f%%\n"
           "   kj_limit   %10.2f  %5.1f%%\n"
@@ -1752,6 +1758,9 @@ void write_cpu_log(void)
 #endif
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+    All.CPU_Sum[CPU_RUMI], (All.CPU_Sum[CPU_RUMI]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
 #ifdef KETJU_REGULARIZATION
     All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH],

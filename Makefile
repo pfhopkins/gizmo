@@ -1081,12 +1081,25 @@ ifeq ($(RUMI_LIB_DIR),)
 $(error STARS_INTEGRATED_BY_RUMI: set RUMI_LIB_DIR to the RUMI++ library install prefix)
 endif
 include $(RUMI_LIB_DIR)/rumi-lib.mk
+# interface check: the installed librumi.a must embed the API version rumi_coupling.cc is written for
+RUMI_LIB_ID := $(shell strings $(RUMI_LIB_DIR)/lib/librumi.a 2>/dev/null | grep -m1 '^RUMI_LIB_ID ')
+RUMI_LIB_API := $(patsubst api=%,%,$(filter api=%,$(RUMI_LIB_ID)))
+RUMI_COUPLING_API := $(shell sed -n 's/^\#define RUMI_COUPLING_API_VERSION *\([0-9]*\).*/\1/p' galaxy_sf/rumi_coupling.cc)
+ifneq ($(RUMI_LIB_API),$(RUMI_COUPLING_API))
+$(error STARS_INTEGRATED_BY_RUMI: $(RUMI_LIB_DIR)/lib/librumi.a has RUMI++ interface version '$(RUMI_LIB_API)' ($(RUMI_LIB_ID)), galaxy_sf/rumi_coupling.cc expects '$(RUMI_COUPLING_API)': rebuild RUMI++ at the matching version)
 endif
-OBJS    += galaxy_sf/rumi_coupling.o
+$(info RUMI++ library: $(RUMI_LIB_ID))
+RUMI_LIB_INCL += -DRUMI_LIB_ID_MK='"$(RUMI_LIB_ID)"'
+RUMI_LIB_DEP = $(RUMI_LIB_DIR)/lib/librumi.a
+endif
+OBJS    += galaxy_sf/rumi_coupling.o galaxy_sf/stella_star_mergers.o
 else
 RUMI_LIB_INCL =
 RUMI_LIB_LIBS =
 endif
+
+# a reinstalled RUMI++ library recompiles the coupling (it embeds the library's id) and relinks
+galaxy_sf/rumi_coupling.o: $(RUMI_LIB_DEP)
 
 # HEALPix library for the RT_USE_TREECOL_FOR_NH angular column bins
 ifeq (NEED_HEALPIX,$(findstring NEED_HEALPIX,$(CONFIGVARS)))

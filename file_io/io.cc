@@ -6266,6 +6266,11 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #endif
 #endif
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+    {const char *rid = rumi_lib_id_string(); hid_t st = H5Tcopy(H5T_C_S1); H5Tset_size(st, strlen(rid) + 1);
+     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "RUMI_lib_id", st, hdf5_dataspace, H5P_DEFAULT);
+     H5Awrite(hdf5_attribute, st, rid); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace); H5Tclose(st);}
+#endif
 }
 
 

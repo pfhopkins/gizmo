@@ -309,7 +309,7 @@ void init(void)
             }
 #endif
 #ifdef STARS_INTEGRATED_BY_RUMI
-            P[i].RumiIntegrated = 0; P[i].RumiTiStart = P[i].RumiTiEnd = 0;
+            P[i].RumiIntegrated = 0; P[i].RumiMember = 0; P[i].RumiDirectAcc = {}; P[i].RumiTiStart = P[i].RumiTiEnd = 0; P[i].RumiMidTi = -1;
 #endif
 #ifdef HERMITE_INTEGRATION
             /* the retained start-of-step state, normally written by the first half-step kick; seed it

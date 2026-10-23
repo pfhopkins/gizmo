@@ -80,6 +80,11 @@ void rumi_limit_timesteps(void);
 void rumi_integrate(void);
 void rumi_finish_drift(void);
 void rumi_swap_output_state(void);
+void rumi_nonmember_star_gravity(void);
+void rumi_save_state(void);
+void rumi_load_state(void);
+const char *rumi_lib_id_string(void);
+void rumi_note_total_energy(double E0);
 #endif
 #ifdef KETJU_REGULARIZATION
 void ketju_limit_timesteps(void);

@@ -849,7 +849,9 @@ extern struct global_data_all_processes
 #ifdef STARS_INTEGRATED_BY_RUMI
   char   RumiConfigFile[256];            /*!< RUMI++ config file (integrator keys) */
   double RumiStarMaxTimestep;            /*!< cap on the common star step [code units], 0 = none */
-  int    RumiNumThreads;                 /*!< Kokkos host threads of the RUMI++ task, 0 = Kokkos default */
+  int    RumiNumThreads;                 /*!< Kokkos host threads per RUMI++ rank, 0 = Kokkos default */
+  double RumiLengthUnitPc, RumiMassUnitMsun, RumiVelUnitKms; /*!< RUMI++ units in code units (0: pc, Msun, km/s); tests in G = 1 units map 1:1 */
+  int    RumiNumRanks;                   /*!< tasks 0..RumiNumRanks-1 run RUMI++ (its distributed path), default 1 */
   int    RumiDeviceId;                   /*!< GPU of the RUMI++ task, -1 = Kokkos default */
   int    RumiPrintInterval;              /*!< star steps between RUMI++ energy/timer lines, 0 = off */
   int    RumiReplayDump;                 /*!< 1: write the first RUMI++ state, G and step for a standalone replay */

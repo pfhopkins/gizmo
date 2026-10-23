@@ -2484,6 +2484,22 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.RumiNumThreads;
       id[nt++] = INT;
 
+      strcpy(tag[nt], "RumiLengthUnitPc");
+      addr[nt] = &All.RumiLengthUnitPc;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiMassUnitMsun");
+      addr[nt] = &All.RumiMassUnitMsun;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiVelUnitKms");
+      addr[nt] = &All.RumiVelUnitKms;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiNumRanks");
+      addr[nt] = &All.RumiNumRanks;
+      id[nt++] = INT;
+
       strcpy(tag[nt], "RumiDeviceId");
       addr[nt] = &All.RumiDeviceId;
       id[nt++] = INT;
@@ -2836,6 +2852,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("RumiConfigFile",tag[i])==0) {strcpy((char *)addr[i],"rumi_config.txt"); printf("Tag %s not set: defaulting to rumi_config.txt\n",tag[i]); continue;}
                 if(strcmp("RumiStarMaxTimestep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (no cap beyond the stars' own criteria)\n",tag[i]); continue;}
                 if(strcmp("RumiNumThreads",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Kokkos default)\n",tag[i]); continue;}
+                if(strcmp("RumiLengthUnitPc",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in pc)\n",tag[i]); continue;}
+                if(strcmp("RumiMassUnitMsun",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in Msun)\n",tag[i]); continue;}
+                if(strcmp("RumiVelUnitKms",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in km/s)\n",tag[i]); continue;}
+                if(strcmp("RumiNumRanks",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1\n",tag[i]); continue;}
                 if(strcmp("RumiDeviceId",tag[i])==0) {*((int *)addr[i])=-1; printf("Tag %s not set: defaulting to -1 (Kokkos default)\n",tag[i]); continue;}
                 if(strcmp("RumiPrintInterval",tag[i])==0) {*((int *)addr[i])=64; printf("Tag %s not set: defaulting to 64\n",tag[i]); continue;}
                 if(strcmp("RumiReplayDump",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0\n",tag[i]); continue;}
