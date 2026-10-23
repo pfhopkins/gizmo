@@ -206,6 +206,21 @@
 
 
 
+/* free-surface volume correction (HYDRO_KERNEL_SURFACE_VOLCORR): the cell volume factor is SLOPE * f_imb + OFFSET, held between FLOOR and 1,
+   with the fits of Reinhardt & Stadel 2017 (arXiv:1701.08296, Fig. 3). Fitted only for the cubic spline and the Wendland C2 kernel in 3D. */
+#ifdef HYDRO_KERNEL_SURFACE_VOLCORR
+#if (KERNEL_FUNCTION == 3)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.39701)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.02918)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.4)   /* the plateau of their cubic-spline fit, read from Fig. 3 (reached at f_imb ~ 0.26) */
+#else /* the Wendland C2 fit; the other kernels have no fit of their own and use this one */
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.52444)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.0259)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.344301)
+#endif
+#endif
+
+
 GIZMO_GPU_FUNCTION static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hinv4)
 {
   *hinv = 1.0 / h;
