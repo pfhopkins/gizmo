@@ -393,7 +393,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                     cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
 #endif
                     double delta = 0.1 * dt_hydrokick * cs_eff_forrestoringforce / Lgrad, q0=log(CellP[i].Density_ExplicitInt), q1=log(P[i].Mass/CellP[i].FaceClosureError), qn=0; if(delta > 0.005) {qn=q0*exp(-delta) + q1*(1.-exp(-delta));} else {qn=q0 + (q1-q0)*delta*(1.-0.5*delta);} /* evolves in log-space across this span */
-                    CellP[i].Density_ExplicitInt = exp(q0); /* set final density */
+                    if(isfinite(qn)) {CellP[i].Density_ExplicitInt = exp(qn);} /* set final density (relaxed toward the kernel density) */
                 }}
 #endif
 
