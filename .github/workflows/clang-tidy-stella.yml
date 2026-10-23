@@ -20,7 +20,7 @@ concurrency:
 jobs:
   clang-tidy:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -28,7 +28,7 @@ jobs:
       - name: Install toolchain
         run: |
           sudo apt-get update
-          sudo apt-get install -y libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev libsundials-dev clang-tidy
+          sudo apt-get install -y --no-install-recommends libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev libsundials-dev clang-tidy
           clang-tidy --version
       - name: Configure
         run: |
