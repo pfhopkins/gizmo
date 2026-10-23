@@ -1402,9 +1402,12 @@ void resolvedism_inject_fb_energy(void)
     E_mech3 = resolvedism_mech_energy_local();
 #endif
     /* split a shared pass's measured coupling by booked energy (else by events) */
+    double gE_inj[NFBCH], gN_ev[NFBCH]; /* split weights must be global: receiver-only ranks book no events */
+    MPI_Allreduce(E_injected, gE_inj, NFBCH, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(n_events, gN_ev, NFBCH, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     auto fb_split = [&](double dE, int a, int b) {
-        double wa = E_injected[a], wb = E_injected[b];
-        if(wa + wb <= 0) {wa = n_events[a]; wb = n_events[b];}
+        double wa = gE_inj[a], wb = gE_inj[b];
+        if(wa + wb <= 0) {wa = gN_ev[a]; wb = gN_ev[b];}
         if(wa + wb <= 0) {wa = 1; wb = 0;}
         E_coupled[a] += dE * wa / (wa + wb); E_coupled[b] += dE * wb / (wa + wb);
     };
@@ -1413,7 +1416,7 @@ void resolvedism_inject_fb_energy(void)
 #else
     fb_split(E_mech2 - E_mech0, 2, 1);
 #endif
-    if(E_injected[0] + E_injected[4] + n_events[0] + n_events[4] <= 0 && n_events[5] > 0) {E_coupled[5] += E_mech3 - E_mech2;} /* failed SNe deposit ejecta: their own channel */
+    if(gE_inj[0] + gE_inj[4] + gN_ev[0] + gN_ev[4] <= 0 && gN_ev[5] > 0) {E_coupled[5] += E_mech3 - E_mech2;} /* failed SNe deposit ejecta: their own channel */
     else {fb_split(E_mech3 - E_mech2, 0, 4);}
 #ifdef CHEMCOOL
     n_events[6] = PIHeatPendingCells; E_injected[6] = E_coupled[6] = PIHeatPendingErg; /* heated by the chemistry since the last row */
