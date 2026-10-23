@@ -16,14 +16,17 @@
 #include "chem_types.h"
 #include <cstdio>
 
+// NaN states seen by validate_input on this thread; the driver reports them once per solve
+extern thread_local long chem_nan_states;
+
 // returns 0 ok, 1 flagged (reject evaluation)
 inline int chem_validate_input(double* y, int nspec, int itmp0 /*0-based energy slot*/,
                                int ih2_0 /*0-based H2 slot*/, long id_current)
 {
     for (int i = 0; i < nspec; i++) {
         if (y[i] != y[i]) {
-            std::fprintf(stderr, "chem_validate_input: species %d is NaN (ID %ld)\n",
-                         i, id_current);
+            (void)id_current;
+            chem_nan_states++;
             return 1;
         }
         if (y[i] < 0.0) y[i] = 0.0;
@@ -52,8 +55,8 @@ inline int chem_validate_input_full(double* y, int nspec, int itmp0, int ih2_0,
     int flag = 0;
     for (int i = 0; i < nspec; i++) {
         if (y[i] != y[i]) {
-            std::fprintf(stderr, "chem_validate_input: species %d is NaN (ID %ld)\n",
-                         i, id_current);
+            (void)id_current;
+            chem_nan_states++;
             return -1;
         }
         if (y[i] < 0.0) y[i] = 0.0;

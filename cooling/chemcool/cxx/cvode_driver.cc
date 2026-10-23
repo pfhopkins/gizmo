@@ -48,6 +48,31 @@
 // thread's totals; single-threaded runs (the Gate-2/3 harnesses) are unchanged.
 thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 0;
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
+thread_local long chem_nan_states = 0;
+
+// CVODE step floor relative to the substep interval: the driver substep is already <= 0.1 of the
+// fastest species e-folding time, so h below this resolves no physical transient (101/102: fatal codes)
+static const double CHEM_HMIN_REL = 1e-12;
+
+// full context of the cell handed to the solver, for the fatal paths
+static void chem_print_cell_context(const char* why, double time, double yn, double dl, double divv,
+                                    const double* y, int nspec, const ChemCell& c)
+{
+    std::fprintf(stderr, "cxx_evolve FATAL: %s (ID %ld): dt=%g yn=%g dl=%g divv=%g net=%d\n",
+                 why, c.id_current, time, yn, dl, divv, c.net);
+    std::fprintf(stderr, "  state (species..., energy):");
+    for (int i = 0; i < nspec; i++) std::fprintf(stderr, " %.9e", y[i]);
+    double temp = -1, gamma = 0, ntot = (1.0 + c.abhe - y[CIH2]) * yn;
+    int finite = (yn > 0 && std::isfinite(yn) && std::isfinite(y[nspec - 1]) && std::isfinite(y[CIH2]));
+    if (finite) cxx_lookup_temp_gamma(y[CIH2], c.abhe, y[nspec - 1] / (ntot * CHEM_KBOLTZ), &temp, &gamma, *c.tab);
+    std::fprintf(stderr, "\n  T=%g (from energy, H2 and abhe; -1 = not computable) tdust=%g\n", temp, c.tdust);
+    std::fprintf(stderr, "  pools abhe=%g abundc=%g abundo=%g abundsi=%g abundD=%g dgr=%g\n",
+                 c.abhe, c.abundc, c.abundo, c.abundsi, c.abundD, c.dust_to_gas_ratio);
+    std::fprintf(stderr, "  rates G0=%g G0_LW=%g G0_dust=%g crir=%g rt_phot=%g %g %g rt_heat=%g %g %g ph1=%g ph38=%g ph42=%g\n",
+                 c.G0, c.G0_LW, c.G0_dust, c.cosmic_ray_ion_rate, c.rt_phot_HI, c.rt_phot_HeI, c.rt_phot_HeII,
+                 c.rt_heat_HI, c.rt_heat_HeI, c.rt_heat_HeII, c.phrates[0], c.phrates[37], c.phrates[41]);
+    std::fflush(stderr);
+}
 
 // audit R10 switch: 1 = keep the Fortran "last RHS evaluation wins" semantics
 static int chem_legacy_lambda()
@@ -303,6 +328,7 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
 // non_eq_abundances has c.trac_num entries; energy in/out [erg cm^-3].
 // Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0));
 // 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
+// 101 = non-finite input state; 102 = CVODE step reached the CHEM_HMIN_REL floor.
 // Net 3: an RHS ABORT (comp_equilib 9751/9752, index 1) returns that code.
 int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                           double* energy, double* non_eq_abundances, ChemCell& c)
@@ -322,6 +348,18 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     for (int i = 0; i < c.trac_num; i++) y[i] = non_eq_abundances[i];
     y[itmp] = *energy;
     for (int i = 0; i < nspec; i++) { y_old[i] = y[i]; ydot[i] = 0.0; }
+
+    // a non-finite state or density handed in by the caller is a bug upstream: fail now, with context
+    {
+        int bad = !std::isfinite(yn) || !std::isfinite(time);
+        for (int i = 0; i < nspec; i++) bad |= !std::isfinite(y[i]);
+        if (bad) {
+            chem_print_cell_context("non-finite input state", time, yn, dl, divv, y, nspec, c);
+            return 101;
+        }
+    }
+    const long nan_states0 = chem_nan_states;   // NaN trial states rejected during this solve
+    double nan_h = 0.0, nan_t = 0.0, nan_dt = 0.0;
 
     double atol[CHEM_NSPEC_MAX];
     chem_atol(c.net, atol);
@@ -514,9 +552,26 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 need_reinit = 0;
             }
             double tret = t_start;
+            const double hmin = CHEM_HMIN_REL * dt;
+            CVodeSetMinStep(w->mem, hmin);
+            const long nan_before = chem_nan_states;
             int flag = CVode(w->mem, t_start + dt, w->yv, &tret, CV_NORMAL);
             cxx_stat_substeps++;
             if (c.fatal_code) { retcode = c.fatal_code; goto out; }
+            if (chem_nan_states > nan_before && nan_states0 == nan_before) {
+                CVodeGetCurrentStep(w->mem, &nan_h);
+                nan_t = t_start; nan_dt = dt;
+            }
+            if (flag < 0) {
+                double hcur = 0.0;
+                CVodeGetCurrentStep(w->mem, &hcur);
+                if (std::fabs(hcur) <= hmin * (1.0 + 1e-6)) {
+                    std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (= %g x substep dt=%g, flag %d) at t=%g of %g\n",
+                                 hcur, CHEM_HMIN_REL, dt, flag, t_start, t_end);
+                    chem_print_cell_context("CVODE step-size floor", time, yn, dl, divv, y_old, nspec, c);
+                    retcode = 102; goto out;
+                }
+            }
 
             int fail = (flag < 0);
             if (!fail) {
@@ -574,6 +629,10 @@ out:
         }
     }
 out_nocopy:
+    if (chem_nan_states > nan_states0) {
+        std::fprintf(stderr, "cxx_evolve: %ld NaN trial states rejected by CVODE (ID %ld; first in substep t=%g dt=%g, CVODE h=%g); solve rc=%d\n",
+                     chem_nan_states - nan_states0, c.id_current, nan_t, nan_dt, nan_h, retcode);
+    }
     {
         long ns = 0;
         if (w && w->mem && CVodeGetNumSteps(w->mem, &ns) == CV_SUCCESS)
