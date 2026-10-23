@@ -62,7 +62,7 @@ int check_if_sufficient_mergesplit_time_has_passed(int i);
 int is_particle_a_special_zoom_target(int i);
 #endif
 int merge_particles_ij(int i, int j);
-int split_particle_i(int i, int n_particles_split, int i_nearest, double r_nearest_presplit);
+int split_particle_i(int i, int n_particles_split, double r_near);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
