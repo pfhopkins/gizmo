@@ -1916,7 +1916,7 @@ c
 c
 c  H2: 
 c
-#if CHEMISTRYNETWORK == 5
+#if CHEMISTRYNETWORK == 3 || CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 17
       crtab(2) = 1d0   ! H2 -> H2+ + e-, zeta per H2 as SGChem
 #else
       crtab(2) = 2d0   ! H2 -> H2+ + e-

@@ -404,7 +404,7 @@ int chem_tables_build(ChemTables& T, const ChemBuildConfig& cfg,
     for (int r = 0; r < chem_rate_registry16_n; r++)
         store_rate(*S, chem_rate_registry16[r], g, nmd);
 #endif
-#if CHEMISTRYNETWORK == 5
+#if CHEMISTRYNETWORK == 3 || CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 17
     S->crtab[1] = 1.0; // H2 -> H2+ + e-: zeta per H2 as SGChem (cheminmo.F crtab(2))
 #endif
     // the four entries with no generated function (see file header)
