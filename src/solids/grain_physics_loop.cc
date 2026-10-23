@@ -118,12 +118,12 @@ void grain_backrx_calc(void)
     PRINT_STATUS(" ..assigning grain back-reaction to gas [runner]");
 
     /* Build the active-grain list via the engine helper (filters by
-     * GrainBackrxSpec::is_active, MPI_Allreduce-gates on the global count).
+     * GrainBackrxSpec::is_active; returns false when no rank has an active grain).
      * Without this the runner sees num_active=0 and does nothing. */
     int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     if(!nlr_build_active_list(GrainBackrxSpec::is_active,
-                               &active_list, &num_active, &num_global_active,
+                               &active_list, &num_active,
                                "grain_backrx_active_list")) {
         CPU_Step[CPU_DRAGFORCE] += measure_time();
         return;
@@ -248,9 +248,9 @@ void grain_rt_opacity_calc(void)
             }
         }
         int *active_list = nullptr;
-        int  num_active = 0, num_global_active = 0;
+        int  num_active = 0;
         if(nlr_build_active_list(GrainRTGasSpec::is_active,
-                                  &active_list, &num_active, &num_global_active,
+                                  &active_list, &num_active,
                                   "grain_rt_gas_active_list")) {
             neighbor_loop_args args = nlr_default_args();
             args.active_list = active_list;
@@ -263,9 +263,9 @@ void grain_rt_opacity_calc(void)
     /* Direction 2: grain sources → gas neighbors (radiation acceleration). */
     {
         int *active_list = nullptr;
-        int  num_active = 0, num_global_active = 0;
+        int  num_active = 0;
         if(nlr_build_active_list(GrainRTGrainSpec::is_active,
-                                  &active_list, &num_active, &num_global_active,
+                                  &active_list, &num_active,
                                   "grain_rt_grain_active_list")) {
             neighbor_loop_args args = nlr_default_args();
             args.active_list = active_list;

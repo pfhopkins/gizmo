@@ -447,7 +447,7 @@ void hydro_gradient_calc(void)
     if(corridor_built_csr) {
         gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
-              && gizmo_sym_num_active_global > 0) {
+              && gizmo_sym_any_active_global) {
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
         fflush(stdout);
         endrun(7315);
@@ -560,7 +560,7 @@ void hydro_gradient_calc(void)
      * blocking the between-iter corridor refresh from freeing
      * sym_neighbor_list — abort 814. */
     const bool nothing_to_do =
-        (!corridor_built_csr) && (gizmo_sym_num_active_global <= 0);
+        (!corridor_built_csr) && (!gizmo_sym_any_active_global);
 
     for(int grad_iter = 0; (!nothing_to_do) && grad_iter < NUMBER_OF_GRADIENT_ITERATIONS; grad_iter++) {
         aux.grad_iter = grad_iter;

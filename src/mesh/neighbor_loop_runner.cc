@@ -247,7 +247,7 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
     return spec_default;
 }
 
-bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int default_max)
+bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int default_max)
 {
     const int TS = gizmo_nlr_modeb_threshold_sum_for(nullptr, default_sum);
     const int TM = gizmo_nlr_modeb_threshold_max_for(nullptr, default_max);
@@ -2758,7 +2758,7 @@ static int nlr_spec_threshold_max(int fallback) {
  * rank answers alike.  Nothing here touches Mode D's state: a call answered by
  * A or B pays nothing for D. */
 template <typename Spec>
-NlrMode nlr_select_mode(int sum_active, int max_active)
+NlrMode nlr_select_mode(long long sum_active, int max_active)
 {
     int default_sum, default_max;
     nlr_default_modeb_thresholds(Spec::search_mode, &default_sum, &default_max);
@@ -3022,26 +3022,28 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
      * Skipped when the caller supplied a dispatch override (cheap path), which
      * is why the global count is not available on every path: it is computed
      * only where something needs it — the threshold decision itself, and the
-     * forced-Mode-B size guard. It is never computed merely to report it. */
+     * globally-zero-active return below. It is never computed merely to report it.
+     * Summed in 64 bits: the total over ranks can exceed 2^31. */
     bool select_mode_b = force_b;
     /* Mode D is asked for only on the threshold path: an override is honoured
      * as given. */
     NlrMode selected_mode = force_b ? NlrMode::B : NlrMode::A;
-    int global_num_active = -1;       /* -1 = not computed on this path */
+    long long global_num_active = -1;       /* -1 = not computed on this path */
     if(!force_a && !force_b) {
-        int local_act = args.num_active;
-        int sum_act = 0, max_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        const int local_act = args.num_active;
+        const long long local_act_64 = local_act;
+        long long sum_act = 0; int max_act = 0;
+        MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         global_num_active = sum_act;
         selected_mode = nlr_select_mode<Spec>(sum_act, max_act);
         select_mode_b = (selected_mode == NlrMode::B);
     } else if(force_b) {
-        /* Forced Mode B skipped the dispatch Allreduce, but its size guard
-         * needs the global count, so it is done here. */
-        int local_act = args.num_active;
-        int sum_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        /* Forced Mode B skipped the dispatch Allreduce; the globally-zero-active
+         * return below still needs the global count, so it is done here. */
+        const long long local_act_64 = args.num_active;
+        long long sum_act = 0;
+        MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         global_num_active = sum_act;
     }
     /* Globally-zero-active call: do NO neighbor work. global_num_active is the
@@ -3069,7 +3071,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     } else {
         plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
     }
-    plan.num_active_global = global_num_active;   /* -1 on dispatch-override paths */
 
     GxDeviceTreeView mode_d_tree{};
     /* A loop whose kernel reads neighbour state it is itself changing needs the
@@ -5331,7 +5332,6 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     }
     NeighborLoopPlan plan;
     plan.path              = NeighborLoopPlan::Path::ModeA_GpuNgl;
-    plan.num_active_global = drv.global_active_total;
     neighbor_loop_args sub = drv.args;
     sub.active_list = (n_compacted > 0) ? active_particle_indices_iter.data() : nullptr;
     sub.num_active  = n_compacted;
@@ -5667,7 +5667,7 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
     if (ThisTask == 0) {
         fprintf(stderr,
             "[%s] FATAL: failed to converge in %d iterations (max_iters=%d). "
-            "global_active_total=%d remained.\n",
+            "global_active_total=%lld remained.\n",
             Spec::loop_name, drv.iter_index, Spec::max_iters, drv.global_active_total);
         fflush(stderr);
     }
@@ -5980,25 +5980,24 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     /* Filled by the Mode D preparation below if that path is taken; handed to
      * the driver so every iteration walks the tree the decision was made on. */
     GxDeviceTreeView mode_d_tree{};
-    int forced_modeb_global_active = -1;
-    /* Global active-particle sum across all ranks (from the dispatch Allreduce);
-     * -1 = not computed (force-A cheap path). Used for the globally-zero-active
-     * no-op below. */
-    int global_active_sum = -1;
+    /* Global active-particle sum across all ranks (from the dispatch Allreduce),
+     * 64-bit since it can exceed 2^31; -1 = not computed (force-A cheap path).
+     * Used for the globally-zero-active no-op below. */
+    long long global_active_sum = -1;
     if (force_mode == NlrForceMode::A) {
         path = DispatchPath::ModeA_GPU_NGL;
     } else if (force_mode == NlrForceMode::B) {
-        int local_act = args.num_active;
-        MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
-                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        global_active_sum = forced_modeb_global_active;
+        const long long local_act_64 = args.num_active;
+        MPI_Allreduce(&local_act_64, &global_active_sum, 1,
+                      MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
          * (= union across subgroups). */
-        int local_act = args.num_active;
-        int sum_act = 0, max_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        const int local_act = args.num_active;
+        const long long local_act_64 = local_act;
+        long long sum_act = 0; int max_act = 0;
+        MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         global_active_sum = sum_act;
         const NlrMode mode = nlr_select_mode<Spec>(sum_act, max_act);
@@ -6408,7 +6407,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         if (NTask > 1) {
             MPI_Allreduce(drv.local_active_per_sg.data(),
                           drv.global_active_per_sg.data(),
-                          args.num_subgroups, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+                          args.num_subgroups, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         } else {
             drv.global_active_per_sg = drv.local_active_per_sg;
         }
@@ -6531,7 +6530,7 @@ template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_ar
  * gravity/ags_force_loop.{h,cc}. */
 template void run_neighbor_loop_iterative<AgsForceSpec>(const neighbor_loop_args_iterative&);
 /* The CBE corridor decides A/B for CBEGrad + AGSForce together, as AGSForce would. */
-template NlrMode nlr_select_mode<AgsForceSpec>(int, int);
+template NlrMode nlr_select_mode<AgsForceSpec>(long long, int);
 template void nlr_import_union_ghosts<AgsForceSpec>(unsigned int, const std::vector<int>&,
                                                      const std::vector<double>&, double);
 #endif
