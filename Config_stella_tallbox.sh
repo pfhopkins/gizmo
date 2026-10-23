@@ -100,7 +100,7 @@ TIDAL_TIMESTEP_CRITERION         % tidal tensor timestep (more accurate for few-
 DO_DENSITY_AROUND_NONGAS_PARTICLES
 
 ## -- KETJU regularized integrator for close encounters --
-#KETJU_REGULARIZATION              % MSTAR chain regularization for massive stars/BHs
+#KETJU_REGULARIZATION              % MSTAR chain regularization; needs ADAPTIVE_GRAVSOFT_FORALL=1 (fixed star softening <= KetjuRegionRadius)
 #KETJU_MERGE_STARS                 % enable stellar collision mergers (Type 4+4) in KETJU
 #KETJU_MERGE_BH                    % enable BH mergers (Type 5+5, Type 5+4) in KETJU
 #KETJU_PN_REMNANT_TAG              % stamp StellarRemnantType at SN time + dispatch PN on Type 4 NS/BH remnants (needs GALSF_RESOLVEDISM_FB; no sink/BH_PROMOTION required)

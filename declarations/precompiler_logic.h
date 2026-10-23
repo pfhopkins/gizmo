@@ -1635,6 +1635,9 @@
 #if defined(FORCE_EQUAL_TIMESTEPS)
 #error "KETJU_REGULARIZATION is not compatible with FORCE_EQUAL_TIMESTEPS"
 #endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && ((ADAPTIVE_GRAVSOFT_FORALL) & 16)
+#error "KETJU_REGULARIZATION needs fixed star softening: use ADAPTIVE_GRAVSOFT_FORALL without bit 16 and SofteningStars <= KetjuRegionRadius (AGS zeta on stars breaks collisional dynamics)"
+#endif
 #endif
 #if defined(KETJU_MERGE_STARS) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_STARS requires KETJU_REGULARIZATION"
