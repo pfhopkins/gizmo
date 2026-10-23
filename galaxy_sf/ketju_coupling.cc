@@ -110,6 +110,7 @@ struct ketju_mpi_particle {
     double CollRadius; /* contact radius, physical code length (0: never collides) */
 #endif
     double GravAcc[3]; /* comoving GravAccel of the gravity call whose kick started this step */
+    double TidalNorm;  /* physical |T| of the field external to its chain at its last step end (0: not known) */
 };
 
 /* ============================================================
@@ -645,6 +646,10 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
 #endif
 #ifdef KETJU_PN_REMNANT_TAG
             local_centers[k].RemnantType = (P[i].Type == 4) ? P[i].RemnantType : -1;
+#endif
+            local_centers[k].TidalNorm = 0;
+#ifndef SINGLE_STAR_TIMESTEPPING
+            if(P[i].COM_dt_tidal > 0 && P[i].COM_dt_tidal < 0.5 * MAX_REAL_NUMBER) local_centers[k].TidalNorm = All.cf_a3inv / (P[i].COM_dt_tidal * P[i].COM_dt_tidal);
 #endif
             k++;
         }
@@ -2132,12 +2137,15 @@ static void move_particle_timebin(int i, int old_bin, int new_bin)
  * Motion (Mannerkoski+ 2023 sec. 2.4.2, eqs. 4 and 6): dt <= 0.1 r_region / v_CoM and dt <= r_region / (6 sigma), so stars
  * cannot cross a region in one step. v_CoM and sigma (1D) are taken relative to the stars around the group (all Type 4/5
  * within the timestep-limiting radius, other groups' centres included) rather than the simulation frame: a cluster moving
- * through a galaxy at 100 km/s is no reason to shorten its regions' steps. */
-static long long CapTally = 0; /* groups whose bin the motion cap set (task 0) */
+ * through a galaxy at 100 km/s is no reason to shorten its regions' steps.
+ * Tide (KetjuTidalStepRes > 0): the external field reaches members only as two kicks per step. For a bound pair the energy
+ * one step's kicks put into its orbit is about mu |T| a v_p dt; above KetjuTidalErrorBudget |E_b| the step is reduced to
+ * that budget, but not below KetjuTidalStepRes P (1 - e)^1.5, where the kicks start to resolve the pericentre passage. */
+static long long CapTally[2] = {0, 0}; /* groups whose bin a motion / tide cap set (task 0) */
 static std::vector<long long> region_step_caps(const std::vector<std::vector<ketju_mpi_particle>> &groups)
 {
     const int n = (int)groups.size();
-    std::vector<long long> caps(n, (long long)TIMEBASE);
+    std::vector<long long> caps(2 * n, (long long)TIMEBASE); /* [2r] motion, [2r+1] tide */
     const double R = All.KetjuRegionRadius, Rlim = DMAX(All.KetjuTimestepLimitingFactor, 2.0) * R; /* physical */
     const double a = All.cf_atime, Rlim_c = Rlim / a;
     auto to_ti = [](double dt) {double t = dt * All.cf_hubble_a / All.Timebase_interval; return (t >= (double)TIMEBASE) ? (long long)TIMEBASE : (long long)DMAX(t, 1.0);};
@@ -2194,7 +2202,30 @@ static std::vector<long long> region_step_caps(const std::vector<std::vector<ket
             if(vrel2 > 0) dt = 0.1 * R / sqrt(vrel2);
             double sig2 = (st[5*r+4] / N - (vf[0]*vf[0] + vf[1]*vf[1] + vf[2]*vf[2])) / 3.0;
             if(N >= 2 && sig2 > 0) dt = DMIN(dt, R / (6.0 * sqrt(sig2)));
-            if(dt < MAX_REAL_NUMBER) caps[r] = to_ti(dt);
+            if(dt < MAX_REAL_NUMBER) caps[2*r] = to_ti(dt);
+        }
+        if(All.KetjuTidalStepRes > 0 && g.size() <= 64) {
+            for(size_t i = 0; i < g.size(); i++) { /* each member's tightest bound partner */
+                int best = -1; double best_a = MAX_REAL_NUMBER, best_e = 0;
+                for(size_t j = 0; j < g.size(); j++) {
+                    if(j == i) continue;
+                    double dr[3], dv[3], r2 = 0, v2 = 0, rv = 0;
+                    for(int k = 0; k < 3; k++) {dr[k] = (g[i].Pos[k] - g[j].Pos[k]) * a; dv[k] = (g[i].Vel[k] - g[j].Vel[k]) / a; r2 += dr[k]*dr[k]; v2 += dv[k]*dv[k]; rv += dr[k]*dv[k];}
+                    double mu = All.G * (g[i].Mass + g[j].Mass), E = 0.5 * v2 - mu / sqrt(r2);
+                    if(E >= 0) continue;
+                    double sma = -mu / (2 * E); if(sma >= best_a) continue;
+                    double h2 = r2 * v2 - rv * rv, e2 = 1 + 2 * E * h2 / (mu * mu);
+                    best = (int)j; best_a = sma; best_e = sqrt(DMAX(e2, 0.0));
+                }
+                if(best < 0) continue; /* a pair found from both sides gives the same cap twice */
+                double T = DMAX(g[i].TidalNorm, g[best].TidalNorm); if(T <= 0) continue;
+                double m1 = g[i].Mass, m2 = g[best].Mass, M = m1 + m2, mu = All.G * M, e = DMIN(best_e, 0.999999);
+                double Eb = All.G * m1 * m2 / (2 * best_a), red = m1 * m2 / M, vp = sqrt(mu * (1 + e) / (best_a * (1 - e)));
+                double Pb = 2 * M_PI * sqrt(best_a * best_a * best_a / mu);
+                double dt_budget = All.KetjuTidalErrorBudget * Eb / (red * T * best_a * vp), floor_dt = All.KetjuTidalStepRes * Pb * pow(1 - e, 1.5);
+                long long ti = to_ti(DMAX(dt_budget, floor_dt));
+                if(ti < caps[2*r+1]) caps[2*r+1] = ti;
+            }
         }
     }
     return caps;
@@ -2300,9 +2331,11 @@ void ketju_limit_timesteps(void)
     }
 #endif
     MPI_Allreduce(MPI_IN_PLACE, min_ti.data(), 2 * n_tsr, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
-    { /* motion caps (identical on all tasks) */
+    { /* motion and tide caps (identical on all tasks) */
         std::vector<long long> caps = region_step_caps(tsr_centers);
-        for(int r = 0; r < n_tsr; r++) if(caps[r] < min_ti[2*r] && caps[r] < (long long)TIMEBASE) {min_ti[2*r] = caps[r]; if(ThisTask == 0) CapTally++;}
+        for(int r = 0; r < n_tsr; r++) for(int c = 0; c < 2; c++) {
+            if(caps[2*r+c] < min_ti[2*r] && caps[2*r+c] < (long long)TIMEBASE) {min_ti[2*r] = caps[2*r+c]; if(ThisTask == 0) CapTally[c]++;}
+        }
     }
 
     long long counts[4] = {0, 0, 0, 0}; /* limited particles moved (down, up), timestep regions set by limiting particles, unsynchronised target bins */
@@ -2577,7 +2610,7 @@ void ketju_run_integration(void)
                 /* coupling energy check: if the direct-sum drift is the kick work, the coupling (impulsive external field) dominates;
                  * if it is the MSTAR term, the integrator does. Normalised by |E0| of the direct sum when that is computed. */
                 double norm = (KetjuEtotSet && KetjuEtot0 != 0) ? fabs(KetjuEtot0) : 1;
-                printf("KETJU CAPS: t=%g timestep-regions set by motion cap=%lld\n", All.Time, CapTally);
+                printf("KETJU CAPS: t=%g timestep-regions set by motion cap=%lld tide cap=%lld\n", All.Time, CapTally[0], CapTally[1]);
                 printf("KETJU ENERGY: t=%g units=%s kick-work-internal net=%.4e abs=%.4e MSTAR-dE=%.4e collisions-dE=%.4e ETOT dE=%.4e\n",
                        All.Time, (norm != 1) ? "|E0|" : "code", cum_energy[0] / norm, cum_energy[1] / norm, cum_energy[2] / norm, cum_energy[3] / norm,
                        KetjuEtotSet ? (KetjuEtot - KetjuEtot0) / norm : 0.0);
