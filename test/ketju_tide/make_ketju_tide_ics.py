@@ -2,9 +2,10 @@
 """ICs for test/ketju_tide (kpc, km/s, 1e10 Msun): a 1 + 1 Msun pair (a = 200 AU, e = 0.5, P ~ 2000 yr) in a KETJU region
 and a 20 Msun star on a circular orbit 5000 AU from it (P_out ~ 0.07 Myr), whose tide reaches the pair. Centred on the
 CoM at the origin."""
+import os
 import sys
 import numpy as np
-sys.path.insert(0, "../ketju_star_collision")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../ketju_star_collision"))
 from make_ketju_star_collision_ics import write, AU, G
 
 def kepler_state(m1, m2, a, e, f):
