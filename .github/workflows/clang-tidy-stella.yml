@@ -27,8 +27,14 @@ jobs:
           fetch-depth: 0
       - name: Install toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev libsundials-dev clang-tidy
+          # stalled mirrors: fail fast and retry, then fall back from the Azure mirror to archive.ubuntu.com
+          echo 'Acquire::Retries "3"; Acquire::http::Timeout "30"; Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/80-retries
+          pkgs="libopenmpi-dev openmpi-bin libhdf5-openmpi-dev libgsl-dev libsundials-dev clang-tidy"
+          if ! timeout 600 sudo apt-get update; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com#http://archive.ubuntu.com#g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+            sudo apt-get update
+          fi
+          timeout 900 sudo apt-get install -y --no-install-recommends $pkgs || { sudo apt-get update && sudo apt-get install -y --no-install-recommends $pkgs; }
           clang-tidy --version
       - name: Configure
         run: |
