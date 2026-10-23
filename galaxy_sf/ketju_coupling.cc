@@ -1487,12 +1487,18 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
             for(int k = 0; k < 6; k++) T[k] += ps->mass[i] * Ti[k];
             M += ps->mass[i];
         }
+        for(int k = 0; k < 6; k++) T[k] *= All.cf_a3inv / M;
+        /* a linear tide is a weak perturbation only: gamma = |T| r_max^3 / (G M) above 0.05 keeps the host's kicks */
+        double r2max = 0; for(int i = 0; i < n; i++) r2max = DMAX(r2max, ps->pos[i][0]*ps->pos[i][0] + ps->pos[i][1]*ps->pos[i][1] + ps->pos[i][2]*ps->pos[i][2]);
+        double Tn = sqrt(T[0]*T[0] + T[1]*T[1] + T[2]*T[2] + 2 * (T[3]*T[3] + T[4]*T[4] + T[5]*T[5]));
+        if(Tn * r2max * sqrt(r2max) < 0.05 * All.G * M) {
         reg.tide_on = 1;
-        for(int k = 0; k < 6; k++) reg.tide_T[k] = T[k] / M * All.cf_a3inv;
+        for(int k = 0; k < 6; k++) reg.tide_T[k] = T[k];
         double tn = 1.0 / (KJ_TIME_TO_NAT * KJ_TIME_TO_NAT);
         reg.integrator->options->enable_external_tide = true;
         for(int k = 0; k < 6; k++) reg.integrator->options->external_tidal_tensor[k] = reg.tide_T[k] * tn;
         ketju_region_tide_kick(reg, -first_halfkick);
+        }
     }
 #endif
     if(reg.compute_tasks.is_root() && reg.integrator) {
