@@ -170,6 +170,9 @@ void read_ic(char *fname)
 }
 
 
+/* HDF5 converts on read: POS/VEL/MASS go through a double buffer, so double ICs keep full precision and float ICs read bit-identically */
+static int read_ic_block_in_double(enum iofields blocknr) {return (All.ICFormat == 3) && (blocknr == IO_POS || blocknr == IO_VEL || blocknr == IO_MASS);}
+
 /*! This function reads out the buffer that was filled with particle data.
  */
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
@@ -177,6 +180,14 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
     long n, k; MyInputFloat *fp; MyInputPosFloat *fp_pos; MyIDType *ip; int *ip_int; float *fp_single;
     fp = (MyInputFloat *) CommBuffer;
     fp_pos = (MyInputPosFloat *) CommBuffer;
+    if(read_ic_block_in_double(blocknr))
+    {
+        double *fp_dbl = (double *) CommBuffer;
+        if(blocknr == IO_POS) {for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].Pos[k] = *fp_dbl++;}} for(n = 0; n < pc; n++) {P[offset + n].Type = type;}}
+        if(blocknr == IO_VEL) {for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {P[offset + n].Vel[k] = *fp_dbl++;}}}
+        if(blocknr == IO_MASS) {for(n = 0; n < pc; n++) {P[offset + n].Mass = *fp_dbl++;}}
+        return;
+    }
     fp_single = (float *) CommBuffer;
     ip = (MyIDType *) CommBuffer;
     ip_int = (int *) CommBuffer;
@@ -1250,6 +1261,7 @@ void read_file(char *fname, int readTask, int lastTask)
             }
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
+            if(read_ic_block_in_double(blocknr)) {bytes_per_blockelement = get_values_per_blockelement(blocknr) * sizeof(double);}
             if(blocknr == IO_ID && ((RestartFlag == 0 && All.ICFormat == 1) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);} /* in this special case, the old unformatted fortran binary GADGET-2 format needs to be respected, which used unsigned int for IDs */
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * sizeof(MyInputFloat);}
@@ -1386,8 +1398,12 @@ void read_file(char *fname, int readTask, int lastTask)
 
                                         H5Sselect_hyperslab(hdf5_dataspace_in_file, H5S_SELECT_SET, start, NULL, count, NULL);
 
-                                        switch(get_datatype_in_block(blocknr))
+                                        switch(read_ic_block_in_double(blocknr) ? 4 : get_datatype_in_block(blocknr))
                                         {
+                                            case 4:
+                                                hdf5_datatype = H5Tcopy(H5T_NATIVE_DOUBLE);
+                                                break;
+
                                             case 0:
                                                 hdf5_datatype = H5Tcopy(H5T_NATIVE_UINT);
                                                 break;
