@@ -86,9 +86,9 @@ InitMetallicity                 1.0             % solar (0.1 for the low-Z varia
 InitStellarAge                  10.0              % pre-existing stars: 10 Gyr old
 
 %---- MHD (MAGNETIC + MHD_B_SET_IN_PARAMS)
-BiniX                           0               % no B field
+BiniX                           0               % [Gauss] uniform B along z as MakeCloud (STARFORGE)
 BiniY                           0
-BiniZ                           0
+BiniZ                           6.61e-6         % E_B = 0.1 |E_grav| (MakeCloud default bturb=0.1) for 1e4 Msun, R 7 pc: mu ~ 3.3
 
 %---- TreeRad column density (TREE_RAD)
 ShieldingLength                 0.050             % 50 pc shielding length
