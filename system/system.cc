@@ -28,10 +28,20 @@
  */
 
 
-/* get random number -- old format took ID as seed to generate reliably identical numbers from a table, but this is not safe for large simulations */
+/* get random number from the per-rank stream: 'id' is ignored, so values depend on rank count and call order (see get_random_number_keyed for reproducible per-particle values) */
 double get_random_number(MyIDType id)
 {
     return gsl_rng_uniform(random_generator);
+}
+
+/* stateless uniform in [0,1) from a 64-bit key (splitmix64): identical for any rank or thread count */
+double get_random_number_keyed(unsigned long long key)
+{
+    unsigned long long z = key + 0x9E3779B97F4A7C15ULL;
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EBULL;
+    z ^= (z >> 31);
+    return (double)(z >> 11) * (1.0 / 9007199254740992.0);
 }
 
 /* returns the number of cpu-ticks in seconds that have elapsed. (or the wall-clock time) */
