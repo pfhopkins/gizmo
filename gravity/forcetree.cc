@@ -2290,8 +2290,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
                     if(ptype != 0 || ptype_sec != 0) {add_ags_zeta_terms_primary=0; add_ags_zeta_terms_secondary=0;} // primary and secondary must be gas for ab side or ba side
 #else
-                    if(!((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
-                    if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
+                    if((ptype_sec < 0) || !((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
+                    if((ptype_sec < 0) || !((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
 #endif
                     if(add_ags_zeta_terms_primary) // ab side
                     {
@@ -2365,7 +2365,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     if(mass > 0 && r2 > 0)
                     {
                         if((1 << ptype) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {primary_uses_tidal_criterion=1;} /* check if the primary particle uses the tidal softening */
-                        if((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {secondary_uses_tidal_criterion=1;} /* check if the secondary particle uses the tidal softening */
+                        if((ptype_sec >= 0) && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))) {secondary_uses_tidal_criterion=1;} /* check if the secondary particle uses the tidal softening */
                         double prefac_tt=0.5, h_touse=h, u_tt=sqrt(r2)/h_touse; // this corresponds to the result of symmetrizing by averaging
 #if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
                         if(h >= h_p) {prefac_tt=1;} else {prefac_tt=1; h_touse=h_p; u_tt=sqrt(r2)/h_touse;} // this corresponds to adopting the MAX criterion for the softening
