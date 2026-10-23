@@ -1,8 +1,8 @@
 """Snapshot states of KETJU region members part-way through their step.
 
 An isolated binary in a region whose steps (1e-5) span ~40 orbits, written every 3.3e-6, i.e. mostly inside steps. Each
-snapshot's relative separation must match the exact two-body orbit from the IC state as GIZMO reads it (float32). Before
-the fix mid-step members were written on the drift chord, O(1) off; now ~1e-4 (the start-state and float32 floor).
+snapshot's relative separation must match the exact two-body orbit from the IC state (double, read exactly). Before
+the fix mid-step members were written on the drift chord, O(1) off; now 5.6e-5 (MSTAR) and 2.2e-5 (Kepler).
 Variant: KetjuKeplerPairs = 1 advances the pair by the exact Kepler drift instead of MSTAR, to the same accuracy."""
 
 import glob
@@ -27,8 +27,8 @@ def test_ketju_snapshot_midstep(kepler):
     clean_test_outputs(TEST_NAME)
     build_and_run_test(TEST_NAME, 1, 1, param_overrides={"KetjuKeplerPairs": kepler})
     with h5py.File(f"{TEST_DIR}/ketju_snapshot_midstep_ics.hdf5", "r") as f:
-        g = f["PartType4"]; x = np.array(g["Coordinates"], dtype=np.float32).astype(float); v = np.array(g["Velocities"], dtype=np.float32).astype(float)
-        m = np.array(g["Masses"], dtype=np.float32).astype(float) * 1e10
+        g = f["PartType4"]; x = np.array(g["Coordinates"], dtype=float); v = np.array(g["Velocities"], dtype=float)
+        m = np.array(g["Masses"], dtype=float) * 1e10
     y0 = np.concatenate([x[1] - x[0], v[1] - v[0]]); mu = G * (m[0] + m[1])
     rhs = lambda t, y: np.concatenate([y[3:], -mu * y[:3] / np.linalg.norm(y[:3]) ** 3])
     worst = 0

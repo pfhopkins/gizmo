@@ -1,8 +1,7 @@
 """KETJU region step caps and the fly-by step, against a DOP853 (rtol 1e-13) three-body integration of the same ICs.
 
 Pair (1 + 1 Msun, a = 200 AU, e = 0.5) in a KETJU region; a 1 Msun star passes at 30 km/s with impact parameter 1500 AU
-(outside the region: integrated by the host) or 600 AU (captured into the region). Converged runs (MaxSizeTimestep 2e-10)
-reach |da/a| ~ 7e-5 here, the float32 IC floor.
+(outside the region: integrated by the host) or 600 AU (captured into the region).
 - motion caps (default): with a field star around the pair the region step is capped (Mannerkoski+ 2023 eqs. 4, 6).
 - fly-by step (KetjuFlybyStepEta 0.2): the intruder's own steps resolve the passage. Without it the intruder takes one
   3000-yr step through the encounter (151 AU off at the end) and the pair is 4e-3 off in a."""
@@ -29,7 +28,6 @@ G = 4.300710573e-6
 def _reference(b):
     from make_ketju_flyby_ics import state
     m, x, v = state(b)
-    x = x.astype(np.float32).astype(float); v = v.astype(np.float32).astype(float)   # as GIZMO reads them
 
     def rhs(t, y):
         p = y[:9].reshape(3, 3); a = np.zeros((3, 3))
