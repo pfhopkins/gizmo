@@ -72,6 +72,9 @@ static void fb_death_rows_flush(void)
 
 double CumulFeedbackEnergy = 0;  /* cumulative feedback energy injected, all channels [erg] */
 double CumulFeedbackCoupled = 0; /* cumulative measured coupled energy, channels 0-5 [erg] */
+#ifdef COSMIC_RAY_FLUID
+double CumulCRInjectedErg = 0;   /* CR energy measured at the feedback deposit [erg] */
+#endif
 double CumulSFEnergyRemoved = 0; /* gas thermal+kinetic energy removed by star formation [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
 double CumulFeedbackMetals = 0;  /* cumulative metals returned to gas by feedback [Msun] */
@@ -677,8 +680,20 @@ double resolvedism_mech_energy_local(void)
         e += 0.5 * P[i].Mass * (P[i].Vel[0]*P[i].Vel[0] + P[i].Vel[1]*P[i].Vel[1] + P[i].Vel[2]*P[i].Vel[2]) * a2inv;
         if(P[i].Type == 0) {e += P[i].Mass * CellP[i].InternalEnergy;}
     }
+#ifdef COSMIC_RAY_FLUID
+    return e * UNIT_ENERGY_IN_CGS + resolvedism_cr_energy_local();
+#endif
     return e * UNIT_ENERGY_IN_CGS;
 }
+
+#ifdef COSMIC_RAY_FLUID
+double resolvedism_cr_energy_local(void)
+{
+    double e = 0;
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {e += CellP[i].CosmicRayEnergy[k];}}}
+    return e * UNIT_ENERGY_IN_CGS;
+}
+#endif
 
 static void resolvedism_fb_apply_recoil(void)
 {
@@ -888,6 +903,9 @@ void resolvedism_inject_fb_energy(void)
 #endif
     MBARY_STEP("post_fb_mom_p0");
     E_mech2 = resolvedism_mech_energy_local();
+#ifdef COSMIC_RAY_FLUID
+    double E_cr2 = resolvedism_cr_energy_local(), E_cr3 = E_cr2;
+#endif
 #if defined(TEST_DUMP_STATE_AROUND_WIND_DEPOSIT) && defined(GALSF_RESOLVEDISM_WINDS_CONTINUOUS)
     if(fb_test_nwind_glob > 0) {fb_test_state_dump(1);}
 #endif
@@ -1333,6 +1351,9 @@ void resolvedism_inject_fb_energy(void)
     myfree(wind_log_mstar); myfree(wind_log_z); myfree(wind_log_y); myfree(wind_log_x);
 
     /* ---- Pass 2: radiation pressure (momentum) ---- */
+#ifdef COSMIC_RAY_FLUID
+    E_cr3 = resolvedism_cr_energy_local();
+#endif
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     E_mech3 = resolvedism_mech_energy_local();
     RadPressure_dp_thisStep = 0;
@@ -1406,6 +1427,9 @@ void resolvedism_inject_fb_energy(void)
     MPI_Reduce(dp_injected, glob_dp, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(Z_injected, glob_Z, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(E_coupled, glob_Ec, NFBCH, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#ifdef COSMIC_RAY_FLUID
+    {double dcr = E_cr3 - E_cr2, dcr_glob = 0; MPI_Reduce(&dcr, &dcr_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); if(ThisTask == 0) {CumulCRInjectedErg += dcr_glob;}}
+#endif
 
     if(ThisTask == 0) {
         for(int ch = 0; ch < NFBCH; ch++) {

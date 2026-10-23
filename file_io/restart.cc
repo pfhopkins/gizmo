@@ -18,7 +18,9 @@
 /* Restartfile layout sentinel (see restart()). The magic distinguishes a sentinel from the leading
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
-#ifdef GALSF_RESOLVEDISM_FB
+#if defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID)
+#define RESTARTFILE_LAYOUT_VERSION 3u /* + CR ledger totals */
+#elif defined(GALSF_RESOLVEDISM_FB)
 #define RESTARTFILE_LAYOUT_VERSION 2u /* + Stella cumulative ledger totals */
 #else
 #define RESTARTFILE_LAYOUT_VERSION 1u
@@ -346,6 +348,10 @@ void restart(int modus)
 	  byten(&CumulPIHeatErg, sizeof(double), modus);
 	  byten(&PIHeatPendingErg, sizeof(double), modus);
 	  byten(&PIHeatPendingCells, sizeof(double), modus);
+#ifdef COSMIC_RAY_FLUID
+	  byten(&CumulCRLossEnergy, sizeof(double), modus);
+	  byten(&CumulCRInjectedErg, sizeof(double), modus);
+#endif
 #endif
 #endif
 

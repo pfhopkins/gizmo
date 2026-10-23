@@ -1815,6 +1815,10 @@ void energy_statistics(void)
     double pi_glob = 0, sf_glob = 0;
     MPI_Reduce(&CumulPIHeatErg, &pi_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&CumulSFEnergyRemoved, &sf_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#ifdef COSMIC_RAY_FLUID
+    double cr_loc[2] = {resolvedism_cr_energy_local(), CumulCRLossEnergy * UNIT_ENERGY_IN_CGS}, cr_glob[2] = {0, 0};
+    MPI_Reduce(cr_loc, cr_glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
 
     /* min/max metallicity for gas (Type 0) and stars (Type 4) */
     double Zmin_gas_loc = 1e30, Zmax_gas_loc = -1e30, Zmin_star_loc = 1e30, Zmax_star_loc = -1e30;
@@ -1841,10 +1845,14 @@ void energy_statistics(void)
       double fb_erg = CumulFeedbackEnergy + pi_glob, fbc_erg = CumulFeedbackCoupled + pi_glob;
       printf("BUDGET t=%.16g  M_gas=%.16g M_star=%.16g M_tot=%.16g  E_therm=%.16g E_kin=%.16g E_pot=%.16g E_tot=%.16g  E_cool_cum=%.16e[erg]  E_fb_cum=%.16e[erg]  M_fb_ret=%.16g[Msun]\n",
         All.Time, M_gas, M_star, M_total, E_therm, E_kin, E_pot, E_total, cool_erg, fb_erg, CumulFeedbackMass);
-      fprintf(FdENERGYinfo, "%12.6f  %14.6e %14.6e %14.6e  %14.6e %14.6e %14.6e %14.6e  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e\n",
+      fprintf(FdENERGYinfo, "%12.6f  %14.6e %14.6e %14.6e  %14.6e %14.6e %14.6e %14.6e  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e  %14.6e",
         All.Time, M_gas*UNIT_MASS_IN_SOLAR, M_star*UNIT_MASS_IN_SOLAR, M_total*UNIT_MASS_IN_SOLAR,
         E_therm*UNIT_ENERGY_IN_CGS, E_kin*UNIT_ENERGY_IN_CGS, E_pot*UNIT_ENERGY_IN_CGS, E_total*UNIT_ENERGY_IN_CGS,
         cool_erg, fb_erg, CumulFeedbackMass, fbc_erg, pi_glob, sf_glob);
+#ifdef COSMIC_RAY_FLUID
+      fprintf(FdENERGYinfo, "  %.16e  %.16e  %.16e", cr_glob[0], CumulCRInjectedErg, cr_glob[1]);
+#endif
+      fprintf(FdENERGYinfo, "\n");
       fflush(FdENERGYinfo);
       printf("BUDGET_Z t=%.16g  Z_gas=[%.16e,%.16e]", All.Time, Zmin_gas, Zmax_gas);
       if(M_star > 0) printf("  Z_star=[%.16e,%.16e]", Zmin_star, Zmax_star);

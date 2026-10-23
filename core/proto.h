@@ -827,10 +827,17 @@ extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code en
 extern double ChemcoolPIHeatErg, ChemcoolPIHeatCells; /* subgrid-PI floor heating in the current cooling pass [erg], cells */
 extern double CumulPIHeatErg;                         /* cumulative subgrid-PI heating on this rank [erg] */
 extern double PIHeatPendingErg, PIHeatPendingCells;   /* PI heating not yet written to FeedbackBudget */
+#ifdef COSMIC_RAY_FLUID
+extern double CumulCRLossEnergy;                      /* CR energy removed by the loss operator on this rank [code energy units] */
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_FB
 extern double CumulFeedbackEnergy;   /* cumulative feedback energy [erg] */
 extern double CumulFeedbackCoupled;  /* cumulative measured coupled feedback energy [erg] */
+#ifdef COSMIC_RAY_FLUID
+extern double CumulCRInjectedErg;    /* CR energy measured at the feedback deposit [erg] */
+double resolvedism_cr_energy_local(void);
+#endif
 double resolvedism_mech_energy_local(void); /* local gas thermal + kinetic energy [erg] */
 extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by star formation on this rank [erg] */
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
