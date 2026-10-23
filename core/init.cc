@@ -750,6 +750,9 @@ void init(void)
             P[i].KernelRadius = 0;
 #endif
             CellP[i].Density = -1;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            CellP[i].LedgerEB = -1;
+#endif
 #ifdef COOLING
 #ifndef CHIMES
             CellP[i].Ne = 1.0;

@@ -551,8 +551,14 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     MHDEnergyLedger[6] += dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) * dt_entr;
+    double eb_ledger_now = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / P[i].Mass : 0; /* non-cosmological test only */
+    if(CellP[i].LedgerEB >= 0) {MHDEnergyLedger[7] += eb_ledger_now - CellP[i].LedgerEB;}
 #endif
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    CellP[i].LedgerEB = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / P[i].Mass : 0;
+    MHDEnergyLedger[8] += CellP[i].LedgerEB - eb_ledger_now;
+#endif
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi-fluxes (otherwise is just "1")
     /* phi units are [vcode][Bcode]=a^3 * vphys*Bphys */

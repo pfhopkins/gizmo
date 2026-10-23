@@ -417,7 +417,7 @@ double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
-#define MHD_ENERGY_LEDGER_N 7
+#define MHD_ENERGY_LEDGER_N 9
 extern double MHDEnergyLedger[MHD_ENERGY_LEDGER_N];
 #endif
 #ifdef DIVBCLEANING_DEDNER

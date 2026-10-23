@@ -84,6 +84,7 @@ extern struct gas_cell_data
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     MyDouble DtE_MHDLedger[5];      /*!< total-energy rates: Powell, Dedner face, Dedner PhiCorr, closure mismatch, B^2 dV/2 booking */
+    MyDouble LedgerEB;              /*!< E_B of this cell at its last B kick (<0: unset) */
 #endif
 #ifdef DIVBCLEANING_DEDNER
     Vec3<MyDouble> DtB_PhiCorr;     /*!< correction forces for mid-face update to phi-field */
