@@ -1,5 +1,5 @@
 """KETJU external tide on a region: a 200 AU pair (P ~ 2000 yr) tidally perturbed by a 20 Msun star at 5000 AU for
-0.2 Myr, against a DOP853 three-body integration from the IC as GIZMO reads it (float32). The region's steps span a good
+0.2 Myr, against a DOP853 three-body integration from the IC. The region's steps span a good
 fraction of the pair's orbit, so the external field reaches the pair as kicks at random phases. Measured |da/a|:
 default 7.4e-4 (907 steps); MaxSizeTimestep 1e-8: 1.9e-6.
 - KetjuTidalStepRes 0.1 (step floor 0.1 P (1-e)^1.5 above the energy budget): 1.7e-5, 4166 steps.

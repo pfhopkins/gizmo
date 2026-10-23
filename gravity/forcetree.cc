@@ -50,10 +50,10 @@ void tree_pair_softening(int p, double *soft, double *zeta)
 {
     soft[0] = soft[1] = ForceSoftening_KernelRadius(p); zeta[0] = zeta[1] = 0;
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-    if(P[p].Type == 0) {if(soft[0] > All.ForceSoftening[P[p].Type]) {zeta[0] = P[p].AGS_zeta;} else {soft[0] = All.ForceSoftening[P[p].Type]; zeta[0] = 0;}}
+    if(P[p].Type == 0) {if(soft[0] > All.ForceSoftening[P[p].Type]) {zeta[0] = P[p].AGS_zeta;} else {soft[0] = All.ForceSoftening[P[p].Type]; zeta[0] = P[p].AGS_zeta;}}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-    if(soft[0] > All.ForceSoftening[P[p].Type]) {zeta[0] = P[p].AGS_zeta;} else {soft[0] = All.ForceSoftening[P[p].Type]; zeta[0] = 0;}
+    if(soft[0] > All.ForceSoftening[P[p].Type]) {zeta[0] = P[p].AGS_zeta;} else {soft[0] = All.ForceSoftening[P[p].Type]; zeta[0] = P[p].AGS_zeta;} /* floor keeps zeta, as force_treeevaluate */
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
     if(P[p].Type == 0) {zeta[1] = P[p].AGS_zeta;}

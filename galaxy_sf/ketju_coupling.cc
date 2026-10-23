@@ -87,8 +87,13 @@ static std::unordered_map<MyIDType, double> region_previous_cost;
 /* ============================================================
  *  Lightweight particle data for MPI communication
  * ============================================================ */
+/* Stella IMF siblings share P.ID and differ in ID_child_number: KETJU keys particles by both */
+struct KetjuUID {MyIDType id, child; bool operator==(const KetjuUID &o) const {return id == o.id && child == o.child;}};
+struct KetjuUIDHash {size_t operator()(const KetjuUID &k) const {return std::hash<MyIDType>()(k.id * 0x9E3779B97F4A7C15ULL ^ k.child);}};
+
 struct ketju_mpi_particle {
     MyIDType ID;
+    MyIDType Child; /* P.ID_child_number */
     int Type;
     int Task;
     int Index;
@@ -119,6 +124,7 @@ struct ketju_mpi_particle {
  * ============================================================ */
 struct ketju_extra_data {
     MyIDType ID;
+    MyIDType Child;
     int Task;
     int Index;
     int Type;
@@ -633,7 +639,7 @@ static std::vector<ketju_mpi_particle> gather_chain_centers(void)
     int k = 0;
     for(int i = 0; i < NumPart; i++) {
         if(is_chain_center(i) && is_synchronized(i)) {
-            local_centers[k].ID = P[i].ID;
+            local_centers[k].ID = P[i].ID; local_centers[k].Child = P[i].ID_child_number;
             local_centers[k].Type = P[i].Type;
             local_centers[k].Task = ThisTask;
             local_centers[k].Index = i;
@@ -946,7 +952,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
     int k = 0;
     for(int idx : reg.local_member_indices) {
         ketju_mpi_particle &mp = local_parts[k];
-        mp.ID = P[idx].ID;
+        mp.ID = P[idx].ID; mp.Child = P[idx].ID_child_number;
         mp.Type = P[idx].Type;
         mp.Task = ThisTask;
         mp.Index = idx;
@@ -1099,7 +1105,7 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
                 if(All.ComovingIntegrationOn)
                     ps->vel[i][j] += hubble_function(a) * ps->pos[i][j];
             }
-            reg.extra_data[i].ID = reg.all_particles[i].ID;
+            reg.extra_data[i].ID = reg.all_particles[i].ID; reg.extra_data[i].Child = reg.all_particles[i].Child;
             reg.extra_data[i].Task = reg.all_particles[i].Task;
             reg.extra_data[i].Index = reg.all_particles[i].Index;
             reg.extra_data[i].Type = reg.all_particles[i].Type;
@@ -1316,7 +1322,7 @@ static void expand_tight_binaries(KetjuRegion &reg, double dt_physical)
  * integrated to it (collisions off) and its state is kept by particle ID until the output, so the region's own
  * integration is unchanged. The state is that of the host scheme at that time: the CoM drifting with its velocity after
  * the first half-kick, the internal motion from MSTAR. With an output list only the next output time is covered. */
-struct ketju_output_state {MyIDType ID; integertime ti; double pos[3], vel[3];};
+struct ketju_output_state {MyIDType ID, Child; integertime ti; double pos[3], vel[3];};
 static std::vector<ketju_output_state> KetjuOutputStates; /* compute roots, until gathered at the output */
 static void record_midstep_output_state(KetjuRegion &reg)
 {
@@ -1352,7 +1358,7 @@ static void record_midstep_output_state(KetjuRegion &reg)
         if(!reg.compute_tasks.is_root()) continue;
         double drift = (to > t0) ? get_drift_factor(t0, to, 0, 0) : 0;
         for(int i = 0; i < n; i++) {
-            ketju_output_state o; o.ID = reg.extra_data[i].ID; o.ti = to;
+            ketju_output_state o; o.ID = reg.extra_data[i].ID; o.Child = reg.extra_data[i].Child; o.ti = to;
             for(int k = 0; k < 3; k++) {
                 o.pos[k] = reg.com_pos[k] + reg.com_vel[k] * drift + C.physical_state->pos[i][k] / a_out;
                 o.vel[k] = reg.com_vel[k] + (C.physical_state->vel[i][k] - hub * C.physical_state->pos[i][k]) * a_out;
@@ -1550,9 +1556,9 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
             for(int i = reg.integrator->num_particles; i < reg.total_particle_count; i++) {
                 ps->mass[i] = 0; for(int j = 0; j < 3; j++) {ps->pos[i][j] = 0; ps->vel[i][j] = 0;}
             }
-            std::unordered_map<MyIDType, ketju_mpi_particle> by_id;
-            for(const ketju_mpi_particle &q : reg.all_particles) by_id[q.ID] = q;
-            for(int i = 0; i < reg.total_particle_count; i++) reg.all_particles[i] = by_id[reg.extra_data[i].ID];
+            std::unordered_map<KetjuUID, ketju_mpi_particle, KetjuUIDHash> by_id;
+            for(const ketju_mpi_particle &q : reg.all_particles) by_id[{q.ID, q.Child}] = q;
+            for(int i = 0; i < reg.total_particle_count; i++) reg.all_particles[i] = by_id[{reg.extra_data[i].ID, reg.extra_data[i].Child}];
         }
 
         int n_steps = reg.integrator->perf->successful_steps + reg.integrator->perf->failed_steps;
@@ -1645,7 +1651,7 @@ static void handle_mergers(KetjuRegion &reg,
                            const std::vector<double> &final_abs_pos,
                            const std::vector<double> &final_mass,
                            const std::vector<double> &original_mass,
-                           const std::vector<MyIDType> &merged_into)
+                           const std::vector<KetjuUID> &merged_into)
 {
     if(!reg.affected_tasks.is_member()) return;
 
@@ -1655,16 +1661,16 @@ static void handle_mergers(KetjuRegion &reg,
 
     if(reg.affected_tasks.is_root()) {
         int n = reg.total_particle_count;
-        std::unordered_map<MyIDType, int> slot;
-        for(int i = 0; i < n; i++) slot[reg.extra_data[i].ID] = i;
+        std::unordered_map<KetjuUID, int, KetjuUIDHash> slot;
+        for(int i = 0; i < n; i++) slot[{reg.extra_data[i].ID, reg.extra_data[i].Child}] = i;
         for(int i = 0; i < n; i++) {
             if(final_mass[i] > 0) continue;
 
             int type_merged = reg.extra_data[i].Type;
             int survivor = -1;
-            if(merged_into[i]) {
+            if(merged_into[i].id) {
                 int j = i;
-                for(int hop = 0; hop < n && merged_into[j] && final_mass[j] <= 0; hop++) {
+                for(int hop = 0; hop < n && merged_into[j].id && final_mass[j] <= 0; hop++) {
                     auto it = slot.find(merged_into[j]); if(it == slot.end()) break; j = it->second;
                 }
                 if(final_mass[j] > 0) survivor = j;
@@ -1869,6 +1875,7 @@ static void handle_mergers(KetjuRegion &reg,
 /* Per-particle data packed for MPI_Scatterv (one struct per particle) */
 struct ketju_scatter_particle {
     MyIDType ID;
+    MyIDType Child;
     int Task;
     int Index;
     int Type;
@@ -1877,7 +1884,7 @@ struct ketju_scatter_particle {
     double Vel[3];       /* CoM-relative peculiar velocity */
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     double OriginalMass;
-    MyIDType MergedInto; /* ID of the particle MSTAR merged this one into (0: none) */
+    KetjuUID MergedInto; /* ID and child number of the particle MSTAR merged this one into (ID 0: none) */
 #endif
 #ifdef KETJU_SINKS
     short int KetjuPNClass;
@@ -1933,13 +1940,14 @@ static void scatter_results(KetjuRegion &reg)
         for(int i = 0; i < n; i++) {
             ketju_scatter_particle &sp = scatter_buf[i];
             sp.ID    = reg.extra_data[i].ID;
+            sp.Child = reg.extra_data[i].Child;
             sp.Task  = reg.extra_data[i].Task;
             sp.Index = reg.extra_data[i].Index;
             sp.Type  = reg.extra_data[i].Type;
             sp.Mass  = ps->mass[i];
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
             sp.OriginalMass = reg.all_particles[i].Mass;
-            sp.MergedInto = 0;
+            sp.MergedInto = {0, 0};
 #endif
             for(int j = 0; j < 3; j++) {
                 /* physical -> comoving: use a_end since positions are at end of step */
@@ -1973,7 +1981,7 @@ static void scatter_results(KetjuRegion &reg)
             for(int m = 0; m < reg.integrator->num_mergers; m++) {
                 struct ketju_bh_merger_info *info = &reg.integrator->merger_infos[m];
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
-                scatter_buf[info->extra_index2].MergedInto = reg.extra_data[info->extra_index1].ID;
+                scatter_buf[info->extra_index2].MergedInto = {reg.extra_data[info->extra_index1].ID, reg.extra_data[info->extra_index1].Child};
 #endif
                 if(info->is_collision) {
                     double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
@@ -2046,7 +2054,7 @@ static void scatter_results(KetjuRegion &reg)
     std::vector<double> final_abs_pos, final_rel_vel, final_mass;
 #if defined(KETJU_MERGE_STARS) || defined(KETJU_MERGE_BH)
     std::vector<double> original_mass;
-    std::vector<MyIDType> merged_into;
+    std::vector<KetjuUID> merged_into;
 #endif
 
     /* affected root keeps the sorted scatter_buf for collision/merger checks */
@@ -2072,6 +2080,7 @@ static void scatter_results(KetjuRegion &reg)
             original_mass[i] = scatter_buf[i].OriginalMass; merged_into[i] = scatter_buf[i].MergedInto;
 #endif
             reg.extra_data[i].ID    = scatter_buf[i].ID;
+            reg.extra_data[i].Child = scatter_buf[i].Child;
             reg.extra_data[i].Task  = scatter_buf[i].Task;
             reg.extra_data[i].Index = scatter_buf[i].Index;
             reg.extra_data[i].Type  = scatter_buf[i].Type;
@@ -2084,7 +2093,7 @@ static void scatter_results(KetjuRegion &reg)
         int idx = sp.Index;
 
         /* sanity check */
-        if(P[idx].ID != sp.ID) {
+        if(P[idx].ID != sp.ID || P[idx].ID_child_number != sp.Child) {
             printf("KETJU ERROR: particle index mismatch! ID %llu vs %llu on task %d\n",
                    (unsigned long long)P[idx].ID, (unsigned long long)sp.ID, ThisTask);
             endrun(667);
@@ -2360,13 +2369,13 @@ static std::vector<long long> region_step_caps(const std::vector<std::vector<ket
 static std::unordered_map<int, long long> flyby_steps(const std::vector<std::vector<ketju_mpi_particle>> &groups)
 {
     std::unordered_map<int, long long> out;
-    struct S {MyIDType id; int group; double m, x[3], v[3];};
-    std::unordered_map<MyIDType, int> gid; for(size_t r = 0; r < groups.size(); r++) for(const ketju_mpi_particle &c : groups[r]) gid[c.ID] = (int)r;
+    struct S {MyIDType id, child; int group; double m, x[3], v[3];};
+    std::unordered_map<KetjuUID, int, KetjuUIDHash> gid; for(size_t r = 0; r < groups.size(); r++) for(const ketju_mpi_particle &c : groups[r]) gid[{c.ID, c.Child}] = (int)r;
     std::vector<S> loc;
     const double a = All.cf_atime;
     for(int i = 0; i < NumPart; i++) {
         if((P[i].Type != 4 && P[i].Type != 5) || P[i].Mass <= 0) continue;
-        S q; q.id = P[i].ID; auto it = gid.find(P[i].ID); q.group = (it == gid.end()) ? -1 : it->second; q.m = P[i].Mass;
+        S q; q.id = P[i].ID; q.child = P[i].ID_child_number; auto it = gid.find({P[i].ID, P[i].ID_child_number}); q.group = (it == gid.end()) ? -1 : it->second; q.m = P[i].Mass;
         double dtd = (P[i].Ti_current < All.Ti_Current) ? get_drift_factor(P[i].Ti_current, All.Ti_Current, i, 0) : 0;
         for(int k = 0; k < 3; k++) {q.x[k] = (P[i].Pos[k] + P[i].Vel[k] * dtd) * a; q.v[k] = P[i].Vel[k] / a;}
         loc.push_back(q);
@@ -2377,9 +2386,9 @@ static std::unordered_map<int, long long> flyby_steps(const std::vector<std::vec
     std::vector<S> all(nt);
     MPI_Allgatherv(loc.data(), nl * sizeof(S), MPI_BYTE, all.data(), bc.data(), bd.data(), MPI_BYTE, MPI_COMM_WORLD);
     const double eta = All.KetjuFlybyStepEta;
-    std::unordered_map<MyIDType, int> local_index; for(int i = 0; i < NumPart; i++) if(is_synchronized(i) && (P[i].Type == 4 || P[i].Type == 5)) local_index[P[i].ID] = i;
+    std::unordered_map<KetjuUID, int, KetjuUIDHash> local_index; for(int i = 0; i < NumPart; i++) if(is_synchronized(i) && (P[i].Type == 4 || P[i].Type == 5)) local_index[{P[i].ID, P[i].ID_child_number}] = i;
     for(int q = bd[ThisTask] / (int)sizeof(S), qe = q + nl; q < qe; q++) {
-        auto li = local_index.find(all[q].id); if(li == local_index.end()) continue;
+        auto li = local_index.find({all[q].id, all[q].child}); if(li == local_index.end()) continue;
         const S &A = all[q]; double tmin = MAX_REAL_NUMBER;
         {
             for(int j = 0; j < nt; j++) {
@@ -2654,8 +2663,11 @@ void ketju_find_regions(void)
         for(int idx : reg.local_member_indices) {
             if(P[idx].ID < local_min) local_min = P[idx].ID;
         }
-        MyIDType chain_id;
+        MyIDType chain_id, min_child, local_minc = (MyIDType)-1;
         MPI_Allreduce(&local_min, &chain_id, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, reg.affected_tasks.comm);
+        for(int idx : reg.local_member_indices) {if(P[idx].ID == chain_id && P[idx].ID_child_number < local_minc) local_minc = P[idx].ID_child_number;}
+        MPI_Allreduce(&local_minc, &min_child, 1, MPI_UNSIGNED_LONG_LONG, MPI_MIN, reg.affected_tasks.comm);
+        chain_id ^= min_child * 0x9E3779B97F4A7C15ULL; if(chain_id == 0) chain_id = 1; /* siblings share P.ID: the child number keeps chains distinct; = min ID when it is 0 */
         for(int idx : reg.local_member_indices) P[idx].KetjuChainID = chain_id;
     }
 
@@ -2829,14 +2841,14 @@ void ketju_swap_output_velocities(void)
         std::vector<ketju_output_state> keep; for(const ketju_output_state &o : KetjuOutputStates) if(o.ti > All.Ti_Current) keep.push_back(o);
         KetjuOutputStates.swap(keep);
     }
-    std::unordered_map<MyIDType, int> by_id; for(size_t q = 0; q < here.size(); q++) by_id[here[q].ID] = (int)q;
+    std::unordered_map<KetjuUID, int, KetjuUIDHash> by_id; for(size_t q = 0; q < here.size(); q++) by_id[{here[q].ID, here[q].Child}] = (int)q;
     for(int i = 0; i < NumPart; i++) {
         if(!P[i].KetjuIntegrated || P[i].Mass <= 0) continue;
         if(P[i].Ti_begstep + P[i].dt_step == All.Ti_Current) {
             for(int j = 0; j < 3; j++) {double v = P[i].Vel[j]; P[i].Vel[j] = P[i].KetjuTrueVel[j]; P[i].KetjuTrueVel[j] = v;}
             continue;
         }
-        auto it = by_id.find(P[i].ID); if(it == by_id.end()) continue;
+        auto it = by_id.find({P[i].ID, P[i].ID_child_number}); if(it == by_id.end()) continue;
         ketju_output_state &o = here[it->second];
         for(int j = 0; j < 3; j++) {double x = P[i].Pos[j], v = P[i].Vel[j]; P[i].Pos[j] = o.pos[j]; P[i].Vel[j] = o.vel[j]; o.pos[j] = x; o.vel[j] = v;}
     }

@@ -2,9 +2,10 @@
 """ICs for test/ketju_flyby (kpc, km/s, 1e10 Msun): a bound 1 + 1 Msun pair (a = 200 AU, e = 0.5) and a 1 Msun star
 20000 AU away moving at 30 km/s with impact parameter b (1500 AU: outside the pair's region; 600 AU: through it).
 Writes ketju_flyby_ics.hdf5 (b = 1500) and ketju_flyby_b600_ics.hdf5. Centred on the CoM at the origin."""
+import os
 import sys
 import numpy as np
-sys.path.insert(0, "../ketju_star_collision")
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../ketju_star_collision"))
 from make_ketju_star_collision_ics import write, AU, G
 
 def kepler_state(m1, m2, a, e, f):
