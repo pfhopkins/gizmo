@@ -546,9 +546,10 @@ and He (`abheI`) photoionization, collisional ionization.
   state reached return 100 only after the substep had been halved below 1e-8 s.
 - validate_input no longer prints per NaN; it counts, and the driver prints one line per solve with the
   number of NaN trial states CVODE rejected, the substep and the CVODE step size at the first one.
-- CVodeSetMinStep(1e-12 x substep dt) before every CVode call; a failure with h at that floor prints the
-  cell context and returns 102 (fatal). The driver substep is already <= 0.1 of the fastest species e-folding
-  time, so h below 1e-12 of it resolves nothing physical. Fortran DVODE path unchanged.
+- CVodeSetMinStep(10 DBL_EPSILON x (t_start + dt)) before every CVode call; a failure with h at that floor
+  prints the cell context and returns 102 (fatal). Below it t + h does not advance t; CVODE's first-step lower
+  bound is 100 uround |tout|. A floor of 1e-12 x substep was tried and rejected: it clamped legitimate steps in
+  hot dense gas (net 17, T0 1e6 K, n 1e6, dt 1e14 s; 99 one-zone states changed). Fortran DVODE path unchanged.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

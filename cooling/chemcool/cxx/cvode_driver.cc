@@ -31,6 +31,7 @@
 #include <sunmatrix/sunmatrix_dense.h>
 #include <sunlinsol/sunlinsol_dense.h>
 #include <sundials/sundials_context.h>
+#include <cfloat>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -50,9 +51,9 @@ thread_local long cxx_stat_calls = 0, cxx_stat_substeps = 0, cxx_stat_retries = 
 thread_local long cxx_stat_rhs_evals = 0, cxx_stat_cvode_steps = 0;
 thread_local long chem_nan_states = 0;
 
-// CVODE step floor relative to the substep interval: the driver substep is already <= 0.1 of the
-// fastest species e-folding time, so h below this resolves no physical transient (101/102: fatal codes)
-static const double CHEM_HMIN_REL = 1e-12;
+// CVODE step floor: 10 x the double resolution of the time coordinate at the substep end. Below it
+// t + h no longer advances t; CVODE's own first-step lower bound is 100 x that. 102 = fatal code.
+static const double CHEM_HMIN_EPS = 10.0 * DBL_EPSILON;
 
 // full context of the cell handed to the solver, for the fatal paths
 static void chem_print_cell_context(const char* why, double time, double yn, double dl, double divv,
@@ -328,7 +329,7 @@ static CvWork* cv_get(int nspec, const double* atol, double t0, const double* y)
 // non_eq_abundances has c.trac_num entries; energy in/out [erg cm^-3].
 // Returns 0 ok; 100 = dt collapse (ABORT(100)); 1 = nstep exceeded (ABORT(0));
 // 2 = negative/zero dt (ABORT(1)/(2)); 3 = CVODE setup failure.
-// 101 = non-finite input state; 102 = CVODE step reached the CHEM_HMIN_REL floor.
+// 101 = non-finite input state; 102 = CVODE step reached the CHEM_HMIN_EPS time-resolution floor.
 // Net 3: an RHS ABORT (comp_equilib 9751/9752, index 1) returns that code.
 int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                           double* energy, double* non_eq_abundances, ChemCell& c)
@@ -552,7 +553,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 need_reinit = 0;
             }
             double tret = t_start;
-            const double hmin = CHEM_HMIN_REL * dt;
+            const double hmin = CHEM_HMIN_EPS * (t_start + dt);
             CVodeSetMinStep(w->mem, hmin);
             const long nan_before = chem_nan_states;
             int flag = CVode(w->mem, t_start + dt, w->yv, &tret, CV_NORMAL);
@@ -566,8 +567,8 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 double hcur = 0.0;
                 CVodeGetCurrentStep(w->mem, &hcur);
                 if (std::fabs(hcur) <= hmin * (1.0 + 1e-6)) {
-                    std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (= %g x substep dt=%g, flag %d) at t=%g of %g\n",
-                                 hcur, CHEM_HMIN_REL, dt, flag, t_start, t_end);
+                    std::fprintf(stderr, "cxx_evolve: CVODE step reached the floor h=%g (time resolution at t=%g, substep dt=%g, flag %d) of %g\n",
+                                 hcur, t_start + dt, dt, flag, t_end);
                     chem_print_cell_context("CVODE step-size floor", time, yn, dl, divv, y_old, nspec, c);
                     retcode = 102; goto out;
                 }
