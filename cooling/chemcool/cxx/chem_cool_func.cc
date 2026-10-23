@@ -416,10 +416,10 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
                   * (1.0 + 4.1 * std::sqrt(abe / (abe + 7e-2)));
 #endif
         // Hadronic + Coulomb heating from CR proton losses (Guo & Oh 2008,
-        // Mannheim & Schlickeiser 1994); mirrors CR_gas_heating().
+        // Mannheim & Schlickeiser 1994); CR_gas_heating() without its ionisation part, which the zeta term heats.
         if (c.cr_energy_density > 0.0) {
             rates[10] -= (0.87 * 6.37e-16 / 6.0
-                        + 0.53 * 3.09e-16 * (abe + 0.57 * abhI)
+                        + 0.53 * 3.09e-16 * abe
                           / (1.0 + 4.0 * c.abhe))
                        * c.cr_energy_density * yn;
         }
