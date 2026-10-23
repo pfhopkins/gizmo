@@ -398,6 +398,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 out.DtE_MHDLedger[4] += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+                out.DtEB_facevol += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 for(k=0; k<3; k++)
                 {
@@ -446,6 +449,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                     CellP[j].DtE_MHDLedger[4] -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+                    CellP[j].DtEB_facevol -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
 #endif
 #ifdef DIVBCLEANING_DEDNER
                     for(k=0; k<3; k++)

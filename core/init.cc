@@ -753,6 +753,9 @@ void init(void)
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             CellP[i].LedgerEB = -1;
 #endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+            CellP[i].EB_last = -1;
+#endif
 #ifdef COOLING
 #ifndef CHIMES
             CellP[i].Ne = 1.0;

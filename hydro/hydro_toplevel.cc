@@ -363,6 +363,9 @@ struct OUTPUT_STRUCT_NAME
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     MyDouble DtE_MHDLedger[5];
 #endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+    MyDouble DtEB_facevol;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
@@ -657,6 +660,9 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] += out->DtE_MHDLedger[kl];}
 #endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+    CellP[i].DtEB_facevol += out->DtEB_facevol;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     CellP[i].DtPhi += out->DtPhi;
@@ -821,6 +827,9 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef MAGNETIC
 #ifndef HYDRO_SPH
             CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && !defined(HYDRO_SPH)
+            CellP[i].DtEB_booked = dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) - CellP[i].DtEB_facevol; /* dE_B/dt the u equation assumes */
 #endif
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             CellP[i].DtE_MHDLedger[3] += (magnorm_closure-1.) * dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
@@ -1057,6 +1066,9 @@ void hydro_final_operations_and_cleanup(void)
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
                 for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
 #endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+                CellP[i].DtEB_facevol = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 CellP[i].DtB_PhiCorr = {};
                 CellP[i].DtPhi = 0;
@@ -1147,6 +1159,9 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].divB = 0; CellP[i].Face_Area = {};
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+            CellP[i].DtEB_facevol = 0;
 #endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};

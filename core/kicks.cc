@@ -297,6 +297,15 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+            { /* charge u with the actual E_B change (kernel volume since last kick + this kick's dVB) minus what the u equation booked */
+                double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
+                Vec3<double> VB_new = CellP[i].B + CellP[i].DtB * (dt_hydrokick / All.cf_atime);
+                double eb_new = 0.5 * VB_new.norm_sq() * rho_over_m / All.cf_atime;
+                if(CellP[i].EB_last >= 0) {du_tot -= (eb_new - CellP[i].EB_last - CellP[i].DtEB_booked * dt_hydrokick) / P[i].Mass;}
+                CellP[i].EB_last = eb_new;
+            }
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro), decide if we need to split this particular cell on this particular timestep, since this un-split solver can lead to energy conservation problems if the mechanical heating is much larger than cooling */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=1; /* default to assume split */

@@ -82,6 +82,11 @@ extern struct gas_cell_data
     Vec3<MyDouble> B;               /*!< actual B (conserved variable used for integration; can be B*V for flux schemes) */
     Vec3<MyDouble> DtB;             /*!< time derivative of B-field (of -conserved- B-field) */
     MyFloat divB;                   /*!< storage for the 'effective' divB used in div-cleaning procedure */
+#ifdef MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE
+    MyDouble EB_last;               /*!< E_B of this cell after its last B kick (<0: unset) */
+    MyDouble DtEB_booked;           /*!< dE_B/dt assumed by the internal-energy equation */
+    MyDouble DtEB_facevol;          /*!< face-estimated B^2 dV/dt/2 term */
+#endif
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     MyDouble DtE_MHDLedger[5];      /*!< total-energy rates: Powell, Dedner face, Dedner PhiCorr, closure mismatch, B^2 dV/2 booking */
     MyDouble LedgerEB;              /*!< E_B of this cell at its last B kick (<0: unset) */
