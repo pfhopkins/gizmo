@@ -901,8 +901,19 @@ void init(void)
 
     set_softenings();
 
-    /* will build tree */
-    if(force_treebuild_gravity() < 0) {endrun(91569);}
+    /* will build tree.  The status is reduced over all ranks, so every rank stops here together; it has to
+       stop at once, because everything below reads the tree.  Right after a full decomposition neither
+       repair status should occur: -2 means particles sit on a rank that does not own their top-level leaf,
+       -4 that particles lie outside the extent the decomposition measured. */
+    {
+        const int build_status = force_treebuild_gravity();
+        if(build_status < 0)
+        {
+            if(ThisTask == 0) {printf("The initial tree build failed (status %d) right after the initial domain decomposition. Stopping.\n", build_status); fflush(stdout);}
+            endrun(91569);
+            gizmo_exit_bad_stop_if_requested("init:treebuild");
+        }
+    }
 
     All.Ti_Current = 0;
 

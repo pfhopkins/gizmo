@@ -198,7 +198,13 @@ void gravity_tree(void)
              * recovery, not the step's merge/split, and running it here would refine twice. */
             if(ThisTask == 0) {printf("Tree build: restoring geometric particle ownership before rebuilding.\n"); fflush(stdout);}
             domain_Decomposition_light(0, 0);
-            if(force_treebuild_gravity() < 0) {endrun(91566);}
+            const int retry_status = force_treebuild_gravity();
+            if(retry_status < 0)
+            {
+                if(ThisTask == 0) {printf("Tree build still failed (status %d) after restoring particle ownership. Stopping.\n", retry_status); fflush(stdout);}
+                endrun(91566);
+                gizmo_exit_bad_stop_if_requested("gravtree:treebuild_retry");   /* the gravity walk below reads this tree */
+            }
         }
         /* The tree just built is current by construction: the build set every
          * node's Ti_current to All.Ti_Current and refilled the whole SoA mirror,
