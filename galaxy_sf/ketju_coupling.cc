@@ -2142,6 +2142,7 @@ static void move_particle_timebin(int i, int old_bin, int new_bin)
  * one step's kicks put into its orbit is about mu |T| a v_p dt; above KetjuTidalErrorBudget |E_b| the step is reduced to
  * that budget, but not below KetjuTidalStepRes P (1 - e)^1.5, where the kicks start to resolve the pericentre passage. */
 static long long CapTally[2] = {0, 0}; /* groups whose bin a motion / tide cap set (task 0) */
+static long long FlybyTally = 0;        /* fly-by steps that shortened a star's or group's step (rank-local) */
 static std::vector<long long> region_step_caps(const std::vector<std::vector<ketju_mpi_particle>> &groups)
 {
     const int n = (int)groups.size();
@@ -2229,6 +2230,54 @@ static std::vector<long long> region_step_caps(const std::vector<std::vector<ket
         }
     }
     return caps;
+}
+
+/* Fly-by step (prototype, KetjuFlybyStepEta > 0): for every synchronised local star the symmetrised pair step
+ * eta min(t_ff, t_fb) (Pelupessy+ 2012; FROST eq. 23 with its approach correction) over all stars of other timestep groups,
+ * positions predicted to now. No distance cut: a star on a long step must already see the stars that can reach it within that
+ * step. O(N_sync N) after gathering every star each step: test-size runs only (production: the gravity tree walk).
+ * Returns the step per local index (integer time, TIMEBASE where none). */
+static std::unordered_map<int, long long> flyby_steps(const std::vector<std::vector<ketju_mpi_particle>> &groups)
+{
+    std::unordered_map<int, long long> out;
+    struct S {MyIDType id; int group; double m, x[3], v[3];};
+    std::unordered_map<MyIDType, int> gid; for(size_t r = 0; r < groups.size(); r++) for(const ketju_mpi_particle &c : groups[r]) gid[c.ID] = (int)r;
+    std::vector<S> loc;
+    const double a = All.cf_atime;
+    for(int i = 0; i < NumPart; i++) {
+        if((P[i].Type != 4 && P[i].Type != 5) || P[i].Mass <= 0) continue;
+        S q; q.id = P[i].ID; auto it = gid.find(P[i].ID); q.group = (it == gid.end()) ? -1 : it->second; q.m = P[i].Mass;
+        double dtd = (P[i].Ti_current < All.Ti_Current) ? get_drift_factor(P[i].Ti_current, All.Ti_Current, i, 0) : 0;
+        for(int k = 0; k < 3; k++) {q.x[k] = (P[i].Pos[k] + P[i].Vel[k] * dtd) * a; q.v[k] = P[i].Vel[k] / a;}
+        loc.push_back(q);
+    }
+    int nl = loc.size(); std::vector<int> cnt(NTask), bc(NTask), bd(NTask);
+    MPI_Allgather(&nl, 1, MPI_INT, cnt.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    int nt = 0; for(int t = 0; t < NTask; t++) {bc[t] = cnt[t] * sizeof(S); bd[t] = nt * sizeof(S); nt += cnt[t];}
+    std::vector<S> all(nt);
+    MPI_Allgatherv(loc.data(), nl * sizeof(S), MPI_BYTE, all.data(), bc.data(), bd.data(), MPI_BYTE, MPI_COMM_WORLD);
+    const double eta = All.KetjuFlybyStepEta;
+    std::unordered_map<MyIDType, int> local_index; for(int i = 0; i < NumPart; i++) if(is_synchronized(i) && (P[i].Type == 4 || P[i].Type == 5)) local_index[P[i].ID] = i;
+    for(int q = bd[ThisTask] / (int)sizeof(S), qe = q + nl; q < qe; q++) {
+        auto li = local_index.find(all[q].id); if(li == local_index.end()) continue;
+        const S &A = all[q]; double tmin = MAX_REAL_NUMBER;
+        {
+            for(int j = 0; j < nt; j++) {
+                const S &B = all[j]; if(j == q || (A.group >= 0 && A.group == B.group)) continue;
+                double d[3], u[3], r2 = 0, v2 = 0, rv = 0;
+                for(int k = 0; k < 3; k++) {d[k] = B.x[k] - A.x[k]; u[k] = B.v[k] - A.v[k]; r2 += d[k]*d[k]; v2 += u[k]*u[k]; rv += d[k]*u[k];}
+                if(r2 <= 0) continue;
+                double r = sqrt(r2), GM = All.G * (A.m + B.m), tff = sqrt(r2 * r / GM), tfb = r / sqrt(v2 + MIN_REAL_NUMBER);
+                double cff = 1.5 * rv / r2, cfb = rv / r2 * (1 + GM / (r * (v2 + MIN_REAL_NUMBER)));
+                double ctf = cff * tff * tff * eta, ctb = cfb * tfb * tfb * eta;
+                double sf = sqrt(1 + cff * ctf * eta), sb = sqrt(1 + cfb * ctb * eta); /* rv < 0 (approach) shortens both */
+                double t = eta * DMIN(tff + ctf / (sf + 1), tfb + ctb / (sb + 1));
+                if(t < tmin) tmin = t;
+            }
+        }
+        if(tmin < MAX_REAL_NUMBER) {double t = DMAX(tmin * All.cf_hubble_a / All.Timebase_interval, 1.0); out[li->second] = (t >= (double)TIMEBASE) ? (long long)TIMEBASE : (long long)t;}
+    }
+    return out;
 }
 
 /* PHASE 6: put every chain region on one timebin, changing only particles synchronised this step.
@@ -2330,6 +2379,18 @@ void ketju_limit_timesteps(void)
         }
     }
 #endif
+    if(All.KetjuFlybyStepEta > 0) { /* fly-by steps: a group's members set its shared bin; stars in no group move directly */
+        std::unordered_map<int, long long> fb = flyby_steps(tsr_centers);
+        std::unordered_map<int, int> member_group; for(int r = 0; r < n_tsr; r++) for(int idx : limited[r]) member_group[idx] = r;
+        for(const auto &f : fb) {
+            auto mg = member_group.find(f.first);
+            if(mg != member_group.end()) {if(f.second < min_ti[2*mg->second]) {min_ti[2*mg->second] = f.second; FlybyTally++;}}
+            else if(f.second < (long long)GET_INTEGERTIME_FROM_TIMEBIN(P[f.first].TimeBin)) {
+                int bin = get_timestep_bin((integertime)f.second); while(bin > 0 && !TimeBinActive[bin]) {bin--;}
+                if(bin > 0 && bin < P[f.first].TimeBin) {move_particle_timebin(f.first, P[f.first].TimeBin, bin); P[f.first].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin); FlybyTally++;}
+            }
+        }
+    }
     MPI_Allreduce(MPI_IN_PLACE, min_ti.data(), 2 * n_tsr, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);
     { /* motion and tide caps (identical on all tasks) */
         std::vector<long long> caps = region_step_caps(tsr_centers);
@@ -2610,7 +2671,7 @@ void ketju_run_integration(void)
                 /* coupling energy check: if the direct-sum drift is the kick work, the coupling (impulsive external field) dominates;
                  * if it is the MSTAR term, the integrator does. Normalised by |E0| of the direct sum when that is computed. */
                 double norm = (KetjuEtotSet && KetjuEtot0 != 0) ? fabs(KetjuEtot0) : 1;
-                printf("KETJU CAPS: t=%g timestep-regions set by motion cap=%lld tide cap=%lld\n", All.Time, CapTally[0], CapTally[1]);
+                printf("KETJU CAPS: t=%g timestep-regions set by motion cap=%lld tide cap=%lld fly-by (task 0)=%lld\n", All.Time, CapTally[0], CapTally[1], FlybyTally);
                 printf("KETJU ENERGY: t=%g units=%s kick-work-internal net=%.4e abs=%.4e MSTAR-dE=%.4e collisions-dE=%.4e ETOT dE=%.4e\n",
                        All.Time, (norm != 1) ? "|E0|" : "code", cum_energy[0] / norm, cum_energy[1] / norm, cum_energy[2] / norm, cum_energy[3] / norm,
                        KetjuEtotSet ? (KetjuEtot - KetjuEtot0) / norm : 0.0);

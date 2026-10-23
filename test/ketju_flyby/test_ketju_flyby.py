@@ -3,7 +3,9 @@
 Pair (1 + 1 Msun, a = 200 AU, e = 0.5) in a KETJU region; a 1 Msun star passes at 30 km/s with impact parameter 1500 AU
 (outside the region: integrated by the host) or 600 AU (captured into the region). Converged runs (MaxSizeTimestep 2e-10)
 reach |da/a| ~ 7e-5 here, the float32 IC floor.
-With a field star around the pair the region step is capped (Mannerkoski+ 2023 eqs. 4, 6)."""
+- motion caps (default): with a field star around the pair the region step is capped (Mannerkoski+ 2023 eqs. 4, 6).
+- fly-by step (KetjuFlybyStepEta 0.2): the intruder's own steps resolve the passage. Without it the intruder takes one
+  3000-yr step through the encounter (151 AU off at the end) and the pair is 4e-3 off in a."""
 
 import subprocess
 import sys
@@ -11,6 +13,7 @@ import sys
 import h5py
 import glob
 import numpy as np
+import pytest
 from scipy.integrate import solve_ivp
 
 from gizmo.test import build_and_run_test, clean_test_outputs
@@ -50,6 +53,19 @@ def _errors(b):
         g = f["PartType4"]; o = np.argsort(np.array(g["ParticleIDs"]))
         x = np.array(g["Coordinates"])[o]; v = np.array(g["Velocities"])[o]
     return abs(_sma(x, v) / _sma(xr, vr) - 1), np.linalg.norm(x[2] - xr[2]) / AU
+
+
+@pytest.mark.parametrize("b,ic,eta,da_max,dx_max", [
+    (1500, "ketju_flyby_ics", 0.2, 3e-4, 1.0),
+    (600, "ketju_flyby_b600_ics", 0.2, 3e-4, 1.0),
+])
+def test_ketju_flyby_step(b, ic, eta, da_max, dx_max):
+    subprocess.run([sys.executable, "make_ketju_flyby_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    build_and_run_test(TEST_NAME, 1, 1, param_overrides={"InitCondFile": ic, "KetjuFlybyStepEta": eta})
+    da, dx = _errors(b)
+    print(f"b={b} AU: pair |da/a| {da:.2e}, intruder off by {dx:.3g} AU")
+    assert da < da_max and dx < dx_max
 
 
 def test_ketju_flyby_motion_caps():

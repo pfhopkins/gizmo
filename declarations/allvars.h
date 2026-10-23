@@ -854,6 +854,7 @@ extern struct global_data_all_processes
   double KetjuMinParticlesPerTask;       /*!< minimum particles per compute task for load balancing (default 10) */
   double KetjuTidalStepRes;              /*!< region-step floor res*P(1-e)^1.5 for tidally kicked members' binaries (0 = off) */
   double KetjuTidalErrorBudget;          /*!< per-step tidal kick energy mu|T|a v_p dt allowed, in units of the binary's |E| */
+  double KetjuFlybyStepEta;              /*!< Type-4 stars outside regions: symmetrised fly-by pair step factor (0 = off) */
 #endif
 
 #ifdef GALSF		/* star formation and feedback sector */
