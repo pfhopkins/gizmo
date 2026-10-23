@@ -417,8 +417,14 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #endif
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
                 /* outward area of i is -Face_Area_Vec: -V grad psi = -sum S (psi_i+psi_j)/2 (symmetric), V div.B = sum S.(B_j-B_i)/2 (difference) */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB
+                /* TP12 sec. 4.2.2 pair: V div.B = sum S.(B_i+B_j)/2 (symmetric, the form in the MFM Powell term), -V grad psi = sum S (psi_i-psi_j)/2 (difference), same sign on i and j */
+                Vec3<double> dB_psicons = Face_Area_Vec * (-0.5 * (local.PsiCons - Get_Gas_Psi_Conservative(j)));
+                double divb_diff_ij = -0.5 * dot(Face_Area_Vec, BPred_j + local.BPred) * All.cf_a2inv;
+#else
                 Vec3<double> dB_psicons = Face_Area_Vec * (0.5 * (local.PsiCons + Get_Gas_Psi_Conservative(j)));
                 double divb_diff_ij = -0.5 * dot(Face_Area_Vec, BPred_j - local.BPred) * All.cf_a2inv;
+#endif
                 out.DtB_PsiCons += dB_psicons * FluxCorrectionFactor_to_i;
                 out.DivBDiff += divb_diff_ij;
 #endif
@@ -475,8 +481,13 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * dot(BPred_j, bflux_from_nonideal_effects) * All.cf_a2inv;
 #endif
 #ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB
+                    CellP[j].DtB_PsiCons += dB_psicons * FluxCorrectionFactor_to_j;
+                    CellP[j].DivBDiff -= divb_diff_ij;
+#else
                     CellP[j].DtB_PsiCons -= dB_psicons * FluxCorrectionFactor_to_j;
                     CellP[j].DivBDiff += divb_diff_ij;
+#endif
 #endif
 #endif
 #endif
