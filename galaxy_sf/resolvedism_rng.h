@@ -3,10 +3,11 @@
 
 /* Rank-independent random streams for Stella draws: seeded from particle identity and integer time, never from rank or call order. */
 
-#define RESOLVEDISM_RNG_SALT_IMF_MASS 0x494D464D41535331ULL /* IMF mass draw (incl. forced-SF redraw) */
-#define RESOLVEDISM_RNG_SALT_SF_ACCEPT 0x5346414343455054ULL /* LYRA SF acceptance */
-#define RESOLVEDISM_RNG_SALT_IA 0x5459504549414E4EULL       /* Type Ia hazard */
-#define RESOLVEDISM_RNG_SALT_STOCH_IMF 0x53544F4348494D46ULL /* STOCHASTIC_IMF massive-star draw */
+/* Draw labels: one fixed constant per kind of draw, so different draws of the same particle at the same time are independent */
+#define RESOLVEDISM_RNG_DRAW_IMF_MASS 0x494D464D41535331ULL /* IMF mass draw (incl. forced-SF redraw) */
+#define RESOLVEDISM_RNG_DRAW_SF_ACCEPT 0x5346414343455054ULL /* LYRA SF acceptance */
+#define RESOLVEDISM_RNG_DRAW_IA 0x5459504549414E4EULL       /* Type Ia hazard */
+#define RESOLVEDISM_RNG_DRAW_STOCH_IMF 0x53544F4348494D46ULL /* STOCHASTIC_IMF massive-star draw */
 
 static inline unsigned long long resolvedism_rng_mix64(unsigned long long z)
 {
@@ -15,10 +16,10 @@ static inline unsigned long long resolvedism_rng_mix64(unsigned long long z)
     return z ^ (z >> 31);
 }
 
-/* stream state for particle i at the current integer time: (ID, child number, generation, Ti_Current, salt) */
-static inline unsigned long long resolvedism_rng_seed(int i, unsigned long long salt)
+/* stream state for particle i at the current integer time: (ID, child number, generation, Ti_Current, draw label) */
+static inline unsigned long long resolvedism_rng_seed(int i, unsigned long long draw_label)
 {
-    unsigned long long s = resolvedism_rng_mix64(salt);
+    unsigned long long s = resolvedism_rng_mix64(draw_label);
     s = resolvedism_rng_mix64(s ^ (unsigned long long)P[i].ID);
     s = resolvedism_rng_mix64(s ^ (unsigned long long)P[i].ID_child_number);
     s = resolvedism_rng_mix64(s ^ (unsigned long long)P[i].ID_generation);

@@ -508,7 +508,7 @@ void star_formation_parent_routine(void)
                  * P = (M_cell / M_star) * pfac  (Gutcke+ 2021, eq. 3).
                  * Massive stars have low P; low-mass stars have high P.
                  * SFR is conserved on average: <M_star * P> = M_cell * pfac. */
-                unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_IMF_MASS); /* rank-independent per-event stream */
+                unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
                 double M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
@@ -546,7 +546,7 @@ void star_formation_parent_routine(void)
 #endif
                 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-                unsigned long long sf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_SF_ACCEPT);
+                unsigned long long sf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_SF_ACCEPT);
                 if(resolvedism_rng_uniform(&sf_rng) < prob)    /* ok, make a star */
 #else
                 if(get_random_number(P[i].ID + 1) < prob)    /* ok, make a star */
@@ -850,7 +850,7 @@ void star_formation_parent_routine(void)
                                 double mass_solar = P[i_star].Mass * UNIT_MASS_IN_SOLAR;
                                 double prob_massive = mass_solar / All.MassPerStarIMF;
                                 P[i_star].Mstar = 0;
-                                unsigned long long stoch_rng = resolvedism_rng_seed(i_star, RESOLVEDISM_RNG_SALT_STOCH_IMF);
+                                unsigned long long stoch_rng = resolvedism_rng_seed(i_star, RESOLVEDISM_RNG_DRAW_STOCH_IMF);
                                 if(resolvedism_rng_uniform(&stoch_rng) < prob_massive) {
                                     double xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
                                     double y = resolvedism_rng_uniform(&stoch_rng);
