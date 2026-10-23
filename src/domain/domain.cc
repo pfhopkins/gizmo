@@ -158,7 +158,8 @@ static int DomainMaxPartLocal, DomainMaxGasLocal;	/*!< domain local-particle ass
  * The check reads counts that domain_sumCost has already reduced across all ranks, so these end up
  * holding the same values everywhere -- the agreement comes from those inputs, not from anything the
  * check itself does. */
-static int domain_bound_needed = 0, domain_bound_limit = 0;
+static long long domain_bound_needed = 0;   /* a candidate's per-rank load: a sum of leaf counts, so it can pass INT_MAX */
+static int domain_bound_limit = 0;
 static double totgravcost, gravcost, totgascost, gascost;
 static void domain_compute_particle_costs(void);
 /* The timebin a particle's recorded work is balanced under: the smallest bin it did that work on, or
@@ -1210,7 +1211,8 @@ static int domain_light_keep_owners(int multipledomains, const int *prev_start, 
         std::copy(DomainTask, DomainTask + NTopleaves, fresh_layout + 2 * (size_t) n_segments);
         std::vector<int> fresh_load(list_load, list_load + NTask), fresh_loadgas(list_loadgas, list_loadgas + NTask);
         std::vector<double> fresh_work(list_work, list_work + NTask), fresh_workgas(list_workgas, list_workgas + NTask);
-        const int fresh_bound_needed = domain_bound_needed, fresh_bound_limit = domain_bound_limit;
+        const long long fresh_bound_needed = domain_bound_needed;
+        const int fresh_bound_limit = domain_bound_limit;
 
         for(int t = 0; t < NTask; t++) {per_task[t] = 0;}
         for(int s = 0; s < n_segments; s++) {
@@ -1666,7 +1668,7 @@ int domain_decompose(void)
               printf("\n");
               printf("  per-rank cap:   %d = %g x PartAllocFactor %g x that average\n",
                      domain_bound_limit, (double) REDUC_FAC_FOR_MEMORY_IN_DOMAIN, All.PartAllocFactor);
-              printf("  best attempt:   %d per rank, over the cap by %d\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
+              printf("  best attempt:   %lld per rank, over the cap by %lld\n", domain_bound_needed, domain_bound_needed - domain_bound_limit);
               /* Changing PartAllocFactor on a restart re-derives the cap from the CURRENT particle count,
                * so what is needed is a factor over the CURRENT average -- NOT the old factor scaled by
                * how much the run has grown, which would reserve that much again and exhaust the node.
@@ -1810,7 +1812,7 @@ int domain_decompose(void)
 int domain_check_memory_bound(int multipledomains)
 {
   int ta, m, i;
-  int load, gasload, max_load, max_gasload;
+  long long load, gasload, max_load, max_gasload;   /* sums of leaf counts for a candidate assignment: checked before any is narrowed */
   double work, workgas;
 
   max_load = max_gasload = 0;
@@ -1829,8 +1831,9 @@ int domain_check_memory_bound(int multipledomains)
 	    workgas += domainWorkGas[i];
 	  }
 
-      list_load[ta] = load;
-      list_loadgas[ta] = gasload;
+      /* stored as int; a load past INT_MAX also exceeds DomainMaxPartLocal, so that candidate is rejected below */
+      list_load[ta] = (load > INT_MAX) ? INT_MAX : (int) load;
+      list_loadgas[ta] = (gasload > INT_MAX) ? INT_MAX : (int) gasload;
       list_work[ta] = work;
       list_workgas[ta] = workgas;
 
@@ -1852,22 +1855,22 @@ int domain_check_memory_bound(int multipledomains)
 	      if(P[i].Type == 0) {gasload++;}
 	    }
 	  }
-      MPI_Allreduce(&load, &max_load, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-      MPI_Allreduce(&gasload, &max_gasload, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+      MPI_Allreduce(&load, &max_load, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+      MPI_Allreduce(&gasload, &max_gasload, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
     }
 #endif
 
     if(max_load > DomainMaxPartLocal)
     {
       domain_bound_needed = max_load; domain_bound_limit = DomainMaxPartLocal;
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%d)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (limit=%d, needed=%lld)\n", (max_load * All.PartAllocFactor) / DomainMaxPartLocal, DomainMaxPartLocal, max_load);}
       return 1;
     }
 
     if(max_gasload > DomainMaxGasLocal)
     {
       domain_bound_needed = max_gasload; domain_bound_limit = DomainMaxGasLocal;
-      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%d)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
+      if(ThisTask == 0) {printf("desired memory imbalance=%g  (GAS/FLUID) (limit=%d, needed=%lld)\n", (max_gasload * All.PartAllocFactor) / DomainMaxGasLocal, DomainMaxGasLocal, max_gasload);}
       return 1;
     }
 

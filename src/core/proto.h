@@ -19,7 +19,7 @@
  */
 
 
-void write_header_attributes_in_hdf5(hid_t handle);
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
 void read_header_attributes_in_hdf5(char *fname);
 
 void output_compile_time_options(void);
@@ -702,7 +702,7 @@ void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
-long get_particles_in_block(enum iofields blocknr, int *typelist);
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_in_file);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
 size_t get_input_float_bytes(enum iofields blocknr);
 int read_file(char *fname, int readTask, int lastTask);

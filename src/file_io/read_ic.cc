@@ -1500,7 +1500,7 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
             size_t comm_chunk_mb = All.CommChunkSize;
             blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
-            npart = get_particles_in_block(blocknr, &typelist[0]);
+            npart = get_particles_in_block(blocknr, &typelist[0], npart_in_file);
 
             if(npart > 0)
             {
