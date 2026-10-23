@@ -722,26 +722,22 @@ void resolvedism_photoionize(void)
 
     /* Post-evaluate ionization state transitions (gizmo2017 pattern):
      * The global reset already cleared 1->0 at the top.
-     * Now transition 2->1 (confirm newly ionized) and wake them.
+     * Now transition 2->1. No wakeup: gizmo2017 photoionize.c:718 wakes SphP[j] with a stale j, never the ionized cell.
      * Cells not re-ionized remain at 0 and recombine via CHEMCOOL. */
-    int sum_ionized = 0, n_woken = 0;
+    int sum_ionized = 0;
     for(j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;
         if(CellP[j].Ionized == 2) {
             CellP[j].Ionized = 1;
-            P[j].wakeup = -1;
-            NeedToWakeupParticles_local = 1;
-            n_woken++;
         }
         if(CellP[j].Ionized == 1)
             sum_ionized++;
     }
     {
-        int total_ionized = 0, total_woken = 0;
+        int total_ionized = 0;
         MPI_Reduce(&sum_ionized, &total_ionized, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&n_woken, &total_woken, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
         if(ThisTask == 0)
-            printf("RESOLVEDISM PI: %d ionized, %d woken\n", total_ionized, total_woken);
+            printf("RESOLVEDISM PI: %d ionized\n", total_ionized);
     }
 
     /* Free in LIFO order */
