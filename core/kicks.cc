@@ -213,6 +213,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
 
 
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+double PsiDampEnergyCumul = 0; /* cumulative E_psi removed by parabolic damping, physical code energy, this task */
+#endif
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
 double MHDEnergyLedger[MHD_ENERGY_LEDGER_N]; /* cumulative code energy: clip, Powell, Dedner face, Dedner PhiCorr, closure, B^2 dV/2, B.d(VB) */
 #endif
@@ -520,6 +523,9 @@ void set_predicted_quantities_for_extra_physics(int i)
     {
         int k, kf; k=0, kf=0;
 #if defined(MAGNETIC)
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZPred = CellP[i].PsiZ;
+#endif
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         CellP[i].BPred = CellP[i].B;
 #if defined(DIVBCLEANING_DEDNER)
@@ -574,6 +580,21 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
     if(CellP[i].LedgerEB >= 0) {MHDEnergyLedger[7] += eb_ledger_now - CellP[i].LedgerEB;}
 #endif
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    { /* hyperbolic update, then parabolic damping; damped E_psi goes to heat unless _NO_DAMPING_HEAT */
+        CellP[i].PsiZ += sqrt(All.cf_atime) * CellP[i].DtPsiZ * dt_entr;
+        double ch = Get_Gas_CleaningSpeed(i), h = 1.2 * P[i].Get_Particle_Size() * All.cf_atime; /* TP12 h = 1.2 (m/rho)^(1/d) */
+        if(ch > 0 && h > 0 && dt_entr > 0)
+        {
+            double z0 = CellP[i].PsiZ; CellP[i].PsiZ *= exp(-dt_entr * DIVBCLEANING_CONSERVATIVE_SIGMA * ch / h);
+            double dE_damp = 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / All.cf_atime;
+            PsiDampEnergyCumul += dE_damp;
+#ifndef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_NO_DAMPING_HEAT
+            if(P[i].Mass > 0) {CellP[i].InternalEnergy += dE_damp / P[i].Mass;}
+#endif
+        }
+    }
+#endif
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
     CellP[i].LedgerEB = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / P[i].Mass : 0;
     MHDEnergyLedger[8] += CellP[i].LedgerEB - eb_ledger_now;

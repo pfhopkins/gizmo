@@ -753,6 +753,9 @@ void init(void)
 #ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
             CellP[i].LedgerEB = -1;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+            CellP[i].PsiZ = CellP[i].PsiZPred = CellP[i].DtPsiZ = 0;
+#endif
 #if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
             CellP[i].EB_last = -1;
 #endif
