@@ -69,6 +69,7 @@ MHD_B_SET_IN_PARAMS
 #CRFLUID_DIFFUSION_MODEL=0       % constant diffusivity (set CosmicRayDiffusionCoeff in params)
 #CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s CR transport speed (non-FIRE default is c); transport runs along B; no isotropic fallback at B = 0 (Stella setups always carry a field)
 #CR_BACKGROUND_IONRATE_ATTENUATED % chemistry zeta = CosmicRayIonRate x f(TreeCol N_H, STARFORGE) [+ zeta(e_CR)]; no background CR energy or pressure
+#CRFLUID_EXCHANGE_PDV_ONLY        % CRs exchange only their P dV work with the gas, not a pressure-fraction share of shock heating
 #INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (CR transport tests; default zeroes it)
 #CHEMCOOL_KEEP_IC_ABUNDANCES     % keep ChemcoolTracAbund from the IC on fresh starts (molecular cloud ICs; default zeroes it)
 

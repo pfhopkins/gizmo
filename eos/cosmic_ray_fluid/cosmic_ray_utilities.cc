@@ -1897,7 +1897,9 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
         if(divv_p*divv_f > 0) {if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_p;} else {divv_u=divv_f;}} // if both agree in sign here, use -larger- since more accurately captures CR-dominated limit
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change
         if(fabs(d_CR) > fabs(dtI_hydro)) {d_CR = dtI_hydro;} // do not allow this to exceed the sum (since all terms have the same sign here, in a well-ordered smooth flow)
+#if !defined(CRFLUID_EXCHANGE_PDV_ONLY) /* Stella opt-in: CRs exchange only their own P dV work; shock heating stays in the gas (CRs from shocks via CRFLUID_INJECTION_AT_SHOCKS) */
         if(fabs(d_CR) < fac_P*fabs(dtI_hydro)) {d_CR = fac_P*dtI_hydro;} // but also do not allow CR term to be -below- CR pressure fraction times total term, since that should be attributed to the CR (as this is all a quasi-adiabatic term)
+#endif
     } else { // both divv terms agree with each other, but dis-agree with the sign of the total change. can't assume anything about smoothness-of-the-flow
         if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_f;} else {divv_u=divv_p;} // pick the divv estimator with the smaller absolute magnitude, since it deviates
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change
