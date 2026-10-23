@@ -2314,15 +2314,15 @@ static std::vector<long long> region_step_caps(const std::vector<std::vector<ket
     for(int r = 0; r < n; r++) {
         const std::vector<ketju_mpi_particle> &g = groups[r];
         if(g.size() < 2) continue;
-        double N = st[5*r];
-        if(N >= 1) {
+        double N = st[5*r], fc = All.KetjuRegionMotionCapFactor;
+        if(N >= 1 && fc > 0) {
             double M = 0, vc[3] = {0, 0, 0}, vf[3], vrel2 = 0;
             for(const ketju_mpi_particle &c : g) {M += c.Mass; for(int k = 0; k < 3; k++) vc[k] += c.Mass * c.Vel[k] / a;}
             for(int k = 0; k < 3; k++) {vf[k] = st[5*r+1+k] / N; double d = vc[k] / M - vf[k]; vrel2 += d * d;}
             double dt = MAX_REAL_NUMBER;
-            if(vrel2 > 0) dt = 0.1 * R / sqrt(vrel2);
+            if(vrel2 > 0) dt = fc * 0.1 * R / sqrt(vrel2);
             double sig2 = (st[5*r+4] / N - (vf[0]*vf[0] + vf[1]*vf[1] + vf[2]*vf[2])) / 3.0;
-            if(N >= 2 && sig2 > 0) dt = DMIN(dt, R / (6.0 * sqrt(sig2)));
+            if(N >= 2 && sig2 > 0) dt = DMIN(dt, fc * R / (6.0 * sqrt(sig2)));
             if(dt < MAX_REAL_NUMBER) caps[2*r] = to_ti(dt);
         }
         if(All.KetjuTidalStepRes > 0 && g.size() <= 64) {

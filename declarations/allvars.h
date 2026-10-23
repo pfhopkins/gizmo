@@ -852,6 +852,7 @@ extern struct global_data_all_processes
   int    KetjuMaxStepCount;              /*!< max MSTAR integration steps before bail-out (default 100000, 0=off) */
   double KetjuExpandBinariesFactor;      /*!< expand tight binaries if period < factor*dt (default 0=off, typical 0.1) */
   double KetjuMinParticlesPerTask;       /*!< minimum particles per compute task for load balancing (default 10) */
+  double KetjuRegionMotionCapFactor;     /*!< scales the region-step motion caps 0.1 r/v_CoM and r/(6 sigma); 0 = off */
   double KetjuTidalStepRes;              /*!< region-step floor res*P(1-e)^1.5 for tidally kicked members' binaries (0 = off) */
   double KetjuTidalErrorBudget;          /*!< per-step tidal kick energy mu|T|a v_p dt allowed, in units of the binary's |E| */
   int    KetjuSmoothTide;                /*!< 1: members feel the external tide inside MSTAR, the host kicks only the CoM */
