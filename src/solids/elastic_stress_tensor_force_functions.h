@@ -39,7 +39,9 @@ void elastic_stress_tensor_force_compute_pair(
 
     double cmag[3] = {0}, v_interface[3];
     double wt_i = -0.5, wt_j = -0.5;
-    for(int k=0; k<3; k++) { v_interface[k] = (wt_i*local.Vel[k] + wt_j*VelPred_j[k]) / All.cf_atime; }
+    /* cmag is added to Fluxes.v (momentum gained by i), so its work is +cmag.v at the face, as for the hydro flux;
+       the material velocity at the face, not the moving-mesh velocity, and not the stress weights above */
+    for(int k=0; k<3; k++) { v_interface[k] = 0.5*(local.Vel[k] + VelPred_j[k]) / All.cf_atime; }
     double rho_i = local.Density * All.cf_a3inv;
     double rho_j = CPj.Density * All.cf_a3inv;
 
