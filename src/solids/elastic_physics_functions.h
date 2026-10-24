@@ -66,8 +66,8 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 #endif
         if(J2 > 0)
         {
-            double f_Y = Y_eff*Y_eff/(NDim*J2);
-            if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
+            double f_Y = Y_eff*Y_eff/(NDim*J2); // (yield stress / equivalent stress)^2
+            if(f_Y < 1) {double return_factor = sqrt(f_Y); for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= return_factor;}}} // radial return: scale the deviator back onto the yield surface (Wilkins 1964)
         }
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
         /* bit 0: Grady-Kipp damage update at kick (mode==0) only */
