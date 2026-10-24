@@ -46,7 +46,7 @@
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign)
 #endif
 
-#define RUMI_COUPLING_API_VERSION 2 /* rumi_lib.h interface these calls are written for (Makefile checks librumi.a) */
+#define RUMI_COUPLING_API_VERSION 3 /* rumi_lib.h interface these calls are written for (Makefile checks librumi.a) */
 static_assert(RUMI_LIB_API_VERSION == RUMI_COUPLING_API_VERSION, "rumi_lib.h is not the RUMI++ interface version rumi_coupling.cc expects");
 #ifndef RUMI_LIB_ID_MK
 #define RUMI_LIB_ID_MK "unknown"
