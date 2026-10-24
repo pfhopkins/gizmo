@@ -1230,11 +1230,12 @@ static void mode_b_remote_evaluate_into_buffer(
      * cross-rank-fresh and dominates every radius_policy (mode_b_local_walker.h). */
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
 
-    /* Targeted-export reverse map: topnode indices are stable between builds →
-     * build ONCE, reuse for the fused walk. */
-    ModeBTopleafMap topleaf_map;   /* shared read-only map, built once */
+    /* Targeted-export reverse map, kept between tree builds; empty (no topleaf recognised) when
+     * there is nothing to export. */
+    static const ModeBTopleafMap no_topleaf_map;
+    const ModeBTopleafMap &topleaf_map = (N > 0 && nt > 1) ? mode_b_topleaf_map_current() : no_topleaf_map;
     ModeBExportSink export_sink;   /* per-query export sink (write-only during the walk) */
-    if(N > 0 && nt > 1) { export_sink.ensure_size(nt); topleaf_map.build(); }
+    if(N > 0 && nt > 1) { export_sink.ensure_size(nt); }
 
     /* Fused-walk export CSR (targeted specs): per active, its per-peer export
      * node-lists, staged ONCE by the fused self walk and marshalled (no second
