@@ -103,7 +103,7 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
             {
                 dS = mu * (dv0[j][k] + dv0[k][j]); // symmetric strain component
                 if(k==j) {dS -= 2.*mu*trace_vel/NDim;} // trace component
-                for(l=0;l<NDim;l++) {dS += S[j][l]*R[l][k] - R[j][l]*S[l][k];} // rotation components
+                for(l=0;l<NDim;l++) {dS += R[j][l]*S[l][k] - S[j][l]*R[l][k];} // Jaumann rotation W.S - S.W, with R = W = (dv_j/dx_k - dv_k/dx_j)/2: the stress turns with the material
                 cell[i].Dt_Elastic_Stress_Tensor[j][k] = dS; // save it to variable
             }
         }
