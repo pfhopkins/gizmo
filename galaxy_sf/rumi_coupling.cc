@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <climits>
+#include <sys/stat.h>
 #include <algorithm>
 #include <vector>
 #include <unordered_map>
@@ -189,9 +190,11 @@ void rumi_init(void)
         printf("RUMI++: %s (built against %s), Kokkos %s on %d rank(s); G = %.10e pc^3/Msun (km/s)^2 (All.G = %.10e); units pc %.10g Msun %.10g km/s %.10g\n",
                rumi_lib::build_id(), RUMI_LIB_ID_MK, rumi_lib::backend_name(), nr, rumi_G(), All.G, UL, UM, UV);
         if(strcmp(rumi_lib::build_id(), RUMI_LIB_ID_MK) != 0) {printf("RUMI++: the linked library is not the one the Makefile checked\n"); endrun(9307);}
+        mkdir(All.OutputDir, 02755); /* begrun runs this before open_outputfiles creates OutputDir */
         char buf[MAX_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, sizeof(buf), "%s/rumi.txt", All.OutputDir);
         FdRumi = fopen(buf, RestartFlag == 0 ? "w" : "a");
-        if(FdRumi) {fprintf(FdRumi, "# %s\n# step time N E_stars E_books ledger_residual/|E_ref| E_ref W_kick W_kick_abs E_set (RUMI++ units: pc Msun km/s) | books escape gw merge sse | wall s: limit gather advance rebuild h2d d2h scatter direct | mergers splits\n", rumi_lib::build_id()); fflush(FdRumi);}
+        if(!FdRumi) {printf("RUMI++: cannot open %s\n", buf); endrun(9308);}
+        {fprintf(FdRumi, "# %s\n# step time N E_stars E_books ledger_residual/|E_ref| E_ref W_kick W_kick_abs E_set (RUMI++ units: pc Msun km/s) | books escape gw merge sse | wall s: limit gather advance rebuild h2d d2h scatter direct | mergers splits\n", rumi_lib::build_id()); fflush(FdRumi);}
     }
 }
 
