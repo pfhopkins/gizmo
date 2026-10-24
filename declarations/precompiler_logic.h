@@ -1650,6 +1650,12 @@
 #if defined(KETJU_MERGE_BH) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
 #endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF: stars merge only on contact; GALSF_MERGER_STARCLUSTER_PARTICLES merges by distance"
+#endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(SINGLE_STAR_SINK_DYNAMICS)
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF: stars merge only on contact; STARFORGE sink dynamics merges bound sinks within the softening"
+#endif
 #if defined(KETJU_REGULARIZATION) && (defined(GALSF_RESOLVEDISM) || !defined(SINGLE_STAR_SINK_DYNAMICS)) && !defined(KETJU_TYPE4_STARS)
 #define KETJU_TYPE4_STARS /* Type-4 stars are chain centers/members (Stella, pure N-body); STARFORGE sink runs keep Type 5 only */
 #endif

@@ -2560,6 +2560,10 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "IMFSampleMinMass");
       addr[nt] = &All.IMFSampleMinMass;
       id[nt++] = REAL;
+
+      strcpy(tag[nt], "ResolvedISM_SFCooldownFreeFallFraction");
+      addr[nt] = &All.SFCooldownFreeFallFraction;
+      id[nt++] = REAL;
 #endif
 
 #ifdef GALSF_RESOLVEDISM_PHOTOION
@@ -3023,6 +3027,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
 #endif
                 if(strcmp("KetjuFlybyStepEta",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                if(strcmp("ResolvedISM_SFCooldownFreeFallFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s not set: defaulting to 0.1 (SF cooldown of 0.1 t_ff after each spawn)\n",tag[i]); continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;

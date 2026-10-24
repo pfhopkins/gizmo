@@ -573,6 +573,7 @@ extern struct global_data_all_processes
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
   double IMFSampleStellarMassCut; /*!< minimum stellar mass to record in IMF sampling */
   double IMFSampleMinMass;        /*!< lower bound of IMF sampling [Msun]: 0.08 = full IMF, higher = truncated (LYRA-style) */
+  double SFCooldownFreeFallFraction; /*!< per-cell SF cooldown after a spawn, in units of the cell's t_ff at spawn (0: off) */
 #endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
   char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */

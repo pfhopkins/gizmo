@@ -681,6 +681,9 @@ void init(void)
             CellP[i].Temperature = 1.22 * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * CellP[i].InternalEnergy;
         }
         CellP[i].FaceClosureError = 0;
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+        CellP[i].SFCooldown = 0; /* not in snapshots: snapshot restarts start with no cooldown */
+#endif
 #ifdef FB_G17_BOUNDARY_INJECTION
         CellP[i].FBinjFlag = 0; /* gizmo2017-mimicry FB-receiver flag starts clear */
 #endif

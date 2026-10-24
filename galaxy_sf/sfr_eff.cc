@@ -481,6 +481,7 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             if(CellP[i].IMFSpawnBlock) {flag=1;} /* recently spawned a star — wait for density recomputation */
+            if(CellP[i].SFCooldown > 0) {flag=1; CellP[i].SFCooldown -= dtime; if(CellP[i].SFCooldown < 0) {CellP[i].SFCooldown = 0;}} /* t_ff cooldown after a spawn */
 #endif
 
             if((flag == 0)&&(dtime>0))        /* active star formation (upon start-up, we need to protect against dt==0) */
@@ -683,6 +684,7 @@ void star_formation_parent_routine(void)
                             P[ns].MstarSampleIMF[1] = (double)i; /* store parent index for deferred tree insertion */
                             P[ns].MstarSampleIMF[3] = SF_LOG_TEMP(i); /* formation temperature [K] for SFinfo log */
                             CellP[i].IMFSpawnBlock = 1; /* block SF on this cell until density is recomputed */
+                            if(All.SFCooldownFreeFallFraction > 0) {CellP[i].SFCooldown = All.SFCooldownFreeFallFraction * sqrt(3.*M_PI / (32.*All.G * CellP[i].Density * All.cf_a3inv));} /* physical t_ff */
                             stars_spawned++;
                         }
 #else /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
