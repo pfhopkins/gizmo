@@ -940,6 +940,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_EOS_STRESS_TENSOR: /* evolved deviatoric stress: element 3*k+kf is S[kf][k], the inverse of the snapshot writer */
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {for(int kf = 0; kf < 3; kf++) {CellP[offset + n].Elastic_Stress_Tensor[kf][k] = *fp++;}}}
+#endif
+            break;
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -950,7 +956,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_AGS_PSI_RE:
         case IO_AGS_PSI_IM:
         case IO_EOSCS:
-        case IO_EOS_STRESS_TENSOR:
         case IO_SFR:
         case IO_POT:
         case IO_ACCEL:
@@ -1323,6 +1328,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #if (defined(EOS_TILLOTSON) || defined(EOS_ANEOS)) && !defined(IO_COMPOSITIONTYPE_NOT_IN_ICFILE)
                    && blocknr != IO_EOSCOMP
 #endif
+#ifdef EOS_ELASTIC
+                   && blocknr != IO_EOS_STRESS_TENSOR
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
                    && blocknr != IO_PARTVEL
 #endif
@@ -1384,6 +1392,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
 #endif
             
+#ifdef EOS_ELASTIC
+            if(blocknr == IO_EOS_STRESS_TENSOR && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* a fresh binary IC need not carry it (stress then starts from zero); snapshots of every format do */
+#endif
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
             if(blocknr == IO_NONIDEAL_FLUX && All.ICFormat != 3) {continue;} /* HDF5 only: legacy binary formats never carry it (it starts from zero) */
 #endif
@@ -1458,6 +1469,7 @@ int read_file(char *fname, int readTask, int lastTask)
                 printf("reading block %d (%s)...\n", bnr, buf);
             }
             int printed_legacy_alias = 0;   /* limit the legacy-name notice below to one line per block */
+            int printed_missing_stress = 0; /* and the missing-stress warning */
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
             /* the old unformatted fortran binary GADGET-2 format used unsigned int for IDs, so that
@@ -1670,6 +1682,11 @@ int read_file(char *fname, int readTask, int lastTask)
                                         /* Optional HDF5 dataset absent: zero CommBuffer so empty_read_buffer's
                                          * dispatch defaults the field rather than reading stale buffer contents. */
                                         memset(CommBuffer, 0, bytes_per_blockelement * pc);
+                                        if(RestartFlag == 2 && blocknr == IO_EOS_STRESS_TENSOR && ThisTask == readTask && !printed_missing_stress)
+                                        {
+                                            printf("WARNING: the snapshot has no '%s' block for particle type %d: the deviatoric stress of these elements restarts from zero, not from its evolved value.\n", buf, type);
+                                            printed_missing_stress = 1;
+                                        }
                                       }
                                     }
 

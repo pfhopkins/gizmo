@@ -976,12 +976,10 @@ void init(void)
         }
 #endif
 #if defined(EOS_ELASTIC)
-        if(RestartFlag != 1)
-        {
-            CellP[i].Dt_Elastic_Stress_Tensor = CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor = {};
-        } else {
-            CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
-        }
+        /* the deviatoric stress is evolved history: it comes from the restart files, a snapshot, or an HDF5 IC's StressTensor
+           block (zero if the block is absent); a fresh binary IC does not carry it */
+        if(RestartFlag == 0 && All.ICFormat != 3) {CellP[i].Elastic_Stress_Tensor = {};}
+        CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
 #if defined(EOS_DAMAGE_POROSITY)
         /* only a fresh start initializes these: RestartFlag 1 restores them from the restart files
