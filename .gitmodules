@@ -1,0 +1,4 @@
+[submodule "ketju-integrator"]
+	path = ketju-integrator
+	url = https://github.com/Ulli1991/ketju-integrator.git
+	branch = stella

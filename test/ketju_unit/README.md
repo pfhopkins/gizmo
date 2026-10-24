@@ -1,7 +1,7 @@
 # KETJU integrator unit tests
 
 Runs the original googletest suite of the KETJU integrator (MSTAR; `ketju-integrator/unit-tests/`,
-GPLv3, Mannerkoski et al.) against GIZMO's vendored, modified `ketju-integrator/` sources.
+GPLv3, Mannerkoski et al.) against GIZMO's modified `ketju-integrator/`, a git submodule of github.com/Ulli1991/ketju-integrator (branch `stella`). Clone with `--recurse-submodules` or run `git submodule update --init --recursive`.
 No GIZMO build or simulation is involved.
 
 ## What is tested
@@ -38,6 +38,6 @@ their test fail.
     pytest test/ketju_unit/test_ketju_unit.py
 
 The test copies `ketju-integrator/` to a pytest temporary directory (its CMake writes `bin/` and
-`lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the vendored
-googletest subset in `ketju-integrator/thirdparty/googletest/`, and runs with
+`lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the googletest
+submodule in `ketju-integrator/thirdparty/googletest/`, and runs with
 `mpiexec --oversubscribe`. Build ~1 min with 4 make jobs; the runs take seconds.

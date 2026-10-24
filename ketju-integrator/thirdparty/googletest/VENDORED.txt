@@ -1,1 +1,0 @@
-googletest 12a5852e (github.com/google/googletest, BSD-3, see LICENSE): CMake files, googletest/{cmake,include,src} only.
