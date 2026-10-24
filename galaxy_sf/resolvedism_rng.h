@@ -20,6 +20,9 @@ static inline unsigned long long resolvedism_rng_mix64(unsigned long long z)
 static inline unsigned long long resolvedism_rng_seed(int i, unsigned long long draw_label)
 {
     unsigned long long s = resolvedism_rng_mix64(draw_label);
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+    if(All.RNGRealisation) {s = resolvedism_rng_mix64(s ^ (unsigned long long)All.RNGRealisation);} /* ResolvedISM_RNGRealisation: independent realisation; 0 keeps the default streams */
+#endif
     s = resolvedism_rng_mix64(s ^ (unsigned long long)P[i].ID);
     s = resolvedism_rng_mix64(s ^ (unsigned long long)P[i].ID_child_number);
     s = resolvedism_rng_mix64(s ^ (unsigned long long)P[i].ID_generation);
