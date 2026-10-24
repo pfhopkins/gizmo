@@ -1333,7 +1333,7 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
 
     double *pair_rv = NULL; // r.v per pair at the last collision check
     if (R->collision_radius) {
-        pair_rv = malloc(sizeof(double) * R->num_particles * R->num_particles);
+        pair_rv = malloc(sizeof(double) * (R->num_particles * R->num_particles + 1));
         ketju_pair_rv(R, pair_rv);
     }
 

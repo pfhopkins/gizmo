@@ -598,10 +598,11 @@ static void merge_stars(struct ketju_system *R, int i, int j) {
     R->num_particles -= 1;
 }
 
-// r.v of each non-PN pair, row-major [n * n]; the caller keeps it between checks
+// r.v of each non-PN pair, row-major [n * n], and the check time in rv[n * n]; the caller keeps it between checks
 void ketju_pair_rv(const struct ketju_system *R, double *rv) {
     const struct ketju_system_physical_state *ps = R->physical_state;
     const int n = R->num_particles;
+    rv[n * n] = ps->time;
     for (int i = 0; i < n; ++i) {
         for (int j = i + 1; j < n; ++j) {
             double s = 0;
@@ -614,15 +615,33 @@ void ketju_pair_rv(const struct ketju_system *R, double *rv) {
     }
 }
 
+// Time since the pericentre of the osculating two-body orbit (r.v >= 0 side)
+static double time_since_pericentre(double mu, double r, double v2, double rv, double e) {
+    const double eps = 0.5 * v2 - mu / r, h2 = r * r * v2 - rv * rv, p = h2 / mu;
+    if (fabs(eps) * r < 1e-8 * mu) { // parabolic (Barker)
+        const double D = rv / sqrt(mu * p);
+        return 0.5 * sqrt(p * p * p / mu) * (D + D * D * D / 3);
+    }
+    const double a = fabs(mu / (2 * eps));
+    if (eps < 0) {
+        const double E = atan2(rv / sqrt(mu * a), 1 - r / a);
+        return (E - e * sin(E)) * sqrt(a * a * a / mu);
+    }
+    const double F = asinh(rv / (e * sqrt(mu * a)));
+    return (e * sinh(F) - F) * sqrt(a * a * a / mu);
+}
+
 // Contact collisions of non-PN particles with collision_radius > 0: r < R_i + R_j
-// now, or a pericentre passed since the last check (r.v from < 0 to >= 0) whose
-// two-body pericentre distance is below R_i + R_j. rv_prev holds the last
-// check's ketju_pair_rv; it is refreshed here.
+// now, or a pericentre passed since the last check (r.v from < 0 to >= 0, and the
+// osculating orbit's pericentre time inside that interval) whose two-body
+// pericentre distance is below R_i + R_j. rv_prev holds the last check's
+// ketju_pair_rv; it is refreshed here.
 int ketju_do_star_collisions(struct ketju_system *R, double *rv_prev) {
     if (!R->collision_radius) return 0;
     int num_merged = 0;
     const double G = R->constants->G;
     const int n_entry = R->num_particles;
+    const double dt_check = rv_prev ? R->physical_state->time - rv_prev[n_entry * n_entry] : 0;
     bool again = true;
     while (again) {
         again = false;
@@ -646,8 +665,9 @@ int ketju_do_star_collisions(struct ketju_system *R, double *rv_prev) {
                     const double mu = G * (ps->mass[i] + ps->mass[j]);
                     const double h2 = r2 * v2 - rv * rv;
                     const double e2 = 1 + (v2 - 2 * mu / sqrt(r2)) * h2 / (mu * mu);
-                    const double rp = (h2 / mu) / (1 + sqrt(e2 > 0 ? e2 : 0));
-                    hit = rp < rc;
+                    const double e = sqrt(e2 > 0 ? e2 : 0), rp = (h2 / mu) / (1 + e);
+                    // r.v can also turn positive at an osculating apocentre (perturbed pair)
+                    hit = rp < rc && time_since_pericentre(mu, sqrt(r2), v2, rv, e) <= 1.000001 * dt_check;
                 }
                 if (hit) {
                     merge_stars(R, i, j);
