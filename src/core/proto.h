@@ -20,7 +20,7 @@
 
 
 void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
-void read_header_attributes_in_hdf5(char *fname);
+int read_header_attributes_in_hdf5(char *fname);   /* 0 on success; nonzero if the file or its Header group cannot be opened */
 
 void output_compile_time_options(void);
 const char *compile_time_config_literal(void);              /* the Config.sh lines, one per line */
