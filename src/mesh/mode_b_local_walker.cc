@@ -213,8 +213,7 @@ static inline double mode_b_node_symmetric_radius(int no,
 
 /* Build the topleaf reverse map from the DomainNodeIndex SSOT (never from a
  * slot-layout assumption). Sized to the max observed offset; entries outside
- * any topleaf stay -1. O(NTopleaves), rebuilt per export call (topnode indices
- * are stable between tree builds; per-call rebuild avoids any staleness). */
+ * any topleaf stay -1. O(NTopleaves). */
 void ModeBTopleafMap::build(void)
 {
     const int tree_base = All.TreeNodeIndexBase;
@@ -229,6 +228,23 @@ void ModeBTopleafMap::build(void)
     for(int i = 0; i < NTopleaves; i++) {
         leaf_of_topnode[DomainNodeIndex[i] - tree_base] = i;
     }
+}
+
+/* DomainNodeIndex is written only by a tree build, and every successful build advances
+ * force_treebuild_generation(), so the map is rebuilt once per build instead of on every call. */
+const ModeBTopleafMap &mode_b_topleaf_map_current(void)
+{
+    static ModeBTopleafMap map;
+    static long built_generation = -1;
+    static int built_ntopleaves = -1, built_tree_base = -1;
+    const long generation = force_treebuild_generation();
+    if(generation != built_generation || NTopleaves != built_ntopleaves || All.TreeNodeIndexBase != built_tree_base) {
+        map.build();
+        built_generation = generation;
+        built_ntopleaves = NTopleaves;
+        built_tree_base = All.TreeNodeIndexBase;
+    }
+    return map;
 }
 
 /* Shared traversal body (SSOT for all three public tree walks).

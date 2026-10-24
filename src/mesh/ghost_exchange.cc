@@ -1035,7 +1035,7 @@ static void gx_walk_export_discover(
      * per-peer send buffers; the walker's node lazy-drift is race-safe (omp
      * critical(_modebdrift_) + release/acquire).  Merge is serial.  The routed SET is
      * unchanged (order-independent bitmap); only per-peer envelope ORDER differs (D6: FP-reorder only). */
-    ModeBTopleafMap map; map.build();
+    const ModeBTopleafMap &map = mode_b_topleaf_map_current();
     std::vector<std::vector<struct gx_export_envelope_t>> send(NTask);
     {
 #ifdef _OPENMP
