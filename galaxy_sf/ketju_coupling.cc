@@ -978,7 +978,11 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #endif
 #ifdef KJ_STAR_COLLISIONS
         mp.CollRadius = ketju_star_contact_radius(idx);
+#ifdef GALSF
         mp.BirthTime = (P[idx].Type == 4) ? P[idx].StellarAge : 0;
+#else
+        mp.BirthTime = 0;
+#endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
         mp.FormDens = (P[idx].Type == 4) ? P[idx].FormationDensity : 0;
 #else
