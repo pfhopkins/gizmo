@@ -828,6 +828,9 @@ void init(void)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
     }
+#ifdef EOS_ELASTIC
+    solid_material_check_cells(); /* every CompositionType is final above: refuse a material the cells carry but that is incomplete */
+#endif
 
 #ifndef BOX_SHEARING
 #if (NUMDIMS==2)
@@ -979,7 +982,7 @@ void init(void)
 #if defined(EOS_ELASTIC)
         /* the deviatoric stress is evolved history: it comes from the restart files, a snapshot, or an HDF5 IC's StressTensor
            block (zero if the block is absent); a fresh binary IC does not carry it */
-        if(RestartFlag == 0 && All.ICFormat != 3) {CellP[i].Elastic_Stress_Tensor = {};}
+        if((RestartFlag == 0 && All.ICFormat != 3) || !solid_material_is_elastic(CellP[i].CompositionType)) {CellP[i].Elastic_Stress_Tensor = {};} /* gas carries none, whatever the file holds */
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
 #if defined(EOS_DAMAGE_POROSITY)
@@ -990,13 +993,13 @@ void init(void)
         {
             CellP[i].Damage = 0;
             CellP[i].ActiveCracks = 0;
-            CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15]; /* alpha_0 per material; 1 = solid */
+            CellP[i].Distention = solid_material_of(CellP[i].CompositionType).InitialDistention; /* alpha_0 per material; 1 = solid */
         }
         if(RestartFlag != 1)
         {
             /* floor the distention, which also covers a snapshot restart from a file written before
              * these fields existed: the absent dataset reads back as zero, not as alpha_0 */
-            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15];}
+            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = solid_material_of(CellP[i].CompositionType).InitialDistention;}
             if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
         }
 #endif

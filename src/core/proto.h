@@ -356,6 +356,10 @@ GIZMO_GPU_FUNCTION double return_user_desired_target_pressure(int i, struct part
 #ifdef EOS_TILLOTSON
 void tillotson_eos_init(void);
 #endif
+#ifdef EOS_ELASTIC
+void solid_material_resolve(void);
+void solid_material_check_cells(void);
+#endif
 #ifdef EOS_ANEOS
 #include "../eos/aneos.h"
 #endif

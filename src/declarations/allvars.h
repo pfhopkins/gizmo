@@ -447,6 +447,18 @@ extern struct global_data_all_processes All;
 #define DM_DISPERSION_LOOP_ACTIVE
 #endif
 
+#ifdef EOS_ELASTIC
+/* the strength/damage/porosity properties of a cell's material (resolved at startup; see eos/composition_registry.h) */
+GIZMO_GPU_FUNCTION static inline const struct solid_material& solid_material_of(int composition_type) {return All.SolidMaterial[composition_type];}
+/* deviatoric stiffness added to the bulk modulus for uniaxial (longitudinal) strain under the stress law
+   dS/dt = 2 mu (strain rate - trace/NUMDIMS): c_L^2 = c_bulk^2 + 2 (1 - 1/NUMDIMS) mu / rho  (4/3 mu in 3D, mu in 2D) */
+GIZMO_GPU_FUNCTION static inline double elastic_longitudinal_soundspeed2_excess(int composition_type, double rho)
+{
+    if(!solid_material_is_elastic(composition_type) || !(rho > 0)) {return 0;}
+    return (2.0 * (1.0 - 1.0/NUMDIMS)) * solid_material_of(composition_type).ShearModulus / rho;
+}
+#endif
+
 #include "particle_data.h"
 #include "cell_data.h"
 

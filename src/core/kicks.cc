@@ -389,8 +389,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             if(CellP[i].KernelDensityForVolumeRelaxation > 0 && isfinite(CellP[i].KernelDensityForVolumeRelaxation)) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
                 if(drho2>0 && CellP[i].Density_ExplicitInt>0 && CellP[i].Density>0) {
                     double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=CellP[i].effective_soundspeed(); /* gradient scale length and sound speed */
-#if defined(EOS_TILLOTSON)
-                    cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
+#if defined(EOS_ELASTIC)
+                    {double mu_shear = solid_material_is_elastic(CellP[i].CompositionType) ? solid_material_of(CellP[i].CompositionType).ShearModulus : 0;
+                    if(mu_shear > 0) {cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(mu_shear / CellP[i].Density));}} /* speed of deviatoric (transverse) waves, which is most relevant, in a solid with strength */
 #endif
                     double delta = 0.1 * dt_hydrokick * cs_eff_forrestoringforce / Lgrad, q0=log(CellP[i].Density_ExplicitInt), q1=log(CellP[i].KernelDensityForVolumeRelaxation), qn=0; if(delta > 0.005) {qn=q0*exp(-delta) + q1*(1.-exp(-delta));} else {qn=q0 + (q1-q0)*delta*(1.-0.5*delta);} /* evolves in log-space across this span */
                     if(isfinite(qn)) {CellP[i].Density_ExplicitInt = exp(qn);} /* set final density (relaxed toward the kernel density) */

@@ -5562,9 +5562,15 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={7,12}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_TILLOTSON_MATERIALS,10}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
     hdf5_attribute = H5Acreate(handle, "Tillotson_EOS_parameters_for_all_species", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.Tillotson_EOS_params); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#endif
+#ifdef EOS_ELASTIC
+    /* per CompositionType: shear modulus, yield strength, Weibull k, Weibull m, Drucker-Prager mu, initial distention, P_e, P_s (code units) */
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_SOLID_MATERIAL_IDS, N_SOLID_MATERIAL_PROPERTIES}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Solid_material_properties_by_composition", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.SolidMaterial); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
 
 #ifdef SINK_PARTICLES

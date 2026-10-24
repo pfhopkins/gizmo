@@ -33,6 +33,7 @@ void elastic_stress_tensor_force_compute_pair(
     (void)rinv; (void)dt_hydrostep;  /* only consumed by commented-out limiter in original */
 
     if(!((local.Mass>0) && (Pj.Mass>0))) { return; }
+    if(!solid_material_is_elastic(local.CompositionType) && !solid_material_is_elastic(CPj.CompositionType)) { return; } /* gas-gas face of a gas+solid build */
 
     double FNormT = Face_Area_Norm;
     double FVec[3] = {Face_Area_Vec[0], Face_Area_Vec[1], Face_Area_Vec[2]};
@@ -47,14 +48,15 @@ void elastic_stress_tensor_force_compute_pair(
 
     double wt_r = rho_i*local.SoundSpeed * rho_j*CPj.SoundSpeed
                 / (rho_i*local.SoundSpeed + rho_j*CPj.SoundSpeed) * FNormT;
-    double cT_i = sqrt(All.Tillotson_EOS_params[local.CompositionType][10] / rho_i);
-    double cT_j = sqrt(All.Tillotson_EOS_params[CPj.CompositionType][10] / rho_j);
-    double wt_t  = rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT;
+    double cT_i = sqrt(solid_material_of(local.CompositionType).ShearModulus / rho_i);
+    double cT_j = sqrt(solid_material_of(CPj.CompositionType).ShearModulus / rho_j);
+    double wt_t = (rho_i*cT_i + rho_j*cT_j > 0) ? rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT : 0; /* shear impedance; zero if neither side has strength */
     double wt_rt = (wt_r - wt_t) * kernel.vdotr2 * rinv*rinv * All.cf_atime*All.cf_atime;
 
     for(int ij_switch=0; ij_switch<2; ij_switch++) {
         double nvt[NUMDIMS*NUMDIMS] = {0}, norm_m = 0, wtfac = 0;
         if(ij_switch == 0) { wtfac = wt_i; } else { wtfac = wt_j; }
+        if(!solid_material_is_elastic(ij_switch == 0 ? local.CompositionType : CPj.CompositionType)) { continue; } /* gas side: no deviatoric stress */
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
         /* damaged material carries (1-D) of its deviatoric stress */
         {

@@ -74,6 +74,7 @@
 #EOS_TILLOTSON                  # Use Tillotson (1962) EOS (for solid/liquid+vapor bodies, impacts); custom EOS params can be specified or pre-computed materials used. see User Guide and Deng et al., arXiv:1711.04589
 #EOS_ANEOS                      # Use ANEOS/SESAME tabulated EOS (for planetary impacts/collisions); specify table file paths in parameterfile (AneosTable0, AneosTable1, etc.)
 #EOS_ELASTIC                    # treat fluid as elastic or plastic (or visco-elastic) material, obeying Hooke's law with full stress terms and von Mises yield model. custom EOS params can be specified or pre-computed materials used.
+#EOS_DAMAGE_POROSITY=7          # damage + porosity for EOS_ELASTIC solids (turns on EOS_ELASTIC + EOS_TILLOTSON): sum of 1 = Grady-Kipp damage, 2 = Drucker-Prager yield, 4 = P-alpha porosity (Tillotson materials only). Per-material values from the presets or the parameterfile.
 #EOS_TYPES_DEFAULTGAS_AND_SOLIDS # for hybrid gas+solid setups (e.g. grain-fluid promotion): make CompositionType=0 Type-0 cells behave as the standard gas fluid instead of a Tillotson/ANEOS material (solid materials then use CompositionType>=1). auto-enabled by GRAIN_FLUID_PROMOTION.
 #PLANET_HEATING                 # radiogenic-decay + background accretional heating of solid bodies: du/dt = Q_rad*exp(-t/tau_rad) + Q_acc (params PlanetHeating_RadQ0_cgs, PlanetHeating_RadTau_cgs, PlanetHeating_AccQ0_cgs). auto-enables EOS_TILLOTSON
 ## ----------------------------------------------------------------------------------------------------
