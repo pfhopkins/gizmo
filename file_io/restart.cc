@@ -347,6 +347,8 @@ void restart(int modus)
 	  in(&CumulIa, modus);
 #ifdef CHEMCOOL
 	  byten(&CumulCoolingEnergyLoss, sizeof(double), modus);
+	  byten(&CumulKickFloorEnergy, sizeof(double), modus);
+	  byten(&CumulMHDNumEnergy, sizeof(double), modus);
 	  byten(&CumulPIHeatErg, sizeof(double), modus);
 	  byten(&PIHeatPendingErg, sizeof(double), modus);
 	  byten(&PIHeatPendingCells, sizeof(double), modus);

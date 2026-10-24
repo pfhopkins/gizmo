@@ -810,6 +810,15 @@ void hydro_final_operations_and_cleanup(void)
 #endif
             CellP[i].DtInternalEnergy /= P[i].Mass;
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass) */
+#if defined(MAGNETIC) && defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+            { /* ledger: d(E_th+E_kin+E_B)/dt of this step; nonzero from Powell/Dedner terms and the -B^2/2 dV/dt the u-equation omits */
+                Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+                double de_mhd = (CellP[i].DtInternalEnergy * P[i].Mass + P[i].Mass * dot(CellP[i].VelPred / All.cf_atime, CellP[i].HydroAccel) + dot(Bp, CellP[i].DtB)
+                                 - 0.5 * Bp.norm_sq() * V_phys * P[i].Particle_DivVel * All.cf_a2inv) * get_particle_timestep_in_physical(i);
+                #pragma omp atomic
+                CumulMHDNumEnergy += de_mhd;
+            }
+#endif
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}

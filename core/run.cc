@@ -1812,6 +1812,12 @@ void energy_statistics(void)
     compute_global_quantities_of_system(); /* ensure SysState is populated for conservation budget */
     double cool_glob = 0;
     MPI_Reduce(&CumulCoolingEnergyLoss, &cool_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double floor_glob = 0;
+    MPI_Reduce(&CumulKickFloorEnergy, &floor_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#ifdef MAGNETIC
+    double mhdnum_glob = 0;
+    MPI_Reduce(&CumulMHDNumEnergy, &mhdnum_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
     double pi_glob = 0, sf_glob = 0;
     MPI_Reduce(&CumulPIHeatErg, &pi_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&CumulSFEnergyRemoved, &sf_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -1865,6 +1871,10 @@ void energy_statistics(void)
 #endif
 #ifdef MAGNETIC
       fprintf(FdENERGYinfo, "  %14.6e", emag_glob * UNIT_ENERGY_IN_CGS);
+#endif
+      fprintf(FdENERGYinfo, "  %14.6e", floor_glob * UNIT_ENERGY_IN_CGS);
+#ifdef MAGNETIC
+      fprintf(FdENERGYinfo, "  %14.6e", mhdnum_glob * UNIT_ENERGY_IN_CGS);
 #endif
       fprintf(FdENERGYinfo, "\n");
       fflush(FdENERGYinfo);
