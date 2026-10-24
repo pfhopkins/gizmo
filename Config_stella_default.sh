@@ -70,7 +70,7 @@ MHD_B_SET_IN_PARAMS
 ## Initial state is per setup: cloud boxes CosmicRayInitialAmbient/Cloud_eVcm3 (Fitz Axen+24: 1 / 0.1), galaxies start at zero.
 #COSMIC_RAY_FLUID
 #CRFLUID_DIFFUSION_MODEL=7       % variable kappa: self-confinement (streaming instability vs ion-neutral damping) + extrinsic turbulence (Hopkins+21), as Fitz Axen+24 DVAR
-#CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s; (3.e7/C_LIGHT_CGS) = 300 km/s is ~2x cheaper in pure cloud boxes
+#CRFLUID_SPEEDOFLIGHT_REDUCTION=(3.e7/C_LIGHT_CGS) % Stella default with COSMIC_RAY_FLUID: 300 km/s CR transport speed (set here only to override)
 #CR_BACKGROUND_IONRATE_ATTENUATED % CR fluid OFF only: chemistry zeta = CosmicRayIonRate x STARFORGE column attenuation (TreeCol N_H); no CR energy or pressure
 #CRFLUID_INJECTION_AT_SHOCKS=(0.1) % opt-in, not relied upon: resolved shock acceleration (CosmicRay_ShockAccelEfficiency)
 #INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (transport tests)

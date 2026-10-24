@@ -303,6 +303,9 @@
 #ifndef CRFLUID_EXCHANGE_PDV_ONLY
 #define CRFLUID_EXCHANGE_PDV_ONLY /* Stella default: CRs take only their own P dV work, no share of shock heating */
 #endif
+#ifndef CRFLUID_SPEEDOFLIGHT_REDUCTION
+#define CRFLUID_SPEEDOFLIGHT_REDUCTION (3.e7/C_LIGHT_CGS) /* Stella default: 300 km/s CR transport speed */
+#endif
 #endif
 #if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION)
 #define CRFLUID_SPEEDOFLIGHT_REDUCTION (1.0)
