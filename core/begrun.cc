@@ -3017,7 +3017,11 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuTidalStepRes",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
                 if(strcmp("KetjuTidalErrorBudget",tag[i])==0) {*((double *)addr[i])=1e-5; printf("Tag %s not set: defaulting to 1e-5\n",tag[i]); continue;}
                 if(strcmp("KetjuSmoothTide",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+#ifdef KETJU_TYPE4_STARS
+                if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (exact Kepler drift for isolated star pairs)\n",tag[i]); continue;}
+#else
                 if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+#endif
                 if(strcmp("KetjuFlybyStepEta",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);

@@ -101,15 +101,14 @@ DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              1.0             % same as InitMetallicity
 MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
 
-%---- KETJU regularized integrator (KETJU_REGULARIZATION — all commented out)
-%KetjuRegionRadius              0.01              % physical radius of KETJU regions [kpc] (10 pc)
-%KetjuMinStarMass               0                 % min Type 4 mass for region center [code units] (0=off)
-%KetjuMinBHMass                 0                 % min Type 5 mass for region center [code units] (0=off)
+%---- KETJU (KETJU_REGULARIZATION + KETJU_MERGE_STARS, ADAPTIVE_GRAVSOFT_FORALL=1): best set of the N-body matrix (KOf); uncomment all
+%SofteningStars                 1.0e-6            % 1e-3 pc fixed star softening (replaces the 0.1 pc line above)
+%MaxSizeTimestep                6.25e-6           % 1/8 of the default 50 kyr
+%KetjuRegionRadius              5.0e-6            % 1000 AU
+%KetjuMinStarMass               0.5e-11           % 0.05 Msun: every sampled star can be a region centre
 %KetjuIntegrationTolerance      1.0e-9            % GBS relative tolerance for MSTAR
-%KetjuExpandBinariesFactor      0.1               % expand tight binaries if period < 0.1*dt (0=off)
-%KetjuMinParticlesPerTask       10                % min particles per compute task for load balancing
-%KetjuMaxStepCount              100000            % max MSTAR steps before bail-out (0=unlimited)
-%KetjuEnableBHMergerKicks       1                 % enable GW recoil kicks for BH mergers
-%KetjuUseStarStarSoftening      0                 % keep softening between stars inside chain (0=unsoftened)
-%KetjuPNTerms                   all               % PN term flags: "all", "none", "no_spin"
-%KetjuTimestepLimitingFactor    100               % radius factor for timestep limiting
+%KetjuTimestepLimitingFactor    10                % radius factor for timestep limiting
+%KetjuUseStarStarSoftening      0                 % unsoftened chains
+%KetjuRegionMotionCapFactor     0                 % region-step motion caps off
+%KetjuKeplerPairs               1                 % exact Kepler drift for isolated pairs (Type-4 default)
+%KetjuFlybyStepEta              0.2               % fly-by pair step (O(N_star^2) per step: cloud-size runs only)
