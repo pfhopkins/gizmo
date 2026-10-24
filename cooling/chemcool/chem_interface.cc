@@ -34,6 +34,15 @@
  * No COMMON block is written here.  The only Fortran call is CALC_TEMP,
  * a pure table lookup (init-time temp/gamma tables + explicit args only).
  * ========================================================================= */
+#if defined(COSMIC_RAY_FLUID)
+static void chem_zeta_from_crfluid(int target, struct ChemInputs *in) /* zeta = 3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/Zsun radioactive; no CosmicRayIonRate floor */
+{
+    double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP);
+    in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC + 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0];
+    in->cr_energy_density = ecr_cgs;
+}
+#endif
+
 void chem_fill_inputs(int target, struct ChemInputs *in)
 {
     /* [orig chemcool.cc:155-170] local working variables (same roles) */
@@ -171,7 +180,12 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->abundD  = All.DeutAbund;
     in->G0      = All.G0;
     in->G0_LW   = All.G0; /* default: LW = full FUV, overridden below if G0_VARIABLE */
+#if defined(COSMIC_RAY_FLUID)
+    chem_zeta_from_crfluid(target, in);
+    CellP[target].CR_ionization_rate = in->cosmic_ray_ion_rate;
+#else
     in->cosmic_ray_ion_rate = All.CosmicRayIonRate;
+#endif
 
     in->id_current = P[target].ID;   /* [orig chemcool.cc:272] (same int truncation as COOLIC.id_current) */
 
@@ -221,10 +235,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double g0 = DMAX(All.FactorG0 * All.G0, 0.324e-2);
         in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
 #if defined(COSMIC_RAY_FLUID)
-        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* transported CRs win over the SFR scaling */
-        in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC;
-        in->cosmic_ray_ion_rate += 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0]; /* radioactive (K-40) floor, as upstream Get_CosmicRayIonizationRate_cgs */
-        in->cr_energy_density = ecr_cgs;
+        chem_zeta_from_crfluid(target, in); /* transported CRs win over the SFR scaling */
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
 #endif
@@ -267,13 +278,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->G0_dust = G0_tot;
 
 #ifdef COSMIC_RAY_FLUID
-    { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
-        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
-        double ecr_eVcm3 = ecr_cgs / 1.602e-12; /* convert to [eV cm^-3] */
-        in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * ecr_eVcm3 / CR_ENDEN_SOLCIRC;
-        in->cosmic_ray_ion_rate += 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0]; /* radioactive (K-40) floor, as upstream Get_CosmicRayIonizationRate_cgs */
-        in->cr_energy_density = ecr_cgs; /* [erg cm^-3], for hadronic+Coulomb heating in cool_func */
-    }
+    chem_zeta_from_crfluid(target, in);
 #elif defined(CR_SCALE_WITH_G0)
     in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));
 #endif
@@ -379,10 +384,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            RADTRANSFER (mutually exclusive), so it MUST be replicated here — otherwise
            the network silently falls back to the fixed default CosmicRayIonRate. */
 #if defined(COSMIC_RAY_FLUID)
-        { double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
-          in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC; /* zeta from e_CR [eV cm^-3] */
-          in->cosmic_ray_ion_rate += 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0]; /* radioactive (K-40) floor, as upstream Get_CosmicRayIonizationRate_cgs */
-          in->cr_energy_density = ecr_cgs; }
+        chem_zeta_from_crfluid(target, in);
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));
 #endif

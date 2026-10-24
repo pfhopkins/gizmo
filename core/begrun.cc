@@ -2393,9 +2393,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G0;
       id[nt++] = REAL;
 
+#if !defined(COSMIC_RAY_FLUID) /* with the CR fluid, zeta comes from e_CR only: the tag is reported as ignored */
       strcpy(tag[nt], "CosmicRayIonRate");
       addr[nt] = &All.CosmicRayIonRate;
       id[nt++] = REAL;
+#endif
 
       strcpy(tag[nt], "DGRnormalized");
       addr[nt] = &All.DGRnormalized;

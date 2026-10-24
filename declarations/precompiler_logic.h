@@ -1360,6 +1360,9 @@
 #if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && defined(COSMIC_RAY_FLUID)
 #error "CR_BACKGROUND_IONRATE_ATTENUATED is the CR-fluid-off mode: with COSMIC_RAY_FLUID the ionisation rate comes from the CR fluid only"
 #endif
+#if defined(CHEMCOOL_CR_ATTEN_K23) && defined(COSMIC_RAY_FLUID)
+#error "CHEMCOOL_CR_ATTEN_K23 attenuates a background zeta; with COSMIC_RAY_FLUID zeta comes from the transported e_CR"
+#endif
 #if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && (!defined(CHEMCOOL) || !defined(RT_USE_TREECOL_FOR_NH) || defined(CR_SCALE_WITH_G0))
 #error "CR_BACKGROUND_IONRATE_ATTENUATED needs CHEMCOOL and the TreeCol column (RT_USE_TREECOL_FOR_NH), and replaces CR_SCALE_WITH_G0"
 #endif
