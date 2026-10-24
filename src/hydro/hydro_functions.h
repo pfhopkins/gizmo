@@ -374,17 +374,19 @@ void hydro_accumulate_neighbor(
         double dmass_holder = Fluxes.rho * dt_hydrostep_i, dmass_limiter;
         if(dmass_holder > 0) {dmass_limiter = P[j].Mass;} else {dmass_limiter = local.Mass;}
         dmass_limiter *= 0.1;
-        if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
+        double mass_flux_accepted = Fluxes.rho; /* the part of this pair's mass flux this side actually transfers (to both cells) */
+        if(fabs(dmass_holder) > dmass_limiter) {mass_flux_accepted *= dmass_limiter / fabs(dmass_holder); dmass_holder *= dmass_limiter / fabs(dmass_holder);}
         /* Timestep-conditional mass flux for machine-accurate conservation */
         double dt_hydrostep_j_loc = get_particle_timestep_in_physical(j, P);
         if(local.dt_hydrostep_i < dt_hydrostep_j_loc) {
             out.dMass += dmass_holder;
         } else if(local.dt_hydrostep_i == dt_hydrostep_j_loc) {
-            out.dMass += 0.5 * dmass_holder;
-        }
+            out.dMass += 0.5 * dmass_holder; mass_flux_accepted *= 0.5;
+        } else {mass_flux_accepted = 0;}
         out.DtMass += Fluxes.rho;
-        Vec3<double> gravwork = kernel.dp * Fluxes.rho;
-        out.GravWorkTerm += gravwork;
+        /* mass dm moved from x_j to x_i changes the potential energy by -dm g.(x_i-x_j); the thermal energy of the cell
+           that transfers it repays that, so the pair's total energy is conserved (normalised per unit mass in hydro_toplevel) */
+        out.GravWorkTerm += kernel.dp * mass_flux_accepted;
 #ifdef METALS
         if(Fluxes.rho > 0) { for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;} }
 #endif
