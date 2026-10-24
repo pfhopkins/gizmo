@@ -1561,7 +1561,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     };
     double E_before = (reg.compute_tasks.is_root() && reg.integrator) ? E_internal() : 0;
     if(reg.compute_tasks.is_member() && reg.integrator) {
-        if(!kepler_pair_step(reg, dt_physical)) {
+        int kepler = kepler_pair_step(reg, dt_physical);
+        if(!kepler) {
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
         ketju_run_integrator(reg.integrator, dt_physical * KJ_TIME_TO_NAT);
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 0);
@@ -1583,7 +1584,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         if(reg.compute_tasks.is_root()) {
             double dE_coll = 0, eu = KJ_MASS_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT;
             for(int m = 0; m < reg.integrator->num_mergers; m++) if(reg.integrator->merger_infos[m].is_collision) dE_coll += reg.integrator->merger_infos[m].dE_collision / eu;
-            KetjuEnergyLedger[2] += E_internal() - E_before - dE_coll;
+            /* MSTAR: its error of T - U - U_tide net of collisions (U softened as integrated); exact Kepler pair: direct */
+            KetjuEnergyLedger[2] += kepler ? E_internal() - E_before - dE_coll : dE * fabs(E_before);
         }
 
         /* Per-region integration logs are silenced (they generate ~1 line per

@@ -18,7 +18,7 @@ KETJU_SRC = REPO_ROOT / "ketju-integrator"
 EXE = "ketju-integrator-unit-tests"
 NUM_MAKE_JOBS = 4
 
-# the 26 cases of the original suite and 7 for GIZMO's additions; a missing one means the suite did not run completely
+# the 26 cases of the original suite and 8 for GIZMO's additions; a missing one means the suite did not run completely
 EXPECTED_TESTS = {
     "Integration_versus_old_integrator.binary_system_full_pn_no_spin",
     "Integration_versus_old_integrator.binary_system_no_pn",
@@ -35,6 +35,7 @@ EXPECTED_TESTS = {
     "Gizmo_star_collisions.head_on_contact",
     "Gizmo_star_collisions.graze_and_miss",
     "Gizmo_collision_energy.includes_other_members_potential",
+    "Gizmo_collision_energy.tide_and_softening",
     "Gizmo_pericentre_guard.osculating_pericentre_time",
     "Gizmo_pericentre_guard.k3_triple_no_false_collision",
     "Gizmo_external_tide.harmonic_com_and_energy",
