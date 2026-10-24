@@ -299,22 +299,22 @@ static void incode_total_energy(void)
      * (the potential-convention switch of an inside-kernel pair must be evaluated at the separation
      * where it actually happened). Only the PRINT remains throttled to snapshot cadence. Cost is
      * O(N_type5^2) per step — the diagnostic already bails for N>4096. */
-    int do_print = !(have0 && (All.Time - last_t < All.TimeBetSnapshot - 1e-9));
+    /* print only where every counted particle ends its step here: elsewhere inactive particles carry half-kicked
+     * velocities and KETJU members part-way through their step sit on the host's chord, so E is not the conserved one */
+    int nsync_loc = 0, nsync = 0;
+    for(int q = 0; q < NumPart; q++) if(KETJU_ETOT_PTYPE(q) && P[q].Ti_begstep + P[q].dt_step != All.Ti_Current) nsync_loc++;
+    MPI_Allreduce(&nsync_loc, &nsync, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    int do_print = (nsync == 0) && !(have0 && (All.Time - last_t < All.TimeBetSnapshot - 1e-9));
 
     /* per particle, 11 doubles: pos[3], Vel[3], (unused), mass, integrated-flag.
-     * With pure-MSTAR coupling the chain member's synchronized P.Vel and P.Pos are exactly
-     * MSTAR's end-of-step state, so the plain sync-point values give the true energy. */
+     * At a print every member ends its step here, so P.Pos/P.Vel are MSTAR's end-of-step state. */
     const int W = 12;  /* [11] = particle ID (for the switch-ledger pair tracking across steps) */
     int nloc = 0, i, j;
     for(i = 0; i < NumPart; i++) if(KETJU_ETOT_PTYPE(i)) nloc++;
     double *sloc = (double*)malloc((nloc > 0 ? nloc : 1) * W * sizeof(double));
     int k = 0;
     for(i = 0; i < NumPart; i++) if(KETJU_ETOT_PTYPE(i)) {
-        /* Use P.Pos/P.Vel by default. For a KETJU chain member these host-frame values are the
-         * velocity-trick reconstruction: P.Pos is a LINEAR drift (chord) of the true curved internal
-         * orbit and P.Vel the trick velocity, so at large member host steps they misrepresent the
-         * internal separation/velocity and give a spurious (constant) PE/KE offset even though MSTAR
-         * conserves the orbit exactly. Use MSTAR's synchronized true end-of-step state instead. */
+        /* P.Pos/P.Vel: exact for members only when their step ends here (mid-step they are the chord), see do_print */
         double px=P[i].Pos[0], py=P[i].Pos[1], pz=P[i].Pos[2];
         double vx=P[i].Vel[0], vy=P[i].Vel[1], vz=P[i].Vel[2];
         sloc[k*W+10]=0.0;
@@ -411,7 +411,7 @@ static void incode_total_energy(void)
 
             if(do_print) {
 #ifdef KETJU_REGULARIZATION
-                ketju_note_total_energy(E, E0); /* printed evaluations only: those are at full syncs, mid-step members carry chord velocities */
+                ketju_note_total_energy(E, E0); /* printed evaluations only: all counted particles synchronised */
 #endif
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
@@ -477,7 +477,7 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
 #ifdef OUTPUT_STAR_ENERGY_DIRECT_SUM
-        incode_total_energy();	/* DIAGNOSTIC: true KETJU-aware energy at sync point (prints on full syncs) */
+        incode_total_energy();	/* DIAGNOSTIC: KETJU-aware total energy, printed at the first full sync after each TimeBetSnapshot */
 #endif
         compute_statistics();	/* regular statistics outputs (like total energy) */
 #if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
