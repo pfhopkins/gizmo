@@ -366,10 +366,13 @@ int  let_exchange_payloads(const struct LETPerRankPayload *local,
  *  Ships nothing to a receiver with no local cover (all_ranks[R].has_cover==0).
  *  receiver_active_bitmap is consulted ONLY in the experimental active-receiver-
  *  cover mode (LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL); it is NULL on the default
- *  all-local path.  Returns the number of nodes packed; *out grown as needed. */
+ *  all-local path.  own_topleaves[0..n_own_topleaves) lists this rank's top leaves that have
+ *  a subtree to pack, in ascending order; it does not depend on R, so the caller builds it once
+ *  per exchange.  Returns the number of nodes packed; *out grown as needed. */
 struct LETPackContext;   /* the packing scratch, private to let_pack.cc */
 int  let_pack_for_rank(struct LETPackContext *pk, int R,
                        const struct LETPerRankPayload *all_ranks,
+                       const int *own_topleaves, int n_own_topleaves,
                        struct LETNodeWire **out_buf,
                        int *out_capacity,
                        struct LETSubtreeHeader **out_hdr_buf,

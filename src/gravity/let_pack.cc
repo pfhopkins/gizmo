@@ -2005,6 +2005,7 @@ static long long let_wire_encode_destination(struct LETPackContext *pk, const st
 
 extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
                                   const struct LETPerRankPayload *all_ranks,
+                                  const int *own_topleaves, int n_own_topleaves,
                                   struct LETNodeWire **out_buf,
                                   int *out_capacity,
                                   struct LETSubtreeHeader **out_hdr_buf,
@@ -2040,16 +2041,11 @@ extern "C" int let_pack_for_rank(struct LETPackContext *pk, int R,
      * own data and are skipped -- shipping them would be a self-reference).  R sees each
      * shipped subtree as the foreign content for that topleaf: the unpack step rewrites
      * Nodes[topleaf_in_R].u.d.nextnode = subtree_root. */
-    for(int i = 0; i < NTopleaves; i++)
+    for(int k = 0; k < n_own_topleaves; k++)
     {
-        if(DomainTask[i] != ThisTask) continue;
+        const int i = own_topleaves[k];
         int topleaf_no = DomainNodeIndex[i];
-        if(topleaf_no < All.TreeNodeIndexBase || topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
-
         int subtree_root = Nodes[topleaf_no].u.d.nextnode;
-        if(subtree_root < 0) continue;  /* empty topleaf */
-        if(subtree_root == Nodes[topleaf_no].u.d.sibling) continue;  /* topleaf has no descendants */
-
         int sib_term = Nodes[topleaf_no].u.d.sibling;
 
         /* Record wire offset BEFORE this topleaf's pack, so we can emit a
@@ -3068,6 +3064,19 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
     }
 
     let_refresh_open_constants();
+    /* This rank's top leaves with a subtree to pack, in ascending order.  Which ones qualify does not
+     * depend on the destination, so they are found once here rather than by every destination's pack. */
+    std::vector<int> own_topleaves;
+    for(int i = 0; i < NTopleaves; i++)
+    {
+        if(DomainTask[i] != ThisTask) continue;
+        const int topleaf_no = DomainNodeIndex[i];
+        if(topleaf_no < All.TreeNodeIndexBase || topleaf_no >= All.TreeNodeIndexBase + MaxNodes) continue;
+        const int subtree_root = Nodes[topleaf_no].u.d.nextnode;
+        if(subtree_root < 0) continue;                                   /* empty topleaf */
+        if(subtree_root == Nodes[topleaf_no].u.d.sibling) continue;      /* topleaf has no descendants */
+        own_topleaves.push_back(i);
+    }
     /* Two ranks means at most one destination to pack, so ask for a single worker rather than
      * one per thread: a run that will never split the loop should not size a pool for it. */
     const int n_workers = let_pack_contexts_prepare((NTask > 2) ? let_pack_workers() : 1);
@@ -3101,10 +3110,12 @@ extern "C" let_exchange_status_t let_run_exchange(long long *foreign_needed_out)
 #endif
 #ifdef LET_ACTIVE_RECEIVER_COVER_EXPERIMENTAL
         const uint64_t *r_bitmap = all_active_bitmaps + (size_t) r * (size_t) bitmap_n_words;
-        n = let_pack_for_rank(pk, r, all_payloads, &pk->scratch, &pk->scratch_cap,
+        n = let_pack_for_rank(pk, r, all_payloads, own_topleaves.data(), (int) own_topleaves.size(),
+                              &pk->scratch, &pk->scratch_cap,
                               &send_hdr_per_rank[r], &hcap, &hcnt, r_bitmap, bitmap_n_words);
 #else
-        n = let_pack_for_rank(pk, r, all_payloads, &pk->scratch, &pk->scratch_cap,
+        n = let_pack_for_rank(pk, r, all_payloads, own_topleaves.data(), (int) own_topleaves.size(),
+                              &pk->scratch, &pk->scratch_cap,
                               &send_hdr_per_rank[r], &hcap, &hcnt, NULL, 0);
 #endif
         /* Encode this destination's records; on any failure it ships nothing, like a failed pack. */
