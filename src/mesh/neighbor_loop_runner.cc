@@ -1437,11 +1437,10 @@ static void mode_b_remote_evaluate_into_buffer(
                     mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                             Spec::search_mode, Spec::radius_policy,
                                             cand_ptr, topleaf_map, sink, jscale);
-                    for(int p = 0; p < nt; p++) {
+                    for(int p : sink.sorted_touched_peers()) {
                         if(p == rank) continue;
                         const std::vector<int>& nodes = sink.nodes_per_peer[p];
                         const int nn = (int)nodes.size();
-                        if(nn == 0) continue;
                         FusedExportRec rec;
                         rec.peer = p; rec.node_off = (int)lnodes.size(); rec.n_nodes = nn;
                         lrecs.push_back(rec);
@@ -1489,11 +1488,10 @@ static void mode_b_remote_evaluate_into_buffer(
                                             Spec::search_mode, Spec::radius_policy,
                                             cand_ptr, topleaf_map, export_sink, jscale);
                     /* stage this active's per-peer exports into the CSR */
-                    for(int p = 0; p < nt; p++) {
+                    for(int p : export_sink.sorted_touched_peers()) {
                         if(p == rank) continue;
                         const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
                         const int nn = (int)nodes.size();
-                        if(nn == 0) continue;
                         FusedExportRec rec;
                         rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
                         csr_recs.push_back(rec);
@@ -1608,37 +1606,34 @@ static void mode_b_remote_evaluate_into_buffer(
                         "oversized round — cap ineffective for this call (raise CommChunkSize).",
                         Spec::loop_name, add, add * kEnvPairBytes, bunch);
                 }
-                /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
-                int rr = r0;
-                for(int p = 0; p < nt; p++) {
-                    if(p == rank) continue;
-                    if(rr < r1 && csr_recs[rr].peer == p) {
-                        const FusedExportRec& rec = csr_recs[rr];
-                        const int* nd = &csr_nodes[rec.node_off];
-                        const int nn = rec.n_nodes;
-                        diag_export_qr++; diag_node_appends += nn;
-                        /* Chunk into NODELISTLENGTH-sized records (legacy opens a
-                         * fresh export slot when a NodeList fills). Chunks cover
-                         * disjoint subtrees → the slot-keyed reply merge sums their
-                         * partial results without double counting. All chunks of a
-                         * (query,peer) group land in THIS round (all-or-nothing
-                         * above), so each group stays contiguous. */
-                        for(int c = 0; c < nn; c += NODELISTLENGTH) {
-                            Envelope env;
-                            env.origin_slot = aa;
-                            env.origin_rank = rank;
-                            int cnt = 0;
-                            for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
-                                env.NodeList[cnt] = nd[c + cnt];
-                            }
-                            env.n_nodes = cnt;
-                            env.reserved_wire_padding = 0;
-                            for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                            env.active = actives[aa];
-                            queries_per_peer[p].push_back(env);
+                /* commit: chunked envelopes per exported peer, straight from this active's
+                 * records (peer-ascending, so each peer's envelopes keep the order a scan
+                 * over every rank gave). */
+                for(int rr = r0; rr < r1; rr++) {
+                    const FusedExportRec& rec = csr_recs[rr];
+                    const int p = rec.peer;
+                    const int* nd = &csr_nodes[rec.node_off];
+                    const int nn = rec.n_nodes;
+                    diag_export_qr++; diag_node_appends += nn;
+                    /* Chunk into NODELISTLENGTH-sized records (legacy opens a
+                     * fresh export slot when a NodeList fills). Chunks cover
+                     * disjoint subtrees → the slot-keyed reply merge sums their
+                     * partial results without double counting. All chunks of a
+                     * (query,peer) group land in THIS round (all-or-nothing
+                     * above), so each group stays contiguous. */
+                    for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                        Envelope env;
+                        env.origin_slot = aa;
+                        env.origin_rank = rank;
+                        int cnt = 0;
+                        for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                            env.NodeList[cnt] = nd[c + cnt];
                         }
-                        rr++;
-                        continue;
+                        env.n_nodes = cnt;
+                        env.reserved_wire_padding = 0;
+                        for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                        env.active = actives[aa];
+                        queries_per_peer[p].push_back(env);
                     }
                 }
                 round_env_count += add;
