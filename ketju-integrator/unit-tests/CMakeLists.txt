@@ -11,6 +11,7 @@ set(UNIT_TEST_SRCS
     mst_construction.cpp
     integration.cpp
     mergers.cpp
+    gizmo_additions.cpp
     )
 
 add_executable(ketju-integrator-unit-tests ${UNIT_TEST_SRCS})
