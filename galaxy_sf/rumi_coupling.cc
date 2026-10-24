@@ -240,6 +240,10 @@ void rumi_limit_timesteps(void)
             int bcap = get_timestep_bin((integertime)DMAX(ti_cap, 2)); if(bcap < bin) {bin = bcap;}
         }
         if(ti_ns_g < LLONG_MAX && ti_ns_g > (long long)All.Ti_Current) {int bns = get_timestep_bin((integertime)(ti_ns_g - (long long)All.Ti_Current)); if(bns < bin) {bin = bns;}}
+        if(!All.OutputListOn && All.TimeBetSnapshot > 0 && All.Ti_nextoutput > All.Ti_Current) { /* at most one output inside the step: the split keeps one mid-step state */
+            long long ti_o2 = (long long)All.Ti_nextoutput + (long long)(All.TimeBetSnapshot / All.Timebase_interval);
+            int bo = get_timestep_bin((integertime)(ti_o2 - (long long)All.Ti_Current)); if(bo < bin) {bin = bo;}
+        }
         while(bin > 0 && !TimeBinActive[bin]) {bin--;}
         if(bin > 0) {
             integertime ti_bin = GET_INTEGERTIME_FROM_TIMEBIN(bin);
