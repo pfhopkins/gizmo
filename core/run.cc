@@ -17,7 +17,7 @@
 void energy_budget_sync_report(void)
 {
     if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
-    double loc[3] = {0,0,0}, glob[3]; int i;
+    double loc[6] = {0,0,0,0,0,0}, glob[6]; int i, k;
     for(i = 0; i < NumPart; i++)
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
@@ -25,13 +25,14 @@ void energy_budget_sync_report(void)
             loc[0] += P[i].Mass * CellP[i].InternalEnergy;
             loc[1] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
             loc[2] += P[i].Mass;
+            for(k = 0; k < 3; k++) {loc[3+k] += P[i].Mass * P[i].Vel[k] / All.cf_atime;} /* physical momentum */
         }
     }
-    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0)
     {
-        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e\n",
-               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e P_gas=%.16e %.16e %.16e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2], glob[3], glob[4], glob[5]); fflush(stdout);
     }
 }
 
