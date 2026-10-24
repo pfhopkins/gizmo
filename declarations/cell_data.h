@@ -337,6 +337,7 @@ extern struct gas_cell_data
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     short int IMFSpawnBlock;              /*!< flag: 1 = recently spawned a star, skip SF until density is recomputed */
+    MyFloat SFCooldown;                   /*!< remaining physical time with SF blocked after a spawn */
 #endif
 #ifdef GALSF_SUBGRID_WINDS
     MyFloat DelayTime;                /*!< remaining maximum decoupling time of wind particle */

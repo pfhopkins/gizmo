@@ -75,6 +75,7 @@ TimeInstantSN                   0.0               % disabled: all stars live the
 
 %---- IMF sampling (GALSF_RESOLVEDISM_SAMPLE_IMF)
 IMFSampleMinMass                0.08              % full IMF: sample down to hydrogen burning limit
+ResolvedISM_SFCooldownFreeFallFraction 0.1         % after a spawn the cell forms no star for this fraction of its t_ff (0: only until its next density update)
 IMFSampleStellarMassCut         0.5               % skip UV/LW computation for M < 0.5 Msun (perf only)
 
 %---- Stellar tables (GALSF_RESOLVEDISM_STELLAR_TABLES)
