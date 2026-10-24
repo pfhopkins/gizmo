@@ -497,4 +497,19 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 }
 
 
+/* electrons, H+ and HI per H from the cell's current chemistry abundances (startup ionisation state) */
+double chemcool_startup_electrons(int target, double *x_HII, double *x_HI)
+{
+    struct ChemInputs cin; memset(&cin, 0, sizeof(cin));
+    chem_fill_gas_abundances(target, &cin);
+    double ab[TRAC_NUM]; for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[target].TracAbund[k];}
+    *x_HII = ab[IHP]; *x_HI = DMAX(1.0 - 2.0*ab[IH2] - ab[IHP], 0.0);
+#if CHEMISTRYNETWORK == 20
+    return ab[IHP]; /* net 20 electrons come from the last solve */
+#else
+    return chemcool_electrons(ab, &cin);
+#endif
+}
+
+
 #endif /* CHEMCOOL */

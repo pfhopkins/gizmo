@@ -43,45 +43,8 @@ static void chem_zeta_from_crfluid(int target, struct ChemInputs *in) /* zeta = 
 }
 #endif
 
-void chem_fill_inputs(int target, struct ChemInputs *in)
+void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/O/Si/N/M per H and Zmass, from the cell metals */
 {
-    /* [orig chemcool.cc:155-170] local working variables (same roles) */
-    double rho, timestep, divv, energy, ekn;
-    double temp;
-    double yn, abh2, abhd, abco, abe;
-    double dl = in->dl_code;
-
-#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
-    double columni;
-#endif
-#ifdef RT_TREECOL_DUST_WEIGHTED
-    double NH;
-#endif
-#ifdef RT_TREECOL_H2_CO
-    double NH2, NCO;
-#endif
-    int i;
-
-    /* [orig chemcool.cc:173-177] cosmological redshift for the solver */
-    if(All.ComovingIntegrationOn) {
-        in->redshift = 1.0 / All.Time - 1.0;
-    } else {
-        in->redshift = 0.;
-    }
-    /* [orig chemcool.cc:178-181] density, timestep, physical velocity divergence */
-    rho      = CellP[target].Density * All.cf_a3inv;
-    timestep = in->dt_code;
-    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
-    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
-#if CHEMISTRYNETWORK == 20
-    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
-        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
-        double g = 0; int k;
-        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
-        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
-    }
-#endif
-
     /* Per-particle element abundances for cooling rates.  28-slot layout:
      *   Met[0]=total Z, [1]=H (explicit), [2]=He, [MET_OF(k)] = element k for k>=ELEM_C.
      *   Σ Met[1..27] = 1 by construction. */
@@ -176,6 +139,48 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->abundsi = All.InitialMetallicity * 1.5e-5;
     in->abundM  = All.InitialMetallicity * CHEMCOOL_ABUNDM_SOLAR;
 #endif
+}
+
+void chem_fill_inputs(int target, struct ChemInputs *in)
+{
+    /* [orig chemcool.cc:155-170] local working variables (same roles) */
+    double rho, timestep, divv, energy, ekn;
+    double temp;
+    double yn, abh2, abhd, abco, abe;
+    double dl = in->dl_code;
+
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
+    double columni;
+#endif
+#ifdef RT_TREECOL_DUST_WEIGHTED
+    double NH;
+#endif
+#ifdef RT_TREECOL_H2_CO
+    double NH2, NCO;
+#endif
+    int i;
+
+    /* [orig chemcool.cc:173-177] cosmological redshift for the solver */
+    if(All.ComovingIntegrationOn) {
+        in->redshift = 1.0 / All.Time - 1.0;
+    } else {
+        in->redshift = 0.;
+    }
+    /* [orig chemcool.cc:178-181] density, timestep, physical velocity divergence */
+    rho      = CellP[target].Density * All.cf_a3inv;
+    timestep = in->dt_code;
+    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
+    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
+#if CHEMISTRYNETWORK == 20
+    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
+        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
+        double g = 0; int k;
+        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
+        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+    }
+#endif
+
+    chem_fill_gas_abundances(target, in);
     /* [orig chemcool.cc:267-270] */
     in->abundD  = All.DeutAbund;
     in->G0      = All.G0;

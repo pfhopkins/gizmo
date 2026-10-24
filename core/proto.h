@@ -823,6 +823,7 @@ void cooling_parent_routine(void);
 void chemcool_init(void);
 double do_chemcool_step(int target, double dt, double dl, int mode);
 double chemcool_cool_cell(int target, double u_old, double dt);
+double chemcool_startup_electrons(int target, double *x_HII, double *x_HI);
 extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code energy units] */
 extern double CumulMHDNumEnergy; /* total energy created by the MHD source terms and the missing -B^2/2 dV/dt [code energy units] */
 extern double CumulKickFloorEnergy; /* thermal energy added by the kick u-limiter and temperature floor [code energy units] */

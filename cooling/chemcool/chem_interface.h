@@ -215,6 +215,7 @@ struct ChemOutputs {
 
 
 void chem_fill_inputs(int target, struct ChemInputs *in);
+void chem_fill_gas_abundances(int target, struct ChemInputs *in);
 void chem_commit_to_fortran(const struct ChemInputs *in);
 void chem_percell_snapshot(void);
 #ifdef CHEMCOOL_CXX
