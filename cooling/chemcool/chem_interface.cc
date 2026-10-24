@@ -807,6 +807,7 @@ void chem_read_outputs(struct ChemOutputs *out)
 {
     int i;
     out->tdust = COOLRC.tdust;                            /* [orig chemcool.cc:924] */
+    out->cr_ion_heat = 0;                                 /* not tallied by the Fortran backend */
     for(i = 0; i < 28; i++) {out->lambda[i] = COOLRC.lambda[i];}                  /* [orig chemcool.cc:869-871,956-985] */
     for(i = 0; i < NRATES_CHEM; i++) {out->lambda_chem[i] = COOLRC.lambda_chem[i];}  /* [orig chemcool.cc:875-877] */
 #ifdef OUTPUT_SHIELD_FAC

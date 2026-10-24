@@ -207,6 +207,7 @@ struct ChemOutputs {
     double lambda[28];               /* <- COOLRC.lambda: individual cooling
                                         rates [erg s^-1 cm^-3]               */
     double lambda_chem[NRATES_CHEM]; /* <- COOLRC.lambda_chem                 */
+    double cr_ion_heat;              /* CR ionisation heating applied over the solve [erg cm^-3] (C++ backend; 0 otherwise) */
 #ifdef OUTPUT_SHIELD_FAC
     double fac_shield_h2;            /* <- COOLRC.fac_shield_h2 (calc_photo)  */
     double fac_shield_dust;          /* <- COOLRC.fac_shield_dust             */

@@ -384,8 +384,13 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 #endif
 
     if(dtime_cgs <= 0) {return;} /* catch */
-    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);
+    int k_CRegy;
+#if defined(CHEMCOOL_CXX) && defined(GALSF_RESOLVEDISM)
+    double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: chemcool.cc takes the chemistry's ionisation heating out of e_CR */
+#else
+    double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC; /* some coefficients; a_hadronic is the default coefficient, b_coulomb_ion_per_GeV the default Coulomb+ionization (the two scale nearly-identically) normalization divided by GeV, b/c we need to divide the energy per CR  */
+#endif
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
         double CR_coolrate,Z,species_ID; CR_coolrate=0; Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy)); species_ID=return_CRbin_CR_species_ID(k_CRegy);

@@ -143,6 +143,7 @@ void chem_cxx_read_outputs(struct ChemOutputs* out)
 {
     const ChemCell& c = tl_cell;
     out->tdust = c.tdust;
+    out->cr_ion_heat = c.cr_ion_heat_int;
     std::memcpy(out->lambda, tl_lambda, sizeof(tl_lambda));
     std::memcpy(out->lambda_chem, tl_lambda_chem, sizeof(tl_lambda_chem));
 #ifdef OUTPUT_SHIELD_FAC
