@@ -561,6 +561,7 @@ void init(void)
         CellP[i].FaceClosureError = 0;
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
         CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
+        if(RestartFlag == 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} /* a snapshot's Density is the integrated density: continue it */
 #endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
