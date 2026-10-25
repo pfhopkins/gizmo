@@ -98,7 +98,7 @@ TIDAL_TIMESTEP_CRITERION                 % tidal-tensor timestep criterion
 KETJU_REGULARIZATION                     % MSTAR chain regularisation for stellar encounters  [excl FORCE_EQUAL_TIMESTEPS]
 KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req KETJU_REGULARIZATION]
 #KETJU_MERGE_BH                          % BH mergers  [req KETJU_REGULARIZATION]
-#KETJU_KOKKOS                            % MSTAR from the C++/Kokkos library (make KOKKOS_ROOT=<install>); default: C library  [req KETJU_REGULARIZATION]
+#KETJU_LEGACY_C_LIBRARY                  % legacy: MSTAR from the C library (reference); default: C++/Kokkos library mstar::mstar (KOKKOS_ROOT)  [req KETJU_REGULARIZATION]
 #KETJU_PN_REMNANT_TAG                    % tag remnant type at SN; PN on Type-4 NS/BH remnants
 #GALSF_RESOLVEDISM_BH_PROMOTION          % promote massive remnants to sinks  [req STELLAR_TABLES] [auto SINK_PARTICLES]
 

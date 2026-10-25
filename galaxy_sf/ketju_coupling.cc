@@ -36,8 +36,8 @@
 #include "../mesh/kernel.h"
 #include "ketju_coupling.h"
 #include "../gravity/tree_pair_kernel.h"
-#ifdef KETJU_KOKKOS
-#include "ketju_mstar_kokkos.h" /* the three library calls on the C++/Kokkos MSTAR library */
+#ifndef KETJU_LEGACY_C_LIBRARY
+#include "ketju_mstar_kokkos.h" /* the three library calls on the C++/Kokkos MSTAR library (default) */
 #define ketju_create_system kj_mstar_create_system
 #define ketju_run_integrator kj_mstar_run_integrator
 #define ketju_free_system kj_mstar_free_system

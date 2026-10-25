@@ -1,8 +1,20 @@
 # KETJU integrator unit tests
 
-Runs the original googletest suite of the KETJU integrator (MSTAR; `ketju-integrator/unit-tests/`,
-GPLv3, Mannerkoski et al.) against GIZMO's modified `ketju-integrator/`, a git submodule of github.com/Ulli1991/ketju-integrator (branch `main`). Clone with `--recurse-submodules` or run `git submodule update --init --recursive`.
-No GIZMO build or simulation is involved.
+Tests of GIZMO's `ketju-integrator/`, a git submodule of github.com/Ulli1991/ketju-integrator (branch `main`). Clone with
+`--recurse-submodules` or run `git submodule update --init --recursive`. No GIZMO build or simulation is involved.
+
+## Default: the C++/Kokkos library (GIZMO's default MSTAR)
+
+`test_ketju_kokkos_ctests` builds `kokkos/` from the top level (`-DKETJU_KOKKOS=ON -DKETJU_SERIAL_MPI=ON`, Kokkos from
+`KOKKOS_ROOT` or the Makefile default) and runs its 6 ctests: `mstar_gizmo_additions` (the GIZMO-addition cases below on
+`mstar::mstar`), `mstar_compare_c` (C vs Kokkos: Kepler, Pythagorean, Plummer cores, PN binary and cusp, BH mergers,
+contact collisions, tide, softening), `mstar_extra_force`, `mstar_embedded_tide`, `mstar_driver`, and `ketju_unit_c`
+(the suite below on the C library, one task, serial MPI stand-in). See `ketju-integrator/kokkos/README.md`.
+
+## Legacy: the C library on MPI (`KETJU_LEGACY_C_LIBRARY`)
+
+`test_ketju_unit` runs only with `GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY`: the original googletest suite on the C
+library, each case on 1, 2 and 4 MPI tasks.
 
 ## What is tested
 
@@ -35,7 +47,8 @@ their test fail.
 ## Running
 
     module load gcc/13; module load openmpi; module load cmake/3.30
-    pytest test/ketju_unit/test_ketju_unit.py
+    pytest test/ketju_unit/test_ketju_unit.py                                              # Kokkos ctests
+    GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY pytest test/ketju_unit/test_ketju_unit.py  # + C googletests on MPI
 
 The test copies `ketju-integrator/` to a pytest temporary directory (its CMake writes `bin/` and
 `lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the googletest

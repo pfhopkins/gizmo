@@ -1,4 +1,4 @@
-/* KETJU_KOKKOS: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
+/* KETJU default: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
  * (ketju-integrator/kokkos, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
 #include <mpi.h>
 #include <cstdio>
@@ -11,7 +11,7 @@
 #include "../declarations/allvars.h"
 #include "ketju_mstar_kokkos.h"
 
-#if defined(KETJU_REGULARIZATION) && defined(KETJU_KOKKOS)
+#if defined(KETJU_REGULARIZATION) && !defined(KETJU_LEGACY_C_LIBRARY)
 #include <mstar/mstar.hpp>
 
 #ifndef KETJU_KOKKOS_DEVICE_MIN_N
@@ -29,7 +29,7 @@ bool kj_kokkos_owned = false;
 
 void kj_abort(const char *msg)
 {
-    fprintf(stderr, "KETJU_KOKKOS: %s\n", msg); fflush(stderr);
+    fprintf(stderr, "KETJU MSTAR: %s\n", msg); fflush(stderr);
     MPI_Abort(MPI_COMM_WORLD, 1);
 }
 
@@ -53,7 +53,7 @@ void kj_kokkos_initialize()
     mstar::initialize(argc, argv);
     kj_kokkos_owned = true;
     std::atexit(kj_kokkos_finalize);
-    if(wrank == 0) printf("KETJU_KOKKOS: MSTAR on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
+    if(wrank == 0) printf("KETJU: MSTAR on Kokkos %s (host %s), regions below %d bodies on the host engine\n",
                           mstar::execution_space_name(), mstar::host_execution_space_name(), KETJU_KOKKOS_DEVICE_MIN_N);
 }
 
