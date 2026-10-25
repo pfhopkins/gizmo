@@ -186,10 +186,20 @@ struct DMDispersionSpec {
     /* after_iter_body -- bisection convergence + radius update for one active (contract at
      * DMDispersionSpec::after_iter in dm_dispersion_loop.cc). Host and device both run this
      * one body. Writes only scratch. */
+    /* The entry point a device iteration calls for each active, in the runner's one signature: the body below. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_device(struct particle_data *P, const struct gas_cell_data *, int i, int iter,
+                                        double h_search_current, const CallScalars& cs, IterScratch& scratch,
+                                        const AccumData& accum, int this_task, int &stop_code)
+    {
+        return after_iter_body(P, i, iter, h_search_current, cs, scratch, accum, this_task, stop_code);
+    }
+
+    /* A condition that must stop the run sets stop_code; the caller requests the stop. */
     KOKKOS_INLINE_FUNCTION
     static IterResult after_iter_body(const struct particle_data *P, int i, int iter, double h_search_current,
                                       const CallScalars& cs, IterScratch& scratch,
-                                      const AccumData& accum, int this_task)
+                                      const AccumData& accum, int this_task, int &stop_code)
     {
         const double ngb     = accum.Ngb;
         double       new_h   = h_search_current;
@@ -257,7 +267,7 @@ struct DMDispersionSpec {
             /* One-sided bracket (legacy lines 155-172) */
             if (scratch.Right == 0 && scratch.Left == 0) {
                 printf("DMDispersionSpec::after_iter: Right==0 && Left==0 && KernelRadiusDM=%g (task=%d)\n", new_h, this_task); KOKKOS_IF_ON_HOST((fflush(stdout);))
-                endrun(90001011);
+                stop_code = 90001011;
                 return IterResult{IterStatus::Converged, new_h};   /* graceful: bad-stop set; stop iterating this active with the last valid DM-dispersion radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
             }
             double fac;

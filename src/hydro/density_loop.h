@@ -486,17 +486,28 @@ struct DensitySpec {
     static IterResult after_iter(const AfterIterContext<DensitySpec>& ctx,
                                  const AccumData& accum);
 
+    /* The entry point a device iteration calls for each active, in the runner's one signature: the body below. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_device(struct particle_data *P, const struct gas_cell_data *CellP, int i, int iter,
+                                        double h_search_current, const CallScalars& cs, IterScratch& scratch,
+                                        const AccumData& accum, int this_task, int &stop_code)
+    {
+        return after_iter_body(P, CellP, i, iter, h_search_current, cs, scratch, accum, this_task, stop_code);
+    }
+
     /* after_iter_body -- bisection convergence + radius update for one active (the
      * literal port of hydro/density.cc:244-590; full contract at DensitySpec::after_iter
      * in density_loop.cc). Host and device both run this one body: the host hook passes
      * its argument view, a device iteration passes the same pointers. Writes scratch, and under
      * AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE the active's own AGS fields in P[i] (through
-     * ags_density_isactive_P), so P must be writable. */
+     * ags_density_isactive_P), so P must be writable. A condition that must stop the run sets
+     * stop_code (the caller requests the stop: the host at once, a device iteration once every rank
+     * has agreed on it). */
     KOKKOS_INLINE_FUNCTION
     static IterResult after_iter_body(struct particle_data *P, const struct gas_cell_data *CellP,
                                       int i, int iter, double h_search_current,
                                       const CallScalars& cs, IterScratch& scratch,
-                                      const AccumData& accum, int this_task)
+                                      const AccumData& accum, int this_task, int &stop_code)
     {
 
         /* ---- (a) local normalization (mirrors density.cc:247-268). Computes
@@ -874,7 +885,7 @@ struct DensitySpec {
                 } else {
                     if (scratch.right == 0 && scratch.left == 0) {
                         printf("DensitySpec::after_iter: Right==0 && Left==0 && KernelRadius=%g (task=%d i=%d)\n", new_h, this_task, i); KOKKOS_IF_ON_HOST((fflush(stdout);))
-                        endrun(90001009);
+                        stop_code = 90001009;
                         return IterResult{IterStatus::Converged, (double)new_h};   /* graceful: bad-stop set; stop iterating this active with the last finite radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
                     }
 

@@ -264,8 +264,11 @@ void DensitySpec::apply_active_writeback_iterative(const neighbor_loop_args& arg
 IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
                                     const AccumData& accum)
 {
-    return after_iter_body(ctx.args.P, ctx.args.CellP, ctx.i, ctx.iter_index, ctx.h_search_current,
-                           ctx.scalars, ctx.scratch, accum, ThisTask);
+    int stop_code = 0;
+    const IterResult r = after_iter_body(ctx.args.P, ctx.args.CellP, ctx.i, ctx.iter_index, ctx.h_search_current,
+                                         ctx.scalars, ctx.scratch, accum, ThisTask, stop_code);
+    if(stop_code) {endrun(stop_code);}
+    return r;
 }
 
 /* ====================================================================

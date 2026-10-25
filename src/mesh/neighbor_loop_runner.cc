@@ -255,18 +255,20 @@ bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int defaul
     return (sum_active > 0) && (sum_active <= TS) && (max_active <= TM);
 }
 
-/* The fewest actives, summed over the ranks, a call needs before Mode D takes it: one device batch
- * (GPU_MIN_SOURCES_FOR_WALK_OFFLOAD).  Below it the request-driven host walker is the faster path --
- * measured on FIF, 2.4 against 9.3 ms per step at 1-3 actives per rank and 7.1 against 16.2 at 10-32 --
- * and it holds none of Mode D's device storage or pinned staging.  Asked when a call is routed and again
- * after every iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
-static constexpr int MODE_D_MIN_SUMMED_ACTIVES = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
+/* The fewest actives some rank must hold before Mode D takes a call: one device batch (GPU_MIN_SOURCES_FOR_WALK_OFFLOAD).
+ * When no rank holds that many the request-driven host walker is the faster path: a device batch of fewer queries loses
+ * to the host per query (measured on FIRE-dwarf and fire2ics, 3-7x below 4096), and a Mode D iteration's fixed cost --
+ * export walks, count exchange, termination -- is then more than Mode B's whole iteration (Poisson box, 128 ranks: the
+ * remainder of a density call finishing on Mode B below this took the call from 31-38 to 21.6 ms).  The busiest rank is
+ * the test, not an average, so a call whose work sits on a few ranks still gives those ranks the device.  Asked when a
+ * call is routed and again after every iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
+static constexpr int MODE_D_MIN_ACTIVES_PER_RANK = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
 
 /* Built-in Mode-B thresholds by search mode, used where neither the parameterfile
  * nor the Spec sets one.
  *   One-way loops: Mode B up to 64 active globally (and 64 on any rank); above
  *   that an eligible loop uses Mode D, which needs no ghost import either, once the
- *   call has MODE_D_MIN_SUMMED_ACTIVES in total (Mode B below that, while Mode B is on).
+ *   busiest rank holds MODE_D_MIN_ACTIVES_PER_RANK (Mode B below that, while Mode B is on).
  *   Symmetric loops: Mode B up to an average of 320 active per rank, with no rank
  *   above 3200.  Measured on Frontier, Mode A's import and list build stop paying
  *   for themselves below a few hundred active per rank.  The per-rank cap is a
@@ -298,16 +300,16 @@ void gizmo_nlr_report_dispatch_thresholds(void)
     symm_max = gizmo_nlr_modeb_threshold_max_for(nullptr, symm_max);
     gizmo_nlr_moded_thresholds(&d_sum, &d_max);
     printf("Neighbor loops: Mode B at or below summed/per-rank-max active %d/%d (one-way), %d/%d (symmetric); "
-           "eligible one-way loops use Mode D at or above %d/%d with at least %d summed (below that Mode B when it is on, "
-           "else the usual path), Mode A otherwise\n",
-           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_max, MODE_D_MIN_SUMMED_ACTIVES);
+           "eligible one-way loops use Mode D at or above %d/%d with at least %d on the busiest rank (below that Mode B when "
+           "it is on, else the usual path), Mode A otherwise\n",
+           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_max, MODE_D_MIN_ACTIVES_PER_RANK);
 }
 
 void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max)
 {
     const int p_sum = nlr_host_all_ptr()->NeighborLoopModeDThresholdSum;
     const int p_max = nlr_host_all_ptr()->NeighborLoopModeDThresholdMax;
-    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the call reaches MODE_D_MIN_SUMMED_ACTIVES. */
+    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the call reaches MODE_D_MIN_ACTIVES_PER_RANK. */
     *threshold_sum = (p_sum == -1) ? 0 : p_sum;
     *threshold_max = (p_max == -1) ? 0 : p_max;
 }
@@ -1138,12 +1140,22 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
                                             typename Spec::AccumData *accums_out);
 
 /* Mode D's device-resident exchange (defined with the device walks below) and the call storage it runs in.  The
- * exchange returns true when it ended in a stop every rank agreed on. */
+ * exchange returns true when it ended in a stop every rank agreed on.  Its actives come from the host (args, radii)
+ * or, for a call iterating on the device, from the device list of slots still iterating (ModeDDeviceQueries), and
+ * its results go to accums_out on the host, or stay in the call's storage when accums_out is null. */
 struct ModeDCallLease;
+struct ModeDDeviceQueries {
+    const int    *live;             /* [n_live] the call slots still iterating */
+    int           n_live;
+    int           call_slot_base;   /* the subgroup's first slot in the call's staging */
+    const int    *slot_index;       /* [call slots] each slot's particle */
+    const double *slot_radius;      /* [call slots] each slot's search radius */
+};
 template <typename Spec>
 static bool mode_d_exchange(ModeDCallLease &lease, const neighbor_loop_args& args, const double *radii,
                             const typename Spec::CallScalars& cs, const typename Spec::DeviceContext& ctx,
-                            unsigned int type_mask, typename Spec::AccumData *accums_out);
+                            unsigned int type_mask, typename Spec::AccumData *accums_out,
+                            const ModeDDeviceQueries *device_queries = nullptr);
 
 template <typename Spec>
 static void mode_b_remote_evaluate_into_buffer(
@@ -2541,7 +2553,7 @@ static int nlr_spec_threshold_max(int fallback) {
  * rank answers alike.  Nothing here touches Mode D's state: a call answered by
  * A or B pays nothing for D.
  *
- * A call that meets the Mode-D bounds but has fewer than MODE_D_MIN_SUMMED_ACTIVES actives in total
+ * A call that meets the Mode-D bounds but whose busiest rank has fewer than MODE_D_MIN_ACTIVES_PER_RANK actives
  * goes to Mode B (see that constant), unless Mode B is switched off. */
 /* Whether the parameter file leaves Mode B on for this loop: a threshold of 0 switches it off. */
 template <typename Spec>
@@ -2553,13 +2565,34 @@ static bool nlr_mode_b_switched_on(void)
            gizmo_nlr_modeb_threshold_max_for(nullptr, nlr_spec_threshold_max<Spec>(default_max)) > 0;
 }
 
-/* Whether a Mode D call's actives, summed over the ranks, still reach MODE_D_MIN_SUMMED_ACTIVES.  Asked when a call is
- * routed, and again after every iteration of an iterative Mode D call, whose converged actives drop out: a remainder
- * below it finishes on Mode B.  Collective input, so every rank answers alike.  The parameter file's Mode D thresholds
- * are asked only when the call is routed. */
-static bool nlr_mode_d_feeds_device(int sum_active)
+/* The per-iteration reduction of a one-subgroup Mode D call: {summed actives, busiest rank's actives, stop code}, as one
+ * element of three long longs, summed / maximum / maximum. */
+static void nlr_count_triple_reduce(void *in, void *inout, int *len, MPI_Datatype *)
 {
-    return sum_active >= MODE_D_MIN_SUMMED_ACTIVES;
+    const long long *a = (const long long *) in;
+    long long *b = (long long *) inout;
+    for(int k = 0; k < *len; k++, a += 3, b += 3) {b[0] += a[0]; if(a[1] > b[1]) {b[1] = a[1];} if(a[2] > b[2]) {b[2] = a[2];}}
+}
+static MPI_Datatype nlr_count_triple_type(void)
+{
+    static MPI_Datatype t = MPI_DATATYPE_NULL;
+    if(t == MPI_DATATYPE_NULL) {MPI_Type_contiguous(3, MPI_LONG_LONG, &t); MPI_Type_commit(&t);}
+    return t;
+}
+static MPI_Op nlr_count_triple_op(void)
+{
+    static MPI_Op op = MPI_OP_NULL;
+    if(op == MPI_OP_NULL) {MPI_Op_create(nlr_count_triple_reduce, 1, &op);}
+    return op;
+}
+
+/* Whether a Mode D call's busiest rank still holds MODE_D_MIN_ACTIVES_PER_RANK actives.  Asked when a call is routed,
+ * and again after every iteration of an iterative Mode D call, whose converged actives drop out: a remainder below it
+ * finishes on Mode B.  Collective input (a maximum over the ranks), so every rank answers alike.  The parameter file's
+ * Mode D thresholds are asked only when the call is routed. */
+static bool nlr_mode_d_feeds_device(int max_active)
+{
+    return max_active >= MODE_D_MIN_ACTIVES_PER_RANK;
 }
 
 template <typename Spec>
@@ -2574,7 +2607,7 @@ NlrMode nlr_select_mode(int sum_active, int max_active)
         int TDS = 0, TDM = 0;
         gizmo_nlr_moded_thresholds(&TDS, &TDM);
         if(sum_active > 0 && sum_active >= TDS && max_active >= TDM) {
-            if(nlr_mode_d_feeds_device(sum_active)) {return NlrMode::D;}
+            if(nlr_mode_d_feeds_device(max_active)) {return NlrMode::D;}
             /* Below the floor: Mode B, unless the parameter file has switched Mode B off, in
              * which case the call keeps its usual path. */
             if(nlr_mode_b_switched_on<Spec>()) {return NlrMode::B;}
@@ -2767,9 +2800,11 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
  * every rank reconciles round counts at the round's end anyway -- so it changes neither the answer nor any
  * rank's path.
  *
- * Allocating is the test.  The device storage is held for one call (allocating it costs milliseconds); the
- * page-locked host staging is one fixed ring held for the run, because pinning costs far too much to repeat per
- * call (gx_mode_d_staging_acquire).  One task holds none of it: the single-rank path keeps its own.
+ * Allocating is the test.  The device storage a call gives back is kept, at its high water, for the next call
+ * (allocating and freeing it every call cost ~1 ms of a ~30 ms density call) and released with the tree, which
+ * bounds what is kept to one tree's calls; the page-locked host staging is one fixed ring held for the run,
+ * because pinning costs far too much to repeat per call (gx_mode_d_staging_acquire).  One task holds none of it:
+ * the single-rank path keeps its own.
  * ========================================================================== */
 
 /* The share of the device's free memory a lease may take: the rest stays for what the call
@@ -2786,6 +2821,8 @@ struct ModeDWorkspacePlan {
     long long arena_min_envelopes;           /* the arena at admission: room for one worst-case active */
     long long segment_records;               /* S: records of one staging message, either kind */
     long long device_bytes;                  /* what admission allocates on the device */
+    long long iteration_actives;             /* actives whose iteration state the call keeps on the device (0: the host keeps it) */
+    long long scratch_bytes;                 /* one active's iteration scratch */
 };
 
 /* a * b, or -1 when either is negative or the product leaves 64 bits. */
@@ -2827,7 +2864,7 @@ static_assert(GX_MODE_D_STAGING_MAX_MESSAGE_BYTES <= (size_t) INT_MAX,
 /* The round arena: everything one round holds, carved out of one allocation for a capacity of C envelopes.  A
  * round's records number at most NODELISTLENGTH per envelope it may send, since an active's envelope bound is
  * never below its node count over NODELISTLENGTH. */
-static constexpr int MODE_D_ARENA_ROWS = 9;
+static constexpr int MODE_D_ARENA_ROWS = 8;
 struct ModeDRoundArena {
     long long          capacity = 0;   /* C */
     char              *base = nullptr;
@@ -2836,8 +2873,8 @@ struct ModeDRoundArena {
     int               *scan = nullptr;                                /* [NODELISTLENGTH C]: the sort's scan, and each record's run start */
     int               *first_record = nullptr;                        /* [C]: where each envelope's records start */
     void              *envelopes = nullptr;                           /* [C]: the queries this round sends, in send order */
-    int               *envelope_active = nullptr;                     /* [C]: the active each envelope asks for */
-    ModeDEnvelopeKey  *keys = nullptr, *keys_spare = nullptr;         /* [C]: the merge order, and the sort's other half */
+    int               *run_offsets = nullptr;                         /* [NODELISTLENGTH C]: each query's run list (2 (C + 1) used) */
+    int               *envelope_of = nullptr;                         /* [NODELISTLENGTH C]: the envelope each sorted record goes in */
     void              *replies = nullptr;                             /* [C]: the answers to this round's queries, in send order */
 };
 /* The arena's row offsets for capacity c, and its total; -1 when a size leaves 64 bits. */
@@ -2847,8 +2884,8 @@ static long long mode_d_arena_layout(long long c, size_t query_bytes, size_t rep
     const long long size[MODE_D_ARENA_ROWS] = {
         mode_d_checked_product(rec, (long long) sizeof(ModeDExportRecord)), mode_d_checked_product(rec, (long long) sizeof(ModeDExportRecord)),
         mode_d_checked_product(rec, (long long) sizeof(int)), mode_d_checked_product(c, (long long) sizeof(int)),
-        mode_d_checked_product(c, (long long) query_bytes), mode_d_checked_product(c, (long long) sizeof(int)),
-        mode_d_checked_product(c, (long long) sizeof(ModeDEnvelopeKey)), mode_d_checked_product(c, (long long) sizeof(ModeDEnvelopeKey)),
+        mode_d_checked_product(c, (long long) query_bytes),
+        mode_d_checked_product(rec, (long long) sizeof(int)), mode_d_checked_product(rec, (long long) sizeof(int)),
         mode_d_checked_product(c, (long long) reply_bytes)};
     long long total = 0;
     for(int k = 0; k < MODE_D_ARENA_ROWS; k++) {
@@ -2863,9 +2900,70 @@ static long long mode_d_arena_layout(long long c, size_t query_bytes, size_t rep
 
 /* One device buffer of a lease: where it is kept, how many bytes, and its memory-ledger label. */
 struct ModeDLeaseBuffer { void **slot; long long bytes; const char *label; };
-static constexpr int MODE_D_LEASE_BUFFERS = 16;
+static constexpr int MODE_D_LEASE_BUFFERS = 22;
+static constexpr int MODE_D_LEASE_GROUP_ROW = 18;   /* the first of the received batches' rows: queries 0, replies 0, queries 1, replies 1 */
+/* The round's small device record: [0] range end, [1] [2] its record span, then two ints the sort and the cut keep on
+ * the device -- a radix pass's split point and the envelope count -- each in one long long slot. */
+enum {MODE_D_ROUND_END = 0, MODE_D_ROUND_FIRST_RECORD, MODE_D_ROUND_LAST_RECORD, MODE_D_ROUND_SPLIT, MODE_D_ROUND_ENVELOPES,
+      MODE_D_ROUND_TOTAL_BOUND, MODE_D_ROUND_TOTAL_RECORDS, MODE_D_ROUND_INFO};   /* the last two: the export count's totals, read together */
 /* The flags a call raises on the device and reads once per round. */
 enum {MODE_D_FLAG_WALK = 0, MODE_D_FLAG_FILL, MODE_D_FLAG_MERGE, MODE_D_FLAGS};
+
+/* The device storage the last calls gave back, kept for the next: each lease buffer by its row in the lease's table,
+ * and the round arena as raw bytes (its rows are laid out again for the call that takes it, whose record sizes may
+ * differ).  Released with the tree and at shutdown (nlr_mode_d_packet_workspace_release). */
+struct ModeDLeasePool {
+    void      *row[MODE_D_LEASE_BUFFERS] = {nullptr};
+    long long  row_bytes[MODE_D_LEASE_BUFFERS] = {0};
+    char      *arena = nullptr;
+    long long  arena_bytes = 0;
+};
+static ModeDLeasePool g_mode_d_lease_pool;
+
+/* Give a buffer to the pool's row k; whichever of it and what the row held is smaller is freed. */
+static void mode_d_pool_keep(int k, void *ptr, long long bytes)
+{
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    if(!ptr) {return;}
+    if(pool.row[k] && pool.row_bytes[k] >= bytes) {gizmo_gpu_free_device(ptr); return;}
+    gizmo_gpu_free_device(pool.row[k]);
+    pool.row[k] = ptr; pool.row_bytes[k] = bytes;
+}
+/* A buffer of at least `bytes` for row k: the pool's when it is large enough, else a new one (the pool's smaller
+ * one is freed).  Null when the device refuses; *got is its size. */
+static void *mode_d_pool_take(int k, long long bytes, const char *label, long long *got)
+{
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    if(pool.row[k] && pool.row_bytes[k] >= bytes) {
+        void *p = pool.row[k]; *got = pool.row_bytes[k];
+        pool.row[k] = nullptr; pool.row_bytes[k] = 0;
+        return p;
+    }
+    gizmo_gpu_free_device(pool.row[k]); pool.row[k] = nullptr; pool.row_bytes[k] = 0;
+    void *p = gizmo_gpu_alloc_device((size_t) bytes, label);
+    *got = p ? bytes : 0;
+    return p;
+}
+/* Device bytes a call must newly allocate beyond what the pool can hand it. */
+static long long mode_d_pool_shortfall(const long long *row_bytes, long long arena_bytes)
+{
+    const ModeDLeasePool &pool = g_mode_d_lease_pool;
+    long long fresh = 0;
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {if(row_bytes[k] > pool.row_bytes[k]) {fresh = mode_d_checked_sum(fresh, row_bytes[k]);}}
+    if(arena_bytes > pool.arena_bytes) {fresh = mode_d_checked_sum(fresh, arena_bytes);}
+    return fresh;
+}
+static void mode_d_lease_pool_release(void)
+{
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    int any = (pool.arena != nullptr);
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {any |= (pool.row[k] != nullptr);}
+    if(!any) {return;}
+    Kokkos::fence("mode_d_lease_pool_release");
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {gizmo_gpu_free_device(pool.row[k]);}
+    gizmo_gpu_free_device(pool.arena);
+    pool = ModeDLeasePool{};
+}
 
 /* Everything a Mode D call holds, released together.  On any route out of the call -- the vote declining it,
  * an early return, its normal end -- the destructor gives back the storage and retires the touched-set epoch the
@@ -2888,15 +2986,27 @@ struct ModeDCallLease {
     long long *active_node_scan     = nullptr;   /* [n + 1] where its export records start */
     long long *active_envelope_scan = nullptr;   /* [n + 1] its envelope bound, then the scan of the bounds */
     void      *active_accums        = nullptr;   /* [n] AccumData: its own result, then every reply merged in */
-    int       *reply_active_offsets = nullptr;   /* [n + 1] where each active's replies start in the merge order */
     /* Device, fixed. */
     int       *per_peer             = nullptr;   /* [NTask + 1] envelopes per peer this round */
-    long long *round_info           = nullptr;   /* [4] the round's range end and record span */
-    int       *flags                = nullptr;   /* [MODE_D_FLAGS] */
+    long long *round_info           = nullptr;   /* [MODE_D_ROUND_INFO] the round's range end and record span, and two device-side ints */
+    int       *flags                = nullptr;   /* [MODE_D_FLAGS]: the tail of per_peer's buffer, read with the counts */
     void      *group_queries[2]     = {nullptr, nullptr};   /* [batch_capacity[m]] received queries, two batches in flight */
     void      *group_replies[2]     = {nullptr, nullptr};   /* [batch_capacity[m]] their answers */
     long long  batch_capacity[2]    = {0, 0};               /* S at admission; grown per round to what arrives (mode_d_batch_grow) */
+    long long  row_bytes[MODE_D_LEASE_BUFFERS] = {0};       /* each buffer's size as held, for the pool on release */
     ModeDRoundArena arena;
+
+    /* Device, per active of the call, when the call iterates on the device (plan.iteration_actives): each active's
+     * particle, search radius, iteration scratch and latest result, by its slot in the call; the slots still iterating,
+     * twice (this iteration's list and the next one's); a keep flag per listed slot, and the next list's length. */
+    int       *iter_slot_index      = nullptr;
+    double    *iter_slot_radius     = nullptr;
+    void      *iter_slot_scratch    = nullptr;
+    void      *iter_slot_accum      = nullptr;
+    int       *iter_live[2]         = {nullptr, nullptr};
+    int       *iter_keep            = nullptr;
+    int       *iter_count           = nullptr;   /* [2]: the next list's length, the iteration's stop code */
+    int        iter_on = 0, iter_which = 0, iter_n_live = 0;   /* host: whether the device holds the state, which list is current, its length */
 
     ModeDSegmentStream stream;   /* the exchange, reused for every round of the call */
     /* Host, reserved at admission so the exchange allocates nothing: per-peer counts and offsets of a round, and
@@ -2928,19 +3038,33 @@ struct ModeDCallLease {
         rows[k++] = {(void **) &active_node_scan,      bytes(n1, (long long) sizeof(long long)),  "ngl_moded_active_node_scan"};
         rows[k++] = {(void **) &active_envelope_scan,  bytes(n1, (long long) sizeof(long long)),  "ngl_moded_active_envelope_scan"};
         rows[k++] = {&active_accums,                   bytes(n, (long long) accum_bytes),         "ngl_moded_active_accums"};
-        rows[k++] = {(void **) &reply_active_offsets,  bytes(n1, (long long) sizeof(int)),        "ngl_moded_reply_active_offsets"};
-        rows[k++] = {(void **) &per_peer,              bytes(nt ? nt + 1 : 0, (long long) sizeof(int)), "ngl_moded_per_peer"};
-        rows[k++] = {(void **) &round_info,            bytes(nt ? 4 : 0, (long long) sizeof(long long)), "ngl_moded_round_info"};
-        rows[k++] = {(void **) &flags,                 bytes(nt ? MODE_D_FLAGS : 0, (long long) sizeof(int)), "ngl_moded_flags"};
+        rows[k++] = {(void **) &per_peer,              bytes(nt ? nt + 1 + MODE_D_FLAGS : 0, (long long) sizeof(int)), "ngl_moded_per_peer"};
+        rows[k++] = {(void **) &round_info,            bytes(nt ? MODE_D_ROUND_INFO : 0, (long long) sizeof(long long)), "ngl_moded_round_info"};
+        const long long ni = nt ? plan.iteration_actives : 0;
+        rows[k++] = {(void **) &iter_slot_index,       bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_index"};
+        rows[k++] = {(void **) &iter_slot_radius,      bytes(ni, (long long) sizeof(double)),     "ngl_moded_iter_radius"};
+        rows[k++] = {&iter_slot_scratch,               bytes(ni, plan.scratch_bytes),             "ngl_moded_iter_scratch"};
+        rows[k++] = {&iter_slot_accum,                 bytes(ni, (long long) accum_bytes),        "ngl_moded_iter_accum"};
+        rows[k++] = {(void **) &iter_live[0],          bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_live"};
+        rows[k++] = {(void **) &iter_live[1],          bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_live"};
+        rows[k++] = {(void **) &iter_keep,             bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_keep"};
+        rows[k++] = {(void **) &iter_count,            bytes(ni > 0 ? 2 : 0, (long long) sizeof(int)), "ngl_moded_iter_count"};
         for(int m = 0; m < 2; m++) {
             rows[k++] = {&group_queries[m],            bytes(s, (long long) query_bytes),         "ngl_moded_group_queries"};
             rows[k++] = {&group_replies[m],            bytes(s, (long long) reply_bytes),         "ngl_moded_group_replies"};
         }
+        static_assert(MODE_D_LEASE_GROUP_ROW + 4 == MODE_D_LEASE_BUFFERS, "the received batches are the table's last four rows");
     }
 
+    /* The arena back to the pool (the larger of it and what the pool holds is kept). */
     void release_arena()
     {
-        if(arena.base) {Kokkos::fence("mode_d_arena_release"); gizmo_gpu_free_device(arena.base);}
+        ModeDLeasePool &pool = g_mode_d_lease_pool;
+        if(arena.base) {
+            Kokkos::fence("mode_d_arena_release");
+            if(pool.arena && pool.arena_bytes >= arena.bytes) {gizmo_gpu_free_device(arena.base);}
+            else {gizmo_gpu_free_device(pool.arena); pool.arena = arena.base; pool.arena_bytes = arena.bytes;}
+        }
         arena = ModeDRoundArena{};
     }
 
@@ -2952,8 +3076,10 @@ struct ModeDCallLease {
         for(const ModeDLeaseBuffer &row : rows) {any |= (*row.slot != nullptr);}
         /* Kernels and copies that use this storage are enqueued, not finished: wait for them. */
         if(any) {Kokkos::fence("mode_d_call_lease_release");}
-        for(const ModeDLeaseBuffer &row : rows) {gizmo_gpu_free_device(*row.slot); *row.slot = nullptr;}
+        for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {mode_d_pool_keep(k, *rows[k].slot, row_bytes[k]); *rows[k].slot = nullptr; row_bytes[k] = 0;}
         batch_capacity[0] = batch_capacity[1] = 0;
+        iter_on = 0; iter_which = 0; iter_n_live = 0;
+        flags = nullptr;
         release_arena();
         stream.release_storage();
         std::vector<int>().swap(peer_counts); std::vector<int>().swap(peer_offsets);
@@ -2971,15 +3097,29 @@ static int mode_d_arena_grow(ModeDCallLease *lease, long long c, size_t query_by
     long long offset[MODE_D_ARENA_ROWS];
     const long long bytes = mode_d_arena_layout(c, query_bytes, reply_bytes, offset);
     if(bytes <= 0) {return 1;}
-    char *base = (char *) gizmo_gpu_alloc_device((size_t) bytes, "ngl_moded_round_arena");
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    char *base = nullptr; long long held = bytes;
+    if(pool.arena && pool.arena_bytes >= bytes) {
+        base = pool.arena; held = pool.arena_bytes; pool.arena = nullptr; pool.arena_bytes = 0;
+        /* a pooled arena holds as many envelopes as its bytes lay out for this call's record sizes, within its limit */
+        long long lo = c, hi = lease->plan.arena_capacity_limit;
+        while(lo < hi) {
+            const long long mid = lo + (hi - lo + 1) / 2;
+            const long long need = mode_d_arena_layout(mid, query_bytes, reply_bytes, offset);
+            if(need > 0 && need <= held) {lo = mid;} else {hi = mid - 1;}
+        }
+        c = lo;
+        (void) mode_d_arena_layout(c, query_bytes, reply_bytes, offset);
+    }
+    else {base = (char *) gizmo_gpu_alloc_device((size_t) bytes, "ngl_moded_round_arena");}
     if(!base) {return 1;}
-    lease->release_arena();
-    a.capacity = c; a.base = base; a.bytes = bytes;
+    if(a.base) {Kokkos::fence("mode_d_arena_grow"); gizmo_gpu_free_device(a.base);}
+    a.capacity = c; a.base = base; a.bytes = held;
     a.records = (ModeDExportRecord *) (base + offset[0]); a.records_spare = (ModeDExportRecord *) (base + offset[1]);
     a.scan = (int *) (base + offset[2]); a.first_record = (int *) (base + offset[3]);
-    a.envelopes = base + offset[4]; a.envelope_active = (int *) (base + offset[5]);
-    a.keys = (ModeDEnvelopeKey *) (base + offset[6]); a.keys_spare = (ModeDEnvelopeKey *) (base + offset[7]);
-    a.replies = base + offset[8];
+    a.envelopes = base + offset[4];
+    a.run_offsets = (int *) (base + offset[5]); a.envelope_of = (int *) (base + offset[6]);
+    a.replies = base + offset[7];
     return 0;
 }
 
@@ -2999,6 +3139,7 @@ static int mode_d_batch_grow(ModeDCallLease *lease, int m, long long c, size_t q
     Kokkos::fence("mode_d_batch_grow");
     gizmo_gpu_free_device(lease->group_queries[m]); gizmo_gpu_free_device(lease->group_replies[m]);
     lease->group_queries[m] = queries; lease->group_replies[m] = replies; lease->batch_capacity[m] = c;
+    lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m] = query_total; lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m + 1] = reply_total;
     return 0;
 }
 
@@ -3052,18 +3193,24 @@ static int mode_d_lease_allocate(ModeDCallLease *lease, long long num_active, si
     if(NTask <= 1) {return 0;}
     int ok = (lease->stream.reserve(NTask) == 0);
     try {
-        lease->peer_counts.reserve((size_t) NTask); lease->peer_offsets.reserve((size_t) NTask + 1);
+        lease->peer_counts.reserve((size_t) NTask + 1 + MODE_D_FLAGS); lease->peer_offsets.reserve((size_t) NTask + 1);
         for(int m = 0; m < 2; m++) {lease->batch_segments[m].reserve((size_t) lease->plan.segment_records);}
     } catch(const std::bad_alloc &) {ok = 0;}
     ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
     lease->buffers(rows, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
     /* A buffer this call cannot need (zero bytes: no actives) is not allocated at all, and its slot stays null. */
-    for(const ModeDLeaseBuffer &row : rows) {
-        if(row.bytes == 0) {continue;}
-        *row.slot = gizmo_gpu_alloc_device((size_t) row.bytes, row.label);
-        ok = ok && (*row.slot != nullptr);
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {
+        if(rows[k].bytes == 0) {continue;}
+        *rows[k].slot = mode_d_pool_take(k, rows[k].bytes, rows[k].label, &lease->row_bytes[k]);
+        ok = ok && (*rows[k].slot != nullptr);
     }
-    for(int m = 0; m < 2; m++) {lease->batch_capacity[m] = lease->group_queries[m] ? lease->plan.segment_records : 0;}
+    lease->flags = lease->per_peer ? lease->per_peer + NTask + 1 : nullptr;
+    for(int m = 0; m < 2; m++) {
+        /* what the (possibly pooled, larger) buffers hold, never less than one staging segment */
+        const long long q_rows = lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m] / (long long) query_bytes;
+        const long long r_rows = lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m + 1] / (long long) reply_bytes;
+        lease->batch_capacity[m] = (lease->group_queries[m] && lease->group_replies[m]) ? ((q_rows < r_rows) ? q_rows : r_rows) : 0;
+    }
     if(ok && lease->plan.arena_min_envelopes > 0) {ok = (mode_d_arena_grow(lease, lease->plan.arena_min_envelopes, query_bytes, reply_bytes) == 0);}
     if(ok) {
         char *base[ModeDSegmentStream::ROLES];
@@ -3093,19 +3240,30 @@ enum class ModeDAdmission { Admitted, StorageRefused, TreeRefused };
  * staging allocation was refused, every rank gives it up and later calls are refused without asking again (the
  * latch is the same on every rank, so that refusal needs no vote); likewise a refused map, until the next build. */
 static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, size_t active_bytes, size_t accum_bytes,
-                                   size_t query_bytes, size_t reply_bytes, const char *caller)
+                                   size_t query_bytes, size_t reply_bytes, const char *caller,
+                                   bool iterates_on_device, size_t scratch_bytes)
 {
     if(gx_mode_d_staging_unavailable()) {return ModeDAdmission::StorageRefused;}
     const char *why = nullptr;
     int tree_ok = 1, staging_ok = 1, map_granted = 1, map_wellformed = 1;
     int ok = (mode_d_workspace_plan(num_active, query_bytes, reply_bytes, &lease->plan, &why) == 0);
+    lease->plan.iteration_actives = iterates_on_device ? num_active : 0;
+    lease->plan.scratch_bytes = (long long) scratch_bytes;
     if(ok) {
         lease->plan.device_bytes = mode_d_lease_device_bytes(lease, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
         if(lease->plan.device_bytes < 0) {why = "the call's storage size leaves 64-bit range"; ok = 0;}
     }
     /* One task sends no messages, so it holds no staging. */
     if(ok && NTask > 1) {staging_ok = (gx_mode_d_staging_acquire() == 0); if(!staging_ok) {why = "its pinned staging could not be allocated"; ok = 0;}}
-    if(ok && !gizmo_device_has_room((size_t) lease->plan.device_bytes, MODE_D_DEVICE_FREE_FRACTION)) {why = "the device has no room for its workspace"; ok = 0;}
+    if(ok) {
+        ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+        lease->buffers(rows, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
+        long long row_bytes[MODE_D_LEASE_BUFFERS], offset[MODE_D_ARENA_ROWS];
+        for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {row_bytes[k] = rows[k].bytes;}
+        const long long arena_bytes = (lease->plan.arena_min_envelopes > 0) ? mode_d_arena_layout(lease->plan.arena_min_envelopes, query_bytes, reply_bytes, offset) : 0;
+        const long long fresh = mode_d_pool_shortfall(row_bytes, arena_bytes);
+        if(fresh < 0 || !gizmo_device_has_room((size_t) fresh, MODE_D_DEVICE_FREE_FRACTION)) {why = "the device has no room for its workspace"; ok = 0;}
+    }
     if(ok && mode_d_lease_allocate(lease, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes) != 0) {why = "its workspace could not be allocated"; ok = 0;}
     /* The tree preparation repairs state and is the expensive half: only a rank holding its
      * storage pays for it.  It reports its own reasons when it declines. */
@@ -3156,12 +3314,33 @@ static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, 
     return all[1] ? ModeDAdmission::StorageRefused : ModeDAdmission::TreeRefused;
 }
 
+/* Helper: compile-time member detector for SupportsSubgroups (default false). */
+template <typename Spec, typename = void>
+struct nlr_supports_subgroups : std::false_type {};
+template <typename Spec>
+struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups>>
+    : Spec::SupportsSubgroups {};
+
+/* Whether a multi-rank Mode D call of this loop iterates on the device: its after_iter has the device entry point
+ * (Spec::after_iter_device), it has no host hook that runs after every iteration over the whole active set
+ * (after_iter_global reads the host's per-active state), and it has one subgroup (the device state is one list). */
+template <typename Spec, typename = void>
+struct nlr_spec_has_after_iter_device : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_after_iter_device<Spec, std::void_t<decltype(&Spec::after_iter_device)>> : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_mode_d_iterates_on_device_v =
+    nlr_spec_has_after_iter_device<Spec>::value && !nlr_spec_has_after_iter_global_v<Spec> && !nlr_supports_subgroups<Spec>::value;
+
 template <typename Spec>
 static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active)
 {
+    size_t scratch_bytes = 0;
+    if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {scratch_bytes = sizeof(typename Spec::IterScratch);}
     return mode_d_admit(lease, num_active, sizeof(typename Spec::ActiveData), sizeof(typename Spec::AccumData),
                         sizeof(NlrQueryEnvelope<typename Spec::ActiveData>),
-                        sizeof(NlrReplyEnvelope<typename Spec::AccumData>), Spec::loop_name);
+                        sizeof(NlrReplyEnvelope<typename Spec::AccumData>), Spec::loop_name,
+                        nlr_mode_d_iterates_on_device_v<Spec>, scratch_bytes);
 }
 
 template <typename Spec>
@@ -3466,13 +3645,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
  *   - num_subgroups >= 1 (caller short-circuits if globally empty)
  *   - num_subgroups > 1 requires Spec::SupportsSubgroups::value
  * ========================================================================== */
-
-/* Helper: compile-time member detector for SupportsSubgroups (default false). */
-template <typename Spec, typename = void>
-struct nlr_supports_subgroups : std::false_type {};
-template <typename Spec>
-struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups>>
-    : Spec::SupportsSubgroups {};
 
 /* ============================================================================
  * NlrIterDriver<Spec> — constructor + destructor.
@@ -4315,7 +4487,10 @@ struct NlrRecordLeaf {
  * (mesh/device_packet_walk.h, the same mechanics the gravity walk uses), each still
  * deciding every node for itself, and each member then evaluates the leaves its
  * own decisions reached, in the order its own flat walk would have reached them.
- * With one walker per packet the result is therefore the flat walk's, bit for bit.
+ * The evaluating packet keeps one walker, so that order -- and with it every sum --
+ * is the same on every run; the team then shares each member's evaluation, which
+ * changes the order its partial sums are added in, so a member's result equals its
+ * flat walk's to round-off rather than bit for bit.
  *
  * Routing, per batch, on the batch's own query count M on this rank:
  *   - below the device tier (nlr_walk_runs_on_device) the batch runs on the host;
@@ -4344,7 +4519,8 @@ struct NlrRecordLeaf {
  * ========================================================================== */
 
 #define MODE_D_PACKET_LOCAL_STACK 16      /* continuations the walker keeps itself; the oldest moves to the frontier */
-#define MODE_D_PACKET_CHUNK       1024    /* leaves recorded between two evaluations by the members */
+#define MODE_D_PACKET_CHUNK       256     /* leaves recorded between two evaluations by the members: small enough that the
+                                            scratch it costs leaves room for ~10 resident packets per compute unit */
 #define MODE_D_PACKET_STEPS       64      /* node steps the walker takes per round */
 #define MODE_D_PACKET_TEAM_MAX    256     /* members, and so threads, per packet at most */
 
@@ -4392,8 +4568,10 @@ struct NlrModeDPacketWorkspace {
 };
 static NlrModeDPacketWorkspace g_mode_d_packets;
 
+static void mode_d_lease_pool_release(void);
 void nlr_mode_d_packet_workspace_release(void)
 {
+    mode_d_lease_pool_release();   /* and the device storage Mode D calls gave back */
     NlrModeDPacketWorkspace &w = g_mode_d_packets;
     if(w.member_failed)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(w.member_failed);}
     if(w.failed_by_reason) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(w.failed_by_reason);}
@@ -4501,28 +4679,32 @@ static const int *nlr_mode_d_packet_top_rank(const GxDeviceTreeView &tree, int *
  * full state on top of its own -- the largest loops' accumulators then spill.  In scratch, a member's
  * accumulator is in registers only while that member evaluates its records. */
 struct NlrModeDPacketPlan {
-    size_t queries, accums, frontier, frontier_masks, records, record_masks, local, local_masks, walker_masks, walker_state, member_state, counters, bytes;
+    size_t queries, accums, partials, frontier, frontier_masks, records, record_masks, local, local_masks, walker_masks, walker_state,
+           member_state, counters, bytes;
 };
 
 /* The walker's position in the traversal, kept in team scratch between its rounds: it must survive each round
  * boundary and the members' evaluation of the record chunk, and kept in registers it would stay live through
  * that evaluation beside the members' accumulators. */
 struct NlrModeDPacketWalkerState {int no, exit, item_live, local_head, local_count;};
-static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int mask_words, int frontier_cap, int chunk_cap, size_t accum_bytes,
+static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int walkers, int mask_words, int frontier_cap, int chunk_cap, size_t accum_bytes,
                                                  size_t member_state_bytes = 0)
 {
     NlrModeDPacketPlan p;
     DevicePacketScratchLayout layout;
     p.queries        = layout.take((size_t) q * 4 * sizeof(double), alignof(double));
     p.accums         = layout.take((size_t) q * accum_bytes, 16);
+    /* one partial result per thread while the team evaluates one member's records together */
+    p.partials       = chunk_cap ? layout.take((size_t) q * accum_bytes, 16) : 0;
     p.frontier       = layout.take((size_t) frontier_cap * sizeof(device_packet_item_t), alignof(device_packet_item_t));
     p.frontier_masks = layout.take((size_t) frontier_cap * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
     p.records        = layout.take((size_t) chunk_cap * sizeof(int), alignof(int));
     p.record_masks   = layout.take((size_t) chunk_cap * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
-    p.local          = layout.take((size_t) MODE_D_PACKET_LOCAL_STACK * sizeof(device_packet_item_t), alignof(device_packet_item_t));
-    p.local_masks    = layout.take((size_t) MODE_D_PACKET_LOCAL_STACK * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
-    p.walker_masks   = layout.take((size_t) 2 * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));   /* the item's mask + the open mask */
-    p.walker_state   = layout.take(sizeof(NlrModeDPacketWalkerState), alignof(NlrModeDPacketWalkerState));
+    /* each walker's own continuations, its item's mask + open mask, and its position between rounds */
+    p.local          = layout.take((size_t) walkers * MODE_D_PACKET_LOCAL_STACK * sizeof(device_packet_item_t), alignof(device_packet_item_t));
+    p.local_masks    = layout.take((size_t) walkers * MODE_D_PACKET_LOCAL_STACK * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
+    p.walker_masks   = layout.take((size_t) walkers * 2 * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
+    p.walker_state   = layout.take((size_t) walkers * sizeof(NlrModeDPacketWalkerState), alignof(NlrModeDPacketWalkerState));
     /* A client that decides nodes itself keeps each member's running state here; the region exists only for
        such a client, so every other client's scratch request is unchanged. */
     p.member_state   = member_state_bytes ? layout.take((size_t) q * member_state_bytes, alignof(long long)) : 0;
@@ -4531,7 +4713,14 @@ static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int mask_words, int fron
     return p;
 }
 
-/* One packet per team: thread 0 walks, thread m < q owns member m.  A batch holds its root queries in
+/* One packet per team, thread m < q owning member m.  Threads [0, n_walkers) walk.  The recording client takes
+ * one walker per member -- a single walker leaves the other lanes idle through a traversal that is a chain of
+ * dependent loads, the shared frontier hands every opened node's sibling to an idle walker, and its claims are
+ * idempotent, so their order does not matter.  Every other client keeps one walker: the export count and fill
+ * write each member's running state in walk order, and an evaluating client's sums would otherwise depend on how
+ * the walkers' record reservations interleave, which differs from run to run.  The members then evaluate each
+ * chunk of records together, one member at a time, every thread taking every q-th record, so the members'
+ * unequal record counts do not leave lanes idle.  A batch holds its root queries in
  * [0, n_local) and its received queries in [n_local, n_total); a packet never mixes the two, so its entry
  * is either the root or the union of its members' start nodes.
  *
@@ -4541,7 +4730,7 @@ static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int mask_words, int fron
  *   void query(int kk, double *x4) const;                           position and reach
  *   void starts(int kk, const int *&nodes, int &n) const;           a received query's start nodes
  *   evaluating:  void begin(Accum &) const; void evaluate(int kk, int j, const double *x4, Accum &) const;
- *                void commit(int kk, const Accum &) const;
+ *                void merge(Accum &into, const Accum &part) const;  void commit(int kk, const Accum &) const;
  *   recording:   void claim(int j) const; */
 template <class Client>
 struct NlrModeDPacketWalk {
@@ -4737,15 +4926,17 @@ struct NlrModeDPacketWalk {
         if(t == 0) {for(int c = 0; c < DEVICE_PACKET_COUNTER_SLOTS; c++) {ctr[c] = 0;}}
         team.team_barrier();
 
-        if(t == 0) {
-            device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks);
-            NlrModeDPacketWalkerState &ws = *region<NlrModeDPacketWalkerState>(scratch, plan.walker_state);
+        /* Walker 0 holds the packet's entry -- the root, or the received members' start nodes on the frontier --
+           and the others start idle and take what is published; all of it set before any walker pops. */
+        if(t < trav.n_walkers) {
+            device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks) + (size_t) t * 2 * W;
+            NlrModeDPacketWalkerState &ws = region<NlrModeDPacketWalkerState>(scratch, plan.walker_state)[t];
             ws.no = -1; ws.exit = -1; ws.item_live = 0; ws.local_head = 0; ws.local_count = 0;
             device_packet_mask_clear(mask, W);
-            if(!resume) {
+            if(t == 0 && !resume) {
                 for(int m = 0; m < q_eff; m++) {device_packet_mask_set(mask, m);}
                 ws.no = cl.tree.node_base; ws.exit = -1; ws.item_live = (q_eff > 0);   /* the root: its own overlap test runs */
-            } else {
+            } else if(t == 0) {
                 received_entries(first, q_eff, region<device_packet_item_t>(scratch, plan.frontier),
                                  region<device_packet_mask_word_t>(scratch, plan.frontier_masks), ctr);   /* a failure is seen at the first round boundary */
             }
@@ -4753,17 +4944,18 @@ struct NlrModeDPacketWalk {
         if constexpr (Client::evaluates) {if(t < q_eff) {cl.begin(region<typename Client::Accum>(scratch, plan.accums)[t]);}}
         if constexpr (gx_walk_policy_has_node_hook_v<Client>) {
             if(t < q_eff) {cl.member_begin(first + t, region<typename Client::MemberState>(scratch, plan.member_state)[t]);}
-            team.team_barrier();
         }
+        team.team_barrier();
 
         while(1) {
-            if(t == 0 && !ctr[DEVICE_PACKET_CTR_FAILED]) {
-                /* the walker's phase: its state from scratch, the traversal, its state back */
-                NlrModeDPacketWalkerState &ws = *region<NlrModeDPacketWalkerState>(scratch, plan.walker_state);
-                device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks);
+            if(t < trav.n_walkers && !ctr[DEVICE_PACKET_CTR_FAILED]) {
+                /* the walkers' phase: each one's state from scratch, its traversal, its state back */
+                NlrModeDPacketWalkerState &ws = region<NlrModeDPacketWalkerState>(scratch, plan.walker_state)[t];
+                device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks) + (size_t) t * 2 * W;
                 int no = ws.no, exit = ws.exit, item_live = ws.item_live, local_head = ws.local_head, local_count = ws.local_count;
                 walk(resume, no, exit, item_live, local_head, local_count, mask, mask + W,
-                     region<device_packet_item_t>(scratch, plan.local), region<device_packet_mask_word_t>(scratch, plan.local_masks),
+                     region<device_packet_item_t>(scratch, plan.local) + (size_t) t * MODE_D_PACKET_LOCAL_STACK,
+                     region<device_packet_mask_word_t>(scratch, plan.local_masks) + (size_t) t * MODE_D_PACKET_LOCAL_STACK * W,
                      region<double>(scratch, plan.queries),
                      region<device_packet_item_t>(scratch, plan.frontier), region<device_packet_mask_word_t>(scratch, plan.frontier_masks),
                      region<int>(scratch, plan.records), region<device_packet_mask_word_t>(scratch, plan.record_masks), ctr,
@@ -4776,22 +4968,29 @@ struct NlrModeDPacketWalk {
                                                        MODE_D_PACKET_FAIL_NO_PROGRESS);
             if(chunk_full < 0) {break;}   /* the packet gave up */
             if constexpr (Client::evaluates) {
-                /* the chunk is full, or the traversal has finished: each member evaluates its own records, in order */
+                /* The chunk is full, or the traversal has finished: the team evaluates it one member at a time, thread
+                   t taking records t, t + q, ...; thread 0 then adds the threads' partial results to the member's own in
+                   thread order, so the sum is the same on every run. */
                 if(ctr[DEVICE_PACKET_CTR_RECORDS] > 0 && (chunk_full || ctr[DEVICE_PACKET_CTR_DONE])) {
-                    if(t < q_eff) {
-                        const double *x = region<double>(scratch, plan.queries) + 4 * t;
-                        const int *records = region<int>(scratch, plan.records);
-                        const device_packet_mask_word_t *rmasks = region<device_packet_mask_word_t>(scratch, plan.record_masks);
-                        typename Client::Accum *accums = region<typename Client::Accum>(scratch, plan.accums);
-                        const int n_rec = ctr[DEVICE_PACKET_CTR_RECORDS];
-                        typename Client::Accum acc = accums[t];   /* in registers for this flush only */
-                        for(int r = 0; r < n_rec; r++) {
-                            if(device_packet_mask_test(rmasks + (size_t) r * W, t)) {cl.evaluate(first + t, records[r], x, acc);}
+                    const int *records = region<int>(scratch, plan.records);
+                    const device_packet_mask_word_t *rmasks = region<device_packet_mask_word_t>(scratch, plan.record_masks);
+                    typename Client::Accum *accums   = region<typename Client::Accum>(scratch, plan.accums);
+                    typename Client::Accum *partials = region<typename Client::Accum>(scratch, plan.partials);
+                    const int n_rec = ctr[DEVICE_PACKET_CTR_RECORDS];
+                    for(int m = 0; m < q_eff; m++) {
+                        const double *x = region<double>(scratch, plan.queries) + 4 * m;
+                        typename Client::Accum acc;   /* in registers for this member's share only */
+                        cl.begin(acc);
+                        for(int r = t; r < n_rec; r += q) {
+                            if(device_packet_mask_test(rmasks + (size_t) r * W, m)) {cl.evaluate(first + m, records[r], x, acc);}
                         }
-                        accums[t] = acc;
+                        partials[t] = acc;
+                        team.team_barrier();
+                        if(t == 0) {for(int l = 0; l < q; l++) {cl.merge(accums[m], partials[l]);}}
+                        team.team_barrier();
                     }
-                    team.team_barrier();
                     if(t == 0) {ctr[DEVICE_PACKET_CTR_RECORDS] = 0;}
+                    team.team_barrier();
                 }
             }
             if(ctr[DEVICE_PACKET_CTR_DONE]) {break;}
@@ -4834,14 +5033,15 @@ static bool nlr_mode_d_packet_run(const Client &cl, const char *label, const int
 
     NlrModeDPacketWalk<Client> f{cl};
     int q = (TREE_QUERY_PACKET_SIZE < MODE_D_PACKET_TEAM_MAX) ? TREE_QUERY_PACKET_SIZE : MODE_D_PACKET_TEAM_MAX;
-    f.trav.n_walkers = 1; f.trav.steps_per_round = MODE_D_PACKET_STEPS;
+    f.trav.steps_per_round = MODE_D_PACKET_STEPS;
     f.trav.chunk_cap = Client::evaluates ? MODE_D_PACKET_CHUNK : 1;   /* a recording packet reserves no records */
     /* The frontier is the single walker's overflow store for its oldest continuations, and the home of a
      * received packet's entries; it is sized for both rather than left at zero. */
     auto shape = [&](int qq) {
         f.q = qq; f.trav.mask_words = device_packet_mask_words(qq);
         f.trav.frontier_cap = (qq * NODELISTLENGTH > 16) ? qq * NODELISTLENGTH : 16;
-        f.plan = nlr_mode_d_packet_plan(qq, f.trav.mask_words, f.trav.frontier_cap, Client::evaluates ? MODE_D_PACKET_CHUNK : 0,
+        f.trav.n_walkers = (gx_walk_policy_has_node_hook_v<Client> || Client::evaluates) ? 1 : qq;   /* only claims are order-free */
+        f.plan = nlr_mode_d_packet_plan(qq, f.trav.n_walkers, f.trav.mask_words, f.trav.frontier_cap, Client::evaluates ? MODE_D_PACKET_CHUNK : 0,
                                         Client::evaluates ? sizeof(typename Client::Accum) : 0, nlr_packet_member_state_bytes<Client>());
     };
     /* The packet width this backend can launch is found once and kept: it is a property of the kernel, the
@@ -4921,6 +5121,7 @@ struct NlrModeDPacketEvaluate {
         leaf.mass_verdicts = mass_verdicts; leaf.use_mass_verdict = use_mass_verdict;
         leaf.visit(j, x4[0], x4[1], x4[2], x4[3]);
     }
+    KOKKOS_INLINE_FUNCTION void merge(Accum &into, const Accum &part) const {Spec::merge_accum(into, part);}
     KOKKOS_INLINE_FUNCTION void commit(int kk, const Accum &acc) const
     {
         if(kk < n_local) {acc_out[kk] = acc; return;}
@@ -5427,7 +5628,8 @@ static void mode_d_exclusive_scan(const Count *counts, Total *out, int n)
 template <typename Spec>
 static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, const double *radii,
                             const typename Spec::CallScalars& cs, const typename Spec::DeviceContext& ctx,
-                            unsigned int type_mask, typename Spec::AccumData *accums_out)
+                            unsigned int type_mask, typename Spec::AccumData *accums_out,
+                            const ModeDDeviceQueries *device_queries)
 {
     using ActiveData = typename Spec::ActiveData;
     using AccumData  = typename Spec::AccumData;
@@ -5437,7 +5639,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     static_assert(alignof(Envelope) <= alignof(ModeDSegmentHeader) && alignof(Reply) <= alignof(ModeDSegmentHeader),
                   "records follow the segment header in a staging message");
 
-    const int N = args.num_active, nt = NTask, me = ThisTask;
+    const int N = device_queries ? device_queries->n_live : args.num_active, nt = NTask, me = ThisTask;
     const size_t q = sizeof(Envelope), r = sizeof(Reply);
     const int S = (int) L.plan.segment_records;
     const GxDeviceTreeView tree = L.tree;
@@ -5449,7 +5651,15 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     Kokkos::parallel_for("mode_d_flags_clear", Kokkos::RangePolicy<>(0, MODE_D_FLAGS), KOKKOS_LAMBDA(int k) {flags[k] = 0;});
 
     /* 1. the queries */
-    if(N > 0) {
+    if(N > 0 && device_queries) {
+        const int *live = device_queries->live, *index = device_queries->slot_index;
+        const double *radius = device_queries->slot_radius;
+        const int base = device_queries->call_slot_base;
+        gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", N, KOKKOS_LAMBDA(int k) {
+            const int slot = live[k];
+            snapshot[k] = Spec::load_active(ctx, base + slot, index[slot], radius[slot], cs);
+        });
+    } else if(N > 0) {
         mode_d_copy_to_device(L.active_index, args.active_list, (size_t) N * sizeof(int));
         mode_d_copy_to_device(L.active_radius, radii, (size_t) N * sizeof(double));
         int *slot = L.active_slot; const int *idx = L.active_index; const double *rad = L.active_radius;
@@ -5474,8 +5684,13 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
             if(last) {bound[i] = sum;}
             sum += v;
         });
-        mode_d_copy_to_host(&totals[0], L.active_envelope_scan + N, sizeof(long long));
-        mode_d_copy_to_host(&totals[1], L.active_node_scan + N, sizeof(long long));
+        {
+            long long *info = L.round_info; const long long *nscan = L.active_node_scan;
+            Kokkos::parallel_for("mode_d_totals", Kokkos::RangePolicy<>(0, 1), KOKKOS_LAMBDA(int) {
+                info[MODE_D_ROUND_TOTAL_BOUND] = bound[N]; info[MODE_D_ROUND_TOTAL_RECORDS] = nscan[N];
+            });
+            mode_d_copy_to_host(totals, L.round_info + MODE_D_ROUND_TOTAL_BOUND, sizeof(totals));
+        }
         const long long want = (totals[0] < L.plan.arena_capacity_limit) ? totals[0] : L.plan.arena_capacity_limit;
         (void) mode_d_arena_grow(&L, want, q, r);   /* refused: the arena keeps its size, and the call runs more rounds */
     }
@@ -5486,9 +5701,10 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     int a_begin = 0, round = 0, locals_done = (N == 0), stop = 0, stop_code = 0, walk_anomaly = 0;
     while(1) {
         round++;
-        int a_end = a_begin, n_round = 0, n_env = 0;
-        long long round_info[4] = {0, 0, 0, 0};
-        const ModeDEnvelopeKey *order = nullptr;
+        int a_end = a_begin, n_round = 0, n_rec = 0;
+        long long round_info[3] = {0, 0, 0};
+        const ModeDExportRecord *sorted = nullptr;
+        ModeDQueryRun *query_runs = nullptr;
         if(a_begin < N) {
             const long long capacity = A.capacity;
             const long long *bound = L.active_envelope_scan, *node_scan = L.active_node_scan;
@@ -5502,7 +5718,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
             });
             mode_d_copy_to_host(round_info, info, sizeof(round_info));
             a_end = (int) round_info[0]; n_round = a_end - a_begin;
-            const int n_rec = (int) (round_info[2] - round_info[1]);
+            n_rec = (int) (round_info[2] - round_info[1]);
 
             ModeDExportStep<MODE_D_EXPORT_FILL> fill;
             fill.topo = topo; fill.first_active = a_begin;
@@ -5510,22 +5726,28 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
             fill.out.node_offset_base = round_info[1]; fill.out.records = A.records; fill.out.anomaly = flags + MODE_D_FLAG_FILL;
             mode_d_export_walk(fill, snapshot + a_begin, n_round, tree, flags + MODE_D_FLAG_WALK);
 
-            const ModeDExportRecord *sorted = mode_d_stable_radix(A.records, A.records_spare, A.scan, n_rec,
-                                                                  KOKKOS_LAMBDA(const ModeDExportRecord &x) {return (unsigned int) x.peer;});
-            n_env = mode_d_envelope_boundaries(sorted, n_rec, A.scan, A.first_record);
+            int *round_ints = (int *) (info + MODE_D_ROUND_SPLIT);   /* the split point, then (next slot) the envelope count */
+            int *n_env_dev  = (int *) (info + MODE_D_ROUND_ENVELOPES);
+            sorted = mode_d_stable_radix(A.records, A.records_spare, A.scan, n_rec,
+                                         KOKKOS_LAMBDA(const ModeDExportRecord &x) {return (unsigned int) x.peer;}, mode_d_key_bits(nt), round_ints);
+            mode_d_envelope_boundaries(sorted, n_rec, A.scan, A.first_record, A.envelope_of, n_env_dev);
+            query_runs = (ModeDQueryRun *) ((sorted == A.records) ? A.records_spare : A.records);   /* the sort's other half is free */
+            mode_d_query_runs(sorted, n_rec, A.scan, A.envelope_of, a_begin, n_round, A.run_offsets, query_runs);
             int *per_peer = L.per_peer;
             Kokkos::parallel_for("mode_d_per_peer_clear", Kokkos::RangePolicy<>(0, nt + 1), KOKKOS_LAMBDA(int p) {per_peer[p] = 0;});
-            mode_d_pack_envelopes(sorted, n_rec, A.first_record, n_env, snapshot, me, (Envelope *) A.envelopes, A.envelope_active, per_peer);
-            if(n_env > 0) {
-                order = mode_d_merge_order(A.envelope_active, n_env, a_begin, n_round, A.keys, A.keys_spare, A.scan, L.reply_active_offsets);
-            }
-            counts.assign((size_t) nt, 0);
-            mode_d_copy_to_host(counts.data(), per_peer, (size_t) nt * sizeof(int));
+            mode_d_pack_envelopes(sorted, n_rec, A.first_record, n_env_dev, snapshot, me, (Envelope *) A.envelopes, per_peer, nt);
+        }
+        /* the per-peer counts and, after them, the flags, in one read (no counts when this rank sent nothing this round) */
+        int host_flags[MODE_D_FLAGS];
+        if(a_begin < N) {
+            counts.resize((size_t) nt + 1 + MODE_D_FLAGS);   /* within the capacity reserved at admission */
+            mode_d_copy_to_host(counts.data(), L.per_peer, ((size_t) nt + 1 + MODE_D_FLAGS) * sizeof(int));
+            for(int f = 0; f < MODE_D_FLAGS; f++) {host_flags[f] = counts[(size_t) nt + 1 + f];}
+            counts.resize((size_t) nt);
         } else {
             counts.assign((size_t) nt, 0);
+            mode_d_copy_to_host(host_flags, flags, sizeof(host_flags));
         }
-        int host_flags[MODE_D_FLAGS];
-        mode_d_copy_to_host(host_flags, flags, sizeof(host_flags));
         if(host_flags[MODE_D_FLAG_WALK] || host_flags[MODE_D_FLAG_FILL]) {
             /* an export this rank cannot vouch for: no payload moves anywhere this round */
             for(int p = 0; p < nt; p++) {counts[(size_t) p] = (p == me) ? 0 : -1;}
@@ -5678,8 +5900,8 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                 if(locals_done && !have_held && n_answered == 0 && (filling < 0 || L.batch_segments[filling].empty()) && X.round_complete()) {break;}
             }
             if(X.errors_seen() && !stop_code) {stop_code = 90001043;}
-            if(!X.errors_seen() && n_env > 0) {
-                mode_d_merge_replies<Spec>(order, L.reply_active_offsets, a_begin, n_round, (const Reply *) A.replies, me, accums,
+            if(!X.errors_seen() && n_rec > 0) {
+                mode_d_merge_replies<Spec>(query_runs, A.run_offsets, a_begin, n_round, (const Reply *) A.replies, me, accums,
                                            flags + MODE_D_FLAG_MERGE);
             }
             mode_d_copy_to_host(host_flags, flags, sizeof(host_flags));
@@ -5695,7 +5917,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     }
 
     /* 4. the results */
-    if(N > 0) {mode_d_copy_to_host(accums_out, accums, (size_t) N * sizeof(AccumData));}
+    if(N > 0 && accums_out) {mode_d_copy_to_host(accums_out, accums, (size_t) N * sizeof(AccumData));}
     if(stop && stop_code) {
         printf("[%s] task %d: the device-resident exchange stopped (%s).\n", Spec::loop_name, me,
                stop_code == 90001042 ? "an export fill did not match its count"
@@ -6287,6 +6509,111 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
 }
 
 /* ============================================================================
+ * A multi-rank Mode D call of a loop that iterates on the device (nlr_mode_d_iterates_on_device_v) keeps each
+ * active's iteration state in the call's device storage from its first iteration to its last: the radius, the
+ * scratch, the latest result, and the list of slots still iterating.  Per iteration the exchange builds its queries
+ * from that list and leaves its results on the device; after_iter runs on the device for every listed slot, the
+ * slots that iterate again are compacted, in order, into the other list, and the host reads only how many there are
+ * -- the count every rank reduces anyway.  The host's copy of the state (the driver's per-active arrays) is brought
+ * up to date only when the call hands over to Mode B or finishes, where the host reads it.
+ * ========================================================================== */
+template <typename Spec>
+static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
+{
+    ModeDCallLease &L = *drv.mode_d_lease;
+    const int n = drv.active_set_size[0];
+    L.iter_on = 1; L.iter_which = 0; L.iter_n_live = (n > 0) ? n : 0;
+    if(n <= 0) {return;}
+    mode_d_copy_to_device(L.iter_slot_index, drv.args.subgroups[0].active_indices, (size_t) n * sizeof(int));
+    mode_d_copy_to_device(L.iter_slot_radius, drv.radii_uvm[0], (size_t) n * sizeof(double));
+    /* the scratch starts zeroed and the list in slot order, as the driver's own copies do: set where they live */
+    char *scratch = (char *) L.iter_slot_scratch; int *live = L.iter_live[0];
+    const size_t scratch_bytes = (size_t) n * sizeof(typename Spec::IterScratch);
+    Kokkos::parallel_for("nlr_mode_d_iteration_begin", Kokkos::RangePolicy<>(0, (scratch_bytes > (size_t) n) ? (long long) scratch_bytes : (long long) n),
+                         KOKKOS_LAMBDA(long long b) {
+        if((size_t) b < scratch_bytes) {scratch[b] = 0;}
+        if(b < n) {live[b] = (int) b;}
+    });
+}
+
+template <typename Spec>
+static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv)
+{
+    ModeDCallLease &L = *drv.mode_d_lease;
+    if(!L.iter_on) {return;}
+    L.iter_on = 0;
+    const int n_all = drv.args.subgroups[0].num_active_local;
+    if(n_all > 0 && drv.radii_uvm[0]) {
+        mode_d_copy_to_host(drv.radii_uvm[0], L.iter_slot_radius, (size_t) n_all * sizeof(double));
+        mode_d_copy_to_host(drv.scratch_uvm[0], L.iter_slot_scratch, (size_t) n_all * sizeof(typename Spec::IterScratch));
+        mode_d_copy_to_host(drv.accum_uvm[0], L.iter_slot_accum, (size_t) n_all * sizeof(typename Spec::AccumData));
+        mode_d_copy_to_host(drv.active_set_uvm[0], L.iter_live[L.iter_which], (size_t) L.iter_n_live * sizeof(int));
+    }
+    drv.active_set_size[0] = L.iter_n_live;
+}
+
+/* One iteration's exchange, the queries and results staying on the device. */
+template <typename Spec>
+static void nlr_iter_dispatch_subgroup_mode_d_on_device(NlrIterDriver<Spec>& drv, int sg)
+{
+    ModeDCallLease &L = *drv.mode_d_lease;
+    const ModeDDeviceQueries dq{L.iter_live[L.iter_which], L.iter_n_live, drv.call_slot_base[sg], L.iter_slot_index, L.iter_slot_radius};
+    neighbor_loop_args sub = drv.args;
+    sub.active_list = nullptr; sub.active_call_slot = nullptr; sub.num_active = L.iter_n_live;
+    mode_d_exchange<Spec>(L, sub, nullptr, drv.cs, drv.ctx, (unsigned int) drv.args.subgroups[sg].j_type_bitmask, nullptr, &dq);
+}
+
+/* after_iter for every listed slot, then the slots that iterate again, in order, into the other list.  Returns the
+ * iteration's stop code (0: none): the largest any slot raised, for the caller to agree on with every rank. */
+template <typename Spec>
+static int nlr_mode_d_after_iter_on_device(NlrIterDriver<Spec>& drv)
+{
+    using AccumData   = typename Spec::AccumData;
+    using IterScratch = typename Spec::IterScratch;
+    ModeDCallLease &L = *drv.mode_d_lease;
+    const int n = L.iter_n_live;
+    int n_next = 0, stop_code = 0;
+    if(n > 0) {
+        const int *cur = L.iter_live[L.iter_which];
+        int *next = L.iter_live[1 - L.iter_which], *keep = L.iter_keep, *count = L.iter_count;
+        const int *index = L.iter_slot_index;
+        double *radius = L.iter_slot_radius;
+        IterScratch *scratch = (IterScratch *) L.iter_slot_scratch;
+        AccumData *slot_accum = (AccumData *) L.iter_slot_accum;
+        const AccumData *accums = (const AccumData *) L.active_accums;
+        struct particle_data *Pp = drv.args.P;
+        struct gas_cell_data *Cp = drv.args.CellP;
+        const typename Spec::CallScalars cs = drv.cs;
+        const int iter = drv.iter_index, this_task = ThisTask;
+        Kokkos::parallel_for("nlr_mode_d_iter_flags_clear", Kokkos::RangePolicy<>(0, 2), KOKKOS_LAMBDA(int c) {count[c] = 0;});
+        gizmo_gpu_kernel_launch("nlr_mode_d_after_iter", n, KOKKOS_LAMBDA(int k) {
+            const int slot = cur[k];
+            const AccumData acc = accums[k];
+            slot_accum[slot] = acc;
+            int code = 0;
+            const IterResult res = Spec::after_iter_device(Pp, Cp, index[slot], iter, radius[slot], cs, scratch[slot], acc, this_task, code);
+            if(res.status == IterStatus::AdjustRadius) {radius[slot] = res.new_h_search;}
+            else if(res.status != IterStatus::Converged && res.status != IterStatus::NeedsMore) {code = 81206;}   /* an unknown status is a Spec defect */
+            if(code) {Kokkos::atomic_max(&count[1], code);}
+            keep[k] = (res.status == IterStatus::NeedsMore || res.status == IterStatus::AdjustRadius) ? 1 : 0;
+        });
+        Kokkos::parallel_scan("nlr_mode_d_compact", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int k, int &before, const bool last) {
+            if(last) {
+                if(keep[k]) {next[before] = cur[k];}
+                if(k == n - 1) {*count = before + keep[k];}
+            }
+            before += keep[k];
+        });
+        int both[2] = {0, 0};
+        mode_d_copy_to_host(both, count, sizeof(both));
+        n_next = both[0]; stop_code = both[1];
+    }
+    L.iter_which = 1 - L.iter_which; L.iter_n_live = n_next;
+    drv.active_set_size[0] = n_next; drv.local_active_per_sg[0] = n_next; drv.local_active_total = n_next;
+    return stop_code;
+}
+
+/* ============================================================================
  * run_neighbor_loop_iterative<Spec> — body (step 2b).
  * ========================================================================== */
 template <typename Spec>
@@ -6530,6 +6857,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         drv.mode_d_tree = mode_d_lease.tree;
         drv.mode_d_lease = &mode_d_lease;
         drv.acquire_arena_and_init_ctx_mode_d();
+        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {if(NTask > 1) {nlr_mode_d_iteration_begin<Spec>(drv);}}
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
         /* Both read P/CellP from the device-resident arena; Mode D differs in
          * how it finds the neighbours, not in where the particles live. */
@@ -6750,7 +7078,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     break;
                 case DispatchPath::ModeD_DeviceFused:
                     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-                        nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg);
+                        bool on_device = false;
+                        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+                            if(drv.mode_d_lease && drv.mode_d_lease->iter_on) {nlr_iter_dispatch_subgroup_mode_d_on_device<Spec>(drv, sg); on_device = true;}
+                        }
+                        if(!on_device) {nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg);}
                     }
                     break;
             }
@@ -6762,6 +7094,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
 
         /* (b) Per-active Spec::after_iter — collect IterStatus, compact
          * active_set per subgroup, mutate radii on AdjustRadius. */
+        bool after_on_device = false;
+        int iteration_stop_code = 0;   /* raised by a device iteration's after_iter; agreed below */
+        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+            if(drv.mode_d_lease && drv.mode_d_lease->iter_on) {iteration_stop_code = nlr_mode_d_after_iter_on_device<Spec>(drv); after_on_device = true;}
+        }
+        if(!after_on_device) {
         drv.local_active_total = 0;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             int n_compacted   = drv.active_set_size[sg];
@@ -6812,6 +7150,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             drv.local_active_per_sg[sg] = write_idx;
             drv.local_active_total     += write_idx;
         }
+        }
 
 
         /* (b.5) Mode A buffer-exceedance rebuild trigger.
@@ -6844,12 +7183,29 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * global activity; sum is global_active_total for the break check.
          * Globally-converged subgroups (global_active_per_sg[sg]==0) skip
          * the per-iter dispatch + collective on the next iteration. */
-        if (NTask > 1) {
+        /* A one-subgroup Mode D call reduces, in the same one collective, the busiest rank's actives (its floor) and
+         * a device iteration's stop code. */
+        int busiest_rank_actives = drv.local_active_total, agreed_stop_code = iteration_stop_code;
+        if (NTask > 1 && path == DispatchPath::ModeD_DeviceFused && args.num_subgroups == 1) {
+            long long mine[3] = {drv.local_active_per_sg[0], drv.local_active_per_sg[0], iteration_stop_code}, all[3] = {0, 0, 0};
+            MPI_Allreduce(mine, all, 1, nlr_count_triple_type(), nlr_count_triple_op(), MPI_COMM_WORLD);
+            drv.global_active_per_sg[0] = (int) all[0]; busiest_rank_actives = (int) all[1]; agreed_stop_code = (int) all[2];
+        } else if (NTask > 1) {
             MPI_Allreduce(drv.local_active_per_sg.data(),
                           drv.global_active_per_sg.data(),
                           args.num_subgroups, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+            if (path == DispatchPath::ModeD_DeviceFused) {
+                MPI_Allreduce(&drv.local_active_total, &busiest_rank_actives, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            }
         } else {
             drv.global_active_per_sg = drv.local_active_per_sg;
+        }
+        /* A stop any rank's device iteration raised: every rank requests it here, together, and leaves the iterations
+         * before another exchange; nothing of this call is written back. */
+        if (agreed_stop_code) {
+            endrun(agreed_stop_code);
+            if (drv.mode_d_lease) {drv.mode_d_lease->stopped = 1;}
+            break;
         }
         drv.global_active_total = 0;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
@@ -6857,14 +7213,15 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         }
         if (drv.global_active_total == 0) break;
 
-        /* A Mode D call whose remaining actives no longer meet Mode D's summed bound finishes on Mode B, the path a
+        /* A Mode D call whose busiest rank no longer meets Mode D's bound finishes on Mode B, the path a
          * call that small takes from the start: the converged actives have dropped out and the rest cannot feed the
          * device.  One way only, decided from the count every rank has just reduced, so every rank switches at the same
          * iteration.  Mode D's storage is given back here.  Mode D's context already reads the caller's particle arrays
          * (the arena acquire aliases them, and no ghosts were imported), so Mode B continues from the same state through
          * the same context.  With Mode B switched off the call stays on Mode D, as it was routed. */
-        if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(drv.global_active_total) &&
+        if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
             nlr_mode_b_switched_on<Spec>()) {
+            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv);}   /* Mode B reads the host's copy */
             mode_d_lease.release();
             drv.mode_d_lease = nullptr;
             path = DispatchPath::ModeB_HostWalker;
@@ -6873,6 +7230,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             s_arena0 = g_gpu_arena_acquire_counter;
             s_np0    = NumPart;
         }
+    }
+
+    /* A call that iterated on the device to its end: the state back to the host's copy, which the writeback reads. */
+    if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+        if(drv.mode_d_lease && !drv.mode_d_lease->stopped) {nlr_mode_d_iteration_end<Spec>(drv);}
     }
 
     /* ===== Max-iter exceeded check (matches legacy density / ags_density endrun(1155)) ===== */

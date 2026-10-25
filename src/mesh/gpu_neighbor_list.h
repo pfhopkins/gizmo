@@ -200,7 +200,8 @@ void gizmo_mark_position_dirty_indices(const int *indices, int n);   /* position
 void gizmo_mark_type_dirty(int particle);                           /* the particle's type changed */
 void gpu_leaf_mirror_note_slots_moved(void);   /* particles changed slots (decomposition, rearrangement): refill it whole */
 void gpu_leaf_mirror_release(void);            /* the tree is freed: the mirror goes with it */
-void nlr_mode_d_packet_workspace_release(void); /* the tree is freed: the packet walk's workspace, whose top-level order it held, goes too */
+void nlr_mode_d_packet_workspace_release(void); /* the tree is freed (or the run ends): the packet walk's workspace, whose top-level order it
+                                                   held, goes too, with the device storage Mode D calls gave back */
 void nlr_mode_d_packet_tree_rebuilt(void);       /* a tree is being built: the packet walk's top-level order is no longer known */
 
 /* Build GPU-accelerated CSR neighbor list.

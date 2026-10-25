@@ -5,7 +5,9 @@
  * Contract:
  *   - No physics in this header or its .cc. Pure transport.
  *   - Self-rank is EXCLUDED from the exchange. Caller handles self locally.
- *   - All point-to-point. NO collectives in this transport.
+ *   - Payloads are point-to-point.  The round's per-peer counts are ONE collective (MPI_Alltoall in
+ *     exchange_counts()), so every rank exchanges counts the same number of times, in the same order
+ *     relative to its other collectives.
  *
  * Two layers:
  *
@@ -23,7 +25,7 @@
  *   one-class transport it replaced.
  *
  * Choreography per round (every rank, sender and receiver roles at once):
- *   exchange_counts()       counts exchange (all Irecvs, then all Isends, one Waitall).
+ *   exchange_counts()       counts exchange (one MPI_Alltoall).
  *   post_query_sends()      Isend every non-empty query payload; the caller's buffers
  *                           must stay valid and unmodified until finish().
  *   post_reply_recvs()      pre-post every reply Irecv, sized by this rank's own sent
@@ -43,13 +45,12 @@
  *                           protocol, aborted loudly).
  *
  * Deadlock-freedom: group query-Irecv waits are satisfied by peers' query Isends,
- * which depend only on the counts exchange (always completes); reply-send waits are
+ * which depend only on the counts exchange (a collective every rank enters); reply-send waits are
  * satisfied by the origins' pre-posted reply Irecvs, posted BEFORE any rank enters
  * its group loop; finish()'s waits come last. No rank blocks on a send before posting
  * all its receives of the matching class -> the dependency graph is acyclic. Each
- * (sender,receiver) pair exchanges one count + one query payload + one reply payload
- * per round, so the tags stay unambiguous (callers drain every request before the
- * next round begins).
+ * (sender,receiver) pair exchanges one query payload + one reply payload per round, so
+ * the tags stay unambiguous (callers drain every request before the next round begins).
  *
  * Payloads go through MPI as bytes, so a typed payload must be trivially copyable.
  */
@@ -113,7 +114,6 @@ public:
     void finish(size_t reply_bytes, double *dt_reply_finish_wait = nullptr);
 
 private:
-    std::vector<MPI_Request> reqs_count;
     std::vector<MPI_Request> reqs_query_send;
     std::vector<MPI_Request> reqs_reply_recv;
     std::vector<int>         reply_recv_peer;      /* parallel to reqs_reply_recv */

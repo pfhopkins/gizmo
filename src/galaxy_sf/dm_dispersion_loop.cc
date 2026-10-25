@@ -131,8 +131,11 @@ void DMDispersionSpec::apply_active_writeback_iterative(
 IterResult DMDispersionSpec::after_iter(const AfterIterContext<DMDispersionSpec>& ctx,
                                          const AccumData& accum)
 {
-    return after_iter_body(ctx.args.P, ctx.i, ctx.iter_index, ctx.h_search_current,
-                           ctx.scalars, ctx.scratch, accum, ThisTask);
+    int stop_code = 0;
+    const IterResult r = after_iter_body(ctx.args.P, ctx.i, ctx.iter_index, ctx.h_search_current,
+                                         ctx.scalars, ctx.scratch, accum, ThisTask, stop_code);
+    if(stop_code) {endrun(stop_code);}
+    return r;
 }
 
 /* ============================================================================

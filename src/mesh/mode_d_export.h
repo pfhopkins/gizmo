@@ -10,15 +10,18 @@
  * the count reserved for it alone.
  *
  * The records then become envelopes in the order the host has always produced them -- by peer, then query, then
- * the order the walk reached the nodes -- through a stable partition by peer, and the replies are merged per query
- * in that same order (the query's own result first, then peers ascending, then each peer's envelopes in order),
- * through a second stable partition, by query.  Both partitions are one primitive, a stable least-significant-bit
- * radix sort, so nothing here depends on atomics for ORDER (counts only) and nothing sizes a table by the task count.
+ * the order the walk reached the nodes -- through a stable partition by peer (a least-significant-bit radix sort
+ * over the peer's bits), and the replies are merged per query in that same order (the query's own result first,
+ * then peers ascending, then each peer's envelopes in order): each query's runs are listed once from the sorted
+ * records and the query orders its own short list by peer, so there is no second sort.  Nothing here depends on
+ * atomics for ORDER (counts only), nothing sizes a table by the task count, and nothing returns to the host
+ * between the fill and the round's one read of its per-peer counts.
  *
  * Include after <Kokkos_Core.hpp> and neighbor_loop_runner.h. */
 #ifndef GIZMO_MODE_D_EXPORT_H
 #define GIZMO_MODE_D_EXPORT_H
 
+#include <climits>
 #include <Kokkos_Core.hpp>
 #include "neighbor_list.h"
 #include "device_tree_walk.h"
@@ -26,6 +29,9 @@
 
 /* One record of the export decision: query `active` sends top-level node `node` to `peer`. */
 struct ModeDExportRecord { int peer; int active; int node; };
+/* One query's records for one peer, after the sort: that peer, the envelope the run starts in, and how many records. */
+struct ModeDQueryRun { int peer; int first_envelope; int records; };
+static_assert(sizeof(ModeDQueryRun) <= sizeof(ModeDExportRecord), "a query's runs are kept in the sort's spare record buffer");
 
 /* What the export walk does at a node and at a pseudo-particle: the host export walk's rule. */
 struct ModeDExportTopology {
@@ -159,42 +165,34 @@ struct ModeDExportPacketClient {
 };
 
 /* ---------------------------------------------------------------------------------------------------------------
- * The stable partition.  Items are sorted by an unsigned key, least significant bit first, one bit per pass: each
- * pass sends the items whose bit is clear to the front and the rest after them, both in their existing order, so
- * the result is ordered by key and, among equal keys, by the order the items arrived in.  A bit that is the same for
- * every key moves nothing and is skipped, so a key range of one value costs no pass.  `scan` holds n ints.  Returns
- * whichever of the two buffers holds the result. */
+ * The stable partition.  Items are sorted by an unsigned key below 2^key_bits, least significant bit first, one bit
+ * per pass: each pass sends the items whose bit is clear to the front and the rest after them, both in their existing
+ * order, so the result is ordered by key and, among equal keys, by the order the items arrived in.  The key range is
+ * the caller's (a peer is below the task count), so the passes are known on the host and each pass's split point
+ * stays on the device (`n_clear`, one int): nothing waits for the host.  A bit every key shares moves nothing.
+ * `scan` holds n ints.  Returns whichever of the two buffers holds the result. */
 template <class Item, class KeyFn>
-Item *mode_d_stable_radix(Item *items, Item *spare, int *scan, int n, KeyFn key)
+Item *mode_d_stable_radix(Item *items, Item *spare, int *scan, int n, KeyFn key, int key_bits, int *n_clear)
 {
     if(n <= 1) {return items;}
-    unsigned int key_or = 0, key_and = ~0u;
-    Kokkos::parallel_reduce("mode_d_radix_bits", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int i, unsigned int &o, unsigned int &a) {
-        const unsigned int k = key(items[i]); o |= k; a &= k;
-    }, Kokkos::BOr<unsigned int>(key_or), Kokkos::BAnd<unsigned int>(key_and));
-    const unsigned int varying = key_or ^ key_and;
-    for(int bit = 0; bit < 32; bit++) {
-        if(!((varying >> bit) & 1u)) {continue;}
+    for(int bit = 0; bit < key_bits; bit++) {
         const Item *src = items;
         Item *dst = spare;
-        int n_clear = 0;
         Kokkos::parallel_scan("mode_d_radix_scan", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int i, int &before, const bool last) {
             const int clear = ((key(src[i]) >> bit) & 1u) ? 0 : 1;
-            if(last) {scan[i] = before;}
+            if(last) {scan[i] = before; if(i == n - 1) {*n_clear = before + clear;}}
             before += clear;
-        }, n_clear);
+        });
         Kokkos::parallel_for("mode_d_radix_place", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int i) {
             const int clear = ((key(src[i]) >> bit) & 1u) ? 0 : 1;
-            dst[clear ? scan[i] : n_clear + (i - scan[i])] = src[i];
+            dst[clear ? scan[i] : *n_clear + (i - scan[i])] = src[i];
         });
         spare = items; items = dst;
     }
     return items;
 }
-
-/* An envelope's position in the merge order: which query it answers (relative to the round's first), and which
- * envelope it is in send order. */
-struct ModeDEnvelopeKey { int active; int envelope; };
+/* The bits a key below `bound` needs. */
+inline int mode_d_key_bits(long long bound) {int b = 0; for(long long v = bound - 1; v > 0; v >>= 1) {b++;} return b;}
 
 /* Plain byte copies between device storage and the host, complete on return. */
 using ModeDDeviceBytes = Kokkos::View<char *, Kokkos::DefaultExecutionSpace::memory_space, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
@@ -230,32 +228,38 @@ struct ModeDRunStartScan {
 };
 
 /* The round's records, sorted by peer, become envelopes: a new envelope where the (peer, query) pair changes, or
- * where NODELISTLENGTH nodes of one pair have filled one.  Returns the number of envelopes; `first_record[e]` is
- * each envelope's first record.  `run_start` holds n ints. */
-inline int mode_d_envelope_boundaries(const ModeDExportRecord *rec, int n, int *run_start, int *first_record)
+ * where NODELISTLENGTH nodes of one pair have filled one.  `first_record[e]` is each envelope's first record,
+ * `envelope_of[i]` the envelope record i goes in, `run_start[i]` where its (peer, query) run starts, and
+ * `*n_envelopes` (device) their number. */
+inline void mode_d_envelope_boundaries(const ModeDExportRecord *rec, int n, int *run_start, int *first_record, int *envelope_of,
+                                       int *n_envelopes)
 {
-    if(n <= 0) {return 0;}
+    if(n <= 0) {Kokkos::parallel_for("mode_d_envelope_none", Kokkos::RangePolicy<>(0, 1), KOKKOS_LAMBDA(int) {*n_envelopes = 0;}); return;}
     /* where each record's (peer, query) run starts: an inclusive maximum over the run starts so far */
     Kokkos::parallel_scan("mode_d_run_start", Kokkos::RangePolicy<>(0, n), ModeDRunStartScan{rec, run_start});
-    int n_envelopes = 0;
     Kokkos::parallel_scan("mode_d_envelope_first", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int i, int &before, const bool last) {
         const int opens = ((i - run_start[i]) % NODELISTLENGTH == 0) ? 1 : 0;
-        if(last && opens) {first_record[before] = i;}
+        if(last) {
+            if(opens) {first_record[before] = i;}
+            envelope_of[i] = before + opens - 1;
+            if(i == n - 1) {*n_envelopes = before + opens;}
+        }
         before += opens;
-    }, n_envelopes);
-    return n_envelopes;
+    });
 }
 
 /* One lane per envelope: the query it carries (from the frozen snapshot), up to NODELISTLENGTH nodes of one
- * (peer, query) run, and which query it answers; and a count of envelopes per peer.  Envelopes come out in send
- * order, so each peer's are contiguous. */
+ * (peer, query) run; and a count of envelopes per peer.  Envelopes come out in send order, so each peer's are
+ * contiguous.  Launched over the records, which bound the envelopes, so the envelope count need not come to the
+ * host first. */
 template <class ActiveData>
-inline void mode_d_pack_envelopes(const ModeDExportRecord *rec, int n_records, const int *first_record, int n_envelopes,
+inline void mode_d_pack_envelopes(const ModeDExportRecord *rec, int n_records, const int *first_record, const int *n_envelopes,
                                   const ActiveData *snapshot, int this_task, NlrQueryEnvelope<ActiveData> *envelopes,
-                                  int *envelope_active, int *per_peer)
+                                  int *per_peer, int n_peers)
 {
-    if(n_envelopes <= 0) {return;}
-    Kokkos::parallel_for("mode_d_pack", Kokkos::RangePolicy<>(0, n_envelopes), KOKKOS_LAMBDA(int e) {
+    if(n_records <= 0) {return;}
+    Kokkos::parallel_for("mode_d_pack", Kokkos::RangePolicy<>(0, n_records), KOKKOS_LAMBDA(int e) {
+        if(e >= *n_envelopes) {return;}
         const int i0 = first_record[e];
         const ModeDExportRecord r0 = rec[i0];
         NlrQueryEnvelope<ActiveData> &env = envelopes[e];
@@ -266,47 +270,69 @@ inline void mode_d_pack_envelopes(const ModeDExportRecord *rec, int n_records, c
         for(int t = c; t < NODELISTLENGTH; t++) {env.NodeList[t] = -1;}
         env.origin_slot = r0.active; env.origin_rank = this_task; env.n_nodes = c; env.reserved_wire_padding = 0;
         env.active = snapshot[r0.active];
-        envelope_active[e] = r0.active;
-        Kokkos::atomic_add(&per_peer[r0.peer], 1);
+        if(r0.peer >= 0 && r0.peer < n_peers) {Kokkos::atomic_add(&per_peer[r0.peer], 1);}   /* likewise, never outside the table */
     });
 }
 
-/* The merge order: the round's envelopes grouped by the query they answer, keeping send order (peers ascending,
- * then each peer's envelopes) within one query, and where each query's group starts.  `keys` and `spare` hold
- * n_envelopes each, `scan` n_envelopes ints, `offsets` n_round + 1. Returns the buffer holding the result. */
-inline ModeDEnvelopeKey *mode_d_merge_order(const int *envelope_active, int n_envelopes, int first_active, int n_round,
-                                            ModeDEnvelopeKey *keys, ModeDEnvelopeKey *spare, int *scan, int *offsets)
+/* Each query's runs, listed once: a (peer, query) run of the sorted records is one entry -- its peer, the envelope it
+ * starts in, its length -- placed in the query's own list (`offsets[k]` .. `offsets[k + 1]`, query k of the round).  The
+ * order within a list is whatever the placement gave; the merge sorts it.  `offsets` holds 2 (n_round + 1) ints (the
+ * second half is the placement's cursors); linear in the records. */
+inline void mode_d_query_runs(const ModeDExportRecord *sorted, int n, const int *run_start, const int *envelope_of, int first_active,
+                              int n_round, int *offsets, ModeDQueryRun *runs)
 {
-    Kokkos::parallel_for("mode_d_merge_clear", Kokkos::RangePolicy<>(0, n_round + 1), KOKKOS_LAMBDA(int a) {offsets[a] = 0;});
-    Kokkos::parallel_for("mode_d_merge_keys", Kokkos::RangePolicy<>(0, n_envelopes), KOKKOS_LAMBDA(int e) {
-        const int a = envelope_active[e] - first_active;
-        keys[e] = ModeDEnvelopeKey{a, e};
-        Kokkos::atomic_add(&offsets[a + 1], 1);   /* a count: its result is the same in any order */
+    int *cursor = offsets + n_round + 1;
+    Kokkos::parallel_for("mode_d_runs_clear", Kokkos::RangePolicy<>(0, 2 * (n_round + 1)), KOKKOS_LAMBDA(int k) {offsets[k] = 0;});
+    if(n <= 0 || n_round <= 0) {return;}
+    /* a run ends where the next record's (peer, query) differs */
+    Kokkos::parallel_for("mode_d_runs_count", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int i) {
+        const int ends = (i == n - 1 || sorted[i + 1].peer != sorted[i].peer || sorted[i + 1].active != sorted[i].active);
+        if(ends) {Kokkos::atomic_add(&offsets[sorted[i].active - first_active + 1], 1);}
     });
-    Kokkos::parallel_scan("mode_d_merge_offsets", Kokkos::RangePolicy<>(0, n_round + 1), KOKKOS_LAMBDA(int a, int &sum, const bool last) {
-        sum += offsets[a];
-        if(last) {offsets[a] = sum;}
+    Kokkos::parallel_scan("mode_d_runs_offsets", Kokkos::RangePolicy<>(0, n_round + 1), KOKKOS_LAMBDA(int k, int &sum, const bool last) {
+        sum += offsets[k];
+        if(last) {offsets[k] = sum;}
     });
-    return mode_d_stable_radix(keys, spare, scan, n_envelopes, KOKKOS_LAMBDA(const ModeDEnvelopeKey &k) {return (unsigned int) k.active;});
+    Kokkos::parallel_for("mode_d_runs_place", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int i) {
+        const int ends = (i == n - 1 || sorted[i + 1].peer != sorted[i].peer || sorted[i + 1].active != sorted[i].active);
+        if(!ends) {return;}
+        const int k = sorted[i].active - first_active, start = run_start[i];
+        const int slot = offsets[k] + Kokkos::atomic_fetch_add(&cursor[k], 1);
+        runs[slot] = ModeDQueryRun{sorted[i].peer, envelope_of[start], i - start + 1};
+    });
 }
 
-/* One lane per query of the round: its own result, then each reply to it in merge order.  The merge is serial per
- * query on purpose: it is the order the host merges in (the query's own result, peers ascending, each peer's
- * envelopes in order), which a reduction across lanes would change.  A reply that does not name this rank and this
- * query is a broken exchange: it is not merged and `bad` is set. */
+/* One lane per query of the round: its own result, then each reply to it -- peers ascending, each peer's envelopes
+ * in send order, the order the host merges in, which a reduction across lanes would change.  The query first orders
+ * its run list by peer (a shell sort in place over its p runs, one per peer, so the order is unique; at most p^2 steps
+ * for a query reaching every peer, against the records x peers rescans this replaced); a run's records are cut every
+ * NODELISTLENGTH, so its envelopes are consecutive from its first.  A reply that does not name this rank and this query
+ * is a broken exchange: it is not merged and `bad` is set. */
 template <class Spec>
-inline void mode_d_merge_replies(const ModeDEnvelopeKey *order, const int *offsets, int first_active, int n_round,
+inline void mode_d_merge_replies(ModeDQueryRun *runs, const int *offsets, int first_active, int n_round,
                                  const NlrReplyEnvelope<typename Spec::AccumData> *replies, int this_task,
                                  typename Spec::AccumData *accums, int *bad)
 {
     if(n_round <= 0) {return;}
     Kokkos::parallel_for("mode_d_merge", Kokkos::RangePolicy<>(0, n_round), KOKKOS_LAMBDA(int k) {
-        const int a = first_active + k;
+        const int a = first_active + k, r0 = offsets[k], n_runs = offsets[k + 1] - offsets[k];
+        ModeDQueryRun *list = runs + r0;
+        for(int gap = n_runs / 2; gap > 0; gap /= 2) {
+            for(int x = gap; x < n_runs; x++) {
+                const ModeDQueryRun v = list[x];
+                int y = x;
+                for(; y >= gap && list[y - gap].peer > v.peer; y -= gap) {list[y] = list[y - gap];}
+                list[y] = v;
+            }
+        }
         typename Spec::AccumData acc = accums[a];
-        for(int j = offsets[k]; j < offsets[k + 1]; j++) {
-            const NlrReplyEnvelope<typename Spec::AccumData> &r = replies[order[j].envelope];
-            if(r.origin_rank != this_task || r.origin_slot != a) {Kokkos::atomic_store(bad, 1); continue;}
-            Spec::merge_accum(acc, r.accum);
+        for(int u = 0; u < n_runs; u++) {
+            const int e0 = list[u].first_envelope, n_env = (list[u].records + NODELISTLENGTH - 1) / NODELISTLENGTH;
+            for(int e = e0; e < e0 + n_env; e++) {
+                const NlrReplyEnvelope<typename Spec::AccumData> &r = replies[e];
+                if(r.origin_rank != this_task || r.origin_slot != a) {Kokkos::atomic_store(bad, 1); continue;}
+                Spec::merge_accum(acc, r.accum);
+            }
         }
         accums[a] = acc;
     });

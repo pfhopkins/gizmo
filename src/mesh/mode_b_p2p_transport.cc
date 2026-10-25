@@ -43,12 +43,12 @@ void bounded_peer_exchange_reply_count_mismatch(int peer, size_t have, int want)
 
 int BoundedPeerExchangeCore::reserve(int ntask)
 {
-    /* Per round: one count each way and at most one query send, reply receive, group receive
-     * and reply send per peer; a group holds at least one peer, so there are at most ntask groups. */
+    /* Per round: at most one query send, reply receive, group receive and reply send per peer;
+     * a group holds at least one peer, so there are at most ntask groups. */
     const size_t n = (size_t) (ntask > 0 ? ntask : 1);
     try {
         sent_counts.reserve(n); recv_counts.reserve(n);
-        reqs_count.reserve(2 * n); reqs_query_send.reserve(n); reqs_reply_recv.reserve(n);
+        reqs_query_send.reserve(n); reqs_reply_recv.reserve(n);
         reply_recv_peer.reserve(n); reply_recv_status.reserve(n); reqs_group_query.reserve(n);
         reqs_reply_send.reserve(n); reply_send_group_start.reserve(n);
     } catch(const std::bad_alloc &) {return 1;}
@@ -58,7 +58,7 @@ int BoundedPeerExchangeCore::reserve(int ntask)
 void BoundedPeerExchangeCore::release_storage()
 {
     std::vector<int>().swap(sent_counts); std::vector<int>().swap(recv_counts);
-    std::vector<MPI_Request>().swap(reqs_count); std::vector<MPI_Request>().swap(reqs_query_send);
+    std::vector<MPI_Request>().swap(reqs_query_send);
     std::vector<MPI_Request>().swap(reqs_reply_recv); std::vector<int>().swap(reply_recv_peer);
     std::vector<MPI_Status>().swap(reply_recv_status); std::vector<MPI_Request>().swap(reqs_group_query);
     std::vector<MPI_Request>().swap(reqs_reply_send); std::vector<int>().swap(reply_send_group_start);
@@ -69,7 +69,6 @@ void BoundedPeerExchangeCore::exchange_counts(const int *counts_to_peer, double 
     const int nt = NTask;
     sent_counts.assign(nt, 0);
     recv_counts.assign(nt, 0);
-    reqs_count.clear();
     reqs_query_send.clear();
     reqs_reply_recv.clear();
     reply_recv_peer.clear();
@@ -82,20 +81,9 @@ void BoundedPeerExchangeCore::exchange_counts(const int *counts_to_peer, double 
         if(p == ThisTask) continue;
         sent_counts[p] = counts_to_peer[p];
     }
-    for(int p = 0; p < nt; p++) {
-        if(p == ThisTask) continue;
-        MPI_Request rq;
-        MPI_Irecv(&recv_counts[p], 1, MPI_INT, p, TAG_MODE_B_QUERY_COUNT, MPI_COMM_WORLD, &rq);
-        reqs_count.push_back(rq);
-    }
-    for(int p = 0; p < nt; p++) {
-        if(p == ThisTask) continue;
-        MPI_Request rq;
-        MPI_Isend(&sent_counts[p], 1, MPI_INT, p, TAG_MODE_B_QUERY_COUNT, MPI_COMM_WORLD, &rq);
-        reqs_count.push_back(rq);
-    }
+    /* one collective, rather than a message to and from every rank; this rank's own entries are zero both ways */
     const double t0 = dt_count_exch ? MPI_Wtime() : 0.0;
-    MPI_Waitall((int) reqs_count.size(), reqs_count.data(), MPI_STATUSES_IGNORE);
+    MPI_Alltoall(sent_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
     if(dt_count_exch) {*dt_count_exch += MPI_Wtime() - t0;}
 }
 
