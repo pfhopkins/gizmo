@@ -3253,12 +3253,13 @@ enum class ModeDAdmission { Admitted, StorageRefused, TreeRefused };
  * latch is the same on every rank, so that refusal needs no vote); likewise a refused map, until the next build. */
 static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, size_t active_bytes, size_t accum_bytes,
                                    size_t query_bytes, size_t reply_bytes, const char *caller,
-                                   bool iterates_on_device, size_t scratch_bytes)
+                                   bool iterates_on_device, size_t scratch_bytes, int host_ok)
 {
     if(gx_mode_d_staging_unavailable()) {return ModeDAdmission::StorageRefused;}
     const char *why = nullptr;
     int tree_ok = 1, staging_ok = 1, map_granted = 1, map_wellformed = 1;
     int ok = (mode_d_workspace_plan(num_active, query_bytes, reply_bytes, &lease->plan, &why) == 0);
+    if(ok && !host_ok) {why = "its host per-slot state could not be allocated"; ok = 0;}
     lease->plan.iteration_actives = iterates_on_device ? num_active : 0;
     lease->plan.scratch_bytes = (long long) scratch_bytes;
     if(ok) {
@@ -3346,14 +3347,14 @@ constexpr bool nlr_mode_d_iterates_on_device_v =
     nlr_spec_writeback_writes_only_own_particle_v<Spec>;
 
 template <typename Spec>
-static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active)
+static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active, int host_ok = 1)
 {
     size_t scratch_bytes = 0;
     if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {scratch_bytes = sizeof(typename Spec::IterScratch);}
     return mode_d_admit(lease, num_active, sizeof(typename Spec::ActiveData), sizeof(typename Spec::AccumData),
                         sizeof(NlrQueryEnvelope<typename Spec::ActiveData>),
                         sizeof(NlrReplyEnvelope<typename Spec::AccumData>), Spec::loop_name,
-                        nlr_mode_d_iterates_on_device_v<Spec>, scratch_bytes);
+                        nlr_mode_d_iterates_on_device_v<Spec>, scratch_bytes, host_ok);
 }
 
 template <typename Spec>
@@ -5812,12 +5813,13 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
             batch[0].state = 1; L.batch_segments[0].clear(); L.batch_segments[1].clear();
             Stream::Segment held{}; int have_held = 0;
             /* What is being evaluated: nothing, received batch 0 or 1, or a chunk of this rank's own queries (with the batch
-             * when they share one launch).  One evaluation at a time.  For a Spec whose evaluation writes only its own
-             * queries' results (ModeBEvalOMP::BitwiseReadonly) it runs on the evaluation queue while this loop keeps the
+             * when they share one launch).  One evaluation at a time.  For a Spec that iterates on the device and whose
+             * evaluation writes only its own queries' results (ModeBEvalOMP::BitwiseReadonly) it runs on the evaluation queue
+             * while this loop keeps the
              * transport moving, received work goes before this rank's own, and this rank's own queries go in chunks of one
              * batch when they are more than one batch; otherwise every evaluation completes before the loop continues, in
              * today's order, with the queries riding the first batch. */
-            constexpr bool overlap = (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly);
+            constexpr bool overlap = nlr_mode_d_iterates_on_device_v<Spec> && (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly);
             const Kokkos::DefaultExecutionSpace *eval_queue = overlap ? &gx_mode_d_eval_space() : nullptr;
             const long long local_chunk = gizmo_gpu_lane_count() > S ? gizmo_gpu_lane_count() : (long long) S;
             const bool locals_in_chunks = overlap && !locals_done && (long long) N > local_chunk;
@@ -5873,7 +5875,19 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                     (have_held || batch[filling].records >= L.batch_capacity[filling] ||
                      L.batch_segments[filling].size() >= L.batch_segments[filling].capacity());
                 const bool batch_ready = (filling >= 0) && (batch_full || in_taken == in_segments);
-                if(idle && batch_ready && (!L.batch_segments[filling].empty() || (!locals_in_chunks && !locals_done))) {
+                /* Once this rank has raised a stop nothing more is evaluated: a ready batch is answered as erroneous (the
+                 * asking rank skips it), this rank's remaining queries are given up, and the round's stop agreement ends
+                 * the call. */
+                if(stop_code && idle) {
+                    if(batch_ready && !L.batch_segments[filling].empty()) {
+                        for(ModeDCallLease::BatchSegment &g : L.batch_segments[filling]) {g.status = 1;}
+                        batch[filling].state = 2; answered_order[n_answered++] = filling;
+                        const int other = 1 - filling;
+                        filling = (batch[other].state == 0) ? other : -1;
+                        if(filling >= 0) {batch[filling] = Batch{}; batch[filling].state = 1; L.batch_segments[filling].clear();}
+                    }
+                    locals_issued = N; locals_done = 1;
+                } else if(idle && batch_ready && (!L.batch_segments[filling].empty() || (!locals_in_chunks && !locals_done))) {
                     const int K = batch[filling].records, with_locals = (!locals_in_chunks && !locals_done) ? N : 0;
                     NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, with_locals ? snapshot : nullptr, with_locals, accums,
                                                   (const Envelope *) L.group_queries[filling], K, (Reply *) L.group_replies[filling],
@@ -5899,9 +5913,11 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                                                        __FILE__, __LINE__, __FUNCTION__);
                     }
                 }
-                /* (c') the running evaluation finished: a received batch's replies may go out only once its walk is known
-                 * to be clean -- a batch whose walk raised an anomaly answers every segment as erroneous (the asking rank skips
-                 * them) and the round's stop agreement ends the call.  A failure of the device itself ends the run here. */
+                /* (c') the running evaluation finished.  Every evaluation is checked for a walk anomaly and for a device-side
+                 * stop that did not trap its kernel (one that traps surfaces as an event error) before anything follows it: a
+                 * received batch's replies go out only once its evaluation is known to be clean -- otherwise every segment is
+                 * answered as erroneous (the asking rank skips them) -- and either finding raises the stop the round's
+                 * agreement acts on.  A failure of the device itself ends the run here. */
                 if(running_batch >= 0 || running_locals) {
                     const int ev = (running_batch >= 0) ? 1 + running_batch : 0;
                     const int status = overlap ? gx_mode_d_eval_event(ev).query() : GIZMO_GPU_EVENT_COMPLETE;
@@ -5910,23 +5926,22 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                                                        __FILE__, __LINE__, __FUNCTION__);
                     }
                     if(status == GIZMO_GPU_EVENT_COMPLETE) {
+                        int walk_word = 0, device_code = 0, device_line = 0;
+                        mode_d_copy_async_to_host(copy_space, &walk_word, flags + MODE_D_FLAG_WALK, sizeof(int));
+                        copy_space.fence("mode_d_evaluation_anomaly");
+                        const int device_stop = gizmo_gpu_consume_device_error(&device_code, &device_line);
+                        if(device_stop) {
+                            char reason[160];
+                            snprintf(reason, sizeof(reason), "a device kernel of a Mode D evaluation stopped (code %d, line %d)", device_code, device_line);
+                            gizmo_request_controlled_stop(device_code, reason, __FILE__, __LINE__, __FUNCTION__);
+                        }
+                        const int unclean = (walk_word || device_stop);
+                        if(unclean && !stop_code) {stop_code = 90001044; walk_anomaly = walk_word;}
                         if(running_locals && locals_issued >= N) {locals_done = 1;}
                         running_locals = 0;
                         if(running_batch >= 0) {
                             const int b = running_batch;
-                            int walk_word = 0, device_code = 0, device_line = 0;
-                            mode_d_copy_async_to_host(copy_space, &walk_word, flags + MODE_D_FLAG_WALK, sizeof(int));
-                            copy_space.fence("mode_d_batch_anomaly");
-                            const int device_stop = gizmo_gpu_consume_device_error(&device_code, &device_line);
-                            if(device_stop) {
-                                char reason[160];
-                                snprintf(reason, sizeof(reason), "a device kernel of a Mode D evaluation stopped (code %d, line %d)", device_code, device_line);
-                                gizmo_request_controlled_stop(device_code, reason, __FILE__, __LINE__, __FUNCTION__);
-                            }
-                            if(walk_word || device_stop) {
-                                for(ModeDCallLease::BatchSegment &g : L.batch_segments[b]) {g.status = 1;}
-                                if(!stop_code) {stop_code = 90001044; walk_anomaly = walk_word;}
-                            }
+                            if(unclean) {for(ModeDCallLease::BatchSegment &g : L.batch_segments[b]) {g.status = 1;}}
                             batch[b].state = 2; answered_order[n_answered++] = b;
                             running_batch = -1;
                         }
@@ -6638,7 +6653,11 @@ static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsig
     const int n_all = drv.args.subgroups[0].num_active_local, n_live = L.iter_n_live;
     drv.active_set_size[0] = n_live;
     if(n_all <= 0 || !drv.radii_uvm[0]) {return;}
-    /* which slots are still iterating */
+    /* which slots are still iterating (the storage was reserved before admission) */
+    if(slot_state.capacity() < (size_t) n_all) {
+        gizmo_fatal_hard_exit_reviewed(90009004, "REVIEWED_HARD_MID_PROTOCOL: a Mode D call's per-slot state was not reserved at admission",
+                                       __FILE__, __LINE__, __FUNCTION__);
+    }
     slot_state.assign((size_t) n_all, 0);
     if(n_live > 0) {
         mode_d_copy_to_host(drv.active_set_uvm[0], L.iter_live[L.iter_which], (size_t) n_live * sizeof(int));
@@ -6774,6 +6793,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * first iterative call and every later fused call is refused, which silently pins the
      * whole run to the fallback path. */
     ModeDCallLease mode_d_lease;
+    /* Per slot of a device-iterated call, at the end of its device iteration: 1 still iterating, 2 written back.  Reserved
+     * before Mode D's admission vote, so nothing allocates after it. */
+    std::vector<unsigned char> device_written;
 
     /* The one live argument view for this call.  A ghost import can raise the particle
      * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
@@ -6947,7 +6969,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             /* The lease's prepared tree is handed to the driver so every iteration walks the
              * tree the decision was made on.  A refused call holds nothing of Mode D; where it
              * goes is mode_d_admit's verdict. */
-            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active);
+            int host_ok = 1;
+            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+                try {device_written.reserve((size_t) (args.num_active > 0 ? args.num_active : 0));} catch(const std::bad_alloc &) {host_ok = 0;}
+            }
+            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active, host_ok);
             if(verdict == ModeDAdmission::Admitted) {path = DispatchPath::ModeD_DeviceFused;}
             else if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {path = DispatchPath::ModeB_HostWalker;}
         }
@@ -6995,8 +7021,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * (destructors run in reverse): the raise sees the final velocities. */
     NlrMotionTargetScope<Spec> motion_target_scope;
     NlrIterDriver<Spec> drv(args, cs);
-    /* Per slot of a device-iterated call, at the end of its device iteration: 1 still iterating, 2 written back. */
-    std::vector<unsigned char> device_written;
 
     /* ===== Path-specific DeviceContext init =====
      * Mode B: bind ctx.P=args.P/CellP directly (no arena).
