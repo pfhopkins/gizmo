@@ -1,7 +1,7 @@
 # KETJU integrator unit tests
 
 Runs the original googletest suite of the KETJU integrator (MSTAR; `ketju-integrator/unit-tests/`,
-GPLv3, Mannerkoski et al.) against GIZMO's modified `ketju-integrator/`, a git submodule of github.com/Ulli1991/ketju-integrator (branch `stella`). Clone with `--recurse-submodules` or run `git submodule update --init --recursive`.
+GPLv3, Mannerkoski et al.) against GIZMO's modified `ketju-integrator/`, a git submodule of github.com/Ulli1991/ketju-integrator (branch `main`). Clone with `--recurse-submodules` or run `git submodule update --init --recursive`.
 No GIZMO build or simulation is involved.
 
 ## What is tested
