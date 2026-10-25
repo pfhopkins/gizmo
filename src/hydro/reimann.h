@@ -360,8 +360,7 @@ static GIZMO_GPU_FUNCTION void Riemann_solver(struct Input_vec_Riemann Riemann_v
     {
         double rho_k,s_k,v_k,cs_m = DMAX(Riemann_vec.L.cs,Riemann_vec.R.cs);
 #ifdef MAGNETIC
-        double v_line_L = dot(Riemann_vec.L.v, n_unit);
-        double v_line_R = dot(Riemann_vec.R.v, n_unit);
+        double v_line_L = Riemann_vec.L.v[0], v_line_R = Riemann_vec.R.v[0]; /* the states were rotated to the face above: component 0 is along n_unit */
 #endif
         if(Riemann_out->S_M>0) {rho_k=Riemann_vec.L.rho; v_k=v_line_L; s_k=DMIN(v_line_L,v_line_R)-cs_m;} else {rho_k=Riemann_vec.R.rho; v_k=v_line_R; s_k=DMAX(v_line_L,v_line_R)+cs_m;}
         if(s_k != Riemann_out->S_M) {Riemann_out->Mdot_estimated=rho_k*Riemann_out->S_M*(s_k-v_k)/(s_k-Riemann_out->S_M);} else {Riemann_out->Mdot_estimated=0;}
