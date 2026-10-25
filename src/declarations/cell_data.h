@@ -40,6 +40,7 @@ extern struct gas_cell_data
 
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
+    MyDouble KernelDensityForVolumeRelaxation; /*!< kernel (surface-corrected, if enabled) density from the last density pass: the value Density_ExplicitInt relaxes toward */
 #endif
     
 #ifdef HYDRO_VOLUME_CORRECTIONS
@@ -329,6 +330,10 @@ extern struct gas_cell_data
     MyFloat Eta_MHD_OhmicResistivity_Coeff;     /*!< Ohmic resistivity coefficient [physical units of L^2/t] */
     MyFloat Eta_MHD_HallEffect_Coeff;           /*!< Hall effect coefficient [physical units of L^2/t] */
     MyFloat Eta_MHD_AmbiPolarDiffusion_Coeff;   /*!< Hall effect coefficient [physical units of L^2/t] */
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    Vec3<MyFloat> NonIdealMHDFlux;              /*!< non-ideal MHD electric field times c [explicitly evolved; physical units of B*L/t; dB/dt = -curl of this] */
+    Vec3<MyFloat> NonIdealMHDFluxPred;          /*!< drift-predicted value of NonIdealMHDFlux */
+#endif
 #endif
 
 #ifdef MHD_BATTERY_MECHANISMS

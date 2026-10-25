@@ -558,7 +558,9 @@ struct DensitySpec {
          * cannot be deferred to finalize; the nudge must fire mid-iter. Tinv
          * is kept in scope specifically so the face-leak computation can run. */
         double ConditionNumber = 0.0;
-        double face_closure_error_local = 0.0;  /* gas-only; nudge gated below */
+#if !defined(HYDRO_KERNEL_SURFACE_VOLCORR)
+        double face_closure_error_local = 0.0;  /* gas-only; feeds only the neighbour-number nudge below, which the surface correction replaces */
+#endif
         if (P[i].Type == 0) {
             const double V_i = VOLUME_NORM_COEFF_FOR_NDIMS * pow(h, (double)NUMDIMS) / (NumNgb_eff > 0 ? NumNgb_eff : 1.0);
             const double dimensional_NV_T_normalizer = pow(h, (double)(2 - NUMDIMS));
@@ -581,6 +583,7 @@ struct DensitySpec {
                 conditioning_term_to_add *= 1.2;
             }
 
+#if !defined(HYDRO_KERNEL_SURFACE_VOLCORR)
             /* Face-leak / FaceClosureError, mirrors density.cc:273-303 verbatim
              * but reading accum.NV_T_face_weights (this iter's accumulator)
              * instead of CellP[i].NV_T_face_weights (which legacy had already
@@ -621,15 +624,8 @@ struct DensitySpec {
             double dimless_face_leak = 0;
             for (int k1 = 0; k1 < 3; ++k1) dimless_face_leak += fabs(face_out[k1]) / (double)NUMDIMS;
 
-    #ifdef HYDRO_KERNEL_SURFACE_VOLCORR
-            double closure_asymm = 0;
-            for (int k1 = 0; k1 < 3; ++k1) closure_asymm += face_in[k1] * face_in[k1];
-            const double particle_inverse_volume = NumNgb_eff / (VOLUME_NORM_COEFF_FOR_NDIMS * pow(h, (double)NUMDIMS));
-            closure_asymm = sqrt(closure_asymm) / (h * particle_inverse_volume);
-            face_closure_error_local = DMIN(DMAX(1.0259 - 2.52444 * closure_asymm, 0.344301), 1.0);
-    #else
             face_closure_error_local = dimless_face_leak / (2.0 * (double)NUMDIMS * pow(dx_i, (double)(NUMDIMS - 1)));
-    #endif
+#endif
         }
 
         /* ---- (c) iter==0 ConditionNumber update logic (mirrors

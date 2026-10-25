@@ -484,7 +484,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
             for (int k1 = 0; k1 < 3; ++k1) closure_asymm += face_in[k1] * face_in[k1];
             const double particle_inverse_volume = NumNgb_eff / (VOLUME_NORM_COEFF_FOR_NDIMS * pow(h, (double)NUMDIMS));
             closure_asymm = sqrt(closure_asymm) / (h * particle_inverse_volume);
-            CellP[i].FaceClosureError = (MyFloat)DMIN(DMAX(1.0259 - 2.52444 * closure_asymm, 0.344301), 1.0);
+            CellP[i].FaceClosureError = (MyFloat)DMIN(DMAX(KERNEL_SURFACE_VOLCORR_OFFSET + KERNEL_SURFACE_VOLCORR_SLOPE * closure_asymm, KERNEL_SURFACE_VOLCORR_FLOOR), 1.0);
 #else
             CellP[i].FaceClosureError = (MyFloat)(dimless_face_leak / (2.0 * (double)NUMDIMS * pow(dx_i, (double)(NUMDIMS - 1))));
 #endif
@@ -611,17 +611,19 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR)
             CellP[i].Density /= CellP[i].FaceClosureError;
-            CellP[i].FaceClosureError = (MyFloat)Volume_0;
 #endif
+            /* FaceClosureError stays dimensionless and must not be overwritten with a cell volume: without the surface
+               correction the face reconstruction reads it as a leak fraction (a volume there forced first-order faces
+               everywhere); with it, it holds the surface volume factor applied above */
 
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
             Volume_0 = (double)P[i].Mass / (double)CellP[i].Density;
-            if (host_all->Time == host_all->TimeBegin) {
+            CellP[i].KernelDensityForVolumeRelaxation = CellP[i].Density;
+            if (host_all->Time == host_all->TimeBegin || !(CellP[i].Density_ExplicitInt > 0) || !isfinite(CellP[i].Density_ExplicitInt)) { /* start, or a newly created cell whose integrated density is unset */
                 CellP[i].Density_ExplicitInt = CellP[i].Density;
             } else {
                 CellP[i].Density = CellP[i].Density_ExplicitInt;
             }
-            CellP[i].FaceClosureError = (MyFloat)Volume_0;
 #endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS

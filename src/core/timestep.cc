@@ -731,7 +731,19 @@ integertime get_timestep(int p,		/*!< particle index */
                 L_cond = DMIN( L_particle , DMAX(1./L_cond_inv, 0.5*L_particle) ) * All.cf_atime; // more conservative estimator - may be needed sometimes to deal accurately with steep local gradients //
                 double diff_coeff = fabs(CellP[p].Eta_MHD_OhmicResistivity_Coeff) + fabs(CellP[p].Eta_MHD_HallEffect_Coeff) + fabs(CellP[p].Eta_MHD_AmbiPolarDiffusion_Coeff);
                 double dt_conduction = dt_prefac_diffusion * L_cond*L_cond / (MIN_REAL_NUMBER + diff_coeff);
-#ifdef SUPER_TIMESTEP_DIFFUSION
+#if defined(MHD_NON_IDEAL_EVOLVED_FLUX)
+                if(diff_coeff > 0)
+                {   /* the evolved non-ideal field propagates at the reduced speed of light: a Courant condition. The larger diffusive
+                       step above is taken instead only where the field relaxes to the standard non-ideal value within that step: the
+                       slowest (transverse) relaxation exponent over it, c~^2 dt (eta_O+eta_A)/eta_NI^2, must be large (residual < e^-10).
+                       There the evolved solver reproduces the standard one; elsewhere the explicit coupling needs the Courant step. */
+                    double dt_nonideal = All.CourantFac * (L_particle*All.cf_atime) / MHD_NON_IDEAL_REDUCED_C_CODE;
+                    double eta_OA = fabs(CellP[p].Eta_MHD_OhmicResistivity_Coeff) + fabs(CellP[p].Eta_MHD_AmbiPolarDiffusion_Coeff), eta_H = CellP[p].Eta_MHD_HallEffect_Coeff;
+                    double relax_exponent = MHD_NON_IDEAL_REDUCED_C_CODE * MHD_NON_IDEAL_REDUCED_C_CODE * dt_conduction * eta_OA / (MIN_REAL_NUMBER + eta_OA*eta_OA + eta_H*eta_H);
+                    if((dt_conduction > dt_nonideal) && (relax_exponent >= 10.)) {dt_nonideal = dt_conduction;}
+                    if(dt_nonideal < dt) {dt = dt_nonideal;}
+                }
+#elif defined(SUPER_TIMESTEP_DIFFUSION)
                 if(dt_conduction < dt_superstep_explicit) dt_superstep_explicit = dt_conduction; // explicit time-step
                 double dt_advective = dt_conduction * DMAX(1,DMAX(L_particle , 1/(MIN_REAL_NUMBER + L_cond_inv))*All.cf_atime / L_cond);
                 if(dt_advective < dt) dt = dt_advective; // 'advective' timestep: needed to limit super-stepping

@@ -39,7 +39,9 @@
 #include <omp.h>
 #endif
 
+#ifndef GIZMO_config_H /* the header defines it; a standalone build (e.g. a unit test) may define it to compile without a Config */
 #include "../GIZMO_config.h"
+#endif
 
 #include "precompiler_logic.h"
 
@@ -643,6 +645,7 @@ enum iofields
   IO_AMBIPOLAR,
   IO_OHMIC,
   IO_HALL,
+  IO_NONIDEAL_FLUX,
   IO_IMF,
   IO_COSMICRAY_ENERGY,
   IO_COSMICRAY_KAPPA,

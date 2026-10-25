@@ -29,11 +29,12 @@ Output format (matches eos/aneos.cc::aneos_read_table):
   Then nT  temperature values (K, one per line)
   Then nrho*nT data rows, outer loop over rho, inner over T:
        rho  T  P  u  S  cs
-  All quantities CGS. Grid is uniform in log10(rho) and log10(T).
+  All quantities CGS. The rho axis written here is uniform in log10(rho); the T axis
+  is the native one. aneos.cc accepts any strictly increasing axes.
   ncols=6 (no phase column; H/He surface is smooth).
 
-The CMS native grid is uniform in (logT, logP). aneos.cc requires (logrho, logT)
-on a uniform log-log grid, so we re-grid:
+The CMS native grid is in (logT, logP). aneos.cc tabulates in (logrho, logT), so
+we re-grid:
   1. Read native (T_i, P_j) -> rho, u, S, grad_ad on the native grid.
   2. Pick target uniform logrho axis covering [min, max] of native rho.
   3. For each target T_i (kept on native log-T axis), interpolate
@@ -229,14 +230,9 @@ def write_sesame(path, regridded, mat_id):
     T_arr = 10.0 ** logT
     P, u, S, cs = regridded['P'], regridded['u'], regridded['S'], regridded['cs']
 
-    # Sanity: aneos.cc requires uniform spacing in log10(rho) and log10(T).
-    # aneos.cc requires uniform spacing in log10. We constructed logrho uniformly,
-    # but logT comes from np.unique on the (rounded) input file; snap it to a clean
-    # uniform axis before emitting.
-    logT = np.linspace(logT[0], logT[-1], logT.size)
-    drho = np.diff(logrho); dT = np.diff(logT)
-    if not (np.allclose(drho, drho[0], rtol=1e-9) and np.allclose(dT, dT[0], rtol=1e-9)):
-        raise ValueError("axes must be uniform in log10")
+    # Write the T axis the data were computed on; aneos.cc requires only strictly increasing axes.
+    if not (np.all(np.diff(logrho) > 0) and np.all(np.diff(logT) > 0)):
+        raise ValueError("axes must be strictly increasing")
 
     with open(path, 'w') as f:
         f.write(f"{mat_id} {nrho} {nT} 6\n")

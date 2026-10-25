@@ -35,6 +35,9 @@
 #ifdef EOS_ELASTIC
 #include "../solids/elastic_physics_functions.h"
 #endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+#include "../hydro/nonideal_mhd_functions.h"
+#endif
 
 
 KOKKOS_INLINE_FUNCTION
@@ -63,6 +66,9 @@ void drift_extra_physics_P(int i, integertime tstart, integertime tend, double d
 #endif
 #ifdef COSMIC_RAY_FLUID
     CosmicRay_Update_DriftKick(i, dt_entr, 1, pp, cell);
+#endif
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    nonideal_mhd_flux_update_driftkick(i, dt_entr, 1, pp, cell);
 #endif
 #ifdef RADTRANSFER
     rt_update_driftkick(i, dt_entr, 1, pp, cell);

@@ -8,6 +8,7 @@
 - Uniform density (rho=1), enforced adiabat with coefficient 0.01, gamma=5/3
 - Initial Bx=By=1/sqrt(2), counter-propagating velocity perturbation
 - Non-ideal MHD coefficients: eta_ad = 1e5 * vA^2, eta_ohmic = 1e-5 * eta_ad, eta_hall = 0
+- MaxSizeTimestep = 40: the diffusive timestep in the compressed post-shock gas is ~1000x smaller than in the ambient gas, and without a cap the ambient cells ahead of the precursor take steps large enough to bias the shock structure; the reference solution is computed with this cap
 
 ## What is tested
 

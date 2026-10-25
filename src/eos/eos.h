@@ -1,7 +1,9 @@
 #ifndef EOS_INTERFACE_H
 #define EOS_INTERFACE_H
 
+#ifndef GIZMO_config_H
 #include "../GIZMO_config.h"
+#endif
 
 #ifdef EOS_HELMHOLTZ
 #define EOS_TABULATED

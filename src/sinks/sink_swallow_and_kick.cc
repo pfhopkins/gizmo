@@ -770,6 +770,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
 #ifdef MHD_NON_IDEAL
         CellP[j].Eta_MHD_OhmicResistivity_Coeff = 0; CellP[j].Eta_MHD_HallEffect_Coeff = 0; CellP[j].Eta_MHD_AmbiPolarDiffusion_Coeff = 0;
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+        CellP[j].NonIdealMHDFlux = {}; CellP[j].NonIdealMHDFluxPred = {};
+#endif
 #endif
 #ifdef VISCOSITY
         CellP[j].Eta_ShearViscosity = 0; CellP[j].Zeta_BulkViscosity = 0;
@@ -885,6 +888,10 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         if(!(rho_alone_in_kernel > 0) || !isfinite(rho_alone_in_kernel)) {rho_alone_in_kernel = CellP[dummy_cell_i_to_clone].Density;} /* the cloned element always has positive density */
         if(!(CellP[j].Density > 0) || !isfinite(CellP[j].Density)) {CellP[j].Density = rho_alone_in_kernel;}
         CellP[j].Density = DMAX(CellP[j].Density , 0.01 * rho_alone_in_kernel);
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+        CellP[j].Density_ExplicitInt = 0; /* unset: the first density pass starts it from this cell's own kernel density, not the clone's or the seed guess above */
+        CellP[j].KernelDensityForVolumeRelaxation = 0; /* set by this cell's first density pass */
+#endif
 
         /* note, if you want to use this routine to inject magnetic flux or cosmic rays, do this below */
 #if defined(SINK_WIND_SPAWN_SET_BFIELD_POLTOR)
