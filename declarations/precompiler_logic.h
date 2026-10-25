@@ -1659,6 +1659,9 @@
 #if defined(KETJU_MERGE_BH) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
 #endif
+#if defined(KETJU_KOKKOS) && !defined(KETJU_REGULARIZATION)
+#error "KETJU_KOKKOS requires KETJU_REGULARIZATION"
+#endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 #error "GALSF_RESOLVEDISM_SAMPLE_IMF: stars merge only on contact; GALSF_MERGER_STARCLUSTER_PARTICLES merges by distance"
 #endif
