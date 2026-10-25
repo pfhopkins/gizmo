@@ -265,6 +265,7 @@ bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int defaul
  * file's NeighborLoopModeDThresholdMax raises this bound for a run.  Asked when a call is routed and again after every
  * iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
 static constexpr int MODE_D_MIN_ACTIVES_PER_RANK = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
+static int nlr_mode_d_rank_bound(void);
 
 /* Built-in Mode-B thresholds by search mode, used where neither the parameterfile
  * nor the Spec sets one.
@@ -301,7 +302,7 @@ void gizmo_nlr_report_dispatch_thresholds(void)
     symm_sum = gizmo_nlr_modeb_threshold_sum_for(nullptr, symm_sum);
     symm_max = gizmo_nlr_modeb_threshold_max_for(nullptr, symm_max);
     gizmo_nlr_moded_thresholds(&d_sum, &d_max);
-    const int d_rank_bound = (d_max > MODE_D_MIN_ACTIVES_PER_RANK) ? d_max : MODE_D_MIN_ACTIVES_PER_RANK;
+    const int d_rank_bound = nlr_mode_d_rank_bound();
     printf("Neighbor loops: Mode B at or below summed/per-rank-max active %d/%d (one-way), %d/%d (symmetric); "
            "eligible one-way loops use Mode D at or above %d summed with at least %d on the busiest rank, when routed and "
            "after every iteration (below that Mode B when it is on, else the usual path), Mode A otherwise\n",
@@ -312,9 +313,10 @@ void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max)
 {
     const int p_sum = nlr_host_all_ptr()->NeighborLoopModeDThresholdSum;
     const int p_max = nlr_host_all_ptr()->NeighborLoopModeDThresholdMax;
-    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the busiest rank reaches MODE_D_MIN_ACTIVES_PER_RANK. */
-    *threshold_sum = (p_sum == -1) ? 0 : p_sum;
-    *threshold_max = (p_max == -1) ? 0 : p_max;
+    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the busiest rank reaches MODE_D_MIN_ACTIVES_PER_RANK.
+     * Either output may be null when only the other is wanted. */
+    if(threshold_sum) {*threshold_sum = (p_sum == -1) ? 0 : p_sum;}
+    if(threshold_max) {*threshold_max = (p_max == -1) ? 0 : p_max;}
 }
 
 
@@ -2594,11 +2596,15 @@ static MPI_Op nlr_count_triple_op(void)
  * parameter file's per-rank bound (NeighborLoopModeDThresholdMax) when that is larger.  Asked when a call is routed,
  * and again after every iteration of an iterative Mode D call, whose converged actives drop out: a remainder below it
  * finishes on Mode B.  Collective input (a maximum over the ranks), so every rank answers alike. */
+static int nlr_mode_d_rank_bound(void)
+{
+    int threshold_max = 0;
+    gizmo_nlr_moded_thresholds(nullptr, &threshold_max);
+    return (threshold_max > MODE_D_MIN_ACTIVES_PER_RANK) ? threshold_max : MODE_D_MIN_ACTIVES_PER_RANK;
+}
 static bool nlr_mode_d_feeds_device(int max_active)
 {
-    int threshold_sum = 0, threshold_max = 0;
-    gizmo_nlr_moded_thresholds(&threshold_sum, &threshold_max);
-    return max_active >= MODE_D_MIN_ACTIVES_PER_RANK && max_active >= threshold_max;
+    return max_active >= nlr_mode_d_rank_bound();
 }
 
 template <typename Spec>
@@ -2610,8 +2616,8 @@ NlrMode nlr_select_mode(int sum_active, int max_active)
         return NlrMode::B;
     }
     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-        int TDS = 0, TDM = 0;   /* TDM is applied inside nlr_mode_d_feeds_device */
-        gizmo_nlr_moded_thresholds(&TDS, &TDM);
+        int TDS = 0;   /* the per-rank bound is nlr_mode_d_feeds_device's */
+        gizmo_nlr_moded_thresholds(&TDS, nullptr);
         if(sum_active > 0 && sum_active >= TDS) {
             if(nlr_mode_d_feeds_device(max_active)) {return NlrMode::D;}
             /* Busiest rank below Mode D's per-rank bound: Mode B, unless the parameter file has
@@ -5568,7 +5574,7 @@ struct NlrModeDBatch {
                 Reply &r = replies[kk - n_local];
                 r.origin_slot = env.origin_slot; r.origin_rank = env.origin_rank;
             };
-            if(queue) {gizmo_gpu_kernel_launch_async(*queue, Spec::loop_name, M, walk);}
+            if(queue) {gizmo_gpu_kernel_launch_async(*queue, Spec::loop_name, M, walk, __FILE__, __LINE__);}
             else {gizmo_gpu_kernel_launch(Spec::loop_name, M, walk);}
     }
 };
@@ -5879,13 +5885,19 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                         filling = (batch[other].state == 0) ? other : -1;
                         if(filling >= 0) {batch[filling] = Batch{}; batch[filling].state = 1; L.batch_segments[filling].clear();}
                     }
-                    if(overlap) {gx_mode_d_eval_event(running_batch >= 0 ? 1 + running_batch : 0).record(*eval_queue);}
+                    if(overlap && gx_mode_d_eval_event(running_batch >= 0 ? 1 + running_batch : 0).record(*eval_queue) != 0) {
+                        gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: a Mode D evaluation's completion could not be recorded",
+                                                       __FILE__, __LINE__, __FUNCTION__);
+                    }
                 } else if(idle && locals_in_chunks && locals_issued < N) {
                     const int c0 = locals_issued, m = ((long long) (N - c0) < local_chunk) ? N - c0 : (int) local_chunk;
                     NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, snapshot + c0, m, accums + c0, nullptr, 0, nullptr,
                                                   flags + MODE_D_FLAG_WALK, eval_queue);
                     running_locals = 1; locals_issued = c0 + m;
-                    gx_mode_d_eval_event(0).record(*eval_queue);
+                    if(gx_mode_d_eval_event(0).record(*eval_queue) != 0) {
+                        gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: a Mode D evaluation's completion could not be recorded",
+                                                       __FILE__, __LINE__, __FUNCTION__);
+                    }
                 }
                 /* (c') the running evaluation finished: a received batch's replies may go out only once its walk is known
                  * to be clean -- a batch whose walk raised an anomaly answers every segment as erroneous (the asking rank skips
@@ -5902,10 +5914,16 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                         running_locals = 0;
                         if(running_batch >= 0) {
                             const int b = running_batch;
-                            int walk_word = 0;
+                            int walk_word = 0, device_code = 0, device_line = 0;
                             mode_d_copy_async_to_host(copy_space, &walk_word, flags + MODE_D_FLAG_WALK, sizeof(int));
                             copy_space.fence("mode_d_batch_anomaly");
-                            if(walk_word) {
+                            const int device_stop = gizmo_gpu_consume_device_error(&device_code, &device_line);
+                            if(device_stop) {
+                                char reason[160];
+                                snprintf(reason, sizeof(reason), "a device kernel of a Mode D evaluation stopped (code %d, line %d)", device_code, device_line);
+                                gizmo_request_controlled_stop(device_code, reason, __FILE__, __LINE__, __FUNCTION__);
+                            }
+                            if(walk_word || device_stop) {
                                 for(ModeDCallLease::BatchSegment &g : L.batch_segments[b]) {g.status = 1;}
                                 if(!stop_code) {stop_code = 90001044; walk_anomaly = walk_word;}
                             }
@@ -5987,7 +6005,8 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     if(stop && stop_code) {
         printf("[%s] task %d: the device-resident exchange stopped (%s).\n", Spec::loop_name, me,
                stop_code == 90001042 ? "an export fill did not match its count"
-               : stop_code == 90001043 ? "a reply or segment did not match what was asked" : nlr_walk_anomaly_text(walk_anomaly));
+               : stop_code == 90001043 ? "a reply or segment did not match what was asked"
+               : walk_anomaly ? nlr_walk_anomaly_text(walk_anomaly) : "a device kernel of its evaluation stopped");
         fflush(stdout);
         endrun(stop_code);
     }
@@ -6605,9 +6624,9 @@ static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
 /* The end of a call's device iteration: at its last iteration, or where its remainder goes on to Mode B.  Every slot's
  * state comes off the device once, in segments through two slabs of the call's pinned staging, each segment's copy
  * running while the host works through the one before.  A slot that is still iterating goes back into the driver's
- * arrays, for Mode B to continue; every other slot has its result now and is handed straight to the Spec's writeback
- * (several host threads; the Spec writes only that active's own rows), and is marked in slot_state (2) so the call's
- * final writeback passes over it.  Nothing goes through the driver's own result arrays. */
+ * arrays (radius, scratch, latest result), for Mode B to continue or for the final writeback at max_iters; every other
+ * slot has its result now and is handed straight to the Spec's writeback (several host threads; the Spec writes only
+ * that active's own rows), and is marked in slot_state (2) so the call's final writeback passes over it. */
 template <typename Spec>
 static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsigned char>& slot_state)
 {
@@ -6668,6 +6687,7 @@ static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsig
             if(state[slot] == 1) {
                 drv.radii_uvm[0][slot] = rad[k];
                 drv.scratch_uvm[0][slot] = scr[k];
+                drv.accum_uvm[0][slot] = acc[k];   /* read by the final writeback if the call ends at max_iters */
                 continue;
             }
             if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {

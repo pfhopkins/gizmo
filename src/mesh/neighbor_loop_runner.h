@@ -2085,7 +2085,7 @@ bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int defaul
  * parameterfile nor the Spec sets one.  The symmetric sum scales with NTask. */
 void nlr_default_modeb_thresholds(int search_mode, int *threshold_sum, int *threshold_max);
 /* The Mode-D lower bounds (summed, per-rank max) from the parameterfile pair
- * NeighborLoopModeDThreshold{Sum,Max}; an unset bound is 0. */
+ * NeighborLoopModeDThreshold{Sum,Max}; an unset bound is 0.  Either output may be null. */
 void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max);
 
 /* The three ways the runner answers a neighbour query. */
