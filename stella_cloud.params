@@ -98,6 +98,12 @@ ShieldingLength                 0.050             % 50 pc shielding length
 %---- CHEMCOOL (CHEMCOOL + CHEMISTRYNETWORK=5)
 G0                              1.7               % initial Habing FUV field (Draine 1978)
 CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1], Milky-Way-like cloud value
+% ---- Stella CR (with COSMIC_RAY_FLUID; CosmicRayIonRate then unused) ----
+%CosmicRay_SNeFraction           0.1               % fraction of SN and fast-wind (>1000 km/s) ejecta energy into CRs
+%CosmicRayDiffusionCoeff         690               % required tag; unused by the variable-kappa model 7 (constant-kappa runs: kpc km/s, 690 = 2.1e29 cm^2/s)
+%CosmicRayInitialAmbient_eVcm3   1.0               % initial CR energy density below the threshold (Fitz Axen+24)
+%CosmicRayInitialCloud_eVcm3     0.1               % initial CR energy density in the cloud
+%CosmicRayInitialCloudThreshold_nH 10.0            % cloud/ambient split [cm^-3] (MakeCloud ambient is 1e-3 of the cloud)
 DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              1.0             % same as InitMetallicity

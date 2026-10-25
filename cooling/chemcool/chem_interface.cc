@@ -34,45 +34,17 @@
  * No COMMON block is written here.  The only Fortran call is CALC_TEMP,
  * a pure table lookup (init-time temp/gamma tables + explicit args only).
  * ========================================================================= */
-void chem_fill_inputs(int target, struct ChemInputs *in)
+#if defined(COSMIC_RAY_FLUID)
+static void chem_zeta_from_crfluid(int target, struct ChemInputs *in) /* zeta = 3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/Zsun radioactive; no CosmicRayIonRate floor */
 {
-    /* [orig chemcool.cc:155-170] local working variables (same roles) */
-    double rho, timestep, divv, energy, ekn;
-    double temp;
-    double yn, abh2, abhd, abco, abe;
-    double dl = in->dl_code;
-
-#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
-    double columni;
-#endif
-#ifdef RT_TREECOL_DUST_WEIGHTED
-    double NH;
-#endif
-#ifdef RT_TREECOL_H2_CO
-    double NH2, NCO;
-#endif
-    int i;
-
-    /* [orig chemcool.cc:173-177] cosmological redshift for the solver */
-    if(All.ComovingIntegrationOn) {
-        in->redshift = 1.0 / All.Time - 1.0;
-    } else {
-        in->redshift = 0.;
-    }
-    /* [orig chemcool.cc:178-181] density, timestep, physical velocity divergence */
-    rho      = CellP[target].Density * All.cf_a3inv;
-    timestep = in->dt_code;
-    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
-    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
-#if CHEMISTRYNETWORK == 20
-    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
-        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
-        double g = 0; int k;
-        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
-        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
-    }
+    double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP);
+    in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC + 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0];
+    in->cr_energy_density = ecr_cgs;
+}
 #endif
 
+void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/O/Si/N/M per H and Zmass, from the cell metals */
+{
     /* Per-particle element abundances for cooling rates.  28-slot layout:
      *   Met[0]=total Z, [1]=H (explicit), [2]=He, [MET_OF(k)] = element k for k>=ELEM_C.
      *   Σ Met[1..27] = 1 by construction. */
@@ -167,11 +139,58 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->abundsi = All.InitialMetallicity * 1.5e-5;
     in->abundM  = All.InitialMetallicity * CHEMCOOL_ABUNDM_SOLAR;
 #endif
+}
+
+void chem_fill_inputs(int target, struct ChemInputs *in)
+{
+    /* [orig chemcool.cc:155-170] local working variables (same roles) */
+    double rho, timestep, divv, energy, ekn;
+    double temp;
+    double yn, abh2, abhd, abco, abe;
+    double dl = in->dl_code;
+
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
+    double columni;
+#endif
+#ifdef RT_TREECOL_DUST_WEIGHTED
+    double NH;
+#endif
+#ifdef RT_TREECOL_H2_CO
+    double NH2, NCO;
+#endif
+    int i;
+
+    /* [orig chemcool.cc:173-177] cosmological redshift for the solver */
+    if(All.ComovingIntegrationOn) {
+        in->redshift = 1.0 / All.Time - 1.0;
+    } else {
+        in->redshift = 0.;
+    }
+    /* [orig chemcool.cc:178-181] density, timestep, physical velocity divergence */
+    rho      = CellP[target].Density * All.cf_a3inv;
+    timestep = in->dt_code;
+    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
+    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
+#if CHEMISTRYNETWORK == 20
+    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
+        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
+        double g = 0; int k;
+        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
+        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+    }
+#endif
+
+    chem_fill_gas_abundances(target, in);
     /* [orig chemcool.cc:267-270] */
     in->abundD  = All.DeutAbund;
     in->G0      = All.G0;
     in->G0_LW   = All.G0; /* default: LW = full FUV, overridden below if G0_VARIABLE */
+#if defined(COSMIC_RAY_FLUID)
+    chem_zeta_from_crfluid(target, in);
+    CellP[target].CR_ionization_rate = in->cosmic_ray_ion_rate;
+#else
     in->cosmic_ray_ion_rate = All.CosmicRayIonRate;
+#endif
 
     in->id_current = P[target].ID;   /* [orig chemcool.cc:272] (same int truncation as COOLIC.id_current) */
 
@@ -221,9 +240,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double g0 = DMAX(All.FactorG0 * All.G0, 0.324e-2);
         in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
 #if defined(COSMIC_RAY_FLUID)
-        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* transported CRs win over the SFR scaling */
-        in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC;
-        in->cr_energy_density = ecr_cgs;
+        chem_zeta_from_crfluid(target, in); /* transported CRs win over the SFR scaling */
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
 #endif
@@ -266,12 +283,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->G0_dust = G0_tot;
 
 #ifdef COSMIC_RAY_FLUID
-    { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
-        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
-        double ecr_eVcm3 = ecr_cgs / 1.602e-12; /* convert to [eV cm^-3] */
-        in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * ecr_eVcm3 / CR_ENDEN_SOLCIRC;
-        in->cr_energy_density = ecr_cgs; /* [erg cm^-3], for hadronic+Coulomb heating in cool_func */
-    }
+    chem_zeta_from_crfluid(target, in);
 #elif defined(CR_SCALE_WITH_G0)
     in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));
 #endif
@@ -377,9 +389,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            RADTRANSFER (mutually exclusive), so it MUST be replicated here — otherwise
            the network silently falls back to the fixed default CosmicRayIonRate. */
 #if defined(COSMIC_RAY_FLUID)
-        { double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
-          in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC; /* zeta from e_CR [eV cm^-3] */
-          in->cr_energy_density = ecr_cgs; }
+        chem_zeta_from_crfluid(target, in);
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));
 #endif
@@ -797,6 +807,7 @@ void chem_read_outputs(struct ChemOutputs *out)
 {
     int i;
     out->tdust = COOLRC.tdust;                            /* [orig chemcool.cc:924] */
+    out->cr_ion_heat = 0;                                 /* not tallied by the Fortran backend */
     for(i = 0; i < 28; i++) {out->lambda[i] = COOLRC.lambda[i];}                  /* [orig chemcool.cc:869-871,956-985] */
     for(i = 0; i < NRATES_CHEM; i++) {out->lambda_chem[i] = COOLRC.lambda_chem[i];}  /* [orig chemcool.cc:875-877] */
 #ifdef OUTPUT_SHIELD_FAC

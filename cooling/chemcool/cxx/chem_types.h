@@ -293,6 +293,8 @@ struct ChemCell {
     double dust_to_gas_ratio;
     double cosmic_ray_ion_rate;
     double cr_energy_density;
+    double cr_ion_heat;       // CR ionisation heating of the last RHS evaluation [erg cm^-3 s^-1]
+    double cr_ion_heat_int;   // CR ionisation heating integrated over the accepted solve [erg cm^-3]
     double redshift;
     double AV_ext;
 

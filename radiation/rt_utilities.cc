@@ -1311,9 +1311,13 @@ void rt_set_simple_inits(int RestartFlag)
 #ifdef RT_CHEM_PHOTOION
             if(flag_to_reset_values_on_startup)
             {
+#ifdef CHEMCOOL
+                {double xHII, xHI; CellP[i].Ne = chemcool_startup_electrons(i, &xHII, &xHI); CellP[i].HII = DMAX(xHII, MIN_REAL_NUMBER); CellP[i].HI = xHI;} /* start from the chemistry abundances, not fully neutral */
+#else
                 CellP[i].HII = MIN_REAL_NUMBER;
                 CellP[i].HI = 1.0 - CellP[i].HII;
                 CellP[i].Ne = CellP[i].HII;
+#endif
 #ifdef RT_CHEM_PHOTOION_HE
                 double fac = (1-HYDROGEN_MASSFRAC) / (4.0 * HYDROGEN_MASSFRAC);
                 CellP[i].HeIII = MIN_REAL_NUMBER * fac;

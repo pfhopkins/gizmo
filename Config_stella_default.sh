@@ -63,15 +63,17 @@ MHD_B_SET_IN_PARAMS
 #RT_SPEEDOFLIGHT_REDUCTION=0.1   % reduced speed of light (10% of c; 0.003 too slow, 0.1 standard)
 #RT_RAD_PRESSURE_FORCES          % radiation pressure on gas
 
-## -- Cosmic ray fluid (alternative to CR_SCALE_WITH_G0) --
-## When enabling, comment out: CR_SCALE_WITH_G0
+## -- Stella CR: one setting for clouds and galaxies (CR fluid on for production, off for cheap smoke tests) --
+## Fluid on: comment out CR_BACKGROUND_IONRATE_ATTENUATED and CR_SCALE_WITH_G0 (zeta then comes from the CR fluid only) and set the Stella CR params.
+## Sources: subgrid SN and fast-wind (>1000 km/s) injection of CosmicRay_SNeFraction of the ejecta energy; resolved shocks are not relied upon.
+## Transport runs along B (no isotropic fallback at B = 0, setups carry a field); P dV-only CR-gas exchange is automatic.
+## Initial state is per setup: cloud boxes CosmicRayInitialAmbient/Cloud_eVcm3 (Fitz Axen+24: 1 / 0.1), galaxies start at zero.
 #COSMIC_RAY_FLUID
-#CRFLUID_DIFFUSION_MODEL=0       % constant diffusivity (set CosmicRayDiffusionCoeff in params)
-#CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s CR transport speed (non-FIRE default is c); transport runs along B; no isotropic fallback at B = 0 (Stella setups always carry a field)
-#CR_BACKGROUND_IONRATE_ATTENUATED % chemistry zeta = CosmicRayIonRate x f(TreeCol N_H, STARFORGE) [+ zeta(e_CR)]; no background CR energy or pressure
-#CRFLUID_EXCHANGE_PDV_ONLY        % on by default in Stella with COSMIC_RAY_FLUID: CRs exchange only their P dV work
-#CRFLUID_INJECTION_AT_SHOCKS=(0.1) % opt-in: resolved shock acceleration (efficiency CosmicRay_ShockAccelEfficiency); Stella CRs come from subgrid SN/wind injection
-#INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (CR transport tests; default zeroes it)
+#CRFLUID_DIFFUSION_MODEL=7       % variable kappa: self-confinement (streaming instability vs ion-neutral damping) + extrinsic turbulence (Hopkins+21), as Fitz Axen+24 DVAR
+#CRFLUID_SPEEDOFLIGHT_REDUCTION=(3.e7/C_LIGHT_CGS) % Stella default with COSMIC_RAY_FLUID: 300 km/s CR transport speed (set here only to override)
+#CR_BACKGROUND_IONRATE_ATTENUATED % CR fluid OFF only: chemistry zeta = CosmicRayIonRate x STARFORGE column attenuation (TreeCol N_H); no CR energy or pressure
+#CRFLUID_INJECTION_AT_SHOCKS=(0.1) % opt-in, not relied upon: resolved shock acceleration (CosmicRay_ShockAccelEfficiency)
+#INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (transport tests)
 #CHEMCOOL_KEEP_IC_ABUNDANCES     % keep ChemcoolTracAbund from the IC on fresh starts (molecular cloud ICs; default zeroes it)
 
 ## -- Turbulent metal diffusion --

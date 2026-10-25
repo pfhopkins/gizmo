@@ -406,6 +406,9 @@ void begrun(void)
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE) || defined(COSMIC_RAY_FLUID) /* 2026-07-04: match the tag registration guard */
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+        All.CosmicRayInitialAmbient_eVcm3 = all.CosmicRayInitialAmbient_eVcm3; All.CosmicRayInitialCloud_eVcm3 = all.CosmicRayInitialCloud_eVcm3; All.CosmicRayInitialCloudThreshold_nH = all.CosmicRayInitialCloudThreshold_nH;
+#endif
 #if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
         All.CosmicRay_ShockAccelEfficiency = all.CosmicRay_ShockAccelEfficiency;
 #endif
@@ -838,7 +841,11 @@ void open_outputfiles(void)
       fprintf(FdENERGYinfo,"%s   (18) E_CR_shock_cumul[erg] (CR energy injected at shocks)\n",prefix_char);
 #endif
 #ifdef MAGNETIC
-      fprintf(FdENERGYinfo,"%s   (last) E_B[erg] magnetic energy, not in (8)\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   then E_B[erg] magnetic energy (not in (8)), E_floor_cumul[erg] (kick u-limiter du > -u/2 and MinGasTemp floor), E_MHD_num_cumul[erg] (Powell/Dedner terms and the -B^2/2 dV/dt the u-equation omits)\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   residual = (8)+E_B-[t=0] + (9) - (12) + (14) - E_floor_cumul - E_MHD_num_cumul (+ CR terms with COSMIC_RAY_FLUID)\n",prefix_char);
+#endif
+#ifndef MAGNETIC
+      fprintf(FdENERGYinfo,"%s   (last) E_floor_cumul[erg] kick u-limiter (du > -u/2) and MinGasTemp floor; residual = (8)-(8)[0]+(9)-(12)+(14)-(last)\n",prefix_char);
 #endif
   }
 #endif
@@ -1458,6 +1465,11 @@ void read_parameter_file(char *fname)
         strcpy(alternate_tag[nt], "CosmicRay_SNeEnergyFraction");
         addr[nt] = &All.CosmicRay_SNeFraction;
         id[nt++] = REAL;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+        strcpy(tag[nt], "CosmicRayInitialAmbient_eVcm3"); strcpy(alternate_tag[nt], "-"); addr[nt] = &All.CosmicRayInitialAmbient_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloud_eVcm3"); strcpy(alternate_tag[nt], "-"); addr[nt] = &All.CosmicRayInitialCloud_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloudThreshold_nH"); strcpy(alternate_tag[nt], "-"); addr[nt] = &All.CosmicRayInitialCloudThreshold_nH; id[nt++] = REAL;
 #endif
 #if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
         strcpy(tag[nt], "CosmicRay_ShockAccelEfficiency");
@@ -2385,9 +2397,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G0;
       id[nt++] = REAL;
 
+#if !defined(COSMIC_RAY_FLUID) /* with the CR fluid, zeta comes from e_CR only: the tag is reported as ignored */
       strcpy(tag[nt], "CosmicRayIonRate");
       addr[nt] = &All.CosmicRayIonRate;
       id[nt++] = REAL;
+#endif
 
       strcpy(tag[nt], "DGRnormalized");
       addr[nt] = &All.DGRnormalized;
@@ -2890,6 +2904,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
                 if(strcmp("CosmicRay_ShockAccelEfficiency",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s not set in parameter file: CR acceleration at shocks takes 10 percent of the dissipated energy flux (=0.1) \n",tag[i]); continue;}
+                if(strcmp("CosmicRayInitialAmbient_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloud_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloudThreshold_nH",tag[i])==0) {*((double *)addr[i])=10.; continue;}
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)

@@ -587,6 +587,9 @@ extern struct global_data_all_processes
 
 #if defined(COSMIC_RAY_FLUID) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION) /* complement of the FIRE declaration; begrun registers it under COSMIC_RAY_FLUID */
   double CosmicRay_SNeFraction;   /*!< fraction of SN energy injected as CRs (typically 0.1) */
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+  double CosmicRayInitialAmbient_eVcm3, CosmicRayInitialCloud_eVcm3, CosmicRayInitialCloudThreshold_nH; /*!< Stella: initial CR energy density [eV cm^-3] below/above the nH threshold [cm^-3] on fresh starts */
+#endif
 #if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
   double CosmicRay_ShockAccelEfficiency; /*!< Stella: fraction of the dissipated shock energy flux into CRs (default 0.1) */
 #endif

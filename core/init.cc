@@ -1031,6 +1031,14 @@ void init(void)
         CellP[i].B = CellP[i].BPred * (P[i].Mass / CellP[i].Density); // convert to the conserved unit V*B //
         CellP[i].BPred = CellP[i].B; CellP[i].DtB = {}; CellP[i].BField_prerefinement = {};
 #endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+        if(RestartFlag == 0 && (All.CosmicRayInitialAmbient_eVcm3 > 0 || All.CosmicRayInitialCloud_eVcm3 > 0)) { /* Stella: initial CR background from a density split (cloud boxes; galaxies start at zero) */
+            double nH_init = CellP[i].nHcgs();
+            double e_eVcm3 = (nH_init >= All.CosmicRayInitialCloudThreshold_nH) ? All.CosmicRayInitialCloud_eVcm3 : All.CosmicRayInitialAmbient_eVcm3;
+            double e_code = e_eVcm3 * 1.602e-12 / UNIT_PRESSURE_IN_CGS * P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+            for(k=0;k<N_CR_PARTICLE_BINS;k++) {CellP[i].CosmicRayEnergy[k] = e_code / N_CR_PARTICLE_BINS;}
+        }
+#endif
 #ifdef COSMIC_RAY_FLUID
         for(k=0;k<N_CR_PARTICLE_BINS;k++)
         {
