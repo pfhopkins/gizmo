@@ -919,9 +919,9 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         /* damage and porosity are integrated history, not diagnostics: they cannot be recomputed
-         * from the other fields, so a snapshot restart has to read them back (init.cc initializes
-         * them only on a fresh start). A snapshot written without these datasets arrives as zeros;
-         * the distention floor in init.cc restores the material default in that case. */
+         * from the other fields, so a snapshot restart has to read them back, and an HDF5 IC may set
+         * them (init.cc initializes them on a fresh binary-IC start). A file written without these
+         * datasets arrives as zeros; the distention floor in init.cc restores the material default. */
         case IO_DAMAGE_POROSITY_DAMAGE:
 #ifdef EOS_DAMAGE_POROSITY
             for(n = 0; n < pc; n++) {CellP[offset + n].Damage = *fp++;}
@@ -1331,6 +1331,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #ifdef EOS_ELASTIC
                    && blocknr != IO_EOS_STRESS_TENSOR
 #endif
+#ifdef EOS_DAMAGE_POROSITY
+                   && blocknr != IO_DAMAGE_POROSITY_DAMAGE && blocknr != IO_DAMAGE_POROSITY_DISTENTION && blocknr != IO_DAMAGE_POROSITY_ACTVCRACKS
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
                    && blocknr != IO_PARTVEL
 #endif
@@ -1394,6 +1397,9 @@ int read_file(char *fname, int readTask, int lastTask)
             
 #ifdef EOS_ELASTIC
             if(blocknr == IO_EOS_STRESS_TENSOR && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* a fresh binary IC need not carry it (stress then starts from zero); snapshots of every format do */
+#endif
+#ifdef EOS_DAMAGE_POROSITY
+            if((blocknr == IO_DAMAGE_POROSITY_DAMAGE || blocknr == IO_DAMAGE_POROSITY_DISTENTION || blocknr == IO_DAMAGE_POROSITY_ACTVCRACKS) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* likewise: an HDF5 IC may set them (e.g. a porous body), a fresh binary IC does not carry them */
 #endif
 #ifdef MHD_NON_IDEAL_EVOLVED_FLUX
             if(blocknr == IO_NONIDEAL_FLUX && All.ICFormat != 3) {continue;} /* HDF5 only: legacy binary formats never carry it (it starts from zero) */

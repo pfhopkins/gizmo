@@ -1,8 +1,9 @@
-/* damage_porosity_functions.h -- damage and P-alpha porosity rate
- * equations and yield-criterion modifier. Body guarded by EOS_DAMAGE_POROSITY
- * (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi 2008).
+/* damage_porosity_functions.h -- the damage rate equation and the yield-criterion
+ * modifier. Body guarded by EOS_DAMAGE_POROSITY (bit 0 Grady-Kipp, bit 1
+ * Drucker-Prager). The P-alpha porosity update (bit 2) lives with the Tillotson
+ * pressure it modifies (declarations/cell_data.h; crush curve in jutzi_crush_curve.h).
  *
- * The per-material parameters (Weibull k and m, Drucker-Prager mu, alpha_0, P_e, P_s) come
+ * The per-material parameters (Weibull k and m, Drucker-Prager mu) come
  * from solid_material_of(CompositionType) (declarations/allvars.h, eos/composition_registry.h).
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -13,7 +14,6 @@
 
 #include <math.h>
 #include "../declarations/allvars.h"
-#include "jutzi_crush_curve.h"
 
 #ifdef EOS_DAMAGE_POROSITY
 /* KOKKOS_INLINE_FUNCTION fallback: GPU TUs (cooling.cc et al.) already include
@@ -33,35 +33,6 @@ int damage_porosity_bit_active(int bit_index)
 {
     return ((EOS_DAMAGE_POROSITY) >> bit_index) & 1;
 }
-
-/* ---------------------------------------------------------------------------
- * bit 2: P-alpha porosity (Jutzi 2008 quadratic crush curve)
- *
- * Returns the irreversible-monotone distention alpha given current matrix
- * pressure P_solid (i.e. the Tillotson/ANEOS pressure evaluated at matrix
- * density rho_s = alpha*rho), the previous distention alpha_prev, and the
- * cell's CompositionType. Compaction is one-way: alpha never grows.
- * ---------------------------------------------------------------------------*/
-KOKKOS_INLINE_FUNCTION
-double distention_jutzi_palpha_update(double alpha_prev, double P_solid,
-                                      int composition_type)
-{
-    const struct solid_material &mat = solid_material_of(composition_type);
-    double alpha_0 = mat.InitialDistention;
-    double P_e     = mat.CrushPressureElastic;
-    double P_s     = mat.CrushPressureSolid;
-    double alpha_eq = jutzi_distention_eq8(P_solid, alpha_0, P_e, P_s);
-    double alpha_new = (alpha_eq < alpha_prev) ? alpha_eq : alpha_prev;
-    if(alpha_new < 1.0) { alpha_new = 1.0; }
-    return alpha_new;
-}
-
-/* Convenience: is bit 2 (P-alpha porosity) requested for this build? */
-#if ((EOS_DAMAGE_POROSITY) & 4)
-#define DAMAGE_POROSITY_BIT_PALPHA 1
-#else
-#define DAMAGE_POROSITY_BIT_PALPHA 0
-#endif
 
 /* ---------------------------------------------------------------------------
  * bit 1: Drucker-Prager pressure-dependent yield extension
@@ -88,7 +59,10 @@ double apply_drucker_prager(double Y0, double P_hydro, int composition_type)
 #endif
 
 /* ---------------------------------------------------------------------------
- * bit 0: Grady-Kipp scalar damage (Benz & Asphaug 1995 Eq. 3-6)
+ * bit 0: simplified Grady-Kipp scalar damage. It follows the sphere-of-cracks form of
+ * Benz & Asphaug 1995, but the cracks grow in every particle from the start, flaws are
+ * activated by the shear-strain proxy below rather than the tensile strain, and the flaw
+ * population is not normalised per particle, so its thresholds differ from that model.
  *
  * Each particle tracks an effective crack radius ActiveCracks [code length].
  * At each kick step:

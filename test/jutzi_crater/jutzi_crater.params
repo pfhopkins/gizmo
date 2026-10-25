@@ -1,12 +1,9 @@
 % Jutzi cratering smoke test (CGS units)
-% Basalt impactor into basalt target, 3 km/s impact.
-% CompositionType=2 (basalt) for all particles; per-material Tillotson params
-% are loaded from the built-in table via tillotson_eos_init() into slots [2][*].
-% Slot [0][*] (below) is the fallback / required universal set; we populate it
-% with basalt values since GIZMO requires these tags.  All values in code units
-% (UnitLength=UnitMass=UnitVelocity=1 => code units = CGS here).
+% Basalt projectile into a basalt target (both CompositionType 2, the basalt preset), 3 km/s impact.
+% The custom material (CompositionType 0) below is unused but its Tillotson tags are required; basalt values.
+% All values in code units (UnitLength=UnitMass=UnitVelocity=1 => code units = CGS here).
 
-% Tillotson EOS params for slot [0] (universal fallback, basalt values in CGS=code)
+% Custom material (CompositionType 0): Tillotson basalt EOS, shear modulus and yield strength
 Tillotson_EOS_params_a          0.5
 Tillotson_EOS_params_b          1.5
 Tillotson_EOS_params_u_0        4.87e12
@@ -24,8 +21,8 @@ InitCondFile                       jutzi_crater_ics
 OutputDir                          output
 SnapshotFileBase                   snapshot
 
-TimeMax                            1.0e-5
-TimeBetSnapshot                    5.0e-6
+TimeMax                            1.2e-5
+TimeBetSnapshot                    3.0e-6
 TimeBegin                          0.0
 OutputListOn                       0
 
@@ -41,7 +38,7 @@ MaxNumNgbDeviation                 0.1
 ErrTolForceAcc                     0.001
 ErrTolTheta                        0.7
 
-TimeBetStatistics                  5.0e-6
+TimeBetStatistics                  3.0e-6
 
 ResubmitOn                         0
 ResubmitCommand                    none
