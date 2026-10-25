@@ -274,6 +274,7 @@ KOKKOS_INLINE_FUNCTION static int density_is_coupling_source_type(int type)
 struct DensitySpec {
     /* Identity */
     static constexpr const char *loop_name = "density";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* the iterative writeback writes only this active's rows of Aux */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics -> threaded eval bit-identical */
 
     /* Search policy: legacy density CSR builder uses NGB_SEARCH_ONEWAY

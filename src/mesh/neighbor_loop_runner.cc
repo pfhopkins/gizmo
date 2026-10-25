@@ -3336,7 +3336,8 @@ template <typename Spec>
 struct nlr_spec_has_after_iter_device<Spec, std::void_t<decltype(&Spec::after_iter_device)>> : std::true_type {};
 template <typename Spec>
 constexpr bool nlr_mode_d_iterates_on_device_v =
-    nlr_spec_has_after_iter_device<Spec>::value && !nlr_spec_has_after_iter_global_v<Spec> && !nlr_supports_subgroups<Spec>::value;
+    nlr_spec_has_after_iter_device<Spec>::value && !nlr_spec_has_after_iter_global_v<Spec> && !nlr_supports_subgroups<Spec>::value &&
+    nlr_spec_writeback_writes_only_own_particle_v<Spec>;
 
 template <typename Spec>
 static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active)
@@ -6542,20 +6543,83 @@ static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
     });
 }
 
+/* The end of a call's device iteration: at its last iteration, or where its remainder goes on to Mode B.  Every slot's
+ * state comes off the device once, in segments through two slabs of the call's pinned staging, each segment's copy
+ * running while the host works through the one before.  A slot that is still iterating goes back into the driver's
+ * arrays, for Mode B to continue; every other slot has its result now and is handed straight to the Spec's writeback
+ * (several host threads; the Spec writes only that active's own rows), and is marked in slot_state (2) so the call's
+ * final writeback passes over it.  Nothing goes through the driver's own result arrays. */
 template <typename Spec>
-static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv)
+static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsigned char>& slot_state)
 {
+    using AccumData   = typename Spec::AccumData;
+    using IterScratch = typename Spec::IterScratch;
     ModeDCallLease &L = *drv.mode_d_lease;
     if(!L.iter_on) {return;}
     L.iter_on = 0;
-    const int n_all = drv.args.subgroups[0].num_active_local;
-    if(n_all > 0 && drv.radii_uvm[0]) {
-        mode_d_copy_to_host(drv.radii_uvm[0], L.iter_slot_radius, (size_t) n_all * sizeof(double));
-        mode_d_copy_to_host(drv.scratch_uvm[0], L.iter_slot_scratch, (size_t) n_all * sizeof(typename Spec::IterScratch));
-        mode_d_copy_to_host(drv.accum_uvm[0], L.iter_slot_accum, (size_t) n_all * sizeof(typename Spec::AccumData));
-        mode_d_copy_to_host(drv.active_set_uvm[0], L.iter_live[L.iter_which], (size_t) L.iter_n_live * sizeof(int));
+    const int n_all = drv.args.subgroups[0].num_active_local, n_live = L.iter_n_live;
+    drv.active_set_size[0] = n_live;
+    if(n_all <= 0 || !drv.radii_uvm[0]) {return;}
+    /* which slots are still iterating */
+    slot_state.assign((size_t) n_all, 0);
+    if(n_live > 0) {
+        mode_d_copy_to_host(drv.active_set_uvm[0], L.iter_live[L.iter_which], (size_t) n_live * sizeof(int));
+        for(int k = 0; k < n_live; k++) {slot_state[(size_t) drv.active_set_uvm[0][k]] = 1;}
     }
-    drv.active_set_size[0] = L.iter_n_live;
+    /* a segment: its slots' results, then radii, then scratch, each part on a 64-byte boundary */
+    auto up64 = [](size_t b) {return (b + 63) & ~(size_t) 63;};
+    const size_t per_slot = sizeof(AccumData) + sizeof(double) + sizeof(IterScratch);
+    int seg_slots = (int) ((GX_MODE_D_STAGING_SLAB_BYTES - 3 * 64) / per_slot);
+    if(seg_slots > n_all) {seg_slots = n_all;}
+    const size_t off_radius = up64((size_t) seg_slots * sizeof(AccumData));
+    const size_t off_scratch = off_radius + up64((size_t) seg_slots * sizeof(double));
+    char *slab[2] = {gx_mode_d_staging_slab(GX_MODE_D_REPLIES_IN, 0), gx_mode_d_staging_slab(GX_MODE_D_REPLIES_IN, 1)};
+    const Kokkos::DefaultExecutionSpace &copy_space = gx_mode_d_copy_space();
+    const AccumData *dev_accum = (const AccumData *) L.iter_slot_accum;
+    const double *dev_radius = L.iter_slot_radius;
+    const IterScratch *dev_scratch = (const IterScratch *) L.iter_slot_scratch;
+    auto issue = [&](int seg) {
+        const int s0 = seg * seg_slots, m = (n_all - s0 < seg_slots) ? n_all - s0 : seg_slots;
+        char *b = slab[seg & 1];
+        mode_d_copy_async_to_host(copy_space, b, dev_accum + s0, (size_t) m * sizeof(AccumData));
+        mode_d_copy_async_to_host(copy_space, b + off_radius, dev_radius + s0, (size_t) m * sizeof(double));
+        mode_d_copy_async_to_host(copy_space, b + off_scratch, dev_scratch + s0, (size_t) m * sizeof(IterScratch));
+    };
+    neighbor_loop_args sub = drv.args;
+    sub.active_list = drv.args.subgroups[0].active_indices;
+    sub.num_active  = n_all;
+    const int *active_indices = drv.args.subgroups[0].active_indices;
+    const int n_seg = (n_all + seg_slots - 1) / seg_slots;
+    const int nthreads = nlr_modeb_omp_nthreads();
+    issue(0);
+    copy_space.fence("mode_d_iteration_end_segment");
+    for(int seg = 0; seg < n_seg; seg++) {
+        if(seg + 1 < n_seg) {issue(seg + 1);}   /* into the other slab, while this one is read */
+        const int s0 = seg * seg_slots, m = (n_all - s0 < seg_slots) ? n_all - s0 : seg_slots;
+        const char *b = slab[seg & 1];
+        const AccumData *acc = (const AccumData *) b;
+        const double *rad = (const double *) (b + off_radius);
+        const IterScratch *scr = (const IterScratch *) (b + off_scratch);
+        unsigned char *state = slot_state.data();
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) num_threads(nthreads) if(nlr_modeb_use_omp(m, nthreads))
+#endif
+        for(int k = 0; k < m; k++) {
+            const int slot = s0 + k;
+            if(state[slot] == 1) {
+                drv.radii_uvm[0][slot] = rad[k];
+                drv.scratch_uvm[0][slot] = scr[k];
+                continue;
+            }
+            if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
+                Spec::apply_active_writeback_iterative(sub, slot, active_indices[slot], acc[k], rad[k], scr[k]);
+            } else {
+                Spec::apply_active_writeback(sub, slot, active_indices[slot], acc[k]);
+            }
+            state[slot] = 2;
+        }
+        copy_space.fence("mode_d_iteration_end_segment");
+    }
 }
 
 /* One iteration's exchange, the queries and results staying on the device. */
@@ -6852,6 +6916,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * (destructors run in reverse): the raise sees the final velocities. */
     NlrMotionTargetScope<Spec> motion_target_scope;
     NlrIterDriver<Spec> drv(args, cs);
+    /* Per slot of a device-iterated call, at the end of its device iteration: 1 still iterating, 2 written back. */
+    std::vector<unsigned char> device_written;
 
     /* ===== Path-specific DeviceContext init =====
      * Mode B: bind ctx.P=args.P/CellP directly (no arena).
@@ -7227,7 +7293,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * the same context.  With Mode B switched off the call stays on Mode D, as it was routed. */
         if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
             nlr_mode_b_switched_on<Spec>()) {
-            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv);}   /* Mode B reads the host's copy */
+            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}   /* Mode B reads the host's copy */
             mode_d_lease.release();
             drv.mode_d_lease = nullptr;
             path = DispatchPath::ModeB_HostWalker;
@@ -7238,9 +7304,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         }
     }
 
-    /* A call that iterated on the device to its end: the state back to the host's copy, which the writeback reads. */
+    /* A call that iterated on the device to its end: every result written back from the device's copy. */
     if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
-        if(drv.mode_d_lease && !drv.mode_d_lease->stopped) {nlr_mode_d_iteration_end<Spec>(drv);}
+        if(drv.mode_d_lease && !drv.mode_d_lease->stopped) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}
     }
 
     /* ===== Max-iter exceeded check (matches legacy density / ags_density endrun(1155)) ===== */
@@ -7276,6 +7342,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         sub.active_list = sgr.active_indices;
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
+            if (sg == 0 && !device_written.empty() && device_written[(size_t) slot] == 2) continue;   /* written at the device iteration's end */
             int i = sgr.active_indices[slot];
             /* If Spec opts into the iterative-variant hook, route the
              * converged radius + IterScratch through it. Specs that don't

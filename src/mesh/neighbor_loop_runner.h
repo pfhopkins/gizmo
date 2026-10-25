@@ -766,6 +766,20 @@ struct nlr_spec_accepts_wider_neighbor_list<Spec, std::void_t<decltype(Spec::acc
 template <typename Spec>
 constexpr bool nlr_spec_accepts_wider_neighbor_list_v = nlr_spec_accepts_wider_neighbor_list<Spec>::value;
 
+/* Optional Spec::writeback_writes_only_own_particle: apply_active_writeback(args, slot, i, accum) (or its iterative
+ * form) writes nothing but particle i's own fields, its own row of any caller-owned per-particle array, and its own
+ * accumulator, and reads no other particle's state that another active's writeback writes.  The large-N host
+ * writeback can then run on several threads, and in any order, since no two actives touch the same memory.  Set it
+ * only after reading every write in the writeback body.  Absent means false: the writeback runs serially in active
+ * order. */
+template <typename Spec, typename = void>
+struct nlr_spec_writeback_writes_only_own_particle : std::false_type {};
+template <typename Spec>
+struct nlr_spec_writeback_writes_only_own_particle<Spec, std::void_t<decltype(Spec::writeback_writes_only_own_particle)>>
+    : std::integral_constant<bool, Spec::writeback_writes_only_own_particle> {};
+template <typename Spec>
+constexpr bool nlr_spec_writeback_writes_only_own_particle_v = nlr_spec_writeback_writes_only_own_particle<Spec>::value;
+
 /* RAII cleanup guard for the runner's DeviceContext. Construct one right
  * after Spec::populate_device_context returns; destruction at function exit
  * (any path) conditionally invokes Spec::cleanup_device_context if the Spec

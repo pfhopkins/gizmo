@@ -89,6 +89,7 @@ struct DMDispNeighborData {
 struct DMDispersionSpec {
     /* Identity */
     static constexpr const char *loop_name = "dm_dispersion";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* the iterative writeback writes only this active's rows of Aux */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics -> threaded eval bit-identical */
 
     /* Search policy: one-way (gas i → DM j only; no j-side writes). */
