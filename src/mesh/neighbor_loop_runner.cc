@@ -5471,7 +5471,8 @@ struct NlrModeDBatch {
     static void evaluate(const typename Spec::DeviceContext& ctx, const typename Spec::CallScalars& cs,
                          const GxDeviceTreeView& tree, unsigned int neighbor_type_mask,
                          const ActiveData *locals, int n_local, AccumData *local_accums,
-                         const Envelope *received, int K, Reply *replies, int *anomaly)
+                         const Envelope *received, int K, Reply *replies, int *anomaly,
+                         const Kokkos::DefaultExecutionSpace *eval_space = nullptr)
     {
         using ScatterData = typename Spec::ScatterData;
         static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
@@ -5522,12 +5523,15 @@ struct NlrModeDBatch {
             }
         }
         if(packets_ran && !replay) {return;}   /* every packet completed */
+        /* The flat walk goes on the evaluation queue, unfenced, only when no packet ran before it: packet batches run to
+         * completion on the default queue, and so does a replay after them. */
+        const Kokkos::DefaultExecutionSpace *queue = packets_ran ? nullptr : eval_space;
         if(leaf_mirror.pos && leaf_mirror.type) {
             flat<true>(ctx, cs, tree, neighbor_type_mask, locals, n_local, local_accums, received, K, replies, anomaly,
-                       replay, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict);
+                       replay, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict, queue);
         } else {
             flat<false>(ctx, cs, tree, neighbor_type_mask, locals, n_local, local_accums, received, K, replies, anomaly,
-                        replay, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict);
+                        replay, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict, queue);
         }
     }
 
@@ -5538,11 +5542,12 @@ struct NlrModeDBatch {
                      const ActiveData *locals, int n_local, AccumData *local_accums,
                      const Envelope *received, int K, Reply *replies, int *anomaly, const int *replay,
                      const struct GxMotionTargetSet &motion_targets, const GxLeafMirrorView &leaf_mirror,
-                     const struct GxTouchedSet &mass_verdicts, int use_mass_verdict)
+                     const struct GxTouchedSet &mass_verdicts, int use_mass_verdict,
+                     const Kokkos::DefaultExecutionSpace *queue)
     {
         using ScatterData = typename Spec::ScatterData;
         const int M = n_local + K;
-            gizmo_gpu_kernel_launch(Spec::loop_name, M, KOKKOS_LAMBDA(int kk) {
+            const auto walk = KOKKOS_LAMBDA(int kk) {
                 if(replay && !replay[kk]) {return;}   /* its packet completed: that result stands */
                 const ActiveData &a = (kk < n_local) ? locals[kk] : received[kk - n_local].active;
                 /* The result accumulates in place, in this query's own output (one writer per slot): nothing the size of an
@@ -5562,7 +5567,9 @@ struct NlrModeDBatch {
                 const Envelope &env = received[kk - n_local];
                 Reply &r = replies[kk - n_local];
                 r.origin_slot = env.origin_slot; r.origin_rank = env.origin_rank;
-            });
+            };
+            if(queue) {gizmo_gpu_kernel_launch_async(*queue, Spec::loop_name, M, walk);}
+            else {gizmo_gpu_kernel_launch(Spec::loop_name, M, walk);}
     }
 };
 
@@ -5791,12 +5798,24 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                 while(out_peer < nt && (out_peer == me || out_index >= X.segments_to(out_peer))) {out_peer++; out_index = 0;}
                 return out_peer < nt;
             };
-            /* the batches of received queries: one being filled, and those whose replies are still going out, in order */
-            struct Batch {int records = 0, segments_sent = 0, state = 0;};   /* state 0 free, 1 filling, 2 answered */
+            /* the batches of received queries: one being filled, one being evaluated, and those whose replies are still going
+             * out, in order */
+            struct Batch {int records = 0, segments_sent = 0, state = 0;};   /* state 0 free, 1 filling, 3 evaluating, 2 answered */
             Batch batch[2];
             int filling = 0, answered_order[2] = {-1, -1}, n_answered = 0;
             batch[0].state = 1; L.batch_segments[0].clear(); L.batch_segments[1].clear();
             Stream::Segment held{}; int have_held = 0;
+            /* What is being evaluated: nothing, received batch 0 or 1, or a chunk of this rank's own queries (with the batch
+             * when they share one launch).  One evaluation at a time.  For a Spec whose evaluation writes only its own
+             * queries' results (ModeBEvalOMP::BitwiseReadonly) it runs on the evaluation queue while this loop keeps the
+             * transport moving, received work goes before this rank's own, and this rank's own queries go in chunks of one
+             * batch when they are more than one batch; otherwise every evaluation completes before the loop continues, in
+             * today's order, with the queries riding the first batch. */
+            constexpr bool overlap = (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly);
+            const Kokkos::DefaultExecutionSpace *eval_queue = overlap ? &gx_mode_d_eval_space() : nullptr;
+            const long long local_chunk = gizmo_gpu_lane_count() > S ? gizmo_gpu_lane_count() : (long long) S;
+            const bool locals_in_chunks = overlap && !locals_done && (long long) N > local_chunk;
+            int running_batch = -1, running_locals = 0, locals_issued = locals_done ? N : 0;
             while(1) {
                 X.progress();
                 /* (a) queries out, as staging slots free: the copies into every free slot are issued, the copy queue is fenced
@@ -5840,22 +5859,59 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                     }
                     if(copied) {copy_space.fence("mode_d_query_segments_in"); for(int c = 0; c < copied; c++) {X.release(Stream::QUERIES_IN, copied_slot[c]);}}
                 }
-                /* (c) a batch of received queries when it is full or nothing more is coming this round, with this rank's
-                 * own queries in the first (alone, when nothing is coming) */
+                /* (c) an evaluation, when none is running: a batch of received queries when it is full or nothing more is
+                 * coming this round (this rank's own queries in it, unless they go in chunks), else the next chunk of this
+                 * rank's own queries */
+                const bool idle = (running_batch < 0 && !running_locals);
                 const bool batch_full = (filling >= 0) &&
                     (have_held || batch[filling].records >= L.batch_capacity[filling] ||
                      L.batch_segments[filling].size() >= L.batch_segments[filling].capacity());
-                if(filling >= 0 && (batch_full || in_taken == in_segments) && (!locals_done || !L.batch_segments[filling].empty())) {
-                    const int K = batch[filling].records;
-                    NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, locals_done ? nullptr : snapshot, locals_done ? 0 : N, accums,
+                const bool batch_ready = (filling >= 0) && (batch_full || in_taken == in_segments);
+                if(idle && batch_ready && (!L.batch_segments[filling].empty() || (!locals_in_chunks && !locals_done))) {
+                    const int K = batch[filling].records, with_locals = (!locals_in_chunks && !locals_done) ? N : 0;
+                    NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, with_locals ? snapshot : nullptr, with_locals, accums,
                                                   (const Envelope *) L.group_queries[filling], K, (Reply *) L.group_replies[filling],
-                                                  flags + MODE_D_FLAG_WALK);
-                    locals_done = 1;
+                                                  flags + MODE_D_FLAG_WALK, eval_queue);
+                    if(with_locals) {running_locals = 1; locals_issued = N;}
                     if(!L.batch_segments[filling].empty()) {
-                        batch[filling].state = 2; answered_order[n_answered++] = filling;
+                        running_batch = filling; batch[filling].state = 3;
                         const int other = 1 - filling;
                         filling = (batch[other].state == 0) ? other : -1;
                         if(filling >= 0) {batch[filling] = Batch{}; batch[filling].state = 1; L.batch_segments[filling].clear();}
+                    }
+                    if(overlap) {gx_mode_d_eval_event(running_batch >= 0 ? 1 + running_batch : 0).record(*eval_queue);}
+                } else if(idle && locals_in_chunks && locals_issued < N) {
+                    const int c0 = locals_issued, m = ((long long) (N - c0) < local_chunk) ? N - c0 : (int) local_chunk;
+                    NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, snapshot + c0, m, accums + c0, nullptr, 0, nullptr,
+                                                  flags + MODE_D_FLAG_WALK, eval_queue);
+                    running_locals = 1; locals_issued = c0 + m;
+                    gx_mode_d_eval_event(0).record(*eval_queue);
+                }
+                /* (c') the running evaluation finished: a received batch's replies may go out only once its walk is known
+                 * to be clean -- a batch whose walk raised an anomaly answers every segment as erroneous (the asking rank skips
+                 * them) and the round's stop agreement ends the call.  A failure of the device itself ends the run here. */
+                if(running_batch >= 0 || running_locals) {
+                    const int ev = (running_batch >= 0) ? 1 + running_batch : 0;
+                    const int status = overlap ? gx_mode_d_eval_event(ev).query() : GIZMO_GPU_EVENT_COMPLETE;
+                    if(status == GIZMO_GPU_EVENT_ERROR) {
+                        gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: the device failed during a Mode D evaluation",
+                                                       __FILE__, __LINE__, __FUNCTION__);
+                    }
+                    if(status == GIZMO_GPU_EVENT_COMPLETE) {
+                        if(running_locals && locals_issued >= N) {locals_done = 1;}
+                        running_locals = 0;
+                        if(running_batch >= 0) {
+                            const int b = running_batch;
+                            int walk_word = 0;
+                            mode_d_copy_async_to_host(copy_space, &walk_word, flags + MODE_D_FLAG_WALK, sizeof(int));
+                            copy_space.fence("mode_d_batch_anomaly");
+                            if(walk_word) {
+                                for(ModeDCallLease::BatchSegment &g : L.batch_segments[b]) {g.status = 1;}
+                                if(!stop_code) {stop_code = 90001044; walk_anomaly = walk_word;}
+                            }
+                            batch[b].state = 2; answered_order[n_answered++] = b;
+                            running_batch = -1;
+                        }
                     }
                 }
                 /* (d) replies out, batch by batch in the order they were answered, each batch's segments in order */
@@ -5904,8 +5960,11 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                     }
                     if(copied) {copy_space.fence("mode_d_reply_segments_in"); for(int c = 0; c < copied; c++) {X.release(Stream::REPLIES_IN, copied_slot[c]);}}
                 }
-                if(locals_done && !have_held && n_answered == 0 && (filling < 0 || L.batch_segments[filling].empty()) && X.round_complete()) {break;}
+                if(locals_done && running_batch < 0 && !running_locals && !have_held && n_answered == 0 &&
+                   (filling < 0 || L.batch_segments[filling].empty()) && X.round_complete()) {break;}
             }
+            /* every evaluation has completed (each was seen to); the device-side endrun record, if any, is read here */
+            if(overlap) {eval_queue->fence("mode_d_round_evaluations"); gizmo_gpu_check_last_error("mode_d_round_evaluations", N, -1);}
             if(X.errors_seen() && !stop_code) {stop_code = 90001043;}
             if(!X.errors_seen() && n_rec > 0) {
                 mode_d_merge_replies<Spec>(query_runs, A.run_offsets, a_begin, n_round, (const Reply *) A.replies, me, accums,

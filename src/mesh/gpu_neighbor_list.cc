@@ -46,6 +46,7 @@ static void gx_walk_drift_tables_refresh(void)
 }
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"   /* GizmoGpuEvent */
 
 #include "sfc_tiles.h"
 #include "sfc_tiles_functions.h"
@@ -3029,6 +3030,9 @@ static int   gx_mode_d_staging_refused = 0;
 /* The exchange's copy queue, made with the staging and kept with it: its own stream on a device backend, so staging copies
    proceed beside the evaluation's work; the default instance on a host backend. */
 static Kokkos::DefaultExecutionSpace *gx_mode_d_copy_instance = NULL;
+/* The exchange's evaluation queue, made with the copy queue, and the completion event of each evaluation buffer. */
+static Kokkos::DefaultExecutionSpace *gx_mode_d_eval_instance = NULL;
+static GizmoGpuEvent gx_mode_d_eval_events[MODE_D_EVAL_EVENTS];
 
 int gx_mode_d_staging_acquire(void)
 {
@@ -3038,16 +3042,30 @@ int gx_mode_d_staging_acquire(void)
     if(!gx_mode_d_staging_base) {return 1;}
     try {
 #if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
-        gx_mode_d_copy_instance = new Kokkos::DefaultExecutionSpace(Kokkos::Experimental::partition_space(Kokkos::DefaultExecutionSpace(), 1)[0]);
+        const auto instances = Kokkos::Experimental::partition_space(Kokkos::DefaultExecutionSpace(), 1, 1);
+        gx_mode_d_copy_instance = new Kokkos::DefaultExecutionSpace(instances[0]);
+        gx_mode_d_eval_instance = new Kokkos::DefaultExecutionSpace(instances[1]);
 #else
         gx_mode_d_copy_instance = new Kokkos::DefaultExecutionSpace();
+        gx_mode_d_eval_instance = new Kokkos::DefaultExecutionSpace();
 #endif
-    } catch(...) {gx_mode_d_copy_instance = NULL;}
-    if(!gx_mode_d_copy_instance) {gizmo_gpu_free_pinned_host(gx_mode_d_staging_base); gx_mode_d_staging_base = NULL; return 1;}
+    } catch(...) {delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL; gx_mode_d_eval_instance = NULL;}
+    int events_made = 0;
+    if(gx_mode_d_copy_instance && gx_mode_d_eval_instance) {
+        for(; events_made < MODE_D_EVAL_EVENTS; events_made++) {if(gx_mode_d_eval_events[events_made].create() != 0) {break;}}
+    }
+    if(events_made < MODE_D_EVAL_EVENTS) {
+        for(int k = 0; k < events_made; k++) {gx_mode_d_eval_events[k].destroy();}
+        delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL;
+        delete gx_mode_d_eval_instance; gx_mode_d_eval_instance = NULL;
+        gizmo_gpu_free_pinned_host(gx_mode_d_staging_base); gx_mode_d_staging_base = NULL; return 1;
+    }
     return 0;
 }
 
 const Kokkos::DefaultExecutionSpace &gx_mode_d_copy_space(void) {return *gx_mode_d_copy_instance;}
+const Kokkos::DefaultExecutionSpace &gx_mode_d_eval_space(void) {return *gx_mode_d_eval_instance;}
+GizmoGpuEvent &gx_mode_d_eval_event(int k) {return gx_mode_d_eval_events[k];}
 
 void gx_mode_d_staging_mark_unavailable(void)
 {
@@ -3067,7 +3085,9 @@ void gx_mode_d_staging_release(void)
 {
     if(!gx_mode_d_staging_base) {return;}
     Kokkos::fence("gx_mode_d_staging_release");   /* copies from or into it may still be enqueued */
+    for(int k = 0; k < MODE_D_EVAL_EVENTS; k++) {gx_mode_d_eval_events[k].destroy();}
     delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL;
+    delete gx_mode_d_eval_instance; gx_mode_d_eval_instance = NULL;
     gizmo_gpu_free_pinned_host(gx_mode_d_staging_base);
     gx_mode_d_staging_base = NULL;
 }

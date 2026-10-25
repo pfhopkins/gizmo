@@ -464,6 +464,9 @@ int   gx_mode_d_staging_unavailable(void);
 char *gx_mode_d_staging_slab(int role, int which);
 /* Released once at shutdown, before Kokkos is finalized. */
 void  gx_mode_d_staging_release(void);
+/* The evaluation buffers of a Mode D exchange that each carry a completion event (made with the staging): this rank's own
+   queries, and each of the two received batches. */
+static constexpr int MODE_D_EVAL_EVENTS = 3;
 
 /* Which top leaf each node of this rank's tree is, for a device walk that decides where a query must be
    sent: node offset (node index minus the tree's node base) -> top-leaf id, or -1 for a node that is not

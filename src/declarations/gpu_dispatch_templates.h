@@ -130,4 +130,64 @@ inline constexpr bool gizmo_gpu_default_space_is_host()
 }
 
 
+/* Work that runs on its own execution-space instance while the host carries on, and the means to learn
+ * when it has finished.
+ *
+ * gizmo_gpu_kernel_launch_async enqueues a kernel on `space` and returns at once: no fence.  Whether the
+ * launch itself was accepted is checked at once; a refused launch means the device can no longer be
+ * trusted, so the run stops through the reviewed hard exit (no further launches, copies or fences).
+ *
+ * GizmoGpuEvent marks a point in an instance's queue.  record() places it after the work enqueued so far;
+ * query() reports NOT_READY, COMPLETE, or ERROR -- any backend status other than those two, which is how a
+ * fault in the device work behind it surfaces (it never turns into an endless wait).  An event is
+ * recorded again only after its previous completion was seen.  Created once and kept; destroyed before
+ * Kokkos is finalized.
+ *
+ * This is the one place GIZMO calls the CUDA / HIP runtime for stream completion: Kokkos has no portable
+ * query of whether an instance's work has finished, only a blocking fence.  It covers completion only --
+ * allocation, copies and kernels still go through Kokkos.  Host backends run every launch to completion
+ * before it returns, so there an event is always COMPLETE. */
+[[noreturn]] void gizmo_fatal_hard_exit_reviewed(int code, const char *reason, const char *file, int line, const char *func);
+
+template<typename F>
+inline void gizmo_gpu_kernel_launch_async(const Kokkos::DefaultExecutionSpace &space, const char *tag, int N, F&& f)
+{
+    Kokkos::parallel_for(tag, Kokkos::RangePolicy<>(space, 0, N), std::forward<F>(f));
+#if defined(__CUDACC__)
+    if(cudaPeekAtLastError() != cudaSuccess) {gizmo_fatal_hard_exit_reviewed(90009002, "an asynchronous kernel launch was refused", __FILE__, __LINE__, tag);}
+#elif defined(__HIPCC__)
+    if(hipPeekAtLastError() != hipSuccess) {gizmo_fatal_hard_exit_reviewed(90009002, "an asynchronous kernel launch was refused", __FILE__, __LINE__, tag);}
+#endif
+}
+
+enum GizmoGpuEventStatus {GIZMO_GPU_EVENT_NOT_READY = 0, GIZMO_GPU_EVENT_COMPLETE = 1, GIZMO_GPU_EVENT_ERROR = 2};
+
+struct GizmoGpuEvent {
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaEvent_t event = nullptr;
+    int create() {return (cudaEventCreateWithFlags(&event, cudaEventDisableTiming) == cudaSuccess) ? 0 : 1;}
+    void record(const Kokkos::DefaultExecutionSpace &space) {cudaEventRecord(event, space.cuda_stream());}
+    int query() const {
+        const cudaError_t e = cudaEventQuery(event);
+        return (e == cudaSuccess) ? GIZMO_GPU_EVENT_COMPLETE : (e == cudaErrorNotReady) ? GIZMO_GPU_EVENT_NOT_READY : GIZMO_GPU_EVENT_ERROR;
+    }
+    void destroy() {if(event) {cudaEventDestroy(event); event = nullptr;}}
+#elif defined(KOKKOS_ENABLE_HIP)
+    hipEvent_t event = nullptr;
+    int create() {return (hipEventCreateWithFlags(&event, hipEventDisableTiming) == hipSuccess) ? 0 : 1;}
+    void record(const Kokkos::DefaultExecutionSpace &space) {(void) hipEventRecord(event, space.hip_stream());}
+    int query() const {
+        const hipError_t e = hipEventQuery(event);
+        return (e == hipSuccess) ? GIZMO_GPU_EVENT_COMPLETE : (e == hipErrorNotReady) ? GIZMO_GPU_EVENT_NOT_READY : GIZMO_GPU_EVENT_ERROR;
+    }
+    void destroy() {if(event) {(void) hipEventDestroy(event); event = nullptr;}}
+#else
+    int create() {return 0;}
+    void record(const Kokkos::DefaultExecutionSpace &) {}
+    int query() const {return GIZMO_GPU_EVENT_COMPLETE;}
+    void destroy() {}
+#endif
+};
+
+
 #endif /* GIZMO_GPU_DISPATCH_TEMPLATES_H */

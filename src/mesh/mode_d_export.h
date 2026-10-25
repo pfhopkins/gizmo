@@ -199,6 +199,11 @@ using ModeDDeviceBytes = Kokkos::View<char *, Kokkos::DefaultExecutionSpace::mem
 using ModeDHostBytes   = Kokkos::View<char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 /* The exchange's copy queue, made and released with the persistent staging (gpu_neighbor_list.cc); valid while it is held. */
 const Kokkos::DefaultExecutionSpace &gx_mode_d_copy_space(void);
+/* The exchange's evaluation queue and its completion events (one per evaluation buffer: this rank's own queries, and each
+ * of the two received batches), made and released with the staging too. */
+struct GizmoGpuEvent;
+const Kokkos::DefaultExecutionSpace &gx_mode_d_eval_space(void);
+GizmoGpuEvent &gx_mode_d_eval_event(int k);
 
 inline void mode_d_copy_to_host(void *host_dst, const void *device_src, size_t bytes)
 {
