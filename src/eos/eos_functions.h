@@ -1001,6 +1001,10 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
         default:
             break;
     }
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    /* fractured material carries (1-D) of its tension; compression is unchanged (Benz & Asphaug 1994) */
+    if(press < 0) {double D_t = cell[i].Damage; if(D_t < 0) {D_t = 0;} if(D_t > 1) {D_t = 1;} press *= (1.0 - D_t);}
+#endif
 #endif
 
 #ifdef EOS_MHD_CORE_BAROTROPIC
