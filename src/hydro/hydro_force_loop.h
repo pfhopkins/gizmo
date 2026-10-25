@@ -255,6 +255,9 @@ struct HydroForceSpec
         local.SoundSpeed          = kc[i].effective_soundspeed();
         local.dt_hydrostep_i      = get_particle_timestep_in_physical(i, kp);
         local.DrkernNgbFactor     = kp[i].DrkernNgbFactor;
+#ifdef EOS_ANEOS
+        local.Temperature         = kc[i].Temperature;
+#endif
         local.Gradients.Density   = kc[i].Gradients.Density;
         local.Gradients.Pressure  = kc[i].Gradients.Pressure;
         local.Gradients.Velocity  = kc[i].Gradients.Velocity;
