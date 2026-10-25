@@ -5,6 +5,7 @@
 
 %---- Files
 InitCondFile                    tallbox         % Hu+21 IC: 1x1 kpc, Sigma_gas = 10 Msun/pc^2, H_g = 250 pc, 1 Msun cells, z in [0,20] kpc, midplane z = 10 kpc
+MaxMemSize                      1800            % MB per task, fixed at startup (auto-detect fails inside memory-limited Slurm steps)
 OutputDir                       output
 
 %---- Output

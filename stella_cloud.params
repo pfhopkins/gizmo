@@ -5,6 +5,7 @@
 
 %---- Files
 InitCondFile                    gmc_Z1_m1.0     % MakeCloud IC converted to these units (stella/tests/harness/cases/r26_gmc_molecular.py)
+MaxMemSize                      1800            % MB per task, fixed at startup (auto-detect fails inside memory-limited Slurm steps)
 OutputDir                       output
 
 %---- Output
