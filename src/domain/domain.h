@@ -17,7 +17,7 @@ int domain_countToGo(size_t nlimit);
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence);
 void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_key);
 int domain_decompose(void);
-int domain_segments_per_rank_for_particles(long long total_particles);
+int domain_segments_per_rank_for_particles(long long total_particles, int *lowered_by_leaf_request);
 int domain_determineTopTree(void);
 void domain_findExtent(void);
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC

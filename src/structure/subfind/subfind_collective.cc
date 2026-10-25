@@ -169,7 +169,7 @@ void subfind_process_group_collectively(int num)
     t0 = my_second();
     /* The decomposition below refines only this group, so size its layout from the group's GLOBAL
      * particle count -- NumPartGroup is this rank's share alone. */
-    domain_free_trick(domain_segments_per_rank_for_particles((long long) totgrouplen1));
+    domain_free_trick(domain_segments_per_rank_for_particles((long long) totgrouplen1, NULL));
     domain_Decomposition(1, 0, 0, 0);
     /* drain a soft stop from the domain top-tree group-count invariant before any downstream SUBFIND
        use of the (possibly bad) domain/top-tree state. */

@@ -165,7 +165,7 @@
    every full decomposition to hold roughly this many particles, which is where the balance gain
    stops paying for those costs.  The best value depends on the problem and the machine (a nearly
    uniform problem with many particles per rank balances well with far fewer, larger segments), so
-   all four values below may be set in Config.sh. */
+   all the values below may be set in Config.sh. */
 #ifndef  DOMAIN_TARGET_PARTICLES_PER_SEGMENT
 #define  DOMAIN_TARGET_PARTICLES_PER_SEGMENT   10000
 #endif
@@ -177,12 +177,31 @@
                                                         all-gather, so this bounds the message count
                                                         on a large problem spread over few ranks */
 #endif
-/* A small problem gets a single segment per rank, which on its own would leave the decomposition
-   almost nothing to balance with.  This is the floor on how many top-tree leaves each rank is
-   refined towards regardless -- a feasibility floor, not a tuned optimum; it sits below every
-   measured landing point, so it binds only in the small-problem regime it exists for. */
+/* A rank holding a single segment would otherwise leave the decomposition almost nothing to
+   balance with.  This is the floor on how many top-tree leaves each rank is refined towards
+   regardless -- a feasibility floor, not a tuned optimum.  It binds whenever a rank holds few
+   segments: in a small problem, and equally in a large one whose segments were made large (one
+   segment per rank on 4096 ranks makes the floor ask for 65,536 leaves, and the eight-way
+   refinement delivered 262,144). */
 #ifndef  DOMAIN_MIN_TOPLEAVES_PER_RANK
 #define  DOMAIN_MIN_TOPLEAVES_PER_RANK         16
+#endif
+/* Every rank holds the complete top tree and exchanges every leaf's moments at each build, so that
+   cost follows the TOTAL number of leaves, not the number per rank -- and with the defaults above
+   the automatic segment count makes that total grow with the particle count (about one segment per
+   ten thousand particles, whatever the rank count).  The automatic choice is held so the leaves it
+   asks for in total stay within this, and so is the per-rank floor, which is lowered towards one
+   leaf per rank once the rank count alone would exceed it.  It is a request, not a bound on what is
+   achieved: refinement splits eight ways at a time, and measured runs achieved 3.5-5 times what they
+   asked for, more when very few are asked for.  The default changes nothing on any problem measured
+   so far (the largest asked for 65,536).  It acts on the segment count around a billion particles (a
+   quarter of that with the four-fold refinement of SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM), and on the
+   per-rank floor above 8,192 ranks (with the default floor of 16) whatever the particle count; the
+   segment lines in the log say when it did.  It cannot take a rank below one segment, so a very large
+   rank count can still ask for more.  DOMAIN_SEGMENTS_SCALE and the per-rank segment bounds are
+   applied after it, so an explicit choice can still ask for more. */
+#ifndef  DOMAIN_MAX_REQUESTED_TOPLEAVES
+#define  DOMAIN_MAX_REQUESTED_TOPLEAVES        131072
 #endif
 
 /* Change the segment count by this factor relative to the automatic choice above.  The result is

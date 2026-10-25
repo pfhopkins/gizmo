@@ -105,9 +105,11 @@ void read_ic(char *fname)
         /* The decomposition's granularity follows the particle load, and this is the first point
            at which that load is known -- before any storage is sized from it.  Settled here once
            for the run; a restart from restart-files carries the value it was given. */
-        All.DomainSegmentsPerRank = domain_segments_per_rank_for_particles(All.TotNumPart);
-        PRINT_STATUS("Domain segments per rank: %d (%lld particles over %d ranks)",
-                     All.DomainSegmentsPerRank, (long long) All.TotNumPart, NTask);
+        int lowered_by_leaf_request = 0;
+        All.DomainSegmentsPerRank = domain_segments_per_rank_for_particles(All.TotNumPart, &lowered_by_leaf_request);
+        PRINT_STATUS("Domain segments per rank: %d (%lld particles over %d ranks%s)",
+                     All.DomainSegmentsPerRank, (long long) All.TotNumPart, NTask,
+                     lowered_by_leaf_request ? "; top-leaf request lowered by DOMAIN_MAX_REQUESTED_TOPLEAVES" : "");
 
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 

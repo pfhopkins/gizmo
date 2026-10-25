@@ -451,28 +451,64 @@ void domain_init_timebin_costs(void)
 }
 #endif /* DOMAIN_TIMEBINS == 1 */
 
-/*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
- *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure.
- *  With allow_peano_order_cadence set, the caller permits that final ordering to be taken on a cadence rather than on every call (see MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS);
- *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
-/*! Choose how many contiguous Peano-Hilbert segments each rank is given.  The decomposition
- *  balances work by distributing these, so more of them balance more finely while costing extra
- *  top-tree refinement, an extra pseudo-particle all-gather apiece, and more spatially fragmented
- *  rank territory.  Holding a roughly fixed number of particles per segment is what keeps those in
- *  balance across problem sizes.  Settled once, from the particle count in the initial conditions.
- */
-int domain_segments_per_rank_for_particles(long long total_particles)
+/* top-tree leaves asked for per domain segment; below 1 a top tree could hold fewer leaves than segments */
+static double domain_toptree_refinement_scale(void)
 {
-  const double ideal = (double) total_particles / ((double) DOMAIN_TARGET_PARTICLES_PER_SEGMENT * (double) NTask);
-  int segments = 1;
-  while(segments < DOMAIN_MAX_SEGMENTS_PER_RANK && (double) segments * 1.5 < ideal) {segments *= 2;}
+  const double scale = (double) DOMAIN_TOPTREE_REFINEMENT_SCALE;
+  return (scale < 1.0) ? 1.0 : scale;
+}
+
+/* The floor on top-tree leaves asked for per rank: DOMAIN_MIN_TOPLEAVES_PER_RANK, lowered (never below
+ * one) where the rank count alone would take the total request past DOMAIN_MAX_REQUESTED_TOPLEAVES. */
+static double domain_min_toptree_leaves_per_rank(void)
+{
+  const double within_request = (double) DOMAIN_MAX_REQUESTED_TOPLEAVES / (double) NTask;
+  double floor = (double) DOMAIN_MIN_TOPLEAVES_PER_RANK;
+  if(floor > within_request) {floor = (within_request > 1.0) ? within_request : 1.0;}
+  return floor;
+}
+
+/* the explicit user controls, applied after the automatic choice */
+static int domain_segments_with_user_bounds(int segments)
+{
   segments *= DOMAIN_SEGMENTS_SCALE;
   if(segments < DOMAIN_MIN_SEGMENTS_PER_RANK) {segments = DOMAIN_MIN_SEGMENTS_PER_RANK;}
   if(segments > DOMAIN_MAX_SEGMENTS_PER_RANK) {segments = DOMAIN_MAX_SEGMENTS_PER_RANK;}
   return segments;
 }
 
+/*! Choose how many contiguous Peano-Hilbert segments each rank is given.  The decomposition
+ *  balances work by distributing these, so more of them balance more finely while costing extra
+ *  top-tree refinement, an extra pseudo-particle all-gather apiece, and more spatially fragmented
+ *  rank territory.  Holding a roughly fixed number of particles per segment is what keeps those in
+ *  balance across problem sizes, until the top-tree leaves that asks for in total (segments x ranks x
+ *  refinement scale) would pass DOMAIN_MAX_REQUESTED_TOPLEAVES; it cannot go below one segment per
+ *  rank, so a very large rank count can still exceed it.  Chosen when the initial conditions are
+ *  read and revisited at every full decomposition.  lowered_by_leaf_request (may be NULL) is set
+ *  when that limit changed the outcome: fewer segments than without it, or a lowered leaf floor.
+ */
+int domain_segments_per_rank_for_particles(long long total_particles, int *lowered_by_leaf_request)
+{
+  const double ideal = (double) total_particles / ((double) DOMAIN_TARGET_PARTICLES_PER_SEGMENT * (double) NTask);
+  int automatic = 1;
+  while(automatic < DOMAIN_MAX_SEGMENTS_PER_RANK && (double) automatic * 1.5 < ideal) {automatic *= 2;}
+  int segments = automatic;
+  const double leaves_per_segment_everywhere = (double) NTask * domain_toptree_refinement_scale();
+  while(segments > 1 && (double) segments * leaves_per_segment_everywhere > (double) DOMAIN_MAX_REQUESTED_TOPLEAVES) {segments /= 2;}
+  const int chosen = domain_segments_with_user_bounds(segments);
+  if(lowered_by_leaf_request)
+    {
+      *lowered_by_leaf_request = (chosen < domain_segments_with_user_bounds(automatic))
+                                 || (domain_min_toptree_leaves_per_rank() < (double) DOMAIN_MIN_TOPLEAVES_PER_RANK);
+    }
+  return chosen;
+}
 
+
+/*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
+ *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure.
+ *  With allow_peano_order_cadence set, the caller permits that final ordering to be taken on a cadence rather than on every call (see MAX_DOMAIN_CALLS_BETWEEN_PEANO_ORDERS);
+ *  the routine-driven decompositions of the main loop set it, while startup, restart and group finding order every time. */
 void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_mergesplit_key, int allow_peano_order_cadence)
 {
     if(ghost_require_no_live_pool_for_layout_change("domain_Decomposition")) {return;}
@@ -589,11 +625,13 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
      * never reached by the lightweight repartition, which reuses the existing arrays. */
     if(!domain_layout_parked)
       {
-        const int segments_wanted = domain_segments_per_rank_for_particles(All.TotNumPart);
+        int lowered_by_leaf_request = 0;
+        const int segments_wanted = domain_segments_per_rank_for_particles(All.TotNumPart, &lowered_by_leaf_request);
         if(segments_wanted != All.DomainSegmentsPerRank)
           {
-            PRINT_STATUS(" ..domain segments per rank: %d -> %d (%lld particles over %d ranks)",
-                         All.DomainSegmentsPerRank, segments_wanted, (long long) All.TotNumPart, NTask);
+            PRINT_STATUS(" ..domain segments per rank: %d -> %d (%lld particles over %d ranks%s)",
+                         All.DomainSegmentsPerRank, segments_wanted, (long long) All.TotNumPart, NTask,
+                         lowered_by_leaf_request ? "; top-leaf request lowered by DOMAIN_MAX_REQUESTED_TOPLEAVES" : "");
             All.DomainSegmentsPerRank = segments_wanted;
           }
       }
@@ -3347,12 +3385,12 @@ int domain_determineTopTree(void)
 
   /* Refine the top tree until no leaf holds more than this share of the particles or of the cost.
    * Expressed per domain segment, because the segments are what the leaves get distributed between.
-   * The floor is a feasibility bound for small problems, where a rank holds a single segment and
-   * would otherwise have almost nothing to balance with. */
-  double refinement_scale = (double) DOMAIN_TOPTREE_REFINEMENT_SCALE;
-  if(refinement_scale < 1.0) {refinement_scale = 1.0;}
-  double leaves_per_rank = refinement_scale * (double) multipledomains;
-  if(leaves_per_rank < (double) DOMAIN_MIN_TOPLEAVES_PER_RANK) {leaves_per_rank = DOMAIN_MIN_TOPLEAVES_PER_RANK;}
+   * The floor is a feasibility bound for a rank holding few segments, which would otherwise have
+   * almost nothing to balance with; it is lowered (never below one leaf per rank) where the rank
+   * count alone would take the total request past DOMAIN_MAX_REQUESTED_TOPLEAVES. */
+  double leaves_per_rank = domain_toptree_refinement_scale() * (double) multipledomains;
+  const double min_leaves_per_rank = domain_min_toptree_leaves_per_rank();
+  if(leaves_per_rank < min_leaves_per_rank) {leaves_per_rank = min_leaves_per_rank;}
   const double target_top_leaves = leaves_per_rank * (double) NTask;
   costlimit = totgravcost / target_top_leaves;
   countlimit = totpartcount / target_top_leaves;
