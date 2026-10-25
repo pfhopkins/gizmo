@@ -60,7 +60,7 @@ def write_hdf5(path, placed, prof, box_size, center_offset=None):
 
         g = f.create_group("PartType0")
         g.create_dataset("Coordinates", data=coords_box)
-        g.create_dataset("Velocities", data=np.zeros((n, 3)))
+        g.create_dataset("Velocities", data=placed["vel"] if "vel" in placed else np.zeros((n, 3)))
         g.create_dataset("Masses", data=placed["masses"])
         g.create_dataset("InternalEnergy", data=placed["u_p"])
         g.create_dataset("ParticleIDs", data=np.arange(1, n + 1, dtype=np.uint32))
@@ -94,6 +94,38 @@ def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, des_num
     correct_u_for_sph_density(placed, prof, zones, des_num_ngb=des_num_ngb, verbose=True)
     write_hdf5(out, placed, prof, box_size=box_size if box_size else 10.0 * prof["R"])
     return placed, prof
+
+
+def place_collision(target, impactor, v_contact_over_v_esc, impact_parameter, separation_in_contact_radii=2.0, G=6.674e-8):
+    """Two bodies (placed dicts from build_planet/seagen_shells, each centred on its own centre of mass) set on the two-body
+    orbit that brings them into contact (centre separation R_t + R_i, each the outermost particle's distance from its body's centre
+    of mass) at relative speed v_contact_over_v_esc x the mutual escape speed sqrt(2 G (M_t + M_i) / (R_t + R_i)), with impact parameter
+    b = sin(angle between the relative velocity and the line of centres at contact), started at a centre separation of
+    separation_in_contact_radii x (R_t + R_i). The orbit is traced back exactly (energy and angular momentum of the
+    relative Kepler orbit); the impactor starts on +x, approaching, with its angular momentum along +z. Positions and
+    velocities are in the centre-of-mass frame; the impactor's particle IDs follow the target's. Returns the merged placed
+    dict (with "vel"), the starting separation, the relative velocity there, and the escape speed."""
+    M_t, M_i = target["masses"].sum(), impactor["masses"].sum(); mu = G * (M_t + M_i)
+    com = lambda body: (body["masses"][:, None] * body["coords"]).sum(0) / body["masses"].sum()
+    R_t = np.max(np.linalg.norm(target["coords"] - com(target), axis=1)); R_i = np.max(np.linalg.norm(impactor["coords"] - com(impactor), axis=1))
+    r_c = R_t + R_i; r0 = separation_in_contact_radii * r_c
+    v_esc = np.sqrt(2.0 * mu / r_c); v_contact = v_contact_over_v_esc * v_esc
+    E = 0.5 * v_contact ** 2 - mu / r_c                 # specific orbital energy of the relative orbit
+    L = r_c * v_contact * impact_parameter              # specific angular momentum
+    v0 = np.sqrt(2.0 * (E + mu / r0)); vt0 = L / r0
+    if vt0 > v0:
+        raise ValueError("this orbit does not reach the requested starting separation (it turns around inside it)")
+    vr0 = -np.sqrt(v0 ** 2 - vt0 ** 2)                  # approaching
+    rel_x = np.array([r0, 0.0, 0.0]); rel_v = np.array([vr0, vt0, 0.0])
+    f_t, f_i = M_i / (M_t + M_i), M_t / (M_t + M_i)    # centre-of-mass frame
+    out = {}
+    for k in ("masses", "rho_p", "u_p", "T_p", "comp_p"):
+        out[k] = np.concatenate([target[k], impactor[k]])
+    out["coords"] = np.concatenate([target["coords"] - com(target) - f_t * rel_x, impactor["coords"] - com(impactor) + f_i * rel_x])
+    out["vel"] = np.concatenate([np.tile(-f_t * rel_v, (len(target["masses"]), 1)), np.tile(f_i * rel_v, (len(impactor["masses"]), 1))])
+    print(f"  collision: M_t {M_t:.4e} M_i {M_i:.4e}  R_t {R_t:.4e} R_i {R_i:.4e}  v_contact {v_contact:.4e} ({v_contact / v_esc:.3f} v_esc)"
+          f"  b {impact_parameter:.3f}  start: separation {r0:.4e}, relative speed {v0:.4e} (radial {vr0:.4e}, tangential {vt0:.4e})")
+    return out, r0, rel_v, v_esc
 
 
 def hse_diagnostics(prof):
