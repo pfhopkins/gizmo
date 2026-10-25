@@ -405,10 +405,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         CellP[target].Temp = temp;
         CellP[target].DustTemp = chem_out.tdust;
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
-        /* Attenuated FUV field the chemistry actually used = G0 x f_dust (2026-07-04).
-         * M1: f_dust=1 (dust column zeroed, transport did the attenuation) -> G0_atten=G0.
-         * HEALPix tree columns: G0 is UNATTENUATED and f_dust=exp(-AV...) applies the dust attenuation,
-         * so G0_atten is the effective FUV -> directly comparable to M1's G0. */
+        /* G0 x f_dust: the dust-attenuated field the chemistry used (Stella M1/TreeRay: f_dust covers floor pixels and the in-cell column) */
 #ifdef OUTPUT_SHIELD_FAC
         CellP[target].ShieldFacDust = chem_out.fac_shield_dust;
         CellP[target].G0_atten      = CellP[target].G0 * chem_out.fac_shield_dust;
@@ -416,6 +413,9 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         CellP[target].ShieldFacDust = 1.0;
         CellP[target].G0_atten      = CellP[target].G0;
 #endif
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        for(i = 0; i < 5; i++) {CellP[target].ChemPhotoRates[i] = chem_out.photorates[i];}
 #endif
 #ifdef OUTPUT_COOLRATE
         CellP[target].CoolingRate_CHEMCOOL = cooling_rate;
@@ -469,7 +469,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 #ifdef RT_INFRARED
             CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] = Lambda_IR / nH2_loc;
 #endif
-#ifdef RT_NUV
+#if defined(RT_NUV) && !defined(RT_NUV_BAND_6_8EV) /* Stella 6-8 eV band feeds G0: line cooling goes to IR below */
 #ifdef RT_INFRARED
             /* If Radiation_Temperature > 1e4, redirect NUV → IR (same as standard solver).
                (Radiation_Temperature is an RT_INFRARED-only field; guard added 2026-07-04 —

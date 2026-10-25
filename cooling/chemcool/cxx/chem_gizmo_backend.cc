@@ -114,9 +114,13 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #endif
 #if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     for (int k = 0; k < NPIX; k++) c.col_tot[k] = in->column_density_projection[k];
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
     for (int k = 0; k < NPIX; k++) c.fac_uv[k] = in->fac_uv[k];
 #endif
+#endif
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+    for (int k = 0; k < NPIX; k++) c.pix_att[k] = in->pix_att[k];
+    c.NH_cell = in->NH_cell;
 #endif
 #ifdef RT_TREECOL_H2_CO
     for (int k = 0; k < NPIX; k++) { c.col_h2[k] = in->column_density_projection_h2[k]; c.col_co[k] = in->column_density_projection_co[k]; }
@@ -149,6 +153,13 @@ void chem_cxx_read_outputs(struct ChemOutputs* out)
 #ifdef OUTPUT_SHIELD_FAC
     out->fac_shield_h2 = c.fac_shield_h2;
     out->fac_shield_dust = c.fac_shield_dust;
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+    out->photorates[0] = c.phrates[0] * c.fac_shield_h2;
+    out->photorates[1] = c.phrates[9];
+    out->photorates[2] = c.G_dust;
+    out->photorates[3] = c.G0_dust * c.chi_isrf / 1.7;
+    out->photorates[4] = c.fac_shield_h2;
 #endif
 }
 

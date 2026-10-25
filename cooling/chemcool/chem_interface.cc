@@ -25,6 +25,12 @@
 #include "../../declarations/resolvedism_dgr.h"
 #include "../../declarations/resolvedism_depletion.h"
 #include "../../galaxy_sf/resolvedism_selfcheck.h"
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+#include "../../gravity/healpix_utils.h"
+#endif
+#if defined(OUTPUT_CHEM_PHOTORATES) && (!defined(CHEMCOOL_CXX) || !(defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)))
+#error "OUTPUT_CHEM_PHOTORATES needs CHEMCOOL_CXX and a G0 field (GALSF_RESOLVEDISM_G0_VARIABLE or M1)"
+#endif
 
 #ifdef CHEMCOOL
 
@@ -258,6 +264,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     double UV_flux_min_pix = 0.324e-2/NPIX / (fac_flux2energy / u_Hab_FUV);
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix;
     for(i = 0; i < NPIX; i++) {
+#if defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && !defined(RADTRANSFER)
+        in->pix_att[i] = (CellP[target].UV_flux[i] < UV_flux_min_pix) ? 1. : 0.; /* TreeRay: floor pixels take the TreeCol column in calc_photo */
+#endif
         CellP[target].UV_flux[i] = DMAX(CellP[target].UV_flux[i], UV_flux_min_pix);
         CellP[target].LW_flux[i] = DMAX(CellP[target].LW_flux[i], LW_flux_min_pix);
         UV_flux_tot += CellP[target].UV_flux[i];
@@ -327,6 +336,46 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #else
         double u_NUV_cgs = 0;
 #endif
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+        /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab x All.G0, G0_LW = u_LW/u_Hab_LW x All.G0, same per-pixel floors; stellar pixels arrive attenuated (pix_att=0) */
+        double u_Hab_FUV = 5.29e-14;
+        double G0_star = (u_NUV_cgs + u_PE_cgs) / u_Hab_FUV * All.G0;
+        double G0_LW_star = u_LW_cgs / u_Hab_LW * All.G0;
+        /* direction split: (1-f) isotropic + f from the pixel facing the M1 flux source */
+        double f_beam = 0; long ipix_src = 0;
+#if defined(RT_EVOLVE_FLUX)
+        {
+            Vec3<double> F_fuv = CellP[target].Rad_Flux[RT_FREQ_BIN_PHOTOELECTRIC];
+            double E_fuv = CellP[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC];
+#if defined(RT_NUV)
+            F_fuv += CellP[target].Rad_Flux[RT_FREQ_BIN_NUV]; E_fuv += CellP[target].Rad_E_gamma[RT_FREQ_BIN_NUV];
+#endif
+            double Fmag = sqrt(F_fuv.norm_sq());
+            if(Fmag > 0 && E_fuv > 0) {
+                f_beam = DMIN(1., Fmag / (C_LIGHT_CODE_REDUCED * E_fuv));
+                double v_src[3] = {-F_fuv[0], -F_fuv[1], -F_fuv[2]}; /* radiation flows away from its source */
+                vec2pix_ring(NSIDE, v_src, &ipix_src);
+            }
+        }
+#endif
+        double G0_floor_pix = 0.324e-2 * All.G0 / NPIX;
+        double G0_LW_floor_pix = 0.1 * G0_floor_pix * (u_Hab_FUV / u_Hab_LW); /* TREE_RAD: LW_flux_min_pix = 0.1 UV_flux_min_pix */
+        double G0_tot = 0, G0_LW_tot = 0, g_pix[NPIX];
+        for(i = 0; i < NPIX; i++) {
+            double w_dir = (1. - f_beam) / NPIX + ((i == ipix_src) ? f_beam : 0.);
+            double s_uv = G0_star * w_dir, s_lw = G0_LW_star * w_dir;
+            in->pix_att[i] = (s_uv < G0_floor_pix) ? 1. : 0.;
+            g_pix[i] = DMAX(s_uv, G0_floor_pix);
+            G0_tot += g_pix[i];
+            G0_LW_tot += DMAX(s_lw, G0_LW_floor_pix);
+        }
+        for(i = 0; i < NPIX; i++) {in->fac_uv[i] = g_pix[i] / G0_tot;}
+        in->G0 = G0_tot;
+        in->G0_LW = G0_LW_tot;
+        in->G0_dust = G0_tot; /* as TREE_RAD: dust heating uses the same 6-13.6 eV field */
+        CellP[target].G0    = in->G0;
+        CellP[target].G0_LW = in->G0_LW;
+#else
         /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
            molecular photochemistry (H2/CO dissociation, C ionization).
            FLOOR (2026-07-04, Uli): use the SAME floor as the tree-column/G0_VARIABLE path
@@ -351,6 +400,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            (2026-07-04). Fields live under G0_VARIABLE||RADTRANSFER (cell_data.h). */
         CellP[target].G0    = in->G0;
         CellP[target].G0_LW = in->G0_LW;
+#endif /* RT_TREECOL_STELLAR_PIXELS_PREATTENUATED */
 
 #if defined(RT_CHEM_PHOTOION)
         /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]
@@ -544,6 +594,12 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->X_H_chem = CHEM_COMP.X_H_chem;
     yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS); /* number density of hydrogen only */
 #endif
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+    in->NH_cell = 0;
+#if defined(RADTRANSFER)
+    in->NH_cell = 0.5 * yn * cbrt(P[target].Mass / (CellP[target].Density * All.cf_a3inv)) * All.cf_atime * UNIT_LENGTH_IN_CGS; /* half-cell column: unresolved in-cell attenuation */
+#endif
+#endif
 
     /* [orig chemcool.cc:604-618]  NOTE: rpar[3..6] are deliberately left
      * unset, exactly as the pre-refactor stack array was — with iphoto=6 the
@@ -606,7 +662,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #else
         NH = columni / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
 #endif
-#if defined(RADTRANSFER)
+#if defined(RADTRANSFER) && !(defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && defined(CHEMCOOL_CXX)) /* legacy Fortran keeps the zeroed column */
         /* M1 RT: the radiation transport already applies dust attenuation to the FUV/LW
            bands, so the field handed to the chemistry (Rad_E_gamma -> G0) is ALREADY
            dust-attenuated. The total-H column drives ONLY the dust f_dust in calc_photo
@@ -641,7 +697,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             in->column_density_projection[i] = NH;
         }
 #endif
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
         in->fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;
 #endif
     }

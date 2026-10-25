@@ -321,6 +321,8 @@ struct ChemCell {
     double col_tot[CHEM_NPIX];   // per-pixel N_H  [cm^-2] (dust attenuation)
     double col_co[CHEM_NPIX];    // per-pixel N_CO [cm^-2]
     double fac_uv[CHEM_NPIX];    // per-pixel UV weights (sum 1)
+    double pix_att[CHEM_NPIX];   // 1: chemistry applies the pixel dust column; 0: flux arrived attenuated
+    double NH_cell;              // unresolved in-cell column [cm^-2] (M1)
 
     // heating from the surrounding dust (DIFFUSE_DUST_EMISSION; /project/)
     double diffuse_dust_heat;

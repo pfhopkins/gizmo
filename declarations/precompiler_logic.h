@@ -863,6 +863,15 @@
 #endif
 #endif /* end of options for our general RHD methods */
 
+/* Stella M1: the NUV bin carries 6-8 eV so NUV + PHOTOELECTRIC spans the 6-13.6 eV chemistry FUV band */
+#if defined(GALSF_RESOLVEDISM) && defined(RADTRANSFER) && defined(CHEMCOOL)
+#ifndef RT_NUV
+#define RT_NUV
+#endif
+#define RT_NUV_BAND_6_8EV
+#define RT_FUV_BANDS_CHEMCOOL_DUST_LAW /* NUV/PE/LW: pure absorption with the chemistry's dust cross sections and per-cell DGR */
+#endif
+
 /* OTVET-specific options [uses the gravity tree to calculate the Eddington tensor] */
 #if defined(RT_OTVET)
 #define RT_USE_GRAVTREE // use gravity tree for Eddington tensor
@@ -1585,8 +1594,8 @@
  * the H2/CO tree columns stay untouched — H2/CO LINE self-shielding remains target-side
  * in chemistry, applied ONCE (curve-of-growth, not exponential; see the
  * h2-double-shield fix 2026-07-07). TreeRay takes over ONLY the stellar-band dust
- * continuum (calc_photo f_dust -> 1 for point sources under TREE_RAY; isotropic
- * background keeps target-side pixel-column attenuation). Future extension (do
+ * continuum (calc_photo skips the column on stellar pixels; floor pixels keep the
+ * target-side pixel-column attenuation). Future extension (do
  * NOT bolt on casually): per-source H2 line shielding from binned H2 shells —
  * requires splitting stellar-vs-background fshield in rate_eq. */
 #ifdef TREE_RAY
