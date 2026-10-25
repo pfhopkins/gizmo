@@ -52,7 +52,7 @@ void viscosity_compute_pair(
     Vec3<double> B_interface = {bhat[0]*bhat_mag, bhat[1]*bhat_mag, bhat[2]*bhat_mag};
     double B_interface_mag2 = B_interface.norm_sq();
     double bhat_dot_gradvhat = 1, bhat_dot_gradvhat_direct = 1, grad_v_mag = 0, Bi_proj = 1;
-    if(B_interface_mag2 >= 0)
+    if(B_interface_mag2 > 0) /* with no field at the interface the isotropic form below applies */
     {
         do_non_mhd = 0;
         double rhs = 0, rhs_direct = 0;
