@@ -123,7 +123,50 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000, sur
             P[k + 1:], m[k + 1:], u[k + 1:], T[k + 1:], rho[k + 1:] = P[k], 0.0, u[k], T[k], rho[k]
             zone_id[k + 1:] = iz
             break
-        P_n, m_n, val_n = _rk4_step(r[k], P[k], m[k], val, dr, mode, mat, isen)
+        # One step, split at a zone's inner mass threshold if the step crosses it: integrate to the crossing
+        # (located by linear interpolation of m inside the step), switch to the inner zone there with the boundary
+        # (P, T), and finish the step with the inner material. Snapping the switch to the step grid instead makes
+        # the core mass, and with it the central structure, jump with R, so the radius bisection cannot converge.
+        r_now, P_now, m_now, dr_left = r[k], P[k], m[k], dr
+        while True:
+            P_n, m_n, val_n = _rk4_step(r_now, P_now, m_now, val, dr_left, mode, mat, isen)
+            if iz >= len(zones) - 1 or m_n > zones[iz].inner_mass_frac * M_total:
+                break
+            thr = zones[iz].inner_mass_frac * M_total
+            f = min(1.0, max(0.0, (m_now - thr) / (m_now - m_n))) if m_now > m_n else 1.0
+            P_b, m_b, val_b = _rk4_step(r_now, P_now, m_now, val, f * dr_left, mode, mat, isen)
+            if mode == "isentrope":
+                T_boundary = isen.state(P_b)[1]
+            elif mode == "u":
+                T_boundary = mat.T_from_u(mat.rho_from_P(P_b, val_b, mode), val_b)
+            else:
+                T_boundary = val_b
+            P_boundary = P_b
+            iz += 1
+            z = zones[iz]; mat = z.material
+            if z.T_profile == "adiabatic" and mat.kind == "sesame":
+                try:
+                    isen = mat.isentrope(P_boundary, T_boundary); val = 0.0; mode = "isentrope"; isentropes.append(isen)
+                except ValueError:
+                    # no valid isentrope through this boundary state in the table (the trial body is compressed
+                    # beyond it): report this R as over-compressed, i.e. mass runs out before the centre
+                    r_at_mzero = r_now + f * dr_left
+                    m[k + 1:] = 0.0; P[k + 1:], u[k + 1:], T[k + 1:], rho[k + 1:] = P[k], u[k], T[k], rho[k]
+                    zone_id[k + 1:] = iz
+                    return {"r": r, "P": P, "m": m, "rho": rho, "u": u, "T": T,
+                            "zone_id": zone_id, "r_at_mzero": r_at_mzero,
+                            "n_beyond_isentrope": sum(s.n_beyond for s in isentropes), "n_dropped_isentrope": 0}
+            elif z.T_profile == "adiabatic":
+                rho_b = mat.rho_from_P(P_boundary, T_boundary, "T")
+                val = mat.u_from_T(rho_b, T_boundary); mode = "u"
+            else:
+                val = z.T_iso; mode = "T"
+            r_now, P_now, m_now, dr_left = r_now + f * dr_left, P_b, m_b, (1.0 - f) * dr_left
+        if r[k + 1] <= 0:
+            # the step into the centre: a regular centre has dP/dr = -(4 pi/3) G rho^2 r, whatever mass the radius
+            # bisection leaves (it would otherwise act as a central point mass and send P(0) off the table)
+            P_n = P[k] + (2.0 * np.pi / 3.0) * G_CGS * rho[k] ** 2 * r[k] ** 2
+            if mode == "u": val_n = val + (P[k] / rho[k] ** 2) * (P_n - P[k]) / max(mat.pressure_cs2(rho[k], val, mode)[1], 1e-30)
         # Floor pressure to keep EOS inversion sane.
         if P_n < P_surface * 1e-6: P_n = P_surface * 1e-6
         if m_n < 0: m_n = 0.0
@@ -136,33 +179,7 @@ def _integrate_inward(R, M_total, T_surface, P_surface, zones, n_steps=4000, sur
                 u[k + 1] = val_n; T[k + 1] = mat.T_from_u(rho[k + 1], val_n)
             else:
                 T[k + 1] = val_n; u[k + 1] = mat.u_from_T(rho[k + 1], val_n)
-        zone_id[k + 1] = iz
-
-        # Zone transition: leave the active zone when m drops below its
-        # inner_mass_frac threshold. (For the innermost zone, threshold=0
-        # so we never leave.)
-        while iz < len(zones) - 1 and m[k + 1] <= zones[iz].inner_mass_frac * M_total:
-            T_boundary = T[k + 1]; P_boundary = P[k + 1]
-            iz += 1
-            z = zones[iz]; mat = z.material
-            if z.T_profile == "adiabatic" and mat.kind == "sesame":
-                try:
-                    isen = mat.isentrope(P_boundary, T_boundary); val = 0.0; mode = "isentrope"; isentropes.append(isen)
-                except ValueError:
-                    # no valid isentrope through this boundary state in the table (the trial body is compressed
-                    # beyond it): report this R as over-compressed, i.e. mass runs out before the centre
-                    r_at_mzero = r[k + 1]
-                    m[k + 1:] = 0.0; P[k + 2:], u[k + 2:], T[k + 2:], rho[k + 2:] = P[k + 1], u[k + 1], T[k + 1], rho[k + 1]
-                    zone_id[k + 1:] = iz
-                    return {"r": r, "P": P, "m": m, "rho": rho, "u": u, "T": T,
-                            "zone_id": zone_id, "r_at_mzero": r_at_mzero,
-                            "n_beyond_isentrope": sum(s.n_beyond for s in isentropes), "n_dropped_isentrope": 0}
-            elif z.T_profile == "adiabatic":
-                rho_b = mat.rho_from_P(P_boundary, T_boundary, "T")
-                val = mat.u_from_T(rho_b, T_boundary); mode = "u"
-            else:
-                val = z.T_iso; mode = "T"
-            zone_id[k + 1] = iz
+        zone_id[k + 1] = iz   # the zone whose material computed this sample's state
 
     return {"r": r, "P": P, "m": m, "rho": rho, "u": u, "T": T,
             "zone_id": zone_id, "r_at_mzero": r_at_mzero,

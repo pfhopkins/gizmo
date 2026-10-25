@@ -55,6 +55,7 @@ struct aneos_table {
     int    *phase;        /* phase flag (integer, no interpolation) */
     int     has_csound;   /* 1 if sound speed column present in table */
     int     has_phase;    /* 1 if phase column present in table */
+    int    *lowest_valid_T; /* optional, length nrho: per density, the lowest temperature row the EOS is valid at (NULL = row 0 everywhere) */
 
     /* Grid bounds */
     double logrho_min, logrho_max;
@@ -183,6 +184,15 @@ static KOKKOS_INLINE_FUNCTION double aneos_dlogQ_dlogrho(const struct aneos_tabl
     return dq / (tbl->logrho[i + 1] - tbl->logrho[i]);
 }
 
+/* The lowest valid log10(T) inside the located density interval: the higher of its two columns' bounds, so the
+   bilinear cell never reaches below either. Without per-density bounds this is the bottom of the table. */
+static KOKKOS_INLINE_FUNCTION double aneos_logT_floor(const struct aneos_table *tbl, struct aneos_axis_location r)
+{
+    if(!tbl->lowest_valid_T) return tbl->logT_min;
+    int k = tbl->lowest_valid_T[r.i], k1 = tbl->lowest_valid_T[r.i + 1];
+    return tbl->logT[(k1 > k) ? k1 : k];
+}
+
 /* ---- Direct (rho, T) lookup ---- */
 
 KOKKOS_INLINE_FUNCTION
@@ -197,7 +207,8 @@ int aneos_lookup_rhoT_P(const struct aneos_table *tables, int mat_index,
     if(!tbl->loaded) return 1;
 
     struct aneos_axis_location r = aneos_locate_rho(tbl, log10(rho_cgs > 0 ? rho_cgs : 1e-30));
-    struct aneos_axis_location T = aneos_locate_T(tbl, log10(T_cgs > 0 ? T_cgs : 1.0));
+    double lT = log10(T_cgs > 0 ? T_cgs : 1.0), lT_floor = aneos_logT_floor(tbl, r);
+    struct aneos_axis_location T = aneos_locate_T(tbl, (lT < lT_floor) ? lT_floor : lT); /* below the valid region: the state at its edge */
 
     if(press_cgs)   *press_cgs   = pow(10.0, aneos_interp(tbl, tbl->log_pressure, r, T));
     if(u_cgs)       *u_cgs       = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, T));
@@ -250,19 +261,19 @@ int aneos_compute_P(const struct aneos_table *tables, int mat_index,
     T = (T_guess && *T_guess > 0) ? *T_guess : 1000.0;
     lT = log10(T);
 
-    /* Clamp initial guess to table */
-    if(lT < tbl->logT_min) lT = tbl->logT_min;
-    if(lT > tbl->logT_max) lT = tbl->logT_max;
-
-    /* Bracketing for bisection fallback */
-    double lT_lo = tbl->logT_min;
+    /* Bracketing for bisection fallback: the valid temperature range at this density */
+    double lT_lo = aneos_logT_floor(tbl, r);
     double lT_hi = tbl->logT_max;
+
+    /* Clamp initial guess to it */
+    if(lT < lT_lo) lT = lT_lo;
+    if(lT > lT_hi) lT = lT_hi;
 
     /* Check bracket: evaluate u at the endpoints */
     double u_lo = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_lo)));
     double u_hi = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_hi)));
 
-    /* If u_target is outside the table range, clamp */
+    /* If u_target is outside the valid range, clamp: below it, every quantity is that of the state at the lower edge */
     if(u_target <= u_lo) {
         lT = lT_lo; converged = 1;
     } else if(u_target >= u_hi) {

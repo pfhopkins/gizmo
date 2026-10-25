@@ -3,7 +3,9 @@ placement -> HDF5 output. Designed to replace the uniform-density rejection-
 sampled-sphere generators in test/aneos_giant_impact, test/jutzi_crater,
 test/cd21_hhe_compression once validated.
 
-Example usage (Earth-like body):
+For a tabulated-EOS (ANEOS) planet, build_planet() below does every step in one call (SEAGen shells with
+spacing-matched masses, GIZMO's own kernel density, u calibrated at it). The steps one by one, for an
+Earth-like body:
 
     from initial_conditions.eos_tools.eos_dispatch import Material
     from initial_conditions.eos_tools.hse_solver   import Zone, solve_hse
@@ -71,6 +73,27 @@ def write_hdf5(path, placed, prof, box_size, center_offset=None):
 
     print(f"Wrote {path}: n={n}  R={prof['R']:.3e} cm  "
           f"P_c={prof['P'][-1]:.3e} dyn/cm^2  T_c={prof['T'][-1]:.3e} K")
+
+
+def build_planet(zones, M_total, T_surface, P_surface, n_particles, out, des_num_ngb=32, mass_ratio="spacing",
+                 box_size=None, seed=17, n_steps=4000):
+    """Layered body in hydrostatic equilibrium, in one call: HSE profile -> SEAGen shells with the particle mass
+    matched to the spacing across each material interface -> GIZMO's own kernel density at the placed positions
+    (cubic spline, des_num_ngb) -> u per particle so that EOS(rho_GIZMO, u) = P_HSE(r) -> HDF5 IC at `out`.
+    zones are ordered outer -> inner (see hse_solver.Zone). Particles whose target pressure no valid EOS state
+    reaches (e.g. below a table's lowest valid temperature) keep the closest valid state and are reported.
+    For the exact densities GIZMO will use, run GIZMO on `out` for zero time and recalibrate with
+    sph_density.calibrate_u on its snapshot_000 densities (the two agree to ~1e-4 for DesNumNgb 32,
+    MaxNumNgbDeviation 0.1). Returns (placed, prof)."""
+    from .hse_solver import solve_hse
+    from .shell_placement import seagen_shells
+    from .sph_density import correct_u_for_sph_density
+    prof = solve_hse(M_total=M_total, T_surface=T_surface, P_surface=P_surface, zones=zones, n_steps=n_steps)
+    print(f"  HSE profile: R = {prof['R']:.4e} cm, P_c = {prof['P'][-1]:.3e}, T_c = {prof['T'][-1]:.3e}")
+    placed = seagen_shells(prof, zones, n_particles, mass_ratio=mass_ratio, seed=seed)
+    correct_u_for_sph_density(placed, prof, zones, des_num_ngb=des_num_ngb, verbose=True)
+    write_hdf5(out, placed, prof, box_size=box_size if box_size else 10.0 * prof["R"])
+    return placed, prof
 
 
 def hse_diagnostics(prof):

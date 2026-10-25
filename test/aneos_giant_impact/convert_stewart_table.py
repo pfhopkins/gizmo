@@ -17,6 +17,20 @@ Output format (GIZMO SESAME):
   ...
   rho T P u S cs   (CGS: g/cm^3, K, dyn/cm^2, erg/g, erg/g/K, cm/s)
   ...  (rho-slow, T-fast ordering: for each rho, loop over all T)
+  lowest_valid_T_index
+  k[0] ... k[nrho-1]   (per density: index of the lowest temperature row the EOS is valid at)
+
+Resolution: the density axis is kept as tabulated (its resolution is what the
+consistency of bilinearly interpolated P and u depends on); every T_stride-th
+temperature row is kept (default 4, which costs little accuracy).
+
+Invalid region: in these tables, states where ANEOS returned a negative entropy
+(the cold, tensile corner below each density's lowest valid temperature) had
+their energy replaced by a sentinel and their other values by filler, and the
+negative entropy survives as the marker. Those rows are a contiguous block at the
+bottom of every density column; the converter writes, per density, the lowest
+kept row above that block, and GIZMO treats it as the lower edge of the table at
+that density.
 """
 
 import numpy as np
@@ -55,22 +69,28 @@ def read_stewart_table(fname):
     return rho, T, data, nrho, nT
 
 
-def downsample(rho, T, data, target_nrho, target_nT):
-    """Downsample by keeping evenly spaced indices of the source axes (the source axes are
-    themselves irregular, so the kept points are too; GIZMO reads any strictly increasing axes)."""
-    nrho_orig, nT_orig = len(rho), len(T)
-
-    idx_rho = np.unique(np.linspace(0, nrho_orig - 1, target_nrho).astype(int))
-    idx_T = np.unique(np.linspace(0, nT_orig - 1, target_nT).astype(int))
-
-    rho_ds = rho[idx_rho]
-    T_ds = T[idx_T]
-    data_ds = data[np.ix_(idx_T, idx_rho)]  # data is [iT, irho, 4]
-
-    return rho_ds, T_ds, data_ds
+def kept_indices(n, stride):
+    """every stride-th index of an axis of length n, always including the last"""
+    idx = list(range(0, n, stride))
+    if idx[-1] != n - 1: idx.append(n - 1)
+    return np.array(idx)
 
 
-def write_gizmo_sesame(fname, mat_id, rho, T, data):
+def lowest_valid_rows(data):
+    """per density column, the index of the first row above the block of negative-entropy rows"""
+    bad = data[:, :, 3] < 0  # [iT, irho]
+    nT, nrho = bad.shape
+    low = np.zeros(nrho, dtype=int)
+    for i in range(nrho):
+        rows = np.where(bad[:, i])[0]
+        if len(rows) == 0: continue
+        if not bad[:rows[-1] + 1, i].all():
+            raise ValueError(f"density column {i}: the negative-entropy rows are not one block at the bottom of the column")
+        low[i] = rows[-1] + 1
+    return low
+
+
+def write_gizmo_sesame(fname, mat_id, rho, T, data, low):
     """Write GIZMO SESAME format. data is [nT, nrho, 4] with (u, P, cs, S) in SI."""
     nrho, nT = len(rho), len(T)
 
@@ -100,30 +120,36 @@ def write_gizmo_sesame(fname, mat_id, rho, T, data):
 
                 f.write(f"{r_cgs:.10e} {t:.10e} {P_cgs:.10e} {u_cgs:.10e} {S_cgs:.10e} {cs_cgs:.10e}\n")
 
+        f.write("lowest_valid_T_index\n")
+        f.write(" ".join(str(int(k)) for k in low) + "\n")
+
     print(f"Wrote {fname}: mat_id={mat_id}, {nrho}x{nT} grid")
 
 
-def convert(input_file, output_file, mat_id, target_nrho=200, target_nT=200):
+def convert(input_file, output_file, mat_id, T_stride=4):
     print(f"Reading {input_file}...")
     rho, T, data, nrho, nT = read_stewart_table(input_file)
     print(f"  Original grid: {nrho} x {nT}")
+    low_native = lowest_valid_rows(data)
 
-    if target_nrho < nrho or target_nT < nT:
-        rho, T, data = downsample(rho, T, data, target_nrho, target_nT)
-        print(f"  Downsampled to: {len(rho)} x {len(T)}")
+    keep_T = kept_indices(nT, T_stride)
+    # per density: the first kept row at or above the native lowest valid row (at most the second-to-last kept row)
+    low = np.minimum(np.searchsorted(keep_T, low_native), len(keep_T) - 2)
+    T, data = T[keep_T], data[keep_T, :, :]
+    print(f"  Kept every {T_stride}th temperature row: {nrho} x {len(T)}; lowest valid T at the median density "
+          f"{T[low[nrho // 2]]:.4g} K, highest lowest-valid T {T[low.max()]:.4g} K")
 
-    write_gizmo_sesame(output_file, mat_id, rho, T, data)
+    write_gizmo_sesame(output_file, mat_id, rho, T, data, low)
 
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
-        print("Usage: convert_stewart_table.py <input.txt> <output.sesame> <mat_id> [nrho] [nT]")
+        print("Usage: convert_stewart_table.py <input.txt> <output.sesame> <mat_id> [T_stride (default 4)]")
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
     mat_id = int(sys.argv[3])
-    nrho = int(sys.argv[4]) if len(sys.argv) > 4 else 200
-    nT = int(sys.argv[5]) if len(sys.argv) > 5 else 200
+    T_stride = int(sys.argv[4]) if len(sys.argv) > 4 else 4
 
-    convert(input_file, output_file, mat_id, nrho, nT)
+    convert(input_file, output_file, mat_id, T_stride)

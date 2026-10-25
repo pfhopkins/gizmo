@@ -318,10 +318,14 @@ static double irr_logu(double lr, double lT)  { return 8.0 + 0.2 * lr + lT + 0.0
 static double irr_logcs(double lr, double lT) { return 5.0 + 0.5 * lT - 0.1 * lr; }
 static double irr_S(double lr, double lT)     { return 1.0e7 * (lT - 2.0 * lr - 1.0); }
 
+/* per-density lowest valid temperature rows written by write_irregular_table when asked (one per IRR_LR) */
+static const int IRR_LOW[] = {0, 2, 4, 0, 2, 4, 0, 2, 4, 0, 2};
+
 /* writes the fixture; 'defect' plants one inconsistency for the refusal tests:
-   0 none, 1 density axis not increasing, 2 a row's T differs from the axis, 3 a non-positive axis value.
-   ncols = 7 (all columns) or 5 (no sound speed or phase, so the code estimates cs) */
-static int write_irregular_table(const char *fname, int defect, int ncols)
+   0 none, 1 density axis not increasing, 2 a row's T differs from the axis, 3 a non-positive axis value,
+   4 a lowest valid row outside [0, nT-2]. ncols = 7 (all columns) or 5 (no sound speed or phase, so the code
+   estimates cs). low_block = 1 appends the per-density lowest-valid-row block (IRR_LOW). */
+static int write_irregular_table_block(const char *fname, int defect, int ncols, int low_block)
 {
     FILE *fp = fopen(fname, "w");
     if(!fp) { fprintf(stderr, "Cannot create %s\n", fname); return 1; }
@@ -344,9 +348,16 @@ static int write_irregular_table(const char *fname, int defect, int ncols)
             fprintf(fp, "\n");
         }
     }
+    if(low_block) {
+        fprintf(fp, "lowest_valid_T_index\n");
+        for(int i = 0; i < IRR_NR; i++) fprintf(fp, "%d ", (defect == 4 && i == 3) ? IRR_NT - 1 : IRR_LOW[i]);
+        fprintf(fp, "\n");
+    }
     fclose(fp);
     return 0;
 }
+
+static int write_irregular_table(const char *fname, int defect, int ncols) {return write_irregular_table_block(fname, defect, ncols, 0);}
 
 /* The lookup this module used before irregular axes were supported: a single mean
    spacing per axis. Kept here only to prove the fixture detects that defect. */
@@ -472,6 +483,28 @@ static void test_irregular_grid(void)
         snprintf(label, sizeof(label), "refuses table with %s", why[defect]);
         check(label, (aneos_read_table(IRR_TABLE_FILE, 2) != 0) ? 1.0 : 0.0, 1.0, 0.0);
     }
+
+    /* per-density lowest valid temperature: below it every quantity is the state at that row. The bilinear fields
+       are exact on the interpolant, so the expected values are the analytic ones at the floor. */
+    write_irregular_table_block(IRR_TABLE_FILE, 0, 7, 1);
+    check("table with a lowest-valid-row block loads", (double)aneos_read_table(IRR_TABLE_FILE, 4), 0.0, 0.0);
+    {
+        /* lr 0.25 lies between knots 6 and 7 (rows 0 and 2): floor at IRR_LT[2] = 1.0; lr -2.875 between knots 1 and 2
+           (rows 2 and 4): floor at IRR_LT[4] = 1.51 */
+        const double cases[][3] = {{0.25, 0.5, 1.0}, {0.25, 3.0, 3.0}, {-2.875, 1.2, 1.51}, {-2.875, 6.0, 6.0}};
+        for(int k = 0; k < 4; k++) {
+            double lr = cases[k][0], lT = cases[k][1], lT_eff = cases[k][2], T_guess = 3.0e3, cv, grun; char label[160];
+            aneos_lookup_rhoT(4, pow(10.0, lr), pow(10.0, lT), &P, &u, &S, &cs, &phase);
+            snprintf(label, sizeof(label), "lowest valid T: lookup P (lr=%g, lT=%g)", lr, lT); check(label, P, pow(10.0, irr_logP(lr, lT_eff)), 1e-10);
+            snprintf(label, sizeof(label), "lowest valid T: lookup cs (lr=%g, lT=%g)", lr, lT); check(label, cs, pow(10.0, irr_logcs(lr, lT_eff)), 1e-10);
+            aneos_compute(4, pow(10.0, lr), pow(10.0, irr_logu(lr, lT)), &T_guess, &P, &cs, &S, &cv, &grun, &phase);
+            snprintf(label, sizeof(label), "lowest valid T: inversion T (lr=%g, lT=%g)", lr, lT); check(label, T_guess, pow(10.0, lT_eff), 1e-6);
+            snprintf(label, sizeof(label), "lowest valid T: inversion P (lr=%g, lT=%g)", lr, lT); check(label, P, pow(10.0, irr_logP(lr, lT_eff)), 1e-5);
+            snprintf(label, sizeof(label), "lowest valid T: inversion S (lr=%g, lT=%g)", lr, lT); check_abs(label, S, irr_S(lr, lT_eff), 1e-1);
+        }
+    }
+    write_irregular_table_block(IRR_TABLE_FILE, 4, 7, 1);
+    check("refuses a lowest valid row outside [0, nT-2]", (aneos_read_table(IRR_TABLE_FILE, 5) != 0) ? 1.0 : 0.0, 1.0, 0.0);
     remove(IRR_TABLE_FILE);
     printf("  %d/%d passed\n\n", n_pass, n_tests);
 }
