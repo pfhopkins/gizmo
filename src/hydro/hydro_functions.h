@@ -229,6 +229,7 @@ void hydro_accumulate_neighbor(
     double face_vel_i = 0, face_vel_j = 0;
     double v_hll = 0;
     int kernel_mode = 0;
+    Vec3<double> face_velocity_jump = {}; /* velocity jump between the reconstructed face states (meshless methods) */
 
     memset(&Fluxes, 0, sizeof(struct Conserved_var_Riemann));
 
@@ -265,7 +266,7 @@ void hydro_accumulate_neighbor(
                                          cr_pressure_j_ptr,
                                          Face_Area_Vec, Face_Area_Norm,
                                          face_vel_i, face_vel_j, face_area_dot_vel,
-                                         mdot_estimated, Riemann_vec, Riemann_out, Fluxes, out);
+                                         mdot_estimated, face_velocity_jump, Riemann_vec, Riemann_out, Fluxes, out);
     }
 #endif
 
@@ -297,7 +298,7 @@ void hydro_accumulate_neighbor(
 #endif
 
     /* ---- Physics sub-modules ---- */
-    elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, rinv,
+    elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, face_velocity_jump, rinv,
                                              Face_Area_Vec, Face_Area_Norm,
                                              tensile_correction_factor, dt_hydrostep, Fluxes);
     Vec3<double> bflux_from_nonideal_effects = {};

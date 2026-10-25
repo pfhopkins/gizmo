@@ -61,6 +61,7 @@ void hydro_core_meshless_compute_pair(
     double &face_vel_j,
     double &face_area_dot_vel,
     double &mdot_estimated,
+    Vec3<double> &face_velocity_jump,
     struct Input_vec_Riemann &Riemann_vec,
     struct Riemann_outputs &Riemann_out,
     struct Conserved_var_Riemann &Fluxes,
@@ -174,6 +175,7 @@ void hydro_core_meshless_compute_pair(
         reconstruct_face_states(local.Vel[k] - v_frame[k], local.Gradients.Velocity[k], VelPred_j[k] - v_frame[k], CellP[j].Gradients.Velocity[k],
                                 distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
     }
+    face_velocity_jump = Riemann_vec.R.v - Riemann_vec.L.v; /* the reconstructed jump (i minus j), before any fallback below resets the states */
 #ifdef MAGNETIC
     int slim_mode = 1;
 #ifdef MHD_CONSTRAINED_GRADIENT
