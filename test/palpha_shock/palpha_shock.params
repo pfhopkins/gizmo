@@ -1,0 +1,43 @@
+% Porous basalt shock compaction (CGS units): two halves of a 200 cm 1D periodic box of porous basalt (P-alpha, Jutzi et al. 2008)
+% collide at 2 x 3 km/s; the shocked material is at rest and compacted to the Rankine-Hugoniot state computed in
+% test_palpha_shock.py. The IC is written by make_ics.py.
+InitCondFile                       palpha_shock_ics
+OutputDir                          output
+SnapshotFileBase                   snapshot
+OutputListOn                       0
+TimeBegin                          0.0
+TimeMax                            8.333333e-05
+TimeBetSnapshot                    4.166667e-05
+TimeBetStatistics                  4.166667e-05
+TimeLimitCPU                       300
+BoxSize                            200.0
+UnitVelocity_in_cm_per_s           1.0
+UnitLength_in_cm                   1.0
+UnitMass_in_g                      1.0
+MaxSizeTimestep                    4.166667e-07
+MinSizeTimestep                    1.0e-12
+CourantFac                         0.2
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.1
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+ResubmitOn                         0
+ResubmitCommand                    none
+DesNumNgb                          4
+MaxNumNgbDeviation                 0.02
+% The custom material (CompositionType 0): Tillotson basalt, its strength, and a porous P-alpha model
+Tillotson_EOS_params_a             0.5
+Tillotson_EOS_params_b             1.5
+Tillotson_EOS_params_u_0           4.87e12
+Tillotson_EOS_params_rho_0         2.7
+Tillotson_EOS_params_A             2.67e11
+Tillotson_EOS_params_B             2.67e11
+Tillotson_EOS_params_u_s           4.72e10
+Tillotson_EOS_params_u_s_prime     1.82e11
+Tillotson_EOS_params_alpha         5.0
+Tillotson_EOS_params_beta          5.0
+SolidMaterial_ShearModulus         2.27e11
+SolidMaterial_YieldStrength        3.5e10
+SolidMaterial_InitialDistention    1.275
+SolidMaterial_CrushPressureElastic 1.0e8
+SolidMaterial_CrushPressureSolid   7.0e10
