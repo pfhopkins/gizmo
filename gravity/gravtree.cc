@@ -656,13 +656,10 @@ void gravity_tree(void)
      * into CellP.UV/LW/NUV/OPT_flux — chemistry reads them unchanged (and under
      * TREE_RAY calc_photo must NOT re-apply f_dust to the stellar component).
      * Column->N_H conversion mirrors chemcool.cc:572 (Sigma_code -> cgs -> per H).
-     * Dust cross sections per H (x DGR): sigma_FUV=2e-21, NUV=1.3e-21, OPT=0.5e-21
-     * cm^2 (LW attenuates with the FUV sigma; H2/CO LINE self-shielding stays in
-     * chemistry, applied once). DGR: global All.DGRnormalized (slice-1
-     * approximation — per-node metallicity is a documented future refinement). */
+     * Per-cell-DGR dust column; sigma per H: FUV 2.5 A_V/N_H, LW 2e-21 (the chemistry's df25/f_dust), NUV 1.3e-21, OPT 0.5e-21. */
     {
         double tr_colconv = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-        double tr_dgr = All.DGRnormalized;
+        const double tr_sig_fuv = 2.5 * 5.348e-22, tr_sig_lw = 2.0e-21; /* per H at solar DGR: chemistry df25 (2.5 A_V, A_V/N_H as chemcool.cc) and f_dust */
 #ifdef TREE_RAY_PI
         /* per-species column conversions: shells hold the SPECIES mass Sigma directly */
         double tr_colconv_hi = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv / PROTONMASS_CGS;
@@ -675,7 +672,7 @@ void gravity_tree(void)
             int pfx, sfx;
             for(pfx = 0; pfx < NPIX; pfx++)
             {
-                double tau_uv = 0, F_uv = 0, F_lw = 0;
+                double tau_uv = 0, tau_d = 0, F_uv = 0, F_lw = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 double F_nuv = 0;
 #endif
@@ -685,18 +682,18 @@ void gravity_tree(void)
                 for(sfx = 0; sfx < TREE_RAY_NSHELL; sfx++)
                 {
                     int ks = pfx*TREE_RAY_NSHELL + sfx;
-                    double NH_sh = (double)CellP[i].TreeRay_ShellCol[ks] * tr_colconv;
-                    double dtau_uv = 2.0e-21 * NH_sh * tr_dgr;
-                    double att_mid_uv = exp(-(tau_uv + 0.5*dtau_uv));
-                    F_uv += (double)CellP[i].TreeRay_ShellUV[ks] * att_mid_uv;
-                    F_lw += (double)CellP[i].TreeRay_ShellLW[ks] * att_mid_uv; /* LW: FUV dust sigma */
+                    double NH_sh = (double)CellP[i].TreeRay_ShellCol[ks] * tr_colconv; /* dust-weighted N_H (solar-DGR units) */
+                    double dtau_uv = tr_sig_fuv * NH_sh, dtau_d = tr_sig_lw * NH_sh;
+                    F_uv += (double)CellP[i].TreeRay_ShellUV[ks] * exp(-(tau_uv + 0.5*dtau_uv));
+                    double att_mid_d = exp(-(tau_d + 0.5*dtau_d));
+                    F_lw += (double)CellP[i].TreeRay_ShellLW[ks] * att_mid_d;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                    F_nuv += (double)CellP[i].TreeRay_ShellNUV[ks] * exp(-(tau_uv + 0.5*dtau_uv)*(1.3/2.0));
+                    F_nuv += (double)CellP[i].TreeRay_ShellNUV[ks] * exp(-(tau_d + 0.5*dtau_d)*(1.3/2.0));
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
-                    F_opt += (double)CellP[i].TreeRay_ShellOPT[ks] * exp(-(tau_uv + 0.5*dtau_uv)*(0.5/2.0));
+                    F_opt += (double)CellP[i].TreeRay_ShellOPT[ks] * exp(-(tau_d + 0.5*dtau_d)*(0.5/2.0));
 #endif
-                    tau_uv += dtau_uv;
+                    tau_uv += dtau_uv; tau_d += dtau_d;
                 }
 #ifdef TREE_RAY_PI
                 {int b_sw; for(b_sw=0; b_sw<N_TRPI_BANDS; b_sw++) {
@@ -750,13 +747,11 @@ void gravity_tree(void)
                 /* implied absorbed luminosity of this cell, code units:
                  * L_abs = F_tot(code L/len^2) * sigma_eff(code len^2), with
                  * sigma_eff = sigma_cgs*DGR * N_H(cell) / UNIT_LENGTH^2 */
-                double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2] + CellP[i].LW_flux[pfx2];}
+                double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2] * (tr_sig_fuv / tr_sig_lw) + CellP[i].LW_flux[pfx2];} /* UV absorbs with its sweep sigma */
                 double NH_cell = P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
                 /* per-cell DGR (2026-07-28): the implied absorption of each cell uses ITS
                  * OWN dust content, consistent with the per-cell leaf weighting in the
-                 * dust column and the per-cell radp absorber. (tr_dgr kept for the
-                 * TREE_RAY shell sweep above: shell-resolved dust columns are a
-                 * documented follow-up -- TREE_RAY is off in production.) */
+                 * dust column and the per-cell radp absorber. */
                 double sigma_eff_code = 2.0e-21 * resolvedism_cell_DGR_solar(i) * NH_cell / (UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS);
                 A_abs_uv += F_tot * sigma_eff_code / (4.0 * M_PI); /* flux stored without 1/4pi; restore for luminosity */
             }
