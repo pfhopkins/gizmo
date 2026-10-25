@@ -18,9 +18,6 @@
 #define DEDNER_IMPLICIT_LIMITER 0.75
 #endif
 
-#if defined(TURB_DIFFUSION)
-#define SAVE_FACE_DENSITY 1
-#endif
 #if defined(MAGNETIC)
 #define SAVE_FACE_BFIELD 1
 #endif
@@ -57,9 +54,6 @@ struct Riemann_outputs
     MyDouble phi_normal_mean;
     MyDouble phi_normal_db;
 #endif
-#endif
-#ifdef SAVE_FACE_DENSITY
-    MyDouble Face_Density;
 #endif
 #ifdef SAVE_FACE_BFIELD
     Vec3<MyDouble> Face_B;
@@ -357,9 +351,6 @@ static GIZMO_GPU_FUNCTION void Riemann_solver(struct Input_vec_Riemann Riemann_v
     if((Riemann_out->P_M<0)||(isnan(Riemann_out->P_M))||(Riemann_out->P_M>press_tot_limiter))
     {
         Riemann_solver_exact(Riemann_vec, Riemann_out, n_unit, v_line_L, v_line_R, cs_L, cs_R, h_L, h_R);
-#ifdef SAVE_FACE_DENSITY
-        Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho + Riemann_vec.R.rho);
-#endif
     }
 #endif // cooling/galsf
 #endif // eos_general
@@ -401,18 +392,6 @@ static GIZMO_GPU_FUNCTION void HLLC_Riemann_solver(struct Input_vec_Riemann Riem
     Riemann_out->Fluxes.rho = 0; /* vanishes by definition in this frame */
     Riemann_out->Fluxes.v = Riemann_out->P_M * n_unit; /* becomes extremely simple for MFM in this frame */
     Riemann_out->Fluxes.p = Riemann_out->P_M * Riemann_out->S_M; /* becomes extremely simple for MFM in this frame */
-#ifdef SAVE_FACE_DENSITY
-    {double tol_s_fd = 1.e-12 * (fabs(S_L) + fabs(S_R) + MIN_REAL_NUMBER);
-    if((fabs(Riemann_out->S_M) < tol_s_fd) || ((Riemann_out->P_M<=0)&&(!isnan(Riemann_out->P_M))))
-    {
-        Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho);
-    } else {
-        Riemann_out->Face_Density = 0.5 * (Riemann_vec.L.rho*(S_L-v_line_L)/(S_L-Riemann_out->S_M) +
-                                           Riemann_vec.R.rho*(S_R-v_line_R)/(S_R-Riemann_out->S_M));
-        if(fabs(Riemann_out->S_M-S_L) < tol_s_fd) {Riemann_out->Face_Density=Riemann_vec.L.rho;}
-        if(fabs(Riemann_out->S_M-S_R) < tol_s_fd) {Riemann_out->Face_Density=Riemann_vec.R.rho;}
-    }}
-#endif
 #endif
 }
 
@@ -455,14 +434,6 @@ static GIZMO_GPU_FUNCTION void Riemann_solver_Rusanov(struct Input_vec_Riemann R
     Riemann_out->Fluxes.v = 0.5 * (f_rho_left * Riemann_vec.L.v + f_rho_right * Riemann_vec.R.v + (Riemann_vec.L.p + Riemann_vec.R.p) * n_unit);
     Riemann_out->Fluxes.p = 0.5 * (f_rho_left * h_L + f_rho_right * h_R + S_plus * (Riemann_vec.R.p - Riemann_vec.L.p));
 #endif
-#ifdef SAVE_FACE_DENSITY
-    {double tol_s_rs = 1.e-12 * (fabs(S_L) + fabs(S_R) + MIN_REAL_NUMBER);
-    Riemann_out->Face_Density = 0.5 * (Riemann_vec.L.rho*(S_L-v_line_L)/(S_L-Riemann_out->S_M) +
-                                       Riemann_vec.R.rho*(S_R-v_line_R)/(S_R-Riemann_out->S_M));
-    if(fabs(Riemann_out->S_M-S_L) < tol_s_rs) {Riemann_out->Face_Density=Riemann_vec.L.rho;}
-    if(fabs(Riemann_out->S_M-S_R) < tol_s_rs) {Riemann_out->Face_Density=Riemann_vec.R.rho;}
-    if((Riemann_out->P_M<=0)&&(!isnan(Riemann_out->P_M))) {Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho);}}
-#endif
     return;
 }
 
@@ -501,9 +472,6 @@ static GIZMO_GPU_FUNCTION void Riemann_solver_KurganovTadmor_PWK(struct Input_ve
     Riemann_out->Fluxes.rho = 0; /* vanishes by definition in this frame */
     Riemann_out->Fluxes.v = (Riemann_vec.R.v-Riemann_vec.L.v)*(f_rho_left*f_rho_right*denom) + (Riemann_out->P_M)*n_unit;
     Riemann_out->Fluxes.p = (S_M*(f_rho_left*Riemann_vec.R.p + f_rho_right*Riemann_vec.L.p) + (h_R-h_L)*f_rho_left*f_rho_right) * denom;
-#endif
-#ifdef SAVE_FACE_DENSITY
-    Riemann_out->Face_Density = 0.5*(Riemann_vec.L.rho+Riemann_vec.R.rho);
 #endif
     return;
 }
@@ -610,9 +578,6 @@ static GIZMO_GPU_FUNCTION void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec,
         Riemann_out->Fluxes.rho = Riemann_vec.L.rho * (v_line_L - v_line_frame);
         Riemann_out->Fluxes.p = Riemann_vec.L.rho * h_L * (v_line_L - v_line_frame) + Riemann_vec.L.p * v_line_frame;
         Riemann_out->Fluxes.v = Riemann_out->Fluxes.rho * Riemann_vec.L.v + Riemann_vec.L.p * n_unit;
-#ifdef SAVE_FACE_DENSITY
-        Riemann_out->Face_Density = Riemann_vec.L.rho;
-#endif
     } else {
         if((S_L <= v_line_frame)&&(v_line_frame <= S_M))
         {
@@ -626,9 +591,6 @@ static GIZMO_GPU_FUNCTION void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec,
 
             dv2 = nfac * (S_L - v_line_frame) * (S_M - v_line_L) + Riemann_vec.L.p;
             Riemann_out->Fluxes.v = Riemann_out->Fluxes.rho * Riemann_vec.L.v + dv2 * n_unit;
-#ifdef SAVE_FACE_DENSITY
-            Riemann_out->Face_Density = nfac;
-#endif
         } else {
             if((S_M <= v_line_frame)&&(v_line_frame <= S_R))
             {
@@ -642,16 +604,10 @@ static GIZMO_GPU_FUNCTION void HLLC_fluxes(struct Input_vec_Riemann Riemann_vec,
 
                 dv2 = nfac * (S_R - v_line_frame) * (S_M - v_line_R) + Riemann_vec.R.p;
                 Riemann_out->Fluxes.v = Riemann_out->Fluxes.rho * Riemann_vec.R.v + dv2 * n_unit;
-#ifdef SAVE_FACE_DENSITY
-                Riemann_out->Face_Density = nfac;
-#endif
             } else {
                 Riemann_out->Fluxes.rho = Riemann_vec.R.rho * (v_line_R - v_line_frame);
                 Riemann_out->Fluxes.p = Riemann_vec.R.rho * h_R * (v_line_R - v_line_frame) + Riemann_vec.R.p * v_line_frame;
                 Riemann_out->Fluxes.v = Riemann_out->Fluxes.rho * Riemann_vec.R.v + Riemann_vec.R.p * n_unit;
-#ifdef SAVE_FACE_DENSITY
-                Riemann_out->Face_Density = Riemann_vec.R.rho;
-#endif
             }
         }
     }
@@ -1566,9 +1522,6 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
 #endif
     Riemann_out->S_M=v_frame;
     Riemann_out->P_M=P_M;
-#ifdef SAVE_FACE_DENSITY
-    Riemann_out->Face_Density = Interface_State->rho;
-#endif
 #ifdef SAVE_FACE_BFIELD
     Riemann_out->Face_B = Interface_State->B;
 #endif
