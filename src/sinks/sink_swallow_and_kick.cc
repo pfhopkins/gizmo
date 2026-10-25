@@ -184,9 +184,9 @@ void sink_swallow_and_kick_loop(void)
      * and MPI_Reduce of swallow counters handled inside the launcher. */
     /* engine: build active list */
     int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     if(!nlr_build_active_list(SinkSwkSpec::is_active,
-                               &active_list, &num_active, &num_global_active,
+                               &active_list, &num_active,
                                "sinkswk_active_list")) {
         CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
         return;

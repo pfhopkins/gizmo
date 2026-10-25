@@ -413,6 +413,9 @@ void hydro_gradient_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time();
     double t0 = my_second();
+    /* The per-active host loops below each write only their own particle, so they thread over the
+     * active list on any step with enough actives to pay for it. */
+    const int n_active_list = (int) ActiveParticleList.size();
 
 #ifdef TURB_DIFF_DYNAMIC
     /* (0) Velocity_bar takes its smoothing once, on its owner, before anything
@@ -420,7 +423,11 @@ void hydro_gradient_calc(void)
      * neighbour's Velocity_bar against the particle's own, so the ghost refresh
      * below must ship the scaled value. Done in either corridor mode, never
      * inside the refresh (whose fallback can rebuild and repeat). */
-    for(int i : ActiveParticleList) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n_active_list >= 16)
+#endif
+    for(int idx = 0; idx < n_active_list; idx++) {
+        const int i = ActiveParticleList[idx];
         if(P[i].Type == 0) {CellP[i].Velocity_bar *= All.TurbDynamicDiffSmoothing;}
     }
 #endif
@@ -440,7 +447,7 @@ void hydro_gradient_calc(void)
     if(corridor_built_csr) {
         gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
-              && gizmo_sym_num_active_global > 0) {
+              && gizmo_sym_any_active_global) {
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);
         fflush(stdout);
         endrun(7315);
@@ -465,7 +472,11 @@ void hydro_gradient_calc(void)
 #ifdef TURB_DIFF_DYNAMIC
     double smoothInv = 1.0 / All.TurbDynamicDiffSmoothing;
 #endif
-    for(int i : ActiveParticleList) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n_active_list >= 16)
+#endif
+    for(int idx = 0; idx < n_active_list; idx++) {
+        const int i = ActiveParticleList[idx];
         if(P[i].Type != 0) continue;
         int k2;
         memset(&passer_base[i], 0, sizeof(struct temporary_data_topass));
@@ -549,14 +560,18 @@ void hydro_gradient_calc(void)
      * blocking the between-iter corridor refresh from freeing
      * sym_neighbor_list — abort 814. */
     const bool nothing_to_do =
-        (!corridor_built_csr) && (gizmo_sym_num_active_global <= 0);
+        (!corridor_built_csr) && (!gizmo_sym_any_active_global);
 
     for(int grad_iter = 0; (!nothing_to_do) && grad_iter < NUMBER_OF_GRADIENT_ITERATIONS; grad_iter++) {
         aux.grad_iter = grad_iter;
 
         /* (5a) Zero per-iter passer fields (mirrors gradients.cc:637-646). */
         if(grad_iter > 0) {
-            for(int i : ActiveParticleList) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n_active_list >= 16)
+#endif
+            for(int idx = 0; idx < n_active_list; idx++) {
+                const int i = ActiveParticleList[idx];
                 if(P[i].Type != 0) continue;
 #ifdef MHD_CONSTRAINED_GRADIENT
                 passer_base[i].FaceDotB = 0;
@@ -608,7 +623,11 @@ void hydro_gradient_calc(void)
         /* (5d) Host between-iter MHD-CG block — verbatim from
          * hydro/gradients.cc:689-829. */
 #ifdef MHD_CONSTRAINED_GRADIENT
-        for(int i : ActiveParticleList) {
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if(n_active_list >= 16)
+#endif
+        for(int idx = 0; idx < n_active_list; idx++) {
+            const int i = ActiveParticleList[idx];
             if(P[i].Type != 0) continue;
             int k, k1;
             CellP[i].FlagForConstrainedGradients = 1;

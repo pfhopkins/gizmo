@@ -24,6 +24,7 @@
 #define MODE_B_LOCAL_WALKER_H
 
 #include <vector>
+#include <algorithm>
 
 /* search_mode constants — match NGB_SEARCH_ONEWAY/SYMMETRIC in
  * mesh/ghost_exchange_spec.h to keep the existing NGL contract. */
@@ -87,9 +88,10 @@ void mode_b_local_neighbor_walk(const double pos[3],
  * THE TOPLEAF itself — exactly legacy's pseudo-hit set (a pseudo child is
  * reached iff its parent topleaf is opened). SSOT = the DomainNodeIndex[]/
  * DomainTask[] arrays (the same arrays legacy ngb.cc and the modern Ewald
- * export detector use); the map is derived from them per call, never assumed
- * from slot layout. build() once per call; read-only during the walk, so ONE
- * instance is safely shared across all walking threads. */
+ * export detector use); the map is derived from them, never assumed from slot
+ * layout. Those arrays change only in a tree build, so one map is kept and
+ * rebuilt only after a build (mode_b_topleaf_map_current); it is read-only
+ * during the walk, so ONE instance is safely shared across all walking threads. */
 struct ModeBTopleafMap {
     std::vector<int> leaf_of_topnode;               /* [no - All.TreeNodeIndexBase] -> topleaf id, -1 = not a topleaf */
     int topnode_map_size = 0;                       /* valid offsets: [0, topnode_map_size) */
@@ -102,21 +104,32 @@ struct ModeBTopleafMap {
     }
 };
 
+/* The map for the current tree, rebuilt only when a tree build has happened since it was last built.
+ * Call outside parallel regions; the reference is valid until the next tree build. */
+const ModeBTopleafMap &mode_b_topleaf_map_current(void);
+
 /* Per-query export sink — the WRITE half. add() records, for the CURRENT
  * query, the DomainNodeIndex start-nodes to export to each owning peer task
  * (legacy pseudo-node export: after_condition_unthreaded.h:19-67). Reused
  * across queries: ensure_size() once per call, clear_all() per query (retains
  * capacity). Write-only during the walk, so each thread owns its OWN instance
- * (no shared export counter). */
+ * (no shared export counter). The peers a query reached are kept in
+ * touched_peers, so clearing and reading a query's exports cost what the query
+ * touched, never a pass over every rank. */
 struct ModeBExportSink {
     std::vector<std::vector<int>> nodes_per_peer;   /* [owner_task] -> DomainNodeIndex list */
+    std::vector<int> touched_peers;                 /* peers with exports for the current query */
     void ensure_size(int ntask) {
-        if((int)nodes_per_peer.size() != ntask) nodes_per_peer.assign(ntask, std::vector<int>{});
+        if((int)nodes_per_peer.size() != ntask) {nodes_per_peer.assign(ntask, std::vector<int>{}); touched_peers.clear();}
     }
-    void clear_all() { for(auto &v : nodes_per_peer) v.clear(); }
+    void clear_all() { for(int p : touched_peers) {nodes_per_peer[p].clear();} touched_peers.clear(); }
     void add(int owner_task, int domain_node_index) {
-        nodes_per_peer[owner_task].push_back(domain_node_index);
+        std::vector<int> &nodes = nodes_per_peer[owner_task];
+        if(nodes.empty()) {touched_peers.push_back(owner_task);}
+        nodes.push_back(domain_node_index);
     }
+    /* The touched peers in ascending rank order: the order a scan over every rank gives. */
+    const std::vector<int> &sorted_touched_peers() { std::sort(touched_peers.begin(), touched_peers.end()); return touched_peers; }
 };
 
 /* SENDER walk (legacy mode==0): walk the local tree from the root; at every

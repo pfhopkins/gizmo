@@ -247,7 +247,7 @@ int gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default)
     return spec_default;
 }
 
-bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int default_max)
+bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int default_max)
 {
     const int TS = gizmo_nlr_modeb_threshold_sum_for(nullptr, default_sum);
     const int TM = gizmo_nlr_modeb_threshold_max_for(nullptr, default_max);
@@ -489,6 +489,30 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
     const long long floor_work = (long long)MODEB_OMP_MIN_PER_THREAD * nthreads;
     const long long thresh = (floor_work > 64) ? floor_work : 64;
     return n_items >= thresh;
+}
+
+/* Host writeback of n evaluated actives, slots [first, first+n), from accums[0..n). A Spec whose
+ * writeback touches only its own particle (nlr_spec_writeback_writes_only_own_particle) runs it on
+ * several threads once there is enough work: the actives are distinct, so the writes are disjoint
+ * and their order cannot change the result. Every other Spec writes back serially in active order. */
+template <typename Spec>
+static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int first, int n,
+                                        const typename Spec::AccumData *accums)
+{
+    if constexpr (nlr_spec_writeback_writes_only_own_particle_v<Spec>) {
+        const bool threaded = nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads());
+        (void) threaded;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+        for(int kk = 0; kk < n; kk++) {
+            Spec::apply_active_writeback(args, first + kk, args.active_list[first + kk], accums[kk]);
+        }
+    } else {
+        for(int kk = 0; kk < n; kk++) {
+            Spec::apply_active_writeback(args, first + kk, args.active_list[first + kk], accums[kk]);
+        }
+    }
 }
 
 /* WHERE one batch of fused-walk sources runs: device, host threads, or one host
@@ -942,11 +966,7 @@ static void run_mode_b_local(const neighbor_loop_args& args, const double *radii
     }
 
     /* Host writeback — same code path as Mode A's writeback. */
-    {
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
-        }
-    }
+    nlr_apply_active_writebacks<Spec>(args, 0, N, accums.data());
 }
 
 
@@ -1324,11 +1344,12 @@ static void mode_b_remote_evaluate_into_buffer(
      * cross-rank-fresh and dominates every radius_policy (mode_b_local_walker.h). */
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
 
-    /* Targeted-export reverse map: topnode indices are stable between builds →
-     * build ONCE, reuse for the fused walk. */
-    ModeBTopleafMap topleaf_map;   /* shared read-only map, built once */
+    /* Targeted-export reverse map, kept between tree builds; empty (no topleaf recognised) when
+     * there is nothing to export. */
+    static const ModeBTopleafMap no_topleaf_map;
+    const ModeBTopleafMap &topleaf_map = (N > 0 && nt > 1) ? mode_b_topleaf_map_current() : no_topleaf_map;
     ModeBExportSink export_sink;   /* per-query export sink (write-only during the walk) */
-    if(N > 0 && nt > 1) { export_sink.ensure_size(nt); topleaf_map.build(); }
+    if(N > 0 && nt > 1) { export_sink.ensure_size(nt); }
 
     /* Fused-walk export CSR (targeted specs): per active, its per-peer export
      * node-lists, staged ONCE by the fused self walk and marshalled (no second
@@ -1417,11 +1438,10 @@ static void mode_b_remote_evaluate_into_buffer(
                     mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                             Spec::search_mode, Spec::radius_policy,
                                             cand_ptr, topleaf_map, sink, jscale);
-                    for(int p = 0; p < nt; p++) {
+                    for(int p : sink.sorted_touched_peers()) {
                         if(p == rank) continue;
                         const std::vector<int>& nodes = sink.nodes_per_peer[p];
                         const int nn = (int)nodes.size();
-                        if(nn == 0) continue;
                         FusedExportRec rec;
                         rec.peer = p; rec.node_off = (int)lnodes.size(); rec.n_nodes = nn;
                         lrecs.push_back(rec);
@@ -1469,11 +1489,10 @@ static void mode_b_remote_evaluate_into_buffer(
                                             Spec::search_mode, Spec::radius_policy,
                                             cand_ptr, topleaf_map, export_sink, jscale);
                     /* stage this active's per-peer exports into the CSR */
-                    for(int p = 0; p < nt; p++) {
+                    for(int p : export_sink.sorted_touched_peers()) {
                         if(p == rank) continue;
                         const std::vector<int>& nodes = export_sink.nodes_per_peer[p];
                         const int nn = (int)nodes.size();
-                        if(nn == 0) continue;
                         FusedExportRec rec;
                         rec.peer = p; rec.node_off = (int)csr_nodes.size(); rec.n_nodes = nn;
                         csr_recs.push_back(rec);
@@ -1588,37 +1607,34 @@ static void mode_b_remote_evaluate_into_buffer(
                         "oversized round — cap ineffective for this call (raise CommChunkSize).",
                         Spec::loop_name, add, add * kEnvPairBytes, bunch);
                 }
-                /* commit: chunked envelopes per exported peer (CSR records are peer-ascending). */
-                int rr = r0;
-                for(int p = 0; p < nt; p++) {
-                    if(p == rank) continue;
-                    if(rr < r1 && csr_recs[rr].peer == p) {
-                        const FusedExportRec& rec = csr_recs[rr];
-                        const int* nd = &csr_nodes[rec.node_off];
-                        const int nn = rec.n_nodes;
-                        diag_export_qr++; diag_node_appends += nn;
-                        /* Chunk into NODELISTLENGTH-sized records (legacy opens a
-                         * fresh export slot when a NodeList fills). Chunks cover
-                         * disjoint subtrees → the slot-keyed reply merge sums their
-                         * partial results without double counting. All chunks of a
-                         * (query,peer) group land in THIS round (all-or-nothing
-                         * above), so each group stays contiguous. */
-                        for(int c = 0; c < nn; c += NODELISTLENGTH) {
-                            Envelope env;
-                            env.origin_slot = aa;
-                            env.origin_rank = rank;
-                            int cnt = 0;
-                            for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
-                                env.NodeList[cnt] = nd[c + cnt];
-                            }
-                            env.n_nodes = cnt;
-                            env.reserved_wire_padding = 0;
-                            for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
-                            env.active = actives[aa];
-                            queries_per_peer[p].push_back(env);
+                /* commit: chunked envelopes per exported peer, straight from this active's
+                 * records (peer-ascending, so each peer's envelopes keep the order a scan
+                 * over every rank gave). */
+                for(int rr = r0; rr < r1; rr++) {
+                    const FusedExportRec& rec = csr_recs[rr];
+                    const int p = rec.peer;
+                    const int* nd = &csr_nodes[rec.node_off];
+                    const int nn = rec.n_nodes;
+                    diag_export_qr++; diag_node_appends += nn;
+                    /* Chunk into NODELISTLENGTH-sized records (legacy opens a
+                     * fresh export slot when a NodeList fills). Chunks cover
+                     * disjoint subtrees → the slot-keyed reply merge sums their
+                     * partial results without double counting. All chunks of a
+                     * (query,peer) group land in THIS round (all-or-nothing
+                     * above), so each group stays contiguous. */
+                    for(int c = 0; c < nn; c += NODELISTLENGTH) {
+                        Envelope env;
+                        env.origin_slot = aa;
+                        env.origin_rank = rank;
+                        int cnt = 0;
+                        for(; cnt < NODELISTLENGTH && (c + cnt) < nn; cnt++) {
+                            env.NodeList[cnt] = nd[c + cnt];
                         }
-                        rr++;
-                        continue;
+                        env.n_nodes = cnt;
+                        env.reserved_wire_padding = 0;
+                        for(int t = cnt; t < NODELISTLENGTH; t++) env.NodeList[t] = -1;
+                        env.active = actives[aa];
+                        queries_per_peer[p].push_back(env);
                     }
                 }
                 round_env_count += add;
@@ -1941,11 +1957,7 @@ static void run_mode_b_remote_impl(const neighbor_loop_args& args, const double 
                                                        (N > 0) ? accums_self.data() : nullptr);
 
     /* Stage 12 final: writeback per active. */
-    {
-        for(int aa = 0; aa < N; aa++) {
-            Spec::apply_active_writeback(args, aa, args.active_list[aa], accums_self[aa]);
-        }
-    }
+    nlr_apply_active_writebacks<Spec>(args, 0, N, accums_self.data());
 
 }
 
@@ -2028,9 +2040,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
                 tree, accums.data());
         }
         if(evaluated) {
-            for(int aa = 0; aa < N; aa++) {
-                Spec::apply_active_writeback(args, aa, args.active_list[aa], accums[aa]);
-            }
+            nlr_apply_active_writebacks<Spec>(args, 0, N, accums.data());
         }
     }
     gpu_particles_arena_mark_clean_after_scatter(Spec::loop_name);
@@ -2687,11 +2697,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
          * host reads d_accums[0,n) directly. */
 
         /* (4) host writeback for [c0, c0+n) before the next chunk reuses arrays. */
-        {
-            for(int kk = 0; kk < n; kk++) {
-                Spec::apply_active_writeback(args, c0 + kk, args.active_list[c0 + kk], d_accums[kk]);
-            }
-        }
+        nlr_apply_active_writebacks<Spec>(args, c0, n, d_accums);
     }
 
 
@@ -2748,7 +2754,7 @@ static int nlr_spec_threshold_max(int fallback) {
  * rank answers alike.  Nothing here touches Mode D's state: a call answered by
  * A or B pays nothing for D. */
 template <typename Spec>
-NlrMode nlr_select_mode(int sum_active, int max_active)
+NlrMode nlr_select_mode(long long sum_active, int max_active)
 {
     int default_sum, default_max;
     nlr_default_modeb_thresholds(Spec::search_mode, &default_sum, &default_max);
@@ -3012,26 +3018,28 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
      * Skipped when the caller supplied a dispatch override (cheap path), which
      * is why the global count is not available on every path: it is computed
      * only where something needs it — the threshold decision itself, and the
-     * forced-Mode-B size guard. It is never computed merely to report it. */
+     * globally-zero-active return below. It is never computed merely to report it.
+     * Summed in 64 bits: the total over ranks can exceed 2^31. */
     bool select_mode_b = force_b;
     /* Mode D is asked for only on the threshold path: an override is honoured
      * as given. */
     NlrMode selected_mode = force_b ? NlrMode::B : NlrMode::A;
-    int global_num_active = -1;       /* -1 = not computed on this path */
+    long long global_num_active = -1;       /* -1 = not computed on this path */
     if(!force_a && !force_b) {
-        int local_act = args.num_active;
-        int sum_act = 0, max_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        const int local_act = args.num_active;
+        const long long local_act_64 = local_act;
+        long long sum_act = 0; int max_act = 0;
+        MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         global_num_active = sum_act;
         selected_mode = nlr_select_mode<Spec>(sum_act, max_act);
         select_mode_b = (selected_mode == NlrMode::B);
     } else if(force_b) {
-        /* Forced Mode B skipped the dispatch Allreduce, but its size guard
-         * needs the global count, so it is done here. */
-        int local_act = args.num_active;
-        int sum_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        /* Forced Mode B skipped the dispatch Allreduce; the globally-zero-active
+         * return below still needs the global count, so it is done here. */
+        const long long local_act_64 = args.num_active;
+        long long sum_act = 0;
+        MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         global_num_active = sum_act;
     }
     /* Globally-zero-active call: do NO neighbor work. global_num_active is the
@@ -3059,7 +3067,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
     } else {
         plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
     }
-    plan.num_active_global = global_num_active;   /* -1 on dispatch-override paths */
 
     GxDeviceTreeView mode_d_tree{};
     /* A loop whose kernel reads neighbour state it is itself changing needs the
@@ -5321,7 +5328,6 @@ static void nlr_iter_dispatch_subgroup_mode_a(NlrIterDriver<Spec>& drv, int sg)
     }
     NeighborLoopPlan plan;
     plan.path              = NeighborLoopPlan::Path::ModeA_GpuNgl;
-    plan.num_active_global = drv.global_active_total;
     neighbor_loop_args sub = drv.args;
     sub.active_list = (n_compacted > 0) ? active_particle_indices_iter.data() : nullptr;
     sub.num_active  = n_compacted;
@@ -5657,7 +5663,7 @@ static void nlr_default_on_max_iter_exceeded(const NlrIterDriver<Spec>& drv)
     if (ThisTask == 0) {
         fprintf(stderr,
             "[%s] FATAL: failed to converge in %d iterations (max_iters=%d). "
-            "global_active_total=%d remained.\n",
+            "global_active_total=%lld remained.\n",
             Spec::loop_name, drv.iter_index, Spec::max_iters, drv.global_active_total);
         fflush(stderr);
     }
@@ -5970,25 +5976,24 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     /* Filled by the Mode D preparation below if that path is taken; handed to
      * the driver so every iteration walks the tree the decision was made on. */
     GxDeviceTreeView mode_d_tree{};
-    int forced_modeb_global_active = -1;
-    /* Global active-particle sum across all ranks (from the dispatch Allreduce);
-     * -1 = not computed (force-A cheap path). Used for the globally-zero-active
-     * no-op below. */
-    int global_active_sum = -1;
+    /* Global active-particle sum across all ranks (from the dispatch Allreduce),
+     * 64-bit since it can exceed 2^31; -1 = not computed (force-A cheap path).
+     * Used for the globally-zero-active no-op below. */
+    long long global_active_sum = -1;
     if (force_mode == NlrForceMode::A) {
         path = DispatchPath::ModeA_GPU_NGL;
     } else if (force_mode == NlrForceMode::B) {
-        int local_act = args.num_active;
-        MPI_Allreduce(&local_act, &forced_modeb_global_active, 1,
-                      MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        global_active_sum = forced_modeb_global_active;
+        const long long local_act_64 = args.num_active;
+        MPI_Allreduce(&local_act_64, &global_active_sum, 1,
+                      MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         path = DispatchPath::ModeB_HostWalker;
     } else {
         /* Threshold dispatch: Allreduce sum + max of base args.num_active
          * (= union across subgroups). */
-        int local_act = args.num_active;
-        int sum_act = 0, max_act = 0;
-        MPI_Allreduce(&local_act, &sum_act, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        const int local_act = args.num_active;
+        const long long local_act_64 = local_act;
+        long long sum_act = 0; int max_act = 0;
+        MPI_Allreduce(&local_act_64, &sum_act, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_act, &max_act, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         global_active_sum = sum_act;
         const NlrMode mode = nlr_select_mode<Spec>(sum_act, max_act);
@@ -6398,7 +6403,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         if (NTask > 1) {
             MPI_Allreduce(drv.local_active_per_sg.data(),
                           drv.global_active_per_sg.data(),
-                          args.num_subgroups, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+                          args.num_subgroups, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         } else {
             drv.global_active_per_sg = drv.local_active_per_sg;
         }
@@ -6521,7 +6526,7 @@ template void run_neighbor_loop_iterative<AgsDensitySpec>(const neighbor_loop_ar
  * gravity/ags_force_loop.{h,cc}. */
 template void run_neighbor_loop_iterative<AgsForceSpec>(const neighbor_loop_args_iterative&);
 /* The CBE corridor decides A/B for CBEGrad + AGSForce together, as AGSForce would. */
-template NlrMode nlr_select_mode<AgsForceSpec>(int, int);
+template NlrMode nlr_select_mode<AgsForceSpec>(long long, int);
 template void nlr_import_union_ghosts<AgsForceSpec>(unsigned int, const std::vector<int>&,
                                                      const std::vector<double>&, double);
 #endif

@@ -767,7 +767,7 @@ void mechfb_run_iterative(int *active_list, int num_active,
     GIZMO_GPU_ENSURE_ALL_FRESH();
 
     /* Caller (mechanical_fb_calc_toplevel) has already short-circuited the
-     * global_num_active == 0 case. A rank reaching here may still have local
+     * case where no rank has an active source. A rank reaching here may still have local
      * num_active == 0 (single subgroup with num_active_local=0); the runner's
      * collective-symmetry invariant requires every rank to enter so that
      * Allreduce/Alltoallv calls inside the runner stay in lock-step. */

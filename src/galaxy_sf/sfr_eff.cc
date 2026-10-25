@@ -393,7 +393,8 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
 void star_formation_parent_routine(void)
 {
     if(ghost_require_no_live_pool_for_layout_change("star_formation_parent_routine")) {return;}
-    int i, bin, flag, stars_spawned, tot_spawned, stars_converted, tot_converted, number_of_stars_generated;
+    int i, bin, flag, stars_spawned, stars_converted, number_of_stars_generated;
+    long long tot_spawned, tot_converted;   /* summed over ranks */
     unsigned int bits; double dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate, sum_sm, total_sm, sm=0, rate, sum_mass_stars, total_sum_mass_stars;
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
     int num_sink_formed=0, tot_sink_formed=0;
@@ -720,15 +721,18 @@ void star_formation_parent_routine(void)
     if( (ThisTask==0) && (tot_sink_formed > 0) )
     {
         printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
-        All.TotSinks += tot_sink_formed;
     } // if(tot_sink_formed > 0)
+    All.TotSinks += tot_sink_formed;   /* on every rank, so every rank's copy of the total agrees */
 #endif
     
-    MPI_Allreduce(&stars_spawned, &tot_spawned, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&stars_converted, &tot_converted, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    {
+        long long local[2] = {stars_spawned, stars_converted}, total[2];
+        MPI_Allreduce(local, total, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        tot_spawned = total[0]; tot_converted = total[1];
+    }
     if(tot_spawned > 0 || tot_converted > 0)
     {
-        if(ThisTask==0) printf("SFR: spawned %d stars, converted %d gas particles into stars\n", tot_spawned, tot_converted);
+        if(ThisTask==0) printf("SFR: spawned %lld stars, converted %lld gas particles into stars\n", tot_spawned, tot_converted);
         All.TotNumPart += tot_spawned;
         All.TotN_gas -= tot_converted;
         NumPart += stars_spawned;

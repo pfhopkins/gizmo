@@ -427,7 +427,7 @@ void hydro_force(void)
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
 
     const bool nothing_to_do =
-        (corridor_csr == nullptr) && (gizmo_sym_num_active_global <= 0);
+        (corridor_csr == nullptr) && (!gizmo_sym_any_active_global);
 
     if(!nothing_to_do) {
         neighbor_loop_args args = nlr_default_args();

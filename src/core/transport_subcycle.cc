@@ -72,7 +72,7 @@ int transport_subcycle_keep_topology(void)
     /* Ghosts are expected wherever the corridor imported (NTask > 1 with active gas anywhere);
        then every rank must hold a live pool to park, or none keeps. The active list was built in
        the working pool; it moves to the heap with the list. One collective decides both. */
-    const int need_pool = (NTask > 1 && gizmo_sym_num_active_global > 0) ? 1 : 0;
+    const int need_pool = (NTask > 1 && gizmo_sym_any_active_global) ? 1 : 0;
     const size_t active_bytes = (size_t)(gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int);
     int *active_heap = (int *) malloc(active_bytes);
     int got = (active_heap && (!need_pool || ghost_pool_is_live())) ? 1 : 0, all_got = 0;

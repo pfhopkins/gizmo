@@ -766,6 +766,20 @@ struct nlr_spec_accepts_wider_neighbor_list<Spec, std::void_t<decltype(Spec::acc
 template <typename Spec>
 constexpr bool nlr_spec_accepts_wider_neighbor_list_v = nlr_spec_accepts_wider_neighbor_list<Spec>::value;
 
+/* Optional Spec::writeback_writes_only_own_particle: apply_active_writeback(args, slot, i, accum)
+ * writes nothing but particle i's own fields, its own row of any caller-owned per-particle
+ * array, and its own accumulator, and reads no other particle's state that another active's
+ * writeback writes.  The large-N host writeback then runs on several threads, since no two
+ * actives touch the same memory.  Set it only after reading every write in the writeback body.
+ * Absent means false: the writeback runs serially in active order. */
+template <typename Spec, typename = void>
+struct nlr_spec_writeback_writes_only_own_particle : std::false_type {};
+template <typename Spec>
+struct nlr_spec_writeback_writes_only_own_particle<Spec, std::void_t<decltype(Spec::writeback_writes_only_own_particle)>>
+    : std::integral_constant<bool, Spec::writeback_writes_only_own_particle> {};
+template <typename Spec>
+constexpr bool nlr_spec_writeback_writes_only_own_particle_v = nlr_spec_writeback_writes_only_own_particle<Spec>::value;
+
 /* RAII cleanup guard for the runner's DeviceContext. Construct one right
  * after Spec::populate_device_context returns; destruction at function exit
  * (any path) conditionally invokes Spec::cleanup_device_context if the Spec
@@ -1426,10 +1440,9 @@ struct neighbor_loop_args_iterative : neighbor_loop_args {
  *
  * Pattern for the caller of run_neighbor_loop<Spec>:
  *
- *   int *active_list, num_active, num_global_active;
+ *   int *active_list, num_active;
  *   if (!nlr_build_active_list(MyLoopSpec::is_active, &active_list,
- *                              &num_active, &num_global_active,
- *                              "myloop_active")) {
+ *                              &num_active, "myloop_active")) {
  *       return;                                       // no active particles anywhere
  *   }
  *   MyLoopAccum *out_buffer = (MyLoopAccum*)mymalloc("myloop_out", ...);
@@ -1455,15 +1468,15 @@ typename Spec::Aux *nlr_aux(const neighbor_loop_args& args)
     return reinterpret_cast<typename Spec::Aux*>(args.aux);
 }
 
-/* Count active particles via predicate, MPI_Allreduce, malloc + fill.
- * Returns false if global count is zero (caller should early-return);
- * otherwise *list_out is mymalloc'd and must be released via
- * nlr_free_active_list. malloc_label is forwarded to mymalloc. */
+/* Collect this rank's active particles via predicate, malloc + fill.
+ * Returns false when no rank has any (one collective decides it, so every
+ * rank returns alike; caller should early-return); otherwise *list_out is
+ * mymalloc'd and must be released via nlr_free_active_list. malloc_label is
+ * forwarded to mymalloc. */
 template <typename ActivePredicate>
 bool nlr_build_active_list(ActivePredicate is_active,
                            int **list_out,
                            int  *num_local_active_out,
-                           int  *num_global_active_out,
                            const char *malloc_label);
 
 void nlr_free_active_list(int *active_list);
@@ -1501,13 +1514,6 @@ struct NeighborLoopPlan {
     };
     Path path;
 
-    /* Global active-particle count after MPI_Allreduce. Sentinel: -1 means
-     * "not populated" — happens on dispatch-override paths
-     * (args.dispatch_override != None), where the runner has no reason to pay
-     * the collective. Hooks/consumers MUST check for -1 before assuming this
-     * field reflects a real global count. Threshold dispatch populates it, and
-     * so does forced Mode B, whose size guard needs it. */
-    int  num_active_global;
 };
 
 /* Path-derived predicate helpers. Single source of truth: keyed on path. */
@@ -1538,7 +1544,7 @@ const char *nlr_path_label(NeighborLoopPlan::Path path);
  *
  * Execution path is chosen by the runner from a small enum (Mode A GPU NGL,
  * Mode B local, Mode B remote, Mode D, future paths). Selection precedence:
- * args.dispatch_override > threshold dispatch on num_active_global vs the
+ * args.dispatch_override > threshold dispatch on the global active count vs the
  * parameterfile NeighborLoopModeBThreshold pair > Spec::modeb_threshold_*,
  * then Mode D against the NeighborLoopModeDThreshold pair (nlr_select_mode).
  * Future paths add a case to the dispatch + the path-predicate helpers
@@ -1696,7 +1702,7 @@ struct NlrIterDriver {
 
     int iter_index;                                  /* 0-based; shared across all subgroups */
     int local_active_total;                          /* sum of local_active_per_sg; refreshed per iter */
-    int global_active_total;                         /* sum of global_active_per_sg; -1 = "not populated yet" */
+    long long global_active_total;                   /* sum of global_active_per_sg; -1 = "not populated yet" */
 
     /* Per-subgroup activity tracking:
      * legacy ags re-partitions bm_groups each outer iter; with fixed
@@ -1704,8 +1710,8 @@ struct NlrIterDriver {
      * global activity per subgroup. Globally-converged subgroups skip the
      * per-iter dispatch + collective. Single-subgroup case: length-1
      * vectors; behavior unchanged. */
-    std::vector<int>                  local_active_per_sg;        /* [num_subgroups]; per-rank, post-compaction */
-    std::vector<int>                  global_active_per_sg;       /* [num_subgroups]; Allreduce-SUM each iter */
+    std::vector<long long>            local_active_per_sg;        /* [num_subgroups]; per-rank, post-compaction; 64-bit so it reduces directly */
+    std::vector<long long>            global_active_per_sg;       /* [num_subgroups]; Allreduce-SUM each iter */
 
     /* Driver-owned DeviceContext.
      *
@@ -2064,7 +2070,7 @@ int  gizmo_nlr_modeb_threshold_max_for(const char *loop_name, int spec_default);
  * the given defaults standing in where the parameterfile pair is unset: Mode B
  * iff any rank has work and both counts are within the thresholds.  Shared by
  * the runner and the corridors. */
-bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int default_max);
+bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int default_max);
 /* The built-in Mode-B thresholds (summed, per-rank max) for a loop of this
  * search mode (MODE_B_SEARCH_ONEWAY / _SYMMETRIC), used where neither the
  * parameterfile nor the Spec sets one.  The symmetric sum scales with NTask. */
@@ -2084,7 +2090,7 @@ enum class NlrMode { A, B, D };
  * choice it stands in for.  Instantiated in neighbor_loop_runner.cc for the
  * Specs a caller asks about. */
 template <typename Spec>
-NlrMode nlr_select_mode(int sum_active, int max_active);
+NlrMode nlr_select_mode(long long sum_active, int max_active);
 /* The union ghost import a subgrouped Mode-A call of Spec makes (actives and
  * their unpadded search radii, the OR of the subgroup masks); collective.  The
  * iterative driver's recipe, for a caller importing in Spec's place.
@@ -2161,16 +2167,14 @@ template <typename ActivePredicate>
 bool nlr_build_active_list(ActivePredicate is_active,
                            int **list_out,
                            int  *num_local_active_out,
-                           int  *num_global_active_out,
                            const char *malloc_label)
 {
     int num_local = 0;
     for(int i : ActiveParticleList) { if(is_active(i)) num_local++; }
-    int num_global = 0;
-    MPI_Allreduce(&num_local, &num_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    *num_local_active_out  = num_local;
-    *num_global_active_out = num_global;
-    if(num_global == 0) { *list_out = nullptr; return false; }
+    int any_local = (num_local > 0) ? 1 : 0, any_global = 0;
+    MPI_Allreduce(&any_local, &any_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    *num_local_active_out = num_local;
+    if(!any_global) { *list_out = nullptr; return false; }
 
     int alloc_n = (num_local > 0) ? num_local : 1;
     *list_out = (int *) mymalloc(malloc_label, alloc_n * sizeof(int));

@@ -235,7 +235,7 @@ static inline void gizmo_hydro_density_import_ghosts_fresh_no_drift(double safet
 
    Multi-rank tiny-N gate: when no rank has any active gas particle, the
    ghost refresh + symlist build are pure overhead (~1-2s/step on Vista
-   2-rank). MPI_Allreduce the local active-gas count once; if global == 0,
+   2-rank). One flag reduction decides whether any rank has active gas; if none,
    skip the collective ghost_exchange and the kernel-side symlist build,
    leaving an empty symlist that the gradient/hydro kernels fast-path on.
 
@@ -259,13 +259,17 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
     {int aa = 0; for(int ii : ActiveParticleList) {
         if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
 
-    /* Global active-gas count: cached for refresh's matching skip decision.
-       Single int Allreduce is microseconds; not measurable next to the
-       O(0.1-1s) ghost_exchange we may skip. */
-    if(NTask > 1) {
-        MPI_Allreduce(&gizmo_sym_num_active, &gizmo_sym_num_active_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    } else {
-        gizmo_sym_num_active_global = gizmo_sym_num_active;
+    /* Whether any rank has active gas: decides, identically on every rank, the
+       collective ghost refresh below and refresh's matching skip. A flag, not a
+       summed count: nothing needs the magnitude, and a 32-bit sum wraps above
+       2^31 active cells. */
+    {
+        int any_local = (gizmo_sym_num_active > 0) ? 1 : 0;
+        if(NTask > 1) {
+            MPI_Allreduce(&any_local, &gizmo_sym_any_active_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        } else {
+            gizmo_sym_any_active_global = any_local;
+        }
     }
 
     if(is_mode_b) {
@@ -279,12 +283,12 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
         return;
     }
 
-    /* When global active-gas count is 0, skip the collective ghost refresh
+    /* When no rank has active gas, skip the collective ghost refresh
        (otherwise pure overhead — ~1-2s/step on 2-rank tiny-N). The symlist
        build still runs with num_active=0; it allocates the size-1 backstop
        offsets/neighbors that downstream gradient_evaluate_gpu requires (a
        NULL backing buffer there causes a segfault even though pairs=0). */
-    if(gizmo_sym_num_active_global > 0 && NTask > 1) {
+    if(gizmo_sym_any_active_global && NTask > 1) {
         double t_refresh = my_second();
         ghost_exchange_cleanup();
         const double t_gi_symm = my_second();
@@ -311,12 +315,12 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
    fail-closed full path and republishes the view afterwards). Refreshes
    ghosts so downstream pairs see updated owner fields on both sides, and
    rebuilds the CSR (ghost indices may shift after re-exchange). Skipped
-   when global active-gas was 0 in prep — no work in either direction. The
+   when no rank had active gas in prep — no work in either direction. The
    size-1 backstop symlist from prep stays valid for the (no-op) kernels. */
 static inline void gizmo_gradients_refresh_symlist(double safety, double search_fac, bool is_mode_b, int keep_for_substeps,
                                                    gpu_neighbor_list_t *keep_device)   /* as for gizmo_gradients_prep_symlist */
 {
-    if(gizmo_sym_num_active_global == 0) return;
+    if(!gizmo_sym_any_active_global) return;
     if(is_mode_b) {
         /* Mode B built no CSR + no ghosts in prep; nothing to refresh. */
         return;

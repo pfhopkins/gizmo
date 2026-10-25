@@ -670,9 +670,9 @@ void radiation_pressure_winds_consolidated(void)
      * collectives inside (ghost_exchange, Allreduce, Alltoallv) stay in
      * lockstep. The runner accepts num_active=0 as a no-op participant.
      * Short-circuit ONLY if globally zero firing sources. */
-    int global_num_active = 0;
-    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if (global_num_active == 0) {radfb_rp_write_momwinds_log(num_active); return;}
+    int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+    MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (!any_active) {radfb_rp_write_momwinds_log(num_active); return;}
 
     /* Aux carries non-owning pointers to the toplevel-owned active arrays.
      * iter_index is set by reset_per_iter_device_context on every iter.

@@ -5,7 +5,9 @@
  * Contract (locked 2026-05-07):
  *   - No physics in this header or its .cc. Pure transport.
  *   - Self-rank is EXCLUDED from the exchange. Caller handles self locally.
- *   - All point-to-point. NO collectives in this transport.
+ *   - Payloads are point-to-point. The per-round counts are ONE collective
+ *     (MPI_Alltoall in begin()), so every rank calls begin() the same number
+ *     of times, in the same order relative to its other collectives.
  *
  * ModeBBoundedExchange is the single transport primitive (it replaced the
  * earlier one-shot mode_b_exchange_queries / mode_b_exchange_replies pair):
@@ -17,7 +19,7 @@
  * group == the old one-shot behavior.
  *
  * Choreography per round (every rank, sender and receiver roles at once):
- *   begin()               counts exchange; post ALL query-payload Isends
+ *   begin()               counts exchange (collective); post ALL query-payload Isends
  *                          (buffers = caller's queries_per_peer, which MUST
  *                          outlive finish()); post ALL reply-payload Irecvs
  *                          (sized sent_counts[p] — bounded by the caller's own
@@ -128,26 +130,10 @@ public:
             sent_counts[p] = (int)queries_per_peer[p].size();
         }
 
-        /* Counts. */
-        std::vector<MPI_Request> reqs_cnt;
-        reqs_cnt.reserve(2 * (nt - 1));
-        for(int p = 0; p < nt; p++) {
-            if(p == ThisTask) continue;
-            MPI_Request rq;
-            MPI_Irecv(&recv_counts[p], 1, MPI_INT, p, TAG_MODE_B_QUERY_COUNT,
-                      MPI_COMM_WORLD, &rq);
-            reqs_cnt.push_back(rq);
-        }
-        for(int p = 0; p < nt; p++) {
-            if(p == ThisTask) continue;
-            MPI_Request rq;
-            MPI_Isend(&sent_counts[p], 1, MPI_INT, p, TAG_MODE_B_QUERY_COUNT,
-                      MPI_COMM_WORLD, &rq);
-            reqs_cnt.push_back(rq);
-        }
+        /* Counts: one collective, rather than a message to and from every rank. */
         {
             const double _t0 = dt_count_exch ? MPI_Wtime() : 0.0;
-            MPI_Waitall((int)reqs_cnt.size(), reqs_cnt.data(), MPI_STATUSES_IGNORE);
+            MPI_Alltoall(sent_counts.data(), 1, MPI_INT, recv_counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
             if(dt_count_exch) *dt_count_exch += MPI_Wtime() - _t0;
         }
 

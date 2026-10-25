@@ -532,8 +532,11 @@ KOKKOS_LIBS     = -lkokkoscore -lkokkoscontainers
 GPU_CXX    = mpicxx -std=c++17
 GPU_CFLAGS = $(KOKKOS_INCL)
 GPU_LDFLAGS= $(KOKKOS_LIBS_PATH)
-MKL_INCL = #
-MKL_LIBS = #
+## MKL only for the PARDISO backend of the MG solve (TACC's intel module sets TACC_MKL_INC/LIB)
+ifeq (MHD_MODIFIED_GRADIENT_USE_PARDISO,$(findstring MHD_MODIFIED_GRADIENT_USE_PARDISO,$(CONFIGVARS)))
+MKL_INCL = -I$(TACC_MKL_INC)
+MKL_LIBS = -L$(TACC_MKL_LIB) -Wl,-rpath,$(TACC_MKL_LIB) -lmkl_intel_lp64 -lmkl_sequential -lmkl_core -lpthread -ldl
+endif
 FFTW_INCL= -I$(TACC_FFTW3_INC)
 FFTW_LIBS= -L$(TACC_FFTW3_LIB)
 HDF5INCL = -I$(TACC_HDF5_INC) -DH5_USE_16_API

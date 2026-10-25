@@ -98,8 +98,8 @@ void rt_source_injection_initial_operations_preloop(void)
  * for future test problems anyways"). Codebase convention `boxSize_Z` is used
  * for the z-slab (see e.g. rt_utilities.cc:108-110 for the same convention).
  *
- * Runs unconditionally on every rank — does NOT short-circuit on
- * global_num_active==0. This is INTENTIONAL: the helper imposes a problem-
+ * Runs unconditionally on every rank — does NOT short-circuit when
+ * no rank has an active source. This is INTENTIONAL: the helper imposes a problem-
  * specific boundary CONDITION on flux fields in the testproblem's z-slab
  * boundary layer regardless of which sources fired this step. It is boundary
  * maintenance, NOT "touched by source" cleanup. (The legacy in-pair
@@ -173,9 +173,9 @@ void rt_source_injection(void)
     /* Collective-symmetry: every rank must enter the runner so MPI collectives
      * inside (ghost_exchange, Allreduce, ghost_writeback Alltoallv) stay in
      * lockstep on multi-rank runs. Short-circuit only when globally zero. */
-    int global_num_active = 0;
-    MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if (global_num_active > 0) {
+    int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+    MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if (any_active) {
         rt_source_injection_run_loop(active_src.data(), host_locals.data(), num_active);
     }
 

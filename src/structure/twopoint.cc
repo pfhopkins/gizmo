@@ -113,14 +113,14 @@ void twopoint(void)
         }
 
         int num_src = (int)active_idx.size();
-        int num_src_global = 0;
-        MPI_Allreduce(&num_src, &num_src_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        int any_src_local = (num_src > 0) ? 1 : 0, any_src = 0;
+        MPI_Allreduce(&any_src_local, &any_src, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
         gpu_neighbor_list_t gnl = {};
         std::vector<int> gnl_neighbors_host;
         int local_count = ghost_get_num_local();
         if(local_count <= 0) local_count = NumPart;
         int ghost_imported = 0;
-        if(num_src_global > 0) {
+        if(any_src) {
             int need_import_local = (ghost_get_num_ghosts() <= 0) ? 1 : 0;
             int need_import = 0;
             MPI_Allreduce(&need_import_local, &need_import, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
@@ -170,7 +170,7 @@ void twopoint(void)
             }
         }
 
-        if(num_src_global > 0) {
+        if(any_src) {
             gpu_ngb_list_free(&gnl);
             gpu_particles_arena_invalidate();
         }

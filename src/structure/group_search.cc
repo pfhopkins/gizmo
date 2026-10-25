@@ -116,14 +116,13 @@ static void group_search_allgather_tiles(const std::vector<group_search_tile_met
       total += tile_counts[task];
     }
   all_tiles.resize(total);
-  std::vector<int> byte_counts(NTask), byte_offsets(NTask);
-  for(int task = 0; task < NTask; task++)
-    {
-      byte_counts[task] = tile_counts[task] * (int)sizeof(group_search_tile_meta_t);
-      byte_offsets[task] = tile_offsets[task] * (int)sizeof(group_search_tile_meta_t);
-    }
-  MPI_Allgatherv((void *)(local_tiles.empty() ? NULL : local_tiles.data()), local_count * (int)sizeof(group_search_tile_meta_t), MPI_BYTE,
-                 (void *)(all_tiles.empty() ? NULL : all_tiles.data()), byte_counts.data(), byte_offsets.data(), MPI_BYTE, MPI_COMM_WORLD);
+  /* counted in tiles, not bytes: a byte count passes 2^31 long before the tile count does */
+  MPI_Datatype tile_type;
+  MPI_Type_contiguous((int)sizeof(group_search_tile_meta_t), MPI_BYTE, &tile_type);
+  MPI_Type_commit(&tile_type);
+  MPI_Allgatherv((void *)(local_tiles.empty() ? NULL : local_tiles.data()), local_count, tile_type,
+                 (void *)(all_tiles.empty() ? NULL : all_tiles.data()), tile_counts.data(), tile_offsets.data(), tile_type, MPI_COMM_WORLD);
+  MPI_Type_free(&tile_type);
 }
 
 static int group_search_particle_matches_group(const int i, const int group_filter)

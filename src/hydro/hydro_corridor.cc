@@ -145,15 +145,13 @@ void gizmo_hydro_corridor_decide_mode(void)
        defaults standing in where NeighborLoopModeBThreshold{Sum,Max} are unset.
        TRANSPORT_SUBCYCLE has already forced Mode A above. An MG step needs the
        complete gas graph, i.e. the Mode-A ghost pool and CSR. The summed count is
-       64-bit for the MG fraction; any count past INT_MAX is far above every
-       Mode-B threshold, so it enters the rule clamped. */
+       64-bit, for the MG fraction and for the rule itself. */
     long long sum_active_gas = 0, sum_active_all_gas = 0; int max_active_gas = 0;
     global_active_gas_counts(&sum_active_gas, &max_active_gas, &sum_active_all_gas);
     decide_mg_step(sum_active_gas, sum_active_all_gas);
     int default_sum, default_max;
     nlr_default_modeb_thresholds(MODE_B_SEARCH_SYMMETRIC, &default_sum, &default_max);
-    const int sum_for_rule = (sum_active_gas > (long long)INT_MAX) ? INT_MAX : (int)sum_active_gas;
-    bool select_mode_b = nlr_mode_b_rule(sum_for_rule, max_active_gas, default_sum, default_max) && !g_mg_step;
+    bool select_mode_b = nlr_mode_b_rule(sum_active_gas, max_active_gas, default_sum, default_max) && !g_mg_step;
     GizmoHydroCorridorMode mode = select_mode_b ? GizmoHydroCorridorMode::MODE_B
                                                 : GizmoHydroCorridorMode::MODE_A;
     g_corridor_mode = mode;
@@ -223,6 +221,9 @@ void gizmo_hydro_corridor_begin(void)
      * symmetric, gas only, the default radius policy, both radii scaled by the
      * ghost safety factor); each consumer is checked against it. */
     g_corridor_query_radii.resize((size_t)gizmo_sym_num_active);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_sym_num_active >= 16)
+#endif
     for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
         g_corridor_query_radii[aa] = gsl_safety * (double)P[gizmo_sym_active_indices[aa]].KernelRadius;
     }

@@ -74,6 +74,7 @@ static fof_id_list *ID_list;
 
 static double LinkL;
 static int NgroupsExt, Nids;
+static long long fof_ids_in_previous_files;   /* IDs written by lower ranks: the group_ids file header field */
 
 static int MyFOF_PRIMARY_LINK_TYPES;
 static int MyFOF_SECONDARY_LINK_TYPES;
@@ -303,7 +304,11 @@ static void fof_find_nearest_dmparticle_modern(void)
     if(P[i].Mass > 0 && ((1 << P[i].Type) & MyFOF_SECONDARY_LINK_TYPES))
       secondary_indices.push_back(i);
 
-  if(secondary_indices.empty()) return;
+  {   /* every rank takes part in the collective import and search below, even with nothing of its own to attach */
+    int any_local = secondary_indices.empty() ? 0 : 1, any_global = 0;
+    MPI_Allreduce(&any_local, &any_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(!any_global) return;
+  }
 
   group_search_import_pool_t import_pool;
   group_search_import_particles(MyFOF_SECONDARY_LINK_TYPES, MyFOF_PRIMARY_LINK_TYPES, 4.0 * LinkL,
@@ -330,48 +335,50 @@ static void fof_find_nearest_dmparticle_modern(void)
             active_radii.push_back(radius[a]);
           }
 
-      if(active_sources.empty()) break;
-
-      neighbor_list_t nl = {NULL, NULL, 0, 0};
-      group_search_build_cross_type_nl(import_pool.particles, active_sources.data(), active_sources.size(),
-                                       active_radii.data(), MyFOF_PRIMARY_LINK_TYPES, &nl);
-
-      for(size_t aa = 0; aa < active_sources.size(); aa++)
+      /* a rank with nothing left still takes part in the collective test at the end of the pass */
+      if(!active_sources.empty())
         {
-          int i = active_sources[aa];
-          int sec_pos = secondary_pos_by_index[i];
-          if(sec_pos < 0) continue;
-          double best_r2 = nearest_dist2[sec_pos];
-          int best_j = -1;
-          for(int n = nl.offsets[aa]; n < nl.offsets[aa + 1]; n++)
+          neighbor_list_t nl = {NULL, NULL, 0, 0};
+          group_search_build_cross_type_nl(import_pool.particles, active_sources.data(), active_sources.size(),
+                                           active_radii.data(), MyFOF_PRIMARY_LINK_TYPES, &nl);
+
+          for(size_t aa = 0; aa < active_sources.size(); aa++)
             {
-              int j = nl.neighbors[n];
-              double r2 = group_search_distance2_particles(import_pool.particles[i], import_pool.particles[j]);
-              if(r2 < best_r2 && r2 < active_radii[aa] * active_radii[aa])
+              int i = active_sources[aa];
+              int sec_pos = secondary_pos_by_index[i];
+              if(sec_pos < 0) continue;
+              double best_r2 = nearest_dist2[sec_pos];
+              int best_j = -1;
+              for(int n = nl.offsets[aa]; n < nl.offsets[aa + 1]; n++)
                 {
-                  best_r2 = r2;
-                  best_j = j;
+                  int j = nl.neighbors[n];
+                  double r2 = group_search_distance2_particles(import_pool.particles[i], import_pool.particles[j]);
+                  if(r2 < best_r2 && r2 < active_radii[aa] * active_radii[aa])
+                    {
+                      best_r2 = r2;
+                      best_j = j;
+                    }
+                }
+              if(best_j >= 0)
+                {
+                  nearest_dist2[sec_pos] = best_r2;
+                  done[sec_pos] = 1;
+                  if(best_j < NumPart)
+                    {
+                      MinID[i] = MinID[best_j];
+                      MinIDTask[i] = MinIDTask[best_j];
+                    }
+                  else
+                    {
+                      int g = best_j - NumPart;
+                      MinID[i] = import_pool.ghost_label_id[g];
+                      MinIDTask[i] = import_pool.ghost_label_task[g];
+                    }
+                  Head[i] = i;
                 }
             }
-          if(best_j >= 0)
-            {
-              nearest_dist2[sec_pos] = best_r2;
-              done[sec_pos] = 1;
-              if(best_j < NumPart)
-                {
-                  MinID[i] = MinID[best_j];
-                  MinIDTask[i] = MinIDTask[best_j];
-                }
-              else
-                {
-                  int g = best_j - NumPart;
-                  MinID[i] = import_pool.ghost_label_id[g];
-                  MinIDTask[i] = import_pool.ghost_label_task[g];
-                }
-              Head[i] = i;
-            }
+          free_neighbor_list(&nl);
         }
-      free_neighbor_list(&nl);
 
       int nleft_local = 0;
       for(size_t a = 0; a < secondary_indices.size(); a++)
@@ -388,7 +395,7 @@ static void fof_find_nearest_dmparticle_modern(void)
               done[a] = 1;
             }
         }
-      MPI_Allreduce(&nleft_local, &nleft_global, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+      {int any_left = (nleft_local > 0) ? 1 : 0; MPI_Allreduce(&any_left, &nleft_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);}   /* any rank still searching */
       iter++;
       if(iter > MAXITER)
         {
@@ -565,7 +572,17 @@ void fof_fof(int num)
     printf("compiling local group data and catalogue took = %g sec\n", timediff(t0, t1));
 
 
-  MPI_Allreduce(&Ngroups, &TotNgroups, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+  {
+    long long ngroups_local = Ngroups, ngroups_total = 0;
+    MPI_Allreduce(&ngroups_local, &ngroups_total, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    if(ngroups_total > INT_MAX - 1)   /* group numbers are int, and TotNgroups + 1 marks particles in no group */
+      {
+        if(ThisTask == 0) {printf("FOF found %lld groups; at most %d are supported (group numbers are int).\n", ngroups_total, INT_MAX - 1);}
+        endrun(990513);
+        gizmo_exit_bad_stop_if_requested("fof:too_many_groups");
+      }
+    TotNgroups = (int) ngroups_total;
+  }
   sumup_large_ints(1, &Nids, &TotNids);
 
   if(TotNgroups > 0)
@@ -1197,7 +1214,7 @@ void fof_save_groups(int num)
     }
 
   MPI_Allgather(&totlen, 1, MPI_INT, Send_count, 1, MPI_INT, MPI_COMM_WORLD);
-  unsigned int *uoffset = (unsigned int *)mymalloc("uoffset", NTask * sizeof(unsigned int));
+  long long *uoffset = (long long *)mymalloc("uoffset", NTask * sizeof(long long));
 
   for(j = 1, uoffset[0] = 0; j < NTask; j++)
     uoffset[j] = uoffset[j - 1] + Send_count[j - 1];
@@ -1250,13 +1267,13 @@ void fof_save_groups(int num)
   sumup_large_ints(1, &Nids, &totNids);
 
   MPI_Allgather(&Nids, 1, MPI_INT, Send_count, 1, MPI_INT, MPI_COMM_WORLD);
-  for(j = 1, Send_offset[0] = 0; j < NTask; j++)
-    Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];
+  for(j = 0, fof_ids_in_previous_files = 0; j < ThisTask; j++)
+    fof_ids_in_previous_files += Send_count[j];
 
 
   if(totNids != TotNids)
     {
-      printf("Task=%d Nids=%d totNids=%d TotNids=%d\n", ThisTask, Nids, (int) totNids, (int) TotNids);
+      printf("Task=%d Nids=%d totNids=%lld TotNids=%lld\n", ThisTask, Nids, totNids, TotNids);
       endrun(12);	/* symmetric (totNids is the post-sumup_large_ints global sum, TotNids is global): all ranks reach the poll together */
       gizmo_exit_bad_stop_if_requested("fof:save_totnids_mismatch");
     }
@@ -1326,11 +1343,13 @@ void fof_save_local_catalogue(int num)
   myfree(len);
 
   /* offset into id-list */
-  len = (int *)mymalloc("len", Ngroups * sizeof(int));
-  for(i = 0; i < Ngroups; i++)
-    len[i] = Group[i].Offset;
-  my_fwrite(len, Ngroups, sizeof(int), fd);
-  myfree(len);
+  {
+    long long *offset = (long long *)mymalloc("offset", Ngroups * sizeof(long long));
+    for(i = 0; i < Ngroups; i++)
+      offset[i] = Group[i].Offset;
+    my_fwrite(offset, Ngroups, sizeof(long long), fd);
+    myfree(offset);
+  }
 
   /* mass */
   mass = (float *)mymalloc("mass", Ngroups * sizeof(float));
@@ -1415,7 +1434,7 @@ void fof_save_local_catalogue(int num)
   my_fwrite(&Nids, sizeof(int), 1, fd);
   my_fwrite(&TotNids, sizeof(long long), 1, fd);
   my_fwrite(&NTask, sizeof(int), 1, fd);
-  my_fwrite(&Send_offset[ThisTask], sizeof(int), 1, fd);	/* this is the number of IDs in previous files */
+  my_fwrite(&fof_ids_in_previous_files, sizeof(long long), 1, fd);	/* this is the number of IDs in previous files */
   my_fwrite(ids, sizeof(MyIDType), Nids, fd);
   fclose(fd);
 }
@@ -1854,7 +1873,8 @@ void read_fof(int num)
   int *list_of_ngroups, *list_of_nids, *list_of_allgrouplen;
   int *recvoffset;
   int grnr, ngrp, sendTask, recvTask;
-  int nprocgroup, primaryTask, groupTask, nid_previous;
+  int nprocgroup, primaryTask, groupTask;
+  long long nid_previous;
   int fof_compare_P_SubNr(const void *a, const void *b);
     PRINT_STATUS("Trying to read preexisting FoF group catalogues...  (presently allocated=%g MB)",AllocatedBytes / (1024.0 * 1024.0));
   domain_Decomposition(1, 0, 0, 0);
@@ -1961,11 +1981,13 @@ void read_fof(int num)
 	      myfree(len);
 
 	      /* offset into id-list */
-	      len = (int *) mymalloc("len", ngroups * sizeof(int));
-	      my_fread(len, ngroups, sizeof(int), fd);
-	      for(i = 0; i < ngroups; i++)
-		tmpGroup[i].Offset = len[i];
-	      myfree(len);
+	      {
+		long long *offset = (long long *) mymalloc("offset", ngroups * sizeof(long long));
+		my_fread(offset, ngroups, sizeof(long long), fd);
+		for(i = 0; i < ngroups; i++)
+		  tmpGroup[i].Offset = offset[i];
+		myfree(offset);
+	      }
 
 	      /* mass */
 	      mass = (float *) mymalloc("mass", ngroups * sizeof(float));
@@ -2051,7 +2073,7 @@ void read_fof(int num)
 	      my_fread(&nids, sizeof(int), 1, fd);
 	      my_fread(&TotNids, sizeof(long long), 1, fd);
 	      my_fread(&ntask, sizeof(int), 1, fd);
-	      my_fread(&nid_previous, sizeof(int), 1, fd);	/* this is the number of IDs in previous files */
+	      my_fread(&nid_previous, sizeof(long long), 1, fd);	/* this is the number of IDs in previous files */
 
 
 	      fof_id_list *tmpID_list = (fof_id_list *) mymalloc("tmpID_list", nids * sizeof(fof_id_list));
@@ -2165,11 +2187,13 @@ void read_fof(int num)
 	      myfree(len);
 
 	      /* offset into id-list */
-	      len = (int *) mymalloc("len", Ngroups * sizeof(int));
-	      my_fread(len, Ngroups, sizeof(int), fd);
-	      for(i = 0; i < Ngroups; i++)
-		Group[i].Offset = len[i];
-	      myfree(len);
+	      {
+		long long *offset = (long long *) mymalloc("offset", Ngroups * sizeof(long long));
+		my_fread(offset, Ngroups, sizeof(long long), fd);
+		for(i = 0; i < Ngroups; i++)
+		  Group[i].Offset = offset[i];
+		myfree(offset);
+	      }
 
 	      /* mass */
 	      mass = (float *) mymalloc("mass", Ngroups * sizeof(float));
@@ -2199,7 +2223,7 @@ void read_fof(int num)
 	      my_fread(&Nids, sizeof(int), 1, fd);
 	      my_fread(&TotNids, sizeof(long long), 1, fd);
 	      my_fread(&ntask, sizeof(int), 1, fd);
-	      my_fread(&nid_previous, sizeof(int), 1, fd);	/* this is the number of IDs in previous files */
+	      my_fread(&nid_previous, sizeof(long long), 1, fd);	/* this is the number of IDs in previous files */
 
 	      ID_list = (fof_id_list *) mymalloc("ID_list", Nids * sizeof(fof_id_list));
 	      ids = (MyIDType *) mymalloc("ids", Nids * sizeof(MyIDType));
