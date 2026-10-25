@@ -6975,7 +6975,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             }
             const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active, host_ok);
             if(verdict == ModeDAdmission::Admitted) {path = DispatchPath::ModeD_DeviceFused;}
-            else if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {path = DispatchPath::ModeB_HostWalker;}
+            else {
+                std::vector<unsigned char>().swap(device_written);   /* a refused call holds nothing of Mode D */
+                if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {path = DispatchPath::ModeB_HostWalker;}
+            }
         }
     }
 
