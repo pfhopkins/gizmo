@@ -9,6 +9,7 @@
 #include "../mesh/kernel.h"
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
 #include "../galaxy_sf/resolvedism_stellar_tables.h"
+#include "../declarations/resolvedism_dgr.h"
 #include "../galaxy_sf/resolvedism_star_age.h"
 #endif
 #include "../system/bracketed_rootfind_functions.h"
@@ -219,6 +220,12 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return (180.)  * fac;} /* note this is roughly equivalent to the specific extinction at R-band [bit higher in UBV, lower in IJHK] */
     if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return (10.) * fac * (0.1 + Zfac);}
 #endif
+#ifdef RT_FUV_BANDS_CHEMCOOL_DUST_LAW
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_NUV || k_freq==RT_FREQ_BIN_LYMAN_WERNER) { /* sigma per H at solar DGR: chemistry df25 (2.5 A_V, A_V = 5.348e-22 N_H) for 6-13.6 eV, f_dust (2e-21) for LW */
+        double sig_H = (k_freq==RT_FREQ_BIN_LYMAN_WERNER) ? 2.0e-21 : 2.5*5.348e-22, dgr = (i>=0) ? resolvedism_cell_DGR_solar(i) : 1.;
+        return DMAX(kappa_HHe, sig_H * dgr * HYDROGEN_MASSFRAC / PROTONMASS_CGS) * fac;
+    }
+#endif
 #ifdef RT_PHOTOELECTRIC
     /* opacity comes primarily from dust (ignoring H2 molecular opacities here). band is 8-13.6 eV [0.091-0.155 micron] (note overlap with LW band) */
     if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC) {return DMAX(kappa_HHe, 720.*DMAX(1.e-4,Zfac*dust_to_metals_vs_standard)) * fac;} // depends rather sensitively on assumed input spectrum+dust composition (e.g. MW vs SMC-like), using 2007+ Draine+Li MW-like dust results here, weighted over a flat spectrum with 1/2 of the weight for the portion of the band which overlaps with LW.
@@ -267,6 +274,9 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
     if(k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ) {return DMAX(1.e-6, DMIN(1.0 - 1.e-6, All.Grain_Absorbed_Fraction_vs_Total_Extinction));}
 #endif
 
+#ifdef RT_FUV_BANDS_CHEMCOOL_DUST_LAW
+    if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_NUV || k_freq==RT_FREQ_BIN_LYMAN_WERNER) {return 1.-1.e-6;} /* the chemistry's attenuation laws are effective extinction: no separate scattering */
+#endif
 #ifdef RT_CHEM_PHOTOION
     if(k_freq==RT_FREQ_BIN_H0)  {return 1.-1.e-6;} /* negligible scattering for ionizing radiation */
 #if defined(RT_CHEM_PHOTOION_HE) && defined(RT_PHOTOION_MULTIFREQUENCY)
@@ -313,7 +323,11 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_da
     lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity;
     lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity;
 #ifdef RT_NUV
+#ifdef RT_NUV_BAND_6_8EV
+    lum[RT_FREQ_BIN_NUV] = DMAX(0., pp[i].UV_luminosity - pp[i].PE_luminosity); /* 6-8 eV */
+#else
     lum[RT_FREQ_BIN_NUV] = pp[i].NUV_luminosity;
+#endif
 #endif
 #ifdef RT_OPTICAL_NIR
     lum[RT_FREQ_BIN_OPTICAL_NIR] = pp[i].OPT_luminosity;
@@ -363,7 +377,13 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_da
 
     double star_age_yr = resolvedism_star_age_yr(i);
     if(star_age_yr <= 0) return 0;
+#ifdef RT_NUV_BAND_6_8EV
+    double table_age_yr = star_age_yr - stellar_t_PMS(logM, logZ); /* main-sequence clock, as the tree path */
+    if(table_age_yr <= 0) return 0;
+    double log_age = log10(DMAX(table_age_yr, 100.0));
+#else
     double log_age = log10(DMAX(star_age_yr, 100.0));
+#endif
 
     /* check if star is still alive */
     double lifetime_yr = stellar_t_PMS(logM, logZ) + stellar_lifetime(logM, logZ);
@@ -405,7 +425,11 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_da
 #endif
 
 #if defined(RT_NUV)
+#ifdef RT_NUV_BAND_6_8EV
+    lum[RT_FREQ_BIN_NUV] = DMAX(0., pow(10.0, stellar_log_L_FUV_total(logM, logZ, log_age)) - pow(10.0, stellar_log_L_FUV_M1(logM, logZ, log_age))) / UNIT_LUM_IN_CGS; /* 6-8 eV = (6-13.6) - (8-13.6) */
+#else
     lum[RT_FREQ_BIN_NUV] = pow(10.0, stellar_log_L_NUV(logM, logZ, log_age)) / UNIT_LUM_IN_CGS; /* 3.4-8 eV */
+#endif
 #endif
 
 #if defined(RT_OPTICAL_NIR)
@@ -664,7 +688,11 @@ void rt_define_effective_frequencies_in_bands(void)
     k=RT_FREQ_BIN_LYMAN_WERNER; rhd_bins_nu_min_ev[k]=11.2; rhd_bins_nu_max_ev[k]=13.6;
 #endif
 #ifdef RT_NUV
+#ifdef RT_NUV_BAND_6_8EV
+    k=RT_FREQ_BIN_NUV; rhd_bins_nu_min_ev[k]=6.; rhd_bins_nu_max_ev[k]=8.;
+#else
     k=RT_FREQ_BIN_NUV; rhd_bins_nu_min_ev[k]=3.444; rhd_bins_nu_max_ev[k]=8.;
+#endif
 #endif
 #ifdef RT_OPTICAL_NIR
     k=RT_FREQ_BIN_OPTICAL_NIR; rhd_bins_nu_min_ev[k]=0.4133; rhd_bins_nu_max_ev[k]=3.444;

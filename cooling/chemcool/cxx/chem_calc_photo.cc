@@ -93,7 +93,7 @@ double cxx_calc_H2_shielding_factor(double temp, double abh2, double NH,
         // H2/CO-only (M1) path too (Uli, 2026-07-08).
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
             double fac_uv_pix = c.fac_uv[I];
 #else
             double fac_uv_pix = 1.0 / nray;
@@ -135,7 +135,7 @@ double cxx_calc_HD_shielding_factor(double temp, double abh2, double abhd,
     } else if (c.iphoto == 6) {
 #ifdef RT_TREECOL_H2_CO
         for (int I = 0; I < c.npix; I++) {
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
             double fac_uv_pix = c.fac_uv[I];
 #else
             double fac_uv_pix = 1.0 / c.npix;
@@ -312,16 +312,23 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         c.chi_isrf = 0.0;
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
             double fac_uv_pix = c.fac_uv[I];
 #else
             double fac_uv_pix = 1.0 / nray;
 #endif
             double NH_ext = c.AV_ext / c.AV_conversion_factor;
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+            // transported stellar pixels (pix_att=0) skip the column; all pixels take the in-cell column
+            f_dust += fac_uv_pix * std::exp(-sigma_dust * (c.pix_att[I] * (c.col_tot[I] + NH_ext) + c.NH_cell));
+            AV = c.pix_att[I] * (c.AV_ext + c.AV_conversion_factor * c.dust_to_gas_ratio * c.col_tot[I] + AVlocal)
+               + c.AV_conversion_factor * c.dust_to_gas_ratio * c.NH_cell;
+#else
             f_dust += fac_uv_pix * std::exp(-sigma_dust * (c.col_tot[I] + NH_ext));
             AV = c.AV_ext + c.AV_conversion_factor * c.dust_to_gas_ratio
                           * c.col_tot[I];
             AV += AVlocal;
+#endif
             c.chi_isrf += fac_uv_pix * cxx_chi(T, AV, c.isrf_option);
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
             f_simp += fac_uv_pix * std::exp(-2.5 * AV);
@@ -372,7 +379,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     }
 
     // M1: the RT solver already applied continuum dust attenuation.
-#ifdef RADTRANSFER
+#if defined(RADTRANSFER) && !defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
     f_dust = 1.0; c.chi_isrf = 1.0; f_simp = 1.0; df25 = 1.0; df30 = 1.0;
     df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
     df09 = 1.0; df12 = 1.0; df18 = 1.0; df21 = 1.0; df23 = 1.0; df24 = 1.0;
@@ -385,10 +392,8 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     df261 = 1.0; df212 = 1.0; df266 = 1.0;
 #endif
 #endif
-    // TreeRay attenuates the STELLAR bands inside the walk, but chi_isrf KEEPS
-    // its computed AV attenuation (the isotropic ISRF background still needs
-    // target-side shielding).
-#ifdef TREE_RAY
+    // TreeRay without HEALPix CHEMCOOL columns: stellar bands attenuated in the walk.
+#if defined(TREE_RAY) && !defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
     f_dust = 1.0; f_simp = 1.0; df25 = 1.0; df30 = 1.0;
     df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
     df09 = 1.0; df12 = 1.0; df18 = 1.0; df21 = 1.0; df23 = 1.0; df24 = 1.0;
@@ -421,7 +426,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         double theta_CO = 0.0, theta_H2 = 0.0;
         int nray = c.npix;
         for (int I = 0; I < nray; I++) {
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
             double fac_uv_pix = c.fac_uv[I];
 #else
             double fac_uv_pix = 1.0 / nray;

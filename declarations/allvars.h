@@ -1635,6 +1635,7 @@ enum iofields
   IO_RESOLVEDISM_G0_LW,
   IO_RESOLVEDISM_G0_ATTEN,   /* attenuated FUV = G0 x f_dust (M1 vs tree-column comparison) */
   IO_RESOLVEDISM_SHIELDFAC_DUST, /* dust shielding factor f_dust (=1 under M1) */
+  IO_CHEM_PHOTORATES,  /* chemistry-side photorates and heating fields (OUTPUT_CHEM_PHOTORATES) */
   IO_RESOLVEDISM_G0_NUV,
   IO_RESOLVEDISM_G0_OPT,
   IO_RESOLVEDISM_CR_ZETA,

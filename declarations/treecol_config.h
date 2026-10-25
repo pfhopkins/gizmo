@@ -54,8 +54,13 @@
 #define RT_TREECOL_EFFECTIVE_COLUMN_FOR_NH /* SigmaEff from the gas bins feeds evaluate_NH_from_GradRho */
 #endif
 
-/* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSTD ISRF; H2 and CO for CHEMCOOL */
-#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSTD_G0_CR) && defined(CHEMCOOL)))
+/* Stella with a transported FUV field (TreeRay walk or M1): stellar pixel fluxes arrive dust-attenuated, the chemistry attenuates only the floor pixels */
+#if defined(RT_TREECOL_HEALPIX) && defined(CHEMCOOL) && (defined(TREE_RAY) || (defined(GALSF_RESOLVEDISM) && (defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID))))
+#define RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+#endif
+
+/* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSTD ISRF (or Stella M1); H2 and CO for CHEMCOOL */
+#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSTD_G0_CR) && defined(CHEMCOOL)) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED))
 #define RT_TREECOL_DUST_WEIGHTED
 #endif
 #if defined(RT_TREECOL_HEALPIX) && defined(CHEMCOOL)
