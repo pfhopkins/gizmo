@@ -223,9 +223,10 @@ void nlr_free_active_list(int *active_list)
  *   2. Spec::modeb_threshold_{sum,max} constexpr, where a Spec declares one
  *   3. the default for the loop's search mode (nlr_default_modeb_thresholds)
  *
- * Mode D, on the calls Mode B does not take, needs both counts at or above the
- * parameterfile pair NeighborLoopModeDThreshold{Sum,Max}; unset, that is 0/0,
- * so an eligible one-way loop uses Mode D wherever Mode B is not chosen.
+ * Mode D, on the calls Mode B does not take, needs the summed count at or above
+ * NeighborLoopModeDThresholdSum (else Mode A) and the busiest rank at or above
+ * the larger of NeighborLoopModeDThresholdMax and MODE_D_MIN_ACTIVES_PER_RANK
+ * (else Mode B), the latter also after every iteration; unset, the pair is 0/0.
  *
  * The thresholds are settable ONLY from the parameterfile, so the values a run
  * used are recorded in its parameter log.
@@ -260,15 +261,16 @@ bool nlr_mode_b_rule(int sum_active, int max_active, int default_sum, int defaul
  * to the host per query (measured on FIRE-dwarf and fire2ics, 3-7x below 4096), and a Mode D iteration's fixed cost --
  * export walks, count exchange, termination -- is then more than Mode B's whole iteration (Poisson box, 128 ranks: the
  * remainder of a density call finishing on Mode B below this took the call from 31-38 to 21.6 ms).  The busiest rank is
- * the test, not an average, so a call whose work sits on a few ranks still gives those ranks the device.  Asked when a
- * call is routed and again after every iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
+ * the test, not an average, so a call whose work sits on a few ranks still gives those ranks the device.  The parameter
+ * file's NeighborLoopModeDThresholdMax raises this bound for a run.  Asked when a call is routed and again after every
+ * iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
 static constexpr int MODE_D_MIN_ACTIVES_PER_RANK = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
 
 /* Built-in Mode-B thresholds by search mode, used where neither the parameterfile
  * nor the Spec sets one.
  *   One-way loops: Mode B up to 64 active globally (and 64 on any rank); above
  *   that an eligible loop uses Mode D, which needs no ghost import either, once the
- *   busiest rank holds MODE_D_MIN_ACTIVES_PER_RANK (Mode B below that, while Mode B is on).
+ *   busiest rank holds Mode D's per-rank bound (Mode B below that, while Mode B is on).
  *   Symmetric loops: Mode B up to an average of 320 active per rank, with no rank
  *   above 3200.  Measured on Frontier, Mode A's import and list build stop paying
  *   for themselves below a few hundred active per rank.  The per-rank cap is a
@@ -299,17 +301,18 @@ void gizmo_nlr_report_dispatch_thresholds(void)
     symm_sum = gizmo_nlr_modeb_threshold_sum_for(nullptr, symm_sum);
     symm_max = gizmo_nlr_modeb_threshold_max_for(nullptr, symm_max);
     gizmo_nlr_moded_thresholds(&d_sum, &d_max);
+    const int d_rank_bound = (d_max > MODE_D_MIN_ACTIVES_PER_RANK) ? d_max : MODE_D_MIN_ACTIVES_PER_RANK;
     printf("Neighbor loops: Mode B at or below summed/per-rank-max active %d/%d (one-way), %d/%d (symmetric); "
-           "eligible one-way loops use Mode D at or above %d/%d with at least %d on the busiest rank (below that Mode B when "
-           "it is on, else the usual path), Mode A otherwise\n",
-           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_max, MODE_D_MIN_ACTIVES_PER_RANK);
+           "eligible one-way loops use Mode D at or above %d summed with at least %d on the busiest rank, when routed and "
+           "after every iteration (below that Mode B when it is on, else the usual path), Mode A otherwise\n",
+           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_rank_bound);
 }
 
 void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max)
 {
     const int p_sum = nlr_host_all_ptr()->NeighborLoopModeDThresholdSum;
     const int p_max = nlr_host_all_ptr()->NeighborLoopModeDThresholdMax;
-    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the call reaches MODE_D_MIN_ACTIVES_PER_RANK. */
+    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the busiest rank reaches MODE_D_MIN_ACTIVES_PER_RANK. */
     *threshold_sum = (p_sum == -1) ? 0 : p_sum;
     *threshold_max = (p_max == -1) ? 0 : p_max;
 }
@@ -2550,12 +2553,12 @@ static int nlr_spec_threshold_max(int fallback) {
  * (parameterfile NeighborLoopModeBThreshold{Sum,Max}, else the Spec's
  * modeb_threshold_{sum,max}, else the default for its search mode).  Otherwise Mode D when the loop can
  * be answered by the fused device walk, some rank has work, and both counts
- * meet the Mode-D lower bounds; otherwise Mode A.  Collective inputs, so every
+ * meet the Mode-D lower bounds; a summed count below its bound gives Mode A.  Collective inputs, so every
  * rank answers alike.  Nothing here touches Mode D's state: a call answered by
  * A or B pays nothing for D.
  *
- * A call that meets the Mode-D bounds but whose busiest rank has fewer than MODE_D_MIN_ACTIVES_PER_RANK actives
- * goes to Mode B (see that constant), unless Mode B is switched off. */
+ * A call that meets the Mode-D summed bound but whose busiest rank has fewer actives than Mode D's per-rank bound
+ * (nlr_mode_d_feeds_device) goes to Mode B, unless Mode B is switched off. */
 /* Whether the parameter file leaves Mode B on for this loop: a threshold of 0 switches it off. */
 template <typename Spec>
 static bool nlr_mode_b_switched_on(void)
@@ -2587,13 +2590,15 @@ static MPI_Op nlr_count_triple_op(void)
     return op;
 }
 
-/* Whether a Mode D call's busiest rank still holds MODE_D_MIN_ACTIVES_PER_RANK actives.  Asked when a call is routed,
+/* Whether a Mode D call's busiest rank still holds enough actives for Mode D: MODE_D_MIN_ACTIVES_PER_RANK, or the
+ * parameter file's per-rank bound (NeighborLoopModeDThresholdMax) when that is larger.  Asked when a call is routed,
  * and again after every iteration of an iterative Mode D call, whose converged actives drop out: a remainder below it
- * finishes on Mode B.  Collective input (a maximum over the ranks), so every rank answers alike.  The parameter file's
- * Mode D thresholds are asked only when the call is routed. */
+ * finishes on Mode B.  Collective input (a maximum over the ranks), so every rank answers alike. */
 static bool nlr_mode_d_feeds_device(int max_active)
 {
-    return max_active >= MODE_D_MIN_ACTIVES_PER_RANK;
+    int threshold_sum = 0, threshold_max = 0;
+    gizmo_nlr_moded_thresholds(&threshold_sum, &threshold_max);
+    return max_active >= MODE_D_MIN_ACTIVES_PER_RANK && max_active >= threshold_max;
 }
 
 template <typename Spec>
@@ -2605,12 +2610,12 @@ NlrMode nlr_select_mode(int sum_active, int max_active)
         return NlrMode::B;
     }
     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-        int TDS = 0, TDM = 0;
+        int TDS = 0, TDM = 0;   /* TDM is applied inside nlr_mode_d_feeds_device */
         gizmo_nlr_moded_thresholds(&TDS, &TDM);
-        if(sum_active > 0 && sum_active >= TDS && max_active >= TDM) {
+        if(sum_active > 0 && sum_active >= TDS) {
             if(nlr_mode_d_feeds_device(max_active)) {return NlrMode::D;}
-            /* Below the floor: Mode B, unless the parameter file has switched Mode B off, in
-             * which case the call keeps its usual path. */
+            /* Busiest rank below Mode D's per-rank bound: Mode B, unless the parameter file has
+             * switched Mode B off, in which case the call keeps its usual path. */
             if(nlr_mode_b_switched_on<Spec>()) {return NlrMode::B;}
         }
     }
