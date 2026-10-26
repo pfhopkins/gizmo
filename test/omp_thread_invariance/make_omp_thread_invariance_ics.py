@@ -1,6 +1,6 @@
 """Generate the omp_thread_invariance IC: a magnetized 3D periodic box with a central
 over-pressured region, a smooth shearing flow, and NUM_METAL_SPECIES passive scalars with
-distinct gradients. The blast spreads the cells over several timebins and its shock wakes
+gradients (pairwise identical between the two halves of the species list). The blast spreads the cells over several timebins and its shock wakes
 up cells ahead of it, the shear switches on turbulent metal diffusion everywhere, and every
 metal species carries its own flux.
 
@@ -43,11 +43,14 @@ def make_IC(N_1D=16, n_species=14, fname="omp_thread_invariance_ics.hdf5", seed=
     B0 = 0.15
     B = np.tile(B0 * np.array([1.0, 1.0, 0.0]) / np.sqrt(2.0), (N, 1))
 
-    # distinct periodic gradients per species; all positive
+    # periodic gradients, all positive; species s and s + n_species//2 start identical, so any
+    # per-species indexing error shows up as a pair that diverges
+    half = n_species // 2
     Z = np.empty((N, n_species))
     for s in range(n_species):
-        n_vec = np.array([1 + s % 3, (s // 3) % 3, (s // 9) % 2 + 1])
-        phase = 2 * np.pi * s / n_species
+        p = s % half
+        n_vec = np.array([1 + p % 3, (p // 3) % 3, (p // 9) % 2 + 1])
+        phase = 2 * np.pi * p / half
         Z[:, s] = 0.02 * (1.0 + 0.5 * np.sin(k * pos @ n_vec + phase))
 
     with h5py.File(fname, "w") as F:
@@ -78,6 +81,7 @@ def make_IC(N_1D=16, n_species=14, fname="omp_thread_invariance_ics.hdf5", seed=
         p.create_dataset("InternalEnergy", data=u)
         p.create_dataset("MagneticField", data=B)
         p.create_dataset("Metallicity", data=Z)
+        p.create_dataset("KernelMaxRadius", data=np.full(N, 2.0 * dx))  # initial guess: read as a snapshot (restart flag 2)
     return fname
 
 

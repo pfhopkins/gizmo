@@ -63,6 +63,23 @@ def _differences(snap_a, snap_b):
     return out
 
 
+def _diverged_twins(snap):
+    """Species pairs (s, s + N/2) start identical (see the IC generator) and get identical physics."""
+    with h5py.File(snap, "r") as F:
+        Z = F["PartType0/Metallicity"][:]
+    half = Z.shape[1] // 2
+    return [s for s in range(half) if not np.array_equal(Z[:, s], Z[:, s + half])]
+
+
+def _metals_evolved(ic, snap):
+    """Fraction of surviving cells whose metallicity changed: guards against metal exchange being a no-op."""
+    with h5py.File(ic, "r") as A, h5py.File(snap, "r") as B:
+        ia, za = A["PartType0/ParticleIDs"][:], A["PartType0/Metallicity"][:]
+        ib, zb = B["PartType0/ParticleIDs"][:], B["PartType0/Metallicity"][:]
+    _, ka, kb = np.intersect1d(ia, ib, return_indices=True)
+    return np.mean(np.any(za[ka] != zb[kb], axis=1))
+
+
 def _total_mass(snap):
     with h5py.File(snap, "r") as F:
         return F["PartType0/Masses"][:].sum()
@@ -85,7 +102,8 @@ def test_omp_thread_invariance(scheme):
     try:
         os.chdir(TEST_DIR)
         for nt, d in outdirs.items():
-            run_test(TEST_NAME, 1, nt, param_overrides={"OutputDir": d})
+            # restart flag 2 keeps the IC's metallicities; a flag-0 start resets them to uniform
+            run_test(TEST_NAME, 1, nt, param_overrides={"OutputDir": d}, restart_flag=2)
             shutil.copyfile(f"test_{TEST_NAME}.out", f"{d}/test_{TEST_NAME}.out")
     finally:
         os.chdir(cwd)
@@ -94,6 +112,11 @@ def test_omp_thread_invariance(scheme):
         assert "BUILD_UNOPTIMIZED" in f.read(), "binary was not built unoptimized; the test would be insensitive"
 
     snaps = [_final_snapshot(f"{TEST_DIR}/{d}") for d in outdirs.values()]
+    evolved = _metals_evolved(f"{TEST_DIR}/{TEST_NAME}_ics.hdf5", snaps[0])
+    assert evolved > 0.5, f"metallicity changed in only {evolved:.0%} of cells; metal exchange is not being exercised"
+    for nt, snap in zip(outdirs, snaps):
+        twins = _diverged_twins(snap)
+        assert not twins, f"{nt} thread(s): species {twins} diverged from their identical twins"
     if scheme == "mfv":
         m1, mn = (_total_mass(s) for s in snaps)
         assert abs(mn / m1 - 1) < MASS_RTOL, f"total mass with 1 vs {nthreads} threads: {m1!r} vs {mn!r}"

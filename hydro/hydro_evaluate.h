@@ -374,7 +374,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 Vec3<double> gravwork = kernel.dp * Fluxes.rho;
                 out.GravWorkTerm += gravwork * FluxCorrectionFactor_to_i;
 #ifdef METALS   /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
-                if(Fluxes.rho > 0) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
+                if(Fluxes.rho > 0) {for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}}
 #endif
 #endif
                 out.Acc += FluxCorrectionFactor_to_i * Fluxes.v;
