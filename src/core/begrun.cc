@@ -2436,6 +2436,11 @@ void read_parameter_file(char *fname)
             double *fields[6] = {&All.SolidMaterialCustom.WeibullK, &All.SolidMaterialCustom.WeibullM, &All.SolidMaterialCustom.DruckerPragerMu,
                                  &All.SolidMaterialCustom.InitialDistention, &All.SolidMaterialCustom.CrushPressureElastic, &All.SolidMaterialCustom.CrushPressureSolid};
             for(int k_f = 0; k_f < 6; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterial_%s", names[k_f]); addr[nt] = fields[k_f]; id[nt++] = REAL;}
+            strcpy(tag[nt], "SolidMaterial_FractureActivation"); addr[nt] = &All.SolidMaterialCustom.FractureActivation; id[nt++] = REAL;
+#if (NUMDIMS < 3)
+            strcpy(tag[nt], "FractureOutOfPlaneExtent"); addr[nt] = &All.FractureOutOfPlaneExtent; id[nt++] = REAL;
+#endif
+            for(int k_p = 1; k_p < N_TILLOTSON_MATERIALS; k_p++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterialPreset%d_FractureActivation", k_p); addr[nt] = &All.SolidMaterialPresetFractureActivation[k_p]; id[nt++] = REAL;}
         }
 #endif
 #ifdef EOS_ANEOS
@@ -2449,6 +2454,8 @@ void read_parameter_file(char *fname)
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_WeibullK", aneos_k); addr[nt] = &custom->WeibullK; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_WeibullM", aneos_k); addr[nt] = &custom->WeibullM; id[nt++] = REAL;
             snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_DruckerPragerMu", aneos_k); addr[nt] = &custom->DruckerPragerMu; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_ReferenceDensity", aneos_k); addr[nt] = &custom->ReferenceDensity; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_FractureActivation", aneos_k); addr[nt] = &custom->FractureActivation; id[nt++] = REAL;
 #endif
         }
 #endif
@@ -3083,6 +3090,8 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef EOS_ELASTIC
                 if(strncmp(tag[i], "SolidMaterial_", 14)==0) {*((double *)addr[i]) = NAN; continue;} /* not given: refused in init() only if cells carry the custom material */
+                if(strncmp(tag[i], "SolidMaterialPreset", 19)==0) {*((double *)addr[i]) = NAN; continue;} /* not given: the preset keeps the default law */
+                if(strcmp(tag[i], "FractureOutOfPlaneExtent")==0) {*((double *)addr[i]) = NAN; continue;} /* not given: refused in init() only if a 1D/2D material uses tensile flaws */
 #endif
 #ifdef DM_HEATING
                 if(strcmp("DM_AnnihilationSigmaV_over_mChi",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (annihilation channel disabled) \n",tag[i],alternate_tag[i]); continue;}

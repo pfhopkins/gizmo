@@ -682,6 +682,11 @@ struct global_data_all_processes
 #ifdef EOS_ELASTIC
   struct solid_material SolidMaterial[N_SOLID_MATERIAL_IDS]; /*!< strength/damage/porosity per CompositionType, resolved at startup: read through solid_material_of() */
   struct solid_material SolidMaterialCustom; /*!< the custom material (CompositionType 0 of a Tillotson or plain elastic build), from the SolidMaterial_* parameters */
+#ifdef EOS_DAMAGE_POROSITY
+  double SolidMaterialFlawsPerMass[N_SOLID_MATERIAL_IDS]; /*!< tensile flaws: ln(N) N / M of each material's N elements of total mass M, set at startup (an element of mass m holds ~ m x this) */
+  double FractureOutOfPlaneExtent; /*!< 1D/2D tensile flaws: thickness (2D) or cross-sectional area (1D) that turns an element's NDIM-volume into a volume */
+  double SolidMaterialPresetFractureActivation[N_TILLOTSON_MATERIALS]; /*!< per preset row 1-6: its fracture law (SolidMaterialPreset<N>_FractureActivation; not given = tensile flaws) */
+#endif
 #endif
 
 #ifdef EOS_TABULATED

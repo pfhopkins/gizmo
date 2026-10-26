@@ -485,9 +485,9 @@ extern struct gas_cell_data
     Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
 #endif
 #ifdef EOS_DAMAGE_POROSITY
-    MyFloat Damage;        /* Grady-Kipp scalar damage D in [0,1] */
+    MyFloat Damage;        /* scalar fracture damage D in [0,1] */
     MyFloat Distention;    /* Jutzi P-alpha distention alpha in [1, alpha_0] */
-    MyFloat ActiveCracks;  /* Grady-Kipp Weibull active-flaw bookkeeping */
+    MyFloat ActiveCracks;  /* fracture bookkeeping: number of activated flaws (tensile-flaw law) or the crack radius (shear-activated law), per the material's FractureActivation */
 #endif
 #endif
     
@@ -715,20 +715,13 @@ extern struct gas_cell_data
     }
 
 #ifdef EOS_TILLOTSON
-    GIZMO_GPU_FUNCTION double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
+    GIZMO_GPU_FUNCTION double tillotson_matrix_pressure(double rho, double u, double *cs2_out) const { /*!< Tillotson pressure and squared sound speed at density rho */
         int type = CompositionType;
         double a=All.Tillotson_EOS_params[type][0], b=All.Tillotson_EOS_params[type][1],
         u0=All.Tillotson_EOS_params[type][2], rho0=All.Tillotson_EOS_params[type][3],
         A0=All.Tillotson_EOS_params[type][4], B0=All.Tillotson_EOS_params[type][5],
         u_s=All.Tillotson_EOS_params[type][6], u_s_prime=All.Tillotson_EOS_params[type][7],
         alpha=All.Tillotson_EOS_params[type][8], beta=All.Tillotson_EOS_params[type][9];
-        double rho=Density, u=InternalEnergyPred;
-#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
-        /* P-alpha porosity. Tillotson is evaluated at the matrix
-         * density rho_s = alpha*rho_bulk; bulk pressure is P_matrix/alpha. */
-        double alpha_d = (Distention >= 1.0) ? Distention : 1.0;
-        rho *= alpha_d;
-#endif
         double eta=rho/rho0, mu=eta-1, u_u0eta2=1+u/(u0*eta*eta), p0=u*rho, z=1/eta-1, press=0, cs=0, press_min=1.e-10*u0*rho0;
         double Pc = (a + b/u_u0eta2)*p0 + A0*mu + B0*mu*mu;
         double c2c_rho = (1+a+b/u_u0eta2)*Pc + A0+B0*(eta*eta-1) + b*(u_u0eta2-1)*(2*p0-Pc)/(u_u0eta2*u_u0eta2);
@@ -739,27 +732,65 @@ extern struct gas_cell_data
         double c2x_rho = (c2c_rho*(u-u_s) + c2e_rho*(u_s_prime - u)) / (u_s_prime - u_s);
         if(u <= u_s) {press=Pc; cs=c2c_rho;} else {if(u >= u_s_prime) {press=Pe; cs=c2e_rho;} else {press=Px; cs=c2x_rho;}}
         if(cs <= 0) {cs=press_min;}
-        SoundSpeed = cs/rho;
-#ifdef EOS_ELASTIC
-        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, Density); /* the stress acts on the bulk density, porous or not */
-#endif
-        SoundSpeed = sqrt(SoundSpeed);
+        *cs2_out = cs/rho;
+        return press;
+    }
+    GIZMO_GPU_FUNCTION double calculate_tillotson_eos() { /*!< Tillotson EOS: sets SoundSpeed, returns pressure */
+        double rho=Density, u=InternalEnergyPred, cs2=0, press=0;
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
-        /* irreversibly update distention from current matrix
-         * pressure, then convert matrix pressure to bulk porous pressure.
-         * The sound speed keeps its acoustic part at the matrix density and its
-         * elastic (shear) part at the bulk density, on which the stress acts. */
+        /* P-alpha porosity: Tillotson is evaluated at the matrix density rho_s = alpha*rho_bulk and the bulk pressure is P_matrix/alpha.
+           Compaction is irreversible and self-consistent: alpha = min(alpha_prev, crush(P_matrix(alpha*rho))). The crush curve falls as the
+           matrix pressure rises, so the root is unique wherever that rises with density. Whenever the previous distention would compact, the
+           root of f(alpha) = alpha - crush(P_matrix(alpha*rho)) is found between 1 (f <= 0) and alpha_prev (f > 0) by the Illinois (modified
+           regula falsi) method, which stays inside that bracket and typically needs 3-4 pressure evaluations at a relative tolerance of 1e-12
+           (taking alpha from the pressure at the uncompacted state overshoots, and the matrix then reads tension in material that was
+           compressed). The sound speed keeps its acoustic part at the matrix density and its elastic (shear) part at the bulk density, on
+           which the stress acts. */
         {
             double alpha_0_p = solid_material_of(CompositionType).InitialDistention;
             double P_e_p     = solid_material_of(CompositionType).CrushPressureElastic;
             double P_s_p     = solid_material_of(CompositionType).CrushPressureSolid;
-            double alpha_eq = jutzi_distention_eq8(press, alpha_0_p, P_e_p, P_s_p);
-            double alpha_new = (alpha_eq < Distention) ? alpha_eq : Distention;
-            if(alpha_new < 1.0) { alpha_new = 1.0; }
+            double alpha_prev = (Distention >= 1.0) ? Distention : 1.0, alpha_new = alpha_prev;
+            press = tillotson_matrix_pressure(alpha_prev*rho, u, &cs2);
+            double f_hi = alpha_prev - jutzi_distention_eq8(press, alpha_0_p, P_e_p, P_s_p);
+            if(f_hi > 0) {
+                double press_prev = press, cs2_prev = cs2; /* the state at alpha_prev, kept if the solve meets a non-finite pressure */
+                double a_lo = 1.0, a_hi = alpha_prev, cs2_try = 0;
+                double press_try = tillotson_matrix_pressure(rho, u, &cs2_try), f_lo = 1.0 - jutzi_distention_eq8(press_try, alpha_0_p, P_e_p, P_s_p);
+                alpha_new = 1.0; press = press_try; cs2 = cs2_try; /* f_lo = 0: the matrix pressure at full compaction is above P_s */
+                volatile int last_side = 0, converged = (f_lo >= 0), failed = !(f_lo == f_lo); /* last_side: which end the previous estimate replaced, +1 upper, -1 lower */
+                for(int it = 0; it < 60 && !converged && !failed; it++) {
+                    double a_try = (a_lo*f_hi - a_hi*f_lo) / (f_hi - f_lo);
+                    press_try = tillotson_matrix_pressure(a_try*rho, u, &cs2_try);
+                    double f_try = a_try - jutzi_distention_eq8(press_try, alpha_0_p, P_e_p, P_s_p);
+                    if(!(f_try == f_try)) {failed = 1; break;}
+                    alpha_new = a_try; press = press_try; cs2 = cs2_try;
+                    if(f_try > 0) {a_hi = a_try; f_hi = f_try; if(last_side == 1) {f_lo *= 0.5;} last_side = 1;}
+                    else {a_lo = a_try; f_lo = f_try; if(last_side == -1) {f_hi *= 0.5;} last_side = -1;}
+                    if(a_hi - a_lo < 1.e-12 * a_hi || fabs(f_try) < 1.e-12 * a_try) {converged = 1;}
+                }
+                for(int it = 0; it < 200 && !converged && !failed; it++) { /* not converged in 60 Illinois steps: bisect what remains of the bracket (~40 halvings reach the tolerance) */
+                    double a_mid = 0.5*(a_lo + a_hi);
+                    press_try = tillotson_matrix_pressure(a_mid*rho, u, &cs2_try);
+                    double f_mid = a_mid - jutzi_distention_eq8(press_try, alpha_0_p, P_e_p, P_s_p);
+                    if(!(f_mid == f_mid)) {failed = 1; break;}
+                    alpha_new = a_mid; press = press_try; cs2 = cs2_try;
+                    if(f_mid > 0) {a_hi = a_mid;} else {a_lo = a_mid;}
+                    if(a_hi - a_lo < 1.e-12 * a_hi || f_mid == 0) {converged = 1;}
+                }
+                if(failed || !converged) {alpha_new = alpha_prev; press = press_prev; cs2 = cs2_prev;} /* a non-finite pressure inside the bracket: no compaction this step, as before this solve existed */
+            }
             Distention = alpha_new;
-            if(alpha_new > 1.0) { press /= alpha_new; }
+            if(alpha_new > 1.0) {press /= alpha_new;}
         }
+#else
+        press = tillotson_matrix_pressure(rho, u, &cs2);
 #endif
+        SoundSpeed = cs2;
+#ifdef EOS_ELASTIC
+        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, Density); /* the stress acts on the bulk density, porous or not */
+#endif
+        SoundSpeed = sqrt(SoundSpeed);
         return press;
     }
 #endif
