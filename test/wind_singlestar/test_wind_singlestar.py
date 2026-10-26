@@ -26,8 +26,6 @@ from gizmo.test import (
     default_mpi_ranks,
     default_omp_threads,
     flush_colorbar,
-    assert_final_time,
-    get_final_snapshot,
     variant_output_dir,
 )
 from pathlib import Path
@@ -321,13 +319,6 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
     if good.any():
         t_plot = np.logspace(np.log10(times[good].min()), np.log10(times[good].max() * 1.1), 200)
         R_weaver_plot = weaver_radius(L_w, RHO_AMBIENT_CODE, t_plot, ALPHA_RADIATIVE)
-        from numpy.polynomial.polynomial import polyfit
-
-        fit_mask = good & (times >= 0.01)
-        if not fit_mask.any():
-            fit_mask = good
-        c = polyfit(np.log10(times[fit_mask]), np.log10(r_shells[fit_mask]), 1)
-        alpha, A = c[1], 10 ** c[0]
 
         plt.figure()
         plt.loglog(times[good], r_shells[good], "ko", markersize=4, label="GIZMO")
@@ -345,7 +336,6 @@ def test_wind_singlestar(request, num_mpi_ranks, num_omp_threads, Mdot_vw, res, 
             )
             plt.loglog(t_plot, R_weaver_plot, "r:", linewidth=1.0,
                        label=rf"Weaver 1977 (radiative), $\alpha$={ALPHA_RADIATIVE:.2f} (n/a here)")
-        #        plt.loglog(t_plot, A * t_plot**alpha, "b--", label=f"Best fit ($t^{{{alpha:.2f}}}$)")
         plt.xlabel("t (code units)")
         plt.ylabel("R_shell (pc)")
         plt.legend()

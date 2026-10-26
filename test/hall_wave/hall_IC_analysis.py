@@ -8,7 +8,7 @@
 ## load libraries we will use 
 import numpy as np
 import h5py as h5py
-from gizmopy import *
+from gizmo import load_from_snapshot
 import matplotlib
 import matplotlib.pylab as pylab
 matplotlib.use('Agg') ## this calls matplotlib without a X-windows GUI
@@ -71,16 +71,14 @@ def plottime(sdir='./',snum_min=0,snum_max=2999,x0=0.5,renorm=1.):
     dB = dB_B0 * B0
     dv = -dB_B0 * omega/k
     bx = bx - B0
-    T_slow = 80.
     lH = eta_Hall/vA
     klH = k*lH
     klH2 = klH*klH
     omega_H = vA*vA/eta_Hall
     omega_slow = (-klH2/2. + np.sqrt((klH2/2.)**2 + klH2)) * omega_H
-    T_slow = 2.*np.pi/omega_slow
     t0plot = omega_H/(2.*np.pi)
 
-    pylab.close('all'); figure=pylab.figure(1,figsize=(6.,4.5)); f00=14.; matplotlib.rcParams.update({'font.size':f00}); legloc='best'; 
+    pylab.close('all'); pylab.figure(1,figsize=(6.,4.5)); f00=14.; matplotlib.rcParams.update({'font.size':f00}); 
     pylab.plot(t*t0plot,vx/dv,color='blue',linestyle='--',label=r'$v_{x}/\delta v$',linewidth=1.)
     pylab.plot(t*t0plot,vy/dv,color='blue',linestyle='-',label=r'$v_{y}/\delta v$',linewidth=1.)
     pylab.plot(t*t0plot,vz/dv,color='blue',linestyle=':',label=r'$v_{z}/\delta v$',linewidth=1.)
@@ -231,7 +229,6 @@ def make_IC():
 
 
 def make_IC_3d():
-    DIMS=3; # number of dimensions 
     N_long=160; # 1D particle number (so total particle number is N_1D^DIMS)
     N_short=10;
     fname='box_3d_r160_x10x10.hdf5'; # output filename 

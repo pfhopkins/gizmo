@@ -77,28 +77,21 @@ def test_evrard(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         coords = F["PartType0/Coordinates"][:]
         rho_sim = F["PartType0/Density"][:]
         vel = F["PartType0/Velocities"][:]
-        u_sim = F["PartType0/InternalEnergy"][:]
 
     # Compute radius from origin and radial velocity
     r_sim = np.sqrt(np.sum(coords**2, axis=1))
     vr_sim = np.sum(vel * coords, axis=1) / (r_sim + 1e-30)
 
-    # Entropy: S = P / rho^gamma = (gamma-1) * u / rho^(gamma-1)
-    gamma = 5.0 / 3.0
-    entropy_sim = (gamma - 1) * u_sim / rho_sim ** (gamma - 1)
-
     # Load exact solution: radius, density, entropy, velocity
     exact = np.loadtxt(f"test/{test_name}/evrard_exact.txt")
     r_exact = exact[:, 0]
     rho_exact = exact[:, 1]
-    entropy_exact = exact[:, 2]
     vr_exact = exact[:, 3]
 
     # Bin simulation data by radius
     r_bins = np.logspace(np.log10(r_exact.min()), np.log10(r_exact.max()), 30)
     rho_binned = binned_statistic(r_sim, rho_sim, "median", r_bins)[0]
     vr_binned = binned_statistic(r_sim, vr_sim, "median", r_bins)[0]
-    entropy_binned = binned_statistic(r_sim, entropy_sim, "median", r_bins)[0]
     r_centers = 0.5 * (r_bins[:-1] + r_bins[1:])
 
     # Interpolate exact solution to bin centers

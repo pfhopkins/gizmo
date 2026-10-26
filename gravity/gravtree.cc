@@ -276,7 +276,7 @@ void gravity_tree(void)
                 else {P[place].is_in_a_binary=0; /* setting values to zero just to be sure */}
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORGAS
-                if((P[place].Type == 0) && (P[place].KernelRadius > All.ForceSoftening[P[place].Type])) {GravDataIn[j].AGS_zeta = P[place].AGS_zeta;} else {GravDataIn[j].AGS_zeta = 0;}
+                if(P[place].Type == 0) {GravDataIn[j].AGS_zeta = P[place].AGS_zeta;} else {GravDataIn[j].AGS_zeta = 0;} /* same zeta as the source side, also at the softening floor */
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
                 GravDataIn[j].Soft = P[place].AGS_KernelRadius;

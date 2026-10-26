@@ -36,8 +36,6 @@ def generate_ics(fname="aneos_giant_impact_ics.hdf5", n_particles=5000):
     core_frac = 0.5  # core radius = 50% of total radius
 
     # Material densities in CGS (for setting thermal energy)
-    rho_forsterite = 3.2  # g/cm^3
-    rho_iron = 7.87       # g/cm^3
 
     coords = generate_sphere_particles(n_particles, radius)
     n = len(coords)
@@ -48,7 +46,6 @@ def generate_ics(fname="aneos_giant_impact_ics.hdf5", n_particles=5000):
     comp_type = np.where(is_core, 1, 0).astype(np.int32)
 
     # Uniform density in code units
-    volume = 4.0 / 3.0 * np.pi * radius**3
     total_mass = 1.0
     particle_mass = total_mass / n
     masses = np.full(n, particle_mass)

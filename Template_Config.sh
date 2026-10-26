@@ -524,6 +524,7 @@
 #DEVELOPER_MODE                    # allows you to modify various numerical parameters (courant factor, etc) at run-time
 #FORCE_EQUAL_TIMESTEPS             # force the code to use a single universal timestep (can change in time, but all particles advance together). chosen as minimum of any particle that step.
 #STOP_WHEN_BELOW_MINTIMESTEP       # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile
+#BUILD_UNOPTIMIZED                 # compile with -O0 (overrides the systype's optimization level). slow; for debugging, and for tests that need unoptimized code generation to expose OpenMP data-sharing races
 # --------------------
 # ----- Hydrodynamics (and MHD)
 #FREEZE_HYDRO                      # zeros all fluxes from RP and doesn't let particles move (for testing additional physics layers)

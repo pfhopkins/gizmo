@@ -2661,7 +2661,7 @@ int domain_determineTopTree(void)
 
 void domain_sumCost(void)
 {
-  int i, n, no;
+  int i, n;
   float *local_domainWork;
   float *local_domainWorkGas;
   int *local_domainCount;
@@ -2764,7 +2764,7 @@ void domain_sumCost(void)
 #ifdef SUBFIND
         if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
-        no = domain_toptree_leaf(Key[n], topNodes);
+        int no = domain_toptree_leaf(Key[n], topNodes); /* per-thread: declared outside the loop it was shared */
         DOMAIN_SUMCOST_PARTICLE_BODY(n, no, my_domainWork, my_domainWorkGas, my_domainCount, my_domainCountGas)
       }
 
@@ -2795,7 +2795,7 @@ void domain_sumCost(void)
 #ifdef SUBFIND
       if(GrNr >= 0 && P[n].GrNr != GrNr) {continue;}
 #endif
-      no = domain_toptree_leaf(Key[n], topNodes);
+      int no = domain_toptree_leaf(Key[n], topNodes);
 #if (DOMAIN_TIMEBINS == 1)
       /* In the serial path, my_binGravCost/my_binHydroCost are just the global arrays */
       float *my_binGravCost = domainBinGravCost;

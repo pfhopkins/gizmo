@@ -50,10 +50,6 @@ def test_sbcluster(num_mpi_ranks, num_omp_threads):
     dx -= boxsize * np.round(dx / boxsize)  # periodic wrapping
     r_gas = np.sqrt(np.sum(dx**2, axis=1))
 
-    dx_dm = dm_pos - center
-    dx_dm -= boxsize * np.round(dx_dm / boxsize)
-    r_dm = np.sqrt(np.sum(dx_dm**2, axis=1))
-
     # Plot radial density and temperature profiles
     rbins = np.logspace(-4.5, -0.5, 40)
     rc = np.sqrt(rbins[:-1] * rbins[1:])

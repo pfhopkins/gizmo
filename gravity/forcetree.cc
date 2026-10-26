@@ -736,7 +736,7 @@ void force_update_node_recursive(int no, int sib, int father)
 #ifdef SINK_PHOTONMOMENTUM
                     if(pa->Type == 5)
                     {
-                        if((pa->Mass>0)&&(pa->DensityAroundParticle>0)&&(pa->Sink_Mdot>0))
+                        if(pa->Mass>0) // same rule as the leaf: non-accreting sinks can shine
                         {
                             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, p);
                             sink_lum += BHLum;
@@ -1653,10 +1653,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if(ptype == 5) {sink_mass = P[target].Sink_Mass;}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-        if(ptype == 0) {if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=0;}}
+        if(ptype == 0) {if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=P[target].AGS_zeta;}}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=0;}
+        if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=P[target].AGS_zeta;}
 #endif
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
         if(pmforce_is_particle_high_res(ptype, P[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
@@ -1900,7 +1900,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
 #ifdef SINK_PHOTONMOMENTUM
                         mass_sinklumwt_forradfb=0;
-                        if(P[no].Type == 5)
+                        if(P[no].Type == 5 && P[no].Mass > 0)
                         {
                             double bhlum_t = sink_lum_bol(P[no].Sink_Mdot, P[no].Sink_Mass, no);
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
@@ -2297,8 +2297,8 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
                     if(ptype != 0 || ptype_sec != 0) {add_ags_zeta_terms_primary=0; add_ags_zeta_terms_secondary=0;} // primary and secondary must be gas for ab side or ba side
 #else
-                    if(!((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
-                    if(!((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
+                    if((ptype_sec < 0) || !((1 << ptype) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype_sec) & (ags_gravity_kernel_shared_BITFLAG(ptype)))) {add_ags_zeta_terms_primary=0;} // primary must be a valid ags particle and 'see' secondary for ab side
+                    if((ptype_sec < 0) || !((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FORALL)) || !((1 << ptype) & (ags_gravity_kernel_shared_BITFLAG(ptype_sec)))) {add_ags_zeta_terms_secondary=0;} // secondary must be a valid ags particle and 'see' primary for ba side
 #endif
                     if(add_ags_zeta_terms_primary) // ab side
                     {
@@ -2372,7 +2372,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     if(mass > 0 && r2 > 0)
                     {
                         if((1 << ptype) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {primary_uses_tidal_criterion=1;} /* check if the primary particle uses the tidal softening */
-                        if((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION)) {secondary_uses_tidal_criterion=1;} /* check if the secondary particle uses the tidal softening */
+                        if((ptype_sec >= 0) && ((1 << ptype_sec) & (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION))) {secondary_uses_tidal_criterion=1;} /* check if the secondary particle uses the tidal softening */
                         double prefac_tt=0.5, h_touse=h, u_tt=sqrt(r2)/h_touse; // this corresponds to the result of symmetrizing by averaging
 #if !defined(ADAPTIVE_GRAVSOFT_SYMMETRIZE_FORCE_BY_AVERAGING)
                         if(h >= h_p) {prefac_tt=1;} else {prefac_tt=1; h_touse=h_p; u_tt=sqrt(r2)/h_touse;} // this corresponds to adopting the MAX criterion for the softening
@@ -4096,7 +4096,7 @@ void force_refresh_node_moments(void)
         }}
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        if(pa->Type == 5 && pa->Mass > 0 && pa->DensityAroundParticle > 0 && pa->Sink_Mdot > 0) {
+        if(pa->Type == 5 && pa->Mass > 0) {
             double BHLum = sink_lum_bol(pa->Sink_Mdot, pa->Sink_Mass, i);
             Nodes[no].sink_lum += BHLum;
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)

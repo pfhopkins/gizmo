@@ -6,7 +6,6 @@ Success = no compile errors for any configuration.
 """
 
 import subprocess
-import sys
 import os
 import pytest
 from pathlib import Path
@@ -149,6 +148,10 @@ COMPILE_CONFIGS = [
     "METALS",
     "METALS TURB_DIFF_METALS TURB_DIFF_ENERGY TURB_DIFF_VELOCITY",
     "METALS TURB_DIFF_METALS TURB_DIFF_ENERGY TURB_DIFF_VELOCITY TURB_DIFF_DYNAMIC OUTPUT_TURB_DIFF_DYNAMIC_ERROR",
+
+    # --- ISM dust chemistry (passes dust species through metal diffusion and FIRE-2 feedback) ---
+    "FIRE_PHYSICS_DEFAULTS=2 GALSF_ISMDUSTCHEM_MODEL=(1+2+8)",
+    "FIRE_PHYSICS_DEFAULTS=3 GALSF_ISMDUSTCHEM_MODEL=(1+2+8)",
 
     # --- Grains ---
     "GRAIN_FLUID",

@@ -22,7 +22,6 @@ Validation protocol:
 """
 
 import pytest
-import numpy as np
 from os import path, chdir
 from urllib.request import urlretrieve, HTTPError
 import h5py

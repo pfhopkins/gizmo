@@ -120,7 +120,7 @@ def make_gravtree_collocated_ics(
     print(f"Wrote {output_file}")
     print(f"  N_gas         = {Ngas} (random={N_random}, clusters={N_clusters}*{N_per_cluster})")
     print(f"  BoxSize       = {BoxSize} pc")
-    print(f"  cluster centers (first 3):")
+    print("  cluster centers (first 3):")
     for c in cluster_centers[:3]:
         print(f"    {c}")
 

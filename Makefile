@@ -109,6 +109,243 @@ FINCL =
 
 
 #----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"Trillium")
+CC       = mpicc
+CXX      = mpicxx
+FC       = mpif90
+OPTIMIZE = -O3 -funroll-loops -march=native
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+OPTIMIZE += -fopenmp
+endif
+GSL_INCL = -I${EBROOTGSL}/include
+GSL_LIBS = -L${EBROOTGSL}/lib -lgsl -lgslcblas
+FFTW_INCL= -I${EBROOTFFTWMPI}/include
+FFTW_LIBS= -L${EBROOTFFTWMPI}/lib -lfftw3 -lfftw3_omp
+MPICHLIB =
+HDF5INCL = -I${EBROOTHDF5}/include -DH5_USE_16_API
+HDF5LIB  = -L${EBROOTHDF5}/lib -lhdf5 -lz
+OPT     += -DUSE_MPI_IN_PLACE -DHDF5_DISABLE_VERSION_CHECK
+ifneq (USE_FFTW3, $(findstring USE_FFTW3, $(CONFIGVARS)))
+OPT += -DUSE_FFTW3
+endif
+HYPRE_PATH = /scratch/vasissua/SHIVAN2/gizmo_tests_sfdev/hypre
+## Notes [Vasilii Pustovoit], Oct 2026:
+##
+## Trillium (Alliance Canada / SciNet), 2x AMD EPYC 9655 = 192 cores per node, SLURM. Compute nodes have NO internet.
+##
+## Modules (load before building AND in the job script):
+##    module load StdEnv/2023 gcc/12.3 openmpi/4.1.5 fftw-mpi/3.3.10 gsl/2.7 hdf5/1.14.2
+##    (+ python/3.10 for the pytest harness)
+##
+## hypre (only needed for MHD_MODIFIED_GRADIENT): the only hypre module is a CUDA build, so build hypre 2.32.0 from
+## source with the modules above (gizmo_tests_sfdev/build_hypre.sh) and point HYPRE_PATH (above) at the prefix; the
+## generic HYPRE_PATH fallback further down adds -I/-L/-rpath/-lHYPRE. Change HYPRE_PATH to your own build.
+##
+## Downloads (ICs, cooling tables, EOS tables): fetch them on the LOGIN node first (compute nodes are offline);
+##    the test harness takes a URL cache for this.
+##
+#############
+## TESTING ##
+#############
+##
+## Test-parameter changes needed:
+##   aneos_giant_impact : PartAllocFactor                         2    -> 4
+##   forgedinfire       : Max_Memory_Per_MPI_Task_in_MB           5000 -> 16000
+##   forgedinfire       : ParticleNumberMemoryImbalance_Limit     1.9  -> 4
+##   shu_jets, SN_singlestar, wind_singlestar: call get_cooling_tables() before building/running (data staging:
+##     COOL_METAL_LINES_BY_SPECIES otherwise makes GIZMO curl spcool_tables.tgz itself, which fails offline)
+##
+## Tests: ran 2026-10-16 onwards (full-suite array 2584797, 1 node per test directory, 18000 s per-test timeout),
+##    then reruns of the long tests with 192 cores and 22 h (finished a few days later). 315 results counted:
+##    PASS 290, XFAIL 9, NOT IMPL 8 (modules not in starforge_dev), UPSTREAM 6, TIMEOUT 2.
+##    TIMEOUT: forgedinfire (2 ranks; 22 h) and isodisk[baseline] (GIZMO's default TimeLimitCPU stops
+##    at 0.85 x 24 h = 20.4 h at t = 0.084 of 0.5; params do not set TimeLimitCPU).
+##    UPSTREAM (potential bugs in upstream code/tests): c_shock[2-4], fire_rtsources[2-2], fire[baseline],
+##    rt, read_ic_binary[sensitivity_demands_temperature], rt_closed_box[source-n1e3-8].
+##    Long passes: core 23.4 h on 192 cores, hernquist[tidal_ags] 9.5 h.
+##    Per-test cores / hours / outcome: see test_reports/PR_DRAFT.md.
+endif
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"CITAstarq")
+CC       =  mpicc
+CXX      =  mpicxx
+FC       =  $(CC)
+OPTIMIZE =  -O3 -ffast-math -march=znver3 -mtune=znver3 -funroll-loops -finline-functions -march=native -flto -fno-fat-lto-objects
+OPTIMIZE+= -g -Wall # For debugging
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+    OPTIMIZE += -fopenmp   # openmp required compiler flags
+endif
+GSL_INCL =  -I/cita/modules/gsl/2.7.1/include/gsl
+GSL_LIBS =  -L/cita/modules/gsl/2.7.1/lib -lgsl -lgslcblas
+FFTW_INCL=  -I/cita/modules/fftw/3.3.10-openmpi-ucx/include
+FFTW_LIBS=  -L/cita/modules/fftw/3.3.10-openmpi-ucx/lib -lfftw3
+MPICHLIB =
+HDF5INCL =  -I/cita/modules/hdf5/1.12.1-ucx/include -DH5_USE_16_API
+HDF5LIB  =  -L/cita/modules/hdf5/1.12.1-ucx/lib -lhdf5 -lz
+OPT     += -DUSE_MPI_IN_PLACE -DHDF5_DISABLE_VERSION_CHECK
+## Notes [Vasilii Pustovoit], Oct 2026:
+##
+## CITA cluster, queue starq (nodes tpb9x): AMD EPYC 7763 = 128 cores, 1 TB per node.
+##  Modules to load, before building AND in the job script:
+##    module load gcc/13.2.0 openmpi/4.1.2-ucx gsl/2.7.1 hdf5/1.12.1-ucx fftw/3.3.10-openmpi-ucx
+##
+## Your .params file should contain MaxMemsize 7500 (otherwise the code grabs a lot of memory/threads).
+##
+## hypre (only for MHD_MODIFIED_GRADIENT): there is no CITA hypre module. Build hypre 2.32.0 with the modules above
+## (--enable-shared --without-superlu --without-openmp) on SHARED storage visible from the compute nodes (NOT
+## /home on interactive nodes).
+##
+## Running:
+##    qsub -q starq -l select=1:ncpus=96:mpiprocs=48 -l place=free -l walltime=24:00:00 job.sh
+##    job.sh: module load (above); export OMP_NUM_THREADS=2; mpirun -np 48 ./GIZMO p.params
+##    Use ONE node for the tests marked below: across 2 starq nodes hernquist[ags] ran ~10^4x slower
+##    (t = 1.5 of 118 in 20.4 h; the same run takes 19.5 min on one node), isodisk showed the same.
+##
+#############
+## TESTING ##
+#############
+##
+## Test-parameter changes needed:
+##   aneos_giant_impact : PartAllocFactor                         2    -> 4
+##   forgedinfire       : Max_Memory_Per_MPI_Task_in_MB           5000 -> 16000
+##   forgedinfire       : ParticleNumberMemoryImbalance_Limit     1.9  -> 4
+##   shu_jets, SN_singlestar, wind_singlestar: call get_cooling_tables() before building/running (data staging:
+##     COOL_METAL_LINES_BY_SPECIES otherwise makes GIZMO curl spcool_tables.tgz itself, which fails offline)
+##
+## Tests: ran 2026-10-15 -> 2026-10-16 (full suite, 56 cores of a shared node = 28 ranks x 2 OpenMP,
+##    1800 s per-test timeout), then reruns of the long tests, 22 h, 2 nodes x 96 = 192 cores, until 2026-10-20.
+##    317 results: PASS 294, XFAIL 8, NOT IMPL 8, UPSTREAM 4, TIMEOUT 3.
+##    TIMEOUT: forgedinfire (2 ranks fixed by the test, 22 h), core (192 cores, killed at the 24 h walltime, baseline variant at
+##    snapshot 8/10), isodisk[baseline] (1 node / 96 cores: TimeLimitCPU stop at 20.9 h, t = 0.141 of 0.5).
+##    UPSTREAM: c_shock[2-4], fire_rtsources[2-2], rt, read_ic_binary[sensitivity_demands_temperature].
+##    Passes needing long runs: hernquist[tidal_ags] 8.2 h (192 cores), hernquist[ags] 19.5 min (1 node, 96 cores),
+##    kh_wengen 2.95 h, shu_jets 2.0 h each, sbcluster 55 min, zeldovich_mhd 26 min.
+endif
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"CITAbob")
+CC       =  mpicc
+CXX      =  mpicxx
+FC       =  $(CC)
+OPTIMIZE =  -O3 -ffast-math -march=znver3 -mtune=znver3 -funroll-loops -finline-functions -march=native -flto -fno-fat-lto-objects
+OPTIMIZE+= -g -Wall # For debugging
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+    OPTIMIZE += -fopenmp   # openmp required compiler flags
+endif
+GSL_INCL =  -I/cita/modules/gsl/2.7.1/include/gsl
+GSL_LIBS =  -L/cita/modules/gsl/2.7.1/lib -lgsl -lgslcblas
+FFTW_INCL=  -I/cita/modules/fftw/3.3.10-openmpi-ucx/include
+FFTW_LIBS=  -L/cita/modules/fftw/3.3.10-openmpi-ucx/lib -lfftw3
+MPICHLIB =
+HDF5INCL =  -I/cita/modules/hdf5/1.12.1-ucx/include -DH5_USE_16_API
+HDF5LIB  =  -L/cita/modules/hdf5/1.12.1-ucx/lib -lhdf5 -lz
+OPT     += -DUSE_MPI_IN_PLACE -DHDF5_DISABLE_VERSION_CHECK
+## Notes [Vasilii Pustovoit], Oct 2026:
+##
+## CITA cluster, queue greenq (nodes tpb*): 2x Intel Xeon Gold 6130 = 32 cores / 64 hw threads, 128 GB per node.
+## Modules to load, before building AND in the job script:
+##    module load gcc/13.2.0 openmpi/4.1.2-ucx gsl/2.7.1 hdf5/1.12.1-ucx fftw/3.3.10-openmpi-ucx
+##
+## Your .params file should contain MaxMemsize 7500 (otherwise the code grabs a lot of memory/threads).
+##
+## hypre (only for MHD_MODIFIED_GRADIENT): there is no CITA hypre module. Build hypre 2.32.0 with the modules above
+## (--enable-shared --without-superlu --without-openmp) on SHARED storage visible from the compute nodes (NOT
+## /home on interactive nodes).
+##
+## Running (greenq lets all users together run at most 384 cores at once; a 6-node job can wait for days):
+##    (example) qsub -q greenq -l select=1:ncpus=32:mpiprocs=32 -l place=scatter:excl -l walltime=24:00:00 job.sh
+##    job.sh: module load (above); export OMP_NUM_THREADS=2; mpirun --use-hwthread-cpus --oversubscribe -np 32 ./GIZMO p.params
+##    Long tests: 6 nodes, select=6:ncpus=32:mpiprocs=16, 96 ranks x 2 OpenMP = 192 cores.
+##
+#############
+## TESTING ##
+#############
+##
+## Test-parameter changes needed:
+##   aneos_giant_impact : PartAllocFactor                         2    -> 4
+##   forgedinfire       : Max_Memory_Per_MPI_Task_in_MB           5000 -> 16000
+##   forgedinfire       : ParticleNumberMemoryImbalance_Limit     1.9  -> 4
+##   shu_jets, SN_singlestar, wind_singlestar: call get_cooling_tables() before building/running (data staging:
+##     COOL_METAL_LINES_BY_SPECIES otherwise makes GIZMO curl spcool_tables.tgz itself, which fails offline)
+##
+## Tests: ran 2026-10-15 -> 2026-10-16 (full suite, 1 node = 32 ranks x 2 OpenMP, 1800 s per-test
+##    timeout), then reruns of the long tests, 22 h, 6 nodes = 192 cores, until 2026-10-20 (queue time mostly).
+##    317 results: PASS 293, XFAIL 8, NOT IMPL 8, UPSTREAM 5, TIMEOUT 3.
+##    TIMEOUT: forgedinfire (2 ranks fixed by the test, 22 h), core (192 cores, killed at the 24 h walltime, baseline
+##    see test_reports/cita_greenq.md for the variant reached), isodisk[baseline] (GIZMO's default TimeLimitCPU stops it at 20.3 h, t = 0.099 of 0.5;
+##    params do not set TimeLimitCPU).
+##    UPSTREAM: c_shock[2-4], fire_rtsources[2-2], rt, read_ic_binary[sensitivity_demands_temperature],
+##    aneos_giant_impact[2-2] (NaN on Intel CPUs: Riemann solver "failed to find positive pressure").
+##    Passes needing long runs on 192 cores: kh_wengen 3.3 h, shu_jets 2.1 h (rad-jets_merge) / 2.0 h (nomerge),
+##    hernquist[ewald] 1.3 h, mri 50 min, sbcluster 47 min, blob 22 min, zeldovich_mhd 22 min.
+##    Per-test cores / hours / outcome: see test_reports/PR_DRAFT.md.
+endif
+
+#----------------------------------------------------------------------------------------------
+ifeq ($(SYSTYPE),"CITA2")
+CC       =  mpicc
+CXX      =  mpicxx
+FC       =  mpif90
+OPTIMIZE =  -O3 -march=native -mtune=native -funroll-loops -finline-functions -flto=auto -fno-fat-lto-objects
+OPTIMIZE += -g -Wall
+ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
+    OPTIMIZE += -fopenmp
+endif
+GSL_INCL =  -I$(GSL_INC)
+GSL_LIBS =  -L$(GSL_LIB) -Wl,-rpath,$(GSL_LIB) -lgsl -lgslcblas
+FFTW_INCL=  -I$(FFTW_INC)
+FFTW_LIBS=  -L$(FFTW_LIB) -Wl,-rpath,$(FFTW_LIB)
+MPICHLIB =
+HDF5INCL =  -I$(HDF5_INC) -DH5_USE_16_API
+HDF5LIB  =  -L$(HDF5_LIB) -Wl,-rpath,$(HDF5_LIB) -lhdf5 -lz
+## MHD_MODIFIED_GRADIENT needs hypre: `module load hypre` (OpenHPC 2.33.0; it also loads openblas and
+## superlu, which libHYPRE.so needs but does not link itself -> undefined dgemm_/dtrsv_/... otherwise).
+ifneq ($(HYPRE_DIR),)
+ifeq (MHD_MODIFIED_GRADIENT,$(findstring MHD_MODIFIED_GRADIENT,$(CONFIGVARS)))
+HYPRE_INCL = -I$(HYPRE_INC)
+HYPRE_LIBS = -L$(HYPRE_LIB) -Wl,-rpath,$(HYPRE_LIB) -lHYPRE \
+             -L$(OPENBLAS_LIB) -Wl,-rpath,$(OPENBLAS_LIB) -lopenblas \
+             -L$(SUPERLU_LIB) -Wl,-rpath,$(SUPERLU_LIB) -lsuperlu
+endif
+endif
+OPT     += -DUSE_MPI_IN_PLACE
+## Notes [Vasilii Pustovoit], Oct 2026:
+##
+## CITA ricky2 cluster, submit host ricky2, Rocky Linux 9.6, OpenHPC; nodes tpb2xx:
+## 2x Intel Xeon Gold 6148 = 40 cores / 80 hw threads (AVX-512), ~189 GB; queues earthq/marsq/jupiterq/...).
+## Do NOT run GIZMO or heavy builds on the ricky2 login node: use the queue.
+## Modules (before building AND in the job script; OpenHPC gnu14 + openmpi5, Open MPI 5.0.7):
+##    module load gnu14 openmpi5 hdf5 fftw gsl hypre
+## Python for the test harness: /cita/modules/miniconda/python-3.13.13 (the module pythons break ssl on compute nodes).
+##
+## Running (1 node = 40 MPI ranks x 2 OpenMP hw threads; OMP_NUM_THREADS=2):
+##    (example) qsub -q earthq -l select=1:ncpus=80:mpiprocs=80 -l place=scatter:excl -l walltime=48:00:00 job.sh
+##    job.sh: module load (above); export OMP_NUM_THREADS=2; mpirun --use-hwthread-cpus --oversubscribe -np 40 ./GIZMO p.params
+##
+#############
+## TESTING ##
+#############
+##
+## Test-parameter changes needed:
+##   aneos_giant_impact : PartAllocFactor                         2    -> 4
+##   forgedinfire       : Max_Memory_Per_MPI_Task_in_MB           5000 -> 16000
+##   forgedinfire       : ParticleNumberMemoryImbalance_Limit     1.9  -> 4
+##   shu_jets, SN_singlestar, wind_singlestar: call get_cooling_tables() before building/running (data staging:
+##     COOL_METAL_LINES_BY_SPECIES otherwise makes GIZMO curl spcool_tables.tgz itself, which fails offline)
+##
+## Tests: ran 2026-10-15 -> 2026-10-16 (full suite, 1 node, 40 ranks x 2 OpenMP, 1800 s per-test
+##    timeout), then reruns of the long tests, 22 h, 5 nodes = 200 cores, until 2026-10-20.
+##    317 results: PASS 293, XFAIL 8, NOT IMPL 8, UPSTREAM 6, TIMEOUT 2.
+##    TIMEOUT: forgedinfire (2 ranks fixed by the test, 22 h) and core (200 cores, killed at the 24 h walltime, 3rd
+##    variant at snapshot 9/10).
+##    UPSTREAM: c_shock[2-4], fire_rtsources[2-2], rt, read_ic_binary[sensitivity_demands_temperature],
+##    aneos_giant_impact[2-2] (NaN on Intel CPUs: Riemann solver "failed to find positive pressure"), isodisk[baseline]
+##    (test checks gas-only mass but stars form; total mass conserved to 1.5e-8).
+##    The full suite ran without the hypre lines/module; they were added for the MHD_MODIFIED_GRADIENT reruns (all pass).
+##    Per-test cores / hours / outcome: see test_reports/PR_DRAFT.md.
+endif
+
 ifeq ($(SYSTYPE),"Frontera")
 CC       =  mpicc
 CXX      =  mpicxx -std=c++17
@@ -599,6 +836,13 @@ HYPRE_INCL = -I$(HYPRE_PATH)/include
 HYPRE_LIBS = -L$(HYPRE_PATH)/lib -L$(HYPRE_PATH)/lib64 -Xlinker -R -Xlinker $(HYPRE_PATH)/lib -Xlinker -R -Xlinker $(HYPRE_PATH)/lib64 -lHYPRE
 endif
 endif
+endif
+
+## BUILD_UNOPTIMIZED (Config.sh): append -O0, which overrides the systype's level since the last -O wins.
+## Unoptimized codegen keeps loop variables in memory, so OpenMP data-sharing bugs that register
+## promotion hides at -O1 and above become visible.
+ifeq (BUILD_UNOPTIMIZED,$(findstring BUILD_UNOPTIMIZED,$(CONFIGVARS)))
+OPTIMIZE += -O0
 endif
 
 ## name of executable and optimizations

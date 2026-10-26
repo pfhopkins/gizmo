@@ -53,7 +53,6 @@ from gizmo.test import (
     build_and_run_test,
     clean_test_outputs,
     variant_output_dir,
-    parse_params,
     run_test,
 )
 

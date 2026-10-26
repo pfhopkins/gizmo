@@ -14,7 +14,6 @@ Validation protocol:
 """
 
 import pytest
-import numpy as np
 from os import path, chdir
 from shutil import copy2
 from urllib.request import urlretrieve, HTTPError

@@ -29,7 +29,7 @@ import sys as _sys
 # is not on the path the way it is under pytest.
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.abspath(__file__)),
                                   "..", "..", "python_src"))
-from gizmo.units import G_CODE, UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_PER_S  # noqa: E402
+from gizmo.units import G_CODE  # noqa: E402
 
 # Unit system of shu_jets.params: pc, Msun, km/s. G comes from gizmo.units, which mirrors
 # GIZMO's constants.h. This file previously used G_CGS = 6.674e-8 -- the modern CODATA value --

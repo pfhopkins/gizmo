@@ -1,0 +1,21 @@
+# Error-class checks only: static-analyzer core/C++/unix (null deref, uninitialised reads, leaks,
+# double free) and a few bugprone checks for outright mistakes. No style, modernize or readability
+# rules. clangd and IDE plugins read this file; CI runs it on the lines a PR changes (see
+# .github/workflows/clang-tidy.yml, scripts/compile_commands.py).
+Checks: >
+  -*,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  clang-analyzer-unix.*,
+  bugprone-use-after-move,
+  bugprone-undefined-memory-manipulation,
+  bugprone-sizeof-expression,
+  bugprone-suspicious-memset-usage,
+  bugprone-misplaced-operator-in-strlen-in-alloc,
+  bugprone-not-null-terminated-result,
+  bugprone-dangling-handle,
+  bugprone-infinite-loop,
+  bugprone-macro-repeated-side-effects,
+  bugprone-suspicious-semicolon
+WarningsAsErrors: '*'
+HeaderFilterRegex: ''
