@@ -25,7 +25,7 @@
  *  need not coincide. */
 int gravity_walk_route_to_host(long long n_local_active)
 {
-    return (All.GravityHostWalkBelowActive > 0 && n_local_active < (long long)All.GravityHostWalkBelowActive) ? 1 : 0;
+    return gizmo_gpu_offload_takes(GPU_OFFLOAD_GRAVITY_WALK, n_local_active) ? 0 : 1;
 }
 
 /*! \file gravtree.c

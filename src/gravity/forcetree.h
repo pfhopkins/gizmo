@@ -73,9 +73,10 @@ size_t force_treewalk_workspace_bytes_per_thread(int cap);
 int force_treeevaluate_ewald_correction(int target, int *exportflag, int *exportnodecount, int *exportindex);
 void force_drift_node(int no, integertime time1);
 
-/*! Host-vs-device routing of the gravity walk: yes when this rank has fewer than
- *  All.GravityHostWalkBelowActive active candidates. A count policy only; the dynamic tree
- *  update routes on its own count and guard in force_update_tree. */
+/*! Host-vs-device routing of the gravity walk: yes when this rank has fewer active
+ *  candidates than the gravity-walk offload count (GPU_OFFLOAD_GRAVITY_WALK, set by
+ *  GravityHostWalkBelowActive or derived from GPUTreeOffloadMinCount). A count policy only;
+ *  the dynamic tree update routes on its own count and guard in force_update_tree. */
 int gravity_walk_route_to_host(long long n_local_active);
 
 /*! Time at which a host lazy node drift was last actually performed on this rank

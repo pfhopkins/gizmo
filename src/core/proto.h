@@ -458,6 +458,23 @@ void report_memory_ledger(const char *when);
 void report_memory_ledger_on_growth(const char *when);
 int gizmo_memory_preflight(void);
 void gizmo_nlr_report_dispatch_thresholds(void);   /* rank 0 prints the resolved neighbour-loop Mode B/D thresholds */
+/* The work a device takes over from the host is chosen by a per-MPI-task count: below it the work stays on the host,
+ * at or above it the device takes it (0: the device whenever there is any work).  gizmo_gpu_offload_min_count resolves each from the
+ * parameter file (core/begrun.cc), so every reader of a count and the startup report agree on its value. */
+enum GizmoOffloadSite
+{
+    GPU_OFFLOAD_PARTICLE_LOOP = 0,    /* elements in a per-particle loop: cooling, nuclear network, turbulence driving, RT chemistry, grain drag, CBE integrator */
+    GPU_OFFLOAD_DRIFT,                /* particles that need a drift */
+    GPU_OFFLOAD_TREE_WALK,            /* sources in one batch of a neighbour-loop tree walk; the fewest actives Mode D takes on its busiest rank */
+    GPU_OFFLOAD_GRAVITY_WALK,         /* active gravity candidates; fewer are walked on the host */
+    GPU_OFFLOAD_SIDX_OWNED_PRESORTED, /* members of a spatial-index build over the rank's own particles, already in order */
+    GPU_OFFLOAD_SIDX_OWNED_SORTED,    /* members of a spatial-index build over the rank's own particles, to be sorted */
+    GPU_OFFLOAD_SIDX_IMPORTED,        /* members of a spatial-index build over imported particles */
+    GPU_OFFLOAD_NUM_SITES
+};
+int gizmo_gpu_offload_min_count(enum GizmoOffloadSite site);
+int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count);   /* 1 if `count` work items go to the device: at least the site's count, and never an empty batch */
+void gizmo_gpu_offload_report(void);   /* rank 0 prints every resolved count and where it came from */
 void gizmo_size_memory_arena(void);   /* sets All.WorkingMemoryPoolSize from what will draw on the pool, unless the parameter file asked for a size; call once, before mymalloc_init */
 #ifdef PMGRID
 /* Arena bytes the long-range mesh will want, for startup sizing, split into what it holds for the

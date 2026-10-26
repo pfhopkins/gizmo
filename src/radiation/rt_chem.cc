@@ -294,7 +294,7 @@ void rt_update_chemistry(void)
     int *chem_indices = (int *) malloc(N_active * sizeof(int));
     {int j = 0; for(int i : ActiveParticleList) {if(P[i].Type == 0) chem_indices[j++] = i;}}
 
-    if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD)
+    if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active))
     {
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* device RT chemistry kernel reads All mirrors; tiny-N CPU path reads host All directly */
         /* Gather into compact SharedSpace arrays */

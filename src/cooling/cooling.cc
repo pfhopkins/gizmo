@@ -378,7 +378,7 @@ void cooling_parent_routine(void)
      * than N_active × struct_size, further reducing UVM pressure.
      */
 #if !defined(CHIMES)
-  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+  if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device cooling reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_COOL_BATCH_SIZE = 32768;
 

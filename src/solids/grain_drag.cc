@@ -280,7 +280,7 @@ void grain_drag_evaluate(struct particle_data *P_host, struct gas_cell_data *Cel
 {
     if(num_active <= 0) return;
 
-    if(num_active < GPU_MIN_PARTICLES_FOR_OFFLOAD)
+    if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, num_active))
     {
         /* Tiny-N CPU/OMP path: dispatch directly on host, no GPU launch, no Kokkos
            allocation, no compact gather/scatter.  Each thread writes only its own grain
