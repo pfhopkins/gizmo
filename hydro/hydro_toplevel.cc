@@ -574,6 +574,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtMass += out->DtMass;
+    #pragma omp atomic /* neighbours add to dMass concurrently (hydro_evaluate.h) */
     CellP[i].dMass += out->dMass;
     CellP[i].GravWorkTerm += out->GravWorkTerm;
 #endif

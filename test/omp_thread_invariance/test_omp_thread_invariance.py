@@ -5,6 +5,9 @@ bit-identical final snapshots. Every threaded loop this configuration exercises 
 particle with a fixed neighbour order, so the thread count must not change a single bit; a data
 race does. The build is unoptimized (BUILD_UNOPTIMIZED) because at -O1 and above a racing shared
 loop counter lives in a register and the race never reaches the binary. See README.md.
+
+MFV exchanges mass between cells with omp atomic updates, whose order legitimately changes the last
+bits, so its variant compares the total mass instead: a lost update moves it by the exchanged mass.
 """
 
 import glob
@@ -22,6 +25,8 @@ TEST_NAME = "omp_thread_invariance"
 TEST_DIR = f"test/{TEST_NAME}"
 N_METAL_SPECIES = 14  # 1 + STARFORGE_FEEDBACK_TRACERS in Config.sh
 MAX_THREADS = 8
+SCHEMES = {"mfm": (), "mfv": ("HYDRO_MESHLESS_FINITE_VOLUME",)}  # Config.sh leaves the default, MFM
+MASS_RTOL = 1e-12
 
 
 def _ensure_ic():
@@ -58,15 +63,22 @@ def _differences(snap_a, snap_b):
     return out
 
 
-def test_omp_thread_invariance():
+def _total_mass(snap):
+    with h5py.File(snap, "r") as F:
+        return F["PartType0/Masses"][:].sum()
+
+
+@pytest.mark.parametrize("scheme", SCHEMES)
+def test_omp_thread_invariance(scheme):
     nthreads = min(MAX_THREADS, os.cpu_count() or 1)
     if nthreads < 2:
         pytest.skip("needs at least 2 cores")
-    clean_test_outputs(TEST_NAME)
-    outdirs = {nt: f"output_{nt}threads" for nt in (1, nthreads)}
+    flags = SCHEMES[scheme]
+    clean_test_outputs(TEST_NAME, flags)
+    outdirs = {nt: f"output_{scheme}_{nt}threads" for nt in (1, nthreads)}
     for d in outdirs.values():
         shutil.rmtree(f"{TEST_DIR}/{d}", ignore_errors=True)
-    build_gizmo_for_test(TEST_NAME, num_openmp_threads=nthreads)
+    build_gizmo_for_test(TEST_NAME, num_openmp_threads=nthreads, extra_config_flags=flags)
     _ensure_ic()
 
     cwd = os.getcwd()
@@ -81,5 +93,10 @@ def test_omp_thread_invariance():
     with open(f"{TEST_DIR}/{outdirs[1]}/test_{TEST_NAME}.out") as f:
         assert "BUILD_UNOPTIMIZED" in f.read(), "binary was not built unoptimized; the test would be insensitive"
 
-    diff = _differences(*(_final_snapshot(f"{TEST_DIR}/{d}") for d in outdirs.values()))
-    assert not diff, f"1 vs {nthreads} OpenMP threads differ (field: particles affected): {diff}"
+    snaps = [_final_snapshot(f"{TEST_DIR}/{d}") for d in outdirs.values()]
+    if scheme == "mfv":
+        m1, mn = (_total_mass(s) for s in snaps)
+        assert abs(mn / m1 - 1) < MASS_RTOL, f"total mass with 1 vs {nthreads} threads: {m1!r} vs {mn!r}"
+    else:
+        diff = _differences(*snaps)
+        assert not diff, f"1 vs {nthreads} OpenMP threads differ (field: particles affected): {diff}"

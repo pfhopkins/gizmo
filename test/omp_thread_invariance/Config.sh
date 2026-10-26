@@ -1,4 +1,4 @@
-HYDRO_MESHLESS_FINITE_MASS
+# hydro scheme left at the default (MFM); the test's MFV variant appends HYDRO_MESHLESS_FINITE_VOLUME
 BOX_PERIODIC
 EOS_GAMMA=(5.0/3.0)
 MAGNETIC
