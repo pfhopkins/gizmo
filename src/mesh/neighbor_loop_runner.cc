@@ -226,7 +226,8 @@ void nlr_free_active_list(int *active_list)
  * Mode D, on the calls Mode B does not take, needs the summed count at or above
  * NeighborLoopModeDThresholdSum (else Mode A) and the busiest rank at or above
  * the larger of NeighborLoopModeDThresholdMax and MODE_D_MIN_ACTIVES_PER_RANK
- * (else Mode B), the latter also after every iteration; unset, the pair is 0/0.
+ * (else Mode B), the latter also after every iteration; unset, the pair is 0 and
+ * MODE_D_DEFAULT_RANK_BOUND.
  *
  * The thresholds are settable ONLY from the parameterfile, so the values a run
  * used are recorded in its parameter log.
@@ -265,6 +266,11 @@ bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int 
  * file's NeighborLoopModeDThresholdMax raises this bound for a run.  Asked when a call is routed and again after every
  * iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
 static constexpr int MODE_D_MIN_ACTIVES_PER_RANK = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
+/* The busiest-rank bound when the parameter file leaves NeighborLoopModeDThresholdMax unset: the count from which Mode D
+ * measurably beats Mode B on density.  Measured per call on Frontier, 64 GPUs (a FIRE nuclear-zoom run): Mode B / Mode D
+ * 1.09 at 1e5-2e5 actives on the busiest rank (1.08 on the slowest rank), 1.4 at 2e5-3e5, 2.2-2.7 above; and on a FIRE
+ * run at 128 GPUs every call Mode D lost had 4k-42k on its busiest rank.  Ties go to the device. */
+static constexpr int MODE_D_DEFAULT_RANK_BOUND = 100000;
 static int nlr_mode_d_rank_bound(void);
 
 /* Built-in Mode-B thresholds by search mode, used where neither the parameterfile
@@ -313,10 +319,10 @@ void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max)
 {
     const int p_sum = nlr_host_all_ptr()->NeighborLoopModeDThresholdSum;
     const int p_max = nlr_host_all_ptr()->NeighborLoopModeDThresholdMax;
-    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen and the busiest rank reaches MODE_D_MIN_ACTIVES_PER_RANK.
-     * Either output may be null when only the other is wanted. */
+    /* Unset (-1): 0 summed, and MODE_D_DEFAULT_RANK_BOUND on the busiest rank.  Either output may be null when only the
+     * other is wanted. */
     if(threshold_sum) {*threshold_sum = (p_sum == -1) ? 0 : p_sum;}
-    if(threshold_max) {*threshold_max = (p_max == -1) ? 0 : p_max;}
+    if(threshold_max) {*threshold_max = (p_max == -1) ? MODE_D_DEFAULT_RANK_BOUND : p_max;}
 }
 
 
