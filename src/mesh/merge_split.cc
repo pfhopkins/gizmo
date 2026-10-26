@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts */
 #include "../core/wakeup_sidecar.h"
 #include "../mesh/kernel.h"
@@ -392,15 +393,6 @@ void merge_and_split_particles(void)
 #else
         const int tid = 0;
 #endif
-        /* The criteria below may draw from the rank's random stream, which only one
-         * thread at a time may advance. Which thread draws which number carries no
-         * meaning here, so each thread works from a stream of its own, held privately
-         * so that neighbouring threads do not share the cache line it lives on. The
-         * seed fixes the draws for a given rank, step and thread count. */
-        gizmo_rng_t ms_rng;
-        gizmo_rng_init(&ms_rng, ((uint64_t)All.NumCurrentTiStep * 1000003ULL
-                                 + (uint64_t)ThisTask * 10007ULL
-                                 + (uint64_t)tid) ^ 0x6d5391a7ULL);
         std::vector<int> ms_idx_priv;
         std::vector<double> ms_rad_priv;
         std::vector<unsigned char> ms_kind_priv;
@@ -417,26 +409,16 @@ void merge_and_split_particles(void)
                                                       * either way, and cheap, so testing it
                                                       * before the far more expensive criteria
                                                       * cannot by itself admit or reject
-                                                      * anything -- it only avoids asking. Note
-                                                      * those criteria may draw from a random
-                                                      * stream, so asking fewer of them
-                                                      * does change which elements draw and
-                                                      * therefore the realised candidate set.
-                                                      * That is accepted here: the visit order
-                                                      * is already arbitrary and only the
-                                                      * statistics of this routine are meant to
-                                                      * be reproducible. */
+                                                      * anything -- it only avoids asking. */
 #ifndef PREVENT_PARTICLE_MERGE_SPLIT
             /* The gates both criteria share, applied once. They used to sit inside each
              * criterion, so an element that was not a merger went on to be asked a second
-             * time as a possible split -- and where a minimum time between refinements is
-             * enforced, that second question draws a fresh randomised wait. Today the two
-             * criteria are mutually exclusive and only one answer is ever acted on, so
-             * the extra draw is discarded rather than compounding; asking once here keeps
-             * that true without depending on it. */
+             * time as a possible split. Today the two criteria are mutually exclusive and
+             * only one answer is ever acted on; asking once here keeps that true without
+             * depending on it. */
             if (P[ip].Type == 0 && CellP[ip].recent_refinement_flag == 1) continue;
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-            if (check_if_sufficient_mergesplit_time_has_passed(ip, &ms_rng) == 0) continue;
+            if (check_if_sufficient_mergesplit_time_has_passed(ip) == 0) continue;
 #endif
 #endif
             const int want_merge = does_particle_need_to_be_merged(ip);
@@ -728,8 +710,9 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 
     int k; double phi,cos_theta;
     k=0;
-    phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
-    cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
+    static constexpr uint64_t SPLIT_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("split_direction");
+    phi = 2.0*M_PI*particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0); // random from 0 to 2pi //
+    cos_theta = 2.0*(particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5); // random between 1 to -1 //
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
@@ -921,7 +904,8 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         if(norm > 0)
         {
             norm = 1/sqrt(norm);
-            double qq = get_random_number(63432*k + 84*i + 99*j + 358453 + 84537*ThisTask);
+            static constexpr uint64_t SPLIT_AXIS_SIGN_RNG_SALT = gizmo_loop_rng_salt("split_axis_sign");
+            double qq = particle_random_number(i, SPLIT_AXIS_SIGN_RNG_SALT, (uint64_t)All.Ti_Current, 0);
             if(qq < 0.5) {norm *= -1.;} // randomly decide which direction along principle axis to orient split (since this is arbitrary, this helps prevent accidental collisions)
             for(k=0;k<NUMDIMS;k++) {dp[k] *= norm;}
             /* project dp onto the isodensity plane (perpendicular to grad_rho): placing daughters on the same
@@ -1694,13 +1678,17 @@ int evaluate_starstar_merger_for_starcluster_eligibility(int i)
 
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
 /* subroutine to check if too little time has passed since the last merge-split, in which case we won't allow it again */
-int check_if_sufficient_mergesplit_time_has_passed(int i, gizmo_rng_t *rng)
+int check_if_sufficient_mergesplit_time_has_passed(int i)
 {
     double N_timesteps_fac = 300.; // require > N timesteps before next merge/split, default was 100, but can be more aggressive - something between 10-100 works well in practice [definitely shorter than 10 can cause problems]
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 2) || defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
     N_timesteps_fac = 30.;
 #endif
-    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * gizmo_rng_uniform(rng);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
+    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) /* spread initial timing out over a broader range so it doesn't all happen at once after the startup: one fixed delay per element, drawn from its identity alone so it is the same at every check */
+    {
+        static constexpr uint64_t STARTUP_DELAY_RNG_SALT = gizmo_loop_rng_salt("initial_merge_split_delay");
+        N_timesteps_fac *= 10. * gizmo_gpu_rand_double(gizmo_rng_particle_identity_key(P[i]), gizmo_rng_event_counter(STARTUP_DELAY_RNG_SALT, 0, 0));
+    }
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
     double dt_incodescale = (get_particle_timestep_in_physical(i, P) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit

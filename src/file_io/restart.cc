@@ -441,8 +441,6 @@ void restart(int modus)
 #endif
 	    }
 
-	  /* write state of random number generator */
-	  byten(random_generator.s, sizeof(random_generator.s), modus);
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
 #ifdef TURB_DRIVING

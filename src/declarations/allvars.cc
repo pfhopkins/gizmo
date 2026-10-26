@@ -160,7 +160,6 @@ double  Max_Unspawned_MassUnits_fromSink;
 long long Ntype[6];		/*!< total number of particles of each type */
 int NtypeLocal[6];		/*!< local number of particles of each type */
 
-gizmo_rng_t random_generator;	/*!< the random number generator used */
 
 int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF

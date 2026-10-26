@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h" /* gizmo_mark_kernel_radius_dirty_range */
@@ -3757,9 +3758,9 @@ void domain_findExtent(void)
       DomainCorner[j] = 0.5 * (xmin_glob[j] + xmax_glob[j]) - 0.5 * len;
     }
 #if defined(RANDOMIZE_GRAVTREE) && !defined(RANDOMIZE_GRAVTREE_PERIODIC) // double the size of the root node and pick a random offset for its center, so that forcetree errors get decorrelated each time the tree is rebuilt. Where gravity is periodic the coordinates are translated instead (domain_apply_random_shift), which leaves the root node the size of the box
-  double dx[3];
-  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType) (All.NumCurrentTiStep) + j) - 0.5);}}
-  MPI_Bcast(dx, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  double dx[3]; static constexpr uint64_t TREE_OFFSET_RNG_SALT = gizmo_loop_rng_salt("random_tree_offset");
+  for(j = 0; j < 3; j++) {dx[j] = len * (gizmo_gpu_rand_double((uint64_t)All.RandomTreeDraws, gizmo_rng_event_counter(TREE_OFFSET_RNG_SALT, (uint64_t)All.Ti_Current, j)) - 0.5);} /* every rank draws the same offset */
+  All.RandomTreeDraws++; /* every rank rebuilds together, so the count agrees */
   for(j=0; j<3; j++) {
       DomainCenter[j] += dx[j];
       DomainCorner[j] = DomainCenter[j] - len;
@@ -3786,7 +3787,7 @@ void domain_findExtent(void)
  *  anchored in space are refused at compile time (precompiler_logic.h), because there is no
  *  frame in which both they and the shifted matter are right.
  *
- *  Drawn on rank 0 and broadcast, since every rank has to key against the same frame. Called
+ *  A function of the time and of how many shifts came before, so every rank draws the same shift, as it must to key against the same frame. Called
  *  from the full decomposition only, with the tree already freed and no ghosts imported, and
  *  before the box wrapping and the keys that follow it. */
 void domain_apply_random_shift(void)
@@ -3794,8 +3795,9 @@ void domain_apply_random_shift(void)
     int i, j;
     double box[3], delta[3], u[3] = {0,0,0};
     box[0] = boxSize_X; box[1] = boxSize_Y; box[2] = boxSize_Z;
-    if(ThisTask == 0) {for(j = 0; j < 3; j++) {u[j] = get_random_number((MyIDType) All.NumCurrentTiStep);}}
-    MPI_Bcast(u, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    static constexpr uint64_t FRAME_SHIFT_RNG_SALT = gizmo_loop_rng_salt("random_frame_shift");
+    for(j = 0; j < 3; j++) {u[j] = gizmo_gpu_rand_double((uint64_t)All.RandomTreeDraws, gizmo_rng_event_counter(FRAME_SHIFT_RNG_SALT, (uint64_t)All.Ti_Current, j));}
+    All.RandomTreeDraws++; /* every rank decomposes together, so the count agrees */
 
     for(j = 0; j < 3; j++)
     {

@@ -705,6 +705,9 @@ struct global_data_all_processes
 #endif
 #endif
 
+#ifdef RANDOMIZE_GRAVTREE
+    long long RandomTreeDraws;  /*!< how many random tree offsets or frame shifts have been drawn: with the time, it names each draw, so decompositions at one time differ. Lives here so a restart resumes the same sequence. */
+#endif
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
     Vec3<double> RandomShift;   /*!< how far the coordinates presently sit from the frame the initial conditions were written in, kept in [0,box). Subtracted back out wherever a physical coordinate is reported. Lives here so a restart resumes in the frame it stopped in. */
 #endif

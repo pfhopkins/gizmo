@@ -28,12 +28,6 @@
  */
 
 
-/* get random number -- old format took ID as seed to generate reliably identical numbers from a table, but this is not safe for large simulations */
-double get_random_number(MyIDType id)
-{
-    return gizmo_rng_uniform(&random_generator);
-}
-
 /* random-number key of particle i at the current instant (gizmo_rng_particle_event_key) */
 uint64_t particle_event_rng_key(int i)
 {

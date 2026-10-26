@@ -200,18 +200,24 @@ GIZMO_RNG_INLINE uint64_t gizmo_gpu_rand_poisson(uint64_t key, uint64_t counter,
     return (x > 0) ? (uint64_t)(x + 0.5) : 0;
 }
 
-/* The random-number key of one particle at the current instant: its identity, its type, and its position
-   at single precision. The position separates particles that share an identity (spawned wind cells all
-   carry one ID; an initial condition can hold duplicates); at single precision, the round-off by which the
-   same particle's position differs between runs on different numbers of ranks changes the key only rarely
-   (when it crosses a single-precision boundary).
-   The identity part changes only when the particle's type, child number or generation does. Works on any
-   particle structure carrying these fields. */
+/* The random-number key of one particle that stays fixed while it moves: its identity and its type. It
+   changes only when the particle's type, child number or generation does, and so serves draws that must
+   not change from step to step. Works on any particle structure carrying these fields. */
+template <class Particle>
+GIZMO_RNG_INLINE uint64_t gizmo_rng_particle_identity_key(const Particle &p)
+{
+    return gizmo_rng_combine(gizmo_rng_particle_identity((uint64_t) p.ID, (uint64_t) p.ID_child_number, (uint64_t) p.ID_generation), (uint64_t) p.Type);
+}
+
+/* The random-number key of one particle at the current instant: its identity key and its position at
+   single precision. The position separates particles that share an identity (spawned wind cells all carry
+   one ID; an initial condition can hold duplicates); at single precision, the round-off by which the same
+   particle's position differs between runs on different numbers of ranks changes the key only rarely (when
+   it crosses a single-precision boundary). */
 template <class Particle>
 GIZMO_RNG_INLINE uint64_t gizmo_rng_particle_event_key(const Particle &p)
 {
-    const uint64_t key = gizmo_rng_combine(gizmo_rng_particle_identity((uint64_t) p.ID, (uint64_t) p.ID_child_number, (uint64_t) p.ID_generation), (uint64_t) p.Type);
-    return gizmo_rng_combine(key, gizmo_position_mix((float) p.Pos[0], (float) p.Pos[1], (float) p.Pos[2]));
+    return gizmo_rng_combine(gizmo_rng_particle_identity_key(p), gizmo_position_mix((float) p.Pos[0], (float) p.Pos[1], (float) p.Pos[2]));
 }
 
 #endif /* GIZMO_GPU_RNG_H */
