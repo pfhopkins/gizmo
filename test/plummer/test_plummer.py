@@ -65,9 +65,15 @@ LAGRANGE_TOL = (0.20, 0.15, 0.30)  # |dr/r| for 10%, 50%, 90% Lagrange radii
 # not need recalibrating if the run length changes. See test/hernquist/test_hernquist.py,
 # where the same gate was derived and the reasoning is written out in full.
 #
-# Rates below are the reference run's, fitted over its full TimeMax=48 trajectory, times 3x.
-# Per variant because secular drift is not itself a defect: ags and tidal_ags genuinely drift
-# here (3.5e-4), a hundred times baseline's.
+# Rates below are measured reference rates, fitted over the full TimeMax=48 trajectory and rounded
+# up a little; ENERGY_SECULAR_MARGIN (3x) supplies the headroom for machine and run-setup
+# differences. Per variant because secular drift is not itself a defect: ags drifts at ~1e-4,
+# some twenty times baseline's.
+#
+# Variants with tidal-radius softening (ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION) start from a
+# placeholder softening of 100x the base value, because no tidal tensor exists at t=0. Snapshot 0
+# is therefore not a physical energy baseline for them, and the rate fit and the endpoint energy
+# check start from snapshot 1.
 #
 # Worth noting against hernquist, whose tidal variant IS secular at 9.5e-4 with no sign
 # changes: plummer's tidal is bounded at 3.2e-6 with four. That 300x split between a cored and
@@ -75,13 +81,13 @@ LAGRANGE_TOL = (0.20, 0.15, 0.30)  # |dr/r| for 10%, 50%, 90% Lagrange radii
 # Plummer and worse on Hernquist -- showing up as integrator character rather than a tolerance.
 ENERGY_SECULAR_RATE = {
     "baseline": 4.643e-06,
-    "ags": 3.504e-04,
+    "ags": 1.0e-04,
     "ewald": 4.351e-06,
     "pmgrid": 1.608e-06,
     "randomize": 4.128e-06,
     "randomize_pmgrid": 3.357e-05,
     "tidal": 3.171e-06,
-    "tidal_ags": 3.468e-04,
+    "tidal_ags": 1.0e-05,
 }
 ENERGY_SECULAR_RATE_DEFAULT = 1.0e-2  # untabulated: loose, nothing measured justifies more
 ENERGY_SECULAR_MARGIN = 3.0
@@ -326,7 +332,10 @@ def test_plummer(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     assert_final_time(snaps[-1], TEST_NAME)
 
     periodic = any("BOX_PERIODIC" in f for f in extra_config_flags)
+    tidal_softening = any("ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION" in f for f in extra_config_flags)
+    first_physical = 1 if tidal_softening else 0  # see the comment above ENERGY_SECULAR_RATE
     pos0, vel0, mass0, pot0, boxsize = _load_snapshot(snaps[0])
+    _, velb, massb, potb, _ = _load_snapshot(snaps[first_physical])
     posf, velf, massf, potf, _ = _load_snapshot(snaps[-1])
     r0 = _radii_from_center(pos0, boxsize, periodic)
     rf = _radii_from_center(posf, boxsize, periodic)
@@ -374,7 +383,7 @@ def test_plummer(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         )
         assert_randomized_drift(TEST_NAME, variant_id, final_drift)
 
-    e0, ke0, pe0 = _total_energy(vel0, mass0, pot0)
+    e0, ke0, pe0 = _total_energy(velb, massb, potb)
     ef, _, _ = _total_energy(velf, massf, potf)
     rel_e_err = abs(ef - e0) / abs(ke0)
     assert rel_e_err < 0.04, (
@@ -382,14 +391,14 @@ def test_plummer(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
         f"(E0={e0:.4g}, Ef={ef:.4g}, KE0={ke0:.4g}, PE0={pe0:.4g})"
     )
 
-    rate = _secular_energy_rate(times, energies)
+    rate = _secular_energy_rate(times[first_physical:], energies[first_physical:])
     rate_ref = ENERGY_SECULAR_RATE.get(variant_id, ENERGY_SECULAR_RATE_DEFAULT)
     rate_max = ENERGY_SECULAR_MARGIN * rate_ref
     calibrated = "recorded reference run" if variant_id in ENERGY_SECULAR_RATE else "default (uncalibrated)"
     assert rate < rate_max, (
         f"[{variant_id}] energy drifts secularly at {rate:.3e} per unit time, exceeding "
         f"{rate_max:.3e} ({ENERGY_SECULAR_MARGIN:g}x the {calibrated} rate {rate_ref:.3e}) "
-        f"over t={times[0]:g}..{times[-1]:g}. A symplectic integrator should oscillate within "
+        f"over t={times[first_physical]:g}..{times[-1]:g}. A symplectic integrator should oscillate within "
         f"a bound, not trend; see ENERGY_SECULAR_RATE."
     )
 
