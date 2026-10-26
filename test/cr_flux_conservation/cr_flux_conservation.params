@@ -1,0 +1,15 @@
+% Cosmic-ray two-moment transport in a static, cold 2D box: total energy (CR + gas) must be conserved
+InitCondFile               cr_flux_conservation_ics
+OutputDir                  output
+TimeMax                    0.01
+BoxSize                    1.0
+TimeBetSnapshot            0.001
+TimeBetStatistics          0.01
+MaxSizeTimestep            0.001
+DesNumNgb                  20
+UnitLength_in_cm           3.085678e21
+UnitMass_in_g              1.989e43
+UnitVelocity_in_cm_per_s   1.0e5
+CosmicRayDiffusionCoeff    1.0
+MaxMemSize                 2000
+PartAllocFactor            3.0
