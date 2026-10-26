@@ -101,6 +101,23 @@ GIZMO_RNG_INLINE double gizmo_gpu_rand_range(uint64_t key, uint64_t counter, dou
 }
 
 
+/* Fold one more value into a running hash. A tuple (identity, call site, event, draw, ...) is hashed one field at
+   a time, which keeps distinct tuples apart; additive offsets do not (with ID+k, draw k of one particle is draw k-1
+   of the next). */
+GIZMO_RNG_INLINE uint64_t gizmo_rng_combine(uint64_t state, uint64_t value)
+{
+    return gizmo_gpu_splitmix64(state ^ value);
+}
+
+
+/* The stochastic identity of a particle: its ID, the child number a split assigns, and the split generation.
+   Split daughters keep their parent's ID, so all three are needed to tell them apart. */
+GIZMO_RNG_INLINE uint64_t gizmo_rng_particle_identity(uint64_t id, uint64_t child_number, uint64_t generation)
+{
+    return gizmo_rng_combine(gizmo_rng_combine(gizmo_rng_combine(0, generation), child_number), id);
+}
+
+
 /* Compile-time FNV-1a 64-bit hash of a loop-name string. Used to derive a
  * per-loop salt that gets XOR-mixed into the counter base of every RNG draw
  * inside that loop. Rationale: counter-based RNG keyed only on
