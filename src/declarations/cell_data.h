@@ -485,9 +485,9 @@ extern struct gas_cell_data
     Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
 #endif
 #ifdef EOS_DAMAGE_POROSITY
-    MyFloat Damage;        /* Grady-Kipp scalar damage D in [0,1] */
+    MyFloat Damage;        /* scalar fracture damage D in [0,1] */
     MyFloat Distention;    /* Jutzi P-alpha distention alpha in [1, alpha_0] */
-    MyFloat ActiveCracks;  /* Grady-Kipp Weibull active-flaw bookkeeping */
+    MyFloat ActiveCracks;  /* fracture bookkeeping: number of activated flaws (tensile-flaw law) or the crack radius (shear-activated law), per the material's FractureActivation */
 #endif
 #endif
     

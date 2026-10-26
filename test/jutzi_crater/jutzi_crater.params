@@ -17,6 +17,9 @@ Tillotson_EOS_params_beta       5.0
 Tillotson_EOS_params_mu         2.27e11
 Tillotson_EOS_params_Y0         3.5e10
 
+% 2D tensile-flaw fracture: the basalt Weibull k is per unit volume; the problem is a slab of this thickness (cm)
+FractureOutOfPlaneExtent        1.0
+
 InitCondFile                       jutzi_crater_ics
 OutputDir                          output
 SnapshotFileBase                   snapshot

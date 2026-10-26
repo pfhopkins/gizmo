@@ -66,14 +66,18 @@ enum {
 struct solid_material {
     double ShearModulus;          /* mu */
     double YieldStrength;         /* Y_0, von Mises */
-    double WeibullK;              /* Grady-Kipp flaw density coefficient [1/code length^3] */
-    double WeibullM;              /* Grady-Kipp Weibull exponent */
+    double WeibullK;              /* Weibull flaw density coefficient k [1/code length^3] */
+    double WeibullM;              /* Weibull exponent m */
     double DruckerPragerMu;       /* Drucker-Prager friction coefficient */
     double InitialDistention;     /* alpha_0 of the P-alpha porosity model (1 = compact) */
     double CrushPressureElastic;  /* P_e of the P-alpha model */
     double CrushPressureSolid;    /* P_s of the P-alpha model */
+    double ReferenceDensity;      /* compact reference density rho_0 (Tillotson rho_0, or an ANEOS table's own value): an element's flaw volume is its mass x InitialDistention / rho_0 */
+    double FractureActivation;    /* fracture law: 0 = tensile flaws (Benz & Asphaug), 1 = the shear-activated law */
 };
-#define N_SOLID_MATERIAL_PROPERTIES 8   /* the doubles above, in order (written as one row per id to the snapshot header) */
+#define N_SOLID_MATERIAL_PROPERTIES 10  /* the doubles above, in order (written as one row per id to the snapshot header) */
+#define FRACTURE_ACTIVATION_TENSILE_FLAWS 0
+#define FRACTURE_ACTIVATION_SHEAR         1
 static_assert(sizeof(struct solid_material) == N_SOLID_MATERIAL_PROPERTIES * sizeof(double), "struct solid_material must stay N_SOLID_MATERIAL_PROPERTIES doubles");
 #define N_SOLID_MATERIAL_IDS 16   /* >= every CompositionType layout: Tillotson rows + ANEOS tables (+1 for the gas slot) */
 

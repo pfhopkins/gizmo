@@ -32,7 +32,7 @@
 
 
 #ifdef EOS_ELASTIC
-/* apply_drucker_prager / damage_update_grady_kipp, used by the stress update below
+/* apply_drucker_prager and the fracture-damage updates, used by the stress update below
    under the EOS_DAMAGE_POROSITY bits. Safe to include here: it carries an include
    guard and does not pull in Kokkos. */
 #include "damage_porosity_functions.h"
@@ -69,15 +69,47 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
             double f_Y = Y_eff*Y_eff/(NDim*J2); // (yield stress / equivalent stress)^2
             if(f_Y < 1) {double return_factor = sqrt(f_Y); for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= return_factor;}}} // radial return: scale the deviator back onto the yield surface (Wilkins 1964)
         }
-#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
-        /* bit 0: Grady-Kipp damage update at kick (mode==0) only */
+#if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_FRACTURE
+        /* bit 0: fracture damage, updated at the kick (mode==0) only, by the law the material names */
         if(mode == 0)
         {
             double D_new, A_new;
-            damage_update_grady_kipp(cell[i].Damage, cell[i].ActiveCracks,
-                                     J2, mu, cell[i].SoundSpeed, dt_entr,
-                                     cell[i].CompositionType,
-                                     &D_new, &A_new);
+            int composition = cell[i].CompositionType;
+            volatile int shear_activated = (solid_material_of(composition).FractureActivation == FRACTURE_ACTIVATION_SHEAR);
+            if(shear_activated)
+            {
+                damage_update_grady_kipp(cell[i].Damage, cell[i].ActiveCracks,
+                                         J2, mu, cell[i].SoundSpeed, dt_entr,
+                                         composition,
+                                         &D_new, &A_new);
+            } else {
+                /* the damage-reduced total stress the flaws see: -P I + (1-D) S (the EOS pressure already carries (1-D) of any tension) */
+                double D_now = cell[i].Damage, stress[3][3] = {{0}};
+                for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {stress[j][k] = (1. - D_now) * S_new[j][k];} stress[j][j] -= cell[i].Pressure;}
+                double rho_i = cell[i].Density;
+                /* the material bulk modulus: Tillotson's A; a tabulated material has no constant, so its local rho c_bulk^2 */
+                double bulk_modulus = rho_i * (cell[i].SoundSpeed*cell[i].SoundSpeed - elastic_longitudinal_soundspeed2_excess(composition, rho_i));
+#ifdef EOS_TILLOTSON
+                if(eos_branch_of(composition) == EOS_BRANCH_TILLOTSON) {bulk_modulus = All.Tillotson_EOS_params[tillotson_subindex(composition)][4];}
+#endif
+                /* the fixed volume holding the element's flaws (its compact reference volume; times the out-of-plane extent in 1D/2D) and its flaw-count bound */
+                double flaw_volume = pp[i].Mass / solid_material_of(composition).ReferenceDensity;
+#if ((EOS_DAMAGE_POROSITY) & 4)
+                flaw_volume *= solid_material_of(composition).InitialDistention; /* a porous element's bulk reference volume */
+#endif
+#if (NUMDIMS < 3)
+                flaw_volume *= All.FractureOutOfPlaneExtent;
+#endif
+                double s_max = All.SolidMaterialFlawsPerMass[composition] * pp[i].Mass;
+                uint64_t identity = gizmo_gpu_splitmix64((uint64_t)pp[i].ID ^ gizmo_gpu_splitmix64((uint64_t)pp[i].ID_child_number ^ gizmo_gpu_splitmix64((uint64_t)pp[i].ID_generation))); /* persistent: split children differ */
+                if(damage_update_tensile_flaws(D_now, cell[i].ActiveCracks, stress, NDim, bulk_modulus, mu, rho_i, pp[i].Mass / rho_i,
+                                               flaw_volume, s_max, identity, dt_entr, composition, &D_new, &A_new))
+                {
+                    printf("ERROR: tensile flaws: element ID %llu (child %llu) has more than %d flaws (s_max %g; its mass grew past the startup bound)\n",
+                           (unsigned long long)pp[i].ID, (unsigned long long)pp[i].ID_child_number, 10 * TENSILE_FLAWS_MAX_PER_ELEMENT, s_max);
+                    endrun(1154);
+                }
+            }
             cell[i].Damage       = (MyFloat)D_new;
             cell[i].ActiveCracks = (MyFloat)A_new;
         }

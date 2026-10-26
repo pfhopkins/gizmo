@@ -67,6 +67,8 @@ static struct solid_material solid_material_preset(int row)
     m.InitialDistention    = q[15];
     m.CrushPressureElastic = q[16] / UNIT_PRESSURE_IN_CGS;
     m.CrushPressureSolid   = q[17] / UNIT_PRESSURE_IN_CGS;
+    m.ReferenceDensity     = q[3] / UNIT_DENSITY_IN_CGS;
+    m.FractureActivation   = FRACTURE_ACTIVATION_TENSILE_FLAWS;
     return m;
 }
 
@@ -77,8 +79,16 @@ static const char *solid_material_problem(const struct solid_material *m, int is
     if(!(isfinite(m->ShearModulus) && m->ShearModulus >= 0)) {return "ShearModulus (finite, >= 0)";}
     if(!(isfinite(m->YieldStrength) && m->YieldStrength >= 0)) {return "YieldStrength (finite, >= 0)";}
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    if(!(m->FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS || m->FractureActivation == FRACTURE_ACTIVATION_SHEAR)) {return "FractureActivation (0 = tensile flaws, 1 = shear-activated law)";}
     if(!(isfinite(m->WeibullK) && m->WeibullK >= 0)) {return "WeibullK (finite, >= 0; 0 = no flaws, never damaged)";}
     if(m->WeibullK > 0 && !(isfinite(m->WeibullM) && m->WeibullM > 0)) {return "WeibullM (finite, > 0)";}
+    if(m->WeibullK > 0 && m->FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS)
+    {
+        if(!(isfinite(m->ReferenceDensity) && m->ReferenceDensity > 0)) {return "ReferenceDensity (finite, > 0: the compact reference density that sets each element's flaw volume)";}
+#if (NUMDIMS < 3)
+        if(!(isfinite(All.FractureOutOfPlaneExtent) && All.FractureOutOfPlaneExtent > 0)) {return "FractureOutOfPlaneExtent (finite, > 0: the thickness in 2D or the cross-sectional area in 1D, code units, that turns an element's area or length into the volume holding its flaws)";}
+#endif
+    }
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 2)
     if(!(isfinite(m->DruckerPragerMu) && m->DruckerPragerMu >= 0)) {return "DruckerPragerMu (finite, >= 0)";}
@@ -116,7 +126,7 @@ void solid_material_resolve(void)
 #ifdef EOS_ANEOS
     static_assert(N_TILLOTSON_MATERIALS + ANEOS_MAX_MATERIALS + 1 <= N_SOLID_MATERIAL_IDS, "N_SOLID_MATERIAL_IDS must cover every CompositionType layout");
 #endif
-    struct solid_material none = {0, 0, 0, 1, 0, 1, 0, 0}; /* no strength, never damaged, compact */
+    struct solid_material none = {0, 0, 0, 1, 0, 1, 0, 0, 0, FRACTURE_ACTIVATION_TENSILE_FLAWS}; /* no strength, never damaged, compact */
     for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
     {
         struct solid_material m = none;
@@ -128,7 +138,11 @@ void solid_material_resolve(void)
             int table = aneos_subindex(id);
             if(table < 0 || table >= All.AneosNumMaterials) {All.SolidMaterial[id] = none; continue;}
             int choice = All.AneosSolidMaterialChoice[table];
-            if(choice >= 1 && choice < N_TILLOTSON_MATERIALS) {m = solid_material_preset(choice); snprintf(name, sizeof(name), "ANEOS table %d: %s", table, solid_material_preset_names[choice]);}
+            if(choice >= 1 && choice < N_TILLOTSON_MATERIALS)
+            {
+                m = solid_material_preset(choice); snprintf(name, sizeof(name), "ANEOS table %d: %s", table, solid_material_preset_names[choice]);
+                m.FractureActivation = All.AneosSolidMaterialCustom[table].FractureActivation; /* the table's own choice of fracture law (not given: the default) */
+            }
             else if(choice == 0) {m = All.AneosSolidMaterialCustom[table]; snprintf(name, sizeof(name), "ANEOS table %d: custom (AneosTable%d_*)", table, table);}
             else /* not set (or not a material): refused in init() only if cells carry this table */
             {
@@ -140,15 +154,30 @@ void solid_material_resolve(void)
 #endif
         else if(id < N_TILLOTSON_MATERIALS)
         {
-            if(id == 0) {m = All.SolidMaterialCustom; strcpy(name, "custom (SolidMaterial_*)");} else {m = solid_material_preset(id); strcpy(name, solid_material_preset_names[id]);}
+            if(id == 0)
+            {
+                m = All.SolidMaterialCustom; strcpy(name, "custom (SolidMaterial_*)");
+#ifdef EOS_TILLOTSON
+                m.ReferenceDensity = All.Tillotson_EOS_params[0][3]; /* the custom Tillotson material's own rho_0 */
+#endif
+            }
+            else
+            {
+                m = solid_material_preset(id); strcpy(name, solid_material_preset_names[id]);
+#ifdef EOS_DAMAGE_POROSITY
+                m.FractureActivation = All.SolidMaterialPresetFractureActivation[id]; /* SolidMaterialPreset<N>_FractureActivation (not given: the default) */
+#endif
+            }
         }
         else {All.SolidMaterial[id] = none; continue;}
+        if(isnan(m.FractureActivation)) {m.FractureActivation = FRACTURE_ACTIVATION_TENSILE_FLAWS;} /* not given: the default law */
         All.SolidMaterial[id] = m;
         if(ThisTask == 0 && solid_material_is_elastic(id))
         {
             const char *problem = solid_material_problem(&m, solid_material_id_is_aneos(id));
-            printf("SOLID MATERIAL CompositionType %2d: %-40s mu=%g Y0=%g k=%g m=%g mu_DP=%g alpha_0=%g P_e=%g P_s=%g%s%s\n", id, name,
+            printf("SOLID MATERIAL CompositionType %2d: %-40s mu=%g Y0=%g k=%g m=%g mu_DP=%g alpha_0=%g P_e=%g P_s=%g rho_0=%g fracture=%s%s%s\n", id, name,
                    m.ShearModulus, m.YieldStrength, m.WeibullK, m.WeibullM, m.DruckerPragerMu, m.InitialDistention, m.CrushPressureElastic, m.CrushPressureSolid,
+                   m.ReferenceDensity, (m.FractureActivation == FRACTURE_ACTIVATION_SHEAR) ? "shear-activated" : "tensile flaws",
                    problem ? "  [no valid " : "", problem ? problem : "");
             if(problem) {printf(": the run stops only if cells carry this CompositionType]\n");}
         }
@@ -178,8 +207,39 @@ void solid_material_check_cells(void)
                 printf("ERROR: cells carry CompositionType %d, whose solid material has no valid %s; set it in the parameterfile (SolidMaterial_* for the custom material, AneosTable<N>_* for an ANEOS table's own values).\n", id, problem);
             }
         }
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1) && defined(HYDRO_MESHLESS_FINITE_VOLUME)
+        if(!problem && All.SolidMaterial[id].WeibullK > 0 && All.SolidMaterial[id].FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS)
+        {
+            bad = 1;
+            if(ThisTask == 0) {printf("ERROR: cells carry CompositionType %d with tensile-flaw fracture, whose flaws belong to each element's fixed mass: it needs a fixed-mass method (MFM or SPH), not MFV or a regular grid.\n", id);}
+        }
+#endif
     }
     if(bad) {endrun(1152);}
+
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    /* tensile flaws: Benz & Asphaug's N ln N flaws per material body, shared out by mass (an element of mass m holds ~ ln(N) N m / M of them).
+       Every element holds at least one flaw, so a material of a single element has exactly one. Fixed-mass elements keep these totals, so a
+       restart from a snapshot recomputes the same values. */
+    double count_local[N_SOLID_MATERIAL_IDS] = {0}, mass_local[N_SOLID_MATERIAL_IDS] = {0}, mmax_local[N_SOLID_MATERIAL_IDS] = {0};
+    double count[N_SOLID_MATERIAL_IDS], mass[N_SOLID_MATERIAL_IDS], mmax[N_SOLID_MATERIAL_IDS];
+    for(int i = 0; i < N_gas; i++) {int ct = CellP[i].CompositionType; if(ct >= 0 && ct < N_SOLID_MATERIAL_IDS) {count_local[ct] += 1; mass_local[ct] += P[i].Mass; mmax_local[ct] = DMAX(mmax_local[ct], P[i].Mass);}}
+    MPI_Allreduce(count_local, count, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(mass_local, mass, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(mmax_local, mmax, N_SOLID_MATERIAL_IDS, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD);
+    for(int id = 0; id < N_SOLID_MATERIAL_IDS; id++)
+    {
+        All.SolidMaterialFlawsPerMass[id] = (count[id] >= 2 && mass[id] > 0) ? log(count[id]) * count[id] / mass[id] : 0;
+        if(count[id] > 0 && solid_material_is_elastic(id) && All.SolidMaterial[id].WeibullK > 0 && All.SolidMaterial[id].FractureActivation == FRACTURE_ACTIVATION_TENSILE_FLAWS
+           && All.SolidMaterialFlawsPerMass[id] * mmax[id] > TENSILE_FLAWS_MAX_PER_ELEMENT)
+        {
+            bad = 1;
+            if(ThisTask == 0) {printf("ERROR: CompositionType %d uses tensile-flaw fracture, and its most massive element (%g x the material's mean mass) would hold %g flaws (ln N x N x m / M), above the %d one element may hold: its element masses are too unequal for this model.\n",
+                                      id, mmax[id] * count[id] / mass[id], All.SolidMaterialFlawsPerMass[id] * mmax[id], TENSILE_FLAWS_MAX_PER_ELEMENT);}
+        }
+    }
+    if(bad) {endrun(1152);}
+#endif
 }
 #endif
 

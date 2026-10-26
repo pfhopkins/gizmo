@@ -61,7 +61,7 @@
 #endif
 
 #if defined(EOS_DAMAGE_POROSITY)
-/* damage + porosity bitfield (bit 0 Grady-Kipp, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
+/* damage + porosity bitfield (bit 0 fracture damage, bit 1 Drucker-Prager, bit 2 P-alpha Jutzi) auto-implies elastic+Tillotson machinery */
 #ifndef EOS_TILLOTSON
 #define EOS_TILLOTSON
 #endif
