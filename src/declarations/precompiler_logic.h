@@ -1043,6 +1043,18 @@
 #error "RT_DIFFUSION_IMPLICIT has been retired. Use RT_M1 with subcycling (TRANSPORT_SUBCYCLE) instead."
 #endif
 
+/* The counts from which work moves to the device are parameterfile parameters now; a Config.sh line that still sets one
+   of the old compile-time values would be ignored without this. */
+#ifdef GPU_MIN_PARTICLES_FOR_OFFLOAD
+#error "GPU_MIN_PARTICLES_FOR_OFFLOAD has been replaced by the parameterfile parameter GPUParticleLoopOffloadMinCount (or GPUElementOffloadMinCount for all per-particle loops and the drift). Remove it from Config.sh."
+#endif
+#ifdef GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD
+#error "GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD has been replaced by the parameterfile parameter GPUDriftOffloadMinCount. Remove it from Config.sh."
+#endif
+#ifdef GPU_MIN_SOURCES_FOR_WALK_OFFLOAD
+#error "GPU_MIN_SOURCES_FOR_WALK_OFFLOAD has been replaced by the parameterfile parameter GPUTreeWalkOffloadMinCount (or GPUTreeOffloadMinCount for the walk, the gravity walk and the spatial-index builds together). Remove it from Config.sh."
+#endif
+
 /* options for FLD or OTVET or M1 or Ray/Rad_Intensity modules */
 #if defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID)
 #ifndef RADTRANSFER

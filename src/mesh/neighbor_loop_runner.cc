@@ -225,9 +225,9 @@ void nlr_free_active_list(int *active_list)
  *
  * Mode D, on the calls Mode B does not take, needs the summed count at or above
  * NeighborLoopModeDThresholdSum (else Mode A) and the busiest rank at or above
- * the larger of NeighborLoopModeDThresholdMax and MODE_D_MIN_ACTIVES_PER_RANK
- * (else Mode B), the latter also after every iteration; unset, the pair is 0 and
- * MODE_D_DEFAULT_RANK_BOUND.
+ * the larger of NeighborLoopModeDThresholdMax and the fewest actives one device batch
+ * holds (nlr_mode_d_min_actives_per_rank; else Mode B), the latter also after every
+ * iteration; unset, the pair is 0 and MODE_D_DEFAULT_RANK_BOUND.
  *
  * The thresholds are settable ONLY from the parameterfile, so the values a run
  * used are recorded in its parameter log.
@@ -257,7 +257,8 @@ bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int 
     return (sum_active > 0) && (sum_active <= TS) && (max_active <= TM);
 }
 
-/* The fewest actives some rank must hold before Mode D takes a call: one device batch (GPU_MIN_SOURCES_FOR_WALK_OFFLOAD).
+/* The fewest actives some rank must hold before Mode D takes a call: one device batch (the tree-walk offload count,
+ * GPU_OFFLOAD_TREE_WALK: 4096 unless GPUTreeWalkOffloadMinCount or GPUTreeOffloadMinCount says otherwise).
  * When no rank holds that many the request-driven host walker is the faster path: a device batch of fewer queries loses
  * to the host per query (measured on FIRE-dwarf and fire2ics, 3-7x below 4096), and a Mode D iteration's fixed cost --
  * export walks, count exchange, termination -- is then more than Mode B's whole iteration (Poisson box, 128 ranks: the
@@ -265,7 +266,7 @@ bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int 
  * the test, not an average, so a call whose work sits on a few ranks still gives those ranks the device.  The parameter
  * file's NeighborLoopModeDThresholdMax raises this bound for a run.  Asked when a call is routed and again after every
  * iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
-static constexpr int MODE_D_MIN_ACTIVES_PER_RANK = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
+static inline int nlr_mode_d_min_actives_per_rank(void) {const int one_batch = gizmo_gpu_offload_min_count(GPU_OFFLOAD_TREE_WALK); return (one_batch > 1) ? one_batch : 1;}
 /* The busiest-rank bound when the parameter file leaves NeighborLoopModeDThresholdMax unset: the count from which Mode D
  * measurably beats Mode B on density.  Measured per call on Frontier, 64 GPUs (a FIRE nuclear-zoom run): Mode B / Mode D
  * 1.09 at 1e5-2e5 actives on the busiest rank (1.08 on the slowest rank), 1.4 at 2e5-3e5, 2.2-2.7 above; and on a FIRE
@@ -571,7 +572,7 @@ static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int firs
  * reads from has already completed (each producer fences at its own launch), and no
  * caller is already inside a parallel region. */
 /* Whether nlr_walk_for_sources runs a batch of n on the device; smaller batches run on the host. */
-static inline bool nlr_walk_runs_on_device(int n) {return n >= GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;}
+static inline bool nlr_walk_runs_on_device(int n) {return gizmo_gpu_offload_takes(GPU_OFFLOAD_TREE_WALK, n) != 0;}
 
 template <class F>
 static inline void nlr_walk_for_sources(const char *tag, int n, F &&body)
@@ -1456,7 +1457,7 @@ static void mode_b_remote_evaluate_into_buffer(
      * counted as export entries. All.CommChunkSize is the parameterfile chunk size. */
     constexpr size_t kReplyBytes = sizeof(ReplyEnvelope);
     const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
-    long long bunch = ((long long)All.CommChunkSize * 1024 * 1024) /
+    long long bunch = (long long) comm_chunk_bytes() /
                       (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
     if(bunch < 1) bunch = 1;
 
@@ -1548,8 +1549,7 @@ static void mode_b_remote_evaluate_into_buffer(
         {
             xch.begin(queries_per_peer);
         }
-        const size_t group_budget_bytes =
-            (size_t)((double)All.CommChunkSize * 1024.0 * 1024.0);
+        const size_t group_budget_bytes = comm_chunk_bytes();
 
         std::vector<int> group_peers;
         std::vector<std::vector<Envelope>> group_queries;
@@ -2604,7 +2604,7 @@ static MPI_Op nlr_count_triple_op(void)
     return op;
 }
 
-/* Whether a Mode D call's busiest rank still holds enough actives for Mode D: MODE_D_MIN_ACTIVES_PER_RANK, or the
+/* Whether a Mode D call's busiest rank still holds enough actives for Mode D: nlr_mode_d_min_actives_per_rank, or the
  * parameter file's per-rank bound (NeighborLoopModeDThresholdMax) when that is larger.  Asked when a call is routed,
  * and again after every iteration of an iterative Mode D call, whose converged actives drop out: a remainder below it
  * finishes on Mode B.  Collective input (a maximum over the ranks), so every rank answers alike. */
@@ -2612,7 +2612,8 @@ static int nlr_mode_d_rank_bound(void)
 {
     int threshold_max = 0;
     gizmo_nlr_moded_thresholds(nullptr, &threshold_max);
-    return (threshold_max > MODE_D_MIN_ACTIVES_PER_RANK) ? threshold_max : MODE_D_MIN_ACTIVES_PER_RANK;
+    const int one_batch = nlr_mode_d_min_actives_per_rank();
+    return (threshold_max > one_batch) ? threshold_max : one_batch;
 }
 static bool nlr_mode_d_feeds_device(int max_active)
 {
@@ -3186,7 +3187,7 @@ static int mode_d_workspace_plan(long long num_active, size_t query_bytes, size_
     const size_t room = GX_MODE_D_STAGING_MAX_MESSAGE_BYTES - sizeof(ModeDSegmentHeader);
     if(query_bytes > room || reply_bytes > room) {*why = "one query or reply record is larger than a staging message"; return 1;}
     const long long pair_bytes  = (long long) query_bytes + (long long) reply_bytes;
-    const long long chunk_bytes = (long long) (All.CommChunkSize * 1024.0 * 1024.0);
+    const long long chunk_bytes = (long long) comm_chunk_bytes();
     plan->envelopes_per_round = chunk_bytes / pair_bytes;
     plan->worst_envelopes_per_active = mode_d_worst_envelopes_per_active();
     if(plan->worst_envelopes_per_active < 0) {*why = "its per-peer top-leaf tally could not be allocated"; return 1;}

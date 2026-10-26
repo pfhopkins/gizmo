@@ -450,6 +450,17 @@ double comm_chunk_megabytes_default(void)
     return (raised > customary_megabytes) ? raised : customary_megabytes;
 }
 
+/* The communication chunk in bytes.  CommChunkSize is a floating-point number of megabytes and is not always a whole
+   one (the default above is not), so the conversion is done in floating point; truncating it to whole megabytes first
+   turns 0.5 into 0.  Every byte conversion of the parameter goes through here. */
+size_t comm_chunk_bytes(void)
+{
+    const double bytes = All.CommChunkSize * 1024.0 * 1024.0;
+    const double largest = (double) ((size_t) 1 << 60);   /* far past any message, and leaves room to multiply */
+    if(!(bytes >= 1.0)) {return 1;}
+    return (bytes > largest) ? ((size_t) 1 << 60) : (size_t) bytes;
+}
+
 /* How big to make the memory arena when the parameter file does not say. Called once, before the
    arena is created, which is the only moment early enough: the arena is the first thing built and
    everything else is allocated out of it.
@@ -506,7 +517,7 @@ static int arena_megabytes_from_tenants(long long total_particles, const char **
        coupling between a communication setting and the run's memory footprint, and the report at
        the end of this file names whichever tenant set the figure so it is visible rather than
        surprising. */
-    long long step = (long long) All.CommChunkSize * 1024 * 1024
+    long long step = (long long) comm_chunk_bytes()
                    + (long long) GRAVITY_LET_DETECTOR_ENTRIES
                      * (long long) (sizeof(struct data_index) + sizeof(struct data_nodelist))
                    + maxpart * (long long) (2 * sizeof(MyFloat));
@@ -769,7 +780,7 @@ int gizmo_memory_preflight(void)
             if(share > particles_per_rank + tree_per_rank && nopt < maxopt)
             {
                 long long fits_mb = (share - particles_per_rank - tree_per_rank) / (1024 * 1024);
-                if(fits_mb > (long long) All.CommChunkSize && fits_mb < All.WorkingMemoryPoolSize)
+                if((double) fits_mb > All.CommChunkSize && fits_mb < All.WorkingMemoryPoolSize)
                     {snprintf(optbuf[nopt], sizeof(optbuf[0]), "WorkingMemoryPoolSize %lld", fits_mb); nopt++;}
             }
             for(int k = 0; k < nopt; k++)

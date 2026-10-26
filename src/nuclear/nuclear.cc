@@ -197,7 +197,7 @@ void nuclear_parent_routine(void)
 
     /* Steps 2-4: Gather / Dispatch / Scatter — batched for GPU, same as cooling */
 #if !defined(CHIMES)
-  if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+  if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device nuclear network reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_BURN_BATCH_SIZE = 32768;
 

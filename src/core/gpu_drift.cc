@@ -9,10 +9,11 @@
  * core/drift_particle_functions.h. There is no second copy of the physics, and no
  * device-only approximation of any part of it.
  *
- * Routing is on the number of particles needing a drift, against the same
- * GPU_MIN_PARTICLES_FOR_OFFLOAD the other batched device loops use. Below it the
- * caller's work is done by the ordinary host loop, so a step with few active
- * particles pays nothing: no staging buffers, no device memory, no copies.
+ * Routing is on the number of particles needing a drift, against the drift's own
+ * offload count (GPU_OFFLOAD_DRIFT: a quarter of GPUElementOffloadMinCount unless
+ * GPUDriftOffloadMinCount says otherwise). Below it the caller's work is done by the
+ * ordinary host loop, so a step with few active particles pays nothing: no staging
+ * buffers, no device memory, no copies.
  *
  * A drift that does not happen is a wrong position, not a missing improvement, so
  * every path that cannot reach the device -- no staging memory, no table mirror --
@@ -140,7 +141,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
     if(n_need <= 0) {return drift_batch_status_();}
 
     /* Tiny-N and everything below the offload threshold stays exactly as it was. */
-    if(n_need < GPU_MIN_PARTICLES_FOR_DRIFT_OFFLOAD) {
+    if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_DRIFT, n_need)) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
         return drift_batch_status_();
     }

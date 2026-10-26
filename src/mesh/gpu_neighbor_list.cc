@@ -1336,17 +1336,20 @@ enum SidxBuildRoute {SIDX_ROUTE_HOST = 0, SIDX_ROUTE_DEVICE = 1};
 
 /* The shapes of build whose device cost differs: the rank's own members already in order (no keys, no sort),
  * the rank's own members sorted, and the imported members, sorted, from their compact records. */
-enum SidxBuildShape {SIDX_SHAPE_OWNED_PRESORTED = 0, SIDX_SHAPE_OWNED_SORTED = 1, SIDX_SHAPE_IMPORTED = 2, SIDX_NUM_SHAPES = 3};
+enum SidxBuildShape {SIDX_SHAPE_OWNED_PRESORTED = 0, SIDX_SHAPE_OWNED_SORTED = 1, SIDX_SHAPE_IMPORTED = 2};
 
 /* The size from which a build of each shape takes the device route, in the units sidx_member_bound gives:
  * gas cells for the gas index over the rank's own particles, else the particles in the source (for an
- * imported segment, every particle in the ghost range).  A device build pays a fixed
- * cost of about a millisecond (launches, staging, allocation) and then runs several times faster per member.
- * Measured on MI250X against 7 host threads: imported builds cross over between 4096 and 8192 particles;
- * full-rank owned builds of 0.5-1.1M members run 4.5x (sorted) and 2.2x (presorted) faster on the device,
- * while ~30k-member owned builds are still slower there, so the owned thresholds sit well clear of that.
- * Presorted builds skip the passes the device speeds up most, so their crossover lies higher. */
-static constexpr int SIDX_DEVICE_ROUTE_MIN_MEMBERS[SIDX_NUM_SHAPES] = {262144, 131072, 8192};
+ * imported segment, every particle in the ghost range).  Each is a spatial-index offload count, resolved from
+ * the parameter file (gizmo_gpu_offload_min_count, core/begrun.cc, which also gives what they were measured at). */
+static int sidx_device_route_takes(int shape, int members)
+{
+    switch(shape) {
+        case SIDX_SHAPE_OWNED_PRESORTED: return gizmo_gpu_offload_takes(GPU_OFFLOAD_SIDX_OWNED_PRESORTED, members);
+        case SIDX_SHAPE_OWNED_SORTED:    return gizmo_gpu_offload_takes(GPU_OFFLOAD_SIDX_OWNED_SORTED, members);
+        default:                         return gizmo_gpu_offload_takes(GPU_OFFLOAD_SIDX_IMPORTED, members);
+    }
+}
 
 /* The share of the device's free memory a build may plan on: ranks sharing a device allocate between the query
  * and the build.  The projection does not count the particle storage, which the device route reads where it lives
@@ -1394,7 +1397,7 @@ static int sidx_build_route(const struct SidxParticleSource &src, int maintained
     if(src.P != P) {return SIDX_ROUTE_HOST;}
     const int shape = src.exact ? SIDX_SHAPE_IMPORTED : (presorted ? SIDX_SHAPE_OWNED_PRESORTED : SIDX_SHAPE_OWNED_SORTED);
     const int members = sidx_member_bound(src).count;
-    if(members < SIDX_DEVICE_ROUTE_MIN_MEMBERS[shape]) {return SIDX_ROUTE_HOST;}
+    if(!sidx_device_route_takes(shape, members)) {return SIDX_ROUTE_HOST;}
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return SIDX_ROUTE_HOST;}
     if(!gizmo_device_has_room(sidx_device_route_peak(m, members, maintained, presorted, src.exact), SIDX_DEVICE_FREE_FRACTION)) {

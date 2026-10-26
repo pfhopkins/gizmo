@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <ctype.h>
+#include <limits.h>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -325,6 +326,11 @@ void begrun(void)
       All.NeighborLoopModeBThresholdMax = all.NeighborLoopModeBThresholdMax;
       All.NeighborLoopModeDThresholdSum = all.NeighborLoopModeDThresholdSum;
       All.NeighborLoopModeDThresholdMax = all.NeighborLoopModeDThresholdMax;
+      All.GPUElementOffloadMinCount = all.GPUElementOffloadMinCount;
+      All.GPUTreeOffloadMinCount = all.GPUTreeOffloadMinCount;
+      All.GPUParticleLoopOffloadMinCount = all.GPUParticleLoopOffloadMinCount;
+      All.GPUDriftOffloadMinCount = all.GPUDriftOffloadMinCount;
+      All.GPUTreeWalkOffloadMinCount = all.GPUTreeWalkOffloadMinCount;
       All.GravityHostWalkBelowActive = all.GravityHostWalkBelowActive;
       All.TreeUpdateHostBelowActive = all.TreeUpdateHostBelowActive;
       All.TreeUpdateFullSweep_ActiveFraction = all.TreeUpdateFullSweep_ActiveFraction;
@@ -1185,6 +1191,110 @@ void report_parameters_a_restart_cannot_change(const void *from_file)
     if(reported) {printf("\n"); fflush(stdout);}
 }
 
+/* The per-MPI-task counts from which work moves from the host to the device.  Two anchors set the defaults of the counts
+ * that scale with them, and every count that has a control of its own keeps it as an override:
+ *   GPUElementOffloadMinCount (elements): per-particle loops use it, the particle drift a quarter of it.
+ *   GPUTreeOffloadMinCount (tree-walk sources): the neighbour-loop walk batch uses it, the gravity walk a quarter of it,
+ *     and the spatial-index builds 2x (imported members), 32x (own members to be sorted) and 64x (own members in order).
+ * An own control of -1 takes the anchor's value, 0 sends the work to the device whenever there is any, a positive value is exact.
+ * Every default was measured on Frontier, an MI250X GCD against 7 OpenMP threads, so on a machine with another host-thread
+ * count per device these are starting points, not constants of nature.
+ *   Per-particle loops: a kernel launch and the staging copies cost a fixed amount that the per-element work of cooling,
+ *     the nuclear network and the like must exceed.
+ *   Drift: its per-element work is far smaller, so it wants a lower count.  Where the particle arrays are device-visible the
+ *     device drift works on them in place.  Measured on a 128-rank galaxy run at matched time, the host is ahead by ~0.3 ms
+ *     per step up to ~1e3 particles in all, and the two tie from ~1e4 in all, where the busiest ranks hold ~1e3 each.  That
+ *     is for a cheap equation of state; a tabulated or solid one makes the device's share grow.
+ *   Tree-walk batch: a three-way choice -- fewer sources than max(64, 4*threads) run on one host core, fewer than this count
+ *     on the host threads, at or above it on the device.  The lower boundary is the neighbour-loop runner's own OpenMP floor,
+ *     so a count at or below it leaves the threaded tier empty.  A walk is a dependent chain per source: a small batch gives
+ *     the device nothing to overlap while it still pays a launch and a fence.  Device batches below this count were measured
+ *     3-7x slower per member than the host tier (FIRE-dwarf, a FIRE zoom-in), and moving every batch below it to the device
+ *     cost 231 s of a 685 s run on a 128-rank cosmological zoom.  Decided per batch and per rank from that batch's own source
+ *     count, because a rank's own actives and the queries it received differ by orders of magnitude inside one call.
+ *     This prices the device walk as it is today; the deficit at small batches is a defect of that walk still being worked off
+ *     (row D-GPU), so the count is to be re-measured as the walk improves, not inherited.
+ *   Gravity walk: the walk of a rank with fewer active candidates runs on the host.
+ *   Spatial-index builds: a device build pays about a millisecond in launches, staging and allocation and then runs several
+ *     times faster per member.  Imported builds cross over between 4096 and 8192 particles; full-rank owned builds of
+ *     0.5-1.1M members run 4.5x (sorted) and 2.2x (in order) faster on the device, ~30k-member owned builds are still slower
+ *     there, and an in-order build skips the passes the device speeds up most, so its crossover lies higher. */
+static const int GPU_OFFLOAD_DEFAULT_ANCHOR = 4096;
+struct GpuOffloadRule
+{
+    const char *what;                       /* named in the startup report */
+    int global_data_all_processes::*own;    /* the control that sets this count by itself, or null */
+    const char *own_name;
+    int global_data_all_processes::*anchor; /* the anchor that sets its default */
+    const char *anchor_name;
+    int times, per;                         /* the default is anchor * times / per */
+};
+static constexpr GpuOffloadRule gpu_offload_rules[GPU_OFFLOAD_NUM_SITES] =   /* in the order of enum GizmoOffloadSite */
+{
+    {"per-particle loops",                          &global_data_all_processes::GPUParticleLoopOffloadMinCount, "GPUParticleLoopOffloadMinCount", &global_data_all_processes::GPUElementOffloadMinCount, "GPUElementOffloadMinCount", 1, 1},
+    {"particle drift",                              &global_data_all_processes::GPUDriftOffloadMinCount,        "GPUDriftOffloadMinCount",        &global_data_all_processes::GPUElementOffloadMinCount, "GPUElementOffloadMinCount", 1, 4},
+    {"neighbour-loop tree-walk batch",              &global_data_all_processes::GPUTreeWalkOffloadMinCount,     "GPUTreeWalkOffloadMinCount",     &global_data_all_processes::GPUTreeOffloadMinCount,    "GPUTreeOffloadMinCount",    1, 1},
+    {"gravity tree walk",                           &global_data_all_processes::GravityHostWalkBelowActive,     "GravityHostWalkBelowActive",     &global_data_all_processes::GPUTreeOffloadMinCount,    "GPUTreeOffloadMinCount",    1, 4},
+    {"spatial-index build, own members in order",   nullptr, nullptr,                                                                                &global_data_all_processes::GPUTreeOffloadMinCount,    "GPUTreeOffloadMinCount",    64, 1},
+    {"spatial-index build, own members sorted",     nullptr, nullptr,                                                                                &global_data_all_processes::GPUTreeOffloadMinCount,    "GPUTreeOffloadMinCount",    32, 1},
+    {"spatial-index build, imported members",       nullptr, nullptr,                                                                                &global_data_all_processes::GPUTreeOffloadMinCount,    "GPUTreeOffloadMinCount",    2, 1},
+};
+static_assert(gpu_offload_rules[GPU_OFFLOAD_NUM_SITES - 1].what != nullptr, "a count of GizmoOffloadSite has no row");
+static_assert(gpu_offload_rules[GPU_OFFLOAD_SIDX_OWNED_PRESORTED].times == 64 && gpu_offload_rules[GPU_OFFLOAD_SIDX_OWNED_SORTED].times == 32 &&
+              gpu_offload_rules[GPU_OFFLOAD_SIDX_IMPORTED].times == 2, "the spatial-index rows are out of the order of GizmoOffloadSite");
+enum {GPU_OFFLOAD_FROM_DEFAULT = 0, GPU_OFFLOAD_FROM_OWN_CONTROL = 1, GPU_OFFLOAD_FROM_ANCHOR = 2};
+
+static int gpu_offload_resolve(int site, int *origin)
+{
+    const GpuOffloadRule &rule = gpu_offload_rules[site];
+    if(rule.own) {
+        const int own = All.*(rule.own);
+        if(own >= 0) {if(origin) {*origin = GPU_OFFLOAD_FROM_OWN_CONTROL;} return own;}
+    }
+    const int anchor_set = All.*(rule.anchor);
+    const long long anchor = (anchor_set >= 0) ? anchor_set : GPU_OFFLOAD_DEFAULT_ANCHOR;
+    if(origin) {*origin = (anchor_set >= 0) ? GPU_OFFLOAD_FROM_ANCHOR : GPU_OFFLOAD_FROM_DEFAULT;}
+    const long long count = anchor * rule.times / rule.per;
+    return (count > INT_MAX) ? INT_MAX : (int) count;
+}
+
+int gizmo_gpu_offload_min_count(enum GizmoOffloadSite site)
+{
+    return gpu_offload_resolve((int) site, nullptr);
+}
+
+/* A count of 0 means "the device whenever there is any work", and an empty batch is none: the device paths allocate
+ * for their batch and take no zero-size launch. */
+int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count)
+{
+    return (count > 0 && count >= (long long) gpu_offload_resolve((int) site, nullptr)) ? 1 : 0;
+}
+
+void gizmo_gpu_offload_report(void)
+{
+    if(ThisTask != 0) {return;}
+    printf("Work moves to the device at or above these counts per MPI task (0: whenever there is any work):\n");
+    for(int site = 0; site < GPU_OFFLOAD_NUM_SITES; site++)
+    {
+        int origin = GPU_OFFLOAD_FROM_DEFAULT;
+        const int count = gpu_offload_resolve(site, &origin);
+        const GpuOffloadRule &rule = gpu_offload_rules[site];
+        char source[160];
+        if(origin == GPU_OFFLOAD_FROM_OWN_CONTROL) {snprintf(source, sizeof(source), "set by %s", rule.own_name);}
+        else
+        {
+            char ratio[24] = "";   /* how the anchor is scaled to this count */
+            if(rule.per != 1) {snprintf(ratio, sizeof(ratio), " / %d", rule.per);}
+            else if(rule.times != 1) {snprintf(ratio, sizeof(ratio), " x %d", rule.times);}
+            snprintf(source, sizeof(source), "from %s%s%s", (origin == GPU_OFFLOAD_FROM_DEFAULT) ? "default " : "", rule.anchor_name, ratio);
+        }
+        printf("   %-46s %10d   (%s)\n", rule.what, count, source);
+    }
+    printf("   %-46s %10d   (TreeUpdateHostBelowActive, independent of the anchors; below it the dynamic tree update runs on the host)\n",
+           "gravity tree update", All.TreeUpdateHostBelowActive);
+    fflush(stdout);
+}
+
 /*! This function parses the parameterfile in a simple way.  Each paramater is
  *  defined by a keyword (`tag'), and can be either of type douple, int, or
  *  character string.  The routine makes sure that each parameter appears
@@ -1825,6 +1935,26 @@ void read_parameter_file(char *fname)
 
         strcpy(tag[nt], "NeighborLoopModeDThresholdMax");
         addr[nt] = &All.NeighborLoopModeDThresholdMax;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "GPUElementOffloadMinCount");
+        addr[nt] = &All.GPUElementOffloadMinCount;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "GPUTreeOffloadMinCount");
+        addr[nt] = &All.GPUTreeOffloadMinCount;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "GPUParticleLoopOffloadMinCount");
+        addr[nt] = &All.GPUParticleLoopOffloadMinCount;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "GPUDriftOffloadMinCount");
+        addr[nt] = &All.GPUDriftOffloadMinCount;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "GPUTreeWalkOffloadMinCount");
+        addr[nt] = &All.GPUTreeWalkOffloadMinCount;
         id[nt++] = INT;
 
         strcpy(tag[nt], "GravityHostWalkBelowActive");
@@ -2877,7 +3007,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("NeighborLoopModeBThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> each loop's built-in default */
                 if(strcmp("NeighborLoopModeDThresholdSum",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> 0: Mode D wherever Mode B is not chosen */
                 if(strcmp("NeighborLoopModeDThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;}
-                if(strcmp("GravityHostWalkBelowActive",tag[i])==0) {*((int *)addr[i])=1000; printf("Tag %s (%s) not set in parameter file: defaulting to run the gravity walk on the host below %d RANK-LOCAL active candidates per step (0 would disable this and always use the device path). \n",tag[i],alternate_tag[i],All.GravityHostWalkBelowActive); continue;}
+                if(strcmp("GPUElementOffloadMinCount",tag[i])==0 || strcmp("GPUTreeOffloadMinCount",tag[i])==0 || strcmp("GPUParticleLoopOffloadMinCount",tag[i])==0 ||
+                   strcmp("GPUDriftOffloadMinCount",tag[i])==0 || strcmp("GPUTreeWalkOffloadMinCount",tag[i])==0 || strcmp("GravityHostWalkBelowActive",tag[i])==0)
+                    {*((int *)addr[i])=-1; continue;} /* unset -> the count the anchor gives it; the startup report lists every resolved count */
                 if(strcmp("TreeUpdateFullSweep_ActiveFraction",tag[i])==0) {*((double *)addr[i])=2; printf("Tag %s (%s) not set in parameter file: defaulting to %g -- the device tree update drifts every node of the tree unless the rank-local fraction of elements it updates is below this, in which case it brings current only the nodes the update touches. \n",tag[i],alternate_tag[i],All.TreeUpdateFullSweep_ActiveFraction); continue;}
                 if(strcmp("TreeUpdateHostBelowActive",tag[i])==0) {*((int *)addr[i])=1000; printf("Tag %s (%s) not set in parameter file: defaulting to run the dynamic tree update on the host below %d RANK-LOCAL elements due a force update per step (0 would disable this and use the device path whenever it is allowed). \n",tag[i],alternate_tag[i],All.TreeUpdateHostBelowActive); continue;}
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
@@ -3310,12 +3442,13 @@ void read_parameter_file(char *fname)
     }
     if(All.NeighborLoopModeDThresholdSum < -1 || All.NeighborLoopModeDThresholdMax < -1)
     {
-        if(ThisTask==0) {printf("NeighborLoopModeDThresholdSum and NeighborLoopModeDThresholdMax must be >= -1 (-1 = unset, 0 = Mode D wherever Mode B is not chosen, positive = lower bound on the summed / per-rank-max active count)\n");} endrun(1);
+        if(ThisTask==0) {printf("NeighborLoopModeDThresholdSum and NeighborLoopModeDThresholdMax must be >= -1 (-1 = unset, 0 = no bound beyond the fewest actives one device batch holds, positive = lower bound on the summed / per-rank-max active count)\n");} endrun(1);
     }
     gizmo_nlr_report_dispatch_thresholds();
-    if(All.GravityHostWalkBelowActive < 0)
+    if(All.GPUElementOffloadMinCount < -1 || All.GPUTreeOffloadMinCount < -1 || All.GPUParticleLoopOffloadMinCount < -1 ||
+       All.GPUDriftOffloadMinCount < -1 || All.GPUTreeWalkOffloadMinCount < -1 || All.GravityHostWalkBelowActive < -1)
     {
-        if(ThisTask==0) {printf("GravityHostWalkBelowActive must be >= 0 (0 = no count-based host routing, positive = rank-local active-candidate count below which the host walk is used)\n");} endrun(1);
+        if(ThisTask==0) {printf("GPUElementOffloadMinCount, GPUTreeOffloadMinCount, GPUParticleLoopOffloadMinCount, GPUDriftOffloadMinCount, GPUTreeWalkOffloadMinCount and GravityHostWalkBelowActive must be >= -1 (-1 = unset, 0 = the device whenever there is any work, positive = the rank-local count from which the work moves to the device)\n");} endrun(1);
     }
     if(All.TreeUpdateFullSweep_ActiveFraction < 0)
     {
@@ -3325,6 +3458,7 @@ void read_parameter_file(char *fname)
     {
         if(ThisTask==0) {printf("TreeUpdateHostBelowActive must be >= 0 (0 = no count-based host routing, positive = rank-local force-update count below which the host tree update is used)\n");} endrun(1);
     }
+    gizmo_gpu_offload_report();
     if((All.ErrTolForceAcc<=0)||(All.ErrTolForceAcc>=0.01))
     {
         if(ThisTask==0) {printf("ErrTolForceAcc must be >0 and <0.01 to ensure stability \n");} endrun(1);

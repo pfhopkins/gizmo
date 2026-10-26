@@ -382,7 +382,7 @@ void add_turb_accel()
     for (int i : ActiveParticleList) {if(P[i].Type == 0) {turb_indices[N_active++] = i;}}
     if(N_active == 0) {free(turb_indices); PRINT_STATUS("Finished turbulence driving (acceleration) computation"); return;}
 
-    if(N_active >= GPU_MIN_PARTICLES_FOR_OFFLOAD) {
+    if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* All-mirror dispatch-boundary belt; the turb_accel kernel itself reads no All.* but keep the call at the GPU dispatch point per the All-mirror convention */
         /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
         const size_t mode_bytes = (size_t) StNModes * 3 * sizeof(double);
