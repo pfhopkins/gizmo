@@ -171,6 +171,7 @@ int damage_update_tensile_flaws(double D_prev, double n_act_prev, const double s
         }
     }
     if(n_act < 1 && !(s_now > 0)) {return 0;} /* nothing to activate and nothing growing */
+    if(n_act < 1 && s_now < tensile_flaw_spacing(identity, 1)) {*n_act_out = 0; return 0;} /* in tension but short of the weakest flaw: the rest of the population is not needed */
 
     /* one pass over the thresholds: the element's flaw total n_tot (s_j <= s_max, at least one) and how many of them s_now has reached */
     int n_tot = 0, n_reached = 0;
