@@ -564,7 +564,6 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     {
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
         return 0;
-        endrun(8888);
     }
 #ifndef SPAWN_PARTICLES_VIA_SPLITTING
     if(P[i].Type != 0) {printf("Splitting Non-Gas Particle: i=%d ID=%llu Type=%d \n",i,(unsigned long long) P[i].ID,P[i].Type);} //fflush(stdout); endrun(8889);
@@ -628,7 +627,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     if(P[i].Type==0) {CellP[j].Mass = P[j].Mass; CellP[i].Mass = P[i].Mass;} // CellP[] is sized All.MaxPartGas; only gas splits get CellP writes
 #ifdef BOX_BND_PARTICLES
     if(P[i].ID==0)  {P[j].ID=1; double m0=P[i].Mass+P[j].Mass; P[i].Mass=P[j].Mass=m0;}
-    if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
+    if(P[i].Type==0) {CellP[i].Mass = P[i].Mass; CellP[j].Mass = P[j].Mass;}
 #endif
 
     /* prepare to shift the particle locations according to the random number we drew above */
