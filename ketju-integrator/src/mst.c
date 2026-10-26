@@ -616,6 +616,9 @@ static int get_longest_edge(double w[3], int id[3]) {
             ind = m;
         }
     }
+    if (ind < 0) {
+        terminate("get_longest_edge: all edge weights are NaN!");
+    }
     return id[ind];
 }
 

@@ -1249,8 +1249,13 @@ void ketju_run_integrator(struct ketju_system *R, double time_interval) {
     timer_start(&R->perf->time_total);
 
     // Init GBS stuff
-    R->internal_state->gbs_k =
-        R->options->gbs_kmax >= 4 ? 4 : R->options->gbs_kmax;
+    if (R->options->gbs_kmax < 4) {
+        char msg[100];
+        sprintf(msg, "Invalid gbs_kmax value %d, the minimum is 4!",
+                R->options->gbs_kmax);
+        terminate(msg);
+    }
+    R->internal_state->gbs_k = 4;
     ketju_init_gbs_comms(R);
 
     int *gbs_rows_for_groups =
