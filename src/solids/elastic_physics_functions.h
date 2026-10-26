@@ -101,7 +101,7 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
                 flaw_volume *= All.FractureOutOfPlaneExtent;
 #endif
                 double s_max = All.SolidMaterialFlawsPerMass[composition] * pp[i].Mass;
-                uint64_t identity = gizmo_gpu_splitmix64((uint64_t)pp[i].ID ^ gizmo_gpu_splitmix64((uint64_t)pp[i].ID_child_number ^ gizmo_gpu_splitmix64((uint64_t)pp[i].ID_generation))); /* persistent: split children differ */
+                uint64_t identity = gizmo_rng_particle_identity((uint64_t)pp[i].ID, (uint64_t)pp[i].ID_child_number, (uint64_t)pp[i].ID_generation); /* persistent: split children differ */
                 if(damage_update_tensile_flaws(D_now, cell[i].ActiveCracks, stress, NDim, bulk_modulus, mu, rho_i, pp[i].Mass / rho_i,
                                                flaw_volume, s_max, identity, dt_entr, composition, &D_new, &A_new))
                 {

@@ -140,7 +140,7 @@ KOKKOS_INLINE_FUNCTION
 double tensile_flaw_spacing(uint64_t identity, int j_flaw) /* s_j - s_(j-1): a unit exponential draw keyed on the particle identity and the flaw index */
 {
     static constexpr uint64_t TENSILE_FLAW_RNG_SALT = gizmo_loop_rng_salt("tensile_flaws");
-    return -log(1.0 - gizmo_gpu_rand_double(identity, TENSILE_FLAW_RNG_SALT ^ (uint64_t)j_flaw));
+    return -log(1.0 - gizmo_gpu_rand_double(identity, gizmo_rng_event_counter(TENSILE_FLAW_RNG_SALT, 0, (uint64_t)j_flaw)));
 }
 
 KOKKOS_INLINE_FUNCTION
