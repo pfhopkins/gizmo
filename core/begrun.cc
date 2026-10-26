@@ -2537,6 +2537,10 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.KetjuTimestepLimitingFactor;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "KetjuMinParticlesPerTask");
+      addr[nt] = &All.KetjuMinParticlesPerTask;
+      id[nt++] = REAL;
+
       strcpy(tag[nt], "KetjuMaxStepCount");
       addr[nt] = &All.KetjuMaxStepCount;
       id[nt++] = INT;
@@ -2844,6 +2848,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuPNTerms",tag[i])==0) {strcpy((char *)addr[i],"none"); printf("Tag %s not set: defaulting to 'none'\n",tag[i]); continue;}
                 if(strcmp("KetjuEnableBHMergerKicks",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0\n",tag[i]); continue;}
                 if(strcmp("KetjuTimestepLimitingFactor",tag[i])==0) {*((double *)addr[i])=100.; printf("Tag %s not set: defaulting to 100\n",tag[i]); continue;}
+                if(strcmp("KetjuMinParticlesPerTask",tag[i])==0) {*((double *)addr[i])=10.; printf("Tag %s not set: defaulting to 10\n",tag[i]); continue;}
                 if(strcmp("KetjuMaxStepCount",tag[i])==0) {*((int *)addr[i])=100000; printf("Tag %s not set: defaulting to 100000\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
@@ -3037,6 +3042,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuUseStarStarSoftening",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1\n",tag[i]); continue;}
 #endif
                 if(strcmp("KetjuTimestepLimitingFactor",tag[i])==0) {*((double *)addr[i])=100.; printf("Tag %s not set: defaulting to 100\n",tag[i]); continue;}
+                if(strcmp("KetjuMinParticlesPerTask",tag[i])==0) {*((double *)addr[i])=10.; printf("Tag %s not set: defaulting to 10\n",tag[i]); continue;}
                 if(strcmp("KetjuMaxStepCount",tag[i])==0) {*((int *)addr[i])=100000; printf("Tag %s not set: defaulting to 100000\n",tag[i]); continue;}
                 if(strcmp("KetjuRegionMotionCapFactor",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (Mannerkoski+ 2023 caps)\n",tag[i]); continue;}
                 if(strcmp("KetjuTidalStepRes",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
