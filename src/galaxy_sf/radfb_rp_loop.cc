@@ -352,12 +352,10 @@ void RadFBRPSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  * runner. Returns 1 if the source passes the gate (fills *loc + *radius);
  * 0 if it doesn't fire this step (skip — not added to runner active list).
  *
- * Ported verbatim from radfb_local_gpu.cc::radfb_rp_local_fill (legacy
- * `static` helper, now public). RNG draw inside the gate retains the
- * legacy single-rank ordering (`get_random_number(P[i].ID + ThisTask + i + 2)`)
- * — that's a source-level stochastic acceptance, NOT a per-pair RNG, so
- * the runner's order-independent per-pair RNG shift (RADFBRP_RNG_SHIFT in
- * radfb_rp_loop.h) doesn't apply here.
+ * The gate's random number is one draw per source per step, keyed on the
+ * source and the current time (particle_random_number) -- a source-level
+ * acceptance, not a per-pair draw, so the per-pair RNG shift
+ * (RADFBRP_RNG_SHIFT in radfb_rp_loop.h) does not apply here.
  * ========================================================================== */
 
 int radfb_rp_local_fill(int i,
@@ -458,7 +456,8 @@ int radfb_rp_local_fill(int i,
     if (prob < 1.0 && prob > 0) dE_over_c /= prob;
 #endif
 
-    double p_random = get_random_number(P_host[i].ID + ThisTask + i + 2);
+    static constexpr uint64_t RP_SOURCE_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_source_gate");
+    double p_random = gizmo_gpu_rand_double(gizmo_rng_particle_event_key(P_host[i]), gizmo_rng_event_counter(RP_SOURCE_GATE_RNG_SALT, (uint64_t)HostAll->Ti_Current, 0));
     if (p_random > prob) return 0;     /* doesn't fire this step */
 
     /* fill struct */

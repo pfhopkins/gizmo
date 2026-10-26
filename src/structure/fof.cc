@@ -1544,7 +1544,8 @@ void fof_make_sink_particles(void)
         if(All.SeedSinkMassSigma > 0)
         {
             /* compute gaussian random number: mean=0, sigma=All.SeedSinkMassSigma */
-            P[import_indices[n]].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian((uint64_t)P[import_indices[n]].ID, (uint64_t)(17 + All.NumCurrentTiStep)) * All.SeedSinkMassSigma );
+            static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_seed_mass"); /* same event kind as the seed mass drawn in sfr_eff.cc */
+            P[import_indices[n]].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian(particle_event_rng_key(import_indices[n]), gizmo_rng_event_counter(SINK_SEED_MASS_RNG_SALT, (uint64_t)All.Ti_Current, 0)) * All.SeedSinkMassSigma );
             unitmass_in_msun = UNIT_MASS_IN_SOLAR;
             if( P[import_indices[n]].Sink_Mass < 100./unitmass_in_msun )
                 P[import_indices[n]].Sink_Mass = 100./unitmass_in_msun;      // enforce lower limit of Mseed = 100 x Msun
