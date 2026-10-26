@@ -30,6 +30,9 @@
 #include "typedefs.h"
 #include "../eos/composition_registry.h"
 #include "../math_types/vec3.h"
+#if defined(COOLING) && defined(COOL_GRACKLE)
+#include <grackle.h> /* for the code_units member below; this header is also reached without allvars.h */
+#endif
 
 /*! This structure contains data which is the SAME for all tasks (mostly code parameters read from the
  * parameter file).  Holding this data in a structure is convenient for writing/reading the restart file, and
