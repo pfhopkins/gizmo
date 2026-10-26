@@ -1,5 +1,5 @@
 /* KETJU (default; the C library with KETJU_LEGACY_C_LIBRARY): ketju_create_system / ketju_run_integrator / ketju_free_system on the C++/Kokkos MSTAR library
- * (mstar::System, ketju-integrator/kokkos). The C structs of ketju_integrator.h stay GIZMO's data model; the state is
+ * (mstar::System, submodule ketju-integrator). The C structs of ketju_integrator.h (ketju-integrator-c) stay GIZMO's data model; the state is
  * integrated on rank 0 of the region's communicator and broadcast, with the C library's semantics (merger records,
  * extra-data and collision_radius reordering, accumulating step counters, abort on max_step_count). */
 #ifndef KETJU_MSTAR_KOKKOS_H

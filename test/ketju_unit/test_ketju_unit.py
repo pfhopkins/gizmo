@@ -1,10 +1,11 @@
-"""KETJU integrator (MSTAR) unit tests against GIZMO's ketju-integrator submodule.
+"""KETJU integrator (MSTAR) unit tests against GIZMO's submodules ketju-integrator (C++/Kokkos, fork main) and
+ketju-integrator-c (C library, fork branch ketju-c).
 
-Default: the C++/Kokkos library's tests (kokkos/tests, ctest): the GIZMO-addition tests on mstar::mstar, C vs Kokkos
-(mstar_compare_c), extra forces, embedded tide, driver, and KETJU's unit tests on the C library (serial MPI stand-in).
-With KETJU_LEGACY_C_LIBRARY in GIZMO_EXTRA_CONFIG_FLAGS: also the original googletest suite on the C library, on 1, 2
-and 4 MPI tasks. Sources are copied to a temporary directory (the top-level CMake writes bin/ and lib/ into the source
-tree). No GIZMO build or simulation is involved.
+Default: the C++/Kokkos library's tests (tests/, ctest): KETJU's unit tests and the GIZMO additions on mstar::mstar,
+C vs Kokkos against stored C results (mstar_compare_c), extra forces, embedded tide, driver.
+With KETJU_LEGACY_C_LIBRARY in GIZMO_EXTRA_CONFIG_FLAGS: also the googletest suite on the C library, on 1, 2 and 4 MPI
+tasks; its sources are copied to a temporary directory (its CMake writes bin/ and lib/ into the source tree).
+No GIZMO build or simulation is involved.
 """
 
 import os
@@ -17,10 +18,11 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 KETJU_SRC = REPO_ROOT / "ketju-integrator"
+KETJU_C_SRC = REPO_ROOT / "ketju-integrator-c"
 EXE = "ketju-integrator-unit-tests"
 NUM_MAKE_JOBS = 4
 
-# the 26 cases of the original suite and 8 for GIZMO's additions; a missing one means the suite did not run completely
+# the 26 cases of the original suite, 8 for GIZMO's additions and 3 softening-kink cases; a missing one means the suite did not run completely
 EXPECTED_TESTS = {
     "Integration_versus_old_integrator.binary_system_full_pn_no_spin",
     "Integration_versus_old_integrator.binary_system_no_pn",
@@ -41,6 +43,10 @@ EXPECTED_TESTS = {
     "Gizmo_pericentre_guard.osculating_pericentre_time",
     "Gizmo_pericentre_guard.k3_triple_no_false_collision",
     "Gizmo_external_tide.harmonic_com_and_energy",
+    # softening-kink landing (unit-tests/softening_kink.cpp)
+    "Softening_kink.two_body_orbit_converges",
+    "Softening_kink.collision_tide_softening_converges",
+    "Softening_kink.off_without_softening",
 } | {f"MST/ConstructionTest.random_stars/{alg}_{n}_particles" for alg in ("Prim", "DnC") for n in (2, 4, 10, 20, 50, 100, 500, 1000)}
 
 
@@ -51,7 +57,7 @@ def _run(cmd, cwd, timeout, env=None):
 
 
 LEGACY_C = "KETJU_LEGACY_C_LIBRARY" in os.environ.get("GIZMO_EXTRA_CONFIG_FLAGS", "").split()
-KOKKOS_CTESTS = {"ketju_unit_c", "mstar_gizmo_additions", "mstar_compare_c", "mstar_extra_force", "mstar_embedded_tide", "mstar_driver"}
+KOKKOS_CTESTS = {"mstar_unit_tests", "mstar_compare_c", "mstar_extra_force", "mstar_embedded_tide", "mstar_driver"}
 
 
 def _kokkos_root():
@@ -64,13 +70,12 @@ def _kokkos_root():
 
 
 def test_ketju_kokkos_ctests(tmp_path):
-    for tool in ("cmake", "make", "gcc", "g++"):
+    for tool in ("cmake", "make", "g++"):
         assert shutil.which(tool), f"{tool} not on PATH (load the gcc and cmake modules)"
-    src = tmp_path / "ketju-integrator"
-    shutil.copytree(KETJU_SRC, src, ignore=shutil.ignore_patterns("bin", "lib", "build*", "*.so", "*.a", ".git"))
+    assert (KETJU_SRC / "include" / "mstar" / "mstar.hpp").is_file(), "ketju-integrator not at the pinned commit (git submodule update --init)"
     build = tmp_path / "build"
-    _run(["cmake", "-S", str(src), "-B", str(build), "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++", "-DKETJU_KOKKOS=ON",
-          "-DKETJU_SERIAL_MPI=ON", f"-DKokkos_ROOT={_kokkos_root()}", "-DCMAKE_BUILD_TYPE=Release"], tmp_path, 600)
+    _run(["cmake", "-S", str(KETJU_SRC), "-B", str(build), "-DCMAKE_CXX_COMPILER=g++",
+          f"-DKokkos_ROOT={_kokkos_root()}", "-DCMAKE_BUILD_TYPE=Release"], tmp_path, 600)
     _run(["cmake", "--build", str(build), "-j", str(NUM_MAKE_JOBS)], tmp_path, 1800)
     res = subprocess.run(["ctest", "--output-on-failure"], cwd=build, capture_output=True, text=True, timeout=1200)
     assert res.returncode == 0, f"ctest failed:\n{res.stdout[-6000:]}\n{res.stderr[-2000:]}"
@@ -82,10 +87,10 @@ def test_ketju_kokkos_ctests(tmp_path):
 def unit_test_exe(tmp_path_factory):
     for tool in ("cmake", "make", "mpicc", "mpicxx", "mpiexec"):
         assert shutil.which(tool), f"{tool} not on PATH (load the gcc, openmpi and cmake modules)"
-    assert (KETJU_SRC / "thirdparty" / "googletest" / "CMakeLists.txt").is_file(), "vendored googletest missing"
+    assert (KETJU_C_SRC / "thirdparty" / "googletest" / "CMakeLists.txt").is_file(), "vendored googletest missing (git submodule update --init --recursive ketju-integrator-c)"
     work = tmp_path_factory.mktemp("ketju_unit")
-    src = work / "ketju-integrator"
-    shutil.copytree(KETJU_SRC, src, ignore=shutil.ignore_patterns("bin", "lib", "build*", "*.so", "*.a"))
+    src = work / "ketju-integrator-c"
+    shutil.copytree(KETJU_C_SRC, src, ignore=shutil.ignore_patterns("bin", "lib", "build*", "*.so", "*.a"))
     build = work / "build"
     build.mkdir()
     env = dict(os.environ, CC="mpicc", CXX="mpicxx")
