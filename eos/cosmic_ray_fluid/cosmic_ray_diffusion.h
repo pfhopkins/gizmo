@@ -29,7 +29,7 @@ for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
         for(k=0;k<3;k++)
         {
             /* the flux is already known (its explicitly evolved, rather than determined by the gradient of the energy density */
-            flux_i[k] = local.CosmicRayFlux[k_CRegy][k]/V_i_phys; flux_j[k] = CellP[j].CosmicRayFlux[k_CRegy][k]/V_j_phys; // this needs to be in physical units
+            flux_i[k] = local.CosmicRayFlux[k_CRegy][k]/V_i_phys; flux_j[k] = CellP[j].CosmicRayFluxPred[k_CRegy][k]/V_j_phys; // this needs to be in physical units
             double flux_ij = 0.5*(flux_i[k] + flux_j[k]); flux_norm += flux_ij*flux_ij;
             cmag += Face_Area_Vec[k] * flux_ij; // remember, our 'flux' variable is a volume-integral; physical units here//
         }

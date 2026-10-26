@@ -907,6 +907,13 @@ endif
 endif
 endif
 
+## BUILD_UNOPTIMIZED (Config.sh): append -O0, which overrides the systype's level since the last -O wins.
+## Unoptimized codegen keeps loop variables in memory, so OpenMP data-sharing bugs that register
+## promotion hides at -O1 and above become visible.
+ifeq (BUILD_UNOPTIMIZED,$(findstring BUILD_UNOPTIMIZED,$(CONFIGVARS)))
+OPTIMIZE += -O0
+endif
+
 ## name of executable and optimizations
 EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
