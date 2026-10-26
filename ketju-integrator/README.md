@@ -202,3 +202,15 @@ by different compilers and optimizations, so in case the tests fail inspect the
 output to see if the errors in the results are only slightly over the assigned tolerances.
 
 
+
+## Origin and inclusion in GIZMO
+
+Plain copy of the Helsinki KETJU integrator (bitbucket.org/helsinkiextragalacticgroup/ketju-integrator, eb96fd0).
+We maintain a fork at github.com/Ulli1991/ketju-integrator, meant to replace this copy as a git submodule:
+`ketju-c` = C library + our fixes, `main` = C++/Kokkos MSTAR (for GIZMO's Kokkos GPU branch later).
+
+    git rm -r ketju-integrator
+    git submodule add -b ketju-c https://github.com/Ulli1991/ketju-integrator.git ketju-integrator
+    cmake -S ketju-integrator -B ketju-integrator/build -DCMAKE_BUILD_TYPE=Release && cmake --build ketju-integrator/build
+
+Local patches vs eb96fd0: CMake minimum 3.10; terminate on `gbs_kmax < 4` (`integration.c`) and on all-NaN edge weights (`mst.c`).
