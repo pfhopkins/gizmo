@@ -255,7 +255,6 @@ extern double Max_Unspawned_MassUnits_fromSink;
 
 extern long long Ntype[6];	/*!< total number of particles of each type */
 extern int NtypeLocal[6];	/*!< local number of particles of each type */
-extern gsl_rng *random_generator;	/*!< the random number generator used */
 extern int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
@@ -553,6 +552,9 @@ extern struct global_data_all_processes
     TimeBetStatistics,		/*!< simulation time interval between computations of energy statistics */
     TimeLastStatistics;		/*!< simulation time when the energy statistics was computed the last time */
   integertime NumCurrentTiStep;		/*!< counts the number of system steps taken up to this point */
+#ifdef RANDOMIZE_GRAVTREE
+  long long RandomTreeDraws;		/*!< how many random tree offsets or frame shifts have been drawn: with the time, it names each draw, so decompositions at one time differ. Lives here so a restart resumes the same sequence. */
+#endif
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
   double RandomShift[3];		/*!< current random frame translation: coordinates are stored shifted by this (mod box) and un-shifted on output */
 #endif

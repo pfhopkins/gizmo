@@ -46,7 +46,6 @@ void set_turb_ampl(void);
 int new_turbforce_needed_this_timestep(void);
 void add_turb_accel(void);
 void log_turb_temp(void);
-double get_random_number(MyIDType id);
 uint64_t particle_event_rng_key(int i);
 double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);
 double mpi_report_comittable_memory(long long BaseMem, int verbose);
@@ -441,7 +440,7 @@ double INLINE_FUNC hubble_function_external(double a);
 
 void sink_accretion(void);
 #ifdef SINK_WIND_SPAWN
-void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
+void get_random_orthonormal_basis(int i, uint64_t site_salt, uint64_t event, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
 void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>& jy, Vec3<double>& jz);
 void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir);
 double get_spawned_cell_launch_speed(int i, struct particle_data *pp);
@@ -1100,7 +1099,7 @@ void apply_excision();
 #ifdef DM_SIDM
 double prob_of_interaction(double mass, double r, double h_si, Vec3<double>&  dV, double dt);
 double g_geo(double r);
-void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m);
+void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m, uint64_t rng_key, uint64_t rng_counter_base);
 void init_geofactor_table(void);
 double geofactor_integ(double x, void * params);
 double geofactor_angle_integ(double u, void * params);

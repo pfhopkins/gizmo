@@ -119,6 +119,9 @@ void init(void)
     set_softenings();
 
     All.NumCurrentTiStep = 0;	/* setup some counters */
+#ifdef RANDOMIZE_GRAVTREE
+    All.RandomTreeDraws = 0;
+#endif
     All.DomainFacWork = 0.5; All.DomainFacLoad = 0.5; All.DomainFacWorkGas = 0.0; /* seed adaptive load-balance weights (restarts restore them from All) */
     All.SnapshotFileCount = 0;
     if(RestartFlag == 2)
@@ -319,7 +322,8 @@ void init(void)
 #endif
 #if defined(SINGLE_STAR_FB_WINDS)
             P[i].wind_mode = 0; P[i].wind_mode_time = All.Time; // wind_mode=0 triggers reset on first call; time initialised for hysteresis
-            Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(P[i].ID,nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
+            static constexpr uint64_t INITIAL_WIND_BASIS_RNG_SALT = gizmo_loop_rng_salt("initial_wind_basis");
+            Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(i, INITIAL_WIND_BASIS_RNG_SALT, 0, nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
 #if defined(GALSF_FB_FIRE_RT_LOCALRP)

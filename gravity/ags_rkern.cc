@@ -6,6 +6,7 @@
 #include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 /*! \file ags_rkern.c

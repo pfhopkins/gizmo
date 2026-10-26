@@ -7,6 +7,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 
 /*! \file domain.c
@@ -2929,9 +2930,9 @@ void domain_findExtent(void)
  * the root node costs a bit of Peano resolution per dimension and wrecks zoom load balance; they
  * translate coordinates instead (domain_apply_random_shift), keeping DomainLen == box. */
 #if defined(RANDOMIZE_GRAVTREE) && !defined(RANDOMIZE_GRAVTREE_PERIODIC)
-  double dx[3];
-  if(ThisTask == 0) { for(j = 0; j < 3; j++) {dx[j] = len * (get_random_number((MyIDType)(All.NumCurrentTiStep) * 3 + j) - 0.5); /* *3+j so the three axes draw distinct seeds: with +j alone, step N's y-shift reused step N+1's x-shift */}}
-  MPI_Bcast(dx, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+  double dx[3]; static constexpr uint64_t TREE_OFFSET_RNG_SALT = gizmo_loop_rng_salt("random_tree_offset");
+  for(j = 0; j < 3; j++) {dx[j] = len * (gizmo_gpu_rand_double((uint64_t)All.RandomTreeDraws, gizmo_rng_event_counter(TREE_OFFSET_RNG_SALT, (uint64_t)All.Ti_Current, j)) - 0.5);} /* every rank draws the same offset */
+  All.RandomTreeDraws++; /* every rank rebuilds together, so the count agrees */
   for(j=0; j<3; j++) {
       DomainCenter[j] += dx[j];
       DomainCorner[j] = DomainCenter[j] - len;
@@ -2952,15 +2953,17 @@ void domain_findExtent(void)
  *  errors between rebuilds without enlarging the root node, so DomainLen stays == box and
  *  zoom load balance is preserved. Coordinates live in the shifted frame until the next
  *  shift; All.RandomShift is subtracted back out on output (fill_write_buffer). Forces and
- *  velocities are translation-invariant, so the physics is unchanged. Drawn on rank 0 and
- *  broadcast so all ranks agree; seeding on NumCurrentTiStep keeps it restart-reproducible. */
+ *  velocities are translation-invariant, so the physics is unchanged. A function of the time
+ *  and of how many shifts came before (All.RandomTreeDraws), so every rank draws the same
+ *  shift without a broadcast and a restart resumes the sequence. */
 void domain_apply_random_shift(void)
 {
     int i, j;
     double box[3], delta[3], u[3] = {0,0,0};
     box[0] = boxSize_X; box[1] = boxSize_Y; box[2] = boxSize_Z;
-    if(ThisTask == 0) {for(j = 0; j < 3; j++) {u[j] = get_random_number((MyIDType)(All.NumCurrentTiStep) * 3 + j);}}
-    MPI_Bcast(u, 3, MPI_DOUBLE, 0, MPI_COMM_WORLD); /* every rank must agree on the frame */
+    static constexpr uint64_t FRAME_SHIFT_RNG_SALT = gizmo_loop_rng_salt("random_frame_shift");
+    for(j = 0; j < 3; j++) {u[j] = gizmo_gpu_rand_double((uint64_t)All.RandomTreeDraws, gizmo_rng_event_counter(FRAME_SHIFT_RNG_SALT, (uint64_t)All.Ti_Current, j));} /* every rank must agree on the frame */
+    All.RandomTreeDraws++; /* every rank decomposes together, so the count agrees */
 
     for(j = 0; j < 3; j++)
     {

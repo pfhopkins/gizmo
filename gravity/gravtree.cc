@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
 
 /*! \file gravtree.c

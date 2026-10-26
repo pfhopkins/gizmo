@@ -13,6 +13,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 
@@ -596,8 +597,9 @@ int split_particle_i(int i, int n_particles_split, int i_nearest, double r_neare
 
     int k; double phi,cos_theta;
     k=0;
-    phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
-    cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
+    static constexpr uint64_t SPLIT_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("split_direction");
+    phi = 2.0*M_PI*particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0); // random from 0 to 2pi //
+    cos_theta = 2.0*(particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5); // random between 1 to -1 //
     Vec3<double> dp = P[i].Pos - P[i_nearest].Pos;
     nearest_xyz(dp);
     double r_near = (r_nearest_presplit > 0) ? r_nearest_presplit : dp.norm();
@@ -795,7 +797,8 @@ int split_particle_i(int i, int n_particles_split, int i_nearest, double r_neare
         if(norm > 0)
         {
             norm = 1/sqrt(norm);
-            double qq = get_random_number(63432*k + 84*i + 99*j + 358453 + 84537*ThisTask);
+            static constexpr uint64_t SPLIT_AXIS_SIGN_RNG_SALT = gizmo_loop_rng_salt("split_axis_sign");
+            double qq = particle_random_number(i, SPLIT_AXIS_SIGN_RNG_SALT, (uint64_t)All.Ti_Current, 0);
             if(qq < 0.5) {norm *= -1.;} // randomly decide which direction along principle axis to orient split (since this is arbitrary, this helps prevent accidental collisions)
             for(k=0;k<NUMDIMS;k++) {dp[k] *= norm;}
             /* project dp onto the isodensity plane (perpendicular to grad_rho): placing daughters on the same
@@ -1521,7 +1524,11 @@ int check_if_sufficient_mergesplit_time_has_passed(int i)
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 2) || defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
     N_timesteps_fac = 30.;
 #endif
-    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * get_random_number(832LL*i + 890345645LL + 83457LL*ThisTask + 12313403LL*P[i].ID);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
+    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) /* spread initial timing out over a broader range so it doesn't all happen at once after the startup: one fixed delay per element, drawn from its identity alone so it is the same at every check */
+    {
+        static constexpr uint64_t STARTUP_DELAY_RNG_SALT = gizmo_loop_rng_salt("initial_merge_split_delay");
+        N_timesteps_fac *= 10. * gizmo_gpu_rand_double(gizmo_rng_particle_identity_key(P[i]), gizmo_rng_event_counter(STARTUP_DELAY_RNG_SALT, 0, 0));
+    }
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
     double dt_incodescale = (get_particle_timestep_in_physical(i) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit

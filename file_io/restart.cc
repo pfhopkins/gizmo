@@ -18,7 +18,7 @@
 /* Restartfile layout sentinel (see restart()). The magic distinguishes a sentinel from the leading
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
-#define RESTARTFILE_LAYOUT_VERSION 1u
+#define RESTARTFILE_LAYOUT_VERSION 2u
 struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
 
 static FILE *fd;
@@ -312,8 +312,6 @@ void restart(int modus)
 #endif
 	    }
 
-	  /* write state of random number generator */
-	  byten(gsl_rng_state(random_generator), gsl_rng_size(random_generator), modus);
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
 #ifdef TURB_DRIVING

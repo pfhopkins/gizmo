@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 /*! compute line-of-sight integrated quantities (for e.g. Lyman-alpha forest studies) */
@@ -80,7 +81,7 @@ struct line_of_sight_particles
 void lineofsight_output(void)
 {
   char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
-  int n, s, next;
+  int n, next;
   double ti;
 
   next = find_next_lineofsighttime(All.Ti_nextlineofsight);
@@ -100,9 +101,10 @@ void lineofsight_output(void)
   Los = (struct line_of_sight *) mymalloc("Los", sizeof(struct line_of_sight));
   LosGlobal = (struct line_of_sight *) mymalloc("LosGlobal", sizeof(struct line_of_sight));
 
-  for(n = 0, s = 0; n < N_LOS; n++)
+  static constexpr uint64_t LOS_PLACEMENT_RNG_SALT = gizmo_loop_rng_salt("line_of_sight_placement"); /* keyed on the line and the time: every rank places the same line */
+  for(n = 0; n < N_LOS; n++)
     {
-      Los->zaxis = (int) (3.0 * get_random_number(s++));
+      Los->zaxis = (int) (3.0 * gizmo_gpu_rand_double((uint64_t)n, gizmo_rng_event_counter(LOS_PLACEMENT_RNG_SALT, (uint64_t)All.Ti_Current, 0)));
       switch (Los->zaxis)
 	{
 	case 2:
@@ -119,8 +121,8 @@ void lineofsight_output(void)
 	  break;
 	}
 
-      Los->Xpos = All.BoxSize * get_random_number(s++);
-      Los->Ypos = All.BoxSize * get_random_number(s++);
+      Los->Xpos = All.BoxSize * gizmo_gpu_rand_double((uint64_t)n, gizmo_rng_event_counter(LOS_PLACEMENT_RNG_SALT, (uint64_t)All.Ti_Current, 1));
+      Los->Ypos = All.BoxSize * gizmo_gpu_rand_double((uint64_t)n, gizmo_rng_event_counter(LOS_PLACEMENT_RNG_SALT, (uint64_t)All.Ti_Current, 2));
 
 #ifdef OUTPUT_LINEOFSIGHT_SPECTRUM
       add_along_lines_of_sight();

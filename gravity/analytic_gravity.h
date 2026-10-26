@@ -98,10 +98,12 @@ void GravAccel_RDITestProblem()
             P[i].GravAccel[GRAV_DIRECTION_RDI] -= All.Vertical_Gravity_Strength; /* everything feels same vertical gravity */
 #if defined(GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION) /* this is a hack for this problem to prevent the bottom boundary layer of gas from detachinng in a spurious way that prevents numerical flux from propagating in the z-direction */
             if(P[i].Type==0) {
-                double h_exp = 0.05*(0.5+get_random_number(2*i+10+P[i].ID)) + 0.5 * (0.8*All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio) * All.Time*All.Time;
+                static constexpr uint64_t RDI_BOUNDARY_RNG_SALT = gizmo_loop_rng_salt("rdi_bottom_boundary_layer");
+                const double h_rand = particle_random_number(i, RDI_BOUNDARY_RNG_SALT, (uint64_t)All.Ti_Current, 0); /* one offset for both layer heights below */
+                double h_exp = 0.05*(0.5+h_rand) + 0.5 * (0.8*All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio) * All.Time*All.Time;
                 if(P[i].Pos[GRAV_DIRECTION_RDI] < h_exp) {P[i].GravAccel[GRAV_DIRECTION_RDI] = All.Vertical_Gravity_Strength * pow(1. - P[i].Pos[GRAV_DIRECTION_RDI]/h_exp, 8) + 1.;}
-                h_exp = 0.05*(0.5+get_random_number(2*i+10+P[i].ID)) + 0.5 * (1.0*All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio) * All.Time*All.Time;
-                if(P[i].Pos[GRAV_DIRECTION_RDI] < h_exp) {P[i].GravAccel[GRAV_DIRECTION_RDI] = All.Vertical_Gravity_Strength * (1.+2.*get_random_number(i+2+P[i].ID) -  P[i].Pos[2]/(0.5*h_exp));}
+                h_exp = 0.05*(0.5+h_rand) + 0.5 * (1.0*All.Vertical_Grain_Accel*All.Dust_to_Gas_Mass_Ratio) * All.Time*All.Time;
+                if(P[i].Pos[GRAV_DIRECTION_RDI] < h_exp) {P[i].GravAccel[GRAV_DIRECTION_RDI] = All.Vertical_Gravity_Strength * (1.+2.*particle_random_number(i, RDI_BOUNDARY_RNG_SALT, (uint64_t)All.Ti_Current, 1) -  P[i].Pos[2]/(0.5*h_exp));}
             }
 #endif
 #endif

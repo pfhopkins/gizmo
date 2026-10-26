@@ -6,6 +6,7 @@
 #include <time.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -304,7 +305,8 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                 {
                     /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
                      * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                    subnode = (int) (8.0 * get_random_number(P[i].ID));
+                    static constexpr uint64_t TREE_INSERT_SUBNODE_RNG_SALT = gizmo_loop_rng_salt("tree_coincident_subnode_insert");
+                    subnode = (int) (8.0 * gizmo_gpu_rand_double(gizmo_rng_combine(particle_event_rng_key(i), (uint64_t) i), gizmo_rng_event_counter(TREE_INSERT_SUBNODE_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t) th))); /* the local index separates exact duplicates; the node index gives a fresh draw at every level */
                     if(subnode >= 8) {subnode = 7;}
                 }
                 
@@ -366,7 +368,8 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                 {
                     /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
                      * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                    subnode = (int) (8.0 * get_random_number(P[th].ID));
+                    static constexpr uint64_t TREE_DISPLACE_SUBNODE_RNG_SALT = gizmo_loop_rng_salt("tree_coincident_subnode_displace");
+                    subnode = (int) (8.0 * gizmo_gpu_rand_double(gizmo_rng_combine(particle_event_rng_key(th), (uint64_t) th), gizmo_rng_event_counter(TREE_DISPLACE_SUBNODE_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t) nfree)));
                     if(subnode >= 8) {subnode = 7;}
                 }
                 
