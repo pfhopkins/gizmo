@@ -401,7 +401,7 @@ void hydro_core_meshless_compute_pair(
         if((SM_over_ceff < epsilon_entropic_eos_big && All.ComovingIntegrationOn >= 0) || (leak_vs_tol > 1))
         {
 #ifdef MAGNETIC
-            Riemann_out.P_M -= 0.5 * Riemann_out.Face_B.norm_sq();
+            Riemann_out.P_M -= Riemann_out.Face_MagneticPressure;
 #endif
             volatile int use_entropic_energy_equation = 1; /* volatile: nvc++ may otherwise fold this runtime gate to its initializer inside device code */
             double facenorm_pm = Riemann_out.P_M * Face_Area_Norm;

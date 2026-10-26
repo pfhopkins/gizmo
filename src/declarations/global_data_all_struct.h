@@ -30,6 +30,9 @@
 #include "typedefs.h"
 #include "../eos/composition_registry.h"
 #include "../math_types/vec3.h"
+#if defined(COOLING) && defined(COOL_GRACKLE)
+#include <grackle.h> /* for the code_units member below; this header is also reached without allvars.h */
+#endif
 
 /*! This structure contains data which is the SAME for all tasks (mostly code parameters read from the
  * parameter file).  Holding this data in a structure is convenient for writing/reading the restart file, and
@@ -702,6 +705,9 @@ struct global_data_all_processes
 #endif
 #endif
 
+#ifdef RANDOMIZE_GRAVTREE
+    long long RandomTreeDraws;  /*!< how many random tree offsets or frame shifts have been drawn: with the time, it names each draw, so decompositions at one time differ. Lives here so a restart resumes the same sequence. */
+#endif
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
     Vec3<double> RandomShift;   /*!< how far the coordinates presently sit from the frame the initial conditions were written in, kept in [0,box). Subtracted back out wherever a physical coordinate is reported. Lives here so a restart resumes in the frame it stopped in. */
 #endif

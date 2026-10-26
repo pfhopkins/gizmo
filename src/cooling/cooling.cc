@@ -1000,9 +1000,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(COOL_GRACKLE) && !defined(GALSF_EFFECTIVE_EQS)
-    double LambdaNet = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1);
-    if(LambdaNet >= 0) LambdaNet = 0.0;
-    return LambdaNet / UNIT_TIME_IN_CGS;
+    double t_grackle = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1); /* Grackle's cooling time, in code units: negative for net cooling, positive for net heating */
+    if(t_grackle >= 0) {return 0;} /* net heating */
+    return -t_grackle;
 #else
     rho *= UNIT_DENSITY_IN_CGS;	/* convert to physical cgs units */
     u_old *= UNIT_SPECEGY_IN_CGS;
@@ -1019,8 +1019,8 @@ double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval
 double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(COOL_GRACKLE) && !defined(GALSF_EFFECTIVE_EQS)
-    double tcool = GetCoolingTime(u_old, rho, ne_guess, ne_eval, target, pp, cell); /* the Grackle interface gives only the cooling time */
-    return (tcool != 0) ? u_old / tcool : 0;
+    double t_grackle = CallGrackle(u_old, rho, 0.0, ne_guess, target, 1); /* Grackle's signed cooling time u/(du/dt), in code units */
+    return (t_grackle != 0) ? -u_old / t_grackle : 0;
 #else
     rho *= UNIT_DENSITY_IN_CGS;	/* convert to physical cgs units */
     double u_cgs = u_old * UNIT_SPECEGY_IN_CGS;

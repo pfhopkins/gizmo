@@ -7,15 +7,17 @@
  * across runs with the same (key, counter) inputs.
  *
  * Intended usage:
- *   - key:     per-particle identity, typically `P[i].ID` (MyIDType → uint64).
- *   - counter: a per-call stream identifier, typically constructed as
- *              `(All.Ti_Current << 8) | tag`, where `tag` is a small
- *              per-kernel nibble selecting an independent sub-stream
- *              (e.g. 0 = SIDM scatter direction, 1 = CBE basis split,
- *              2 = sink stochastic accretion, ...). This guarantees that
- *              different kernels sample independent streams from the same
- *              particle without correlation across kernel calls on the same
- *              timestep, and different timesteps give fresh streams.
+ *   - key:     whose draw it is. For one particle, gizmo_rng_particle_event_key(P[i])
+ *              (identity, type, single-precision position).
+ *   - counter: which draw, gizmo_rng_event_counter(SALT, event, draw_index): SALT =
+ *              gizmo_loop_rng_salt("<call site>") names the kind of event, `event` is
+ *              when it happens (Ti_Current, or 0 for a draw that must not change with
+ *              time), `draw_index` which of the event's numbers this is. Each field is
+ *              folded in separately (gizmo_rng_combine); additive or shifted counters
+ *              are not used for new draws, since they collide (draw k of one stream is
+ *              draw k-1 of the next).
+ *   The device pair draws (SIDM, AGS, sink feed, radiation-pressure pair gate) build
+ *   their counters as (Ti_Current << 32) ^ SALT ^ tag, keyed on both particles.
  *
  * Statistical quality: SplitMix64 passes BigCrush. Sufficient for all
  * stochastic physics in GIZMO (scattering directions, stochastic accretion,
@@ -101,6 +103,32 @@ GIZMO_RNG_INLINE double gizmo_gpu_rand_range(uint64_t key, uint64_t counter, dou
 }
 
 
+/* Fold one more value into a running hash. A tuple (identity, call site, event, draw, ...) is hashed one field at
+   a time, which keeps distinct tuples apart; additive offsets do not (with ID+k, draw k of one particle is draw k-1
+   of the next). */
+GIZMO_RNG_INLINE uint64_t gizmo_rng_combine(uint64_t state, uint64_t value)
+{
+    return gizmo_gpu_splitmix64(state ^ value);
+}
+
+
+/* The stochastic identity of a particle: its ID, the child number a split assigns, and the split generation.
+   Split daughters keep their parent's ID, so all three are needed to tell them apart. */
+GIZMO_RNG_INLINE uint64_t gizmo_rng_particle_identity(uint64_t id, uint64_t child_number, uint64_t generation)
+{
+    return gizmo_rng_combine(gizmo_rng_combine(gizmo_rng_combine(0, generation), child_number), id);
+}
+
+
+/* The counter of one random event: what kind of event (`site_salt`, gizmo_loop_rng_salt of a name per call
+   site), when (`event`: the integer time Ti_Current, or 0 for a draw that must not change with time), and which
+   of the numbers the event needs (`draw_index`). */
+GIZMO_RNG_INLINE uint64_t gizmo_rng_event_counter(uint64_t site_salt, uint64_t event, uint64_t draw_index)
+{
+    return gizmo_rng_combine(gizmo_rng_combine(site_salt, event), draw_index);
+}
+
+
 /* Compile-time FNV-1a 64-bit hash of a loop-name string. Used to derive a
  * per-loop salt that gets XOR-mixed into the counter base of every RNG draw
  * inside that loop. Rationale: counter-based RNG keyed only on
@@ -112,7 +140,7 @@ GIZMO_RNG_INLINE double gizmo_gpu_rand_range(uint64_t key, uint64_t counter, dou
  *
  * Use as:
  *   static constexpr uint64_t MY_LOOP_RNG_SALT = gizmo_loop_rng_salt("my_loop");
- *   uint64_t counter = ((uint64_t)Ti_Current << 32) ^ MY_LOOP_RNG_SALT ^ tag;
+ *   uint64_t counter = gizmo_rng_event_counter(MY_LOOP_RNG_SALT, Ti_Current, draw_index);
  *
  * Constexpr → resolved at compile time, zero runtime cost, human-legible
  * (the source-of-truth string "my_loop" lives next to the constant).
@@ -170,6 +198,26 @@ GIZMO_RNG_INLINE uint64_t gizmo_gpu_rand_poisson(uint64_t key, uint64_t counter,
     }
     double x = gizmo_gpu_rand_gaussian(key, counter) * sqrt(lambda) + lambda;
     return (x > 0) ? (uint64_t)(x + 0.5) : 0;
+}
+
+/* The random-number key of one particle that stays fixed while it moves: its identity and its type. It
+   changes only when the particle's type, child number or generation does, and so serves draws that must
+   not change from step to step. Works on any particle structure carrying these fields. */
+template <class Particle>
+GIZMO_RNG_INLINE uint64_t gizmo_rng_particle_identity_key(const Particle &p)
+{
+    return gizmo_rng_combine(gizmo_rng_particle_identity((uint64_t) p.ID, (uint64_t) p.ID_child_number, (uint64_t) p.ID_generation), (uint64_t) p.Type);
+}
+
+/* The random-number key of one particle at the current instant: its identity key and its position at
+   single precision. The position separates particles that share an identity (spawned wind cells all carry
+   one ID; an initial condition can hold duplicates); at single precision, the round-off by which the same
+   particle's position differs between runs on different numbers of ranks changes the key only rarely (when
+   it crosses a single-precision boundary). */
+template <class Particle>
+GIZMO_RNG_INLINE uint64_t gizmo_rng_particle_event_key(const Particle &p)
+{
+    return gizmo_rng_combine(gizmo_rng_particle_identity_key(p), gizmo_position_mix((float) p.Pos[0], (float) p.Pos[1], (float) p.Pos[2]));
 }
 
 #endif /* GIZMO_GPU_RNG_H */

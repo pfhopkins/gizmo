@@ -237,7 +237,7 @@ KOKKOS_INLINE_FUNCTION void gpu_morton_split_8way(const int       *sorted_idx,
 /* In-place reshuffle of a sorted_idx range using random per-particle octants
  * (collocation handler).  Mirrors CPU forcetree.cc:267-273 random subnode
  * assignment when Nodes[th].len < EPSILON_FOR_TREERND_SUBNODE_SPLITTING *
- * split_scale: each particle gets a random octant from get_random_number(P[i].ID).
+ * split_scale: each particle gets a random octant keyed on its ID.
  *
  *   sorted_idx_range[0..count) -- in-place: read particle indices, write
  *                                 reshuffled by random octant.

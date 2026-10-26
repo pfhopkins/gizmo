@@ -5,6 +5,7 @@
 #include <time.h>
 #include "../../declarations/allvars.h"
 #include "../../core/proto.h"
+#include "../../declarations/gpu_rng.h"
 #include "../../mesh/kernel.h"
 /*!
 * This file was originally part of the GADGET3 code developed by Volker Springel.
@@ -157,7 +158,8 @@ int subfind_loctree_treebuild(int npart, struct unbind_data *mp)
           if(nfreep->len < 3.e-4 * ForceSoftening_KernelRadius(th))
           {
               /* seems like we're dealing with particles at identical locations. randomize subnode index (well below gravitational softening scale) */
-              subnode = (int) (8.0 * get_random_number(nfree));
+              static constexpr uint64_t COINCIDENT_SUBNODE_RNG_SALT = gizmo_loop_rng_salt("subfind_coincident_subnode");
+              subnode = (int) (8.0 * gizmo_gpu_rand_double(gizmo_rng_combine(particle_event_rng_key(th), (uint64_t) th), gizmo_rng_event_counter(COINCIDENT_SUBNODE_RNG_SALT, 0, (uint64_t) nfree))); /* the local index separates exact duplicates (same identity, same point) */
               if(subnode >= 8) {subnode = 7;}
           }
 

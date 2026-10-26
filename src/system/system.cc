@@ -12,6 +12,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 /*! various routines are collected here, needed to communicate with the 
  *  actual system, stdin/out, abort runs, etc
@@ -27,10 +28,19 @@
  */
 
 
-/* get random number -- old format took ID as seed to generate reliably identical numbers from a table, but this is not safe for large simulations */
-double get_random_number(MyIDType id)
+/* random-number key of particle i at the current instant (gizmo_rng_particle_event_key) */
+uint64_t particle_event_rng_key(int i)
 {
-    return gizmo_rng_uniform(&random_generator);
+    return gizmo_rng_particle_event_key(P[i]);
+}
+
+/* uniform random number in [0,1) for one random event of particle i: site_salt names the kind of event, event says when it
+   happens (All.Ti_Current, or 0 at initialization), draw_index which of the event's numbers this is. It depends only on the
+   particle's state (identity and single-precision position), never on which rank or thread draws it: runs with different rank
+   counts draw the same numbers for as long as that state agrees. */
+double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index)
+{
+    return gizmo_gpu_rand_double(particle_event_rng_key(i), gizmo_rng_event_counter(site_salt, event, draw_index));
 }
 
 /* returns the number of cpu-ticks in seconds that have elapsed. (or the wall-clock time) */

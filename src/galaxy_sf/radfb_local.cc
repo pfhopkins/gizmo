@@ -6,6 +6,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 /* this file handles the FIRE short-range radiation-pressure and
@@ -107,11 +108,40 @@
  * "how do we collect each source's candidate gas list" from "the greedy
  * ionization physics." */
 struct HIISourcePrep {
-    int    i;          /* source particle index */
-    double dt;         /* per-source physical timestep */
-    double stellum;    /* effective ionizing luminosity (chimes-aware) */
-    double R_for_NL;   /* per-source max search radius (1.26·RHIIMAX, h-clamped) */
+    int    i;            /* source particle index */
+    double dt;           /* per-source physical timestep */
+    double mionizable;   /* gas mass this source can ionize this step */
+    double RHII_initial; /* starting Stromgren radius, limited to [0.3 h, RHIIMAX] */
+    double RHIIMAX;      /* maximum search radius, limited to [2 h, 10 h] */
+    double prandom;      /* the source's one random number: the gate below and the partial-ionization draws */
+    double R_for_NL;     /* per-source max search radius (1.26·RHIIMAX, h-clamped) */
 };
+
+/* Fills the per-source HII quantities, in the order of the original algorithm: the ionizable mass comes from the
+ * unlimited Stromgren radius, the radius is limited afterwards. Draws the source's single random number and
+ * returns whether the source can ionize anything of interest this step. */
+static int hii_prepare_source(int i, double dt, double stellum, HIISourcePrep& src)
+{
+    double rho = P[i].DensityAroundParticle, h_i = P[i].KernelRadius;
+    double RHII = 4.78e-9 * pow(stellum, 0.333) * pow(rho*All.cf_a3inv*UNIT_DENSITY_IN_CGS, -0.66667);
+    RHII /= All.cf_atime * UNIT_LENGTH_IN_CGS;
+    double RHIIMAX = 2. * 240.0 * pow(stellum, 0.5) / (All.cf_atime*UNIT_LENGTH_IN_CGS);
+    if(RHIIMAX < 2.0*h_i)  RHIIMAX = 2.0*h_i;
+    if(RHIIMAX > 10.0*h_i) RHIIMAX = 10.0*h_i;
+    double mionizable = VOLUME_NORM_COEFF_FOR_NDIMS * rho * RHII*RHII*RHII;
+    double M_ionizing_emitted = (3.05e10 * PROTONMASS_CGS) * stellum * (dt * UNIT_TIME_IN_CGS);
+    mionizable = DMIN(mionizable, M_ionizing_emitted/UNIT_MASS_IN_CGS);
+    if(RHII > RHIIMAX)   RHII = RHIIMAX;
+    if(RHII < 0.3*h_i)   RHII = 0.3*h_i;
+
+    src.i = i; src.dt = dt;
+    src.mionizable = mionizable; src.RHII_initial = RHII; src.RHIIMAX = RHIIMAX;
+    static constexpr uint64_t HII_SOURCE_RNG_SALT = gizmo_loop_rng_salt("hii_region_source");
+    src.prandom = particle_random_number(i, HII_SOURCE_RNG_SALT, (uint64_t)All.Ti_Current, 0);
+    src.R_for_NL = 1.26 * RHIIMAX; /* covers the full RHII expansion */
+    if(src.R_for_NL < 0.5*h_i) src.R_for_NL = 0.5*h_i;
+    return (src.prandom < 5.0*mionizable/P[i].Mass); /* above this the source cannot ionize anything of interest */
+}
 
 /* Output counters. Filled by the pre-pass (census fields) + the greedy helper
  * (ionization fields). Top-level MPI_Reduce reads this. */
@@ -136,27 +166,11 @@ static void hii_greedy_ionize_source(const HIISourcePrep& src,
     const int MAX_N_ITERATIONS_HIIFB = 5;
     int    i        = src.i;
     double dt       = src.dt;
-    double stellum  = src.stellum;
     Vec3<double> pos = P[i].Pos;
     double rho      = P[i].DensityAroundParticle;
     double h_i      = P[i].KernelRadius;
-
-    double RHII = 4.78e-9 * pow(stellum, 0.333) * pow(rho*All.cf_a3inv*UNIT_DENSITY_IN_CGS, -0.66667);
-    RHII /= All.cf_atime * UNIT_LENGTH_IN_CGS;
-    double RHIIMAX = 2. * 240.0 * pow(stellum, 0.5) / (All.cf_atime*UNIT_LENGTH_IN_CGS);
-    if(RHIIMAX < 2.0*h_i)  RHIIMAX = 2.0*h_i;
-    if(RHIIMAX > 10.0*h_i) RHIIMAX = 10.0*h_i;
-    double mionizable = VOLUME_NORM_COEFF_FOR_NDIMS * rho * RHII*RHII*RHII;
-    double M_ionizing_emitted = (3.05e10 * PROTONMASS_CGS) * stellum * (dt * UNIT_TIME_IN_CGS);
-    mionizable = DMIN(mionizable, M_ionizing_emitted/UNIT_MASS_IN_CGS);
-    if(RHII > RHIIMAX)   RHII = RHIIMAX;
-    if(RHII < 0.3*h_i)   RHII = 0.3*h_i;
-    double RHII_initial = RHII;
-    double prandom = get_random_number(P[i].ID + 7);
-
-    /* Defense-in-depth gate (already enforced in the pre-pass; preserved here
-     * to match current per-source semantics exactly). */
-    if(prandom >= 5.0*mionizable/P[i].Mass) return;
+    const double mionizable = src.mionizable, RHIIMAX = src.RHIIMAX, RHII_initial = src.RHII_initial, prandom = src.prandom;
+    double RHII = RHII_initial;
 
     double mionized = 0.0, mion_actual = 0.0;
     int    jnearest = -1; double rnearest = MAX_REAL_NUMBER;
@@ -417,9 +431,9 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 
     /* Pre-pass: identify candidate sources, accumulate census diagnostics for
      * ALL ionizing candidates (preserves total_N_ionizing_part semantics as a
-     * source-population census, not a stochastic sample count), apply the
-     * deterministic prandom<5*mionizable/Mass filter, and stage per-source
-     * (dt, stellum, R_for_NL) for the provider + helper. */
+     * source-population census, not a stochastic sample count), keep the
+     * sources that pass the prandom<5*mionizable/Mass gate, and stage their
+     * quantities (hii_prepare_source) for the provider + helper. */
     for(int ip : ActiveParticleList) {
 #ifdef SINK_HII_HEATING
         if(!((P[ip].Type == 5) || is_galsf_stellar_candidate_type(P[ip].Type, All.ComovingIntegrationOn))) continue;
@@ -438,40 +452,15 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 #endif
         if(stellum_i <= 0) continue;
         if(P[ip].KernelRadius <= 0 || P[ip].DensityAroundParticle <= 0) continue;
-        double h_local = P[ip].KernelRadius;
 
         /* Census diagnostics for ALL ionizing candidates (before stochastic gate). */
         stats.total_N_ionizing_part += 1;
         stats.total_Ndot_ionizing   += stellum_i * (3.05e10/HYDROGEN_MASSFRAC);
 
-        /* Deterministic prandom prefilter — same formula as the per-source helper.
-         * Sources that fail this contribute ZERO work in the helper (helper has
-         * the same gate as defense-in-depth). Filtering here keeps the NL build
-         * tight; get_random_number(ID+7) is deterministic so identical prandom
-         * is seen in the helper. */
-        {
-            double rho_i = P[ip].DensityAroundParticle;
-            double RHII_i = 4.78e-9*pow(stellum_i,0.333)*pow(rho_i*All.cf_a3inv*UNIT_DENSITY_IN_CGS,-0.66667) / (All.cf_atime*UNIT_LENGTH_IN_CGS);
-            double RHIIMAX_i = 2.*240.0*pow(stellum_i,0.5)/(All.cf_atime*UNIT_LENGTH_IN_CGS);
-            if(RHIIMAX_i < 2.0*h_local)  RHIIMAX_i = 2.0*h_local;
-            if(RHIIMAX_i > 10.0*h_local) RHIIMAX_i = 10.0*h_local;
-            if(RHII_i > RHIIMAX_i) RHII_i = RHIIMAX_i;
-            if(RHII_i < 0.3*h_local) RHII_i = 0.3*h_local;
-            double mion_i = VOLUME_NORM_COEFF_FOR_NDIMS*rho_i*RHII_i*RHII_i*RHII_i;
-            double M_emit = (3.05e10*PROTONMASS_CGS)*stellum_i*(dt_i*UNIT_TIME_IN_CGS)/UNIT_MASS_IN_CGS;
-            mion_i = DMIN(mion_i, M_emit);
-            double prandom_i = get_random_number(P[ip].ID + 7);
-            if(prandom_i >= 5.0*mion_i/P[ip].Mass) continue;
-        }
-
-        /* Per-source max search radius (covers full RHII expansion to 1.26·RHIIMAX). */
-        double RHIIMAX_l = 2. * 240.0*pow(stellum_i, 0.5) / (All.cf_atime * UNIT_LENGTH_IN_CGS);
-        if(RHIIMAX_l < 2.0*h_local)  RHIIMAX_l = 2.0*h_local;
-        if(RHIIMAX_l > 10.0*h_local) RHIIMAX_l = 10.0*h_local;
-        double R_for_NL = 1.26 * RHIIMAX_l;
-        if(R_for_NL < 0.5*h_local) R_for_NL = 0.5*h_local;
-
-        HIISourcePrep pp; pp.i = ip; pp.dt = dt_i; pp.stellum = stellum_i; pp.R_for_NL = R_for_NL;
+        /* Sources that cannot ionize anything of interest contribute no work; their quantities and their one
+         * random number are carried to the ionization step, which uses them unchanged. */
+        HIISourcePrep pp;
+        if(!hii_prepare_source(ip, dt_i, stellum_i, pp)) continue;
         src.push_back(pp);
     }
 

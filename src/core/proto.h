@@ -39,7 +39,8 @@ void set_turb_ampl(void);
 int new_turbforce_needed_this_timestep(void);
 void add_turb_accel(void);
 void log_turb_temp(void);
-double get_random_number(MyIDType id);
+uint64_t particle_event_rng_key(int i);
+double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);
 double mpi_report_comittable_memory(long long BaseMem, int verbose);
 int report_node_memory_headroom(long long *avail_kb, long long *commit_headroom_kb);
 int gizmo_node_headroom_admits(long long bytes_this_rank);
@@ -55,7 +56,7 @@ int does_particle_need_to_be_merged(int i);
 int does_particle_need_to_be_split(int i);
 double target_mass_renormalization_factor_for_mergesplit(int i, int split_key);
 #if defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT) || defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
-int check_if_sufficient_mergesplit_time_has_passed(int i, gizmo_rng_t *rng);
+int check_if_sufficient_mergesplit_time_has_passed(int i);
 int is_particle_a_special_zoom_target(int i);
 #endif
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_TAG_ANCHOR
@@ -596,7 +597,7 @@ double Get_CosmicRayGradientLength(int i, int k_CRegy, struct particle_data *pp,
 GIZMO_GPU_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
-GIZMO_GPU_FUNCTION void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct particle_data *pp, struct gas_cell_data *cell);
+GIZMO_GPU_FUNCTION void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct particle_data *pp, struct gas_cell_data *cell, int mode);
 GIZMO_GPU_FUNCTION double evaluate_cr_transport_reductionfactor(int target, int k_CRegy, int mode, struct gas_cell_data *cell);
 double Get_AlfvenMachNumber_Local(int i, double vA_idealMHD_codeunits, int use_shear_corrected_vturb_flag, struct gas_cell_data *cell);
 double diffusion_coefficient_constant(int target, int k_CRegy, struct gas_cell_data *cell);
@@ -676,7 +677,7 @@ double INLINE_FUNC hubble_function_external(double a);
 
 void sink_accretion(void);
 #ifdef SINK_WIND_SPAWN
-void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
+void get_random_orthonormal_basis(int i, uint64_t site_salt, uint64_t event, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz);
 void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<double>& ny, Vec3<double>& nz, Vec3<double>& veldir, Vec3<double>& dpdir);
 double get_spawned_cell_launch_speed(int i, struct particle_data *pp);
 #ifdef MAGNETIC

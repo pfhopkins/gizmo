@@ -311,8 +311,9 @@ void hydro_accumulate_neighbor(
     /* Per-pair physics sub-modules. Functions guard their bodies with the
        relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
     double face_density_for_diffusion = 0;
-#if defined(SAVE_FACE_DENSITY) && !defined(HYDRO_SPH)
-    face_density_for_diffusion = Riemann_out.Face_Density;
+#if defined(TURB_DIFFUSION) && !defined(HYDRO_SPH)
+    /* the reconstructed face densities of the two sides, averaged: the same value from either side of the pair */
+    face_density_for_diffusion = 0.5 * (Riemann_vec.L.rho + Riemann_vec.R.rho);
 #endif
 #if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
     /* 2-T plasma bit 2: capture the conduction-only contribution to Fluxes.p
@@ -329,9 +330,9 @@ void hydro_accumulate_neighbor(
                            Face_Area_Vec, Face_Area_Norm, v_hll, bhat, bhat_mag,
                            dt_hydrostep, Fluxes);
     turb_diff_metals_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                  face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+                                  face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
     chimes_turb_diff_ions_compute_pair(local, P[j], CellP[j], kernel, rinv, Face_Area_Vec, Face_Area_Norm,
-                                       face_density_for_diffusion, v_hll, dt_hydrostep, mdot_estimated, out);
+                                       face_density_for_diffusion, v_hll, dt_hydrostep, dt_hydrostep_i, mdot_estimated, out);
     {
         /* Riemann_out / face_area_dot_vel exist only under !HYDRO_SPH; local
            shims default to zero so the function signature stays the same. */

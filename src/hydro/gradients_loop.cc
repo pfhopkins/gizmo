@@ -656,7 +656,7 @@ void hydro_gradient_calc(void)
                         dbgrad += 2. * dh * fabs(b0 * CellP[i].Gradients.B[k][k1]);
                     }
                 }
-                dbmax /= dbgrad;
+                dbmax = (dbgrad > 0) ? dbmax / dbgrad : MAX_REAL_NUMBER; /* no field-gradient term (e.g. B=0): only the ordinary slope limit below applies */
                 for(k1 = 0; k1 < 3; k1++) {
                     double d_abs = CellP[i].Gradients.B[k1].norm_sq();
                     if(d_abs > 0) {
@@ -858,9 +858,13 @@ void hydro_gradient_calc(void)
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
         {
             double ngb_eff = pow(P[i].NumNgb, NUMDIMS);
+            int softening_is_free = (P[i].KernelRadius > All.ForceSoftening[0]); /* at the softening floor the radius does not vary with the density */
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) && defined(ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT)
+            if(P[i].KernelRadius >= ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT/All.cf_atime) {softening_is_free = 0;} /* nor at the hard upper limit */
+#endif
             if((fabs(ngb_eff - All.DesNumNgb) / All.DesNumNgb < 0.05)
                && (P[i].KernelRadius > 1.001 * All.MinKernelRadius)
-               && (P[i].KernelRadius < 0.999 * All.MaxKernelRadius)) {
+               && (P[i].KernelRadius < 0.999 * All.MaxKernelRadius) && softening_is_free) {
                 double ndenNGB = ngb_eff / (VOLUME_NORM_COEFF_FOR_NDIMS * pow(P[i].KernelRadius, NUMDIMS));
                 P[i].AGS_zeta *= P[i].Mass * P[i].KernelRadius / (NUMDIMS * ndenNGB) * P[i].DrkernNgbFactor;
             } else {

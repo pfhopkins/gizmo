@@ -239,7 +239,6 @@ extern double Max_Unspawned_MassUnits_fromSink;
 
 extern long long Ntype[6];	/*!< total number of particles of each type */
 extern int NtypeLocal[6];	/*!< local number of particles of each type */
-extern gizmo_rng_t random_generator;	/*!< the random number generator used */
 extern int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */

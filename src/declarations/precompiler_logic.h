@@ -1186,6 +1186,8 @@
 
 #ifdef RT_CHEM_PHOTOION
 #define RT_BAND_IS_IONIZING(k) ((k==RT_FREQ_BIN_H0) || (k==RT_FREQ_BIN_He0) || (k==RT_FREQ_BIN_He1) || (k==RT_FREQ_BIN_He2))
+#else
+#define RT_BAND_IS_IONIZING(k) (0) /* no ionizing bands without photo-ionization chemistry */
 #endif
 
 #ifndef GALSF_FB_FIRE_RT_LONGRANGE

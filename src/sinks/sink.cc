@@ -465,14 +465,16 @@ void set_sink_mdot(int i, int n, double dt)
     {
         omega_ri=sqrt(All.G*P[n].DensityAroundParticle*All.cf_a3inv); /* dynamical frequency in physical units */
         n0_sgrid_elements=10.0; norm_subgrid=0.55*3.256/sqrt(n0_sgrid_elements);
-        nsubgridvar=(long)P[n].ID + (long)(All.Time/((All.TimeMax-All.TimeBegin)/1000.));
-        /* this line just allows 'resetting' the time constants every so often, while generally keeping them steady */
+        nsubgridvar=(long)(All.Time/((All.TimeMax-All.TimeBegin)/1000.));
+        /* this line just allows 'resetting' the time constants every so often, while generally keeping them steady: the draws below depend only on the sink's identity and this interval */
+        static constexpr uint64_t SUBGRID_PHASE_RNG_SALT = gizmo_loop_rng_salt("sink_subgrid_variability_phase"), SUBGRID_AMPLITUDE_RNG_SALT = gizmo_loop_rng_salt("sink_subgrid_variability_amplitude");
+        const uint64_t subgrid_key = gizmo_rng_particle_identity((uint64_t)P[n].ID, (uint64_t)P[n].ID_child_number, 0); /* not the generation: a sink advances it with every cell it spawns */
         double fac;
         if(All.ComovingIntegrationOn) {fac=omega_ri * (evaluate_time_since_t_initial_in_Gyr(0.001)/(UNIT_TIME_IN_GYR));} else {fac=omega_ri * All.Time;} /* All.Time is physical time, this is good */
         if(n0_sgrid_elements >= 1) {
             for(jsub=1;jsub<=n0_sgrid_elements;jsub++) {
-                varsg1=gizmo_gpu_rand_double((uint64_t)nsubgridvar, (uint64_t)jsub);
-                varsg2=gizmo_gpu_rand_gaussian((uint64_t)nsubgridvar, (uint64_t)(100+jsub));
+                varsg1=gizmo_gpu_rand_double(subgrid_key, gizmo_rng_event_counter(SUBGRID_PHASE_RNG_SALT, (uint64_t)nsubgridvar, (uint64_t)jsub));
+                varsg2=gizmo_gpu_rand_gaussian(subgrid_key, gizmo_rng_event_counter(SUBGRID_AMPLITUDE_RNG_SALT, (uint64_t)nsubgridvar, (uint64_t)jsub));
                 time_var_subgridvar=fac*pow(omega_ri*dt,-((float)jsub)/n0_sgrid_elements) + 2.*M_PI*varsg1;
                 mdot *= exp( norm_subgrid*cos(time_var_subgridvar)*varsg2 );
             }}

@@ -234,7 +234,6 @@ void begrun(void)
 
 
 
-  gizmo_rng_init(&random_generator, (uint64_t)(42 + ThisTask));
 
 #ifdef PMGRID
   if(RestartFlag != 3 && RestartFlag != 4) {long_range_init();}

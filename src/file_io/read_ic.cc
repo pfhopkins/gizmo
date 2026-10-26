@@ -482,6 +482,63 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        /* Grackle species: on a snapshot restart they continue from the file (a fresh start sets them in init()) */
+        case IO_grHI:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHI = *fp++;}
+#endif
+            break;
+        case IO_grHII:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHII = *fp++;}
+#endif
+            break;
+        case IO_grHM:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHM = *fp++;}
+#endif
+            break;
+        case IO_grHeI:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHeI = *fp++;}
+#endif
+            break;
+        case IO_grHeII:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHeII = *fp++;}
+#endif
+            break;
+        case IO_grHeIII:
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHeIII = *fp++;}
+#endif
+            break;
+        case IO_grH2I:
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grH2I = *fp++;}
+#endif
+            break;
+        case IO_grH2II:
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grH2II = *fp++;}
+#endif
+            break;
+        case IO_grDI:
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grDI = *fp++;}
+#endif
+            break;
+        case IO_grDII:
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grDII = *fp++;}
+#endif
+            break;
+        case IO_grHDI:
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            for(n = 0; n < pc; n++) {CellP[offset + n].grHDI = *fp++;}
+#endif
+            break;
+
 
         case IO_KERNELRADIUS:		/* gas kernel length */
             for(n = 0; n < pc; n++) {P[offset + n].KernelRadius = *fp++;}
@@ -1015,17 +1072,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_ACRB:
         case IO_VSTURB_DISS:
         case IO_VSTURB_DRIVE:
-        case IO_grHI:
-        case IO_grHII:
-        case IO_grHM:
-        case IO_grHeI:
-        case IO_grHeII:
-        case IO_grHeIII:
-        case IO_grH2I:
-        case IO_grH2II:
-        case IO_grDI:
-        case IO_grDII:
-        case IO_grHDI:
         case IO_TURB_DIFF_COEFF:
         case IO_DYNERROR:
         case IO_DYNERRORDEFAULT:

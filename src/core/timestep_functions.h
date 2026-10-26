@@ -1030,7 +1030,7 @@ void apply_special_boundary_conditions_body(Motion &a, double mass_for_dp, int m
             if((reflect_lower && x < wall_gap) || (reflect_upper && L - x < wall_gap))
             {
                 const struct particle_data &s = a.stored();
-                const uint64_t key = gizmo_gpu_splitmix64((uint64_t) s.ID ^ gizmo_gpu_splitmix64((uint64_t) s.ID_child_number ^ gizmo_gpu_splitmix64((uint64_t) s.ID_generation)));
+                const uint64_t key = gizmo_rng_particle_identity((uint64_t) s.ID, (uint64_t) s.ID_child_number, (uint64_t) s.ID_generation);
                 const int face = (reflect_lower && x < wall_gap) ? 0 : 1;
                 const uint64_t counter = gizmo_gpu_splitmix64(((uint64_t) ti_target) ^ SPECIAL_BOUNDARY_RNG_SALT) + (uint64_t)(6 * crossings + 2 * j + face);
                 const double offset = wall_gap * (0.5 + gizmo_gpu_rand_double(key, counter));

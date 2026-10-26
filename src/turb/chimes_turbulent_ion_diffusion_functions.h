@@ -6,9 +6,10 @@
  * Writes out.ChimesIonsYield[k] (i-side, no atomic needed). j-side writes to
  * CellP[j].ChimesNIons have been removed — the original fragment applied them
  * unconditionally under #pragma omp atomic, but the net transfer was gated on
- * legacy j_is_active_for_fluxes behaviour (dead-code in modern GIZMO); the
- * i-side accumulation alone already conserves in the symmetric neighbor-list
- * pattern, since each particle evaluates every pair from its own side.
+ * legacy j_is_active_for_fluxes behaviour (dead-code in modern GIZMO). Each
+ * particle evaluates every pair from its own side and applies the exchange for
+ * its own step: the limiters bound the amount over the pair step
+ * dt_pair = max(dt_i, dt_j), and cell i receives the fraction dt_i/dt_pair of it.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -31,7 +32,8 @@ void chimes_turb_diff_ions_compute_pair(
     double Face_Area_Norm,
     double Face_Density,
     double v_hll,
-    double dt_hydrostep,
+    double dt_pair,
+    double dt_i,
     double mdot_estimated,
     struct hydro_data_out &out)
 {
@@ -45,12 +47,13 @@ void chimes_turb_diff_ions_compute_pair(
 #else
     diffusion_wt *= Face_Density;
 #endif
-    double massflux = fabs( Face_Area_Norm * diffusion_wt / (DMIN(kernel.h_i, kernel.h_j) * All.cf_atime) * dt_hydrostep / (DMIN(local.Mass, Pj.Mass)) );
+    double massflux = fabs( Face_Area_Norm * diffusion_wt / (DMIN(kernel.h_i, kernel.h_j) * All.cf_atime) * dt_pair / (DMIN(local.Mass, Pj.Mass)) );
     if(massflux > 0.25) { diffusion_wt *= 0.25 / massflux; }
 
     double rho_i = local.Density * All.cf_a3inv;
     double rho_j = CPj.Density * All.cf_a3inv;
     double rho_ij = 0.5 * (rho_i + rho_j);
+    const double dt_fraction_i = (dt_pair > 0) ? dt_i / dt_pair : 0; /* cell i receives the amount for its own step */
 
     for(int k_species=0; k_species<ChimesGlobalVars.totalNumberOfSpecies; k_species++)
     {
@@ -78,17 +81,17 @@ void chimes_turb_diff_ions_compute_pair(
         double f_direct = Face_Area_Norm * d_scalar * rinv / All.cf_atime;
         if((f_direct*cmag < 0) && (fabs(f_direct) > HLL_DIFFUSION_OVERSHOOT_FACTOR*fabs(cmag))) { cmag = 0; }
 
-        cmag *= -diffusion_wt * dt_hydrostep;
+        cmag *= -diffusion_wt * dt_pair;
         if(fabs(cmag) > 0)
         {
             double zlim = 0.25 * DMIN( DMIN(local.Mass, Pj.Mass)*fabs(d_scalar),
                                        DMAX(local_abundance_times_mass, external_abundance_times_mass) );
             if(fabs(cmag) > zlim) { cmag *= zlim / fabs(cmag); }
 #ifndef HYDRO_SPH
-            double dmet = ((external_abundance_times_mass/Pj.Mass) - (local_abundance_times_mass/local.Mass)) * fabs(mdot_estimated) * dt_hydrostep;
+            double dmet = ((external_abundance_times_mass/Pj.Mass) - (local_abundance_times_mass/local.Mass)) * fabs(mdot_estimated) * dt_pair;
             cmag = MINMOD(dmet, cmag);
 #endif
-            out.ChimesIonsYield[k_species] += cmag;
+            out.ChimesIonsYield[k_species] += cmag * dt_fraction_i;
         }
     }
 #endif /* CHIMES_TURB_DIFF_IONS */

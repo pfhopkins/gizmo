@@ -15,6 +15,7 @@
 #include "../system/gpu_particles_arena.h"
 #include "../core/timestep_functions.h"   /* Hermite pass state, refreshed below */
 #include "../mesh/kernel.h"
+#include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
 
 /*! Host-vs-device routing for the gravity walk, keyed on the RANK-LOCAL count of active
