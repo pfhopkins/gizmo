@@ -123,3 +123,46 @@ def test_omp_thread_invariance(scheme):
     else:
         diff = _differences(*snaps)
         assert not diff, f"1 vs {nthreads} OpenMP threads differ (field: particles affected): {diff}"
+
+
+DECOMP_RANKS = 2
+N_DECOMPOSITIONS = 5  # correct code agrees for ~10; a race in the cost sums shows in the first, at startup
+
+
+def _decompositions(log, n):
+    with open(log) as f:
+        return [l for l in f if l.startswith(("Balance:", "Domain adaptive weights:"))][: 2 * n]
+
+
+def test_omp_domain_decomposition():
+    """With 2 MPI ranks, the first decompositions must agree line for line between 1 and N threads.
+
+    domain_sumCost sums each top-tree leaf's cost and particle count under OpenMP; a leaf index shared between
+    threads attributes particles to the wrong leaves and changes the decomposition from the first one, before any
+    physics. Snapshots are not compared: multi-rank runs are reproducible at a fixed thread count but not bit-identical
+    across thread counts, and drift apart after ~10 decompositions.
+    """
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("compares two runs it makes itself; nothing to validate from external snapshots")
+    nthreads = min(4, len(os.sched_getaffinity(0)) // DECOMP_RANKS)
+    if nthreads < 2:
+        pytest.skip(f"needs at least {2 * DECOMP_RANKS} cores")
+    clean_test_outputs(TEST_NAME)
+    build_gizmo_for_test(TEST_NAME, num_openmp_threads=nthreads)
+    _make_ic()
+    logs = {}
+    cwd = os.getcwd()
+    try:
+        os.chdir(TEST_DIR)
+        for nt in (1, nthreads):
+            d = f"output_decomp_{nt}threads"
+            shutil.rmtree(d, ignore_errors=True)
+            run_test(TEST_NAME, DECOMP_RANKS, nt, param_overrides={"OutputDir": d, "TimeMax": 0.02, "TimeBetSnapshot": 0.02},
+                     restart_flag=2)
+            shutil.copyfile(f"test_{TEST_NAME}.out", f"{d}/test_{TEST_NAME}.out")
+            logs[nt] = _decompositions(f"{d}/test_{TEST_NAME}.out", N_DECOMPOSITIONS)
+    finally:
+        os.chdir(cwd)
+    assert len(logs[1]) == 2 * N_DECOMPOSITIONS, f"expected {N_DECOMPOSITIONS} decompositions, got {len(logs[1]) // 2}"
+    diff = [(a.strip(), b.strip()) for a, b in zip(logs[1], logs[nthreads]) if a != b]
+    assert not diff, f"decomposition with 1 vs {nthreads} threads, first difference:\n  {diff[0][0]}\n  {diff[0][1]}"

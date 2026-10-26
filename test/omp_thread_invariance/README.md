@@ -9,6 +9,12 @@ MFM variant requires bit-identical snapshots. MFV exchanges mass between cells w
 updates, whose order legitimately changes the last bits, so the MFV variant requires the total
 mass to agree to 1e-12 instead: a lost update moves it by the exchanged mass.
 
+A third check, `test_omp_domain_decomposition`, runs the same problem on 2 MPI ranks with 1 and N (up to 4)
+threads for a few steps and requires the first 5 domain decompositions (the `Balance:` and `Domain adaptive weights:`
+lines) to agree. The first one happens at startup, before any physics, and with correct code they agree for about
+10. Snapshots are not compared there: multi-rank runs are reproducible at a fixed thread count, but not bit-identical
+across thread counts.
+
 ## Why the build is unoptimized
 
 `BUILD_UNOPTIMIZED` in `Config.sh` makes the Makefile append `-O0`. At `-O1` and above GCC keeps a
@@ -43,6 +49,9 @@ Each variant takes about 15 s including the build.
 - MFV: fails when the advective metal flux in `hydro_evaluate.h` updates only one species (the
   leftover index `k` instead of a loop over species). Species 3 diverges from its twin even with
   one thread.
+- Decomposition: fails when `domain_sumCost` shares the top-tree leaf index between threads. Particles are then
+  counted in the wrong leaves, and the startup decomposition goes from exact balance (memory balance 1) to
+  1.0007-1.005, even at 2 threads.
 
 Not covered: when several active neighbours wake the same inactive cell in one hydro pass, the
 cell's new timebin comes from whichever neighbour writes `P[j].wakeup` last (`hydro_evaluate.h`), so
