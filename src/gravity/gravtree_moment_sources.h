@@ -123,10 +123,11 @@ gravtree_fill_particle_source_inputs(int p, struct particle_data *P_arr,
 
 #ifdef SINK_PHOTONMOMENTUM
     out->bh_active = 0;
-    if(P_arr[p].Type == 5 && P_arr[p].Mass > 0 &&
-       P_arr[p].DensityAroundParticle > 0 && P_arr[p].Sink_Mdot > 0) {
-        out->bh_active = 1;     /* gated in regardless of the luminosity value (which may be 0) */
-        out->bh_lum    = (MyFloat) GRAVTREE_FILL_SINK_LUM_BOL(P_arr[p].Sink_Mdot, P_arr[p].Sink_Mass, p, P_arr);
+    double sink_lum = 0; /* a stellar sink shines without accreting; a black hole's luminosity is zero without accretion */
+    if(P_arr[p].Type == 5 && P_arr[p].Mass > 0) {sink_lum = GRAVTREE_FILL_SINK_LUM_BOL(P_arr[p].Sink_Mdot, P_arr[p].Sink_Mass, p, P_arr);}
+    if(sink_lum > 0) {
+        out->bh_active = 1;
+        out->bh_lum    = (MyFloat) sink_lum;
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
         out->bh_angle = P_arr[p].Sink_Specific_AngMom;
 #else
