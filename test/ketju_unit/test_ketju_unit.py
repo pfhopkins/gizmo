@@ -1,8 +1,10 @@
-"""KETJU integrator (MSTAR) googletest suite against GIZMO's vendored ketju-integrator.
+"""KETJU integrator (MSTAR) unit tests against GIZMO's ketju-integrator submodule.
 
-Copies ketju-integrator/ to a temporary directory (its CMake writes bin/ and lib/ into the
-source tree), builds unit-tests/ with the vendored googletest, and runs it on 1, 2 and 4
-MPI tasks. No GIZMO build or simulation is involved.
+Default: the C++/Kokkos library's tests (kokkos/tests, ctest): the GIZMO-addition tests on mstar::mstar, C vs Kokkos
+(mstar_compare_c), extra forces, embedded tide, driver, and KETJU's unit tests on the C library (serial MPI stand-in).
+With KETJU_LEGACY_C_LIBRARY in GIZMO_EXTRA_CONFIG_FLAGS: also the original googletest suite on the C library, on 1, 2
+and 4 MPI tasks. Sources are copied to a temporary directory (the top-level CMake writes bin/ and lib/ into the source
+tree). No GIZMO build or simulation is involved.
 """
 
 import os
@@ -48,6 +50,34 @@ def _run(cmd, cwd, timeout, env=None):
     return res
 
 
+LEGACY_C = "KETJU_LEGACY_C_LIBRARY" in os.environ.get("GIZMO_EXTRA_CONFIG_FLAGS", "").split()
+KOKKOS_CTESTS = {"ketju_unit_c", "mstar_gizmo_additions", "mstar_compare_c", "mstar_extra_force", "mstar_embedded_tide", "mstar_driver"}
+
+
+def _kokkos_root():
+    # KOKKOS_ROOT from the environment, else the Makefile's default (as the GIZMO build)
+    if os.environ.get("KOKKOS_ROOT"):
+        return os.environ["KOKKOS_ROOT"]
+    m = re.search(r"^KOKKOS_ROOT \?= (\S+)", (REPO_ROOT / "Makefile").read_text(), re.M)
+    assert m, "KOKKOS_ROOT not set and no default in the Makefile"
+    return m.group(1)
+
+
+def test_ketju_kokkos_ctests(tmp_path):
+    for tool in ("cmake", "make", "gcc", "g++"):
+        assert shutil.which(tool), f"{tool} not on PATH (load the gcc and cmake modules)"
+    src = tmp_path / "ketju-integrator"
+    shutil.copytree(KETJU_SRC, src, ignore=shutil.ignore_patterns("bin", "lib", "build*", "*.so", "*.a", ".git"))
+    build = tmp_path / "build"
+    _run(["cmake", "-S", str(src), "-B", str(build), "-DCMAKE_C_COMPILER=gcc", "-DCMAKE_CXX_COMPILER=g++", "-DKETJU_KOKKOS=ON",
+          "-DKETJU_SERIAL_MPI=ON", f"-DKokkos_ROOT={_kokkos_root()}", "-DCMAKE_BUILD_TYPE=Release"], tmp_path, 600)
+    _run(["cmake", "--build", str(build), "-j", str(NUM_MAKE_JOBS)], tmp_path, 1800)
+    res = subprocess.run(["ctest", "--output-on-failure"], cwd=build, capture_output=True, text=True, timeout=1200)
+    assert res.returncode == 0, f"ctest failed:\n{res.stdout[-6000:]}\n{res.stderr[-2000:]}"
+    ran = set(re.findall(r"Test +#\d+: (\S+) \.+ +Passed", res.stdout))
+    assert ran == KOKKOS_CTESTS, f"missing: {sorted(KOKKOS_CTESTS - ran)}; unexpected: {sorted(ran - KOKKOS_CTESTS)}"
+
+
 @pytest.fixture(scope="module")
 def unit_test_exe(tmp_path_factory):
     for tool in ("cmake", "make", "mpicc", "mpicxx", "mpiexec"):
@@ -66,6 +96,7 @@ def unit_test_exe(tmp_path_factory):
     return exe
 
 
+@pytest.mark.skipif(not LEGACY_C, reason="C library googletests: KETJU_LEGACY_C_LIBRARY in GIZMO_EXTRA_CONFIG_FLAGS")
 @pytest.mark.parametrize("ntasks", [1, 2, 4])
 def test_ketju_unit(unit_test_exe, ntasks):
     # rank 0 prints every test and gathers failures from all ranks; the exit code is nonzero on any failure
