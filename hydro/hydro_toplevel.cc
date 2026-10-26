@@ -484,7 +484,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, CellP);}
+    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0);}
 #endif
 #endif
 
