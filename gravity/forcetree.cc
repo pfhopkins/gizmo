@@ -1646,10 +1646,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         if(ptype == 5) {sink_mass = P[target].Sink_Mass;}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS)
-        if(ptype == 0) {if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=0;}}
+        if(ptype == 0) {if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=P[target].AGS_zeta;}}
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-        if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=0;}
+        if(soft > All.ForceSoftening[P[target].Type]) {zeta = P[target].AGS_zeta;} else {soft=All.ForceSoftening[P[target].Type]; zeta=P[target].AGS_zeta;}
 #endif
 #if defined(PMGRID) && defined(PM_PLACEHIGHRESREGION)
         if(pmforce_is_particle_high_res(ptype, P[target].Pos)) {rcut = All.Rcut[1]; asmth = All.Asmth[1];}
