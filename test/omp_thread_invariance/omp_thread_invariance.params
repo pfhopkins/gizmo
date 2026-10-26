@@ -1,0 +1,22 @@
+% OpenMP thread-count invariance: 1 and N threads must give bit-identical snapshots with MFM, equal total mass with MFV (see README.md).
+%
+InitCondFile                       omp_thread_invariance_ics
+OutputDir                          output
+TimeMax                            0.1
+BoxSize                            1
+TimeBetSnapshot                    0.1
+DesNumNgb                          32
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.1
+MaxSizeTimestep                    0.04
+ErrTolForceAcc                     0.001
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ErrTolTheta                        0.7
+MaxNumNgbDeviation                 0.1
+ResubmitOn                         0
+ResubmitCommand                    none
+DivBcleaningParabolicSigma         0.2
+DivBcleaningHyperbolicSigma        1.0
+TurbDiffusionCoefficient           1.0

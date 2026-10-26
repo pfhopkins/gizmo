@@ -484,7 +484,7 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k=0;k<NUM_METAL_SPECIES;k++) {in->Metallicity[k] = P[i].Metallicity[k];}
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
-    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0, CellP);}
+    for(k=NUM_METAL_SPECIES;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {in->Metallicity[k] = return_ismdustchem_species_of_interest_for_diffusion_and_yields(i,k,0);}
 #endif
 #endif
 
@@ -574,6 +574,7 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     CellP[i].DtMass += out->DtMass;
+    #pragma omp atomic /* neighbours add to dMass concurrently (hydro_evaluate.h) */
     CellP[i].dMass += out->dMass;
     CellP[i].GravWorkTerm += out->GravWorkTerm;
 #endif
@@ -670,7 +671,6 @@ void turb_diff_metals_budget_log(void)
 
 void hydro_final_operations_and_cleanup(void)
 {
-    int i,k;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -706,7 +706,7 @@ void hydro_final_operations_and_cleanup(void)
             tolerance_for_correction = 10.0;
             db_vsig_h_norm = 0.1; // can be as low as 0.03 //
             double DtB_PhiCorr=0,DtB_UnCorr=0,db_vsig_h=0,PhiCorr_Norm=1.0;
-            for(k=0; k<3; k++)
+            for(int k=0; k<3; k++)
             {
                 DtB_UnCorr += CellP[i].DtB[k] * CellP[i].DtB[k]; // physical units //
                 db_vsig_h = db_vsig_h_norm * (CellP[i].BPred[k]*All.cf_atime) * (0.5*CellP[i].MaxSignalVel) / (P[i].Get_Particle_Size()*All.cf_atime);
@@ -829,18 +829,18 @@ void hydro_final_operations_and_cleanup(void)
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive */
-            for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
-            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);} // floor at 0: a fractional floor creates metal
+            for(int k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
+            for(int k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);} // floor at 0: a fractional floor creates metal
 #else
-            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
+            for(int k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange */
-            for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
-            for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
-            for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = DMAX(CellP[i].ISMDustChem_Dust_Species[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Species[k]);}
+            for(int k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[NUM_METAL_SPECIES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
+            for(int k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[i].ISMDustChem_Dust_Source[k] = DMAX(CellP[i].ISMDustChem_Dust_Source[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Source[k]);}
+            for(int k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {CellP[i].ISMDustChem_Dust_Species[k] = DMAX(CellP[i].ISMDustChem_Dust_Species[k] + CellP[i].Dyield[NUM_METAL_SPECIES+NUM_ISMDUSTCHEM_ELEMENTS+NUM_ISMDUSTCHEM_SOURCES+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Species[k]);}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             // For grain size bins we track the total mass and number and not a scalar mass fraction, so convert back to total values
-            for(k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
+            for(int k=0;k<NUM_ISMDUSTCHEM_SPECIES;k++) {
                 int l;
                 double new_bin_mass, new_bin_number, old_bin_mass;
                 for(l=0;l<NUM_ISMDUSTCHEM_SIZE_BINS;l++) {
@@ -861,7 +861,7 @@ void hydro_final_operations_and_cleanup(void)
             double P_cr_spec = (1./3.)*CellP[i].SubGrid_CosmicRayEnergyDensity/CellP[i].Density, P_tot_spec = P_cr_spec + (2./3.)*CellP[i].InternalEnergyPred + (1./2.)*pow(CellP[i].Alfven_speed(),2); // just include CR+thermal+magnetic here
             CellP[i].DtInternalEnergy *= (1.-P_cr_spec/P_tot_spec); /* approximate correction, valid to level here [more sophisticated correction can cause problems since the PdV energy isn't actually being taken -out- of the CR field, as it would be if followed explicitly] */
 #else
-            double gamma_minus_eCR_tmp=0; for(k=0;k<N_CR_PARTICLE_BINS;k++) {gamma_minus_eCR_tmp+=(GAMMA_COSMICRAY(k)-1.)*CellP[i].CosmicRayEnergyPred[k];} // routine below only depends on the total CR energy, not bin-by-bin energies, when we do it this way here
+            double gamma_minus_eCR_tmp=0; for(int k=0;k<N_CR_PARTICLE_BINS;k++) {gamma_minus_eCR_tmp+=(GAMMA_COSMICRAY(k)-1.)*CellP[i].CosmicRayEnergyPred[k];} // routine below only depends on the total CR energy, not bin-by-bin energies, when we do it this way here
             double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt, gamma_minus_eCR_tmp, 1, P, CellP); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
             double u0=DMAX(CellP[i].InternalEnergyPred, All.MinEgySpec) , uf=DMAX(u0 - dCR_div/P[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
             CellP[i].DtInternalEnergy += (uf - u0) / (dt + MIN_REAL_NUMBER); // update gas quantities to be used in cooling function
@@ -871,7 +871,7 @@ void hydro_final_operations_and_cleanup(void)
             /* energy transfer from CRs to gas due to the streaming instability (mediated by high-frequency Alfven waves, but they thermalize quickly
                 (note this is important; otherwise build up CR 'traps' where the gas piles up and cools but is entirely supported by CRs in outer disks) */
 #if !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) // handled in separate solver if explicitly evolving the relevant wave families
-            for(k=0;k<N_CR_PARTICLE_BINS;k++) {
+            for(int k=0;k<N_CR_PARTICLE_BINS;k++) {
                 double streamfac = fabs(CR_get_streaming_loss_rate_coefficient(i,k, CellP));
                 CellP[i].DtInternalEnergy += CellP[i].CosmicRayEnergyPred[k] * streamfac / P[i].Mass; // make sure to divide by mass here to get the correct units since DtInternalEnergy has been converted to specific energy units (while CR energies are absolute)
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
@@ -884,7 +884,7 @@ void hydro_final_operations_and_cleanup(void)
             double vA_eff=Get_Gas_ion_Alfven_speed_i(i, CellP), vol_i=CellP[i].Density*All.cf_a3inv/P[i].Mass, Bmag=0; Vec3<double> bhat = CellP[i].BPred; // define some useful variables
             Bmag = bhat.norm_sq(); // get direction vector for B-field needed below
             if(Bmag>0) {Bmag=sqrt(Bmag); bhat /= Bmag;} // make dimensionless
-            if(Bmag>0) {for(k=0;k<N_CR_PARTICLE_BINS;k++) {
+            if(Bmag>0) {for(int k=0;k<N_CR_PARTICLE_BINS;k++) {
                 int target_for_cr_betagamma = i; // if this = -1, use the gamma factor at the bin-center for evaluating this, if this = i, use the mean gamma of the bin, weighted by the CR energy -- won't give exactly the same result here
                 target_for_cr_betagamma = -1; // the correction terms depend on these being evaluated at their bin-centered locations
                 double three_chi = return_cosmic_ray_anisotropic_closure_function_threechi(i,k, CellP);
@@ -976,7 +976,6 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 
     /* need to zero out all numbers that can be set -EITHER- by an active particle in the domain, or by one of the neighbors we will get sent */
-    int i, k;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
@@ -999,26 +998,26 @@ void hydro_force_initial_operations_preloop(void)
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-            for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] = 0;}
+            for(int k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[i].Dyield[k] = 0;}
 #endif
 #if defined(RT_SOLVER_EXPLICIT)
 #if defined(RT_EVOLVE_ENERGY)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] = 0;}
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] = 0;}
 #ifdef TRANSPORT_SUBCYCLE
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma_Work[k] = 0;}
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma_Work[k] = 0;}
 #endif
 #endif
 #if defined(RT_EVOLVE_FLUX)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
 #endif
 #if defined(RT_INFRARED)
             CellP[i].Dt_Rad_E_gamma_T_weighted_IR = 0;
 #endif
 #if defined(RT_EVOLVE_FLUX)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
 #endif
 #if defined(RT_EVOLVE_INTENSITIES)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}}
+            for(int k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}}
 #endif
 #endif
 #ifdef MAGNETIC
@@ -1038,7 +1037,7 @@ void hydro_force_initial_operations_preloop(void)
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
             CellP[i].DtCREgyNewInjectionFromShocks = 0;
 #endif
-            for(k=0;k<N_CR_PARTICLE_BINS;k++)
+            for(int k=0;k<N_CR_PARTICLE_BINS;k++)
             {
                 CellP[i].DtCosmicRayEnergy[k] = 0;
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
