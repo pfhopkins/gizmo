@@ -1580,6 +1580,10 @@ void process_wake_ups(void)
 		integertime t_2 = P[i].Ti_current;
 		if(t_2 > tstart) {tstart = t_2;}
 		integertime tend = All.Ti_Current;
+#ifndef HYDRO_MESHLESS_FINITE_VOLUME
+		const integertime old_midpoint = P[i].Ti_begstep + P[i].integertime_step() / 2;
+		const int new_step_starts_now = (P[i].Ti_current == All.Ti_Current) && TimeBinActive[bin] && (P[i].integertime_step() == GET_INTEGERTIME_FROM_TIMEBIN(binold)); /* a particle not drifted to now keeps the truncated step below, a bin not active now cannot be kicked, and a step an earlier wake-up truncated without a kick has no midpoint to continue from */
+#endif
 
 		TimeBinCount[binold]--;
 		if(P[i].Type == 0) {TimeBinCountGas[binold]--;}
@@ -1611,12 +1615,19 @@ void process_wake_ups(void)
 		n++;
 		WokenParticles.push_back(i);
 
-		/* The kick this particle already received covers past the time it is being woken to. Do NOT
-		   try to reverse it: re-deriving the increment with reversed bounds would only cancel the
-		   original if the acceleration and energy rate were unchanged since, and they are not, so it
-		   injects energy instead. Saitoh & Makino (2009) eq (3) avoids integrating the system backwards
-		   for exactly this reason and instead sets the new time consistent with the system time, which
-		   is what the truncation below does. */
+#ifndef HYDRO_MESHLESS_FINITE_VOLUME
+		/* The old step kicked this particle only to its midpoint, so that is where its velocity and
+		   energy stand, whether the wake-up falls before or after it. The new step starts now, and its
+		   first half-kick is only run for particles that were already active when this step began, so
+		   this one never gets it. Complete the old step here, carrying the particle from its midpoint
+		   to now with the acceleration and energy rate that step used (a particle that is not active
+		   only has them from its own last solve), and give it the first half-kick of the new step
+		   below. Only the interval the old step really applied is undone, not the second half it
+		   never reached. (Finite-volume gas runs its first kick by time bin, so it gets the first
+		   half-kick but not this completion of the old step. A particle in the cases excluded above
+		   keeps the truncated step below and no kick.) */
+		if(new_step_starts_now) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);}
+#endif
 		if(tend < tstart) {set_predicted_quantities_for_extra_physics(i);}
 		/* End the step at the current system time, so the interval the applied kick already covered is
 		   not integrated twice. dt_step stays authoritative, but is no longer a power-of-two bin length
@@ -1629,12 +1640,15 @@ void process_wake_ups(void)
 		}
 #if defined(USE_TIMESTEP_DILATION_FOR_ZOOMS)
         /* a wakeup starts a new step for this particle, so freeze its dilation factor at the
-           position it now holds, as a normal timestep assignment would. This must follow the
-           partial kick reversed just above, which cancels the kick it undoes only while the
-           factor still matches the one that kick was applied with. */
+           position it now holds, as a normal timestep assignment would. Where the old step was
+           completed above, that kick covered time under the old step's factor and so had to come
+           first; the interval of the new step is converted with the factor frozen here. */
         P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, P);
 #endif
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
+#ifndef HYDRO_MESHLESS_FINITE_VOLUME
+		if(new_step_starts_now) {do_the_kick(i, P[i].Ti_begstep, P[i].Ti_begstep + P[i].integertime_step() / 2, P[i].Ti_current, 0);} /* the first half-kick of the new step, as do_first_halfstep_kick gives an active particle */
+#endif
 	    }
 	}
     }
