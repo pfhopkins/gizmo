@@ -20,7 +20,7 @@ int main(int argc, char **argv)
     All.Timebase_interval = (log(All.TimeMax) - log(All.TimeBegin)) / TIMEBASE;
     init_drift_table();
 
-    /* a few distinct intervals, so successive calls keep replacing whatever the previous call computed */
+    /* a few distinct intervals, so calls keep replacing whatever the previous call cached */
     const int K = 4;
     integertime t0[K], t1[K];
     double ref_drift[K], ref_kick[K];
@@ -39,7 +39,7 @@ int main(int argc, char **argv)
 #pragma omp for schedule(static)
         for(long long m = 0; m < n_calls; m++)
         {
-            int k = (int)((m + m / 3) % K);
+            int k = (int)((m / 2) % K); /* each interval twice in a row: the second call is a cache hit */
             if(get_drift_factor(t0[k], t1[k], -1, 0) != ref_drift[k]) {bad_drift++;}
             if(get_gravkick_factor(t0[k], t1[k], -1, 0) != ref_kick[k]) {bad_kick++;}
         }

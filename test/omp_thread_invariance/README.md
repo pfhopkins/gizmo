@@ -44,4 +44,6 @@ Each variant takes about 15 s including the build.
   leftover index `k` instead of a loop over species). Species 3 diverges from its twin even with
   one thread.
 
-Not covered: the WAKEUP last-writer race, which has no observable effect here.
+Not covered: when several active neighbours wake the same inactive cell in one hydro pass, the
+cell's new timebin comes from whichever neighbour writes `P[j].wakeup` last (`hydro_evaluate.h`), so
+it can depend on thread scheduling. No such difference appears here, even in a 1000x stronger blast.

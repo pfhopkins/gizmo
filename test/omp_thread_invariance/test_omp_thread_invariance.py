@@ -1,9 +1,8 @@
 """OpenMP thread-count invariance.
 
-Runs one problem with 1 and with N OpenMP threads from the same binary and requires
-bit-identical final snapshots. Every threaded loop this configuration exercises works per
-particle with a fixed neighbour order, so the thread count must not change a single bit; a data
-race does. The build is unoptimized (BUILD_UNOPTIMIZED) because at -O1 and above a racing shared
+Runs one problem with 1 and with N OpenMP threads from the same binary and compares the final
+snapshots. With MFM every threaded loop this configuration exercises works per particle with a
+fixed neighbour order, so the thread count must not change a single bit; a data race does. The build is unoptimized (BUILD_UNOPTIMIZED) because at -O1 and above a racing shared
 loop counter lives in a register and the race never reaches the binary. See README.md.
 
 MFV exchanges mass between cells with omp atomic updates, whose order legitimately changes the last
@@ -29,9 +28,8 @@ SCHEMES = {"mfm": (), "mfv": ("HYDRO_MESHLESS_FINITE_VOLUME",)}  # Config.sh lea
 MASS_RTOL = 1e-12
 
 
-def _ensure_ic():
-    if os.path.isfile(f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"):
-        return
+def _make_ic():
+    """Regenerated every run: the IC file is gitignored, so a stale one from an older generator would persist."""
     spec = importlib.util.spec_from_file_location("make_ics", f"{TEST_DIR}/make_{TEST_NAME}_ics.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -87,7 +85,9 @@ def _total_mass(snap):
 
 @pytest.mark.parametrize("scheme", SCHEMES)
 def test_omp_thread_invariance(scheme):
-    nthreads = min(MAX_THREADS, os.cpu_count() or 1)
+    if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        pytest.skip("compares two runs it makes itself; nothing to validate from external snapshots")
+    nthreads = min(MAX_THREADS, len(os.sched_getaffinity(0)))
     if nthreads < 2:
         pytest.skip("needs at least 2 cores")
     flags = SCHEMES[scheme]
@@ -96,7 +96,7 @@ def test_omp_thread_invariance(scheme):
     for d in outdirs.values():
         shutil.rmtree(f"{TEST_DIR}/{d}", ignore_errors=True)
     build_gizmo_for_test(TEST_NAME, num_openmp_threads=nthreads, extra_config_flags=flags)
-    _ensure_ic()
+    _make_ic()
 
     cwd = os.getcwd()
     try:

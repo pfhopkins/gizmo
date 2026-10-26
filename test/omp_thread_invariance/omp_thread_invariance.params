@@ -1,4 +1,4 @@
-% OpenMP thread-count invariance: 1 and N threads must give bit-identical snapshots (see README.md).
+% OpenMP thread-count invariance: 1 and N threads must give bit-identical snapshots with MFM, equal total mass with MFV (see README.md).
 %
 InitCondFile                       omp_thread_invariance_ics
 OutputDir                          output

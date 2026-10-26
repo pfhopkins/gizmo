@@ -23,7 +23,7 @@ MAX_THREADS = 8
 def test_driftfac_threads():
     if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         pytest.skip("builds GIZMO; nothing to validate from external snapshots")
-    nthreads = min(MAX_THREADS, os.cpu_count() or 1)
+    nthreads = min(MAX_THREADS, len(os.sched_getaffinity(0)))
     if nthreads < 2:
         pytest.skip("needs at least 2 cores")
     cwd = os.getcwd()
