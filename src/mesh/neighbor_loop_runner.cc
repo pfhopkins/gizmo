@@ -2876,7 +2876,7 @@ static_assert(GX_MODE_D_STAGING_MAX_MESSAGE_BYTES <= (size_t) INT_MAX,
 /* The round arena: everything one round holds, carved out of one allocation for a capacity of C envelopes.  A
  * round's records number at most NODELISTLENGTH per envelope it may send, since an active's envelope bound is
  * never below its node count over NODELISTLENGTH. */
-static constexpr int MODE_D_ARENA_ROWS = 8;
+static constexpr int MODE_D_ARENA_ROWS = 7;
 struct ModeDRoundArena {
     long long          capacity = 0;   /* C */
     char              *base = nullptr;
@@ -2885,7 +2885,6 @@ struct ModeDRoundArena {
     int               *scan = nullptr;                                /* [NODELISTLENGTH C]: the sort's scan, and each record's run start */
     int               *first_record = nullptr;                        /* [C]: where each envelope's records start */
     void              *envelopes = nullptr;                           /* [C]: the queries this round sends, in send order */
-    int               *run_offsets = nullptr;                         /* [NODELISTLENGTH C]: each query's run list (2 (C + 1) used) */
     int               *envelope_of = nullptr;                         /* [NODELISTLENGTH C]: the envelope each sorted record goes in */
     void              *replies = nullptr;                             /* [C]: the answers to this round's queries, in send order */
 };
@@ -2897,7 +2896,7 @@ static long long mode_d_arena_layout(long long c, size_t query_bytes, size_t rep
         mode_d_checked_product(rec, (long long) sizeof(ModeDExportRecord)), mode_d_checked_product(rec, (long long) sizeof(ModeDExportRecord)),
         mode_d_checked_product(rec, (long long) sizeof(int)), mode_d_checked_product(c, (long long) sizeof(int)),
         mode_d_checked_product(c, (long long) query_bytes),
-        mode_d_checked_product(rec, (long long) sizeof(int)), mode_d_checked_product(rec, (long long) sizeof(int)),
+        mode_d_checked_product(rec, (long long) sizeof(int)),
         mode_d_checked_product(c, (long long) reply_bytes)};
     long long total = 0;
     for(int k = 0; k < MODE_D_ARENA_ROWS; k++) {
@@ -2912,8 +2911,8 @@ static long long mode_d_arena_layout(long long c, size_t query_bytes, size_t rep
 
 /* One device buffer of a lease: where it is kept, how many bytes, and its memory-ledger label. */
 struct ModeDLeaseBuffer { void **slot; long long bytes; const char *label; };
-static constexpr int MODE_D_LEASE_BUFFERS = 22;
-static constexpr int MODE_D_LEASE_GROUP_ROW = 18;   /* the first of the received batches' rows: queries 0, replies 0, queries 1, replies 1 */
+static constexpr int MODE_D_LEASE_BUFFERS = 23;
+static constexpr int MODE_D_LEASE_GROUP_ROW = 19;   /* the first of the received batches' rows: queries 0, replies 0, queries 1, replies 1 */
 /* The round's small device record: [0] range end, [1] [2] its record span, then two ints the sort and the cut keep on
  * the device -- a radix pass's split point and the envelope count -- each in one long long slot. */
 enum {MODE_D_ROUND_END = 0, MODE_D_ROUND_FIRST_RECORD, MODE_D_ROUND_LAST_RECORD, MODE_D_ROUND_SPLIT, MODE_D_ROUND_ENVELOPES,
@@ -2998,6 +2997,8 @@ struct ModeDCallLease {
     long long *active_node_scan     = nullptr;   /* [n + 1] where its export records start */
     long long *active_envelope_scan = nullptr;   /* [n + 1] its envelope bound, then the scan of the bounds */
     void      *active_accums        = nullptr;   /* [n] AccumData: its own result, then every reply merged in */
+    int       *run_offsets          = nullptr;   /* [2 (n + 1)] a round's run list per query: offsets, then the placement's
+                                                    cursors (a round holds at most every active, however few it exports) */
     /* Device, fixed. */
     int       *per_peer             = nullptr;   /* [NTask + 1] envelopes per peer this round */
     long long *round_info           = nullptr;   /* [MODE_D_ROUND_INFO] the round's range end and record span, and two device-side ints */
@@ -3050,6 +3051,7 @@ struct ModeDCallLease {
         rows[k++] = {(void **) &active_node_scan,      bytes(n1, (long long) sizeof(long long)),  "ngl_moded_active_node_scan"};
         rows[k++] = {(void **) &active_envelope_scan,  bytes(n1, (long long) sizeof(long long)),  "ngl_moded_active_envelope_scan"};
         rows[k++] = {&active_accums,                   bytes(n, (long long) accum_bytes),         "ngl_moded_active_accums"};
+        rows[k++] = {(void **) &run_offsets,           bytes(2 * n1, (long long) sizeof(int)),    "ngl_moded_run_offsets"};
         rows[k++] = {(void **) &per_peer,              bytes(nt ? nt + 1 + MODE_D_FLAGS : 0, (long long) sizeof(int)), "ngl_moded_per_peer"};
         rows[k++] = {(void **) &round_info,            bytes(nt ? MODE_D_ROUND_INFO : 0, (long long) sizeof(long long)), "ngl_moded_round_info"};
         const long long ni = nt ? plan.iteration_actives : 0;
@@ -3130,8 +3132,8 @@ static int mode_d_arena_grow(ModeDCallLease *lease, long long c, size_t query_by
     a.records = (ModeDExportRecord *) (base + offset[0]); a.records_spare = (ModeDExportRecord *) (base + offset[1]);
     a.scan = (int *) (base + offset[2]); a.first_record = (int *) (base + offset[3]);
     a.envelopes = base + offset[4];
-    a.run_offsets = (int *) (base + offset[5]); a.envelope_of = (int *) (base + offset[6]);
-    a.replies = base + offset[7];
+    a.envelope_of = (int *) (base + offset[5]);
+    a.replies = base + offset[6];
     return 0;
 }
 
@@ -5753,7 +5755,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
                                          KOKKOS_LAMBDA(const ModeDExportRecord &x) {return (unsigned int) x.peer;}, mode_d_key_bits(nt), round_ints);
             mode_d_envelope_boundaries(sorted, n_rec, A.scan, A.first_record, A.envelope_of, n_env_dev);
             query_runs = (ModeDQueryRun *) ((sorted == A.records) ? A.records_spare : A.records);   /* the sort's other half is free */
-            mode_d_query_runs(sorted, n_rec, A.scan, A.envelope_of, a_begin, n_round, A.run_offsets, query_runs);
+            mode_d_query_runs(sorted, n_rec, A.scan, A.envelope_of, a_begin, n_round, L.run_offsets, query_runs);
             int *per_peer = L.per_peer;
             Kokkos::parallel_for("mode_d_per_peer_clear", Kokkos::RangePolicy<>(0, nt + 1), KOKKOS_LAMBDA(int p) {per_peer[p] = 0;});
             mode_d_pack_envelopes(sorted, n_rec, A.first_record, n_env_dev, snapshot, me, (Envelope *) A.envelopes, per_peer, nt);
@@ -6000,7 +6002,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
             if(overlap) {eval_queue->fence("mode_d_round_evaluations"); gizmo_gpu_check_last_error("mode_d_round_evaluations", N, -1);}
             if(X.errors_seen() && !stop_code) {stop_code = 90001043;}
             if(!X.errors_seen() && n_rec > 0) {
-                mode_d_merge_replies<Spec>(query_runs, A.run_offsets, a_begin, n_round, (const Reply *) A.replies, me, accums,
+                mode_d_merge_replies<Spec>(query_runs, L.run_offsets, a_begin, n_round, (const Reply *) A.replies, me, accums,
                                            flags + MODE_D_FLAG_MERGE);
             }
             mode_d_copy_to_host(host_flags, flags, sizeof(host_flags));
