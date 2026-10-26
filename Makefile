@@ -125,7 +125,7 @@ HDF5INCL = -I$(HDF5_HOME)/include -DH5_USE_16_API
 HDF5LIB  = -L$(HDF5_HOME)/lib -lhdf5 -lz
 MPICHLIB = -lstdc++
 # KETJU: Kokkos 5.0 install (OpenMP + Serial, gcc 13) for the mstar library
-KOKKOS_ROOT ?= /orion/ptmp/uli/orion/cpp_nbody_stage0/kokkos-install
+KOKKOS_ROOT ?= /u/uli/sw/kokkos/5.0.0-openmp-gcc13
 OPT     += -DHDF5_DISABLE_VERSION_CHECK
 ## modules: module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
 endif
