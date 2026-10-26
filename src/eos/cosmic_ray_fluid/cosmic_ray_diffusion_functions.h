@@ -167,7 +167,7 @@ void cosmic_ray_diffusion_compute_pair(
         double vdotr2_phys = kernel.vdotr2 / (kernel.r * All.cf_atime);
         if(All.ComovingIntegrationOn) { vdotr2_phys -= All.cf_hubble_a2 * kernel.r / All.cf_atime; }
         if(vdotr2_phys < 0 && vdotf2_phys < 0
-           && (DMAX(vdotf2_phys, vdotr2_phys) * UNIT_VEL_IN_KMS > min_shockvel_for_accel)) {
+           && (DMAX(fabs(vdotf2_phys), fabs(vdotr2_phys)) * UNIT_VEL_IN_KMS > min_shockvel_for_accel)) {
             if((local.InternalEnergyPred - CellP[j].InternalEnergyPred) * (local.Density - CellP[j].Density) > 0) {
                 if((local.Pressure - CellP[j].Pressure) * (local.InternalEnergyPred - CellP[j].InternalEnergyPred) > 0) {
                     double gamma_touse = 5./3.;
