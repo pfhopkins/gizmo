@@ -1,4 +1,4 @@
-% Cosmic-ray two-moment transport in a static, cold 2D box: total energy (CR + gas) must be conserved
+% Cosmic-ray two-moment transport along a uniform B in a static, cold 2D box: CR + gas energy must be conserved
 InitCondFile               cr_flux_conservation_ics
 OutputDir                  output
 TimeMax                    0.01
@@ -13,3 +13,4 @@ UnitVelocity_in_cm_per_s   1.0e5
 CosmicRayDiffusionCoeff    1.0
 MaxMemSize                 2000
 PartAllocFactor            3.0
+UnitMagneticField_in_gauss 9.2235141293e-06  % = the code unit for these length/mass/velocity units, so the IC field is in code units

@@ -1,11 +1,13 @@
-"""2D periodic box of uniform, static, cold gas on a jittered lattice with a Gaussian cosmic-ray energy bump.
-The gas is cold (u = 5e-7) so that its own pressure work does not swamp the CR energy budget the test checks."""
+"""2D periodic box of uniform, static, cold gas on a jittered lattice with a Gaussian cosmic-ray energy bump and a
+weak uniform magnetic field along x, which the CRs diffuse along. The gas is cold (u = 5e-7) so that its own pressure
+work does not swamp the CR energy budget the test checks; the field (code units, see the params file) is weak enough
+not to set the timestep."""
 import sys
 import h5py
 import numpy as np
 
 
-def make_ics(fn, n_side=32, box=1.0, jitter=0.2, rho=1.0, u=5e-7, ecr0=1e-6, sigma=0.1, seed=7):
+def make_ics(fn, n_side=32, box=1.0, jitter=0.2, rho=1.0, u=5e-7, ecr0=1e-6, sigma=0.1, b0=1e-3, seed=7):
     rng = np.random.default_rng(seed)
     g = (np.arange(n_side) + 0.5) / n_side * box
     xy = np.array(np.meshgrid(g, g, indexing="ij")).reshape(2, -1).T
@@ -36,6 +38,9 @@ def make_ics(fn, n_side=32, box=1.0, jitter=0.2, rho=1.0, u=5e-7, ecr0=1e-6, sig
         p["InternalEnergy"] = np.full(n, u)
         p["CosmicRayEnergy"] = Ecr
         p["KernelMaxRadius"] = np.full(n, h)
+        B = np.zeros((n, 3))
+        B[:, 0] = b0
+        p["MagneticField"] = B
     return Ecr.sum()
 
 
