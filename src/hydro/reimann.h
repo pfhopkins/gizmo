@@ -18,9 +18,6 @@
 #define DEDNER_IMPLICIT_LIMITER 0.75
 #endif
 
-#if defined(MAGNETIC)
-#define SAVE_FACE_BFIELD 1
-#endif
 #if defined(VISCOSITY) && defined(MAGNETIC)
 //#define SAVE_FACE_VFIELD 1 // for now we use a simpler midpoint velocity; this should be updated for hydro solvers (not just mhd) //
 #endif
@@ -55,8 +52,8 @@ struct Riemann_outputs
     MyDouble phi_normal_db;
 #endif
 #endif
-#ifdef SAVE_FACE_BFIELD
-    Vec3<MyDouble> Face_B;
+#ifdef MAGNETIC
+    MyDouble Face_MagneticPressure; /* symmetric magnetic-pressure estimate used by the MFM entropic energy switch (see HLLD_Riemann_solver) */
 #endif
 #ifdef SAVE_FACE_VFIELD
     Vec3<MyDouble> Face_Vel;
@@ -1107,6 +1104,7 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
             vdotB_L,vdotB_R,B2_L,B2_R,cs2rho_L,cs2rho_R,tmp,c_eff,Bx2,rho_wt_L,rho_wt_R;
     struct Conserved_var_Riemann U_s,U_ss,V_s, *Interface_State;
     Interface_State = &Riemann_vec.L;
+    double face_magnetic_pressure = -1; /* set where the two sides' star states differ in tangential field; otherwise taken from the interface state */
     B2_L = Riemann_vec.L.B.norm_sq();
     B2_R = Riemann_vec.R.B.norm_sq();
 
@@ -1313,6 +1311,28 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
                     Riemann_out->Fluxes.B[1] -= S_L * Riemann_vec.L.B[1];
                     Riemann_out->Fluxes.B[2] -= S_L * Riemann_vec.L.B[2];
 
+                    /* the right-hand star state: needed for the star-star state, and for the face magnetic pressure when the two star states are not joined */
+                    V_s.rho = rho_wt_R / (S_R - S_M);
+                    double sqrt_rho_star_alt = sqrt(V_s.rho);
+                    V_s.v[0] = S_M;
+                    V_s.B[0] = Bx;
+                    tmp = rho_wt_R * (S_R - S_M) - Bx2;
+                    if(fabs(tmp) < SMALL_NUMBER * P_M)
+                    {
+                        V_s.v[1] = Riemann_vec.R.v[1];
+                        V_s.v[2] = Riemann_vec.R.v[2];
+                        V_s.B[1] = Riemann_vec.R.B[1];
+                        V_s.B[2] = Riemann_vec.R.B[2];
+                    } else {
+                        tmp = 1/tmp;
+                        tmp2 = tmp * (S_M - vxR) * Bx;
+                        V_s.v[1] = Riemann_vec.R.v[1] - Riemann_vec.R.B[1] * tmp2;
+                        V_s.v[2] = Riemann_vec.R.v[2] - Riemann_vec.R.B[2] * tmp2;
+                        tmp2 = tmp * (rho_wt_R*(S_R-vxR) - Bx2);
+                        V_s.B[1] = Riemann_vec.R.B[1] * tmp2;
+                        V_s.B[2] = Riemann_vec.R.B[2] * tmp2;
+                    }
+
                     if((v_frame <= S_star) || (0.5*Bx2 < SMALL_NUMBER * P_M))
                     {
                         /* left Alfven wave :: F_L - S_L*U_L + (S_L-a_x)*U_star */
@@ -1324,6 +1344,7 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
                         Riemann_out->Fluxes.B[1] += dS * U_s.B[1];
                         Riemann_out->Fluxes.B[2] += dS * U_s.B[2];
                         Interface_State = &U_s;
+                        face_magnetic_pressure = 0.25 * (U_s.B.norm_sq() + V_s.B.norm_sq()); /* tangential B jumps across the contact: average the two sides */
 
                     } else {
                         /* ok the star and star-star states are different, need to compute them separately */
@@ -1344,26 +1365,7 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
                         double sign_Bx = 1.0;
                         if(Bx < 0) sign_Bx = -1.0;
 
-                        /* getting the middle states requires both sides: get the necessary R quantities */
-                        V_s.rho = rho_wt_R / (S_R - S_M);
-                        double sqrt_rho_star_alt = sqrt(V_s.rho);
                         double irhowt = 1/(sqrt_rho_star + sqrt_rho_star_alt);
-                        tmp = rho_wt_R * (S_R - S_M) - Bx2;
-                        if(fabs(tmp) < SMALL_NUMBER * P_M)
-                        {
-                            V_s.v[1] = Riemann_vec.R.v[1];
-                            V_s.v[2] = Riemann_vec.R.v[2];
-                            V_s.B[1] = Riemann_vec.R.B[1];
-                            V_s.B[2] = Riemann_vec.R.B[2];
-                        } else {
-                            tmp = 1/tmp;
-                            tmp2 = tmp * (S_M - vxR) * Bx;
-                            V_s.v[1] = Riemann_vec.R.v[1] - Riemann_vec.R.B[1] * tmp2;
-                            V_s.v[2] = Riemann_vec.R.v[2] - Riemann_vec.R.B[2] * tmp2;
-                            tmp2 = tmp * (rho_wt_R*(S_R-vxR) - Bx2);
-                            V_s.B[1] = Riemann_vec.R.B[1] * tmp2;
-                            V_s.B[2] = Riemann_vec.R.B[2] * tmp2;
-                        }
                         for(k=1;k<3;k++)
                         {
                             U_ss.v[k] = irhowt * (sqrt_rho_star*U_s.v[k] + sqrt_rho_star_alt*V_s.v[k] +
@@ -1521,9 +1523,7 @@ static GIZMO_GPU_FUNCTION void HLLD_Riemann_solver(struct Input_vec_Riemann Riem
 #endif
     Riemann_out->S_M=v_frame;
     Riemann_out->P_M=P_M;
-#ifdef SAVE_FACE_BFIELD
-    Riemann_out->Face_B = Interface_State->B;
-#endif
+    Riemann_out->Face_MagneticPressure = (face_magnetic_pressure >= 0) ? face_magnetic_pressure : 0.5 * Interface_State->B.norm_sq();
 #ifdef SAVE_FACE_VFIELD
     Riemann_out->Face_Vel = Interface_State->v;
 #endif
@@ -1585,10 +1585,6 @@ static GIZMO_GPU_FUNCTION void rotate_fluxes_back_to_lab(struct Riemann_outputs 
 #ifdef MAGNETIC
     v = Riemann_out->Fluxes.B;
     Riemann_out->Fluxes.B = v[0]*rot_matrix.n + v[1]*rot_matrix.m + v[2]*rot_matrix.p;
-#endif
-#ifdef SAVE_FACE_BFIELD
-    v = Riemann_out->Face_B;
-    Riemann_out->Face_B = v[0]*rot_matrix.n + v[1]*rot_matrix.m + v[2]*rot_matrix.p;
 #endif
 #ifdef SAVE_FACE_VFIELD
     v = Riemann_out->Face_Vel;
