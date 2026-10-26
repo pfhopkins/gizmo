@@ -1130,9 +1130,6 @@ int merge_particles_ij(int i, int j)
 #ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
     for(k=0;k<NUM_METAL_SPECIES+NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION;k++) {CellP[j].Dyield_pending[k] += CellP[i].Dyield_pending[k];} /* pending exchange adds */
 #endif
-#if defined(SINK_THERMALFEEDBACK)
-    CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* it adds */
-#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[j].ISMDustChem_Dust_Metal[k] = wt_j*CellP[j].ISMDustChem_Dust_Metal[k] + wt_i*CellP[i].ISMDustChem_Dust_Metal[k];} /* dust-mass conserving */
     for(k=0;k<NUM_ISMDUSTCHEM_SOURCES;k++) {CellP[j].ISMDustChem_Dust_Source[k] = wt_j*CellP[j].ISMDustChem_Dust_Source[k] + wt_i*CellP[i].ISMDustChem_Dust_Source[k];} /* dust source-mass conserving */
