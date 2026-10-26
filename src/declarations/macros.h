@@ -183,6 +183,9 @@ void        gizmo_request_controlled_stop(int code, const char *reason,
    (maps to CudaUVMSpace on NVIDIA, HIPManagedSpace on AMD).  Define a
    convenience alias so allocation code doesn't hardcode a backend. */
 #define GIZMO_KOKKOS_SHARED_SPACE Kokkos::SharedSpace
+/* Page-locked host memory the device copies to and from directly (plain host memory
+   on a build with no device). */
+#define GIZMO_KOKKOS_PINNED_HOST_SPACE Kokkos::SharedHostPinnedSpace
 /* Device-only memory space: GPU HBM on a GPU backend, SharedSpace when there is
    no device (host builds).  Use for arrays that are kernel-read-only and can be
    fed via explicit deep_copy from a SharedSpace/HostSpace stage — a partial move

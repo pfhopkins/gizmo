@@ -766,12 +766,12 @@ struct nlr_spec_accepts_wider_neighbor_list<Spec, std::void_t<decltype(Spec::acc
 template <typename Spec>
 constexpr bool nlr_spec_accepts_wider_neighbor_list_v = nlr_spec_accepts_wider_neighbor_list<Spec>::value;
 
-/* Optional Spec::writeback_writes_only_own_particle: apply_active_writeback(args, slot, i, accum)
- * writes nothing but particle i's own fields, its own row of any caller-owned per-particle
- * array, and its own accumulator, and reads no other particle's state that another active's
- * writeback writes.  The large-N host writeback then runs on several threads, since no two
- * actives touch the same memory.  Set it only after reading every write in the writeback body.
- * Absent means false: the writeback runs serially in active order. */
+/* Optional Spec::writeback_writes_only_own_particle: apply_active_writeback(args, slot, i, accum) (or its iterative
+ * form) writes nothing but particle i's own fields, its own row of any caller-owned per-particle array, and its own
+ * accumulator, and reads no other particle's state that another active's writeback writes.  The large-N host
+ * writeback can then run on several threads, and in any order, since no two actives touch the same memory.  Set it
+ * only after reading every write in the writeback body.  Absent means false: the writeback runs serially in active
+ * order. */
 template <typename Spec, typename = void>
 struct nlr_spec_writeback_writes_only_own_particle : std::false_type {};
 template <typename Spec>
@@ -1749,6 +1749,7 @@ struct NlrIterDriver {
      * verdict, and by the time a subgroup is being dispatched that decision has
      * already been acted on. */
     GxDeviceTreeView mode_d_tree{};
+    struct ModeDCallLease *mode_d_lease = nullptr;   /* the call's Mode D storage, when the call was admitted */
 
     /* Per-subgroup state (DYNAMICALLY SIZED to args.num_subgroups).
      *
@@ -1867,17 +1868,43 @@ struct NlrIterDriver {
  *   - scalars is a CONST REFERENCE to the driver-owned CallScalars (whole-
  *     call lifetime; never a stack temporary).
  *   - args is the driver's same-call neighbor_loop_args_iterative reference.
+ *   - call_slot is the active's position in the call's active_list (the subgroup's
+ *     first position plus subgroup_slot): the index of any call-level per-active
+ *     table the Spec stages in its DeviceContext.
+ *   - device_ctx is the driver's DeviceContext (whole-call lifetime).
  * ========================================================================== */
 template <typename Spec>
 struct AfterIterContext {
     const neighbor_loop_args_iterative& args;
     int    subgroup_index;                           /* 0 .. args.num_subgroups - 1 */
     int    subgroup_slot;                            /* 0 .. subgroups[subgroup_index].num_active_local - 1 */
+    int    call_slot;                                /* position in args.active_list */
     int    i;                                        /* particle_data index */
     int    iter_index;                               /* shared across all subgroups in this iter */
     double h_search_current;                         /* value snapshot; mutate via IterResult only */
     const typename Spec::CallScalars& scalars;       /* driver-owned; whole-call lifetime */
     typename Spec::IterScratch&       scratch;       /* mutable; PERSISTS across iters (allocated/zeroed once at iter 0) */
+    const typename Spec::DeviceContext& device_ctx;  /* driver-owned; whole-call lifetime */
+};
+
+/* NlrDeviceIterContext<Spec> -- the device twin of AfterIterContext, passed to Spec::after_iter_device when a Mode D call
+ * keeps its iteration on the device.  The same identity and lifetimes, with the particle arrays in place of the host
+ * argument view.  A condition that must stop the run is reported through stop_code (non-zero), which every rank agrees
+ * on after the iteration: a device body never calls endrun. */
+template <typename Spec>
+struct NlrDeviceIterContext {
+    struct particle_data *P;
+    struct gas_cell_data *CellP;
+    int    subgroup_index;
+    int    call_slot;
+    int    i;
+    int    iter_index;
+    double h_search_current;
+    const typename Spec::CallScalars&   scalars;
+    typename Spec::IterScratch&         scratch;
+    const typename Spec::DeviceContext& device_ctx;
+    int    this_task;
+    int   &stop_code;
 };
 
 /*! The argument view a loop is about to hand to a Spec hook or to a device context must
@@ -2076,7 +2103,7 @@ bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int 
  * parameterfile nor the Spec sets one.  The symmetric sum scales with NTask. */
 void nlr_default_modeb_thresholds(int search_mode, int *threshold_sum, int *threshold_max);
 /* The Mode-D lower bounds (summed, per-rank max) from the parameterfile pair
- * NeighborLoopModeDThreshold{Sum,Max}; an unset bound is 0. */
+ * NeighborLoopModeDThreshold{Sum,Max}; unset, 0 summed and the built-in busiest-rank bound.  Either output may be null. */
 void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max);
 
 /* The three ways the runner answers a neighbour query. */

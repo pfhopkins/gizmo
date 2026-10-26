@@ -79,8 +79,9 @@
 #define DEVICE_TREE_WALK_H
 
 #include <Kokkos_Core.hpp>
+#include <type_traits>
 
-#include "neighbor_list.h"              /* gx_export_envelope_t, GxDeviceTreeView */
+#include "neighbor_list.h"             /* gx_export_envelope_t, GxDeviceTreeView */
 #include "ghost_exchange_functions.h"   /* the canonical-wrap overlap predicate */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, NODE_TYPE_PRESENCE */
 #include "../core/timestep_functions.h" /* get_drift_factor_impl, DriftKickTableView:
@@ -119,6 +120,29 @@ GxStartNode gx_classify_start_node(int start, const GxDeviceTreeView &tree)
     if(start - tree.node_base >= tree.node_capacity) {return GxStartNode::Malformed;}   /* precondition leaves this unreachable */
     return GxStartNode::Walk;
 }
+
+/* A policy that decides some nodes itself, rather than leaving every one to the opening test.
+ *
+ * Most policies only act at particles.  A policy that also declares `has_node_hook` is asked about each
+ * internal node before the opening test, and about each pseudo-particle, and answers with one of these
+ * actions; `tag` is the policy's own label for what it records (the export walk uses the top leaf).
+ * The decision is a function of the node alone -- which members of a packet open the node is still
+ * the traversal's own test -- so one decision serves the flat walk and the packet walk alike.
+ *   Descend           the ordinary rule: open on overlap, step to the sibling otherwise;
+ *   Sibling           step to the sibling whether or not the node overlaps;
+ *   RecordAndSibling  record `tag` for the query (each member that opens the node, in a packet), then
+ *                     step to the sibling; for a pseudo-particle, record it for the query and step on;
+ *   Malformed         the tree cannot be described here: reported as a malformed tree. */
+enum class GxNodeAction {Descend, Sibling, RecordAndSibling, Malformed};
+struct GxNodeDecision {GxNodeAction action; int tag;};
+
+template <class Policy, class = void>
+struct gx_walk_policy_has_node_hook : std::false_type {};
+template <class Policy>
+struct gx_walk_policy_has_node_hook<Policy, std::void_t<decltype(Policy::has_node_hook)>>
+    : std::integral_constant<bool, Policy::has_node_hook> {};
+template <class Policy>
+constexpr bool gx_walk_policy_has_node_hook_v = gx_walk_policy_has_node_hook<Policy>::value;
 
 /* Walk one query against the local tree.
  *
@@ -190,6 +214,12 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                 if(Entry == GxWalkEntry::SubtreeResume) {
                     if(tree.node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL)) {break;}
                 }
+                [[maybe_unused]] GxNodeDecision decision{GxNodeAction::Descend, -1};
+                if constexpr (gx_walk_policy_has_node_hook_v<LeafPolicy>) {
+                    decision = leaf_policy.node_decision(kn);
+                    if(decision.action == GxNodeAction::Malformed) {Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE); break;}
+                    if(decision.action == GxNodeAction::Sibling) {no = tree.node_sibling[kn]; continue;}
+                }
                 /* WIDEN-ON-OPEN: the sweep's own expression, evaluated lazily.
                  *
                  * `len` is what the mirror last recorded and `node_ti` is WHEN it
@@ -231,6 +261,13 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
                 if(do_open && prune_type_mask && tree.type_mask_trusted) {
                     if(!(NODE_TYPE_PRESENCE(tree.node_bitflags[kn]) & prune_type_mask)) {do_open = 0;}
                 }
+                if constexpr (gx_walk_policy_has_node_hook_v<LeafPolicy>) {
+                    if(decision.action == GxNodeAction::RecordAndSibling) {
+                        if(do_open) {leaf_policy.record(decision.tag);}
+                        no = tree.node_sibling[kn];
+                        continue;
+                    }
+                }
                 if(do_open) {
                     const int child = tree.node_nextnode[kn];
                     /* An imported foreign subtree holds no locally-owned
@@ -243,6 +280,11 @@ void gx_device_tree_walk_impl(double qx, double qy, double qz, double reach,
             } else {
                 /* Pseudo-particle: another rank's subtree root, nothing local
                  * below it.  Step past exactly as the host walk does. */
+                if constexpr (gx_walk_policy_has_node_hook_v<LeafPolicy>) {
+                    const GxNodeDecision pseudo = leaf_policy.pseudo_decision(no - tree.pseudo_start);
+                    if(pseudo.action == GxNodeAction::Malformed) {Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_MALFORMED_TREE); break;}
+                    if(pseudo.action == GxNodeAction::RecordAndSibling) {leaf_policy.record(pseudo.tag);}
+                }
                 no = tree.nextnode_aux[tree.particle_slots + (no - tree.pseudo_start)];
             }
         }

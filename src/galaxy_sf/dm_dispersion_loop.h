@@ -89,6 +89,7 @@ struct DMDispNeighborData {
 struct DMDispersionSpec {
     /* Identity */
     static constexpr const char *loop_name = "dm_dispersion";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* the iterative writeback writes only this active's rows of Aux */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics -> threaded eval bit-identical */
 
     /* Search policy: one-way (gas i → DM j only; no j-side writes). */
@@ -182,6 +183,109 @@ struct DMDispersionSpec {
 
     static IterResult after_iter(const AfterIterContext<DMDispersionSpec>& ctx,
                                  const AccumData& accum);
+
+    /* after_iter_body -- bisection convergence + radius update for one active (contract at
+     * DMDispersionSpec::after_iter in dm_dispersion_loop.cc). Host and device both run this
+     * one body. Writes only scratch. */
+    /* The entry point a device iteration calls for each active: the body below. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_device(const NlrDeviceIterContext<DMDispersionSpec>& c, const AccumData& accum)
+    {
+        return after_iter_body(c.P, c.i, c.iter_index, c.h_search_current, c.scalars, c.scratch, accum, c.this_task, c.stop_code);
+    }
+
+    /* A condition that must stop the run sets stop_code; the caller requests the stop. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_body(const struct particle_data *P, int i, int iter, double h_search_current,
+                                      const CallScalars& cs, IterScratch& scratch,
+                                      const AccumData& accum, int this_task, int &stop_code)
+    {
+        const double ngb     = accum.Ngb;
+        double       new_h   = h_search_current;
+
+        /* maxsoft: legacy dm_dispersion.cc:107 */
+        const double maxsoft = DMIN(cs.max_kernel_radius,
+                                    10.0 * (double)P[i].KernelRadius);
+
+        /* Convergence check (legacy lines 108-117):
+         *   redo = (Ngb out of target band) AND (bracket not tight)
+         *   Force converge if h >= maxsoft (clamp to maxsoft). */
+        int redo_particle = 0;
+        if (((ngb < kDesNumNgb - kDesNumNgbDev) || (ngb > kDesNumNgb + kDesNumNgbDev))
+            && ((double)scratch.Right - (double)scratch.Left > 0.001 * (double)scratch.Left
+                || scratch.Left == 0 || scratch.Right == 0))
+        {
+            redo_particle = 1;
+        }
+        if (new_h >= maxsoft) {
+            new_h = maxsoft;
+            redo_particle = 0;
+        }
+
+        if (!redo_particle) {
+            return IterResult{IterStatus::Converged, new_h};
+        }
+
+        /* Iteration warning (legacy line 127-130) */
+        if (iter >= MAXITER - 10) {
+            PRINT_WARNING("DM disp: i=%d task=%d ID=%llu Type=%d KernelRadiusDM=%g Left=%g Right=%g Ngbs=%g Right-Left=%g\n   pos=(%g|%g|%g)\n",
+                i, this_task, (unsigned long long)P[i].ID, P[i].Type,
+                new_h, (double)scratch.Left, (double)scratch.Right, ngb,
+                (double)scratch.Right - (double)scratch.Left,
+                P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
+        }
+
+        /* Bracket update (legacy lines 124-125) */
+        if (ngb < kDesNumNgb - kDesNumNgbDev) {
+            if (new_h > (double)scratch.Left) scratch.Left = (float)new_h;
+        } else {
+            if (scratch.Right > 0) {
+                if (new_h < (double)scratch.Right) scratch.Right = (float)new_h;
+            } else {
+                scratch.Right = (float)new_h;
+            }
+        }
+
+        /* New radius computation (legacy lines 133-172) */
+        if (scratch.Right > 0 && scratch.Left > 0) {
+            /* Geometric interpolation between right/left (legacy line 139-150) */
+            if (ngb > 1) {
+                new_h *= pow(kDesNumNgb / ngb, 1.0 / NUMDIMS);
+            } else {
+                new_h *= 2.0;
+            }
+            if ((new_h < (double)scratch.Right) && (new_h > (double)scratch.Left)) {
+                new_h = pow(new_h * new_h * new_h * new_h
+                            * (double)scratch.Left * (double)scratch.Right, 1.0/6.0);
+            } else {
+                if (new_h > (double)scratch.Right) new_h = (double)scratch.Right;
+                if (new_h < (double)scratch.Left)  new_h = (double)scratch.Left;
+                new_h = pow(new_h * (double)scratch.Left * (double)scratch.Right, 1.0/3.0);
+            }
+        } else {
+            /* One-sided bracket (legacy lines 155-172) */
+            if (scratch.Right == 0 && scratch.Left == 0) {
+                printf("DMDispersionSpec::after_iter: Right==0 && Left==0 && KernelRadiusDM=%g (task=%d)\n", new_h, this_task); KOKKOS_IF_ON_HOST((fflush(stdout);))
+                stop_code = 90001011;
+                return IterResult{IterStatus::Converged, new_h};   /* graceful: bad-stop set; stop iterating this active with the last valid DM-dispersion radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
+            }
+            double fac;
+            if (scratch.Right == 0 && scratch.Left > 0) {
+                if (ngb > 1) { fac = log(kDesNumNgb / ngb) / NUMDIMS; } else { fac = 1.4; }
+                if (ngb < 2*kDesNumNgb && ngb > 0.1*kDesNumNgb) { new_h *= exp(fac); }
+                else { new_h *= 1.26; }
+            }
+            if (scratch.Right > 0 && scratch.Left == 0) {
+                if (ngb > 1) { fac = log(kDesNumNgb / ngb) / NUMDIMS; } else { fac = 1.4; }
+                fac = DMAX(fac, -1.535);
+                if (ngb < 2*kDesNumNgb && ngb > 0.1*kDesNumNgb) { new_h *= exp(fac); }
+                else { new_h /= 1.26; }
+            }
+        }
+
+        return IterResult{IterStatus::AdjustRadius, new_h};
+    }
+
 
     /* ========================================================================
      * Device hooks — header-inline (runner instantiates pair body from GPU TUs)

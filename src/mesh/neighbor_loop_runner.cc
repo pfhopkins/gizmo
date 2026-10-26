@@ -43,6 +43,7 @@
 #include "gpu_neighbor_list.h"
 #include "device_tree_walk.h"          /* the one device traversal; Mode D enters it from the root */
 #include "device_packet_walk.h"        /* packets: several queries sharing one traversal (shared with the gravity walk) */
+#include "mode_d_export.h"             /* Mode D's device export decision, envelope packing and reply merge */
 #include "../declarations/gpu_recorder_claim.h"   /* gx_touched_set_claim_in, the fused walk's touched-set claim */
 #include "kernel.h"  /* MUST precede sink_env1_loop.h (kernel_main, NEAREST_XYZ) */
 #include "ghost_writeback.h"             /* ghost_get_num_local */
@@ -222,9 +223,11 @@ void nlr_free_active_list(int *active_list)
  *   2. Spec::modeb_threshold_{sum,max} constexpr, where a Spec declares one
  *   3. the default for the loop's search mode (nlr_default_modeb_thresholds)
  *
- * Mode D, on the calls Mode B does not take, needs both counts at or above the
- * parameterfile pair NeighborLoopModeDThreshold{Sum,Max}; unset, that is 0/0,
- * so an eligible one-way loop uses Mode D wherever Mode B is not chosen.
+ * Mode D, on the calls Mode B does not take, needs the summed count at or above
+ * NeighborLoopModeDThresholdSum (else Mode A) and the busiest rank at or above
+ * the larger of NeighborLoopModeDThresholdMax and MODE_D_MIN_ACTIVES_PER_RANK
+ * (else Mode B), the latter also after every iteration; unset, the pair is 0 and
+ * MODE_D_DEFAULT_RANK_BOUND.
  *
  * The thresholds are settable ONLY from the parameterfile, so the values a run
  * used are recorded in its parameter log.
@@ -254,10 +257,27 @@ bool nlr_mode_b_rule(long long sum_active, int max_active, int default_sum, int 
     return (sum_active > 0) && (sum_active <= TS) && (max_active <= TM);
 }
 
+/* The fewest actives some rank must hold before Mode D takes a call: one device batch (GPU_MIN_SOURCES_FOR_WALK_OFFLOAD).
+ * When no rank holds that many the request-driven host walker is the faster path: a device batch of fewer queries loses
+ * to the host per query (measured on FIRE-dwarf and fire2ics, 3-7x below 4096), and a Mode D iteration's fixed cost --
+ * export walks, count exchange, termination -- is then more than Mode B's whole iteration (Poisson box, 128 ranks: the
+ * remainder of a density call finishing on Mode B below this took the call from 31-38 to 21.6 ms).  The busiest rank is
+ * the test, not an average, so a call whose work sits on a few ranks still gives those ranks the device.  The parameter
+ * file's NeighborLoopModeDThresholdMax raises this bound for a run.  Asked when a call is routed and again after every
+ * iteration of an iterative Mode D call (nlr_mode_d_feeds_device). */
+static constexpr int MODE_D_MIN_ACTIVES_PER_RANK = GPU_MIN_SOURCES_FOR_WALK_OFFLOAD;
+/* The busiest-rank bound when the parameter file leaves NeighborLoopModeDThresholdMax unset: the count from which Mode D
+ * measurably beats Mode B on density.  Measured per call on Frontier, 64 GPUs (a FIRE nuclear-zoom run): Mode B / Mode D
+ * 1.09 at 1e5-2e5 actives on the busiest rank (1.08 on the slowest rank), 1.4 at 2e5-3e5, 2.2-2.7 above; and on a FIRE
+ * run at 128 GPUs every call Mode D lost had 4k-42k on its busiest rank.  Ties go to the device. */
+static constexpr int MODE_D_DEFAULT_RANK_BOUND = 100000;
+static int nlr_mode_d_rank_bound(void);
+
 /* Built-in Mode-B thresholds by search mode, used where neither the parameterfile
  * nor the Spec sets one.
  *   One-way loops: Mode B up to 64 active globally (and 64 on any rank); above
- *   that an eligible loop uses Mode D, which needs no ghost import either.
+ *   that an eligible loop uses Mode D, which needs no ghost import either, once the
+ *   busiest rank holds Mode D's per-rank bound (Mode B below that, while Mode B is on).
  *   Symmetric loops: Mode B up to an average of 320 active per rank, with no rank
  *   above 3200.  Measured on Frontier, Mode A's import and list build stop paying
  *   for themselves below a few hundred active per rank.  The per-rank cap is a
@@ -288,18 +308,21 @@ void gizmo_nlr_report_dispatch_thresholds(void)
     symm_sum = gizmo_nlr_modeb_threshold_sum_for(nullptr, symm_sum);
     symm_max = gizmo_nlr_modeb_threshold_max_for(nullptr, symm_max);
     gizmo_nlr_moded_thresholds(&d_sum, &d_max);
+    const int d_rank_bound = nlr_mode_d_rank_bound();
     printf("Neighbor loops: Mode B at or below summed/per-rank-max active %d/%d (one-way), %d/%d (symmetric); "
-           "eligible one-way loops use Mode D at or above %d/%d, Mode A otherwise\n",
-           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_max);
+           "eligible one-way loops use Mode D at or above %d summed with at least %d on the busiest rank, when routed and "
+           "after every iteration (below that Mode B when it is on, else the usual path), Mode A otherwise\n",
+           oneway_sum, oneway_max, symm_sum, symm_max, d_sum, d_rank_bound);
 }
 
 void gizmo_nlr_moded_thresholds(int *threshold_sum, int *threshold_max)
 {
     const int p_sum = nlr_host_all_ptr()->NeighborLoopModeDThresholdSum;
     const int p_max = nlr_host_all_ptr()->NeighborLoopModeDThresholdMax;
-    /* Unset (-1) = 0: Mode D wherever Mode B is not chosen. */
-    *threshold_sum = (p_sum == -1) ? 0 : p_sum;
-    *threshold_max = (p_max == -1) ? 0 : p_max;
+    /* Unset (-1): 0 summed, and MODE_D_DEFAULT_RANK_BOUND on the busiest rank.  Either output may be null when only the
+     * other is wanted. */
+    if(threshold_sum) {*threshold_sum = (p_sum == -1) ? 0 : p_sum;}
+    if(threshold_max) {*threshold_max = (p_max == -1) ? MODE_D_DEFAULT_RANK_BOUND : p_max;}
 }
 
 
@@ -1101,24 +1124,6 @@ struct NlrPeerAnswerHostWalk {
     }
 };
 
-/* The local queries a fused round co-schedules with the ones it received.
- *
- * Defined here rather than beside the walk that consumes it because the
- * transport above fills it in, and it needs nothing the transport does not
- * already have -- no allocator, no leaf policy, just the two Spec types.
- *
- * Empty by default, which is the single-rank case and every round after the one
- * that took this call's locals.  `accums_out` is WRITTEN, not merged: a local
- * query is evaluated exactly once per call, and the reply merge that follows
- * accumulates on top of what this wrote. */
-template <typename Spec>
-struct NlrModeDLocalSlice {
-    const typename Spec::ActiveData *actives = nullptr;
-    bool                             device_visible = false;
-    int                              n = 0;
-    typename Spec::AccumData        *accums_out = nullptr;
-};
-
 /* The motion-target set for one call of a loop that writes neighbour
  * velocities: opened before any kernel, raised and closed after the writeback.
  * A loop without the trait touches none of this. */
@@ -1151,9 +1156,6 @@ struct NlrMotionTargetScope {
     ~NlrMotionTargetScope() {nlr_motion_targets_close<Spec>();}
 };
 
-template <typename Spec>
-struct NlrPeerAnswerDeviceFused;
-
 /* One rank's queries answered from its own tree, device-resident end to end.
  * Returns false only when the device buffers could not be had, in which case
  * nothing was evaluated and the caller answers on the host instead. */
@@ -1168,58 +1170,33 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
                                             const GxDeviceTreeView& tree,
                                             typename Spec::AccumData *accums_out);
 
-/* Holds the queries when they are built where the particles already are.
- *
- * Host-visible as well as device-visible, which is what lets one buffer serve
- * all three readers: the export walk wants each query's position and reach, the
- * envelopes ship the objects to peers, and the walk kernel evaluates them. A
- * plain vector could serve the first two and not the third; this serves all of
- * them, so the queries are built once and not copied again afterwards.
- *
- * That is narrower than "nothing is staged", and deliberately so: the indices
- * and radii the build reads are still staged, and the accumulators still are.
- * What this removes is the host walking P and CellP to fill the queries. */
-template <typename Spec>
-struct NlrDeviceBuiltActives {
-    typename Spec::ActiveData *p = nullptr;
-    NlrDeviceBuiltActives() = default;
-    NlrDeviceBuiltActives(const NlrDeviceBuiltActives&) = delete;
-    NlrDeviceBuiltActives& operator=(const NlrDeviceBuiltActives&) = delete;
-    ~NlrDeviceBuiltActives() {
-        if(p) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(p);}
-    }
+/* Mode D's device-resident exchange (defined with the device walks below) and the call storage it runs in.  The
+ * exchange returns true when it ended in a stop every rank agreed on.  Its actives come from the host (args, radii)
+ * or, for a call iterating on the device, from one subgroup's segment of the device list of call slots still
+ * iterating (ModeDDeviceQueries), and its results go to accums_out on the host, or stay in the call's storage --
+ * at the segment's offset for a device-iterated call -- when accums_out is null. */
+struct ModeDCallLease;
+struct ModeDDeviceQueries {
+    const int    *live;             /* [n_live] the call slots of one subgroup still iterating */
+    int           n_live;
+    int           result_offset;    /* where that subgroup's results go in the call's result rows */
+    const int    *slot_index;       /* [call slots] each slot's particle */
+    const double *slot_radius;      /* [call slots] each slot's search radius */
 };
+template <typename Spec>
+static bool mode_d_exchange(ModeDCallLease &lease, const neighbor_loop_args& args, const double *radii,
+                            const typename Spec::CallScalars& cs, const typename Spec::DeviceContext& ctx,
+                            unsigned int type_mask, typename Spec::AccumData *accums_out,
+                            const ModeDDeviceQueries *device_queries = nullptr);
 
-template <typename Spec, typename DeviceCtx>
-static typename Spec::ActiveData *
-nlr_build_self_actives_on_device(const neighbor_loop_args& args,
-                                 const DeviceCtx& ctx,
-                                 const double *radii,
-                                 const typename Spec::CallScalars& cs,
-                                 int n,
-                                 NlrDeviceBuiltActives<Spec>& owner);
-
-/* Which backend answers queries on this call.
- *
- * HostWalk is what Mode B has always done and is the default, so a caller that
- * says nothing gets exactly the path F1 proved unchanged.  DeviceFused is Mode D:
- * the same transport, the same wire, the same reply merge -- a different way of
- * turning a query into an accumulator.  The choice is the CALLER's because it is
- * the same choice that selected the dispatch path, and it was made collectively
- * there; the transport must not re-decide it per rank. */
-enum class NlrEvalBackend { HostWalk, DeviceFused };
-
-template <typename Spec, NlrEvalBackend Backend = NlrEvalBackend::HostWalk>
+template <typename Spec>
 static void mode_b_remote_evaluate_into_buffer(
     const neighbor_loop_args& args,
     const double *radii,
     const typename Spec::CallScalars& cs,
     const typename Spec::DeviceContext& ctx,         /* caller-owned */
     unsigned int neighbor_type_mask,                  /* explicit caller param */
-    typename Spec::AccumData *accums_out,             /* size = args.num_active; caller-owned */
-    /* Only read on the DeviceFused backend, where it is the tree the collective
-     * readiness decision was made against.  Unused by HostWalk. */
-    const GxDeviceTreeView *fused_tree = nullptr)
+    typename Spec::AccumData *accums_out)             /* size = args.num_active; caller-owned */
 {
     using ActiveData    = typename Spec::ActiveData;
     using AccumData     = typename Spec::AccumData;
@@ -1234,24 +1211,6 @@ static void mode_b_remote_evaluate_into_buffer(
     static_assert(std::is_trivially_copyable<ReplyEnvelope>::value,
         "NlrReplyEnvelope must be trivially-copyable for byte-level MPI transfer");
 
-    /* The fused backend reads the tree through this pointer, and a caller that
-     * forgot it would not fail here -- it would fail inside a device kernel,
-     * where the symptom is an unbounded read rather than a message.  The backend
-     * is a template seam, so the next caller is the one this protects. */
-    if constexpr (Backend == NlrEvalBackend::DeviceFused) {
-        if(fused_tree == nullptr) {
-            if(ThisTask == 0) {
-                fprintf(stderr,
-                    "[%s] FATAL: the fused evaluation backend was selected without the prepared "
-                    "tree it walks. The caller that chose this backend owns that tree.\n",
-                    Spec::loop_name);
-                fflush(stderr);
-            }
-            endrun(90001030);
-            return;
-        }
-    }
-
     const int N    = args.num_active;     /* may be 0 on this rank; collective entry */
     const int nt   = NTask;
     const int rank = ThisTask;
@@ -1261,69 +1220,28 @@ static void mode_b_remote_evaluate_into_buffer(
      * Helper does NOT call populate_call_scalars or populate_device_context. */
 
     /* The queries. One snapshot serves both this rank's own pairs and the copies
-     * shipped to peers, so neither can see a different epoch from the other.
-     *
-     * WHERE they are built is the difference between the backends. The host
-     * walker builds them here, one Spec::load_active per active, and each of
-     * those is a scattered read of P[i] and CellP[i] -- the canonical arrays
-     * surfacing on the host, once per active, on the calls that have the most
-     * actives. The fused backend has those same particles resident on the device
-     * already, so it builds them there instead, into a buffer the host can still
-     * read for the export walk and the envelopes.
-     *
-     * The objects are the same either way: same function, same inputs, same
-     * epoch. The epoch holds because the queries are built from the ACTIVES, and
-     * an active is already current when a neighbour loop is entered: the sync
-     * point drifts every particle in every active time bin to All.Ti_Current
+     * shipped to peers, so neither can see a different epoch from the other.  An
+     * active is already current when a neighbour loop is entered: the sync point
+     * drifts every particle in every active time bin to All.Ti_Current
      * (core/run.cc), ActiveParticleList is built from those same bins, and every
-     * Spec that can reach this backend draws its active list from that list.
-     * Nothing advances All.Ti_Current again inside the step.
-     *
-     * That is the invariant the discovery pass below also rests on, so it is
-     * worth naming rather than leaving implied: the record pass and the
-     * evaluation pass must build the same query from the same particle, and they
-     * would not if a drift between them could move an active. The touched-set
-     * drift only advances particles that are behind, so an active that is
-     * already current cannot be moved by it.
-     *
-     * Falling back to the host build when the device buffer cannot be had is
-     * safe where declining would not be: it changes how the queries are filled,
-     * never which collectives this rank enters, so the peers cannot tell. */
+     * Spec draws its active list from that list.  Nothing advances All.Ti_Current
+     * again inside the step. */
     std::vector<ActiveData> actives_host;
-    NlrDeviceBuiltActives<Spec> actives_device;
     ActiveData *actives = nullptr;
-    bool actives_are_device_visible = false;
     if(N > 0) {
-        if constexpr (Backend == NlrEvalBackend::DeviceFused) {
-            actives = nlr_build_self_actives_on_device<Spec>(args, ctx, radii, cs, N,
-                                                             actives_device);
-            actives_are_device_visible = (actives != nullptr);
-        }
-        if(actives == nullptr) {
-            actives_host.resize(N);
-            build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
-                                                      actives_host.data());
-            actives = actives_host.data();
-        }
+        actives_host.resize(N);
+        build_self_actives_host_pre_drift<Spec>(args, ctx, radii, cs,
+                                                  actives_host.data());
+        actives = actives_host.data();
     }
 
-    /* ---- ON THE HOST-WALK BACKEND the self stages run ONCE, BEFORE the peer
-     * round loop: self candidate collection + drift + evaluation precede peer
-     * evaluation, and only the PEER work streams in bounded rounds below.
+    /* ---- The self stages run ONCE, BEFORE the peer round loop: self candidate
+     * collection + drift + evaluation precede peer evaluation, and only the PEER
+     * work streams in bounded rounds below.  That order describes this path; it
+     * is not a contract other paths keep (Mode A and Mode D evaluate local and
+     * received queries together).
      *
-     * ⛔ THE FUSED BACKEND DOES NOT DO THIS, AND THE "self-before-peer WRITE
-     * order" THIS COMMENT USED TO ASSERT IS NOT A CONTRACT ANYWHERE.  It walks
-     * local and received queries in one batch, so a neighbour j can be reached
-     * by both in the same launch.  Nothing is lost by that: whether a given
-     * local particle is reached by one of this rank's queries or by one a peer
-     * sent is an accident of where the domain boundary fell and carries no
-     * physical meaning, Mode A has always evaluated local and imported
-     * candidates together in a single fused loop, and the only pair kernels
-     * this backend admits are those whose neighbour-side writes already go
-     * through atomics.  The ordering below is therefore a description of the
-     * host path, not a rule the fused path breaks.
-     *
-     * ORDERING NOTE (host path) — the reorder this introduces vs the prior single-pass form:
+     * ORDERING NOTE — the reorder this introduces vs the prior single-pass form:
      * peer candidate COLLECTION now runs AFTER self EVALUATION (previously it ran
      * before). The peer-candidate walk keys membership on P[j].{Type,Pos,Mass}:
      *   - Type/Pos are NEVER mutated by a pair kernel (only drift writes Pos, and
@@ -1371,15 +1289,8 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<std::vector<int>> cand_self_tree;
     if(N > 0) {
                 if(nt > 1) {
-            /* want_cands: the tree walk needs candidates; the export CSR
-             * for the round loop is built regardless,
-             * so the fused walk runs with cand_out=nullptr there. */
-            /* The export CSR is built either way; the candidate list is
-             * only wanted by a backend that will later walk it.  A fused
-             * backend answers its own actives from the tree directly, so
-             * collecting them here would be building a list to throw away. */
-            const bool want_cands = (Backend == NlrEvalBackend::HostWalk);
-            if(want_cands) cand_self_tree.assign(N, std::vector<int>{});
+            /* One walk per active collects its candidates and its export CSR together. */
+            cand_self_tree.assign(N, std::vector<int>{});
             csr_rec_off.assign(N + 1, 0);
             /* Thread the fused self walk above the work threshold. Each thread
              * walks its actives into its OWN export sink + its OWN CSR segment
@@ -1425,16 +1336,8 @@ static void mode_b_remote_evaluate_into_buffer(
                                          (double)actives[aa].pos[1],
                                          (double)actives[aa].pos[2]};
                     sink.clear_all();
-                    /* No candidate sink when the backend will not walk one:
-                     * cand_self_tree is left empty in that case, so taking its
-                     * element address would be out of bounds. Both branches
-                     * guard it, and this one is now the branch that meets the
-                     * case, since a walk that collects nothing threads too. */
-                    std::vector<int>* cand_ptr = nullptr;
-                    if(want_cands) {
-                        cand_ptr = &cand_self_tree[aa];
-                        if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
-                    }
+                    std::vector<int>* cand_ptr = &cand_self_tree[aa];
+                    if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
                     mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                             Spec::search_mode, Spec::radius_policy,
                                             cand_ptr, topleaf_map, sink, jscale);
@@ -1480,11 +1383,8 @@ static void mode_b_remote_evaluate_into_buffer(
                                          (double)actives[aa].pos[1],
                                          (double)actives[aa].pos[2]};
                     export_sink.clear_all();
-                    std::vector<int>* cand_ptr = nullptr;
-                    if(want_cands) {
-                        cand_ptr = &cand_self_tree[aa];
-                        if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
-                    }
+                    std::vector<int>* cand_ptr = &cand_self_tree[aa];
+                    if(cand_ptr->capacity() == 0) cand_ptr->reserve(64);
                     mode_b_walk_and_export(pos_arr, h_q, neighbor_type_mask,
                                             Spec::search_mode, Spec::radius_policy,
                                             cand_ptr, topleaf_map, export_sink, jscale);
@@ -1514,7 +1414,7 @@ static void mode_b_remote_evaluate_into_buffer(
      * drift per-round below). drift_particle is idempotent to All.Ti_Current
      * (constant across the helper), so a j that is both a self- and peer-
      * candidate drifts once — identical to the old combined union drift. */
-    if constexpr (Backend == NlrEvalBackend::HostWalk) {
+    {
         /* The same query the walk above used: the frozen actives[] on the multi-rank fused walk, the
          * particle and its radius on the single-rank walk. */
         if (N > 0) drift_and_filter_candidates<Spec>(cand_self_tree, neighbor_type_mask, [&](int aa, double *pos, double &h_q) {
@@ -1529,25 +1429,10 @@ static void mode_b_remote_evaluate_into_buffer(
         });
     }
 
-    /* Stage 8: answer THIS rank's own queries -> accums_out.
-     *
-     * The host backend evaluates the list it collected above.  The fused backend
-     * does NOT answer them here: it carries them into the round loop below and
-     * walks them in the same launch as the queries it received, because the two
-     * ask the same question of the same tree and a half-empty launch apiece
-     * leaves the device waiting twice.  Which of this rank's particles a given
-     * query reaches is an accident of where the domain boundary fell, so there
-     * is nothing to separate.  `local_cursor` tracks how many have been taken.
-     *
-     * The fused backend also skips the collected-candidate drift, because it
-     * collected no candidates -- not because everything is already current. */
-    [[maybe_unused]] int local_cursor = 0;   /* read only on the fused path */
-    if constexpr (Backend == NlrEvalBackend::HostWalk) {
-        if(N > 0) {
-            evaluate_pairs_post_drift<Spec>(ctx, actives, N,
-                                              cand_self_tree, accums_out, cs, EvalOMPPolicy::AllowProduction);
-        }
-        local_cursor = N;   /* answered here; the round loop carries nothing */
+    /* Stage 8: answer THIS rank's own queries -> accums_out, from the list collected above. */
+    if(N > 0) {
+        evaluate_pairs_post_drift<Spec>(ctx, actives, N,
+                                          cand_self_tree, accums_out, cs, EvalOMPPolicy::AllowProduction);
     }
 
     /* ---- PEER round loop (streaming). Build a CommChunkSize-bounded batch of
@@ -1739,47 +1624,10 @@ static void mode_b_remote_evaluate_into_buffer(
      * and evaluate -- are one backend operation.  See NlrPeerAnswerHostWalk. */
     const int K = (int)peer_actives.size();
     std::vector<AccumData> peer_replies(K);
-    if constexpr (Backend == NlrEvalBackend::HostWalk) {
-        NlrPeerAnswerHostWalk<Spec>::answer(ctx, cs, peer_actives,
-                                            peer_nodelist_flat, peer_nnodes,
-                                            neighbor_type_mask,
-                                            peer_replies);
-    } else {
-        /* Carry whatever of this rank's own queries are still unplaced into the
-         * same two launches as this group's received ones -- but only as many as
-         * fit under the accumulator high-water the unfused shape already
-         * required.
-         *
-         * WHY THERE IS A BOUND AT ALL.  Answering the locals separately meant
-         * their N accumulators were allocated and freed BEFORE this group's K
-         * were, so the call's peak was max(N, K).  One batch makes both live at
-         * once, which would be N + K.  Holding L + K <= max(N, K) -- i.e.
-         * L <= N - K -- keeps the peak exactly what it was, so fusing cannot
-         * make a call that used to fit stop fitting.
-         *
-         * WHAT IT COSTS.  When a group brings MORE queries than this rank has
-         * actives (K >= N) the headroom is zero and the locals wait, which for
-         * that group is the unfused launch count rather than a regression.  In
-         * the ordinary case K is bounded by the group budget and far below N, so
-         * the headroom covers essentially every local and one group takes them
-         * all.  Whether spreading them across groups instead would fill the
-         * device better is a measurement, not something to assume here. */
-        NlrModeDLocalSlice<Spec> local_slice;
-        const int local_headroom = (N > K) ? (N - K) : 0;
-        const int local_remaining = N - local_cursor;
-        const int local_take = (local_remaining < local_headroom) ? local_remaining : local_headroom;
-        if(local_take > 0) {
-            local_slice.actives        = actives + local_cursor;
-            local_slice.device_visible = actives_are_device_visible;
-            local_slice.n              = local_take;
-            local_slice.accums_out     = accums_out + local_cursor;
-        }
-        NlrPeerAnswerDeviceFused<Spec>::answer(ctx, cs, *fused_tree, peer_actives,
-                                               peer_nodelist_flat, peer_nnodes,
-                                               neighbor_type_mask,
-                                               peer_replies, local_slice);
-        local_cursor += local_slice.n;
-    }
+    NlrPeerAnswerHostWalk<Spec>::answer(ctx, cs, peer_actives,
+                                        peer_nodelist_flat, peer_nnodes,
+                                        neighbor_type_mask,
+                                        peer_replies);
     /* Stage 10 (per group): build reply envelopes (origin_slot/rank copied from
      * each received query envelope), unflatten into per-peer arrays via the
      * provenance map, then send THIS group's replies — after which the group's
@@ -1803,36 +1651,6 @@ static void mode_b_remote_evaluate_into_buffer(
         xch.send_group_replies(group_peers, std::move(replies_for_group));
     }
         }   /* end whole-peer group loop */
-
-        /* ⛔ ANY OF THIS RANK'S OWN QUERIES STILL UNPLACED ARE ANSWERED HERE,
-         * BEFORE THE REPLY DRAIN BELOW -- NEVER AFTER THE ROUND LOOP.
-         *
-         * accums_out[slot] is ASSIGNED by a local evaluation and MERGED INTO by
-         * an incoming reply.  A rank that received nothing this round got no
-         * group above, so without this its locals would still be unanswered when
-         * the drain merges its replies, and the assignment would then land on top
-         * of them and discard them.  Putting the flush here rather than after the
-         * do/while is what makes that impossible, and it is also the whole
-         * no-received-queries case: a rank that never receives anything from
-         * anyone answers all of its own work here, on the first round.
-         *
-         * Normally a no-op: the group loop above already took them. */
-        if constexpr (Backend == NlrEvalBackend::DeviceFused) {
-            if(local_cursor < N) {
-                std::vector<AccumData> no_replies;
-                NlrModeDLocalSlice<Spec> local_slice;
-                local_slice.actives        = actives + local_cursor;
-                local_slice.device_visible = actives_are_device_visible;
-                local_slice.n              = N - local_cursor;
-                local_slice.accums_out     = accums_out + local_cursor;
-                NlrPeerAnswerDeviceFused<Spec>::answer(ctx, cs, *fused_tree,
-                                                       std::vector<ActiveData>{},
-                                                       std::vector<int>{}, std::vector<int>{},
-                                                       neighbor_type_mask,
-                                                       no_replies, local_slice);
-                local_cursor = N;
-            }
-        }
 
         /* Stage 11: drain the exchange (remaining query-payload Isends + all
          * pre-posted reply Irecvs, byte-count-asserted), then merge replies
@@ -1982,7 +1800,7 @@ constexpr bool nlr_spec_mode_d_eligible_v =
  * that is where the walk evaluates them; the tree was prepared and voted on at
  * the dispatch site, once, before this is entered. */
 template <typename Spec>
-static void run_mode_d(const neighbor_loop_args& args, const double *radii,
+static void run_mode_d(const neighbor_loop_args& args, const double *radii, ModeDCallLease &lease,
                        const GxDeviceTreeView& tree)
 {
     using AccumData = typename Spec::AccumData;
@@ -2007,7 +1825,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
     std::vector<AccumData> accums(N);
     for(int aa = 0; aa < N; aa++) {Spec::zero_accum(accums[aa]);}
 
-    bool evaluated = true;
+    bool evaluated = true, stopped = false;
     {
         /* The guard releases the Spec's context after the writeback below, the
          * order the other wrappers keep. */
@@ -2024,11 +1842,9 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
             return;
         }
         if(NTask > 1) {
-            /* Every rank enters the transport, with or without actives of its own. */
-            mode_b_remote_evaluate_into_buffer<Spec, NlrEvalBackend::DeviceFused>(
-                args, radii, cs, ctx,
-                nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
-                (N > 0) ? accums.data() : nullptr, &tree);
+            /* Every rank enters the exchange, with or without actives of its own. */
+            stopped = mode_d_exchange<Spec>(lease, args, radii, cs, ctx, nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
+                                  (N > 0) ? accums.data() : nullptr);
         } else if(N > 0) {
             /* Each entry's slot into the call-level staging: carried by a
              * narrowed list, its position otherwise. */
@@ -2039,7 +1855,8 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii,
                 nlr_effective_neighbor_type_mask(args, Spec::neighbor_type_mask),
                 tree, accums.data());
         }
-        if(evaluated) {
+        /* An exchange that ended in an agreed stop leaves no result to write back. */
+        if(evaluated && !stopped) {
             nlr_apply_active_writebacks<Spec>(args, 0, N, accums.data());
         }
     }
@@ -2750,9 +2567,58 @@ static int nlr_spec_threshold_max(int fallback) {
  * (parameterfile NeighborLoopModeBThreshold{Sum,Max}, else the Spec's
  * modeb_threshold_{sum,max}, else the default for its search mode).  Otherwise Mode D when the loop can
  * be answered by the fused device walk, some rank has work, and both counts
- * meet the Mode-D lower bounds; otherwise Mode A.  Collective inputs, so every
+ * meet the Mode-D lower bounds; a summed count below its bound gives Mode A.  Collective inputs, so every
  * rank answers alike.  Nothing here touches Mode D's state: a call answered by
- * A or B pays nothing for D. */
+ * A or B pays nothing for D.
+ *
+ * A call that meets the Mode-D summed bound but whose busiest rank has fewer actives than Mode D's per-rank bound
+ * (nlr_mode_d_feeds_device) goes to Mode B, unless Mode B is switched off. */
+/* Whether the parameter file leaves Mode B on for this loop: a threshold of 0 switches it off. */
+template <typename Spec>
+static bool nlr_mode_b_switched_on(void)
+{
+    int default_sum, default_max;
+    nlr_default_modeb_thresholds(Spec::search_mode, &default_sum, &default_max);
+    return gizmo_nlr_modeb_threshold_sum_for(nullptr, nlr_spec_threshold_sum<Spec>(default_sum)) > 0 &&
+           gizmo_nlr_modeb_threshold_max_for(nullptr, nlr_spec_threshold_max<Spec>(default_max)) > 0;
+}
+
+/* The per-iteration reduction of a one-subgroup Mode D call: {summed actives, busiest rank's actives, stop code}, as one
+ * element of three long longs, summed / maximum / maximum. */
+static void nlr_count_triple_reduce(void *in, void *inout, int *len, MPI_Datatype *)
+{
+    const long long *a = (const long long *) in;
+    long long *b = (long long *) inout;
+    for(int k = 0; k < *len; k++, a += 3, b += 3) {b[0] += a[0]; if(a[1] > b[1]) {b[1] = a[1];} if(a[2] > b[2]) {b[2] = a[2];}}
+}
+static MPI_Datatype nlr_count_triple_type(void)
+{
+    static MPI_Datatype t = MPI_DATATYPE_NULL;
+    if(t == MPI_DATATYPE_NULL) {MPI_Type_contiguous(3, MPI_LONG_LONG, &t); MPI_Type_commit(&t);}
+    return t;
+}
+static MPI_Op nlr_count_triple_op(void)
+{
+    static MPI_Op op = MPI_OP_NULL;
+    if(op == MPI_OP_NULL) {MPI_Op_create(nlr_count_triple_reduce, 1, &op);}
+    return op;
+}
+
+/* Whether a Mode D call's busiest rank still holds enough actives for Mode D: MODE_D_MIN_ACTIVES_PER_RANK, or the
+ * parameter file's per-rank bound (NeighborLoopModeDThresholdMax) when that is larger.  Asked when a call is routed,
+ * and again after every iteration of an iterative Mode D call, whose converged actives drop out: a remainder below it
+ * finishes on Mode B.  Collective input (a maximum over the ranks), so every rank answers alike. */
+static int nlr_mode_d_rank_bound(void)
+{
+    int threshold_max = 0;
+    gizmo_nlr_moded_thresholds(nullptr, &threshold_max);
+    return (threshold_max > MODE_D_MIN_ACTIVES_PER_RANK) ? threshold_max : MODE_D_MIN_ACTIVES_PER_RANK;
+}
+static bool nlr_mode_d_feeds_device(int max_active)
+{
+    return max_active >= nlr_mode_d_rank_bound();
+}
+
 template <typename Spec>
 NlrMode nlr_select_mode(long long sum_active, int max_active)
 {
@@ -2762,10 +2628,13 @@ NlrMode nlr_select_mode(long long sum_active, int max_active)
         return NlrMode::B;
     }
     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-        int TDS = 0, TDM = 0;
-        gizmo_nlr_moded_thresholds(&TDS, &TDM);
-        if(sum_active > 0 && sum_active >= TDS && max_active >= TDM) {
-            return NlrMode::D;
+        int TDS = 0;   /* the per-rank bound is nlr_mode_d_feeds_device's */
+        gizmo_nlr_moded_thresholds(&TDS, nullptr);
+        if(sum_active > 0 && sum_active >= TDS) {
+            if(nlr_mode_d_feeds_device(max_active)) {return NlrMode::D;}
+            /* Busiest rank below Mode D's per-rank bound: Mode B, unless the parameter file has
+             * switched Mode B off, in which case the call keeps its usual path. */
+            if(nlr_mode_b_switched_on<Spec>()) {return NlrMode::B;}
         }
     }
     return NlrMode::A;
@@ -2939,22 +2808,574 @@ static void nlr_dispatch_ghost_writeback_end(const neighbor_loop_args& args,
  * Public entry: run_neighbor_loop<Spec>
  * ========================================================================== */
 
-/* The touched-set epoch a fused call opens belongs to that call and to nothing after it.
+/* ============================================================================
+ * Mode D call admission: what a device-resident call holds, and the one owner of it.
  *
- * Retirement rides a scope guard rather than a statement at the end of the work, because the
- * epoch is opened by the walk preparation -- before the collective vote that decides whether
- * Mode D is taken at all -- and the paths between that point and the end of the call include a
- * vote that routes elsewhere, an out-of-memory fallback to the host walker, and several early
- * returns.  A recorder left held would refuse every later epoch, which pins the fused walk to
- * its fallback for the rest of the run while looking exactly like the mechanism working.
+ * A Mode D call needs storage for its whole pipeline -- the queries it asks, its export decision, the
+ * envelopes it packs, the replies it gets back, the messages it receives -- and every piece is sized from
+ * quantities known before the call starts: the actives on this rank, the task count, the top-level leaves and
+ * the communication chunk.  So it is decided and allocated before any work, and the call either has every
+ * piece or is not a Mode D call: nothing on the exchange's path is allocated or declined in the middle of an
+ * exchange, where one rank stopping would leave its peers waiting.
  *
- * The retirement is ordered after the owner's last consume, which is also what fences the
- * recording kernel: gx_touched_set_drift_and_mark waits for it, and the guard runs at scope
- * exit, after every pass has been consumed. */
-struct GxTouchedEpochGuard {
-    int held;
-    ~GxTouchedEpochGuard() {if(held) {gx_touched_set_retire(GX_TOUCHED_OWNER_FUSED_WALK);}}
+ * One piece may grow after admission: the round arena, which holds what one round sends.  Admission gives it
+ * room for one worst-case active; once a call has counted what its actives actually send, it tries to grow
+ * the arena to that.  A growth refused keeps the arena as it was and the call simply runs more rounds --
+ * every rank reconciles round counts at the round's end anyway -- so it changes neither the answer nor any
+ * rank's path.
+ *
+ * Allocating is the test.  The device storage a call gives back is kept, at its high water, for the next call
+ * (allocating and freeing it every call cost ~1 ms of a ~30 ms density call) and released with the tree, which
+ * bounds what is kept to one tree's calls; the page-locked host staging is one fixed ring held for the run,
+ * because pinning costs far too much to repeat per call (gx_mode_d_staging_acquire).  One task holds none of it:
+ * the single-rank path keeps its own.
+ * ========================================================================== */
+
+/* The share of the device's free memory a lease may take: the rest stays for what the call
+ * still allocates while it runs, so admission can never leave the call's own later
+ * allocations to fail in the middle of an exchange. */
+static constexpr double MODE_D_DEVICE_FREE_FRACTION = 0.8;
+
+/* The sizes a Mode D call's storage is built from.  Every product is checked in 64-bit arithmetic before it is
+ * used. */
+struct ModeDWorkspacePlan {
+    long long envelopes_per_round;           /* E: query envelopes one round may carry, the chunk / (query + reply) */
+    long long worst_envelopes_per_active;    /* the most one active can need: a run per peer plus its node lists */
+    long long arena_capacity_limit;          /* the most envelopes the round arena may ever hold: E, within the index range */
+    long long arena_min_envelopes;           /* the arena at admission: room for one worst-case active */
+    long long segment_records;               /* S: records of one staging message, either kind */
+    long long device_bytes;                  /* what admission allocates on the device */
+    long long iteration_actives;             /* actives whose iteration state the call keeps on the device (0: the host keeps it) */
+    long long scratch_bytes;                 /* one active's iteration scratch */
+    long long iteration_subgroups;           /* the subgroups of a call iterating on the device (one live count each) */
 };
+
+/* a * b, or -1 when either is negative or the product leaves 64 bits. */
+static long long mode_d_checked_product(long long a, long long b)
+{
+    if(a < 0 || b < 0) {return -1;}
+    if(a != 0 && b > LLONG_MAX / a) {return -1;}
+    return a * b;
+}
+/* a + b, or -1 when either is negative or the sum leaves 64 bits. */
+static long long mode_d_checked_sum(long long a, long long b)
+{
+    if(a < 0 || b < 0 || b > LLONG_MAX - a) {return -1;}
+    return a + b;
+}
+
+/* The most envelopes one active can need: it can open every remote top leaf, and each peer's
+ * leaves go out in node lists of NODELISTLENGTH -- so the sum over the other tasks of their top
+ * leaves, chunked.  Local top leaves send nothing, so on one task this is zero.  O(NTopleaves),
+ * paid only by a call that reaches Mode D's admission.  -1 when its O(NTask) tally cannot be had. */
+static long long mode_d_worst_envelopes_per_active(void)
+{
+    if(NTask <= 1 || NTopleaves <= 0) {return 0;}
+    std::vector<long long> leaves_of_task;
+    try {leaves_of_task.assign((size_t) NTask, 0);} catch(const std::bad_alloc &) {return -1;}
+    for(int i = 0; i < NTopleaves; i++) {
+        const int t = DomainTask[i];
+        if(t >= 0 && t < NTask && t != ThisTask) {leaves_of_task[(size_t) t]++;}
+    }
+    long long worst = 0;
+    for(int t = 0; t < NTask; t++) {worst += (leaves_of_task[(size_t) t] + NODELISTLENGTH - 1) / NODELISTLENGTH;}
+    return worst;
+}
+
+/* Every message a Mode D call posts is one staging message at most, so MPI's int byte count always holds it. */
+static_assert(GX_MODE_D_STAGING_MAX_MESSAGE_BYTES <= (size_t) INT_MAX,
+              "a Mode D staging message must fit one MPI byte count");
+
+/* The round arena: what one round holds per envelope or per record, carved out of one allocation for a capacity of
+ * C envelopes.  A round's records number at most NODELISTLENGTH per envelope it may send, since an active's envelope
+ * bound is never below its node count over NODELISTLENGTH.  What a round holds per ACTIVE (its run list) is a lease
+ * row sized by the call's actives: a round may hold many actives that export nothing. */
+static constexpr int MODE_D_ARENA_ROWS = 7;
+struct ModeDRoundArena {
+    long long          capacity = 0;   /* C */
+    char              *base = nullptr;
+    long long          bytes = 0;
+    ModeDExportRecord *records = nullptr, *records_spare = nullptr;   /* [NODELISTLENGTH C]: the round's records and the sort's other half */
+    int               *scan = nullptr;                                /* [NODELISTLENGTH C]: the sort's scan, and each record's run start */
+    int               *first_record = nullptr;                        /* [C]: where each envelope's records start */
+    void              *envelopes = nullptr;                           /* [C]: the queries this round sends, in send order */
+    int               *envelope_of = nullptr;                         /* [NODELISTLENGTH C]: the envelope each sorted record goes in */
+    void              *replies = nullptr;                             /* [C]: the answers to this round's queries, in send order */
+};
+/* The arena's row offsets for capacity c, and its total; -1 when a size leaves 64 bits. */
+static long long mode_d_arena_layout(long long c, size_t query_bytes, size_t reply_bytes, long long offset[MODE_D_ARENA_ROWS])
+{
+    const long long rec = mode_d_checked_product(NODELISTLENGTH, c);
+    const long long size[MODE_D_ARENA_ROWS] = {
+        mode_d_checked_product(rec, (long long) sizeof(ModeDExportRecord)), mode_d_checked_product(rec, (long long) sizeof(ModeDExportRecord)),
+        mode_d_checked_product(rec, (long long) sizeof(int)), mode_d_checked_product(c, (long long) sizeof(int)),
+        mode_d_checked_product(c, (long long) query_bytes),
+        mode_d_checked_product(rec, (long long) sizeof(int)),
+        mode_d_checked_product(c, (long long) reply_bytes)};
+    long long total = 0;
+    for(int k = 0; k < MODE_D_ARENA_ROWS; k++) {
+        if(size[k] < 0) {return -1;}
+        total = ((total + 63) / 64) * 64;
+        offset[k] = total;
+        total = mode_d_checked_sum(total, size[k]);
+        if(total < 0) {return -1;}
+    }
+    return total;
+}
+
+/* One device buffer of a lease: where it is kept, how many bytes, and its memory-ledger label. */
+struct ModeDLeaseBuffer { void **slot; long long bytes; const char *label; };
+static constexpr int MODE_D_LEASE_BUFFERS = 23;
+static constexpr int MODE_D_LEASE_GROUP_ROW = 19;   /* the first of the received batches' rows: queries 0, replies 0, queries 1, replies 1 */
+/* The round's small device record: [0] range end, [1] [2] its record span, then two ints the sort and the cut keep on
+ * the device -- a radix pass's split point and the envelope count -- each in one long long slot. */
+enum {MODE_D_ROUND_END = 0, MODE_D_ROUND_FIRST_RECORD, MODE_D_ROUND_LAST_RECORD, MODE_D_ROUND_SPLIT, MODE_D_ROUND_ENVELOPES,
+      MODE_D_ROUND_TOTAL_BOUND, MODE_D_ROUND_TOTAL_RECORDS, MODE_D_ROUND_INFO};   /* the last two: the export count's totals, read together */
+/* The flags a call raises on the device and reads once per round. */
+enum {MODE_D_FLAG_WALK = 0, MODE_D_FLAG_FILL, MODE_D_FLAG_MERGE, MODE_D_FLAGS};
+
+/* The device storage the last calls gave back, kept for the next: each lease buffer by its row in the lease's table,
+ * and the round arena as raw bytes (its rows are laid out again for the call that takes it, whose record sizes may
+ * differ).  Released with the tree and at shutdown (nlr_mode_d_packet_workspace_release). */
+struct ModeDLeasePool {
+    void      *row[MODE_D_LEASE_BUFFERS] = {nullptr};
+    long long  row_bytes[MODE_D_LEASE_BUFFERS] = {0};
+    char      *arena = nullptr;
+    long long  arena_bytes = 0;
+};
+static ModeDLeasePool g_mode_d_lease_pool;
+
+/* Give a buffer to the pool's row k; whichever of it and what the row held is smaller is freed. */
+static void mode_d_pool_keep(int k, void *ptr, long long bytes)
+{
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    if(!ptr) {return;}
+    if(pool.row[k] && pool.row_bytes[k] >= bytes) {gizmo_gpu_free_device(ptr); return;}
+    gizmo_gpu_free_device(pool.row[k]);
+    pool.row[k] = ptr; pool.row_bytes[k] = bytes;
+}
+/* A buffer of at least `bytes` for row k: the pool's when it is large enough, else a new one (the pool's smaller
+ * one is freed).  Null when the device refuses; *got is its size. */
+static void *mode_d_pool_take(int k, long long bytes, const char *label, long long *got)
+{
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    if(pool.row[k] && pool.row_bytes[k] >= bytes) {
+        void *p = pool.row[k]; *got = pool.row_bytes[k];
+        pool.row[k] = nullptr; pool.row_bytes[k] = 0;
+        return p;
+    }
+    gizmo_gpu_free_device(pool.row[k]); pool.row[k] = nullptr; pool.row_bytes[k] = 0;
+    void *p = gizmo_gpu_alloc_device((size_t) bytes, label);
+    *got = p ? bytes : 0;
+    return p;
+}
+/* Device bytes a call must newly allocate beyond what the pool can hand it. */
+static long long mode_d_pool_shortfall(const long long *row_bytes, long long arena_bytes)
+{
+    const ModeDLeasePool &pool = g_mode_d_lease_pool;
+    long long fresh = 0;
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {if(row_bytes[k] > pool.row_bytes[k]) {fresh = mode_d_checked_sum(fresh, row_bytes[k]);}}
+    if(arena_bytes > pool.arena_bytes) {fresh = mode_d_checked_sum(fresh, arena_bytes);}
+    return fresh;
+}
+static void mode_d_lease_pool_release(void)
+{
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    int any = (pool.arena != nullptr);
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {any |= (pool.row[k] != nullptr);}
+    if(!any) {return;}
+    Kokkos::fence("mode_d_lease_pool_release");
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {gizmo_gpu_free_device(pool.row[k]);}
+    gizmo_gpu_free_device(pool.arena);
+    pool = ModeDLeasePool{};
+}
+
+/* Everything a Mode D call holds, released together.  On any route out of the call -- the vote declining it,
+ * an early return, its normal end -- the destructor gives back the storage and retires the touched-set epoch the
+ * walk preparation opened.  A recorder left held would refuse every later epoch, which pins the fused walk to its
+ * fallback for the rest of the run while looking exactly like the mechanism working.  The top-leaf map is not
+ * the call's: it belongs to the tree (gx_top_leaf_map_*). */
+struct ModeDCallLease {
+    GxDeviceTreeView   tree{};
+    GxTopLeafMapView   map{};
+    int                epoch_held = 0;
+    int                stopped = 0;   /* every rank agreed on a stop in an exchange of this call: no exchange follows */
+    ModeDWorkspacePlan plan{};
+
+    /* Device, per active of the call. */
+    void      *query_snapshot       = nullptr;   /* [n] ActiveData: the query each active asks, frozen once per iteration */
+    int       *active_index         = nullptr;   /* [n] the particle */
+    int       *active_slot          = nullptr;   /* [n] its slot in the call's staging */
+    double    *active_radius        = nullptr;   /* [n] its search radius */
+    int       *active_nodes         = nullptr;   /* [n] remote top leaves it reaches */
+    long long *active_node_scan     = nullptr;   /* [n + 1] where its export records start */
+    long long *active_envelope_scan = nullptr;   /* [n + 1] its envelope bound, then the scan of the bounds */
+    void      *active_accums        = nullptr;   /* [n] AccumData: its own result, then every reply merged in */
+    int       *run_offsets          = nullptr;   /* [2 (n + 1)] a round's run list per query: offsets, then the placement's
+                                                    cursors (a round holds at most every active, however few it exports) */
+    /* Device, fixed. */
+    int       *per_peer             = nullptr;   /* [NTask + 1] envelopes per peer this round */
+    long long *round_info           = nullptr;   /* [MODE_D_ROUND_INFO] the round's range end and record span, and two device-side ints */
+    int       *flags                = nullptr;   /* [MODE_D_FLAGS]: the tail of per_peer's buffer, read with the counts */
+    void      *group_queries[2]     = {nullptr, nullptr};   /* [batch_capacity[m]] received queries, two batches in flight */
+    void      *group_replies[2]     = {nullptr, nullptr};   /* [batch_capacity[m]] their answers */
+    long long  batch_capacity[2]    = {0, 0};               /* S at admission; grown per round to what arrives (mode_d_batch_grow) */
+    long long  row_bytes[MODE_D_LEASE_BUFFERS] = {0};       /* each buffer's size as held, for the pool on release */
+    ModeDRoundArena arena;
+
+    /* Device, per active of the call, when the call iterates on the device (plan.iteration_actives): each active's
+     * particle, search radius, iteration scratch and latest result, by its slot in the call; the slots still iterating,
+     * twice (this iteration's list and the next one's), each subgroup's entries from its first call slot; a keep flag
+     * per listed slot; the stop code and each subgroup's next length. */
+    int       *iter_slot_index      = nullptr;
+    double    *iter_slot_radius     = nullptr;
+    void      *iter_slot_scratch    = nullptr;
+    void      *iter_slot_accum      = nullptr;
+    int       *iter_live[2]         = {nullptr, nullptr};
+    int       *iter_keep            = nullptr;
+    int       *iter_count           = nullptr;   /* [1 + subgroups]: the iteration's stop code, then each subgroup's next length */
+    int        iter_on = 0, iter_which = 0;      /* host: whether the device holds the state, which list is current */
+    std::vector<int> iter_counts_host;           /* host: iter_count read back (reserved at admission) */
+
+    ModeDSegmentStream stream;   /* the exchange, reused for every round of the call */
+    /* Host, reserved at admission so the exchange allocates nothing: per-peer counts and offsets of a round, and
+     * the segments each of the two received batches holds. */
+    struct BatchSegment {int source, index, records, offset, status;};
+    std::vector<int>          peer_counts, peer_offsets;
+    std::vector<BatchSegment> batch_segments[2];
+
+    ModeDCallLease() = default;
+    ModeDCallLease(const ModeDCallLease&) = delete;
+    ModeDCallLease& operator=(const ModeDCallLease&) = delete;
+    ~ModeDCallLease() {release();}
+
+    /* The device buffers, once: the plan sums them, the allocation and the release walk them.  Sizes come from the
+     * plan and the record sizes (a negative size means a product left 64 bits); the release needs only the slots. */
+    void buffers(ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS], long long num_active, size_t active_bytes, size_t accum_bytes,
+                 size_t query_bytes, size_t reply_bytes)
+    {
+        /* One task exchanges nothing and holds none of this. */
+        const long long nt = (NTask > 1) ? NTask : 0, n = nt ? num_active : 0, s = plan.segment_records;
+        auto bytes = [](long long count, long long each) {return mode_d_checked_product(count, each);};
+        const long long n1 = (n > 0) ? n + 1 : 0;
+        int k = 0;
+        rows[k++] = {&query_snapshot,                  bytes(n, (long long) active_bytes),        "ngl_moded_query_snapshot"};
+        rows[k++] = {(void **) &active_index,          bytes(n, (long long) sizeof(int)),         "ngl_moded_active_index"};
+        rows[k++] = {(void **) &active_slot,           bytes(n, (long long) sizeof(int)),         "ngl_moded_active_slot"};
+        rows[k++] = {(void **) &active_radius,         bytes(n, (long long) sizeof(double)),      "ngl_moded_active_radius"};
+        rows[k++] = {(void **) &active_nodes,          bytes(n, (long long) sizeof(int)),         "ngl_moded_active_nodes"};
+        rows[k++] = {(void **) &active_node_scan,      bytes(n1, (long long) sizeof(long long)),  "ngl_moded_active_node_scan"};
+        rows[k++] = {(void **) &active_envelope_scan,  bytes(n1, (long long) sizeof(long long)),  "ngl_moded_active_envelope_scan"};
+        rows[k++] = {&active_accums,                   bytes(n, (long long) accum_bytes),         "ngl_moded_active_accums"};
+        rows[k++] = {(void **) &run_offsets,           bytes(2 * n1, (long long) sizeof(int)),    "ngl_moded_run_offsets"};
+        rows[k++] = {(void **) &per_peer,              bytes(nt ? nt + 1 + MODE_D_FLAGS : 0, (long long) sizeof(int)), "ngl_moded_per_peer"};
+        rows[k++] = {(void **) &round_info,            bytes(nt ? MODE_D_ROUND_INFO : 0, (long long) sizeof(long long)), "ngl_moded_round_info"};
+        const long long ni = nt ? plan.iteration_actives : 0;
+        rows[k++] = {(void **) &iter_slot_index,       bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_index"};
+        rows[k++] = {(void **) &iter_slot_radius,      bytes(ni, (long long) sizeof(double)),     "ngl_moded_iter_radius"};
+        rows[k++] = {&iter_slot_scratch,               bytes(ni, plan.scratch_bytes),             "ngl_moded_iter_scratch"};
+        rows[k++] = {&iter_slot_accum,                 bytes(ni, (long long) accum_bytes),        "ngl_moded_iter_accum"};
+        rows[k++] = {(void **) &iter_live[0],          bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_live"};
+        rows[k++] = {(void **) &iter_live[1],          bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_live"};
+        rows[k++] = {(void **) &iter_keep,             bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_keep"};
+        rows[k++] = {(void **) &iter_count,            bytes(ni > 0 ? 1 + plan.iteration_subgroups : 0, (long long) sizeof(int)), "ngl_moded_iter_count"};
+        for(int m = 0; m < 2; m++) {
+            rows[k++] = {&group_queries[m],            bytes(s, (long long) query_bytes),         "ngl_moded_group_queries"};
+            rows[k++] = {&group_replies[m],            bytes(s, (long long) reply_bytes),         "ngl_moded_group_replies"};
+        }
+        static_assert(MODE_D_LEASE_GROUP_ROW + 4 == MODE_D_LEASE_BUFFERS, "the received batches are the table's last four rows");
+    }
+
+    /* The arena back to the pool (the larger of it and what the pool holds is kept). */
+    void release_arena()
+    {
+        ModeDLeasePool &pool = g_mode_d_lease_pool;
+        if(arena.base) {
+            Kokkos::fence("mode_d_arena_release");
+            if(pool.arena && pool.arena_bytes >= arena.bytes) {gizmo_gpu_free_device(arena.base);}
+            else {gizmo_gpu_free_device(pool.arena); pool.arena = arena.base; pool.arena_bytes = arena.bytes;}
+        }
+        arena = ModeDRoundArena{};
+    }
+
+    void release()
+    {
+        ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+        buffers(rows, 0, 0, 0, 0, 0);
+        int any = 0;
+        for(const ModeDLeaseBuffer &row : rows) {any |= (*row.slot != nullptr);}
+        /* Kernels and copies that use this storage are enqueued, not finished: wait for them. */
+        if(any) {Kokkos::fence("mode_d_call_lease_release");}
+        for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {mode_d_pool_keep(k, *rows[k].slot, row_bytes[k]); *rows[k].slot = nullptr; row_bytes[k] = 0;}
+        batch_capacity[0] = batch_capacity[1] = 0;
+        iter_on = 0; iter_which = 0;
+        std::vector<int>().swap(iter_counts_host);
+        flags = nullptr;
+        release_arena();
+        stream.release_storage();
+        std::vector<int>().swap(peer_counts); std::vector<int>().swap(peer_offsets);
+        for(int m = 0; m < 2; m++) {std::vector<BatchSegment>().swap(batch_segments[m]);}
+        if(epoch_held) {gx_touched_set_retire(GX_TOUCHED_OWNER_FUSED_WALK); epoch_held = 0;}
+    }
+};
+
+/* Give the round arena room for c envelopes (never less than it has).  The old arena is kept until the new one is
+ * granted, so a refusal leaves the call exactly as it was.  Returns 0 when the arena holds c. */
+static int mode_d_arena_grow(ModeDCallLease *lease, long long c, size_t query_bytes, size_t reply_bytes)
+{
+    ModeDRoundArena &a = lease->arena;
+    if(c <= a.capacity) {return 0;}
+    long long offset[MODE_D_ARENA_ROWS];
+    const long long bytes = mode_d_arena_layout(c, query_bytes, reply_bytes, offset);
+    if(bytes <= 0) {return 1;}
+    ModeDLeasePool &pool = g_mode_d_lease_pool;
+    char *base = nullptr; long long held = bytes;
+    if(pool.arena && pool.arena_bytes >= bytes) {
+        base = pool.arena; held = pool.arena_bytes; pool.arena = nullptr; pool.arena_bytes = 0;
+        /* a pooled arena holds as many envelopes as its bytes lay out for this call's record sizes, within its limit */
+        long long lo = c, hi = lease->plan.arena_capacity_limit;
+        while(lo < hi) {
+            const long long mid = lo + (hi - lo + 1) / 2;
+            const long long need = mode_d_arena_layout(mid, query_bytes, reply_bytes, offset);
+            if(need > 0 && need <= held) {lo = mid;} else {hi = mid - 1;}
+        }
+        c = lo;
+        (void) mode_d_arena_layout(c, query_bytes, reply_bytes, offset);
+    }
+    else {base = (char *) gizmo_gpu_alloc_device((size_t) bytes, "ngl_moded_round_arena");}
+    if(!base) {return 1;}
+    if(a.base) {Kokkos::fence("mode_d_arena_grow"); gizmo_gpu_free_device(a.base);}
+    a.capacity = c; a.base = base; a.bytes = held;
+    a.records = (ModeDExportRecord *) (base + offset[0]); a.records_spare = (ModeDExportRecord *) (base + offset[1]);
+    a.scan = (int *) (base + offset[2]); a.first_record = (int *) (base + offset[3]);
+    a.envelopes = base + offset[4];
+    a.envelope_of = (int *) (base + offset[5]);
+    a.replies = base + offset[6];
+    return 0;
+}
+
+/* Give received-query batch m room for c queries (never less than it has).  The old buffers are kept until both new
+ * ones are granted, so a refusal leaves the batch as it was and the round runs in more, smaller batches; rank-local,
+ * so it is never a routing change.  Called between rounds, when nothing reads or writes the batch.  Returns 0 when
+ * batch m holds c. */
+static int mode_d_batch_grow(ModeDCallLease *lease, int m, long long c, size_t query_bytes, size_t reply_bytes)
+{
+    if(c <= lease->batch_capacity[m]) {return 0;}
+    const long long query_total = mode_d_checked_product(c, (long long) query_bytes);
+    const long long reply_total = mode_d_checked_product(c, (long long) reply_bytes);
+    if(query_total <= 0 || reply_total <= 0) {return 1;}
+    void *queries = gizmo_gpu_alloc_device((size_t) query_total, "ngl_moded_group_queries");
+    void *replies = queries ? gizmo_gpu_alloc_device((size_t) reply_total, "ngl_moded_group_replies") : nullptr;
+    if(!queries || !replies) {gizmo_gpu_free_device(queries); return 1;}
+    Kokkos::fence("mode_d_batch_grow");
+    gizmo_gpu_free_device(lease->group_queries[m]); gizmo_gpu_free_device(lease->group_replies[m]);
+    lease->group_queries[m] = queries; lease->group_replies[m] = replies; lease->batch_capacity[m] = c;
+    lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m] = query_total; lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m + 1] = reply_total;
+    return 0;
+}
+
+/* Size a Mode D call.  Returns 0 and fills *plan, or names (in *why) the first bound the call does not meet.
+ * Rank-local: the active count differs between ranks, so the verdict is voted.  One task sizes nothing. */
+static int mode_d_workspace_plan(long long num_active, size_t query_bytes, size_t reply_bytes,
+                                 ModeDWorkspacePlan *plan, const char **why)
+{
+    *plan = ModeDWorkspacePlan{};
+    if(NTask <= 1) {return 0;}
+    /* Payloads move through the staging in messages of at most GX_MODE_D_STAGING_MAX_MESSAGE_BYTES, a header
+     * and whole records: one record must fit in one. */
+    const size_t room = GX_MODE_D_STAGING_MAX_MESSAGE_BYTES - sizeof(ModeDSegmentHeader);
+    if(query_bytes > room || reply_bytes > room) {*why = "one query or reply record is larger than a staging message"; return 1;}
+    const long long pair_bytes  = (long long) query_bytes + (long long) reply_bytes;
+    const long long chunk_bytes = (long long) (All.CommChunkSize * 1024.0 * 1024.0);
+    plan->envelopes_per_round = chunk_bytes / pair_bytes;
+    plan->worst_envelopes_per_active = mode_d_worst_envelopes_per_active();
+    if(plan->worst_envelopes_per_active < 0) {*why = "its per-peer top-leaf tally could not be allocated"; return 1;}
+    /* the arena's records are indexed by int */
+    const long long index_limit = (long long) INT_MAX / NODELISTLENGTH;
+    plan->arena_capacity_limit = (plan->envelopes_per_round < index_limit) ? plan->envelopes_per_round : index_limit;
+    if(plan->arena_capacity_limit < plan->worst_envelopes_per_active) {
+        *why = "one active's worst-case export does not fit in a communication chunk"; return 1;}
+    plan->arena_min_envelopes = (num_active > 0) ? plan->worst_envelopes_per_active : 0;
+    const size_t larger = (query_bytes > reply_bytes) ? query_bytes : reply_bytes;
+    plan->segment_records = (long long) (room / larger);
+    return 0;
+}
+
+/* The lease's device total at admission, from its one buffer table and the minimum arena; -1 when a size leaves
+ * 64 bits. */
+static long long mode_d_lease_device_bytes(ModeDCallLease *lease, long long num_active, size_t active_bytes, size_t accum_bytes,
+                                           size_t query_bytes, size_t reply_bytes)
+{
+    ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+    lease->buffers(rows, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
+    long long device = 0;
+    for(const ModeDLeaseBuffer &row : rows) {device = (device < 0) ? -1 : mode_d_checked_sum(device, row.bytes);}
+    if(lease->plan.arena_min_envelopes > 0 && device >= 0) {
+        long long offset[MODE_D_ARENA_ROWS];
+        device = mode_d_checked_sum(device, mode_d_arena_layout(lease->plan.arena_min_envelopes, query_bytes, reply_bytes, offset));
+    }
+    return device;
+}
+
+/* Allocate every piece of a planned lease.  Returns 0 when all were granted; the caller releases a partial one. */
+static int mode_d_lease_allocate(ModeDCallLease *lease, long long num_active, size_t active_bytes, size_t accum_bytes,
+                                 size_t query_bytes, size_t reply_bytes)
+{
+    if(NTask <= 1) {return 0;}
+    int ok = (lease->stream.reserve(NTask) == 0);
+    try {
+        lease->peer_counts.reserve((size_t) NTask + 1 + MODE_D_FLAGS); lease->peer_offsets.reserve((size_t) NTask + 1);
+        for(int m = 0; m < 2; m++) {lease->batch_segments[m].reserve((size_t) lease->plan.segment_records);}
+        if(lease->plan.iteration_actives > 0) {lease->iter_counts_host.reserve((size_t) (1 + lease->plan.iteration_subgroups));}
+    } catch(const std::bad_alloc &) {ok = 0;}
+    ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+    lease->buffers(rows, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
+    /* A buffer this call cannot need (zero bytes: no actives) is not allocated at all, and its slot stays null. */
+    for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {
+        if(rows[k].bytes == 0) {continue;}
+        *rows[k].slot = mode_d_pool_take(k, rows[k].bytes, rows[k].label, &lease->row_bytes[k]);
+        ok = ok && (*rows[k].slot != nullptr);
+    }
+    lease->flags = lease->per_peer ? lease->per_peer + NTask + 1 : nullptr;
+    for(int m = 0; m < 2; m++) {
+        /* what the (possibly pooled, larger) buffers hold, never less than one staging segment */
+        const long long q_rows = lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m] / (long long) query_bytes;
+        const long long r_rows = lease->row_bytes[MODE_D_LEASE_GROUP_ROW + 2 * m + 1] / (long long) reply_bytes;
+        lease->batch_capacity[m] = (lease->group_queries[m] && lease->group_replies[m]) ? ((q_rows < r_rows) ? q_rows : r_rows) : 0;
+    }
+    if(ok && lease->plan.arena_min_envelopes > 0) {ok = (mode_d_arena_grow(lease, lease->plan.arena_min_envelopes, query_bytes, reply_bytes) == 0);}
+    if(ok) {
+        char *base[ModeDSegmentStream::ROLES];
+        for(int r = 0; r < ModeDSegmentStream::ROLES; r++) {base[r] = gx_mode_d_staging_slab(r, 0);}
+        lease->stream.attach(base, GX_MODE_D_STAGING_MAX_MESSAGE_BYTES);
+    }
+    return ok ? 0 : 1;
+}
+
+/* The ring's roles and slots are the stream's. */
+static_assert((int) GX_MODE_D_QUERIES_OUT == (int) ModeDSegmentStream::QUERIES_OUT && (int) GX_MODE_D_QUERIES_IN == (int) ModeDSegmentStream::QUERIES_IN &&
+              (int) GX_MODE_D_REPLIES_OUT == (int) ModeDSegmentStream::REPLIES_OUT && (int) GX_MODE_D_REPLIES_IN == (int) ModeDSegmentStream::REPLIES_IN,
+              "the staging roles and the stream's roles are one numbering");
+static_assert((size_t) ModeDSegmentStream::SLOTS * GX_MODE_D_STAGING_MAX_MESSAGE_BYTES == GX_MODE_D_STAGING_SLABS_PER_ROLE * GX_MODE_D_STAGING_SLAB_BYTES,
+              "a role's slabs are exactly its slots, contiguous");
+
+/* The collective verdict on a Mode D call.  A rank that cannot hold the call's storage (or the device would not
+ * hold the top-leaf map) sends it to Mode B, which needs none of it (unless Mode B is switched off: then, as for a
+ * tree refusal, the call keeps its usual path).  A rank whose tree cannot be described to the device keeps the
+ * path the call had before Mode D was considered -- what such a refusal has always done -- and that class wins
+ * when both occur.  A top-leaf map that does not describe the tree is a defect, and stops the run. */
+enum class ModeDAdmission { Admitted, StorageRefused, TreeRefused };
+
+/* Admit a Mode D call, collectively.  Plans, makes sure the persistent staging is held, allocates the whole
+ * lease, prepares the tree and the top-leaf map, then votes once.  Every rank returns the same verdict; on any
+ * refusal every rank's lease is already released, so the call proceeds holding nothing of Mode D.  If any rank's
+ * staging allocation was refused, every rank gives it up and later calls are refused without asking again (the
+ * latch is the same on every rank, so that refusal needs no vote); likewise a refused map, until the next build. */
+static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, size_t active_bytes, size_t accum_bytes,
+                                   size_t query_bytes, size_t reply_bytes, const char *caller,
+                                   bool iterates_on_device, size_t scratch_bytes, int num_subgroups, int host_ok)
+{
+    if(gx_mode_d_staging_unavailable()) {return ModeDAdmission::StorageRefused;}
+    const char *why = nullptr;
+    int tree_ok = 1, staging_ok = 1, map_granted = 1, map_wellformed = 1;
+    int ok = (mode_d_workspace_plan(num_active, query_bytes, reply_bytes, &lease->plan, &why) == 0);
+    if(ok && !host_ok) {why = "its host per-slot state could not be allocated"; ok = 0;}
+    lease->plan.iteration_actives = iterates_on_device ? num_active : 0;
+    lease->plan.scratch_bytes = (long long) scratch_bytes;
+    lease->plan.iteration_subgroups = iterates_on_device ? num_subgroups : 0;
+    if(ok) {
+        lease->plan.device_bytes = mode_d_lease_device_bytes(lease, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
+        if(lease->plan.device_bytes < 0) {why = "the call's storage size leaves 64-bit range"; ok = 0;}
+    }
+    /* One task sends no messages, so it holds no staging. */
+    if(ok && NTask > 1) {staging_ok = (gx_mode_d_staging_acquire() == 0); if(!staging_ok) {why = "its pinned staging could not be allocated"; ok = 0;}}
+    if(ok) {
+        ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
+        lease->buffers(rows, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
+        long long row_bytes[MODE_D_LEASE_BUFFERS], offset[MODE_D_ARENA_ROWS];
+        for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {row_bytes[k] = rows[k].bytes;}
+        const long long arena_bytes = (lease->plan.arena_min_envelopes > 0) ? mode_d_arena_layout(lease->plan.arena_min_envelopes, query_bytes, reply_bytes, offset) : 0;
+        const long long fresh = mode_d_pool_shortfall(row_bytes, arena_bytes);
+        if(fresh < 0 || !gizmo_device_has_room((size_t) fresh, MODE_D_DEVICE_FREE_FRACTION)) {why = "the device has no room for its workspace"; ok = 0;}
+    }
+    if(ok && mode_d_lease_allocate(lease, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes) != 0) {why = "its workspace could not be allocated"; ok = 0;}
+    /* The tree preparation repairs state and is the expensive half: only a rank holding its
+     * storage pays for it.  It reports its own reasons when it declines. */
+    if(ok) {tree_ok = (gx_device_fused_walk_prepare(&lease->tree, caller) == 0); lease->epoch_held = tree_ok; ok = tree_ok;}
+    if(ok && NTask > 1) {
+        const int status = gx_top_leaf_map_acquire(&lease->tree, &lease->map);
+        if(status == GX_TOP_LEAF_MAP_REFUSED) {map_granted = 0; why = "the device would not hold its top-leaf map"; ok = 0;}
+        if(status == GX_TOP_LEAF_MAP_MALFORMED) {map_wellformed = 0; why = "its top-leaf map does not describe the tree"; ok = 0;}
+    }
+    int local[5] = {ok, tree_ok, staging_ok, map_granted, map_wellformed}, all[5] = {0, 0, 0, 0, 0};
+    MPI_Allreduce(local, all, 5, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!all[4]) {
+        /* Every rank is here, in step.  Nothing of Mode D is held across the stop, which drains at once. */
+        lease->release();
+        gx_top_leaf_map_discard_for_tree();
+        if(!map_wellformed) {
+            printf("%s: task %d: the domain's top leaves do not describe this rank's tree (a leaf outside the node range, "
+                   "not a top-level node, mapped twice, or owned by no task); stopping.\n", caller, ThisTask);
+            fflush(stdout);
+        }
+        endrun(90001041);
+        gizmo_exit_bad_stop_if_requested("nlr:mode_d_map");
+        return ModeDAdmission::TreeRefused;   /* not reached: the stop above finalizes every rank */
+    }
+    /* Reported after the vote, so it names where the call actually went; each distinct reason the
+     * first time it occurs. */
+    if(why) {
+        /* Room for every reason this admission can give (twelve); were it ever full, nothing more
+         * is printed, so no reason can repeat on every call. */
+        static const char *reported_reasons[16] = {nullptr};
+        int seen = 0, k = 0;
+        for(; k < 16 && reported_reasons[k]; k++) {if(reported_reasons[k] == why) {seen = 1; break;}}
+        if(!seen && k < 16) {
+            reported_reasons[k] = why;
+            printf("%s: task %d declines a device-resident call: %s (%.1f MB device, %.1f MB pinned staging); "
+                   "a call declined this way %s on every rank\n",
+                   caller, ThisTask, why, (lease->plan.device_bytes > 0 ? lease->plan.device_bytes : 0) / (1024.0 * 1024.0),
+                   (double) GX_MODE_D_STAGING_BYTES / (1024.0 * 1024.0),
+                   all[1] ? "goes to Mode B (or keeps its usual path if Mode B is switched off)"
+                          : "keeps the path it had before Mode D (another task could not describe its tree)");
+            fflush(stdout);
+        }
+    }
+    if(all[0]) {return ModeDAdmission::Admitted;}
+    lease->release();
+    if(!all[2]) {gx_mode_d_staging_mark_unavailable();}
+    if(!all[3]) {gx_top_leaf_map_discard_for_tree();}
+    return all[1] ? ModeDAdmission::StorageRefused : ModeDAdmission::TreeRefused;
+}
+
+/* Helper: compile-time member detector for SupportsSubgroups (default false). */
+template <typename Spec, typename = void>
+struct nlr_supports_subgroups : std::false_type {};
+template <typename Spec>
+struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups>>
+    : Spec::SupportsSubgroups {};
+
+/* Whether a multi-rank Mode D call of this loop iterates on the device: its after_iter has the device entry point
+ * (Spec::after_iter_device, called with NlrDeviceIterContext), and it declares no host step that runs after every
+ * iteration over the whole active set (after_iter_global): a Spec that needs one keeps its iteration on the host. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_after_iter_device : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_after_iter_device<Spec, std::void_t<decltype(&Spec::after_iter_device)>> : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_mode_d_iterates_on_device_v =
+    nlr_spec_has_after_iter_device<Spec>::value && !nlr_spec_has_after_iter_global_v<Spec>;
+
+template <typename Spec>
+static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active, int num_subgroups = 1, int host_ok = 1)
+{
+    size_t scratch_bytes = 0;
+    if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {scratch_bytes = sizeof(typename Spec::IterScratch);}
+    return mode_d_admit(lease, num_active, sizeof(typename Spec::ActiveData), sizeof(typename Spec::AccumData),
+                        sizeof(NlrQueryEnvelope<typename Spec::ActiveData>),
+                        sizeof(NlrReplyEnvelope<typename Spec::AccumData>), Spec::loop_name,
+                        nlr_mode_d_iterates_on_device_v<Spec>, scratch_bytes, num_subgroups, host_ok);
+}
 
 template <typename Spec>
 void run_neighbor_loop(const neighbor_loop_args& args_in)
@@ -3068,7 +3489,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
         plan.path = NeighborLoopPlan::Path::ModeA_GpuNgl;
     }
 
-    GxDeviceTreeView mode_d_tree{};
     /* A loop whose kernel reads neighbour state it is itself changing needs the
      * live particle, which a ghost copy is not (nlr_spec_needs_live_neighbours).
      * It is answered where its neighbours live: on the device below when the
@@ -3079,24 +3499,20 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
                                     : NeighborLoopPlan::Path::ModeB_Local;
         }
     }
-    /* Retires this call's touched-set epoch on every way out of this function; see the guard's
-     * own note.  Declared here so it outlives the decision below and the execution further
-     * down, both of which can route away from Mode D after the epoch is already open. */
-    GxTouchedEpochGuard touched_epoch{0};
-    /* Mode D takes the calls nlr_select_mode gives it, when every rank can
-     * describe its tree to the device -- the same decision the iterative driver
-     * makes, and for the same reasons (stated there).  A caller-owned neighbour
-     * list is Mode A by construction.  The vote is collective; the mode was
-     * chosen from a collective too, so every rank reaches it. */
+    /* Everything a Mode D call holds, released on every way out of this function (see the
+     * lease).  Declared here so it outlives the decision below and the execution further down. */
+    ModeDCallLease mode_d_lease;
+    /* Mode D takes the calls nlr_select_mode gives it, when every rank is admitted -- the
+     * same decision the iterative driver makes, and for the same reasons (stated there).  A
+     * caller-owned neighbour list is Mode A by construction.  The admission is collective;
+     * the mode was chosen from a collective too, so every rank reaches it.  A refused call
+     * holds nothing of Mode D; where it goes is mode_d_admit's verdict. */
     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
         if(selected_mode == NlrMode::D && args.external_csr == nullptr) {
-            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
-            /* This rank's epoch is open exactly when its own preparation succeeded, whatever
-             * the vote below decides for the call. */
-            touched_epoch.held = ready_local;
-            int ready = 0;
-            MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(ready) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active);
+            if(verdict == ModeDAdmission::Admitted) {plan.path = NeighborLoopPlan::Path::ModeD_DeviceFused;}
+            else if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {
+                plan.path = (NTask > 1) ? NeighborLoopPlan::Path::ModeB_Remote : NeighborLoopPlan::Path::ModeB_Local;}
         }
     }
 
@@ -3198,7 +3614,7 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
             break;
         case NeighborLoopPlan::Path::ModeD_DeviceFused:
             if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-                run_mode_d<Spec>(args, radii.data(), mode_d_tree);
+                run_mode_d<Spec>(args, radii.data(), mode_d_lease, mode_d_lease.tree);
             } else {
                 /* Never chosen without the eligibility above. */
                 endrun(90001032);
@@ -3264,13 +3680,6 @@ void run_neighbor_loop(const neighbor_loop_args& args_in)
  *   - num_subgroups >= 1 (caller short-circuits if globally empty)
  *   - num_subgroups > 1 requires Spec::SupportsSubgroups::value
  * ========================================================================== */
-
-/* Helper: compile-time member detector for SupportsSubgroups (default false). */
-template <typename Spec, typename = void>
-struct nlr_supports_subgroups : std::false_type {};
-template <typename Spec>
-struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups>>
-    : Spec::SupportsSubgroups {};
 
 /* ============================================================================
  * NlrIterDriver<Spec> — constructor + destructor.
@@ -3923,23 +4332,34 @@ static void nlr_iter_dispatch_subgroup_mode_b_remote(NlrIterDriver<Spec>& drv, i
  * asserted, and no loop is named here.
  * ========================================================================== */
 
-/* Whether a fused walk of this loop over n queries keeps each reached particle's mass verdict for the
- * rest of the call (gx_candidate_has_mass): only when the loop's pair kernel cannot take a neighbour's
- * mass to zero or below (nlr_spec_keeps_neighbour_mass_positive_v), and only when the walk runs on the
- * device, where the verdicts live.  Otherwise Mass is read from the particle record at every visit. */
+/* Whether a fused walk of this loop keeps each reached particle's mass verdict for the rest of the call
+ * (gx_candidate_has_mass): only when the loop's pair kernel cannot take a neighbour's mass to zero or below
+ * (nlr_spec_keeps_neighbour_mass_positive_v), and only when the walk runs on the device, where the verdicts
+ * live.  Otherwise Mass is read from the particle record at every visit. */
 template <typename Spec>
-static int nlr_mode_d_keeps_mass_verdict(int n)
+static int nlr_mode_d_keeps_mass_verdict(bool on_device)
 {
-    return (nlr_spec_keeps_neighbour_mass_positive_v<Spec> && nlr_walk_runs_on_device(n)) ? 1 : 0;
+    return (nlr_spec_keeps_neighbour_mass_positive_v<Spec> && on_device) ? 1 : 0;
 }
 
 
-/* The leaf mirror for a fused walk of n queries: the device copy of every tree slot's position and type,
- * brought current, when the walk runs on the device and this rank has it; otherwise the null view, and
- * the walk reads the particle records. */
-static GxLeafMirrorView nlr_mode_d_leaf_mirror(int n, const GxDeviceTreeView &tree)
+/* The leaf mirror for a fused walk: the device copy of every tree slot's position and type, brought current,
+ * when the walk runs on the device and this rank has it; otherwise the null view, and the walk reads the
+ * particle records. */
+static GxLeafMirrorView nlr_mode_d_leaf_mirror(bool on_device, const GxDeviceTreeView &tree)
 {
-    return nlr_walk_runs_on_device(n) ? gx_leaf_mirror_current(tree.local_particle_slots) : GxLeafMirrorView{};
+    return on_device ? gx_leaf_mirror_current(tree.local_particle_slots) : GxLeafMirrorView{};
+}
+
+/* Run a fused walk's work items: on the device whatever their number when `device_only` (an admitted
+ * multi-rank Mode D call, whose queries and replies live in device memory), else where the batch size puts
+ * them (nlr_walk_for_sources). */
+template <class F>
+static inline void nlr_mode_d_launch(bool device_only, const char *tag, int n, F &&body)
+{
+    if(n <= 0) {return;}
+    if(device_only) {gizmo_gpu_kernel_launch(tag, n, std::forward<F>(body)); return;}
+    nlr_walk_for_sources(tag, n, std::forward<F>(body));
 }
 
 /* What happens when the walk reaches a particle this rank owns.
@@ -4002,9 +4422,18 @@ struct NlrModeDReduceLeaf {
 /* One query of a fused Mode-D batch: the batch's own locals [0, n_local) search the
  * whole tree from the root; a received query kk resumes at the start nodes its
  * sender's walk exported to this rank. */
+/* How many start nodes a received envelope carries, as a walk may use it: a count off the wire is clamped to
+ * the list it came in, and a negative one is none -- never the "walk from the root" a local query takes -- so
+ * the recording and the evaluating walk decide the same way about the same query. */
+template <typename ActiveData>
+KOKKOS_INLINE_FUNCTION int nlr_mode_d_envelope_nodes(const NlrQueryEnvelope<ActiveData> &env)
+{
+    return (env.n_nodes < 0) ? 0 : ((env.n_nodes > NODELISTLENGTH) ? NODELISTLENGTH : env.n_nodes);
+}
+
 template <typename Leaf, typename ActiveData>
 KOKKOS_INLINE_FUNCTION
-void nlr_mode_d_walk_query(int kk, int n_local, const ActiveData &a, const int *nn_d, const int *nodes_d,
+void nlr_mode_d_walk_query(int kk, int n_local, const ActiveData &a, const NlrQueryEnvelope<ActiveData> *received,
                            const GxDeviceTreeView &tree, Leaf &leaf, int *anomaly_d, unsigned int type_mask)
 {
     if(kk < n_local) {
@@ -4012,19 +4441,14 @@ void nlr_mode_d_walk_query(int kk, int n_local, const ActiveData &a, const int *
                                       (double)a.h_search, tree, leaf, anomaly_d, type_mask);
         return;
     }
-    const int kr = kk - n_local;
-    /* No start nodes: nothing on this rank was exported to this query.
-     * ⚠ This is only correct because every Mode-B-wire query is
-     * TARGETED: a query carrying no start nodes reached nothing on this
-     * rank.  There is no broadcast query shape on this wire.  The host
-     * walker skips it rather than walking from anywhere, and so does
-     * this -- note it leaves the ZEROED accumulator in place,
-     * which is the right reply. */
-    if(nn_d[kr] <= 0) {return;}
-    gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2],
-                        (double)a.h_search,
-                        nodes_d + (size_t)kr * NODELISTLENGTH, nn_d[kr],
-                        tree, leaf, anomaly_d, type_mask);
+    const NlrQueryEnvelope<ActiveData> &env = received[kk - n_local];
+    const int n_start = nlr_mode_d_envelope_nodes(env);
+    /* No start nodes: nothing on this rank was exported to this query.  Every query on this wire is TARGETED,
+     * so one carrying no start nodes reached nothing here; the host walker skips it rather than walking from
+     * anywhere, and so does this, leaving the zeroed accumulator in place, which is the right reply. */
+    if(n_start <= 0) {return;}
+    gx_device_tree_walk((double)a.pos[0], (double)a.pos[1], (double)a.pos[2], (double)a.h_search,
+                        env.NodeList, n_start, tree, leaf, anomaly_d, type_mask);
 }
 
 
@@ -4098,7 +4522,10 @@ struct NlrRecordLeaf {
  * (mesh/device_packet_walk.h, the same mechanics the gravity walk uses), each still
  * deciding every node for itself, and each member then evaluates the leaves its
  * own decisions reached, in the order its own flat walk would have reached them.
- * With one walker per packet the result is therefore the flat walk's, bit for bit.
+ * The evaluating packet keeps one walker, so that order -- and with it every sum --
+ * is the same on every run; the team then shares each member's evaluation, which
+ * changes the order its partial sums are added in, so a member's result equals its
+ * flat walk's to round-off rather than bit for bit.
  *
  * Routing, per batch, on the batch's own query count M on this rank:
  *   - below the device tier (nlr_walk_runs_on_device) the batch runs on the host;
@@ -4127,7 +4554,8 @@ struct NlrRecordLeaf {
  * ========================================================================== */
 
 #define MODE_D_PACKET_LOCAL_STACK 16      /* continuations the walker keeps itself; the oldest moves to the frontier */
-#define MODE_D_PACKET_CHUNK       1024    /* leaves recorded between two evaluations by the members */
+#define MODE_D_PACKET_CHUNK       256     /* leaves recorded between two evaluations by the members: small enough that the
+                                            scratch it costs leaves room for ~10 resident packets per compute unit */
 #define MODE_D_PACKET_STEPS       64      /* node steps the walker takes per round */
 #define MODE_D_PACKET_TEAM_MAX    256     /* members, and so threads, per packet at most */
 
@@ -4143,9 +4571,9 @@ enum {
 
 /* Whether a batch of M queries on this rank walks as packets, for a pass that needs fewer than `ratio`
  * lanes of the device per query to gain from sharing a traversal. */
-static inline bool nlr_mode_d_packets_for(int M, int ratio)
+static inline bool nlr_mode_d_packets_for(int M, int ratio, bool device_only = false)
 {
-    return TREE_QUERY_PACKET_SIZE > 1 && nlr_walk_runs_on_device(M) &&
+    return TREE_QUERY_PACKET_SIZE > 1 && (device_only || nlr_walk_runs_on_device(M)) &&
            !device_packet_lanes_saturated(M, ratio, gizmo_gpu_lane_count());
 }
 
@@ -4175,8 +4603,10 @@ struct NlrModeDPacketWorkspace {
 };
 static NlrModeDPacketWorkspace g_mode_d_packets;
 
+static void mode_d_lease_pool_release(void);
 void nlr_mode_d_packet_workspace_release(void)
 {
+    mode_d_lease_pool_release();   /* and the device storage Mode D calls gave back */
     NlrModeDPacketWorkspace &w = g_mode_d_packets;
     if(w.member_failed)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(w.member_failed);}
     if(w.failed_by_reason) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(w.failed_by_reason);}
@@ -4284,33 +4714,48 @@ static const int *nlr_mode_d_packet_top_rank(const GxDeviceTreeView &tree, int *
  * full state on top of its own -- the largest loops' accumulators then spill.  In scratch, a member's
  * accumulator is in registers only while that member evaluates its records. */
 struct NlrModeDPacketPlan {
-    size_t queries, accums, frontier, frontier_masks, records, record_masks, local, local_masks, walker_masks, walker_state, counters, bytes;
+    size_t queries, accums, partials, frontier, frontier_masks, records, record_masks, local, local_masks, walker_masks, walker_state,
+           member_state, counters, bytes;
 };
 
 /* The walker's position in the traversal, kept in team scratch between its rounds: it must survive each round
  * boundary and the members' evaluation of the record chunk, and kept in registers it would stay live through
  * that evaluation beside the members' accumulators. */
 struct NlrModeDPacketWalkerState {int no, exit, item_live, local_head, local_count;};
-static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int mask_words, int frontier_cap, int chunk_cap, size_t accum_bytes)
+static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int walkers, int mask_words, int frontier_cap, int chunk_cap, size_t accum_bytes,
+                                                 size_t member_state_bytes = 0)
 {
     NlrModeDPacketPlan p;
     DevicePacketScratchLayout layout;
     p.queries        = layout.take((size_t) q * 4 * sizeof(double), alignof(double));
     p.accums         = layout.take((size_t) q * accum_bytes, 16);
+    /* one partial result per thread while the team evaluates one member's records together */
+    p.partials       = chunk_cap ? layout.take((size_t) q * accum_bytes, 16) : 0;
     p.frontier       = layout.take((size_t) frontier_cap * sizeof(device_packet_item_t), alignof(device_packet_item_t));
     p.frontier_masks = layout.take((size_t) frontier_cap * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
     p.records        = layout.take((size_t) chunk_cap * sizeof(int), alignof(int));
     p.record_masks   = layout.take((size_t) chunk_cap * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
-    p.local          = layout.take((size_t) MODE_D_PACKET_LOCAL_STACK * sizeof(device_packet_item_t), alignof(device_packet_item_t));
-    p.local_masks    = layout.take((size_t) MODE_D_PACKET_LOCAL_STACK * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
-    p.walker_masks   = layout.take((size_t) 2 * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));   /* the item's mask + the open mask */
-    p.walker_state   = layout.take(sizeof(NlrModeDPacketWalkerState), alignof(NlrModeDPacketWalkerState));
+    /* each walker's own continuations, its item's mask + open mask, and its position between rounds */
+    p.local          = layout.take((size_t) walkers * MODE_D_PACKET_LOCAL_STACK * sizeof(device_packet_item_t), alignof(device_packet_item_t));
+    p.local_masks    = layout.take((size_t) walkers * MODE_D_PACKET_LOCAL_STACK * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
+    p.walker_masks   = layout.take((size_t) walkers * 2 * mask_words * sizeof(device_packet_mask_word_t), alignof(device_packet_mask_word_t));
+    p.walker_state   = layout.take((size_t) walkers * sizeof(NlrModeDPacketWalkerState), alignof(NlrModeDPacketWalkerState));
+    /* A client that decides nodes itself keeps each member's running state here; the region exists only for
+       such a client, so every other client's scratch request is unchanged. */
+    p.member_state   = member_state_bytes ? layout.take((size_t) q * member_state_bytes, alignof(long long)) : 0;
     p.counters       = layout.take(DEVICE_PACKET_COUNTER_SLOTS * sizeof(int), alignof(long long));
     p.bytes = layout.bytes;
     return p;
 }
 
-/* One packet per team: thread 0 walks, thread m < q owns member m.  A batch holds its root queries in
+/* One packet per team, thread m < q owning member m.  Threads [0, n_walkers) walk.  The recording client takes
+ * one walker per member -- a single walker leaves the other lanes idle through a traversal that is a chain of
+ * dependent loads, the shared frontier hands every opened node's sibling to an idle walker, and its claims are
+ * idempotent, so their order does not matter.  Every other client keeps one walker: the export count and fill
+ * write each member's running state in walk order, and an evaluating client's sums would otherwise depend on how
+ * the walkers' record reservations interleave, which differs from run to run.  The members then evaluate each
+ * chunk of records together, one member at a time, every thread taking every q-th record, so the members'
+ * unequal record counts do not leave lanes idle.  A batch holds its root queries in
  * [0, n_local) and its received queries in [n_local, n_total); a packet never mixes the two, so its entry
  * is either the root or the union of its members' start nodes.
  *
@@ -4320,7 +4765,7 @@ static NlrModeDPacketPlan nlr_mode_d_packet_plan(int q, int mask_words, int fron
  *   void query(int kk, double *x4) const;                           position and reach
  *   void starts(int kk, const int *&nodes, int &n) const;           a received query's start nodes
  *   evaluating:  void begin(Accum &) const; void evaluate(int kk, int j, const double *x4, Accum &) const;
- *                void commit(int kk, const Accum &) const;
+ *                void merge(Accum &into, const Accum &part) const;  void commit(int kk, const Accum &) const;
  *   recording:   void claim(int j) const; */
 template <class Client>
 struct NlrModeDPacketWalk {
@@ -4332,6 +4777,16 @@ struct NlrModeDPacketWalk {
     int *member_failed, *failed_by_reason;
     const int *top_rank; int top_rank_span;
 
+    /* A node-deciding client records `tag` for every member in `members`, each into its own running state. */
+    KOKKOS_INLINE_FUNCTION void record_members(const device_packet_mask_word_t *members, int tag, char *member_states) const
+    {
+        if constexpr (gx_walk_policy_has_node_hook_v<Client>) {
+            using MemberState = typename Client::MemberState;
+            MemberState *states = (MemberState *) member_states;
+            for(int m = 0; m < q; m++) {if(device_packet_mask_test(members, m)) {cl.record(states[m], tag);}}
+        }
+    }
+
     /* The walker: advance its item until its step budget runs out, the chunk is full, it runs out of work,
      * or the packet gives up -- deciding every node the way gx_device_tree_walk_impl decides it, for every
      * member of the item at once. */
@@ -4339,7 +4794,7 @@ struct NlrModeDPacketWalk {
                                      device_packet_mask_word_t *mask, device_packet_mask_word_t *open_mask,
                                      device_packet_item_t *local, device_packet_mask_word_t *lmasks,
                                      const double *queries, device_packet_item_t *frontier, device_packet_mask_word_t *fmasks,
-                                     int *records, device_packet_mask_word_t *rmasks, int *ctr) const
+                                     int *records, device_packet_mask_word_t *rmasks, int *ctr, char *member_states) const
     {
         const GxDeviceTreeView &tree = cl.tree;
         const int W = trav.mask_words;
@@ -4369,6 +4824,14 @@ struct NlrModeDPacketWalk {
                 continue;
             }
             if(no >= tree.pseudo_start) {   /* pseudo-particle: another rank's subtree, nothing local below it */
+                if constexpr (gx_walk_policy_has_node_hook_v<Client>) {
+                    const GxNodeDecision pseudo = cl.pseudo_decision(no - tree.pseudo_start);
+                    if(pseudo.action == GxNodeAction::Malformed) {
+                        Kokkos::atomic_store(cl.anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
+                        trav.fail(ctr, MODE_D_PACKET_FAIL_MALFORMED); break;
+                    }
+                    if(pseudo.action == GxNodeAction::RecordAndSibling) {record_members(mask, pseudo.tag, member_states);}
+                }
                 no = tree.nextnode_aux[tree.particle_slots + (no - tree.pseudo_start)];
                 continue;
             }
@@ -4379,6 +4842,15 @@ struct NlrModeDPacketWalk {
             }
             /* a resumed walk ends where it re-enters the top-level tree; a walk from the root descends it */
             if(resume && (tree.node_bitflags[kn] & (1u << BITFLAG_TOPLEVEL))) {item_live = 0; continue;}
+            [[maybe_unused]] GxNodeDecision decision{GxNodeAction::Descend, -1};
+            if constexpr (gx_walk_policy_has_node_hook_v<Client>) {
+                decision = cl.node_decision(kn);
+                if(decision.action == GxNodeAction::Malformed) {
+                    Kokkos::atomic_store(cl.anomaly, GX_WALK_ANOMALY_MALFORMED_TREE);
+                    trav.fail(ctr, MODE_D_PACKET_FAIL_MALFORMED); break;
+                }
+                if(decision.action == GxNodeAction::Sibling) {no = tree.node_sibling[kn]; continue;}
+            }
             double len_eff = (double) tree.node_len[kn];
             if(tree.node_vmax && tree.node_ti && tree.drift_tables_ok) {
                 const double dl = motion_bound_widening((double) tree.node_vmax[kn], tree.node_ti[kn], tree.ti_now, &tree.drift_tables);
@@ -4397,6 +4869,9 @@ struct NlrModeDPacketWalk {
                 }
             }
             const int child = tree.node_nextnode[kn], sibling = tree.node_sibling[kn];
+            if constexpr (gx_walk_policy_has_node_hook_v<Client>) {
+                if(decision.action == GxNodeAction::RecordAndSibling) {record_members(open_mask, decision.tag, member_states); no = sibling; continue;}
+            }
             /* nobody opens it, or it is an imported foreign subtree, which holds no locally-owned particles */
             if(!device_packet_mask_any(open_mask, W) || (child >= tree.foreign_base && child < tree.pseudo_start)) {no = sibling; continue;}
             if(!trav.descend(child, sibling, no, exit, mask, open_mask, local_head, local_count, local, lmasks,
@@ -4486,32 +4961,40 @@ struct NlrModeDPacketWalk {
         if(t == 0) {for(int c = 0; c < DEVICE_PACKET_COUNTER_SLOTS; c++) {ctr[c] = 0;}}
         team.team_barrier();
 
-        if(t == 0) {
-            device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks);
-            NlrModeDPacketWalkerState &ws = *region<NlrModeDPacketWalkerState>(scratch, plan.walker_state);
+        /* Walker 0 holds the packet's entry -- the root, or the received members' start nodes on the frontier --
+           and the others start idle and take what is published; all of it set before any walker pops. */
+        if(t < trav.n_walkers) {
+            device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks) + (size_t) t * 2 * W;
+            NlrModeDPacketWalkerState &ws = region<NlrModeDPacketWalkerState>(scratch, plan.walker_state)[t];
             ws.no = -1; ws.exit = -1; ws.item_live = 0; ws.local_head = 0; ws.local_count = 0;
             device_packet_mask_clear(mask, W);
-            if(!resume) {
+            if(t == 0 && !resume) {
                 for(int m = 0; m < q_eff; m++) {device_packet_mask_set(mask, m);}
                 ws.no = cl.tree.node_base; ws.exit = -1; ws.item_live = (q_eff > 0);   /* the root: its own overlap test runs */
-            } else {
+            } else if(t == 0) {
                 received_entries(first, q_eff, region<device_packet_item_t>(scratch, plan.frontier),
                                  region<device_packet_mask_word_t>(scratch, plan.frontier_masks), ctr);   /* a failure is seen at the first round boundary */
             }
         }
         if constexpr (Client::evaluates) {if(t < q_eff) {cl.begin(region<typename Client::Accum>(scratch, plan.accums)[t]);}}
+        if constexpr (gx_walk_policy_has_node_hook_v<Client>) {
+            if(t < q_eff) {cl.member_begin(first + t, region<typename Client::MemberState>(scratch, plan.member_state)[t]);}
+        }
+        team.team_barrier();
 
         while(1) {
-            if(t == 0 && !ctr[DEVICE_PACKET_CTR_FAILED]) {
-                /* the walker's phase: its state from scratch, the traversal, its state back */
-                NlrModeDPacketWalkerState &ws = *region<NlrModeDPacketWalkerState>(scratch, plan.walker_state);
-                device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks);
+            if(t < trav.n_walkers && !ctr[DEVICE_PACKET_CTR_FAILED]) {
+                /* the walkers' phase: each one's state from scratch, its traversal, its state back */
+                NlrModeDPacketWalkerState &ws = region<NlrModeDPacketWalkerState>(scratch, plan.walker_state)[t];
+                device_packet_mask_word_t *mask = region<device_packet_mask_word_t>(scratch, plan.walker_masks) + (size_t) t * 2 * W;
                 int no = ws.no, exit = ws.exit, item_live = ws.item_live, local_head = ws.local_head, local_count = ws.local_count;
                 walk(resume, no, exit, item_live, local_head, local_count, mask, mask + W,
-                     region<device_packet_item_t>(scratch, plan.local), region<device_packet_mask_word_t>(scratch, plan.local_masks),
+                     region<device_packet_item_t>(scratch, plan.local) + (size_t) t * MODE_D_PACKET_LOCAL_STACK,
+                     region<device_packet_mask_word_t>(scratch, plan.local_masks) + (size_t) t * MODE_D_PACKET_LOCAL_STACK * W,
                      region<double>(scratch, plan.queries),
                      region<device_packet_item_t>(scratch, plan.frontier), region<device_packet_mask_word_t>(scratch, plan.frontier_masks),
-                     region<int>(scratch, plan.records), region<device_packet_mask_word_t>(scratch, plan.record_masks), ctr);
+                     region<int>(scratch, plan.records), region<device_packet_mask_word_t>(scratch, plan.record_masks), ctr,
+                     scratch + plan.member_state);
                 if(item_live || local_count > 0) {trav.ctr_add(&ctr[DEVICE_PACKET_CTR_WORKING], 1);}
                 ws.no = no; ws.exit = exit; ws.item_live = item_live; ws.local_head = local_head; ws.local_count = local_count;
             }
@@ -4520,22 +5003,30 @@ struct NlrModeDPacketWalk {
                                                        MODE_D_PACKET_FAIL_NO_PROGRESS);
             if(chunk_full < 0) {break;}   /* the packet gave up */
             if constexpr (Client::evaluates) {
-                /* the chunk is full, or the traversal has finished: each member evaluates its own records, in order */
-                if(ctr[DEVICE_PACKET_CTR_RECORDS] > 0 && (chunk_full || ctr[DEVICE_PACKET_CTR_DONE])) {
-                    if(t < q_eff) {
-                        const double *x = region<double>(scratch, plan.queries) + 4 * t;
-                        const int *records = region<int>(scratch, plan.records);
-                        const device_packet_mask_word_t *rmasks = region<device_packet_mask_word_t>(scratch, plan.record_masks);
-                        typename Client::Accum *accums = region<typename Client::Accum>(scratch, plan.accums);
-                        const int n_rec = ctr[DEVICE_PACKET_CTR_RECORDS];
-                        typename Client::Accum acc = accums[t];   /* in registers for this flush only */
-                        for(int r = 0; r < n_rec; r++) {
-                            if(device_packet_mask_test(rmasks + (size_t) r * W, t)) {cl.evaluate(first + t, records[r], x, acc);}
+                /* The chunk is full, or the traversal has finished: the team evaluates it one member at a time, thread
+                   t taking records t, t + q, ...; thread 0 then adds the threads' partial results to the member's own in
+                   thread order, so the sum is the same on every run. */
+                /* the record count is read only once the round's verdict says no walker is still adding to it */
+                if((chunk_full || ctr[DEVICE_PACKET_CTR_DONE]) && ctr[DEVICE_PACKET_CTR_RECORDS] > 0) {
+                    const int *records = region<int>(scratch, plan.records);
+                    const device_packet_mask_word_t *rmasks = region<device_packet_mask_word_t>(scratch, plan.record_masks);
+                    typename Client::Accum *accums   = region<typename Client::Accum>(scratch, plan.accums);
+                    typename Client::Accum *partials = region<typename Client::Accum>(scratch, plan.partials);
+                    const int n_rec = ctr[DEVICE_PACKET_CTR_RECORDS];
+                    for(int m = 0; m < q_eff; m++) {
+                        const double *x = region<double>(scratch, plan.queries) + 4 * m;
+                        typename Client::Accum acc;   /* in registers for this member's share only */
+                        cl.begin(acc);
+                        for(int r = t; r < n_rec; r += q) {
+                            if(device_packet_mask_test(rmasks + (size_t) r * W, m)) {cl.evaluate(first + m, records[r], x, acc);}
                         }
-                        accums[t] = acc;
+                        partials[t] = acc;
+                        team.team_barrier();
+                        if(t == 0) {for(int l = 0; l < q; l++) {cl.merge(accums[m], partials[l]);}}
+                        team.team_barrier();
                     }
-                    team.team_barrier();
                     if(t == 0) {ctr[DEVICE_PACKET_CTR_RECORDS] = 0;}
+                    team.team_barrier();
                 }
             }
             if(ctr[DEVICE_PACKET_CTR_DONE]) {break;}
@@ -4548,8 +5039,18 @@ struct NlrModeDPacketWalk {
             return;
         }
         if constexpr (Client::evaluates) {if(t < q_eff) {cl.commit(first + t, region<typename Client::Accum>(scratch, plan.accums)[t]);}}
+        /* Published only by a packet that completed: one that gave up leaves nothing, and its members are replayed from the start. */
+        if constexpr (gx_walk_policy_has_node_hook_v<Client>) {if(t < q_eff) {cl.member_commit(first + t, region<typename Client::MemberState>(scratch, plan.member_state)[t]);}}
     }
 };
+
+/* The per-member state a node-deciding client keeps in team scratch; none for any other client. */
+template <class Client>
+constexpr size_t nlr_packet_member_state_bytes(void)
+{
+    if constexpr (gx_walk_policy_has_node_hook_v<Client>) {return sizeof(typename Client::MemberState);}
+    else {return 0;}
+}
 
 /* Run a batch as packets.  Returns true with each member's give-up flag in the workspace (the caller replays
  * the flagged members flat), or false when the batch cannot walk as packets here -- no workspace, no legal
@@ -4568,15 +5069,16 @@ static bool nlr_mode_d_packet_run(const Client &cl, const char *label, const int
 
     NlrModeDPacketWalk<Client> f{cl};
     int q = (TREE_QUERY_PACKET_SIZE < MODE_D_PACKET_TEAM_MAX) ? TREE_QUERY_PACKET_SIZE : MODE_D_PACKET_TEAM_MAX;
-    f.trav.n_walkers = 1; f.trav.steps_per_round = MODE_D_PACKET_STEPS;
+    f.trav.steps_per_round = MODE_D_PACKET_STEPS;
     f.trav.chunk_cap = Client::evaluates ? MODE_D_PACKET_CHUNK : 1;   /* a recording packet reserves no records */
     /* The frontier is the single walker's overflow store for its oldest continuations, and the home of a
      * received packet's entries; it is sized for both rather than left at zero. */
     auto shape = [&](int qq) {
         f.q = qq; f.trav.mask_words = device_packet_mask_words(qq);
         f.trav.frontier_cap = (qq * NODELISTLENGTH > 16) ? qq * NODELISTLENGTH : 16;
-        f.plan = nlr_mode_d_packet_plan(qq, f.trav.mask_words, f.trav.frontier_cap, Client::evaluates ? MODE_D_PACKET_CHUNK : 0,
-                                        Client::evaluates ? sizeof(typename Client::Accum) : 0);
+        f.trav.n_walkers = (gx_walk_policy_has_node_hook_v<Client> || Client::evaluates) ? 1 : qq;   /* only claims are order-free */
+        f.plan = nlr_mode_d_packet_plan(qq, f.trav.n_walkers, f.trav.mask_words, f.trav.frontier_cap, Client::evaluates ? MODE_D_PACKET_CHUNK : 0,
+                                        Client::evaluates ? sizeof(typename Client::Accum) : 0, nlr_packet_member_state_bytes<Client>());
     };
     /* The packet width this backend can launch is found once and kept: it is a property of the kernel, the
      * backend and the scratch request, none of which change during a run.  A packet wider than the legal
@@ -4615,10 +5117,13 @@ struct NlrModeDPacketEvaluate {
     static constexpr bool evaluates = true;
     using Accum = typename Spec::AccumData;
     using ActiveData = typename Spec::ActiveData;
+    using Envelope = NlrQueryEnvelope<ActiveData>;
+    using Reply = NlrReplyEnvelope<Accum>;
     typename Spec::DeviceContext ctx;
     typename Spec::CallScalars cs;
-    const ActiveData *ql = nullptr, *q_d = nullptr;   /* root queries, received queries */
-    const int *nodes_d = nullptr, *nn_d = nullptr;     /* received start nodes, strided by NODELISTLENGTH */
+    const ActiveData *ql = nullptr;                    /* root queries */
+    const Envelope *received = nullptr;                /* received queries, read in place: each carries its start nodes */
+    Reply *replies = nullptr;                          /* one per received query */
     const double *reach = nullptr;                     /* the search radius when the caller walks with its own; else the query's */
     int n_local = 0, n_total = 0;
     GxDeviceTreeView tree;
@@ -4630,7 +5135,7 @@ struct NlrModeDPacketEvaluate {
     int use_mass_verdict = 0;
     Accum *acc_out = nullptr;
 
-    KOKKOS_INLINE_FUNCTION const ActiveData &act(int kk) const {return (kk < n_local) ? ql[kk] : q_d[kk - n_local];}
+    KOKKOS_INLINE_FUNCTION const ActiveData &act(int kk) const {return (kk < n_local) ? ql[kk] : received[kk - n_local].active;}
     KOKKOS_INLINE_FUNCTION void query(int kk, double *x4) const
     {
         const ActiveData &a = act(kk);
@@ -4639,7 +5144,8 @@ struct NlrModeDPacketEvaluate {
     }
     KOKKOS_INLINE_FUNCTION void starts(int kk, const int *&nodes, int &n) const
     {
-        const int kr = kk - n_local; nodes = nodes_d + (size_t) kr * NODELISTLENGTH; n = nn_d[kr];
+        const Envelope &env = received[kk - n_local];
+        nodes = env.NodeList; n = nlr_mode_d_envelope_nodes(env);
     }
     KOKKOS_INLINE_FUNCTION void begin(Accum &acc) const {memset((void *) &acc, 0, sizeof(Accum)); Spec::zero_accum(acc);}
     KOKKOS_INLINE_FUNCTION void evaluate(int kk, int j, const double *x4, Accum &acc) const
@@ -4651,7 +5157,14 @@ struct NlrModeDPacketEvaluate {
         leaf.mass_verdicts = mass_verdicts; leaf.use_mass_verdict = use_mass_verdict;
         leaf.visit(j, x4[0], x4[1], x4[2], x4[3]);
     }
-    KOKKOS_INLINE_FUNCTION void commit(int kk, const Accum &acc) const {acc_out[kk] = acc;}
+    KOKKOS_INLINE_FUNCTION void merge(Accum &into, const Accum &part) const {Spec::merge_accum(into, part);}
+    KOKKOS_INLINE_FUNCTION void commit(int kk, const Accum &acc) const
+    {
+        if(kk < n_local) {acc_out[kk] = acc; return;}
+        const Envelope &env = received[kk - n_local];
+        Reply &r = replies[kk - n_local];
+        r.origin_slot = env.origin_slot; r.origin_rank = env.origin_rank; r.accum = acc;
+    }
 };
 
 /* The recording client: one claim per reached local slot, through the production recording leaf. */
@@ -4685,15 +5198,16 @@ struct NlrModeDPacketRecord {
  * null when every packet completed. */
 template <typename Spec>
 static bool nlr_mode_d_packet_evaluate(const typename Spec::DeviceContext &ctx, const typename Spec::CallScalars &cs,
-                                       const typename Spec::ActiveData *ql, const typename Spec::ActiveData *q_d,
-                                       const int *nodes_d, const int *nn_d, const double *reach, int n_local, int M,
+                                       const typename Spec::ActiveData *ql,
+                                       const NlrQueryEnvelope<typename Spec::ActiveData> *received,
+                                       NlrReplyEnvelope<typename Spec::AccumData> *replies, const double *reach, int n_local, int M,
                                        const GxDeviceTreeView &tree, unsigned int type_mask, int *anomaly,
                                        const struct GxMotionTargetSet &motion_targets, const GxLeafMirrorView &leaf_mirror,
                                        const struct GxTouchedSet &mass_verdicts, int use_mass_verdict,
                                        typename Spec::AccumData *acc_out, const int **replay)
 {
     auto fill = [&](auto &cl) {
-        cl.ctx = ctx; cl.cs = cs; cl.ql = ql; cl.q_d = q_d; cl.nodes_d = nodes_d; cl.nn_d = nn_d; cl.reach = reach;
+        cl.ctx = ctx; cl.cs = cs; cl.ql = ql; cl.received = received; cl.replies = replies; cl.reach = reach;
         cl.n_local = n_local; cl.n_total = M; cl.tree = tree; cl.type_mask = type_mask; cl.anomaly = anomaly;
         cl.motion_targets = motion_targets; cl.mass_verdicts = mass_verdicts; cl.use_mass_verdict = use_mass_verdict;
         cl.acc_out = acc_out;
@@ -4741,7 +5255,8 @@ static void nlr_record_and_drift(const struct particle_data *P,
                                  const GxDeviceTreeView &tree,
                                  int n, int n_root, int *anomaly,
                                  const char *label,
-                                 QueryFn query)
+                                 QueryFn query,
+                                 bool device_only = false)
 {
     if(n <= 0) {return;}
     /* Nothing to discover when the whole rank is already uniform: something else
@@ -4768,15 +5283,17 @@ static void nlr_record_and_drift(const struct particle_data *P,
      * already treats as fatal, rather than returned, so this adds no path out of
      * an exchange that a peer is waiting on. */
     if(!ts.seen || !ts.list || !ts.counter) {
-        Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);
+        /* in device memory when device_only: raised there */
+        if(device_only) {gizmo_gpu_kernel_launch("nlr_mode_d_record_unavailable", 1, KOKKOS_LAMBDA(int) {Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);});}
+        else {Kokkos::atomic_store(anomaly, GX_WALK_ANOMALY_TOUCHED_SET_FULL);}
         return;
     }
-    GIZMO_GPU_ENSURE_ALL_FRESH();
+    /* All is the caller's to have brought current, once for its call or exchange: this runs per evaluation batch. */
     /* In the packet band the batch records as packets; members of a packet that gave up are then recorded by
      * the flat walk below, which completes the set (the claims a discarded packet made are kept: they are
      * deduplicated per call, and the drift consumes the set once). */
     const int *replay = nullptr;
-    if(nlr_mode_d_packets_for(n, 4)) {
+    if(nlr_mode_d_packets_for(n, 4, device_only)) {
         NlrModeDPacketRecord<QueryFn> cl{query};
         cl.n_local = n_root; cl.n_total = n; cl.tree = tree; cl.type_mask = supply_mask; cl.anomaly = anomaly;
         cl.leaf = NlrRecordLeaf{P, ts, supply_mask, anomaly};
@@ -4786,7 +5303,7 @@ static void nlr_record_and_drift(const struct particle_data *P,
             return;
         }
     }
-    nlr_walk_for_sources(label, n, KOKKOS_LAMBDA(int kk) {
+    nlr_mode_d_launch(device_only, label, n, KOKKOS_LAMBDA(int kk) {
         if(replay && !replay[kk]) {return;}   /* only the members of packets that gave up */
         double qx = 0, qy = 0, qz = 0, reach = 0;
         const int *start_nodes = nullptr;
@@ -4891,8 +5408,8 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
      * tests types on the leaf mirror as it stands; the mirror is brought current
      * again after the drift, whose marks it takes, before the evaluation reads
      * positions from it. */
-    const int use_mass_verdict = nlr_mode_d_keeps_mass_verdict<Spec>(n);
-    const GxLeafMirrorView record_mirror = nlr_mode_d_leaf_mirror(n, tree);
+    const int use_mass_verdict = nlr_mode_d_keeps_mass_verdict<Spec>(nlr_walk_runs_on_device(n));
+    const GxLeafMirrorView record_mirror = nlr_mode_d_leaf_mirror(nlr_walk_runs_on_device(n), tree);
     nlr_record_and_drift(
         ctx.P, supply_mask, use_mass_verdict, record_mirror.type, tree, n, n, anomaly, "nlr_mode_d_self_record",
         KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach,
@@ -4907,7 +5424,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
     const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
     const struct GxTouchedSet mass_verdicts = use_mass_verdict ? gx_touched_set_view() : GxTouchedSet{};
     /* As on the multi-rank batch: the leaf mirror on a device batch when this rank has it, else the particle records. */
-    const GxLeafMirrorView leaf_mirror = nlr_mode_d_leaf_mirror(n, tree);
+    const GxLeafMirrorView leaf_mirror = nlr_mode_d_leaf_mirror(nlr_walk_runs_on_device(n), tree);
     /* In the packet band the batch is evaluated by the same packet client as a multi-rank batch, every query a
      * root query, from a query buffer built where the particles are; the flat walk below then evaluates only
      * the members of packets that gave up, or the whole batch when packets did not run.  The buffer is built
@@ -4922,7 +5439,7 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
                     queries[k] = Spec::load_active(ctx, active_slot[k], active_idx[k], radii[k], cs);
                 });
                 /* the walk's reach is the runner's radius, as the recording pass and the flat walk take it */
-                packets_ran = nlr_mode_d_packet_evaluate<Spec>(ctx, cs, queries, nullptr, nullptr, nullptr, radii, n, n, tree, supply_mask,
+                packets_ran = nlr_mode_d_packet_evaluate<Spec>(ctx, cs, queries, nullptr, nullptr, radii, n, n, tree, supply_mask,
                                                                anomaly, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict,
                                                                accums_out, &replay);
             }
@@ -4960,124 +5477,33 @@ static void nlr_mode_d_local_reduce(const typename Spec::DeviceContext &ctx,
     }
 }
 
-/* Build this rank's queries where its particles already are.
+
+/* One evaluation launch sequence of an admitted multi-rank Mode D call: this rank's own queries (if any are
+ * still unanswered) and a batch of received ones, answered from this rank's tree, on the device, whatever
+ * their number -- the queries and the replies live in device memory.  No candidate list is built: the walk
+ * evaluates where it lands.  The locals this walk reaches are brought current first by a recording pass over the
+ * same queries and a drift of exactly what it recorded; a later batch can reach locals an earlier one did not,
+ * which is why every batch discovers rather than relying on an earlier pass.
  *
- * The host form of this walks P[i] and CellP[i] once per active, scattered, to
- * fill one ActiveData each. That is correct, and on the transport path it is
- * also the canonical arrays surfacing on the host on exactly the calls with the
- * most actives. The particles are resident on the device, so the same
- * Spec::load_active runs there instead and writes into a buffer the host can
- * still read -- the export walk and the envelope pack both need to.
- *
- * The index and radius arrays it reads from ARE staged host-side, and that is
- * deliberate rather than overlooked: they are runner-owned, contiguous, and one
- * int and one double per active, against the many scattered particle-field reads
- * they replace. The remaining host touch is small and named, not absent.
- *
- * Returns the buffer, or nullptr if the device memory could not be had -- in
- * which case the caller builds on the host and gets identical objects.
- */
-template <typename Spec, typename DeviceCtx>
-static typename Spec::ActiveData *
-nlr_build_self_actives_on_device(const neighbor_loop_args& args,
-                                 const DeviceCtx& ctx,
-                                 const double *radii,
-                                 const typename Spec::CallScalars& cs,
-                                 int n,
-                                 NlrDeviceBuiltActives<Spec>& owner)
-{
-    using ActiveData = typename Spec::ActiveData;
-
-    if(n <= 0) {return nullptr;}
-
-    ActiveData *act_d  = (ActiveData *) nlr_shared_alloc_bytes((size_t)n * sizeof(ActiveData), "moded_self_actives");
-    int        *idx_d  = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_idx");
-    double     *rad_d  = (double *)     nlr_shared_alloc_bytes((size_t)n * sizeof(double),     "moded_self_radii");
-    int        *slot_d = (int *)        nlr_shared_alloc_bytes((size_t)n * sizeof(int),        "moded_self_slot");
-
-    if(!act_d || !idx_d || !rad_d || !slot_d) {
-        if(act_d)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(act_d);}
-        if(idx_d)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);}
-        if(rad_d)  {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);}
-        if(slot_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);}
-        return nullptr;
-    }
-
-    for(int k = 0; k < n; k++) {
-        idx_d[k]  = args.active_list[k];
-        rad_d[k]  = radii[k];
-        slot_d[k] = args.active_call_slot ? args.active_call_slot[k] : k;
-    }
-
-    /* load_active reads All.* through this unit's mirror; without the belt those
-     * read as zero on device, silently, and only on HIP. */
-    GIZMO_GPU_ENSURE_ALL_FRESH();
-
-    /* Named apart from the walk kernels this loop also launches: they run under
-     * the loop's own name, so sharing it would leave a device fault in the query
-     * build indistinguishable from one in the traversal. */
-    gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", n, KOKKOS_LAMBDA(int k) {
-        act_d[k] = Spec::load_active(ctx, slot_d[k], idx_d[k], rad_d[k], cs);
-    });
-
-    /* The indices, slots and radii were only ever the kernel's input. The
-     * queries themselves outlive this call and belong to the owner. */
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(rad_d);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(slot_d);
-
-    owner.p = act_d;
-    return act_d;
-}
-
-/* Answering received queries and this rank's own in ONE device pass, no
- * candidate list.
- *
- * Same contract as NlrPeerAnswerHostWalk for the received half -- queries in,
- * one accumulator each out -- reached by walking each query's exported subtrees
- * on the device and evaluating the pair kernel where the walk lands.  Nothing is
- * COLLECTED, so there is no candidate list to drift -- but the locals this walk
- * lands on are this rank's, and they are brought current by a recording pass
- * over the same queries followed by a drift of exactly what it recorded.  A
- * round can reach locals an earlier one never did, which is why it discovers
- * rather than relying on what an earlier pass found.
- *
- * `local` carries this rank's OWN queries when the round loop has some left to
- * place, and they are walked in the same two launches: one record, one
- * evaluate, over `n_local + K` work items.  Two half-filled launches apiece is
- * what this replaces, and on the steps that matter neither of them came close
- * to filling the device.  The two kinds occupy CONTIGUOUS index ranges --
- * locals first -- so the entry a work item takes does not alternate between
- * neighbouring lanes.
- *
- * A received query arrives already built.  The rank that owns it constructed its
- * ActiveData before shipping it, so the receiver re-uses that rather than
- * rebuilding one from particles it does not own -- and a query is the same
- * object to this kernel whoever sent it, which is what lets one leaf policy
- * serve every half.
- * ========================================================================== */
+ * The two kinds occupy contiguous index ranges, locals first, so the entry a work item takes does not alternate
+ * between neighbouring lanes.  A local's result is ASSIGNED to its accumulator (a local query is evaluated once
+ * per call; the reply merge accumulates on top of it); a received query's result is written into its reply, with
+ * the query's own origin, so the rank that asked can check it.  Anomalies are raised in `anomaly`, in device
+ * memory, and read by the caller once per round. */
 template <typename Spec>
-struct NlrPeerAnswerDeviceFused {
-    using AccumData = typename Spec::AccumData;
+struct NlrModeDBatch {
+    using ActiveData = typename Spec::ActiveData;
+    using AccumData  = typename Spec::AccumData;
+    using Envelope   = NlrQueryEnvelope<ActiveData>;
+    using Reply      = NlrReplyEnvelope<AccumData>;
 
-    static void answer(const typename Spec::DeviceContext& ctx,
-                       const typename Spec::CallScalars& cs,
-                       const GxDeviceTreeView& tree,
-                       const std::vector<typename Spec::ActiveData>& peer_actives,
-                       const std::vector<int>& peer_nodelist_flat,
-                       const std::vector<int>& peer_nnodes,
-                       unsigned int neighbor_type_mask,
-                       std::vector<AccumData>& peer_replies_out,
-                       const NlrModeDLocalSlice<Spec>& local = {})
+    static void evaluate(const typename Spec::DeviceContext& ctx, const typename Spec::CallScalars& cs,
+                         const GxDeviceTreeView& tree, unsigned int neighbor_type_mask,
+                         const ActiveData *locals, int n_local, AccumData *local_accums,
+                         const Envelope *received, int K, Reply *replies, int *anomaly,
+                         const Kokkos::DefaultExecutionSpace *eval_space = nullptr)
     {
-        using ActiveData  = typename Spec::ActiveData;
         using ScatterData = typename Spec::ScatterData;
-
-        /* The Mode-D admission tests.  They used to sit on the self walk, which
-         * ran on this same Spec ahead of the round loop; that walk is now this
-         * one, so they live here or nowhere.  The iterative dispatchers check
-         * only the search mode and the eval tier at runtime, so the bind-hook
-         * test in particular has no other compile-time home. */
         static_assert(nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly,
                       "Mode D evaluates a seeker's pairs on the rank that owns the neighbours, so a "
                       "pair kernel's neighbour-side writes land on the owner's own particles and need "
@@ -5088,185 +5514,540 @@ struct NlrPeerAnswerDeviceFused {
                       "per-type supply bands, which are not mirrored to the device.");
         static_assert(!nlr_spec_has_bind_active_to_eval_context_v<Spec>,
                       "This Spec rebinds each active to the evaluating context before its pair kernel "
-                      "runs, which the host backend does inside evaluate_pairs_post_drift. The fused "
-                      "backend evaluates in a device kernel and performs no such rebind, so a received "
-                      "active would still carry the sending rank's pointers. Port the rebind into the "
-                      "device path before serving this Spec.");
+                      "runs, which the host backend does inside evaluate_pairs_post_drift. The device "
+                      "evaluation performs no such rebind, so a received active would still carry the "
+                      "sending rank's pointers. Port the rebind into the device path before serving this Spec.");
 
-        const int K = (int)peer_actives.size();
-        const int n_local = (local.actives && local.accums_out) ? local.n : 0;
         const int M = n_local + K;
         if(M <= 0) {return;}
+        /* All was brought current by the exchange this batch belongs to, once for the whole exchange. */
 
-        /* The queries and their start-node lists have to be where the kernel can
-         * read them.  This is a copy of the QUERIES, which is what Mode D ships
-         * anyway -- not of the particles, which is what it exists to avoid.
-         *
-         * The LOCAL queries are not copied here: the transport normally builds
-         * them on the device already, and then both launches read that buffer in
-         * place.  They are staged only when it could not be had, which is the
-         * same condition the transport reports rather than this guessing from a
-         * pointer it cannot interrogate.  The start-node array covers the
-         * RECEIVED slice only -- a local query walks from the root and has no
-         * list -- so the local half costs no NODELISTLENGTH stride. */
-        const bool stage_local = (n_local > 0) && !local.device_visible;
-        ActiveData *ql_staged= stage_local
-                                 ? (ActiveData *) nlr_shared_alloc_bytes((size_t)n_local * sizeof(ActiveData), "moded_local_q")
-                                 : nullptr;
-        ActiveData *q_d      = (K > 0) ? (ActiveData *) nlr_shared_alloc_bytes((size_t)K * sizeof(ActiveData), "moded_peer_q") : nullptr;
-        int        *nodes_d  = (K > 0) ? (int *)        nlr_shared_alloc_bytes((peer_nodelist_flat.empty() ? 1 : peer_nodelist_flat.size()) * sizeof(int), "moded_peer_nodes") : nullptr;
-        int        *nn_d     = (K > 0) ? (int *)        nlr_shared_alloc_bytes((size_t)K * sizeof(int), "moded_peer_nnodes") : nullptr;
-        AccumData  *acc_d    = (AccumData *)  nlr_shared_alloc_bytes((size_t)M * sizeof(AccumData), "moded_fused_accum");
-        int        *anomaly_d= (int *)        nlr_shared_alloc_bytes(sizeof(int), "moded_peer_anomaly");
-
-        if((K > 0 && (!q_d || !nodes_d || !nn_d)) || (stage_local && !ql_staged) ||
-           !acc_d || !anomaly_d) {
-            /* Answering short is not an option and neither is answering on the
-             * host from inside a path every rank agreed to take, so this is the
-             * controlled stop.  The agreement that selected this path is what
-             * removes the option of quietly doing something else here. */
-            if(ql_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ql_staged);}
-            if(q_d)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);}
-            if(nodes_d)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);}
-            if(nn_d)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);}
-            if(acc_d)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);}
-            if(anomaly_d) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);}
-            if(ThisTask == 0) {
-                fprintf(stderr, "[%s] FATAL: no device memory for %d local + %d received queries "
-                        "on the fused path.\n", Spec::loop_name, n_local, K);
-                fflush(stderr);
-            }
-            endrun(90001026);
-            return;
-        }
-
-        /* ⛔ THE NODE LIST IS STRIDED, NOT PACKED.  peer_nodelist_flat is
-         * K * NODELISTLENGTH with each query's start nodes at its own fixed
-         * offset, and peer_nnodes says how many of that query's slots are valid.
-         * Treating it as packed -- cumulative offsets from the counts -- gives
-         * every query after the first somebody else's start nodes, so it walks
-         * the wrong subtrees and answers short.  The host walker at the same
-         * data indexes [k * NODELISTLENGTH]; this has to agree with it. */
-        /* Both guards trust the same thing: that the flat list really is
-         * K * NODELISTLENGTH.  Clamp the per-query count to what the buffer can
-         * actually hold, so a short or ragged list truncates a query instead of
-         * walking off the end of nodes_d. */
-        const int nodes_stride = NODELISTLENGTH;
-        const size_t nodes_have = peer_nodelist_flat.size();
-        for(int k = 0; k < K; k++) {
-            q_d[k]  = peer_actives[k];
-            int nn  = (k < (int)peer_nnodes.size()) ? peer_nnodes[k] : 0;
-            if(nn > nodes_stride) {nn = nodes_stride;}
-            /* Floor as well as cap.  A count off the wire is not trusted, and a
-             * NEGATIVE one would otherwise reach the recording walk as this
-             * batch's "no start list, walk from the root" sentinel -- so a
-             * corrupt received query would have the whole local tree recorded
-             * for it while the evaluating walk skipped it.  Both passes have to
-             * make the same decision about the same query. */
-            if(nn < 0) {nn = 0;}
-            const size_t need = (size_t)(k + 1) * (size_t)nodes_stride;
-            if(need > nodes_have) {nn = 0;}
-            nn_d[k] = nn;
-        }
-        for(size_t i = 0; i < peer_nodelist_flat.size(); i++) {nodes_d[i] = peer_nodelist_flat[i];}
-        if(stage_local) {
-            for(int k = 0; k < n_local; k++) {ql_staged[k] = local.actives[k];}
-        }
-        const ActiveData *ql = ql_staged ? ql_staged : local.actives;
-        *anomaly_d = 0;
-
-        GIZMO_GPU_ENSURE_ALL_FRESH();
-
-        /* Every query in this batch reaches this rank's particles, and they are
-         * no more current for a local query than for a received one.  One
-         * record-then-drift over the whole batch, each work item entering the
-         * traversal the way its own kind does.  Types come from the leaf mirror as it
-         * stands; it is brought current again after the drift for the positions. */
-        const int use_mass_verdict = nlr_mode_d_keeps_mass_verdict<Spec>(M);
-        const GxLeafMirrorView record_mirror = nlr_mode_d_leaf_mirror(M, tree);
+        const int use_mass_verdict = nlr_mode_d_keeps_mass_verdict<Spec>(true);
+        const GxLeafMirrorView record_mirror = nlr_mode_d_leaf_mirror(true, tree);
         nlr_record_and_drift(
-            ctx.P, neighbor_type_mask, use_mass_verdict, record_mirror.type, tree, M, n_local, anomaly_d, "nlr_mode_d_record",
-            KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach,
-                          const int *&start_nodes, int &n_start) {
-                const ActiveData& a = (kk < n_local) ? ql[kk] : q_d[kk - n_local];
+            ctx.P, neighbor_type_mask, use_mass_verdict, record_mirror.type, tree, M, n_local, anomaly, "nlr_mode_d_record",
+            KOKKOS_LAMBDA(int kk, double &qx, double &qy, double &qz, double &reach, const int *&start_nodes, int &n_start) {
+                const ActiveData &a = (kk < n_local) ? locals[kk] : received[kk - n_local].active;
                 qx = (double)a.pos[0]; qy = (double)a.pos[1]; qz = (double)a.pos[2];
                 reach = (double)a.h_search;
-                if(kk < n_local) {
-                    start_nodes = nullptr; n_start = -1;       /* ours: from the root */
-                } else {
-                    const int kr = kk - n_local;
-                    start_nodes = nodes_d + (size_t)kr * NODELISTLENGTH;
-                    n_start = nn_d[kr];
+                if(kk < n_local) {start_nodes = nullptr; n_start = -1;}   /* ours: from the root */
+                else {
+                    const Envelope &env = received[kk - n_local];
+                    start_nodes = env.NodeList; n_start = nlr_mode_d_envelope_nodes(env);
                 }
-            });
+            }, true);
 
         const struct GxMotionTargetSet motion_targets = gx_motion_target_view();
         const struct GxTouchedSet mass_verdicts = use_mass_verdict ? gx_touched_set_view() : GxTouchedSet{};
-        /* A device batch reads type and position from the leaf mirror when this rank has it current; otherwise, and
-         * on the host tier, from the particle records.  Either source gives the same answer, so the choice is rank-local. */
-        const GxLeafMirrorView leaf_mirror = nlr_mode_d_leaf_mirror(M, tree);
-        /* In the packet band a loop whose evaluation may run in packets takes them; the flat walk below then
-         * evaluates only the members of packets that gave up, or the whole batch when packets did not run. */
+        const GxLeafMirrorView leaf_mirror = nlr_mode_d_leaf_mirror(true, tree);
+        /* A loop whose evaluation may run in packets takes them in their band; the flat walk then evaluates only the
+           members of packets that gave up, or the whole batch when packets did not run. */
         bool packets_ran = false;
         const int *replay = nullptr;
         if constexpr (nlr_mode_d_evaluates_in_packets_v<Spec>) {
-            if(nlr_mode_d_packets_for(M, 2)) {
-                packets_ran = nlr_mode_d_packet_evaluate<Spec>(ctx, cs, ql, q_d, nodes_d, nn_d, nullptr, n_local, M, tree, neighbor_type_mask,
-                                                               anomaly_d, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict,
-                                                               acc_d, &replay);
+            if(nlr_mode_d_packets_for(M, 2, true)) {
+                packets_ran = nlr_mode_d_packet_evaluate<Spec>(ctx, cs, locals, received, replies, nullptr, n_local, M, tree,
+                                                               neighbor_type_mask, anomaly, motion_targets, leaf_mirror,
+                                                               mass_verdicts, use_mass_verdict, local_accums, &replay);
             }
         }
-        if(packets_ran && !replay) {
-            /* every packet completed */
-        } else if(leaf_mirror.pos && leaf_mirror.type) {
-            nlr_walk_for_sources(Spec::loop_name, M, KOKKOS_LAMBDA(int kk) {
-                if(replay && !replay[kk]) {return;}
-                Spec::zero_accum(acc_d[kk]);
-                const ActiveData& a = (kk < n_local) ? ql[kk] : q_d[kk - n_local];
-                ScatterData s{};
-                NlrModeDReduceLeaf<Spec, true> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
-                leaf.motion_targets = motion_targets;
-                leaf.leaf_mirror = leaf_mirror;
-                leaf.mass_verdicts = mass_verdicts; leaf.use_mass_verdict = use_mass_verdict;
-                nlr_mode_d_walk_query(kk, n_local, a, nn_d, nodes_d, tree, leaf, anomaly_d, neighbor_type_mask);
-            });
+        if(packets_ran && !replay) {return;}   /* every packet completed */
+        /* The flat walk goes on the evaluation queue, unfenced, only when no packet ran before it: packet batches run to
+         * completion on the default queue, and so does a replay after them. */
+        const Kokkos::DefaultExecutionSpace *queue = packets_ran ? nullptr : eval_space;
+        if(leaf_mirror.pos && leaf_mirror.type) {
+            flat<true>(ctx, cs, tree, neighbor_type_mask, locals, n_local, local_accums, received, K, replies, anomaly,
+                       replay, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict, queue);
         } else {
-            nlr_walk_for_sources(Spec::loop_name, M, KOKKOS_LAMBDA(int kk) {
-                if(replay && !replay[kk]) {return;}
-                Spec::zero_accum(acc_d[kk]);
-                const ActiveData& a = (kk < n_local) ? ql[kk] : q_d[kk - n_local];
-                ScatterData s{};
-                NlrModeDReduceLeaf<Spec> leaf{&ctx, &a, &acc_d[kk], &s, neighbor_type_mask, &cs};
-                leaf.motion_targets = motion_targets;
-                leaf.mass_verdicts = mass_verdicts; leaf.use_mass_verdict = use_mass_verdict;
-                nlr_mode_d_walk_query(kk, n_local, a, nn_d, nodes_d, tree, leaf, anomaly_d, neighbor_type_mask);
-            });
-        }
-
-        const int anomaly_seen = *anomaly_d;
-        /* The local half is ASSIGNED: a local query is evaluated exactly once per
-         * call, and the reply merge accumulates on top of what this writes. */
-        for(int k = 0; k < n_local; k++) {local.accums_out[k] = acc_d[k];}
-        for(int k = 0; k < K; k++) {peer_replies_out[k] = acc_d[n_local + k];}
-
-        if(ql_staged) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ql_staged);}
-        if(q_d)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q_d);}
-        if(nodes_d)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nodes_d);}
-        if(nn_d)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(nn_d);}
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(acc_d);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(anomaly_d);
-
-        if(anomaly_seen != 0) {
-            if(ThisTask == 0) {
-                fprintf(stderr,
-                    "[%s] FATAL: fused query walk: %s.\n", Spec::loop_name,
-                    nlr_walk_anomaly_text(anomaly_seen));
-                fflush(stderr);
-            }
-            endrun(90001027);
+            flat<false>(ctx, cs, tree, neighbor_type_mask, locals, n_local, local_accums, received, K, replies, anomaly,
+                        replay, motion_targets, leaf_mirror, mass_verdicts, use_mass_verdict, queue);
         }
     }
+
+    /* The flat device walk: one work item per query (only the replayed members when packets ran). */
+    template <bool UsesMirror>
+    static void flat(const typename Spec::DeviceContext& ctx, const typename Spec::CallScalars& cs,
+                     const GxDeviceTreeView& tree, unsigned int neighbor_type_mask,
+                     const ActiveData *locals, int n_local, AccumData *local_accums,
+                     const Envelope *received, int K, Reply *replies, int *anomaly, const int *replay,
+                     const struct GxMotionTargetSet &motion_targets, const GxLeafMirrorView &leaf_mirror,
+                     const struct GxTouchedSet &mass_verdicts, int use_mass_verdict,
+                     const Kokkos::DefaultExecutionSpace *queue)
+    {
+        using ScatterData = typename Spec::ScatterData;
+        const int M = n_local + K;
+            const auto walk = KOKKOS_LAMBDA(int kk) {
+                if(replay && !replay[kk]) {return;}   /* its packet completed: that result stands */
+                const ActiveData &a = (kk < n_local) ? locals[kk] : received[kk - n_local].active;
+                /* The result accumulates in place, in this query's own output (one writer per slot): nothing the size of an
+                 * accumulator is held in registers across the walk. */
+                AccumData *acc = (kk < n_local) ? &local_accums[kk] : &replies[kk - n_local].accum;
+                Spec::zero_accum(*acc);
+                ScatterData sc{};
+                NlrModeDReduceLeaf<Spec, UsesMirror> leaf{&ctx, &a, acc, &sc, neighbor_type_mask, &cs};
+                leaf.motion_targets = motion_targets;
+                /* Named here, unconditionally, so that the capture happens outside the `if constexpr`: a device lambda
+                 * may not first-capture a variable inside one. */
+                const GxLeafMirrorView &mirror = leaf_mirror;
+                if constexpr (UsesMirror) {leaf.leaf_mirror = mirror;} else {(void) mirror;}
+                leaf.mass_verdicts = mass_verdicts; leaf.use_mass_verdict = use_mass_verdict;
+                nlr_mode_d_walk_query(kk, n_local, a, received, tree, leaf, anomaly, neighbor_type_mask);
+                if(kk < n_local) {return;}
+                const Envelope &env = received[kk - n_local];
+                Reply &r = replies[kk - n_local];
+                r.origin_slot = env.origin_slot; r.origin_rank = env.origin_rank;
+            };
+            if(queue) {gizmo_gpu_kernel_launch_async(*queue, Spec::loop_name, M, walk, __FILE__, __LINE__);}
+            else {gizmo_gpu_kernel_launch(Spec::loop_name, M, walk);}
+    }
 };
+
+static void mode_d_copy_async_to_host(const Kokkos::DefaultExecutionSpace &space, void *host_dst, const void *device_src, size_t bytes)
+{
+    if(bytes) {Kokkos::deep_copy(space, ModeDHostBytes((char *) host_dst, bytes), ModeDDeviceBytes((char *) device_src, bytes));}
+}
+static void mode_d_copy_async_to_device(const Kokkos::DefaultExecutionSpace &space, void *device_dst, const void *host_src, size_t bytes)
+{
+    if(bytes) {Kokkos::deep_copy(space, ModeDDeviceBytes((char *) device_dst, bytes), ModeDHostBytes((char *) host_src, bytes));}
+}
+
+/* One export pass over a batch of frozen queries: as packets in their band, the flat device walk otherwise and for
+ * the members of packets that gave up (which then start again from nothing: a packet that gave up published
+ * nothing).  Device-only, whatever the batch size. */
+template <int Pass, class ActiveData>
+static void mode_d_export_walk(const ModeDExportStep<Pass> &step, const ActiveData *queries, int n,
+                               const GxDeviceTreeView &tree, int *anomaly)
+{
+    if(n <= 0) {return;}
+    bool ran = false;
+    const int *replay = nullptr;
+    if(nlr_mode_d_packets_for(n, 4, true)) {
+        ModeDExportPacketClient<Pass, ActiveData> cl;
+        cl.step = step; cl.queries = queries; cl.n_local = n; cl.n_total = n; cl.tree = tree; cl.anomaly = anomaly;
+        ran = nlr_mode_d_packet_run(cl, "nlr_mode_d_export_packets", &replay);
+    }
+    if(ran && !replay) {return;}
+    gizmo_gpu_kernel_launch("nlr_mode_d_export", n, KOKKOS_LAMBDA(int kk) {
+        if(replay && !replay[kk]) {return;}
+        const ActiveData &a = queries[kk];
+        ModeDExportFlatPolicy<Pass> policy{&step, {}};
+        step.begin(kk, (double) a.h_search, policy.s);
+        gx_device_tree_walk_from_root((double) a.pos[0], (double) a.pos[1], (double) a.pos[2], (double) a.h_search,
+                                      tree, policy, anomaly, 0u);
+        step.commit(kk, policy.s);
+    });
+}
+
+/* An exclusive scan of n counts into out[0..n], out[n] the total. */
+template <class Count, class Total>
+static void mode_d_exclusive_scan(const Count *counts, Total *out, int n)
+{
+    Kokkos::parallel_scan("mode_d_scan", Kokkos::RangePolicy<>(0, n + 1), KOKKOS_LAMBDA(int i, Total &sum, const bool last) {
+        const Total v = (i < n) ? (Total) counts[i] : (Total) 0;
+        if(last) {out[i] = sum;}
+        sum += v;
+    });
+}
+
+/* ============================================================================
+ * mode_d_exchange<Spec> -- one Mode D call's peer exchange (one iteration's, for an iterative loop), resident
+ * on the device.  The host moves messages and O(NTask) counts; every query, record, envelope and reply is in
+ * device memory and is touched only by device kernels and staging copies.
+ *
+ *   1. the queries, frozen: one kernel builds every active's query where its particle lives;
+ *   2. the export count: what each query sends (mode_d_export.h), and from it each query's slice and envelope
+ *      bound; the round arena grows to this iteration's bound if the device allows;
+ *   3. rounds, each the largest run of whole actives whose bounds fit the arena: fill the round's records, sort
+ *      them by peer, cut them into envelopes in send order, and fix the merge order; exchange counts (an anomaly
+ *      on any rank is a negative count, and no payload moves); stream the queries out, answer the queries that
+ *      come in, in batches, on the device, and stream the replies back; merge each active's replies onto its own
+ *      result in the host's order; agree at the round's end whether everyone is done, or a stop was raised;
+ *   4. the results to the caller.
+ *
+ * The received queries are evaluated in as few batches as the device needs: a batch is evaluated when it is full
+ * or when nothing more is coming this round, never merely with what has arrived so far.  This rank's own queries go
+ * with the first batch, and alone only when nothing is coming: a separate evaluation would add a whole record, drift and
+ * evaluate sequence, and would overlap little, since an evaluation holds the progress loop. */
+template <typename Spec>
+static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, const double *radii,
+                            const typename Spec::CallScalars& cs, const typename Spec::DeviceContext& ctx,
+                            unsigned int type_mask, typename Spec::AccumData *accums_out,
+                            const ModeDDeviceQueries *device_queries)
+{
+    using ActiveData = typename Spec::ActiveData;
+    using AccumData  = typename Spec::AccumData;
+    using Envelope   = NlrQueryEnvelope<ActiveData>;
+    using Reply      = NlrReplyEnvelope<AccumData>;
+    using Stream     = ModeDSegmentStream;
+    static_assert(alignof(Envelope) <= alignof(ModeDSegmentHeader) && alignof(Reply) <= alignof(ModeDSegmentHeader),
+                  "records follow the segment header in a staging message");
+
+    const int N = device_queries ? device_queries->n_live : args.num_active, nt = NTask, me = ThisTask;
+    const size_t q = sizeof(Envelope), r = sizeof(Reply);
+    const int S = (int) L.plan.segment_records;
+    const GxDeviceTreeView tree = L.tree;
+    ActiveData *snapshot = (ActiveData *) L.query_snapshot;
+    AccumData  *accums   = (AccumData *) L.active_accums + (device_queries ? device_queries->result_offset : 0);
+    int        *flags    = L.flags;
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    const Kokkos::DefaultExecutionSpace &copy_space = gx_mode_d_copy_space();
+    Kokkos::parallel_for("mode_d_flags_clear", Kokkos::RangePolicy<>(0, MODE_D_FLAGS), KOKKOS_LAMBDA(int k) {flags[k] = 0;});
+
+    /* 1. the queries */
+    if(N > 0 && device_queries) {
+        const int *live = device_queries->live, *index = device_queries->slot_index;
+        const double *radius = device_queries->slot_radius;
+        gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", N, KOKKOS_LAMBDA(int k) {
+            const int slot = live[k];
+            snapshot[k] = Spec::load_active(ctx, slot, index[slot], radius[slot], cs);
+        });
+    } else if(N > 0) {
+        mode_d_copy_to_device(L.active_index, args.active_list, (size_t) N * sizeof(int));
+        mode_d_copy_to_device(L.active_radius, radii, (size_t) N * sizeof(double));
+        int *slot = L.active_slot; const int *idx = L.active_index; const double *rad = L.active_radius;
+        if(args.active_call_slot) {mode_d_copy_to_device(L.active_slot, args.active_call_slot, (size_t) N * sizeof(int));}
+        else {Kokkos::parallel_for("mode_d_slots", Kokkos::RangePolicy<>(0, N), KOKKOS_LAMBDA(int k) {slot[k] = k;});}
+        gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", N, KOKKOS_LAMBDA(int k) {
+            snapshot[k] = Spec::load_active(ctx, slot[k], idx[k], rad[k], cs);
+        });
+    }
+
+    /* 2. the export count, and the arena for it */
+    const ModeDExportTopology topo{L.map, me};
+    long long totals[2] = {0, 0};   /* envelope bound, records */
+    if(N > 0) {
+        ModeDExportStep<MODE_D_EXPORT_COUNT> count;
+        count.topo = topo; count.out.nodes = L.active_nodes; count.out.envelope_bound = L.active_envelope_scan;
+        mode_d_export_walk(count, snapshot, N, tree, flags + MODE_D_FLAG_WALK);
+        mode_d_exclusive_scan(L.active_nodes, L.active_node_scan, N);
+        long long *bound = L.active_envelope_scan;
+        Kokkos::parallel_scan("mode_d_bound_scan", Kokkos::RangePolicy<>(0, N + 1), KOKKOS_LAMBDA(int i, long long &sum, const bool last) {
+            const long long v = (i < N) ? bound[i] : 0;
+            if(last) {bound[i] = sum;}
+            sum += v;
+        });
+        {
+            long long *info = L.round_info; const long long *nscan = L.active_node_scan;
+            Kokkos::parallel_for("mode_d_totals", Kokkos::RangePolicy<>(0, 1), KOKKOS_LAMBDA(int) {
+                info[MODE_D_ROUND_TOTAL_BOUND] = bound[N]; info[MODE_D_ROUND_TOTAL_RECORDS] = nscan[N];
+            });
+            mode_d_copy_to_host(totals, L.round_info + MODE_D_ROUND_TOTAL_BOUND, sizeof(totals));
+        }
+        const long long want = (totals[0] < L.plan.arena_capacity_limit) ? totals[0] : L.plan.arena_capacity_limit;
+        (void) mode_d_arena_grow(&L, want, q, r);   /* refused: the arena keeps its size, and the call runs more rounds */
+    }
+
+    /* 3. rounds */
+    ModeDRoundArena &A = L.arena;
+    std::vector<int> &counts = L.peer_counts, &peer_off = L.peer_offsets;
+    int a_begin = 0, round = 0, locals_done = (N == 0), stop = 0, stop_code = 0, walk_anomaly = 0;
+    while(1) {
+        round++;
+        int a_end = a_begin, n_round = 0, n_rec = 0;
+        long long round_info[3] = {0, 0, 0};
+        const ModeDExportRecord *sorted = nullptr;
+        ModeDQueryRun *query_runs = nullptr;
+        if(a_begin < N) {
+            const long long capacity = A.capacity;
+            const long long *bound = L.active_envelope_scan, *node_scan = L.active_node_scan;
+            long long *info = L.round_info;
+            const int first = a_begin;
+            /* the largest run of whole actives whose bounds fit: one active always fits (admission) */
+            Kokkos::parallel_for("mode_d_round_end", Kokkos::RangePolicy<>(0, 1), KOKKOS_LAMBDA(int) {
+                int lo = first + 1, hi = N;
+                while(lo < hi) {const int mid = lo + (hi - lo + 1) / 2; if(bound[mid] - bound[first] <= capacity) {lo = mid;} else {hi = mid - 1;}}
+                info[0] = lo; info[1] = node_scan[first]; info[2] = node_scan[lo];
+            });
+            mode_d_copy_to_host(round_info, info, sizeof(round_info));
+            a_end = (int) round_info[0]; n_round = a_end - a_begin;
+            n_rec = (int) (round_info[2] - round_info[1]);
+
+            ModeDExportStep<MODE_D_EXPORT_FILL> fill;
+            fill.topo = topo; fill.first_active = a_begin;
+            fill.out.node_offset = L.active_node_scan + a_begin; fill.out.node_count = L.active_nodes + a_begin;
+            fill.out.node_offset_base = round_info[1]; fill.out.records = A.records; fill.out.anomaly = flags + MODE_D_FLAG_FILL;
+            mode_d_export_walk(fill, snapshot + a_begin, n_round, tree, flags + MODE_D_FLAG_WALK);
+
+            int *round_ints = (int *) (info + MODE_D_ROUND_SPLIT);   /* the split point, then (next slot) the envelope count */
+            int *n_env_dev  = (int *) (info + MODE_D_ROUND_ENVELOPES);
+            sorted = mode_d_stable_radix(A.records, A.records_spare, A.scan, n_rec,
+                                         KOKKOS_LAMBDA(const ModeDExportRecord &x) {return (unsigned int) x.peer;}, mode_d_key_bits(nt), round_ints);
+            mode_d_envelope_boundaries(sorted, n_rec, A.scan, A.first_record, A.envelope_of, n_env_dev);
+            query_runs = (ModeDQueryRun *) ((sorted == A.records) ? A.records_spare : A.records);   /* the sort's other half is free */
+            mode_d_query_runs(sorted, n_rec, A.scan, A.envelope_of, a_begin, n_round, L.run_offsets, query_runs);
+            int *per_peer = L.per_peer;
+            Kokkos::parallel_for("mode_d_per_peer_clear", Kokkos::RangePolicy<>(0, nt + 1), KOKKOS_LAMBDA(int p) {per_peer[p] = 0;});
+            mode_d_pack_envelopes(sorted, n_rec, A.first_record, n_env_dev, snapshot, me, (Envelope *) A.envelopes, per_peer, nt);
+        }
+        /* the per-peer counts and, after them, the flags, in one read (no counts when this rank sent nothing this round) */
+        int host_flags[MODE_D_FLAGS];
+        if(a_begin < N) {
+            counts.resize((size_t) nt + 1 + MODE_D_FLAGS);   /* within the capacity reserved at admission */
+            mode_d_copy_to_host(counts.data(), L.per_peer, ((size_t) nt + 1 + MODE_D_FLAGS) * sizeof(int));
+            for(int f = 0; f < MODE_D_FLAGS; f++) {host_flags[f] = counts[(size_t) nt + 1 + f];}
+            counts.resize((size_t) nt);
+        } else {
+            counts.assign((size_t) nt, 0);
+            mode_d_copy_to_host(host_flags, flags, sizeof(host_flags));
+        }
+        if(host_flags[MODE_D_FLAG_WALK] || host_flags[MODE_D_FLAG_FILL]) {
+            /* an export this rank cannot vouch for: no payload moves anywhere this round */
+            for(int p = 0; p < nt; p++) {counts[(size_t) p] = (p == me) ? 0 : -1;}
+            stop_code = host_flags[MODE_D_FLAG_FILL] ? 90001042 : 90001044;
+            if(!host_flags[MODE_D_FLAG_FILL]) {walk_anomaly = host_flags[MODE_D_FLAG_WALK];}
+        }
+        peer_off.assign((size_t) nt + 1, 0);
+        for(int p = 0; p < nt; p++) {peer_off[(size_t) p + 1] = peer_off[(size_t) p] + ((counts[(size_t) p] > 0) ? counts[(size_t) p] : 0);}
+
+        Stream &X = L.stream;
+        const int anomaly_round = X.begin_round(round, counts.data(), S, q, r);
+        if(!anomaly_round) {
+            /* What arrives this round is known from the count exchange.  A batch holds what arrives, up to one query
+             * per lane of the device (a larger batch adds no parallelism) and never fewer than one staging segment;
+             * the second batch is grown only when more arrives than the first holds.  Refused growth leaves a batch
+             * as it was: the round then runs in more batches. */
+            long long incoming = 0;
+            int in_segments = 0, in_taken = 0;
+            for(int p = 0; p < nt; p++) {if(p != me) {incoming += X.recv_count(p); in_segments += X.segments_from(p);}}
+            {
+                const long long lanes = gizmo_gpu_lane_count(), feed = (lanes > S) ? lanes : (long long) S;
+                (void) mode_d_batch_grow(&L, 0, (incoming < feed) ? incoming : feed, q, r);
+                const long long rest = incoming - L.batch_capacity[0];
+                if(rest > 0) {(void) mode_d_batch_grow(&L, 1, (rest < feed) ? rest : feed, q, r);}
+                /* Each batch's segment list, so that taking a segment never allocates.  A refusal is not a defect:
+                 * a batch whose list is full counts as full below. */
+                for(int m = 0; m < 2; m++) {
+                    try {L.batch_segments[m].reserve((size_t) in_segments);} catch(const std::bad_alloc &) {}
+                }
+            }
+            /* the queries out: each destination's segments in order */
+            int out_peer = 0, out_index = 0;
+            auto next_out = [&](void) {
+                while(out_peer < nt && (out_peer == me || out_index >= X.segments_to(out_peer))) {out_peer++; out_index = 0;}
+                return out_peer < nt;
+            };
+            /* the batches of received queries: one being filled, one being evaluated, and those whose replies are still going
+             * out, in order */
+            struct Batch {int records = 0, segments_sent = 0, state = 0;};   /* state 0 free, 1 filling, 3 evaluating, 2 answered */
+            Batch batch[2];
+            int filling = 0, answered_order[2] = {-1, -1}, n_answered = 0;
+            batch[0].state = 1; L.batch_segments[0].clear(); L.batch_segments[1].clear();
+            Stream::Segment held{}; int have_held = 0;
+            /* What is being evaluated: nothing, received batch 0 or 1, or a chunk of this rank's own queries (with the batch
+             * when they share one launch).  One evaluation at a time.  For a Spec that iterates on the device and whose
+             * evaluation writes only its own queries' results (ModeBEvalOMP::BitwiseReadonly) it runs on the evaluation queue
+             * while this loop keeps the
+             * transport moving, received work goes before this rank's own, and this rank's own queries go in chunks of one
+             * batch when they are more than one batch; otherwise every evaluation completes before the loop continues, in
+             * today's order, with the queries riding the first batch. */
+            constexpr bool overlap = nlr_mode_d_iterates_on_device_v<Spec> && (nlr_spec_modeb_eval_omp<Spec>() == ModeBEvalOMP::BitwiseReadonly);
+            const Kokkos::DefaultExecutionSpace *eval_queue = overlap ? &gx_mode_d_eval_space() : nullptr;
+            const long long local_chunk = gizmo_gpu_lane_count() > S ? gizmo_gpu_lane_count() : (long long) S;
+            const bool locals_in_chunks = overlap && !locals_done && (long long) N > local_chunk;
+            int running_batch = -1, running_locals = 0, locals_issued = locals_done ? N : 0;
+            while(1) {
+                X.progress();
+                /* (a) queries out, as staging slots free: the copies into every free slot are issued, the copy queue is fenced
+                 * once, then the sends are posted -- each destination's segments in order */
+                {
+                    int free_k[Stream::SLOTS], dest[Stream::SLOTS], seg_index[Stream::SLOTS], recs[Stream::SLOTS], n_out = 0;
+                    const int n_free = X.free_slots(Stream::QUERIES_OUT, free_k);
+                    while(n_out < n_free && next_out()) {
+                        recs[n_out] = X.records_in_segment(X.sent_count(out_peer), out_index);
+                        const size_t first_env = (size_t) peer_off[(size_t) out_peer] + (size_t) out_index * (size_t) S;
+                        mode_d_copy_async_to_host(copy_space, X.payload(Stream::QUERIES_OUT, free_k[n_out]), (char *) A.envelopes + first_env * q, (size_t) recs[n_out] * q);
+                        dest[n_out] = out_peer; seg_index[n_out] = out_index;
+                        out_index++; n_out++;
+                    }
+                    if(n_out) {copy_space.fence("mode_d_query_segments_out");}
+                    for(int k = 0; k < n_out; k++) {X.send_query_segment(free_k[k], dest[k], seg_index[k], recs[k]);}
+                }
+                /* (b) received queries into the batch being filled, as many as fit and are ready */
+                if(filling >= 0) {
+                    std::vector<ModeDCallLease::BatchSegment> &segs = L.batch_segments[filling];
+                    int copied = 0, copied_slot[Stream::SLOTS];
+                    while(1) {
+                        Stream::Segment seg;
+                        if(have_held) {seg = held;} else if(!X.next_query_segment(seg)) {break;}
+                        /* full: no room for its records, or no room in its (reserved) segment list */
+                        if((seg.status == 0 && batch[filling].records + seg.records > L.batch_capacity[filling]) ||
+                           segs.size() >= segs.capacity()) {held = seg; have_held = 1; break;}
+                        have_held = 0; in_taken++;
+                        if(seg.status == 0) {
+                            mode_d_copy_async_to_device(copy_space, (char *) L.group_queries[filling] + (size_t) batch[filling].records * q,
+                                                        X.payload(Stream::QUERIES_IN, seg.slot), (size_t) seg.records * q);
+                            segs.push_back({seg.source, seg.index, seg.records, batch[filling].records, 0});
+                            batch[filling].records += seg.records;
+                            copied_slot[copied++] = seg.slot;
+                        } else {
+                            /* answered without being evaluated, so it holds no room in the batch */
+                            segs.push_back({seg.source, seg.index, seg.records, -1, 1});
+                            X.release(Stream::QUERIES_IN, seg.slot);
+                        }
+                        if(copied == Stream::SLOTS) {break;}
+                    }
+                    if(copied) {copy_space.fence("mode_d_query_segments_in"); for(int c = 0; c < copied; c++) {X.release(Stream::QUERIES_IN, copied_slot[c]);}}
+                }
+                /* (c) an evaluation, when none is running: a batch of received queries when it is full or nothing more is
+                 * coming this round (this rank's own queries in it, unless they go in chunks), else the next chunk of this
+                 * rank's own queries */
+                const bool idle = (running_batch < 0 && !running_locals);
+                const bool batch_full = (filling >= 0) &&
+                    (have_held || batch[filling].records >= L.batch_capacity[filling] ||
+                     L.batch_segments[filling].size() >= L.batch_segments[filling].capacity());
+                const bool batch_ready = (filling >= 0) && (batch_full || in_taken == in_segments);
+                /* Once this rank has raised a stop nothing more is evaluated: a ready batch is answered as erroneous (the
+                 * asking rank skips it), this rank's remaining queries are given up, and the round's stop agreement ends
+                 * the call. */
+                if(stop_code && idle) {
+                    if(batch_ready && !L.batch_segments[filling].empty()) {
+                        for(ModeDCallLease::BatchSegment &g : L.batch_segments[filling]) {g.status = 1;}
+                        batch[filling].state = 2; answered_order[n_answered++] = filling;
+                        const int other = 1 - filling;
+                        filling = (batch[other].state == 0) ? other : -1;
+                        if(filling >= 0) {batch[filling] = Batch{}; batch[filling].state = 1; L.batch_segments[filling].clear();}
+                    }
+                    locals_issued = N; locals_done = 1;
+                } else if(idle && batch_ready && (!L.batch_segments[filling].empty() || (!locals_in_chunks && !locals_done))) {
+                    const int K = batch[filling].records, with_locals = (!locals_in_chunks && !locals_done) ? N : 0;
+                    NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, with_locals ? snapshot : nullptr, with_locals, accums,
+                                                  (const Envelope *) L.group_queries[filling], K, (Reply *) L.group_replies[filling],
+                                                  flags + MODE_D_FLAG_WALK, eval_queue);
+                    if(with_locals) {running_locals = 1; locals_issued = N;}
+                    if(!L.batch_segments[filling].empty()) {
+                        running_batch = filling; batch[filling].state = 3;
+                        const int other = 1 - filling;
+                        filling = (batch[other].state == 0) ? other : -1;
+                        if(filling >= 0) {batch[filling] = Batch{}; batch[filling].state = 1; L.batch_segments[filling].clear();}
+                    }
+                    if(overlap && gx_mode_d_eval_event(running_batch >= 0 ? 1 + running_batch : 0).record(*eval_queue) != 0) {
+                        gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: a Mode D evaluation's completion could not be recorded",
+                                                       __FILE__, __LINE__, __FUNCTION__);
+                    }
+                } else if(idle && locals_in_chunks && locals_issued < N) {
+                    const int c0 = locals_issued, m = ((long long) (N - c0) < local_chunk) ? N - c0 : (int) local_chunk;
+                    NlrModeDBatch<Spec>::evaluate(ctx, cs, tree, type_mask, snapshot + c0, m, accums + c0, nullptr, 0, nullptr,
+                                                  flags + MODE_D_FLAG_WALK, eval_queue);
+                    running_locals = 1; locals_issued = c0 + m;
+                    if(gx_mode_d_eval_event(0).record(*eval_queue) != 0) {
+                        gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: a Mode D evaluation's completion could not be recorded",
+                                                       __FILE__, __LINE__, __FUNCTION__);
+                    }
+                }
+                /* (c') the running evaluation finished.  Every evaluation is checked for a walk anomaly and for a device-side
+                 * stop that did not trap its kernel (one that traps surfaces as an event error) before anything follows it: a
+                 * received batch's replies go out only once its evaluation is known to be clean -- otherwise every segment is
+                 * answered as erroneous (the asking rank skips them) -- and either finding raises the stop the round's
+                 * agreement acts on.  A failure of the device itself ends the run here. */
+                if(running_batch >= 0 || running_locals) {
+                    const int ev = (running_batch >= 0) ? 1 + running_batch : 0;
+                    const int status = overlap ? gx_mode_d_eval_event(ev).query() : GIZMO_GPU_EVENT_COMPLETE;
+                    if(status == GIZMO_GPU_EVENT_ERROR) {
+                        gizmo_fatal_hard_exit_reviewed(90009003, "REVIEWED_HARD_MID_PROTOCOL: the device failed during a Mode D evaluation",
+                                                       __FILE__, __LINE__, __FUNCTION__);
+                    }
+                    if(status == GIZMO_GPU_EVENT_COMPLETE) {
+                        int walk_word = 0, device_code = 0, device_line = 0;
+                        mode_d_copy_async_to_host(copy_space, &walk_word, flags + MODE_D_FLAG_WALK, sizeof(int));
+                        copy_space.fence("mode_d_evaluation_anomaly");
+                        const int device_stop = gizmo_gpu_consume_device_error(&device_code, &device_line);
+                        if(device_stop) {
+                            char reason[160];
+                            snprintf(reason, sizeof(reason), "a device kernel of a Mode D evaluation stopped (code %d, line %d)", device_code, device_line);
+                            gizmo_request_controlled_stop(device_code, reason, __FILE__, __LINE__, __FUNCTION__);
+                        }
+                        const int unclean = (walk_word || device_stop);
+                        if(unclean && !stop_code) {stop_code = 90001044; walk_anomaly = walk_word;}
+                        if(running_locals && locals_issued >= N) {locals_done = 1;}
+                        running_locals = 0;
+                        if(running_batch >= 0) {
+                            const int b = running_batch;
+                            if(unclean) {for(ModeDCallLease::BatchSegment &g : L.batch_segments[b]) {g.status = 1;}}
+                            batch[b].state = 2; answered_order[n_answered++] = b;
+                            running_batch = -1;
+                        }
+                    }
+                }
+                /* (d) replies out, batch by batch in the order they were answered, each batch's segments in order */
+                while(n_answered > 0) {
+                    const int b = answered_order[0];
+                    std::vector<ModeDCallLease::BatchSegment> &segs = L.batch_segments[b];
+                    {
+                        /* the copies into every free slot, one fence, then the sends, in the batch's segment order */
+                        int free_k[Stream::SLOTS], n_out = 0, copied = 0;
+                        const int n_free = X.free_slots(Stream::REPLIES_OUT, free_k);
+                        const int first = batch[b].segments_sent;
+                        while(n_out < n_free && first + n_out < (int) segs.size()) {
+                            const ModeDCallLease::BatchSegment &g = segs[(size_t) (first + n_out)];
+                            char *dst = X.payload(Stream::REPLIES_OUT, free_k[n_out]);
+                            if(g.status == 0) {
+                                mode_d_copy_async_to_host(copy_space, dst, (char *) L.group_replies[b] + (size_t) g.offset * r, (size_t) g.records * r);
+                                copied = 1;
+                            } else {
+                                /* the rank that asked skips every reply of an erroneous segment; these only have to be well formed */
+                                Reply *rep = (Reply *) dst;
+                                for(int k = 0; k < g.records; k++) {rep[k].origin_slot = 0; rep[k].origin_rank = g.source; Spec::zero_accum(rep[k].accum);}
+                            }
+                            n_out++;
+                        }
+                        if(copied) {copy_space.fence("mode_d_reply_segments_out");}
+                        for(int k = 0; k < n_out; k++) {
+                            const ModeDCallLease::BatchSegment &g = segs[(size_t) (first + k)];
+                            X.send_reply_segment(free_k[k], g.source, g.index, g.records, g.status);
+                        }
+                        batch[b].segments_sent += n_out;
+                    }
+                    if(batch[b].segments_sent < (int) segs.size()) {break;}
+                    batch[b] = Batch{}; segs.clear();
+                    answered_order[0] = answered_order[1]; answered_order[1] = -1; n_answered--;
+                    if(filling < 0) {filling = b; batch[b].state = 1;}
+                }
+                /* (e) replies in, each to its envelope's place */
+                {
+                    int copied = 0, copied_slot[Stream::SLOTS];
+                    Stream::Segment seg;
+                    while(copied < Stream::SLOTS && X.next_reply_segment(seg)) {
+                        if(seg.status != 0) {X.release(Stream::REPLIES_IN, seg.slot); continue;}   /* skipped: the stop is already raised */
+                        const size_t first_env = (size_t) peer_off[(size_t) seg.source] + (size_t) seg.index * (size_t) S;
+                        mode_d_copy_async_to_device(copy_space, (char *) A.replies + first_env * r, X.payload(Stream::REPLIES_IN, seg.slot), (size_t) seg.records * r);
+                        copied_slot[copied++] = seg.slot;
+                    }
+                    if(copied) {copy_space.fence("mode_d_reply_segments_in"); for(int c = 0; c < copied; c++) {X.release(Stream::REPLIES_IN, copied_slot[c]);}}
+                }
+                if(locals_done && running_batch < 0 && !running_locals && !have_held && n_answered == 0 &&
+                   (filling < 0 || L.batch_segments[filling].empty()) && X.round_complete()) {break;}
+            }
+            /* every evaluation has completed (each was seen to); the device-side endrun record, if any, is read here */
+            if(overlap) {eval_queue->fence("mode_d_round_evaluations"); gizmo_gpu_check_last_error("mode_d_round_evaluations", N, -1);}
+            if(X.errors_seen() && !stop_code) {stop_code = 90001043;}
+            if(!X.errors_seen() && n_rec > 0) {
+                mode_d_merge_replies<Spec>(query_runs, L.run_offsets, a_begin, n_round, (const Reply *) A.replies, me, accums,
+                                           flags + MODE_D_FLAG_MERGE);
+            }
+            mode_d_copy_to_host(host_flags, flags, sizeof(host_flags));
+            if(host_flags[MODE_D_FLAG_MERGE] && !stop_code) {stop_code = 90001043;}
+            if(host_flags[MODE_D_FLAG_WALK] && !stop_code) {stop_code = 90001044; walk_anomaly = host_flags[MODE_D_FLAG_WALK];}
+        }
+        a_begin = a_end;
+        /* the round's end: everyone done, or a stop raised anywhere */
+        int local[2] = {(a_begin >= N && locals_done) ? 1 : 0, (stop_code || anomaly_round) ? 0 : 1}, all[2] = {0, 0};
+        MPI_Allreduce(local, all, 2, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+        if(!all[1]) {stop = 1; L.stopped = 1; break;}
+        if(all[0]) {break;}
+    }
+
+    /* 4. the results */
+    if(N > 0 && accums_out) {mode_d_copy_to_host(accums_out, accums, (size_t) N * sizeof(AccumData));}
+    if(stop && stop_code) {
+        printf("[%s] task %d: the device-resident exchange stopped (%s).\n", Spec::loop_name, me,
+               stop_code == 90001042 ? "an export fill did not match its count"
+               : stop_code == 90001043 ? "a reply or segment did not match what was asked"
+               : walk_anomaly ? nlr_walk_anomaly_text(walk_anomaly) : "a device kernel of its evaluation stopped");
+        fflush(stdout);
+        endrun(stop_code);
+    }
+    return stop != 0;
+}
 
 /* ============================================================================
  * nlr_iter_dispatch_subgroup_mode_a<Spec>(drv, sg).
@@ -5742,12 +6523,9 @@ static void nlr_iter_dispatch_subgroup_mode_d(NlrIterDriver<Spec>& drv, int sg)
      * rank, including one with no actives of its own. */
     if(NTask > 1) {
         std::vector<AccumData> accums_compacted(n_compacted);
-        for(int k = 0; k < n_compacted; k++) {Spec::zero_accum(accums_compacted[k]);}
-        mode_b_remote_evaluate_into_buffer<Spec, NlrEvalBackend::DeviceFused>(
-            sub, radii_compacted.data(), drv.cs, drv.ctx,
-            (unsigned int)sgr.j_type_bitmask,
-            (n_compacted > 0) ? accums_compacted.data() : nullptr,
-            &drv.mode_d_tree);
+        mode_d_exchange<Spec>(*drv.mode_d_lease, sub, radii_compacted.data(), drv.cs, drv.ctx,
+                              (unsigned int)sgr.j_type_bitmask,
+                              (n_compacted > 0) ? accums_compacted.data() : nullptr);
         for(int k = 0; k < n_compacted; k++) {
             drv.accum_uvm[sg][drv.active_set_uvm[sg][k]] = accums_compacted[k];
         }
@@ -5851,17 +6629,227 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
 }
 
 /* ============================================================================
+ * A multi-rank Mode D call of a loop that iterates on the device (nlr_mode_d_iterates_on_device_v) keeps each
+ * active's iteration state in the call's device storage from its first iteration to its last: the radius, the
+ * scratch, the latest result, and the lists of slots still iterating.  All of it is by call slot (the ordered
+ * concatenation of the subgroups), and each subgroup's entries of a list start at the subgroup's first call slot, so a
+ * subgroup's segment never moves as the lists shrink.  Per iteration each subgroup's exchange builds its queries from
+ * its segment and leaves its results at the same offset; after_iter runs on the device for every listed slot, the
+ * slots that iterate again are compacted, in order, within their segment of the other list, and the host reads only
+ * how many there are in each subgroup -- the counts every rank reduces anyway.  The host's copy of the state (the
+ * driver's per-active arrays) is brought up to date only when the call hands over to Mode B or finishes, where the host
+ * reads it.  Each subgroup's live count is the driver's active_set_size[sg], kept current on both sides.
+ * ========================================================================== */
+template <typename Spec>
+static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
+{
+    ModeDCallLease &L = *drv.mode_d_lease;
+    const int n = drv.args.num_active;
+    L.iter_on = 1; L.iter_which = 0;
+    if(n <= 0) {return;}
+    for(int sg = 0; sg < drv.args.num_subgroups; sg++) {
+        const int m = drv.active_set_size[sg], base = drv.call_slot_base[sg];
+        if(m <= 0 || !drv.radii_uvm[sg]) {continue;}
+        mode_d_copy_to_device(L.iter_slot_index + base, drv.args.subgroups[sg].active_indices, (size_t) m * sizeof(int));
+        mode_d_copy_to_device(L.iter_slot_radius + base, drv.radii_uvm[sg], (size_t) m * sizeof(double));
+    }
+    /* the scratch starts zeroed and every slot listed in its own position, as the driver's own copies do: set where
+       they live */
+    char *scratch = (char *) L.iter_slot_scratch; int *live = L.iter_live[0];
+    const size_t scratch_bytes = (size_t) n * sizeof(typename Spec::IterScratch);
+    Kokkos::parallel_for("nlr_mode_d_iteration_begin", Kokkos::RangePolicy<>(0, (scratch_bytes > (size_t) n) ? (long long) scratch_bytes : (long long) n),
+                         KOKKOS_LAMBDA(long long b) {
+        if((size_t) b < scratch_bytes) {scratch[b] = 0;}
+        if(b < n) {live[b] = (int) b;}
+    });
+}
+
+/* The end of a call's device iteration: at its last iteration, or where its remainder goes on to Mode B.  Every slot's
+ * state comes off the device once, in segments through two slabs of the call's pinned staging, each segment's copy
+ * running while the host works through the one before.  A slot that is still iterating goes back into the driver's
+ * arrays (radius, scratch, latest result), for Mode B to continue or for the final writeback at max_iters.  Every other
+ * slot has its result now: a Spec whose writeback writes only that active's own rows has it handed straight to the
+ * writeback (several host threads) and marked in slot_state (2), so the call's final writeback passes over it; any
+ * other Spec's slots go back into the driver's arrays too, for the final writeback in active order. */
+template <typename Spec>
+static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsigned char>& slot_state)
+{
+    using AccumData   = typename Spec::AccumData;
+    using IterScratch = typename Spec::IterScratch;
+    constexpr bool early_writeback = nlr_spec_writeback_writes_only_own_particle_v<Spec>;
+    ModeDCallLease &L = *drv.mode_d_lease;
+    if(!L.iter_on) {return;}
+    L.iter_on = 0;
+    const int n_all = drv.args.num_active, n_sg = drv.args.num_subgroups;
+    if(n_all <= 0) {return;}
+    /* which slots are still iterating (the storage was reserved before admission) */
+    if(slot_state.capacity() < (size_t) n_all) {
+        gizmo_fatal_hard_exit_reviewed(90009004, "REVIEWED_HARD_MID_PROTOCOL: a Mode D call's per-slot state was not reserved at admission",
+                                       __FILE__, __LINE__, __FUNCTION__);
+    }
+    slot_state.assign((size_t) n_all, 0);
+    for(int sg = 0; sg < n_sg; sg++) {
+        const int m = drv.active_set_size[sg], base = drv.call_slot_base[sg];
+        if(m <= 0) {continue;}
+        int *list = drv.active_set_uvm[sg];
+        mode_d_copy_to_host(list, L.iter_live[L.iter_which] + base, (size_t) m * sizeof(int));
+        for(int k = 0; k < m; k++) {slot_state[(size_t) list[k]] = 1; list[k] -= base;}   /* call slot -> the subgroup's slot */
+    }
+    /* a segment: its slots' results, then radii, then scratch, each part on a 64-byte boundary */
+    auto up64 = [](size_t b) {return (b + 63) & ~(size_t) 63;};
+    const size_t per_slot = sizeof(AccumData) + sizeof(double) + sizeof(IterScratch);
+    int seg_slots = (int) ((GX_MODE_D_STAGING_SLAB_BYTES - 3 * 64) / per_slot);
+    if(seg_slots > n_all) {seg_slots = n_all;}
+    const size_t off_radius = up64((size_t) seg_slots * sizeof(AccumData));
+    const size_t off_scratch = off_radius + up64((size_t) seg_slots * sizeof(double));
+    char *slab[2] = {gx_mode_d_staging_slab(GX_MODE_D_REPLIES_IN, 0), gx_mode_d_staging_slab(GX_MODE_D_REPLIES_IN, 1)};
+    const Kokkos::DefaultExecutionSpace &copy_space = gx_mode_d_copy_space();
+    const AccumData *dev_accum = (const AccumData *) L.iter_slot_accum;
+    const double *dev_radius = L.iter_slot_radius;
+    const IterScratch *dev_scratch = (const IterScratch *) L.iter_slot_scratch;
+    auto issue = [&](int seg) {
+        const int s0 = seg * seg_slots, m = (n_all - s0 < seg_slots) ? n_all - s0 : seg_slots;
+        char *b = slab[seg & 1];
+        mode_d_copy_async_to_host(copy_space, b, dev_accum + s0, (size_t) m * sizeof(AccumData));
+        mode_d_copy_async_to_host(copy_space, b + off_radius, dev_radius + s0, (size_t) m * sizeof(double));
+        mode_d_copy_async_to_host(copy_space, b + off_scratch, dev_scratch + s0, (size_t) m * sizeof(IterScratch));
+    };
+    const int n_seg = (n_all + seg_slots - 1) / seg_slots;
+    const int nthreads = nlr_modeb_omp_nthreads();
+    issue(0);
+    copy_space.fence("mode_d_iteration_end_segment");
+    for(int seg = 0; seg < n_seg; seg++) {
+        if(seg + 1 < n_seg) {issue(seg + 1);}   /* into the other slab, while this one is read */
+        const int s0 = seg * seg_slots, m = (n_all - s0 < seg_slots) ? n_all - s0 : seg_slots;
+        const char *b = slab[seg & 1];
+        const AccumData *acc = (const AccumData *) b;
+        const double *rad = (const double *) (b + off_radius);
+        const IterScratch *scr = (const IterScratch *) (b + off_scratch);
+        unsigned char *state = slot_state.data();
+        /* the segment's slots, subgroup by subgroup: each one's part of it, with that subgroup's argument view, as its
+           writeback is called everywhere else */
+        for(int sg = 0; sg < n_sg; sg++) {
+            const int base = drv.call_slot_base[sg];
+            const int n_here = (drv.args.subgroups[sg].num_active_local > 0) ? drv.args.subgroups[sg].num_active_local : 0;
+            const int lo = (s0 > base) ? s0 : base, hi = (s0 + m < base + n_here) ? s0 + m : base + n_here;
+            if(lo >= hi || !drv.radii_uvm[sg]) {continue;}
+            neighbor_loop_args sub = drv.args;
+            sub.active_list = drv.args.subgroups[sg].active_indices; sub.num_active = n_here;
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) num_threads(nthreads) if(nlr_modeb_use_omp(hi - lo, nthreads))
+#endif
+            for(int slot = lo; slot < hi; slot++) {
+                const int k = slot - s0, sl = slot - base;
+                if(state[slot] == 1 || !early_writeback) {
+                    drv.radii_uvm[sg][sl] = rad[k];
+                    drv.scratch_uvm[sg][sl] = scr[k];
+                    drv.accum_uvm[sg][sl] = acc[k];   /* read by Mode B, or by the final writeback */
+                    continue;
+                }
+                if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
+                    Spec::apply_active_writeback_iterative(sub, sl, sub.active_list[sl], acc[k], rad[k], scr[k]);
+                } else {
+                    Spec::apply_active_writeback(sub, sl, sub.active_list[sl], acc[k]);
+                }
+                state[slot] = 2;
+            }
+        }
+        copy_space.fence("mode_d_iteration_end_segment");
+    }
+}
+
+/* One subgroup's exchange of an iteration: its segment of the live list, queries and results staying on the device,
+ * the results at the segment's offset. */
+template <typename Spec>
+static void nlr_iter_dispatch_subgroup_mode_d_on_device(NlrIterDriver<Spec>& drv, int sg)
+{
+    ModeDCallLease &L = *drv.mode_d_lease;
+    const int base = drv.call_slot_base[sg], m = drv.active_set_size[sg];
+    const ModeDDeviceQueries dq{L.iter_live[L.iter_which] + base, m, base, L.iter_slot_index, L.iter_slot_radius};
+    neighbor_loop_args sub = drv.args;
+    sub.active_list = nullptr; sub.active_call_slot = nullptr; sub.num_active = m;
+    mode_d_exchange<Spec>(L, sub, nullptr, drv.cs, drv.ctx, (unsigned int) drv.args.subgroups[sg].j_type_bitmask, nullptr, &dq);
+}
+
+/* after_iter for every listed slot, then the slots that iterate again, in order, into their segment of the other list:
+ * one launch of each per subgroup with live slots, and one read of the counts.  Returns the iteration's stop code (0:
+ * none): the largest any slot raised, for the caller to agree on with every rank. */
+template <typename Spec>
+static int nlr_mode_d_after_iter_on_device(NlrIterDriver<Spec>& drv)
+{
+    using AccumData   = typename Spec::AccumData;
+    using IterScratch = typename Spec::IterScratch;
+    ModeDCallLease &L = *drv.mode_d_lease;
+    const int n_sg = drv.args.num_subgroups, n_counts = 1 + n_sg;
+    int any = 0, stop_code = 0;
+    for(int sg = 0; sg < n_sg; sg++) {any |= (drv.active_set_size[sg] > 0);}
+    if(any) {
+        const int *cur_all = L.iter_live[L.iter_which];
+        int *next_all = L.iter_live[1 - L.iter_which], *keep_all = L.iter_keep;
+        int *count = L.iter_count;   /* [0] the stop code, [1 + sg] subgroup sg's next length */
+        const int *index = L.iter_slot_index;
+        double *radius = L.iter_slot_radius;
+        IterScratch *scratch = (IterScratch *) L.iter_slot_scratch;
+        AccumData *slot_accum = (AccumData *) L.iter_slot_accum;
+        const AccumData *accums_all = (const AccumData *) L.active_accums;
+        struct particle_data *Pp = drv.args.P;
+        struct gas_cell_data *Cp = drv.args.CellP;
+        const typename Spec::CallScalars cs = drv.cs;
+        const typename Spec::DeviceContext dctx = drv.ctx;
+        const int iter = drv.iter_index, this_task = ThisTask;
+        Kokkos::parallel_for("nlr_mode_d_iter_counts_clear", Kokkos::RangePolicy<>(0, n_counts), KOKKOS_LAMBDA(int c) {count[c] = 0;});
+        for(int sg = 0; sg < n_sg; sg++) {
+            const int n = drv.active_set_size[sg], base = drv.call_slot_base[sg];
+            if(n <= 0) {continue;}
+            const int *cur = cur_all + base;
+            int *next = next_all + base, *keep = keep_all + base;
+            const AccumData *accums = accums_all + base;
+            gizmo_gpu_kernel_launch("nlr_mode_d_after_iter", n, KOKKOS_LAMBDA(int k) {
+                const int slot = cur[k];
+                const AccumData acc = accums[k];
+                slot_accum[slot] = acc;
+                int code = 0;
+                const NlrDeviceIterContext<Spec> c{Pp, Cp, sg, slot, index[slot], iter, radius[slot], cs, scratch[slot], dctx, this_task, code};
+                const IterResult res = Spec::after_iter_device(c, acc);
+                if(res.status == IterStatus::AdjustRadius) {radius[slot] = res.new_h_search;}
+                else if(res.status != IterStatus::Converged && res.status != IterStatus::NeedsMore) {code = 81206;}   /* an unknown status is a Spec defect */
+                if(code) {Kokkos::atomic_max(&count[0], code);}
+                keep[k] = (res.status == IterStatus::NeedsMore || res.status == IterStatus::AdjustRadius) ? 1 : 0;
+            });
+            Kokkos::parallel_scan("nlr_mode_d_compact", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int k, int &before, const bool last) {
+                if(last) {
+                    if(keep[k]) {next[before] = cur[k];}
+                    if(k == n - 1) {count[1 + sg] = before + keep[k];}
+                }
+                before += keep[k];
+            });
+        }
+        L.iter_counts_host.resize((size_t) n_counts);   /* within the capacity reserved at admission */
+        mode_d_copy_to_host(L.iter_counts_host.data(), count, (size_t) n_counts * sizeof(int));
+        stop_code = L.iter_counts_host[0];
+        for(int sg = 0; sg < n_sg; sg++) {if(drv.active_set_size[sg] > 0) {drv.active_set_size[sg] = L.iter_counts_host[1 + sg];}}
+    }
+    L.iter_which = 1 - L.iter_which;
+    drv.local_active_total = 0;
+    for(int sg = 0; sg < n_sg; sg++) {drv.local_active_per_sg[sg] = drv.active_set_size[sg]; drv.local_active_total += drv.active_set_size[sg];}
+    return stop_code;
+}
+
+/* ============================================================================
  * run_neighbor_loop_iterative<Spec> — body (step 2b).
  * ========================================================================== */
 template <typename Spec>
 void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
 {
-    /* Retires this call's touched-set epoch on every way out, exactly as the non-iterative
-     * runner does.  The iterative driver opens its own epoch at its own dispatch decision, so
-     * it owns its own retirement: without this the recorder stays held after the first
-     * iterative call and every later fused call is refused, which silently pins the whole run
-     * to the fallback path. */
-    GxTouchedEpochGuard touched_epoch{0};
+    /* Everything a Mode D call holds, released on every way out, exactly as in the
+     * non-iterative runner.  Declared first so it outlives the driver, which walks the tree
+     * the lease prepared.  Without the release the touched-set recorder stays held after the
+     * first iterative call and every later fused call is refused, which silently pins the
+     * whole run to the fallback path. */
+    ModeDCallLease mode_d_lease;
+    /* Per slot of a device-iterated call, at the end of its device iteration: 1 still iterating, 2 written back.  Reserved
+     * before Mode D's admission vote, so nothing allocates after it. */
+    std::vector<unsigned char> device_written;
 
     /* The one live argument view for this call.  A ghost import can raise the particle
      * capacity and move P[]/CellP[], so the cached base pointers are refreshed in this
@@ -5958,10 +6946,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * (runtime abort 81201 above catches missing trait). */
 
 
-    /* ===== Path selection at iter 0 (FIXED for whole call) =====
+    /* ===== Path selection at iter 0 =====
      * Integrates with the canonical override / threshold dispatch
-     * (mirrors the selection in run_neighbor_loop). Path is held fixed
-     * across all iterations of one iterative call.
+     * (mirrors the selection in run_neighbor_loop). Path is held across the
+     * iterations of one call, with one exception: a Mode D call whose
+     * remaining actives fall below Mode D's floor finishes on Mode B (end of
+     * the iteration loop).
      *
      * num_active for threshold uses the UNION across all subgroups (base
      * args.num_active per the doc convention). This selection is single-subgroup-only;
@@ -5973,9 +6963,6 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * here for completeness and future use. */
     const NlrForceMode force_mode = args.dispatch_override;
     DispatchPath path;
-    /* Filled by the Mode D preparation below if that path is taken; handed to
-     * the driver so every iteration walks the tree the decision was made on. */
-    GxDeviceTreeView mode_d_tree{};
     /* Global active-particle sum across all ranks (from the dispatch Allreduce),
      * 64-bit since it can exceed 2^31; -1 = not computed (force-A cheap path).
      * Used for the globally-zero-active no-op below. */
@@ -6024,7 +7011,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          *
          * With the peer half in place this now runs at any task count, and the
          * reduction above stops being a formality: a rank that cannot describe
-         * its tree to the device pulls the WHOLE call back to Mode A, because the
+         * its tree to the device pulls the WHOLE call off Mode D, because the
          * alternative is one rank walking while its peers wait for queries that
          * never arrive. */
         /* nlr_select_mode never asks for Mode D on a call with no actives
@@ -6032,12 +7019,19 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * whole tree, and such a call has no work to justify that -- it is
          * O(Nnodes) on the way to the globally-zero-active no-op below. */
         if(mode == NlrMode::D) {
-            const int ready_local = (gx_device_fused_walk_prepare(&mode_d_tree, Spec::loop_name) == 0) ? 1 : 0;
-            /* Open exactly when this rank's own preparation succeeded, whatever the vote decides. */
-            touched_epoch.held = ready_local;
-            int ready = 0;
-            MPI_Allreduce(&ready_local, &ready, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-            if(ready) {path = DispatchPath::ModeD_DeviceFused;}
+            /* The lease's prepared tree is handed to the driver so every iteration walks the
+             * tree the decision was made on.  A refused call holds nothing of Mode D; where it
+             * goes is mode_d_admit's verdict. */
+            int host_ok = 1;
+            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+                try {device_written.reserve((size_t) (args.num_active > 0 ? args.num_active : 0));} catch(const std::bad_alloc &) {host_ok = 0;}
+            }
+            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active, args.num_subgroups, host_ok);
+            if(verdict == ModeDAdmission::Admitted) {path = DispatchPath::ModeD_DeviceFused;}
+            else {
+                std::vector<unsigned char>().swap(device_written);   /* a refused call holds nothing of Mode D */
+                if(verdict == ModeDAdmission::StorageRefused && nlr_mode_b_switched_on<Spec>()) {path = DispatchPath::ModeB_HostWalker;}
+            }
         }
     }
 
@@ -6065,11 +7059,12 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * enforcement around the iterative call; mirrors non-iter run_neighbor_loop
      * lines 2018-2026 + 2099-2122. Snapshot here; check post-iter-loop.
      * Mode A paths legitimately advance these counters (one ghost_import +
-     * one arena_acquire per call); enforcement skipped. */
-    const uint64_t s_drift0 = g_global_drift_counter;
-    const uint64_t s_ghost0 = g_ghost_import_counter;
-    const uint64_t s_arena0 = g_gpu_arena_acquire_counter;
-    const int      s_np0    = NumPart;
+     * one arena_acquire per call); enforcement skipped.  A Mode D call that
+     * finishes on Mode B takes the snapshot again where it switches. */
+    uint64_t s_drift0 = g_global_drift_counter;
+    uint64_t s_ghost0 = g_ghost_import_counter;
+    uint64_t s_arena0 = g_gpu_arena_acquire_counter;
+    int      s_np0    = NumPart;
 
     /* ===== Driver lifetime wrapped in inner scope =====
      * Driver destructor runs at scope exit; Mode B hard-corridor check fires
@@ -6090,8 +7085,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     if (path == DispatchPath::ModeB_HostWalker) {
         drv.initialize_device_context_mode_b();
     } else if (path == DispatchPath::ModeD_DeviceFused) {
-        drv.mode_d_tree = mode_d_tree;
+        drv.mode_d_tree = mode_d_lease.tree;
+        drv.mode_d_lease = &mode_d_lease;
         drv.acquire_arena_and_init_ctx_mode_d();
+        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {if(NTask > 1) {nlr_mode_d_iteration_begin<Spec>(drv);}}
     } else if (path == DispatchPath::ModeA_GPU_NGL) {
         /* Both read P/CellP from the device-resident arena; Mode D differs in
          * how it finds the neighbours, not in where the particles live. */
@@ -6276,7 +7273,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             Spec::reset_per_iter_device_context(args, drv.ctx, drv.iter_index);
         }
 
-        /* (a) Per-subgroup dispatch — fixed path for the call. This
+        /* (a) Per-subgroup dispatch on the call's path (Mode D may have handed over to Mode B). This
          * implements Mode B local (np=1) and Mode B remote (np>1) via the
          * same DispatchPath::ModeB_HostWalker label; the per-subgroup helper
          * picks local vs remote based on NTask. Mode A iter is still
@@ -6289,6 +7286,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
              * global_bm_presence by the caller, so any subgroup present
              * has SOME rank with non-zero actives — entering the dispatch
              * is the correct lockstep collective participation). */
+            /* A stop agreed in an earlier exchange of this call ends the call: no rank enters another. */
+            if (drv.mode_d_lease && drv.mode_d_lease->stopped) break;
             const bool sg_globally_active = (drv.iter_index == 0)
                 ? true   /* iter 0: trust caller's subgroups[] (global union) */
                 : (drv.global_active_per_sg[sg] > 0);
@@ -6310,14 +7309,28 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     break;
                 case DispatchPath::ModeD_DeviceFused:
                     if constexpr (nlr_spec_mode_d_eligible_v<Spec>) {
-                        nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg);
+                        bool on_device = false;
+                        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+                            if(drv.mode_d_lease && drv.mode_d_lease->iter_on) {nlr_iter_dispatch_subgroup_mode_d_on_device<Spec>(drv, sg); on_device = true;}
+                        }
+                        if(!on_device) {nlr_iter_dispatch_subgroup_mode_d<Spec>(drv, sg);}
                     }
                     break;
             }
         }
 
+        /* A stop agreed in this iteration's exchange: every rank leaves the iterations here, before any
+         * result of it is read, and the stop drains at the run's next poll. */
+        if (drv.mode_d_lease && drv.mode_d_lease->stopped) break;
+
         /* (b) Per-active Spec::after_iter — collect IterStatus, compact
          * active_set per subgroup, mutate radii on AdjustRadius. */
+        bool after_on_device = false;
+        int iteration_stop_code = 0;   /* raised by a device iteration's after_iter; agreed below */
+        if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+            if(drv.mode_d_lease && drv.mode_d_lease->iter_on) {iteration_stop_code = nlr_mode_d_after_iter_on_device<Spec>(drv); after_on_device = true;}
+        }
+        if(!after_on_device) {
         drv.local_active_total = 0;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             int n_compacted   = drv.active_set_size[sg];
@@ -6326,10 +7339,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                 int  slot = drv.active_set_uvm[sg][k];
                 int  i    = args.subgroups[sg].active_indices[slot];
                 AfterIterContext<Spec> ctx{
-                    args, sg, slot, i, drv.iter_index,
+                    args, sg, slot, drv.call_slot_base[sg] + slot, i, drv.iter_index,
                     /* h_search_current */ drv.radii_uvm[sg][slot],
                     /* scalars (ref to driver-owned) */ drv.cs,
-                    /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot]
+                    /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot],
+                    /* device context (driver-owned) */  drv.ctx
                 };
                 IterResult r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
                 switch (r.status) {
@@ -6368,6 +7382,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             drv.local_active_per_sg[sg] = write_idx;
             drv.local_active_total     += write_idx;
         }
+        /* A host after_iter may write state the next iteration's kernels read (a per-active table in the Spec's
+         * DeviceContext): ordered here, once per iteration, on every path that runs kernels. */
+        if (path != DispatchPath::ModeB_HostWalker) {Kokkos::fence("nlr_after_iter_host_writes");}
+        }
 
 
         /* (b.5) Mode A buffer-exceedance rebuild trigger.
@@ -6400,18 +7418,64 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * global activity; sum is global_active_total for the break check.
          * Globally-converged subgroups (global_active_per_sg[sg]==0) skip
          * the per-iter dispatch + collective on the next iteration. */
-        if (NTask > 1) {
+        /* A one-subgroup Mode D call reduces, in the same one collective, the busiest rank's actives (its floor) and
+         * a device iteration's stop code; a multi-subgroup one reduces both in its one maximum. */
+        int busiest_rank_actives = drv.local_active_total, agreed_stop_code = iteration_stop_code;
+        if (NTask > 1 && path == DispatchPath::ModeD_DeviceFused && args.num_subgroups == 1) {
+            long long mine[3] = {drv.local_active_per_sg[0], drv.local_active_per_sg[0], iteration_stop_code}, all[3] = {0, 0, 0};
+            MPI_Allreduce(mine, all, 1, nlr_count_triple_type(), nlr_count_triple_op(), MPI_COMM_WORLD);
+            drv.global_active_per_sg[0] = all[0]; busiest_rank_actives = (int) all[1]; agreed_stop_code = (int) all[2];
+        } else if (NTask > 1) {
             MPI_Allreduce(drv.local_active_per_sg.data(),
                           drv.global_active_per_sg.data(),
                           args.num_subgroups, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+            if (path == DispatchPath::ModeD_DeviceFused) {
+                int mine2[2] = {drv.local_active_total, iteration_stop_code}, all2[2] = {0, 0};
+                MPI_Allreduce(mine2, all2, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                busiest_rank_actives = all2[0]; agreed_stop_code = all2[1];
+            }
         } else {
             drv.global_active_per_sg = drv.local_active_per_sg;
+        }
+        /* A stop any rank's device iteration raised: every rank requests it here, together, and leaves the iterations
+         * before another exchange; nothing of this call is written back. */
+        if (agreed_stop_code) {
+            endrun(agreed_stop_code);
+            if (drv.mode_d_lease) {drv.mode_d_lease->stopped = 1;}
+            break;
         }
         drv.global_active_total = 0;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             drv.global_active_total += drv.global_active_per_sg[sg];
         }
+        /* A long tail of iterations is worth a line: the count every rank has just agreed on. */
+        if (drv.iter_index > 10 && ThisTask == 0 && drv.global_active_total > 0) {
+            printf("%s iteration %d: %lld still iterating\n", Spec::loop_name, drv.iter_index, drv.global_active_total);
+        }
         if (drv.global_active_total == 0) break;
+
+        /* A Mode D call whose busiest rank no longer meets Mode D's bound finishes on Mode B, the path a
+         * call that small takes from the start: the converged actives have dropped out and the rest cannot feed the
+         * device.  One way only, decided from the count every rank has just reduced, so every rank switches at the same
+         * iteration.  Mode D's storage is given back here.  Mode D's context already reads the caller's particle arrays
+         * (the arena acquire aliases them, and no ghosts were imported), so Mode B continues from the same state through
+         * the same context.  With Mode B switched off the call stays on Mode D, as it was routed. */
+        if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
+            nlr_mode_b_switched_on<Spec>()) {
+            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}   /* Mode B reads the host's copy */
+            mode_d_lease.release();
+            drv.mode_d_lease = nullptr;
+            path = DispatchPath::ModeB_HostWalker;
+            s_drift0 = g_global_drift_counter;
+            s_ghost0 = g_ghost_import_counter;
+            s_arena0 = g_gpu_arena_acquire_counter;
+            s_np0    = NumPart;
+        }
+    }
+
+    /* A call that iterated on the device to its end: every result written back from the device's copy. */
+    if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+        if(drv.mode_d_lease && !drv.mode_d_lease->stopped) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}
     }
 
     /* ===== Max-iter exceeded check (matches legacy density / ags_density endrun(1155)) ===== */
@@ -6430,6 +7494,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * apply_active_writeback are the SUBGROUP'S full active_indices —
      * every active particle gets its converged result written back. */
     for (int sg = 0; sg < args.num_subgroups; sg++) {
+        /* A Mode D exchange of this call ended in an agreed stop: no result is written back. */
+        if (drv.mode_d_lease && drv.mode_d_lease->stopped) break;
         const NlrSubgroup& sgr = args.subgroups[sg];
         const int n_total = sgr.num_active_local;
         /* This loop is bounded by the subgroup's ORIGINAL active count, not by
@@ -6445,6 +7511,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         sub.active_list = sgr.active_indices;
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
+            if (!device_written.empty() && device_written[(size_t) (drv.call_slot_base[sg] + slot)] == 2) continue;   /* written at the device iteration's end */
             int i = sgr.active_indices[slot];
             /* If Spec opts into the iterative-variant hook, route the
              * converged radius + IterScratch through it. Specs that don't

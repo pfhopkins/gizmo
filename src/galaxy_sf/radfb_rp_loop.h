@@ -9,9 +9,8 @@
  *             (wt_area) over valid neighbors into
  *             AccumData; no j-side writes; ghost-writeback hooks no-op
  *             (gated by Aux::iter_index).
- *   iter 1  — apply kicks using staged wt_sum (copied from IterScratch
- *             into RadFBRPLocalIn.wt_sum by after_iter_global, post-iter
- *             staging hook); atomic_add to P[j].Vel, CellP[j].VelPred,
+ *   iter 1  — apply kicks using the wt_sum staged into RadFBRPLocalIn by
+ *             iteration 0's after_iter; atomic_add to P[j].Vel, CellP[j].VelPred,
  *             P[j].dp; accumulate source-side jet_momentum_used into
  *             AccumData; ghost-writeback bundle fires normally.
  *
@@ -130,10 +129,9 @@ struct RadFBRPCallScalars {
  * load_active. Trivially copyable.
  *
  * `wt_sum` is overwritten between iters: zero at iter 0 entry (carried
- * through populate_device_context); refreshed by after_iter_global (the
- * post-iter staging hook) from IterScratch.wt_sum after iter 0's after_iter
- * stashes it there. iter 1's device kernel reads it as the kick-
- * normalization denominator. */
+ * through populate_device_context); written by iteration 0's after_iter
+ * (host or device) from that source's accumulated weight. iter 1's kernel
+ * reads it as the kick-normalization denominator. */
 struct RadFBRPLocalIn {
     Vec3<MyDouble> Pos;
     MyFloat        KernelRadius;          /* RtauMax — neighbor-search radius */
@@ -144,8 +142,8 @@ struct RadFBRPLocalIn {
     MyFloat        dE_over_c;             /* total photon momentum budget this step */
     MyFloat        f_lum_ion;             /* ionizing luminosity fraction */
     MyIDType       ID;                    /* source particle ID, for RNG */
-    /* Staged kick-weight denominator. Iter 0 = 0 at populate; written by after_iter_global
-     * from drv.scratch_uvm[sg][slot].wt_sum before iter 1 dispatch. DOUBLE,
+    /* Staged kick-weight denominator. Iter 0 = 0 at populate; written by iteration 0's
+     * after_iter from accum.wt_sum before iter 1 dispatch. DOUBLE,
      * not MyFloat — legacy computes the denominator in double and narrowing
      * here would be a silent precision downgrade (directive 5). */
     double         wt_sum;
@@ -186,26 +184,6 @@ struct RadFBRPAccum {
                                   * finally applied. Same construction the legacy log used. */
 };
 
-/* IterScratch — host-only per-active state, carries iter-0's accumulated
- * wt_sum into the iter-0→iter-1 staging bridge. Flow:
- *   iter 0 device kernel:   accum.wt_sum += covering-factor weight (per pair).
- *   iter 0 after_iter (per active):
- *                            ctx.scratch.wt_sum = accum.wt_sum  (status-only
- *                            otherwise — no P/CellP writes).
- *   iter 0 after_iter_global (post-iter staging hook; mutates per_active_local;
- *                              NO physics writes):
- *                            drv.scratch_uvm[sg][slot].wt_sum →
- *                              drv.ctx.per_active_local[slot].wt_sum
- *                            (+ Kokkos::fence() before iter-1 device dispatch).
- *   iter 1 device kernel:    reads loc.wt_sum (staged); applies kicks.
- * Carries through IterScratch (the runner's intended per-active iter-state)
- * — not through AccumData directly, which is less stable if the runner
- * zeros/repurposes accum between hooks. */
-struct RadFBRPIterScratch {
-    double wt_sum;
-    double wt_area;
-};
-
 /* DeviceContext extension. Holds the UVM pointer to per-active RadFBRPLocalIn
  * (toplevel-owned host buffer; runner copies into UVM in populate). Carries
  * a per-iter snapshot of iter_index (mirrored
@@ -213,10 +191,9 @@ struct RadFBRPIterScratch {
  * have access — Aux is host-only). Trivially copyable; runner captures by
  * value into Kokkos device lambdas. */
 struct RadFBRPDeviceContext : NeighborLoopDeviceContextBase {
-    RadFBRPLocalIn *per_active_local;     /* UVM, [num_active]; wt_sum field
-                                           * rewritten between iters by
-                                           * after_iter_global (post-iter
-                                           * staging hook) from IterScratch */
+    RadFBRPLocalIn *per_active_local;     /* UVM, [num_active] by call slot; wt_sum /
+                                           * wt_area written by iteration 0's
+                                           * after_iter, read by iteration 1 */
     int             iter_index_snapshot;  /* mirror of Aux::iter_index, refreshed
                                            * per iter; read by load_active on device */
 };
@@ -456,11 +433,11 @@ struct RadFBRPSpec {
     static constexpr bool           writes_neighbour_motion   = true;   /* the radiation-pressure kick lands on the neighbour's velocity */
 
     /* Iterative metadata. 2 iters strict (iter 0 = wt_sum aggregation;
-     * iter 1 = kicks). after_iter returns Converged at iter 1 always.
-     * IterScratch carries iter-0 wt_sum through after_iter →
-     * after_iter_global → per_active_local. */
+     * iter 1 = kicks). after_iter returns Converged at iter 1 always; at
+     * iter 0 it stages wt_sum / wt_area into per_active_local, so there is
+     * no per-active scratch. */
     using IterControl  = Iterative;
-    using IterScratch  = RadFBRPIterScratch;
+    using IterScratch  = NoIterScratch;
     static constexpr int    max_iters                    = 2;
     static constexpr bool   mode_a_rebuild_csr_every_iter = false;
     /* Single j-mask subgroup (gas-only); SupportsSubgroups omitted →
@@ -523,10 +500,7 @@ struct RadFBRPSpec {
     static void cleanup_device_context (const neighbor_loop_args& args, DeviceContext& ctx);
 
     /* Per-iter reset — CRITICAL ordering. Sets Aux::iter_index = iter_index
-     * BEFORE any rank can enter a detector/writeback hook. Also handles the
-     * iter-0 → iter-1 transition by copying IterScratch.wt_sum into per-active
-     * UVM RadFBRPLocalIn.wt_sum (so iter-1 device kernel reads the staged
-     * value). */
+     * BEFORE any rank can enter a detector/writeback hook. */
     static void reset_per_iter_device_context(const neighbor_loop_args_iterative& args,
                                                DeviceContext& ctx,
                                                int iter_index);
@@ -567,16 +541,36 @@ struct RadFBRPSpec {
     static void ghost_writeback_end       (const neighbor_loop_args&, const NeighborLoopPlan&);
 
     /* Iterative hooks.
-     * after_iter is STATUS-ONLY: it writes no P/CellP state, only the
-     * runner's per-active IterScratch.
-     * after_iter_global stages iter-0 wt_sum into per_active_local so
-     * iter-1's device kernel reads the staged value. */
+     * after_iter writes no P/CellP state: at iteration 0 it stages the
+     * source's own entry of per_active_local, which iteration 1 reads. */
     static IterResult after_iter(const AfterIterContext<RadFBRPSpec>& ctx,
                                   const AccumData& accum);
-    static void       after_iter_global(const neighbor_loop_args& args,
-                                         const struct NlrIterDriver<RadFBRPSpec>& drv);
-
-    /* Diagnostics — env-gated. */
+    /* The entry point a device iteration calls for each source: the body below. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_device(const NlrDeviceIterContext<RadFBRPSpec>& c, const AccumData& accum)
+    {
+        return after_iter_body(c.iter_index, c.h_search_current, c.device_ctx.per_active_local, c.call_slot, accum);
+    }
+    /* after_iter_body -- the iteration decision for one source (contract at
+     * RadFBRPSpec::after_iter in radfb_rp_loop.cc). Host and device both run this one body.
+     * Writes only the source's own entry (call_slot) of the per-source table. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_body(int iter, double h_search_current, RadFBRPLocalIn *per_active_local,
+                                      int call_slot, const AccumData& accum)
+    {
+        if (iter == 0) {
+            if (per_active_local != nullptr) {   /* absent only when staging failed and the stop is requested */
+                per_active_local[call_slot].wt_sum  = accum.wt_sum;
+                per_active_local[call_slot].wt_area = accum.wt_area;
+            }
+            if (accum.wt_sum <= 0) {
+                return IterResult{IterStatus::Converged, h_search_current};
+            }
+            return IterResult{IterStatus::NeedsMore, h_search_current};
+        }
+        /* iter >= 1 — kicks applied; we're done. */
+        return IterResult{IterStatus::Converged, h_search_current};
+    }
 
     /* ====================================================================
      * Device hooks (header-inline).

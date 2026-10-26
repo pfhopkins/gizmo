@@ -74,6 +74,9 @@ enum {
     DEVICE_PACKET_CTR_DONE,              /* the traversal is finished: a team-level verdict taken at the round boundary, never by one walker */
     DEVICE_PACKET_CTR_WORKING,           /* walkers still holding an item or a continuation at the end of the round; reset at the boundary */
     DEVICE_PACKET_CTR_STEPPED,           /* nodes stepped this round, by the whole team */
+    DEVICE_PACKET_CTR_GAVE_UP,           /* the round boundary's verdict that the packet gave up: written by one thread at the
+                                            boundary, read by all after it; walkers never write it (they write FAILED, which a
+                                            fast walker may already be setting in the next round while a slow one reads) */
     DEVICE_PACKET_CTR_CLIENT_BASE        /* the first slot a client may number its own counters from */
 };
 
@@ -345,9 +348,10 @@ struct DevicePacketTraversal {
                 fail(ctr, no_progress_reason);
             }
             ctr[DEVICE_PACKET_CTR_STEPPED] = 0;
+            ctr[DEVICE_PACKET_CTR_GAVE_UP] = ctr[DEVICE_PACKET_CTR_FAILED] ? 1 : 0;
         }
         team.team_barrier();
-        if(ctr[DEVICE_PACKET_CTR_FAILED]) {return -1;}
+        if(ctr[DEVICE_PACKET_CTR_GAVE_UP]) {return -1;}
         return chunk_full;
     }
 };

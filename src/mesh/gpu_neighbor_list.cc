@@ -46,6 +46,7 @@ static void gx_walk_drift_tables_refresh(void)
 }
 #include "../core/proto.h"
 #include "../declarations/gpu_error_check.h"
+#include "../declarations/gpu_dispatch_templates.h"   /* GizmoGpuEvent */
 
 #include "sfc_tiles.h"
 #include "sfc_tiles_functions.h"
@@ -57,6 +58,7 @@ static void gx_walk_drift_tables_refresh(void)
 #include "device_tree_walk.h"          /* the one device tree traversal */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, force_host_lazy_drift_ti */
 #include "../gravity/gpu_gravity_tree.h" /* node SoA + drift certification */
+#include "../gravity/gpu_peano_walk.h"   /* the domain mirrors the top-leaf map reads */
 #include "../gravity/gpu_morton_functions.h" /* Morton128 keys for the index build */
 #include "../gravity/ags_functions.h"        /* the AGS inputs of the after-drift reach rule */
 #include "../core/predict_functions.h"       /* box_wrap_position_to_primary_image */
@@ -1380,15 +1382,6 @@ static size_t sidx_device_route_peak(const struct SidxBuildMemoryPlan &m, int nu
     return (sorting > building) ? sorting : building;
 }
 
-/* Whether bytes fit within fraction of the device's free memory: 1 when they do, or when that memory is not
- * known (a refused allocation is then the backstop). */
-static int sidx_device_has_room(size_t bytes, double fraction)
-{
-    size_t free_bytes = 0, total_bytes = 0;
-    if(!gizmo_gpu_device_memory(&free_bytes, &total_bytes)) {return 1;}
-    return (double)bytes <= fraction * (double)free_bytes;
-}
-
 /* The route a build takes: the device route when there is a device apart from the host, the source is the
  * particle storage the device shares (the device route reads members where they live, so never an array of a
  * caller's own), the build is of a size at which that route is the faster, its projected peak fits the device's
@@ -1404,7 +1397,7 @@ static int sidx_build_route(const struct SidxParticleSource &src, int maintained
     if(members < SIDX_DEVICE_ROUTE_MIN_MEMBERS[shape]) {return SIDX_ROUTE_HOST;}
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return SIDX_ROUTE_HOST;}
-    if(!sidx_device_has_room(sidx_device_route_peak(m, members, maintained, presorted, src.exact), SIDX_DEVICE_FREE_FRACTION)) {
+    if(!gizmo_device_has_room(sidx_device_route_peak(m, members, maintained, presorted, src.exact), SIDX_DEVICE_FREE_FRACTION)) {
         return SIDX_ROUTE_HOST;
     }
     gx_walk_drift_tables_refresh();
@@ -1421,7 +1414,7 @@ static int sidx_host_route_fits(const struct SidxParticleSource &src, int mainta
     const struct SidxBuildMemoryPlan m = sidx_build_memory_plan(src.count, members, sidx_tiles_bound(members), maintained, presorted);
     if(!m.fits) {return 0;}
     if(!std::is_same<Kokkos::DefaultExecutionSpace, Kokkos::DefaultHostExecutionSpace>::value &&
-       !sidx_device_has_room(sidx_kept_device_bytes(m, maintained), 1.0)) {return 0;}
+       !gizmo_device_has_room(sidx_kept_device_bytes(m, maintained), 1.0)) {return 0;}
     const size_t always[] = {m.tiles, m.bvh, m.pool, m.rows, m.level_nodes, m.members, m.leaf_of_tile, m.bvh_shape};
     const size_t when_sized[] = {m.slot_of, m.shear_folds, m.keys};
     size_t bytes = 0; int blocks = 0;
@@ -3030,6 +3023,143 @@ long long gx_touched_set_retire_faults(void)  {return g_touched_retire_faults;}
 
 struct GxTouchedSet gx_touched_set_view(void) {return g_touched_set;}
 
+/* Mode D's persistent pinned staging (see gpu_neighbor_list.h).  Pinning is paid once:
+   page-locking is far too slow to repeat per call (about half a second for 3 GB on Frontier). */
+static char *gx_mode_d_staging_base = NULL;
+static int   gx_mode_d_staging_refused = 0;
+/* The exchange's copy queue, made with the staging and kept with it: its own stream on a device backend, so staging copies
+   proceed beside the evaluation's work; the default instance on a host backend. */
+static Kokkos::DefaultExecutionSpace *gx_mode_d_copy_instance = NULL;
+/* The exchange's evaluation queue, made with the copy queue, and the completion event of each evaluation buffer. */
+static Kokkos::DefaultExecutionSpace *gx_mode_d_eval_instance = NULL;
+static GizmoGpuEvent gx_mode_d_eval_events[MODE_D_EVAL_EVENTS];
+
+int gx_mode_d_staging_acquire(void)
+{
+    if(gx_mode_d_staging_base) {return 0;}
+    if(gx_mode_d_staging_refused) {return 1;}
+    gx_mode_d_staging_base = (char *) gizmo_gpu_alloc_pinned_host(GX_MODE_D_STAGING_BYTES, "ngl_moded_staging");
+    if(!gx_mode_d_staging_base) {return 1;}
+    try {
+#if defined(KOKKOS_ENABLE_CUDA) || defined(KOKKOS_ENABLE_HIP)
+        const auto instances = Kokkos::Experimental::partition_space(Kokkos::DefaultExecutionSpace(), 1, 1);
+        gx_mode_d_copy_instance = new Kokkos::DefaultExecutionSpace(instances[0]);
+        gx_mode_d_eval_instance = new Kokkos::DefaultExecutionSpace(instances[1]);
+#else
+        gx_mode_d_copy_instance = new Kokkos::DefaultExecutionSpace();
+        gx_mode_d_eval_instance = new Kokkos::DefaultExecutionSpace();
+#endif
+    } catch(...) {delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL; gx_mode_d_eval_instance = NULL;}
+    int events_made = 0;
+    if(gx_mode_d_copy_instance && gx_mode_d_eval_instance) {
+        for(; events_made < MODE_D_EVAL_EVENTS; events_made++) {if(gx_mode_d_eval_events[events_made].create() != 0) {break;}}
+    }
+    if(events_made < MODE_D_EVAL_EVENTS) {
+        for(int k = 0; k < events_made; k++) {gx_mode_d_eval_events[k].destroy();}
+        delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL;
+        delete gx_mode_d_eval_instance; gx_mode_d_eval_instance = NULL;
+        gizmo_gpu_free_pinned_host(gx_mode_d_staging_base); gx_mode_d_staging_base = NULL; return 1;
+    }
+    return 0;
+}
+
+const Kokkos::DefaultExecutionSpace &gx_mode_d_copy_space(void) {return *gx_mode_d_copy_instance;}
+const Kokkos::DefaultExecutionSpace &gx_mode_d_eval_space(void) {return *gx_mode_d_eval_instance;}
+GizmoGpuEvent &gx_mode_d_eval_event(int k) {return gx_mode_d_eval_events[k];}
+
+void gx_mode_d_staging_mark_unavailable(void)
+{
+    gx_mode_d_staging_release();
+    gx_mode_d_staging_refused = 1;
+}
+
+int gx_mode_d_staging_unavailable(void) {return gx_mode_d_staging_refused;}
+
+char *gx_mode_d_staging_slab(int role, int which)
+{
+    if(!gx_mode_d_staging_base) {return NULL;}
+    return gx_mode_d_staging_base + ((size_t) role * GX_MODE_D_STAGING_SLABS_PER_ROLE + (size_t) which) * GX_MODE_D_STAGING_SLAB_BYTES;
+}
+
+void gx_mode_d_staging_release(void)
+{
+    if(!gx_mode_d_staging_base) {return;}
+    Kokkos::fence("gx_mode_d_staging_release");   /* copies from or into it may still be enqueued */
+    for(int k = 0; k < MODE_D_EVAL_EVENTS; k++) {gx_mode_d_eval_events[k].destroy();}
+    delete gx_mode_d_copy_instance; gx_mode_d_copy_instance = NULL;
+    delete gx_mode_d_eval_instance; gx_mode_d_eval_instance = NULL;
+    gizmo_gpu_free_pinned_host(gx_mode_d_staging_base);
+    gx_mode_d_staging_base = NULL;
+}
+
+/* The top-leaf map (see gpu_neighbor_list.h): one device array per tree, built on first use after a build. */
+static int *gx_top_leaf_map       = NULL;
+static int  gx_top_leaf_map_cap   = 0;   /* entries allocated */
+static int  gx_top_leaf_map_span  = 0;   /* entries describing the current tree */
+static int  gx_top_leaf_map_built = 0;   /* describes the current tree */
+static int  gx_top_leaf_map_given_up = 0;   /* refused or discarded for the current tree */
+
+void gx_top_leaf_map_release(void)
+{
+    if(gx_top_leaf_map) {Kokkos::fence("gx_top_leaf_map_release"); gizmo_gpu_free_device(gx_top_leaf_map);}
+    gx_top_leaf_map = NULL; gx_top_leaf_map_cap = 0; gx_top_leaf_map_span = 0; gx_top_leaf_map_built = 0;
+}
+
+void gx_top_leaf_map_tree_rebuilt(void)
+{
+    gx_top_leaf_map_built = 0;
+    gx_top_leaf_map_given_up = 0;
+}
+
+void gx_top_leaf_map_discard_for_tree(void)
+{
+    gx_top_leaf_map_release();
+    gx_top_leaf_map_given_up = 1;
+}
+
+int gx_top_leaf_map_acquire(const struct GxDeviceTreeView *tree, struct GxTopLeafMapView *out)
+{
+    *out = GxTopLeafMapView{};
+    if(gx_top_leaf_map_given_up) {return GX_TOP_LEAF_MAP_REFUSED;}
+    const int *dni = gpu_peano_walk_domain_node_index(), *dtask = gpu_peano_walk_domain_task();
+    const int n_leaves = NTopleaves;
+    if(!dni || !dtask || n_leaves <= 0) {return GX_TOP_LEAF_MAP_MALFORMED;}
+    if(!gx_top_leaf_map_built) {
+        GIZMO_GPU_ENSURE_ALL_FRESH();
+        const int node_base = tree->node_base, node_capacity = tree->node_capacity, ntask = NTask;
+        const unsigned int *flags = tree->node_bitflags;
+        /* the span is the largest top-leaf offset; a leaf outside the node range is the first defect */
+        int max_off = -1, outside = 0;
+        Kokkos::parallel_reduce("gx_top_leaf_map_span", Kokkos::RangePolicy<>(0, n_leaves), KOKKOS_LAMBDA(int i, int &mx, int &bad) {
+            const int off = dni[i] - node_base;
+            if(off < 0 || off >= node_capacity || dtask[i] < 0 || dtask[i] >= ntask) {bad = 1; return;}
+            if(!(flags[off] & (1u << BITFLAG_TOPLEVEL)) || (flags[off] & (1u << BITFLAG_INTERNAL_TOPLEVEL))) {bad = 1; return;}
+            if(off > mx) {mx = off;}
+        }, Kokkos::Max<int>(max_off), Kokkos::Max<int>(outside));
+        /* a Max reduction starts from the type's lowest value, so a flag no lane raised reads below zero */
+        if(outside > 0 || max_off < 0) {return GX_TOP_LEAF_MAP_MALFORMED;}
+        const int span = max_off + 1;
+        if(span > gx_top_leaf_map_cap) {
+            gx_top_leaf_map_release();
+            gx_top_leaf_map = (int *) gizmo_gpu_alloc_device((size_t) span * sizeof(int), "ngl_moded_top_leaf_map");
+            if(!gx_top_leaf_map) {gx_top_leaf_map_given_up = 1; return GX_TOP_LEAF_MAP_REFUSED;}
+            gx_top_leaf_map_cap = span;
+        }
+        gx_top_leaf_map_span = span;
+        int *map = gx_top_leaf_map;
+        Kokkos::parallel_for("gx_top_leaf_map_clear", Kokkos::RangePolicy<>(0, span), KOKKOS_LAMBDA(int k) {map[k] = -1;});
+        int twice = 0;
+        Kokkos::parallel_reduce("gx_top_leaf_map_fill", Kokkos::RangePolicy<>(0, n_leaves), KOKKOS_LAMBDA(int i, int &dup) {
+            if(Kokkos::atomic_compare_exchange(&map[dni[i] - node_base], -1, i) != -1) {dup = 1;}
+        }, Kokkos::Max<int>(twice));
+        if(twice > 0) {gx_top_leaf_map_release(); return GX_TOP_LEAF_MAP_MALFORMED;}
+        gx_top_leaf_map_built = 1;
+    }
+    out->leaf_of_node = gx_top_leaf_map; out->span = gx_top_leaf_map_span;
+    out->domain_task = dtask; out->domain_node_index = dni; out->n_topleaves = n_leaves;
+    return GX_TOP_LEAF_MAP_OK;
+}
+
 /* Give the workspace back.  Called once, at shutdown, before Kokkos is
  * finalized -- Kokkos must not be torn down while an allocation it is tracking
  * is still owned.  Deliberately NOT hung off the tree epoch or the domain
@@ -3267,7 +3397,7 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
      *
      * The order matters and is not incidental.  A rank that cannot describe its
      * tree declines, and under the collective vote that decision pulls the WHOLE
-     * call back to Mode A -- so any repair performed before the checks is work
+     * call off Mode D -- so any repair performed before the checks is work
      * paid for an answer that is then thrown away, on every rank.  Ask first,
      * repair second.
      *

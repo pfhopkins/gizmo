@@ -44,6 +44,7 @@ double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_
 double mpi_report_comittable_memory(long long BaseMem, int verbose);
 int report_node_memory_headroom(long long *avail_kb, long long *commit_headroom_kb);
 int gizmo_node_headroom_admits(long long bytes_this_rank);
+int gizmo_device_has_room(size_t bytes, double fraction);
 void gizmo_kept_list_grow(long long delta_bytes);
 void gizmo_kept_list_note_refused(long long bytes);
 long long report_comittable_memory(long long *MemTotal,
@@ -66,8 +67,34 @@ int merge_particles_ij(int i, int j);
 int split_particle_i(int i, int n_particles_split, double r_near);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
-double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
-double matrix_invert_ndims(double T[3][3], double Tinv[3][3]);
+/* routine to invert square matrices of side Ndims x Ndims, used in a number of places in code for e.g. gradients, etc.
+   Callable on host and device, so the per-particle solvers that use it run unchanged in either place. */
+GIZMO_GPU_FUNCTION static inline double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv)
+{
+    double FrobNorm = T.frobenius_norm_sq(); /* Frobenius norm of T */
+    Tinv = Mat3<double>{}; /* initialize Tinv to null */
+#if (NUMDIMS==1) /* one-dimensional case */
+    double detT = T[0][0]; if((detT != 0) && !isnan(detT)) {Tinv[0][0] = 1./detT;} else {Tinv[0][0]=1;} /* only one non-trivial element in 1D! */
+#elif (NUMDIMS==2) /* two-dimensional case */
+    double detT = T[0][0]*T[1][1] - T[0][1]*T[1][0];
+    if((detT != 0) && !isnan(detT))
+    {
+        Tinv[0][0] =  T[1][1] / detT; Tinv[0][1] = -T[0][1] / detT;
+        Tinv[1][0] = -T[1][0] / detT; Tinv[1][1] =  T[0][0] / detT;
+    }
+#else /* three-dimensional case */
+    double detT = T.invert(Tinv);
+#endif
+    double FrobNorm_inv = Tinv.frobenius_norm_sq(); /* Frobenius norm of inverse matrix */
+    double ConditionNumber = DMAX( sqrt(FrobNorm*FrobNorm_inv) / NUMDIMS , 1 ); /* this = sqrt( ||T^-1||*||T|| ) :: should be ~1 for a well-conditioned matrix */
+    (void)detT;
+    return ConditionNumber;
+}
+/* legacy overload accepting raw arrays -- forwards to the Mat3 version */
+GIZMO_GPU_FUNCTION static inline double matrix_invert_ndims(double T[3][3], double Tinv[3][3])
+{
+    return matrix_invert_ndims(*reinterpret_cast<Mat3<double>*>(T), *reinterpret_cast<Mat3<double>*>(Tinv));
+}
 #ifdef HERMITE_INTEGRATION
 GIZMO_GPU_FUNCTION int eligible_for_hermite(int i, struct particle_data *pp); /* definition in core/timestep_functions.h (single source of truth) */
 void do_hermite_prediction(void);
@@ -464,6 +491,7 @@ enum {
   GIZMO_KOKBUCKET_NGL_SIDX,             /* label prefix ngl_sidx_  (tile/BVH/pool/compact-position spatial index) */
   GIZMO_KOKBUCKET_NGL_PAIRS,            /* label prefix ngl_pairs_ (per-dispatch active list, CSR offsets/neighbours, search scratch) */
   GIZMO_KOKBUCKET_NGL_PACKET,           /* label prefix ngl_packet_ (the fused neighbour walk's packet workspace, kept between calls) */
+  GIZMO_KOKBUCKET_NGL_MODE_D_CALL,      /* label prefix ngl_moded_ (a device-resident neighbour call's workspace, held for that call, and its persistent pinned staging) */
   GIZMO_KOKBUCKET_NGL,                  /* label prefix ngl_ (remaining neighbour-list memory: build/refresh scratch) */
   GIZMO_KOKBUCKET_MG_GRAPH,             /* label prefix mg_graph_  (MG div(B) face graph, its per-row values and build scratch) */
   GIZMO_KOKBUCKET_MG_INSERT,            /* label prefix mg_insert_ (MG solver insertion arrays, freed once HYPRE has assembled) */
@@ -493,6 +521,8 @@ extern "C" const char *gizmo_kokkos_mem_unknown_space_name(void);  /* first unre
 extern "C" void *gizmo_gpu_alloc_shared(size_t nbytes, const char *label);   /* SharedSpace/UVM: host- and device-readable */
 extern "C" void *gizmo_gpu_alloc_device(size_t nbytes, const char *label);   /* device-only memory */
 extern "C" void *gizmo_gpu_alloc_host(size_t nbytes, const char *label);     /* host memory obtained through Kokkos */
+extern "C" void *gizmo_gpu_alloc_pinned_host(size_t nbytes, const char *label);   /* page-locked host memory: device copies and MPI run at full speed from it */
+extern "C" void  gizmo_gpu_free_pinned_host(void *ptr);                            /* releases gizmo_gpu_alloc_pinned_host memory */
 extern "C" void  gizmo_gpu_free_device(void *ptr);                                              /* releases gizmo_gpu_alloc_device memory */
 extern "C" void  gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes); /* blocking bulk copies between */
 extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, size_t nbytes);   /* host and device-only memory (waits for all device work first) */
@@ -1485,20 +1515,6 @@ void cbe_corridor_end(void);
 #endif
 #endif
 
-#if defined(AGS_FACE_CALCULATION_IS_ACTIVE)
-/* Result of inverting an AGS face moment matrix. cn_expansion is the signal
- * that drives neighbor-count expansion (a large sentinel when the raw matrix
- * is singular, because matrix_invert_ndims() reports CN=1 for a zero inverse);
- * cn_final + status are diagnostics (status: 0=clean, 1=regularized via
- * diagonal-loading, 2=could-not-condition / near-zero raw matrix, warned). */
-struct AgsNvtInversion { double cn_expansion; double cn_final; int status; };
-/* Invert the symmetric raw moment matrix (upper-triangle components
- * sym6 = {00,01,02,11,12,22}) accumulated at AGS kernel size h into the full
- * symmetric face operator Tinv_out (= inverse of the raw moment matrix). Uses
- * the hydro density-path preconditioning (diagonal-loading until well-
- * conditioned). Single source of truth for AGS/CBE face NV_T inversion. */
-AgsNvtInversion ags_invert_nvt_for_faces(const double sym6[6], double h, double Tinv_out[3][3]);
-#endif
 
 #ifdef DM_FUZZY
 void do_dm_fuzzy_initialization(void);

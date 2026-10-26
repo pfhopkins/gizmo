@@ -200,7 +200,8 @@ void gizmo_mark_position_dirty_indices(const int *indices, int n);   /* position
 void gizmo_mark_type_dirty(int particle);                           /* the particle's type changed */
 void gpu_leaf_mirror_note_slots_moved(void);   /* particles changed slots (decomposition, rearrangement): refill it whole */
 void gpu_leaf_mirror_release(void);            /* the tree is freed: the mirror goes with it */
-void nlr_mode_d_packet_workspace_release(void); /* the tree is freed: the packet walk's workspace, whose top-level order it held, goes too */
+void nlr_mode_d_packet_workspace_release(void); /* the tree is freed (or the run ends): the packet walk's workspace, whose top-level order it
+                                                   held, goes too, with the device storage Mode D calls gave back */
 void nlr_mode_d_packet_tree_rebuilt(void);       /* a tree is being built: the packet walk's top-level order is no longer known */
 
 /* Build GPU-accelerated CSR neighbor list.
@@ -441,6 +442,54 @@ void gx_touched_set_drift_and_mark(integertime time1);
 /* Released once at shutdown, before Kokkos is finalized. Not on the tree or
    domain epoch: the storage is persistent by design. */
 void gx_touched_set_release(void);
+
+/* The page-locked host staging a device-resident (Mode D) call moves its messages
+   through: one fixed budget per rank, allocated at the first Mode D call and kept,
+   split into two slabs for each direction of each payload, so no direction can take
+   the space another needs to make progress.  Messages are cut to at most a quarter
+   of a slab.  Fixed by construction, never grown, never a run parameter. */
+enum GxModeDStagingRole {GX_MODE_D_QUERIES_OUT, GX_MODE_D_QUERIES_IN, GX_MODE_D_REPLIES_OUT, GX_MODE_D_REPLIES_IN,
+                         GX_MODE_D_STAGING_ROLES};
+static constexpr size_t GX_MODE_D_STAGING_SLAB_BYTES        = (size_t) 8 * 1024 * 1024;
+static constexpr int    GX_MODE_D_STAGING_SLABS_PER_ROLE    = 2;
+static constexpr size_t GX_MODE_D_STAGING_BYTES             = GX_MODE_D_STAGING_SLAB_BYTES * GX_MODE_D_STAGING_SLABS_PER_ROLE * GX_MODE_D_STAGING_ROLES;
+static constexpr size_t GX_MODE_D_STAGING_MAX_MESSAGE_BYTES = GX_MODE_D_STAGING_SLAB_BYTES / 4;
+/* 0 when this rank holds the staging (already, or allocated now); 1 when the allocation was
+   refused.  The allocation alone decides: the budget is fixed and small, and a per-rank guess at
+   node headroom cannot see what the other ranks already hold.  Rank-local: the caller votes on it. */
+int   gx_mode_d_staging_acquire(void);
+/* Once any rank's allocation was refused, every rank gives it up and no later call asks again. */
+void  gx_mode_d_staging_mark_unavailable(void);
+int   gx_mode_d_staging_unavailable(void);
+char *gx_mode_d_staging_slab(int role, int which);
+/* Released once at shutdown, before Kokkos is finalized. */
+void  gx_mode_d_staging_release(void);
+/* The evaluation buffers of a Mode D exchange that each carry a completion event (made with the staging): this rank's own
+   queries, and each of the two received batches. */
+static constexpr int MODE_D_EVAL_EVENTS = 3;
+
+/* Which top leaf each node of this rank's tree is, for a device walk that decides where a query must be
+   sent: node offset (node index minus the tree's node base) -> top-leaf id, or -1 for a node that is not
+   a top leaf.  Only that map is held here; a leaf's owner and node index are read from the domain mirrors
+   (gpu_peano_walk_domain_task / gpu_peano_walk_domain_node_index), which are refreshed by every build.
+   Built on the device the first time a Mode D call needs it after a build, and kept until the next one.
+   Status of an acquire: */
+enum {GX_TOP_LEAF_MAP_OK = 0, GX_TOP_LEAF_MAP_REFUSED = 1, GX_TOP_LEAF_MAP_MALFORMED = 2};
+struct GxTopLeafMapView {
+    const int *leaf_of_node;        /* [span] in device memory */
+    int        span;                /* node offsets [0, span) are mapped */
+    const int *domain_task;         /* [n_topleaves], the owner of each top leaf */
+    const int *domain_node_index;   /* [n_topleaves], the node each top leaf is */
+    int        n_topleaves;
+};
+/* Rank-local; the caller votes on the status.  REFUSED: the device would not hold the map; it is not asked
+   for again until the next build.  MALFORMED: the domain mirrors do not describe this tree (a top leaf
+   outside the node range, not a top-level node, mapped twice, or owned by no task). */
+int  gx_top_leaf_map_acquire(const struct GxDeviceTreeView *tree, struct GxTopLeafMapView *out);
+/* Every rank gives the map up for the rest of this tree's life (a refusal anywhere, or a malformed map). */
+void gx_top_leaf_map_discard_for_tree(void);
+void gx_top_leaf_map_tree_rebuilt(void);   /* a build began: the map no longer describes the tree */
+void gx_top_leaf_map_release(void);        /* the tree is freed, or shutdown */
 
 /* Raise the motion bound of particles idx[0..n) in the gravity tree's nodes,
  * with the top-level part carried to the other ranks at the next tree-update
