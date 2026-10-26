@@ -304,7 +304,8 @@ void merge_and_split_particles(void)
     } *Ptmp;
 
     int target_for_merger,dummy=0,numngb_inbox,startnode,i,j,n; double threshold_val;
-    int n_particles_merged,n_particles_split,n_particles_gas_split,MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;
+    int n_particles_merged,n_particles_split,n_particles_gas_split;
+    long long MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split;   /* summed over ranks */
     (void)dummy; (void)numngb_inbox; (void)startnode; (void)n; /* may go unused on modern path */
     Gas_split=0; n_particles_merged=0; n_particles_split=0; n_particles_gas_split=0; MPI_n_particles_merged=0; MPI_n_particles_split=0; MPI_n_particles_gas_split=0;
     Ptmp = (struct flags_merg_split *) mymalloc("Ptmp", NumPart * sizeof(struct flags_merg_split));
@@ -664,19 +665,21 @@ void merge_and_split_particles(void)
 #endif
     myfree(Ptmp);
     
-    MPI_Allreduce(&n_particles_merged, &MPI_n_particles_merged, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&n_particles_split, &MPI_n_particles_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&n_particles_gas_split, &MPI_n_particles_gas_split, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    {
+        long long local[3] = {n_particles_merged, n_particles_split, n_particles_gas_split}, total[3];
+        MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_n_particles_merged = total[0]; MPI_n_particles_split = total[1]; MPI_n_particles_gas_split = total[2];
+    }
     if(ThisTask == 0)
     {
         if(MPI_n_particles_merged > 0 || MPI_n_particles_split > 0)
         {
-            printf("Particle split/merge check: %d particles merged, %d particles split (%d gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
+            printf("Particle split/merge check: %lld particles merged, %lld particles split (%lld gas) \n", MPI_n_particles_merged,MPI_n_particles_split,MPI_n_particles_gas_split);
         }
     }
     /* the reduction or increase of n_part by MPI_n_particles_merged will occur in rearrange_particle_sequence, which -must- be called immediately after this routine! */
-    All.TotNumPart += (long long)MPI_n_particles_split;
-    All.TotN_gas += (long long)MPI_n_particles_gas_split;
+    All.TotNumPart += MPI_n_particles_split;
+    All.TotN_gas += MPI_n_particles_gas_split;
     Gas_split = n_particles_gas_split; // specific to the local processor //
     NumPart += (n_particles_split - n_particles_gas_split); // specific to the local processor; note the gas split number will be added below, this is just non-gas splits //
     gpu_particles_arena_invalidate(); /* NumPart and P[] indices changed; arena stale */
@@ -1459,7 +1462,8 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
        "eliminate" zero-mass ghost copies and shrink NumPart under the pool. */
     if(ghost_require_no_live_pool_for_layout_change("rearrange_particle_sequence")) {return;}
     int i, j, flag = 0, flag_sum, j_next;
-    int count_elim, count_gaselim, count_sink_elim, tot_elim, tot_gaselim, tot_sink_elim;
+    int count_elim, count_gaselim, count_sink_elim;
+    long long tot_elim, tot_gaselim, tot_sink_elim;   /* summed over ranks */
     struct particle_data psave;
     struct gas_cell_data gascellsave;
 #ifdef CHIMES
@@ -1591,13 +1595,15 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
         }
     NumPart = numpart_local; N_gas = ngas_local; /* publish compacted counts once */
 
-    MPI_Allreduce(&count_elim, &tot_elim, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&count_gaselim, &tot_gaselim, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&count_sink_elim, &tot_sink_elim, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    {
+        long long local[3] = {count_elim, count_gaselim, count_sink_elim}, total[3];
+        MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        tot_elim = total[0]; tot_gaselim = total[1]; tot_sink_elim = total[2];
+    }
 
     if(count_elim) {flag = 1;}
 
-    if(ThisTask == 0) {if(tot_elim > 0) {printf("Rearrange: Eliminated %d/%d gas/star particles and merged away %d sink particles.\n", tot_gaselim, tot_elim - tot_gaselim - tot_sink_elim, tot_sink_elim);}}
+    if(ThisTask == 0) {if(tot_elim > 0) {printf("Rearrange: Eliminated %lld/%lld gas/star particles and merged away %lld sink particles.\n", tot_gaselim, tot_elim - tot_gaselim - tot_sink_elim, tot_sink_elim);}}
 
     All.TotNumPart -= tot_elim;
     All.TotN_gas -= tot_gaselim;

@@ -236,6 +236,9 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             local.SoundSpeed = kc[ii].effective_soundspeed();
             local.dt_hydrostep_i = get_particle_timestep_in_physical(ii, kp);
             local.DrkernNgbFactor = kp[ii].DrkernNgbFactor;
+#ifdef EOS_ANEOS
+            local.Temperature = kc[ii].Temperature;
+#endif
             local.Gradients.Density = kc[ii].Gradients.Density;
             local.Gradients.Pressure = kc[ii].Gradients.Pressure;
             local.Gradients.Velocity = kc[ii].Gradients.Velocity;

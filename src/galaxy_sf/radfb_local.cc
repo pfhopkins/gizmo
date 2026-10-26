@@ -477,9 +477,9 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 
     /* Collective dispatch: all ranks must agree on which path runs, since the
      * GPU path's ghost_exchange is collective. */
-    int num_src = (int)src.size();
-    int global_num_src = 0;
-    MPI_Allreduce(&num_src, &global_num_src, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    const long long num_src = (long long)src.size();
+    long long global_num_src = 0;   /* compared against the threshold, and can exceed 2^31 */
+    MPI_Allreduce(&num_src, &global_num_src, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 
     if(global_num_src > 0) {
         int threshold = gizmo_nlr_modeb_threshold_sum_for("hii", /*spec_default=*/256);

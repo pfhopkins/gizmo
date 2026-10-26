@@ -260,6 +260,11 @@ void begrun(void)
     }
 #endif
 
+#ifdef EOS_ELASTIC
+    solid_material_resolve(); /* strength/damage/porosity per CompositionType, from the presets and the parameterfile, before init() uses them */
+    if(gizmo_poll_controlled_stop()) return;
+#endif
+
 #ifdef NUCLEAR_NETWORK
     InitNuclearNetwork();
 #endif
@@ -1192,7 +1197,7 @@ void read_parameter_file(char *fname)
 #define REAL 1
 #define STRING 2
 #define INT 3
-#define MAXTAGS 300
+#define MAXTAGS 500
 
     FILE *fd, *fdout;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf2[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf3[DEFAULT_PATH_BUFFERSIZE_TOUSE], tag[MAXTAGS][50], alternate_tag[MAXTAGS][50];
@@ -2415,13 +2420,38 @@ void read_parameter_file(char *fname)
 #endif
 
 #ifdef EOS_ELASTIC
-        strcpy(tag[nt], "Tillotson_EOS_params_mu");
-        addr[nt] = &All.Tillotson_EOS_params[0][10];
+        /* the custom solid material (CompositionType 0 of a Tillotson or plain elastic build); optional, refused in init() if cells use it incomplete */
+        strcpy(tag[nt], "SolidMaterial_ShearModulus");
+        strcpy(alternate_tag[nt], "Tillotson_EOS_params_mu");
+        addr[nt] = &All.SolidMaterialCustom.ShearModulus;
         id[nt++] = REAL;
 
-        strcpy(tag[nt], "Tillotson_EOS_params_Y0");
-        addr[nt] = &All.Tillotson_EOS_params[0][11];
+        strcpy(tag[nt], "SolidMaterial_YieldStrength");
+        strcpy(alternate_tag[nt], "Tillotson_EOS_params_Y0");
+        addr[nt] = &All.SolidMaterialCustom.YieldStrength;
         id[nt++] = REAL;
+#ifdef EOS_DAMAGE_POROSITY
+        {
+            const char *names[6] = {"WeibullK", "WeibullM", "DruckerPragerMu", "InitialDistention", "CrushPressureElastic", "CrushPressureSolid"};
+            double *fields[6] = {&All.SolidMaterialCustom.WeibullK, &All.SolidMaterialCustom.WeibullM, &All.SolidMaterialCustom.DruckerPragerMu,
+                                 &All.SolidMaterialCustom.InitialDistention, &All.SolidMaterialCustom.CrushPressureElastic, &All.SolidMaterialCustom.CrushPressureSolid};
+            for(int k_f = 0; k_f < 6; k_f++) {snprintf(tag[nt], sizeof(tag[nt]), "SolidMaterial_%s", names[k_f]); addr[nt] = fields[k_f]; id[nt++] = REAL;}
+        }
+#endif
+#ifdef EOS_ANEOS
+        /* per ANEOS table: the solid material it names (preset 1-6, or 0 = its own values below) */
+        for(int aneos_k = 0; aneos_k < ANEOS_MAX_MATERIALS; aneos_k++) {
+            struct solid_material *custom = &All.AneosSolidMaterialCustom[aneos_k];
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_SolidMaterial", aneos_k); addr[nt] = &All.AneosSolidMaterialChoice[aneos_k]; id[nt++] = INT;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_ShearModulus", aneos_k); addr[nt] = &custom->ShearModulus; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_YieldStrength", aneos_k); addr[nt] = &custom->YieldStrength; id[nt++] = REAL;
+#ifdef EOS_DAMAGE_POROSITY
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_WeibullK", aneos_k); addr[nt] = &custom->WeibullK; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_WeibullM", aneos_k); addr[nt] = &custom->WeibullM; id[nt++] = REAL;
+            snprintf(tag[nt], sizeof(tag[nt]), "AneosTable%d_DruckerPragerMu", aneos_k); addr[nt] = &custom->DruckerPragerMu; id[nt++] = REAL;
+#endif
+        }
+#endif
 #endif
 
 #if defined(RT_CHEM_PHOTOION) && !(defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF))
@@ -3047,7 +3077,12 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 #ifdef EOS_ANEOS
-                if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
+                if(strncmp(tag[i], "AneosTable", 10)==0) { /* unused ANEOS table slots default to 'none'; their per-table solid material to 'not given' */
+                    if(id[i] == STRING) {strcpy((char *)addr[i], "none");} else if(id[i] == INT) {*((int *)addr[i]) = -1;} else {*((double *)addr[i]) = NAN;}
+                    continue;}
+#endif
+#ifdef EOS_ELASTIC
+                if(strncmp(tag[i], "SolidMaterial_", 14)==0) {*((double *)addr[i]) = NAN; continue;} /* not given: refused in init() only if cells carry the custom material */
 #endif
 #ifdef DM_HEATING
                 if(strcmp("DM_AnnihilationSigmaV_over_mChi",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to 0 (annihilation channel disabled) \n",tag[i],alternate_tag[i]); continue;}

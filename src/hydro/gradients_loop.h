@@ -169,6 +169,7 @@ struct GradientsDeviceContext : NeighborLoopDeviceContextBase
 struct GradientsSpec
 {
     static constexpr const char *loop_name = "gradients";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* writes its own P[i]/CellP[i] fields, passer[i] and its own accumulator only */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only (delegates to gradient_accumulate_neighbor: out-> + local kernel scratch); no j-write, no atomics -> threaded eval bit-identical */
 
     /* Symmetric gas-gas topology (matches gizmo_sym_neighbor_list + the
@@ -590,6 +591,7 @@ struct GradientsSpec
 struct GradientsIterSpec
 {
     static constexpr const char *loop_name = "gradients";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* writes passer[i] only */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly; /* i-side AccumData only; no j-write, no atomics */
 
     static constexpr int                     search_mode        = MODE_B_SEARCH_SYMMETRIC;

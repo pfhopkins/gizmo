@@ -611,7 +611,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #ifdef PMGRID
         grav_acc += All.cf_a2inv * pp[i].GravPM;
 #endif
-        DtInternalEnergyEffCGS -= All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
+        DtInternalEnergyEffCGS += All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
 #endif
         /* limit the magnitude of the hydro dtinternalenergy */
         if(DtInternalEnergyEffCGS < 0) {

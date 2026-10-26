@@ -19,8 +19,8 @@
  */
 
 
-void write_header_attributes_in_hdf5(hid_t handle);
-void read_header_attributes_in_hdf5(char *fname);
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
+int read_header_attributes_in_hdf5(char *fname);   /* 0 on success; nonzero if the file or its Header group cannot be opened */
 
 void output_compile_time_options(void);
 const char *compile_time_config_literal(void);              /* the Config.sh lines, one per line */
@@ -383,6 +383,10 @@ GIZMO_GPU_FUNCTION double return_user_desired_target_pressure(int i, struct part
 #ifdef EOS_TILLOTSON
 void tillotson_eos_init(void);
 #endif
+#ifdef EOS_ELASTIC
+void solid_material_resolve(void);
+void solid_material_check_cells(void);
+#endif
 #ifdef EOS_ANEOS
 #include "../eos/aneos.h"
 #endif
@@ -732,7 +736,7 @@ void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
-long get_particles_in_block(enum iofields blocknr, int *typelist);
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_in_file);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
 size_t get_input_float_bytes(enum iofields blocknr);
 int read_file(char *fname, int readTask, int lastTask);

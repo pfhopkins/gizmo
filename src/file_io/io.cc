@@ -36,6 +36,57 @@ static int n_type[6];
 static long long ntot_type_all[6];
 static int n_info;
 
+/* Whether a block present in this build is written in the current snapshot format. */
+static int block_written_in_snapshot(enum iofields blocknr)
+{
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+    if(blocknr == IO_NONIDEAL_FLUX && All.SnapFormat != 3) {return 0;} /* written to HDF5 snapshots only: legacy binary formats never carry it */
+#endif
+    return blockpresent(blocknr);
+}
+
+/* SnapFormat 1 and 2 frame every block with a 32-bit byte count and keep 32-bit per-file counts in their
+   header. Whether every file of this snapshot fits is decided identically on every rank, before any
+   directory or file is created, so a snapshot that cannot be represented never leaves a partial set. */
+static int binary_snapshot_records_fit(int filenr)
+{
+    const int nfiles = All.NumFilesPerSnapshot;
+    long long *counts_mine = (long long *) mymalloc("counts_mine", 6 * (size_t) nfiles * sizeof(long long));
+    long long *counts_file = (long long *) mymalloc("counts_file", 6 * (size_t) nfiles * sizeof(long long));
+    for(int k = 0; k < 6 * nfiles; k++) {counts_mine[k] = 0;}
+    for(int t = 0; t < 6; t++) {counts_mine[6 * filenr + t] = n_type[t];}
+    MPI_Allreduce(counts_mine, counts_file, 6 * nfiles, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    const long long marker_bytes = (All.SnapFormat == 2) ? 2 * (long long) sizeof(int) : 0;
+    int fits = 1;
+    for(int f = 0; f < nfiles && fits; f++)
+    {
+        /* every block is checked; the positions block alone (12+ bytes for every particle) also bounds each
+           per-type header count below INT_MAX */
+        const long long *counts = counts_file + 6 * (size_t) f;
+        for(int bnr = 0; bnr < 1000 && fits; bnr++)
+        {
+            enum iofields blocknr = (enum iofields) bnr;
+            if(blocknr == IO_LASTENTRY) {break;}
+            if(!block_written_in_snapshot(blocknr)) {continue;}
+            int typelist[6];
+            const long long bytes = get_particles_in_block(blocknr, typelist, counts) * (long long) get_bytes_per_blockelement(blocknr, 0) + marker_bytes;
+            if(bytes > INT_MAX)
+            {
+                fits = 0;
+                if(ThisTask == 0)
+                {
+                    char name[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                    get_dataset_name(blocknr, name);
+                    printf("Snapshot file %d: block %s needs %lld bytes, more than the 32-bit record of SnapFormat %d can hold. Use SnapFormat 3 (HDF5) or a larger NumFilesPerSnapshot.\n", f, name, bytes, All.SnapFormat);
+                }
+            }
+        }
+    }
+    myfree(counts_file);
+    myfree(counts_mine);
+    return fits;
+}
+
 /*! This function writes a snapshot of the particle distribution to one or
  * several files using Gadget's default file format.  If
  * NumFilesPerSnapshot>1, the snapshot is distributed into several files,
@@ -74,6 +125,7 @@ void savepositions(int num)
         if(!gizmo_alloc_fits_all_ranks(gizmo_mymalloc_rounded_size(bytes), 1))
         {
             gizmo_request_controlled_stop(2, "savepositions: CommBuffer arena allocation won't fit on >=1 rank", __FILE__, __LINE__, __FUNCTION__);
+            gizmo_exit_bad_stop_if_requested("io:snapshot_buffer");   /* collective decision; not every caller polls after savepositions */
             return;
         }
         if(!(CommBuffer = mymalloc("CommBuffer", bytes)))
@@ -101,8 +153,7 @@ void savepositions(int num)
 #if IO_SINKS_ONLY_SNAPSHOT_FREQUENCY > 0
         if( (All.SnapshotFileCount-1) % (IO_SINKS_ONLY_SNAPSHOT_FREQUENCY+1) )
         {
-            snprintf(outputdir, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/stars_only", All.OutputDir);
-            mkdir(outputdir, 02755);
+            snprintf(outputdir, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/stars_only", All.OutputDir);   /* created below, once the snapshot is known to fit */
         }
 #endif
 
@@ -117,6 +168,19 @@ void savepositions(int num)
 
         /* assign processors to output files */
         distribute_file(All.NumFilesPerSnapshot, 0, 0, NTask - 1, &filenr, &primaryTask, &lastTask);
+
+        if((All.SnapFormat == 1 || All.SnapFormat == 2) && !binary_snapshot_records_fit(filenr))
+        {
+            myfree(CommBuffer);
+            gizmo_request_controlled_stop(2, "savepositions: this snapshot does not fit the 32-bit records of SnapFormat 1/2", __FILE__, __LINE__, __FUNCTION__);
+            /* stop here: every rank reached the same decision, and some callers (snapshot conversion, the final
+               output) do not poll after savepositions */
+            gizmo_exit_bad_stop_if_requested("io:snapshot_record_limit");
+            return;
+        }
+#if IO_SINKS_ONLY_SNAPSHOT_FREQUENCY > 0
+        if( (All.SnapshotFileCount-1) % (IO_SINKS_ONLY_SNAPSHOT_FREQUENCY+1) ) {mkdir(outputdir, 02755);}
+#endif
 
         if(All.NumFilesPerSnapshot > 1)
         {
@@ -2699,12 +2763,12 @@ int get_values_per_blockelement(enum iofields blocknr)
 
 
 /*! This function determines how many particles there are in a given block,
- *  based on the information in the header-structure.  It also flags particle
+ *  given the file's particle counts per type.  It also flags particle
  *  types that are present in the block in the typelist array.
  */
-long get_particles_in_block(enum iofields blocknr, int *typelist)
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_in_file)
 {
-    long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
+    long long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
     nall = 0; nsel = 0; ntot_withmasses = 0; nstars_tot=0;
 
     /* NOTE: this is an I/O-block membership bitmask (which types write e.g. the ages block),
@@ -2718,16 +2782,16 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
     for(i = 0; i < 6; i++)
     {
         typelist[i] = 0;
-        if(header.npart[i] > 0)
+        if(npart_in_file[i] > 0)
         {
-            nall += header.npart[i];
+            nall += npart_in_file[i];
             typelist[i] = 1;
-            if((1 << i) & (valid_star_types)) {nstars_tot += header.npart[i];}
+            if((1 << i) & (valid_star_types)) {nstars_tot += npart_in_file[i];}
         }
-        if(All.MassTable[i] == 0) {ntot_withmasses += header.npart[i];}
+        if(All.MassTable[i] == 0) {ntot_withmasses += npart_in_file[i];}
     }
-    ngas = header.npart[0];
-    nstars = header.npart[4];
+    ngas = npart_in_file[0];
+    nstars = npart_in_file[4];
 
 
     switch (blocknr)
@@ -2760,7 +2824,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             for(i = 0; i < 6; i++)
             {
                 typelist[i] = 0;
-                if(All.MassTable[i] == 0 && header.npart[i] > 0) {typelist[i] = 1;}
+                if(All.MassTable[i] == 0 && npart_in_file[i] > 0) {typelist[i] = 1;}
             }
             return ntot_withmasses;
             break;
@@ -2773,11 +2837,11 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
                tested because they are independent -- the output flag can be set on a build whose
                integrator is disabled, where the blocks are absent altogether. */
             {
-                int n_hermite = 0;
+                long long n_hermite = 0;
                 for(i = 0; i < 6; i++)
                 {
                     typelist[i] = ((1 << i) & (HERMITE_INTEGRATION)) ? 1 : 0;
-                    if(typelist[i]) {n_hermite += header.npart[i];}
+                    if(typelist[i]) {n_hermite += npart_in_file[i];}
                 }
                 return n_hermite;
             }
@@ -2907,31 +2971,31 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_GRAINTYPE:
             nngb=0;
 #ifdef GRAIN_FLUID
-            for(i=0;i<6;i++) {if((1 << i) & (GRAIN_PTYPES)) {nngb+=header.npart[i];} else {typelist[i]=0;}}
+            for(i=0;i<6;i++) {if((1 << i) & (GRAIN_PTYPES)) {nngb+=npart_in_file[i];} else {typelist[i]=0;}}
 #endif
             return nngb;
             break;
 
         case IO_IMF:
             for(i = 1; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
-            return nstars + header.npart[5];
+            return nstars + npart_in_file[5];
             break;
 
         case IO_Z:
             for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
-            return ngas + nstars + header.npart[5];
+            return ngas + nstars + npart_in_file[5];
             break;
 
         case IO_CHIMES_STAR_SIGMA:
             nngb = nstars;
             typelist[0]=typelist[1]=typelist[5]=0;
-            if(All.ComovingIntegrationOn) {typelist[2]=typelist[3]=0;} else {nngb += header.npart[2] + header.npart[3];}
+            if(All.ComovingIntegrationOn) {typelist[2]=typelist[3]=0;} else {nngb += npart_in_file[2] + npart_in_file[3];}
             return nngb;
             break;
 
         case IO_DENS_AROUND_STAR:
             typelist[0] = 0;
-            return header.npart[1]+header.npart[2]+header.npart[3]+header.npart[4]+header.npart[5];
+            return npart_in_file[1]+npart_in_file[2]+npart_in_file[3]+npart_in_file[4]+npart_in_file[5];
             break;
 
         case IO_SINKMASS:
@@ -2952,7 +3016,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_LUM_SINGLESTAR:
         case IO_SINKPROGS:
             for(i = 0; i < 6; i++) {if(i != 5) {typelist[i] = 0;}}
-            return header.npart[5];
+            return npart_in_file[5];
             break;
 
         case IO_LASTENTRY:
@@ -4611,10 +4675,12 @@ void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf)
  */
 void write_file(char *fname, int writeTask, int lastTask)
 {
-    int type, bytes_per_blockelement, npart, nextblock, typelist[6];
+    int type, bytes_per_blockelement, nextblock, typelist[6];
+    long long npart;
     int n_for_this_task, n, p, pc, offset = 0, task, i;
     size_t blockmaxlen;
-    int ntot_type[6], nn[6];
+    long long ntot_type[6];   /* particles of each type in this file: summed over the ranks feeding it, so 64-bit */
+    int nn[6];
     enum iofields blocknr;
     char label[8];
     int bnr;
@@ -4630,7 +4696,8 @@ void write_file(char *fname, int writeTask, int lastTask)
     hid_t hdf5_datatype = 0, hdf5_dataspace_in_file = 0, hdf5_dataset = 0;
     herr_t hdf5_status;
     hsize_t dims[2], count[2], start[2];
-    int rank = 0, pcsum = 0;
+    int rank = 0;
+    long long pcsum = 0;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 
 #define SKIP  {my_fwrite(&blksize,sizeof(int),1,fd);}
@@ -4650,18 +4717,18 @@ void write_file(char *fname, int writeTask, int lastTask)
         }
 
         for(task = writeTask + 1; task <= lastTask; task++)
-            MPI_Send(&ntot_type[0], 6, MPI_INT, task, TAG_N, MPI_COMM_WORLD);
+            MPI_Send(&ntot_type[0], 6, MPI_LONG_LONG, task, TAG_N, MPI_COMM_WORLD);
     }
     else
     {
         MPI_Send(&n_type[0], 6, MPI_INT, writeTask, TAG_LOCALN, MPI_COMM_WORLD);
-        MPI_Recv(&ntot_type[0], 6, MPI_INT, writeTask, TAG_N, MPI_COMM_WORLD, &status);
+        MPI_Recv(&ntot_type[0], 6, MPI_LONG_LONG, writeTask, TAG_N, MPI_COMM_WORLD, &status);
     }
 
     /* fill file header */
     for(n = 0; n < 6; n++)
     {
-        header.npart[n] = (int) ntot_type[n];
+        header.npart[n] = (ntot_type[n] > INT_MAX) ? INT_MAX : (int) ntot_type[n];   /* the binary header only: SnapFormat 1/2 were checked to fit, HDF5 writes ntot_type */
         header.npartTotal[n] = (unsigned int) ntot_type_all[n];
         header.npartTotalHighWord[n] = (unsigned int) (ntot_type_all[n] >> 32);
     }
@@ -4722,14 +4789,14 @@ void write_file(char *fname, int writeTask, int lastTask)
 
             for(type = 0; type < 6; type++)
             {
-                if(header.npart[type] > 0)
+                if(ntot_type[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gcreate(hdf5_file, buf, 0);
                 }
             }
 
-            write_header_attributes_in_hdf5(hdf5_headergrp);
+            write_header_attributes_in_hdf5(hdf5_headergrp, ntot_type);
 
         }
         else
@@ -4772,13 +4839,10 @@ void write_file(char *fname, int writeTask, int lastTask)
             if(blocknr == IO_LASTENTRY)
                 break;
 
-#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
-            if(blocknr == IO_NONIDEAL_FLUX && All.SnapFormat != 3) {continue;} /* written to HDF5 snapshots only: legacy binary formats never carry it */
-#endif
-            if(blockpresent(blocknr))
+            if(block_written_in_snapshot(blocknr))
             {
                 bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
-                npart = get_particles_in_block(blocknr, &typelist[0]);
+                npart = get_particles_in_block(blocknr, &typelist[0], ntot_type);
 
                 if(npart > 0)
                 {
@@ -4831,15 +4895,12 @@ void write_file(char *fname, int writeTask, int lastTask)
         blocknr = (enum iofields) bnr;
         if(blocknr == IO_LASTENTRY) {break;}
 
-#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
-        if(blocknr == IO_NONIDEAL_FLUX && All.SnapFormat != 3) {continue;} /* written to HDF5 snapshots only: legacy binary formats never carry it */
-#endif
-        if(blockpresent(blocknr))
+        if(block_written_in_snapshot(blocknr))
         {
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
             size_t comm_chunk_mb = All.CommChunkSize;
             blockmaxlen = (size_t) ((comm_chunk_mb * 1024 * 1024) / bytes_per_blockelement);
-            npart = get_particles_in_block(blocknr, &typelist[0]);
+            npart = get_particles_in_block(blocknr, &typelist[0], ntot_type);
 
             if(npart > 0)
             {
@@ -4861,11 +4922,11 @@ void write_file(char *fname, int writeTask, int lastTask)
                             SKIP;
                             get_Tab_IO_Label(blocknr, label);
                             my_fwrite(label, sizeof(char), 4, fd);
-                            nextblock = npart * bytes_per_blockelement + 2 * sizeof(int);
+                            nextblock = (int) (npart * bytes_per_blockelement + 2 * (long long) sizeof(int));   /* fits: checked before the file was opened */
                             my_fwrite(&nextblock, sizeof(int), 1, fd);
                             SKIP;
                         }
-                        blksize = npart * bytes_per_blockelement;
+                        blksize = (int) (npart * bytes_per_blockelement);
                         SKIP;
                     }
                 }
@@ -4879,7 +4940,7 @@ void write_file(char *fname, int writeTask, int lastTask)
 #endif
                     {
 
-                        if(ThisTask == writeTask && All.SnapFormat == 3 && header.npart[type] > 0)
+                        if(ThisTask == writeTask && All.SnapFormat == 3 && ntot_type[type] > 0)
                         {
                             switch(get_datatype_in_block(blocknr))
                             {
@@ -4904,7 +4965,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                                     break;
                             }
 
-                            dims[0] = header.npart[type];
+                            dims[0] = ntot_type[type];
                             dims[1] = get_values_per_blockelement(blocknr);
                             if(dims[1] == 1) {rank = 1;} else {rank = 2;}
 
@@ -5000,7 +5061,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                         }
 
 
-                        if(ThisTask == writeTask && All.SnapFormat == 3 && header.npart[type] > 0)
+                        if(ThisTask == writeTask && All.SnapFormat == 3 && ntot_type[type] > 0)
                         {
                             if(All.SnapFormat == 3)
                             {
@@ -5034,7 +5095,7 @@ void write_file(char *fname, int writeTask, int lastTask)
         if(All.SnapFormat == 3)
         {
 
-            for(type = 5; type >= 0; type--) {if(header.npart[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+            for(type = 5; type >= 0; type--) {if(ntot_type[type] > 0) {H5Gclose(hdf5_grp[type]);}}
             H5Gclose(hdf5_headergrp);
             H5Fclose(hdf5_file);
 
@@ -5050,7 +5111,7 @@ void write_file(char *fname, int writeTask, int lastTask)
 
 
 
-void write_header_attributes_in_hdf5(hid_t handle)
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file)
 {
     hsize_t adim[1] = { 6 }; hid_t hdf5_dataspace, hdf5_attribute;
 
@@ -5058,8 +5119,8 @@ void write_header_attributes_in_hdf5(hid_t handle)
         H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
     
     hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, adim, NULL);
-    hdf5_attribute = H5Acreate(handle, "NumPart_ThisFile", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
-    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, header.npart); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+    hdf5_attribute = H5Acreate(handle, "NumPart_ThisFile", H5T_NATIVE_LLONG, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_LLONG, npart_this_file); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 
     hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, adim, NULL);
     hdf5_attribute = H5Acreate(handle, "NumPart_Total", H5T_NATIVE_UINT, hdf5_dataspace, H5P_DEFAULT);
@@ -5562,9 +5623,15 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={7,12}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_TILLOTSON_MATERIALS,10}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
     hdf5_attribute = H5Acreate(handle, "Tillotson_EOS_parameters_for_all_species", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.Tillotson_EOS_params); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
+#endif
+#ifdef EOS_ELASTIC
+    /* per CompositionType: shear modulus, yield strength, Weibull k, Weibull m, Drucker-Prager mu, initial distention, P_e, P_s (code units) */
+    {hdf5_dataspace = H5Screate(H5S_SIMPLE); hsize_t tmp_dim[2]={N_SOLID_MATERIAL_IDS, N_SOLID_MATERIAL_PROPERTIES}; H5Sset_extent_simple(hdf5_dataspace, 2, tmp_dim, NULL);
+    hdf5_attribute = H5Acreate(handle, "Solid_material_properties_by_composition", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, All.SolidMaterial); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
 
 #ifdef SINK_PARTICLES

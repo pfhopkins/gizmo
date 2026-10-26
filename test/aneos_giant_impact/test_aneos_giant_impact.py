@@ -32,6 +32,13 @@ from gizmo.test import (
 ZENODO_BASE = "https://zenodo.org/records/12732259/files"
 
 
+def _has_valid_row_block(path):
+    """does the converted table end with the per-density lowest-valid-row block"""
+    with open(path, "rb") as f:
+        f.seek(0, 2); f.seek(max(0, f.tell() - 200000))
+        return b"lowest_valid_T_index" in f.read()
+
+
 def setup_tables(test_dir):
     """Download Stewart tables and convert to GIZMO format if needed."""
     converter = join(test_dir, "convert_stewart_table.py")
@@ -41,8 +48,8 @@ def setup_tables(test_dir):
         ("ANEOS_iron_S20.txt", 2020, "iron.sesame"),
     ]:
         out_path = join(test_dir, out_name)
-        if isfile(out_path):
-            continue
+        if isfile(out_path) and _has_valid_row_block(out_path):
+            continue  # a table without the block comes from an older converter: rebuild it
 
         raw_path = join(test_dir, material)
         if not isfile(raw_path):
@@ -51,9 +58,9 @@ def setup_tables(test_dir):
             print(f"Downloading {material}...")
             urlretrieve(url, raw_path)
 
-        print(f"Converting {material} -> {out_name} (downsampled to 200x200)...")
+        print(f"Converting {material} -> {out_name}...")
         subprocess.run(
-            [sys.executable, converter, raw_path, out_path, str(mat_id), "200", "200"],
+            [sys.executable, converter, raw_path, out_path, str(mat_id)],
             check=True,
             cwd=test_dir,
         )

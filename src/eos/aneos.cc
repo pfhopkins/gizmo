@@ -88,7 +88,7 @@ static void aneos_free_table_arrays(struct aneos_table *tbl)
 {
     double **dbl[] = {&tbl->logrho, &tbl->logT, &tbl->log_pressure, &tbl->log_energy, &tbl->entropy, &tbl->log_csound};
     for(int k = 0; k < (int)(sizeof(dbl) / sizeof(dbl[0])); k++) {if(*dbl[k]) {gpu_particles_uvm_free(*dbl[k]); *dbl[k] = NULL;}}
-    int **ints[] = {&tbl->phase, &tbl->map_rho, &tbl->map_T};
+    int **ints[] = {&tbl->phase, &tbl->map_rho, &tbl->map_T, &tbl->lowest_valid_T};
     for(int k = 0; k < (int)(sizeof(ints) / sizeof(ints[0])); k++) {if(*ints[k]) {gpu_particles_uvm_free(*ints[k]); *ints[k] = NULL;}}
     tbl->loaded = 0;
 }
@@ -220,6 +220,20 @@ int aneos_read_table(const char *filename, int mat_index)
                 tbl->phase[idx] = phase_val;
         }
     }
+    /* Optional trailing block: per density, the index of the lowest valid temperature row (a table whose cold corner
+       holds no valid states marks it; below that row a lookup returns the state at the row) */
+    char block_name[64];
+    if(fscanf(fp, " %63s", block_name) == 1) {
+        if(strcmp(block_name, "lowest_valid_T_index") != 0) {return aneos_refuse(fp, tbl, filename, "unrecognised block after the data rows", 0);}
+        tbl->lowest_valid_T = (int *)aneos_shared_calloc(nrho, sizeof(int), "aneos_lowest_valid_T");
+        if(!tbl->lowest_valid_T) {return aneos_refuse(fp, tbl, filename, "could not allocate the lowest-valid-row block", nrho);}
+        for(int i = 0; i < nrho; i++) {
+            int k;
+            if(fscanf(fp, "%d", &k) != 1) {return aneos_refuse(fp, tbl, filename, "lowest-valid-row block unreadable", i);}
+            if(k < 0 || k > nT - 2) {return aneos_refuse(fp, tbl, filename, "lowest valid row outside [0, nT-2]", i);}
+            tbl->lowest_valid_T[i] = k;
+        }
+    }
     fclose(fp);
     for(int i = 0; i < nrho; i++) {tbl->logrho[i] = log10(tbl->logrho[i]);}
     for(int j = 0; j < nT; j++) {tbl->logT[j] = log10(tbl->logT[j]);}
@@ -237,8 +251,8 @@ int aneos_read_table(const char *filename, int mat_index)
     tbl->loaded = 1;
 
     double nonuni_rho = aneos_axis_nonuniformity(tbl->logrho, nrho), nonuni_T = aneos_axis_nonuniformity(tbl->logT, nT);
-    printf("ANEOS: loaded material %d from \"%s\" (%d x %d grid, %d columns)\n",
-           tbl->mat_id, filename, nrho, nT, ncols);
+    printf("ANEOS: loaded material %d from \"%s\" (%d x %d grid, %d columns%s)\n",
+           tbl->mat_id, filename, nrho, nT, ncols, tbl->lowest_valid_T ? ", per-density lowest valid temperature" : "");
     printf("  log10(rho) range: [%.3f, %.3f] %s,  log10(T) range: [%.3f, %.3f] %s\n",
            tbl->logrho_min, tbl->logrho_max, (nonuni_rho < 1.0e-6) ? "uniform" : "irregular",
            tbl->logT_min, tbl->logT_max, (nonuni_T < 1.0e-6) ? "uniform" : "irregular");

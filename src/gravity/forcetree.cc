@@ -173,6 +173,13 @@ static int tree_allocated_flag = 0;
  *  must know (the particle-storage resize, which may not release capacity under a standing tree)
  *  ask here rather than inferring it from MaxNodes or a live pointer. */
 int force_tree_is_allocated(void) {return tree_allocated_flag;}
+/* Imported foreign subtrees are read only by the gravity walks and SUBFIND's potential walk; every neighbour
+   walk skips them and stops at a remote top leaf.  Without either consumer no subtree is imported, the foreign
+   index range is empty, and foreign top leaves keep pointing at their pseudo-particles. */
+#if !defined(SELFGRAVITY_OFF) || defined(SUBFIND)
+#define TREE_IMPORTS_FOREIGN_SUBTREES
+#endif
+
 /* The foreign storage this rank reserves for the gravity tree, derived from its own past demand: raised whenever a
    force_treebuild_gravity build that finished its LET exchange over the whole tree needed more, to that import or a
    quarter above the old reservation, whichever is larger (so it can exceed any import seen so far).  The gravity
@@ -600,7 +607,11 @@ let_build_attempt:
      * receiver needed. The pseudodata Iallgatherv posted just above must still be
      * completed regardless, so no early return here. */
     long long foreign_needed = 0;
+#ifdef TREE_IMPORTS_FOREIGN_SUBTREES
     let_exchange_status_t let_status = let_run_exchange(&foreign_needed);
+#else
+    let_exchange_status_t let_status = LET_OK;   /* no consumer of imported subtrees in this build */
+#endif
     int pseudo_status = force_exchange_pseudodata_complete();
 
     /* Classify globally (worst status wins). A send-buffer malloc failure
@@ -688,7 +699,9 @@ let_build_attempt:
         /* Success: foreign moments complete. Scatter AoS→SoA, finalize LET
          * completeness, then re-sum ancestor topnode moments. */
         if(gpu_scatter_pseudo_to_soa() != 0)    {endrun(90000073);}
+#ifdef TREE_IMPORTS_FOREIGN_SUBTREES
         let_finalize_unredirected_foreign_topleaves();
+#endif
         if(gpu_topnode_moment_resum() != 0)     {endrun(90000074);}
         if(building_gravity_tree && !not_whole_tree_any && foreign_needed > remembered_foreign_slots)
         {
@@ -3589,7 +3602,8 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
      * and serializes nothing, so it derives normally.
      * Numforeignnodes (current count, <= AllocatedForeignNodes <= MaxForeignNodes) is reset on each
      * LET exchange.  The range is empty (MaxForeignNodes = 0) only before the first tree is
-     * allocated, or when a restart file carries none. */
+     * allocated, when a restart file carries none, or in a build that never imports
+     * (TREE_IMPORTS_FOREIGN_SUBTREES undefined). */
     if(foreign_node_slots_exact >= 0)
     {
         /* Restart read: the index ceiling the file's node pointers were written against, not an
@@ -3610,6 +3624,9 @@ void force_treeallocate(int maxnodes, int tree_particle_slots, int foreign_node_
          * when an import does not fit the index range). This is the SOLE place MaxForeignNodes is
          * derived. */
         long long want = (base > RuntimeMinLETForeignNodes) ? base : RuntimeMinLETForeignNodes;
+#ifndef TREE_IMPORTS_FOREIGN_SUBTREES
+        want = 0;   /* nothing is ever imported */
+#endif
         if(want < 0) want = 0;
         if(want > (long long)INT_MAX)
         {

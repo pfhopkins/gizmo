@@ -150,9 +150,9 @@ void sink_feed_loop(void)
 
     /* ---------- engine: build active list ---------- */
     int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     if(!nlr_build_active_list(SinkFeedSpec::is_active,
-                               &active_list, &num_active, &num_global_active,
+                               &active_list, &num_active,
                                "sinkfeed_active_list")) {
         CPU_Step[CPU_SINK_FEEDSWK] += measure_time();
         return;

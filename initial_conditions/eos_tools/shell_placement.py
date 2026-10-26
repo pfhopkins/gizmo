@@ -1,6 +1,11 @@
 """Particle placement for HSE-equilibrium layered bodies.
 
-Two backends:
+seagen_shells(profile, zones, n_particles, mass_ratio="spacing")
+    SEAGen shells (needs the optional seagen package), one material per zone, with the particle mass of each
+    zone chosen so the particle spacing matches across each material interface. The recommended placement
+    for tabulated-EOS planets.
+
+Two further backends:
     fibonacci_shells(profile, n_particles, ...)
         Equal-mass shells; within each shell, points placed on a
         Fibonacci spiral over the unit sphere. Deterministic, fast, good
@@ -177,6 +182,86 @@ def glass_relax(prof, zones, n_particles, n_sweeps=20, seed=17,
     comp_p = np.array([zones[z].material.composition_type for z in zid], dtype=np.int32)
     return {"coords": coords, "masses": masses, "rho_p": rho_p,
             "u_p": u_p, "T_p": T_p, "comp_p": comp_p}
+
+
+def _zone_profiles(prof):
+    """outward (ascending r, r > 0) profile arrays and the zone index of each sample"""
+    r = prof["r"][::-1]; keep = r > 0
+    return r[keep], prof["rho"][::-1][keep], prof["zone_id"][::-1][keep]
+
+
+def _seagen_realise(prof, zones, n_particles, m_rel, seed):
+    """one SEAGen sphere with relative particle mass m_rel[z] per zone (outer -> inner order of zones)"""
+    import seagen
+    r, rho, zid = _zone_profiles(prof)
+    M_z = np.array([np.sum(np.diff(np.r_[0.0, prof["m"][::-1][prof["r"][::-1] > 0]])[zid == z]) for z in range(len(zones))])
+    m_rel = np.asarray(m_rel, float) / m_rel[-1]               # SEAGen counts the desired number in units of the innermost material's particle mass
+    m0 = np.sum(M_z / m_rel) / n_particles
+    s = seagen.GenSphere(int(round(prof["M_total"] / m0)), r, rho, A1_mat_prof=zid, A1_m_rel_prof=m_rel[zid],
+                         verbosity=0, seed=seed)
+    return np.c_[s.A1_x, s.A1_y, s.A1_z], np.asarray(s.A1_m, float), np.asarray(s.A1_mat, int)
+
+
+def _interface_spacing_ratio(prof, coords, masses, zone, z_outer):
+    """particle spacing (m/rho)^(1/3) of the innermost shell of zone z_outer over that of the outermost shell of
+    zone z_outer + 1, each with its own material's profile density"""
+    r = np.linalg.norm(coords, axis=1); rp, rhop, zp = _zone_profiles(prof)
+    def spacing(z, pick):
+        s = zone == z; rs = r[s]; shell = np.isclose(rs, pick(rs), rtol=1e-6)
+        rho_z = np.interp(pick(rs), rp[zp == z], rhop[zp == z])
+        return np.median((masses[s][shell] / rho_z) ** (1.0 / 3.0))
+    return spacing(z_outer + 1, np.max) / spacing(z_outer, np.min)
+
+
+def seagen_shells(prof, zones, n_particles, mass_ratio="spacing", seed=17, verbose=True):
+    """Place particles on SEAGen shells (Kegerreis et al. 2019), one material per zone.
+
+    mass_ratio sets the particle mass of each zone relative to the zone outside it (one value per material
+    interface, outer -> inner, or a single value for a two-zone body): 1.0 = equal masses; "spacing" (the default)
+    = for each interface, the realised ratio whose particle spacing ratio across that interface is nearest 1
+    (equal particle volume on both sides). SEAGen fits whole shells, so a requested ratio is realised only
+    approximately and the admissible ratios are discrete: the scan tries requested ratios from 0.85 to 1.75 times
+    the interface density ratio (inner over outer) and keeps the realisation itself. Positions are not relaxed
+    afterwards (relaxing toward the profile density disorders the shells and worsens the discrete force balance).
+    Needs the optional package seagen (pip install seagen)."""
+    try:
+        import seagen  # noqa: F401
+    except ImportError:
+        raise ImportError("seagen_shells needs the seagen package: pip install seagen")
+    nz = len(zones)
+    r, rho, zid = _zone_profiles(prof)
+    m_rel = np.ones(nz)   # outer zone = 1; inner zones relative to it
+    realise = lambda m_rel: _seagen_realise(prof, zones, n_particles, m_rel, seed)
+    for z_outer in reversed(range(nz - 1)):          # interfaces from the centre outward; inner ones already fixed
+        rho_out = rho[zid == z_outer][np.argmin(r[zid == z_outer])]   # densities either side of the interface
+        rho_in = rho[zid == z_outer + 1][np.argmax(r[zid == z_outer + 1])]
+        if mass_ratio == "spacing":
+            best = None
+            for f in np.arange(0.85, 1.7501, 0.05):
+                trial = m_rel.copy(); trial[z_outer + 1:] = m_rel[z_outer + 1:] / m_rel[z_outer + 1] * (m_rel[z_outer] * f * rho_in / rho_out)
+                coords, masses, zone = realise(trial)
+                sr = _interface_spacing_ratio(prof, coords, masses, zone, z_outer)
+                if best is None or abs(sr - 1) < abs(best[1] - 1): best = (trial, sr, f)
+            m_rel = best[0]
+        else:
+            q = np.atleast_1d(mass_ratio)[z_outer if np.ndim(mass_ratio) else 0]
+            m_rel[z_outer + 1:] = m_rel[z_outer + 1:] / m_rel[z_outer + 1] * (m_rel[z_outer] * q)
+    coords, masses, zone = realise(m_rel)
+    rp, rhop, zp = _zone_profiles(prof); uu = prof["u"][::-1][prof["r"][::-1] > 0]; TT = prof["T"][::-1][prof["r"][::-1] > 0]
+    rr = np.linalg.norm(coords, axis=1)
+    rho_p = np.empty(len(rr)); u_p = np.empty(len(rr)); T_p = np.empty(len(rr))
+    for z in range(nz):   # each particle reads its own material's branch of the profile
+        s = zone == z; on = zp == z; x = np.clip(rr[s], rp[on].min(), rp[on].max())
+        rho_p[s] = np.interp(x, rp[on], rhop[on]); u_p[s] = np.interp(x, rp[on], uu[on]); T_p[s] = np.interp(x, rp[on], TT[on])
+    if verbose:
+        for z_outer in range(nz - 1):
+            q_got = np.median(masses[zone == z_outer + 1]) / np.median(masses[zone == z_outer])
+            print(f"  seagen_shells: interface {zones[z_outer].material.name}/{zones[z_outer + 1].material.name}: "
+                  f"particle mass ratio {q_got:.3f}, spacing ratio {_interface_spacing_ratio(prof, coords, masses, zone, z_outer):.3f}")
+        print(f"  seagen_shells: N {len(rr)} (" + ", ".join(f"{zones[z].material.name} {np.sum(zone == z)}" for z in range(nz))
+              + f"), total mass / M {masses.sum() / prof['M_total']:.6f}")
+    comp_p = np.array([zones[z].material.composition_type for z in zone], dtype=np.int32)
+    return {"coords": coords, "masses": masses, "rho_p": rho_p, "u_p": u_p, "T_p": T_p, "comp_p": comp_p}
 
 
 def atmosphere_shell(prof, zones, n_particles,

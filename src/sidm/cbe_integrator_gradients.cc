@@ -332,9 +332,10 @@ void cbe_corridor_begin(void)
      * partition's active count, which is what AGSForce would decide alone. */
     int local_n = 0;
     for(const std::vector<int> &rows : c.part.actives) {local_n += (int)rows.size();}
-    int sum_n = local_n, max_n = local_n;
+    const long long local_n_64 = local_n;
+    long long sum_n = local_n; int max_n = local_n;   /* the sum over ranks can exceed 2^31 */
     if(NTask > 1) {
-        MPI_Allreduce(&local_n, &sum_n, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(&local_n_64, &sum_n, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&local_n, &max_n, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
     /* If this selector ever returns Mode D, that answer needs no list and no

@@ -292,9 +292,9 @@ void mechanical_fb_calc_toplevel(void)
         /* Multi-rank correctness: ghost_prep is collective so all ranks must agree
          * on whether to call it. MPI_Allreduce first; if no rank has any source,
          * every rank skips the mech_fb path entirely (no allocation, no kernel). */
-        int global_num_active = num_active;
-        MPI_Allreduce(&num_active, &global_num_active, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-        if(global_num_active == 0) { return; }
+        int any_local = (num_active > 0) ? 1 : 0, any_active = 0;
+        MPI_Allreduce(&any_local, &any_active, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(!any_active) { return; }
 
         /* persistent grow-only buffer: no per-step alloc or O(N_gas) zero. The
          * buffer is all-zero at entry by the drain-zero invariant below.

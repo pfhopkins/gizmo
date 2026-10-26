@@ -1123,6 +1123,16 @@ static int mg_solve_backend(double *x)
         for(auto &e : row) {col_idx.push_back((int) e.first); vals.push_back(e.second);}
         row_ptr.push_back((int) col_idx.size());
     }
+    {   /* PARDISO's interface and the gather to rank 0 index the whole system with 32-bit ints */
+        long long size_local[2] = {N_gas, (long long) col_idx.size()}, size_global[2] = {0, 0};
+        MPI_Allreduce(size_local, size_global, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        if(size_global[0] > INT_MAX || size_global[1] > INT_MAX)
+        {
+            if(ThisTask == 0) {printf("MG PARDISO: the system has %lld rows and %lld non-zeros, more than its 32-bit indexing allows. Build without MHD_MODIFIED_GRADIENT_USE_PARDISO to use the distributed solver.\n", size_global[0], size_global[1]);}
+            endrun(990514);
+            gizmo_exit_bad_stop_if_requested("mg:pardiso_too_large");
+        }
+    }
     int my_rows = N_gas, my_nnz = (int) col_idx.size();
     std::vector<int> all_rows(NTask), all_nnz(NTask), disp_rows(NTask), disp_nnz(NTask);
     MPI_Gather(&my_rows, 1, MPI_INT, all_rows.data(), 1, MPI_INT, 0, MPI_COMM_WORLD);

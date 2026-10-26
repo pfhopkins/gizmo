@@ -190,7 +190,7 @@ void difffilter_vel_calc_gpu_toplevel(void)
     const GizmoHydroCorridorMode  corridor_mode = gizmo_hydro_corridor_get_mode();
 
     int *active_list_local = nullptr;   /* allocated by nlr_build_active_list in the fallback only */
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
 
     DiffFilterSpec::Aux aux;   /* unused — DiffFilter scatters straight to CellP */
     neighbor_loop_args args = nlr_default_args();
@@ -206,7 +206,7 @@ void difffilter_vel_calc_gpu_toplevel(void)
     } else {
         /* Mode B (request-driven, no corridor CSR): build the list here. */
         if (!nlr_build_active_list(DiffFilterSpec::is_active,
-                                   &active_list_local, &num_active, &num_global_active,
+                                   &active_list_local, &num_active,
                                    "difffilter_active_list")) {
             return;   /* no active gas anywhere this step */
         }
@@ -270,7 +270,7 @@ void dynamicdiff_gpu_toplevel(int dynamic_iteration,
     const GizmoHydroCorridorMode  corridor_mode = gizmo_hydro_corridor_get_mode();
 
     int *active_list_local = nullptr;   /* allocated by nlr_build_active_list in the fallback only */
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
 
     DynDiffSpec::Aux aux;
     aux.dddp              = dddp;
@@ -289,7 +289,7 @@ void dynamicdiff_gpu_toplevel(int dynamic_iteration,
     } else {
         /* Mode B (request-driven, no corridor CSR): build the list here. */
         if (!nlr_build_active_list(DynDiffSpec::is_active,
-                                   &active_list_local, &num_active, &num_global_active,
+                                   &active_list_local, &num_active,
                                    "dyndiff_active_list")) {
             return;   /* no active gas anywhere this step */
         }

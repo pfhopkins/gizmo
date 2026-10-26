@@ -122,9 +122,9 @@ void sink_environment_loop(void)
 
     /* ---------- engine: build active list (count + Allreduce + skip-if-empty + fill) ---------- */
     int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     if(!nlr_build_active_list(SinkEnv1Spec::is_active,
-                               &active_list, &num_active, &num_global_active,
+                               &active_list, &num_active,
                                "sinkenv_active_list")) {
         CPU_Step[CPU_SINK_ENV] += measure_time();
         return;
@@ -204,9 +204,9 @@ void sink_environment_second_loop(void)
 
     /* ---------- engine: build active list ---------- */
     int *active_list = nullptr;
-    int  num_active = 0, num_global_active = 0;
+    int  num_active = 0;
     if(!nlr_build_active_list(SinkEnv2Spec::is_active,
-                               &active_list, &num_active, &num_global_active,
+                               &active_list, &num_active,
                                "sinkenv2_active_list")) {
         CPU_Step[CPU_SINK_ENV] += measure_time();
         return;

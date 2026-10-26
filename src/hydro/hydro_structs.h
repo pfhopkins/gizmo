@@ -79,6 +79,9 @@ struct hydro_data_in
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
     MyFloat DrkernNgbFactor;
+#ifdef EOS_ANEOS
+    MyFloat Temperature;    /* orders the two sides of a face in the entropic energy switch */
+#endif
 #ifdef HYDRO_SPH
     MyFloat DrkernHydroSumFactor;
     MyFloat alpha;

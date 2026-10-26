@@ -175,7 +175,13 @@ void run(void)
              * and rebuild. */
             if(ThisTask == 0) {printf("Restart tree build: restoring geometric particle ownership first.\n"); fflush(stdout);}
             domain_Decomposition_light(0, 0);
-            if(force_treebuild_gravity() < 0) {endrun(91568);}
+            const int retry_status = force_treebuild_gravity();
+            if(retry_status < 0)
+            {
+                if(ThisTask == 0) {printf("Restart tree build still failed (status %d) after restoring particle ownership. Stopping.\n", retry_status); fflush(stdout);}
+                endrun(91568);
+                gizmo_exit_bad_stop_if_requested("run:restart_treebuild_retry");
+            }
         }
         /* Same proof as the main-step build in gravtree.cc: a full drift ran
          * immediately above, so this tree's node geometry describes this time and

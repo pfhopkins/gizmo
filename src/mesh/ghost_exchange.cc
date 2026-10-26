@@ -1062,10 +1062,9 @@ static void gx_walk_export_discover(
             mode_b_walk_and_export(local_queries[qi].pos, local_queries[qi].h,
                                    supply_mask, search_mode, spec->radius_policy,
                                    /*cand_out=*/NULL, map, sink, walker_j_reach_scale);
-            for(int t = 0; t < NTask; t++) {
+            for(int t : sink.sorted_touched_peers()) {
                 if(t == ThisTask) continue;
                 long nn = (long)sink.nodes_per_peer[t].size();
-                if(nn <= 0) continue;
                 const std::vector<int> &nl = sink.nodes_per_peer[t];
                 for(long base = 0; base < nn; base += NODELISTLENGTH) {
                     struct gx_export_envelope_t e;

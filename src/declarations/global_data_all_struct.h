@@ -28,6 +28,7 @@
 #include "constants.h"
 #include "macros.h"
 #include "typedefs.h"
+#include "../eos/composition_registry.h"
 #include "../math_types/vec3.h"
 
 /*! This structure contains data which is the SAME for all tasks (mostly code parameters read from the
@@ -673,7 +674,11 @@ struct global_data_all_processes
 #endif
 
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC)
-  double Tillotson_EOS_params[7][18]; /*! < holds parameters for Tillotson EOS for solids; slots 12-15 (k_Weibull, m_Weibull, mu_DP, alpha_0) and slots 16-17 (P_e, P_s) are used only under EOS_DAMAGE_POROSITY */
+  double Tillotson_EOS_params[N_TILLOTSON_MATERIALS][10]; /*! < Tillotson EOS coefficients a, b, u_0, rho_0, A, B, u_s, u_s', alpha, beta per row (0 = custom, 1-6 presets) */
+#endif
+#ifdef EOS_ELASTIC
+  struct solid_material SolidMaterial[N_SOLID_MATERIAL_IDS]; /*!< strength/damage/porosity per CompositionType, resolved at startup: read through solid_material_of() */
+  struct solid_material SolidMaterialCustom; /*!< the custom material (CompositionType 0 of a Tillotson or plain elastic build), from the SolidMaterial_* parameters */
 #endif
 
 #ifdef EOS_TABULATED
@@ -686,6 +691,10 @@ struct global_data_all_processes
 #endif
     int  AneosNumMaterials;                       /* number of ANEOS material tables to load */
     char AneosTableFiles[ANEOS_MAX_MATERIALS][256]; /* file paths for each material's SESAME table */
+#ifdef EOS_ELASTIC
+    int  AneosSolidMaterialChoice[ANEOS_MAX_MATERIALS];                   /* per table: 1-6 = preset, 0 = the table's own values (AneosTable<N>_SolidMaterial) */
+    struct solid_material AneosSolidMaterialCustom[ANEOS_MAX_MATERIALS];  /* per table custom values (AneosTable<N>_ShearModulus etc.) */
+#endif
 #endif
 
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC

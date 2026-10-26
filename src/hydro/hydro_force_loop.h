@@ -133,6 +133,7 @@ struct HydroForceDeviceContext : NeighborLoopDeviceContextBase
 struct HydroForceSpec
 {
     static constexpr const char *loop_name = "hydro_force";
+    static constexpr bool writeback_writes_only_own_particle = true;   /* writes CellP[i] and its own accumulator only */
     /* Eval-thread tier: j-side writes are CellP[j].dMass (Kokkos::atomic_add,
      * MFV), P[j].wakeup (Kokkos::atomic_max, order-invariant), NeedToWakeup
      * (Kokkos::atomic_store 1, idempotent) — all via HYDRO_ATOMIC_* in
@@ -255,6 +256,9 @@ struct HydroForceSpec
         local.SoundSpeed          = kc[i].effective_soundspeed();
         local.dt_hydrostep_i      = get_particle_timestep_in_physical(i, kp);
         local.DrkernNgbFactor     = kp[i].DrkernNgbFactor;
+#ifdef EOS_ANEOS
+        local.Temperature         = kc[i].Temperature;
+#endif
         local.Gradients.Density   = kc[i].Gradients.Density;
         local.Gradients.Pressure  = kc[i].Gradients.Pressure;
         local.Gradients.Velocity  = kc[i].Gradients.Velocity;

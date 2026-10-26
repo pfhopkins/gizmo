@@ -157,60 +157,23 @@ void x86_fix(void)
 #endif
 
 
-void minimum_large_ints(int n, long long *src, long long *res)
+void minimum_large_ints(int n, long long *src, long long *res)   /* src may be res */
 {
-  int i, j;
-  long long *numlist;
-
-  numlist = (long long *) mymalloc("numlist", NTask * n * sizeof(long long));
-  MPI_Allgather(src, n * sizeof(long long), MPI_BYTE, numlist, n * sizeof(long long), MPI_BYTE,
-                MPI_COMM_WORLD);
-
-  for(j = 0; j < n; j++)
-    res[j] = src[j];
-
-  for(i = 0; i < NTask; i++)
-    for(j = 0; j < n; j++)
-      if(res[j] > numlist[i * n + j])
-        res[j] = numlist[i * n + j];
-
-  myfree(numlist);
+  if(src == res) {MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);}
+  else {MPI_Allreduce(src, res, n, MPI_LONG_LONG, MPI_MIN, MPI_COMM_WORLD);}
 }
 
+/* Sums over ranks of per-rank integers, at 64 bits: one reduction, with no buffer or scan sized by the rank count. */
 void sumup_large_ints(int n, int *src, long long *res)
 {
-  int i, j, *numlist;
-
-  numlist = (int *) mymalloc("numlist", NTask * n * sizeof(int));
-  MPI_Allgather(src, n, MPI_INT, numlist, n, MPI_INT, MPI_COMM_WORLD);
-
-  for(j = 0; j < n; j++)
-    res[j] = 0;
-
-  for(i = 0; i < NTask; i++)
-    for(j = 0; j < n; j++)
-      res[j] += numlist[i * n + j];
-
-  myfree(numlist);
+  for(int j = 0; j < n; j++) {res[j] = src[j];}   /* widened in place: nothing is allocated before the collective */
+  MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
 }
 
-void sumup_longs(int n, long long *src, long long *res)
+void sumup_longs(int n, long long *src, long long *res)   /* src may be res */
 {
-  int i, j;
-  long long *numlist;
-
-  numlist = (long long *) mymalloc("numlist", NTask * n * sizeof(long long));
-  MPI_Allgather(src, n * sizeof(long long), MPI_BYTE, numlist, n * sizeof(long long), MPI_BYTE,
-		MPI_COMM_WORLD);
-
-  for(j = 0; j < n; j++)
-    res[j] = 0;
-
-  for(i = 0; i < NTask; i++)
-    for(j = 0; j < n; j++)
-      res[j] += numlist[i * n + j];
-
-  myfree(numlist);
+  if(src == res) {MPI_Allreduce(MPI_IN_PLACE, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);}
+  else {MPI_Allreduce(src, res, n, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);}
 }
 
 size_t sizemax(size_t a, size_t b)

@@ -619,7 +619,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
             Volume_0 = (double)P[i].Mass / (double)CellP[i].Density;
             CellP[i].KernelDensityForVolumeRelaxation = CellP[i].Density;
-            if (host_all->Time == host_all->TimeBegin || !(CellP[i].Density_ExplicitInt > 0) || !isfinite(CellP[i].Density_ExplicitInt)) { /* start, or a newly created cell whose integrated density is unset */
+            if ((host_all->Time == host_all->TimeBegin && RestartFlag != 2) || !(CellP[i].Density_ExplicitInt > 0) || !isfinite(CellP[i].Density_ExplicitInt)) { /* fresh start, or a newly created cell whose integrated density is unset (a snapshot restart continues the snapshot's) */
                 CellP[i].Density_ExplicitInt = CellP[i].Density;
             } else {
                 CellP[i].Density = CellP[i].Density_ExplicitInt;

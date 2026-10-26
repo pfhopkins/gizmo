@@ -12,6 +12,8 @@ Table file layout (matches cms_to_sesame.py, convert_stewart_table.py and aneos.
     next nrho values: rho [g/cm^3];  next nT values: T [K]
     next nrho*nT rows (outer rho, inner T): rho T P u S [cs] [phase]
     ncols = 5 (no cs), 6 (with cs) or 7 (with cs and an integer phase flag, read and ignored)
+    optional: the token lowest_valid_T_index, then nrho integers -- per density, the lowest temperature
+    row the EOS is valid at; below it a lookup returns the state at that row, as in aneos.h
 """
 
 import numpy as np
@@ -37,9 +39,15 @@ class SesameTable:
         if cols not in (5, 6, 7):
             refuse("ncols must be 5, 6 or 7")
         n = nrho * nT
-        if len(tok) != 4 + nrho + nT + n * cols:
-            refuse(f"expected {4 + nrho + nT + n * cols} values, found {len(tok)}")
-        vals = np.array(tok[4:], dtype=float)
+        n_data = 4 + nrho + nT + n * cols
+        self.lowest_valid_T = None
+        if len(tok) == n_data + 1 + nrho and tok[n_data] == "lowest_valid_T_index":
+            self.lowest_valid_T = np.array(tok[n_data + 1:], dtype=int)
+            if np.any(self.lowest_valid_T < 0) or np.any(self.lowest_valid_T > nT - 2):
+                refuse("lowest valid row outside [0, nT-2]")
+        elif len(tok) != n_data:
+            refuse(f"expected {n_data} values (or the lowest_valid_T_index block after them), found {len(tok)}")
+        vals = np.array(tok[4:n_data], dtype=float)
         self.rho_axis = vals[:nrho]
         self.T_axis = vals[nrho:nrho + nT]
         flat = vals[nrho + nT:].reshape(n, cols)
@@ -74,8 +82,21 @@ class SesameTable:
         t = min(1.0, max(0.0, (x - axis[i]) / (axis[i + 1] - axis[i])))
         return i, t
 
+    def logT_floor(self, i):
+        """lowest valid log10(T) in density interval i (arrays allowed): the higher of its two columns' bounds"""
+        if self.lowest_valid_T is None:
+            return np.full(np.shape(i), self.logT[0]) if np.ndim(i) else self.logT[0]
+        k = np.maximum(self.lowest_valid_T[i], self.lowest_valid_T[np.asarray(i) + 1])
+        return self.logT[k]
+
+    def below_valid(self, rho, T):
+        """True where (rho, T) lies below the table's valid region (a lookup there returns the edge state)"""
+        i, _ = self._locate_v(self.logrho, np.log10(np.asarray(rho, float)))
+        return np.log10(np.asarray(T, float)) < self.logT_floor(i)
+
     def _cell(self, rho, T):
-        return self._locate(self.logrho, np.log10(rho)) + self._locate(self.logT, np.log10(T))
+        i, t = self._locate(self.logrho, np.log10(rho))
+        return (i, t) + self._locate(self.logT, max(np.log10(T), self.logT_floor(i)))
 
     @staticmethod
     def _interp(table, i, t, j, u):
@@ -112,7 +133,7 @@ class SesameTable:
         if self.has_cs:
             return 10.0 ** self._interp(self.logcs, *c)
         rho_c = 10.0 ** np.clip(np.log10(rho), self.logrho[0], self.logrho[-1])
-        T_c = 10.0 ** np.clip(np.log10(T), self.logT[0], self.logT[-1])
+        T_c = 10.0 ** np.clip(np.log10(T), self.logT_floor(c[0]), self.logT[-1])
         P = 10.0 ** self._interp(self.logP, *c); u = 10.0 ** self._interp(self.logu, *c)
         cv = (u / T_c) * self._dlog_dlogT(self.logu, *c)
         cv = cv if cv > 0 else 1e-10
@@ -131,7 +152,7 @@ class SesameTable:
 
     def _cell_v(self, rho, T):
         i, t = self._locate_v(self.logrho, np.log10(rho))
-        j, u = self._locate_v(self.logT, np.log10(T))
+        j, u = self._locate_v(self.logT, np.maximum(np.log10(T), self.logT_floor(i)))
         return i, t, j, u
 
     def pressure_v(self, rho, T):

@@ -44,11 +44,9 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 {
     int j,k,l,NDim=NUMDIMS;
     double dv0[3][3], R[3][3], S[3][3], S_new[3][3], dS=0, mu, Y0, J2=0, I1=0;
-#ifdef EOS_TILLOTSON
-    mu = All.Tillotson_EOS_params[cell[i].CompositionType][10]; Y0 = All.Tillotson_EOS_params[cell[i].CompositionType][11]; // set for composition
-#else
-    mu = All.Tillotson_EOS_params[0][10]; Y0 = All.Tillotson_EOS_params[0][11];  // set to universal constants
-#endif
+    if(!solid_material_is_elastic(cell[i].CompositionType)) {return;} /* the gas of a gas+solid build carries no deviatoric stress */
+    const struct solid_material &material = solid_material_of(cell[i].CompositionType);
+    mu = material.ShearModulus; Y0 = material.YieldStrength;
 
     if(mode < 2) // drift or kick operation
     {
@@ -68,8 +66,8 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 #endif
         if(J2 > 0)
         {
-            double f_Y = Y_eff*Y_eff/(NDim*J2);
-            if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
+            double f_Y = Y_eff*Y_eff/(NDim*J2); // (yield stress / equivalent stress)^2
+            if(f_Y < 1) {double return_factor = sqrt(f_Y); for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= return_factor;}}} // radial return: scale the deviator back onto the yield surface (Wilkins 1964)
         }
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_GRADY_KIPP
         /* bit 0: Grady-Kipp damage update at kick (mode==0) only */
@@ -103,7 +101,7 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
             {
                 dS = mu * (dv0[j][k] + dv0[k][j]); // symmetric strain component
                 if(k==j) {dS -= 2.*mu*trace_vel/NDim;} // trace component
-                for(l=0;l<NDim;l++) {dS += S[j][l]*R[l][k] - R[j][l]*S[l][k];} // rotation components
+                for(l=0;l<NDim;l++) {dS += R[j][l]*S[l][k] - S[j][l]*R[l][k];} // Jaumann rotation W.S - S.W, with R = W = (dv_j/dx_k - dv_k/dx_j)/2: the stress turns with the material
                 cell[i].Dt_Elastic_Stress_Tensor[j][k] = dS; // save it to variable
             }
         }

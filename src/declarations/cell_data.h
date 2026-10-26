@@ -23,7 +23,7 @@ extern struct gas_cell_data
     MyDouble MassTrue;              /*!< true particle mass ('mass' now is -predicted- mass */
     MyDouble dMass;                 /*!< change in particle masses from hydro step (conserved variable) */
     MyDouble DtMass;                /*!< rate-of-change of particle masses (for drifting) */
-    Vec3<MyDouble> GravWorkTerm;    /*!< correction term needed for hydro mass flux in gravity */
+    Vec3<MyDouble> GravWorkTerm;    /*!< MFV: sum over faces of the transferred mass flux times the pair separation, per unit cell mass; dot with the gravitational acceleration gives the specific heating rate that repays the potential energy of the exchanged mass */
     Vec3<MyDouble> ParticleVel;     /*!< actual velocity of the mesh-generating points */
 #endif
     
@@ -741,17 +741,18 @@ extern struct gas_cell_data
         if(cs <= 0) {cs=press_min;}
         SoundSpeed = cs/rho;
 #ifdef EOS_ELASTIC
-        SoundSpeed += All.Tillotson_EOS_params[CompositionType][10] / rho;
+        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, Density); /* the stress acts on the bulk density, porous or not */
 #endif
         SoundSpeed = sqrt(SoundSpeed);
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 4)
         /* irreversibly update distention from current matrix
          * pressure, then convert matrix pressure to bulk porous pressure.
-         * Sound speed retained as matrix-frame value (CFL-conservative). */
+         * The sound speed keeps its acoustic part at the matrix density and its
+         * elastic (shear) part at the bulk density, on which the stress acts. */
         {
-            double alpha_0_p = All.Tillotson_EOS_params[CompositionType][15];
-            double P_e_p     = All.Tillotson_EOS_params[CompositionType][16];
-            double P_s_p     = All.Tillotson_EOS_params[CompositionType][17];
+            double alpha_0_p = solid_material_of(CompositionType).InitialDistention;
+            double P_e_p     = solid_material_of(CompositionType).CrushPressureElastic;
+            double P_s_p     = solid_material_of(CompositionType).CrushPressureSolid;
             double alpha_eq = jutzi_distention_eq8(press, alpha_0_p, P_e_p, P_s_p);
             double alpha_new = (alpha_eq < Distention) ? alpha_eq : Distention;
             if(alpha_new < 1.0) { alpha_new = 1.0; }

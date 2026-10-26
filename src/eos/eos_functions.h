@@ -990,6 +990,9 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
             if(aneos_ierr) {endrun(920902); break;}
             press      = aneos_P / UNIT_PRESSURE_IN_CGS;
             soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
+#ifdef EOS_ELASTIC
+            soundspeed = sqrt(soundspeed*soundspeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density)); /* longitudinal: bulk plus the deviatoric stiffness */
+#endif
             cell[i].Temperature = aneos_T_guess;
             cell[i].PhaseID = aneos_phase;
             break;
@@ -998,6 +1001,10 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
         default:
             break;
     }
+#if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
+    /* fractured material carries (1-D) of its tension; compression is unchanged (Benz & Asphaug 1994) */
+    if(press < 0) {double D_t = cell[i].Damage; if(D_t < 0) {D_t = 0;} if(D_t > 1) {D_t = 1;} press *= (1.0 - D_t);}
+#endif
 #endif
 
 #ifdef EOS_MHD_CORE_BAROTROPIC
@@ -1087,6 +1094,11 @@ void set_eos_pressure_impl(int i, struct particle_data *pp, struct gas_cell_data
     if(soundspeed == 0) {double rho_for_soundspeed = cell[i].density_for_energy(); /* every pressure term assembled above scales with the density, so P/rho keeps a finite limit as rho->0: evaluate that limit rather than forming 0/0 */
         if(rho_for_soundspeed > 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / rho_for_soundspeed);} else {cell[i].SoundSpeed = sqrt(gamma_eos_index * (gamma_eos_index-1.) * cell[i].InternalEnergyPred);}
     } else {cell[i].SoundSpeed = soundspeed;}
+#if defined(EOS_ELASTIC)
+    /* a solid with no tabulated or Tillotson EOS (those branches add it themselves): the signal speed includes its deviatoric stiffness */
+    if(eos_branch_of(cell[i].CompositionType) == EOS_BRANCH_NONE && solid_material_is_elastic(cell[i].CompositionType))
+        {cell[i].SoundSpeed = sqrt(cell[i].SoundSpeed*cell[i].SoundSpeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density));}
+#endif
 #endif
 
     cell[i].Pressure = press;

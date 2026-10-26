@@ -163,7 +163,7 @@ extern struct subgroup_properties
   int GrNr;
   int SubNr;
   int SubParent;    
-  unsigned int Offset;
+  long long Offset;   /* into the global ID list, which spans every rank */
   MyIDType SubMostBoundID;
   double Mass;
   double SubVelDisp;

@@ -561,6 +561,7 @@ void init(void)
         CellP[i].FaceClosureError = 0;
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
         CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
+        if(RestartFlag == 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} /* a snapshot's Density is the integrated density: continue it */
 #endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
@@ -827,6 +828,32 @@ void init(void)
         CellP[i].Injected_Sink_Energy = 0;
 #endif
     }
+#ifdef EOS_ELASTIC
+    solid_material_check_cells(); /* every CompositionType is final above: refuse a material the cells carry but that is incomplete */
+#endif
+#if defined(EOS_DAMAGE_POROSITY)
+    /* damage and porosity, before the first density pass evaluates the equation of state (whose P-alpha update would
+     * otherwise read an unset distention). Only a fresh start from a binary IC initializes them: RestartFlag 1 restores
+     * them from the restart files, RestartFlag 2 reads them back from the snapshot, and an HDF5 IC may carry them
+     * (absent datasets read as zero); they are integrated history (Grady-Kipp damage, P-alpha distention, active flaw
+     * count) that cannot be recomputed */
+    for(i = 0; i < N_gas; i++)
+    {
+        if(RestartFlag == 0 && All.ICFormat != 3)
+        {
+            CellP[i].Damage = 0;
+            CellP[i].ActiveCracks = 0;
+            CellP[i].Distention = solid_material_of(CellP[i].CompositionType).InitialDistention; /* alpha_0 per material; 1 = solid */
+        }
+        if(RestartFlag != 1)
+        {
+            /* floor the distention: an absent dataset (an HDF5 IC, or a snapshot written before these fields existed)
+             * reads back as zero, not as alpha_0 */
+            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = solid_material_of(CellP[i].CompositionType).InitialDistention;}
+            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
+        }
+    }
+#endif
 
 #ifndef BOX_SHEARING
 #if (NUMDIMS==2)
@@ -904,8 +931,19 @@ void init(void)
 
     set_softenings();
 
-    /* will build tree */
-    if(force_treebuild_gravity() < 0) {endrun(91569);}
+    /* will build tree.  The status is reduced over all ranks, so every rank stops here together; it has to
+       stop at once, because everything below reads the tree.  Right after a full decomposition neither
+       repair status should occur: -2 means particles sit on a rank that does not own their top-level leaf,
+       -4 that particles lie outside the extent the decomposition measured. */
+    {
+        const int build_status = force_treebuild_gravity();
+        if(build_status < 0)
+        {
+            if(ThisTask == 0) {printf("The initial tree build failed (status %d) right after the initial domain decomposition. Stopping.\n", build_status); fflush(stdout);}
+            endrun(91569);
+            gizmo_exit_bad_stop_if_requested("init:treebuild");
+        }
+    }
 
     All.Ti_Current = 0;
 
@@ -976,30 +1014,10 @@ void init(void)
         }
 #endif
 #if defined(EOS_ELASTIC)
-        if(RestartFlag != 1)
-        {
-            CellP[i].Dt_Elastic_Stress_Tensor = CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor = {};
-        } else {
-            CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
-        }
-#endif
-#if defined(EOS_DAMAGE_POROSITY)
-        /* only a fresh start initializes these: RestartFlag 1 restores them from the restart files
-         * and RestartFlag 2 reads them back from the snapshot, and they are integrated history
-         * (Grady-Kipp damage, P-alpha distention, active flaw count) that cannot be recomputed */
-        if(RestartFlag != 1 && RestartFlag != 2)
-        {
-            CellP[i].Damage = 0;
-            CellP[i].ActiveCracks = 0;
-            CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15]; /* alpha_0 per material; 1 = solid */
-        }
-        if(RestartFlag != 1)
-        {
-            /* floor the distention, which also covers a snapshot restart from a file written before
-             * these fields existed: the absent dataset reads back as zero, not as alpha_0 */
-            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = All.Tillotson_EOS_params[CellP[i].CompositionType][15];}
-            if(!(CellP[i].Distention >= 1.0)) {CellP[i].Distention = 1.0;}
-        }
+        /* the deviatoric stress is evolved history: it comes from the restart files, a snapshot, or an HDF5 IC's StressTensor
+           block (zero if the block is absent); a fresh binary IC does not carry it */
+        if((RestartFlag == 0 && All.ICFormat != 3) || !solid_material_is_elastic(CellP[i].CompositionType)) {CellP[i].Elastic_Stress_Tensor = {};} /* gas carries none, whatever the file holds */
+        CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
         CellP[i].DtInternalEnergy = 0;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)

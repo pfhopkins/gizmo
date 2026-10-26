@@ -277,7 +277,7 @@ void RtSrcInjectionSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
  * Caller pre-conditions:
  *   - active_src + host_locals are toplevel-owned buffers, valid for the
  *     duration of this call.
- *   - global_num_active > 0 (host TU has done the MPI_Allreduce gate).
+ *   - some rank has an active source (host TU has done the MPI_Allreduce gate).
  *   - rt_source_injection_initial_operations_preloop has already run for any
  *     gas-source self-emission case.
  * ========================================================================== */

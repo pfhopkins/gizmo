@@ -24,6 +24,7 @@
 #define MODE_B_LOCAL_WALKER_H
 
 #include <vector>
+#include <algorithm>
 
 /* search_mode constants — match NGB_SEARCH_ONEWAY/SYMMETRIC in
  * mesh/ghost_exchange_spec.h to keep the existing NGL contract. */
@@ -112,16 +113,23 @@ const ModeBTopleafMap &mode_b_topleaf_map_current(void);
  * (legacy pseudo-node export: after_condition_unthreaded.h:19-67). Reused
  * across queries: ensure_size() once per call, clear_all() per query (retains
  * capacity). Write-only during the walk, so each thread owns its OWN instance
- * (no shared export counter). */
+ * (no shared export counter). The peers a query reached are kept in
+ * touched_peers, so clearing and reading a query's exports cost what the query
+ * touched, never a pass over every rank. */
 struct ModeBExportSink {
     std::vector<std::vector<int>> nodes_per_peer;   /* [owner_task] -> DomainNodeIndex list */
+    std::vector<int> touched_peers;                 /* peers with exports for the current query */
     void ensure_size(int ntask) {
-        if((int)nodes_per_peer.size() != ntask) nodes_per_peer.assign(ntask, std::vector<int>{});
+        if((int)nodes_per_peer.size() != ntask) {nodes_per_peer.assign(ntask, std::vector<int>{}); touched_peers.clear();}
     }
-    void clear_all() { for(auto &v : nodes_per_peer) v.clear(); }
+    void clear_all() { for(int p : touched_peers) {nodes_per_peer[p].clear();} touched_peers.clear(); }
     void add(int owner_task, int domain_node_index) {
-        nodes_per_peer[owner_task].push_back(domain_node_index);
+        std::vector<int> &nodes = nodes_per_peer[owner_task];
+        if(nodes.empty()) {touched_peers.push_back(owner_task);}
+        nodes.push_back(domain_node_index);
     }
+    /* The touched peers in ascending rank order: the order a scan over every rank gives. */
+    const std::vector<int> &sorted_touched_peers() { std::sort(touched_peers.begin(), touched_peers.end()); return touched_peers; }
 };
 
 /* SENDER walk (legacy mode==0): walk the local tree from the root; at every
