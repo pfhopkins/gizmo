@@ -926,6 +926,7 @@ KOKKOS_INLINE_FUNCTION void inject_cosmic_rays(double CR_energy_to_inject, doubl
         dir_to_use = B_dot_dir * Bdir; // launch -along- B, projected [with sign determined] by the intially-desired direction
 #else
         dir_to_use = {dir[0], dir[1], dir[2]}; // launch in the 'default' direction
+#endif
         dir_mag = dir_to_use.norm_sq();
         if(dir_mag <= 0) {dir_to_use[0]=0; dir_to_use[1]=0; dir_to_use[2]=1; dir_mag=1;}
         for(k=0;k<3;k++) {
@@ -933,7 +934,6 @@ KOKKOS_INLINE_FUNCTION void inject_cosmic_rays(double CR_energy_to_inject, doubl
             cr_atomic_add(&cell[target].CosmicRayFlux[k_CRegy][k], dflux); // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
             cr_atomic_add(&cell[target].CosmicRayFluxPred[k_CRegy][k], dflux); // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
         }
-#endif
     }
     return;
 }
