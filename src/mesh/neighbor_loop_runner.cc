@@ -2873,9 +2873,10 @@ static long long mode_d_worst_envelopes_per_active(void)
 static_assert(GX_MODE_D_STAGING_MAX_MESSAGE_BYTES <= (size_t) INT_MAX,
               "a Mode D staging message must fit one MPI byte count");
 
-/* The round arena: everything one round holds, carved out of one allocation for a capacity of C envelopes.  A
- * round's records number at most NODELISTLENGTH per envelope it may send, since an active's envelope bound is
- * never below its node count over NODELISTLENGTH. */
+/* The round arena: what one round holds per envelope or per record, carved out of one allocation for a capacity of
+ * C envelopes.  A round's records number at most NODELISTLENGTH per envelope it may send, since an active's envelope
+ * bound is never below its node count over NODELISTLENGTH.  What a round holds per ACTIVE (its run list) is a lease
+ * row sized by the call's actives: a round may hold many actives that export nothing. */
 static constexpr int MODE_D_ARENA_ROWS = 7;
 struct ModeDRoundArena {
     long long          capacity = 0;   /* C */
@@ -4987,7 +4988,8 @@ struct NlrModeDPacketWalk {
                 /* The chunk is full, or the traversal has finished: the team evaluates it one member at a time, thread
                    t taking records t, t + q, ...; thread 0 then adds the threads' partial results to the member's own in
                    thread order, so the sum is the same on every run. */
-                if(ctr[DEVICE_PACKET_CTR_RECORDS] > 0 && (chunk_full || ctr[DEVICE_PACKET_CTR_DONE])) {
+                /* the record count is read only once the round's verdict says no walker is still adding to it */
+                if((chunk_full || ctr[DEVICE_PACKET_CTR_DONE]) && ctr[DEVICE_PACKET_CTR_RECORDS] > 0) {
                     const int *records = region<int>(scratch, plan.records);
                     const device_packet_mask_word_t *rmasks = region<device_packet_mask_word_t>(scratch, plan.record_masks);
                     typename Client::Accum *accums   = region<typename Client::Accum>(scratch, plan.accums);
