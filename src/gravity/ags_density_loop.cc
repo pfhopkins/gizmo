@@ -843,7 +843,7 @@ void ags_density(void)
 #ifdef AGS_ZETA_IN_FORCE
                 P[i].AGS_zeta = 1;   /* the pair sum is taken by AGSForce_calc, which multiplies it into what this pass stores */
 #endif
-                if(P[i].AGS_KernelRadius >= maxsoft) { P[i].AGS_zeta = 0; }
+                if((P[i].AGS_KernelRadius >= maxsoft) || (P[i].AGS_KernelRadius <= minsoft)) { P[i].AGS_zeta = 0; } /* radius held at a limit: it does not vary with the density, so no correction term */
 
                 double z0 = P[i].AGS_zeta * P[i].AGS_KernelRadius /   /* the pair sum carries its symmetrization factor */
                             (NUMDIMS * P[i].Mass * P[i].NumNgb /
