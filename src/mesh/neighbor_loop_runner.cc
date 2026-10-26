@@ -1457,7 +1457,7 @@ static void mode_b_remote_evaluate_into_buffer(
      * counted as export entries. All.CommChunkSize is the parameterfile chunk size. */
     constexpr size_t kReplyBytes = sizeof(ReplyEnvelope);
     const long long kEnvPairBytes = (long long)sizeof(Envelope) + (long long)kReplyBytes;
-    long long bunch = ((long long)All.CommChunkSize * 1024 * 1024) /
+    long long bunch = (long long) comm_chunk_bytes() /
                       (kEnvPairBytes > 0 ? kEnvPairBytes : 1);
     if(bunch < 1) bunch = 1;
 
@@ -1549,8 +1549,7 @@ static void mode_b_remote_evaluate_into_buffer(
         {
             xch.begin(queries_per_peer);
         }
-        const size_t group_budget_bytes =
-            (size_t)((double)All.CommChunkSize * 1024.0 * 1024.0);
+        const size_t group_budget_bytes = comm_chunk_bytes();
 
         std::vector<int> group_peers;
         std::vector<std::vector<Envelope>> group_queries;
@@ -3188,7 +3187,7 @@ static int mode_d_workspace_plan(long long num_active, size_t query_bytes, size_
     const size_t room = GX_MODE_D_STAGING_MAX_MESSAGE_BYTES - sizeof(ModeDSegmentHeader);
     if(query_bytes > room || reply_bytes > room) {*why = "one query or reply record is larger than a staging message"; return 1;}
     const long long pair_bytes  = (long long) query_bytes + (long long) reply_bytes;
-    const long long chunk_bytes = (long long) (All.CommChunkSize * 1024.0 * 1024.0);
+    const long long chunk_bytes = (long long) comm_chunk_bytes();
     plan->envelopes_per_round = chunk_bytes / pair_bytes;
     plan->worst_envelopes_per_active = mode_d_worst_envelopes_per_active();
     if(plan->worst_envelopes_per_active < 0) {*why = "its per-peer top-leaf tally could not be allocated"; return 1;}

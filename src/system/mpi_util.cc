@@ -72,7 +72,7 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
         return 0;
     }
     
-    size_t count_limit = (((long long)All.CommChunkSize)*1024LL * 1024LL) / size_sendtype;
+    size_t count_limit = comm_chunk_bytes() / size_sendtype;
     size_t count_limit_intmax = INT_MAX;
     if(count_limit_intmax < count_limit) {count_limit = count_limit_intmax;}
     
@@ -157,7 +157,7 @@ int MPI_Sendrecv_into_particle_storage(void *sendbuf0, size_t sendcount, MPI_Dat
         gizmo_fatal_hard_exit_reviewed(90002041, "REVIEWED_HARD_MID_PROTOCOL: staged particle-storage receive with send and "
                                        "receive types of different sizes", __FILE__, __LINE__, __FUNCTION__);
     }
-    size_t count_limit = (((long long)All.CommChunkSize) * 1024LL * 1024LL) / size_sendtype;
+    size_t count_limit = comm_chunk_bytes() / size_sendtype;
     if(count_limit > (size_t) INT_MAX) {count_limit = INT_MAX;}
     const size_t staging_limit = PARTICLE_RECEIVE_STAGING_BYTES / (size_t) size_recvtype;
     if(count_limit > staging_limit) {count_limit = staging_limit;}
