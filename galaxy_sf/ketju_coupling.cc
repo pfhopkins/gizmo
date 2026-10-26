@@ -2011,6 +2011,7 @@ static void scatter_results(KetjuRegion &reg)
                 if(info->is_collision) {
                     double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
                     KetjuCollisionEnergy += info->dE_collision / eu;
+#ifdef KJ_STAR_COLLISIONS
                     const ketju_extra_data &x1 = reg.extra_data[info->extra_index1], &x2 = reg.extra_data[info->extra_index2];
                     double age1 = evaluate_time_since_t_initial_in_Gyr(x1.BirthTime) * 1e9, age2 = evaluate_time_since_t_initial_in_Gyr(x2.BirthTime) * 1e9;
                     double rho_y = (age1 < age2) ? x1.FormDens : x2.FormDens; /* younger star's formation density */
@@ -2018,6 +2019,7 @@ static void scatter_results(KetjuRegion &reg)
                     printf("KETJU STAR COLLISION: ID %llu (M=%g) + ID %llu (M=%g) at t=%g, dE=%g sibling=%d dt_birth=%g yr (%g t_ff) age_younger=%g yr\n",
                            (unsigned long long)x1.ID, info->m1 / mu, (unsigned long long)x2.ID, info->m2 / mu, All.Time, info->dE_collision / eu,
                            (int)(x1.ID == x2.ID), fabs(age1 - age2), (tff_yr > 0) ? fabs(age1 - age2) / tff_yr : -1., DMIN(age1, age2));
+#endif
                     continue;
                 }
                 printf("KETJU BH MERGER [region]: m1=%g m2=%g -> m_rem=%g, chi1=%g chi2=%g -> chi_rem=%g, v_kick=%g\n",

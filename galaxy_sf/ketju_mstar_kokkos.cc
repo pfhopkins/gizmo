@@ -1,5 +1,5 @@
 /* KETJU default: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
- * (ketju-integrator/kokkos, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
+ * (submodule ketju-integrator, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -139,6 +139,9 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         q.max_tree_distance = o->max_tree_distance;
         q.max_step_count = o->max_step_count;
         q.star_star_softening = o->star_star_softening;
+        q.softening_kink_landing = o->softening_kink_landing;
+        q.softening_kink_eta = o->softening_kink_eta;
+        q.softening_kink_error_ratio = o->softening_kink_error_ratio;
         q.no_star_star_gravity = o->no_star_star_gravity;
         q.enable_bh_mergers = o->enable_bh_mergers;
         q.bh_merger_distance_in_Rs = o->bh_merger_distance_in_Rs;
@@ -196,6 +199,7 @@ void kj_mstar_run_integrator(struct ketju_system *R, double time_interval)
         /* counters accumulate over calls as in the C library */
         R->perf->successful_steps += (int)S.perf.successful_steps;
         R->perf->failed_steps += (int)S.perf.failed_steps;
+        R->perf->kink_landings += (int)S.perf.kink_landings;
         R->perf->total_work += S.perf.total_work;
         R->perf->relative_energy_error = S.perf.relative_energy_error;
         R->perf->time_mst += S.perf.t_mst;

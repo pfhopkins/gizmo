@@ -2,3 +2,7 @@
 	path = ketju-integrator
 	url = https://github.com/Ulli1991/ketju-integrator.git
 	branch = main
+[submodule "ketju-integrator-c"]
+	path = ketju-integrator-c
+	url = https://github.com/Ulli1991/ketju-integrator.git
+	branch = ketju-c
