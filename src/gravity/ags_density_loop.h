@@ -328,6 +328,7 @@ struct AgsDensitySpec {
     static constexpr const char *loop_name = "ags_density";
     static constexpr bool keeps_neighbour_mass_positive = true;   /* its only neighbour writes are the wakeup flags */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: only j-writes are gated atomic_max(wakeup)+atomic_or(need_wakeup), both order-invariant, no read-back */
+    static constexpr bool writeback_writes_only_own_particle = true;   /* the writeback writes nothing: after_iter writes the active's own P[i] fields */
 
     /* search_mode is ONEWAY: the legacy ags_density CSR builder used
      * NGB_SEARCH_ONEWAY, and the pair predicate is one-way (r < h_i only —
@@ -393,8 +394,9 @@ struct AgsDensitySpec {
     /* Empty Aux — the Spec contract requires the typedef but ags_density
      * has no per-call host-only aux buffers. Active state is read directly
      * from ctx.P[i] in load_active; per-iter convergence + final P[i]
-     * scatter happens inside after_iter on host (where P[] is accessible).
-     * apply_active_writeback is a no-op. */
+     * scatter happens inside after_iter (on the host, or on the device when a
+     * Mode D call iterates there: after_iter_body is device-callable and must
+     * stay so). apply_active_writeback is a no-op. */
     struct Aux { };
 
     static constexpr bool uses_ghost_write_detector = true;
@@ -552,7 +554,7 @@ struct AgsDensitySpec {
     }
 
     /* NO-OP for AgsDensitySpec. after_iter writes post-processed per-iter
-     * values directly to P[i] on host (legacy semantics — see
+     * values directly to P[i], on the host or the device (legacy semantics — see
      * ags_density_loop.cc::after_iter). No aux buffer; caller's post-runner
      * finalize pass reads P[i] directly. Declared because the runner
      * contract requires the hook to exist. */
@@ -601,14 +603,23 @@ struct AgsDensitySpec {
     static IterResult after_iter      (const AfterIterContext<AgsDensitySpec>& ctx,
                                         const AccumData&                       accum);
 
+    /* The entry point a device iteration calls for each active: the body below. */
+    KOKKOS_INLINE_FUNCTION
+    static IterResult after_iter_device(const NlrDeviceIterContext<AgsDensitySpec>& c, const AccumData& accum)
+    {
+        return after_iter_body(c.P, c.i, c.iter_index, c.h_search_current, c.scalars, c.scratch, accum, c.this_task, c.stop_code);
+    }
+
     /* after_iter_body -- AGS kernel-radius convergence for one active (contract at
      * AgsDensitySpec::after_iter in ags_density_loop.cc). Host and device both run this one
      * body. It writes the active's own AGS fields in P[i] through the same MyFloat stores as
-     * always, and re-reads them where it did before. */
+     * always, and re-reads them where it did before. A condition that must stop the run sets
+     * stop_code (the caller requests the stop: the host at once, a device iteration once every
+     * rank has agreed on it). */
     KOKKOS_INLINE_FUNCTION
     static IterResult after_iter_body(struct particle_data *P, int i, int iter, double current_h,
                                       const CallScalars& scalars, IterScratch& scratch,
-                                      const AccumData& accum, int this_task)
+                                      const AccumData& accum, int this_task, int &stop_code)
     {
 
         /* (0) Iter-0 initialization of IterScratch. The runner zero-memsets
@@ -899,8 +910,8 @@ struct AgsDensitySpec {
                 }
             } else if(scratch.Right == 0 && scratch.Left == 0) {
                 printf("AGS: Right==0 && Left==0 && P[%d].AGS_KernelRadius=%g (task=%d)\n", i, current_h, this_task); KOKKOS_IF_ON_HOST((fflush(stdout);))
-                endrun(90001010);
-                return IterResult{IterStatus::Converged, current_h};   /* graceful: bad-stop set; stop iterating this active with the last valid AGS radius; drains at runner completion -> phase poll (per-active: NO immediate collective) */
+                stop_code = 90001010;
+                return IterResult{IterStatus::Converged, current_h};   /* stop iterating this active with the last valid AGS radius; the caller requests the stop */
             } else if(scratch.Right == 0 && scratch.Left > 0) {
                 /* No upper bound — geometric extrapolation (rkern.cc:336-364). */
                 double fac_lim;
@@ -962,9 +973,6 @@ struct AgsDensitySpec {
 
         return IterResult{IterStatus::AdjustRadius, new_h};
     }
-
-    static void       after_iter_global(const neighbor_loop_args&              args,
-                                         const struct NlrIterDriver<AgsDensitySpec>& drv);
 
     /* ====================================================================
      * ENGINE APPARATUS

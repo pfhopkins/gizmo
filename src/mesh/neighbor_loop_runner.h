@@ -1868,17 +1868,43 @@ struct NlrIterDriver {
  *   - scalars is a CONST REFERENCE to the driver-owned CallScalars (whole-
  *     call lifetime; never a stack temporary).
  *   - args is the driver's same-call neighbor_loop_args_iterative reference.
+ *   - call_slot is the active's position in the call's active_list (the subgroup's
+ *     first position plus subgroup_slot): the index of any call-level per-active
+ *     table the Spec stages in its DeviceContext.
+ *   - device_ctx is the driver's DeviceContext (whole-call lifetime).
  * ========================================================================== */
 template <typename Spec>
 struct AfterIterContext {
     const neighbor_loop_args_iterative& args;
     int    subgroup_index;                           /* 0 .. args.num_subgroups - 1 */
     int    subgroup_slot;                            /* 0 .. subgroups[subgroup_index].num_active_local - 1 */
+    int    call_slot;                                /* position in args.active_list */
     int    i;                                        /* particle_data index */
     int    iter_index;                               /* shared across all subgroups in this iter */
     double h_search_current;                         /* value snapshot; mutate via IterResult only */
     const typename Spec::CallScalars& scalars;       /* driver-owned; whole-call lifetime */
     typename Spec::IterScratch&       scratch;       /* mutable; PERSISTS across iters (allocated/zeroed once at iter 0) */
+    const typename Spec::DeviceContext& device_ctx;  /* driver-owned; whole-call lifetime */
+};
+
+/* NlrDeviceIterContext<Spec> -- the device twin of AfterIterContext, passed to Spec::after_iter_device when a Mode D call
+ * keeps its iteration on the device.  The same identity and lifetimes, with the particle arrays in place of the host
+ * argument view.  A condition that must stop the run is reported through stop_code (non-zero), which every rank agrees
+ * on after the iteration: a device body never calls endrun. */
+template <typename Spec>
+struct NlrDeviceIterContext {
+    struct particle_data *P;
+    struct gas_cell_data *CellP;
+    int    subgroup_index;
+    int    call_slot;
+    int    i;
+    int    iter_index;
+    double h_search_current;
+    const typename Spec::CallScalars&   scalars;
+    typename Spec::IterScratch&         scratch;
+    const typename Spec::DeviceContext& device_ctx;
+    int    this_task;
+    int   &stop_code;
 };
 
 /*! The argument view a loop is about to hand to a Spec hook or to a device context must

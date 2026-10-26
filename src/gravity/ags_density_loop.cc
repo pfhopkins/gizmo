@@ -14,7 +14,6 @@
  *   - merge_accum (Mode B remote peer merge — manifest pattern)
  *   - after_iter (legacy convergence test + bisection; also syncs
  *     P[i].AGS_KernelRadius every iter)
- *   - after_iter_global (iter > 10 print only)
  *   - ghost-writeback bundle manifest (PARTICLE_MAX wakeup) + lifecycle
  *
  * Replaces the now-deleted gravity/ags_density_gpu.cc (retired in the
@@ -226,28 +225,11 @@ void AgsDensitySpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 IterResult AgsDensitySpec::after_iter(const AfterIterContext<AgsDensitySpec>& ctx,
                                        const AccumData&                       accum)
 {
-    return after_iter_body(P, ctx.i, ctx.iter_index, ctx.h_search_current,
-                           ctx.scalars, ctx.scratch, accum, ThisTask);
-}
-
-/* after_iter_global — host-only, no MPI (TRAP 7).
- *
- * Legacy `ags_density` printed "AGS-ngb iteration N: need to repeat for K
- * particles" at iter > 10 (rkern.cc:413). The runner calls
- * after_iter_global BEFORE the per-subgroup MPI_Allreduce,
- * so `drv.global_active_total` here is the PREVIOUS iter's count, not the
- * current iter's. Rather than print a misleading number or duplicate
- * the Allreduce here (would be a TRAP-7 violation), we drop the count
- * from the message and just emit a "still iterating" marker. The legacy
- * exact count is lost from the AGS port's per-iter log; not load-bearing
- * for physics. */
-void AgsDensitySpec::after_iter_global(const neighbor_loop_args& /*args*/,
-                                        const NlrIterDriver<AgsDensitySpec>& drv)
-{
-    const int iter = drv.iter_index;
-    if(iter > 10 && ThisTask == 0) {
-        printf("AGS-ngb iteration %d: still iterating.\n", iter);
-    }
+    int stop_code = 0;
+    const IterResult r = after_iter_body(P, ctx.i, ctx.iter_index, ctx.h_search_current,
+                                         ctx.scalars, ctx.scratch, accum, ThisTask, stop_code);
+    if(stop_code) {endrun(stop_code);}
+    return r;
 }
 
 /* ============================================================================

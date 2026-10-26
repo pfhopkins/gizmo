@@ -187,13 +187,11 @@ struct DMDispersionSpec {
     /* after_iter_body -- bisection convergence + radius update for one active (contract at
      * DMDispersionSpec::after_iter in dm_dispersion_loop.cc). Host and device both run this
      * one body. Writes only scratch. */
-    /* The entry point a device iteration calls for each active, in the runner's one signature: the body below. */
+    /* The entry point a device iteration calls for each active: the body below. */
     KOKKOS_INLINE_FUNCTION
-    static IterResult after_iter_device(struct particle_data *P, const struct gas_cell_data *, int i, int iter,
-                                        double h_search_current, const CallScalars& cs, IterScratch& scratch,
-                                        const AccumData& accum, int this_task, int &stop_code)
+    static IterResult after_iter_device(const NlrDeviceIterContext<DMDispersionSpec>& c, const AccumData& accum)
     {
-        return after_iter_body(P, i, iter, h_search_current, cs, scratch, accum, this_task, stop_code);
+        return after_iter_body(c.P, c.i, c.iter_index, c.h_search_current, c.scalars, c.scratch, accum, c.this_task, c.stop_code);
     }
 
     /* A condition that must stop the run sets stop_code; the caller requests the stop. */

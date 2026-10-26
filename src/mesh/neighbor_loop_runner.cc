@@ -1172,13 +1172,14 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
 
 /* Mode D's device-resident exchange (defined with the device walks below) and the call storage it runs in.  The
  * exchange returns true when it ended in a stop every rank agreed on.  Its actives come from the host (args, radii)
- * or, for a call iterating on the device, from the device list of slots still iterating (ModeDDeviceQueries), and
- * its results go to accums_out on the host, or stay in the call's storage when accums_out is null. */
+ * or, for a call iterating on the device, from one subgroup's segment of the device list of call slots still
+ * iterating (ModeDDeviceQueries), and its results go to accums_out on the host, or stay in the call's storage --
+ * at the segment's offset for a device-iterated call -- when accums_out is null. */
 struct ModeDCallLease;
 struct ModeDDeviceQueries {
-    const int    *live;             /* [n_live] the call slots still iterating */
+    const int    *live;             /* [n_live] the call slots of one subgroup still iterating */
     int           n_live;
-    int           call_slot_base;   /* the subgroup's first slot in the call's staging */
+    int           result_offset;    /* where that subgroup's results go in the call's result rows */
     const int    *slot_index;       /* [call slots] each slot's particle */
     const double *slot_radius;      /* [call slots] each slot's search radius */
 };
@@ -2846,6 +2847,7 @@ struct ModeDWorkspacePlan {
     long long device_bytes;                  /* what admission allocates on the device */
     long long iteration_actives;             /* actives whose iteration state the call keeps on the device (0: the host keeps it) */
     long long scratch_bytes;                 /* one active's iteration scratch */
+    long long iteration_subgroups;           /* the subgroups of a call iterating on the device (one live count each) */
 };
 
 /* a * b, or -1 when either is negative or the product leaves 64 bits. */
@@ -3023,15 +3025,17 @@ struct ModeDCallLease {
 
     /* Device, per active of the call, when the call iterates on the device (plan.iteration_actives): each active's
      * particle, search radius, iteration scratch and latest result, by its slot in the call; the slots still iterating,
-     * twice (this iteration's list and the next one's); a keep flag per listed slot, and the next list's length. */
+     * twice (this iteration's list and the next one's), each subgroup's entries from its first call slot; a keep flag
+     * per listed slot; the stop code and each subgroup's next length. */
     int       *iter_slot_index      = nullptr;
     double    *iter_slot_radius     = nullptr;
     void      *iter_slot_scratch    = nullptr;
     void      *iter_slot_accum      = nullptr;
     int       *iter_live[2]         = {nullptr, nullptr};
     int       *iter_keep            = nullptr;
-    int       *iter_count           = nullptr;   /* [2]: the next list's length, the iteration's stop code */
-    int        iter_on = 0, iter_which = 0, iter_n_live = 0;   /* host: whether the device holds the state, which list is current, its length */
+    int       *iter_count           = nullptr;   /* [1 + subgroups]: the iteration's stop code, then each subgroup's next length */
+    int        iter_on = 0, iter_which = 0;      /* host: whether the device holds the state, which list is current */
+    std::vector<int> iter_counts_host;           /* host: iter_count read back (reserved at admission) */
 
     ModeDSegmentStream stream;   /* the exchange, reused for every round of the call */
     /* Host, reserved at admission so the exchange allocates nothing: per-peer counts and offsets of a round, and
@@ -3074,7 +3078,7 @@ struct ModeDCallLease {
         rows[k++] = {(void **) &iter_live[0],          bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_live"};
         rows[k++] = {(void **) &iter_live[1],          bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_live"};
         rows[k++] = {(void **) &iter_keep,             bytes(ni, (long long) sizeof(int)),        "ngl_moded_iter_keep"};
-        rows[k++] = {(void **) &iter_count,            bytes(ni > 0 ? 2 : 0, (long long) sizeof(int)), "ngl_moded_iter_count"};
+        rows[k++] = {(void **) &iter_count,            bytes(ni > 0 ? 1 + plan.iteration_subgroups : 0, (long long) sizeof(int)), "ngl_moded_iter_count"};
         for(int m = 0; m < 2; m++) {
             rows[k++] = {&group_queries[m],            bytes(s, (long long) query_bytes),         "ngl_moded_group_queries"};
             rows[k++] = {&group_replies[m],            bytes(s, (long long) reply_bytes),         "ngl_moded_group_replies"};
@@ -3104,7 +3108,8 @@ struct ModeDCallLease {
         if(any) {Kokkos::fence("mode_d_call_lease_release");}
         for(int k = 0; k < MODE_D_LEASE_BUFFERS; k++) {mode_d_pool_keep(k, *rows[k].slot, row_bytes[k]); *rows[k].slot = nullptr; row_bytes[k] = 0;}
         batch_capacity[0] = batch_capacity[1] = 0;
-        iter_on = 0; iter_which = 0; iter_n_live = 0;
+        iter_on = 0; iter_which = 0;
+        std::vector<int>().swap(iter_counts_host);
         flags = nullptr;
         release_arena();
         stream.release_storage();
@@ -3221,6 +3226,7 @@ static int mode_d_lease_allocate(ModeDCallLease *lease, long long num_active, si
     try {
         lease->peer_counts.reserve((size_t) NTask + 1 + MODE_D_FLAGS); lease->peer_offsets.reserve((size_t) NTask + 1);
         for(int m = 0; m < 2; m++) {lease->batch_segments[m].reserve((size_t) lease->plan.segment_records);}
+        if(lease->plan.iteration_actives > 0) {lease->iter_counts_host.reserve((size_t) (1 + lease->plan.iteration_subgroups));}
     } catch(const std::bad_alloc &) {ok = 0;}
     ModeDLeaseBuffer rows[MODE_D_LEASE_BUFFERS];
     lease->buffers(rows, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
@@ -3267,7 +3273,7 @@ enum class ModeDAdmission { Admitted, StorageRefused, TreeRefused };
  * latch is the same on every rank, so that refusal needs no vote); likewise a refused map, until the next build. */
 static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, size_t active_bytes, size_t accum_bytes,
                                    size_t query_bytes, size_t reply_bytes, const char *caller,
-                                   bool iterates_on_device, size_t scratch_bytes, int host_ok)
+                                   bool iterates_on_device, size_t scratch_bytes, int num_subgroups, int host_ok)
 {
     if(gx_mode_d_staging_unavailable()) {return ModeDAdmission::StorageRefused;}
     const char *why = nullptr;
@@ -3276,6 +3282,7 @@ static ModeDAdmission mode_d_admit(ModeDCallLease *lease, long long num_active, 
     if(ok && !host_ok) {why = "its host per-slot state could not be allocated"; ok = 0;}
     lease->plan.iteration_actives = iterates_on_device ? num_active : 0;
     lease->plan.scratch_bytes = (long long) scratch_bytes;
+    lease->plan.iteration_subgroups = iterates_on_device ? num_subgroups : 0;
     if(ok) {
         lease->plan.device_bytes = mode_d_lease_device_bytes(lease, num_active, active_bytes, accum_bytes, query_bytes, reply_bytes);
         if(lease->plan.device_bytes < 0) {why = "the call's storage size leaves 64-bit range"; ok = 0;}
@@ -3349,26 +3356,25 @@ struct nlr_supports_subgroups<Spec, std::void_t<typename Spec::SupportsSubgroups
     : Spec::SupportsSubgroups {};
 
 /* Whether a multi-rank Mode D call of this loop iterates on the device: its after_iter has the device entry point
- * (Spec::after_iter_device), it has no host hook that runs after every iteration over the whole active set
- * (after_iter_global reads the host's per-active state), and it has one subgroup (the device state is one list). */
+ * (Spec::after_iter_device, called with NlrDeviceIterContext), and it declares no host step that runs after every
+ * iteration over the whole active set (after_iter_global): a Spec that needs one keeps its iteration on the host. */
 template <typename Spec, typename = void>
 struct nlr_spec_has_after_iter_device : std::false_type {};
 template <typename Spec>
 struct nlr_spec_has_after_iter_device<Spec, std::void_t<decltype(&Spec::after_iter_device)>> : std::true_type {};
 template <typename Spec>
 constexpr bool nlr_mode_d_iterates_on_device_v =
-    nlr_spec_has_after_iter_device<Spec>::value && !nlr_spec_has_after_iter_global_v<Spec> && !nlr_supports_subgroups<Spec>::value &&
-    nlr_spec_writeback_writes_only_own_particle_v<Spec>;
+    nlr_spec_has_after_iter_device<Spec>::value && !nlr_spec_has_after_iter_global_v<Spec>;
 
 template <typename Spec>
-static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active, int host_ok = 1)
+static ModeDAdmission mode_d_admit_for(ModeDCallLease *lease, int num_active, int num_subgroups = 1, int host_ok = 1)
 {
     size_t scratch_bytes = 0;
     if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {scratch_bytes = sizeof(typename Spec::IterScratch);}
     return mode_d_admit(lease, num_active, sizeof(typename Spec::ActiveData), sizeof(typename Spec::AccumData),
                         sizeof(NlrQueryEnvelope<typename Spec::ActiveData>),
                         sizeof(NlrReplyEnvelope<typename Spec::AccumData>), Spec::loop_name,
-                        nlr_mode_d_iterates_on_device_v<Spec>, scratch_bytes, host_ok);
+                        nlr_mode_d_iterates_on_device_v<Spec>, scratch_bytes, num_subgroups, host_ok);
 }
 
 template <typename Spec>
@@ -5681,7 +5687,7 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     const int S = (int) L.plan.segment_records;
     const GxDeviceTreeView tree = L.tree;
     ActiveData *snapshot = (ActiveData *) L.query_snapshot;
-    AccumData  *accums   = (AccumData *) L.active_accums;
+    AccumData  *accums   = (AccumData *) L.active_accums + (device_queries ? device_queries->result_offset : 0);
     int        *flags    = L.flags;
     GIZMO_GPU_ENSURE_ALL_FRESH();
     const Kokkos::DefaultExecutionSpace &copy_space = gx_mode_d_copy_space();
@@ -5691,10 +5697,9 @@ static bool mode_d_exchange(ModeDCallLease &L, const neighbor_loop_args& args, c
     if(N > 0 && device_queries) {
         const int *live = device_queries->live, *index = device_queries->slot_index;
         const double *radius = device_queries->slot_radius;
-        const int base = device_queries->call_slot_base;
         gizmo_gpu_kernel_launch("nlr_mode_d_build_queries", N, KOKKOS_LAMBDA(int k) {
             const int slot = live[k];
-            snapshot[k] = Spec::load_active(ctx, base + slot, index[slot], radius[slot], cs);
+            snapshot[k] = Spec::load_active(ctx, slot, index[slot], radius[slot], cs);
         });
     } else if(N > 0) {
         mode_d_copy_to_device(L.active_index, args.active_list, (size_t) N * sizeof(int));
@@ -6626,22 +6631,30 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
 /* ============================================================================
  * A multi-rank Mode D call of a loop that iterates on the device (nlr_mode_d_iterates_on_device_v) keeps each
  * active's iteration state in the call's device storage from its first iteration to its last: the radius, the
- * scratch, the latest result, and the list of slots still iterating.  Per iteration the exchange builds its queries
- * from that list and leaves its results on the device; after_iter runs on the device for every listed slot, the
- * slots that iterate again are compacted, in order, into the other list, and the host reads only how many there are
- * -- the count every rank reduces anyway.  The host's copy of the state (the driver's per-active arrays) is brought
- * up to date only when the call hands over to Mode B or finishes, where the host reads it.
+ * scratch, the latest result, and the lists of slots still iterating.  All of it is by call slot (the ordered
+ * concatenation of the subgroups), and each subgroup's entries of a list start at the subgroup's first call slot, so a
+ * subgroup's segment never moves as the lists shrink.  Per iteration each subgroup's exchange builds its queries from
+ * its segment and leaves its results at the same offset; after_iter runs on the device for every listed slot, the
+ * slots that iterate again are compacted, in order, within their segment of the other list, and the host reads only
+ * how many there are in each subgroup -- the counts every rank reduces anyway.  The host's copy of the state (the
+ * driver's per-active arrays) is brought up to date only when the call hands over to Mode B or finishes, where the host
+ * reads it.  Each subgroup's live count is the driver's active_set_size[sg], kept current on both sides.
  * ========================================================================== */
 template <typename Spec>
 static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
 {
     ModeDCallLease &L = *drv.mode_d_lease;
-    const int n = drv.active_set_size[0];
-    L.iter_on = 1; L.iter_which = 0; L.iter_n_live = (n > 0) ? n : 0;
+    const int n = drv.args.num_active;
+    L.iter_on = 1; L.iter_which = 0;
     if(n <= 0) {return;}
-    mode_d_copy_to_device(L.iter_slot_index, drv.args.subgroups[0].active_indices, (size_t) n * sizeof(int));
-    mode_d_copy_to_device(L.iter_slot_radius, drv.radii_uvm[0], (size_t) n * sizeof(double));
-    /* the scratch starts zeroed and the list in slot order, as the driver's own copies do: set where they live */
+    for(int sg = 0; sg < drv.args.num_subgroups; sg++) {
+        const int m = drv.active_set_size[sg], base = drv.call_slot_base[sg];
+        if(m <= 0 || !drv.radii_uvm[sg]) {continue;}
+        mode_d_copy_to_device(L.iter_slot_index + base, drv.args.subgroups[sg].active_indices, (size_t) m * sizeof(int));
+        mode_d_copy_to_device(L.iter_slot_radius + base, drv.radii_uvm[sg], (size_t) m * sizeof(double));
+    }
+    /* the scratch starts zeroed and every slot listed in its own position, as the driver's own copies do: set where
+       they live */
     char *scratch = (char *) L.iter_slot_scratch; int *live = L.iter_live[0];
     const size_t scratch_bytes = (size_t) n * sizeof(typename Spec::IterScratch);
     Kokkos::parallel_for("nlr_mode_d_iteration_begin", Kokkos::RangePolicy<>(0, (scratch_bytes > (size_t) n) ? (long long) scratch_bytes : (long long) n),
@@ -6654,29 +6667,33 @@ static void nlr_mode_d_iteration_begin(NlrIterDriver<Spec>& drv)
 /* The end of a call's device iteration: at its last iteration, or where its remainder goes on to Mode B.  Every slot's
  * state comes off the device once, in segments through two slabs of the call's pinned staging, each segment's copy
  * running while the host works through the one before.  A slot that is still iterating goes back into the driver's
- * arrays (radius, scratch, latest result), for Mode B to continue or for the final writeback at max_iters; every other
- * slot has its result now and is handed straight to the Spec's writeback (several host threads; the Spec writes only
- * that active's own rows), and is marked in slot_state (2) so the call's final writeback passes over it. */
+ * arrays (radius, scratch, latest result), for Mode B to continue or for the final writeback at max_iters.  Every other
+ * slot has its result now: a Spec whose writeback writes only that active's own rows has it handed straight to the
+ * writeback (several host threads) and marked in slot_state (2), so the call's final writeback passes over it; any
+ * other Spec's slots go back into the driver's arrays too, for the final writeback in active order. */
 template <typename Spec>
 static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsigned char>& slot_state)
 {
     using AccumData   = typename Spec::AccumData;
     using IterScratch = typename Spec::IterScratch;
+    constexpr bool early_writeback = nlr_spec_writeback_writes_only_own_particle_v<Spec>;
     ModeDCallLease &L = *drv.mode_d_lease;
     if(!L.iter_on) {return;}
     L.iter_on = 0;
-    const int n_all = drv.args.subgroups[0].num_active_local, n_live = L.iter_n_live;
-    drv.active_set_size[0] = n_live;
-    if(n_all <= 0 || !drv.radii_uvm[0]) {return;}
+    const int n_all = drv.args.num_active, n_sg = drv.args.num_subgroups;
+    if(n_all <= 0) {return;}
     /* which slots are still iterating (the storage was reserved before admission) */
     if(slot_state.capacity() < (size_t) n_all) {
         gizmo_fatal_hard_exit_reviewed(90009004, "REVIEWED_HARD_MID_PROTOCOL: a Mode D call's per-slot state was not reserved at admission",
                                        __FILE__, __LINE__, __FUNCTION__);
     }
     slot_state.assign((size_t) n_all, 0);
-    if(n_live > 0) {
-        mode_d_copy_to_host(drv.active_set_uvm[0], L.iter_live[L.iter_which], (size_t) n_live * sizeof(int));
-        for(int k = 0; k < n_live; k++) {slot_state[(size_t) drv.active_set_uvm[0][k]] = 1;}
+    for(int sg = 0; sg < n_sg; sg++) {
+        const int m = drv.active_set_size[sg], base = drv.call_slot_base[sg];
+        if(m <= 0) {continue;}
+        int *list = drv.active_set_uvm[sg];
+        mode_d_copy_to_host(list, L.iter_live[L.iter_which] + base, (size_t) m * sizeof(int));
+        for(int k = 0; k < m; k++) {slot_state[(size_t) list[k]] = 1; list[k] -= base;}   /* call slot -> the subgroup's slot */
     }
     /* a segment: its slots' results, then radii, then scratch, each part on a 64-byte boundary */
     auto up64 = [](size_t b) {return (b + 63) & ~(size_t) 63;};
@@ -6697,10 +6714,6 @@ static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsig
         mode_d_copy_async_to_host(copy_space, b + off_radius, dev_radius + s0, (size_t) m * sizeof(double));
         mode_d_copy_async_to_host(copy_space, b + off_scratch, dev_scratch + s0, (size_t) m * sizeof(IterScratch));
     };
-    neighbor_loop_args sub = drv.args;
-    sub.active_list = drv.args.subgroups[0].active_indices;
-    sub.num_active  = n_all;
-    const int *active_indices = drv.args.subgroups[0].active_indices;
     const int n_seg = (n_all + seg_slots - 1) / seg_slots;
     const int nthreads = nlr_modeb_omp_nthreads();
     issue(0);
@@ -6713,86 +6726,112 @@ static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsig
         const double *rad = (const double *) (b + off_radius);
         const IterScratch *scr = (const IterScratch *) (b + off_scratch);
         unsigned char *state = slot_state.data();
+        /* the segment's slots, subgroup by subgroup: each one's part of it, with that subgroup's argument view, as its
+           writeback is called everywhere else */
+        for(int sg = 0; sg < n_sg; sg++) {
+            const int base = drv.call_slot_base[sg];
+            const int n_here = (drv.args.subgroups[sg].num_active_local > 0) ? drv.args.subgroups[sg].num_active_local : 0;
+            const int lo = (s0 > base) ? s0 : base, hi = (s0 + m < base + n_here) ? s0 + m : base + n_here;
+            if(lo >= hi || !drv.radii_uvm[sg]) {continue;}
+            neighbor_loop_args sub = drv.args;
+            sub.active_list = drv.args.subgroups[sg].active_indices; sub.num_active = n_here;
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static) num_threads(nthreads) if(nlr_modeb_use_omp(m, nthreads))
+            #pragma omp parallel for schedule(static) num_threads(nthreads) if(nlr_modeb_use_omp(hi - lo, nthreads))
 #endif
-        for(int k = 0; k < m; k++) {
-            const int slot = s0 + k;
-            if(state[slot] == 1) {
-                drv.radii_uvm[0][slot] = rad[k];
-                drv.scratch_uvm[0][slot] = scr[k];
-                drv.accum_uvm[0][slot] = acc[k];   /* read by the final writeback if the call ends at max_iters */
-                continue;
+            for(int slot = lo; slot < hi; slot++) {
+                const int k = slot - s0, sl = slot - base;
+                if(state[slot] == 1 || !early_writeback) {
+                    drv.radii_uvm[sg][sl] = rad[k];
+                    drv.scratch_uvm[sg][sl] = scr[k];
+                    drv.accum_uvm[sg][sl] = acc[k];   /* read by Mode B, or by the final writeback */
+                    continue;
+                }
+                if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
+                    Spec::apply_active_writeback_iterative(sub, sl, sub.active_list[sl], acc[k], rad[k], scr[k]);
+                } else {
+                    Spec::apply_active_writeback(sub, sl, sub.active_list[sl], acc[k]);
+                }
+                state[slot] = 2;
             }
-            if constexpr (nlr_spec_has_apply_active_writeback_iterative_v<Spec>) {
-                Spec::apply_active_writeback_iterative(sub, slot, active_indices[slot], acc[k], rad[k], scr[k]);
-            } else {
-                Spec::apply_active_writeback(sub, slot, active_indices[slot], acc[k]);
-            }
-            state[slot] = 2;
         }
         copy_space.fence("mode_d_iteration_end_segment");
     }
 }
 
-/* One iteration's exchange, the queries and results staying on the device. */
+/* One subgroup's exchange of an iteration: its segment of the live list, queries and results staying on the device,
+ * the results at the segment's offset. */
 template <typename Spec>
 static void nlr_iter_dispatch_subgroup_mode_d_on_device(NlrIterDriver<Spec>& drv, int sg)
 {
     ModeDCallLease &L = *drv.mode_d_lease;
-    const ModeDDeviceQueries dq{L.iter_live[L.iter_which], L.iter_n_live, drv.call_slot_base[sg], L.iter_slot_index, L.iter_slot_radius};
+    const int base = drv.call_slot_base[sg], m = drv.active_set_size[sg];
+    const ModeDDeviceQueries dq{L.iter_live[L.iter_which] + base, m, base, L.iter_slot_index, L.iter_slot_radius};
     neighbor_loop_args sub = drv.args;
-    sub.active_list = nullptr; sub.active_call_slot = nullptr; sub.num_active = L.iter_n_live;
+    sub.active_list = nullptr; sub.active_call_slot = nullptr; sub.num_active = m;
     mode_d_exchange<Spec>(L, sub, nullptr, drv.cs, drv.ctx, (unsigned int) drv.args.subgroups[sg].j_type_bitmask, nullptr, &dq);
 }
 
-/* after_iter for every listed slot, then the slots that iterate again, in order, into the other list.  Returns the
- * iteration's stop code (0: none): the largest any slot raised, for the caller to agree on with every rank. */
+/* after_iter for every listed slot, then the slots that iterate again, in order, into their segment of the other list:
+ * one launch of each per subgroup with live slots, and one read of the counts.  Returns the iteration's stop code (0:
+ * none): the largest any slot raised, for the caller to agree on with every rank. */
 template <typename Spec>
 static int nlr_mode_d_after_iter_on_device(NlrIterDriver<Spec>& drv)
 {
     using AccumData   = typename Spec::AccumData;
     using IterScratch = typename Spec::IterScratch;
     ModeDCallLease &L = *drv.mode_d_lease;
-    const int n = L.iter_n_live;
-    int n_next = 0, stop_code = 0;
-    if(n > 0) {
-        const int *cur = L.iter_live[L.iter_which];
-        int *next = L.iter_live[1 - L.iter_which], *keep = L.iter_keep, *count = L.iter_count;
+    const int n_sg = drv.args.num_subgroups, n_counts = 1 + n_sg;
+    int any = 0, stop_code = 0;
+    for(int sg = 0; sg < n_sg; sg++) {any |= (drv.active_set_size[sg] > 0);}
+    if(any) {
+        const int *cur_all = L.iter_live[L.iter_which];
+        int *next_all = L.iter_live[1 - L.iter_which], *keep_all = L.iter_keep;
+        int *count = L.iter_count;   /* [0] the stop code, [1 + sg] subgroup sg's next length */
         const int *index = L.iter_slot_index;
         double *radius = L.iter_slot_radius;
         IterScratch *scratch = (IterScratch *) L.iter_slot_scratch;
         AccumData *slot_accum = (AccumData *) L.iter_slot_accum;
-        const AccumData *accums = (const AccumData *) L.active_accums;
+        const AccumData *accums_all = (const AccumData *) L.active_accums;
         struct particle_data *Pp = drv.args.P;
         struct gas_cell_data *Cp = drv.args.CellP;
         const typename Spec::CallScalars cs = drv.cs;
+        const typename Spec::DeviceContext dctx = drv.ctx;
         const int iter = drv.iter_index, this_task = ThisTask;
-        Kokkos::parallel_for("nlr_mode_d_iter_flags_clear", Kokkos::RangePolicy<>(0, 2), KOKKOS_LAMBDA(int c) {count[c] = 0;});
-        gizmo_gpu_kernel_launch("nlr_mode_d_after_iter", n, KOKKOS_LAMBDA(int k) {
-            const int slot = cur[k];
-            const AccumData acc = accums[k];
-            slot_accum[slot] = acc;
-            int code = 0;
-            const IterResult res = Spec::after_iter_device(Pp, Cp, index[slot], iter, radius[slot], cs, scratch[slot], acc, this_task, code);
-            if(res.status == IterStatus::AdjustRadius) {radius[slot] = res.new_h_search;}
-            else if(res.status != IterStatus::Converged && res.status != IterStatus::NeedsMore) {code = 81206;}   /* an unknown status is a Spec defect */
-            if(code) {Kokkos::atomic_max(&count[1], code);}
-            keep[k] = (res.status == IterStatus::NeedsMore || res.status == IterStatus::AdjustRadius) ? 1 : 0;
-        });
-        Kokkos::parallel_scan("nlr_mode_d_compact", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int k, int &before, const bool last) {
-            if(last) {
-                if(keep[k]) {next[before] = cur[k];}
-                if(k == n - 1) {*count = before + keep[k];}
-            }
-            before += keep[k];
-        });
-        int both[2] = {0, 0};
-        mode_d_copy_to_host(both, count, sizeof(both));
-        n_next = both[0]; stop_code = both[1];
+        Kokkos::parallel_for("nlr_mode_d_iter_counts_clear", Kokkos::RangePolicy<>(0, n_counts), KOKKOS_LAMBDA(int c) {count[c] = 0;});
+        for(int sg = 0; sg < n_sg; sg++) {
+            const int n = drv.active_set_size[sg], base = drv.call_slot_base[sg];
+            if(n <= 0) {continue;}
+            const int *cur = cur_all + base;
+            int *next = next_all + base, *keep = keep_all + base;
+            const AccumData *accums = accums_all + base;
+            gizmo_gpu_kernel_launch("nlr_mode_d_after_iter", n, KOKKOS_LAMBDA(int k) {
+                const int slot = cur[k];
+                const AccumData acc = accums[k];
+                slot_accum[slot] = acc;
+                int code = 0;
+                const NlrDeviceIterContext<Spec> c{Pp, Cp, sg, slot, index[slot], iter, radius[slot], cs, scratch[slot], dctx, this_task, code};
+                const IterResult res = Spec::after_iter_device(c, acc);
+                if(res.status == IterStatus::AdjustRadius) {radius[slot] = res.new_h_search;}
+                else if(res.status != IterStatus::Converged && res.status != IterStatus::NeedsMore) {code = 81206;}   /* an unknown status is a Spec defect */
+                if(code) {Kokkos::atomic_max(&count[0], code);}
+                keep[k] = (res.status == IterStatus::NeedsMore || res.status == IterStatus::AdjustRadius) ? 1 : 0;
+            });
+            Kokkos::parallel_scan("nlr_mode_d_compact", Kokkos::RangePolicy<>(0, n), KOKKOS_LAMBDA(int k, int &before, const bool last) {
+                if(last) {
+                    if(keep[k]) {next[before] = cur[k];}
+                    if(k == n - 1) {count[1 + sg] = before + keep[k];}
+                }
+                before += keep[k];
+            });
+        }
+        L.iter_counts_host.resize((size_t) n_counts);   /* within the capacity reserved at admission */
+        mode_d_copy_to_host(L.iter_counts_host.data(), count, (size_t) n_counts * sizeof(int));
+        stop_code = L.iter_counts_host[0];
+        for(int sg = 0; sg < n_sg; sg++) {if(drv.active_set_size[sg] > 0) {drv.active_set_size[sg] = L.iter_counts_host[1 + sg];}}
     }
-    L.iter_which = 1 - L.iter_which; L.iter_n_live = n_next;
-    drv.active_set_size[0] = n_next; drv.local_active_per_sg[0] = n_next; drv.local_active_total = n_next;
+    L.iter_which = 1 - L.iter_which;
+    drv.local_active_total = 0;
+    for(int sg = 0; sg < n_sg; sg++) {drv.local_active_per_sg[sg] = drv.active_set_size[sg]; drv.local_active_total += drv.active_set_size[sg];}
     return stop_code;
 }
 
@@ -6987,7 +7026,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
                 try {device_written.reserve((size_t) (args.num_active > 0 ? args.num_active : 0));} catch(const std::bad_alloc &) {host_ok = 0;}
             }
-            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active, host_ok);
+            const ModeDAdmission verdict = mode_d_admit_for<Spec>(&mode_d_lease, args.num_active, args.num_subgroups, host_ok);
             if(verdict == ModeDAdmission::Admitted) {path = DispatchPath::ModeD_DeviceFused;}
             else {
                 std::vector<unsigned char>().swap(device_written);   /* a refused call holds nothing of Mode D */
@@ -7300,10 +7339,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                 int  slot = drv.active_set_uvm[sg][k];
                 int  i    = args.subgroups[sg].active_indices[slot];
                 AfterIterContext<Spec> ctx{
-                    args, sg, slot, i, drv.iter_index,
+                    args, sg, slot, drv.call_slot_base[sg] + slot, i, drv.iter_index,
                     /* h_search_current */ drv.radii_uvm[sg][slot],
                     /* scalars (ref to driver-owned) */ drv.cs,
-                    /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot]
+                    /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot],
+                    /* device context (driver-owned) */  drv.ctx
                 };
                 IterResult r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
                 switch (r.status) {
@@ -7342,6 +7382,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             drv.local_active_per_sg[sg] = write_idx;
             drv.local_active_total     += write_idx;
         }
+        /* A host after_iter may write state the next iteration's kernels read (a per-active table in the Spec's
+         * DeviceContext): ordered here, once per iteration, on every path that runs kernels. */
+        if (path != DispatchPath::ModeB_HostWalker) {Kokkos::fence("nlr_after_iter_host_writes");}
         }
 
 
@@ -7376,7 +7419,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * Globally-converged subgroups (global_active_per_sg[sg]==0) skip
          * the per-iter dispatch + collective on the next iteration. */
         /* A one-subgroup Mode D call reduces, in the same one collective, the busiest rank's actives (its floor) and
-         * a device iteration's stop code. */
+         * a device iteration's stop code; a multi-subgroup one reduces both in its one maximum. */
         int busiest_rank_actives = drv.local_active_total, agreed_stop_code = iteration_stop_code;
         if (NTask > 1 && path == DispatchPath::ModeD_DeviceFused && args.num_subgroups == 1) {
             long long mine[3] = {drv.local_active_per_sg[0], drv.local_active_per_sg[0], iteration_stop_code}, all[3] = {0, 0, 0};
@@ -7387,7 +7430,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                           drv.global_active_per_sg.data(),
                           args.num_subgroups, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
             if (path == DispatchPath::ModeD_DeviceFused) {
-                MPI_Allreduce(&drv.local_active_total, &busiest_rank_actives, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                int mine2[2] = {drv.local_active_total, iteration_stop_code}, all2[2] = {0, 0};
+                MPI_Allreduce(mine2, all2, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                busiest_rank_actives = all2[0]; agreed_stop_code = all2[1];
             }
         } else {
             drv.global_active_per_sg = drv.local_active_per_sg;
@@ -7402,6 +7447,10 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         drv.global_active_total = 0;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             drv.global_active_total += drv.global_active_per_sg[sg];
+        }
+        /* A long tail of iterations is worth a line: the count every rank has just agreed on. */
+        if (drv.iter_index > 10 && ThisTask == 0 && drv.global_active_total > 0) {
+            printf("%s iteration %d: %lld still iterating\n", Spec::loop_name, drv.iter_index, drv.global_active_total);
         }
         if (drv.global_active_total == 0) break;
 
@@ -7462,7 +7511,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         sub.active_list = sgr.active_indices;
         sub.num_active  = n_total;
         for (int slot = 0; slot < n_total; slot++) {
-            if (sg == 0 && !device_written.empty() && device_written[(size_t) slot] == 2) continue;   /* written at the device iteration's end */
+            if (!device_written.empty() && device_written[(size_t) (drv.call_slot_base[sg] + slot)] == 2) continue;   /* written at the device iteration's end */
             int i = sgr.active_indices[slot];
             /* If Spec opts into the iterative-variant hook, route the
              * converged radius + IterScratch through it. Specs that don't

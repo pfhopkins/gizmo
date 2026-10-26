@@ -487,13 +487,11 @@ struct DensitySpec {
     static IterResult after_iter(const AfterIterContext<DensitySpec>& ctx,
                                  const AccumData& accum);
 
-    /* The entry point a device iteration calls for each active, in the runner's one signature: the body below. */
+    /* The entry point a device iteration calls for each active: the body below. */
     KOKKOS_INLINE_FUNCTION
-    static IterResult after_iter_device(struct particle_data *P, const struct gas_cell_data *CellP, int i, int iter,
-                                        double h_search_current, const CallScalars& cs, IterScratch& scratch,
-                                        const AccumData& accum, int this_task, int &stop_code)
+    static IterResult after_iter_device(const NlrDeviceIterContext<DensitySpec>& c, const AccumData& accum)
     {
-        return after_iter_body(P, CellP, i, iter, h_search_current, cs, scratch, accum, this_task, stop_code);
+        return after_iter_body(c.P, c.CellP, c.i, c.iter_index, c.h_search_current, c.scalars, c.scratch, accum, c.this_task, c.stop_code);
     }
 
     /* after_iter_body -- bisection convergence + radius update for one active (the
