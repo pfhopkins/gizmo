@@ -6,6 +6,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 
@@ -216,6 +217,16 @@ void init(void)
 #endif
 
 
+#ifdef ASSIGN_NEW_IDS
+    assign_unique_ids();
+#endif
+    /* assign other ID parameters needed: before any initialization-time random draw, which is keyed on them */
+
+    if(RestartFlag==0) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
+#ifdef NO_CHILD_IDS_IN_ICS
+    if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
+#endif
+
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {
         P[i].GravAccel = {};
@@ -342,7 +353,8 @@ void init(void)
 #if defined(INPUT_READ_SINKPROPS) && defined(SINGLE_STAR_SINK_DYNAMICS)
             if(P[i].Type != 5) /* sink particles have their age read from the IC */
 #endif
-            {P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * get_random_number(P[i].ID + 3);}
+            {static constexpr uint64_t INITIAL_STELLAR_AGE_RNG_SALT = gizmo_loop_rng_salt("initial_stellar_age");
+             P[i].StellarAge = -2.0 * All.InitStellarAgeinGyr / (UNIT_TIME_IN_GYR) * particle_random_number(i, INITIAL_STELLAR_AGE_RNG_SALT, 0, 0);}
         }
 #endif
         
@@ -356,7 +368,8 @@ void init(void)
             /* Change grain mass to change the distribution of sizes.  Grain_Size_Spectrum_Powerlaw parameter sets d\mu/dln(R_d) ~ R_d^Grain_Size_Spectrum_Powerlaw */
             if(grain_subtype <= 2)
             {
-                P[i].Grain_Size = All.Grain_Size_Min * exp( gsl_rng_uniform(random_generator) * log(All.Grain_Size_Max/All.Grain_Size_Min) );
+                static constexpr uint64_t INITIAL_GRAIN_SIZE_RNG_SALT = gizmo_loop_rng_salt("initial_grain_size");
+                P[i].Grain_Size = All.Grain_Size_Min * exp( particle_random_number(i, INITIAL_GRAIN_SIZE_RNG_SALT, 0, 0) * log(All.Grain_Size_Max/All.Grain_Size_Min) );
                 if(All.Grain_Size_Max > All.Grain_Size_Min*1.0001 && fabs(All.Grain_Size_Spectrum_Powerlaw) != 0) {
                     P[i].Mass *= (All.Grain_Size_Spectrum_Powerlaw/(pow(All.Grain_Size_Max/All.Grain_Size_Min,All.Grain_Size_Spectrum_Powerlaw)-1.)) *
                     pow(P[i].Grain_Size/All.Grain_Size_Min,All.Grain_Size_Spectrum_Powerlaw) * log(All.Grain_Size_Max/All.Grain_Size_Min);}
@@ -522,7 +535,8 @@ void init(void)
                 P[i].Sink_Mass_Reservoir = All.SeedReservoirMass;
 #endif
 #ifdef SINK_FOLLOW_ACCRETED_ANGMOM
-                double sink_mu=2*get_random_number(P[i].ID+3)-1, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                static constexpr uint64_t INITIAL_SINK_SPIN_RNG_SALT = gizmo_loop_rng_salt("initial_sink_spin");
+                double sink_mu=2*particle_random_number(i, INITIAL_SINK_SPIN_RNG_SALT, 0, 0)-1, sink_phi=2*M_PI*particle_random_number(i, INITIAL_SINK_SPIN_RNG_SALT, 0, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                 double spin_prefac = All.G * P[i].Sink_Mass / C_LIGHT_CODE; // assume initially maximally-spinning black hole with random orientation
                 P[i].Sink_Specific_AngMom[0]=spin_prefac*sink_sin*cos(sink_phi); P[i].Sink_Specific_AngMom[1]=spin_prefac*sink_sin*sin(sink_phi); P[i].Sink_Specific_AngMom[2]=spin_prefac*sink_mu;
 #endif
@@ -800,16 +814,6 @@ void init(void)
             CellP[i].HydroAccel[1] = CellP[i].HydroAccel[2] = 0;
         }
     }
-#endif
-
-#ifdef ASSIGN_NEW_IDS
-    assign_unique_ids();
-#endif
-    /* assign other ID parameters needed */
-
-    if(RestartFlag==0) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
-#ifdef NO_CHILD_IDS_IN_ICS
-    if(RestartFlag != 1) {for(i = 0; i < NumPart; i++) {P[i].ID_child_number = 0; P[i].ID_generation = 0;}}
 #endif
 
 #ifdef TEST_FOR_IDUNIQUENESS

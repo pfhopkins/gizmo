@@ -6,6 +6,7 @@
 #include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 /* this file handles the FIRE short-range radiation-pressure and
@@ -67,7 +68,8 @@ void radiation_pressure_winds_consolidated(void)
                 if((P[i].Type==4) && (P[i].NewStar_Momentum_For_JetFeedback>0)) {prob = 1; jet_momentum_tocouple = P[i].NewStar_Momentum_For_JetFeedback;} // require entering loop with desired momentum budget in addition to usual
                 if(prob < 1 && prob > 0) {dE_over_c /= prob;} // if assigning low-probability, need to up-weight the kick to statistically couple the right momentum
 #endif
-                double p_random = get_random_number(P[i].ID+ThisTask+i+2); // random number for use below
+                static constexpr uint64_t RP_SOURCE_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_source_gate");
+                double p_random = particle_random_number(i, RP_SOURCE_GATE_RNG_SALT, (uint64_t)All.Ti_Current, 0); // random number for use below
                 if(p_random <= prob) // alright, its worth doing the loop!
                 { // within loop
                     /* ok, now open the neighbor list for the star particle */
@@ -140,7 +142,8 @@ void radiation_pressure_winds_consolidated(void)
                                 delta_v_imparted_rp = dv_imparted_multiplescattering + dv_imparted_singlescattering;
 #else
                                 prob = (dv_imparted_multiplescattering+dv_imparted_singlescattering) / delta_v_imparted_rp; if(prob>1) {delta_v_imparted_rp *= prob;}
-                                if(n>0) {p_random=get_random_number(P[j].ID+P[i].ID +ThisTask+ 3);} //else p_random=0;
+                                static constexpr uint64_t RP_PAIR_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_pair_gate");
+                                p_random = gizmo_gpu_rand_double(gizmo_rng_combine(particle_event_rng_key(i), particle_event_rng_key(j)), gizmo_rng_event_counter(RP_PAIR_GATE_RNG_SALT, (uint64_t)All.Ti_Current, 0)); /* one draw per source-neighbour pair, independent of the source's gate draw */
                                 if(p_random < prob)
 #endif
                                 { /* open subloop with wind kick */
@@ -168,7 +171,7 @@ void radiation_pressure_winds_consolidated(void)
                                     if(norm>0) {norm=sqrt(norm); dir /= norm;} else {dir = {0,0,1}; norm=1;}
                                     {auto dv_kick = delta_v_imparted_rp * All.cf_atime * dir; P[j].Vel += dv_kick; CellP[j].VelPred += dv_kick; P[j].dp += dv_kick * P[j].Mass; force_raise_motion_bound(j);} /* apply the kick */
 #endif
-                                } /* closes if(get_random_number(P[i].ID + 2) < prob) */
+                                } /* closes the stochastic kick gate */
                             } /* if( (P[j].Mass>0) && (CellP[j].Density>0) ) */
                         } /* for(n=0; n<numngb_inbox; n++) */
                     } /* if (rho>0) */
@@ -261,7 +264,8 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
             RHII_initial=RHII;
             total_N_ionizing_part += 1; total_Ndot_ionizing += stellum * (3.05e10/HYDROGEN_MASSFRAC); // increment before loop //
 
-            prandom = get_random_number(P[i].ID + 7); // pre-calc the (eventually) needed random number
+            static constexpr uint64_t HII_SOURCE_RNG_SALT = gizmo_loop_rng_salt("hii_region_source");
+            prandom = particle_random_number(i, HII_SOURCE_RNG_SALT, (uint64_t)All.Ti_Current, 0); // pre-calc the (eventually) needed random number
             // guesstimate if this is even close to being interesting for the particle masses of interest
             if(prandom < 5.0*mionizable/P[i].Mass) // prandom > this, won't be able to ionize anything interesting
             {
