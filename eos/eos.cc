@@ -126,6 +126,9 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
                       &aneos_P, &aneos_cs, NULL, NULL, NULL, &aneos_phase); /* entropy, Cv and Gruneisen not needed here */
         press      = aneos_P / UNIT_PRESSURE_IN_CGS;
         soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
+#ifdef EOS_ELASTIC
+        soundspeed = sqrt(soundspeed*soundspeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density)); /* longitudinal: bulk plus the deviatoric stiffness */
+#endif
         cell[i].Temperature = aneos_T_guess;
         cell[i].PhaseID = aneos_phase;
     }
@@ -209,6 +212,9 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
     
 #ifdef EOS_GENERAL /* need to be sure soundspeed variable is set: if not defined above, set it to the default which is given by the effective gamma */
     if(soundspeed == 0) {cell[i].SoundSpeed = sqrt(gamma_eos_index * press / cell[i].density_for_energy());} else {cell[i].SoundSpeed = soundspeed;}
+#if defined(EOS_ELASTIC) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) /* those EOS add the deviatoric stiffness themselves */
+    cell[i].SoundSpeed = sqrt(cell[i].SoundSpeed*cell[i].SoundSpeed + elastic_longitudinal_soundspeed2_excess(cell[i].CompositionType, cell[i].Density));
+#endif
 #endif
 
     /* Finally, set the pressure as advertised */

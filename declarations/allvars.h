@@ -1062,6 +1062,12 @@ static inline int elastic_material_row(int composition_type)
     (void)composition_type; return 0;
 #endif
 }
+/* signal speed^2 added by the deviatoric stiffness: dS/dt = 2 mu (strain rate - trace/NUMDIMS) raises the longitudinal
+   modulus by 2 (1 - 1/NUMDIMS) mu, i.e. c^2 by mu/rho in 2D and 4/3 mu/rho in 3D */
+static inline double elastic_longitudinal_soundspeed2_excess(int composition_type, double rho)
+{
+    return 2.*(1.-1./NUMDIMS) * All.Tillotson_EOS_params[elastic_material_row(composition_type)][10] / rho;
+}
 #endif
 
 

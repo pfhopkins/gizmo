@@ -606,7 +606,7 @@ extern struct gas_cell_data
         if(cs <= 0) {cs=press_min;}
         SoundSpeed = cs/rho;
 #ifdef EOS_ELASTIC
-        SoundSpeed += All.Tillotson_EOS_params[CompositionType][10] / rho;
+        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, rho);
 #endif
         SoundSpeed = sqrt(SoundSpeed);
         return press;
