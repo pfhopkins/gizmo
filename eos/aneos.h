@@ -1,7 +1,9 @@
 #ifndef ANEOS_H
 #define ANEOS_H
 
+#ifndef GIZMO_config_H /* a standalone build (test/aneos_unit) defines it to compile without a Config */
 #include "../GIZMO_config.h"
+#endif
 
 #ifdef EOS_ANEOS
 

@@ -20,8 +20,9 @@ open(OUTFILE, ">GIZMO_config.h");
 open(COUTF,   ">compile_time_info.cc");
 
 # include guard: eos.h and aneos.h include this file again after declarations/precompiler_logic.h has
-# processed it, and without the guard that second pass would re-define every option the logic #undef'd
-print OUTFILE "#ifndef GIZMO_CONFIG_H\n#define GIZMO_CONFIG_H\n";
+# processed it, and without the guard that second pass would re-define every option the logic #undef'd.
+# A standalone build (e.g. test/aneos_unit) defines GIZMO_config_H to compile without a Config.
+print OUTFILE "#ifndef GIZMO_config_H\n#define GIZMO_config_H\n";
 
 print COUTF "#include <stdio.h>\n";
 print COUTF "void output_compile_time_options(void)\n\{\n";
