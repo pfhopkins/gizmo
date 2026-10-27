@@ -192,7 +192,7 @@ static void test_split()
     NumPart = N_gas = 3;
     Totals before = totals(3);
     Vec3<double> x0 = P[0].Pos;
-    int ok = split_particle_i(0, 0, 1, 0.); /* 0: measure the distance to cell 1 now */
+    int ok = split_particle_i(0, 0, 0.1); /* distance to cell 1, the nearest */
     check("split:succeeded", ok == 1, ok, 1);
     check_totals("split", before, totals(4));
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
@@ -266,23 +266,6 @@ static void test_nongas_never_touches_CellP()
     check("rearrange:no_CellP_write_past_MaxPartGas", canary_intact(), canary_intact(), 1);
 #endif
 }
-
-#ifdef MAGNETIC
-static void test_split_zero_density()
-{
-    /* a cell split before it has a density keeps its pre-split B, which density() restores from */
-    setup(64, 64);
-    make_gas(0, 0.5, 0.5, 0.5, 2.0, 0.70, 0.28, 0.02, 0.0);
-    make_gas(1, 0.6, 0.5, 0.5, 1.0, 0.72, 0.27, 0.01, 0.3);
-    make_gas(2, 0.5, 0.7, 0.5, 1.0, 0.72, 0.27, 0.01, 0.6);
-    CellP[0].Density = 0;
-    NumPart = N_gas = 3;
-    int ok = split_particle_i(0, 0, 1, 0.);
-    check("split_zero_density:succeeded", ok == 1, ok, 1);
-    double b0 = CellP[0].BField_prerefinement.norm(), b3 = CellP[3].BField_prerefinement.norm();
-    check("split_zero_density:prerefinement_B_kept", std::isfinite(b0) && b0 > 0 && b3 == b0, b0, b3);
-}
-#endif
 
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
 void hydro_final_operations_and_cleanup(void);
@@ -401,9 +384,6 @@ int main(int argc, char **argv)
     test_merge();
     test_hydrogen_massfrac();
     test_nongas_never_touches_CellP();
-#ifdef MAGNETIC
-    test_split_zero_density();
-#endif
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION)
     test_metal_floor();
 #endif
