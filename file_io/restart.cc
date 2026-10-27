@@ -305,7 +305,7 @@ void restart(int modus)
       byten(gsl_rng_state(StRng), gsl_rng_size(StRng), modus);
 	  byten(&StNModes, sizeof(StNModes), modus);
 	  byten(StOUPhases, StNModes*6*sizeof(double),modus);
-	  byten(StAmpl, StNModes*3*sizeof(double),modus);
+	  byten(StAmpl, StNModes*sizeof(double),modus);
 	  byten(StAka, StNModes*3*sizeof(double),modus);
 	  byten(StAkb, StNModes*3*sizeof(double),modus);
 	  byten(StMode, StNModes*3*sizeof(double),modus);
