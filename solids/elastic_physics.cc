@@ -79,8 +79,8 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
         // now apply the von Mises yield criterion //
         if(J2 > 0)
         {
-            double f_Y = Y0*Y0/(NDim*J2);
-            if(f_Y < 1) {for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= f_Y;}}}
+            double f_Y = Y0*Y0/(NDim*J2); // (yield stress / equivalent stress)^2
+            if(f_Y < 1) {double return_factor = sqrt(f_Y); for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= return_factor;}}} // radial return onto the yield surface (Wilkins 1964)
         }
         // write out to variable //
         for(j=0;j<NDim;j++) {
