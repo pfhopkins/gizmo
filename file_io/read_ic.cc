@@ -770,12 +770,14 @@ void read_file(char *fname, int readTask, int lastTask)
         {
             read_header_attributes_in_hdf5(fname);
             hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+            if(hdf5_file < 0) {printf("can't open file `%s' for reading initial conditions.\n", fname); endrun(123);}
             for(type = 0; type < 6; type++)
             {
                 if(header.npart[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gopen(hdf5_file, buf);
+                    if(hdf5_grp[type] < 0) {printf("no group %s in `%s'.\n", buf, fname); endrun(124);} /* else every block would read as absent and be zero-filled */
                 }
             }
         }
@@ -1466,8 +1468,11 @@ void read_header_attributes_in_hdf5(char *fname)
 {
     hid_t hdf5_file, hdf5_headergrp, hdf5_attribute;
 
+    /* a failed open here would leave the previous file's header in place */
     hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if(hdf5_file < 0) {printf("can't open file `%s' for reading initial conditions.\n", fname); endrun(123);}
     hdf5_headergrp = H5Gopen(hdf5_file, "/Header");
+    if(hdf5_headergrp < 0) {printf("no group /Header in `%s'.\n", fname); endrun(124);}
 
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_ThisFile");
     H5Aread(hdf5_attribute, H5T_NATIVE_INT, header.npart);
