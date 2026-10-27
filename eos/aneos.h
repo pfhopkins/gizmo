@@ -36,6 +36,7 @@ struct aneos_table {
     int    *phase;        /* phase flag (integer, no interpolation) */
     int     has_csound;   /* 1 if sound speed column present in table */
     int     has_phase;    /* 1 if phase column present in table */
+    int    *lowest_valid_T; /* optional, length nrho: per density, the lowest temperature row the EOS is valid at (NULL = row 0 everywhere) */
 
     /* Grid bounds */
     double logrho_min, logrho_max;
