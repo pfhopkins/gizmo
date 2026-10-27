@@ -23,6 +23,7 @@ MinSizeTimestep             1e-12
 UnitLength_in_cm            3.085678e18     % 1 pc
 UnitMass_in_g               1.989e33        % 1 Msun
 UnitVelocity_in_cm_per_s    1.0e5           % 1 km/s
+UnitMagneticField_in_gauss  1.0             % MagneticField in the ICs/snapshots is in gauss (MAGNETIC builds only)
 GravityConstantInternal     0
 
 ComovingIntegrationOn       0
