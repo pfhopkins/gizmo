@@ -15,7 +15,9 @@
         double FVec[3]={0}; for(k=0;k<3;k++) {FVec[k] = Face_Area_Vec[k];}
 
         double cmag[3]={0}, v_interface[3], wt_i=-0.5, wt_j=-0.5; // we need a minus sign at some point; its handy to just include it now in the weights //
-        for(k=0;k<3;k++) {v_interface[k] = (wt_i*local.Vel[k] + wt_j*VelPred_j[k]) / All.cf_atime;} // physical units //
+        /* cmag is added to Fluxes.v (momentum gained by i), so its work is +cmag.v at the face, as for the hydro flux:
+           the material velocity at the face, not the moving-mesh velocity, and not the stress weights above */
+        for(k=0;k<3;k++) {v_interface[k] = 0.5*(local.Vel[k] + VelPred_j[k]) / All.cf_atime;} // physical units //
         double rho_i = local.Density * All.cf_a3inv, rho_j = CellP[j].Density * All.cf_a3inv;
 
         // terms for HLL fluxes
