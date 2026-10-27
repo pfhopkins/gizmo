@@ -399,7 +399,14 @@ void add_turb_accel()
 #ifdef TURB_DRIVING_TARGET_SIGMA
     fac_sol *= All.TurbDriving_DrivingNormFactor; /* applied to the force, not the OU noise amplitude, so it acts immediately */
 #endif
+#ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
+    /* called only on driving updates, so refresh every cell: otherwise a cell keeps its old force (and gain) until it
+       happens to be active on an update, which for coarse timebins can be many coherence times. Inactive cells are
+       evaluated at their last-drifted position, at most one of their own steps old, well below the driving scale. */
+    for(int i = 0; i < NumPart; i++)
+#else
     for (int i : ActiveParticleList)
+#endif
     {
         if(P[i].Type == 0)
         {
