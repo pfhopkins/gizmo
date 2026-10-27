@@ -997,13 +997,13 @@ void density(void)
 #endif
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR)
                 CellP[i].Density /= CellP[i].FaceClosureError; // correct volume of the cell based on the free surface correction above
-                CellP[i].FaceClosureError = Volume_0;
 #endif
+                /* FaceClosureError stays a dimensionless closure diagnostic: the face reconstruction reads it as a leak fraction */
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
                 Volume_0 = P[i].Mass / CellP[i].Density;
+                CellP[i].KernelDensityForVolumeRelaxation = CellP[i].Density;
                 if(All.Time == All.TimeBegin && RestartFlag != 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // fresh start: set initial value to density calculated above (a snapshot restart continues the snapshot's)
                     else {CellP[i].Density = CellP[i].Density_ExplicitInt;} // set to explicitly-evolved density field
-                CellP[i].FaceClosureError = Volume_0;
 #endif
 #ifdef HYDRO_VOLUME_CORRECTIONS
                 CellP[i].Volume_1 = CellP[i].Volume_0 = Volume_0; // initialize this value for use in the correction loop, and in case this is not set in the subsequent loop because of inactivity, set this first to the zeroth-order estimator
