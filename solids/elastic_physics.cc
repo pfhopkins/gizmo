@@ -60,11 +60,8 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
 {
     int j,k,l,NDim=NUMDIMS;
     double dv0[3][3], R[3][3], S[3][3], S_new[3][3], dS=0, mu, Y0, J2=0, I1=0;
-#ifdef EOS_TILLOTSON
-    mu = All.Tillotson_EOS_params[CellP[i].CompositionType][10]; Y0 = All.Tillotson_EOS_params[CellP[i].CompositionType][11]; // set for composition
-#else
-    mu = All.Tillotson_EOS_params[0][10]; Y0 = All.Tillotson_EOS_params[0][11];  // set to universal constants
-#endif
+    int row = elastic_material_row(CellP[i].CompositionType);
+    mu = All.Tillotson_EOS_params[row][10]; Y0 = All.Tillotson_EOS_params[row][11];
 
     if(mode < 2) // drift or kick operation
     {

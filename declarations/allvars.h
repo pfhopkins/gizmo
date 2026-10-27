@@ -1051,6 +1051,19 @@ extern struct global_data_all_processes
 All;
 
 
+#ifdef EOS_ELASTIC
+/* row of All.Tillotson_EOS_params holding a cell's shear modulus [10] and yield strength [11]: its own material under
+   EOS_TILLOTSON (the named presets), otherwise row 0 (the parameterfile values), which every cell then shares */
+static inline int elastic_material_row(int composition_type)
+{
+#ifdef EOS_TILLOTSON
+    return composition_type;
+#else
+    (void)composition_type; return 0;
+#endif
+}
+#endif
+
 
 #include "particle_data.h"
 #include "cell_data.h"
