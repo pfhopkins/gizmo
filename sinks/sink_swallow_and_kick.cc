@@ -1071,6 +1071,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         CellP[j].dMass = 0; CellP[j].DtMass = 0; CellP[j].MassTrue = P[j].Mass; CellP[j].GravWorkTerm = {};
 #endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+        CellP[j].Density_ExplicitInt = 0; /* unset: the first density pass starts it from this cell's own kernel density, not the template's */
         CellP[j].KernelDensityForVolumeRelaxation = 0; /* set by this cell's first density pass */
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)

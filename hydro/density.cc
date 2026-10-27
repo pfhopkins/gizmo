@@ -1002,7 +1002,7 @@ void density(void)
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
                 Volume_0 = P[i].Mass / CellP[i].Density;
                 CellP[i].KernelDensityForVolumeRelaxation = CellP[i].Density;
-                if(All.Time == All.TimeBegin && RestartFlag != 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // fresh start: set initial value to density calculated above (a snapshot restart continues the snapshot's)
+                if((All.Time == All.TimeBegin && RestartFlag != 2) || !(CellP[i].Density_ExplicitInt > 0) || !isfinite(CellP[i].Density_ExplicitInt)) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // fresh start, or a new cell whose integrated density is unset: start from the density calculated above (a snapshot restart continues the snapshot's)
                     else {CellP[i].Density = CellP[i].Density_ExplicitInt;} // set to explicitly-evolved density field
 #endif
 #ifdef HYDRO_VOLUME_CORRECTIONS
