@@ -659,8 +659,12 @@ extern struct global_data_all_processes
     int FileNumberTurbSpectrum;
 #endif
 #ifdef TURB_DRIVING_TARGET_SIGMA
-    double TurbDriving_SmoothedVRMS;     /* exponentially smoothed measured RMS velocity, time constant = 2*t_corr */
-    double TurbDriving_DrivingNormFactor; /* multiplicative factor on driving amplitude from proportional control loop */
+    double TurbDriving_DrivingNormFactor; /* gain on the driving acceleration, set by the PID loop on ln(v_target/v_rms) */
+    double TurbDriving_PID_Integral;      /* integral term, in units of ln(gain) */
+    double TurbDriving_PID_Derivative;    /* low-pass filtered derivative term, in units of ln(gain) */
+    double TurbDriving_PID_LastError;     /* error at the previous update */
+    int TurbDriving_PID_Started;          /* 0 until the first measurement seeds the loop */
+    double TurbDriving_PID_Kp, TurbDriving_PID_Ti, TurbDriving_PID_Td; /* gains; Ti, Td in units of TurbDrive_MaxWavelength/TurbDrive_ApproxRMSVturb */
 #endif
 #endif
     
