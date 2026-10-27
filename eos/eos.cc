@@ -120,10 +120,10 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
         double aneos_rho_cgs = cell[i].Density * UNIT_DENSITY_IN_CGS;
         double aneos_u_cgs   = cell[i].InternalEnergyPred * UNIT_SPECEGY_IN_CGS;
         double aneos_T_guess = cell[i].Temperature;
-        double aneos_P, aneos_cs, aneos_S, aneos_cv, aneos_grun;
+        double aneos_P, aneos_cs;
         int aneos_phase;
         aneos_compute(aneos_mat, aneos_rho_cgs, aneos_u_cgs, &aneos_T_guess,
-                      &aneos_P, &aneos_cs, &aneos_S, &aneos_cv, &aneos_grun, &aneos_phase);
+                      &aneos_P, &aneos_cs, NULL, NULL, NULL, &aneos_phase); /* entropy, Cv and Gruneisen not needed here */
         press      = aneos_P / UNIT_PRESSURE_IN_CGS;
         soundspeed = aneos_cs / UNIT_VEL_IN_CGS;
         cell[i].Temperature = aneos_T_guess;
