@@ -180,3 +180,19 @@ def test_turb_diff_metals_rate_matches_equal_timesteps():
     for name, ind, eq in [("gained by the cold side", gain_ind, gain_eq), ("lost by the hot side", loss_ind, loss_eq)]:
         assert abs(ind / eq - 1) < 0.02, f"metal {name} with individual timesteps is {ind / eq:.3f}x that with equal timesteps"
 
+
+def assert_rate_matches(tag_individual, tag_equal, t_compare=0.01):
+    gain_ind, loss_ind = metals_exchanged(tag_individual, t_compare)
+    gain_eq, loss_eq = metals_exchanged(tag_equal, t_compare)
+    print(f"individual/equal dt: cold-side gain {gain_ind / gain_eq:.4f}, hot-side loss {loss_ind / loss_eq:.4f}")
+    assert gain_eq > 0, "no metals diffused into the cold side"
+    for name, ind, eq in [("gained by the cold side", gain_ind, gain_eq), ("lost by the hot side", loss_ind, loss_eq)]:
+        assert abs(ind / eq - 1) < 0.02, f"metal {name} with individual timesteps is {ind / eq:.3f}x that with equal timesteps"
+
+
+def test_turb_diff_metals_default_rate_matches_equal_timesteps():
+    """rate_matches_equal_timesteps for the default exchange: a cell on a shorter step than its neighbour takes its
+    own step's share of the pair-step exchange, not all of it at every step."""
+    run_case("individual_dt_default", exact=False)
+    run_case("equal_dt_default", exact=False, extra_config_flags=("FORCE_EQUAL_TIMESTEPS",))
+    assert_rate_matches("individual_dt_default", "equal_dt_default")

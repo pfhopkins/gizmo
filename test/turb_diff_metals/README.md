@@ -13,5 +13,6 @@ Diffusive exchange that a cell receives while inactive is held in its `Dyield_pe
 | `deep_hierarchy` | 1e3 K / 1e7 K, at least 5 occupied timebins |
 | `merge_split` | cell masses spread by +-60%, merge/split every timestep |
 | `rate_matches_equal_timesteps` | the metal mass gained by the cold side and lost by the hot side both agree to 2% with a `FORCE_EQUAL_TIMESTEPS` run at 10 Myr (later the two runs' flows diverge, and with them the diffusivity) |
+| `default_rate_matches_equal_timesteps` | the same, for the default exchange: a cell on a shorter step than its neighbour takes its own step's share of the pair-step exchange |
 
 Each conservation case also checks that more than one timebin was occupied, that some exchange was pending at some step (so the cross-timebin path was exercised), and that no metallicity went negative.
