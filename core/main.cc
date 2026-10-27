@@ -72,6 +72,15 @@ int main(int argc, char **argv)
 #endif
       printf("\nCode was compiled with settings:\n\n");
       output_compile_time_options();
+      printf("Effective compile-time settings (the above, with every default and derived option they switch on; hash %016llx):\n\n",
+             compile_time_effective_options_fnv1a64());
+      for(const char *line = compile_time_effective_options(); *line; )
+      {
+          const char *end = strchr(line, '\n');
+          printf("        %.*s\n", (int) (end - line), line);
+          line = end + 1;
+      }
+      printf("\nCompiler: %s\n", compile_time_compiler_version());
    }
 
 #ifdef _OPENMP
