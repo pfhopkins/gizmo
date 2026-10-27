@@ -13,7 +13,7 @@ extern struct gas_cell_data
     MyDouble MassTrue;              /*!< true particle mass ('mass' now is -predicted- mass */
     MyDouble dMass;                 /*!< change in particle masses from hydro step (conserved variable) */
     MyDouble DtMass;                /*!< rate-of-change of particle masses (for drifting) */
-    Vec3<MyDouble> GravWorkTerm;    /*!< correction term needed for hydro mass flux in gravity */
+    Vec3<MyDouble> GravWorkTerm;    /*!< MFV: sum over faces of the transferred mass flux times the pair separation, per unit cell mass; dotted with the gravitational acceleration, the specific heating rate that repays the potential energy of the exchanged mass */
     Vec3<MyDouble> ParticleVel;     /*!< actual velocity of the mesh-generating points */
 #endif
     

@@ -229,6 +229,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
             /* load and update the particle masses : particle mass update here, from hydro fluxes */
             mass_old = CellP[i].MassTrue; mass_pred = P[i].Mass; mass_new = mass_old + dMass; CellP[i].MassTrue = mass_new; // UNITS: remember all time derivatives (DtX, dX) are in -physical- units; as are mass, entropy/internal energy, but -not- velocity //
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+            if(mass_old > 0 && mass_new > 0 && CellP[i].Density_ExplicitInt > 0) {CellP[i].Density_ExplicitInt *= mass_new / mass_old;} /* the exchanged mass changes the density at fixed volume; -rho div(v) is applied below */
+#endif
             /* double e_old = mass_old * CellP[i].InternalEnergy; for(j = 0; j< 3; j++) e_old += 0.5*mass_old * (P[i].Vel[j]/All.cf_atime)*(P[i].Vel[j]/All.cf_atime); // physical //
             for(j = 0; j < 3; j++) // momentum-space-kick
             {
@@ -264,7 +267,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
-            dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
+            dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)

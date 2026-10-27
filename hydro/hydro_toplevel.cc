@@ -767,7 +767,10 @@ void hydro_final_operations_and_cleanup(void)
             CellP[i].DtB *= magnorm_closure;
 #endif
             CellP[i].DtInternalEnergy /= P[i].Mass;
-            /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass) */
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+            CellP[i].GravWorkTerm /= P[i].Mass;
+#endif
+            /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass), GravWorkTerm.g = du/dt from mass moved through the potential */
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}

@@ -358,21 +358,25 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 double dmass_holder = Fluxes.rho * dt_hydrostep_i, dmass_limiter;
                 if(dmass_holder > 0) {dmass_limiter=P[j].Mass;} else {dmass_limiter=local.Mass;}
                 dmass_limiter *= 0.1;
-                if(fabs(dmass_holder) > dmass_limiter) {dmass_holder *= dmass_limiter / fabs(dmass_holder);}
+                double mass_flux_accepted = Fluxes.rho; /* the part of this pair's mass flux that this evaluation transfers (to both cells) */
+                if(fabs(dmass_holder) > dmass_limiter) {mass_flux_accepted *= dmass_limiter / fabs(dmass_holder); dmass_holder *= dmass_limiter / fabs(dmass_holder);}
+                if(local.dt_hydrostep_i > dt_hydrostep_j) {mass_flux_accepted = 0;} /* j transfers it */
                 if((local.dt_hydrostep_i < dt_hydrostep_j) || (local.dt_hydrostep_i==dt_hydrostep_j && j_is_active_for_fluxes==1)) {
                     out.dMass += FluxCorrectionFactor_to_i * dmass_holder;
                     #pragma omp atomic
                     CellP[j].dMass -= FluxCorrectionFactor_to_j * dmass_holder; // here to ensure machine-accurate conservation with different timesteps we need to set this: careful to be thread-safe
                 }
                 if(local.dt_hydrostep_i==dt_hydrostep_j && j_is_active_for_fluxes==0) {
+                    mass_flux_accepted *= 0.5; /* j transfers the other half */
                     out.dMass += FluxCorrectionFactor_to_i * 0.5*dmass_holder;
                     #pragma omp atomic
                     CellP[j].dMass -= FluxCorrectionFactor_to_j * 0.5*dmass_holder; // here to ensure machine-accurate conservation with different timesteps we need to set this: careful to be thread-safe
                 }
                  /* this gets subtracted here to ensure the exchange is exact */
                 out.DtMass += FluxCorrectionFactor_to_i * Fluxes.rho;
-                Vec3<double> gravwork = kernel.dp * Fluxes.rho;
-                out.GravWorkTerm += gravwork * FluxCorrectionFactor_to_i;
+                /* mass dm moved from x_j to x_i changes the potential energy by -dm g.(x_i-x_j): the thermal energy of the cell that
+                   transfers it repays that, so the pair's total energy is conserved (normalised per unit mass in hydro_toplevel) */
+                out.GravWorkTerm += kernel.dp * (FluxCorrectionFactor_to_i * mass_flux_accepted);
 #ifdef METALS   /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
                 if(Fluxes.rho > 0) {for(k=0;k<NUM_METAL_SPECIES;k++) {out.Dyield[k] += FluxCorrectionFactor_to_i * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}}
 #endif
@@ -414,8 +418,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                 if(j_is_active_for_fluxes)
                 {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                    CellP[j].DtMass -= FluxCorrectionFactor_to_j * Fluxes.rho;
-                    CellP[j].GravWorkTerm -= gravwork * FluxCorrectionFactor_to_j;
+                    CellP[j].DtMass -= FluxCorrectionFactor_to_j * Fluxes.rho; /* GravWorkTerm: i repays the whole transfer it made above */
 #ifdef METALS       /* if we have mass fluxes, we need to have metal fluxes if we're using them (or any other passive scalars) */
                     if(Fluxes.rho < 0) {CellP[j].Dyield[k] = FluxCorrectionFactor_to_j * (P[j].Metallicity[k] - local.Metallicity[k]) * dmass_holder;}
 #endif
