@@ -1017,11 +1017,13 @@ void init(void)
         All.MinMassForParticleMerger = MERGESPLIT_HARDCODE_MIN_MASS;
 #endif
 
-#ifdef SINGLE_STAR_SINK_DYNAMICS /* Get mean gas mass, used in various subroutines */
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT) /* Get mean gas mass, used in various subroutines */
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
         All.MeanGasParticleMass = mpi_mass_tot/( (double)mpi_Ngas );
+#endif
+#ifdef SINGLE_STAR_SINK_DYNAMICS
         if(RestartFlag==0){
             for(i=0; i<NumPart; i++){
                 if(P[i].Type==5){P[i].Sink_Formation_Mass = All.MeanGasParticleMass;} // will behave as if this sink formed from a gas cell with the average mass

@@ -501,7 +501,7 @@ extern struct global_data_all_processes
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
   double ArtCondConstant;
 #endif
-#ifdef SINGLE_STAR_SINK_DYNAMICS
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT)
     double MeanGasParticleMass; /*!< the mean gas particle mass */
 #endif
     double MinMassForParticleMerger; /*!< the minimum mass of a gas particle below which it will be merged into a neighbor */
