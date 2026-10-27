@@ -111,11 +111,10 @@
         reconstruct_face_states(kernel.sound_i, local.Gradients.SoundSpeed, kernel.sound_j, CellP[j].Gradients.SoundSpeed,
                                 distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, recon_mode);
 #endif
-        for(k=0;k<3;k++)
+        for(k=0;k<3;k++) /* reconstruct the velocity relative to the face: the limiter keeps a value's sign, and a velocity's sign depends on the frame */
         {
-            reconstruct_face_states(local.Vel[k], local.Gradients.Velocity[k], VelPred_j[k], CellP[j].Gradients.Velocity[k],
+            reconstruct_face_states(local.Vel[k] - v_frame[k], local.Gradients.Velocity[k], VelPred_j[k] - v_frame[k], CellP[j].Gradients.Velocity[k],
                                     distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
-            Riemann_vec.L.v[k] -= v_frame[k]; Riemann_vec.R.v[k] -= v_frame[k];
         }
 #ifdef MAGNETIC
         int slim_mode = 1;
