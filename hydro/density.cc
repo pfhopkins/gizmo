@@ -1001,7 +1001,7 @@ void density(void)
 #endif
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
                 Volume_0 = P[i].Mass / CellP[i].Density;
-                if(All.Time == All.TimeBegin) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // set initial value to density calculated above
+                if(All.Time == All.TimeBegin && RestartFlag != 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // fresh start: set initial value to density calculated above (a snapshot restart continues the snapshot's)
                     else {CellP[i].Density = CellP[i].Density_ExplicitInt;} // set to explicitly-evolved density field
                 CellP[i].FaceClosureError = Volume_0;
 #endif
