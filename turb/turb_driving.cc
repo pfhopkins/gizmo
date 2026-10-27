@@ -240,13 +240,14 @@ static void st_update_driving_gain(void)
 
     double v = st_compute_vrms();
     double e = log(v_target / DMAX(v, 1.e-3*v_target)); e = DMAX(-e_max, DMIN(e_max, e));
-    if(!All.TurbDriving_PID_Started) /* bumpless start: begin at gain 1, with no derivative kick */
+    int first_update = !All.TurbDriving_PID_Started;
+    if(first_update) /* bumpless start: begin at gain 1, with no derivative kick */
         {All.TurbDriving_PID_LastError = e; All.TurbDriving_PID_Integral = -Kp * e; All.TurbDriving_PID_Started = 1;}
 
     All.TurbDriving_PID_Derivative = (Tf * All.TurbDriving_PID_Derivative + Kp * Td * (e - All.TurbDriving_PID_LastError)) / (Tf + dt);
     All.TurbDriving_PID_LastError = e;
     double p_term = Kp * e, integral = All.TurbDriving_PID_Integral;
-    if(Ti > 0) {integral += Kp * e * dt / Ti;}
+    if(Ti > 0 && !first_update) {integral += Kp * e * dt / Ti;} /* else, with a long update interval, the first interval would not run at gain 1 */
     double lng = p_term + integral + All.TurbDriving_PID_Derivative;
     if(fabs(lng) < lng_max || lng * e < 0) {All.TurbDriving_PID_Integral = integral;} /* anti-windup: no integration that would push further into saturation */
     lng = p_term + All.TurbDriving_PID_Integral + All.TurbDriving_PID_Derivative;
