@@ -620,6 +620,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_EOS_STRESS_TENSOR: /* deviatoric stress: element 3*k+kf is S[kf][k], the inverse of the snapshot writer */
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {for(int kf = 0; kf < 3; kf++) {CellP[offset + n].Elastic_Stress_Tensor[kf][k] = *fp++;}}}
+#endif
+            break;
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -630,7 +636,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_AGS_PSI_RE:
         case IO_AGS_PSI_IM:
         case IO_EOSCS:
-        case IO_EOS_STRESS_TENSOR:
         case IO_CBE_MOMENTS:
         case IO_SFR:
         case IO_POT:
@@ -957,6 +962,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
                    && blocknr != IO_EOSCOMP
 #endif
+#ifdef EOS_ELASTIC
+                   && blocknr != IO_EOS_STRESS_TENSOR
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
                    && blocknr != IO_PARTVEL
 #endif
@@ -996,6 +1004,9 @@ void read_file(char *fname, int readTask, int lastTask)
             if(blocknr == IO_GENERATION_ID || blocknr == IO_CHILD_ID) {continue;}
 #endif
             if((RestartFlag == 0) && (All.InitGasTemp > 0) && (blocknr == IO_U)) {continue;}
+#ifdef EOS_ELASTIC
+            if(RestartFlag == 0 && All.ICFormat != 3 && blocknr == IO_EOS_STRESS_TENSOR) {continue;} /* a binary IC does not carry it (the stress starts from zero); every snapshot does */
+#endif
 
 
 #ifdef MHD_B_SET_IN_PARAMS

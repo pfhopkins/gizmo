@@ -918,12 +918,10 @@ void init(void)
         }
 #endif
 #if defined(EOS_ELASTIC)
-        if(RestartFlag != 1)
-        {
-            CellP[i].Dt_Elastic_Stress_Tensor = CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor = {};
-        } else {
-            CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
-        }
+        /* the deviatoric stress is evolved state: it comes from the restart files, a snapshot, or an HDF5 IC's
+           StressTensor block (zero if absent); a binary IC does not carry it */
+        if(RestartFlag == 0 && All.ICFormat != 3) {CellP[i].Elastic_Stress_Tensor = {};}
+        CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
         CellP[i].DtInternalEnergy = 0;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
