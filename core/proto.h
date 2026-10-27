@@ -355,7 +355,8 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 double CR_cooling_and_gas_heating(int target, double n_elec, double nH_cgs, double dtime_cgs, int mode);
 double CR_energy_spectrum_injection_fraction(int k_CRegy, int source_type, double shock_vel, int return_index_in_bin, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double return_cosmic_ray_anisotropic_closure_function_threechi(int target, int k_CRegy, struct gas_cell_data *cell);
-void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell);
+void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell, int mode);
+void cosmic_ray_inject_from_resolved_shocks(int i, double dt_entr, int mode, struct gas_cell_data *cell);
 double return_CRbin_M1speed(int k_CRegy);
 double INLINE_FUNC cosmicrayfluid_rsol_corrfac(int k);
 double INLINE_FUNC Get_Gas_CosmicRayPressure(int i, int k_CRegy, struct gas_cell_data *cell);

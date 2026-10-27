@@ -343,6 +343,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 
         
     } // complete loop over CR bins
+    cosmic_ray_inject_from_resolved_shocks(i, dt_entr, mode, cell);
     return 1; // exit
 }
 
