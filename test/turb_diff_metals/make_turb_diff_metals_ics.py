@@ -12,9 +12,10 @@ import numpy as np
 Z_SOLAR = 0.0142
 
 
-def make_ics(filename, n_side=20, box=0.5, T_cold=1e4, T_hot=1e6, Z_cold=0.1, Z_hot=60.0, mass_spread=0.0, seed=42):
+def make_ics(filename, n_side=20, box=0.5, T_cold=1e4, T_hot=1e6, Z_cold=0.1, Z_hot=60.0, mass_spread=0.0, seed=42, B_z=0.0, time=0.0):
     """Writes the IC. Z_cold/Z_hot in solar units; mass_spread>0 draws cell masses uniformly from
-    m*(1 -/+ mass_spread) and sets the merge/split thresholds inside that range."""
+    m*(1 -/+ mass_spread) and sets the merge/split thresholds inside that range. B_z>0 adds a uniform field
+    along z, in units of the run's UnitMagneticField_in_gauss. time is the header time (the scale factor, for a comoving run)."""
     rng = np.random.default_rng(seed)
     g = (np.arange(n_side) + 0.5) / n_side * box
     x = np.array(np.meshgrid(g, g, g, indexing="ij")).reshape(3, -1).T
@@ -33,7 +34,7 @@ def make_ics(filename, n_side=20, box=0.5, T_cold=1e4, T_hot=1e6, Z_cold=0.1, Z_
         hd.attrs["NumPart_Total"] = np.array([n, 0, 0, 0, 0, 0], dtype=np.uint32)
         hd.attrs["NumPart_Total_HighWord"] = np.zeros(6, dtype=np.uint32)
         hd.attrs["MassTable"] = np.zeros(6)
-        hd.attrs["Time"] = 0.0
+        hd.attrs["Time"] = time
         hd.attrs["Redshift"] = 0.0
         hd.attrs["BoxSize"] = box
         hd.attrs["NumFilesPerSnapshot"] = 1
@@ -50,6 +51,10 @@ def make_ics(filename, n_side=20, box=0.5, T_cold=1e4, T_hot=1e6, Z_cold=0.1, Z_
         p["InternalEnergy"] = u
         p["Metallicity"] = Z
         p["KernelMaxRadius"] = np.full(n, h)
+        if B_z > 0:
+            B = np.zeros_like(x)
+            B[:, 2] = B_z
+            p["MagneticField"] = B
     return (m * Z).sum()
 
 

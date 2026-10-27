@@ -14,5 +14,7 @@ Diffusive exchange that a cell receives while inactive is held in its `Dyield_pe
 | `merge_split` | cell masses spread by +-60%, merge/split every timestep |
 | `rate_matches_equal_timesteps` | the metal mass gained by the cold side and lost by the hot side both agree to 2% with a `FORCE_EQUAL_TIMESTEPS` run at 10 Myr (later the two runs' flows diverge, and with them the diffusivity) |
 | `default_rate_matches_equal_timesteps` | the same, for the default exchange: a cell on a shorter step than its neighbour takes its own step's share of the pair-step exchange |
+| `mhd_default_exchange_conserves_at_equal_timesteps` | `MAGNETIC` (uniform weak B_z) with `FORCE_EQUAL_TIMESTEPS`, default exchange: both evaluations of a pair compute the same exchange, so `sum(M*Z)` is constant to 1e-12 at every step |
+| `comoving_matches_physical` | the box in comoving coordinates (Einstein-de Sitter from a0 = 0.163, where its mass is the critical density) moves the same metal mass across the interface in 10 Myr as the physical run, to 10% (the diffusion weight is a physical density) |
 
 Each conservation case also checks that more than one timebin was occupied, that some exchange was pending at some step (so the cross-timebin path was exercised), and that no metallicity went negative.
