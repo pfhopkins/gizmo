@@ -395,7 +395,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
 
     // ---- (R11) cosmic-ray heating ----
     if (iflag_cmb == 0) {
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_CRHEAT_K23)
+#if CHEMISTRYNETWORK == 16
         {   // Gong+17 / Kim+2023 Eqs. 32-33: Draine (2011) for HI, Krumholz (2014) for H2, per H nucleus
             double qcr_HI = 6.5 + 26.4 * std::sqrt(abe / (abe + 0.07));
             double logn = std::log10(yn), qcr_H2;
@@ -439,23 +439,9 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         double PEvar2 = 1.0 + 2e-4 * PEvar0;
         double eps = (4.9e-2 / PEvar1) + (cl[17] / PEvar2);
         rates[11] = -1.3e-24 * eps * G_dust * yn * c.dust_to_gas_ratio;
-#ifndef CHEMCOOL_PE_K23
         // grain recombination cooling (SGChem rates(29)), kept in the PE rate
         rates[11] = rates[11] + c.dust_to_gas_ratio * cl[76]
                   * std::pow(PEvar0, cl[75]) * abe * (yn * yn);
-#endif
-#ifdef CHEMCOOL_PE_K23
-        {   // Kim+2023 Eqs. 30-31 (psi + 50), plus WD01 Eq. 45 recombination cooling (R_V=3.1, b_C=4, ISRF)
-            double psi = G_dust * std::sqrt(temp) / yne + 50.0;
-            double epsk = (5.22 + 2.25 * std::pow(temp, 0.147))
-                        / (1.0 + 0.04996 * std::pow(psi, 0.431) * (1.0 + 0.0043 * std::pow(psi, 0.692)));
-            double lp = std::log(psi);
-            rates[11] = (-1e-26 * epsk * G_dust
-                         + 1e-28 * yne * std::pow(temp, 0.3959 + 2.380 / lp)
-                           * std::exp(-6.554 + 1.575 * lp - 0.05674 * lp * lp))
-                      * yn * c.dust_to_gas_ratio;
-        }
-#endif
     }
 
     // ---- (R13) OI fine-structure cooling ----

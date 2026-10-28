@@ -264,12 +264,6 @@
 #CR_SCALE_WITH_G0               # cosmic ray ionization rate scales with G0
 #CHEMCOOL_CXX                   # use the C++/CVODE chemistry backend (cooling/chemcool/cxx/) instead
 #CHEMCOOL_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
-#CHEMCOOL_CRHEAT_K23          # CR heating per ionization from Kim+2023 (Draine 2011 q_H, Krumholz 2014 q_H2) in every network, not 20 eV
-#CHEMCOOL_PE_K23              # photoelectric heating efficiency Kim+2023 Eqs. 30-31 (WD01 fit, psi+50) plus WD01 grain recombination cooling
-#CHEMCOOL_H2FORM_K23          # H2 formation on dust Kim+2023 Eq. 16 (no dust-temperature dependence)
-#CHEMCOOL_H2SHIELD_B5=3       # Doppler b [km/s] for H2 self-shielding (Kim+2023/GOW17: 3) instead of thermal
-#CHEMCOOL_GASDUST_K23         # gas-dust coupling alpha_gd = 3.2e-34 Z'_d (Kim+2023 Eq. 45, Goldsmith 2001)
-#CHEMCOOL_CR_ATTEN_K23        # CR ionization attenuated as 1/N_eff above 9.35e20 cm^-2 (Kim+2023 Eq. 55)
 #CHEMCOOL_KEEP_IC_ABUNDANCES  # keep ChemcoolTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the

@@ -61,9 +61,6 @@ double cxx_calc_H2_shielding_factor(double temp, double abh2, double NH,
                                     ChemCell& c)
 {
     double b  = std::sqrt(CHEM_KBOLTZ * temp / CHEM_PROTONMASS);
-#ifdef CHEMCOOL_H2SHIELD_B5
-    b = CHEMCOOL_H2SHIELD_B5 * 1e5;
-#endif
     double b5 = b / 1e5;
     double fshield = 0.0;
     double NH2_local = abh2 * NH;
@@ -268,7 +265,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     double df09 = 1.0, df12 = 1.0, df18 = 1.0, df21 = 1.0, df23 = 1.0, df24 = 1.0,
            df28 = 1.0, df31 = 1.0, df37 = 1.0, df38 = 1.0, df39 = 1.0,
            dfsp1 = 1.0;               // nets 3/7/8/11
-    double df187 = 1.0;   // sigma_PE = 1e-21 Z' (Gong+17; Kim+2023 under CHEMCOOL_PE_K23)
+    double df187 = 1.0;   // sigma_PE = 1e-21 Z' (Gong+17, net 16)
 #if CHEMISTRYNETWORK == 16
     double df418 = 1.0, df388 = 1.0, df376 = 1.0,
            df261 = 1.0, df212 = 1.0, df266 = 1.0;   // Gong+17 (SGChem)
@@ -296,7 +293,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
             df15 = std::exp(-1.5 * AV);
             df17 = std::exp(-1.7 * AV);
 #endif
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
             df187 = std::exp(-1.87 * AV);
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -338,7 +335,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         df15 = 0.0; df17 = 0.0;
         df09 = 0.0; df12 = 0.0; df18 = 0.0; df21 = 0.0; df23 = 0.0; df24 = 0.0;
         df28 = 0.0; df31 = 0.0; df37 = 0.0; df38 = 0.0; df39 = 0.0; dfsp1 = 0.0;
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
         df187 = 0.0;
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -381,7 +378,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
             df15 += fac_uv_pix * std::exp(-1.5 * AV);
             df17 += fac_uv_pix * std::exp(-1.7 * AV);
 #endif
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
             df187 += fac_uv_pix * std::exp(-1.87 * AV);
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -420,7 +417,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
     df09 = 1.0; df12 = 1.0; df18 = 1.0; df21 = 1.0; df23 = 1.0; df24 = 1.0;
     df28 = 1.0; df31 = 1.0; df37 = 1.0; df38 = 1.0; df39 = 1.0; dfsp1 = 1.0;
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
     df187 = 1.0;
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -434,7 +431,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
     df05 = 1.0; df19 = 1.0; df15 = 1.0; df17 = 1.0;
     df09 = 1.0; df12 = 1.0; df18 = 1.0; df21 = 1.0; df23 = 1.0; df24 = 1.0;
     df28 = 1.0; df31 = 1.0; df37 = 1.0; df38 = 1.0; df39 = 1.0; dfsp1 = 1.0;
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
     df187 = 1.0;
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -588,21 +585,10 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
 done:
     // f_rsc rescales the field strength to Habing units (photoinit sets it).
     (void)f_simp;   // used only under CHEMISTRYNETWORK 5/6 (UNUSED_PARAM in the .F)
-    (void)df187;    // read only by net 16 or under CHEMCOOL_PE_K23
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+    (void)df187;    // read only by net 16
+#if CHEMISTRYNETWORK == 16
     c.G_dust = c.f_rsc * c.G0 * df187;
 #else
     c.G_dust = c.f_rsc * c.G0 * df25;
-#endif
-#ifdef CHEMCOOL_CR_ATTEN_K23
-    {   // Kim+2023 Eq. 55: N_eff = tau_PE,eff / (1e-21 Z'_d), xi ~ 1/N_eff above N_0 = 9.35e20
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
-        double cr_tau  = -std::log(std::max(df187, 1e-300));
-#else
-        double cr_tau  = -std::log(std::max(df25, 1e-300));
-#endif
-        double cr_neff = cr_tau / (1e-21 * std::max(c.dust_to_gas_ratio, 1e-30));
-        if (cr_neff > 9.35e20) c.cosmic_ray_ion_rate *= 9.35e20 / cr_neff;
-    }
 #endif
 }

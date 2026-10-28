@@ -209,12 +209,12 @@ Counts: `{"generated": 349, "TABLE": 8, "SPECIAL": 0, "RHS_INLINE": 212, "genera
 | crphot10 | GENERATED | - | cheminmo.F:2000-2000 | - | - | crphot(10) = 6.4d2 | O2 -> O2+ + e |
 | crphot11 | GENERATED | - | cheminmo.F:2005-2005 | - | - | crphot(11) = 0.21d0 | CO -> C + O |
 | crphot12 | GENERATED | - | cheminmo.F:2011-2011 | - | - | crphot(12) = 5.2d3 | NO -> N + O |
-| cl1 | TABLE | 5,17 | coolinmo.F:253-1192 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(1,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(1,itemp) = max(f,1d-60)<br>elseif (temp > 1d4):<br>cltab(1,itemp) = (1d1**(-18.253d0)) |  |
-| cl2 | TABLE | 5,17 | coolinmo.F:276-1193 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(2,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(2,itemp) = ((((fpara*h2q02)*h2e20)+((fortho*h2q13)*h2e31))*kboltz)<br>elseif (temp > 1d4):<br>cltab(2,itemp) = (1d1**(-21.943d0)) |  |
-| cl3 | TABLE | 5,17 | coolinmo.F:293-1194 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(3,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(3,itemp) = ((((fpara*h2q02)*h2e20)+((fortho*h2q13)*h2e31))*kboltz)<br>elseif (temp > 1d4):<br>cltab(3,itemp) = (1d1**(-22.758d0)) |  |
+| cl1 | TABLE | 5,17 | coolinmo.F:253-1189 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(1,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(1,itemp) = max(f,1d-60)<br>elseif (temp > 1d4):<br>cltab(1,itemp) = (1d1**(-18.253d0)) |  |
+| cl2 | TABLE | 5,17 | coolinmo.F:276-1190 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(2,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(2,itemp) = ((((fpara*h2q02)*h2e20)+((fortho*h2q13)*h2e31))*kboltz)<br>elseif (temp > 1d4):<br>cltab(2,itemp) = (1d1**(-21.943d0)) |  |
+| cl3 | TABLE | 5,17 | coolinmo.F:293-1191 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 5d0):<br>cltab(3,itemp) = 1d-60<br>elseif (temp < 1d2):<br>cltab(3,itemp) = ((((fpara*h2q02)*h2e20)+((fortho*h2q13)*h2e31))*kboltz)<br>elseif (temp > 1d4):<br>cltab(3,itemp) = (1d1**(-22.758d0)) |  |
 | cl4 | GENERATED | 5,17 | coolinmo.F:308-336 | - | - | if (temp < 1d1):<br>cltab(4,itemp) = 0d0<br>elseif (temp < 1d2):<br>cltab(4,itemp) = (1d1**((((((-16.818342d0)+(37.383713d0*dlog10(temp3)))+(58.145166d0*(dlog10(temp3)**2)))+(48.656103d0*(dlog10(temp3)**3)))+(20.159831d0*(dlog10(temp3)**4)))+(3.8479610d0*(dlog10(temp3)**5))))<br>elseif (temp < 1d3):<br>cltab(4,itemp) = (1d1**((((((-24.311209d0)+(3.5692468d0*dlog10(temp3)))-(11.332860d0*(dlog10(temp3)**2)))-(27.850082d0*(dlog10(temp3)**3)))-(21.328264d0*(dlog10(temp3)**4)))-(4.2519023d0*(dlog10(t |  |
 | cl5 | GENERATED | 5,17 | coolinmo.F:344-358 | - | - | if (temp < 1d1):<br>cltab(5,itemp) = 0d0<br>elseif (temp < 1d4):<br>cltab(5,itemp) = (1d1**((((((-23.962112d0)+(2.09433740d0*dlog10(temp3)))-(0.77151436d0*(dlog10(temp3)**2)))+(0.43693353d0*(dlog10(temp3)**3)))-(0.14913216d0*(dlog10(temp3)**4)))-(0.033638326d0*(dlog10(temp3)**5))))<br>else:<br>cltab(5,itemp) = (1d1**((((((-23.962112d0)+2.09433740d0)-0.77151436d0)+0.43693353d0)-0.14913216d0)-0.033638326d0)) |  |
-| cl6 | TABLE | 5,17 | coolinmo.F:1567-1621 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br> |  |
+| cl6 | TABLE | 5,17 | coolinmo.F:1564-1618 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br> |  |
 | cl7 | GENERATED | 5,17 | coolinmo.F:463-463 | - | - | cltab(7,itemp) = blwatr |  |
 | cl8 | GENERATED | 5,17 | coolinmo.F:470-470 | - | - | cltab(8,itemp) = blwatv |  |
 | cl9 | GENERATED | 5,17 | coolinmo.F:476-476 | - | - | cltab(9,itemp) = blwatvh |  |
@@ -223,61 +223,61 @@ Counts: `{"generated": 349, "TABLE": 8, "SPECIAL": 0, "RHS_INLINE": 212, "genera
 | cl12 | GENERATED | 5,17 | coolinmo.F:532-532 | - | - | cltab(12,itemp) = blcov |  |
 | cl13 | GENERATED | 5,17 | coolinmo.F:544-546 | - | - | if (temp < 7d2):<br>cltab(13,itemp) = ((1.049d-35*(temp**3.98))*ctinv)<br>else:<br>cltab(13,itemp) = ((1.062d-29*(temp**1.87))*ctinv) |  |
 | cl14 | GENERATED | 5,17 | coolinmo.F:558-558 | - | - | cltab(14,itemp) = (((3.8d-33*tsqrt)*gg)*exp((-(temp/3e4)))) |  |
-| cl15 | GENERATED | 5,17 | coolinmo.F:566-566 | - | - | cltab(15,itemp) = ((2.84d-28*temp)*tsqrt) | (cl15) --  OH cooling - non-lte |
-| cl16 | GENERATED | 5,17 | coolinmo.F:576-576 | - | - | cltab(16,itemp) = (dsqrt(tfix)/phi_pah) |  |
-| cl17 | GENERATED | 5,17 | coolinmo.F:578-578 | - | - | cltab(17,itemp) = (3.7d-2*((tfix/1d4)**0.7d0)) |  |
-| cl18 | GENERATED | 5,17 | coolinmo.F:600-620 | - | - | if (temp < 5d0):<br>cltab(18,itemp) = (((5d-11/3d0)*exp((((((((4.581-(156.118*tfintq))+(2679.979*(tfintq**2)))-(78996.962*(tfintq**3)))+(1308323.468*(tfintq**4)))-(13011761.861*(tfintq**5)))+(71010784.971*(tfintq**6)))-(162826621.855*(tfintq**7)))))*exp((oxe10/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(18,itemp) = (((5d-11/3d0)*exp((((((((4.581-(156.118*tintq))+(2679.979*(tintq**2)))-(78996.962*(tintq**3)))+(1308323.468*(tintq**4)))-(13011761.861*(tintq**5)))+(71010784.971*(tintq**6)))-(1 |  |
-| cl19 | GENERATED | 5,17 | coolinmo.F:626-646 | - | - | if (temp < 5d0):<br>cltab(19,itemp) = ((5d-11*exp((((((((3.297-(168.382*tfintq))+(1844.099*(tfintq**2)))-(68362.889*(tfintq**3)))+(1376864.737*(tfintq**4)))-(17964610.169*(tfintq**5)))+(134374927.808*(tfintq**6)))-(430107587.886*(tfintq**7)))))*exp((oxe20/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(19,itemp) = ((5d-11*exp((((((((3.297-(168.382*tintq))+(1844.099*(tintq**2)))-(68362.889*(tintq**3)))+(1376864.737*(tintq**4)))-(17964610.169*(tintq**5)))+(134374927.808*(tintq**6)))-(430107587.8 |  |
-| cl20 | GENERATED | 5,17 | coolinmo.F:653-665 | - | - | if (temp < 5d1):<br>cltab(20,itemp) = (2.62d-12*(temp**0.74d0))<br>elseif (temp < 1d3):<br>cltab(20,itemp) = ((3d-11*exp((((((((3.437+(17.443*tisqt))-(618.761*(tisqt**2)))+(3757.156*(tisqt**3)))-(12736.468*(tisqt**4)))+(22785.266*(tisqt**5)))-(22759.228*(tisqt**6)))+(12668.261*(tisqt**7)))))*exp((oxe21/(kboltz*temp))))<br>else:<br>cltab(20,itemp) = (3.61d-10*(temp**0.158d0)) |  |
-| cl21 | GENERATED | 5,17 | coolinmo.F:678-678 | - | - | cltab(21,itemp) = (f+hh) |  |
-| cl22 | GENERATED | 5,17 | coolinmo.F:682-682 | - | - | cltab(22,itemp) = (f+hh) |  |
-| cl23 | GENERATED | 5,17 | coolinmo.F:686-686 | - | - | cltab(23,itemp) = (f+hh) |  |
-| cl24 | GENERATED | 5,17 | coolinmo.F:691-691 | - | - | cltab(24,itemp) = (5.12d-10*(temp**(-0.075))) | Electron rate -- from my fits to BBT98. |
-| cl25 | GENERATED | 5,17 | coolinmo.F:693-693 | - | - | cltab(25,itemp) = (4.863d-10*(temp**(-0.026))) | 2 -> 0 |
-| cl26 | GENERATED | 5,17 | coolinmo.F:695-695 | - | - | cltab(26,itemp) = (1.082d-14*(temp**0.926)) | 2 -> 1 |
-| cl27 | GENERATED | 5,17 | coolinmo.F:701-705 | - | - | if (temp < 194):<br>cltab(27,itemp) = (6.38d-11*(temp**0.40))<br>elseif (temp < 3686):<br>cltab(27,itemp) = (7.75d-12*(temp**0.80))<br>else:<br>cltab(27,itemp) = (2.65d-10*(temp**0.37)) |  |
-| cl28 | GENERATED | 5,17 | coolinmo.F:709-713 | - | - | if (temp < 511):<br>cltab(28,itemp) = (6.10d-13*(temp**1.10))<br>elseif (temp < 7510):<br>cltab(28,itemp) = (2.12d-12*(temp**0.90))<br>else:<br>cltab(28,itemp) = (4.49d-10*(temp**0.30)) |  |
-| cl29 | GENERATED | 5,17 | coolinmo.F:717-719 | - | - | if (temp < 2090):<br>cltab(29,itemp) = (2.029d-11*(temp**0.56))<br>else:<br>cltab(29,itemp) = (3.434d-10*(temp**0.19)) |  |
-| cl30 | GENERATED | 5,17 | coolinmo.F:733-755 | - | - | if (temp < 5d0):<br>cltab(30,itemp) = (((1d-11/3d0)*dexp(((((((((3.6593+(56.6023*tfinq))-(802.9765*(tfinq**2)))+(5025.1882*(tfinq**3)))-(17874.4255*(tfinq**4)))+(38343.6655*(tfinq**5)))-(49249.4895*(tfinq**6)))+(34789.3941*(tfinq**7)))-(10390.9809*(tfinq**8)))))*dexp((cie10/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(30,itemp) = (((1d-11/3d0)*dexp(((((((((3.6593+(56.6023*tinq))-(802.9765*(tinq**2)))+(5025.1882*(tinq**3)))-(17874.4255*(tinq**4)))+(38343.6655*(tinq**5)))-(49249.4895*(tinq**6 |  |
-| cl31 | GENERATED | 5,17 | coolinmo.F:762-784 | - | - | if (temp < 5d0):<br>cltab(31,itemp) = ((2.0d-12*dexp(((((((((10.8377-(173.4153*tfinth))+(2024.0272*(tfinth**2)))-(13391.6549*(tfinth**3)))+(52198.5522*(tfinth**4)))-(124518.3586*(tfinth**5)))+(178182.5823*(tfinth**6)))-(140970.6106*(tfinth**7)))+(47504.5861*(tfinth**8)))))*dexp((cie20/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(31,itemp) = ((2.0d-12*dexp(((((((((10.8377-(173.4153*tinth))+(2024.0272*(tinth**2)))-(13391.6549*(tinth**3)))+(52198.5522*(tinth**4)))-(124518.3586*(tinth**5)))+(17 |  |
-| cl32 | GENERATED | 5,17 | coolinmo.F:790-820 | - | - | if (temp < 5d0):<br>cltab(32,itemp) = ((6.0d-12*dexp((((((((15.8996-(201.3030*tfinq))+(1533.6164*(tfinq**2)))-(6491.0083*(tfinq**3)))+(15921.9239*(tfinq**4)))-(22691.1632*(tfinq**5)))+(17334.7529*(tfinq**6)))-(5517.9360*(tfinq**7)))))*dexp((cie21/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(32,itemp) = ((6.0d-12*dexp((((((((15.8996-(201.3030*tinq))+(1533.6164*(tinq**2)))-(6491.0083*(tinq**3)))+(15921.9239*(tinq**4)))-(22691.1632*(tinq**5)))+(17334.7529*(tinq**6)))-(5517.9360*(tinq**7)))))*d |  |
-| cl33 | GENERATED | 5,17 | coolinmo.F:833-833 | - | - | cltab(33,itemp) = (f+hh) |  |
-| cl34 | GENERATED | 5,17 | coolinmo.F:840-840 | - | - | cltab(34,itemp) = (f+hh) |  |
-| cl35 | GENERATED | 5,17 | coolinmo.F:847-847 | - | - | cltab(35,itemp) = (f+hh) |  |
-| cl36 | GENERATED | 5,17 | coolinmo.F:865-866 | - | - | cltab(36,itemp) = ((((1d0/3d0)*8.629d-6)*dexp(f))/dsqrt(temp)) |  |
-| cl37 | GENERATED | 5,17 | coolinmo.F:880-880 | - | - | cltab(37,itemp) = (((0.2d0*8.629d-6)*dexp(f))/dsqrt(temp)) |  |
-| cl38 | GENERATED | 5,17 | coolinmo.F:894-894 | - | - | cltab(38,itemp) = (((0.2d0*8.629d-6)*dexp(f))/dsqrt(temp)) |  |
-| cl39 | GENERATED | 5,17 | coolinmo.F:909-909 | - | - | cltab(39,itemp) = f |  |
-| cl40 | GENERATED | 5,17 | coolinmo.F:921-921 | - | - | cltab(40,itemp) = f |  |
-| cl41 | GENERATED | 5,17 | coolinmo.F:933-933 | - | - | cltab(41,itemp) = f |  |
-| cl42 | GENERATED | 5,17 | coolinmo.F:941-941 | - | - | cltab(42,itemp) = (3.5d-10*(temp2**(-0.03))) | (cl[42-43]) -- SiI fine structure lines |
-| cl43 | GENERATED | 5,17 | coolinmo.F:943-943 | - | - | cltab(43,itemp) = (1.7d-11*(temp2**0.17)) | 2 -> 0 |
-| cl44 | GENERATED | 5,17 | coolinmo.F:945-945 | - | - | cltab(44,itemp) = (5.0d-10*(temp2**0.17)) | 2 -> 1 |
-| cl45 | GENERATED | 5,17 | coolinmo.F:977-979 | - | - | if (temp <= 2d3):<br>cltab(45,itemp) = (8d-10*(temp2**0.07d0))<br>else:<br>cltab(45,itemp) = (3.113619d-10*(temp2**0.385d0)) |  |
-| cl46 | GENERATED | 5,17 | coolinmo.F:994-994 | - | - | cltab(46,itemp) = (f+hh) |  |
-| cl47 | GENERATED | 5,17 | coolinmo.F:1003-1005 | - | - | if (temp <= 2d3):<br>cltab(47,itemp) = (3.86d-7/dsqrt(temp2))<br>else:<br>cltab(47,itemp) = (2.426206d-7/(temp2**0.345d0)) |  |
-| cl48 | GENERATED | 5,17 | coolinmo.F:1012-1012 | - | - | cltab(48,itemp) = (2d0*dexp((-(91.25d0/temp)))) | Proton rate negligible below 10^4K, ignorable below 10^5K. |
-| cl49 | GENERATED | 5,17 | coolinmo.F:1020-1020 | - | - | cltab(49,itemp) = (4.95d-10*(temp2**0.24)) | (cl[49-51]) -- SiII fine structure lines |
-| cl50 | GENERATED | 5,17 | coolinmo.F:1025-1025 | - | - | cltab(50,itemp) = (1.2d-6/dsqrt(temp2)) | (cl50) SiII - electron (DK91 -- extrapolated to T < 4000K, |
-| cl51 | GENERATED | 5,17 | coolinmo.F:1029-1029 | - | - | cltab(51,itemp) = (2d0*dexp((-(412.24d0/temp)))) | cl51 holds f(1,LTE) |
-| cl52 | TABLE | 5,17 | coolinmo.F:1047-1574 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 1d3):<br>cltab(52,itemp) = 0d0<br>else:<br>cltab(52,itemp) = ((7.5d-19*dexp((-(1.18348d5/temp))))/(1d0+dsqrt((temp/1d5)))) | This rate includes cooling from HI, HeI, HeII excitation, so we set |
-| cl53 | GENERATED | 5,17 | coolinmo.F:1129-1133 | - | - | cltab(53,itemp) = (((((-42.57688)+(21.93385*thd))-(10.19097*(thd**2)))+(2.19906*(thd**3)))-(0.17334*(thd**4))) |  |
-| cl54 | GENERATED | 5,17 | coolinmo.F:1134-1138 | - | - | cltab(54,itemp) = ((((0.92433+(0.77952*thd))-(0.54263*(thd**2)))+(0.11711*(thd**3)))-(8.35d-3*(thd**4))) |  |
-| cl55 | GENERATED | 5,17 | coolinmo.F:1139-1143 | - | - | cltab(55,itemp) = ((((0.54962-(1.06447*thd))+(0.62343*(thd**2)))-(0.13768*(thd**3)))+(1.06d-2*(thd**4))) |  |
-| cl56 | GENERATED | 5,17 | coolinmo.F:1144-1148 | - | - | cltab(56,itemp) = (((((-7.676d-2)+(0.11864d0*thd))-(7.366d-2*(thd**2)))+(1.759d-2*(thd**3)))-(1.482d-3*(thd**4))) |  |
-| cl57 | GENERATED | 5,17 | coolinmo.F:1149-1153 | - | - | cltab(57,itemp) = ((((2.75d-3-(3.66d-3*thd))+(2.514d-3*(thd**2)))-(6.6631d-4*(thd**3)))+(6.1926d-5*(thd**4))) |  |
-| cl58 | GENERATED | 5,17 | coolinmo.F:1159-1159 | - | - | cltab(58,itemp) = (2.289d-49*(temp**4)) | (cl58) H2 collision-induced emission cooling. |
-| cl59 | TABLE | 5,17 | coolinmo.F:1059-1578 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 2d3):<br>cltab(59,itemp) = 0d0<br>else:<br>cltab(59,itemp) = ((1.1d-19*(temp**0.082d0))*exp((-(2.3d5/temp)))) | HeI excitation cooling |
-| cl60 | TABLE | 5,17 | coolinmo.F:1074-1579 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 1d2):<br>cltab(60,itemp) = 0d0<br>else:<br>cltab(60,itemp) = ((9.1d-27*exp((-(1.3179d4/temp))))/((temp**0.1687d0)*(1d0+dsqrt((temp/1d5))))) |  |
-| cl61 | TABLE | 5,17 | coolinmo.F:1085-1583 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 4d3):<br>cltab(61,itemp) = 0d0<br>else:<br>cltab(61,itemp) = ((5.54d-17*exp((-(4.73638d5/temp))))/((temp**0.397d0)*(1d0+dsqrt((temp/1d5))))) | HeII excitation cooling |
-| cl62 | GENERATED | 5,17 | coolinmo.F:1103-1103 | - | - | cltab(62,itemp) = ((1.426d-27*dsqrt(temp))*gff) |  |
-| cl63 | GENERATED | 5,17 | coolinmo.F:1113-1113 | - | - | cltab(63,itemp) = (((4d0*1.426d-27)*dsqrt(temp))*gff) |  |
+| cl15 | GENERATED | 5,17 | coolinmo.F:563-563 | - | - | cltab(15,itemp) = ((2.84d-28*temp)*tsqrt) | (cl15) --  OH cooling - non-lte |
+| cl16 | GENERATED | 5,17 | coolinmo.F:573-573 | - | - | cltab(16,itemp) = (dsqrt(tfix)/phi_pah) |  |
+| cl17 | GENERATED | 5,17 | coolinmo.F:575-575 | - | - | cltab(17,itemp) = (3.7d-2*((tfix/1d4)**0.7d0)) |  |
+| cl18 | GENERATED | 5,17 | coolinmo.F:597-617 | - | - | if (temp < 5d0):<br>cltab(18,itemp) = (((5d-11/3d0)*exp((((((((4.581-(156.118*tfintq))+(2679.979*(tfintq**2)))-(78996.962*(tfintq**3)))+(1308323.468*(tfintq**4)))-(13011761.861*(tfintq**5)))+(71010784.971*(tfintq**6)))-(162826621.855*(tfintq**7)))))*exp((oxe10/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(18,itemp) = (((5d-11/3d0)*exp((((((((4.581-(156.118*tintq))+(2679.979*(tintq**2)))-(78996.962*(tintq**3)))+(1308323.468*(tintq**4)))-(13011761.861*(tintq**5)))+(71010784.971*(tintq**6)))-(1 |  |
+| cl19 | GENERATED | 5,17 | coolinmo.F:623-643 | - | - | if (temp < 5d0):<br>cltab(19,itemp) = ((5d-11*exp((((((((3.297-(168.382*tfintq))+(1844.099*(tfintq**2)))-(68362.889*(tfintq**3)))+(1376864.737*(tfintq**4)))-(17964610.169*(tfintq**5)))+(134374927.808*(tfintq**6)))-(430107587.886*(tfintq**7)))))*exp((oxe20/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(19,itemp) = ((5d-11*exp((((((((3.297-(168.382*tintq))+(1844.099*(tintq**2)))-(68362.889*(tintq**3)))+(1376864.737*(tintq**4)))-(17964610.169*(tintq**5)))+(134374927.808*(tintq**6)))-(430107587.8 |  |
+| cl20 | GENERATED | 5,17 | coolinmo.F:650-662 | - | - | if (temp < 5d1):<br>cltab(20,itemp) = (2.62d-12*(temp**0.74d0))<br>elseif (temp < 1d3):<br>cltab(20,itemp) = ((3d-11*exp((((((((3.437+(17.443*tisqt))-(618.761*(tisqt**2)))+(3757.156*(tisqt**3)))-(12736.468*(tisqt**4)))+(22785.266*(tisqt**5)))-(22759.228*(tisqt**6)))+(12668.261*(tisqt**7)))))*exp((oxe21/(kboltz*temp))))<br>else:<br>cltab(20,itemp) = (3.61d-10*(temp**0.158d0)) |  |
+| cl21 | GENERATED | 5,17 | coolinmo.F:675-675 | - | - | cltab(21,itemp) = (f+hh) |  |
+| cl22 | GENERATED | 5,17 | coolinmo.F:679-679 | - | - | cltab(22,itemp) = (f+hh) |  |
+| cl23 | GENERATED | 5,17 | coolinmo.F:683-683 | - | - | cltab(23,itemp) = (f+hh) |  |
+| cl24 | GENERATED | 5,17 | coolinmo.F:688-688 | - | - | cltab(24,itemp) = (5.12d-10*(temp**(-0.075))) | Electron rate -- from my fits to BBT98. |
+| cl25 | GENERATED | 5,17 | coolinmo.F:690-690 | - | - | cltab(25,itemp) = (4.863d-10*(temp**(-0.026))) | 2 -> 0 |
+| cl26 | GENERATED | 5,17 | coolinmo.F:692-692 | - | - | cltab(26,itemp) = (1.082d-14*(temp**0.926)) | 2 -> 1 |
+| cl27 | GENERATED | 5,17 | coolinmo.F:698-702 | - | - | if (temp < 194):<br>cltab(27,itemp) = (6.38d-11*(temp**0.40))<br>elseif (temp < 3686):<br>cltab(27,itemp) = (7.75d-12*(temp**0.80))<br>else:<br>cltab(27,itemp) = (2.65d-10*(temp**0.37)) |  |
+| cl28 | GENERATED | 5,17 | coolinmo.F:706-710 | - | - | if (temp < 511):<br>cltab(28,itemp) = (6.10d-13*(temp**1.10))<br>elseif (temp < 7510):<br>cltab(28,itemp) = (2.12d-12*(temp**0.90))<br>else:<br>cltab(28,itemp) = (4.49d-10*(temp**0.30)) |  |
+| cl29 | GENERATED | 5,17 | coolinmo.F:714-716 | - | - | if (temp < 2090):<br>cltab(29,itemp) = (2.029d-11*(temp**0.56))<br>else:<br>cltab(29,itemp) = (3.434d-10*(temp**0.19)) |  |
+| cl30 | GENERATED | 5,17 | coolinmo.F:730-752 | - | - | if (temp < 5d0):<br>cltab(30,itemp) = (((1d-11/3d0)*dexp(((((((((3.6593+(56.6023*tfinq))-(802.9765*(tfinq**2)))+(5025.1882*(tfinq**3)))-(17874.4255*(tfinq**4)))+(38343.6655*(tfinq**5)))-(49249.4895*(tfinq**6)))+(34789.3941*(tfinq**7)))-(10390.9809*(tfinq**8)))))*dexp((cie10/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(30,itemp) = (((1d-11/3d0)*dexp(((((((((3.6593+(56.6023*tinq))-(802.9765*(tinq**2)))+(5025.1882*(tinq**3)))-(17874.4255*(tinq**4)))+(38343.6655*(tinq**5)))-(49249.4895*(tinq**6 |  |
+| cl31 | GENERATED | 5,17 | coolinmo.F:759-781 | - | - | if (temp < 5d0):<br>cltab(31,itemp) = ((2.0d-12*dexp(((((((((10.8377-(173.4153*tfinth))+(2024.0272*(tfinth**2)))-(13391.6549*(tfinth**3)))+(52198.5522*(tfinth**4)))-(124518.3586*(tfinth**5)))+(178182.5823*(tfinth**6)))-(140970.6106*(tfinth**7)))+(47504.5861*(tfinth**8)))))*dexp((cie20/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(31,itemp) = ((2.0d-12*dexp(((((((((10.8377-(173.4153*tinth))+(2024.0272*(tinth**2)))-(13391.6549*(tinth**3)))+(52198.5522*(tinth**4)))-(124518.3586*(tinth**5)))+(17 |  |
+| cl32 | GENERATED | 5,17 | coolinmo.F:787-817 | - | - | if (temp < 5d0):<br>cltab(32,itemp) = ((6.0d-12*dexp((((((((15.8996-(201.3030*tfinq))+(1533.6164*(tfinq**2)))-(6491.0083*(tfinq**3)))+(15921.9239*(tfinq**4)))-(22691.1632*(tfinq**5)))+(17334.7529*(tfinq**6)))-(5517.9360*(tfinq**7)))))*dexp((cie21/(kboltz*tfix))))<br>elseif (temp < 1d3):<br>cltab(32,itemp) = ((6.0d-12*dexp((((((((15.8996-(201.3030*tinq))+(1533.6164*(tinq**2)))-(6491.0083*(tinq**3)))+(15921.9239*(tinq**4)))-(22691.1632*(tinq**5)))+(17334.7529*(tinq**6)))-(5517.9360*(tinq**7)))))*d |  |
+| cl33 | GENERATED | 5,17 | coolinmo.F:830-830 | - | - | cltab(33,itemp) = (f+hh) |  |
+| cl34 | GENERATED | 5,17 | coolinmo.F:837-837 | - | - | cltab(34,itemp) = (f+hh) |  |
+| cl35 | GENERATED | 5,17 | coolinmo.F:844-844 | - | - | cltab(35,itemp) = (f+hh) |  |
+| cl36 | GENERATED | 5,17 | coolinmo.F:862-863 | - | - | cltab(36,itemp) = ((((1d0/3d0)*8.629d-6)*dexp(f))/dsqrt(temp)) |  |
+| cl37 | GENERATED | 5,17 | coolinmo.F:877-877 | - | - | cltab(37,itemp) = (((0.2d0*8.629d-6)*dexp(f))/dsqrt(temp)) |  |
+| cl38 | GENERATED | 5,17 | coolinmo.F:891-891 | - | - | cltab(38,itemp) = (((0.2d0*8.629d-6)*dexp(f))/dsqrt(temp)) |  |
+| cl39 | GENERATED | 5,17 | coolinmo.F:906-906 | - | - | cltab(39,itemp) = f |  |
+| cl40 | GENERATED | 5,17 | coolinmo.F:918-918 | - | - | cltab(40,itemp) = f |  |
+| cl41 | GENERATED | 5,17 | coolinmo.F:930-930 | - | - | cltab(41,itemp) = f |  |
+| cl42 | GENERATED | 5,17 | coolinmo.F:938-938 | - | - | cltab(42,itemp) = (3.5d-10*(temp2**(-0.03))) | (cl[42-43]) -- SiI fine structure lines |
+| cl43 | GENERATED | 5,17 | coolinmo.F:940-940 | - | - | cltab(43,itemp) = (1.7d-11*(temp2**0.17)) | 2 -> 0 |
+| cl44 | GENERATED | 5,17 | coolinmo.F:942-942 | - | - | cltab(44,itemp) = (5.0d-10*(temp2**0.17)) | 2 -> 1 |
+| cl45 | GENERATED | 5,17 | coolinmo.F:974-976 | - | - | if (temp <= 2d3):<br>cltab(45,itemp) = (8d-10*(temp2**0.07d0))<br>else:<br>cltab(45,itemp) = (3.113619d-10*(temp2**0.385d0)) |  |
+| cl46 | GENERATED | 5,17 | coolinmo.F:991-991 | - | - | cltab(46,itemp) = (f+hh) |  |
+| cl47 | GENERATED | 5,17 | coolinmo.F:1000-1002 | - | - | if (temp <= 2d3):<br>cltab(47,itemp) = (3.86d-7/dsqrt(temp2))<br>else:<br>cltab(47,itemp) = (2.426206d-7/(temp2**0.345d0)) |  |
+| cl48 | GENERATED | 5,17 | coolinmo.F:1009-1009 | - | - | cltab(48,itemp) = (2d0*dexp((-(91.25d0/temp)))) | Proton rate negligible below 10^4K, ignorable below 10^5K. |
+| cl49 | GENERATED | 5,17 | coolinmo.F:1017-1017 | - | - | cltab(49,itemp) = (4.95d-10*(temp2**0.24)) | (cl[49-51]) -- SiII fine structure lines |
+| cl50 | GENERATED | 5,17 | coolinmo.F:1022-1022 | - | - | cltab(50,itemp) = (1.2d-6/dsqrt(temp2)) | (cl50) SiII - electron (DK91 -- extrapolated to T < 4000K, |
+| cl51 | GENERATED | 5,17 | coolinmo.F:1026-1026 | - | - | cltab(51,itemp) = (2d0*dexp((-(412.24d0/temp)))) | cl51 holds f(1,LTE) |
+| cl52 | TABLE | 5,17 | coolinmo.F:1044-1571 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 1d3):<br>cltab(52,itemp) = 0d0<br>else:<br>cltab(52,itemp) = ((7.5d-19*dexp((-(1.18348d5/temp))))/(1d0+dsqrt((temp/1d5)))) | This rate includes cooling from HI, HeI, HeII excitation, so we set |
+| cl53 | GENERATED | 5,17 | coolinmo.F:1126-1130 | - | - | cltab(53,itemp) = (((((-42.57688)+(21.93385*thd))-(10.19097*(thd**2)))+(2.19906*(thd**3)))-(0.17334*(thd**4))) |  |
+| cl54 | GENERATED | 5,17 | coolinmo.F:1131-1135 | - | - | cltab(54,itemp) = ((((0.92433+(0.77952*thd))-(0.54263*(thd**2)))+(0.11711*(thd**3)))-(8.35d-3*(thd**4))) |  |
+| cl55 | GENERATED | 5,17 | coolinmo.F:1136-1140 | - | - | cltab(55,itemp) = ((((0.54962-(1.06447*thd))+(0.62343*(thd**2)))-(0.13768*(thd**3)))+(1.06d-2*(thd**4))) |  |
+| cl56 | GENERATED | 5,17 | coolinmo.F:1141-1145 | - | - | cltab(56,itemp) = (((((-7.676d-2)+(0.11864d0*thd))-(7.366d-2*(thd**2)))+(1.759d-2*(thd**3)))-(1.482d-3*(thd**4))) |  |
+| cl57 | GENERATED | 5,17 | coolinmo.F:1146-1150 | - | - | cltab(57,itemp) = ((((2.75d-3-(3.66d-3*thd))+(2.514d-3*(thd**2)))-(6.6631d-4*(thd**3)))+(6.1926d-5*(thd**4))) |  |
+| cl58 | GENERATED | 5,17 | coolinmo.F:1156-1156 | - | - | cltab(58,itemp) = (2.289d-49*(temp**4)) | (cl58) H2 collision-induced emission cooling. |
+| cl59 | TABLE | 5,17 | coolinmo.F:1056-1575 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 2d3):<br>cltab(59,itemp) = 0d0<br>else:<br>cltab(59,itemp) = ((1.1d-19*(temp**0.082d0))*exp((-(2.3d5/temp)))) | HeI excitation cooling |
+| cl60 | TABLE | 5,17 | coolinmo.F:1071-1576 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 1d2):<br>cltab(60,itemp) = 0d0<br>else:<br>cltab(60,itemp) = ((9.1d-27*exp((-(1.3179d4/temp))))/((temp**0.1687d0)*(1d0+dsqrt((temp/1d5))))) |  |
+| cl61 | TABLE | 5,17 | coolinmo.F:1082-1580 | - | - | **assigned inside a residual do-loop (spline/DATA-table construction outside the analytic T-loop)**<br>if (temp < 4d3):<br>cltab(61,itemp) = 0d0<br>else:<br>cltab(61,itemp) = ((5.54d-17*exp((-(4.73638d5/temp))))/((temp**0.397d0)*(1d0+dsqrt((temp/1d5))))) | HeII excitation cooling |
+| cl62 | GENERATED | 5,17 | coolinmo.F:1100-1100 | - | - | cltab(62,itemp) = ((1.426d-27*dsqrt(temp))*gff) |  |
+| cl63 | GENERATED | 5,17 | coolinmo.F:1110-1110 | - | - | cltab(63,itemp) = (((4d0*1.426d-27)*dsqrt(temp))*gff) |  |
 | cl64 | GENERATED | 5,17 | coolinmo.F:364-378 | - | - | if (temp < 1d1):<br>cltab(64,itemp) = 0d0<br>elseif (temp < 1d4):<br>cltab(64,itemp) = (1d1**((((((-23.689237d0)+(2.1892372d0*dlog10(temp3)))-(0.81520438d0*(dlog10(temp3)**2)))+(0.29036281d0*(dlog10(temp3)**3)))-(0.16596184d0*(dlog10(temp3)**4)))+(0.19191375d0*(dlog10(temp3)**5))))<br>else:<br>cltab(64,itemp) = (1d1**((((((-23.689237d0)+2.1892372d0)-0.81520438d0)+0.29036281d0)-0.16596184d0)+0.19191375d0)) |  |
 | cl65 | GENERATED | 5,17 | coolinmo.F:386-400 | - | - | if (temp < 1d1):<br>cltab(65,itemp) = 0d0<br>elseif (temp < 1d4):<br>cltab(65,itemp) = (1d1**((((((-22.089523d0)+(1.5714711d0*dlog10(temp3)))+(0.015391166d0*(dlog10(temp3)**2)))-(0.23619985d0*(dlog10(temp3)**3)))-(0.51002221d0*(dlog10(temp3)**4)))+(0.32168730d0*(dlog10(temp3)**5))))<br>else:<br>cltab(65,itemp) = (1d1**((((((-22.089523d0)+1.5714711d0)+0.015391166d0)-0.23619985d0)-0.51002221d0)+0.32168730d0)) |  |
 | cl66 | GENERATED | 5,17 | coolinmo.F:406-436 | - | - | if (temp < 1d2):<br>cltab(66,itemp) = 0d0<br>elseif (temp < 5d2):<br>cltab(66,itemp) = (1d1**(((((((((-21.928796d0)+(16.815730d0*dlog10(temp3)))+(96.743155d0*(dlog10(temp3)**2)))+(343.19180d0*(dlog10(temp3)**3)))+(734.71651d0*(dlog10(temp3)**4)))+(983.67576d0*(dlog10(temp3)**5)))+(801.81247d0*(dlog10(temp3)**6)))+(364.14446d0*(dlog10(temp3)**7)))+(70.609154d0*(dlog10(temp3)**8))))<br>elseif (temp < 1d4):<br>cltab(66,itemp) = (10.d0**(((((((((-22.921189d0)+(1.6802758d0*dlog10(temp3)))+(0.93310622 |  |
 | cl67 | GENERATED | 5,17 | coolinmo.F:442-442 | - | - | cltab(67,itemp) = (9d0*exp((-(170.5d0/temp)))) | (cl67): Equilibrium J=1/J=0 H2 ratio (used to compute heating/cooling |
-| cl75 | GENERATED | 5,17 | coolinmo.F:1171-1171 | - | - | cltab(75,itemp) = (0.74/(tfix**0.068d0)) |  |
-| cl76 | GENERATED | 5,17 | coolinmo.F:1173-1174 | - | - | cltab(76,itemp) = ((4.65d-30*(tfix**0.94d0))*phi_pah) |  |
+| cl75 | GENERATED | 5,17 | coolinmo.F:1168-1168 | - | - | cltab(75,itemp) = (0.74/(tfix**0.068d0)) |  |
+| cl76 | GENERATED | 5,17 | coolinmo.F:1170-1171 | - | - | cltab(76,itemp) = ((4.65d-30*(tfix**0.94d0))*phi_pah) |  |
 | cst1 | GENERATED | 17 | const_rates.F:72-72 | - | - | cst(1) = 6.4d-10 | H2 formation from H2+  (H2+ + H -> H2 + H+) |
 | cst2 | GENERATED | - | const_rates.F:78-78 | - | - | cst(2) = 2.1d-9 | Charge transfer: C+ + Si -> C + Si+ |
 | cst3 | GENERATED | - | const_rates.F:84-84 | - | - | cst(3) = 7.7d-10 | CO+ formation from C+ and OH:  C+ + OH -> CO+ + H |
@@ -577,25 +577,25 @@ Counts: `{"generated": 349, "TABLE": 8, "SPECIAL": 0, "RHS_INLINE": 212, "genera
 | cool_func:rates(12)@894 | RHS_INLINE | 5,17 | cool_func.F:894-894 | - | - | rates(12) = 0d0 |  |
 | cool_func:rates(12)@896 | RHS_INLINE | 5,17 | cool_func.F:896-896 | - | - | rates(12) = 0d0 |  |
 | cool_func:rates(12)@905 | RHS_INLINE | 5,17 | cool_func.F:905-905 | - | - | rates(12) = -1.3d-24 * eps * G_dust * yn * dust_to_gas_ratio | eps = 8.6d-2 |
-| cool_func:rates(12)@910 | RHS_INLINE | 5,17 | cool_func.F:910-911 | - | - | rates(12) = rates(12) + dust_to_gas_ratio * cl76 * PEvar0**cl75 * abe * yn**2 |  |
-| cool_func:rates(13)@935 | RHS_INLINE | 5,17 | cool_func.F:935-935 | - | - | rates(13) = 0d0 |  |
-| cool_func:rates(13)@938 | RHS_INLINE | 5,17 | cool_func.F:938-938 | - | - | rates(13) = 0d0 |  |
-| cool_func:rates(13)@997 | RHS_INLINE | 5,17 | cool_func.F:997-997 | - | - | rates(13) = (oxlam1 - oxlam2) * abo * yn | Net cooling rate is emission - absorption; note that if the latter |
-| cool_func:rates(14)@1009 | RHS_INLINE | 5,17 | cool_func.F:1009-1009 | - | - | rates(14) = 0d0 |  |
-| cool_func:rates(14)@1012 | RHS_INLINE | 5,17 | cool_func.F:1012-1012 | - | - | rates(14) = 0d0 |  |
-| cool_func:rates(14)@1059 | RHS_INLINE | 5,17 | cool_func.F:1059-1059 | - | - | rates(14) = (cIlam1 - cIlam2) * abcI * yn | Net cooling rate is emission - absorption; note that if the latter |
-| cool_func:rates(15)@1072 | RHS_INLINE | 5,17 | cool_func.F:1072-1072 | - | - | rates(15) = 0d0 |  |
-| cool_func:rates(15)@1075 | RHS_INLINE | 5,17 | cool_func.F:1075-1075 | - | - | rates(15) = 0d0 |  |
-| cool_func:rates(15)@1122 | RHS_INLINE | 5,17 | cool_func.F:1122-1122 | - | - | rates(15) = (siIlam1 - siIlam2) * absiI * yn | Net cooling rate is emission - absorption; note that if the latter |
-| cool_func:rates(16)@1131 | RHS_INLINE | 5,17 | cool_func.F:1131-1131 | - | - | rates(16) = 0d0 |  |
-| cool_func:rates(16)@1173 | RHS_INLINE | 5,17 | cool_func.F:1173-1173 | - | - | rates(16) = (cIIvar2 - cIIvar3) * abcII * yn |  |
-| cool_func:rates(17)@1182 | RHS_INLINE | 5,17 | cool_func.F:1182-1182 | - | - | rates(17) = 0d0 |  |
-| cool_func:rates(17)@1196 | RHS_INLINE | 5,17 | cool_func.F:1196-1196 | - | - | rates(17) = (siIIvar2 - siIIvar3) * siIIe10 * absiII * yn |  |
-| cool_func:rates(18)@1202 | RHS_INLINE | 5,17 | cool_func.F:1202-1202 | - | - | rates(18) = compvar1 * (temp - CMB_temp) * yne |  |
-| cool_func:rates(19)@1219 | RHS_INLINE | 5,17 | cool_func.F:1219-1220 | - | - | rates(19) = 1d1**(cl53 + lnh * (cl54 + lnh * (cl55 + lnh * (cl56 + lnh * cl57)))) * ynhd |  |
-| cool_func:rates(19)@1221 | RHS_INLINE | 5,17 | cool_func.F:1221-1221 | - | - | rates(19) = rates(19) * r19scale |  |
-| cool_func:rates(19)@1223 | RHS_INLINE | 5,17 | cool_func.F:1223-1223 | - | - | rates(19) = 0d0 |  |
-| cool_func:rates(20)@1232 | RHS_INLINE | 5,17 | cool_func.F:1232-1232 | - | - | rates(20) = cl58 * yn * (2d0 * ynh2) | CMB effects: see note above for molecular coolants |
-| cool_func:rates(20)@1238 | RHS_INLINE | 5,17 | cool_func.F:1238-1238 | - | - | rates(20) = rates(20) * min((1d0 - dexp(-tau_CIE)) / tau_CIE, 1d0) |  |
-| cool_func:rates(3)@1265 | RHS_INLINE | 5,17 | cool_func.F:1265-1265 | - | - | rates(3) = 0. | Benchmarking suggests that writing this out explicitly is more efficient |
-| cool_func:rates(3)@1290 | RHS_INLINE | 5,17 | cool_func.F:1290-1290 | - | - | rates(3) = wss_rate_total *yn**2 | print*, 'wss_rate_total = ', wss_rate_total |
+| cool_func:rates(12)@909 | RHS_INLINE | 5,17 | cool_func.F:909-910 | - | - | rates(12) = rates(12) + dust_to_gas_ratio * cl76 * PEvar0**cl75 * abe * yn**2 |  |
+| cool_func:rates(13)@922 | RHS_INLINE | 5,17 | cool_func.F:922-922 | - | - | rates(13) = 0d0 |  |
+| cool_func:rates(13)@925 | RHS_INLINE | 5,17 | cool_func.F:925-925 | - | - | rates(13) = 0d0 |  |
+| cool_func:rates(13)@984 | RHS_INLINE | 5,17 | cool_func.F:984-984 | - | - | rates(13) = (oxlam1 - oxlam2) * abo * yn | Net cooling rate is emission - absorption; note that if the latter |
+| cool_func:rates(14)@996 | RHS_INLINE | 5,17 | cool_func.F:996-996 | - | - | rates(14) = 0d0 |  |
+| cool_func:rates(14)@999 | RHS_INLINE | 5,17 | cool_func.F:999-999 | - | - | rates(14) = 0d0 |  |
+| cool_func:rates(14)@1046 | RHS_INLINE | 5,17 | cool_func.F:1046-1046 | - | - | rates(14) = (cIlam1 - cIlam2) * abcI * yn | Net cooling rate is emission - absorption; note that if the latter |
+| cool_func:rates(15)@1059 | RHS_INLINE | 5,17 | cool_func.F:1059-1059 | - | - | rates(15) = 0d0 |  |
+| cool_func:rates(15)@1062 | RHS_INLINE | 5,17 | cool_func.F:1062-1062 | - | - | rates(15) = 0d0 |  |
+| cool_func:rates(15)@1109 | RHS_INLINE | 5,17 | cool_func.F:1109-1109 | - | - | rates(15) = (siIlam1 - siIlam2) * absiI * yn | Net cooling rate is emission - absorption; note that if the latter |
+| cool_func:rates(16)@1118 | RHS_INLINE | 5,17 | cool_func.F:1118-1118 | - | - | rates(16) = 0d0 |  |
+| cool_func:rates(16)@1160 | RHS_INLINE | 5,17 | cool_func.F:1160-1160 | - | - | rates(16) = (cIIvar2 - cIIvar3) * abcII * yn |  |
+| cool_func:rates(17)@1169 | RHS_INLINE | 5,17 | cool_func.F:1169-1169 | - | - | rates(17) = 0d0 |  |
+| cool_func:rates(17)@1183 | RHS_INLINE | 5,17 | cool_func.F:1183-1183 | - | - | rates(17) = (siIIvar2 - siIIvar3) * siIIe10 * absiII * yn |  |
+| cool_func:rates(18)@1189 | RHS_INLINE | 5,17 | cool_func.F:1189-1189 | - | - | rates(18) = compvar1 * (temp - CMB_temp) * yne |  |
+| cool_func:rates(19)@1206 | RHS_INLINE | 5,17 | cool_func.F:1206-1207 | - | - | rates(19) = 1d1**(cl53 + lnh * (cl54 + lnh * (cl55 + lnh * (cl56 + lnh * cl57)))) * ynhd |  |
+| cool_func:rates(19)@1208 | RHS_INLINE | 5,17 | cool_func.F:1208-1208 | - | - | rates(19) = rates(19) * r19scale |  |
+| cool_func:rates(19)@1210 | RHS_INLINE | 5,17 | cool_func.F:1210-1210 | - | - | rates(19) = 0d0 |  |
+| cool_func:rates(20)@1219 | RHS_INLINE | 5,17 | cool_func.F:1219-1219 | - | - | rates(20) = cl58 * yn * (2d0 * ynh2) | CMB effects: see note above for molecular coolants |
+| cool_func:rates(20)@1225 | RHS_INLINE | 5,17 | cool_func.F:1225-1225 | - | - | rates(20) = rates(20) * min((1d0 - dexp(-tau_CIE)) / tau_CIE, 1d0) |  |
+| cool_func:rates(3)@1252 | RHS_INLINE | 5,17 | cool_func.F:1252-1252 | - | - | rates(3) = 0. | Benchmarking suggests that writing this out explicitly is more efficient |
+| cool_func:rates(3)@1277 | RHS_INLINE | 5,17 | cool_func.F:1277-1277 | - | - | rates(3) = wss_rate_total *yn**2 | print*, 'wss_rate_total = ', wss_rate_total |

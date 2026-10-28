@@ -428,10 +428,6 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             fa     = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / c.tdust));
             stick  = 1.0 / (1.0 + 0.4 * std::pow(temp2 + tdust2, 0.5)
                                 + 0.2 * temp2 + 0.08 * std::pow(temp2, 2.0));
-#ifdef CHEMCOOL_H2FORM_K23
-            fa     = 1.0;   // Kim+2023 Eq. 16: no T_d dependence
-            stick  = 2.0 / (1.0 + 0.4 * std::sqrt(temp2) + 0.2 * temp2 + 0.08 * temp2 * temp2);
-#endif
             *Rdust = ch7 * fa * stick;
             *RH2   = *Rdust * abHI * (yn * yn);
             return;
@@ -473,17 +469,10 @@ void cxx_calc_dust_temp(double yn, double chi_isrf, double temp, double abHI,
             fa     = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / c.tdust));
             stick  = 1.0 / (1.0 + 0.4 * std::pow(temp2 + tdust2, 0.5)
                                 + 0.2 * temp2 + 0.08 * std::pow(temp2, 2.0));
-#ifdef CHEMCOOL_H2FORM_K23
-            fa     = 1.0;   // Kim+2023 Eq. 16: no T_d dependence
-            stick  = 2.0 / (1.0 + 0.4 * std::sqrt(temp2) + 0.2 * temp2 + 0.08 * temp2 * temp2);
-            *Rdust = ch7 * fa * stick;
-            double Rdust_rat = 0.0;
-#else
             double dfa = -fa * (1 - fa) * (6e2 / (c.tdust * c.tdust));
             *Rdust = ch7 * fa * stick;
             double Rdust_rat = (dfa / fa
                               - 2e-2 * stick / std::sqrt(c.tdust + temp));
-#endif
             *RH2 = *Rdust * abHI * (yn * yn);
 
 #ifdef NO_DUST_H2_HEAT

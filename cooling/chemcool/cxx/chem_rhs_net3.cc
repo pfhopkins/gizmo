@@ -247,13 +247,8 @@ int chem_rhs_net3(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
         double temp2  = temp * 1e-2;
         double tdust2 = c.tdust * 1e-2;
         double fa = 1.0 / (1.0 + 1e4 * std::exp(-6e2 / c.tdust));
-#ifdef CHEMCOOL_H2FORM_K23
-        (void)fa; (void)tdust2;
-        ch7 = ch7 * 2.0 / (1.0 + 0.4 * std::sqrt(temp2) + 0.2 * temp2 + 0.08 * temp2 * temp2);
-#else
         ch7 = ch7 * fa / (1.0 + 0.4 * std::sqrt(temp2 + tdust2) + 0.2 * temp2
                           + 0.08 * temp2 * temp2);
-#endif
     } else {
         h_gr = 0.0; heii_gr = 0.0; dii_gr = 0.0; cii_gr = 0.0; oii_gr = 0.0;
         si2_gr = 0.0; ch7 = 0.0; RH2 = 0.0; Rdust = 0.0;

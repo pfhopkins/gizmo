@@ -724,6 +724,12 @@ chemcool_consts.h, precompiler_logic.h (`#error` without CHEMCOOL_CXX), rate_eq_
   the stage fractions from the pools; no reduced ion set.
 - Verification: /orion/ptmp/uli/orion/chem_closeout/net18/ (bench/out, ref/, gizmo_run/).
 
+## D-52. Kim+2023 process options removed
+CHEMCOOL_CRHEAT_K23, _PE_K23, _H2FORM_K23, _GASDUST_K23, _CR_ATTEN_K23 and _H2SHIELD_B5 are gone from both
+backends and Template_Config.sh (`#error` if set): the TIGRESS-NCR physics is network 20 (D-29). The last version
+with the options (validated Fortran/C++ parity, B1/B2 harness chem_closeout/k23bench) is commit a7a25b1b. Net 16
+keeps its own Gong+17 CR heating and sigma_PE = 1e-21 (df187); grain recombination cooling (D-35) is unconditional.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

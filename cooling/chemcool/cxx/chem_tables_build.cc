@@ -415,9 +415,6 @@ int chem_tables_build(ChemTables& T, const ChemBuildConfig& cfg,
         S->cltab[(size_t)i * CHEM_NCLTAB + 58] = cl59_of(t);
         S->cltab[(size_t)i * CHEM_NCLTAB + 59] = cl60_of(t);
         S->cltab[(size_t)i * CHEM_NCLTAB + 60] = cl61_of(t);
-#ifdef CHEMCOOL_GASDUST_K23
-        S->cltab[(size_t)i * CHEM_NCLTAB + 13] = 3.2e-34 * std::sqrt(t);   // Kim+2023 Eq. 45
-#endif
     }
 
     // ---- cl1, cl2, cl3, cl6 (spline entries; chem_spline.cc) ----

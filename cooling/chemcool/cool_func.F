@@ -840,7 +840,7 @@ c       -- following Goldsmith & Langer (1978), we assume that
 c          each ionization deposits 20eV as heat
 c
       if (iflag_cmb .eq. 0) then
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_CRHEAT_K23)
+#if CHEMISTRYNETWORK == 16
 c       Gong+17: Draine (2011) for HI, Krumholz (2014) for H2
         qcr_HI = 6.5d0 + 26.4d0 * dsqrt(abe / (abe + 0.07d0))
         logn = log10(yn)
@@ -903,24 +903,11 @@ c
 c        eps = 8.6d-2
         
         rates(12) = -1.3d-24 * eps * G_dust * yn * dust_to_gas_ratio
-#ifndef CHEMCOOL_PE_K23
 c       grain recombination cooling (SGChem rates(29)), kept in the PE rate
         cl75 = cltab(75,itemp) + dtemp * dtcltab(75,itemp)
         cl76 = cltab(76,itemp) + dtemp * dtcltab(76,itemp)
         rates(12) = rates(12) + dust_to_gas_ratio * cl76
      $            * PEvar0**cl75 * abe * yn**2
-#endif
-#ifdef CHEMCOOL_PE_K23
-c       Kim+2023 Eqs. 30-31 (psi + 50), plus WD01 Eq. 45 recombination cooling (R_V=3.1, b_C=4, ISRF)
-        PEvar0 = G_dust * dsqrt(temp) / yne + 5d1
-        eps = (5.22d0 + 2.25d0 * temp**0.147d0) / (1d0 + 0.04996d0
-     $        * PEvar0**0.431d0 * (1d0 + 0.0043d0 * PEvar0**0.692d0))
-        PEvar1 = dlog(PEvar0)
-        rates(12) = (- 1d-26 * eps * G_dust
-     $     + 1d-28 * yne * temp**(0.3959d0 + 2.380d0 / PEvar1)
-     $     * dexp(-6.554d0 + 1.575d0 * PEvar1 - 0.05674d0 * PEvar1**2))
-     $     * yn * dust_to_gas_ratio
-#endif
       endif
 c
 c (R13) -- OI fine-structure cooling

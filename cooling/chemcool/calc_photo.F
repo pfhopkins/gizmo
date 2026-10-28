@@ -97,9 +97,6 @@ c
       REAL fshield_HD
 
       REAL df187, df418, df388, df376, df261, df212, df266
-#ifdef CHEMCOOL_CR_ATTEN_K23
-      REAL cr_tau, cr_neff
-#endif
       REAL df05, df09, df12, df15, df17, df18, df19, df21, df23,
      $     df24, df25, df28, df30, df31, df37, df38, df39, dfsp1
 
@@ -225,7 +222,7 @@ c
             df15   = dexp(-1.5d0 * AV)
             df17   = dexp(-1.7d0 * AV)
 #endif
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
             df187  = dexp(-1.87d0 * AV)
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -368,7 +365,7 @@ c           the other dust factors, per pixel as in the single-AV branch
             df15 = df15 + fac_uv_pix * exp(-1.5d0 * AV)
             df17 = df17 + fac_uv_pix * exp(-1.7d0 * AV)
 #endif
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
             df187 = df187 + fac_uv_pix * exp(-1.87d0 * AV)
 #endif
 #if CHEMISTRYNETWORK == 16
@@ -701,22 +698,10 @@ c recombination and photoelectric heating, which is based on BHRB04.
 c This treatment neglects any variation of the photoelectric 
 c heating efficiency with increasing A_V.
 c
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
+#if CHEMISTRYNETWORK == 16
       G_dust = f_rsc * G0 * df187
 #else
       G_dust = f_rsc * G0 * df25
-#endif
-#ifdef CHEMCOOL_CR_ATTEN_K23
-c     Kim+2023 Eq. 55: N_eff = tau_PE,eff / (1e-21 Z'_d), xi ~ 1/N_eff above N_0 = 9.35e20
-#if CHEMISTRYNETWORK == 16 || defined(CHEMCOOL_PE_K23)
-      cr_tau = -dlog(max(df187, 1d-300))
-#else
-      cr_tau = -dlog(max(df25, 1d-300))
-#endif
-      cr_neff = cr_tau / (1d-21 * max(dust_to_gas_ratio, 1d-30))
-      if (cr_neff .gt. 9.35d20) then
-        cosmic_ray_ion_rate = cosmic_ray_ion_rate * 9.35d20 / cr_neff
-      endif
 #endif
 c
 c Optionally, call a user-defined subroutine SPECIAL_PHOTO to override
@@ -838,9 +823,6 @@ c representative of the whole flow. This isn't true in general, but
 c is still a minor approximation compared to the others we are making
 c
       b  = dsqrt(kboltz * temp / mh)
-#ifdef CHEMCOOL_H2SHIELD_B5
-      b  = CHEMCOOL_H2SHIELD_B5 * 1d5
-#endif
       b5 = b / 1d5
       fshield = 0d0
       NH2_local = abh2 * NH
