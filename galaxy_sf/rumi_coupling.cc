@@ -180,7 +180,12 @@ void rumi_init(void)
         if(rumi_lib::kokkos_initialize(All.RumiNumThreads, All.RumiDeviceId) != 0) {ok = 0;}
         else {
             atexit(rumi_atexit); /* endrun(0) calls MPI_Finalize and exit directly */
+#ifdef RUMI_LIB_HAS_MPI
+            /* always the sub-communicator: unattached, the library's collectives run on MPI_COMM_WORLD */
+            if(NTask > 1 && rumi_lib::attach_comm(MPI_Comm_c2f(RumiComm)) != 0) {ok = 0;}
+#else
             if(nr > 1 && rumi_lib::attach_comm(MPI_Comm_c2f(RumiComm)) != 0) {ok = 0;}
+#endif
             if(ok && rumi_lib::configure(All.RumiConfigFile, ThisTask == 0) != 0) {ok = 0;}
         }
     }

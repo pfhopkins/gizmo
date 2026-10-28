@@ -1113,6 +1113,9 @@ $(error STARS_INTEGRATED_BY_RUMI: $(RUMI_LIB_DIR)/lib/librumi.a has RUMI++ inter
 endif
 $(info RUMI++ library: $(RUMI_LIB_ID))
 RUMI_LIB_INCL += -DRUMI_LIB_ID_MK='"$(RUMI_LIB_ID)"'
+ifeq ($(RUMI_LIB_MPI),ON)
+RUMI_LIB_INCL += -DRUMI_LIB_HAS_MPI
+endif
 RUMI_LIB_DEP = $(RUMI_LIB_DIR)/lib/librumi.a
 endif
 OBJS    += galaxy_sf/rumi_coupling.o galaxy_sf/stella_star_mergers.o
