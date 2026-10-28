@@ -669,6 +669,12 @@ and multiplied the averages. The Lee+96 tables are still built (cheminmo, chem_t
 * B14: dust temperature converges to 1% relative (SGChem 1 mK absolute); kept from the Newton-divergence fix.
 * B15: PE heating off below DGR 1e-8 (SGChem DGR = 0); the electron cut-off is aligned (D-38).
 
+## D-50. Net 17 H2+ equilibrium: dissociative recombination on its own electrons, both backends
+H2+ is solved from h2p_dr x^2 + denom x = num with the other electrons (x_e - x_H2+) in denom (Gong+17 closure),
+instead of h2p_dr x_e x with x_e including H2+ itself. Same reactions; in un-ionized pristine H2 (Z = 0, G0 = 0,
+T <= 500 K) the old form exceeded the 0.5 cap and comp_equilib returned 0. SGChem rate_eq_primordial.F has the old
+form. Measured (chem_stability/REPORT.md): 0 cap hits, <= 0.6% in T, <= 0.2% in species. Nets 5/15/16/3 unchanged.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

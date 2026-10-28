@@ -19,6 +19,7 @@
 #include "chem_types.h"
 #include "chem_rhs_common.h"
 #include <cstdio>
+#include <algorithm>
 
 // comp_equilib (rate_eq_ulli.F:1063-1093).  Returns -1 sentinel on
 // creation-without-destruction or over-saturated equilibrium (callers clamp).
@@ -275,9 +276,11 @@ int chem_rhs_net17(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               + ch29 * abhp * abhm + ch156 * abhehp * abHI
               + (cr2 * abh2 / yn) + T.cst[74] * abhep * abh2
               + (ph41 / yn) * abh2;
-        denom = T.cst[0] * abHI + h2p_dr * abe + (ph5 / yn)
+        denom = T.cst[0] * abHI + h2p_dr * std::max(0.0, abe - abh2p_old) + (ph5 / yn)
               + 2.0 * ch127 * abhm + ch154 * abheI
               + h2p_cdh * abM;
+        // H2+ DR also on its own electrons: h2p_dr*x^2 + denom*x = num
+        denom = 0.5 * (denom + std::sqrt(denom * denom + 4.0 * std::max(0.0, h2p_dr) * num));
         abh2p = comp_equilib(num, denom, 0.5, 2);
         if (abh2p < 0.0) abh2p = 0.0;
         abe  = abe  + (abh2p - abh2p_old);        if (abe  < 0.0) abe  = 0.0;

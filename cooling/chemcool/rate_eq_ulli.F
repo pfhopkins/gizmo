@@ -657,9 +657,13 @@ c
      $        + (cr2 * abh2 / yn)  + cst(75) * abhep * abh2
      $        + (ph41 / yn) * abh2
 c
-        denom = cst(1) * abHI + h2p_dr * abe + (ph5 / yn)
+        denom = cst(1) * abHI + h2p_dr * max(0d0, abe - abh2p_old)
+     $        + (ph5 / yn)
      $        + 2d0 * ch127 * abhm + ch154 * abheI
      $        + h2p_cdh * abM
+c H2+ DR also on its own electrons: h2p_dr*x**2 + denom*x = num
+        denom = 0.5d0 * (denom
+     $        + dsqrt(denom**2 + 4d0 * max(0d0, h2p_dr) * num))
 c
         abh2p = comp_equilib(num, denom, 0.5d0, 2, yn,
      $                       time_to_equilibrium)
