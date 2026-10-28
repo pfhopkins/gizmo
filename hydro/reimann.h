@@ -1129,7 +1129,9 @@ void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_ou
 #ifdef DIVBCLEANING_DEDNER
     /* use the solution for the modified Bx, given the action of the phi-field; 
         however this must be slope-limited to ensure the 'corrected' Bx remains stable */
-#if !defined(MHD_CONSTRAINED_GRADIENT) || defined(COOLING) || defined(GALSF)
+#if !defined(MHD_CONSTRAINED_GRADIENT) && !defined(MHD_MODIFIED_GRADIENT)
+    /* (never under the constrained- or modified-gradient methods: both minimize the face sum of (1/2)(B_L+B_R).A,
+        so the face-normal field must be that same arithmetic mean; the wavespeed-weighted mean would re-introduce divergence) */
     /* this is the formulation from E. Gaburov assuming -two- wavespeeds (cL and cR); this down-weights the correction term
      under some circumstances, which appears to increase stability */
     double cL = Riemann_out->cfast_L; // may want to try with correction for approach speed; this helps to stabilize things in the cL=cR case
@@ -1232,8 +1234,11 @@ void HLLD_Riemann_solver(struct Input_vec_Riemann Riemann_vec, struct Riemann_ou
     if(within_sampled_vacuum == 1)
     {
         
-        /* ok, we are supersonically separating, the only safe thing to do is to assign no fluxes of conserved quantities */
-        P_M = MIN_REAL_NUMBER; S_M = v_frame = Riemann_out->B_normal_corrected = 0; // vanishing //
+        /* ok, we are supersonically separating, the only safe thing to do is to assign no fluxes of conserved quantities.
+           The face-normal magnetic field is NOT zeroed: across a vacuum the density vanishes but B_n is continuous into the
+           neighbour, so the face keeps the normal field computed above. Zeroing it booked B_n=0 on the face, an implicit
+           divergence that does not exist, feeding the Powell/Dedner sources and the moving-face induction term. */
+        P_M = MIN_REAL_NUMBER; S_M = v_frame = 0; // vanishing //
 #ifdef DIVBCLEANING_DEDNER
         Riemann_out->phi_normal_mean = Riemann_out->phi_normal_db = 0; // vanishing
 #endif

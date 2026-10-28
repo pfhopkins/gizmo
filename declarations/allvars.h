@@ -255,7 +255,6 @@ extern double Max_Unspawned_MassUnits_fromSink;
 
 extern long long Ntype[6];	/*!< total number of particles of each type */
 extern int NtypeLocal[6];	/*!< local number of particles of each type */
-extern gsl_rng *random_generator;	/*!< the random number generator used */
 extern int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
 extern int Stars_converted;	/*!< current number of star particles in gas particle block */
@@ -335,7 +334,7 @@ extern MyDouble GeoFactorTable[GEOFACTOR_TABLE_LENGTH];
 extern int NTopnodes, NTopleaves;
 
 /* variables for input/output , usually only used on process 0 */
-extern char ParameterFile[100];    /*!< file name of parameterfile used for starting the simulation */
+extern char ParameterFile[256];    /*!< file name of parameterfile used for starting the simulation */
 extern FILE
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
 *FdTimebin,    /*!< file handle for timebin.txt log-file. */
@@ -460,8 +459,9 @@ extern struct global_data_all_processes
     MyDouble DM_InteractionVelocityScale; /*!< scale above which the scattering becomes velocity-dependent */
 #endif
 
-  int MaxPart;			/*!< This gives the maxmimum number of particles that can be stored on one processor. */
-  int MaxPartGas;		/*!< This gives the maxmimum number of gas cells that can be stored on one processor. */
+  int MaxPart;			/*!< This gives the maxmimum number of particles that can be stored on one processor. Set when the initial conditions are read and raised at a domain boundary by resize_particle_storage(), which is the ONLY route by which it may change once storage exists.  IDENTICAL ON EVERY RANK, and that is its contract: it is both the physical size of P[] and the gravity tree's node-index base (Nodes = Nodes_base - MaxPart, root = MaxPart, pseudo-particles at MaxPart + MaxNodes), and those indices travel between ranks inside exported node lists.  The domain exchange also compares every rank's load against it while running over globally-reduced counts.  A per-rank value would break both. */
+  int MaxPartGas;		/*!< This gives the maxmimum number of gas cells that can be stored on one processor. Rank-identical and raised alongside MaxPart; see there. */
+  int MaxPartExpandable;	/*!< Hard ceiling on MaxPart for the whole run: the largest particle capacity a rank may be raised to.  Fixed when the initial conditions are read and carried through restart files, so a resumed run keeps the ceiling it started with.  It is a bound on growth, not a prediction of what fits: whether the memory is there remains the allocator's answer at the moment it is asked.  Derived from the mymalloc budget (Max_Memory_Per_MPI_Task_in_MB), since that budget is a fixed-size arena and is what growth actually spends, and held down by a wide multiple of the starting capacity so a small problem does not size for slots it will never hold. */
   int ICFormat;			/*!< selects different versions of IC file-format */
   int SnapFormat;		/*!< selects different versions of snapshot file-formats */
   int NumFilesPerSnapshot;	/*!< number of files in multi-file snapshot dumps */
@@ -552,6 +552,9 @@ extern struct global_data_all_processes
     TimeBetStatistics,		/*!< simulation time interval between computations of energy statistics */
     TimeLastStatistics;		/*!< simulation time when the energy statistics was computed the last time */
   integertime NumCurrentTiStep;		/*!< counts the number of system steps taken up to this point */
+#ifdef RANDOMIZE_GRAVTREE
+  long long RandomTreeDraws;		/*!< how many random tree offsets or frame shifts have been drawn: with the time, it names each draw, so decompositions at one time differ. Lives here so a restart resumes the same sequence. */
+#endif
 #ifdef RANDOMIZE_GRAVTREE_PERIODIC
   double RandomShift[3];		/*!< current random frame translation: coordinates are stored shifted by this (mod box) and un-shifted on output */
 #endif

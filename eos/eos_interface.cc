@@ -154,11 +154,13 @@ static int eos_validate(struct eos_input const * vars, struct eos_input * vars_a
   {
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_LT_RHOMIN);
     vars_adj->rho = rho_ye_min / vars_adj->Ye;
+    while(vars_adj->rho * vars_adj->Ye < rho_ye_min) {vars_adj->rho = nextafter(vars_adj->rho, HUGE_VAL);} /* rounding must not leave the clamped value outside the table */
   }
   if(vars->rho * vars_adj->Ye > rho_ye_max)
   {
     BITMASK_SET_FLAG(*bitmask, EOS_ERR_RHO_GT_RHOMAX);
     vars_adj->rho = rho_ye_max / vars_adj->Ye;
+    while(vars_adj->rho * vars_adj->Ye > rho_ye_max) {vars_adj->rho = nextafter(vars_adj->rho, -HUGE_VAL);}
   }
 
 #ifdef _OPENMP

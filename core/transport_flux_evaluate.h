@@ -72,8 +72,9 @@ int transport_flux_evaluate(int target, int mode, int *exportflag, int *exportno
                 double hinv_j = 1.0/kernel.h_j;
                 double u_i = kernel.r * hinv_i, u_j = kernel.r * hinv_j;
                 kernel.wk_i=0; kernel.wk_j=0; kernel.dwk_i=0; kernel.dwk_j=0;
-                if(u_i < 1) kernel_main(u_i, hinv3_i, hinv4_i, &kernel.wk_i, &kernel.dwk_i, -1);
-                if(u_j < 1) kernel_main(u_j, hinv_j*hinv_j*hinv_j, hinv_j*hinv_j*hinv_j*hinv_j, &kernel.wk_j, &kernel.dwk_j, -1);
+                /* mode 0: the face construction reads the kernel derivative in its ill-conditioned fallback branch */
+                if(u_i < 1) kernel_main(u_i, hinv3_i, hinv4_i, &kernel.wk_i, &kernel.dwk_i, 0);
+                if(u_j < 1) kernel_main(u_j, hinv_j*hinv_j*hinv_j, hinv_j*hinv_j*hinv_j*hinv_j, &kernel.wk_j, &kernel.dwk_j, 0);
 
                 double V_j = P[j].Mass / CellP[j].Density;
                 double Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime;

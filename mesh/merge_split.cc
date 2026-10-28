@@ -13,6 +13,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 
@@ -350,6 +351,11 @@ void merge_and_split_particles(void)
                 {
                     target_for_merger = -1;
                     threshold_val = MAX_REAL_NUMBER;
+                    /* The one-way search returns the full contents of every node overlapping the search
+                       sphere, not the particles inside it (no sphere test for SEARCHBOTHWAYS==0). The
+                       merge target and the ambient average must be taken inside the kernel the search
+                       was built with, so each candidate is tested here. (cf. kokkos 50f785c1) */
+                    double h2_src = P[i].KernelRadius * P[i].KernelRadius;
 #if defined(SINK_SPAWN_MERGE_WHEN_AMBIENT) && defined(SINK_WIND_SPAWN)
                     /* Characterize the ambient medium around a spawned cell, so retirement is judged
                        against the bulk flow rather than whichever single neighbor is picked as target.
@@ -362,6 +368,7 @@ void merge_and_split_particles(void)
                         int n_amb; for(n_amb=0; n_amb<numngb_inbox; n_amb++)
                         {
                             int j_amb = Ngblist[n_amb]; if((j_amb<0) || (j_amb==i)) {continue;}
+                            {Vec3<double> dp_amb = P[i].Pos - P[j_amb].Pos; nearest_xyz(dp_amb,-1); if(dp_amb.norm_sq() >= h2_src) {continue;}}
                             if((P[j_amb].Type!=0) || (P[j_amb].Mass<=0)) {continue;}
                             if(P[j_amb].ID==All.SpawnedWindCellID) {continue;} /* ambient = non-spawned gas only */
                             double w = P[j_amb].Mass; int k; for(k=0;k<3;k++) {v_ambient[k] += w * P[j_amb].Vel[k];}
@@ -382,7 +389,9 @@ void merge_and_split_particles(void)
 #endif
                     for(n=0; n<numngb_inbox; n++) /* loop over neighbors */
                     {
-                        j = Ngblist[n]; double m_eff = P[j].Mass; int do_allow_merger = 0; // boolean flag to check
+                        j = Ngblist[n]; if(j < 0) {continue;}
+                        {Vec3<double> dp_c = P[i].Pos - P[j].Pos; nearest_xyz(dp_c,-1); if(dp_c.norm_sq() >= h2_src) {continue;}}
+                        double m_eff = P[j].Mass; int do_allow_merger = 0; // boolean flag to check
                         if((P[j].Mass >= P[i].Mass) && (P[i].Mass+P[j].Mass < All.MaxMassForParticleSplit)) {do_allow_merger = 1;}
 #ifdef GALSF_MERGER_STARCLUSTER_PARTICLES
                         if(P[i].Type==4 && P[j].Type==4) {m_eff=evaluate_starstar_merger_for_starcluster_particle_pair(i,j); if(m_eff<=0) {do_allow_merger=0;} else {do_allow_merger=1;}}
@@ -522,7 +531,7 @@ void merge_and_split_particles(void)
             if(did_split == 1) {n_particles_split++; if(P[i].Type==0) {n_particles_gas_split++;}} else {failed_splits++;}
         }
     }
-    if(failed_splits) {printf ("On Task=%d with NumPart=%d we tried and failed to split %d elements, after running out of space (REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart=%d, REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas=%d ).\n We did split %d total (%d gas) elements. Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, failed_splits, (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart), (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas), n_particles_split, n_particles_gas_split); fflush(stdout);}
+    if(failed_splits) {printf ("On Task=%d with NumPart=%d we tried and failed to split %d elements, after running out of space (REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart=%d, REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas=%d ).\n We did split %d total (%d gas) elements. The elements refused are counted and asked for at the domain boundary below, which is where the capacity may be raised; they are retried once it has been.\n", ThisTask, NumPart, failed_splits, (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart), (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas), n_particles_split, n_particles_gas_split); fflush(stdout);}
 
 #ifdef BOX_PERIODIC
     /* map the particles back onto the box (make sure they get wrapped if they go off the edges). Redundant
@@ -557,13 +566,25 @@ void merge_and_split_particles(void)
     so care needs to be taken modifying this so that it's done in a way that is (1) conservative, (2) minimizes perturbations to the
     volumetric quantities of the flow, and (3) doesn't crash the tree or lead to particle 'overlap'
     Modified by Takashi Okamoto on 20/6/2019.  */
+/*! Elements this rank wanted to create since the last domain boundary and could not, for want of particle
+    storage. Splitting refuses rather than growing storage under itself -- growing would move the arrays the
+    standing tree and the active list are indexing, and the capacity is that tree's node-index base -- so the
+    demand is remembered here and the next domain boundary, which is where capacity may move, asks for it.
+    Per-rank and never communicated: the boundary reduces it along with everything else it decides from. */
+static int UnmetSplitDemand = 0;
+int gizmo_get_unmet_split_demand(void) {return UnmetSplitDemand;}
+void gizmo_reset_unmet_split_demand(void) {UnmetSplitDemand = 0;}
+
 int split_particle_i(int i, int n_particles_split, double r_near)
 {
     double mass_of_new_particle;
     if( ((P[i].Type==0) && (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPartGas))) || (NumPart + n_particles_split + 1 >= (int)(REDUC_FAC_FOR_MEMORY_IN_DOMAIN*All.MaxPart)) )
     {
+        /* Bounded: a run pinned at its capacity ceiling refuses splits every step, and the count is only ever
+           a request for slots, so it never needs to exceed what a rank could hold. */
+        if(UnmetSplitDemand < All.MaxPartExpandable) {UnmetSplitDemand++;}
         //printf ("On Task=%d with NumPart=%d we tried to split a particle, but there is no space left...(All.MaxPart=%d). Try using more nodes, or raising PartAllocFac, or changing the split conditions to avoid this.\n", ThisTask, NumPart, All.MaxPart); fflush(stdout);
-        return 0;
+        return 0; /* the caller counts and reports failed splits */
     }
 #ifndef SPAWN_PARTICLES_VIA_SPLITTING
     if(P[i].Type != 0) {printf("Splitting Non-Gas Particle: i=%d ID=%llu Type=%d \n",i,(unsigned long long) P[i].ID,P[i].Type);} //fflush(stdout); endrun(8889);
@@ -574,8 +595,9 @@ int split_particle_i(int i, int n_particles_split, double r_near)
 
     int k; double phi,cos_theta;
     k=0;
-    phi = 2.0*M_PI*get_random_number(i+1+ThisTask); // random from 0 to 2pi //
-    cos_theta = 2.0*(get_random_number(i+3+2*ThisTask)-0.5); // random between 1 to -1 //
+    static constexpr uint64_t SPLIT_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("split_direction");
+    phi = 2.0*M_PI*particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 0); // random from 0 to 2pi //
+    cos_theta = 2.0*(particle_random_number(i, SPLIT_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, 1)-0.5); // random between 1 to -1 //
     /* set d_r to the Voronoi-optimal daughter offset: d = (V_daughter)^{1/NDIMS}/2 = 2^{-(NDIMS+1)/NDIMS} * dx_eff,
        placing each daughter at its sub-cell centroid. minimizes O(d^2) perturbations to neighbor density estimates
        while maintaining a glass-like configuration. dimension-general: 0.397*dx_eff in 3D, 0.354 in 2D, 0.25 in 1D */
@@ -770,7 +792,8 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         if(norm > 0)
         {
             norm = 1/sqrt(norm);
-            double qq = get_random_number(63432*k + 84*i + 99*j + 358453 + 84537*ThisTask);
+            static constexpr uint64_t SPLIT_AXIS_SIGN_RNG_SALT = gizmo_loop_rng_salt("split_axis_sign");
+            double qq = particle_random_number(i, SPLIT_AXIS_SIGN_RNG_SALT, (uint64_t)All.Ti_Current, 0);
             if(qq < 0.5) {norm *= -1.;} // randomly decide which direction along principle axis to orient split (since this is arbitrary, this helps prevent accidental collisions)
             for(k=0;k<NUMDIMS;k++) {dp[k] *= norm;}
             /* project dp onto the isodensity plane (perpendicular to grad_rho): placing daughters on the same
@@ -919,6 +942,7 @@ int merge_particles_ij(int i, int j)
         /* momentum shift for passing to tree (so we know how to move it) */
         P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
         P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
+        force_raise_motion_bound(j);
         return 1;
     } // closes merger of non-gas particles, only gas particles will see the blocks below //
 
@@ -1161,6 +1185,7 @@ int merge_particles_ij(int i, int j)
     /* momentum shift for passing to tree (so we know how to move it) */
     P[i].dp += P[i].Vel * P[i].Mass - p_old_i;
     P[j].dp += P[j].Vel * P[j].Mass - p_old_j;
+    force_raise_motion_bound(j);
     /* call the pressure routine to re-calculate pressure (and sound speeds) as needed */
     set_eos_pressure(j, P, CellP);
 #if defined(MHD_CONSERVE_B_ON_REFINEMENT)
@@ -1493,7 +1518,11 @@ int check_if_sufficient_mergesplit_time_has_passed(int i)
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 2) || defined(FIRE_SUPERLAGRANGIAN_JEANS_REFINEMENT)
     N_timesteps_fac = 30.;
 #endif
-    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) {N_timesteps_fac *= 10. * get_random_number(832LL*i + 890345645LL + 83457LL*ThisTask + 12313403LL*P[i].ID);} // spread initial timing out over a broader range so it doesn't all happen at once after the startup
+    if(P[i].Time_Of_Last_MergeSplit <= All.TimeBegin) /* spread initial timing out over a broader range so it doesn't all happen at once after the startup: one fixed delay per element, drawn from its identity alone so it is the same at every check */
+    {
+        static constexpr uint64_t STARTUP_DELAY_RNG_SALT = gizmo_loop_rng_salt("initial_merge_split_delay");
+        N_timesteps_fac *= 10. * gizmo_gpu_rand_double(gizmo_rng_particle_identity_key(P[i]), gizmo_rng_event_counter(STARTUP_DELAY_RNG_SALT, 0, 0));
+    }
     double dtime_code = All.Time - P[i].Time_Of_Last_MergeSplit; // time [in code units] since last merge/split
     double dt_incodescale = (get_particle_timestep_in_physical(i) * All.cf_hubble_a) * All.cf_atime; // timestep converted appropriately to code units [physical if non-comoving, else scale factor]
     if(dtime_code < N_timesteps_fac*dt_incodescale) {return 0;} // not enough time passed, prohibit

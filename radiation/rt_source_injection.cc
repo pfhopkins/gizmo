@@ -219,6 +219,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                         #pragma omp atomic
                         P[j].dp[kv] += dv_tmp * P[j].Mass;
                     } // applies direction and converts to code units
+                    force_note_motion_change(j); /* this cell now moves faster than the nodes above it know */
 #endif
 #endif
 
@@ -346,6 +347,7 @@ void rt_source_injection(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds(); /* kicked cells: raise the bounds above them before the next node drift */
 #ifdef RT_REINJECT_ACCRETED_PHOTONS
     {int n_tmp; for(n_tmp=0; n_tmp<NumPart; n_tmp++) {if(P[n_tmp].Type==5) {P[n_tmp].Sink_accreted_photon_energy = 0;}}} /* reset after all injection (local+remote) is complete */
 #endif

@@ -689,13 +689,6 @@
 #endif
 
 
-#ifdef MHD_CONSTRAINED_GRADIENT
-/* make sure mid-point gradient calculation for cleaning terms is enabled */
-#ifndef MHD_CONSTRAINED_GRADIENT_MIDPOINT
-#define MHD_CONSTRAINED_GRADIENT_MIDPOINT
-#endif
-#endif
-
 #ifdef MHD_MODIFIED_GRADIENT
 #ifndef MAGNETIC
 #define MAGNETIC
@@ -1062,6 +1055,23 @@
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
+#endif
+
+/* constrained gradients fit the cleaning-field gradient at the face mid-points; that needs the Dedner field, so the
+   mid-point fit is on exactly when both are, whatever order they were set in (it replaces the ordinary phi gradient) */
+#if defined(MHD_CONSTRAINED_GRADIENT) && defined(DIVBCLEANING_DEDNER)
+#ifndef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+#define MHD_CONSTRAINED_GRADIENT_MIDPOINT
+#endif
+#else
+#undef MHD_CONSTRAINED_GRADIENT_MIDPOINT
+#endif
+
+#if defined(TRANSPORT_SUBCYCLE) && !defined(RADTRANSFER)
+#error "TRANSPORT_SUBCYCLE subcycles radiation transport and needs a RADTRANSFER build (cosmic rays alone are not subcycled)"
+#endif
+#if defined(TRANSPORT_SUBCYCLE) && defined(RT_EVOLVE_INTENSITIES)
+#error "TRANSPORT_SUBCYCLE does not carry the radiation intensities (Dt_Rad_Intensity is not in the subcycle flux pass); run intensities without subcycling"
 #endif
 
 #if defined(TURB_DIFF_ENERGY) || defined(TURB_DIFF_VELOCITY) || defined(TURB_DIFF_MASS) || defined(TURB_DIFF_METALS)

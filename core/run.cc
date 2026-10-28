@@ -146,6 +146,13 @@ void run(void)
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
         }
+        /* Bounds raised outside the kick during the previous step reach the other ranks' copies of
+           the top-level tree here, ahead of every walk and node drift this step makes. Collective
+           and never gated on a rank-local condition; a rank with nothing of its own to send still
+           enters it. A raise made later in a step reaches this rank's own tree at once and the
+           other ranks' copies only here, one step later. */
+        force_flush_motion_bounds();
+
         find_timesteps();		/* find-timesteps */
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
@@ -222,6 +229,14 @@ void run(void)
             else
             {
                 TreeOpsCount[TREEOPS_DEFER]++;
+                /* This path keeps the standing tree and skips force_update_tree, so nothing has
+                   raised the motion bounds for the particles kicked at the sync point just passed
+                   -- and the nodes are left behind to be drifted lazily by this step's walks, over
+                   an interval those particles have already crossed at their post-kick speeds. The
+                   raise has to happen here, before any of that, and while ActiveParticleList still
+                   names the particles that were kicked (make_list_of_active_particles below
+                   replaces it with this step's list). */
+                for(int i : ActiveParticleList) {force_raise_motion_bound(i);}
                 make_list_of_active_particles();
             }
         }
@@ -1026,6 +1041,12 @@ void write_cpu_log(void)
   MPI_Reduce(CPU_Step, avg_CPU_Step, CPU_PARTS, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
   double maint_loc[3] = {TreeMaintTime_SwapPointers, TreeMaintTime_Rearrange, (double) TreeMaintCount_SwapPointers}, maint_max[3];
   MPI_Reduce(maint_loc, maint_max, 3, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); /* rank-local work: report the worst rank */
+#ifdef TREE_INTEGRITY_AUDITS
+  /* the geometry audit's box-containment check only reports (see force_tree_geometry_audit), so its
+     running totals are the only place a growing containment problem would show */
+  double geo_loc[4] = {(double) TreeGeoAuditCount, (double) TreeGeoAuditBoxCount, TreeGeoAuditWorstLen, TreeGeoAuditWorstH}, geo_max[4];
+  MPI_Reduce(geo_loc, geo_max, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+#endif
 
   if(ThisTask == 0)
     {
@@ -1075,6 +1096,9 @@ void write_cpu_log(void)
       fprintf(FdCPU, "Step %lld, Time: %.16g, CPUs: %d\n",(long long) All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU, "Nactive=%lld, Imbal(Max/Mean)=%g \n", (long long) GlobNumForceUpdate, (max_CPU_Step[0]/(MIN_REAL_NUMBER + avg_CPU_Step[0])-1.)*NTask+1.);
       fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld condemned_walk=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], TreeOpsCount[TREEOPS_CONDEMNED_WALK], maint_max[0], maint_max[1], (long long) maint_max[2]);
+#ifdef TREE_INTEGRITY_AUDITS
+      fprintf(FdCPU, "TreeGeoAudit: audits=%lld box_excess_audits=%lld worst_excess=%.3g len %.3g h\n", (long long) geo_max[0], (long long) geo_max[1], geo_max[2], geo_max[3]);
+#endif
       fprintf(FdCPU,
 	      "total         %10.2f  %5.1f%%\n"
 	      "tree+gravity  %10.2f  %5.1f%%\n"

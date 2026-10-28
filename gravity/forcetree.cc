@@ -6,6 +6,7 @@
 #include <time.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -89,6 +90,11 @@ static float shortrange_table_tidal[NTAB];
 static int first_flag = 0;
 static int tree_allocated_flag = 0;
 
+/*! Whether tree storage is currently held. The flag is the only record of that, so a caller that must
+ *  know -- the particle-capacity resize, which moves the node-index base and so may not run under a
+ *  standing tree -- asks here rather than inferring it from MaxNodes or a live pointer. */
+int force_tree_is_allocated(void) {return tree_allocated_flag;}
+
 #ifdef BOX_PERIODIC
 /*! Size of 3D look-up table for Ewald correction force */
 #define EN  64
@@ -151,9 +157,10 @@ int force_treebuild(int npart, struct unbind_data *mp)
     force_exchange_pseudodata();
     force_treeupdate_pseudos(All.MaxPart);
     TreeWalkValidatePending = 0; /* fresh tree: nothing pending from pre-build rearranges */
+    force_motion_bounds_reset(1); /* every bound is freshly derived here, and the node numbering has changed */
     if(mp == NULL && npart == NumPart) {TreeOpsCount[TREEOPS_BUILD]++; ForceAddElementToTree_CallsSinceBuild = 0; All.NumForcesSinceLastDomainDecomp = 0;} /* whole-tree builds only; subset builds are fof-internal. Both cadence counters measure tree age, so they reset HERE, not at decomposition (every decomposition is followed by a build anyway) */
 #ifdef TREE_INTEGRITY_AUDITS
-    if(mp == NULL && npart == NumPart) {force_tree_full_audit(1, "build");} /* whole-tree builds only: subset builds legitimately leave particles unreached */
+    if(mp == NULL && npart == NumPart) {force_tree_full_audit(1, "build"); force_tree_geometry_audit("build");} /* whole-tree builds only: subset builds legitimately leave particles unreached */
 #endif
 
     /* Tree-integrity invariant. N_part is exchanged with the pseudo-particle data and re-accumulated
@@ -298,7 +305,8 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                 {
                     /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
                      * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                    subnode = (int) (8.0 * get_random_number(P[i].ID));
+                    static constexpr uint64_t TREE_INSERT_SUBNODE_RNG_SALT = gizmo_loop_rng_salt("tree_coincident_subnode_insert");
+                    subnode = (int) (8.0 * gizmo_gpu_rand_double(gizmo_rng_combine(particle_event_rng_key(i), (uint64_t) i), gizmo_rng_event_counter(TREE_INSERT_SUBNODE_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t) th))); /* the local index separates exact duplicates; the node index gives a fresh draw at every level */
                     if(subnode >= 8) {subnode = 7;}
                 }
                 
@@ -360,7 +368,8 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
                 {
                     /* seems like we're dealing with particles at identical (or extremely close) locations. Randomize subnode index to allow tree construction. Note: Multipole moments
                      * of tree are still correct, but this will only happen well below gravitational softening length-scale anyway. */
-                    subnode = (int) (8.0 * get_random_number(P[th].ID));
+                    static constexpr uint64_t TREE_DISPLACE_SUBNODE_RNG_SALT = gizmo_loop_rng_salt("tree_coincident_subnode_displace");
+                    subnode = (int) (8.0 * gizmo_gpu_rand_double(gizmo_rng_combine(particle_event_rng_key(th), (uint64_t) th), gizmo_rng_event_counter(TREE_DISPLACE_SUBNODE_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t) nfree)));
                     if(subnode >= 8) {subnode = 7;}
                 }
                 
@@ -1473,7 +1482,7 @@ void force_flag_localnodes(void)
  *  because every caller debits the child's mass from a co-located parent, so
  *  node total mass and COM are conserved. Type-conditioned moments (gasmass,
  *  stellar_lum, sink_*) are NOT updated here and go stale until the next
- *  refresh/rebuild, and hmax/vmax are bumped on the immediate parent only.
+ *  refresh/rebuild; hmax/vmax are raised over the whole ancestor chain.
  */
 void force_add_element_to_tree(int iparent, int ichild)
 {
@@ -1495,15 +1504,13 @@ void force_add_element_to_tree(int iparent, int ichild)
      * Indexing Extnodes with it would be a wild write, so leave the opening-criterion fields
      * alone; the child inherits the same -1 and is skipped by the other consumers too. */
     if(Father[iparent] < 0) {return;}
-    /* update parent node properties [maximum softening, speed] for opening criteria.
-       The hmax bound must cover the CHILD's kernel: for a sink-spawn call the parent is the sink,
-       whose kernel radius is the wrong particle's -- it both misses a larger gas child and
-       pollutes the gas-hmax bound with sink kernels (the unsafe direction for neighbour
-       completeness is the miss). */
-    if(P[ichild].Type == 0) {Extnodes[Father[iparent]].hmax = DMAX(Extnodes[Father[iparent]].hmax, DMIN(P[ichild].KernelRadius, All.MaxKernelRadius));}
-    double vmax = Extnodes[Father[iparent]].vmax;
-    int k; for(k=0; k<3; k++) {if(fabs(P[ichild].Vel[k]) > vmax) {vmax = fabs(P[ichild].Vel[k]);}}
-    Extnodes[Father[iparent]].vmax = vmax;
+    /* Raise the motion and kernel bounds the child needs over its whole ancestor chain: each of
+       those nodes prunes searches by its own bounds, so stopping at the immediate parent leaves the
+       child invisible to a query that opens from higher up. The bounds are the CHILD's: for a
+       sink-spawn call the parent is the sink, whose kernel radius is the wrong particle's -- that
+       both misses a larger gas child and pollutes the gas-hmax bound with sink kernels (the unsafe
+       direction for neighbour completeness is the miss). */
+    force_raise_motion_bound(ichild);
 }
 
 
@@ -3644,6 +3651,7 @@ void force_treefree(void)
 {
     if(tree_allocated_flag)
     {
+        force_motion_bounds_reset(0);
         myfree(Father);
         myfree(Nextnode);
         myfree(Extnodes_base);
@@ -3926,12 +3934,30 @@ void ewald_force(int iii, int jjj, int kkk, double x[3], double force[3])
 #endif // #ifdef BOX_PERIODIC //
 
 
+/*! Particle i's position and kernel radius at All.Ti_Current, as drift_particle would leave them
+ *  (straight-line motion: MFM gas and KDK/Hermite sinks), without drifting it. Lazy drift leaves
+ *  inactive particles at older times, so anything stamped current from P[] must read it this way. */
+static double force_predict_to_current(int i, Vec3<MyDouble> &x)
+{
+    x = P[i].Pos; double h = P[i].KernelRadius;
+    if(P[i].Ti_current >= All.Ti_Current) {return h;}
+    double dt = get_drift_factor(P[i].Ti_current, All.Ti_Current, i, 0);
+    x += P[i].Vel * dt;
+#if (HYDRO_FIX_MESH_MOTION > 0)
+    if(P[i].Type == 0 && P[i].Mass > 0) {h = DMIN(DMAX(h * exp(drift_divv_factor(i, dt) / NUMDIMS), All.MinKernelRadius), All.MaxKernelRadius);}
+#endif
+    return h;
+}
+
+
 /*! Refresh tree node moments without rebuilding the tree structure. Uses bottom-up accumulation
  *  via Father[] pointers instead of u.suns[] (which are destroyed after the initial tree build
  *  since they share a union with u.d). Nodes are processed from high to low index, which gives
  *  bottom-up order since children are always allocated with higher indices than parents.
- *  Use this when particle properties (mass, type, luminosity) have changed but particles haven't
- *  moved, e.g. after star formation or sink SN events. */
+ *  Use this when particle properties (mass, type, luminosity) have changed, e.g. after star
+ *  formation or sink SN events. It runs mid-step, where inactive particles and the nodes holding
+ *  them still sit at older times: the moments are built from members predicted to now, and each
+ *  node's box is drifted to now before it is stamped current. */
 void force_refresh_node_moments(void)
 {
     TreeOpsCount[TREEOPS_REFRESH]++;
@@ -3941,6 +3967,10 @@ void force_refresh_node_moments(void)
     /* Step 1: zero all node moment fields (preserving structural fields: nextnode, sibling, father) */
     for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
     {
+        /* len is the one geometric field kept across the refresh, and drifting is what widens it to
+           cover members that moved since the node was last current; stamping without it loses that
+           interval until the next build */
+        if(Nodes[no].Ti_current != All.Ti_Current) {force_drift_node(no, All.Ti_Current);}
         unsigned int saved_bitflags = Nodes[no].u.d.bitflags; /* preserve topology flags (TOPLEVEL etc) */
         Nodes[no].u.d.mass = 0;
         Nodes[no].u.d.s = {};
@@ -4012,9 +4042,10 @@ void force_refresh_node_moments(void)
         no = Father[i];
         if(no < 0) {continue;}
         struct particle_data *pa = &P[i];
+        Vec3<MyDouble> pos; double kernel_now = force_predict_to_current(i, pos); /* lagging members are read at now, not where they were last drifted */
 
         Nodes[no].u.d.mass += pa->Mass;
-        Nodes[no].u.d.s += pa->Mass * pa->Pos;
+        Nodes[no].u.d.s += pa->Mass * pos;
         Extnodes[no].vs += pa->Mass * pa->Vel;
         Nodes[no].N_part++;
 
@@ -4030,7 +4061,7 @@ void force_refresh_node_moments(void)
 
         if(pa->Type == 0)
         {
-            double htmp = DMIN(All.MaxKernelRadius, P[i].KernelRadius);
+            double htmp = DMIN(All.MaxKernelRadius, kernel_now);
             if(htmp > Extnodes[no].hmax) {Extnodes[no].hmax = htmp;}
             if(P[i].Particle_DivVel > Extnodes[no].divVmax) {Extnodes[no].divVmax = P[i].Particle_DivVel;}
         }
@@ -4059,7 +4090,7 @@ void force_refresh_node_moments(void)
             for(k=0;k<CHIMES_LOCAL_UV_NBINS;k++) {Nodes[no].chimes_stellar_lum_G0[k] += chimes_lum_G0[k]; Nodes[no].chimes_stellar_lum_ion[k] += chimes_lum_ion[k];}
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-            Nodes[no].rt_source_lum_s += l_sum * pa->Pos;
+            Nodes[no].rt_source_lum_s += l_sum * pos;
             Extnodes[no].rt_source_lum_vs += l_sum * pa->Vel;
 #endif
         }}
@@ -4078,7 +4109,7 @@ void force_refresh_node_moments(void)
 #ifdef SINK_CALC_DISTANCES
         if(pa->Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) {
             Nodes[no].sink_mass += pa->Mass;
-            Nodes[no].sink_pos += pa->Mass * pa->Pos; /* store as mass-weighted sum, normalize later */
+            Nodes[no].sink_pos += pa->Mass * pos; /* store as mass-weighted sum, normalize later */
 #ifdef SINK_NODE_MOTION_TRACKED
             Nodes[no].N_SINK += 1;
 #endif
@@ -4097,7 +4128,7 @@ void force_refresh_node_moments(void)
         {for(k=0;k<6;k++) {Nodes[no].tidal_tensorps_prevstep.data[k] += pa->Mass * pa->tidal_tensorps_prevstep.data[k];}}
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        if(pa->Type != 0) {Nodes[no].mass_dm += pa->Mass; Nodes[no].s_dm += pa->Mass * pa->Pos; Extnodes[no].vs_dm += pa->Mass * pa->Vel;}
+        if(pa->Type != 0) {Nodes[no].mass_dm += pa->Mass; Nodes[no].s_dm += pa->Mass * pos; Extnodes[no].vs_dm += pa->Mass * pa->Vel;}
 #endif
     }
 
@@ -4216,6 +4247,7 @@ void force_refresh_node_moments(void)
         int audit_moments_now = ((++refresh_audit_counter % 8) == 0) || TreeAuditMomentsPending;
         TreeAuditMomentsPending = 0;
         force_tree_full_audit(audit_moments_now, "refresh");
+        if(audit_moments_now) {force_tree_geometry_audit("refresh");}
     }
 #endif
 }
@@ -4306,9 +4338,10 @@ void force_validate_tree_links(const char *tag)
  *  (c) with audit_moments (valid only immediately after a build or refresh, when moments are
  *      freshly derived): per-node mass and N_part re-derived from the particle arrays via the
  *      Father chains match the stored values -- restricted to nodes below the top level, whose
- *      stored moments carry no cross-rank pseudo contributions -- and every gas particle's kernel
- *      is covered by its parent's hmax. A wrong Father shows up here as a node-mass mismatch, so
- *      this doubles as the Father-consistency check. Failures are fatal with a tagged report. */
+ *      stored moments carry no cross-rank pseudo contributions. A wrong Father shows up here as a
+ *      node-mass mismatch, so this doubles as the Father-consistency check. Kernel coverage by hmax
+ *      is checked by force_tree_geometry_audit, at the predicted kernel. Failures are fatal with a
+ *      tagged report. */
 void force_tree_full_audit(int audit_moments, const char *tag)
 {
     if(Numnodestree <= 0) {return;}
@@ -4371,12 +4404,6 @@ void force_tree_full_audit(int audit_moments, const char *tag)
                 np_scr[f - All.MaxPart]++; /* unconditional, mirroring force_refresh_node_moments -- zero-mass locals are normally gone by audit time (rearrange precedes build/refresh) */
                 f = Nodes[f].u.d.father;
             }
-            if(P[i].Type == 0 && Father[i] >= All.MaxPart && Father[i] < All.MaxPart + Numnodestree)
-            {
-                double hneed = DMIN(P[i].KernelRadius, All.MaxKernelRadius);
-                if(Extnodes[Father[i]].hmax < 0.999999 * hneed)
-                {printf("TREE-AUDIT task %d [%s]: gas particle %d kernel %g exceeds parent node hmax %g\n", ThisTask, tag, i, hneed, Extnodes[Father[i]].hmax); fail = 1;}
-            }
         }
         long long nbad = 0;
         for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
@@ -4400,5 +4427,84 @@ void force_tree_full_audit(int audit_moments, const char *tag)
     myfree(nstack);
     myfree(visited);
     if(fail) {endrun(91571);}
+}
+
+
+/*! Tier-2 geometric audit (TREE_INTEGRITY_AUDITS builds only). The audit above checks only
+ *  time-independent quantities (topology, mass, counts), which stale positions cannot disturb. This
+ *  one checks the geometry the walks rely on, with every local particle predicted to All.Ti_Current:
+ *  (a) each particle lies inside every ancestor's box, center +- len/2 -- the neighbour search
+ *      discards a node by exactly that box (rkern + len/2), so a member outside it can be missed.
+ *      REPORTED, not fatal: force_drift_node grows the half-width at exactly the speed of the
+ *      node's fastest member, so a member that is both the fastest and sitting on the face has zero
+ *      margin by construction, and any historical one-kick shortfall (~1e-10 in code units here)
+ *      persists forever since len never shrinks. That floor is not a diagnosable defect class --
+ *      it moves or vanishes with a recompile -- whereas the systematic classes this audit did catch
+ *      showed up on many particles at once and grew with time, which the count and worst case
+ *      printed here still expose. Totals go to cpu.txt per global step;
+ *  (b) each gas particle's kernel is covered by its parent's hmax (searches both ways read hmax);
+ *  (c) each node below the top level has s at the centre of mass of its members.
+ *  (b) and (c) are exact quantities with no such floor, and remain fatal.
+ *  Valid only when every local node is current: right after a build or a moments refresh. Rank-local
+ *  (no collectives): the refresh samples it on a rank-local condition. */
+long long TreeGeoAuditCount = 0;      /*!< rank-local: geometry audits run */
+long long TreeGeoAuditBoxCount = 0;   /*!< ... of which found a box-containment excess */
+double TreeGeoAuditWorstLen = 0;      /*!< worst box excess seen, in units of the node length */
+double TreeGeoAuditWorstH = 0;        /*!< ... and of the offending particle's kernel/softening */
+void force_tree_geometry_audit(const char *tag)
+{
+    if(Numnodestree <= 0) {return;}
+    double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    double *msum = (double *) mymalloc("geo_audit_msum", (size_t) Numnodestree * 4 * sizeof(double)); /* per node: mass, mass-weighted x,y,z */
+    memset(msum, 0, (size_t) Numnodestree * 4 * sizeof(double));
+    long long nbad[3] = {0, 0, 0};
+    double worst[4] = {0, 0, 0, 0}; /* box excess in len, box excess in h, kernel/hmax, COM offset in len */
+    int i, k, no, worst_i = -1, worst_f = -1;
+    for(i = 0; i < NumPart; i++)
+    {
+        int f = Father[i];
+        if(P[i].Mass <= 0 || f < All.MaxPart || f >= All.MaxPart + Numnodestree) {continue;}
+        Vec3<MyDouble> x; double h = force_predict_to_current(i, x);
+        if(P[i].Type == 0)
+        {
+            double hneed = DMIN(h, All.MaxKernelRadius);
+            if(Extnodes[f].hmax < 0.999999 * hneed) {nbad[1]++; worst[2] = DMAX(worst[2], hneed / DMAX(Extnodes[f].hmax, MIN_REAL_NUMBER));}
+        }
+        double hscale = (P[i].Type == 0) ? h : ForceSoftening_KernelRadius(i);
+        for(; f >= All.MaxPart && f < All.MaxPart + Numnodestree; f = Nodes[f].u.d.father)
+        {
+            double dx = x[0] - Nodes[f].center[0], dy = x[1] - Nodes[f].center[1], dz = x[2] - Nodes[f].center[2];
+            double d = DMAX(NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1), DMAX(NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1), NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1)));
+            double excess = d - 0.5 * Nodes[f].len;
+            if(excess > 0) {nbad[0]++; if(excess / Nodes[f].len > worst[0]) {worst[0] = excess / Nodes[f].len; worst_i = i; worst_f = f;} if(hscale > 0) {worst[1] = DMAX(worst[1], excess / hscale);}}
+            double *ms = msum + 4 * (size_t) (f - All.MaxPart);
+            ms[0] += P[i].Mass; for(k = 0; k < 3; k++) {ms[1 + k] += P[i].Mass * x[k];}
+        }
+    }
+    for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
+    {
+        if(Nodes[no].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) {continue;} /* s carries cross-rank pseudo mass here */
+        double *ms = msum + 4 * (size_t) (no - All.MaxPart);
+        if(ms[0] <= 0) {continue;}
+        double off = 0; for(k = 0; k < 3; k++) {off = DMAX(off, fabs(ms[1 + k] / ms[0] - Nodes[no].u.d.s[k]));}
+        if(off > 1.e-6 * Nodes[no].len) {nbad[2]++; worst[3] = DMAX(worst[3], off / Nodes[no].len);}
+    }
+    myfree(msum);
+    TreeGeoAuditCount++;
+    if(nbad[0]) {TreeGeoAuditBoxCount++; TreeGeoAuditWorstLen = DMAX(TreeGeoAuditWorstLen, worst[0]); TreeGeoAuditWorstH = DMAX(TreeGeoAuditWorstH, worst[1]);}
+    if(nbad[0] || nbad[1] || nbad[2])
+    {
+        printf("TREE-GEOMETRY-AUDIT task %d [%s] t=%.10g: %lld particle-ancestor pairs outside the node box (worst %.3g len, %.3g h); %lld gas kernels above parent hmax (worst x%.4g); %lld node COMs off (worst %.3g len)\n",
+               ThisTask, tag, All.Time, nbad[0], worst[0], worst[1], nbad[1], worst[2], nbad[2], worst[3]);
+        if(worst_i >= 0)
+        {
+            double vm = 0; for(k = 0; k < 3; k++) {vm = DMAX(vm, fabs(P[worst_i].Vel[k]));}
+            printf("TREE-GEOMETRY-AUDIT task %d: worst box excess: particle %d ID=%llu Type=%d TimeBin=%d lagging %lld ticks, max|v_k|=%g; node %d (N_part=%d, top-level=%d) vmax=%g len=%g\n",
+                   ThisTask, worst_i, (unsigned long long) P[worst_i].ID, P[worst_i].Type, P[worst_i].TimeBin, (long long) (All.Ti_Current - P[worst_i].Ti_current), vm,
+                   worst_f, Nodes[worst_f].N_part, (Nodes[worst_f].u.d.bitflags & ((1 << BITFLAG_TOPLEVEL) | (1 << BITFLAG_INTERNAL_TOPLEVEL))) ? 1 : 0, Extnodes[worst_f].vmax, Nodes[worst_f].len);
+        }
+        fflush(stdout);
+        if(nbad[1] || nbad[2]) {endrun(91573);} /* the exact checks are fatal; the box excess is reported */
+    }
 }
 #endif

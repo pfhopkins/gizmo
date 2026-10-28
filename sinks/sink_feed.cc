@@ -6,6 +6,7 @@
 #include <string.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -24,6 +25,7 @@
 struct INPUT_STRUCT_NAME
 {
     int NodeList[NODELISTLENGTH]; Vec3<MyDouble> Pos; Vec3<MyFloat> Vel; MyFloat KernelRadius, Mass, Sink_Mass, Dt, Density, Mdot; MyIDType ID;
+    uint64_t RngKey; /* the sink's random-number key (particle_event_rng_key), for the per-neighbour draws */
 #if defined(SINK_CALC_LOCAL_ANGLEWEIGHTS)
     Vec3<MyFloat> Jgas_in_Kernel;
 #endif
@@ -54,6 +56,7 @@ static inline void INPUTFUNCTION_NAME(struct INPUT_STRUCT_NAME *in, int i, int l
     int k, j_tempinfo; j_tempinfo=P[i].IndexMapToTempStruc; /* link to the location in the shared structure where this is stored */
     in->Pos=P[i].Pos; in->Vel=P[i].Vel; /* good example - always needed */
     in->KernelRadius = P[i].KernelRadius; in->Mass = P[i].Mass; in->Sink_Mass = P[i].Sink_Mass; in->ID = P[i].ID; in->Density = P[i].DensityAroundParticle; in->Mdot = P[i].Sink_Mdot;
+    in->RngKey = particle_event_rng_key(i);
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
     in->SinkRadius = P[i].SinkRadius;
 #endif
@@ -236,7 +239,7 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
                                 if(sink_check_boundedness(j,vrel,vesc,r,sink_radius) != 1) {allow_sink_merger = 0;} // stricter criterion
 #endif
                                 if(r >= max_rmerge) {allow_sink_merger = 0;} // beyond max radius (default sink)
-                                if(P[j].Mass > max_mmerge) {allow_sink_merger = 0;} // beyond max mass (default few cells)
+                                if(!(P[j].Mass <= max_mmerge)) {allow_sink_merger = 0;} // beyond max mass (default few cells); negated so a non-finite ceiling fails closed
                                 if(allow_sink_merger == 1) /* ok only if meet all the criteria above are we allowed to consider a BH-BH merger */
 #endif
                                 {
@@ -288,7 +291,8 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 #if defined(SINK_WIND_KICK)
                                         p /= All.Sink_accreted_fraction; // we need to accrete more, then remove the mass in winds
 #endif
-                                        w = get_random_number(P[j].ID);
+                                        static constexpr uint64_t SINK_CAPTURE_RNG_SALT = gizmo_loop_rng_salt("sink_eddington_limited_capture");
+                                        w = gizmo_gpu_rand_double(gizmo_rng_combine(local.RngKey, particle_event_rng_key(j)), gizmo_rng_event_counter(SINK_CAPTURE_RNG_SALT, (uint64_t)All.Ti_Current, 0)); /* keyed on both ends: thread-safe, and two sinks decide independently */
                                         if(w < p)
                                         {
 #ifdef SINK_OUTPUT_MOREINFO
@@ -321,7 +325,8 @@ int sink_feed_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef SINK_WIND_KICK /* DAA: for stochastic winds (SINK_WIND_KICK) we remove a fraction of mass from gas particles prior to kicking --> need to increase the probability here to balance sink particle growth */
                                 if(f_accreted>0) {p /= f_accreted; if((sink_mass_withdisk - local.Mass) < 0) {p = ( (1-f_accreted)/f_accreted ) * local.Mdot * local.Dt * wk / local.Density;}} /* DAA: compute outflow probability when "sink_mass_withdisk < mass" - we don't need to enforce mass conservation in this case, relevant only in low-res sims where the BH seed mass is much lower than the gas particle mass */
 #endif
-                                w = get_random_number(P[j].ID);
+                                static constexpr uint64_t SINK_SWALLOW_RNG_SALT = gizmo_loop_rng_salt("sink_stochastic_swallow");
+                                w = gizmo_gpu_rand_double(gizmo_rng_combine(local.RngKey, particle_event_rng_key(j)), gizmo_rng_event_counter(SINK_SWALLOW_RNG_SALT, (uint64_t)All.Ti_Current, 0)); /* keyed on both ends: thread-safe, and two sinks decide independently */
                                 if(w < p)
                                 {
 #ifdef SINK_OUTPUT_MOREINFO

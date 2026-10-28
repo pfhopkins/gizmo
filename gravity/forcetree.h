@@ -33,6 +33,9 @@ void force_refresh_node_moments(void);
 void force_validate_tree_links(const char *tag);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
+void force_tree_geometry_audit(const char *tag);
+extern long long TreeGeoAuditCount, TreeGeoAuditBoxCount; /*!< geometry audits run, and those with a box-containment excess (rank-local) */
+extern double TreeGeoAuditWorstLen, TreeGeoAuditWorstH;   /*!< worst box excess over the run, in node lengths and in kernel radii */
 #endif
 
 void force_flag_localnodes(void);
@@ -53,6 +56,11 @@ void force_dynamic_update_node(int no, int mode, MyFloat *minbound, MyFloat *max
 void force_update_hmax(void);
 void force_update_hmax_of_node(int no, int mode);
 void force_finish_kick_nodes(void);
+void force_motion_bounds_reset(int tree_live);
+void force_raise_motion_bound(int i);       /* serial: a velocity changed outside the kick */
+void force_note_motion_change(int i);       /* thread-safe: same, raised by force_raise_noted_motion_bounds */
+void force_raise_noted_motion_bounds(void);
+void force_flush_motion_bounds(void);       /* collective */
 int force_create_empty_nodes(int no, int topnode, int bits, int x, int y, int z, int *nodecount, int *nextfree);
 void force_exchange_pseudodata(void);
 void force_insert_pseudo_particles(void);
@@ -68,6 +76,7 @@ int    force_treebuild(int npart, struct unbind_data *mp);
 int    force_treebuild_single(int npart, struct unbind_data *mp);
 int    force_treeevaluate_direct(int target, int mode);
 void   force_treefree(void);
+int    force_tree_is_allocated(void);   /* nonzero while tree storage is held */
 void   force_update_node(int no, int flag);
 void   force_update_node_recursive(int no, int sib, int father);
 void   force_update_size_of_parent_node(int no);

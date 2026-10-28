@@ -9,6 +9,8 @@
 #include <gsl/gsl_eigen.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
+static constexpr uint64_t SN_EVENT_RNG_SALT = gizmo_loop_rng_salt("supernova_event"); /* whether a star particle has a supernova this step */
 #include "../mesh/kernel.h"
 
 /* Routines for models that require stellar evolution: luminosities, mass loss, SNe rates, etc.
@@ -237,7 +239,7 @@ double mechanical_fb_calculate_eventrates(int i, double dt)
     {
         double RSNe = 3.e-4; // assume a constant rate ~ 3e-4 SNe/Myr/solar mass for t = 0-30 Myr //
         double p = RSNe * (P[i].Mass*UNIT_MASS_IN_SOLAR) * (dt*UNIT_TIME_IN_MYR); // unit conversion factor
-        double n_sn_0=(float)floor(p); p-=n_sn_0; if(get_random_number(P[i].ID+6) < p) {n_sn_0++;} // determine if SNe occurs
+        double n_sn_0=(float)floor(p); p-=n_sn_0; if(particle_random_number(i, SN_EVENT_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {n_sn_0++;} // determine if SNe occurs
         P[i].SNe_ThisTimeStep = n_sn_0; // assign to particle
         return RSNe;
     }
@@ -278,7 +280,7 @@ double mechanical_fb_calculate_eventrates_SNe(int i, double dt)
     if(star_age>agemax && P[i].IMF_NumMassiveStars>0) {RSNe += 2.516e-4*renorm;} // account for un-exploded O-stars
 #endif
     double p = RSNe * (P[i].Mass*UNIT_MASS_IN_SOLAR) * (dt*UNIT_TIME_IN_MYR); // unit conversion factor
-    double n_sn_0=(float)floor(p); p-=n_sn_0; if(get_random_number(P[i].ID+6) < p) {n_sn_0++;} // determine if SNe occurs
+    double n_sn_0=(float)floor(p); p-=n_sn_0; if(particle_random_number(i, SN_EVENT_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {n_sn_0++;} // determine if SNe occurs
 #ifdef GALSF_SFR_IMF_SAMPLING
     if(star_age<agemax && P[i].IMF_NumMassiveStars<n_sn_0) {n_sn_0=P[i].IMF_NumMassiveStars;} // limit to number of O-stars for SNe //
 #endif
@@ -295,7 +297,8 @@ void mechanical_fb_calculate_eventrates_Rprocess(int i, double dt)
     if(star_age>=0.003) // rate is zero at <3e6 yr
     {
         double p = 3.0e-5 / (1000.*star_age) * (P[i].Mass*UNIT_MASS_IN_SOLAR) * (dt*UNIT_TIME_IN_MYR); // Nsne/Myr for a 1 Msun population
-        double n_sn_0=(float)floor(p); p-=n_sn_0; if(get_random_number(P[i].ID + 7) < p) {n_sn_0++;} // if > 1, this cuts that part off so we get appropriate n > 1 solution
+        static constexpr uint64_t RPROCESS_EVENT_RNG_SALT = gizmo_loop_rng_salt("rprocess_event");
+        double n_sn_0=(float)floor(p); p-=n_sn_0; if(particle_random_number(i, RPROCESS_EVENT_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {n_sn_0++;} // if > 1, this cuts that part off so we get appropriate n > 1 solution
         P[i].RProcessEvent_ThisTimeStep = n_sn_0; // assign event
     }
 #endif
@@ -345,6 +348,7 @@ void mechanical_fb_calculate_eventrates_Agetracers(int i, double dt)
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
     P[i].AgeDeposition_ThisTimeStep=0; // reset
     if(P[i].Type != 4) {return;} // only new stars are eligible sources
+    static constexpr uint64_t AGE_TRACER_RNG_SALT = gizmo_loop_rng_salt("age_tracer_deposit");
     double rate_normalization = All.AgeTracerRateNormalization; // determines the fraction of time spent depositing tracers, or rate-per-particle
     if(rate_normalization == 0 || rate_normalization <= -1) {P[i].AgeDeposition_ThisTimeStep=1; return;} // rate_normalization = 0 means deposit every time step
     double stellar_age_myr = evaluate_stellar_age_Gyr(i)*1000.; int k = get_age_tracer_bin(stellar_age_myr); // get age in Myr and bin for age
@@ -352,9 +356,9 @@ void mechanical_fb_calculate_eventrates_Agetracers(int i, double dt)
     if(rate_normalization <= 0) // there is a constant probability of event -per timestep-, with 'amount returned' depending on timestep duration
     {
         if(dt*UNIT_TIME_IN_MYR/bin_dt_myr > fabs(rate_normalization)) {P[i].AgeDeposition_ThisTimeStep=1;} else  // if dt is large compared to bin spacing, might 'miss' an event, so we want to always make an event and return
-            {if(get_random_number(P[i].ID + 3) < fabs(rate_normalization)) {P[i].AgeDeposition_ThisTimeStep=1./fabs(rate_normalization);}} // rate limit according to the return fraction this represents fraction of time star should be depositing; if selected, deposit age tracer and use this scaling to increase the normalization of the tracer field
+            {if(particle_random_number(i, AGE_TRACER_RNG_SALT, (uint64_t)All.Ti_Current, 0) < fabs(rate_normalization)) {P[i].AgeDeposition_ThisTimeStep=1./fabs(rate_normalization);}} // rate limit according to the return fraction this represents fraction of time star should be depositing; if selected, deposit age tracer and use this scaling to increase the normalization of the tracer field
     } else { // there is a constant probability per -time- (target 'number of events per bin per particle'), with 'amount returned' constant
-        double p=fabs(rate_normalization)*(dt*UNIT_TIME_IN_MYR/bin_dt_myr), n_events=(float)floor(p); p-=n_events; if(get_random_number(P[i].ID + 3) < p) {n_events++;} // if > 1, this cuts that part off so we get appropriate n > 1 solution
+        double p=fabs(rate_normalization)*(dt*UNIT_TIME_IN_MYR/bin_dt_myr), n_events=(float)floor(p); p-=n_events; if(particle_random_number(i, AGE_TRACER_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {n_events++;} // if > 1, this cuts that part off so we get appropriate n > 1 solution
         P[i].AgeDeposition_ThisTimeStep = n_events / fabs(rate_normalization); // assign event
     }
 #endif
@@ -411,7 +415,8 @@ void mechanical_fb_calculate_eventrates_Winds(int i, double dt)
     
     double n_wind_0=(double)floor(p/D_RETURN_FRAC); p-=n_wind_0*D_RETURN_FRAC; // if p >> return frac, should have > 1 event, so we inject the correct wind mass
     P[i].MassReturn_ThisTimeStep += n_wind_0*D_RETURN_FRAC; // add this in, then determine if there is a 'remainder' to be added as well
-    if(get_random_number(P[i].ID + 5) < p/D_RETURN_FRAC) {P[i].MassReturn_ThisTimeStep += D_RETURN_FRAC;} // add the 'remainder' stochastically
+    static constexpr uint64_t WIND_MASS_REMAINDER_RNG_SALT = gizmo_loop_rng_salt("stellar_wind_mass_remainder");
+    if(particle_random_number(i, WIND_MASS_REMAINDER_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p/D_RETURN_FRAC) {P[i].MassReturn_ThisTimeStep += D_RETURN_FRAC;} // add the 'remainder' stochastically
 }
 
 
@@ -423,7 +428,8 @@ void particle2in_addFB_Rprocess(struct addFB_evaluate_data_in_ *in, int i)
 {
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P[i].RProcessEvent_ThisTimeStep<=0) {in->Msne=0; return;} // no event
-    int k; double star_age=evaluate_stellar_age_Gyr(i), p=get_random_number(P[i].ID + 8), pcrit, tcrit;
+    static constexpr uint64_t RPROCESS_SPECIES_RNG_SALT = gizmo_loop_rng_salt("rprocess_species");
+    int k; double star_age=evaluate_stellar_age_Gyr(i), p=particle_random_number(i, RPROCESS_SPECIES_RNG_SALT, (uint64_t)All.Ti_Current, 0), pcrit, tcrit;
     for(k=0;k<NUM_RPROCESS_SPECIES;k++)
     {
         if(k==0) {tcrit=0.03;  pcrit=0.3333333333;}  // model 0: tmin > 3e7 yr, rate = 1e-5
@@ -723,10 +729,8 @@ void update_stellarnumber_and_timedistribofstarformation(void)
 #endif
                 double n_expected_total = f_m * P[i].Mass * UNIT_MASS_IN_SOLAR; // default f_m above is 1 O-star per 100 Msun [more exactly calculated here as number of stars per solar mass with mass > 8 Msun, from our adopted Kroupa IMF from 0.01-100 Msun]
                 double dn_expected_in_dt = n_expected_total * d_tau; // expected number to spawn in this particular interval
-                gsl_rng *random_generator_for_massivestars; // allocate rng
-                random_generator_for_massivestars = gsl_rng_alloc(gsl_rng_ranlxd1); // setup generator
-                gsl_rng_set(random_generator_for_massivestars, P[i].ID + 49531 + All.NumCurrentTiStep); // seed random number
-                unsigned int n_to_add = gsl_ran_poisson(random_generator_for_massivestars, dn_expected_in_dt); // actually draw the number
+                static constexpr uint64_t NEW_MASSIVE_STARS_RNG_SALT = gizmo_loop_rng_salt("massive_star_count_during_evolution");
+                unsigned int n_to_add = (unsigned int)gizmo_gpu_rand_poisson(particle_event_rng_key(i), gizmo_rng_event_counter(NEW_MASSIVE_STARS_RNG_SALT, (uint64_t)All.Ti_Current, 0), dn_expected_in_dt);
                 if(n_to_add > 0) // hey, new stars!
                 {
                     P[i].IMF_WeightedMeanStellarFormationTime = (P[i].IMF_NumMassiveStars * P[i].StellarAge + n_to_add * All.Time) / (P[i].IMF_NumMassiveStars + n_to_add); // update the effective stellar age (so e.g. if we lose stars, this can keep updating)

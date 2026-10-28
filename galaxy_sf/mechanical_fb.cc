@@ -456,6 +456,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                     #pragma omp atomic
                     P[j].dp[k] += Mass_j*Vel_j[k] - Mass_j_0*Vel_j_0[k]; // discrete momentum change
                 }
+                force_note_motion_change(j);
                 #pragma omp atomic
                 CellP[j].InternalEnergy += InternalEnergy_j - InternalEnergy_j_0; // delta-update
                 #pragma omp atomic
@@ -857,6 +858,7 @@ void verify_and_assign_local_mechfb_integrals(void)
                     double dv = (-dm/mf)*P[j].Vel[k] + f0*(1./mf)*dp[k]*All.cf_atime; /* calculate total momentum change and mass change and therefore final velocity (in code units) */
                     P[j].Vel[k] += dv; CellP[j].VelPred[k] += dv; P[j].dp[k] += f0*dp[k]; /* update velocities */
                 }
+                force_raise_motion_bound(j);
             }
             ndone++; /* note another cell accounted for */
             if(ndone >= N_Gas_Couplings_ThisTask) {break;} /* we have done all cells (note is possible if the same cell is hit many times, N_Gas_Couplings_ThisTask can be much larger than ndone after the full loop. but if its smaller, then we -must- be done with this loop */
@@ -904,6 +906,7 @@ void mechanical_fb_calc(int fb_loop_iteration)
     loop_iteration = fb_loop_iteration; /* sets the appropriate feedback type for the calls below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds();
     CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 }
 #include "../system/code_block_xchange_finalize.h" /* de-define the relevant variables and macros to avoid compilation errors and memory leaks */

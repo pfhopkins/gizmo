@@ -189,7 +189,6 @@ double  Max_Unspawned_MassUnits_fromSink;
 long long Ntype[6];		/*!< total number of particles of each type */
 int NtypeLocal[6];		/*!< local number of particles of each type */
 
-gsl_rng *random_generator;	/*!< the random number generator used */
 
 int Gas_split;           /*!< current number of newly-spawned gas particles outside block */
 #ifdef GALSF
@@ -226,7 +225,7 @@ int NumPartGroup;
 /* variables for input/output , usually only used on process 0 */
 
 
-char ParameterFile[100];	/*!< file name of parameterfile used for starting the simulation */
+char ParameterFile[256];	/*!< file name of parameterfile used for starting the simulation */
 
 FILE
 #ifdef OUTPUT_ADDITIONAL_RUNINFO

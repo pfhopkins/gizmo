@@ -184,10 +184,6 @@ void begrun(void)
 
 
 
-  random_generator = gsl_rng_alloc(gsl_rng_ranlxd1);
-
-  gsl_rng_set(random_generator, 42 + ThisTask);	/* start-up seed */
-
 #ifdef PMGRID
   if(RestartFlag != 3 && RestartFlag != 4) {long_range_init();}
 #endif

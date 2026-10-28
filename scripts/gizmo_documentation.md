@@ -10,6 +10,11 @@
     + [Use, Authorship, & Citation Requirements](#requirements-authorship)
     + [Code Sharing Guidelines](#requirements-sharing)
     + [Code Development & Extensions (New Physics and Code)](#requirements-development)
+        + [Contributing Changes Back (Workflow)](#requirements-development-workflow)
+        + [Development Principles (Physics, Numerics, Performance)](#requirements-development-principles)
+        + [Reuse the Existing Templates (Where New Code Goes)](#requirements-development-templates)
+            + [Writing a New Neighbor Loop (the Loop Template)](#requirements-development-neighborloops)
+        + [AI-Assisted Development](#requirements-development-ai)
 4. [Fluid (Hydro) Solvers](#hydro)
     + [Examples (Demonstrations, Animations, and Talks)](#hydro-examples)
     + [MFV](#hydro-mfv), [MFM](#hydro-mfm), [Grid](#hydro-grid), [SPH](#hydro-sph), [other](#hydro-mmm) 
@@ -120,6 +125,10 @@
     + [How do I Avoid Memory Errors/Crashes?](#faqs-memory)
     + [My Large Simulation Hangs, but Smaller Runs Work?](#faqs-big)
     + [Why Did Everything Drop to TimeBin=1?](#faqs-timebin)
+    + [A Parameter I Set Has No Effect?](#faqs-ignoredparams)
+    + [How do I Stop a Run Cleanly?](#faqs-stop)
+    + [Why Do Two Identical Runs Not Give Bit-for-Bit Identical Results?](#faqs-reproducibility)
+    + [Why Are Conserved Quantities Not Always Conserved to Machine Precision with Individual Timesteps?](#faqs-conservation)
     + [Are there Public ICs? Analysis Tools? Image/Movie-Makers?](#faqs-rscr)
     + [What Does this Variable Mean?](#faqs-variable)
     + [What are the Code Units?](#faqs-units)
@@ -306,7 +315,7 @@ Users who violate these policies will have their access to the private version[s
 <a name="requirements-development"></a>
 ## Code Development & Extensions (New Physics and Code) 
 
-You are encouraged to study and modify this code (public or private)! Please, if you have ideas for interesting physics to add, add it! You are only asked to do a few things, to make your experience and that of everyone else much easier. 
+You are encouraged to study and modify this code! Please, if you have ideas for interesting physics to add, add it! You are only asked to do a few things, to make your experience and that of everyone else much easier. 
 
 + **Communicate Your Plans.** As the lead developer (PFH), I'd really appreciate knowing what kinds of physics you're adding. It may be that someone else has already done this, or that there is partial code already in place, to save you a huge amount of effort.
 
@@ -314,57 +323,114 @@ You are encouraged to study and modify this code (public or private)! Please, if
 
 + **Always protect against conflicts.** Non-standard code extensions should always be written such that they can be switched off, if not needed, and have no side effects on existing code. Normally this means that they have to be enclosed in conditional compilation precompiler statements (#ifdef), especially if variables in the global structures of the code need to be allocated for the extension. However, if the extension's execution can also be controlled at run-time by simple variables, then consider introducing a parameterfile-variable to control the extension. In general, the number of Makefile symbols to control conditional compilation should be kept to a minimum.
 
-+ Do not place any substantial piece of code belonging to your extension into existing functions of the code. Write your own functions for the code extension, and only place a function call (if needed bracketed by an #ifdef) into the appropriate place of the primary code. Also, place your extension functions into separate source files. The source files for any new module should go into their own folder, with an appropriate name -- just like the existing modules in the code for things like hydro, gravity, galaxy formation, etc. Otherwise the code will quickly become impossible to manage.
++ **Keep code in the module that owns it.** A genuinely new module gets its own source files, in its own folder with an appropriate name, just like the existing modules for hydro, gravity, galaxy formation, etc., and is called from the main code at the appropriate place (if needed bracketed by an `#ifdef`). But a small, cohesive addition to an existing calculation belongs in the existing function or file, not in a new one; pull out a helper function when it is reused or makes the code clearer. Do not multiply files and functions, and never create a second, parallel version of something the code already computes (see the code-style principles below). Otherwise the code will quickly become impossible to manage.
 
 + If you're willing to push the changes back and share them, it adds incredibly to the value of the code and (likely) to your own citation rates. Consider it!
 
 
+<a name="requirements-development-workflow"></a>
+### _Contributing Changes Back (Workflow)_:
+
+Contributions come in as pull requests on the [GitHub repository](https://github.com/pfhopkins/gizmo), into the branch they were developed against. Each development branch has a maintainer who reviews pull requests into it -- for example PFH for `gpu_kokkos_unified` (the Kokkos CPU/GPU version of the code) and Mike Grudic for `starforge_dev`. Target the branch your change was developed against; carrying a feature over to other branches is coordinated separately with their maintainers, and can need substantial adaptation (for example to the Kokkos CPU/GPU structure of `gpu_kokkos_unified`). The workflow is:
+
+1. **Sync first.** Bring your branch up to date with the branch you want to contribute to, and resolve any conflicts on your side. Syncing often costs a little each time, but keeps every merge small and simple; a branch that has drifted far from its upstream can be very hard to merge back.
+
+2. **Make it work, and show that it works.** Build and run your change over the range of conditions and module combinations it is meant to support, including with it switched off (see the rules above: new features should compile out completely when not enabled). The checks you write to confirm a fix or a feature are part of the pull request: describe them, and what they showed, in its description. They do not by themselves belong in the code. The test problems shipped with the code (`test/`) are a curated set: each validates physics not otherwise tested, has pedagogical value for users, or sets up a real physics problem. If you think your feature warrants a new test problem by those criteria, propose it explicitly in the pull request -- it needs the maintainer's approval.
+
+3. **Run the existing tests.** Run at least the tests in the "blast radius" of your change (the test problems that exercise the modules and code paths you touched), and if that is not obvious, the full suite (see `test/how_to_run_tests.md`). Also compile the `Config.sh` combinations your change touches, including ones where the new code is compiled out. Tests should pass, or fail only for a reason you understand and state in the pull request.
+
+4. **Open a pull request** from your branch into the branch you synced with, and request a review from its maintainer. Say what changed and why, which modules and configurations it affects, and what you ran to check it. Keep each pull request to one logical change, and do not include run outputs, generated files, or temporary diagnostics.
+
+5. **Iterate with the reviewer** on any further checks or changes.
+
+6. **The maintainer merges** once satisfied.
+
+The code-style and development principles below apply to every contribution, including the specific rules for the Kokkos (CPU/GPU) branch and for AI-assisted development.
+
+<a name="requirements-development-style"></a>
 ### _General Code-style Principles (Good Practices)_:
 
-+ Code formatting: Try to be consistent with the code formatting of the main code, which is more or less GNU-style, with a few small differences. You can run the indent-command with the options: 
++ **Formatting:** match the file you are editing. The code uses 4-space indentation, braces on their own line for functions, and compact single-line statements where they read naturally (e.g. `if(dt > dt_max) {dt = dt_max;}`), with no fixed line-length limit.
 
-        indent -gnu -npsl -npcs -nbs -nsaf -nsai -nsaw -nprs -bap -pmt -l110 *.c
++ **Names:** name functions all in lower case as a "command" that is descriptive of what the function does, with words separated by underscores, e.g. `calculate_normal_vector_for_triangle(...)`. Global variables (which should be kept to a minimum!) start with an upper case character and are nouns, with words separated by mixed lower/upper case characters and no underscores, e.g. `NumForceCalculations`. Local variables start with lowercase and should have descriptive names: single letters are fine for loop indices or in a few-line block, but not in a long function, where `h` or `t` quickly becomes ambiguous. Narrow the scope of each variable as much as possible, and combine declaration and initialization where possible, e.g. `int n = get_particle_count();`.
 
-    on your source file(s) to make the indention consistent.
++ **Single source of truth.** This is a core principle of the code. Every physics equation, numerical assumption, limiter, unit conversion or eligibility rule should be implemented in exactly one place, or failing that in the fewest places possible, and everything that needs it should call that one implementation. Changing a piece of physics should never require hunting down several copies, hooks or CPU- and GPU-specific versions of it across the code: copies drift apart, and then one of them is wrong. So avoid repetition (write a function instead of copying code), and when you extend a calculation, extend the existing routine (or its loop over neighbors) rather than adding a second, parallel version of it. Small helpers go into the existing header for their module (or `core/proto.h`), not into new files; new source files and folders are for genuinely new modules.
 
-+ Name functions all in lower case as a "command" that is descriptive of what the function does. Words are separated by underscores, e.g. `calculate_normal_vector_for_triangle(...)`. For all functions, input arguments should come first, output arguments last.
++ **Compile-time flags and parameters:** keep their number to a minimum. Flags are fully capitalized, with the prefix of their module (e.g. all galaxy star-formation flags begin with `GALSF_`). Every flag or parameter you add, rename, or retire must be described correctly in `Template_Config.sh` and in this User Guide. Do not build function argument lists out of `#ifdef` blocks (a reordering silently passes the wrong values); pass a struct, or declare the optional arguments unconditionally.
 
-+ Global variables (which should be kept to a minimum!) start with an upper case character. They are nouns, with words separated by mixed lower/upper case characters, and contain no underscores. Use abbreviations that are clear, e.g. NumForceCalculations.
++ **Constants:** physical constants and unit conversions come from the shared definitions (`declarations/constants.h`, the `UNIT_*_IN_CGS` macros), never re-typed. Coefficients of fits and models can be written where they are used, with a comment saying what they are and where they come from (e.g. `// Ia rate: prompt Gaussian plus delayed component, Mannucci et al. 2006`).
 
-+ Local variables start with lowercase, and should have descriptive names too, except for simple loop iterators and the like. Try to narrow the scope of a variable as much as possible, for example by declaring them inside a block where they are needed. Declaration and initialization should be combined in one command where possible, e.g.
++ **Warnings:** new code should compile without new warnings (most machine blocks in the `Makefile` compile with `-Wall`). On GPU builds, treat any warning about calling a host function from device code (`nvcc`/`hipcc` warnings `#20011-D`, `#20014-D`) as an error: the device copy of that function is broken. A CPU-only build cannot produce these warnings at all, so changes that add device annotations need a GPU compile.
 
-        int n = get_particle_count();
++ **Comments:** explain what the code does and why, at the level of the physics or algorithm, and cite the paper or equation for any non-trivial formula; skip comments that only restate the code. The meaning of every global variable and structure member is commented where it is declared (`int MyGlobalCount; /*!< counts the number of timesteps */`). Comments must make sense to a reader who has only the code: do not rely on private notes, design documents, development "phases" or "stages", or the tools used to write the code. A reference to a published paper or a public issue can supplement the explanation, but never replace it. Do not leave comments saying something is "deferred" or "not yet done": state what the code does and does not do, and why.
 
-    instead of
++ **Nothing temporary in a commit:** debugging prints, counters, test switches and other diagnostics are removed before a change is committed; write them so they stay separate from the real code (their own block or function), never woven into it, so removing them cannot remove anything else. Never control the behavior of the code through environment variables: they are not recorded with a run's parameters, so nobody can tell later what a run did. A user-adjustable setting is a `Config.sh` flag or a parameterfile parameter, or it is fixed in the code.
 
-        int n;
-        n = get_particle_count();
+<a name="requirements-development-principles"></a>
+### _Development Principles (Physics, Numerics, Performance)_:
 
++ **Never silently remove or weaken physics or numerics.** A change may fix a bug or improve accuracy; it must not quietly compute less. That rules out: dropping an `#ifdef` branch your change did not handle; adding an `#error` to block a flag combination your change does not support; replacing a calculation with a constant or a simpler approximation; falling back to an older, less capable code path when the new one has a problem; and removing or neutralizing a limiter or safety check (even one that a rewrite makes look unnecessary). If you believe one of these is needed, say so explicitly in your pull request and discuss it with the maintainer first.
 
-+ Avoid repetition of code, write a function instead. Break up long functions into smaller more manageable pieces.
++ **Physics and numerics stay separate and modular.** Physics modules should not need to know how neighbor finding, communication, or the device kernels are organized, and those frameworks should not contain module-specific special cases. In particular, an optimization or dispatch decision should depend on structural properties (how many elements are active, the type of neighbor search, available memory), never on which module is calling, so that it benefits every module of the same kind.
 
-+ Preprocessor macros (compile-time flags) that have arguments should be avoided if possible (but do whatever you can to minimize the number of compile-time flags). If needed, their names should be fully capitalized. They should always be named with a consistent prefix naming scheme (as currently in the code, where for example all the galaxy star formation flags begin with `GALSF_`).
++ **Performance for both large and small active sets.** With individual timesteps, most steps advance only a small fraction of the elements. Work on such a step must scale with the number of active elements (and their neighbors), not with the total number of elements: a loop over all particles, or a copy of whole particle arrays to or from the GPU, added to every step can make the code orders of magnitude slower for production problems, even if it is invisible in a test where everything is active.
 
-+ Magic numbers (including numerical constants) in the code should be avoided and instead be replaced by a symbolic constant (all uppercase) declared with #ifdef in a header file.
++ **GPU and portability (Kokkos branch):** all device code is written through Kokkos, so the same source runs on NVIDIA, AMD and CPU-only machines; never write CUDA- or HIP-specific code, and test `GIZMO_GPU_COMPILER` (not `__CUDA_ARCH__`) where device and host code must differ. A function called from device code in another source file must be defined as `KOKKOS_INLINE_FUNCTION` in a header (the `*_functions.h` files) and included where it is used: relocatable device code is not used. Never guard a physics call out of the device build (`#ifndef GIZMO_GPU_COMPILER`) to make it compile: the run then silently skips that physics on the GPU. The device and CPU paths must give the same answer: on a fixed state, or after a few steps, they should agree to roundoff (or the method's stated tolerance), and larger differences are bugs to find, not compiler or floating-point effects. In long runs of chaotic systems, compare the early steps for agreement and the later evolution statistically.
 
-+ Address all warnings emitted by the compiler when compiled with "-Wall". Unless there are very or necessary good reasons, the code should compile without any warning (not without a crash, without a *warning*).
++ **Testing a change:**
+    - Run with at least 2 MPI tasks: a single task never exercises the exchange of data between tasks, where many bugs live.
+    - Build from scratch whenever headers or `Config.sh` change: the `Makefile` does not track header dependencies, so a partial rebuild can link old and new code together.
+    - Confirm that your change is actually exercised by the test you run (the flags are on, the particles involved exist, the code path executes); a passing test that never reaches your code proves nothing.
+    - Judge results against the known solution or a converged reference, not by whether the run finished: many bugs produce wrong answers without crashing. Read the run's standard error and output for warnings, and check `parameters-usedvalues` to confirm the parameters you set were actually used.
+    - When results change in a way you did not expect, the first hypothesis is a bug in the change, not that the new answer is somehow correct.
 
-+ Include consistent commenting in your code. The meaning of all global variables should be commented where they are introduced, ideally with doxygen syntax, e.g:
+<a name="requirements-development-templates"></a>
+### _Reuse the Existing Templates (Where New Code Goes)_:
 
-        int MyGlobalCount; /*!< counts the number of timesteps */
+Almost any new physics or numerical method needs one of a handful of kinds of computation, and the code already has a template for each. Before writing a new loop, find the one your problem belongs to and follow it. The point of the templates is that you write only the physics (what is computed, from what data, and what is returned), and the template owns everything else: which elements are active, finding neighbors, getting data to and from other MPI tasks, running on CPUs or GPUs, threading, and cleanup. If you find yourself re-creating any of that inside a physics module, stop: either the template already does it, or it is missing a genuinely general capability, which should then be added to the template once, for every module that uses it.
 
-    Functions should be preceded by a brief explanation of what the function does, including warnings/instructions, if any, about how the function may be used, e.g.:
++ **Local work on each active element** (nothing exchanged with neighbors), e.g. a cooling or chemistry solve: follow `cooling_parent_routine()` in `cooling/cooling.cc`. The pattern is: list the eligible active elements; gather them into compact arrays (`compact_P`, `compact_Cell`) so the per-element physics touches contiguous memory and can be threaded or offloaded without knowing the particle layout; run the physics, written once as a function of those arrays; and scatter the results back.
 
-        /*!
-         * Insert the point P[i] into the list of active particles. Return 
-         * the new number of active paticles.
-        */
-        int insert_point_into_active_list(int i)
-        {
-        ...
-        }
++ **Interactions between neighboring elements** (density, gradients, hydrodynamic fluxes, diffusion, feedback deposition, sink accretion, dust drag, radiation injection, ...): use the neighbor-loop template, described in detail [below](#requirements-development-neighborloops).
 
-    You do not need to state here *how* the function achieves what it does, but this can be stated if appropriated in comments in the function body. There, avoid superfluous comments that just reflect what's obvious from the code anyway. Instead, focus on comments that help one to quickly understand/check what the code tries to do at an algorithmic level. If complicated formulae are implemented, try to include in a comment a reference to the equation that is implemented. Avoid c++ style comments in C-code.
++ **Long-range interactions** (anything summed over the tree like gravity: tidal tensors, column densities, long-range radiation, ...): add the new term to the existing gravity tree walk in `gravity/gravtree.cc` rather than writing a new walk, and build the node moment it needs in `gravity/forcetree.cc` (`force_update_node_recursive`, and the refresh in `force_refresh_node_moments`, which must stay in step with it).
+
++ **Global transforms and solves:** for distributed FFTs, follow the particle-mesh gravity (`PMGRID`, `gravity/pm_periodic.cc`); for large sparse linear systems, follow the modified-gradient magnetic-field correction (`MHD_MODIFIED_GRADIENT`, `hydro/mg_gradient_correction.cc`, which uses HYPRE). Reuse their decomposition, communication and solver set-up rather than introducing a separate one.
+
+<a name="requirements-development-neighborloops"></a>
+#### _Writing a New Neighbor Loop (the Loop Template)_
+
+Every loop over pairs of neighboring elements in the code runs through one include-file template, the `system/code_block_xchange_*.h` files. A new loop lives in its own source file and supplies only its physics; the template owns the active-element list, the tree searches, the export/import of data between MPI tasks, OpenMP threading, buffer management and cleanup. `sinks/sink_environment.cc` is a complete worked example (two loops in one file), and every file that includes `code_block_xchange_initialize.h` is a model for its kind (`hydro/density.cc`, `hydro/gradients.cc`, `galaxy_sf/mechanical_fb.cc`, ...).
+
+What a loop provides, in order, in its source file:
+
+1. `#define CORE_FUNCTION_NAME my_loop_evaluate` (a unique name; every other macro and structure name is derived from it) and `#define CONDITIONFUNCTION_FOR_EVALUATION if(my_loop_isactive(i))`, the test for which elements act as sources on this step, followed by `#include "../system/code_block_xchange_initialize.h"`.
+2. `struct INPUT_STRUCT_NAME`: what each source carries (always `NodeList[NODELISTLENGTH]` and `Pos`, plus whatever the physics needs), and `INPUTFUNCTION_NAME(in, i, loop_iteration)` which fills it from element `i`. This is what gets shipped to other tasks, so keep it to plain data.
+3. `struct OUTPUT_STRUCT_NAME`: what is summed up for each source, and `OUTPUTFUNCTION_NAME(out, i, mode, loop_iteration)` which applies it to the element. Use `ASSIGN_ADD` (assign for `mode==0`, add for `mode==1`) so that partial sums from other tasks combine correctly; a field combined any other way (maxima, flags) must be written out explicitly for both modes, or results silently depend on the number of tasks.
+4. The core function `int CORE_FUNCTION_NAME(int target, int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist, int loop_iteration)`: load the source (`mode==0` from `P[]`, `mode==1` from the imported buffer), find neighbors with one of the `ngb_treefind_*` routines, accumulate the physics for each neighbor, and hand the result back. In the threaded search variants the lower-case `ngblist` argument must be used, not the global `Ngblist`. Choose the search deliberately: the `_pairs_` searches return every element within `max(h_i, h_j)` (needed for anything symmetric, like fluxes); the one-way `_variable_` searches return the full contents of every tree node overlapping the search sphere, without a per-element distance test, so the core function must apply its own `r < h_i` check.
+5. A driver function that includes, in this order, `code_block_xchange_perform_ops_malloc.h`, `code_block_xchange_perform_ops.h` and `code_block_xchange_perform_ops_demalloc.h`, with any preparation before and normalization after them; and `#include "../system/code_block_xchange_finalize.h"` at the end of the file, which undefines the macros so the next loop (in this or another file) can define its own.
+
+The template passes `loop_iteration` through everything, for loops that repeat until a per-source condition is met (the kernel-length iteration in `hydro/density.cc` is the model). Every task must call the driver when any task has active sources, since the template communicates collectively; do not gate the call on a rank-local condition.
+
+<a name="requirements-development-ai"></a>
+### _AI-Assisted Development_:
+
+Using AI coding assistants and agents to develop **GIZMO** is fine, and can be very productive. But a human developer remains responsible for every change: you must understand what the code you submit does, review it yourself, and look at the test results yourself to confirm that they pass and that they test what they claim to. An agent's report that something is "fixed", "validated" or "passing" is not evidence; the evidence is the diff, the test output, and the comparison against the reference. The maintainer reviews AI-assisted pull requests exactly like any others.
+
+Agents tend to make some mistakes over and over, and they are worth checking for explicitly in every AI-assisted change:
+
++ "Fixing" a failure by weakening something: loosening a tolerance, simplifying the test or the configuration, disabling a module or a limiter, or adding a fallback path, instead of finding the bug. Everything under "Development Principles" above applies with extra force.
++ Comments that refer to their own working notes, plans, "phases" or "stages", or that describe the history of the change rather than the code; and "deferred"/"TODO" notes standing in for work that was silently left out.
++ Leftover scaffolding: debug prints, counters, environment-variable switches, temporary test harnesses, unused functions.
++ Committing things that do not belong in the repository: their own notes and scratch files, run outputs, binaries, plots. Stage files explicitly by name rather than adding everything.
++ Claims made without checking: confirm that the build was clean and current, that the test exercised the changed code, and that the reported numbers come from the run they are attributed to.
++ Edits that only partly applied: after an automated multi-file edit, read the complete diff rather than trusting the tool's report.
+
+Keep the agent inside safe limits:
+
++ Actions that discard work or are hard to undo (deleting files, `git reset`, force-pushes, rewriting pushed history) should need your explicit approval each time.
++ **Remote systems:** logging in, transferring files and submitting jobs on shared computing facilities have consequences beyond your own machine. Follow the facility's policies; if an agent does any of this, set it up deliberately (scoped credentials, supervision), and make sure it can never repeat failed log-in attempts: most centers use multi-factor authentication, and repeated failures can get an account, or a whole group's access, locked.
++ **Runs and processes:** put output where the machine's storage and quota policies intend it (not system temporary directories, which can fill and take the machine down), check there is room, and bound every run's length and output (e.g. `MaxSimulationWallTime_in_Seconds`, the snapshot spacing). Keep track of the processes an agent starts, and never let it stop work it did not start.
 
 ***
 
@@ -3415,6 +3481,7 @@ Newer versions of the code include a wide range of additional flags in the heade
     UnitVelocity_In_CGS = user-specified unit velocity in cgs (from parameterfile)
     UnitLength_In_CGS = user-specified unit length in cgs (from parameterfile)
     Internal_UnitB_In_Gauss = internal code B-units (not what is in the snapshot, but useful to check if desired setup is actually done, if MAGNETIC on) 
+    UnitMagneticField_In_Gauss = unit of the MagneticField dataset in Gauss, i.e. UnitMagneticField_in_gauss from the parameterfile (B[Gauss] = MagneticField * UnitMagneticField_In_Gauss; if MAGNETIC on)
     Gravitational_Constant_In_Code_Inits = gravity constant G in code units
     
     Minimum_Mass_For_Cell_Merge = minimum mass below which cells are merged
@@ -3505,9 +3572,9 @@ If the run uses an SPH hydro solver, it also includes:
 
 If the run includes magnetic fields:
 
-**MagneticField**: [N,3]-element array with B-field x,y,z components (units are Gauss and *physical*)
+**MagneticField**: [N,3]-element array with B-field x,y,z components (*physical*, in units of the parameterfile's `UnitMagneticField_in_gauss`, which is recorded in the snapshot header as `UnitMagneticField_In_Gauss`: multiply by it to get Gauss)
 
-**DivergenceOfMagneticField**: [N]-array, Div[B] (i.e. $\nabla\cdot{\bf B}$) at particle position (useful for testing div-cleaning). Units are Gauss/code length, and are *physical*. A common dimensionless measure of the divergence (which ideally would be zero) is $h\,|\nabla\cdot{\bf B}|/|{\bf B}|$, where $h=V_{i}/2$, $(V_{i}/\pi)^{1/2}$, $(3V_{i}/4\pi)^{1/3}$ in 1D, 2D, and 3D, respectively, and $V_{i}=m_{i}/\rho_{i}$ where $m_{i}$ and $\rho_{i}$ are the mass and density in *physical* units.
+**DivergenceOfMagneticField**: [N]-array, Div[B] (i.e. $\nabla\cdot{\bf B}$) at particle position (useful for testing div-cleaning). Units are those of **MagneticField** per code length, and are *physical*. A common dimensionless measure of the divergence (which ideally would be zero) is $h\,|\nabla\cdot{\bf B}|/|{\bf B}|$, where $h=V_{i}/2$, $(V_{i}/\pi)^{1/2}$, $(3V_{i}/4\pi)^{1/3}$ in 1D, 2D, and 3D, respectively, and $V_{i}=m_{i}/\rho_{i}$ where $m_{i}$ and $\rho_{i}$ are the mass and density in *physical* units.
 
 If the run includes explicit radiation-hydrodynamics:
 
@@ -4627,6 +4694,28 @@ Look carefully at the stdout, and profiling info, to diagnose in which subroutin
 
 In my experience, this is usually caused by users setting inappropriate flags (flags not designed for the problem they are simulating, or mutually-incompatible flags), or having a units mistake in their ICs or parameter file (so the timesteps are wildly different from what the user 'thinks' they should be), or reading ICs with insufficient precision (so particles have identical positions at floating-point accuracy, solved by setting the input and output `Config.sh` flags to `DOUBLEPRECISION`). But obviously, if you think you've identified a bug, you should go to the user group and report it.
 
+<a name="faqs-ignoredparams"></a>
+## A Parameter I Set Has No Effect?
+
+Check the stdout for a line like `Tag 'X' was specified, but it is being ignored`. The code reads only the parameters that the compiled modules use: a parameter belonging to a module (or a `DEVELOPER_MODE` option) that is not enabled in `Config.sh`, or a misspelled name, is skipped with exactly this warning, and the run proceeds with the default. If a parameter appears twice in the parameterfile, the **first** occurrence is used and the second is reported as ignored. The file `parameters-usedvalues` in the output directory lists every value the run actually used: check it whenever you are varying a parameter between runs.
+
+<a name="faqs-stop"></a>
+## How do I Stop a Run Cleanly?
+
+Create an empty file named `stop` in the run's output directory (`touch output/stop`): at the end of the current timestep the code writes restart files and exits normally, so the run can be continued later (see [Restarting a run](#tutorial-restart)). To bound a run from the start, set `MaxSimulationWallTime_in_Seconds` in the parameterfile: the code stops in the same way once 85% of that wall-clock time has elapsed, leaving margin to write the restart files before a queue limit kills the job. Killing the job instead loses everything since the last restart file, and can leave files half-written.
+
+<a name="faqs-reproducibility"></a>
+## Why Do Two Identical Runs Not Give Bit-for-Bit Identical Results?
+
+Floating-point addition is not associative, so any change in the order of operations changes the last bits of a result: different numbers of MPI tasks or OpenMP threads, different domain decompositions, GPU versus CPU execution, and even the scheduling of threads from one run to the next all change the order in which neighbor or tree contributions are summed. Iterative steps (e.g. the kernel-length iteration, which stops anywhere within its tolerance) and any chaotic dynamics (turbulence, star formation, N-body interactions) then amplify those last-bit differences until individual elements differ visibly, while the statistical properties of the simulation agree. So compare runs statistically, or against known solutions, not element by element. This does not explain large differences that appear immediately (at the first steps) between runs with the same number of tasks and threads: chaotic amplification takes time to grow, so such differences should be investigated. (Note also that restart files, unlike snapshots, can only be used with the same executable and the same number of MPI tasks that wrote them.)
+
+<a name="faqs-conservation"></a>
+## Why Are Conserved Quantities Not Always Conserved to Machine Precision with Individual Timesteps?
+
+With adaptive (individual) timesteps, neighboring elements are generally advanced on different steps, and each applies its exchanges with its neighbors over its own timestep. Conserved quantities (momentum, energy, metal and other passive-scalar masses, magnetic flux, photon and cosmic-ray number, and so on) are then conserved to the accuracy of the time integration, not to machine precision: this exchange error converges away as the timesteps shrink, and vanishes when all elements share one timestep. This is an intentional and valid choice of method, not a fallback or a known deficiency: a deliberate trade of manifest conservation for lower memory and computational cost, made by essentially every astrophysics code that uses adaptive timesteps. The one quantity for which **GIZMO** enforces machine-accurate conservation with extra machinery is total mass (in the MFV method, where mass moves between cells), because some physics breaks badly if mass is not exactly conserved. For most problems the other errors are far below the uncertainties in the physics (yields, mixing rates, chemistry); in problems where they are not, the error can be reduced with smaller timesteps.
+
+When a global total changes in your run, separate three possibilities: (1) real sources, sinks or boundary fluxes (star formation, feedback injection, cooling losses, open boundaries, particles removed), which change it physically; (2) the adaptive-timestep exchange error described here, which shrinks with smaller timesteps and disappears if all elements are forced onto one timestep; and (3) a genuine problem, which does neither. Repeating the problem with smaller timesteps, and optionally with one shared timestep, is a useful diagnostic: the integration error should decrease systematically as the timesteps shrink. Its disappearing on a shared timestep alone does not prove that the adaptive-timestep behavior is correct.
+
 <a name="faqs-rscr"></a>
 ## Are there Public ICs? Analysis Tools? Image/Movie-Makers?
 
@@ -4642,7 +4731,7 @@ Example: if you are using radiation-hydrodynamics, and see the variable `PhotonE
 <a name="faqs-units"></a>
 ## What are the Code Units?
 
-See the section of this User Guide on [Units](#snaps-units). If you aren't sure whether something is in one unit or another (e.g. is this an absolute energy associated with a particle, or a specific energy, or an energy density?) check the units for sanity, and search for the variable in the source code to see where it is defined and written out.
+See the section of this User Guide on [Units](#snaps-units). Magnetic fields in snapshots are in units of the parameterfile's `UnitMagneticField_in_gauss`, recorded in the snapshot header as `UnitMagneticField_In_Gauss` (multiply by it to get Gauss). If you aren't sure whether something is in one unit or another (e.g. is this an absolute energy associated with a particle, or a specific energy, or an energy density?) check the units for sanity, and search for the variable in the source code to see where it is defined and written out.
 
 <a name="faqs-citation"></a>
 ## Can I use this Module? What should I cite?

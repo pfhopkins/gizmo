@@ -10,6 +10,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
 
 /*! \file gravtree.c
@@ -565,7 +566,7 @@ void gravity_tree(void)
             double dtime_phys = (All.Time - P[i].Time_Of_Last_SmoothedVelUpdate) / All.cf_hubble_a; /* want to convert to physical units */
             if(dtime_phys > 0) {
                 P[i].Acc_Total_PrevStep = (P[i].vel_of_nearest_special - P[i].Vel) / (All.cf_atime * dtime_phys * All.cf_a2inv); /* converting to cosmological units here */
-                P[i].Vel = P[i].vel_of_nearest_special;
+                P[i].Vel = P[i].vel_of_nearest_special; force_note_motion_change(i);
             }
         }
 #endif
@@ -658,6 +659,9 @@ void gravity_tree(void)
 #endif
 
     } /* end of loop over active particles*/
+#ifdef SPECIAL_POINT_WEIGHTED_MOTION
+    force_raise_noted_motion_bounds(); /* tracers given the smoothed velocity of their neighbourhood */
+#endif
 
 
 #else /* the tree walk that would normally zero-then-accumulate these never runs here, so they would

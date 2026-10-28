@@ -182,6 +182,9 @@ void cooling_parent_routine(void)
         int i = cool_indices[j];
         CellP[i] = compact_Cell[j];
         P[i] = compact_P[j]; /* only a few pp fields are written (Vel, dp under RADTRANSFER), but full copy is simplest and safe */
+#if defined(RADTRANSFER)
+        force_raise_motion_bound(i); /* the emission back-reaction scaled this cell's velocity, outside the sync-point kick */
+#endif
     }
 
     myfree(compact_Cell);
@@ -797,11 +800,6 @@ double convert_u_to_temp(double u, double rho, int target, double *ne_guess, dou
         {
             if(temp >= T_bracket_max || temp <= T_bracket_min) {temp = sqrt(T_bracket_min*T_bracket_max);} // bisect (in log-space)
         }
-        /*
-#ifndef RT_INFRARED        
-        if(fabs(temp-temp_old_old)/(temp+temp_old_old) < 1.e-3) {double wt=get_random_number(12*iter+340*ThisTask+5435*target); temp=(wt*temp_old + (1.-wt)*temp_new);}
-#endif
-        */
         temp_old_old = temp_old;
         iter++;
         if(iter > (MAXITER - 10)) {printf("-> temp_next/new/old/oldold=%g/%g/%g/%g ne=%g mu=%g rho=%g iter=%d target=%d err_new/prev=%g/%g gamma_minus_1_mu_new/prev=%g/%g Brackets: Error_bracket_positive=%g Error_bracket_negative=%g T_bracket_Min/Max=%g/%g fac_for_SecantDT=%g \n", temp,temp_new,temp_old,temp_old_old,*ne_guess, (*mu_guess) ,rho,iter,target,err_new,err_old,prefac_fun,prefac_fun_old,T_bracket_errpos,T_bracket_errneg,T_bracket_min,T_bracket_max,fac); fflush(stdout);}

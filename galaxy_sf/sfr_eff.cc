@@ -9,6 +9,11 @@
 #include <gsl/gsl_eigen.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
+#if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
+static constexpr uint64_t NEW_SINK_SPIN_RNG_SALT = gizmo_loop_rng_salt("new_sink_spin"); /* the spin direction of a sink made here */
+#endif
+static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_seed_mass"); /* also drawn under this name in fof.cc */
 #include "../mesh/kernel.h"
 
 /*!
@@ -105,11 +110,9 @@ void assign_imf_properties_from_starforming_gas(int i, int i_star)
 #endif
 
 #ifdef GALSF_SFR_IMF_SAMPLING
-    gsl_rng *random_generator_for_massivestars;
-    random_generator_for_massivestars = gsl_rng_alloc(gsl_rng_ranlxd1);
-    gsl_rng_set(random_generator_for_massivestars, P[i].ID + 121 + All.NumCurrentTiStep);
     double mu = 0.0115 * P[i].Mass * UNIT_MASS_IN_SOLAR; // 1 O-star per 100 Msun [more exactly calculated here as number of stars per solar mass with mass > 8 Msun, from our adopted Kroupa IMF from 0.01-100 Msun]
-    unsigned int kk = gsl_ran_poisson(random_generator_for_massivestars, mu);
+    static constexpr uint64_t MASSIVE_STAR_COUNT_RNG_SALT = gizmo_loop_rng_salt("massive_star_count_at_formation");
+    unsigned int kk = (unsigned int)gizmo_gpu_rand_poisson(particle_event_rng_key(i), gizmo_rng_event_counter(MASSIVE_STAR_COUNT_RNG_SALT, (uint64_t)All.Ti_Current, 0), mu);
     P[i_star].IMF_NumMassiveStars = (double)kk;
 #ifdef GALSF_SFR_IMF_SAMPLING_DISTRIBUTE_SF
     P[i_star].IMF_NumMassiveStars = 0; // set to zero, these will increase with time now
@@ -450,18 +453,21 @@ void star_formation_parent_routine(void)
                 prob = P[i].Mass / mass_of_star * pfac;
                 
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
-                double w = get_random_number(P[i].ID);
+                static constexpr uint64_t SF_ENRICHMENT_RNG_SALT = gizmo_loop_rng_salt("star_formation_enrichment");
+                double w = particle_random_number(i, SF_ENRICHMENT_RNG_SALT, (uint64_t)All.Ti_Current, 0);
                 P[i].Metallicity[0] += w * All.SolarAbundances[0] * pfac;
                 if(NUM_METAL_SPECIES>=10) {int k; for(k=1;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] += w * All.SolarAbundances[k] * pfac;}}
 #endif
                 
-                if(get_random_number(P[i].ID + 1) < prob)    /* ok, make a star */
+                static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
+                if(particle_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
                 {
                     
 #ifdef SINK_SEED_FROM_LOCALGAS
                     /* before making a star, assess whether or not we can instead make a sink seed particle */
                     p = return_probability_of_this_forming_sink_from_seed_model(i);
-                    if(get_random_number(P[i].ID + 2) < p)
+                    static constexpr uint64_t SINK_SEED_CHOICE_RNG_SALT = gizmo_loop_rng_salt("sink_seed_instead_of_star");
+                    if(particle_random_number(i, SINK_SEED_CHOICE_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p)
                     {
                         /* make a sink particle */
                         P[i].Mass = CellP[i].Mass; /* sync mass before type conversion */
@@ -474,9 +480,7 @@ void star_formation_parent_routine(void)
                         P[i].Sink_Mass = All.SeedSinkMass;
                         if(All.SeedSinkMassSigma > 0)
                         {
-                            gsl_rng *random_generator_forbh; /* generate gaussian random number for random BH seed mass */
-                            random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1); gsl_rng_set(random_generator_forbh, P[i].ID + 17 + All.NumCurrentTiStep);
-                            P[i].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gsl_ran_gaussian(random_generator_forbh, All.SeedSinkMassSigma) );
+                            P[i].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian(particle_event_rng_key(i), gizmo_rng_event_counter(SINK_SEED_MASS_RNG_SALT, (uint64_t)All.Ti_Current, 0)) * All.SeedSinkMassSigma );
                         }
                         P[i].Sink_Formation_Mass = P[i].Mass; // save the mass we had at the time of sink formation, because we will use this later to understand how the sink has grown
                         if(p>1) P[i].Sink_Mass *= p; /* assume multiple seeds in particle merge */
@@ -493,7 +497,7 @@ void star_formation_parent_routine(void)
                         P[i].Sink_AccretionDeficit = 0;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                        double sink_mu=2.0*get_random_number(P[i].ID+3)-1.0, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                        double sink_mu=2.0*particle_random_number(i, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 0)-1.0, sink_phi=2*M_PI*particle_random_number(i, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                         double spin_prefac = All.G * P[i].Sink_Mass / C_LIGHT_CODE; // assume initially maximally-spinning BH with random orientation
                         P[i].Sink_Specific_AngMom[0]=spin_prefac * sink_sin*cos(sink_phi); P[i].Sink_Specific_AngMom[1]=spin_prefac * sink_sin*sin(sink_phi); P[i].Sink_Specific_AngMom[2]=spin_prefac * sink_mu;
 #endif
@@ -576,7 +580,7 @@ void star_formation_parent_routine(void)
                         P[i_star].NewStar_Momentum_For_JetFeedback = P[i_star].Mass * 40./UNIT_VEL_IN_KMS;
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                        double sink_mu=2.0*get_random_number(P[i].ID+3)-1.0, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                        double sink_mu=2.0*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 0)-1.0, sink_phi=2*M_PI*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                         P[i_star].Sink_Specific_AngMom[0]=sink_sin*cos(sink_phi); P[i_star].Sink_Specific_AngMom[1]=sink_sin*sin(sink_phi); P[i_star].Sink_Specific_AngMom[2]=sink_mu;
 #endif
 #ifdef SINK_WIND_SPAWN
@@ -626,7 +630,7 @@ void star_formation_parent_routine(void)
                             P[i_star].Sink_Mass_Reservoir = DMAX(DMAX(0, P[i_star].Mass-P[i_star].Sink_Mass), All.SeedReservoirMass);
 #endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
-                            double sink_mu=2.0*get_random_number(P[i].ID+3)-1.0, sink_phi=2*M_PI*get_random_number(P[i].ID+4), sink_sin=sqrt(1-sink_mu*sink_mu);
+                            double sink_mu=2.0*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 0)-1.0, sink_phi=2*M_PI*particle_random_number(i_star, NEW_SINK_SPIN_RNG_SALT, (uint64_t)All.Ti_Current, 1), sink_sin=sqrt(1-sink_mu*sink_mu);
                             double spin_prefac = All.G * P[i_star].Sink_Mass / C_LIGHT_CODE; // assume initially maximally-spinning BH with random orientation
                             P[i_star].Sink_Specific_AngMom[0]=spin_prefac*sink_sin*cos(sink_phi); P[i_star].Sink_Specific_AngMom[1]= spin_prefac * sink_sin*sin(sink_phi); P[i_star].Sink_Specific_AngMom[2]=spin_prefac * sink_mu;
 #endif
@@ -817,21 +821,22 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
     prob = 1 - exp(-p);
 #endif
 
-    if(get_random_number(P[i].ID + 2) < prob)	/* ok, make the particle go into the wind */
+    static constexpr uint64_t WIND_RNG_SALT = gizmo_loop_rng_salt("subgrid_wind_launch");
+    if(particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)	/* ok, make the particle go into the wind */
     {
 #if !defined(GALSF_WINDS_ORIENTATION)
 #define GALSF_WINDS_ORIENTATION 0   // determine the wind acceleration orientation //
 #endif
 
 #if (GALSF_WINDS_ORIENTATION==0) // random wind direction
-        double theta = acos(2 * get_random_number(P[i].ID + 3) - 1);
-        double phi = 2 * M_PI * get_random_number(P[i].ID + 4);
+        double theta = acos(2 * particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 1) - 1);
+        double phi = 2 * M_PI * particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 2);
         dir[0] = sin(theta) * cos(phi); dir[1] = sin(theta) * sin(phi); dir[2] = cos(theta);
-        if(get_random_number(P[i].ID + 5) < 0.5) {dir = -dir;}
+        if(particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 3) < 0.5) {dir = -dir;}
 #endif
 #if (GALSF_WINDS_ORIENTATION==1) // polar wind (defined by accel.cross.vel)
         dir = cross(P[i].GravAccel, P[i].Vel);
-        if(get_random_number(P[i].ID + 5) < 0.5) {dir = -dir;}
+        if(particle_random_number(i, WIND_RNG_SALT, (uint64_t)All.Ti_Current, 3) < 0.5) {dir = -dir;}
 #endif
 #if (GALSF_WINDS_ORIENTATION==2) // along density gradient //
         dir = -P[i].GradRho;
@@ -841,13 +846,13 @@ void assign_wind_kick_from_sf_routine(int i, double sm, double dtime, double pvt
         norm = dir.norm_sq();
         if(norm>0) {norm=sqrt(norm);} else {dir = {0,0,1}; norm=1;}
         dir /= norm;
-        {auto dv_kick = v * All.cf_atime * dir; P[i].Vel += dv_kick; P[i].dp += dv_kick * P[i].Mass;}
+        {auto dv_kick = v * All.cf_atime * dir; P[i].Vel += dv_kick; P[i].dp += dv_kick * P[i].Mass; force_raise_motion_bound(i);}
         for(j = 0; j < 3; j++)
         {
             CellP[i].VelPred[j] += v * All.cf_atime * dir[j];
         }
         CellP[i].DelayTime = All.WindFreeTravelMaxTimeFactor / All.cf_hubble_a;
-    } /* if(get_random_number(P[i].ID + 2) < prob) */
+    } /* if(wind launched) */
 }
 #endif // defined(GALSF_SUBGRID_WINDS)
 
