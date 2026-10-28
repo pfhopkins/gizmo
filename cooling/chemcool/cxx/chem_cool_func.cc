@@ -10,7 +10,7 @@
 //    double.  They are NOT the same number.  CHEM_KBOLTZ / CHEM_FS_KB below.
 //    (Same trap as DEVIATIONS.md D-10.)
 //  * cool_func's temperature index: `temp .gt. tmax -> itemp = nmd, dtemp = 0`
-//    (no extrapolation above 1e8 K, D-38).
+//    (no extrapolation above 1e8 K, D-39).
 //  * rates(3) is unconditionally zeroed at cool_func.F:1223 and then (under
 //    WSS_CIE_COOL) overwritten by the WSS metal-line CIE rate.
 //  * integer powers use chem_fpowi (gfortran's association), real powers use

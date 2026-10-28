@@ -565,7 +565,7 @@ the SGCHEM_GONG17_TEST branch. abhe reaches the C++ builder as `ChemBuildConfig.
 it (`CHEMCOOL_FORTRAN_DIR` overrides). Consumers: ch9/ch17 in nets 3/15/16/17, ch18 in nets 3/17
 (zeroed while 2 NH x_HI < 1.6e17, i.e. always with dl = 0); net 5 reads none of them.
 
-## D-32. T_CMB cooling floor in nets 5 and 16, both backends
+## D-33. T_CMB cooling floor in nets 5 and 16, both backends
 Provenance: SGChem `rate_eq_simple.F:459-470`, `rate_eq_gong17.F:875-889`.
 * ydot(T) = -(ylam + ylam_chem - ylam_floor), ylam_floor = cool_func at T_CMB(z) = 2.726 (1+z) with
   iflag_cmb = 1, at every z (as SGChem). Nets 3/17 keep their z > 0 gate (= SGChem rate_eq_primordial);
@@ -573,38 +573,38 @@ Provenance: SGChem `rate_eq_simple.F:459-470`, `rate_eq_gong17.F:875-889`.
 * cool_func publishes `lambda` only for the iflag_cmb = 0 call, so the floor call no longer overwrites the
   diagnostic rates (also affected nets 3/17 at z > 0 before).
 
-## D-33. CMB heating of dust, all networks, both backends
+## D-34. CMB heating of dust, all networks, both backends
 Provenance: SGChem `cool_util.F:780-804` (calc_dust_temp).
 * isrf_heat = max(c_isrf chi_isrf - 4.68e-31 2.726^6, 0) yn G0_dust/1.7 + 4.68e-31 T_CMB(z)^6 yn, then x DGR
   (our DGR-multiplied convention); c_isrf = 5.8e-24 (isrf_option 1) or 5.73e-24. The z = 0 CMB share is moved
   out of the ISRF coefficient and the CMB term follows T_CMB(z).
 
-## D-34. Grain recombination cooling (SGChem rates(29)), all networks, both backends
+## D-35. Grain recombination cooling (SGChem rates(29)), all networks, both backends
 Provenance: SGChem `cool_func.F:1239-1248`, `coolinmo.F` cl75/cl76.
 * cl75 = 0.74 / tfix^0.068, cl76 = 4.65e-30 tfix^0.94 phi_pah (tfix = min(T, 1e4)); NCLTAB 67 -> 76.
 * Added to rates(12) (PE slot) as DGR cl76 PEvar0^cl75 x_e n^2 wherever the BT94 PE rate is evaluated
   (zero when PE is zero, as SGChem). Not added with CHEMCOOL_PE_K23, which carries WD01 recombination cooling.
 
-## D-35. BT94 photoelectric fits held at T = 1e4 K above 1e4 K, all networks, both backends
+## D-36. BT94 photoelectric fits held at T = 1e4 K above 1e4 K, all networks, both backends
 Provenance: SGChem `coolinmo.F:639-651`. cl16 = sqrt(tfix)/phi_pah, cl17 = 3.7e-2 (tfix/1e4)^0.7.
 
-## D-36. phi_pah = 0.5, both backends
+## D-37. phi_pah = 0.5, both backends
 Provenance: SGChem `init_chemistry_parameters.F:86`. Was 1.0 (gadget_tnt_new value). Enters cl16 (PE
-charging parameter) and cl76 (D-34). Set in `chemcool.cc`, `chem_backend_cxx.cc` and the golden harnesses.
+charging parameter) and cl76 (D-35). Set in `chemcool.cc`, `chem_backend_cxx.cc` and the golden harnesses.
 
-## D-37. PE electron cut-off x_e n < 1e-9 G_dust cl16, both backends
+## D-38. PE electron cut-off x_e n < 1e-9 G_dust cl16, both backends
 Provenance: SGChem `cool_func.F:909`. Was 1e-20. Our DGR < 1e-8 cut (SGChem: DGR = 0) is kept.
 
-## D-38. No table extrapolation above tmax = 1e8 K in cool_func and net 3, both backends
+## D-39. No table extrapolation above tmax = 1e8 K in cool_func and net 3, both backends
 Provenance: SGChem `cool_func.F:217-219` (dtemp = 0). cool_func and rate_eq_mol (net 3) set dtemp =
 temp - temptab(nmd) above tmax, i.e. linear extrapolation of every cl/ch table with the last slope; now held at
 the tmax value, as the other rate_eq index paths already were.
 
-## D-39. CO and H2O vibrational cooling: LTE term uses the collider density neff, both backends
+## D-40. CO and H2O vibrational cooling: LTE term uses the collider density neff, both backends
 Provenance: SGChem `cool_func.F:770-775, 839-845`. `1/L0 + yn/L_LTE` -> `1/L0 + neff/L_LTE` for CO, 13CO, C18O,
 H2O and H2(18)O, with the neff each block already uses for its rotational/L0 term.
 
-## D-40. Network 15 aligned with SGChem `rate_eq_nl99.F`, both backends
+## D-41. Network 15 aligned with SGChem `rate_eq_nl99.F`, both backends
 * H+ recombination on grains, `- h_gr x_H+` in ydot(H+) (S:417). The matching cooling term (rates_chem(6))
   was already applied, so ionization and energy were inconsistent.
 * HCO+ dissociative recombination uses ch87 (Geppert+05, 3.0e-7 (T/300)^-0.64) with branches 0.92 -> CO + H,
@@ -615,18 +615,18 @@ H2O and H2(18)O, with the neff each block already uses for its rotational/L0 ter
 * OHx photodissociation dust factor exp(-1.7 AV) (SGChem ph49); was exp(-1.5 AV).
 * H2 collisional dissociation (ykdh, ykdh2) zero below 500 K (S:259-283).
 
-## D-41. UV-pumping heating 6.94 x the H2 dissociation rate in nets 3, 15 and 16, both backends
+## D-42. UV-pumping heating 6.94 x the H2 dissociation rate in nets 3, 15 and 16, both backends
 Provenance: SGChem uses 6.94 in every network (`rate_eq_nl99.F:586-587`, `rate_eq_gong17.F:775-776`,
 `rate_eq_simple.F:362`, `rate_eq_primordial.F:800`); nets 5/17 already did (D-27). Was 8.5 (1.22x more heating).
 Net 3 has no SGChem counterpart and follows the common value.
 
-## D-42. Grain recombination fit range in nets 5 and 15, both backends
+## D-43. Grain recombination fit range in nets 5 and 15, both backends
 Provenance: SGChem `rate_eq_simple.F:241-257`, `rate_eq_nl99.F:334-348`. phi = G_dust sqrt(T)/(n x_e) is floored
 at 100 (fits valid for phi > 100); was a phi < 1e-6 (net 5) / phi < 1 (net 15) branch returning the
 phi = 0 limit. Net 15 also gains the hot-gas factor exp(-T/3e4) that net 5 had. Nets 3/17 keep their
 phi < 1e-6 branch (alignment scoped to nets 5 and 15).
 
-## D-43. Rate options as SGChem: iflag_mn = 4, iflag_ad = 6, iflag_3bh2a = 5, iflag_3bh2b = 4, both backends
+## D-44. Rate options as SGChem: iflag_mn = 4, iflag_ad = 6, iflag_3bh2a = 5, iflag_3bh2b = 4, both backends
 Provenance: SGChem `init_chemistry_parameters.F:106-112`, `cheminmo.F:532-540` (iflag_ad 5/6), `:1414-1417`
 (iflag_3bh2a 6, Forrey 2013; only for CHEMISTRYNETWORK 1, ported for completeness).
 * ch1 (H2 + H CID, high-n limit): MSM96 instead of the inverse ABN02 rate; ch2 = ch1/8.
@@ -635,7 +635,7 @@ Provenance: SGChem `init_chemistry_parameters.F:106-112`, `cheminmo.F:532-540` (
 * Readers: ch2 net 5; ch1/ch2 nets 15/16; all six nets 3/17. Set in `chemcool.cc`, `chem_backend_cxx.cc` and the
   golden harnesses (legacy `harness.F`/`test_harness.F` untouched).
 
-## D-44. SGChem rate-coefficient updates, both backends
+## D-45. SGChem rate-coefficient updates, both backends
 Provenance: SGChem `photoinit_ism.F:71, 108-110`, `cheminmo.F:414-418, 547-552, 565-571, 2004`.
 * phtab(3) Si photoionization 1.824e-9 -> 2.647e-9 (read by nets 3 and 16).
 * phtab(10) CO photodissociation 1.235e-10 (vDB88) -> 1.411e-10 (Heays+17), all networks.
@@ -644,23 +644,30 @@ Provenance: SGChem `photoinit_ism.F:71, 108-110`, `cheminmo.F:414-418, 547-552, 
 * ch24 zero below 100 K, where the fit is not valid (nets 3, 17).
 * crtab(3) CR ionization of C 3.83 -> 3.85 zeta (nets 3, 15, 16).
 
-## D-45. H2 rovibrational cooling by H+ and e-, all networks, both backends
+## D-46. H2 rovibrational cooling by H+ and e-, all networks, both backends
 Provenance: SGChem `coolinmo.F:451-506`. cl65 (H2-H+): G90/K02 fit -> fit including Honvault+11/12;
 cl66 (H2-e): DRD83 -> Yoon+08 (zero below 100 K, two fits split at 500 K, constant above 1e4 K).
 
-## D-46. High-density thresholds as SGChem, both backends
+## D-47. High-density thresholds as SGChem, both backends
 * Gas-dust coupling limit (tdust = T, rates(1) = dust emission): n > 1e8 / DGR^1.5 in cool_func (was n DGR > 1e10)
   and net 15 (was 1e9 / DGR^1.5), as SGChem `cool_func.F:606-618`, `rate_eq_nl99.F:358` and our net 16. Our
   tdust cap at 1.5e3 K is kept.
 * H2 line opacity (Clark+11 Sobolev, SGChem iflag_h2_opacity = 3) applied above n = 1e8 (was 1e9),
   SGChem `cool_func.F:640-679`.
 
-## D-47. CO self-shielding and shielding by H2 from Visser et al (2009), all networks, both backends
+## D-48. CO self-shielding and shielding by H2 from Visser et al (2009), all networks, both backends
 Provenance: SGChem `calc_shield.F:244-275, 334-420` (default; Lee+96 only under OLD_CO_SELF_SHIELDING) and
 `shield_data.h` (47 N_CO x 42 N_H2 grid, copied verbatim into `shield_data_visser.h`, extracted for C++ by
 `tables_extract.py`). Log-linear interpolation in both columns; in TreeCol mode the factor is evaluated per
 pixel and pixel-averaged (SGChem per ray), where the Lee+96 path averaged theta_CO and theta_H2 separately
 and multiplied the averages. The Lee+96 tables are still built (cheminmo, chem_tables_build) but not read.
+
+## D-49. SGChem differences not adopted (sgchem_vs_ours.md B10, B13, B14, B15)
+* B10: ATOL_H2 1e-7, ATOL_HP 1e-12 (SGChem 1e-9, 1e-9); solver tolerances, KEEP R4.
+* B13: H2 dust shielding exp(-AV 2e-21/AV_conversion_factor) = exp(-3.74 AV) (SGChem nets != 16: exp(-3.5 AV),
+  `evolve_abundances.F:253`); net 15 CO uses df25. Open: aligning changes H2 in nets 5/17.
+* B14: dust temperature converges to 1% relative (SGChem 1 mK absolute); kept from the Newton-divergence fix.
+* B15: PE heating off below DGR 1e-8 (SGChem DGR = 0); the electron cut-off is aligned (D-38).
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
