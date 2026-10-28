@@ -40,9 +40,11 @@
 
 int sink_feed_is_active(int i)
 {
-    if(P[i].Type != 5) return 0;
-    if(P[i].Mass <= 0) return 0;
-    if(P[i].KernelRadius <= 0) return 0;
+    /* The same predicate sink_start() used to assign P[i].IndexMapToTempStruc and size
+       SinkTempInfo (sink_isactive: Type 5, mass, kernel, and under SINK_INTERACT_ON_GAS_TIMESTEP
+       a density pass this step). A sink active here but skipped there carries a stale index
+       and reads/writes SinkTempInfo out of bounds. starforge_dev's feed loop uses sink_isactive. */
+    if(!sink_isactive(i)) return 0;
     if(P[i].TimeBin < 0) return 0;
     return 1;
 }
