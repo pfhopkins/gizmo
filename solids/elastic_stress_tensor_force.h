@@ -23,7 +23,7 @@
         // terms for HLL fluxes
         double wt_r = rho_i*local.SoundSpeed * rho_j*CellP[j].SoundSpeed / (rho_i*local.SoundSpeed + rho_j*CellP[j].SoundSpeed) * FNormT; // physical
         double cT_i=sqrt(All.Tillotson_EOS_params[elastic_material_row(local.CompositionType)][10]/rho_i), cT_j=sqrt(All.Tillotson_EOS_params[elastic_material_row(CellP[j].CompositionType)][10]/rho_j); // physical
-        double wt_t = rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT; // physical
+        double wt_t = (rho_i*cT_i + rho_j*cT_j > 0) ? rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT : 0; // physical; zero if neither side has strength
         double wt_rt = (wt_r - wt_t) * kernel.vdotr2 * rinv*rinv*All.cf_atime*All.cf_atime;
         // evaluate force from deviatoric stress tensor //
         // fancier model where tensile correction is always applied to compressive principle component of the stress tensor [have to solve for eigenvalues of the stress tensor]
