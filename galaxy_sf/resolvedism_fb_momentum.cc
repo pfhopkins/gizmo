@@ -829,7 +829,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                 }
 #endif /* GALSF_RESOLVEDISM_WINDS_THERMAL_ONLY (kick block ends here) */
 #ifdef COSMIC_RAY_FLUID
-                if(loop_iteration == 0 && local.WindCREnergy > 0) {inject_cosmic_rays(wk * local.WindCREnergy, local.WindMomentum / local.Mej, 0, j, rhat, CellP);}
+                if(loop_iteration == 0 && local.WindCREnergy > 0) {inject_cosmic_rays(wk * local.WindCREnergy, local.WindMomentum / local.Mej, 0, j, rhat, CellP, -1);}
 #endif
 
                 } /* critical (fb_mom_receiver) */
