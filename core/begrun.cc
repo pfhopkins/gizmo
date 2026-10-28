@@ -309,6 +309,11 @@ void begrun(void)
 #ifdef TURB_DIFFUSION
         All.TurbDiffusion_Coefficient = all.TurbDiffusion_Coefficient;
 #endif
+#ifdef TURB_DRIVING_TARGET_SIGMA
+        All.TurbDriving_PID_Kp = all.TurbDriving_PID_Kp;
+        All.TurbDriving_PID_Ti = all.TurbDriving_PID_Ti;
+        All.TurbDriving_PID_Td = all.TurbDriving_PID_Td;
+#endif
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
         All.ArtCondConstant = all.ArtCondConstant;
 #endif
@@ -2093,6 +2098,23 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.TurbDriving_Global_DrivingRandomNumberKey;
         id[nt++] = INT;
 
+#ifdef TURB_DRIVING_TARGET_SIGMA
+        strcpy(tag[nt], "TurbDrive_PID_Kp"); // proportional gain of the v_rms control loop, on ln(v_target/v_rms)
+        strcpy(alternate_tag[nt], "TurbDrive_PID_Kp");
+        addr[nt] = &All.TurbDriving_PID_Kp;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "TurbDrive_PID_Ti"); // integral time, in units of TurbDrive_MaxWavelength/TurbDrive_ApproxRMSVturb; <=0 disables
+        strcpy(alternate_tag[nt], "TurbDrive_PID_Ti");
+        addr[nt] = &All.TurbDriving_PID_Ti;
+        id[nt++] = REAL;
+
+        strcpy(tag[nt], "TurbDrive_PID_Td"); // derivative time, same units; 0 disables
+        strcpy(alternate_tag[nt], "TurbDrive_PID_Td");
+        addr[nt] = &All.TurbDriving_PID_Td;
+        id[nt++] = REAL;
+#endif
+
         /* Andreas Bauer's paper on turbulence:
          // sub-sonic (Mach~0.3) test: //
          ST_decay        1.
@@ -2585,6 +2607,11 @@ void read_parameter_file(char *fname)
                 if(strcmp("ST_decay",tag[i])==0) {*((double *)addr[i])=-1; printf("Tag %s (%s) not set in parameter file: defaulting to assume driving-scale mode coherence time is given by expected rms eddy turnover time ~ L_drive / rms v_turb (=%g) \n",tag[i],alternate_tag[i],All.TurbDriving_Global_DecayTime); continue;}
                 if(strcmp("ST_SpectForm",tag[i])==0) {*((int *)addr[i])=2; printf("Tag %s (%s) not set in parameter file: defaulting to assume driving follows a Kolmogorov spectrum (=%d) \n",tag[i],alternate_tag[i],All.TurbDriving_Global_DrivingSpectrumKey); continue;}
                 if(strcmp("ST_Seed",tag[i])==0) {*((int *)addr[i])=42; printf("Tag %s (%s) not set in parameter file: defaulting to the answer to everything (=%d) \n",tag[i],alternate_tag[i],All.TurbDriving_Global_DrivingRandomNumberKey); continue;}
+#if defined(TURB_DRIVING_TARGET_SIGMA)
+                if(strcmp("TurbDrive_PID_Kp",tag[i])==0) {*((double *)addr[i])=2.0; printf("Tag %s (%s) not set in parameter file: defaulting to proportional gain (=%g) \n",tag[i],alternate_tag[i],All.TurbDriving_PID_Kp); continue;}
+                if(strcmp("TurbDrive_PID_Ti",tag[i])==0) {*((double *)addr[i])=0.25; printf("Tag %s (%s) not set in parameter file: defaulting to integral time in units of TurbDrive_MaxWavelength/TurbDrive_ApproxRMSVturb (=%g) \n",tag[i],alternate_tag[i],All.TurbDriving_PID_Ti); continue;}
+                if(strcmp("TurbDrive_PID_Td",tag[i])==0) {*((double *)addr[i])=0.0; printf("Tag %s (%s) not set in parameter file: defaulting to no derivative term (=%g) \n",tag[i],alternate_tag[i],All.TurbDriving_PID_Td); continue;}
+#endif
                 if(strcmp("ST_SolWeight",tag[i])==0) {*((double *)addr[i])=0.5; printf("Tag %s (%s) not set in parameter file: defaulting to assume the so-called natural mix of modes for pressure-free turbulence (=%g) \n",tag[i],alternate_tag[i],All.TurbDriving_Global_SolenoidalFraction); continue;}
 #endif
 #ifdef GALSF_FB_FIRE_AGE_TRACERS

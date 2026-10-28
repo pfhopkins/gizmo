@@ -26,7 +26,7 @@
 #ifdef HYDRO_SPH
         diffusion_wt *= 0.5*(local.Density + CellP[j].Density)*All.cf_a3inv; // physical
 #else
-        diffusion_wt *= Riemann_out.Face_Density; // physical
+        diffusion_wt *= 0.5*(Riemann_vec.L.rho + Riemann_vec.R.rho)*All.cf_a3inv; // physical; reconstructed face densities averaged, same from either side
 #endif
         /* calculate implied mass flux 'across the boundary' to prevent excessively large coefficients */
         double massflux = fabs( Face_Area_Norm * diffusion_wt / (DMIN(kernel.h_i,kernel.h_j)*All.cf_atime) * dt_hydrostep / (DMIN(local.Mass,P[j].Mass)) );
