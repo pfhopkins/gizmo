@@ -1814,8 +1814,8 @@ double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *p
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     return cell[i].SubGrid_CosmicRayEnergyDensity*All.cf_a3inv * UNIT_PRESSURE_IN_CGS;
 #endif
-#if defined(GHOSTD_G0_CR) && !defined(CHEMCOOL) /* CHEMCOOL sets its CR rate in chem_fill_inputs */
-    return All.FactorG0 * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; /* GHOSTD: uniform, linear in FactorG0 */
+#if defined(GHOSDT_G0_CR) && !defined(CHEMCOOL) /* CHEMCOOL sets its CR rate in chem_fill_inputs */
+    return All.FactorG0 * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; /* GHOSDT: uniform, linear in FactorG0 */
 #endif
 #ifdef RT_ISRF_BACKGROUND
     double column = evaluate_NH_from_GradRho(pp[i].GradRho,pp[i].KernelRadius,cell[i].Density,pp[i].NumNgb,1,i,pp) * UNIT_SURFDEN_IN_CGS, sigma_0=2.23e-3; // sigma_0 is N_H = 1e21 cm^-2 in g cm^-2

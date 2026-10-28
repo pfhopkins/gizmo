@@ -99,8 +99,8 @@ BiniZ                           0
 ShieldingLength                 0.050             % 50 pc shielding length
 
 %---- CHEMCOOL (CHEMCOOL + CHEMISTRYNETWORK=5)
-G0                              1.7               % Habing FUV field at FactorG0 = 1 (GHOSTD scales it with the 30 Myr SFR, floor 0.324e-2)
-CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1] at FactorG0 = 1 (GHOSTD + CR_SCALE_WITH_G0 scale it with the 30 Myr SFR)
+G0                              1.7               % Habing FUV field at FactorG0 = 1 (GHOSDT scales it with the 30 Myr SFR, floor 0.324e-2)
+CosmicRayIonRate                3.0e-17           % CR ionization rate [s^-1] at FactorG0 = 1 (GHOSDT + CR_SCALE_WITH_G0 scale it with the 30 Myr SFR)
 DGRnormalized                   1.0               % dust-to-metal efficiency (1.0 = MW); DGR scales with local Z per particle
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
 InitialMetallicity              1.0             % same as InitMetallicity

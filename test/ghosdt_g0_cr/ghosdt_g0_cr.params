@@ -1,5 +1,5 @@
-% GHOSTD_G0_CR: FactorG0 follows the 30 Myr star formation rate (dense cold gas box + pre-existing young stars)
-InitCondFile                       ghostd_g0_cr_ics
+% GHOSDT_G0_CR: FactorG0 follows the 30 Myr star formation rate (dense cold gas box + pre-existing young stars)
+InitCondFile                       ghosdt_g0_cr_ics
 OutputDir                          output
 TimeBegin                          0
 TimeMax                            0.01

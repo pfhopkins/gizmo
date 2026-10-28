@@ -1,6 +1,6 @@
 # Stella tallbox configuration (Hu+21 stratified box): the Stella default (net 5 on the C++ chemistry backend,
 # no dust model, subgrid photoionization and FUV) plus a periodic x/y, outflow-z long box and the tallbox
-# external potential, GHOSTD defaults for G0 and CR rate. Gravity, shielding columns and (opt-in) dynamic G0 are periodic in x/y, open in z.
+# external potential, GHOSDT defaults for G0 and CR rate. Gravity, shielding columns and (opt-in) dynamic G0 are periodic in x/y, open in z.
 BOX_PERIODIC
 BOX_LONG_Z=20
 BOX_OUTFLOW_Z
@@ -21,8 +21,8 @@ GALSF_RESOLVEDISM_SAMPLE_IMF
 N_STELLAR_MASS=5
 #GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF    % disabled — using pure Jeans criterion (Hu 2023)
 GALSF_RESOLVEDISM_INSTANT_SN
-GHOSTD_G0_CR                     % GHOSTD defaults: uniform G0 and CR rate scaled with the 30 Myr SFR (gizmo2017 tallbox)
-#GALSF_RESOLVEDISM_G0_VARIABLE   % opt in: Stella dynamic G0 overrides GHOSTD
+GHOSDT_G0_CR                     % GHOSDT defaults: uniform G0 and CR rate scaled with the 30 Myr SFR (gizmo2017 tallbox)
+#GALSF_RESOLVEDISM_G0_VARIABLE   % opt in: Stella dynamic G0 overrides GHOSDT
 #GALSF_RESOLVEDISM_NUV_VARIABLE
 #GALSF_RESOLVEDISM_OPT_VARIABLE
 GALSF_RESOLVEDISM_STELLAR_TABLES
@@ -48,7 +48,7 @@ WSS_CIE_COOL
 #GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
 #GALSF_CHEMCOOL_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
 CHEMCOOL_CXX                     % C++/CVODE chemistry backend (default for Stella)
-CR_SCALE_WITH_G0                 % GHOSTD defaults: CR rate scaled with FactorG0
+CR_SCALE_WITH_G0                 % GHOSDT defaults: CR rate scaled with FactorG0
 TURB_DIFF_METALS
 
 ## -- Tree column densities --

@@ -42,7 +42,7 @@ GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req 
 #GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from tree per-pixel fluxes  [auto by G0_VARIABLE without RADTRANSFER]
-#GHOSTD_G0_CR                            % GHOSTD defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
+#GHOSDT_G0_CR                            % GHOSDT defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
 RT_USE_TREECOL_FOR_NH=12                 % tree columns, 12*NSIDE^2 HEALPix bins: gas + dust-weighted (G0_VARIABLE), H2 + CO (CHEMCOOL), cut at ShieldingLength
 NEED_HEALPIX                             % HEALPix support
 

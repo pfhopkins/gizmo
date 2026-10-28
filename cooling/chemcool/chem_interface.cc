@@ -256,8 +256,8 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
 
 
-#ifdef GHOSTD_G0_CR
-    { /* GHOSTD (gizmo2017 G0_SCALE_WITH_TOTAL_SFR + CR_SCALE_WITH_G0): uniform G0 and zeta from FactorG0; dynamic fields below override */
+#ifdef GHOSDT_G0_CR
+    { /* GHOSDT (gizmo2017 G0_SCALE_WITH_TOTAL_SFR + CR_SCALE_WITH_G0): uniform G0 and zeta from FactorG0; dynamic fields below override */
         double g0 = DMAX(All.FactorG0 * All.G0, 0.324e-2);
         in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
 #if defined(COSMIC_RAY_FLUID)
@@ -829,12 +829,12 @@ void chem_commit_to_fortran(const struct ChemInputs *in)
 
     COOLRC.G0    = in->G0;
     COOLRC.G0_LW = in->G0_LW;
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSTD_G0_CR) || defined(RADTRANSFER)
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER)
     COOLRC.G0_dust = in->G0_dust;
 #endif
 
     COOLRC.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate;
-#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSTD_G0_CR) || defined(RADTRANSFER))
+#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER))
     COOLRC.cr_energy_density = in->cr_energy_density;
 #endif
 
