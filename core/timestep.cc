@@ -1504,8 +1504,8 @@ void process_wake_ups(void)
 #endif
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
 		    /* the old step kicked this cell only to its midpoint and kick 1 (ActiveParticleList) skips it: complete the old step to now here, first half-kick of the new one below */
-		    if(new_step_starts_now) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);} else
-#endif
+		    if(new_step_starts_now) {do_the_kick(i, old_midpoint, All.Ti_Current, P[i].Ti_current, 1);} /* otherwise no kick: the step is truncated below */
+#else
 		    {
 #ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
 		    /* Do NOT reverse the kick: re-deriving the increment with reversed bounds does not cancel
@@ -1515,6 +1515,7 @@ void process_wake_ups(void)
 		    do_the_kick(i, tstart, tend, P[i].Ti_current, 1);
 #endif
 		    }
+#endif
 		    set_predicted_quantities_for_extra_physics(i);
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
 		    double eb_d = P[i].Mass * (CellP[i].InternalEnergy + 0.5*P[i].Vel.norm_sq()*All.cf_a2inv) - eb_e0;
@@ -1524,7 +1525,7 @@ void process_wake_ups(void)
 		    {long eb_depth = (long)binold - (long)bin; WakeDepth_sum += eb_depth; if(eb_depth > WakeDepth_max) {WakeDepth_max = eb_depth;}}
 #endif
 		}
-#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+#if defined(WAKEUP_TRUNCATE_STEP_ON_DEMOTION) || !defined(HYDRO_MESHLESS_FINITE_VOLUME)
 		/* End the step at the current system time, so the interval the applied kick already covered is
 		   not integrated twice and no reversal is needed. dt_step stays authoritative (integertime_step()
 		   returns it under WAKEUP) but is no longer a power-of-two bin length, so it deliberately
