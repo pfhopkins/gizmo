@@ -200,7 +200,7 @@ c
 #endif
 c
          if (AV .gt. 0d0) then
-            f_dust = dexp(-AV * (2d-21 / AV_conversion_factor))
+            f_dust = dexp(-3.5d0 * AV)   ! SGChem evolve_abundances.F:253
             chi_isrf = chi(AV)
 #ifdef DEBUGDUSTTEMP
             if (yn .gt. 1e5 ) print *, 
@@ -288,7 +288,7 @@ c the df*/f_dust dust factors must still be INITIALISED and summed here (they co
 c out ~1 because column_density_projection is zeroed under M1), then the RADTRANSFER
 c override below pins the key ones -- M1 already applied continuum dust attenuation.
 #if defined RAYTRACE || defined RT_TREECOL_DUST_WEIGHTED || defined RT_TREECOL_H2_CO
-         sigma_dust = 2d-21 * dust_to_gas_ratio
+         sigma_dust = 3.5d0 * AV_conversion_factor * dust_to_gas_ratio
          f_dust     = 0d0
          f_simp     = 0d0
          df05       = 0d0

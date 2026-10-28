@@ -9,12 +9,12 @@
 //   * AV is built from AV_conversion_factor * dust_to_gas_ratio * N_H, i.e. the
 //     DGR rides on the *conversion*, so a variable per-cell DGR changes AV but
 //     NOT the column; and
-//   * f_dust uses sigma_dust = 2e-21 * dust_to_gas_ratio applied to the RAW
+//   * f_dust uses sigma_dust = 3.5 * AV_conversion_factor * dust_to_gas_ratio applied to the RAW
 //     column (plus the external NH_ext = AV_ext / AV_conversion_factor), which
 //     is the same product written the other way round.  The two must stay
-//     consistent -- writing f_dust = exp(-AV * 2e-21/AV_conversion_factor) in
+//     consistent -- writing f_dust = exp(-3.5 AV) in
 //     the non-pixel branch is the SAME number, and that is exactly what the
-//     Fortran does at line 203.  Reproduced literally, both branches.
+//     Fortran does at line 203 (SGChem exp(-3.5 AV), D-49).  Reproduced literally, both branches.
 //
 // H2 self-shielding is applied ONCE, in the RHS (ykdis = phrates(1)*fshield),
 // for nets != 1 -- NOT baked into phrates(1) here (h2_double_shield_bug,
@@ -276,7 +276,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         else               AV = c.AV_ext + c.AV_conversion_factor
                               * c.dust_to_gas_ratio * NH;
         if (AV > 0.0) {
-            f_dust = std::exp(-AV * (2e-21 / c.AV_conversion_factor));
+            f_dust = std::exp(-3.5 * AV);   // SGChem evolve_abundances.F:253
             c.chi_isrf = cxx_chi(T, AV, c.isrf_option);
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
             f_simp = std::exp(-2.5 * AV);
@@ -329,7 +329,7 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         }
     } else {    // iphoto == 2 (six-ray) or 6 (TreeCol)
 #if defined RAYTRACE || defined RT_TREECOL_DUST_WEIGHTED || defined RT_TREECOL_H2_CO
-        double sigma_dust = 2e-21 * c.dust_to_gas_ratio;
+        double sigma_dust = 3.5 * c.AV_conversion_factor * c.dust_to_gas_ratio;
         f_dust = 0.0; f_simp = 0.0;
         df05 = 0.0; df19 = 0.0; df25 = 0.0; df30 = 0.0;
         df15 = 0.0; df17 = 0.0;
