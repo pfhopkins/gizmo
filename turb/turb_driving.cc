@@ -202,11 +202,16 @@ double st_return_rms_acceleration(void)
 
 #ifdef TURB_DRIVING_TARGET_SIGMA
 /* mass-weighted rms velocity of gas about its mean velocity; if TURB_DRIVING_TARGET_SIGMA > 0, only gas
-   within that radius (code units) of the box center. Returns the target if there is no gas to measure. */
+   within that radius of the box center: in code units, or with STARFORGE_GMC_TURBINIT in units of the nominal
+   cloud radius. Returns the target if there is no gas to measure. */
 static double st_compute_vrms(void)
 {
     double sums[5] = {0}; /* m, m*v[3], m*v^2 */
+#ifdef STARFORGE_GMC_TURBINIT
+    const double aperture = (double)(TURB_DRIVING_TARGET_SIGMA) * STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * All.BoxSize;
+#else
     const double aperture = (double)(TURB_DRIVING_TARGET_SIGMA);
+#endif
     const double box_cx = 0.5*boxSize_X, box_cy = 0.5*boxSize_Y, box_cz = 0.5*boxSize_Z;
     for(int i = 0; i < NumPart; i++)
     {

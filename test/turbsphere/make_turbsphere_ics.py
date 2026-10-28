@@ -1,7 +1,7 @@
 """Uniform static sphere in a periodic box of 10 R with 1e-3-density ambient gas, for the turbsphere test.
 
-This is MakeCloud's default geometry, which GravAccel_GMCTurbInit (STARFORGE_GMC_TURBINIT) hard-codes:
-R = BoxSize/10 and a cloud holding 0.808 of the gas mass. All particles have the same mass; both
+This is MakeCloud's default geometry, which GravAccel_GMCTurbInit (STARFORGE_GMC_TURBINIT) assumes:
+R = 0.1 BoxSize and a cloud holding 0.808 of the gas mass. All particles have the same mass; both
 cloud and ambient sit on lattices, the ambient one 10x coarser. The cloud mass gives
 alpha_vir = 5 sigma_3D^2 R / (3 G M) at the target Mach number; with R = 5 pc this is the sphere
 inscribed in turbulent_box, with the same mass and sigma. A uniform B_z gives plasma beta `beta` in
@@ -20,6 +20,9 @@ from gizmo.units import G_CODE  # noqa: E402
 import turb_driving_common as common  # noqa: E402
 
 DENSITY_CONTRAST = 1e-3
+# as STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE and _CLOUD_MASS_FRACTION in declarations/allvars.h
+CLOUD_RADIUS_IN_BOXSIZE = 0.1
+CLOUD_MASS_FRACTION = 0.808
 
 
 def lattice(n, spacing, center):
@@ -28,7 +31,7 @@ def lattice(n, spacing, center):
 
 
 def make_ics(out, n_cloud=32768, radius=5.0, mach=10.0, alpha_vir=2.0, beta=1.0):
-    box = 10 * radius
+    box = radius / CLOUD_RADIUS_IN_BOXSIZE
     sigma = mach * common.CS
     m_cloud = 5 * sigma**2 * radius / (3 * G_CODE * alpha_vir)
     d = radius * (4 * np.pi / (3 * n_cloud)) ** (1 / 3)  # lattice spacing giving ~n_cloud points in the sphere
@@ -60,5 +63,5 @@ if __name__ == "__main__":
     a = ap.parse_args()
     nc, na, m, bz = make_ics(a.out, a.n_cloud, a.radius, a.mach, a.alpha_vir, a.beta)
     print(f"wrote {a.out}: {nc} cloud + {na} ambient cells, M_cloud = {m:.6g} Msun, "
-          f"cloud mass fraction {nc / (nc + na):.4f} (GravAccel_GMCTurbInit assumes 0.808), "
+          f"cloud mass fraction {nc / (nc + na):.4f} (GravAccel_GMCTurbInit assumes {CLOUD_MASS_FRACTION}), "
           f"B_z = {bz * 1e6:.4g} uG (beta = {a.beta:g} in the cloud)")

@@ -1052,6 +1052,13 @@ extern struct global_data_all_processes
 All;
 
 
+#ifdef STARFORGE_GMC_TURBINIT
+/* MakeCloud's default uniform-sphere ICs, which GravAccel_GMCTurbInit assumes: a cloud of radius
+   STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * BoxSize at the box centre, holding this fraction of the gas mass */
+constexpr double STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE = 0.1;
+constexpr double STARFORGE_GMC_TURBINIT_CLOUD_MASS_FRACTION = 0.808;
+#endif
+
 
 #include "particle_data.h"
 #include "cell_data.h"

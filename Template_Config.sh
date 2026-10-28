@@ -123,7 +123,7 @@
 ####################################################################################################
 #TURB_DRIVING                   # turns on turbulent driving/stirring. see begrun for parameters that must be set
 #TURB_DRIVING_SPECTRUMGRID=128  # activates on-the-fly calculation of the turbulent velocity, vorticity, and smoothed-velocity power spectra, evaluated on a grid of linear-size TURB_DRIVING_SPECTRUMGRID elements. Requires BOX_PERIODIC
-#TURB_DRIVING_TARGET_SIGMA=0    # PID loop on the driving amplitude, holding the gas rms velocity (about its mean) at TurbDrive_ApproxRMSVturb; optional gains TurbDrive_PID_Kp/Ti/Td. If value > 0, only gas within that distance (code units) of the box center is measured; 0 uses all gas.
+#TURB_DRIVING_TARGET_SIGMA=0    # PID loop on the driving amplitude, holding the gas rms velocity (about its mean) at TurbDrive_ApproxRMSVturb; optional gains TurbDrive_PID_Kp/Ti/Td. If value > 0, only gas within that distance of the box center is measured (code units; with STARFORGE_GMC_TURBINIT, nominal cloud radii); 0 uses all gas.
 ####################################################################################################
 
 

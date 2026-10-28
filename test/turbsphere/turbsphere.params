@@ -1,4 +1,4 @@
-%---- turbsphere: uniform sphere (R = 5 pc) in a 50 pc periodic box, stirred to Mach 10 inside R. Units pc - km/s - Msun.
+%---- turbsphere: uniform sphere (R = 5 pc) in a 50 pc periodic box, stirred to Mach 10 inside 2R. Units pc - km/s - Msun.
 InitCondFile                turbsphere_ics
 OutputDir                   output
 ICFormat                    3
@@ -58,7 +58,7 @@ SofteningStarsMaxPhys       1e-3
 SofteningBndryMaxPhys       1e-3
 
 %---- Turbulent driving (TURB_DRIVING): solenoidal, parabolic spectrum on wavelengths 2R/3 - 2R, peak at R
-TurbDrive_ApproxRMSVturb            2.0             % target 3D v_rms within R: Mach 10 at c_s = 0.2 km/s
+TurbDrive_ApproxRMSVturb            2.0             % target 3D v_rms within 2R: Mach 10 at c_s = 0.2 km/s
 TurbDrive_MaxWavelength             10.0            % 2R, the cloud diameter
 TurbDrive_MinWavelength             3.3333333333    % 2R/3
 TurbDrive_DrivingSpectrum           1               % parabola, zero at kmin and kmax
