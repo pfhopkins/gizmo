@@ -23,17 +23,8 @@ enum StellarElement {
     ELEM_Cu = 25, ELEM_Zn = 26
 };
 
-/* ────────────────────────────────────────────────────────────────────────
- * FIRE-pattern Metallicity[] layout (NUM_METAL_SPECIES=27, our config):
- *   Metallicity[0]      = total Z   (Σ_{k=2..26} Metallicity[k])
- *   Metallicity[1]      = He
- *   Metallicity[2..26]  = 25 metals, indexed by StellarElement (ELEM_C..ELEM_Zn)
- *   X_H = 1 − Metallicity[0] − Metallicity[1]   (implicit)
- *
- * Use these accessors to read elemental mass-fractions; they hide the
- * H-implicit special case.  Indices ELEM_He..ELEM_Zn (k≥1) match
- * Metallicity[] indices — only ELEM_H needs special handling.
- * ──────────────────────────────────────────────────────────────────────── */
+/* Metallicity[] layout (NUM_METAL_SPECIES=28): [0] = total Z, [1] = H, [2] = He, [3..27] = C..Zn.
+ * Element k sits at slot MET_OF(k) = k + 1; never index the FIRE order (He at 1, Fe at 10). */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 /* StellarElement k (0..26 in HDF5 / table-index space) → Metallicity[] slot.
  *   MET_OF(ELEM_H)  = 1

@@ -137,12 +137,8 @@ extern ALIGN(32) struct particle_data
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     MyFloat BirthMetallicity;             /*!< total metallicity Z at birth, for table lookups */
 #endif
-/* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: per-species mass fractions now live in
- * P[].Metallicity[NUM_METAL_SPECIES=27] (FIRE pattern extended).  Layout:
- *   Metallicity[0] = total Z
- *   Metallicity[1] = He
- *   Metallicity[2..26] = 25 individual metals indexed by StellarElement enum
- *   X_H is implicit: 1 − Metallicity[0] − Metallicity[1]
+/* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: per-species mass fractions live in P[].Metallicity[NUM_METAL_SPECIES=28]:
+ *   [0] = total Z, [1] = H, [2] = He, [3..27] = C..Zn; slot = MET_OF(StellarElement) (see precompiler_logic.h).
  * No separate ElementAbundance[] array is stored. */
 #if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
     MyFloat DeuteriumAbundance;       /*!< total D mass fraction (free + D+ + HD), for diffusion of D pool in network 17 */

@@ -510,7 +510,13 @@ double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0,
 #ifdef METALS
     if(target >= 0)
     {
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && defined(CHEMCOOL) && !defined(GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE)
+        X = 1./(1.+4.*ABHE); Y = 1.-X; Z = 0; // H/He mix of the chemistry (n_He/n_H = ABHE, metals not counted)
+#elif defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+        Z = DMIN(0.25,pp[target].Metallicity[0]); Y = pp[target].Metallicity[MET_OF(ELEM_He)]; // slot 1 is H in this layout
+#else
         Z = DMIN(0.25,pp[target].Metallicity[0]); if(NUM_METAL_SPECIES>=10) {Y = DMIN(0.35,pp[target].Metallicity[1]);}
+#endif
         X = 1. - (Y+Z);
     }
 #endif
