@@ -336,6 +336,12 @@ static std::vector<AbSet> ab_grid()
 // ===========================================================================
 // PHASE B / C -- leaf kernels
 // ===========================================================================
+// net 15 never reads phrates 11-37 and 52-54, which the C++ leaves at zero (DEVIATIONS D-24)
+static bool phrate_used(int net, int k)
+{
+    return !(net == 15 && ((k >= 10 && k <= 36) || (k >= 51 && k <= 53)));
+}
+
 static int kernels(const ChemTables& TT, const char* tag, int net)
 {
     int ok = 1;
@@ -535,7 +541,8 @@ static int kernels(const ChemTables& TT, const char* tag, int net)
             c.G_dust = 0.0; c.chi_isrf = 0.0;
             cxx_calc_photo(temp, abh2, abhd, abco, c);
 
-            for (int k = 0; k < NPHTAB; k++) { rp.add(phF[k], c.phrates[k]);
+            for (int k = 0; k < NPHTAB; k++) { if (!phrate_used(net, k)) continue;
+                                               rp.add(phF[k], c.phrates[k]);
                                                per[k].add(phF[k], c.phrates[k]); }
             rgd.add(GdF, c.G_dust);
             rci.add(chF, c.chi_isrf);
