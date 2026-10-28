@@ -1237,6 +1237,9 @@
  * Slot 0 (total Z) is redundant with Σ_{k=3..27} Met[k] but kept for legacy
  * cooling code that reads Metallicity[0] / SolarAbundances[0]. */
 #define NUM_METAL_SPECIES 28
+#ifdef COOL_METAL_LINES_BY_SPECIES
+#error "GALSF_RESOLVEDISM_METALS_INDIVIDUAL is incompatible with COOL_METAL_LINES_BY_SPECIES (its tables and helpers read the FIRE slot order, He at 1)"
+#endif
 #else
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
 #endif

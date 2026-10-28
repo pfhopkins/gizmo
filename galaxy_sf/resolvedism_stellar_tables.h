@@ -23,17 +23,8 @@ enum StellarElement {
     ELEM_Cu = 25, ELEM_Zn = 26
 };
 
-/* ────────────────────────────────────────────────────────────────────────
- * FIRE-pattern Metallicity[] layout (NUM_METAL_SPECIES=27, our config):
- *   Metallicity[0]      = total Z   (Σ_{k=2..26} Metallicity[k])
- *   Metallicity[1]      = He
- *   Metallicity[2..26]  = 25 metals, indexed by StellarElement (ELEM_C..ELEM_Zn)
- *   X_H = 1 − Metallicity[0] − Metallicity[1]   (implicit)
- *
- * Use these accessors to read elemental mass-fractions; they hide the
- * H-implicit special case.  Indices ELEM_He..ELEM_Zn (k≥1) match
- * Metallicity[] indices — only ELEM_H needs special handling.
- * ──────────────────────────────────────────────────────────────────────── */
+/* Metallicity[] layout (NUM_METAL_SPECIES=28): [0] = total Z, [1] = H, [2] = He, [3..27] = C..Zn.
+ * Element k sits at slot MET_OF(k) = k + 1; never index the FIRE order (He at 1, Fe at 10). */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 /* StellarElement k (0..26 in HDF5 / table-index space) → Metallicity[] slot.
  *   MET_OF(ELEM_H)  = 1
@@ -42,6 +33,23 @@ enum StellarElement {
  *   ...
  *   MET_OF(ELEM_Zn) = 27 */
 #define MET_OF(k) ((k) + 1)
+/* Asplund+09 photospheric mass fractions in StellarElement order (stella-tables X_init); metals sum to 0.014 */
+static const double resolvedism_solar_massfrac[STBL_NELEM] = {
+    7.3750000000e-01, /*  0: H  */    2.4850000000e-01, /*  1: He */
+    2.4765351227e-03, /*  2: C  */    7.2545495820e-04, /*  3: N  */
+    6.0028592850e-03, /*  4: O  */    5.2841265250e-07, /*  5: F  */
+    1.3157897125e-03, /*  6: Ne */    3.0605839462e-05, /*  7: Na */
+    7.4124358876e-04, /*  8: Mg */    5.8255839166e-05, /*  9: Al */
+    6.9620919184e-04, /* 10: Si */    6.0990559675e-06, /* 11: P  */
+    3.2376421296e-04, /* 12: S  */    8.5877929305e-06, /* 13: Cl */
+    7.6870616805e-05, /* 14: Ar */    3.2093705781e-06, /* 15: K  */
+    6.7169384016e-05, /* 16: Ca */    4.8646655463e-08, /* 17: Sc */
+    3.2681466346e-06, /* 18: Ti */    3.3215539907e-07, /* 19: V  */
+    1.7387424601e-05, /* 20: Cr */    1.1327606908e-05, /* 21: Mn */
+    1.3528499188e-03, /* 22: Fe */    4.4118818564e-06, /* 23: Co */
+    7.4619379442e-05, /* 24: Ni */    7.5396909229e-07, /* 25: Cu */
+    1.8184871682e-06, /* 26: Zn */
+};
 #endif
 
 /* Isotope index mapping (matches HDF5 'isotopes' dataset order) */

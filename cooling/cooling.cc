@@ -840,9 +840,13 @@ double convert_temp_to_u(double temp, double rho, int target, double *cv, double
 #ifdef METALS
     if (target >= 0) {
         Z = DMIN(0.25, pp[target].Metallicity[0]);
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+        Y = pp[target].Metallicity[MET_OF(ELEM_He)]; // slot 1 is H in this layout
+#else
         if (NUM_METAL_SPECIES >= 10) {
             Y = DMIN(0.35, pp[target].Metallicity[1]);
         }
+#endif
         X = 1. - (Y + Z);
     }
 #endif

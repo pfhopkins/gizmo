@@ -7,9 +7,10 @@ Paths (flags appended to Config.sh): TREE_RAD (GALSF_RESOLVEDISM_G0_VARIABLE, th
   slab    thin medium + an n_H = 200, 1.875 pc slab 2.5 pc from the star (N = 1.2e21 cm^-2) on one side
 For every cell the chemistry's own rates (OUTPUT_CHEM_PHOTORATES) are compared with the TREE_RAD conventions applied to
 the exact field L/(4 pi r^2 c) and the exact star-to-cell column N:
-  k_H2 = 3.3e-11 G0_LW exp(-2e-21 N) fshield,  k_CO = 1.235e-10 G0 exp(-2.5 A_V),  G_dust = G0 exp(-2.5 A_V),
+  k_H2 = 3.3e-11 G0_LW exp(-2e-21 N) fshield_H2,  k_CO = 1.411e-10 G0 exp(-2.5 A_V) fshield_CO,  G_dust = G0 exp(-2.5 A_V),
   dust-heating field = G0 chi_isrf / 1.7 (reference here G0 exp(-2.5 A_V) / 1.7),
-with G0 = u(6-13.6 eV)/5.29e-14 x 1.7, G0_LW = u(11.2-13.6 eV)/2.11e-14 x 1.7, A_V = 5.348e-22 N.
+with G0 = u(6-13.6 eV)/5.29e-14 x 1.7, G0_LW = u(11.2-13.6 eV)/2.11e-14 x 1.7, A_V = 5.348e-22 N; the line self-shielding
+factors fshield_H2, fshield_CO are the chemistry's own (ChemPhotoRates columns 4, 5).
 """
 
 import json
@@ -44,6 +45,7 @@ M_P = 1.6726e-24
 C_LIGHT = 2.99792458e10
 X_H = 0.7065  # net 5 (ABHE = 0.1)
 U_HAB_FUV, U_HAB_LW, G0_PARAM, AV_PER_NH = 5.29e-14, 2.11e-14, 1.7, 5.348e-22
+K_CO = 1.411e-10  # CO photodissociation at G0 = 1 (Heays+17, phtab(10))
 UNIT_RHO = 1.989e43 / KPC**3
 BOX_PC, NG = 20.0, 32
 N_THIN, N_UNIFORM, N_SLAB = 0.3, 100.0, 200.0
@@ -169,7 +171,7 @@ def ratios(snap, case, l_fuv, l_lw):
     g0lw = l_lw / (4 * np.pi * r_cm**2 * C_LIGHT) / U_HAB_LW * G0_PARAM
     att = np.exp(-2.5 * av)
     ref = {"k_H2": 3.3e-11 * g0lw * np.exp(-2e-21 * av / AV_PER_NH) * pr[m, 4],
-           "k_CO": 1.235e-10 * g0 * att, "G_dust": g0 * att, "dust_heat": g0 * att / 1.7}
+           "k_CO": K_CO * g0 * att * pr[m, 5], "G_dust": g0 * att, "dust_heat": g0 * att / 1.7}
     got = {"k_H2": pr[m, 0], "k_CO": pr[m, 1], "G_dust": pr[m, 2], "dust_heat": pr[m, 3]}
     return {q: float(np.median(got[q] / ref[q])) for q in QUANT}, int(m.sum()), float(np.median(av))
 
@@ -181,8 +183,8 @@ def star_luminosities(snap):
 
 # acceptance (median rate / analytic), measured at 32^3 (see README):
 # thin: TREE_RAD/TREE_RAY 0.98-1.00, M1 1.21 (point-source M1 closure, E > F/c)
-# uniform: TREE_RAY 0.93-1.00; TREE_RAD 0.001-0.01 (TreeCol column continues past the star); M1 1.3-1.9 (HLL ~1/(1+tau_cell) per cell)
-# slab: TREE_RAD 0.84-0.89, TREE_RAY 0.93-0.99, M1 1.9-2.7 (3-cell slab, tau_cell 0.5-0.8, shadow filling)
+# uniform: TREE_RAY 0.91-0.94 (shell columns follow the tree opening, still drifting at 1.2 kyr); TREE_RAD 0.001-0.01 (TreeCol column continues past the star); M1 1.4-1.9 (HLL ~1/(1+tau_cell) per cell)
+# slab: TREE_RAD 0.84-0.89, TREE_RAY 0.98-0.99, M1 2.0-2.7 (3-cell slab, tau_cell 0.5-0.8, shadow filling)
 # TREE_RAD dust heating uses the ISRF chi(A_V), not exp(-2.5 A_V): not checked against this reference when attenuated
 TOL = {("thin", "tree_rad"): (0.95, 1.05), ("thin", "tree_ray"): (0.95, 1.05), ("thin", "m1"): (0.9, 1.4),
        ("uniform", "tree_rad"): (0.0, 0.1), ("uniform", "tree_ray"): (0.85, 1.15), ("uniform", "m1"): (0.9, 2.5),

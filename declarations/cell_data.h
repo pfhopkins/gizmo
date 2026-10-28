@@ -314,7 +314,7 @@ extern struct gas_cell_data
                                                -> = G0_unatten x f_dust. Directly comparable across schemes. */
     MyFloat ShieldFacDust;                /*!< dust shielding factor f_dust used this step */
 #ifdef OUTPUT_CHEM_PHOTORATES
-    MyFloat ChemPhotoRates[5];            /*!< chemistry-side k_H2, k_CO, G_dust, dust-heating field, fshield_H2 (test output) */
+    MyFloat ChemPhotoRates[6];            /*!< chemistry-side k_H2, k_CO, G_dust, dust-heating field, fshield_H2, fshield_CO (test output) */
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE

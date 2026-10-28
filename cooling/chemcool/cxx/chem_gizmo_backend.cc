@@ -168,6 +168,7 @@ void chem_cxx_read_outputs(struct ChemOutputs* out)
     out->photorates[2] = c.G_dust;
     out->photorates[3] = c.G0_dust * c.chi_isrf / 1.7;
     out->photorates[4] = c.fac_shield_h2;
+    out->photorates[5] = c.fshield_CO;
 #endif
 }
 
