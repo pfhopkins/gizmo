@@ -416,7 +416,7 @@ void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct 
             }
 #endif
             short int TimeBin_j = P[j].TimeBin; if(TimeBin_j < 0) {TimeBin_j = -TimeBin_j - 1;} // need to make sure we correct for the fact that TimeBin is used as a 'switch' here to determine if a particle is active for iteration, otherwise this gives nonsense!
-#ifdef WAKEUP_TRUNCATE_STEP_ON_DEMOTION
+#if defined(WAKEUP_TRUNCATE_STEP_ON_DEMOTION) || !defined(HYDRO_MESHLESS_FINITE_VOLUME) /* same condition as the wake-up truncation in timestep.cc */
             /* a truncated step is shorter than its bin, so TimeBin over-reports how long this neighbour will run,
                and both users of this field are unsafe when it reads long (a sink outruns its gas, and unlike gas a
                sink cannot be woken to recover). floor to a bin that fits, stopping at 1: bin 0 has zero length, which
