@@ -115,9 +115,10 @@ def controller_log(stdout_file):
     return np.array(rows, dtype=float).T if rows else np.zeros((3, 0))
 
 
-def plot(t, mach, beta, log, fname):
+def plot(t, mach, beta, log, fname, r_half=None):
     mhd = np.isfinite(beta).any()
-    fig, axes = plt.subplots(3 if mhd else 2, 1, sharex=True, figsize=(6, 7 if mhd else 5))
+    n = 2 + mhd + (r_half is not None)
+    fig, axes = plt.subplots(n, 1, sharex=True, figsize=(6, 2 * n + 1))
     if log.size:
         axes[0].plot(log[0] / T_EDDY, log[1] / CS, color="0.6", lw=0.8, label="loop measurement")
         axes[1].plot(log[0] / T_EDDY, log[2], color="k", lw=0.8)
@@ -130,6 +131,10 @@ def plot(t, mach, beta, log, fname):
     if mhd:
         axes[2].semilogy(t / T_EDDY, beta, "o-", color="k", ms=3, lw=0.8)
         axes[2].set_ylabel(r"plasma $\beta$")
+    if r_half is not None:
+        axes[-1].plot(t / T_EDDY, r_half, "o-", color="k", ms=3, lw=0.8)
+        axes[-1].set_ylim(0, None)
+        axes[-1].set_ylabel(r"gas $r_{\rm half}$ [pc]")
     axes[-1].set_xlabel(r"$t / t_{\rm eddy}$")
     fig.savefig(fname, bbox_inches="tight", dpi=150)
     plt.close(fig)
@@ -144,7 +149,9 @@ def run_and_check(test_name, variant, aperture=None, lazy=False, max_ranks=8):
     outdir = variant_output_dir(test_name, flags)
     log = f"{outdir}/test_{test_name}.out" if flags else f"test/{test_name}/test_{test_name}.out"
     t, mach, beta, r_half = history(outdir, aperture)
-    plot(t, mach, beta, controller_log(log), f"test/{test_name}/mach_vs_time{variant_suffix(flags)}.png")
+    # r_half only means something for an isolated cloud, not for gas filling a periodic box
+    plot(t, mach, beta, controller_log(log), f"test/{test_name}/mach_vs_time{variant_suffix(flags)}.png",
+         r_half=r_half if aperture else None)
 
     settled = t >= T_SETTLED
     assert settled.sum() >= 5, f"only {settled.sum()} snapshots after t = {T_SETTLED}"
