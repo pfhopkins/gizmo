@@ -24,7 +24,7 @@ from gizmo.units import UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_P
 GAMMA = 1.001
 CS = 0.2  # isothermal sound speed, km/s
 MACH_TARGET = 10.0
-T_EDDY = 5.0  # TurbDrive_MaxWavelength / TurbDrive_ApproxRMSVturb, the loop's unit of time
+T_EDDY = 5.0  # crossing time: box side (turbulent_box) or cloud diameter (turbsphere) over the target v_rms
 T_SETTLED = 2 * T_EDDY  # start of the window the steady-state checks use
 
 MAX_MEAN_ERROR = 0.03  # |<Mach>/target - 1| over the settled window
