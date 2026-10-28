@@ -662,12 +662,14 @@ Provenance: SGChem `calc_shield.F:244-275, 334-420` (default; Lee+96 only under 
 pixel and pixel-averaged (SGChem per ray), where the Lee+96 path averaged theta_CO and theta_H2 separately
 and multiplied the averages. The Lee+96 tables are still built (cheminmo, chem_tables_build) but not read.
 
-## D-49. SGChem differences not adopted (sgchem_vs_ours.md B10, B13, B14, B15)
-* B10: ATOL_H2 1e-7, ATOL_HP 1e-12 (SGChem 1e-9, 1e-9); solver tolerances, KEEP R4.
-* B13: H2 dust shielding exp(-AV 2e-21/AV_conversion_factor) = exp(-3.74 AV) (SGChem nets != 16: exp(-3.5 AV),
-  `evolve_abundances.F:253`); net 15 CO uses df25. Open: aligning changes H2 in nets 5/17.
-* B14: dust temperature converges to 1% relative (SGChem 1 mK absolute); kept from the Newton-divergence fix.
-* B15: PE heating off below DGR 1e-8 (SGChem DGR = 0); the electron cut-off is aligned (D-38).
+## D-49. SGChem differences (sgchem_vs_ours.md B10, B13, B14, B15)
+* B10 (not adopted): ATOL_H2 1e-7, ATOL_HP 1e-12 (SGChem 1e-9, 1e-9); solver tolerances, KEEP R4.
+* B13 (ADOPTED 2026-10-28, Uli "adopt Simon's"): H2 (and HD) dust shielding f_dust = exp(-3.5 AV) as SGChem
+  `evolve_abundances.F:253` (was exp(-AV 2e-21/AV_conversion_factor) = exp(-3.74 AV)); ray/TreeCol branch uses
+  sigma_dust = 3.5 AV_conversion_factor DGR. Both backends (calc_photo.F, chem_calc_photo.cc); net 16 keeps df418
+  (SGChem 4.18); net 15 CO df25 unchanged (SGChem exp(-3.5 AV) for CO via fshield_dust_mol: open, not changed).
+* B14 (not adopted): dust temperature converges to 1% relative (SGChem 1 mK absolute); kept from the Newton-divergence fix.
+* B15 (not adopted): PE heating off below DGR 1e-8 (SGChem DGR = 0); the electron cut-off is aligned (D-38).
 
 ## D-50. Net 17 H2+ equilibrium: dissociative recombination on its own electrons, both backends
 H2+ is solved from h2p_dr x^2 + denom x = num with the other electrons (x_e - x_H2+) in denom (Gong+17 closure),
