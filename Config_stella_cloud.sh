@@ -29,6 +29,7 @@ GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 GALSF_RESOLVEDISM_RADPRESSURE
 GALSF_RESOLVEDISM_TYPE_IA
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
+#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
 GALSF_SFR_CRITERION=(64)       % Jeans mass only (Hu & Sternberg 2023): M_J < N_ngb * m_gas
 
 ## -- Cooling & chemistry --

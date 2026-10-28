@@ -9,6 +9,9 @@
 #include "../mesh/kernel.h"
 #ifdef CHEMCOOL
 #include "../cooling/chemcool/chemcool_consts.h"
+#ifdef CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY
+#include "../declarations/resolvedism_dgr.h"
+#endif
 #endif
 
 
@@ -219,6 +222,16 @@ void init(void)
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     Initialize_ISMDustChem_Global_Variables();
+#endif
+#ifdef CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY
+    { /* constant DGR: dust exceeds the metal mass below Z/Zsun = DGRnormalized x DGR_MW / Zsun */
+        double z_dust_eq_metals = All.DGRnormalized * RESOLVEDISM_DGR_SOLAR_ABS / All.SolarAbundances[0];
+        if(ThisTask == 0) {printf("CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY: DGR = %g x MW at every Z; dust exceeds the metals below Z = %g Zsun\n", All.DGRnormalized, z_dust_eq_metals);}
+        if(All.InitialMetallicity < z_dust_eq_metals) {
+            if(ThisTask == 0) {printf("CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY: InitialMetallicity %g Zsun < %g Zsun gives dust mass > metal mass; lower DGRnormalized (gizmo2017: 0.01) or use the Z-scaled default\n", All.InitialMetallicity, z_dust_eq_metals);}
+            endrun(78301);
+        }
+    }
 #endif
 #endif
 
