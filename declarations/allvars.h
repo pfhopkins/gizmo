@@ -501,7 +501,7 @@ extern struct global_data_all_processes
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY
   double ArtCondConstant;
 #endif
-#ifdef SINGLE_STAR_SINK_DYNAMICS
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(STARFORGE_GMC_TURBINIT)
     double MeanGasParticleMass; /*!< the mean gas particle mass */
 #endif
     double MinMassForParticleMerger; /*!< the minimum mass of a gas particle below which it will be merged into a neighbor */
@@ -659,8 +659,12 @@ extern struct global_data_all_processes
     int FileNumberTurbSpectrum;
 #endif
 #ifdef TURB_DRIVING_TARGET_SIGMA
-    double TurbDriving_SmoothedVRMS;     /* exponentially smoothed measured RMS velocity, time constant = 2*t_corr */
-    double TurbDriving_DrivingNormFactor; /* multiplicative factor on driving amplitude from proportional control loop */
+    double TurbDriving_DrivingNormFactor; /* gain on the driving acceleration, set by the PID loop on ln(v_target/v_rms) */
+    double TurbDriving_PID_Integral;      /* integral term, in units of ln(gain) */
+    double TurbDriving_PID_Derivative;    /* low-pass filtered derivative term, in units of ln(gain) */
+    double TurbDriving_PID_LastError;     /* error at the previous update */
+    int TurbDriving_PID_Started;          /* 0 until the first measurement seeds the loop */
+    double TurbDriving_PID_Kp, TurbDriving_PID_Ti, TurbDriving_PID_Td; /* gains; Ti, Td in units of TurbDrive_MaxWavelength/TurbDrive_ApproxRMSVturb */
 #endif
 #endif
     
@@ -1047,6 +1051,13 @@ extern struct global_data_all_processes
 }
 All;
 
+
+#ifdef STARFORGE_GMC_TURBINIT
+/* MakeCloud's default uniform-sphere ICs, which GravAccel_GMCTurbInit assumes: a cloud of radius
+   STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * BoxSize at the box centre, holding this fraction of the gas mass */
+constexpr double STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE = 0.1;
+constexpr double STARFORGE_GMC_TURBINIT_CLOUD_MASS_FRACTION = 0.808;
+#endif
 
 
 #include "particle_data.h"
