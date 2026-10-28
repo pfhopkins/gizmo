@@ -936,13 +936,13 @@ void star_formation_parent_routine(void)
     if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
 #endif
     
-#ifdef GHOSTD_G0_CR
-    { /* GHOSTD (Hu+21): FactorG0 = [M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] */
+#ifdef GHOSDT_G0_CR
+    { /* GHOSDT (Hu+21): FactorG0 = [M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] */
         double m_young = 0, m_young_tot = 0;
         for(i = 0; i < NumPart; i++) {if(P[i].Type == 4 && evaluate_time_since_t_initial_in_Gyr(P[i].StellarAge) < 0.03) {m_young += P[i].Mass;}}
         MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         All.FactorG0 = (m_young_tot / 0.03) / (All.Mgas0 / 4.0);
-        if(ThisTask == 0) {printf("GHOSTD: Time=%.17g Mgas0=%.17g M_young=%.17g FactorG0=%.17g\n", All.Time, All.Mgas0, m_young_tot, All.FactorG0);}
+        if(ThisTask == 0) {printf("GHOSDT: Time=%.17g Mgas0=%.17g M_young=%.17g FactorG0=%.17g\n", All.Time, All.Mgas0, m_young_tot, All.FactorG0);}
     }
 #endif
     MPI_Allreduce(&stars_spawned, &tot_spawned, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);

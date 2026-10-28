@@ -59,8 +59,8 @@
 #define RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
 #endif
 
-/* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSTD ISRF (or Stella M1); H2 and CO for CHEMCOOL */
-#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSTD_G0_CR) && defined(CHEMCOOL)) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED))
+/* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSDT ISRF (or Stella M1); H2 and CO for CHEMCOOL */
+#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSDT_G0_CR) && defined(CHEMCOOL)) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED))
 #define RT_TREECOL_DUST_WEIGHTED
 #endif
 #if defined(RT_TREECOL_HEALPIX) && defined(CHEMCOOL)

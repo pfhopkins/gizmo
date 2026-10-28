@@ -153,7 +153,7 @@ struct ChemInputs {
     /* --- radiation field ------------------------------------------------- */
     double G0;                 /* -> COOLRC.G0    [Habing]                    */
     double G0_LW;              /* -> COOLRC.G0_LW [Habing]                    */
-    double G0_dust;            /* -> COOLRC.G0_dust [commit: G0_VARIABLE || GHOSTD_G0_CR || RADTRANSFER] */
+    double G0_dust;            /* -> COOLRC.G0_dust [commit: G0_VARIABLE || GHOSDT_G0_CR || RADTRANSFER] */
     double rt_phot_HI;         /* -> COOLRC.rt_phot_HI   [s^-1]               */
     double rt_phot_HeI;        /* -> COOLRC.rt_phot_HeI  [s^-1]               */
     double rt_phot_HeII;       /* -> COOLRC.rt_phot_HeII [s^-1]               */
@@ -163,7 +163,7 @@ struct ChemInputs {
 
     /* --- cosmic rays ----------------------------------------------------- */
     double cosmic_ray_ion_rate; /* -> COOLRC.cosmic_ray_ion_rate [s^-1]       */
-    double cr_energy_density;   /* -> COOLRC.cr_energy_density [erg cm^-3] [commit: COSMIC_RAY_FLUID && (G0_VARIABLE || GHOSTD_G0_CR || RADTRANSFER)] */
+    double cr_energy_density;   /* -> COOLRC.cr_energy_density [erg cm^-3] [commit: COSMIC_RAY_FLUID && (G0_VARIABLE || GHOSDT_G0_CR || RADTRANSFER)] */
 
     /* --- composition (orig chemcool.cc:592-602) ------------------------- */
     double abhe;               /* -> CHEM_COMP.abhe [commit: GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE];

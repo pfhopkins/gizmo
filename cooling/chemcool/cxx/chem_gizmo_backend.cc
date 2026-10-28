@@ -97,11 +97,11 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #endif
     c.abundD = in->abundD; c.abundM = in->abundM;
     c.G0 = in->G0; c.G0_LW = in->G0_LW;
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSTD_G0_CR) || defined(RADTRANSFER)
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER)
     c.G0_dust = in->G0_dust;
 #endif
     c.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate;
-#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSTD_G0_CR) || defined(RADTRANSFER))
+#if defined(COSMIC_RAY_FLUID) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER))
     c.cr_energy_density = in->cr_energy_density;
 #endif
     c.rt_phot_HI = in->rt_phot_HI; c.rt_phot_HeI = in->rt_phot_HeI; c.rt_phot_HeII = in->rt_phot_HeII;

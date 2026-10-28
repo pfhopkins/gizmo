@@ -1380,11 +1380,11 @@
 #if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && (!defined(CHEMCOOL) || !defined(RT_USE_TREECOL_FOR_NH) || defined(CR_SCALE_WITH_G0))
 #error "CR_BACKGROUND_IONRATE_ATTENUATED needs CHEMCOOL and the TreeCol column (RT_USE_TREECOL_FOR_NH), and replaces CR_SCALE_WITH_G0"
 #endif
-#if defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR)
-#error "GALSF_RESOLVEDISM_G0_SCALE_SFR and GALSF_RESOLVEDISM_GHOSTD_G0_CR were renamed: use GHOSTD_G0_CR"
+#if defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(GHOSTD_G0_CR)
+#error "GALSF_RESOLVEDISM_G0_SCALE_SFR, GALSF_RESOLVEDISM_GHOSTD_G0_CR and GHOSTD_G0_CR were renamed: use GHOSDT_G0_CR"
 #endif
-#if defined(GHOSTD_G0_CR) && !(defined(GALSF) && (defined(RT_ISRF_BACKGROUND) || defined(CHEMCOOL)))
-#error "GHOSTD_G0_CR scales the RT_ISRF_BACKGROUND field (or the CHEMCOOL G0) and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND or CHEMCOOL"
+#if defined(GHOSDT_G0_CR) && !(defined(GALSF) && (defined(RT_ISRF_BACKGROUND) || defined(CHEMCOOL)))
+#error "GHOSDT_G0_CR scales the RT_ISRF_BACKGROUND field (or the CHEMCOOL G0) and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND or CHEMCOOL"
 #endif
 
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && defined(RADTRANSFER)

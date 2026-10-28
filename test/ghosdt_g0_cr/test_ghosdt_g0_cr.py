@@ -1,4 +1,4 @@
-"""GHOSTD_G0_CR: FactorG0 is set every star-formation call and follows the 30 Myr star formation rate.
+"""GHOSDT_G0_CR: FactorG0 is set every star-formation call and follows the 30 Myr star formation rate.
 
 A cold dense gas box forms stars (no feedback, so star masses stay fixed) while pre-existing type-4 stars
 (ages drawn by init.cc from InitStellarAge, uniform in 0-40 Myr) age through the 30 Myr window. From the final snapshot we rebuild, for every logged call at time t,
@@ -16,12 +16,12 @@ import pytest
 
 from gizmo.test import build_and_run_test, clean_test_outputs, default_mpi_ranks, get_cooling_tables, get_final_snapshot
 
-TEST_NAME = "ghostd_g0_cr"
+TEST_NAME = "ghosdt_g0_cr"
 TEST_DIR = f"test/{TEST_NAME}"
 IC_FILE = f"{TEST_DIR}/{TEST_NAME}_ics.hdf5"
 BOX, T_BEGIN = 0.05, 0.0  # kpc, code time (kpc/(km/s))
 CODE_TIME_IN_GYR = 3.085678e21 / 1e5 / (1e9 * 365.25 * 86400)
-LINE = re.compile(r"GHOSTD: Time=(\S+) Mgas0=(\S+) M_young=(\S+) FactorG0=(\S+)")
+LINE = re.compile(r"GHOSDT: Time=(\S+) Mgas0=(\S+) M_young=(\S+) FactorG0=(\S+)")
 
 
 def make_ics(out):
@@ -66,7 +66,7 @@ def check(logfile, ic_file, final_snapshot):
 
 
 @pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
-def test_ghostd_g0_cr(num_mpi_ranks):
+def test_ghosdt_g0_cr(num_mpi_ranks):
     clean_test_outputs(TEST_NAME)
     get_cooling_tables(TEST_DIR)
     make_ics(IC_FILE)
