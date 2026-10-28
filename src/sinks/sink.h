@@ -87,6 +87,7 @@ extern struct sink_temp_particle_data       // sinkdata_topass
 
 /* sink_utils.c */
 void sink_start(void);
+int sink_tempinfo_index(int i, const char *caller);   /* checked P[i].IndexMapToTempStruc */
 void sink_end(void);
 void sink_properties_loop(void);
 double sink_eddington_mdot(double sink_mass);

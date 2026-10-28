@@ -64,7 +64,7 @@ static void sink_env1_scatter_to_temp_info(const int *active_list,
 {
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
-        int t = P[i].IndexMapToTempStruc;
+        int t = sink_tempinfo_index(i, __FUNCTION__);
 
         /* Local op macros — scoped to this loop body via #undef below.
          * Semantically identical expansion to the prior hand-written
@@ -182,7 +182,7 @@ static void sink_env2_scatter_to_temp_info(const int *active_list,
 {
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
-        int t = P[i].IndexMapToTempStruc;
+        int t = sink_tempinfo_index(i, __FUNCTION__);
 
 #define SCATTER_ADD(dst, src_field)  dst += per_active_accum[a].src_field;
 
@@ -224,7 +224,7 @@ void sink_environment_second_loop(void)
      * into the UVM array attached to the runner's DeviceContext. */
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
-        int t = P[i].IndexMapToTempStruc;
+        int t = sink_tempinfo_index(i, __FUNCTION__);
         for(int k = 0; k < 3; k++) {
             host_inputs[a].Jgas[k]  = SinkTempInfo[t].Jgas_in_Kernel[k];
             host_inputs[a].Jstar[k] = SinkTempInfo[t].Jstar_in_Kernel[k];
