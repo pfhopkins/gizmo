@@ -481,6 +481,7 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             if(CellP[i].IMFSpawnBlock) {flag=1;} /* recently spawned a star — wait for density recomputation */
+            if(CellP[i].SFCooldown > 0) {flag=1; CellP[i].SFCooldown -= dtime; if(CellP[i].SFCooldown < 0) {CellP[i].SFCooldown = 0;}} /* t_ff cooldown after a spawn */
 #endif
 
             if((flag == 0)&&(dtime>0))        /* active star formation (upon start-up, we need to protect against dt==0) */
@@ -508,7 +509,7 @@ void star_formation_parent_routine(void)
                  * P = (M_cell / M_star) * pfac  (Gutcke+ 2021, eq. 3).
                  * Massive stars have low P; low-mass stars have high P.
                  * SFR is conserved on average: <M_star * P> = M_cell * pfac. */
-                unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_IMF_MASS); /* rank-independent per-event stream */
+                unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
                 double M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
@@ -546,7 +547,7 @@ void star_formation_parent_routine(void)
 #endif
                 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
-                unsigned long long sf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_SF_ACCEPT);
+                unsigned long long sf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_SF_ACCEPT);
                 if(resolvedism_rng_uniform(&sf_rng) < prob)    /* ok, make a star */
 #else
                 if(get_random_number(P[i].ID + 1) < prob)    /* ok, make a star */
@@ -683,6 +684,7 @@ void star_formation_parent_routine(void)
                             P[ns].MstarSampleIMF[1] = (double)i; /* store parent index for deferred tree insertion */
                             P[ns].MstarSampleIMF[3] = SF_LOG_TEMP(i); /* formation temperature [K] for SFinfo log */
                             CellP[i].IMFSpawnBlock = 1; /* block SF on this cell until density is recomputed */
+                            if(All.SFCooldownFreeFallFraction > 0) {CellP[i].SFCooldown = All.SFCooldownFreeFallFraction * sqrt(3.*M_PI / (32.*All.G * CellP[i].Density * All.cf_a3inv));} /* physical t_ff */
                             stars_spawned++;
                         }
 #else /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
@@ -850,7 +852,7 @@ void star_formation_parent_routine(void)
                                 double mass_solar = P[i_star].Mass * UNIT_MASS_IN_SOLAR;
                                 double prob_massive = mass_solar / All.MassPerStarIMF;
                                 P[i_star].Mstar = 0;
-                                unsigned long long stoch_rng = resolvedism_rng_seed(i_star, RESOLVEDISM_RNG_SALT_STOCH_IMF);
+                                unsigned long long stoch_rng = resolvedism_rng_seed(i_star, RESOLVEDISM_RNG_DRAW_STOCH_IMF);
                                 if(resolvedism_rng_uniform(&stoch_rng) < prob_massive) {
                                     double xmin = All.MinMassIMF, xmax = All.MaxMassIMF;
                                     double y = resolvedism_rng_uniform(&stoch_rng);

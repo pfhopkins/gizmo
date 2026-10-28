@@ -409,6 +409,12 @@ void begrun(void)
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE) || defined(COSMIC_RAY_FLUID) /* 2026-07-04: match the tag registration guard */
         All.CosmicRay_SNeFraction = all.CosmicRay_SNeFraction;
 #endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+        All.CosmicRayInitialAmbient_eVcm3 = all.CosmicRayInitialAmbient_eVcm3; All.CosmicRayInitialCloud_eVcm3 = all.CosmicRayInitialCloud_eVcm3; All.CosmicRayInitialCloudThreshold_nH = all.CosmicRayInitialCloudThreshold_nH;
+#endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        All.CosmicRay_ShockAccelEfficiency = all.CosmicRay_ShockAccelEfficiency;
+#endif
 
 #ifdef GALSF_ISMDUSTCHEM_MODEL
         All.ISMDustChem_SNeIIDustScaling = all.ISMDustChem_SNeIIDustScaling;
@@ -834,8 +840,15 @@ void open_outputfiles(void)
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo,"%s   (15) E_CR[erg]  (16) E_CR_injected_cumul[erg] (measured at the feedback deposit)  (17) E_CR_loss_cumul[erg] (hadronic+Coulomb, removed from the CR fluid); (15)-(15)[t=0]-(16)+(17) = CR-gas exchange (adiabatic work, streaming losses)\n",prefix_char);
 #endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+      fprintf(FdENERGYinfo,"%s   (18) E_CR_shock_cumul[erg] (CR energy injected at shocks)\n",prefix_char);
+#endif
 #ifdef MAGNETIC
-      fprintf(FdENERGYinfo,"%s   (last) E_B[erg] magnetic energy, not in (8)\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   then E_B[erg] magnetic energy (not in (8)), E_floor_cumul[erg] (kick u-limiter du > -u/2 and MinGasTemp floor), E_MHD_num_cumul[erg] (Powell/Dedner terms and the -B^2/2 dV/dt the u-equation omits)\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   residual = (8)+E_B-[t=0] + (9) - (12) + (14) - E_floor_cumul - E_MHD_num_cumul (+ CR terms with COSMIC_RAY_FLUID)\n",prefix_char);
+#endif
+#ifndef MAGNETIC
+      fprintf(FdENERGYinfo,"%s   (last) E_floor_cumul[erg] kick u-limiter (du > -u/2) and MinGasTemp floor; residual = (8)-(8)[0]+(9)-(12)+(14)-(last)\n",prefix_char);
 #endif
   }
 #endif
@@ -1454,6 +1467,17 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "CosmicRay_SNeFraction");
         strcpy(alternate_tag[nt], "CosmicRay_SNeEnergyFraction");
         addr[nt] = &All.CosmicRay_SNeFraction;
+        id[nt++] = REAL;
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+        strcpy(tag[nt], "CosmicRayInitialAmbient_eVcm3"); strcpy(alternate_tag[nt], "-"); addr[nt] = &All.CosmicRayInitialAmbient_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloud_eVcm3"); strcpy(alternate_tag[nt], "-"); addr[nt] = &All.CosmicRayInitialCloud_eVcm3; id[nt++] = REAL;
+        strcpy(tag[nt], "CosmicRayInitialCloudThreshold_nH"); strcpy(alternate_tag[nt], "-"); addr[nt] = &All.CosmicRayInitialCloudThreshold_nH; id[nt++] = REAL;
+#endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        strcpy(tag[nt], "CosmicRay_ShockAccelEfficiency");
+        strcpy(alternate_tag[nt], "-");
+        addr[nt] = &All.CosmicRay_ShockAccelEfficiency;
         id[nt++] = REAL;
 #endif
         
@@ -2376,9 +2400,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G0;
       id[nt++] = REAL;
 
+#if !defined(COSMIC_RAY_FLUID) /* with the CR fluid, zeta comes from e_CR only: the tag is reported as ignored */
       strcpy(tag[nt], "CosmicRayIonRate");
       addr[nt] = &All.CosmicRayIonRate;
       id[nt++] = REAL;
+#endif
 
       strcpy(tag[nt], "DGRnormalized");
       addr[nt] = &All.DGRnormalized;
@@ -2556,6 +2582,10 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.KetjuTimestepLimitingFactor;
       id[nt++] = REAL;
 
+      strcpy(tag[nt], "KetjuMinParticlesPerTask");
+      addr[nt] = &All.KetjuMinParticlesPerTask;
+      id[nt++] = REAL;
+
       strcpy(tag[nt], "KetjuMaxStepCount");
       addr[nt] = &All.KetjuMaxStepCount;
       id[nt++] = INT;
@@ -2593,6 +2623,14 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "IMFSampleMinMass");
       addr[nt] = &All.IMFSampleMinMass;
       id[nt++] = REAL;
+
+      strcpy(tag[nt], "ResolvedISM_SFCooldownFreeFallFraction");
+      addr[nt] = &All.SFCooldownFreeFallFraction;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "ResolvedISM_RNGRealisation");
+      addr[nt] = &All.RNGRealisation;
+      id[nt++] = INT;
 #endif
 
 #ifdef GALSF_RESOLVEDISM_PHOTOION
@@ -2867,6 +2905,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuPNTerms",tag[i])==0) {strcpy((char *)addr[i],"none"); printf("Tag %s not set: defaulting to 'none'\n",tag[i]); continue;}
                 if(strcmp("KetjuEnableBHMergerKicks",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0\n",tag[i]); continue;}
                 if(strcmp("KetjuTimestepLimitingFactor",tag[i])==0) {*((double *)addr[i])=100.; printf("Tag %s not set: defaulting to 100\n",tag[i]); continue;}
+                if(strcmp("KetjuMinParticlesPerTask",tag[i])==0) {*((double *)addr[i])=10.; printf("Tag %s not set: defaulting to 10\n",tag[i]); continue;}
                 if(strcmp("KetjuMaxStepCount",tag[i])==0) {*((int *)addr[i])=100000; printf("Tag %s not set: defaulting to 100000\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
@@ -2926,6 +2965,10 @@ void read_parameter_file(char *fname)
 #if defined(CRFLUID_DIFFUSION_MODEL) && (CRFLUID_DIFFUSION_MODEL == 0)
                 if(strcmp("CosmicRayDiffusionCoeff",tag[i])==0) {*((double *)addr[i])=690.; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored diffusivity ~3e29, assuming units kpc/h and km/s (=%g) \n",tag[i],alternate_tag[i],All.CosmicRayDiffusionCoeff); continue;}
 #endif
+                if(strcmp("CosmicRay_ShockAccelEfficiency",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s not set in parameter file: CR acceleration at shocks takes 10 percent of the dissipated energy flux (=0.1) \n",tag[i]); continue;}
+                if(strcmp("CosmicRayInitialAmbient_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloud_eVcm3",tag[i])==0) {*((double *)addr[i])=0; continue;}
+                if(strcmp("CosmicRayInitialCloudThreshold_nH",tag[i])==0) {*((double *)addr[i])=10.; continue;}
                 if(strcmp("CosmicRay_SNeFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s (%s) not set in parameter file: defaulting to observationally-favored ~10 percent conversion to CRs (=%g) \n",tag[i],alternate_tag[i],All.CosmicRay_SNeFraction); continue;}
 #endif
 #if defined(SINGLE_STAR_STARFORGE_DEFAULTS)
@@ -3056,13 +3099,22 @@ void read_parameter_file(char *fname)
                 if(strcmp("KetjuUseStarStarSoftening",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1\n",tag[i]); continue;}
 #endif
                 if(strcmp("KetjuTimestepLimitingFactor",tag[i])==0) {*((double *)addr[i])=100.; printf("Tag %s not set: defaulting to 100\n",tag[i]); continue;}
+                if(strcmp("KetjuMinParticlesPerTask",tag[i])==0) {*((double *)addr[i])=10.; printf("Tag %s not set: defaulting to 10\n",tag[i]); continue;}
                 if(strcmp("KetjuMaxStepCount",tag[i])==0) {*((int *)addr[i])=100000; printf("Tag %s not set: defaulting to 100000\n",tag[i]); continue;}
                 if(strcmp("KetjuRegionMotionCapFactor",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (Mannerkoski+ 2023 caps)\n",tag[i]); continue;}
                 if(strcmp("KetjuTidalStepRes",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
                 if(strcmp("KetjuTidalErrorBudget",tag[i])==0) {*((double *)addr[i])=1e-5; printf("Tag %s not set: defaulting to 1e-5\n",tag[i]); continue;}
                 if(strcmp("KetjuSmoothTide",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+#ifdef KETJU_TYPE4_STARS
+                if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1 (exact Kepler drift for isolated star pairs)\n",tag[i]); continue;}
+#else
                 if(strcmp("KetjuKeplerPairs",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+#endif
                 if(strcmp("KetjuFlybyStepEta",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (off)\n",tag[i]); continue;}
+#endif
+#ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+                if(strcmp("ResolvedISM_RNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (default random streams)\n",tag[i]); continue;}
+                if(strcmp("ResolvedISM_SFCooldownFreeFallFraction",tag[i])==0) {*((double *)addr[i])=0.1; printf("Tag %s not set: defaulting to 0.1 (SF cooldown of 0.1 t_ff after each spawn)\n",tag[i]); continue;}
 #endif
                 printf("ERROR. I miss a required value for tag '%s' (or alternate name '%s') in parameter file '%s'.\n", tag[i], alternate_tag[i], fname);
                 errorFlag = 1;

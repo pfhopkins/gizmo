@@ -25,6 +25,12 @@
 #include "../../declarations/resolvedism_dgr.h"
 #include "../../declarations/resolvedism_depletion.h"
 #include "../../galaxy_sf/resolvedism_selfcheck.h"
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+#include "../../gravity/healpix_utils.h"
+#endif
+#if defined(OUTPUT_CHEM_PHOTORATES) && (!defined(CHEMCOOL_CXX) || !(defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)))
+#error "OUTPUT_CHEM_PHOTORATES needs CHEMCOOL_CXX and a G0 field (GALSF_RESOLVEDISM_G0_VARIABLE or M1)"
+#endif
 
 #ifdef CHEMCOOL
 
@@ -34,45 +40,17 @@
  * No COMMON block is written here.  The only Fortran call is CALC_TEMP,
  * a pure table lookup (init-time temp/gamma tables + explicit args only).
  * ========================================================================= */
-void chem_fill_inputs(int target, struct ChemInputs *in)
+#if defined(COSMIC_RAY_FLUID)
+static void chem_zeta_from_crfluid(int target, struct ChemInputs *in) /* zeta = 3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/Zsun radioactive; no CosmicRayIonRate floor */
 {
-    /* [orig chemcool.cc:155-170] local working variables (same roles) */
-    double rho, timestep, divv, energy, ekn;
-    double temp;
-    double yn, abh2, abhd, abco, abe;
-    double dl = in->dl_code;
-
-#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
-    double columni;
-#endif
-#ifdef RT_TREECOL_DUST_WEIGHTED
-    double NH;
-#endif
-#ifdef RT_TREECOL_H2_CO
-    double NH2, NCO;
-#endif
-    int i;
-
-    /* [orig chemcool.cc:173-177] cosmological redshift for the solver */
-    if(All.ComovingIntegrationOn) {
-        in->redshift = 1.0 / All.Time - 1.0;
-    } else {
-        in->redshift = 0.;
-    }
-    /* [orig chemcool.cc:178-181] density, timestep, physical velocity divergence */
-    rho      = CellP[target].Density * All.cf_a3inv;
-    timestep = in->dt_code;
-    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
-    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
-#if CHEMISTRYNETWORK == 20
-    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
-        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
-        double g = 0; int k;
-        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
-        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
-    }
+    double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP);
+    in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC + 1.e-21 * P[target].Metallicity[0] / All.SolarAbundances[0];
+    in->cr_energy_density = ecr_cgs;
+}
 #endif
 
+void chem_fill_gas_abundances(int target, struct ChemInputs *in) /* gas-phase C/O/Si/N/M per H and Zmass, from the cell metals */
+{
     /* Per-particle element abundances for cooling rates.  28-slot layout:
      *   Met[0]=total Z, [1]=H (explicit), [2]=He, [MET_OF(k)] = element k for k>=ELEM_C.
      *   Σ Met[1..27] = 1 by construction. */
@@ -167,11 +145,58 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->abundsi = All.InitialMetallicity * 1.5e-5;
     in->abundM  = All.InitialMetallicity * CHEMCOOL_ABUNDM_SOLAR;
 #endif
+}
+
+void chem_fill_inputs(int target, struct ChemInputs *in)
+{
+    /* [orig chemcool.cc:155-170] local working variables (same roles) */
+    double rho, timestep, divv, energy, ekn;
+    double temp;
+    double yn, abh2, abhd, abco, abe;
+    double dl = in->dl_code;
+
+#if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
+    double columni;
+#endif
+#ifdef RT_TREECOL_DUST_WEIGHTED
+    double NH;
+#endif
+#ifdef RT_TREECOL_H2_CO
+    double NH2, NCO;
+#endif
+    int i;
+
+    /* [orig chemcool.cc:173-177] cosmological redshift for the solver */
+    if(All.ComovingIntegrationOn) {
+        in->redshift = 1.0 / All.Time - 1.0;
+    } else {
+        in->redshift = 0.;
+    }
+    /* [orig chemcool.cc:178-181] density, timestep, physical velocity divergence */
+    rho      = CellP[target].Density * All.cf_a3inv;
+    timestep = in->dt_code;
+    divv     = (CellP[target].Gradients.Velocity[0][0] + CellP[target].Gradients.Velocity[1][1] + CellP[target].Gradients.Velocity[2][2]) * All.cf_a2inv;
+    if(All.ComovingIntegrationOn) divv += 3.0 * hubble_function(All.Time); /* Hubble flow contribution to physical divergence */
+#if CHEMISTRYNETWORK == 20
+    {   /* mean |dv_i/dx_i| (Hubble flow included) for the CO LVG column, physical cgs */
+        double hf = All.ComovingIntegrationOn ? hubble_function(All.Time) : 0.0;
+        double g = 0; int k;
+        for(k = 0; k < 3; k++) {g += fabs(CellP[target].Gradients.Velocity[k][k] * All.cf_a2inv + hf);}
+        in->dvdr_cgs = g / 3.0 * UNIT_VEL_IN_CGS / UNIT_LENGTH_IN_CGS;
+    }
+#endif
+
+    chem_fill_gas_abundances(target, in);
     /* [orig chemcool.cc:267-270] */
     in->abundD  = All.DeutAbund;
     in->G0      = All.G0;
     in->G0_LW   = All.G0; /* default: LW = full FUV, overridden below if G0_VARIABLE */
+#if defined(COSMIC_RAY_FLUID)
+    chem_zeta_from_crfluid(target, in);
+    CellP[target].CR_ionization_rate = in->cosmic_ray_ion_rate;
+#else
     in->cosmic_ray_ion_rate = All.CosmicRayIonRate;
+#endif
 
     in->id_current = P[target].ID;   /* [orig chemcool.cc:272] (same int truncation as COOLIC.id_current) */
 
@@ -221,9 +246,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double g0 = DMAX(All.FactorG0 * All.G0, 0.324e-2);
         in->G0 = g0; in->G0_LW = g0; in->G0_dust = g0;
 #if defined(COSMIC_RAY_FLUID)
-        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* transported CRs win over the SFR scaling */
-        in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC;
-        in->cr_energy_density = ecr_cgs;
+        chem_zeta_from_crfluid(target, in); /* transported CRs win over the SFR scaling */
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = All.FactorG0 * All.CosmicRayIonRate;
 #endif
@@ -241,6 +264,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     double UV_flux_min_pix = 0.324e-2/NPIX / (fac_flux2energy / u_Hab_FUV);
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix;
     for(i = 0; i < NPIX; i++) {
+#if defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && !defined(RADTRANSFER)
+        in->pix_att[i] = (CellP[target].UV_flux[i] < UV_flux_min_pix) ? 1. : 0.; /* TreeRay: floor pixels take the TreeCol column in calc_photo */
+#endif
         CellP[target].UV_flux[i] = DMAX(CellP[target].UV_flux[i], UV_flux_min_pix);
         CellP[target].LW_flux[i] = DMAX(CellP[target].LW_flux[i], LW_flux_min_pix);
         UV_flux_tot += CellP[target].UV_flux[i];
@@ -266,12 +292,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->G0_dust = G0_tot;
 
 #ifdef COSMIC_RAY_FLUID
-    { /* compute zeta from local CR energy density (Brugaletta+ 2024, Cummings+ 2016) */
-        double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
-        double ecr_eVcm3 = ecr_cgs / 1.602e-12; /* convert to [eV cm^-3] */
-        in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * ecr_eVcm3 / CR_ENDEN_SOLCIRC;
-        in->cr_energy_density = ecr_cgs; /* [erg cm^-3], for hadronic+Coulomb heating in cool_func */
-    }
+    chem_zeta_from_crfluid(target, in);
 #elif defined(CR_SCALE_WITH_G0)
     in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));
 #endif
@@ -315,6 +336,46 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #else
         double u_NUV_cgs = 0;
 #endif
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+        /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab x All.G0, G0_LW = u_LW/u_Hab_LW x All.G0, same per-pixel floors; stellar pixels arrive attenuated (pix_att=0) */
+        double u_Hab_FUV = 5.29e-14;
+        double G0_star = (u_NUV_cgs + u_PE_cgs) / u_Hab_FUV * All.G0;
+        double G0_LW_star = u_LW_cgs / u_Hab_LW * All.G0;
+        /* direction split: (1-f) isotropic + f from the pixel facing the M1 flux source */
+        double f_beam = 0; long ipix_src = 0;
+#if defined(RT_EVOLVE_FLUX)
+        {
+            Vec3<double> F_fuv = CellP[target].Rad_Flux[RT_FREQ_BIN_PHOTOELECTRIC];
+            double E_fuv = CellP[target].Rad_E_gamma[RT_FREQ_BIN_PHOTOELECTRIC];
+#if defined(RT_NUV)
+            F_fuv += CellP[target].Rad_Flux[RT_FREQ_BIN_NUV]; E_fuv += CellP[target].Rad_E_gamma[RT_FREQ_BIN_NUV];
+#endif
+            double Fmag = sqrt(F_fuv.norm_sq());
+            if(Fmag > 0 && E_fuv > 0) {
+                f_beam = DMIN(1., Fmag / (C_LIGHT_CODE_REDUCED * E_fuv));
+                double v_src[3] = {-F_fuv[0], -F_fuv[1], -F_fuv[2]}; /* radiation flows away from its source */
+                vec2pix_ring(NSIDE, v_src, &ipix_src);
+            }
+        }
+#endif
+        double G0_floor_pix = 0.324e-2 * All.G0 / NPIX;
+        double G0_LW_floor_pix = 0.1 * G0_floor_pix * (u_Hab_FUV / u_Hab_LW); /* TREE_RAD: LW_flux_min_pix = 0.1 UV_flux_min_pix */
+        double G0_tot = 0, G0_LW_tot = 0, g_pix[NPIX];
+        for(i = 0; i < NPIX; i++) {
+            double w_dir = (1. - f_beam) / NPIX + ((i == ipix_src) ? f_beam : 0.);
+            double s_uv = G0_star * w_dir, s_lw = G0_LW_star * w_dir;
+            in->pix_att[i] = (s_uv < G0_floor_pix) ? 1. : 0.;
+            g_pix[i] = DMAX(s_uv, G0_floor_pix);
+            G0_tot += g_pix[i];
+            G0_LW_tot += DMAX(s_lw, G0_LW_floor_pix);
+        }
+        for(i = 0; i < NPIX; i++) {in->fac_uv[i] = g_pix[i] / G0_tot;}
+        in->G0 = G0_tot;
+        in->G0_LW = G0_LW_tot;
+        in->G0_dust = G0_tot; /* as TREE_RAD: dust heating uses the same 6-13.6 eV field */
+        CellP[target].G0    = in->G0;
+        CellP[target].G0_LW = in->G0_LW;
+#else
         /* G0: FUV field (8-13.6 eV, already includes LW) in Habing units — drives the
            molecular photochemistry (H2/CO dissociation, C ionization).
            FLOOR (2026-07-04, Uli): use the SAME floor as the tree-column/G0_VARIABLE path
@@ -339,6 +400,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            (2026-07-04). Fields live under G0_VARIABLE||RADTRANSFER (cell_data.h). */
         CellP[target].G0    = in->G0;
         CellP[target].G0_LW = in->G0_LW;
+#endif /* RT_TREECOL_STELLAR_PIXELS_PREATTENUATED */
 
 #if defined(RT_CHEM_PHOTOION)
         /* Compute per-band photoionization rates [s^-1] and heating rates [erg s^-1 per atom]
@@ -377,9 +439,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            RADTRANSFER (mutually exclusive), so it MUST be replicated here — otherwise
            the network silently falls back to the fixed default CosmicRayIonRate. */
 #if defined(COSMIC_RAY_FLUID)
-        { double ecr_cgs = Get_CosmicRayEnergyDensity_cgs(target, P, CellP); /* [erg cm^-3] */
-          in->cosmic_ray_ion_rate = CR_IONRATE_SOLCIRC * (ecr_cgs / 1.602e-12) / CR_ENDEN_SOLCIRC; /* zeta from e_CR [eV cm^-3] */
-          in->cr_energy_density = ecr_cgs; }
+        chem_zeta_from_crfluid(target, in);
 #elif defined(CR_SCALE_WITH_G0)
         in->cosmic_ray_ion_rate = DMAX(1e-21, DMIN(2e-16, (in->G0 / 1.7) * All.CosmicRayIonRate));
 #endif
@@ -534,6 +594,12 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     in->X_H_chem = CHEM_COMP.X_H_chem;
     yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS); /* number density of hydrogen only */
 #endif
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+    in->NH_cell = 0;
+#if defined(RADTRANSFER)
+    in->NH_cell = 0.5 * yn * cbrt(P[target].Mass / (CellP[target].Density * All.cf_a3inv)) * All.cf_atime * UNIT_LENGTH_IN_CGS; /* half-cell column: unresolved in-cell attenuation */
+#endif
+#endif
 
     /* [orig chemcool.cc:604-618]  NOTE: rpar[3..6] are deliberately left
      * unset, exactly as the pre-refactor stack array was — with iphoto=6 the
@@ -596,7 +662,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #else
         NH = columni / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
 #endif
-#if defined(RADTRANSFER)
+#if defined(RADTRANSFER) && !(defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && defined(CHEMCOOL_CXX)) /* legacy Fortran keeps the zeroed column */
         /* M1 RT: the radiation transport already applies dust attenuation to the FUV/LW
            bands, so the field handed to the chemistry (Rad_E_gamma -> G0) is ALREADY
            dust-attenuated. The total-H column drives ONLY the dust f_dust in calc_photo
@@ -631,7 +697,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             in->column_density_projection[i] = NH;
         }
 #endif
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
         in->fac_uv[i] = CellP[target].UV_flux[i] / UV_flux_tot;
 #endif
     }
@@ -797,6 +863,7 @@ void chem_read_outputs(struct ChemOutputs *out)
 {
     int i;
     out->tdust = COOLRC.tdust;                            /* [orig chemcool.cc:924] */
+    out->cr_ion_heat = 0;                                 /* not tallied by the Fortran backend */
     for(i = 0; i < 28; i++) {out->lambda[i] = COOLRC.lambda[i];}                  /* [orig chemcool.cc:869-871,956-985] */
     for(i = 0; i < NRATES_CHEM; i++) {out->lambda_chem[i] = COOLRC.lambda_chem[i];}  /* [orig chemcool.cc:875-877] */
 #ifdef OUTPUT_SHIELD_FAC

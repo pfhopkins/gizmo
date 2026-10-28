@@ -384,8 +384,13 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 #endif
 
     if(dtime_cgs <= 0) {return;} /* catch */
-    int k_CRegy; double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);
+    int k_CRegy;
+#if defined(CHEMCOOL_CXX) && defined(GALSF_RESOLVEDISM)
+    double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: chemcool.cc takes the chemistry's ionisation heating out of e_CR */
+#else
+    double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC; /* some coefficients; a_hadronic is the default coefficient, b_coulomb_ion_per_GeV the default Coulomb+ionization (the two scale nearly-identically) normalization divided by GeV, b/c we need to divide the energy per CR  */
+#endif
     for(k_CRegy=0;k_CRegy<N_CR_PARTICLE_BINS;k_CRegy++)
     {
         double CR_coolrate,Z,species_ID; CR_coolrate=0; Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy)); species_ID=return_CRbin_CR_species_ID(k_CRegy);
@@ -485,6 +490,9 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #ifdef COOLING
     double ne=1, nh0=0, nHe0=0, nHepp, nhp, nHeII, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs, u0=cell[i].InternalEnergyPred;
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); rho_cgs=rho*UNIT_DENSITY_IN_CGS; // get thermodynamic properties
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
+    nh0 = DMAX(0., 1. - Get_Gas_Ionized_Fraction(i, pp, cell)); /* Stella: neutral H nuclei incl. H2 (ThermalProperties gives atomic H only), for ion-neutral damping */
+#endif
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
 #endif
     M_A = Get_AlfvenMachNumber_Local(i,vA_noion,0, cell); /* get turbulent Alfven Mach number estimate. 0 or 1 to turn on shear-correction */
@@ -595,6 +603,7 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
         dir_to_use = B_dot_dir * Bdir; // launch -along- B, projected [with sign determined] by the intially-desired direction
 #else
         dir_to_use = {dir[0], dir[1], dir[2]}; // launch in the 'default' direction
+#endif
         dir_mag = dir_to_use.norm_sq();
         if(dir_mag <= 0) {dir_to_use[0]=0; dir_to_use[1]=0; dir_to_use[2]=1; dir_mag=1;}
         for(k=0;k<3;k++) {
@@ -604,7 +613,6 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
             #pragma omp atomic
             cell[target].CosmicRayFluxPred[k_CRegy][k]+=dflux; // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
         }
-#endif
     }
     return;
 }
@@ -848,7 +856,15 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
     if(cell[i].DtCREgyNewInjectionFromShocks > 0) /* now perform the actual CR injection using the rates estimated in the hydro solver */
     {
         Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        double ecr_shock_before = 0; for(int kk=0;kk<N_CR_PARTICLE_BINS;kk++) {ecr_shock_before += cell[i].CosmicRayEnergy[kk];}
+#endif
         inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], cell); /* inject the energy */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+        {double ecr_shock_after = 0; for(int kk=0;kk<N_CR_PARTICLE_BINS;kk++) {ecr_shock_after += cell[i].CosmicRayEnergy[kk];}
+         #pragma omp atomic
+         CumulCRShockEnergy += ecr_shock_after - ecr_shock_before;} /* Stella ledger: CR energy delivered at shocks */
+#endif
         cell[i].DtCREgyNewInjectionFromShocks = 0; // reset to nil, we've successfully injected the energy
     }
 #endif
@@ -1897,7 +1913,9 @@ double CR_calculate_adiabatic_gasCR_exchange_term(int i, double dt_entr, double 
         if(divv_p*divv_f > 0) {if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_p;} else {divv_u=divv_f;}} // if both agree in sign here, use -larger- since more accurately captures CR-dominated limit
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change
         if(fabs(d_CR) > fabs(dtI_hydro)) {d_CR = dtI_hydro;} // do not allow this to exceed the sum (since all terms have the same sign here, in a well-ordered smooth flow)
+#if !defined(CRFLUID_EXCHANGE_PDV_ONLY) /* Stella opt-in: CRs exchange only their own P dV work; shock heating stays in the gas (CRs from shocks via CRFLUID_INJECTION_AT_SHOCKS) */
         if(fabs(d_CR) < fac_P*fabs(dtI_hydro)) {d_CR = fac_P*dtI_hydro;} // but also do not allow CR term to be -below- CR pressure fraction times total term, since that should be attributed to the CR (as this is all a quasi-adiabatic term)
+#endif
     } else { // both divv terms agree with each other, but dis-agree with the sign of the total change. can't assume anything about smoothness-of-the-flow
         if(fabs(divv_p) > fabs(divv_f)) {divv_u=divv_f;} else {divv_u=divv_p;} // pick the divv estimator with the smaller absolute magnitude, since it deviates
         d_CR = gamma_minus_eCR_tmp * divv_u; // expected PdV CR energy change

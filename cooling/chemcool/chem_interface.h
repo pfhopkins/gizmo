@@ -180,9 +180,13 @@ struct ChemInputs {
     /* --- per-pixel TREECOL columns -> PROJECT (orig chemcool.cc:637-713) - */
 #if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     double column_density_projection[NPIX];   /* total-H (or effective-dust) column [cm^-2] */
-#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED)
     double fac_uv[NPIX];       /* per-pixel FUV flux fraction [dust column && G0_VARIABLE] */
 #endif
+#endif
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+    double pix_att[NPIX];      /* 1 = floor pixel (chemistry applies the column), 0 = transported stellar flux */
+    double NH_cell;            /* M1 unresolved in-cell column [cm^-2]; 0 for TreeRay */
 #endif
 #ifdef RT_TREECOL_H2_CO
     double column_density_projection_h2[NPIX]; /* N_H2 [cm^-2] */
@@ -207,14 +211,19 @@ struct ChemOutputs {
     double lambda[28];               /* <- COOLRC.lambda: individual cooling
                                         rates [erg s^-1 cm^-3]               */
     double lambda_chem[NRATES_CHEM]; /* <- COOLRC.lambda_chem                 */
+    double cr_ion_heat;              /* CR ionisation heating applied over the solve [erg cm^-3] (C++ backend; 0 otherwise) */
 #ifdef OUTPUT_SHIELD_FAC
     double fac_shield_h2;            /* <- COOLRC.fac_shield_h2 (calc_photo)  */
     double fac_shield_dust;          /* <- COOLRC.fac_shield_dust             */
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+    double photorates[5];            /* k_H2 (x fshield) [s^-1], k_CO [s^-1], G_dust (PE), G0_dust chi_isrf/1.7 (dust heating), fshield_H2 */
 #endif
 };
 
 
 void chem_fill_inputs(int target, struct ChemInputs *in);
+void chem_fill_gas_abundances(int target, struct ChemInputs *in);
 void chem_commit_to_fortran(const struct ChemInputs *in);
 void chem_percell_snapshot(void);
 #ifdef CHEMCOOL_CXX

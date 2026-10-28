@@ -59,7 +59,7 @@ def check_rows(rows):
         d = {k: float(v) for k, v in d.items()}
         n, z, ecr, ne, xhi, xh2 = d["nH"], d["zeta_in"], d["ecr"], d["ne"], d["xHI"], d["xH2"]
         tag = "nH=%g zeta=%g" % (n, z)
-        zc = z + d.get("zeta_bg", 0.0)  # CR_BACKGROUND_IONRATE_ATTENUATED adds CosmicRayIonRate x f(N_H); the driver cell has no column, f = 1
+        zc = z + d.get("zeta_bg", 0.0) + 1e-21  # + radioactive floor 1e-21 Z/Zsun (driver cell is solar)  # CR_BACKGROUND_IONRATE_ATTENUATED adds CosmicRayIonRate x f(N_H); the driver cell has no column, f = 1
         if abs(d["zeta_cell"] / zc - 1) > 1e-6 or abs(z * 1.8 / 3e-17 * 1.602e-12 / ecr - 1) > 1e-6:
             fails.append("%s: zeta in the cell %g" % (tag, d["zeta_cell"]))
         gam = 3.2e-11 * zc * n * (xhi + xh2) + (0.87 * 6.37e-16 / 6 + 0.53 * 3.09e-16 * ne / (1 + 4 * ABHE)) * ecr * n

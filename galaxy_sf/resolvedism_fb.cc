@@ -534,7 +534,7 @@ void resolvedism_determine_SNe(void)
 #endif
 
             /* Stochastic check */
-            unsigned long long ia_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_SALT_IA); /* rank-independent */
+            unsigned long long ia_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IA); /* rank-independent */
             double rn = resolvedism_rng_uniform(&ia_rng);
             if(rn < P_Ia) {
                 P[i].SNe_ThisTimeStep = 4; /* Type Ia */

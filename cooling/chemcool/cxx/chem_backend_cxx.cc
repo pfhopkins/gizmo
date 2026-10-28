@@ -69,7 +69,7 @@ void chem_cxx_cell_defaults(ChemCell& c, const ChemTables& T, int net)
     c.tdust = 10.0;
     c.fshield_CO = 1.0;
     c.npix = CHEM_NPIX;
-    for (int k = 0; k < CHEM_NPIX; k++) c.fac_uv[k] = 1.0 / CHEM_NPIX;
+    for (int k = 0; k < CHEM_NPIX; k++) { c.fac_uv[k] = 1.0 / CHEM_NPIX; c.pix_att[k] = 1.0; }
     n20_cell_defaults(c);
     c.tab = &T;
 }

@@ -1107,6 +1107,13 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+        case IO_CHEM_PHOTORATES:
+#ifdef OUTPUT_CHEM_PHOTORATES
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < 5; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ChemPhotoRates[k];} fp += 5; n++;}
+#endif
+            break;
+
         case IO_RESOLVEDISM_G0_NUV:
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_NUV_VARIABLE)
             for(n = 0; n < pc; pindex++)
@@ -2584,6 +2591,12 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
 
+        case IO_CHEM_PHOTORATES:
+#ifdef OUTPUT_CHEM_PHOTORATES
+            if(mode) bytes_per_blockelement = 5 * sizeof(MyInputFloat);
+            else bytes_per_blockelement = 5 * sizeof(MyOutputFloat);
+#endif
+            break;
         case IO_SAMPLE_IMF_MSTAR:
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             if(mode) bytes_per_blockelement = N_STELLAR_MASS * sizeof(MyInputFloat);
@@ -3008,6 +3021,9 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break;
 
+        case IO_CHEM_PHOTORATES:
+            values = 5;
+            break;
         case IO_SAMPLE_IMF_MSTAR:
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             values = N_STELLAR_MASS;
@@ -3305,6 +3321,10 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             return ngas;
             break;
 
+        case IO_CHEM_PHOTORATES:
+            for(i = 0; i < 6; i++) {if(i != 0) {typelist[i] = 0;}}
+            return ngas;
+            break;
         case IO_SAMPLE_IMF_MSTAR:
         case IO_STOCHASTIC_IMF_MSTAR:
         case IO_FORMATION_DENSITY:
@@ -3695,6 +3715,11 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+        case IO_CHEM_PHOTORATES:
+#ifdef OUTPUT_CHEM_PHOTORATES
+            return 1;
+#endif
+            break;
         case IO_SAMPLE_IMF_MSTAR:
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
             return 1;
@@ -4424,6 +4449,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_TREE_RAD_PROJECTION:
             strncpy(label, "TRPR", 4);
             break;
+        case IO_CHEM_PHOTORATES:
+            strncpy(label, "CHPR", 4);
+            break;
         case IO_SAMPLE_IMF_MSTAR:
             strncpy(label, "SIMF", 4);
             break;
@@ -4959,6 +4987,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_TREE_RAD_PROJECTION:
             strcpy(buf, "TreeRadProjection");
+            break;
+        case IO_CHEM_PHOTORATES:
+            strcpy(buf, "ChemPhotoRates");
             break;
         case IO_SAMPLE_IMF_MSTAR:
             strcpy(buf, "SampleIMFStellarMasses");

@@ -36,6 +36,12 @@
 #include "../mesh/kernel.h"
 #include "ketju_coupling.h"
 #include "../gravity/tree_pair_kernel.h"
+#ifndef KETJU_LEGACY_C_LIBRARY
+#include "ketju_mstar_kokkos.h" /* the three library calls on the C++/Kokkos MSTAR library (default) */
+#define ketju_create_system kj_mstar_create_system
+#define ketju_run_integrator kj_mstar_run_integrator
+#define ketju_free_system kj_mstar_free_system
+#endif
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) || defined(KETJU_PN_REMNANT_TAG)
 #include "resolvedism_stellar_tables.h" /* ELEM_*, MET_OF, REM_* */
 #endif
@@ -114,6 +120,7 @@ struct ketju_mpi_particle {
 #endif
 #ifdef KJ_STAR_COLLISIONS
     double CollRadius; /* contact radius, physical code length (0: never collides) */
+    double BirthTime, FormDens; /* StellarAge and physical formation density, for the collision log */
 #endif
     double GravAcc[3]; /* comoving GravAccel of the gravity call whose kick started this step */
     double TidalNorm;  /* physical |T| of the field external to its chain at its last step end (0: not known) */
@@ -131,6 +138,9 @@ struct ketju_extra_data {
     int Type;
 #ifdef KETJU_SINKS
     short int KetjuPNClass;
+#endif
+#ifdef KJ_STAR_COLLISIONS
+    double BirthTime, FormDens;
 #endif
 };
 
@@ -975,6 +985,16 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
 #endif
 #ifdef KJ_STAR_COLLISIONS
         mp.CollRadius = ketju_star_contact_radius(idx);
+#ifdef GALSF
+        mp.BirthTime = (P[idx].Type == 4) ? P[idx].StellarAge : 0;
+#else
+        mp.BirthTime = 0;
+#endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF)
+        mp.FormDens = (P[idx].Type == 4) ? P[idx].FormationDensity : 0;
+#else
+        mp.FormDens = 0;
+#endif
 #endif
         for(int j = 0; j < 3; j++) mp.GravAcc[j] = P[idx].GravAccel[j];
         for(int j = 0; j < 6; j++) mp.Tidal[j] = 0;
@@ -1110,6 +1130,9 @@ static void setup_integrator(KetjuRegion &reg, const int *counts)
             reg.extra_data[i].Task = reg.all_particles[i].Task;
             reg.extra_data[i].Index = reg.all_particles[i].Index;
             reg.extra_data[i].Type = reg.all_particles[i].Type;
+#ifdef KJ_STAR_COLLISIONS
+            reg.extra_data[i].BirthTime = reg.all_particles[i].BirthTime; reg.extra_data[i].FormDens = reg.all_particles[i].FormDens;
+#endif
 #ifdef KETJU_SINKS
             reg.extra_data[i].KetjuPNClass = reg.all_particles[i].KetjuPNClass;
             if(i < reg.num_pn_particles) {
@@ -1545,7 +1568,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
     };
     double E_before = (reg.compute_tasks.is_root() && reg.integrator) ? E_internal() : 0;
     if(reg.compute_tasks.is_member() && reg.integrator) {
-        if(!kepler_pair_step(reg, dt_physical)) {
+        int kepler = kepler_pair_step(reg, dt_physical);
+        if(!kepler) {
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 1);
         ketju_run_integrator(reg.integrator, dt_physical * KJ_TIME_TO_NAT);
         kj_state_change_units(reg.integrator->physical_state, reg.integrator->num_particles, 0);
@@ -1567,7 +1591,8 @@ static void integrate_region(KetjuRegion &reg, double dt_physical)
         if(reg.compute_tasks.is_root()) {
             double dE_coll = 0, eu = KJ_MASS_TO_NAT * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT;
             for(int m = 0; m < reg.integrator->num_mergers; m++) if(reg.integrator->merger_infos[m].is_collision) dE_coll += reg.integrator->merger_infos[m].dE_collision / eu;
-            KetjuEnergyLedger[2] += E_internal() - E_before - dE_coll;
+            /* MSTAR: its error of T - U - U_tide net of collisions (U softened as integrated); exact Kepler pair: direct */
+            KetjuEnergyLedger[2] += kepler ? E_internal() - E_before - dE_coll : dE * fabs(E_before);
         }
 
         /* Per-region integration logs are silenced (they generate ~1 line per
@@ -1848,9 +1873,15 @@ static void scatter_results(KetjuRegion &reg)
                 if(info->is_collision) {
                     double mu = KJ_MASS_TO_NAT, eu = mu * KJ_VEL_TO_NAT * KJ_VEL_TO_NAT; /* MSTAR natural -> host units */
                     KetjuCollisionEnergy += info->dE_collision / eu;
-                    printf("KETJU STAR COLLISION: ID %llu (M=%g) + ID %llu (M=%g) at t=%g, dE=%g\n",
-                           (unsigned long long)reg.extra_data[info->extra_index1].ID, info->m1 / mu,
-                           (unsigned long long)reg.extra_data[info->extra_index2].ID, info->m2 / mu, All.Time, info->dE_collision / eu);
+#ifdef KJ_STAR_COLLISIONS
+                    const ketju_extra_data &x1 = reg.extra_data[info->extra_index1], &x2 = reg.extra_data[info->extra_index2];
+                    double age1 = evaluate_time_since_t_initial_in_Gyr(x1.BirthTime) * 1e9, age2 = evaluate_time_since_t_initial_in_Gyr(x2.BirthTime) * 1e9;
+                    double rho_y = (age1 < age2) ? x1.FormDens : x2.FormDens; /* younger star's formation density */
+                    double tff_yr = (rho_y > 0) ? sqrt(3. * M_PI / (32. * All.G * rho_y)) * UNIT_TIME_IN_YR : 0;
+                    printf("KETJU STAR COLLISION: ID %llu (M=%g) + ID %llu (M=%g) at t=%g, dE=%g sibling=%d dt_birth=%g yr (%g t_ff) age_younger=%g yr\n",
+                           (unsigned long long)x1.ID, info->m1 / mu, (unsigned long long)x2.ID, info->m2 / mu, All.Time, info->dE_collision / eu,
+                           (int)(x1.ID == x2.ID), fabs(age1 - age2), (tff_yr > 0) ? fabs(age1 - age2) / tff_yr : -1., DMIN(age1, age2));
+#endif
                     continue;
                 }
                 printf("KETJU BH MERGER [region]: m1=%g m2=%g -> m_rem=%g, chi1=%g chi2=%g -> chi_rem=%g, v_kick=%g\n",

@@ -2877,7 +2877,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef TREE_RAY
                     /* absorber deposit: same Sigma contribution, binned by COM distance */
                     {int is_col = iheal*TREE_RAY_NSHELL + TREERAY_SHELL_OF(r2_col);
-                     treeray_shell_col[is_col] += colmass[TREECOL_GAS] / area;
+                     treeray_shell_col[is_col] += colmass[TREECOL_DUST] / area; /* per-cell DGR-weighted (solar units), as the TreeCol dust column */
 #ifdef TREE_RAY_PI
                      treeray_shell_nh[is_col] += nh_m / area;
 #ifdef TREERAY_PI_HE

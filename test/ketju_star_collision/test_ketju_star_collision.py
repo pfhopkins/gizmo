@@ -63,3 +63,19 @@ def test_ketju_star_collision_energy():
     de_coll, de_tot, de_mstar = float(f["collisions-dE"]), float(f["dE"]), float(f["MSTAR-dE"])
     print(f"collisions {de_coll:.6e} ETOT {de_tot:.6e} MSTAR {de_mstar:.2e} (units |E0|)")
     assert de_coll < 0 and abs(de_tot - de_coll) < 1e-3 * abs(de_coll) and abs(de_mstar) < 1e-8
+
+
+def test_ketju_star_collision_triple():
+    """No false collision in a hierarchical triple: a perturbed wide pair whose r.v changes sign with a nearly radial relative
+    velocity has an osculating pericentre below R1 + R2 that lies far in the past; it must not count as a passage."""
+    subprocess.run([sys.executable, "make_ketju_star_collision_ics.py"], cwd=TEST_DIR, check=True)
+    clean_test_outputs(TEST_NAME)
+    build_and_run_test(TEST_NAME, 1, 1, param_overrides={
+        "InitCondFile": "ketju_star_collision_triple_ics", "TimeMax": 2e-3, "TimeBetSnapshot": 2e-4, "TimeBetStatistics": 2e-4,
+        "MaxSizeTimestep": 1.25e-7, "SofteningStars": 3.117e-8, "KetjuRegionRadius": 1e-5, "KetjuRegionMotionCapFactor": 0,
+        "KetjuKeplerPairs": 1, "KetjuFlybyStepEta": 0.2})
+    log = open(f"{TEST_DIR}/test_{TEST_NAME}.out").read()
+    assert "KETJU STAR COLLISION" not in log
+    lines = [l for l in log.splitlines() if l.startswith("KETJU ENERGY")]
+    de_tot = float(dict(kv.split("=") for kv in lines[-1].split() if "=" in kv and not kv.startswith("t="))["dE"])
+    assert abs(de_tot) < 1e-6

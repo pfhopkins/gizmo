@@ -415,6 +415,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         rates[10] = -1e-11 * (ynh2 + ynh + yne) * c.cosmic_ray_ion_rate
                   * (1.0 + 4.1 * std::sqrt(abe / (abe + 7e-2)));
 #endif
+        c.cr_ion_heat = -rates[10]; // ionisation heating, integrated by the driver
         // Hadronic + Coulomb heating from CR proton losses (Guo & Oh 2008,
         // Mannheim & Schlickeiser 1994); CR_gas_heating() without its ionisation part, which the zeta term heats.
         if (c.cr_energy_density > 0.0) {
@@ -425,6 +426,7 @@ int cxx_cool_func(double temp, double yn, double dl, double divv, double G_dust,
         }
     } else {
         rates[10] = 0.0;
+        c.cr_ion_heat = 0.0;
     }
 
     // ---- (R12) photoelectric heating (Bakes & Tielens 94 / Wolfire+03) ----

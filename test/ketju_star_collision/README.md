@@ -5,5 +5,6 @@ MSTAR checks every accepted step: a separation below R1 + R2, or a pericentre pa
 two-body pericentre distance is below R1 + R2 (so a passage inside one GBS step is not missed). The product sits at the
 pair's centre of mass with its summed mass and momentum; the heavier star survives.
 
-Cases: head-on, grazing at 0.8 (R1 + R2) with a bound third star, and a miss at 1.25 (R1 + R2). Pure N-body: the radius
+Cases: head-on, grazing at 0.8 (R1 + R2) with a bound third star, and a miss at 1.25 (R1 + R2). A pericentre counts only if
+the osculating orbit passed it since the last check; the triple case (K-stack K3 IC) must show no collision. Pure N-body: the radius
 is the main-sequence fallback R/Rsun = M^0.8 (M < 1 Msun), M^0.57 (above). Runs take a few seconds on one rank.

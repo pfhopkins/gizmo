@@ -299,22 +299,22 @@ static void incode_total_energy(void)
      * (the potential-convention switch of an inside-kernel pair must be evaluated at the separation
      * where it actually happened). Only the PRINT remains throttled to snapshot cadence. Cost is
      * O(N_type5^2) per step — the diagnostic already bails for N>4096. */
-    int do_print = !(have0 && (All.Time - last_t < All.TimeBetSnapshot - 1e-9));
+    /* print only where every counted particle ends its step here: elsewhere inactive particles carry half-kicked
+     * velocities and KETJU members part-way through their step sit on the host's chord, so E is not the conserved one */
+    int nsync_loc = 0, nsync = 0;
+    for(int q = 0; q < NumPart; q++) if(KETJU_ETOT_PTYPE(q) && P[q].Ti_begstep + P[q].dt_step != All.Ti_Current) nsync_loc++;
+    MPI_Allreduce(&nsync_loc, &nsync, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    int do_print = (nsync == 0) && !(have0 && (All.Time - last_t < All.TimeBetSnapshot - 1e-9));
 
     /* per particle, 11 doubles: pos[3], Vel[3], (unused), mass, integrated-flag.
-     * With pure-MSTAR coupling the chain member's synchronized P.Vel and P.Pos are exactly
-     * MSTAR's end-of-step state, so the plain sync-point values give the true energy. */
+     * At a print every member ends its step here, so P.Pos/P.Vel are MSTAR's end-of-step state. */
     const int W = 12;  /* [11] = particle ID (for the switch-ledger pair tracking across steps) */
     int nloc = 0, i, j;
     for(i = 0; i < NumPart; i++) if(KETJU_ETOT_PTYPE(i)) nloc++;
     double *sloc = (double*)malloc((nloc > 0 ? nloc : 1) * W * sizeof(double));
     int k = 0;
     for(i = 0; i < NumPart; i++) if(KETJU_ETOT_PTYPE(i)) {
-        /* Use P.Pos/P.Vel by default. For a KETJU chain member these host-frame values are the
-         * velocity-trick reconstruction: P.Pos is a LINEAR drift (chord) of the true curved internal
-         * orbit and P.Vel the trick velocity, so at large member host steps they misrepresent the
-         * internal separation/velocity and give a spurious (constant) PE/KE offset even though MSTAR
-         * conserves the orbit exactly. Use MSTAR's synchronized true end-of-step state instead. */
+        /* P.Pos/P.Vel: exact for members only when their step ends here (mid-step they are the chord), see do_print */
         double px=P[i].Pos[0], py=P[i].Pos[1], pz=P[i].Pos[2];
         double vx=P[i].Vel[0], vy=P[i].Vel[1], vz=P[i].Vel[2];
         sloc[k*W+10]=0.0;
@@ -411,7 +411,7 @@ static void incode_total_energy(void)
 
             if(do_print) {
 #ifdef KETJU_REGULARIZATION
-                ketju_note_total_energy(E, E0); /* printed evaluations only: those are at full syncs, mid-step members carry chord velocities */
+                ketju_note_total_energy(E, E0); /* printed evaluations only: all counted particles synchronised */
 #endif
 #ifdef STARS_INTEGRATED_BY_RUMI
                 rumi_note_total_energy(E0); /* the collision energy RUMI++ booked, over |E0| (as KETJU ENERGY's collisions-dE) */
@@ -480,7 +480,7 @@ void run(void)
     while(1)			/* main timestep iteration loop */
     {
 #ifdef OUTPUT_STAR_ENERGY_DIRECT_SUM
-        incode_total_energy();	/* DIAGNOSTIC: true KETJU-aware energy at sync point (prints on full syncs) */
+        incode_total_energy();	/* DIAGNOSTIC: KETJU-aware total energy, printed at the first full sync after each TimeBetSnapshot */
 #endif
         compute_statistics();	/* regular statistics outputs (like total energy) */
 #if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
@@ -1836,12 +1836,21 @@ void energy_statistics(void)
     compute_global_quantities_of_system(); /* ensure SysState is populated for conservation budget */
     double cool_glob = 0;
     MPI_Reduce(&CumulCoolingEnergyLoss, &cool_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double floor_glob = 0;
+    MPI_Reduce(&CumulKickFloorEnergy, &floor_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#ifdef MAGNETIC
+    double mhdnum_glob = 0;
+    MPI_Reduce(&CumulMHDNumEnergy, &mhdnum_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
     double pi_glob = 0, sf_glob = 0;
     MPI_Reduce(&CumulPIHeatErg, &pi_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&CumulSFEnergyRemoved, &sf_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #ifdef COSMIC_RAY_FLUID
-    double cr_loc[2] = {resolvedism_cr_energy_local(), CumulCRLossEnergy * UNIT_ENERGY_IN_CGS}, cr_glob[2] = {0, 0};
-    MPI_Reduce(cr_loc, cr_glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double cr_loc[3] = {resolvedism_cr_energy_local(), CumulCRLossEnergy * UNIT_ENERGY_IN_CGS, 0}, cr_glob[3] = {0, 0, 0};
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+    cr_loc[2] = CumulCRShockEnergy * UNIT_ENERGY_IN_CGS;
+#endif
+    MPI_Reduce(cr_loc, cr_glob, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
 #ifdef MAGNETIC
     double emag_loc = 0, emag_glob = 0;
@@ -1881,8 +1890,15 @@ void energy_statistics(void)
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo, "  %.16e  %.16e  %.16e", cr_glob[0], CumulCRInjectedErg, cr_glob[1]);
 #endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+      fprintf(FdENERGYinfo, "  %.16e", cr_glob[2]);
+#endif
 #ifdef MAGNETIC
       fprintf(FdENERGYinfo, "  %14.6e", emag_glob * UNIT_ENERGY_IN_CGS);
+#endif
+      fprintf(FdENERGYinfo, "  %14.6e", floor_glob * UNIT_ENERGY_IN_CGS);
+#ifdef MAGNETIC
+      fprintf(FdENERGYinfo, "  %14.6e", mhdnum_glob * UNIT_ENERGY_IN_CGS);
 #endif
       fprintf(FdENERGYinfo, "\n");
       fflush(FdENERGYinfo);

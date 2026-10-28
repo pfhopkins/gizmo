@@ -3,7 +3,8 @@
 orbit (v_inf = 5 km/s) with pericentre 0 (head-on), 0.8 (R1 + R2) (graze, with a 0.7 Msun third star on a 600 AU orbit
 around the pair, so MSTAR goes on with two bodies after the merger) or 1.25 (R1 + R2) (miss). A 0.3 Msun bystander sits
 at 0.97 pc. Radii: R/Rsun = M^0.8 below 1 Msun, M^0.57 above (the code's fallback without Stella tables). Centred on
-the origin: GIZMO reads positions in single precision."""
+the origin: GIZMO reads positions in single precision. Triple: three 1 Msun stars, a 50 AU e = 0.2 binary and a third star at
+~1200 AU (the K-stack K3 IC), where no pair ever comes near contact."""
 import numpy as np, h5py
 
 AU = 1.0 / 206264.806 / 1e3          # kpc
@@ -41,7 +42,13 @@ def pair(rp_au, r0_au=30.0, vinf=5.0):
     return [-M2 / M * x, M1 / M * x], [-M2 / M * v, M1 / M * v]
 
 
+TRIPLE_X = [[2.0846989099999994e-06, 0, 0], [1.7938106899999997e-06, 0, 0], [-3.8785095999999995e-06, 0, 0]]  # kpc
+TRIPLE_V = [[0, 2.8741549917192337, 0.038696562636978307], [0, -1.9895475219637486, 0.038696562636978307],
+            [0, -0.88460746975548465, -0.077393125273956601]]                                       # km/s
+
+
 def main():
+    write("ketju_star_collision_triple_ics.hdf5", [1.0, 1.0, 1.0], [np.array(x) / AU for x in TRIPLE_X], TRIPLE_V)
     for case, f in CASES.items():
         x, v = pair(f * R_CONTACT); m = [M1, M2]
         if case != "headon":

@@ -1,0 +1,24 @@
+#!/bin/bash            # this line only there to enable syntax highlighting in this file
+
+## G0 consistency test: one Stella star in a fixed medium; the radiation path is appended per run
+## (test_g0_consistency.py: TREE_RAD = G0_VARIABLE, TREE_RAY = + TREE_RAY, M1 = RT_M1 bands)
+HYDRO_MESHLESS_FINITE_MASS
+GALSF_RESOLVEDISM
+GALSF_RESOLVEDISM_FB                   % required by Stella; no feedback channel is enabled
+GALSF_RESOLVEDISM_SAMPLE_IMF
+N_STELLAR_MASS=5
+GALSF_RESOLVEDISM_STELLAR_TABLES
+GALSF_RESOLVEDISM_METALS_INDIVIDUAL
+COOLING
+COOLING_OPERATOR_SPLIT
+CHEMCOOL
+CHEMISTRYNETWORK=5
+CO_SHIELDING
+CHEMCOOL_CXX
+CHEMCOOL_KEEP_IC_ABUNDANCES
+RT_USE_TREECOL_FOR_NH=12
+NEED_HEALPIX
+METALS
+DO_DENSITY_AROUND_NONGAS_PARTICLES
+OUTPUT_CHEM_PHOTORATES
+OUTPUT_TEMPERATURE

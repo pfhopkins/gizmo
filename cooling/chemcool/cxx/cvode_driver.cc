@@ -345,6 +345,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
     cxx_stat_calls++;
     c.yn = yn; c.dl = dl; c.divv = divv;
     c.fatal_code = 0;
+    c.cr_ion_heat_int = 0.0;
 
     double y[CHEM_NSPEC_MAX], y_old[CHEM_NSPEC_MAX], ydot[CHEM_NSPEC_MAX];
     for (int i = 0; i < c.trac_num; i++) y[i] = non_eq_abundances[i];
@@ -487,6 +488,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                                        1e-1 * std::fabs(y[itmp] / ydot[itmp]));
                 else
                     dt_byp = t_end - t_start;
+                c.cr_ion_heat_int += c.cr_ion_heat * dt_byp; // explicit step: exactly the applied heating
                 y[itmp] += dt_byp * ydot[itmp];
                 t_start += dt_byp;
                 if (t_start >= t_end - 1e-10 * t_end) { done = 1; break; }  // WEDGEFIX 3
@@ -510,6 +512,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
 
     int new_step = 1;
     int need_reinit = 0;         // istate=1 equivalent pending
+    double crh_prev = 0.0, crh_dt = 0.0; // CR ionisation heating at the last accepted state, pending accepted interval
     double dt = 0.0, dt_est = 0.0;
     int retcode = 1;             // if the loop exhausts: "nstep exceeded"
     double tdust_old = c.tdust;
@@ -521,6 +524,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
 
             int rerr = rhs_dispatch(t_start, y, ydot, c);
             if (c.fatal_code) { retcode = c.fatal_code; goto out; }
+            c.cr_ion_heat_int += 0.5 * (crh_prev + c.cr_ion_heat) * crh_dt; crh_prev = c.cr_ion_heat; crh_dt = 0.0; // trapezoid over the accepted substep
             dt_est = 1e18;
             for (int j = 0; j < nspec; j++) {
                 if (used[j] && ydot[j] != 0.0 && safety[j] != 0.0 && y[j] > ctrl_floor[j]) {
@@ -597,6 +601,7 @@ int cxx_evolve_abundances(double time, double dl, double yn, double divv,
                 need_reinit = 1;                          // istate = 1
             } else {
                 t_start = t_start + dt;
+                crh_dt = dt;
                 new_step = 1;                             // istate stays 2:
                 // NB check_abundances clips modified OUR y (final answer /
                 // future y_old) but were NOT pushed into CVODE -- continuation
@@ -629,6 +634,7 @@ out:
             double ydot_final[CHEM_NSPEC_MAX];
             (void)rhs_dispatch(t_start, y, ydot_final, c);
         }
+        c.cr_ion_heat_int += 0.5 * (crh_prev + (chem_legacy_lambda() ? crh_prev : c.cr_ion_heat)) * crh_dt; // last accepted substep
     }
 out_nocopy:
     if (floor_hits > 0)

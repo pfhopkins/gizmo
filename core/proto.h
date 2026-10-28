@@ -63,7 +63,7 @@ int check_if_sufficient_mergesplit_time_has_passed(int i);
 int is_particle_a_special_zoom_target(int i);
 #endif
 int merge_particles_ij(int i, int j);
-int split_particle_i(int i, int n_particles_split, int i_nearest, double r_nearest_presplit);
+int split_particle_i(int i, int n_particles_split, double r_near);
 void do_first_halfstep_kick(void);
 void do_second_halfstep_kick(void);
 double matrix_invert_ndims(Mat3<double>& T, Mat3<double>& Tinv);
@@ -836,12 +836,18 @@ void cooling_parent_routine(void);
 void chemcool_init(void);
 double do_chemcool_step(int target, double dt, double dl, int mode);
 double chemcool_cool_cell(int target, double u_old, double dt);
+double chemcool_startup_electrons(int target, double *x_HII, double *x_HI);
 extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code energy units] */
+extern double CumulMHDNumEnergy; /* total energy created by the MHD source terms and the missing -B^2/2 dV/dt [code energy units] */
+extern double CumulKickFloorEnergy; /* thermal energy added by the kick u-limiter and temperature floor [code energy units] */
 extern double ChemcoolPIHeatErg, ChemcoolPIHeatCells; /* subgrid-PI floor heating in the current cooling pass [erg], cells */
 extern double CumulPIHeatErg;                         /* cumulative subgrid-PI heating on this rank [erg] */
 extern double PIHeatPendingErg, PIHeatPendingCells;   /* PI heating not yet written to FeedbackBudget */
 #ifdef COSMIC_RAY_FLUID
 extern double CumulCRLossEnergy;                      /* CR energy removed by the loss operator on this rank [code energy units] */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+extern double CumulCRShockEnergy;                     /* CR energy injected at shocks on this rank [code energy units] */
+#endif
 #endif
 #endif
 #ifdef GALSF_RESOLVEDISM_FB

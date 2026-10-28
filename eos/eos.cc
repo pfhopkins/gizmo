@@ -7,6 +7,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
+#include "../cooling/chemcool/chemcool_consts.h"
+#endif
 
 /*! Routines for gas equation-of-state terms (collects things like calculation of gas pressure)
  * This file was written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -226,6 +229,15 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #ifdef COOLING
 #ifdef CHIMES
   return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
+#elif defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
+    { /* ions per H nucleus from the chemistry's electrons; ThermalProperties' nH0 is atomic H only, so 1-nH0 would count H2 as ionized */
+        double x_ion = cell[i].Ne;
+#if CHEMISTRYNETWORK == 5
+        x_ion -= cell[i].TracAbund[ICO]; /* net 5 counts all gas-phase C as C+; carbon in CO is neutral */
+#endif
+        if(!isfinite(x_ion)) {x_ion = 0;}
+        return DMIN(DMAX(x_ion, 1.e-12), 1.);
+    }
 #else
     double ne=1, nh0=0, nHe0, nHepp, nhp, nHeII, temperature, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); // get thermodynamic properties

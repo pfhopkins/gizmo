@@ -573,6 +573,8 @@ extern struct global_data_all_processes
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
   double IMFSampleStellarMassCut; /*!< minimum stellar mass to record in IMF sampling */
   double IMFSampleMinMass;        /*!< lower bound of IMF sampling [Msun]: 0.08 = full IMF, higher = truncated (LYRA-style) */
+  double SFCooldownFreeFallFraction; /*!< per-cell SF cooldown after a spawn, in units of the cell's t_ff at spawn (0: off) */
+  int RNGRealisation; /*!< Stella random-stream realisation (0: default streams) */
 #endif
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
   char StellarTablesFile[256];  /*!< path to stellar_tables_unified.hdf5 */
@@ -585,6 +587,12 @@ extern struct global_data_all_processes
 
 #if defined(COSMIC_RAY_FLUID) && !defined(GALSF_FB_FIRE_STELLAREVOLUTION) /* complement of the FIRE declaration; begrun registers it under COSMIC_RAY_FLUID */
   double CosmicRay_SNeFraction;   /*!< fraction of SN energy injected as CRs (typically 0.1) */
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_RESOLVEDISM)
+  double CosmicRayInitialAmbient_eVcm3, CosmicRayInitialCloud_eVcm3, CosmicRayInitialCloudThreshold_nH; /*!< Stella: initial CR energy density [eV cm^-3] below/above the nH threshold [cm^-3] on fresh starts */
+#endif
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+  double CosmicRay_ShockAccelEfficiency; /*!< Stella: fraction of the dissipated shock energy flux into CRs (default 0.1) */
+#endif
 #endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
@@ -1638,6 +1646,7 @@ enum iofields
   IO_RESOLVEDISM_G0_LW,
   IO_RESOLVEDISM_G0_ATTEN,   /* attenuated FUV = G0 x f_dust (M1 vs tree-column comparison) */
   IO_RESOLVEDISM_SHIELDFAC_DUST, /* dust shielding factor f_dust (=1 under M1) */
+  IO_CHEM_PHOTORATES,  /* chemistry-side photorates and heating fields (OUTPUT_CHEM_PHOTORATES) */
   IO_RESOLVEDISM_G0_NUV,
   IO_RESOLVEDISM_G0_OPT,
   IO_RESOLVEDISM_CR_ZETA,

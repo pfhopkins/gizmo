@@ -1,0 +1,62 @@
+# KETJU integrator unit tests
+
+Tests of GIZMO's two submodules of github.com/Ulli1991/ketju-integrator: `ketju-integrator/` (branch `main`, the
+C++/Kokkos MSTAR library) and `ketju-integrator-c/` (branch `ketju-c`, the C library; its header is also GIZMO's data
+model on the default path). Clone with `--recurse-submodules` or run `git submodule update --init --recursive`. No GIZMO
+build or simulation is involved.
+
+## Default: the C++/Kokkos library (GIZMO's default MSTAR)
+
+`test_ketju_kokkos_ctests` builds `ketju-integrator/` (Kokkos from `KOKKOS_ROOT` or the Makefile default; build directory
+in a pytest temporary directory) and runs its 5 ctests: `mstar_unit_tests` (KETJU's unit tests and the GIZMO-addition
+and softening-kink cases below on `mstar::mstar`), `mstar_compare_c` (against stored C-library results: Kepler,
+Pythagorean, Plummer cores, PN binary and cusp, BH mergers, contact collisions, tide, softening), `mstar_extra_force`,
+`mstar_embedded_tide`, `mstar_driver`. See `ketju-integrator/README.md`.
+
+## Legacy: the C library on MPI (`KETJU_LEGACY_C_LIBRARY`)
+
+`test_ketju_unit` runs only with `GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY`: the googletest suite of
+`ketju-integrator-c/`, each case on 1, 2 and 4 MPI tasks.
+
+## What is tested
+
+37 cases, each on 1, 2 and 4 MPI tasks. The original 26:
+- `Integration_*`: binary integration (Newtonian, PN, spin, three-body PN terms, unit systems)
+  against stored results of the old integrator.
+- `Integration_with_mergers`, `Instant_mergers`: BH mergers (head-on, from an orbit, multiple
+  mergers with per-particle extra data).
+- `MST/ConstructionTest`: Prim and divide-and-conquer MST construction, 2 to 1000 random particles.
+
+`Gizmo_*` (`unit-tests/gizmo_additions.cpp`): GIZMO's additions, each with an analytic or conserved-quantity check and,
+where feasible, a check that fails without the feature or fix:
+- `Gizmo_collision_radius.null_after_create`: `ketju_create_system` sets `collision_radius` on a garbage-filled struct.
+- `Gizmo_star_collisions.head_on_contact`: radial infall, contact time vs the Kepler solution, product at the CoM with
+  summed mass and momentum, E_end = E0 + dE_collision; no merger without radii.
+- `Gizmo_star_collisions.graze_and_miss`: flyby with two-body pericentre 0.8 (R1 + R2) collides, 1.25 misses; a bound
+  third star; energy balance.
+- `Gizmo_collision_energy.includes_other_members_potential`: dE_collision = -E_pair + the pair's potential-energy change
+  with the other members = the exact total-energy change (the pair term alone misses it).
+- `Gizmo_pericentre_guard.osculating_pericentre_time`: an r.v sign change counts only if the osculating pericentre was
+  passed since the last check (and not near apocentre).
+- `Gizmo_pericentre_guard.k3_triple_no_false_collision`: the K3 triple of `test/ketju_star_collision` in host-sized calls,
+  no collision, energy conserved (positive control: MSTAR alone does not reproduce the GIZMO false collision).
+- `Gizmo_external_tide.harmonic_com_and_energy`: tide T = -w^2 I, CoM moves as X0 cos(w t), energy incl. the tide
+  potential conserved, no step-count blow-up; no CoM motion with the tide off.
+- `Gizmo_collision_energy.tide_and_softening`: collision energy with the tide and softening.
+
+`Softening_kink.*` (`unit-tests/softening_kink.cpp`): GBS steps landed on the softening kernel's break points (two-body
+orbit, collision with tide and softening converge; off without softening).
+
+Negative checks run by hand (reverting each fix): init, pericentre guard, dE_others and the tide's work in B each make
+their test fail.
+
+## Running
+
+    module load gcc/13; module load openmpi; module load cmake/3.30
+    pytest test/ketju_unit/test_ketju_unit.py                                              # Kokkos ctests
+    GIZMO_EXTRA_CONFIG_FLAGS=KETJU_LEGACY_C_LIBRARY pytest test/ketju_unit/test_ketju_unit.py  # + C googletests on MPI
+
+The legacy test copies `ketju-integrator-c/` to a pytest temporary directory (its CMake writes `bin/` and
+`lib/` into the source tree), builds with `-DUNIT_TESTS=ON -DBUILD_GMOCK=OFF` and the googletest
+submodule in `ketju-integrator-c/thirdparty/googletest/`, and runs with
+`mpiexec --oversubscribe`. Build ~1 min with 4 make jobs; the runs take seconds.

@@ -114,7 +114,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
      * the COOLR/COOLI/CHEM_COMP/PROJECT COMMON blocks. */
     struct ChemInputs  chem_in;
     struct ChemOutputs chem_out;
-    int i;
+    int i, chem_solved = 0;
 
     chem_in.dt_code = dt;
     chem_in.dl_code = dl;
@@ -290,6 +290,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         chemcool_clamp_pools(abundances, &chem_in);
 #ifdef CHEMCOOL_CXX
         chem_cxx_evolve_cell(timestep, dl_cgs, yn, divv, &energy, abundances);
+        chem_solved = 1;
 #else
         EVOLVE_ABUNDANCES(&timestep, &dl_cgs, &yn, &divv, &energy, abundances, &column_est);
 #endif
@@ -300,6 +301,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
      * (stale-lambda) COMMON state the pre-refactor code read -- identical. */
 #ifdef CHEMCOOL_CXX
     chem_cxx_read_outputs(&chem_out);
+    if(!chem_solved) {chem_out.cr_ion_heat = 0;} /* skipped solve: no CR ionisation heating applied */
 #else
     chem_read_outputs(&chem_out);
 #endif
@@ -363,6 +365,21 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         for(i = 0; i < TRAC_NUM; i++) {
             CellP[target].TracAbund[i] = abundances[i];
         }
+#if defined(COSMIC_RAY_FLUID) && defined(CHEMCOOL_CXX)
+        { /* the CR ionisation heating the solve applied, minus the radioactive share of zeta, comes out of e_CR (booked in E_CR_loss_cumul) */
+            double zeta_cr = CR_IONRATE_SOLCIRC * (chem_in.cr_energy_density / 1.602e-12) / CR_ENDEN_SOLCIRC;
+            double f_cr = (chem_in.cosmic_ray_ion_rate > 0) ? DMIN(zeta_cr / chem_in.cosmic_ray_ion_rate, 1.) : 0;
+            double vol_cgs = P[target].Mass / (CellP[target].Density * All.cf_a3inv) * pow(UNIT_LENGTH_IN_CGS, 3);
+            double de_code = f_cr * DMAX(chem_out.cr_ion_heat, 0) * vol_cgs / UNIT_ENERGY_IN_CGS, ecr_tot = 0;
+            for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ecr_tot += CellP[target].CosmicRayEnergy[k];}
+            if(de_code > 0 && ecr_tot > 0) {
+                static long n_capped = 0;
+                if(de_code > ecr_tot) {if(n_capped++ == 0) {printf("CHEMCOOL: CR ionisation heating %g exceeds e_CR %g (ID %llu); capped at e_CR (first of possibly more)\n", de_code, ecr_tot, (unsigned long long)P[target].ID);} de_code = ecr_tot;}
+                double q = 1. - de_code / ecr_tot;
+                for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {CellP[target].CosmicRayEnergy[k] *= q; CellP[target].CosmicRayEnergyPred[k] *= q; CellP[target].CosmicRayFlux[k] *= q; CellP[target].CosmicRayFluxPred[k] *= q;}
+            }
+        }
+#endif
 #if defined(RADTRANSFER)
         /* Write the H ionization state + electron abundance from CHEMCOOL back to
          * the cell (2026-07-04). Two reasons, both M1-critical:
@@ -388,10 +405,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         CellP[target].Temp = temp;
         CellP[target].DustTemp = chem_out.tdust;
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
-        /* Attenuated FUV field the chemistry actually used = G0 x f_dust (2026-07-04).
-         * M1: f_dust=1 (dust column zeroed, transport did the attenuation) -> G0_atten=G0.
-         * HEALPix tree columns: G0 is UNATTENUATED and f_dust=exp(-AV...) applies the dust attenuation,
-         * so G0_atten is the effective FUV -> directly comparable to M1's G0. */
+        /* G0 x f_dust: the dust-attenuated field the chemistry used (Stella M1/TreeRay: f_dust covers floor pixels and the in-cell column) */
 #ifdef OUTPUT_SHIELD_FAC
         CellP[target].ShieldFacDust = chem_out.fac_shield_dust;
         CellP[target].G0_atten      = CellP[target].G0 * chem_out.fac_shield_dust;
@@ -399,6 +413,9 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         CellP[target].ShieldFacDust = 1.0;
         CellP[target].G0_atten      = CellP[target].G0;
 #endif
+#endif
+#ifdef OUTPUT_CHEM_PHOTORATES
+        for(i = 0; i < 5; i++) {CellP[target].ChemPhotoRates[i] = chem_out.photorates[i];}
 #endif
 #ifdef OUTPUT_COOLRATE
         CellP[target].CoolingRate_CHEMCOOL = cooling_rate;
@@ -452,7 +469,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 #ifdef RT_INFRARED
             CellP[target].Lambda_RadiativeCooling_toRHDBins[RT_FREQ_BIN_INFRARED] = Lambda_IR / nH2_loc;
 #endif
-#ifdef RT_NUV
+#if defined(RT_NUV) && !defined(RT_NUV_BAND_6_8EV) /* Stella 6-8 eV band feeds G0: line cooling goes to IR below */
 #ifdef RT_INFRARED
             /* If Radiation_Temperature > 1e4, redirect NUV → IR (same as standard solver).
                (Radiation_Temperature is an RT_INFRARED-only field; guard added 2026-07-04 —
@@ -494,6 +511,21 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
         endrun(101);
     }
     return CellP[target].InternalEnergy;
+}
+
+
+/* electrons, H+ and HI per H from the cell's current chemistry abundances (startup ionisation state) */
+double chemcool_startup_electrons(int target, double *x_HII, double *x_HI)
+{
+    struct ChemInputs cin; memset(&cin, 0, sizeof(cin));
+    chem_fill_gas_abundances(target, &cin);
+    double ab[TRAC_NUM]; for(int k = 0; k < TRAC_NUM; k++) {ab[k] = CellP[target].TracAbund[k];}
+    *x_HII = ab[IHP]; *x_HI = DMAX(1.0 - 2.0*ab[IH2] - ab[IHP], 0.0);
+#if CHEMISTRYNETWORK == 20
+    return ab[IHP]; /* net 20 electrons come from the last solve */
+#else
+    return chemcool_electrons(ab, &cin);
+#endif
 }
 
 

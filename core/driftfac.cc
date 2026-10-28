@@ -100,8 +100,9 @@ double get_drift_factor(integertime time0, integertime time1, int i, int mode)
 {
     double a1, a2, df1, df2, u1, u2;
     int i1, i2;
-    static integertime last_time0 = -1, last_time1 = -1;
-    static double last_value;
+    /* per-thread memo: the drift routines call this concurrently from OpenMP regions */
+    static thread_local integertime last_time0 = -1, last_time1 = -1;
+    static thread_local double last_value;
 
     if(All.ComovingIntegrationOn == 0)
     {
@@ -153,8 +154,9 @@ double get_gravkick_factor(integertime time0, integertime time1, int i, int mode
 {
   double a1, a2, df1, df2, u1, u2;
   int i1, i2;
-  static integertime last_time0 = -1, last_time1 = -1;
-  static double last_value;
+  /* per-thread memo: the drift routines call this concurrently from OpenMP regions */
+  static thread_local integertime last_time0 = -1, last_time1 = -1;
+  static thread_local double last_value;
 
     if(All.ComovingIntegrationOn == 0)
     {

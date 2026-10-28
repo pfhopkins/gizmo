@@ -37,3 +37,7 @@ jobs:
       run: python -m compileall -q python_src test
     - name: Collect the test suite
       run: pytest --collect-only -q test/
+    - name: Lint with ruff
+      run: |
+        python -m pip install ruff==0.17.2
+        ruff check python_src test

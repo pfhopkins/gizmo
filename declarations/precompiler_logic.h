@@ -205,8 +205,9 @@
 #else
 #define COSMIC_RAY_FLUID            /*! use 'explicit' CR integration in one of the code formulations */
 #endif // closes whether to do cr fluid or subgrid
+#if defined(COSMIC_RAY_FLUID) /*! spectrum and diffusion defaults apply only to explicit CRs, not the sub-grid model */
 #if !defined(CRFLUID_EVOLVE_SPECTRUM) /*! check to enable flags for which CR spectrum or single-bin to evolve */
-#if (FIRE_CRS >= 0) || (FIRE_CRS <= 1)
+#if (FIRE_CRS >= 0) && (FIRE_CRS <= 1)
 #define CRFLUID_EVOLVE_SPECTRUM 1   /*! evolve proton + electron spectrum */
 #endif
 #if (FIRE_CRS >= 2)
@@ -223,6 +224,7 @@
 //#define CRFLUID_SET_ET_MODEL (-1)   /*! set mode for ET model using best-estimate of fturb from Alfven-wave scattering */
 #endif
 #endif // closes which diffusion model[s] to enable
+#endif // COSMIC_RAY_FLUID
 #endif // FIRE_CRS
 
 #if defined(FIRE_BHS)
@@ -299,6 +301,14 @@
 
 /* set default modules for different cosmic ray transport settings/packages */
 #ifdef COSMIC_RAY_FLUID
+#if defined(GALSF_RESOLVEDISM)
+#ifndef CRFLUID_EXCHANGE_PDV_ONLY
+#define CRFLUID_EXCHANGE_PDV_ONLY /* Stella default: CRs take only their own P dV work, no share of shock heating */
+#endif
+#ifndef CRFLUID_SPEEDOFLIGHT_REDUCTION
+#define CRFLUID_SPEEDOFLIGHT_REDUCTION (3.e7/C_LIGHT_CGS) /* Stella default: 300 km/s CR transport speed */
+#endif
+#endif
 #if !defined(CRFLUID_SPEEDOFLIGHT_REDUCTION)
 #define CRFLUID_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
@@ -871,6 +881,15 @@
 #endif
 #endif /* end of options for our general RHD methods */
 
+/* Stella M1: the NUV bin carries 6-8 eV so NUV + PHOTOELECTRIC spans the 6-13.6 eV chemistry FUV band */
+#if defined(GALSF_RESOLVEDISM) && defined(RADTRANSFER) && defined(CHEMCOOL)
+#ifndef RT_NUV
+#define RT_NUV
+#endif
+#define RT_NUV_BAND_6_8EV
+#define RT_FUV_BANDS_CHEMCOOL_DUST_LAW /* NUV/PE/LW: pure absorption with the chemistry's dust cross sections and per-cell DGR */
+#endif
+
 /* OTVET-specific options [uses the gravity tree to calculate the Eddington tensor] */
 #if defined(RT_OTVET)
 #define RT_USE_GRAVTREE // use gravity tree for Eddington tensor
@@ -1368,6 +1387,12 @@
 #endif
 #endif
 
+#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && defined(COSMIC_RAY_FLUID)
+#error "CR_BACKGROUND_IONRATE_ATTENUATED is the CR-fluid-off mode: with COSMIC_RAY_FLUID the ionisation rate comes from the CR fluid only"
+#endif
+#if defined(CHEMCOOL_CR_ATTEN_K23) && defined(COSMIC_RAY_FLUID)
+#error "CHEMCOOL_CR_ATTEN_K23 attenuates a background zeta; with COSMIC_RAY_FLUID zeta comes from the transported e_CR"
+#endif
 #if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && (!defined(CHEMCOOL) || !defined(RT_USE_TREECOL_FOR_NH) || defined(CR_SCALE_WITH_G0))
 #error "CR_BACKGROUND_IONRATE_ATTENUATED needs CHEMCOOL and the TreeCol column (RT_USE_TREECOL_FOR_NH), and replaces CR_SCALE_WITH_G0"
 #endif
@@ -1587,8 +1612,8 @@
  * the H2/CO tree columns stay untouched — H2/CO LINE self-shielding remains target-side
  * in chemistry, applied ONCE (curve-of-growth, not exponential; see the
  * h2-double-shield fix 2026-07-07). TreeRay takes over ONLY the stellar-band dust
- * continuum (calc_photo f_dust -> 1 for point sources under TREE_RAY; isotropic
- * background keeps target-side pixel-column attenuation). Future extension (do
+ * continuum (calc_photo skips the column on stellar pixels; floor pixels keep the
+ * target-side pixel-column attenuation). Future extension (do
  * NOT bolt on casually): per-source H2 line shielding from binned H2 shells —
  * requires splitting stellar-vs-background fshield in rate_eq. */
 #ifdef TREE_RAY
@@ -1660,6 +1685,15 @@
 #endif
 #if defined(KETJU_MERGE_BH) && !defined(KETJU_REGULARIZATION)
 #error "KETJU_MERGE_BH requires KETJU_REGULARIZATION"
+#endif
+#if defined(KETJU_LEGACY_C_LIBRARY) && !defined(KETJU_REGULARIZATION)
+#error "KETJU_LEGACY_C_LIBRARY requires KETJU_REGULARIZATION"
+#endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF: stars merge only on contact; GALSF_MERGER_STARCLUSTER_PARTICLES merges by distance"
+#endif
+#if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(SINGLE_STAR_SINK_DYNAMICS)
+#error "GALSF_RESOLVEDISM_SAMPLE_IMF: stars merge only on contact; STARFORGE sink dynamics merges bound sinks within the softening"
 #endif
 #if defined(KETJU_REGULARIZATION) && (defined(GALSF_RESOLVEDISM) || !defined(SINGLE_STAR_SINK_DYNAMICS)) && !defined(KETJU_TYPE4_STARS)
 #define KETJU_TYPE4_STARS /* Type-4 stars are chain centers/members (Stella, pure N-body); STARFORGE sink runs keep Type 5 only */

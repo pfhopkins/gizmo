@@ -57,9 +57,14 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 double CumulCoolingEnergyLoss = 0; /* cumulative cooling energy loss on this rank [code energy units] */
+double CumulMHDNumEnergy = 0; /* MHD non-conservative energy on this rank [code energy units] */
+double CumulKickFloorEnergy = 0; /* kick u-limiter + temperature-floor energy on this rank [code energy units] */
 double ChemcoolPIHeatErg = 0, ChemcoolPIHeatCells = 0, CumulPIHeatErg = 0, PIHeatPendingErg = 0, PIHeatPendingCells = 0;
 #ifdef COSMIC_RAY_FLUID
 double CumulCRLossEnergy = 0; /* CR energy removed by the loss operator on this rank [code energy units] */
+#if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
+double CumulCRShockEnergy = 0; /* CR energy injected at shocks on this rank [code energy units] */
+#endif
 #endif
 
 /* forward declarations for functions used before their definitions (needed because pp/cell params changed signatures) */

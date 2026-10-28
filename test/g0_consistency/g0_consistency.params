@@ -1,0 +1,83 @@
+%---- G0 consistency test: one 40 Msun Stella star at the centre of a fixed 20 pc medium (units kpc, 1e10 Msun, km/s)
+
+%---- Files
+InitCondFile                    g0_consistency_ics      % written by test_g0_consistency.py (snapshot format, RestartFlag 2)
+MaxMemSize                      1800
+OutputDir                       output
+
+%---- Output
+TimeBetSnapshot                 4.0e-7            % ~0.4 kyr
+TimeBetStatistics               4.0e-7
+TimeOfFirstSnapshot             0.001
+SnapFormat                      3
+
+%---- Box & simulation time
+BoxSize                         0.02              % 20 pc
+TimeBegin                       0.001             % IC header time
+TimeMax                         0.0010012         % +1.2 kyr: M1 steady at r < 9 pc before light reflected at the closed box faces returns
+ComovingIntegrationOn           0
+
+%---- Timestep control
+MaxSizeTimestep                 1.0e-7
+MinSizeTimestep                 0
+
+%---- Tree & domain
+TreeDomainUpdateFrequency       0.05
+PartAllocFactor                 5.0
+BufferSize                      100
+
+%---- Units
+UnitLength_in_cm                3.085678e21
+UnitMass_in_g                   1.989e43
+UnitVelocity_in_cm_per_s        1.0e5
+UnitMagneticField_in_gauss      1.0
+
+%---- Gravity softening
+SofteningGas                    1.0e-4
+SofteningHalo                   0.050
+SofteningDisk                   0.020
+SofteningBulge                  0.020
+SofteningStars                  1.0e-4
+SofteningBndry                  0.005
+
+%---- Kernel
+DesNumNgb                       32
+MaxKernelRadius                 2000
+
+%---- Temperature
+InitGasTemp                     0                 % use the IC energy
+MinGasTemp                      10.0
+
+%---- CPU
+TimeLimitCPU                    86400
+CpuTimeBetRestartFile           86400
+
+%---- Cosmology (unused)
+Omega0                          1.0
+OmegaLambda                     0.0
+OmegaBaryon                     0.0
+HubbleParam                     1.0
+
+%---- Star formation off
+CritPhysDensity                 1.0e10
+SfEffPerFreeFall                0.5
+FacSfThreshMJ                   1.0
+IMFSampleMinMass                0.08
+ResolvedISM_SFCooldownFreeFallFraction 0.1
+IMFSampleStellarMassCut         0.5
+
+%---- Stellar tables
+StellarTablesFile               gizmo/galaxy_sf/stellar_tables/stellar_tables_unified.hdf5
+MaxStellarTimestep              10000.0
+
+%---- Metallicity (solar; DGR = 1)
+InitMetallicity                 1.0
+InitStellarAge                  10.0
+InitialMetallicity              1.0
+
+%---- Radiation / chemistry
+ShieldingLength                 0.050             % production 50 pc
+G0                              1.7
+CosmicRayIonRate                3.0e-17
+DGRnormalized                   1.0
+DeutAbund                       2.6e-5
