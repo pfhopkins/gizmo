@@ -556,7 +556,8 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 
 
 /* utility routine which handles the numerically-necessary parts of the CR 'injection' for you; here 'injection_velocity' should be in physical (not comoving) units */
-void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell)
+/* mode: -1 = instantaneous injection (evolved and predicted copies together); 0 = kick (evolved copies and CR number); 1 = drift (predicted copies only) */
+void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, int source_type, int target, double *dir, struct gas_cell_data *cell, int mode)
 {
     if(CR_energy_to_inject <= 0) {return;}
     double f_injected[N_CR_PARTICLE_BINS]; f_injected[0]=1; int k_CRegy;
@@ -581,13 +582,16 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
 #endif
         double gamma_one = slope_inj + 1., xm_gamma_one = pow(xm, gamma_one), xp_gamma_one = pow(xp, gamma_one); // variables below
         double ntot_inj = (dEcr / E_GeV) * ((gamma_one + egy_slopemode) / (gamma_one)) * (xp_gamma_one - xm_gamma_one) / (xp_gamma_one*xp_e - xm_gamma_one*xm_e); // injected number in bin
+        if(mode != 1) {
         #pragma omp atomic
-        cell[target].CosmicRay_Number_in_Bin[k_CRegy] += ntot_inj; // simply update injected number. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+        cell[target].CosmicRay_Number_in_Bin[k_CRegy] += ntot_inj;} // simply update injected number. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
 #endif
+        if(mode != 1) {
         #pragma omp atomic
-        cell[target].CosmicRayEnergy[k_CRegy] += dEcr; // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+        cell[target].CosmicRayEnergy[k_CRegy] += dEcr;} // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+        if(mode != 0) {
         #pragma omp atomic
-        cell[target].CosmicRayEnergyPred[k_CRegy] += dEcr; // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+        cell[target].CosmicRayEnergyPred[k_CRegy] += dEcr;} // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
         double dir_mag=0, flux_mag=dEcr * CRFLUID_REDUCED_C_CODE(k_CRegy); Vec3<double> dir_to_use={}; int k;
 #ifdef MAGNETIC
         Vec3<double> Bdir=cell[target].BPred;
@@ -600,13 +604,29 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
         if(dir_mag <= 0) {dir_to_use[0]=0; dir_to_use[1]=0; dir_to_use[2]=1; dir_mag=1;}
         for(k=0;k<3;k++) {
             double dflux=flux_mag*dir_to_use[k]/sqrt(dir_mag);
+            if(mode != 1) {
             #pragma omp atomic
-            cell[target].CosmicRayFlux[k_CRegy][k]+=dflux; // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+            cell[target].CosmicRayFlux[k_CRegy][k]+=dflux;} // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+            if(mode != 0) {
             #pragma omp atomic
-            cell[target].CosmicRayFluxPred[k_CRegy][k]+=dflux; // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
+            cell[target].CosmicRayFluxPred[k_CRegy][k]+=dflux;} // update injected CR energy. needs to be done thread-safely, but since the above routines dont depend on this, it should be safe to do here.
         }
     }
     return;
+}
+
+
+/* CR injection at resolved shocks: the hydro solve sets the rate DtCREgyNewInjectionFromShocks for the coming step and removes the same rate from the
+   thermal energy, so each kick adds rate*dt to the evolved CRs and each drift to the predicted ones, like the other rates (the hydro solve resets it). */
+void cosmic_ray_inject_from_resolved_shocks(int i, double dt_entr, int mode, struct gas_cell_data *cell)
+{
+#if defined(CRFLUID_INJECTION_AT_SHOCKS)
+    if(cell[i].DtCREgyNewInjectionFromShocks > 0)
+    {
+        Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
+        inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], cell, mode);
+    }
+#endif
 }
 
 
@@ -841,14 +861,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 
     } // loop over CR bins complete
     
-#if defined(CRFLUID_INJECTION_AT_SHOCKS)
-    if(cell[i].DtCREgyNewInjectionFromShocks > 0) /* now perform the actual CR injection using the rates estimated in the hydro solver */
-    {
-        Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
-        inject_cosmic_rays(cell[i].DtCREgyNewInjectionFromShocks * dt_entr, 1000./UNIT_VEL_IN_KMS, 2, i, &dir[0], cell); /* inject the energy */
-        cell[i].DtCREgyNewInjectionFromShocks = 0; // reset to nil, we've successfully injected the energy
-    }
-#endif
+    cosmic_ray_inject_from_resolved_shocks(i, dt_entr, mode, cell);
 #if defined(SINK_CR_INJECTION_AT_TERMINATION)
     if(cell[i].Sink_CR_Energy_Available_For_Injection > 0) {
         /* need to determine whether or not sufficient deceleration has occurred in order to inject CRs from our 'reservoir */
@@ -863,7 +876,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
 #endif
         if((pp[i].ID != All.SpawnedWindCellID) || (vmag < ((double)(SINK_CR_INJECTION_AT_TERMINATION))*v_outflow_fast_forinjection)) {
             Vec3<double> dir = -cell[i].Gradients.Pressure; /* initial flux direction down pressure gradient */
-            inject_cosmic_rays(cell[i].Sink_CR_Energy_Available_For_Injection, v_outflow_fast_forinjection, 5, i, &dir[0], cell); /* inject the energy */
+            inject_cosmic_rays(cell[i].Sink_CR_Energy_Available_For_Injection, v_outflow_fast_forinjection, 5, i, &dir[0], cell, -1); /* inject the energy */
             cell[i].Sink_CR_Energy_Available_For_Injection = 0;  // reset its value to nil, now that it has been injected
         }
     }
