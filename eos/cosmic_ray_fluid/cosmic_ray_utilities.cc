@@ -1849,7 +1849,9 @@ double Get_CosmicRayIonizationRate_cgs(int i, struct particle_data *pp, struct g
 #endif
 #ifdef METALS
     zeta_cr += 1.e-21 * pp[i].Metallicity[0]/All.SolarAbundances[0]; // include radioactive decay of K-40 and other species, which scales with metallicity
-#if (NUM_METAL_SPECIES > 10)
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+    zeta_cr += 1.e-19 * pp[i].Metallicity[MET_OF(ELEM_Fe)]/resolvedism_solar_massfrac[ELEM_Fe]; // Fe slot and solar Fe of this layout (slot 10 is Al, SolarAbundances[10] = 0)
+#elif (NUM_METAL_SPECIES > 10)
     zeta_cr += 1.e-19 * pp[i].Metallicity[10]/All.SolarAbundances[10]; // Contribution from short-lived radioisotopes, here scaling to Fe abundance - Adams et al 2014 Apj 789 86
 #endif
 #endif

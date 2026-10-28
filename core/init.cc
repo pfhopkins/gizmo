@@ -487,23 +487,7 @@ void init(void)
                Solar mass fractions: Asplund+ 2009 photospheric ratios (stella-tables stellar/solar_abundances.py).
                In isotope mode (40 species), first 27 slots are elements, rest zeroed
                — isotope splitting done at first feedback event or from IC file. */
-            /* Asplund+09 photospheric ratios, metals sum to 0.014 = All.SolarAbundances[0]; same values as the stellar tables X_init */
-            static const double solar_elem[27] = {
-                7.3750000000e-01, /*  0: H  */    2.4850000000e-01, /*  1: He */
-                2.4765351227e-03, /*  2: C  */    7.2545495820e-04, /*  3: N  */
-                6.0028592850e-03, /*  4: O  */    5.2841265250e-07, /*  5: F  */
-                1.3157897125e-03, /*  6: Ne */    3.0605839462e-05, /*  7: Na */
-                7.4124358876e-04, /*  8: Mg */    5.8255839166e-05, /*  9: Al */
-                6.9620919184e-04, /* 10: Si */    6.0990559675e-06, /* 11: P  */
-                3.2376421296e-04, /* 12: S  */    8.5877929305e-06, /* 13: Cl */
-                7.6870616805e-05, /* 14: Ar */    3.2093705781e-06, /* 15: K  */
-                6.7169384016e-05, /* 16: Ca */    4.8646655463e-08, /* 17: Sc */
-                3.2681466346e-06, /* 18: Ti */    3.3215539907e-07, /* 19: V  */
-                1.7387424601e-05, /* 20: Cr */    1.1327606908e-05, /* 21: Mn */
-                1.3528499188e-03, /* 22: Fe */    4.4118818564e-06, /* 23: Co */
-                7.4619379442e-05, /* 24: Ni */    7.5396909229e-07, /* 25: Cu */
-                1.8184871682e-06, /* 26: Zn */
-            };
+            const double *solar_elem = resolvedism_solar_massfrac;
             double Zfrac = All.InitMetallicityinSolar; /* fraction of solar metallicity */
             double Zmetal = 0;
             /* 28-slot FIRE-pattern layout:
