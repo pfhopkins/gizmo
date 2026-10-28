@@ -221,7 +221,7 @@ struct ChemOutputs {
     double fac_shield_dust;          /* <- COOLRC.fac_shield_dust             */
 #endif
 #ifdef OUTPUT_CHEM_PHOTORATES
-    double photorates[5];            /* k_H2 (x fshield) [s^-1], k_CO [s^-1], G_dust (PE), G0_dust chi_isrf/1.7 (dust heating), fshield_H2 */
+    double photorates[6];            /* k_H2 (x fshield) [s^-1], k_CO [s^-1], G_dust (PE), G0_dust chi_isrf/1.7 (dust heating), fshield_H2, fshield_CO */
 #endif
 };
 

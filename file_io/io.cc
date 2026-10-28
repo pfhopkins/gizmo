@@ -1110,7 +1110,7 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
         case IO_CHEM_PHOTORATES:
 #ifdef OUTPUT_CHEM_PHOTORATES
             for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type) {for(k = 0; k < 5; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ChemPhotoRates[k];} fp += 5; n++;}
+                if(P[pindex].Type == type) {for(k = 0; k < 6; k++) {fp[k] = (MyOutputFloat) CellP[pindex].ChemPhotoRates[k];} fp += 6; n++;}
 #endif
             break;
 
@@ -2593,8 +2593,8 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_CHEM_PHOTORATES:
 #ifdef OUTPUT_CHEM_PHOTORATES
-            if(mode) bytes_per_blockelement = 5 * sizeof(MyInputFloat);
-            else bytes_per_blockelement = 5 * sizeof(MyOutputFloat);
+            if(mode) bytes_per_blockelement = 6 * sizeof(MyInputFloat);
+            else bytes_per_blockelement = 6 * sizeof(MyOutputFloat);
 #endif
             break;
         case IO_SAMPLE_IMF_MSTAR:
@@ -3022,7 +3022,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_CHEM_PHOTORATES:
-            values = 5;
+            values = 6;
             break;
         case IO_SAMPLE_IMF_MSTAR:
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF

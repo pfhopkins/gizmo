@@ -421,7 +421,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
 #endif
 #endif
 #ifdef OUTPUT_CHEM_PHOTORATES
-        for(i = 0; i < 5; i++) {CellP[target].ChemPhotoRates[i] = chem_out.photorates[i];}
+        for(i = 0; i < 6; i++) {CellP[target].ChemPhotoRates[i] = chem_out.photorates[i];}
 #endif
 #ifdef OUTPUT_COOLRATE
         CellP[target].CoolingRate_CHEMCOOL = cooling_rate;
