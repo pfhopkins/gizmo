@@ -31,7 +31,8 @@ MAX_MEAN_ERROR = 0.03  # |<Mach>/target - 1| over the settled window
 MAX_SETTLED_DEVIATION = 0.1  # max |Mach/target - 1| at any settled snapshot
 MAX_OVERSHOOT = 0.1  # max Mach/target - 1 over the whole run, including spin-up from rest
 
-VARIANTS = {"hydro": (), "mhd": ("MAGNETIC",)}
+# MHD with constrained gradients at the level STARFORGE runs use (SINGLE_STAR_STARFORGE_DEFAULTS turns it on)
+VARIANTS = {"hydro": (), "mhd": ("MAGNETIC", "MHD_CONSTRAINED_GRADIENT=1")}
 # Lazy force: TurbAccel is recomputed only on driving updates, the way STARFORGE stirring runs use it,
 # with the update cadence they use, t_cross/10 (t_cross = TurbDrive_MaxWavelength / v_rms = T_EDDY)
 LAZY_FLAG = "TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE"
