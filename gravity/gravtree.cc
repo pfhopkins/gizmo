@@ -973,14 +973,20 @@ int needs_new_treeforce(int n){
 #ifdef HERMITE_INTEGRATION
     if((1 << P[n].Type) & HERMITE_INTEGRATION) {return 1;} // Hermite-integrated particles must always get a fresh tree force; the lazy-cache path is incompatible with the predictor-corrector sub-stepping
 #endif
-    if(P[n].Type > 0){ // in this implementation we only do the lazy updating for gas cells whose timesteps are otherwise constrained by multiphysics (e.g. radiation, feedback)
-        return 1;
-    } else {
-        if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(P[n].Type == 5) {return 1;} // single-star sinks take a full tree force every step: their dynamics are followed more carefully
+#endif
+    /* types whose GravAccel also carries terms added after the walk: the skip path extrapolates GravAccel and would stack them */
+#ifdef GRAIN_FLUID
+    if((1 << P[n].Type) & (GRAIN_PTYPES)) {return 1;}
+#endif
+#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
+    if(P[n].Type == 1) {return 1;}
+#endif
+    if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        else if(P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
-#endif        
-        else {return 0;}
-    }
+    else if(P[n].Type == 0 && P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // gas only, as the feedback-time step limit it serves: we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
+#endif
+    else {return 0;}
 }
 #endif

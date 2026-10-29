@@ -185,6 +185,9 @@
 #define ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (0.1/UNIT_LENGTH_IN_KPC)
 #define GALSF_SFR_IMF_SAMPLING /* use the IMF-sampling discrete number of O-star scheme, no penalty at low mass-res */
 #define FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT (1) /* ramp the SNe rate and massive stellar feedback fraction of total mass (essentially L/M) at low metallicities, leaves no dwarf stars below [Z/H]<-7 or so ramping down to -5 */
+#if !defined(ADAPTIVE_TREEFORCE_UPDATE)
+#define ADAPTIVE_TREEFORCE_UPDATE (0.0625) /* re-walk the tree for a particle's gravity only once per this fraction of its dynamical time, extrapolating with the jerk in between */
+#endif
 #endif // defaults = 3
 
 #if defined(FIRE_MHD)
@@ -662,7 +665,7 @@
 #endif
 
 
-#ifdef ADAPTIVE_TREEFORCE_UPDATE // instead of going into the tree every timestep, only update gravity with a frequency set by this fraction of dynamical timescale (default for gas only)
+#ifdef ADAPTIVE_TREEFORCE_UPDATE // instead of going into the tree every timestep, only update gravity with a frequency set by this fraction of dynamical timescale (every type; exemptions in needs_new_treeforce)
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // need this to estimate the dynamical time
 #endif
