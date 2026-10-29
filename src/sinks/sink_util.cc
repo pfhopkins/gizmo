@@ -41,15 +41,11 @@ void sink_start(void)
         }
     }
 
-    /* allocate the sink temp struct */
-    if(N_active_loc_Sink>0)
-    {
-        SinkTempInfo = (struct sink_temp_particle_data *) mymalloc("SinkTempInfo", N_active_loc_Sink * sizeof(struct sink_temp_particle_data));
-    } else {
-        SinkTempInfo = (struct sink_temp_particle_data *) mymalloc("SinkTempInfo", 1 * sizeof(struct sink_temp_particle_data));
-    }
+    /* allocate the sink temp struct, plus one spare row past the active ones: sink_tempinfo_index() routes a sink
+       holding a stale index there, so no active sink's row is touched before the run stops */
+    SinkTempInfo = (struct sink_temp_particle_data *) mymalloc("SinkTempInfo", (N_active_loc_Sink+1) * sizeof(struct sink_temp_particle_data));
 
-    memset( &SinkTempInfo[0], 0, N_active_loc_Sink * sizeof(struct sink_temp_particle_data) );
+    memset( &SinkTempInfo[0], 0, (N_active_loc_Sink+1) * sizeof(struct sink_temp_particle_data) );
 
     Nbh=0;
     for (int i : ActiveParticleList)
@@ -71,17 +67,21 @@ void sink_start(void)
 
 }
 
-/* P[i].IndexMapToTempStruc, checked against the SinkTempInfo bounds. sink_start() assigns the index only to
+/* P[i].IndexMapToTempStruc, checked against this step's SinkTempInfo. sink_start() assigns the index only to
    sinks passing sink_isactive(); a consumer that selects sinks by any other predicate can hold an index left
-   over from an earlier step and read or scatter through it past the end of SinkTempInfo. Fail loudly instead. */
+   over from an earlier step, which points past the end of SinkTempInfo or at another sink's row. Either way
+   the row's own index no longer names this sink. endrun only requests a stop and returns, so the caller is
+   then handed the spare row sink_start allocates past the active ones: its accesses stay in bounds and leave
+   every active sink's row untouched until the stop. */
 int sink_tempinfo_index(int i, const char *caller)
 {
     int t = P[i].IndexMapToTempStruc;
-    if(t < 0 || t >= N_active_loc_Sink)
+    if(t < 0 || t >= N_active_loc_Sink || SinkTempInfo[t].index != (MyIDType) i)
     {
-        printf("%s: task %d sink slot %d (ID %llu, TimeBin %d) has IndexMapToTempStruc=%d outside [0,%d): selected by a predicate other than sink_isactive()\n",
+        printf("%s: task %d sink slot %d (ID %llu, TimeBin %d) has IndexMapToTempStruc=%d, not its row in [0,%d): selected by a predicate other than sink_isactive()\n",
                caller, ThisTask, i, (unsigned long long) P[i].ID, (int) P[i].TimeBin, t, N_active_loc_Sink);
-        fflush(stdout); endrun(787201);
+        endrun(787201);
+        return N_active_loc_Sink;
     }
     return t;
 }

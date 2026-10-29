@@ -9,8 +9,6 @@
  * SinkFeedLocalIn), apply_active_writeback, merge_accum, and the
  * ghost-writeback manifest + lifecycle hooks.
  *
- * Replaces sinks/sink_feed_gpu.cc + sinks/sink_feed_functions.h.
- *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
 
@@ -34,8 +32,7 @@
 
 /* ============================================================================
  * ACTIVE PREDICATE
- * Mirrors sink_isactive + extra guards from the legacy particle2in
- * (sink_feed_gpu.cc:38–46).
+ * sink_isactive plus a TimeBin guard.
  * ========================================================================== */
 
 int sink_feed_is_active(int i)
@@ -43,7 +40,7 @@ int sink_feed_is_active(int i)
     /* The same predicate sink_start() used to assign P[i].IndexMapToTempStruc and size
        SinkTempInfo (sink_isactive: Type 5, mass, kernel, and under SINK_INTERACT_ON_GAS_TIMESTEP
        a density pass this step). A sink active here but skipped there carries a stale index
-       and reads/writes SinkTempInfo out of bounds. starforge_dev's feed loop uses sink_isactive. */
+       and reads/writes SinkTempInfo out of bounds. */
     if(!sink_isactive(i)) return 0;
     if(P[i].TimeBin < 0) return 0;
     return 1;
