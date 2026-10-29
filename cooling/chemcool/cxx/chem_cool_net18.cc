@@ -460,7 +460,7 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
     // radiation, cosmic rays, grains
     const double G = c.G0 * c.n18_df25;                        // dust-attenuated FUV [Habing]
     const double fsh = (c.iphoto == 0) ? 1.0 : (tl_fsh >= 0.0) ? tl_fsh : cxx_calc_H2_shielding_factor(T, xH2, c.dl * nH, c);
-    const double kdiss = c.G0_LW * 5.68E-11 * c.fac_shield_dust * fsh;   // H2 photodissociation [s^-1]
+    const double kdiss = c.G0_LW * (5.68E-11 / 1.7) * c.fac_shield_dust * fsh;   // H2 photodissociation [s^-1]; 5.68e-11 per Draine field, G0_LW in Habing units
     const double zeta = c.cosmic_ray_ion_rate;
     const double phis = (1.0 - (xe / 1.20)) * (0.670 / (1.0 + (xe / 0.05)));
     const double ztot = zeta * (1.0 + phis), zH2 = 2.0 * zeta * (1.0 + phis), crsc = zH2 / 1E-16;
@@ -620,8 +620,8 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
         }
         LC[2] = -h;
     }
-    {   // H2 pumping, photodissociation, formation (Bialy 2018); D0 I_UV = 1.7 k_diss
-        double ncf = 1.0 / (1.0 + (k.ncrit / nHtot)), DI = 1.7 * kdiss;
+    {   // H2 pumping, photodissociation, formation (Bialy 2018); D0 I_UV = k_diss
+        double ncf = 1.0 / (1.0 + (k.ncrit / nHtot)), DI = kdiss;
         double pump = 9.0 * DI * 1.12 * EV2ERG * nH2 * ncf, pd = DI * 0.4 * EV2ERG * nH2;
         double form = fdg * k.adust * (0.2 * EV2ERG + 4.48 * EV2ERG * ncf) * nHtot * nHtot * xHI
                     + hprim * (0.6 * EV2ERG + 3.13 * EV2ERG * ncf) * nHtot * nHtot * xHI;

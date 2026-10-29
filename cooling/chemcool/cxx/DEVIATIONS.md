@@ -713,7 +713,9 @@ chemcool_consts.h, precompiler_logic.h (`#error` without CHEMCOOL_CXX), rate_eq_
   no electron rates.  Open: the SiI 2-0 H file has 1.7e-10 (paper 1.7e-11); the FeI "e" column holds 1e-17..1e-11
   and the "H+" column 1.2e-7 / 9.3e-8 (electron-like values) -- left as in RTZ.
 - GIZMO mapping: G0 for RTZ's FUV terms = G0 x exp(-2.5 A_V) (pixel average, 1 under M1/TreeRay); H2
-  photodissociation 5.68e-11 G0_LW x f_dust x DB96 self-shielding (live); CO x fshield_CO; Bialy D0 I_UV = 1.7 k_diss;
+  photodissociation (5.68e-11/1.7) G0_LW x f_dust x DB96 self-shielding (live; RTZ's 5.68e-11 is per Draine field,
+  G0_LW is Habing: was 1.7x high until 2026-10-29); CO x fshield_CO; Bialy pumping/dissociation heating D0 I_UV = k_diss
+  (RTZ uses I_UV = 1.7 G0 against 5.68e-11 G0 for the destruction; was 2.89x high);
   zeta = cell CR rate; M1 rt_phot/rt_heat for HI, HeI, HeII added; UVB on in cosmological runs.  Pools: gas phase
   from the cell (dust model: C, O, Mg, Si, Fe minus Dust[]; N, Ne, S total); without the dust model RTZ depletion
   1 - (1 - d) min(DGR, 1); 10 Zsun cap as the other nets; He = abhe.  TracAbund keeps every stage (neutral
