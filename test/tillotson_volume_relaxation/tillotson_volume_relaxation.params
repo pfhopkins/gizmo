@@ -1,0 +1,40 @@
+% Explicitly integrated cell volumes relaxing toward the kernel density, Tillotson EOS without strength
+%
+%        HYDRO_MESHLESS_FINITE_MASS
+%        BOX_SPATIAL_DIMENSION=1
+%        BOX_PERIODIC
+%        SELFGRAVITY_OFF
+%        EOS_TILLOTSON
+%        HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+%
+InitCondFile                       volume_relaxation_ics
+OutputDir                          output
+TimeMax                            20
+BoxSize                            1
+TimeBetSnapshot                    2
+MaxSizeTimestep                    0.01
+DesNumNgb                          4
+MaxNumNgbDeviation                 1e-6
+MaxMemSize                         1000
+ErrTolIntAccuracy                  0.01
+CourantFac                         0.2
+MaxRMSDisplacementFac              0.125
+TimeBetStatistics                  0.5
+ResubmitOn                         0
+ResubmitCommand                    none
+ErrTolTheta                        0.7
+ErrTolForceAcc                     0.001
+% zero pressure at every density and energy; the sound speed is the EOS floor sqrt(1e-10 u_0 rho_0 / rho) = 1/sqrt(rho)
+Tillotson_EOS_params_a             0
+Tillotson_EOS_params_b             0
+Tillotson_EOS_params_u_0           1e+10
+Tillotson_EOS_params_rho_0         1
+Tillotson_EOS_params_A             0
+Tillotson_EOS_params_B             0
+Tillotson_EOS_params_u_s           1e+20
+Tillotson_EOS_params_u_s_prime     1e+20
+Tillotson_EOS_params_alpha         0
+Tillotson_EOS_params_beta          0
+UnitVelocity_in_cm_per_s           1
+UnitLength_in_cm                   1
+UnitMass_in_g                      1

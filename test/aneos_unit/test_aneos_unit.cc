@@ -9,6 +9,7 @@
  *   5. Tests derived quantities (Cv, Gruneisen parameter)
  *   6. Tests boundary clamping behavior
  *   7. Tests lookups, inversion and table refusals on irregularly spaced axes
+ *   8. Tests the lowest valid specific energy at a density
  *
  * Compile:
  *   mpicxx -std=c++17 -DEOS_ANEOS -DGIZMO_config_H -I../.. \
@@ -502,6 +503,34 @@ static void test_irregular_grid(void)
     printf("  %d/%d passed\n\n", n_pass, n_tests);
 }
 
+/* ---- The lowest valid specific energy at a density (the floor the integrator keeps u at) ---- */
+
+static void test_min_specific_energy(void)
+{
+    printf("--- Test: Lowest valid specific energy ---\n");
+    write_irregular_table_block(IRR_TABLE_FILE, 0, 7, 1);
+    check("table with a lowest-valid-row block loads into slot 6", (double)aneos_read_table(IRR_TABLE_FILE, 6), 0.0, 0.0);
+    /* the energy of the floor row (the higher of the interval's two columns' rows), on the bilinear interpolant */
+    const double cases[][2] = {{0.25, 1.0}, {-2.875, 1.51}, {-0.5, 1.0}, {3.0, 1.0}};
+    for(int k = 0; k < 4; k++) {
+        double lr = cases[k][0], lT_floor = cases[k][1]; char label[160];
+        snprintf(label, sizeof(label), "min energy at lr=%g is the energy of row lT=%g", lr, lT_floor);
+        check(label, aneos_min_specific_energy(6, pow(10.0, lr)), pow(10.0, irr_logu(lr, lT_floor)), 1e-10);
+        double T_guess = 3.0e3, P, cs, uu = aneos_min_specific_energy(6, pow(10.0, lr));
+        aneos_compute(6, pow(10.0, lr), 1.0000001 * uu, &T_guess, &P, &cs, NULL, NULL, NULL, NULL);
+        snprintf(label, sizeof(label), "just above the min energy the inversion is on the valid row (lr=%g)", lr);
+        check(label, log10(T_guess), lT_floor, 1e-5);
+    }
+    /* a density outside the table is clamped to its edge, as in the inversion */
+    check("min energy below the density axis is that at its first knot", aneos_min_specific_energy(6, 1e-6), pow(10.0, irr_logu(-3.0, 1.0)), 1e-10);
+    check("min energy above the density axis is that at its last knot", aneos_min_specific_energy(6, 1e6), pow(10.0, irr_logu(4.0, 1.0)), 1e-10);
+    /* without a block, the floor is the bottom of the table */
+    check("ideal-gas table (no block): min energy is u(T_min)", aneos_min_specific_energy(0, 1.0), analytic_u(pow(10.0, LOGT_MIN)), 1e-10);
+    check("unloaded or invalid material: no bound", aneos_min_specific_energy(-1, 1.0) + aneos_min_specific_energy(ANEOS_MAX_MATERIALS, 1.0), 0.0, 0.0);
+    remove(IRR_TABLE_FILE);
+    printf("  %d/%d passed\n\n", n_pass, n_tests);
+}
+
 /* ---- Main ---- */
 
 int main(void)
@@ -523,6 +552,7 @@ int main(void)
     test_inversion_with_good_guess();
     test_invalid_material();
     test_irregular_grid();
+    test_min_specific_energy();
 
     /* Cleanup */
     aneos_cleanup();

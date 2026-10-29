@@ -211,6 +211,23 @@ void tillotson_eos_init(void);
 #ifdef EOS_ANEOS
 #include "../eos/aneos.h"
 #endif
+/* the positivity catch on a specific internal energy update u_old -> u_new: the energy halves when the update would take it
+   below half; and where the material has a lowest valid energy u_floor > 0, the result is never below that (0: no bound) */
+static inline double internal_energy_positivity_catch(double u_old, double u_new, double u_floor)
+{
+    double u = (u_new < 0.5*u_old) ? 0.5*u_old : u_new;
+    return (u_floor > 0 && u < u_floor) ? u_floor : u;
+}
+/* the lowest specific internal energy [code units] at which a cell's material has a valid equation of state at density rho
+   [code units]: for an ANEOS table material, the energy at the table's lowest valid temperature there; 0 (no bound) otherwise */
+static inline double lowest_valid_internal_energy(int composition_type, double rho)
+{
+#ifdef EOS_ANEOS
+    return aneos_min_specific_energy(composition_type, rho * UNIT_DENSITY_IN_CGS) / UNIT_SPECEGY_IN_CGS;
+#else
+    (void)composition_type; (void)rho; return 0;
+#endif
+}
 
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode);

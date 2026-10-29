@@ -222,18 +222,22 @@ void drift_particle(int i, integertime time1)
             
             CellP[i].Density *= exp(-divv_fac);
             double etmp = CellP[i].InternalEnergyPred + CellP[i].DtInternalEnergy * dt_entr;
+            double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none), at the predicted density */
+#ifdef EOS_ANEOS
+            u_floor = lowest_valid_internal_energy(CellP[i].CompositionType, CellP[i].Density);
+#endif
 #if defined(RADTRANSFER) && defined(RT_EVOLVE_ENERGY) /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal */ 
             int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma_Pred[kfreq];}
             if(erad_tot > 0)
             {
-                int_e_min=0.025*CellP[i].InternalEnergyPred; tot_e_min=0.025*(erad_tot/rsol_fac+CellP[i].InternalEnergyPred*P[i].Mass);
+                int_e_min=DMAX(0.025*CellP[i].InternalEnergyPred, u_floor); tot_e_min=0.025*(erad_tot/rsol_fac+CellP[i].InternalEnergyPred*P[i].Mass);
                 enew=DMAX(erad_tot/rsol_fac+etmp*P[i].Mass,tot_e_min); etmp=(enew-erad_tot/rsol_fac)/P[i].Mass; if(etmp<int_e_min) {dErad=rsol_fac*(etmp-int_e_min); etmp=int_e_min;}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergyPred = etmp; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma_Pred[kfreq] *= 1 + dErad/erad_tot;}
             } else {
-                if(etmp<0.5*CellP[i].InternalEnergyPred) {CellP[i].InternalEnergyPred *= 0.5;} else {CellP[i].InternalEnergyPred=etmp;}
+                CellP[i].InternalEnergyPred = internal_energy_positivity_catch(CellP[i].InternalEnergyPred, etmp, u_floor);
             }
 #else
-            if(etmp<0.5*CellP[i].InternalEnergyPred) {CellP[i].InternalEnergyPred *= 0.5;} else {CellP[i].InternalEnergyPred=etmp;}
+            CellP[i].InternalEnergyPred = internal_energy_positivity_catch(CellP[i].InternalEnergyPred, etmp, u_floor);
 #endif
             if(CellP[i].InternalEnergyPred<All.MinEgySpec) CellP[i].InternalEnergyPred=All.MinEgySpec;
             

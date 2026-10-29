@@ -52,6 +52,23 @@
 #endif
 
 
+#ifdef EOS_ELASTIC
+    {
+        /* elastic solids: as the gradient matrix of either cell becomes ill-conditioned, blend the face smoothly toward the kernel-gradient
+           face; one weight per pair keeps the face antisymmetric, so the pair exchange stays conserving */
+        double condition_number_max = DMAX(fabs((double)local.ConditionNumber), fabs((double)CellP[j].ConditionNumber));
+        double s_blend = DMIN(1., DMAX(0., (condition_number_max - CONDITION_NUMBER_FACE_BLEND_START) / (CONDITION_NUMBER_FACE_BLEND_FULL - CONDITION_NUMBER_FACE_BLEND_START)));
+        double w_blend = s_blend * s_blend * (3. - 2. * s_blend);
+        if(w_blend > 0)
+        {
+            double face_kernel = -(wt_i*V_i*kernel.dwk_i + wt_j*V_j*kernel.dwk_j) / kernel.r * All.cf_atime*All.cf_atime; /* the kernel-gradient face, along dp */
+            Face_Area_Vec = (1. - w_blend) * Face_Area_Vec + w_blend * (kernel.dp * face_kernel);
+            Face_Area_Norm = Face_Area_Vec.norm_sq();
+            facenormal_dot_dp = dot(Face_Area_Vec, kernel.dp);
+        }
+    }
+#endif
+
     /* if the effective gradient matrix is ill-conditioned (or not positive-definite!): for stability, we revert to the "RSPH" EOM */
     if((CellP[j].ConditionNumber*CellP[j].ConditionNumber > 1.0e12 + cnumcrit2) || (facenormal_dot_dp < 0))
     {

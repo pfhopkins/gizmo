@@ -91,6 +91,10 @@
 #else
 #define  CONDITION_NUMBER_DANGER  1.0e3 /*!< condition number above which we will not trust matrix-based gradients */
 #endif
+#ifdef EOS_ELASTIC
+#define  CONDITION_NUMBER_FACE_BLEND_START  20.0 /*!< elastic solids: above this condition number (the larger of a pair) the meshless face starts to blend toward the kernel-gradient face */
+#define  CONDITION_NUMBER_FACE_BLEND_FULL   50.0 /*!< elastic solids: condition number at which that face is the kernel-gradient face alone */
+#endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */
 #define  GRAVITY_G_CGS      (6.672e-8)
