@@ -295,6 +295,7 @@ extern double* StAkb; // phases (imag part)
 extern double* StMode; // k vectors
 extern int StNModes; // total number of modes
 extern integertime StTPrev; // time of last update (to determine when next will be)
+extern integertime StTUpdatedAt; // time at which the driving phases last changed
 extern gizmo_rng_t StRng; // random number generator key
 #endif
 

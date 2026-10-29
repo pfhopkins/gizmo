@@ -277,9 +277,8 @@ void RadFBRPSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
  * 0 if it doesn't fire this step (skip — not added to runner active list).
  *
  * The gate's random number is one draw per source per step, keyed on the
- * source and the current time (particle_random_number) -- a source-level
- * acceptance, not a per-pair draw, so the per-pair RNG shift
- * (RADFBRP_RNG_SHIFT in radfb_rp_loop.h) does not apply here.
+ * source and the current time -- a source-level acceptance, separate from
+ * the per-pair draw in radfb_rp_loop.h.
  * ========================================================================== */
 
 int radfb_rp_local_fill(int i,
@@ -390,7 +389,7 @@ int radfb_rp_local_fill(int i,
     loc->SourceKernelRadius = (MyFloat)P_host[i].KernelRadius;
     loc->dE_over_c    = (MyFloat)dE_over_c;
     loc->f_lum_ion    = (MyFloat)f_lum_ion;
-    loc->ID           = P_host[i].ID;
+    loc->rng_key      = gizmo_rng_particle_event_key(P_host[i]);
     loc->wt_sum       = 0;
     loc->wt_area      = 0;                /* zero at iter-0 entry; filled by
                                            * iteration 0's after_iter before iter 1 */

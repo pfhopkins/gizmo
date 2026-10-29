@@ -26,14 +26,13 @@
 #ifdef SINK_PARTICLES // top-level flag
 
 
-/* Host-side fill of SinkFeedLocalIn for source particle i. Mirrors the
- * legacy sink_feed_local_fill from sinks/sink_feed_gpu.cc:49-107
- * verbatim. SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES now wired: per-i
+/* Host-side fill of SinkFeedLocalIn for source particle i. Under
+ * SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES the per-i
  * eligibility is filled here (per-j eligibility is filled in
  * sink_feed_loop.cc::populate_device_context). */
 static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
 {
-    int j_tempinfo = P[i].IndexMapToTempStruc;
+    int j_tempinfo = sink_tempinfo_index(i, __FUNCTION__);
 
     loc->Pos          = P[i].Pos;
     loc->Vel          = P[i].Vel;
@@ -42,6 +41,7 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
     loc->Sink_Mass    = P[i].Sink_Mass;
     loc->ID           = P[i].ID;
     loc->claim_token  = gizmo_sink_claim_token(ThisTask, i);
+    loc->rng_key      = gizmo_rng_particle_event_key(P[i]);
     loc->Density      = P[i].DensityAroundParticle;
     loc->Mdot         = P[i].Sink_Mdot;
     loc->Dt           = (MyFloat)get_particle_feedback_timestep_in_physical(i, P);
@@ -87,8 +87,7 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
                                     * (double)loc->Dt);
 #endif
 #ifdef SINGLE_STAR_MERGE_AWAY_CLOSE_BINARIES
-    /* Per-i eligibility for the binary-merge-away criterion. Mirrors the
-     * legacy sink_feed.cc:46 fill on the CPU path. Per-j eligibility is
+    /* Per-i eligibility for the binary-merge-away criterion. Per-j eligibility is
      * filled by sink_feed_loop.cc::populate_device_context over the
      * full ctx.num_total range. */
     loc->Sink_eligible_for_binary_merge_away =
@@ -115,7 +114,7 @@ static void sink_feed_scatter_to_temp_info(const int *active_list,
 {
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
-        int t = P[i].IndexMapToTempStruc;
+        int t = sink_tempinfo_index(i, __FUNCTION__);
 
 #define SCATTER_ADD(dst, src_field)        dst += per_active_accum[a].src_field;
 #define SCATTER_MIN_PAIR(dst_v, dst_p, src_v, src_p)                            \
@@ -187,8 +186,7 @@ void sink_feed_loop(void)
     run_neighbor_loop<SinkFeedSpec>(args);
 
     /* ---------- physics: caller scatter into SinkTempInfo + P[i] ----------
-     * Order-preserved per legacy sink_feed_gpu.cc:320 (ghost_writeback)
-     * → :327-340 (apply per-source outputs). The runner's bundle end
+     * Ghost writeback first, then the per-source outputs. The runner's bundle end
      * (Mode A) fires inside run_neighbor_loop above, so by the time
      * we reach this scatter the j-side reverse-comm has already landed.
      */

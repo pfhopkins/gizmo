@@ -16,8 +16,9 @@
  *              folded in separately (gizmo_rng_combine); additive or shifted counters
  *              are not used for new draws, since they collide (draw k of one stream is
  *              draw k-1 of the next).
- *   The device pair draws (SIDM, AGS, sink feed, radiation-pressure pair gate) build
- *   their counters as (Ti_Current << 32) ^ SALT ^ tag, keyed on both particles.
+ *   A draw for a pair of particles combines the two event keys (sink feed, radiation-pressure
+ *   pair gate). The SIDM and AGS pair draws key on both IDs symmetrically and build their
+ *   counters as (Ti_Current << 32) ^ SALT ^ tag.
  *
  * Statistical quality: SplitMix64 passes BigCrush. Sufficient for all
  * stochastic physics in GIZMO (scattering directions, stochastic accretion,

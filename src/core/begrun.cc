@@ -3685,6 +3685,7 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 #endif
 #ifdef TURB_DRIVING
       StTPrev /= 2;
+      StTUpdatedAt /= 2;
 #endif
 
     for(i = 0; i < NumPart; i++)

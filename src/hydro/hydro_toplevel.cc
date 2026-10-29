@@ -359,7 +359,9 @@ void hydro_final_operations_and_cleanup(void)
                 if(F_dot_B < 0) {vA_k *= -1;} // needs to have appropriately-matched signage below //
                 double gamma_0=return_CRbin_gamma_factor(target_for_cr_betagamma,k,CellP), gamma_fac=gamma_0/(gamma_0-1.); // lorentz factor here, needed in next line, because the loss term here scales with -total- energy, not kinetic energy
                 if(beta_fac<0.1) {gamma_fac=2./(beta_fac*beta_fac) -0.5 - 0.125*beta_fac*beta_fac;} // avoid accidental nan
-                Vec3<double> fcorr = bhat * (grad_P_dot_B + (gamma_fac*(F_dot_B/cosmicrayfluid_rsol_corrfac(k)) - three_chi*vA_k*(gamma_fac*e0_cr + p0_cr))*(beta_fac*beta_fac)/(3.*CellP[i].CosmicRayDiffusionCoeff[k])) / (CellP[i].Density*All.cf_a3inv); // physical units
+                double scattering_term = 0; // ~1/kappa: zero while no diffusion coefficient exists yet (with CRFLUID_EVOLVE_SCATTERINGWAVES the wave solver sets it, and it has not run before the first force evaluation), i.e. the kappa->infinity limit
+                if(CellP[i].CosmicRayDiffusionCoeff[k] > 0) {scattering_term = (gamma_fac*(F_dot_B/cosmicrayfluid_rsol_corrfac(k)) - three_chi*vA_k*(gamma_fac*e0_cr + p0_cr))*(beta_fac*beta_fac)/(3.*CellP[i].CosmicRayDiffusionCoeff[k]);}
+                Vec3<double> fcorr = bhat * (grad_P_dot_B + scattering_term) / (CellP[i].Density*All.cf_a3inv); // physical units
                 fcorr += (1.-three_chi) * (gradpcr - bhat*grad_P_dot_B) / (CellP[i].Density*All.cf_a3inv); // physical units
                 CellP[i].HydroAccel += fcorr; // add correction term back into hydro acceleration terms -- need to check that don't end up with nasty terms for badly-initialized/limited scattering rates above
             }}
@@ -418,11 +420,7 @@ void hydro_final_operations_and_cleanup(void)
 
     
 #ifdef TURB_DRIVING
-#ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE // if this is enabled, we only update as frequently as the driving phases are recomputed, as set by TurbDrive_TimeBetweenTurbUpdates. To avoid large errors, must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
-    if(new_turbforce_needed_this_timestep()){add_turb_accel();}
-#else    
-    add_turb_accel(); // update turbulent driving fields and TurbAccel fields at same time as update HydroAccel, here
-#endif    
+    add_turb_accel(); // update turbulent driving fields and TurbAccel fields at same time as update HydroAccel, here. With TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE a cell's TurbAccel is only recomputed after the driving phases change, as set by TurbDrive_TimeBetweenTurbUpdates; to avoid large errors that must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
 #endif
 
 }

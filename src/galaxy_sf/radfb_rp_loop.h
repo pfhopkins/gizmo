@@ -18,11 +18,9 @@
  * pre-port `radfb_local_functions.h` and the legacy `radfb_local_gpu.cc`,
  * both retired in the radfb_local cleanup commit.
  *
- * RNG stream is intentionally NOT byte-identical to legacy. Legacy keyed
- * on pair-ordinal `nn` (gone with the runner API). New stream keys on
- * (loc.ID ^ Pj.ID) plus a per-loop XOR shift RADFBRP_RNG_SHIFT (collision-
- * audited for cross-loop collisions). Order-independent; population
- * statistics identical.
+ * The per-pair stochastic kick is drawn once per (star, cell) pair, keyed on
+ * both particles' event keys, so it is independent of neighbour order,
+ * Mode A vs Mode B, rank and thread.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO. */
 #ifndef RADFB_RP_LOOP_H
@@ -49,28 +47,10 @@
  * accessors; misordered includes must compile-fail loudly, not silently
  * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
-/* Per-loop RNG XOR shift — STREAM INTENTIONALLY CHANGED from legacy.
- *
- * Legacy radfb_local_functions.h keyed RNG on pair-ordinal `nn`:
- *     gizmo_gpu_rand_double(loc.ID ^ kp[j].ID, All.Ti_Current + 3 + nn).
- * The runner pair_kernel API does NOT pass `nn`, and Mode-A tree vs
- * Mode-B candidate orderings differ — so a `nn`-keyed RNG would require
- * new runner plumbing, and Mode A and Mode B would then draw different
- * per-pair randoms for the same pair.
- *
- * New stream is order-independent:
- *     gizmo_gpu_rand_double(loc.ID ^ Pj.ID,
- *                            scalars.rng_ti_counter ^ RADFBRP_RNG_SHIFT).
- * Population statistics identical to legacy (per-pair stochastic
- * acceptance/rejection rate unchanged; only the per-pair seed function
- * changes). Phil 2026-05-16 approved.
- *
- * Collision audit (2026-05-16): the only other 64-bit per-loop RNG
- * shift in any ported _loop file is sinks/sink_feed_loop.cc:77 =
- * 0xfeed5117ULL. Picked 0xfadfb1234567890dULL — distinct from
- * sink_feed and from every legacy small-integer shift surveyed in
- * feedback_rng_loop_uniqueness.md (49531, 121, 17, 11, 3, 7). */
-static constexpr uint64_t RADFBRP_RNG_SHIFT = 0xfadfb1234567890dULL;
+/* Per-pair kick draw (FIRE-2 stellar evolution): key = the star's event key combined with the cell's,
+ * counter = this site's salt and the current time. Keyed on both ends so pairs never share a draw (an
+ * exclusive-or of the two IDs collides, e.g. for every pair of cells that share an ID). */
+static constexpr uint64_t RP_PAIR_GATE_RNG_SALT = gizmo_loop_rng_salt("radiation_pressure_pair_gate");
 
 /* Age threshold above which a star contributes nothing — matches the
  * legacy `radfb_rp_age_threshold` in radfb_local_gpu.cc. */
@@ -116,9 +96,7 @@ struct RadFBRPCallScalars {
 
     double           rp_renorm;          /* All.RP_Local_Momentum_Renormalization */
     double           dv_cap_codeunits;   /* 1.0e4 / UNIT_VEL_IN_KMS */
-    uint64_t         rng_ti_counter;     /* (uint64_t)All.Ti_Current — XORed
-                                          * with RADFBRP_RNG_SHIFT at the
-                                          * gpu_rand_double call site */
+    uint64_t         rng_ti_counter;     /* (uint64_t)All.Ti_Current, the event time of the pair draw */
 #ifdef SINK_WIND_SPAWN
     MyIDType         spawned_wind_cell_id;
 #endif
@@ -141,7 +119,7 @@ struct RadFBRPLocalIn {
                                            * by separation there is meaningless. */
     MyFloat        dE_over_c;             /* total photon momentum budget this step */
     MyFloat        f_lum_ion;             /* ionizing luminosity fraction */
-    MyIDType       ID;                    /* source particle ID, for RNG */
+    uint64_t       rng_key;               /* the star's event key (gizmo_rng_particle_event_key), for the pair draw */
     /* Staged kick-weight denominator. Iter 0 = 0 at populate; written by iteration 0's
      * after_iter from accum.wt_sum before iter 1 dispatch. DOUBLE,
      * not MyFloat — legacy computes the denominator in double and narrowing
@@ -211,9 +189,8 @@ struct RadFBRPActiveState {
  * Inline pair body — iter 1 kick application.
  *
  * Ported from the legacy `radfb_rp_pair_kick` in radfb_local_functions.h,
- * with All.* reads scrubbed (route through scalars) and RNG stream changed
- * to the order-independent (loc.ID ^ Pj.ID, rng_ti_counter ^ shift) form
- * documented above.
+ * with All.* reads scrubbed (route through scalars) and the pair draw keyed
+ * on both particles as documented above.
  *
  * Called by RadFBRPSpec::pair_kernel ONLY on iter 1 (iter 0 path accumulates
  * ========================================================================== */
@@ -319,8 +296,8 @@ static void radfb_rp_pair_kick(
     double dv_imparted = (double)loc.delta_v_imparted_rp;
     double prob = (dv_ms + dv_ss) / dv_imparted;
     if (prob > 1.0) { dv_imparted *= prob; prob = 1.0; }
-    double p_rand = gizmo_gpu_rand_double((uint64_t)loc.ID ^ (uint64_t)Pj.ID,
-                                           scalars.rng_ti_counter ^ RADFBRP_RNG_SHIFT);
+    double p_rand = gizmo_gpu_rand_double(gizmo_rng_combine(loc.rng_key, gizmo_rng_particle_event_key(Pj)),
+                                           gizmo_rng_event_counter(RP_PAIR_GATE_RNG_SALT, scalars.rng_ti_counter, 0));
     if (p_rand >= prob) return;
 
     /* cap total dv */
@@ -417,7 +394,7 @@ static void radfb_rp_pair_kick(
 struct RadFBRPSpec {
     static constexpr const char *loop_name = "radfbrp";
     static constexpr bool keeps_neighbour_mass_positive = true;   /* its neighbour writes are velocity/momentum kicks only */
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: iter-1 kicks atomic_add Pj.Vel/Cj.VelPred/Pj.dp, ID^ID RNG + staged wt_sum order-indep, never read back -> ulp */
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* EpsilonAtomic: iter-1 kicks atomic_add Pj.Vel/Cj.VelPred/Pj.dp, pair-keyed RNG + staged wt_sum order-indep, never read back -> ulp */
 
     /* Search policy. Legacy radfb_local_gpu.cc:259 used NGB_SEARCH_ONEWAY +
      * j_type_bitmask=1 (gas only). */

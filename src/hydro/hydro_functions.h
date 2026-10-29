@@ -94,9 +94,9 @@ void hydro_accumulate_neighbor(
 #endif
     kernel.dv = local.Vel - VelPred_j;
     kernel.rho_ij_inv = 2.0 / (local.Density + CellP[j].Density);
-    double Particle_Size_j = P[j].Get_Particle_Size() * All.cf_atime;
-    double Particle_Size_i = local.Mass / local.Density;
-    Particle_Size_i = pow(Particle_Size_i, 1.0/NUMDIMS) * All.cf_atime;
+    /* both sides take the cell size from the cell volume, so every pair quantity built from them (face checks, transport speed caps) is the same seen from either cell */
+    double Particle_Size_i = pow(local.Mass / local.Density, 1.0/NUMDIMS) * All.cf_atime;
+    double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1.0/NUMDIMS) * All.cf_atime;
 
     kernel.sound_j = CellP[j].effective_soundspeed();
     kernel.vsig = kernel.sound_i + kernel.sound_j;

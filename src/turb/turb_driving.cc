@@ -35,6 +35,8 @@ double* StAkb; // phases (imag part)
 double* StMode; // k vectors
 int StNModes; // total number of modes
 integertime StTPrev; // time of last update (to determine when next will be)
+integertime StTUpdatedAt; // time at which the driving phases last changed (StTPrev advances by whole update intervals, so it can lag this)
+static int StTInitialFieldPending = 0; // set on a start without restart files: the first force evaluation gives every active gas cell the initial field
 gizmo_rng_t StRng; // random number generator key
 
 
@@ -86,7 +88,7 @@ void init_turb(void)
     StAka = (double*) mymalloc_movable(&StAka,"StAka", StNModes * 3 * sizeof(double));
     StAkb = (double*) mymalloc_movable(&StAkb,"StAkb", StNModes * 3 * sizeof(double));
     StAmpl = (double*) mymalloc_movable(&StAmpl,"StAmpl", StNModes * sizeof(double));
-    StOUPhases = (double*) mymalloc_movable(StOUPhases,"StOUPhases", StNModes * 6 * sizeof(double));
+    StOUPhases = (double*) mymalloc_movable(&StOUPhases,"StOUPhases", StNModes * 6 * sizeof(double));
     double kc = 0.5*(kmin+kmax), amin = 0., amplitude_integrated_allmodes = 0.;
     StNModes = 0;
     
@@ -188,6 +190,8 @@ void init_turb(void)
     st_turbdrive_calc_phases(); // initialize phases
     set_turb_ampl(); // set initial amplitudes and calculate initial quantities needed for dissipation measures
     StTPrev = All.Ti_Current; // mark current time as last update of turb driving fields
+    StTUpdatedAt = All.Ti_Current;
+    if(RestartFlag != 1) {StTInitialFieldPending = 1;} /* restart files carry every cell's TurbAccel */
 }
 
 
@@ -326,6 +330,7 @@ void set_turb_ampl(void)
         st_update_ouseq();
         PRINT_STATUS(" ..calculating coefficients and phases following desired projection");
         st_turbdrive_calc_phases();
+        StTUpdatedAt = All.Ti_Current;
         StTPrev = StTPrev + st_return_dt_between_updates() / All.Timebase_interval;
         PRINT_STATUS(" ..updated turbulent stirring field at time %f", StTPrev * All.Timebase_interval);
     }
@@ -370,6 +375,33 @@ void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cel
 }
 
 
+/* Whether gas cell i needs its TurbAccel recomputed. Without TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE every active cell is.
+   With it, a cell's TurbAccel is the driving field as of the start of its step, so it is recomputed only once the phases
+   have changed after that time: cells on long steps that are not active when the phases change pick up the new field
+   the next time they are, and the cost stays proportional to the active cells. A cell whose step began at the time the
+   phases changed already has that field: the phases change in add_turb_accel before its cells are chosen, and the
+   cells that start a step at that time without being active -- woken or spawned -- are refreshed afterwards. */
+static int turb_accel_needs_update(int i, integertime ti_step_start)
+{
+    if(P[i].Type != 0) {return 0;}
+#ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
+    return (StTInitialFieldPending || StTUpdatedAt > ti_step_start);
+#else
+    return 1;
+#endif
+}
+
+/* A cell that starts a new step without a force evaluation -- woken, or newly spawned -- is brought up to the current
+   driving field here (a spawned cell passes -1, before any phase time, so it is always refreshed: its cloned acceleration
+   belongs to another cell and position). */
+void turb_accel_refresh_for_new_step(int i, integertime ti_previous_step_start)
+{
+#ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
+    if(turb_accel_needs_update(i, ti_previous_step_start))
+        {add_turb_accel_for_particle(i, P, CellP, StMode, StAka, StAkb, StAmpl, StNModes, 2.*solenoidal_frac_total_weight_renormalization());}
+#endif
+}
+
 /* routine to actually calculate the turbulent acceleration 'driving field' force on every resolution element */
 void add_turb_accel()
 {
@@ -379,7 +411,8 @@ void add_turb_accel()
     /* Build active gas particle index list */
     int N_active = 0;
     int *turb_indices = (int *) malloc(ActiveParticleList.size() * sizeof(int));
-    for (int i : ActiveParticleList) {if(P[i].Type == 0) {turb_indices[N_active++] = i;}}
+    for (int i : ActiveParticleList) {if(turb_accel_needs_update(i, P[i].Ti_begstep)) {turb_indices[N_active++] = i;}}
+    StTInitialFieldPending = 0; /* cleared even when nothing is selected: every particle is active at this first call, so an empty list means this rank has no gas, and cells arriving later carry their TurbAccel with them */
     if(N_active == 0) {free(turb_indices); PRINT_STATUS("Finished turbulence driving (acceleration) computation"); return;}
 
     if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {

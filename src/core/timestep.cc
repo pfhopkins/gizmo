@@ -1577,6 +1577,9 @@ void process_wake_ups(void)
 	    if(bin != binold)
 	    {
 		integertime tstart = P[i].Ti_begstep + P[i].integertime_step(); /* the step this particle is actually on, which a previous demotion may have truncated below its bin length */
+#ifdef TURB_DRIVING
+		const integertime ti_previous_step_start = P[i].Ti_begstep;
+#endif
 		integertime t_2 = P[i].Ti_current;
 		if(t_2 > tstart) {tstart = t_2;}
 		integertime tend = All.Ti_Current;
@@ -1646,6 +1649,9 @@ void process_wake_ups(void)
         P[i].TimestepDilationFactor = return_timestep_dilation_factor(i, P);
 #endif
 		if(P[i].Ti_current < All.Ti_Current) {P[i].Ti_current=All.Ti_Current;}
+#ifdef TURB_DRIVING
+		turb_accel_refresh_for_new_step(i, ti_previous_step_start);
+#endif
 #ifndef HYDRO_MESHLESS_FINITE_VOLUME
 		if(new_step_starts_now) {do_the_kick(i, P[i].Ti_begstep, P[i].Ti_begstep + P[i].integertime_step() / 2, P[i].Ti_current, 0);} /* the first half-kick of the new step, as do_first_halfstep_kick gives an active particle */
 #endif

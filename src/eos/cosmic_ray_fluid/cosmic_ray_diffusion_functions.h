@@ -71,7 +71,7 @@ void cosmic_ray_diffusion_compute_pair(
             double thold_hll;
             for(int k=0; k<3; k++) {
                 flux_i[k] = local.CosmicRayFlux[k_CRegy][k] / V_i_phys;
-                flux_j[k] = CellP[j].CosmicRayFlux[k_CRegy][k] / V_j_phys;
+                flux_j[k] = CellP[j].CosmicRayFluxPred[k_CRegy][k] / V_j_phys; /* predicted, like local.CosmicRayFlux: both sides of the face must see the same pair */
                 double flux_ij = 0.5 * (flux_i[k] + flux_j[k]);
                 flux_norm += flux_ij * flux_ij;
                 cmag += Face_Area_Vec[k] * flux_ij;
@@ -92,7 +92,7 @@ void cosmic_ray_diffusion_compute_pair(
                                    / (4. + CRopticaldepth * (4. + CRopticaldepth * (4. + 3. * CRopticaldepth)));
             double reducedcM1 = reductionfactor * cr_m1_speed_touse * sqrtthreeinv;
             double c_light_eff = DMAX(2. * kernel.vsig, reducedcM1);
-            double v_eff_touse = DMIN(c_light_eff, kappa_ij / Particle_Size_j);
+            double v_eff_touse = DMIN(c_light_eff, kappa_ij / DMIN(Particle_Size_i, Particle_Size_j));
             double c_hll = 0.5 * fabs(face_vel_i - face_vel_j) + v_eff_touse;
             double hll_corr = 1. / (1. + 1.5 * c_light_eff * DMAX(Particle_Size_j / kappa_j, Particle_Size_i / kappa_i));
             double q = 0.5 * c_hll * (kernel.r * All.cf_atime) / fabs(MIN_REAL_NUMBER + kappa_ij);
@@ -120,7 +120,7 @@ void cosmic_ray_diffusion_compute_pair(
                 if(sign_c0 < 0) { thold_hll *= 0.001; }
                 if(fabs(cmag) > thold_hll) { cmag *= thold_hll / fabs(cmag); }
                 cmag /= dt_hydrostep;
-                Fluxes.CosmicRayPressure[k_CRegy] = cmag;
+                Fluxes.CosmicRayPressure[k_CRegy] += cmag; /* on top of any advective flux from the Riemann solution (MFV) */
             }
 
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
@@ -137,12 +137,14 @@ void cosmic_ray_diffusion_compute_pair(
                 if(flux_tmp[k_i_to_j] * dt_hydrostep < -0.5) { flux_tmp[k_i_to_j] = -0.5 / dt_hydrostep; }
                 Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_j_to_i] += flux_tmp[k_j_to_i] * CellP[j].CosmicRayAlfvenEnergyPred[k_CRegy][k_j_to_i];
                 Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_i_to_j] += flux_tmp[k_i_to_j] * local.CosmicRayAlfvenEnergy[k_CRegy][k_i_to_j];
-                for(int k=0; k<2; k++) { out.DtCosmicRayAlfvenEnergy[k_CRegy][k] += Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k]; }
             }
 #endif
         }
 
         out.DtCosmicRayEnergy[k_CRegy] += Fluxes.CosmicRayPressure[k_CRegy];
+#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
+        for(int k=0; k<2; k++) { out.DtCosmicRayAlfvenEnergy[k_CRegy][k] += Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k]; }
+#endif
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
         double CR_number_to_energy_ratio = 0;
         if(Fluxes.CosmicRayPressure[k_CRegy] > 0) {
