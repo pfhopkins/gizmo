@@ -732,6 +732,16 @@ backends and Template_Config.sh (`#error` if set): the TIGRESS-NCR physics is ne
 with the options (validated Fortran/C++ parity, B1/B2 harness chem_closeout/k23bench) is commit a7a25b1b. Net 16
 keeps its own Gong+17 CR heating and sigma_PE = 1e-21 (df187); grain recombination cooling (D-35) is unconditional.
 
+## D-53. (2026-10-29) Band energy densities per unit G0: Draine (1978) shape / 1.7, all bands, both backends
+The photorates (SGChem photoinit_ism.F, e.g. H2 3.3e-11 s^-1) assume the Draine (1978) spectrum scaled so that G0 = 1.7
+is the Draine field. The band energy densities that turn a radiation field into G0 (chem_interface.h) now use that
+spectrum for every band (scripts/habing_band_energy_densities.py, Draine 2011 eq. 12.7 divided by 1.7):
+6-13.6 eV 5.257e-14 (was 5.29e-14, Habing), 8-13.6 eV 3.380e-14 (was 5.03e-14 = 0.95 x the 6-13.6 value, not a band
+integral), 11.2-13.6 eV 7.799e-15 (was 2.11e-14, which matches no spectrum). For the same field G0 rises by 0.63%,
+G0_LW by 2.705x (H2 and HD photodissociation were 2.7x too slow), and the 8-13.6 eV G0 of the non-Stella M1 path by
+1.488x. The LW floor (10% of the FUV floor flux) rises 2.705x in G0_LW. EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES
+(Habing 1968 spectrum, 8-13.6 eV 2.93e-14, 15% below the Draine shape) is retired (`#error`).
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

@@ -9,7 +9,7 @@ For every cell the chemistry's own rates (OUTPUT_CHEM_PHOTORATES) are compared w
 the exact field L/(4 pi r^2 c) and the exact star-to-cell column N:
   k_H2 = 3.3e-11 G0_LW exp(-2e-21 N) fshield_H2,  k_CO = 1.411e-10 G0 exp(-2.5 A_V) fshield_CO,  G_dust = G0 exp(-2.5 A_V),
   dust-heating field = G0 chi_isrf / 1.7 (reference here G0 exp(-2.5 A_V) / 1.7),
-with G0 = u(6-13.6 eV)/5.29e-14 x 1.7, G0_LW = u(11.2-13.6 eV)/2.11e-14 x 1.7, A_V = 5.348e-22 N; the line self-shielding
+with G0 = u(6-13.6 eV)/5.257e-14 x 1.7, G0_LW = u(11.2-13.6 eV)/7.799e-15 x 1.7, A_V = 5.348e-22 N; the line self-shielding
 factors fshield_H2, fshield_CO are the chemistry's own (ChemPhotoRates columns 4, 5).
 """
 
@@ -44,7 +44,7 @@ MSUN = 1.989e33
 M_P = 1.6726e-24
 C_LIGHT = 2.99792458e10
 X_H = 0.7065  # net 5 (ABHE = 0.1)
-U_HAB_FUV, U_HAB_LW, G0_PARAM, AV_PER_NH = 5.29e-14, 2.11e-14, 1.7, 5.348e-22
+U_HAB_FUV, U_HAB_LW, G0_PARAM, AV_PER_NH = 5.257e-14, 7.799e-15, 1.7, 5.348e-22
 K_CO = 1.411e-10  # CO photodissociation at G0 = 1 (Heays+17, phtab(10))
 UNIT_RHO = 1.989e43 / KPC**3
 BOX_PC, NG = 20.0, 32
