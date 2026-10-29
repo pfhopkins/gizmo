@@ -1852,6 +1852,8 @@ void energy_statistics(void)
     cr_loc[2] = CumulCRShockEnergy * UNIT_ENERGY_IN_CGS;
 #endif
     MPI_Reduce(cr_loc, cr_glob, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    double crclip_glob = 0;
+    MPI_Reduce(&CumulCRClipEnergy, &crclip_glob, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
 #endif
 #ifdef MAGNETIC
     double emag_loc = 0, emag_glob = 0;
@@ -1900,6 +1902,9 @@ void energy_statistics(void)
       fprintf(FdENERGYinfo, "  %14.6e", floor_glob * UNIT_ENERGY_IN_CGS);
 #ifdef MAGNETIC
       fprintf(FdENERGYinfo, "  %14.6e", mhdnum_glob * UNIT_ENERGY_IN_CGS);
+#endif
+#ifdef COSMIC_RAY_FLUID
+      fprintf(FdENERGYinfo, "  %14.6e", crclip_glob * UNIT_ENERGY_IN_CGS);
 #endif
       fprintf(FdENERGYinfo, "\n");
       fflush(FdENERGYinfo);

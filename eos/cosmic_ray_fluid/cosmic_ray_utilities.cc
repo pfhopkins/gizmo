@@ -851,6 +851,13 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
         if(dCR < -eCR_tmp) {dCR=-eCR_tmp;} // don't allow it to go negative
         double eCR_0, eCR_00; eCR_00 = eCR_tmp; eCR_tmp += dCR; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+        if(mode==0 && (dCR != dCR_dt*dt_entr || eCR_00 != cell[i].CosmicRayEnergy[k_CRegy] || eCR_tmp != eCR_00 + dCR)) { /* ledger: CR energy the cap and zero floors add */
+            double de_clip = eCR_tmp - (cell[i].CosmicRayEnergy[k_CRegy] + dCR_dt*dt_entr);
+            if(isfinite(de_clip)) {
+                #pragma omp atomic
+                CumulCRClipEnergy += de_clip;}}
+#endif
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy]=eCR_tmp;} else {cell[i].CosmicRayEnergyPred[k_CRegy]=eCR_tmp;} // updated energy
         eCR_0 = eCR_tmp; // save this value for below
         
@@ -872,6 +879,15 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         /* now need to account for the adiabatic heating/cooling of the 'fluid', here, with gamma=GAMMA_COSMICRAY(k_CRegy) */
         double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt_entr, (GAMMA_COSMICRAY(k_CRegy)-1.)*eCR_tmp, mode, pp, cell); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
         double uf = DMAX(u0 - dCR_div/pp[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
+#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+        if(mode==0) { /* ledger: gas energy the MinEgySpec floors add */
+            double u_in = cell[i].InternalEnergy, u_raw = u0 - dCR_div/pp[i].Mass, de_floor = 0;
+            if(u_in < All.MinEgySpec) {de_floor += (All.MinEgySpec - u_in) * pp[i].Mass;}
+            if(u_raw < All.MinEgySpec) {de_floor += (All.MinEgySpec - u_raw) * pp[i].Mass;}
+            if(de_floor != 0 && isfinite(de_floor)) {
+                #pragma omp atomic
+                CumulKickFloorEnergy += de_floor;}}
+#endif
         if(mode==0) {cell[i].InternalEnergy = uf;} else {cell[i].InternalEnergyPred = uf;} // update gas
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
         if(mode==0) {cell[i].CosmicRayEnergy[k_CRegy] += dCR_div;} else {cell[i].CosmicRayEnergyPred[k_CRegy] += dCR_div;} // update CRs: note if explicitly evolving spectrum, this is done separately below //

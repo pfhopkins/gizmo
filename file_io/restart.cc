@@ -19,9 +19,9 @@
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
 #if defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID) && defined(CRFLUID_INJECTION_AT_SHOCKS)
-#define RESTARTFILE_LAYOUT_VERSION 7u /* + metal ledger totals */
+#define RESTARTFILE_LAYOUT_VERSION 9u /* + metal ledger and CR clip totals */
 #elif defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID)
-#define RESTARTFILE_LAYOUT_VERSION 6u /* + metal ledger totals */
+#define RESTARTFILE_LAYOUT_VERSION 8u /* + metal ledger and CR clip totals */
 #elif defined(GALSF_RESOLVEDISM_FB)
 #define RESTARTFILE_LAYOUT_VERSION 5u /* + metal ledger totals */
 #else
@@ -353,6 +353,7 @@ void restart(int modus)
 #ifdef COSMIC_RAY_FLUID
 	  byten(&CumulCRLossEnergy, sizeof(double), modus);
 	  byten(&CumulCRInjectedErg, sizeof(double), modus);
+	  byten(&CumulCRClipEnergy, sizeof(double), modus);
 #if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
 	  byten(&CumulCRShockEnergy, sizeof(double), modus);
 #endif
