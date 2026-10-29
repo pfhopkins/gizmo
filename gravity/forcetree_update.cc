@@ -474,6 +474,26 @@ void force_flush_motion_bounds(void)
 }
 
 
+/*! Node no's kernel bound hmax grown over a drift of dt. Its members may each have been drifted several
+ *  times within that one interval, each drift capping only its own change (drift_divv_factor), so the
+ *  product of their factors can exceed one capped factor over the whole interval: the node's growth by
+ *  its largest member divergence divVmax (a maximum taken from zero, so it never shrinks the bound) is
+ *  therefore uncapped. No drift takes a kernel past MaxKernelRadius, so max(hmax, MaxKernelRadius) is
+ *  still a bound and keeps it finite. */
+static double force_node_hmax_drift(int no, double dt)
+{
+    double hmax = Extnodes[no].hmax, x = Extnodes[no].divVmax * dt;
+    if(!(hmax >= 0) || !(x >= 0))
+    {
+        printf("Task=%d node %d: kernel bound cannot be drifted (hmax=%g divVmax=%g dt=%g)\n", ThisTask, no, hmax, (double) Extnodes[no].divVmax, dt);
+        fflush(stdout); endrun(90000103);
+    }
+    if(hmax <= 0) {return hmax;}
+    double ceiling = DMAX(hmax, All.MaxKernelRadius), grown = hmax * exp(x / NUMDIMS);
+    return (grown < ceiling) ? grown : ceiling;
+}
+
+
 void force_drift_node(int no, integertime time1)
 {
   int j;
@@ -547,7 +567,7 @@ void force_drift_node(int no, integertime time1)
     Nodes[no].rt_source_lum_s += Extnodes[no].rt_source_lum_vs * dt_drift;
 #endif
 
-    if(Extnodes[no].hmax > 0) {Extnodes[no].hmax *= exp(DMAX(-1.,DMIN(1.,Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));}
+    Extnodes[no].hmax = force_node_hmax_drift(no, dt_drift_hmax);
     Nodes[no].Ti_current = time1;
 }
 

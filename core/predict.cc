@@ -100,23 +100,15 @@ void reconstruct_timebins(void)
 
 /*! The clamped volume-change exponent divV*dt a drift of dt_drift applies to particle i: kernel radii
  *  scale by exp(result/NUMDIMS), densities by exp(-result). Also used to predict a lagging particle's
- *  kernel without drifting it. */
+ *  kernel without drifting it. The cap, the same for every particle type and both directions, keeps a
+ *  prediction near the last solved value. It applies to ONE drift: a bound spanning several (a tree
+ *  node's hmax) grows by force_drift_node's uncapped rule instead. */
 double drift_divv_factor(int i, double dt_drift)
 {
+    const double divv_fac_max = 0.3;
     double divv_fac = P[i].Particle_DivVel * dt_drift;
-    /* How far the predicted kernel radius may move in one drift. The two directions are not the
-       same risk: growing follows the flow and simply predicts a larger search, while shrinking
-       can empty a kernel of the neighbours the next density solve needs. So growth carries the
-       looser bound, which also tracks the divergence it approximates more closely than the old
-       symmetric 0.3 did -- that tight cap lowers the guess's order and fails the density guess
-       more often. Adaptive softening has used the loose bound on both sides for the same reason. */
-    double divv_fac_max_grow   = 4.0;
-    double divv_fac_max_shrink = 1.5;
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if(ags_density_isactive(i) && P[i].Type>0) {divv_fac_max_grow = 4; divv_fac_max_shrink = 4;} // can [should] allow larger changes when using adapting soft for all
-#endif
-    if(divv_fac > +divv_fac_max_grow)   divv_fac = +divv_fac_max_grow;
-    if(divv_fac < -divv_fac_max_shrink) divv_fac = -divv_fac_max_shrink;
+    if(divv_fac > +divv_fac_max) divv_fac = +divv_fac_max;
+    if(divv_fac < -divv_fac_max) divv_fac = -divv_fac_max;
     return divv_fac;
 }
 
