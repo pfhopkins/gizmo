@@ -86,7 +86,7 @@ void init_turb(void)
     StAka = (double*) mymalloc_movable(&StAka,"StAka", StNModes * 3 * sizeof(double));
     StAkb = (double*) mymalloc_movable(&StAkb,"StAkb", StNModes * 3 * sizeof(double));
     StAmpl = (double*) mymalloc_movable(&StAmpl,"StAmpl", StNModes * sizeof(double));
-    StOUPhases = (double*) mymalloc_movable(StOUPhases,"StOUPhases", StNModes * 6 * sizeof(double));
+    StOUPhases = (double*) mymalloc_movable(&StOUPhases,"StOUPhases", StNModes * 6 * sizeof(double));
     double kc = 0.5*(kmin+kmax), amin = 0., amplitude_integrated_allmodes = 0.;
     StNModes = 0;
     
