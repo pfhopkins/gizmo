@@ -180,3 +180,57 @@ def test_turb_diff_metals_rate_matches_equal_timesteps():
     for name, ind, eq in [("gained by the cold side", gain_ind, gain_eq), ("lost by the hot side", loss_ind, loss_eq)]:
         assert abs(ind / eq - 1) < 0.02, f"metal {name} with individual timesteps is {ind / eq:.3f}x that with equal timesteps"
 
+
+def assert_rate_matches(tag_individual, tag_equal, t_compare=0.01):
+    gain_ind, loss_ind = metals_exchanged(tag_individual, t_compare)
+    gain_eq, loss_eq = metals_exchanged(tag_equal, t_compare)
+    print(f"individual/equal dt: cold-side gain {gain_ind / gain_eq:.4f}, hot-side loss {loss_ind / loss_eq:.4f}")
+    assert gain_eq > 0, "no metals diffused into the cold side"
+    for name, ind, eq in [("gained by the cold side", gain_ind, gain_eq), ("lost by the hot side", loss_ind, loss_eq)]:
+        assert abs(ind / eq - 1) < 0.02, f"metal {name} with individual timesteps is {ind / eq:.3f}x that with equal timesteps"
+
+
+def test_turb_diff_metals_default_rate_matches_equal_timesteps():
+    """rate_matches_equal_timesteps for the default exchange: a cell on a shorter step than its neighbour takes its
+    own step's share of the pair-step exchange, not all of it at every step."""
+    run_case("individual_dt_default", exact=False)
+    run_case("equal_dt_default", exact=False, extra_config_flags=("FORCE_EQUAL_TIMESTEPS",))
+    assert_rate_matches("individual_dt_default", "equal_dt_default")
+
+
+def test_turb_diff_metals_mhd_default_exchange_conserves_at_equal_timesteps():
+    """MHD, default exchange, equal timesteps: both evaluations of a pair must compute the same exchange, so sum(M*Z)
+    is conserved to round-off at every step. Sensitive to the diffusion weight (face density) and to the mass-flux
+    estimate that limits the exchange, both of which the MHD Riemann solver can make one-sided."""
+    MZ0, budget, outdir = run_case("mhd_equal_dt", exact=False, extra_config_flags=("MAGNETIC", "FORCE_EQUAL_TIMESTEPS"),
+                                   ic_kwargs=dict(B_z=1e-8), param_overrides={"UnitMagneticField_in_gauss": 1})
+    drift = np.abs(budget[:, 1] - MZ0) / MZ0
+    MZ_final, Zmin = metal_mass(snapshots(outdir)[-1])
+    print(f"MHD equal-dt default exchange: max per-step drift {drift.max():.3e}, final {(MZ_final - MZ0) / MZ0:+.3e}, "
+          f"cold-side gain by 10 Myr {metals_exchanged('mhd_equal_dt', 0.01)[0] / MZ0:.3e} of the metal mass")
+    assert metals_exchanged("mhd_equal_dt", 0.01)[0] > 0, "no metals diffused into the cold side"
+    assert drift.max() < RTOL_CONSERVATION, f"sum(M*Z) drifts by {drift.max():.2e} (step {drift.argmax()}, t={budget[drift.argmax(), 0]:.4g}); final {(MZ_final - MZ0) / MZ0:+.2e}"
+    assert Zmin >= 0, "negative metallicity"
+
+
+def test_turb_diff_metals_comoving_matches_physical():
+    """The diffusion weight is a physical density. The same box run in comoving coordinates (Einstein-de Sitter, from the
+    scale factor a0 at which its mass is the critical density: a0^3 = 4e-3) must move the same metal mass across the
+    interface in its first 10 Myr as the physical run; the box expands by 1.5% in that time."""
+    G = 6.672e-8 * 1.989e43 / (3.085678e21 * 1e10)  # code units of the params file, h=1
+    H0 = 3.2407789e-18 * 3.085678e21 / 1e5
+    box, n_side, m0, t_compare = 0.5, 20, 1e-10, 0.01
+    a0 = box / (n_side**3 * m0 * 8 * np.pi * G / (3 * H0**2)) ** (1 / 3)
+    a1 = (a0**1.5 + 1.5 * H0 * t_compare) ** (2 / 3)
+    run_case("physical", exact=False, param_overrides={"TimeMax": t_compare})
+    run_case("comoving", exact=False, ic_kwargs=dict(box=box / a0, time=a0),
+             param_overrides={"ComovingIntegrationOn": 1, "TimeBegin": a0, "TimeMax": a1, "BoxSize": box / a0,
+                              "Omega0": 1, "OmegaLambda": 0, "OmegaBaryon": 1, "HubbleParam": 1,
+                              "TimeBetSnapshot": 1.005, "MaxSizeTimestep": 0.005 * H0 * a0**-1.5,
+                              **{f"Softening{t}MaxPhys": 0 for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")}})
+    gain_phys, loss_phys = metals_exchanged("physical", t_compare)
+    gain_com, loss_com = metals_exchanged("comoving", a1)
+    assert gain_phys > 0, "no metals diffused into the cold side"
+    print(f"comoving/physical: cold-side gain {gain_com / gain_phys:.4f}, hot-side loss {loss_com / loss_phys:.4f}")
+    for name, com, phys in [("gained by the cold side", gain_com, gain_phys), ("lost by the hot side", loss_com, loss_phys)]:
+        assert abs(com / phys - 1) < 0.1, f"metal {name} in the comoving run is {com / phys:.3f}x that in the physical run"

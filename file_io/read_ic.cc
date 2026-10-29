@@ -620,6 +620,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_EOS_STRESS_TENSOR: /* deviatoric stress: element 3*k+kf is S[kf][k], the inverse of the snapshot writer */
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; n++) {for(k = 0; k < 3; k++) {for(int kf = 0; kf < 3; kf++) {CellP[offset + n].Elastic_Stress_Tensor[kf][k] = *fp++;}}}
+#endif
+            break;
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -630,7 +636,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_AGS_PSI_RE:
         case IO_AGS_PSI_IM:
         case IO_EOSCS:
-        case IO_EOS_STRESS_TENSOR:
         case IO_CBE_MOMENTS:
         case IO_SFR:
         case IO_POT:
@@ -770,12 +775,14 @@ void read_file(char *fname, int readTask, int lastTask)
         {
             read_header_attributes_in_hdf5(fname);
             hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+            if(hdf5_file < 0) {printf("can't open file `%s' for reading initial conditions.\n", fname); endrun(123);}
             for(type = 0; type < 6; type++)
             {
                 if(header.npart[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gopen(hdf5_file, buf);
+                    if(hdf5_grp[type] < 0) {printf("no group %s in `%s'.\n", buf, fname); endrun(124);} /* else every block would read as absent and be zero-filled */
                 }
             }
         }
@@ -955,6 +962,9 @@ void read_file(char *fname, int readTask, int lastTask)
 #if defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
                    && blocknr != IO_EOSCOMP
 #endif
+#ifdef EOS_ELASTIC
+                   && blocknr != IO_EOS_STRESS_TENSOR
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==1)||(HYDRO_FIX_MESH_MOTION==2)||(HYDRO_FIX_MESH_MOTION==3))
                    && blocknr != IO_PARTVEL
 #endif
@@ -994,6 +1004,9 @@ void read_file(char *fname, int readTask, int lastTask)
             if(blocknr == IO_GENERATION_ID || blocknr == IO_CHILD_ID) {continue;}
 #endif
             if((RestartFlag == 0) && (All.InitGasTemp > 0) && (blocknr == IO_U)) {continue;}
+#ifdef EOS_ELASTIC
+            if(RestartFlag == 0 && All.ICFormat != 3 && blocknr == IO_EOS_STRESS_TENSOR) {continue;} /* a binary IC does not carry it (the stress starts from zero); every snapshot does */
+#endif
 
 
 #ifdef MHD_B_SET_IN_PARAMS
@@ -1466,8 +1479,11 @@ void read_header_attributes_in_hdf5(char *fname)
 {
     hid_t hdf5_file, hdf5_headergrp, hdf5_attribute;
 
+    /* a failed open here would leave the previous file's header in place */
     hdf5_file = H5Fopen(fname, H5F_ACC_RDONLY, H5P_DEFAULT);
+    if(hdf5_file < 0) {printf("can't open file `%s' for reading initial conditions.\n", fname); endrun(123);}
     hdf5_headergrp = H5Gopen(hdf5_file, "/Header");
+    if(hdf5_headergrp < 0) {printf("no group /Header in `%s'.\n", fname); endrun(124);}
 
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_ThisFile");
     H5Aread(hdf5_attribute, H5T_NATIVE_INT, header.npart);

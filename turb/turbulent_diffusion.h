@@ -79,8 +79,9 @@
                 #pragma omp atomic
                 CellP[j].Dyield_pending[k_species] -= cmag;
 #else
-                out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag;
-                if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag;}
+                /* the limiters above bound the exchange over the pair step dt_hydrostep: each side applies the share for its own step */
+                out.Dyield[k_species] += FluxCorrectionFactor_to_i * cmag * (dt_hydrostep_i / dt_hydrostep);
+                if(j_is_active_for_fluxes) {CellP[j].Dyield[k_species] -= FluxCorrectionFactor_to_j * cmag * (dt_hydrostep_j / dt_hydrostep);}
 #endif
             }
         }

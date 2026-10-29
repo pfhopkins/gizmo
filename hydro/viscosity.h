@@ -42,7 +42,7 @@
         double bhat_dot_gradvhat_direct = 1;
         double grad_v_mag = 0;
         double Bi_proj = 1;
-        if(B_interface_mag2 >= 0)
+        if(B_interface_mag2 > 0) /* with no field at the interface the isotropic form below applies */
         {
             /* Braginskii formulation of leading-order anisotropic viscosity */
             do_non_mhd = 0;
@@ -126,15 +126,16 @@
         
         for(k_v=0;k_v<3;k_v++)
         {
+            double b_hll_eff=1, dv_visc, thold_ptot_hll=0.03;
 #ifdef MAGNETIC
-            double b_hll_eff = DMAX(DMIN(1. , 3.*bhat_dot_gradvhat*bhat_dot_gradvhat) , 0.01);
-            double dv_visc = 3. * (B_interface[k_v]*Bi_proj - kernel.dp[k_v]/3.) * bhat_dot_gradvhat_direct * a_inv; // physical
-            double thold_ptot_hll = 0.1 * exp(-2. * grad_v_mag * kernel.r / (1.e-30 + fabs(kernel.dv[k_v]))); // units ok
-#else
-            double b_hll_eff=1;
-            double dv_visc = cmag_dir[k_v] * rinv*rinv / (All.cf_atime * DMAX(eta,zeta)); // physical
-            double thold_ptot_hll = 0.03;
+            if(do_non_mhd==0)
+            {
+                b_hll_eff = DMAX(DMIN(1. , 3.*bhat_dot_gradvhat*bhat_dot_gradvhat) , 0.01);
+                dv_visc = 3. * (B_interface[k_v]*Bi_proj - kernel.dp[k_v]/3.) * bhat_dot_gradvhat_direct * a_inv; // physical
+                thold_ptot_hll = 0.1 * exp(-2. * grad_v_mag * kernel.r / (1.e-30 + fabs(kernel.dv[k_v]))); // units ok
+            } else
 #endif
+            {dv_visc = cmag_dir[k_v] * rinv*rinv / (All.cf_atime * DMAX(eta,zeta));} // physical
             /* obtain HLL correction terms for Reimann problem solution */
             double hll_tmp = rho_ij * HLL_correction(dv_visc,-dv_visc,rho_ij,viscous_wt_physical); // physical
             double fluxlimiter_absnorm = -DMAX(eta,zeta) * sqrt(b_hll_eff) * Face_Area_Norm * dv_visc*rinv*a_inv; // physical

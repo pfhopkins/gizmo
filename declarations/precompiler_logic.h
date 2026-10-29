@@ -768,7 +768,7 @@
 #endif
 
 
-#ifndef  GALSF_GENERATIONS
+#if defined(GALSF) && !defined(GALSF_GENERATIONS)
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
@@ -786,13 +786,13 @@
 #define CRFLUID_REDUCED_C_CODE(k) (return_CRbin_M1speed(k)) // allow for bin-to-bin variations in RSOL
 
 
+#if defined(FOF) || defined(SUBFIND) /* the group finders are the only users of the link types */
 #ifndef FOF_PRIMARY_LINK_TYPES
 #define FOF_PRIMARY_LINK_TYPES 2
 #endif
-
-
 #ifndef FOF_SECONDARY_LINK_TYPES
 #define FOF_SECONDARY_LINK_TYPES 0
+#endif
 #endif
 
 
@@ -913,7 +913,7 @@
 #ifndef RT_SPEEDOFLIGHT_REDUCTION
 #define RT_SPEEDOFLIGHT_REDUCTION (1.0)
 #endif
-#ifndef RT_SOURCES
+#if (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE) || defined(RT_SOURCE_INJECTION)) && !defined(RT_SOURCES) /* only radiation code reads the source types */
 #define RT_SOURCES 1+2+4+8+16+32 // default to allowing all types to act as sources //
 #endif
 

@@ -567,7 +567,7 @@ void density(void)
                     double closure_asymm=0; for(k1=0;k1<3;k1++) {closure_asymm += Face_Area_OneSided_Estimator_in[k1]*Face_Area_OneSided_Estimator_in[k1];}
                     double particle_inverse_volume = P[i].NumNgb / ( VOLUME_NORM_COEFF_FOR_NDIMS * pow(P[i].KernelRadius,NUMDIMS) );
                     closure_asymm = sqrt(closure_asymm) / (P[i].KernelRadius * particle_inverse_volume); // dimensionnless measure of asymmetry in kernel
-                    CellP[i].FaceClosureError = DMIN(DMAX(1.0259-2.52444*closure_asymm,0.344301),1.); // correction factor for 'missing' volume assuming a wendland C2 kernel and a sharp surface from Reinhardt & Stadel 2017 (arXiv:1701.08296)
+                    CellP[i].FaceClosureError = DMIN(DMAX(KERNEL_SURFACE_VOLCORR_OFFSET + KERNEL_SURFACE_VOLCORR_SLOPE*closure_asymm, KERNEL_SURFACE_VOLCORR_FLOOR), 1.); // correction factor for 'missing' volume at a sharp surface, fitted per kernel and dimension (mesh/kernel.h)
 #else
                     CellP[i].FaceClosureError = dimless_face_leak / (2.*NUMDIMS*pow(dx_i,NUMDIMS-1));
 #endif
@@ -997,13 +997,13 @@ void density(void)
 #endif
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR)
                 CellP[i].Density /= CellP[i].FaceClosureError; // correct volume of the cell based on the free surface correction above
-                CellP[i].FaceClosureError = Volume_0;
 #endif
+                /* FaceClosureError stays a dimensionless closure diagnostic: the face reconstruction reads it as a leak fraction */
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
                 Volume_0 = P[i].Mass / CellP[i].Density;
-                if(All.Time == All.TimeBegin) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // set initial value to density calculated above
+                CellP[i].KernelDensityForVolumeRelaxation = CellP[i].Density;
+                if((All.Time == All.TimeBegin && RestartFlag != 2) || !(CellP[i].Density_ExplicitInt > 0) || !isfinite(CellP[i].Density_ExplicitInt)) {CellP[i].Density_ExplicitInt = CellP[i].Density;} // fresh start, or a new cell whose integrated density is unset: start from the density calculated above (a snapshot restart continues the snapshot's)
                     else {CellP[i].Density = CellP[i].Density_ExplicitInt;} // set to explicitly-evolved density field
-                CellP[i].FaceClosureError = Volume_0;
 #endif
 #ifdef HYDRO_VOLUME_CORRECTIONS
                 CellP[i].Volume_1 = CellP[i].Volume_0 = Volume_0; // initialize this value for use in the correction loop, and in case this is not set in the subsequent loop because of inactivity, set this first to the zeroth-order estimator

@@ -4811,6 +4811,24 @@ void write_header_attributes_in_hdf5(hid_t handle)
     {double tmp=All.UnitMagneticField_in_gauss; hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "UnitMagneticField_In_Gauss", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
         H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
 #endif
+    /* how the code was built: the literal Config.sh, every option in effect (with the defaults and derived options it
+       switched on) and a hash of those, the build, and the compiler. Reports GIZMO_config.h, not whether objects were stale. */
+    {
+        auto write_string_attribute = [handle](const char *name, const char *value) {
+            hid_t string_type = H5Tcopy(H5T_C_S1); H5Tset_size(string_type, strlen(value) + 1);
+            hid_t space = H5Screate(H5S_SCALAR); hid_t attribute = H5Acreate(handle, name, string_type, space, H5P_DEFAULT);
+            H5Awrite(attribute, string_type, value); H5Aclose(attribute); H5Sclose(space); H5Tclose(string_type);};
+        write_string_attribute("Compile_Config_Options", compile_time_config_literal());
+        write_string_attribute("Compile_Effective_Options", compile_time_effective_options());
+        unsigned long long options_hash = compile_time_effective_options_fnv1a64();
+        hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Compile_Effective_Options_FNV1a64", H5T_NATIVE_ULLONG, hdf5_dataspace, H5P_DEFAULT);
+        H5Awrite(hdf5_attribute, H5T_NATIVE_ULLONG, &options_hash); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+#ifdef BUILDINFO
+        write_string_attribute("Build_Info", BUILDINFO);
+#endif
+        write_string_attribute("Compiler_Version", compile_time_compiler_version());
+    }
+
     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "Gravitational_Constant_In_Code_Inits", H5T_NATIVE_DOUBLE, hdf5_dataspace, H5P_DEFAULT);
     H5Awrite(hdf5_attribute, H5T_NATIVE_DOUBLE, &All.G); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 

@@ -13,7 +13,7 @@ extern struct gas_cell_data
     MyDouble MassTrue;              /*!< true particle mass ('mass' now is -predicted- mass */
     MyDouble dMass;                 /*!< change in particle masses from hydro step (conserved variable) */
     MyDouble DtMass;                /*!< rate-of-change of particle masses (for drifting) */
-    Vec3<MyDouble> GravWorkTerm;    /*!< correction term needed for hydro mass flux in gravity */
+    Vec3<MyDouble> GravWorkTerm;    /*!< MFV: sum over faces of the transferred mass flux times the pair separation, per unit cell mass; dotted with the gravitational acceleration, the specific heating rate that repays the potential energy of the exchanged mass */
     Vec3<MyDouble> ParticleVel;     /*!< actual velocity of the mesh-generating points */
 #endif
     
@@ -27,6 +27,7 @@ extern struct gas_cell_data
     
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
     MyDouble Density_ExplicitInt;   /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
+    MyDouble KernelDensityForVolumeRelaxation; /*!< kernel (surface-corrected, if enabled) density from the last density pass: the value Density_ExplicitInt relaxes toward */
 #endif
     
 #ifdef HYDRO_VOLUME_CORRECTIONS
@@ -605,7 +606,7 @@ extern struct gas_cell_data
         if(cs <= 0) {cs=press_min;}
         SoundSpeed = cs/rho;
 #ifdef EOS_ELASTIC
-        SoundSpeed += All.Tillotson_EOS_params[CompositionType][10] / rho;
+        SoundSpeed += elastic_longitudinal_soundspeed2_excess(CompositionType, rho);
 #endif
         SoundSpeed = sqrt(SoundSpeed);
         return press;

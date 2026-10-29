@@ -215,7 +215,7 @@ void set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, str
 #ifdef PMGRID
     grav_acc += All.cf_a2inv * pp[i].GravPM;
 #endif
-    DtInternalEnergyEffCGS -= All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
+    DtInternalEnergyEffCGS += All.cf_atime * dot(cell[i].GravWorkTerm, grav_acc);
 #endif
     if(DtInternalEnergyEffCGS < 0) {
         double qfac = DMIN(0,DMAX(DMAX(-0.9, exp(DtInternalEnergyEffCGS*dtime/cell[i].InternalEnergy)-1.), All.MinEgySpec/cell[i].InternalEnergy-1.));

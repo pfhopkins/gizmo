@@ -1055,6 +1055,24 @@ extern struct global_data_all_processes
 All;
 
 
+#ifdef EOS_ELASTIC
+/* row of All.Tillotson_EOS_params holding a cell's shear modulus [10] and yield strength [11]: its own material under
+   EOS_TILLOTSON (the named presets), otherwise row 0 (the parameterfile values), which every cell then shares */
+static inline int elastic_material_row(int composition_type)
+{
+#ifdef EOS_TILLOTSON
+    return composition_type;
+#else
+    (void)composition_type; return 0;
+#endif
+}
+/* signal speed^2 added by the deviatoric stiffness: dS/dt = 2 mu (strain rate - trace/NUMDIMS) raises the longitudinal
+   modulus by 2 (1 - 1/NUMDIMS) mu, i.e. c^2 by mu/rho in 2D and 4/3 mu/rho in 3D */
+static inline double elastic_longitudinal_soundspeed2_excess(int composition_type, double rho)
+{
+    return 2.*(1.-1./NUMDIMS) * All.Tillotson_EOS_params[elastic_material_row(composition_type)][10] / rho;
+}
+#endif
 #ifdef STARFORGE_GMC_TURBINIT
 /* MakeCloud's default uniform-sphere ICs, which GravAccel_GMCTurbInit assumes: a cloud of radius
    STARFORGE_GMC_TURBINIT_CLOUD_RADIUS_IN_BOXSIZE * BoxSize at the box centre, holding this fraction of the gas mass */

@@ -229,6 +229,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
             /* load and update the particle masses : particle mass update here, from hydro fluxes */
             mass_old = CellP[i].MassTrue; mass_pred = P[i].Mass; mass_new = mass_old + dMass; CellP[i].MassTrue = mass_new; // UNITS: remember all time derivatives (DtX, dX) are in -physical- units; as are mass, entropy/internal energy, but -not- velocity //
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+            if(mass_old > 0 && mass_new > 0 && CellP[i].Density_ExplicitInt > 0) {CellP[i].Density_ExplicitInt *= mass_new / mass_old;} /* the exchanged mass changes the density at fixed volume; -rho div(v) is applied below */
+#endif
             /* double e_old = mass_old * CellP[i].InternalEnergy; for(j = 0; j< 3; j++) e_old += 0.5*mass_old * (P[i].Vel[j]/All.cf_atime)*(P[i].Vel[j]/All.cf_atime); // physical //
             for(j = 0; j < 3; j++) // momentum-space-kick
             {
@@ -264,7 +267,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             /* calculate the contribution to the energy change from the mass fluxes in the gravitation field */
-            dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
+            dEnt_Gravity += dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
@@ -327,14 +330,14 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
             CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,P[i].Particle_DivVel*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
-            if(CellP[i].FaceClosureError > 0) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
+            if(CellP[i].KernelDensityForVolumeRelaxation > 0 && isfinite(CellP[i].KernelDensityForVolumeRelaxation)) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
                 if(drho2>0 && CellP[i].Density_ExplicitInt>0 && CellP[i].Density>0) {
                     double Lgrad = CellP[i].Density / sqrt(drho2); Lgrad=DMAX(Lgrad,P[i].KernelRadius); double cs_eff_forrestoringforce=CellP[i].effective_soundspeed(); /* gradient scale length and sound speed */
 #if defined(EOS_TILLOTSON)
                     cs_eff_forrestoringforce=DMIN(cs_eff_forrestoringforce , sqrt(All.Tillotson_EOS_params[CellP[i].CompositionType][10] / CellP[i].Density)); /* speed of deviatoric waves, which is most relevant, if defined */
 #endif
-                    double delta = 0.1 * dt_hydrokick * cs_eff_forrestoringforce / Lgrad, q0=log(CellP[i].Density_ExplicitInt), q1=log(P[i].Mass/CellP[i].FaceClosureError), qn=0; if(delta > 0.005) {qn=q0*exp(-delta) + q1*(1.-exp(-delta));} else {qn=q0 + (q1-q0)*delta*(1.-0.5*delta);} /* evolves in log-space across this span */
-                    CellP[i].Density_ExplicitInt = exp(q0); /* set final density */
+                    double delta = 0.1 * dt_hydrokick * cs_eff_forrestoringforce / Lgrad, q0=log(CellP[i].Density_ExplicitInt), q1=log(CellP[i].KernelDensityForVolumeRelaxation), qn=0; if(delta > 0.005) {qn=q0*exp(-delta) + q1*(1.-exp(-delta));} else {qn=q0 + (q1-q0)*delta*(1.-0.5*delta);} /* evolves in log-space across this span */
+                    if(isfinite(qn)) {CellP[i].Density_ExplicitInt = exp(qn);} /* set final density (relaxed toward the kernel density) */
                 }}
 #endif
 

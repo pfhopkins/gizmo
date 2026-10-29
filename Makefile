@@ -67,7 +67,10 @@ CONFIGVARS := $(shell cat GIZMO_config.h)
 HG_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
 HG_REPO := $(shell git config --get remote.origin.url)
 HG_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
-BUILDINFO = "Build on $(HOSTNAME) by $(USER) from $(HG_BRANCH):$(HG_COMMIT) at $(HG_REPO)"
+# tracked files that differ from the commit (untracked files are not detected)
+HG_DIRTY := $(if $(HG_COMMIT),$(shell git diff --quiet HEAD -- . 2>/dev/null || echo "-tracked-dirty"),)
+BUILD_HOST := $(or $(HOSTNAME),$(shell hostname 2>/dev/null),unknown-host)
+BUILDINFO = "Build on $(BUILD_HOST) by $(USER) from $(HG_BRANCH):$(HG_COMMIT)$(HG_DIRTY) at $(HG_REPO)"
 OPT += -DBUILDINFO='$(BUILDINFO)'
 OPT += -DGIZMO_SOURCE_DIR='"$(CURDIR)/"'
 
@@ -976,7 +979,8 @@ $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 #$(FOBJS): %.o: %.f90
 #	$(FC) $(OPTIMIZE) -c $< -o $@
 
-compile_time_info.cc: $(CONFIG)
+# every object depends on compile_time_info.cc, so an edit to precompiler_logic.h rebuilds them all
+compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:
