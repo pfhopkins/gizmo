@@ -37,6 +37,7 @@ GALSF_RESOLVEDISM_WINDS_THERMAL          % inelastic-residual heating (adopted 2
 
 ########## Radiation: FUV / photoionisation / radiation pressure (subgrid) ##########
 GALSF_RESOLVEDISM_PHOTOION               % subgrid Stromgren photoionisation (pisub)  [excl RADTRANSFER]
+#GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE % pisub photon cost per cell at case-B alpha(T_cell), T>=1e4 K  [req PHOTOION]
 GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req HEALPix RT_USE_TREECOL_FOR_NH, auto RADPRESSURE_TREERAD] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_NUV_VARIABLE          % NUV band field  [auto by RADPRESSURE]
 #GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
