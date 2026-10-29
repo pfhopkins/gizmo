@@ -67,7 +67,7 @@ void gravity_tree(void)
         /* the build keys particles against the standing domain: one outside its extent would be filed
            under the wrong cell, so re-measure the extent with a decomposition first */
         if(domain_extent_outgrown()) {domain_Decomposition(0, 0, 0);}
-        rearrange_particle_sequence();
+        rearrange_particle_sequence(1); /* the tree is rebuilt just below */
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */

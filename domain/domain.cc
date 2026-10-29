@@ -346,7 +346,7 @@ void domain_Decomposition(int UseAllTimeBins, int SaveKeys, int do_particle_merg
     }
     t_mergesplit = timediff(t_drift_start, my_second());
     double t_tmp = my_second();
-    rearrange_particle_sequence(); /* must be called after merge_and_split_particles, and should always be called before new domains are built */
+    rearrange_particle_sequence(1); /* must be called after merge_and_split_particles, and should always be called before new domains are built; the tree is freed below */
     t_rearrange = timediff(t_tmp, my_second());
 
     UseAllParticles = UseAllTimeBins;
@@ -546,7 +546,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
 
     double t_light_start = my_second(), t_light_rearrange=0, t_light_drift=0, t_light_boxwrap=0, t_light_barrier=0;
     TreeDiscardImminent = 1; /* as in the full decomposition: the tree dies before the next walk */
-    rearrange_particle_sequence();
+    rearrange_particle_sequence(1); /* the tree is freed below */
     t_light_rearrange = timediff(t_light_start, my_second());
     UseAllParticles = UseAllTimeBins;
 

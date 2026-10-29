@@ -896,7 +896,7 @@ void prepare_decouple(void);
 void read_ic(char *fname);
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
-void rearrange_particle_sequence(void);
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
 void force_validate_tree_links(const char *tag);
 void force_tree_check_walkable(const char *tag);

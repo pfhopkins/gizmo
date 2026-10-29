@@ -1289,8 +1289,17 @@ void remove_particle_from_treewalk(int i){
     'deletion', the standard procedure should be to set the deleted particle mass to zero, and then let this routine
     (when it is called in standard sequence) do its job and 'clean up' the particle
  */
-void rearrange_particle_sequence(void)
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
 {
+    /* Under MAINTAIN_TREE_IN_REARRANGE every slot move repairs the standing tree's walk links, and
+       finding the links into one slot walks the whole tree, so a call that moves many particles costs
+       that many full-tree walks. A caller that frees or rebuilds the tree before anything walks it
+       again would discard those repairs unread; such calls only condemn the tree, as without the flag. */
+#ifdef MAINTAIN_TREE_IN_REARRANGE
+    const int repair_walk_links = !tree_rebuilt_before_next_walk;
+#else
+    const int repair_walk_links = 0; (void) tree_rebuilt_before_next_walk;
+#endif
     TreeOpsCount[TREEOPS_REARRANGE]++;
     double _t0_rearr = my_second();
     int i, j, flag = 0, flag_sum, j_next;
@@ -1340,9 +1349,7 @@ void rearrange_particle_sequence(void)
                 gascellsave = CellP[i];
                 CellP[i] = CellP[j];
                 CellP[j] = gascellsave;  /* have the gas particle take its gas/fluid cell pointer with it */
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i,j);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(i,j);}
 #ifdef CHIMES /* swap chimes-specific 'gasvars' structure which is separate from the default code gas cell structure */
                 gasVarsSave = ChimesGasVars[i]; ChimesGasVars[i] = ChimesGasVars[j]; ChimesGasVars[j] = gasVarsSave;
                 /* Old particle (now at position j) is no longer a gas particle, so delete its abundance array. */
@@ -1372,9 +1379,7 @@ void rearrange_particle_sequence(void)
 
                 P[i] = P[N_gas - 1];
                 CellP[i] = CellP[N_gas - 1];
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i, N_gas-1);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(i, N_gas-1);}
                 /* swap with properties of last gas particle (i-- below will force a check of this so its ok) */
 #ifdef CHIMES
                 free_gas_abundances_memory(&(ChimesGasVars[i]), &ChimesGlobalVars);
@@ -1383,10 +1388,7 @@ void rearrange_particle_sequence(void)
 #endif
 
                 P[N_gas - 1] = P[NumPart - 1]; /* redirect the final gas pointer to go to the final particle (BH) */
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(N_gas - 1, NumPart-1);
-                remove_particle_from_treewalk(NumPart - 1);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(N_gas - 1, NumPart-1); remove_particle_from_treewalk(NumPart - 1);}
                 N_gas--; /* shorten the total N_gas count */
                 count_gaselim++; /* record that a BH was eliminated */
             }
@@ -1396,10 +1398,7 @@ void rearrange_particle_sequence(void)
                 P[i] = P[NumPart - 1]; /* re-directs pointer for this particle to pointer at final particle -- so we
                                         swap the two; note that ordering -does not- matter among the non-fluid/gas cells
                                         so its fine if this mixes up the list ordering of different particle types */
-#ifdef MAINTAIN_TREE_IN_REARRANGE
-                swap_treewalk_pointers(i, NumPart - 1);
-                remove_particle_from_treewalk(NumPart - 1);
-#endif
+                if(repair_walk_links) {swap_treewalk_pointers(i, NumPart - 1); remove_particle_from_treewalk(NumPart - 1);}
             }
 
             NumPart--;
@@ -1423,27 +1422,32 @@ void rearrange_particle_sequence(void)
 
     MPI_Allreduce(&flag, &flag_sum, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(flag_sum) {reconstruct_timebins();}
-#ifndef MAINTAIN_TREE_IN_REARRANGE
-    /* Slots moved and nothing above repaired the tree's walk links: the standing tree no longer
-       describes the particle list. Condemn it deterministically -- flag_sum is the SUM every rank
-       just reduced, so all ranks agree, and no walk may run before the rebuild. Covers every
-       elimination path (swallow victims, outflow BCs, excision, mergers) and every reorder in one
-       place; the old code was safe only when a rebuild happened to follow. (cf. gizmo-cpp a06e0073) */
-    if(flag_sum) {TreeReconstructFlag = 1;}
-#else
-    /* Topology was maintained per-swap above, but an eliminated particle's mass and type-conditioned
-       contributions are still in every ancestor moment. Re-derive them before the next force
-       evaluation -- tot_elim is Allreduce'd above, so this is rank-uniform. Safety net: this fires
-       even if the site that zeroed the mass forgot to raise the moments flag itself. */
-    if(tot_elim > 0) {TreeMomentsStaleFlag = 1;}
-    if(flag) {TreeWalkValidatePending = 1;} /* rank-local note: this rank's threading was edited; the next tree consumer validates it (tier-0) */
-    if(flag || count_elim) {TreeAuditMomentsPending = 1;} /* the next refresh audits moments un-strided: post-mutation is exactly when a wrong Father shows as a moment mismatch */
+    if(!repair_walk_links)
+    {
+        /* Slots moved and nothing above repaired the tree's walk links: the standing tree no longer
+           describes the particle list. Condemn it deterministically -- flag_sum is the SUM every rank
+           just reduced, so all ranks agree, and no walk may run before the rebuild. Covers every
+           elimination path (swallow victims, outflow BCs, excision, mergers) and every reorder in one
+           place; the old code was safe only when a rebuild happened to follow. (cf. gizmo-cpp a06e0073) */
+        if(flag_sum) {TreeReconstructFlag = 1;}
+    }
+#ifdef MAINTAIN_TREE_IN_REARRANGE
+    else
+    {
+        /* Topology was maintained per-swap above, but an eliminated particle's mass and type-conditioned
+           contributions are still in every ancestor moment. Re-derive them before the next force
+           evaluation -- tot_elim is Allreduce'd above, so this is rank-uniform. Safety net: this fires
+           even if the site that zeroed the mass forgot to raise the moments flag itself. */
+        if(tot_elim > 0) {TreeMomentsStaleFlag = 1;}
+        if(flag) {TreeWalkValidatePending = 1;} /* rank-local note: this rank's threading was edited; the next tree consumer validates it (tier-0) */
+        if(flag || count_elim) {TreeAuditMomentsPending = 1;} /* the next refresh audits moments un-strided: post-mutation is exactly when a wrong Father shows as a moment mismatch */
 #ifdef TREE_INTEGRITY_AUDITS
-    /* not when the tree is about to be freed (decomposition prelude): splits there deliberately
-       leave daughters uninserted, which the audit would misread as orphans (and the audit work
-       would be spent on a structure nothing will walk) */
-    if(flag && !TreeDiscardImminent) {force_tree_full_audit(0, "rearrange");}
+        /* not when the tree is about to be freed (decomposition prelude): splits there deliberately
+           leave daughters uninserted, which the audit would misread as orphans (and the audit work
+           would be spent on a structure nothing will walk) */
+        if(flag && !TreeDiscardImminent) {force_tree_full_audit(0, "rearrange");}
 #endif
+    }
 #endif
     TreeMaintTime_Rearrange += my_second() - _t0_rearr;
 }
