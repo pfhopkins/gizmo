@@ -359,7 +359,8 @@ void hydro_final_operations_and_cleanup(void)
                 if(F_dot_B < 0) {vA_k *= -1;} // needs to have appropriately-matched signage below //
                 double gamma_0=return_CRbin_gamma_factor(target_for_cr_betagamma,k,CellP), gamma_fac=gamma_0/(gamma_0-1.); // lorentz factor here, needed in next line, because the loss term here scales with -total- energy, not kinetic energy
                 if(beta_fac<0.1) {gamma_fac=2./(beta_fac*beta_fac) -0.5 - 0.125*beta_fac*beta_fac;} // avoid accidental nan
-                Vec3<double> fcorr = bhat * (grad_P_dot_B + (gamma_fac*(F_dot_B/cosmicrayfluid_rsol_corrfac(k)) - three_chi*vA_k*(gamma_fac*e0_cr + p0_cr))*(beta_fac*beta_fac)/(3.*CellP[i].CosmicRayDiffusionCoeff[k])) / (CellP[i].Density*All.cf_a3inv); // physical units
+                Vec3<double> fcorr = {}; // the scattering-rate term needs a diffusion coefficient: with CRFLUID_EVOLVE_SCATTERINGWAVES that is set by the wave solver, which has not run before the first force evaluation
+                if(CellP[i].CosmicRayDiffusionCoeff[k] > 0) {fcorr = bhat * (grad_P_dot_B + (gamma_fac*(F_dot_B/cosmicrayfluid_rsol_corrfac(k)) - three_chi*vA_k*(gamma_fac*e0_cr + p0_cr))*(beta_fac*beta_fac)/(3.*CellP[i].CosmicRayDiffusionCoeff[k])) / (CellP[i].Density*All.cf_a3inv);} // physical units
                 fcorr += (1.-three_chi) * (gradpcr - bhat*grad_P_dot_B) / (CellP[i].Density*All.cf_a3inv); // physical units
                 CellP[i].HydroAccel += fcorr; // add correction term back into hydro acceleration terms -- need to check that don't end up with nasty terms for badly-initialized/limited scattering rates above
             }}

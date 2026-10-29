@@ -1017,7 +1017,11 @@ void init(void)
             CellP[i].CosmicRayEnergyPred[k]=CellP[i].CosmicRayEnergy[k]; CellP[i].CosmicRayDiffusionCoeff[k]=0; CellP[i].DtCosmicRayEnergy[k]=0;
             CellP[i].CosmicRayFlux[k] = {}; CellP[i].CosmicRayFluxPred[k] = {};
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-            for(j=0;j<2;j++) {CellP[i].CosmicRayAlfvenEnergy[k][j]=0; CellP[i].CosmicRayAlfvenEnergyPred[k][j]=0; CellP[i].DtCosmicRayAlfvenEnergy[k][j]=0;}
+            for(j=0;j<2;j++) /* keep wave energies read from the ICs or snapshot; ICs usually carry none, so seed those with a small fraction of the CR energy */
+            {
+                if(!(CellP[i].CosmicRayAlfvenEnergy[k][j] > 0)) {CellP[i].CosmicRayAlfvenEnergy[k][j] = 1.e-8 * CellP[i].CosmicRayEnergy[k];}
+                CellP[i].CosmicRayAlfvenEnergyPred[k][j]=CellP[i].CosmicRayAlfvenEnergy[k][j]; CellP[i].DtCosmicRayAlfvenEnergy[k][j]=0;
+            }
 #endif
         }
 #endif
