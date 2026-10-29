@@ -289,6 +289,9 @@ void domain_init_timebin_costs(void)
 
     for(int i = 0; i < NumPart; i++)
     {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;} /* the same particles the cost loop costed: the others have no cost set */
+#endif
         double gc = (double)particle_total_cost[i];
         if(gc <= 0) gc = 1.0;
         for(int n = 0; n < NumTimeBinsToBeBalanced; n++)
