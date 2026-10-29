@@ -705,8 +705,8 @@ void star_formation_parent_routine(void)
     if( (ThisTask==0) && (tot_sink_formed > 0) )
     {
         printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
-        All.TotSinks += tot_sink_formed;
     } // if(tot_sink_formed > 0)
+    All.TotSinks += tot_sink_formed;   /* on every rank, so every rank's copy of the total agrees */
     if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
 #endif
     

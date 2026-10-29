@@ -31,6 +31,49 @@ static int n_type[6];
 static long long ntot_type_all[6];
 static int n_info;
 
+/* SnapFormat 1 and 2 frame every block with a 32-bit byte count. 1 if every block of one file holding counts[t]
+   particles of each type fits; otherwise rank 0 names the first block that does not. */
+int binary_snapshot_file_fits(const long long *counts, int filenr)
+{
+    const long long marker_bytes = (All.SnapFormat == 2) ? 2 * (long long) sizeof(int) : 0;
+    for(int bnr = 0; bnr < 1000; bnr++)
+    {
+        enum iofields blocknr = (enum iofields) bnr;
+        if(blocknr == IO_LASTENTRY) {break;}
+        if(!blockpresent(blocknr)) {continue;}
+        int typelist[6];
+        const long long bytes = get_particles_in_block(blocknr, typelist, counts) * (long long) get_bytes_per_blockelement(blocknr, 0) + marker_bytes;
+        if(bytes > INT_MAX)
+        {
+            if(ThisTask == 0)
+            {
+                char name[DEFAULT_PATH_BUFFERSIZE_TOUSE];
+                get_dataset_name(blocknr, name);
+                printf("Snapshot file %d: block %s needs %lld bytes, more than the 32-bit record of SnapFormat %d can hold. Use SnapFormat 3 (HDF5) or a larger NumFilesPerSnapshot.\n", filenr, name, bytes, All.SnapFormat);
+            }
+            return 0;
+        }
+    }
+    return 1;
+}
+
+/* Decided identically on every rank, before any directory or file is created, so a snapshot that cannot be
+   represented never leaves a partial set. */
+static int binary_snapshot_records_fit(int filenr)
+{
+    const int nfiles = All.NumFilesPerSnapshot;
+    long long *counts_mine = (long long *) mymalloc("counts_mine", 6 * (size_t) nfiles * sizeof(long long));
+    long long *counts_file = (long long *) mymalloc("counts_file", 6 * (size_t) nfiles * sizeof(long long));
+    for(int k = 0; k < 6 * nfiles; k++) {counts_mine[k] = 0;}
+    for(int t = 0; t < 6; t++) {counts_mine[6 * filenr + t] = n_type[t];}
+    MPI_Allreduce(counts_mine, counts_file, 6 * nfiles, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    int fits = 1;
+    for(int f = 0; f < nfiles && fits; f++) {fits = binary_snapshot_file_fits(counts_file + 6 * (size_t) f, f);}
+    myfree(counts_file);
+    myfree(counts_mine);
+    return fits;
+}
+
 /*! This function writes a snapshot of the particle distribution to one or
  * several files using Gadget's default file format.  If
  * NumFilesPerSnapshot>1, the snapshot is distributed into several files,
@@ -62,8 +105,7 @@ void savepositions(int num)
         if(ThisTask == 0)
             printf("\nwriting snapshot file #%d... \n", num);
 
-        size_t MyBufferSize = All.BufferSize;
-        if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))
+        if(!(CommBuffer = mymalloc("CommBuffer", bytes = comm_buffer_bytes())))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
             endrun(2);
@@ -88,8 +130,7 @@ void savepositions(int num)
 #if IO_SINKS_ONLY_SNAPSHOT_FREQUENCY > 0
         if( (All.SnapshotFileCount-1) % (IO_SINKS_ONLY_SNAPSHOT_FREQUENCY+1) )
         {
-            snprintf(outputdir, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/stars_only", All.OutputDir);
-            mkdir(outputdir, 02755);
+            snprintf(outputdir, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/stars_only", All.OutputDir);   /* created below, once the snapshot is known to fit */
         }
 #endif
 
@@ -104,6 +145,15 @@ void savepositions(int num)
 
         /* assign processors to output files */
         distribute_file(All.NumFilesPerSnapshot, 0, 0, NTask - 1, &filenr, &primaryTask, &lastTask);
+
+        if((All.SnapFormat == 1 || All.SnapFormat == 2) && !binary_snapshot_records_fit(filenr))
+        {
+            if(ThisTask == 0) {printf("Stopping: this snapshot does not fit the 32-bit records of SnapFormat %d.\n", All.SnapFormat); fflush(stdout);}
+            endrun(91582);
+        }
+#if IO_SINKS_ONLY_SNAPSHOT_FREQUENCY > 0
+        if( (All.SnapshotFileCount-1) % (IO_SINKS_ONLY_SNAPSHOT_FREQUENCY+1) ) {mkdir(outputdir, 02755);}
+#endif
 
         if(All.NumFilesPerSnapshot > 1)
         {
@@ -188,7 +238,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
     int *ip_int;
     float *fp_single;
 #ifdef OUTPUT_COOLRATE
-    double tcool, u;
+    double u;
 #endif
 #ifdef MAGNETIC /* NOTE: we always work -internally- in code units where MU_0 = 1; hence the 4pi here; [much simpler, but be sure of your conversions!] */
     double gizmo2gauss = UNIT_B_IN_GAUSS / All.UnitMagneticField_in_gauss;
@@ -627,7 +677,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         break;
             
         case IO_DUSTCHEMSPECIESMET:    /* gas dust species following Species routines */
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -690,23 +740,6 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
         break;
         
-        case IO_DUSTCHEMGRAINBINSLOPES:    /* slopes for each grain size bin for each dust species */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    int k1, k2;
-                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
-                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {    
-                                fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Dust_SlopeInBin[k1][k2] / (UNIT_GRAIN_NUMBER/(UNIT_GRAIN_LENGTH*UNIT_GRAIN_LENGTH)));
-                            }
-                    }
-                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
-                    n++;
-                }
-#endif
-        break;
-
         case IO_DUSTCHEMGRAINBINMASS:    /* mass for each grain size bin for each dust species */
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             for(n = 0; n < pc; pindex++)
@@ -723,38 +756,6 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 }
 #endif
         break;
-
-case IO_DUSTCHEM_COAG_MASSRATE:    /* coagulation rate for each grain size bin for each dust species */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    int k1, k2;
-                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
-                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {    
-                                fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Coag_dMdt[k1][k2] / (UNIT_MASS_IN_CGS/UNIT_TIME_IN_CGS));
-                            }
-                    }
-                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
-                    n++;
-                }
-#endif
-
-case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin for each dust species */
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-            for(n = 0; n < pc; pindex++)
-                if(P[pindex].Type == type)
-                {
-                    int k1, k2;
-                    for(k1=0;k1<NUM_ISMDUSTCHEM_SPECIES;k1++) {
-                        for(k2=0;k2<NUM_ISMDUSTCHEM_SIZE_BINS;k2++) {    
-                                fp[NUM_ISMDUSTCHEM_SIZE_BINS*k1 + k2] = (MyOutputFloat) (CellP[pindex].ISMDustChem_Shat_dMdt[k1][k2] / (UNIT_MASS_IN_CGS/UNIT_TIME_IN_CGS));
-                            }
-                    }
-                    fp += (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
-                    n++;
-                }
-#endif
 
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
@@ -1276,9 +1277,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-                    double ne = CellP[pindex].Ne, ne_out=ne; u = CellP[pindex].InternalEnergyPred; tcool = GetCoolingTime(u, CellP[pindex].Density * All.cf_a3inv, ne, &ne_out, pindex, P, CellP); /* get cooling time */
-                    double coolrate_to_output = 0; if(tcool != 0) {coolrate_to_output = u / tcool;} /* convert cooling time with current thermal energy to du/dt */
-                    *fp++ = (MyOutputFloat) coolrate_to_output;
+                    double ne = CellP[pindex].Ne, ne_out=ne; u = CellP[pindex].InternalEnergyPred;
+                    *fp++ = (MyOutputFloat) GetNetCoolingRate(u, CellP[pindex].Density * All.cf_a3inv, ne, &ne_out, pindex, P, CellP); /* net -du/dt: positive cooling, negative heating */
                     n++;
                 }
 #endif
@@ -2160,7 +2160,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
             break;
 
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             if(mode)
                 bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES) * sizeof(MyInputFloat);
             else
@@ -2197,9 +2197,6 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 
         case IO_DUSTCHEMGRAINBINNUMBERS:
         case IO_DUSTCHEMGRAINBINMASS:
-        case IO_DUSTCHEMGRAINBINSLOPES:
-        case IO_DUSTCHEM_COAG_MASSRATE:
-        case IO_DUSTCHEM_SHAT_MASSRATE:
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             if(mode)
                 bytes_per_blockelement = (NUM_ISMDUSTCHEM_SPECIES * NUM_ISMDUSTCHEM_SIZE_BINS) * sizeof(MyInputFloat);
@@ -2473,7 +2470,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             values = NUM_ISMDUSTCHEM_SPECIES;
 #endif
             break; 
@@ -2497,10 +2494,7 @@ int get_values_per_blockelement(enum iofields blocknr)
             break;
 
         case IO_DUSTCHEMGRAINBINNUMBERS:
-        case IO_DUSTCHEMGRAINBINSLOPES:
         case IO_DUSTCHEMGRAINBINMASS:
-        case IO_DUSTCHEM_COAG_MASSRATE:
-        case IO_DUSTCHEM_SHAT_MASSRATE:
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
             values = (NUM_ISMDUSTCHEM_SPECIES*NUM_ISMDUSTCHEM_SIZE_BINS);
 #endif
@@ -2547,12 +2541,12 @@ int get_values_per_blockelement(enum iofields blocknr)
 
 
 /*! This function determines how many particles there are in a given block,
- *  based on the information in the header-structure.  It also flags particle
+ *  given the file's particle counts per type.  It also flags particle
  *  types that are present in the block in the typelist array.
  */
-long get_particles_in_block(enum iofields blocknr, int *typelist)
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_file)
 {
-    long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
+    long long i, nall, nsel, ntot_withmasses, ngas, nstars, nngb, nstars_tot;
     nall = 0; nsel = 0; ntot_withmasses = 0; nstars_tot=0;
 
     int valid_star_types=16; if(All.ComovingIntegrationOn==0) {valid_star_types+=4+8;} /* used in e.g. ages block below, not for all, but easier to define here */
@@ -2562,16 +2556,16 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
     for(i = 0; i < 6; i++)
     {
         typelist[i] = 0;
-        if(header.npart[i] > 0)
+        if(npart_file[i] > 0)
         {
-            nall += header.npart[i];
+            nall += npart_file[i];
             typelist[i] = 1;
-            if((1 << i) & (valid_star_types)) {nstars_tot += header.npart[i];}
+            if((1 << i) & (valid_star_types)) {nstars_tot += npart_file[i];}
         }
-        if(All.MassTable[i] == 0) {ntot_withmasses += header.npart[i];}
+        if(All.MassTable[i] == 0) {ntot_withmasses += npart_file[i];}
     }
-    ngas = header.npart[0];
-    nstars = header.npart[4];
+    ngas = npart_file[0];
+    nstars = npart_file[4];
 
 
     switch (blocknr)
@@ -2604,7 +2598,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
             for(i = 0; i < 6; i++)
             {
                 typelist[i] = 0;
-                if(All.MassTable[i] == 0 && header.npart[i] > 0) {typelist[i] = 1;}
+                if(All.MassTable[i] == 0 && npart_file[i] > 0) {typelist[i] = 1;}
             }
             return ntot_withmasses;
             break;
@@ -2693,10 +2687,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_MACHNUM:
         case IO_SHOCKMACHNUM:
         case IO_DUSTCHEMGRAINBINNUMBERS:
-        case IO_DUSTCHEMGRAINBINSLOPES:
         case IO_DUSTCHEMGRAINBINMASS:
-        case IO_DUSTCHEM_COAG_MASSRATE:
-        case IO_DUSTCHEM_SHAT_MASSRATE:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
             break;
@@ -2724,31 +2715,31 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_GRAINTYPE:
             nngb=0;
 #ifdef GRAIN_FLUID
-            for(i=0;i<6;i++) {if((1 << i) & (GRAIN_PTYPES)) {nngb+=header.npart[i];} else {typelist[i]=0;}}
+            for(i=0;i<6;i++) {if((1 << i) & (GRAIN_PTYPES)) {nngb+=npart_file[i];} else {typelist[i]=0;}}
 #endif
             return nngb;
             break;
 
         case IO_IMF:
             for(i = 1; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
-            return nstars + header.npart[5];
+            return nstars + npart_file[5];
             break;
 
         case IO_Z:
             for(i = 0; i < 6; i++) {if(i != 0 && i != 4 && i != 5) {typelist[i] = 0;}}
-            return ngas + nstars + header.npart[5];
+            return ngas + nstars + npart_file[5];
             break;
 
         case IO_CHIMES_STAR_SIGMA:
             nngb = nstars;
             typelist[0]=typelist[1]=typelist[5]=0;
-            if(All.ComovingIntegrationOn) {typelist[2]=typelist[3]=0;} else {nngb += header.npart[2] + header.npart[3];}
+            if(All.ComovingIntegrationOn) {typelist[2]=typelist[3]=0;} else {nngb += npart_file[2] + npart_file[3];}
             return nngb;
             break;
 
         case IO_DENS_AROUND_STAR:
             typelist[0] = 0;
-            return header.npart[1]+header.npart[2]+header.npart[3]+header.npart[4]+header.npart[5];
+            return npart_file[1]+npart_file[2]+npart_file[3]+npart_file[4]+npart_file[5];
             break;
 
         case IO_SINKMASS:
@@ -2769,7 +2760,7 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_LUM_SINGLESTAR:
         case IO_SINKPROGS:
             for(i = 0; i < 6; i++) {if(i != 5) {typelist[i] = 0;}}
-            return header.npart[5];
+            return npart_file[5];
             break;
 
         case IO_LASTENTRY:
@@ -2888,7 +2879,7 @@ int blockpresent(enum iofields blocknr)
             break;               
           
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             return 1;
 #endif
             break; 
@@ -2905,19 +2896,6 @@ int blockpresent(enum iofields blocknr)
             return 1;
 #endif
             break;
-
-            case IO_DUSTCHEMGRAINBINSLOPES:
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO) 
-            return 1;
-#endif
-            break;      
-
-            case IO_DUSTCHEM_COAG_MASSRATE:
-            case IO_DUSTCHEM_SHAT_MASSRATE:
-#if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
-            return 1;
-#endif
-            break;   
 
         case IO_MACHNUM:
 #if defined(OUTPUT_MACH_NUMBER)
@@ -3564,15 +3542,6 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strncpy(label, "DBNU", 4);
             break;
-        case IO_DUSTCHEMGRAINBINSLOPES:
-            strncpy(label, "DBSL", 4);
-            break;
-        case IO_DUSTCHEM_COAG_MASSRATE:
-            strncpy(label, "DBCO", 4);
-            break;
-        case IO_DUSTCHEM_SHAT_MASSRATE:
-            strncpy(label, "DBSH", 4);
-            break;
         case IO_DUSTCHEMGRAINBINMASS:
             strncpy(label, "DBMA", 4);
             break;
@@ -4010,17 +3979,8 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strcpy(buf, "DustBinNumbers");
             break;
-        case IO_DUSTCHEMGRAINBINSLOPES:
-            strcpy(buf, "DustBinSlopes");
-            break;
         case IO_DUSTCHEMGRAINBINMASS:
             strcpy(buf, "DustBinMasses");
-            break;
-        case IO_DUSTCHEM_COAG_MASSRATE:
-            strcpy(buf, "DustBinCoagMassRate");
-            break;
-        case IO_DUSTCHEM_SHAT_MASSRATE:
-            strcpy(buf, "DustBinShatMassRate");
             break;
         case IO_CHIMES_ABUNDANCES:
             strcpy(buf, "ChimesAbundances");
@@ -4316,10 +4276,12 @@ void get_dataset_name(enum iofields blocknr, char *buf)
  */
 void write_file(char *fname, int writeTask, int lastTask)
 {
-    int type, bytes_per_blockelement, npart, nextblock, typelist[6];
+    int type, bytes_per_blockelement, nextblock, typelist[6];
+    long long npart;
     int n_for_this_task, n, p, pc, offset = 0, task, i;
     size_t blockmaxlen;
-    int ntot_type[6], nn[6];
+    long long ntot_type[6];   /* particles of each type in this file: summed over the ranks feeding it */
+    int nn[6];
     enum iofields blocknr;
     char label[8];
     int bnr;
@@ -4331,7 +4293,8 @@ void write_file(char *fname, int writeTask, int lastTask)
     hid_t hdf5_datatype = 0, hdf5_dataspace_in_file = 0, hdf5_dataset = 0;
     herr_t hdf5_status;
     hsize_t dims[2], count[2], start[2];
-    int rank = 0, pcsum = 0;
+    int rank = 0;
+    long long pcsum = 0;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
 
 #define SKIP  {my_fwrite(&blksize,sizeof(int),1,fd);}
@@ -4351,18 +4314,18 @@ void write_file(char *fname, int writeTask, int lastTask)
         }
 
         for(task = writeTask + 1; task <= lastTask; task++)
-            MPI_Send(&ntot_type[0], 6, MPI_INT, task, TAG_N, MPI_COMM_WORLD);
+            MPI_Send(&ntot_type[0], 6, MPI_LONG_LONG, task, TAG_N, MPI_COMM_WORLD);
     }
     else
     {
         MPI_Send(&n_type[0], 6, MPI_INT, writeTask, TAG_LOCALN, MPI_COMM_WORLD);
-        MPI_Recv(&ntot_type[0], 6, MPI_INT, writeTask, TAG_N, MPI_COMM_WORLD, &status);
+        MPI_Recv(&ntot_type[0], 6, MPI_LONG_LONG, writeTask, TAG_N, MPI_COMM_WORLD, &status);
     }
 
     /* fill file header */
     for(n = 0; n < 6; n++)
     {
-        header.npart[n] = (int) ntot_type[n];
+        header.npart[n] = (ntot_type[n] > INT_MAX) ? INT_MAX : (int) ntot_type[n];   /* binary header only: SnapFormat 1/2 were checked to fit, HDF5 writes ntot_type */
         header.npartTotal[n] = (unsigned int) ntot_type_all[n];
         header.npartTotalHighWord[n] = (unsigned int) (ntot_type_all[n] >> 32);
     }
@@ -4423,14 +4386,14 @@ void write_file(char *fname, int writeTask, int lastTask)
 
             for(type = 0; type < 6; type++)
             {
-                if(header.npart[type] > 0)
+                if(ntot_type[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gcreate(hdf5_file, buf, 0);
                 }
             }
 
-            write_header_attributes_in_hdf5(hdf5_headergrp);
+            write_header_attributes_in_hdf5(hdf5_headergrp, ntot_type);
 
         }
         else
@@ -4473,7 +4436,7 @@ void write_file(char *fname, int writeTask, int lastTask)
             if(blockpresent(blocknr))
             {
                 bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
-                npart = get_particles_in_block(blocknr, &typelist[0]);
+                npart = get_particles_in_block(blocknr, &typelist[0], ntot_type);
 
                 if(npart > 0)
                 {
@@ -4529,9 +4492,8 @@ void write_file(char *fname, int writeTask, int lastTask)
         if(blockpresent(blocknr))
         {
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 0);
-            size_t MyBufferSize = All.BufferSize;
-            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
-            npart = get_particles_in_block(blocknr, &typelist[0]);
+            blockmaxlen = comm_buffer_bytes() / bytes_per_blockelement;
+            npart = get_particles_in_block(blocknr, &typelist[0], ntot_type);
 
             if(npart > 0)
             {
@@ -4553,11 +4515,11 @@ void write_file(char *fname, int writeTask, int lastTask)
                             SKIP;
                             get_Tab_IO_Label(blocknr, label);
                             my_fwrite(label, sizeof(char), 4, fd);
-                            nextblock = npart * bytes_per_blockelement + 2 * sizeof(int);
+                            nextblock = (int) (npart * bytes_per_blockelement + 2 * (long long) sizeof(int));   /* fits: checked before the file was opened */
                             my_fwrite(&nextblock, sizeof(int), 1, fd);
                             SKIP;
                         }
-                        blksize = npart * bytes_per_blockelement;
+                        blksize = (int) (npart * bytes_per_blockelement);
                         SKIP;
                     }
                 }
@@ -4571,7 +4533,7 @@ void write_file(char *fname, int writeTask, int lastTask)
 #endif
                     {
 
-                        if(ThisTask == writeTask && All.SnapFormat == 3 && header.npart[type] > 0)
+                        if(ThisTask == writeTask && All.SnapFormat == 3 && ntot_type[type] > 0)
                         {
                             switch(get_datatype_in_block(blocknr))
                             {
@@ -4596,7 +4558,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                                     break;
                             }
 
-                            dims[0] = header.npart[type];
+                            dims[0] = ntot_type[type];
                             dims[1] = get_values_per_blockelement(blocknr);
                             if(dims[1] == 1) {rank = 1;} else {rank = 2;}
 
@@ -4692,7 +4654,7 @@ void write_file(char *fname, int writeTask, int lastTask)
                         }
 
 
-                        if(ThisTask == writeTask && All.SnapFormat == 3 && header.npart[type] > 0)
+                        if(ThisTask == writeTask && All.SnapFormat == 3 && ntot_type[type] > 0)
                         {
                             if(All.SnapFormat == 3)
                             {
@@ -4726,7 +4688,7 @@ void write_file(char *fname, int writeTask, int lastTask)
         if(All.SnapFormat == 3)
         {
 
-            for(type = 5; type >= 0; type--) {if(header.npart[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+            for(type = 5; type >= 0; type--) {if(ntot_type[type] > 0) {H5Gclose(hdf5_grp[type]);}}
             H5Gclose(hdf5_headergrp);
             H5Fclose(hdf5_file);
 
@@ -4742,7 +4704,7 @@ void write_file(char *fname, int writeTask, int lastTask)
 
 
 
-void write_header_attributes_in_hdf5(hid_t handle)
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file)
 {
     hsize_t adim[1] = { 6 }; hid_t hdf5_dataspace, hdf5_attribute;
 
@@ -4750,8 +4712,8 @@ void write_header_attributes_in_hdf5(hid_t handle)
         H5Awrite(hdf5_attribute, H5T_NATIVE_INT, &tmp); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);}
     
     hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, adim, NULL);
-    hdf5_attribute = H5Acreate(handle, "NumPart_ThisFile", H5T_NATIVE_INT, hdf5_dataspace, H5P_DEFAULT);
-    H5Awrite(hdf5_attribute, H5T_NATIVE_INT, header.npart); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
+    hdf5_attribute = H5Acreate(handle, "NumPart_ThisFile", H5T_NATIVE_LLONG, hdf5_dataspace, H5P_DEFAULT);
+    H5Awrite(hdf5_attribute, H5T_NATIVE_LLONG, npart_this_file); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace);
 
     hdf5_dataspace = H5Screate(H5S_SIMPLE); H5Sset_extent_simple(hdf5_dataspace, 1, adim, NULL);
     hdf5_attribute = H5Acreate(handle, "NumPart_Total", H5T_NATIVE_UINT, hdf5_dataspace, H5P_DEFAULT);

@@ -29,7 +29,7 @@ double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
  */
 
 
-void write_header_attributes_in_hdf5(hid_t handle);
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
 void read_header_attributes_in_hdf5(char *fname);
 void write_parameters_attributes_in_hdf5(hid_t handle);
 void write_units_attributes_in_hdf5(hid_t handle);
@@ -489,7 +489,8 @@ void get_dataset_name(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
-long get_particles_in_block(enum iofields blocknr, int *typelist);
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_file);
+int binary_snapshot_file_fits(const long long *counts, int filenr);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
 void read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);
@@ -530,6 +531,7 @@ void cellcorrections_final_operations_and_cleanup(void);
 #endif
 
 size_t sizemax(size_t a, size_t b);
+size_t comm_buffer_bytes(void);
 
 void reconstruct_timebins(void);
 void init_peano_map(void);
@@ -857,6 +859,7 @@ void hydro_force(void);
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);

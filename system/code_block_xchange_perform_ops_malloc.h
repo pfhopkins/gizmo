@@ -1,7 +1,7 @@
 force_tree_check_walkable(__func__); /* every template loop walks the standing tree: report (fatal under audits) if it is condemned */
 /*! allocate buffers to arrange communication */
-long long NTaskTimesNumPart = maxThreads * NumPart; size_t MyBufferSize = All.BufferSize; int loop_iteration = 0;
-All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME) + sizemax(sizeof(struct INPUT_STRUCT_NAME),sizeof(struct OUTPUT_STRUCT_NAME))));
+long long NTaskTimesNumPart = maxThreads * NumPart; size_t MyBufferBytes = comm_buffer_bytes(); int loop_iteration = 0;
+All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME) + sizemax(sizeof(struct INPUT_STRUCT_NAME),sizeof(struct OUTPUT_STRUCT_NAME))));
 Ngblist.resize(NTaskTimesNumPart);
 DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
 DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));

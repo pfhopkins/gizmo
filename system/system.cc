@@ -175,6 +175,17 @@ void sumup_longs(int n, long long *src, long long *res)
   myfree(numlist);
 }
 
+/* BufferSize in bytes. The parameter is a floating-point number of megabytes; converting it through an integer
+   first truncated a fraction (0.5 became 0, and then no chunk could ever move). At least 1 byte, and capped so
+   byte arithmetic on it cannot overflow. */
+size_t comm_buffer_bytes(void)
+{
+    const double bytes = All.BufferSize * 1024.0 * 1024.0;
+    const size_t largest = (size_t) 1 << 60;
+    if(!(bytes >= 1.0)) {return 1;}
+    return (bytes > (double) largest) ? largest : (size_t) bytes;
+}
+
 size_t sizemax(size_t a, size_t b)
 {
   if(a < b)

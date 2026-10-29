@@ -9,6 +9,12 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
+/* Particles of each type in the input file whose header was read last. The io_header keeps 32-bit counts because
+   the binary formats fix its 256-byte layout, but an HDF5 file can hold more than 2^31 of a type, so the reader
+   counts from this 64-bit copy. Only each rank's share has to fit an int, which the MaxPart check enforces. */
+static long long npart_in_file[6];
+static void npart_in_file_from_binary_header(void) {for(int t = 0; t < 6; t++) {npart_in_file[t] = header.npart[t];}}
+
 /*! This function reads initial conditions that are in the default file format
  * of Gadget, i.e. snapshot files can be used as input files.  However, when a
  * snapshot file is used as input, not all the information in the header is
@@ -280,7 +286,7 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
             break;
 
         case IO_DUSTCHEMSPECIESMET:
-#if (GALSF_ISMDUSTCHEM_MODEL & 2)
+#if defined(GALSF_ISMDUSTCHEM_MODEL)
             for(n = 0; n < pc; n++) {for(k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {CellP[offset + n].ISMDustChem_Dust_Species[k] = *fp++;}} // Get dust species fractions
 #endif
             break;
@@ -691,9 +697,6 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_DELAY_TIME_HII:
         case IO_CHIMES_FLUX_G0:
         case IO_CHIMES_FLUX_ION:
-        case IO_DUSTCHEMGRAINBINSLOPES:
-        case IO_DUSTCHEM_COAG_MASSRATE:
-        case IO_DUSTCHEM_SHAT_MASSRATE:
         case IO_MACHNUM:
         case IO_DUST_TO_GAS:
         case IO_AMBIPOLAR:
@@ -726,7 +729,8 @@ void read_file(char *fname, int readTask, int lastTask)
     size_t bytes;
 
 
-    int rank, pcsum;
+    int rank;
+    long long pcsum;   /* offset of this slice in the file's dataset: spans every earlier rank's share */
     int n_blocks_zerofilled = 0; /* datasets the code asked for but the file did not have */
     hid_t hdf5_file = 0, hdf5_grp[6], hdf5_dataspace_in_file;
     hid_t hdf5_datatype = 0, hdf5_dataspace_in_memory, hdf5_dataset;
@@ -759,6 +763,7 @@ void read_file(char *fname, int readTask, int lastTask)
             SKIP;
             my_fread(&header, sizeof(header), 1, fd);
             SKIP2;
+            npart_in_file_from_binary_header();
 
             if(blksize1 != 256 || blksize2 != 256)
             {
@@ -778,7 +783,7 @@ void read_file(char *fname, int readTask, int lastTask)
             if(hdf5_file < 0) {printf("can't open file `%s' for reading initial conditions.\n", fname); endrun(123);}
             for(type = 0; type < 6; type++)
             {
-                if(header.npart[type] > 0)
+                if(npart_in_file[type] > 0)
                 {
                     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "/PartType%d", type);
                     hdf5_grp[type] = H5Gopen(hdf5_file, buf);
@@ -791,12 +796,14 @@ void read_file(char *fname, int readTask, int lastTask)
         for(task = readTask + 1; task <= lastTask; task++)
         {
             MPI_Ssend(&header, sizeof(header), MPI_BYTE, task, TAG_HEADER, MPI_COMM_WORLD);
+            MPI_Ssend(npart_in_file, 6, MPI_LONG_LONG, task, TAG_HEADER, MPI_COMM_WORLD);
         }
 
     }
     else
     {
         MPI_Recv(&header, sizeof(header), MPI_BYTE, readTask, TAG_HEADER, MPI_COMM_WORLD, &status);
+        MPI_Recv(npart_in_file, 6, MPI_LONG_LONG, readTask, TAG_HEADER, MPI_COMM_WORLD, &status);
     }
 
 #ifdef INPUT_IN_DOUBLEPRECISION
@@ -819,8 +826,8 @@ void read_file(char *fname, int readTask, int lastTask)
         if(header.num_files <= 1)
             for(i = 0; i < 6; i++)
             {
-                header.npartTotal[i] = header.npart[i];
-                header.npartTotalHighWord[i] = 0;
+                header.npartTotal[i] = (unsigned int) (npart_in_file[i] & 0xFFFFFFFFLL);
+                header.npartTotalHighWord[i] = (unsigned int) (npart_in_file[i] >> 32);
             }
 
         All.TotN_gas = header.npartTotal[0] + (((long long) header.npartTotalHighWord[0]) << 32);
@@ -834,6 +841,24 @@ void read_file(char *fname, int readTask, int lastTask)
 
         for(i = 0; i < 6; i++) {All.MassTable[i] = header.mass[i];}
 
+        /* The total may be any size, but what a rank holds is indexed with an int, with the tree's node indices
+           above the particle range in the same int (hence the INT_MAX/4 ceiling, as for the capacity ceiling).
+           Every rank computes the same value, so all stop here together if it does not fit. */
+        {
+            const double maxpart_wanted = All.PartAllocFactor * (double) balanced_particles_per_rank(All.TotNumPart, NTask);
+            const double maxpart_limit = (double) (INT_MAX / 4);
+            if(maxpart_wanted > maxpart_limit)
+            {
+                if(ThisTask == 0)
+                {
+                    printf("%lld particles over %d ranks need %.0f particle slots per rank (PartAllocFactor=%g), more than a rank "
+                           "can index (%.0f). Run on at least %.0f ranks.\n", (long long) All.TotNumPart, NTask, maxpart_wanted,
+                           All.PartAllocFactor, maxpart_limit, ceil(maxpart_wanted / maxpart_limit * (double) NTask));
+                    fflush(stdout);
+                }
+                endrun(91581);
+            }
+        }
         All.MaxPart = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotNumPart, NTask));
         All.MaxPartGas = (int) (All.PartAllocFactor * balanced_particles_per_rank(All.TotN_gas, NTask));	/* sets the maximum number of particles that may reside on a processor */
 #ifdef ALLOW_IMBALANCED_GASPARTICLELOAD
@@ -847,8 +872,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
         allocate_memory();
 
-        size_t MyBufferSize = All.BufferSize;
-        if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))
+        if(!(CommBuffer = mymalloc("CommBuffer", bytes = comm_buffer_bytes())))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
             endrun(2);
@@ -864,26 +888,21 @@ void read_file(char *fname, int readTask, int lastTask)
 
     if(ThisTask == readTask)
     {
-        for(i = 0, n_in_file = 0; i < 6; i++) {n_in_file += header.npart[i];}
+        for(i = 0, n_in_file = 0; i < 6; i++) {n_in_file += npart_in_file[i];}
 
+        long long type_total[6];
+        for(i = 0; i < 6; i++) {type_total[i] = (long long) header.npartTotal[i] + (((long long) header.npartTotalHighWord[i]) << 32);}
         printf("\nReading file `%s' on task=%d (contains %lld particles.)\n"
                " ..distributing this file to tasks %d-%d\n"
-               "Type 0 (gas):   %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 1 (halo):  %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 2 (alt):   %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 3 (pic):   %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 4 (stars): %8d  (tot=%6d%09d) masstab=%g\n"
-               "Type 5 (sink):  %8d  (tot=%6d%09d) masstab=%g\n\n", fname, ThisTask, n_in_file, readTask,
-               lastTask, header.npart[0], (int) (header.npartTotal[0] / 1000000000),
-               (int) (header.npartTotal[0] % 1000000000), All.MassTable[0], header.npart[1],
-               (int) (header.npartTotal[1] / 1000000000), (int) (header.npartTotal[1] % 1000000000),
-               All.MassTable[1], header.npart[2], (int) (header.npartTotal[2] / 1000000000),
-               (int) (header.npartTotal[2] % 1000000000), All.MassTable[2], header.npart[3],
-               (int) (header.npartTotal[3] / 1000000000), (int) (header.npartTotal[3] % 1000000000),
-               All.MassTable[3], header.npart[4], (int) (header.npartTotal[4] / 1000000000),
-               (int) (header.npartTotal[4] % 1000000000), All.MassTable[4], header.npart[5],
-               (int) (header.npartTotal[5] / 1000000000), (int) (header.npartTotal[5] % 1000000000),
-               All.MassTable[5]);
+               "Type 0 (gas):   %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 1 (halo):  %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 2 (alt):   %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 3 (pic):   %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 4 (stars): %12lld  (tot=%15lld) masstab=%g\n"
+               "Type 5 (sink):  %12lld  (tot=%15lld) masstab=%g\n\n", fname, ThisTask, n_in_file, (int) readTask, (int) lastTask,
+               npart_in_file[0], type_total[0], All.MassTable[0], npart_in_file[1], type_total[1], All.MassTable[1],
+               npart_in_file[2], type_total[2], All.MassTable[2], npart_in_file[3], type_total[3], All.MassTable[3],
+               npart_in_file[4], type_total[4], All.MassTable[4], npart_in_file[5], type_total[5], All.MassTable[5]);
         fflush(stdout);
     }
 
@@ -897,7 +916,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
     for(type = 0, nall = 0; type < 6; type++)
     {
-        n_in_file = header.npart[type];
+        n_in_file = npart_in_file[type];
         n_for_this_task = n_in_file / ntask;
         if((ThisTask - readTask) < (n_in_file % ntask)) {n_for_this_task++;}
 
@@ -1078,9 +1097,6 @@ void read_file(char *fname, int readTask, int lastTask)
             if(RestartFlag == 2 && blocknr == IO_MACHNUM) {continue;}
             if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINNUMBERS) {continue;}
             if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINMASS) {continue;}
-            if(RestartFlag == 2 && blocknr == IO_DUSTCHEMGRAINBINSLOPES) {continue;}
-            if(RestartFlag == 2 && blocknr == IO_DUSTCHEM_COAG_MASSRATE) {continue;}
-            if(RestartFlag == 2 && blocknr == IO_DUSTCHEM_SHAT_MASSRATE) {continue;}
 #endif
 #endif
 #endif
@@ -1105,9 +1121,8 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
 #endif
-            size_t MyBufferSize = All.BufferSize;
-            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
-            npart = get_particles_in_block(blocknr, &typelist[0]);
+            blockmaxlen = comm_buffer_bytes() / bytes_per_blockelement;
+            npart = get_particles_in_block(blocknr, &typelist[0], npart_in_file);
 
             if(npart > 0)
             {
@@ -1130,7 +1145,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
                 for(type = 0, offset = 0, nread = 0; type < 6; type++)
                 {
-                    n_in_file = header.npart[type];
+                    n_in_file = npart_in_file[type];
 
                     pcsum = 0;
 
@@ -1205,7 +1220,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
                                       if(hdf5_dataset >= 0)
                                       {
-                                        dims[0] = header.npart[type];
+                                        dims[0] = (hsize_t) npart_in_file[type];
                                         dims[1] = get_values_per_blockelement(blocknr);
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
                                         if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {dims[1] = 1;}
@@ -1318,7 +1333,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
     for(type = 0; type < 6; type++)
     {
-        n_in_file = header.npart[type];
+        n_in_file = npart_in_file[type];
         n_for_this_task = n_in_file / ntask;
         if((ThisTask - readTask) < (n_in_file % ntask)) {n_for_this_task++;}
         NumPart += n_for_this_task;
@@ -1336,7 +1351,7 @@ void read_file(char *fname, int readTask, int lastTask)
             if(n_blocks_zerofilled > 0)
                 {printf("%s: %d block(s) absent and zero-filled%s\n", fname, n_blocks_zerofilled,
                         (RestartFlag >= 2) ? " -- see the WARNING lines above" : " (normal for a fresh IC)"); fflush(stdout);}
-            for(type = 5; type >= 0; type--) {if(header.npart[type] > 0) {H5Gclose(hdf5_grp[type]);}}
+            for(type = 5; type >= 0; type--) {if(npart_in_file[type] > 0) {H5Gclose(hdf5_grp[type]);}}
             H5Fclose(hdf5_file);
         }
 
@@ -1485,17 +1500,30 @@ void read_header_attributes_in_hdf5(char *fname)
     hdf5_headergrp = H5Gopen(hdf5_file, "/Header");
     if(hdf5_headergrp < 0) {printf("no group /Header in `%s'.\n", fname); endrun(124);}
 
+    /* Counts are read at 64 bits whatever width the file stores them at, so a file holding more than 2^31
+       particles of a type is read whole. The 32-bit header field keeps a copy capped at INT_MAX; the reader
+       counts from npart_in_file. */
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_ThisFile");
-    H5Aread(hdf5_attribute, H5T_NATIVE_INT, header.npart);
+    H5Aread(hdf5_attribute, H5T_NATIVE_LLONG, npart_in_file);
     H5Aclose(hdf5_attribute);
+    for(int t = 0; t < 6; t++) {header.npart[t] = (npart_in_file[t] > INT_MAX) ? INT_MAX : (int) npart_in_file[t];}
 
+    /* The total is a low and a high 32-bit word; a writer that stored the whole count in the low word at 64 bits is
+       read correctly too, since both words are read at 64 bits and recombined. */
+    unsigned long long total_low[6] = {0,0,0,0,0,0}, total_high[6] = {0,0,0,0,0,0};
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_Total");
-    H5Aread(hdf5_attribute, H5T_NATIVE_UINT, header.npartTotal);
+    H5Aread(hdf5_attribute, H5T_NATIVE_ULLONG, total_low);
     H5Aclose(hdf5_attribute);
 
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "NumPart_Total_HighWord");
-    H5Aread(hdf5_attribute, H5T_NATIVE_UINT, header.npartTotalHighWord);
+    H5Aread(hdf5_attribute, H5T_NATIVE_ULLONG, total_high);
     H5Aclose(hdf5_attribute);
+    for(int t = 0; t < 6; t++)
+    {
+        unsigned long long total = (total_low[t] > 0xFFFFFFFFULL) ? total_low[t] : total_low[t] + (total_high[t] << 32);
+        header.npartTotal[t] = (unsigned int) (total & 0xFFFFFFFFULL);
+        header.npartTotalHighWord[t] = (unsigned int) (total >> 32);
+    }
 
     hdf5_attribute = H5Aopen_name(hdf5_headergrp, "MassTable");
     H5Aread(hdf5_attribute, H5T_NATIVE_DOUBLE, header.mass);

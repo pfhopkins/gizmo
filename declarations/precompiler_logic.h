@@ -102,6 +102,9 @@
 #if defined(GRAIN_COLLISIONS)
 #define DM_SIDM 8 /* use the SIDM module to handle scattering of otherwise-collisionless particles against each other -- set to Particle Type=3 here */
 #endif
+#if defined(PIC_MHD) && !defined(PIC_SPEEDOFLIGHT_REDUCTION)
+#define PIC_SPEEDOFLIGHT_REDUCTION (1) /* default: no reduction of the speed of light for MHD-PIC */
+#endif
 #if defined(PIC_MHD)
 #define PIC_MHD_NEW_RSOL_METHOD /* prefer new method for dealing with RSOL, should make simulations easier if done correctly */
 #ifdef GRAIN_FLUID
