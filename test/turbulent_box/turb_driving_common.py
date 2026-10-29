@@ -17,6 +17,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
+from matplotlib import ticker
 
 from gizmo.test import build_and_run_test, default_mpi_ranks, variant_output_dir, variant_suffix
 from gizmo.units import UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_PER_S
@@ -128,6 +129,10 @@ def plot(t, mach, beta, log, fname, r_half=None):
     axes[0].set_ylabel("Mach")
     axes[0].legend(frameon=False)
     axes[1].set_yscale("log")
+    if log.size and log[2].max() < 10 * log[2].min():  # under a decade, log ticks leave most of the axis unlabeled
+        axes[1].yaxis.set_major_locator(ticker.MaxNLocator(5))
+        axes[1].yaxis.set_major_formatter(ticker.ScalarFormatter())
+        axes[1].yaxis.set_minor_locator(ticker.NullLocator())
     axes[1].set_ylabel("driving gain")
     if mhd:
         axes[2].semilogy(t / T_EDDY, beta, "o-", color="k", ms=3, lw=0.8)
