@@ -553,11 +553,14 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
 void advect_mesh_point(int i, double dt)
 {
 #if (HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3) // cylindrical or spherical coordinates
-    // define the location relative to the origin (needed in these coordinate systems)
-    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // assume center is at coordinate origin
-#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // unless we use a special anchor, to define the center
-    dp_offset = P[i].Pos - P[i].Min_xyz_to_Sink;
-#elif defined(BOX_PERIODIC) // or if periodic, the box mid-point is instead the center
+    /* The mesh velocity is read as a turn about the centre plus a radial (and, for the cylindrical case, a vertical) motion:
+       the point's direction from the centre is turned in the plane it and its tangential velocity span, through the angle
+       that velocity sweeps in dt, and its velocity is turned with it, keeping its speed. A rigidly rotating cylindrical mesh
+       stays rigid; in the spherical case each point follows the great circle of its radius and velocity. */
+    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // location relative to the centre; the centre is the coordinate origin ...
+#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // ... unless a special anchor defines it
+    for(int k=0;k<3;k++) {dp_offset[k] = -(P[i].Pos[k] + P[i].Min_xyz_to_Sink[k]);} /* Min_xyz_to_Sink = x_sink - x, so dp = x - x_sink */
+#elif defined(BOX_PERIODIC) // ... or the box is periodic, when it is the box mid-point
 #if (NUMDIMS==1)
     dp_offset[0] = -boxHalf_X;
 #elif (NUMDIMS==2)
@@ -567,31 +570,42 @@ void advect_mesh_point(int i, double dt)
 #endif
 #endif
     dp += dp_offset;
-#if (HYDRO_FIX_MESH_MOTION == 2) // cylindrical
-    double r2=dp[0]*dp[0]+dp[1]*dp[1], r=sqrt(r2), c0=dp[0]/r, s0=dp[1]/r, z=dp[2]; // get r, sin/cos theta, z
-    double vr=c0*CellP[i].ParticleVel[0] + s0*CellP[i].ParticleVel[1], vt=s0*CellP[i].ParticleVel[0] - c0*CellP[i].ParticleVel[1], vz=CellP[i].ParticleVel[2]; // velocities in these directions
-    double r_n=r+vr*dt, z_n=z+vz*dt, c_n=c0-s0*(vt/r)*dt, s_n=s0+c0*(vt/r)*dt; // updated cylindrical values
-    dp[0] = c_n*r_n; dp[1] = s_n*r_n; dp[2] = z_n; // back to coordinates
-    CellP[i].ParticleVel[0] = c_n*vr + s_n*vt; // re-set velocities in these coordinates //
-    CellP[i].ParticleVel[1] = s_n*vr - c_n*vt;
-    CellP[i].ParticleVel[2] = vz;
-    return;
-#elif (HYDRO_FIX_MESH_MOTION == 3) // spherical
-    Vec3<double> v = CellP[i].ParticleVel; double r2=dp.norm_sq(); // assume center is at coordinate origin
-    double r=sqrt(r2), rxy=sqrt(dp[0]*dp[0]+dp[1]*dp[1]), vr=dot(dp,v)/r; // updated r is easy
-    double ct = 1./sqrt(1.+dp[1]*dp[1]/(dp[0]*dp[0])), st = (dp[1]/dp[0])*ct; // cos and sin theta
-    double cp = sqrt(1.-dp[2]*dp[2]/(r*r)), sp = dp[2]/r; // cos and sin phi
-    double t_dot = (v[0]*dp[1]-v[1]*dp[0])/(rxy*rxy), p_dot = (dp[2]*(dp[0]*v[0]+dp[1]*v[1])-rxy*rxy*v[2])/(r*r*rxy); // theta, phi derivatives
-    double r_n=r+vr*dt, ct_n=ct-st*t_dot, st_n=st+ct*t_dot, cp_n=cp-sp*t_dot, sp_n=sp+cp*t_dot; // updated angles and positions in spherical
-    dp[0] = r_n * ct_n * cp_n; dp[1] = r_n * st_n * cp_n; dp[2] = r_n * sp_n; // back to coordinates
-    rxy = sqrt(dp[0]*dp[0] + dp[1]*dp[1]); // updated rxy
-    CellP[i].ParticleVel[0] = (dp[0]/r_n) * vr + dp[1] * t_dot + dp[0]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[1] = (dp[1]/r_n) * vr - dp[0] * t_dot + dp[1]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[2] = (dp[2]/r_n) * vr - rxy * p_dot; // back to cartesian velocities
-    return;
+    Vec3<double> v = CellP[i].ParticleVel;
+    Vec3<double> radial = dp; // the part of the position that rotates
+#if (HYDRO_FIX_MESH_MOTION == 2)
+    radial[2] = 0; // cylindrical: z advances on its own
 #endif
-    // ok now have the updated x/y/z positions relative to the origin, convert these back to the simulation coordinate frame
-    P[i].Pos = dp - dp_offset;
+    const double r = radial.norm();
+    if(r > 0)
+    {
+        const Vec3<double> e_r = radial / r;
+        const double v_r = dot(v, e_r);
+        Vec3<double> v_t = v - v_r * e_r; // tangential velocity, in the plane of rotation
+#if (HYDRO_FIX_MESH_MOTION == 2)
+        v_t[2] = 0;
+#endif
+        const double vt = v_t.norm();
+        const double r_new = r + v_r * dt;
+        if(r_new <= 0) {P[i].Pos += v * dt; return;} // carried through the centre in one step: the turn is undefined, so advance straight
+        Vec3<double> e_r_new = e_r, e_t_new = {};
+        if(vt > 0)
+        {
+            const Vec3<double> e_t = v_t / vt;
+            const double angle = vt * dt / r_new, c = cos(angle), s = sin(angle); // tangential distance over the final radius: the chord is at most vt*dt
+            e_r_new = c * e_r + s * e_t; // the direction turned through the swept angle
+            e_t_new = c * e_t - s * e_r; // and the tangential direction with it
+        }
+        dp = r_new * e_r_new;
+        v  = v_r * e_r_new + vt * e_t_new; // the same speed, turned with the point
+#if (HYDRO_FIX_MESH_MOTION == 2)
+        dp[2] = P[i].Pos[2] + dp_offset[2] + CellP[i].ParticleVel[2] * dt;
+        v[2]  = CellP[i].ParticleVel[2];
+#endif
+        CellP[i].ParticleVel = v;
+    }
+    else {dp += v * dt;} // a point at the centre has no direction to turn
+    P[i].Pos = dp - dp_offset; // back to the simulation frame
+    return;
 #endif // ok done with cylindrical/spherical coordinates
     
     
