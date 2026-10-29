@@ -29,7 +29,7 @@ double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
  */
 
 
-void write_header_attributes_in_hdf5(hid_t handle);
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
 void read_header_attributes_in_hdf5(char *fname);
 void write_parameters_attributes_in_hdf5(hid_t handle);
 void write_units_attributes_in_hdf5(hid_t handle);
@@ -489,7 +489,8 @@ void get_dataset_name(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
-long get_particles_in_block(enum iofields blocknr, int *typelist);
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_file);
+int binary_snapshot_file_fits(const long long *counts, int filenr);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
 void read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);

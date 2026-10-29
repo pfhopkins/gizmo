@@ -1176,7 +1176,8 @@ void subfind_save_local_catalogue(int num)
     }
   if(All.SnapFormat == 3)
     {
-      write_header_attributes_in_hdf5(hdf5_headergrp);
+      const long long npart_this_file[6] = {Ngroups, Nsubgroups, Nids, 0, 0, 0};
+      write_header_attributes_in_hdf5(hdf5_headergrp, npart_this_file);
     }
   else
     {
