@@ -127,6 +127,25 @@
 /* case B recombination coefficient at T=10^4 K [cm^3/s] */
 #define PI_ALPHA_B 2.6e-13
 
+#ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
+#include "../cooling/chemcool/chemcool_consts.h"
+#include "../cooling/chemcool/chem_commons.h"
+/* chemistry's H+ case-B rate chtab(13) at T, rate_eq_simple.F table lookup */
+static double pi_chem_case_b_rate(double T)
+{
+    const double *ch = &COOLR.chtab[0][0], *dch = &COOLR.dtchtab[0][0];
+    int it = NMD; double dT = 0;
+    if(T < COOLR.tmax) {it = (int)(log10(T) / COOLR.dtlog) + 1; if(it < 1) {it = 1;} if(it > NMD) {it = NMD;} dT = T - COOLR.temptab[it-1];}
+    return ch[(it-1)*NCHTAB + 12] + dT * dch[(it-1)*NCHTAB + 12];
+}
+/* PI_ALPHA_B scaled by the chemistry's case-B T-dependence, T floored at 1e4 K */
+static double pi_alpha_b_cell(double T)
+{
+    if(!(T > 1.0e4)) return PI_ALPHA_B;
+    return PI_ALPHA_B * pi_chem_case_b_rate(T) / pi_chem_case_b_rate(1.0e4);
+}
+#endif
+
 /* Stromgren radius: Rs = (3 S_ly / (4 pi alpha_B n_H^2))^(1/3) */
 static double compute_stromgren_radius_cgs(double S_ly, double nH_cgs)
 {
@@ -273,7 +292,7 @@ void out2particle_resolvedismPI(struct OUTPUT_STRUCT_NAME *out, int i, int mode,
 /* base eligibility: massive single star (the >=8 Msun activity gate) */
 static int resolvedismPI_base_check(int i)
 {
-    if(P[i].Type != 4) {return 0;}
+    if(!STELLA_OWNS_STAR(P[i])) {return 0;}
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     if(!P[i].sampled) {return 0;}
     if(P[i].MstarSampleIMF[0] < 8.0) {return 0;} /* single star must be massive to ionize */
@@ -350,8 +369,13 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                     int b = (int)(r * inv_dr); if(b >= PI_NBIN) {b = PI_NBIN - 1;}
                     double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
                     double M_cgs   = P[j].Mass * UNIT_MASS_IN_CGS;
+#ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
+                    double recomb  = pi_alpha_b_cell(CellP[j].Temp) * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
+                                     * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+#else
                     double recomb  = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
                                      * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+#endif
                     out.BinCost[ipix * PI_NBIN + b] += recomb;
                     if(out.BinRmin[ipix * PI_NBIN + b] <= 0 || r < out.BinRmin[ipix * PI_NBIN + b]) {out.BinRmin[ipix * PI_NBIN + b] = r;} /* v6: innermost cell of each bin */
                 }
@@ -416,7 +440,7 @@ void resolvedism_photoionize(void)
      * "every fine time-step for ALL sources" — this restores that. */
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 4) continue;
+        if(!STELLA_OWNS_STAR(P[i])) continue;
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_PHOTOION)
         P[i].Lyman_photons_per_sec = compute_single_star_S_ly(i);
 #endif
@@ -447,7 +471,7 @@ void resolvedism_photoionize(void)
      * biases nothing, because the front is solved from the per-cell integral. */
     int nslots = 0;
     for(i = 0; i < NumPart; i++) {
-        if(P[i].Type != 4) continue;
+        if(!STELLA_OWNS_STAR(P[i])) continue;
         if(!resolvedismPI_base_check(i)) continue;
         double S_ly = compute_single_star_S_ly(i);
         if(S_ly <= 0) continue;
@@ -664,7 +688,7 @@ void resolvedism_photoionize(void)
     if(iter > 1) {
         double local_max_r = 0, local_min_r = MAX_REAL_NUMBER;
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type == 4 && PISearchRadius != NULL && PISearchRadius[i] > 0) {
+            if(STELLA_OWNS_STAR(P[i]) && PISearchRadius != NULL && PISearchRadius[i] > 0) {
                 if(PISearchRadius[i] > local_max_r) local_max_r = PISearchRadius[i];
                 if(PISearchRadius[i] < local_min_r) local_min_r = PISearchRadius[i];
             }
@@ -684,7 +708,7 @@ void resolvedism_photoionize(void)
         double local_rfront_min = MAX_REAL_NUMBER, local_rfront_max = 0;
         double local_asym_max = 0;
         for(i = 0; i < NumPart; i++)  /* ALL sources every call (2026-07-31 fix; bodies gate on PISlot/Type) */ {
-            if(P[i].Type != 4) continue;
+            if(!STELLA_OWNS_STAR(P[i])) continue;
             if(PISearchRadius[i] <= 0) continue;
             npi_local++;
             double star_rmin = MAX_REAL_NUMBER, star_rmax = 0;
@@ -724,6 +748,24 @@ void resolvedism_photoionize(void)
      * The global reset already cleared 1->0 at the top.
      * Now transition 2->1. No wakeup: gizmo2017 photoionize.c:718 wakes SphP[j] with a stale j, never the ionized cell.
      * Cells not re-ionized remain at 0 and recombine via CHEMCOOL. */
+#ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
+    {   /* photon ledger: recombination cost of the cells marked this call vs total Q */
+        double led[2] = {0, 0}, led_g[2] = {0, 0};
+        for(i = 0; i < NumPart; i++) {if(PISlot[i] >= 0) {led[0] += compute_single_star_S_ly(i);}}
+        for(j = 0; j < N_gas; j++) {
+            if(P[j].Type != 0 || P[j].Mass <= 0 || CellP[j].Ionized != 2) continue;
+            double rho_cgs = CellP[j].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS, M_cgs = P[j].Mass * UNIT_MASS_IN_CGS;
+#ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
+            double alpha = pi_alpha_b_cell(CellP[j].Temp);
+#else
+            double alpha = PI_ALPHA_B;
+#endif
+            led[1] += alpha * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
+        }
+        MPI_Allreduce(led, led_g, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+        if(ThisTask == 0 && led_g[0] > 0) {printf("RESOLVEDISM PI LEDGER: t=%g Q=%g recomb=%g ratio=%.4f\n", All.Time, led_g[0], led_g[1], led_g[1] / led_g[0]);}
+    }
+#endif
     int sum_ionized = 0;
     for(j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;

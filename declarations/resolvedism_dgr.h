@@ -13,6 +13,14 @@
 #error "CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY has no effect with GALSF_RESOLVEDISM_DUST (live dust sets the DGR)"
 #endif
 #define RESOLVEDISM_DGR_SOLAR_ABS 0.01  /* absolute MW dust-to-gas mass ratio at DGR=1 (solar units) */
+#ifdef EXPERIMENTAL_DUST_HU_MODEL
+/* Hu model: MW anchor = the solar seed, so a seeded solar cell has DGR = 1 */
+#define RESOLVEDISM_DGR_MW_C_ABS   1.24e-3 /* carbonaceous part: RESOLVEDISM_DEPL_C x Asplund09 C (Dwek 2005 1.9e-3 exceeds that C budget) */
+#define RESOLVEDISM_DGR_MW_SIL_ABS 3.5e-3  /* silicate part (Dwek 2005, as Hu+23/26) */
+#define RESOLVEDISM_DGR_MW_ABS     (RESOLVEDISM_DGR_MW_C_ABS + RESOLVEDISM_DGR_MW_SIL_ABS) /* = the solar seed */
+#else
+#define RESOLVEDISM_DGR_MW_ABS     RESOLVEDISM_DGR_SOLAR_ABS /* live dust normalised by 0.01 */
+#endif
 
 /* raw DGR formula, no cap/gate (chemistry applies its own cap and solve-T sputter gate) */
 static inline double resolvedism_cell_DGR_solar_raw(int p)
@@ -22,7 +30,7 @@ static inline double resolvedism_cell_DGR_solar_raw(int p)
     {
         double DGR_actual = 0; int kd;
         for(kd = 0; kd < NUM_RESOLVEDISM_DUST; kd++) {DGR_actual += CellP[p].Dust[kd];}
-        dgr = DGR_actual / RESOLVEDISM_DGR_SOLAR_ABS;
+        dgr = DGR_actual / RESOLVEDISM_DGR_MW_ABS;
     }
 #elif defined(CHEMCOOL)
 #if defined(METALS) && !defined(CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY)
@@ -30,6 +38,8 @@ static inline double resolvedism_cell_DGR_solar_raw(int p)
 #else
     dgr = All.DGRnormalized;
 #endif
+#elif defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(METALS)
+    dgr = P[p].Metallicity[0] / All.SolarAbundances[0]; /* FIRE-cooled mode: dust-to-metal ratio fixed at solar */
 #else
     dgr = 1.0; /* no chemistry: DGRnormalized not defined (pure N-body / non-Stella builds) */
 #endif

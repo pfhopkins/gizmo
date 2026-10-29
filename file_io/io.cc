@@ -1030,6 +1030,17 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+        case IO_STAR_MODEL:
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = (int) P[pindex].StarModel;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_BIRTH_METALLICITY:
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             for(n = 0; n < pc; pindex++)
@@ -1593,6 +1604,14 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
                 if(P[pindex].Type == type)
                 {
                     *fp++ = (MyOutputFloat) (Get_Gas_PhiField(pindex) * All.cf_a3inv * gizmo2gauss);
+                    n++;
+                }
+#endif
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) (Get_Gas_Psi_Conservative(pindex) * gizmo2gauss); /* physical psi [gauss * velocity] */
                     n++;
                 }
 #endif
@@ -2371,6 +2390,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
         case IO_SAMPLED_IMF:
+        case IO_STAR_MODEL:
             bytes_per_blockelement = sizeof(int);
             break;
             
@@ -2814,6 +2834,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
         case IO_SAMPLED_IMF:
+        case IO_STAR_MODEL:
             typekey = 0;		/* native int */
             break;
             
@@ -2949,6 +2970,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_FORMATION_DENSITY:
         case IO_SAMPLED_IMF:
         case IO_BIRTH_METALLICITY:
+        case IO_STAR_MODEL:
             values = 1;
             break;
 
@@ -3332,6 +3354,11 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_BIRTH_METALLICITY:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
+            break;
+
+        case IO_STAR_MODEL:
+            for(i = 0; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
+            return header.npart[4] + header.npart[5];
             break;
 
         case IO_ELEMENT_ABUNDANCE:
@@ -3744,6 +3771,12 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
+        case IO_STAR_MODEL:
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            return 1;
+#endif
+            break;
+
         case IO_BIRTH_METALLICITY:
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             return 1;
@@ -4004,6 +4037,9 @@ int blockpresent(enum iofields blocknr)
             break;
 
         case IO_PHI:
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
+            return 1;
+#endif
         case IO_GRADPHI:
 #if defined(DIVBCLEANING_DEDNER) && defined(OUTPUT_BFIELD_DIVCLEAN_INFO)
             return 1;
@@ -4463,6 +4499,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
             break;
         case IO_SAMPLED_IMF:
             strncpy(label, "SAMF", 4);
+            break;
+        case IO_STAR_MODEL:
+            strncpy(label, "SMOD", 4);
             break;
         case IO_BIRTH_METALLICITY:
             strncpy(label, "BMET", 4);
@@ -5002,6 +5041,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_SAMPLED_IMF:
             strcpy(buf, "IMFSampledFlag");
+            break;
+        case IO_STAR_MODEL:
+            strcpy(buf, "StarModel");
             break;
         case IO_BIRTH_METALLICITY:
             strcpy(buf, "BirthMetallicity");
@@ -6297,6 +6339,11 @@ void write_header_attributes_in_hdf5(hid_t handle)
 #endif
 #endif
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+    {const char *rid = rumi_lib_id_string(); hid_t st = H5Tcopy(H5T_C_S1); H5Tset_size(st, strlen(rid) + 1);
+     hdf5_dataspace = H5Screate(H5S_SCALAR); hdf5_attribute = H5Acreate(handle, "RUMI_lib_id", st, hdf5_dataspace, H5P_DEFAULT);
+     H5Awrite(hdf5_attribute, st, rid); H5Aclose(hdf5_attribute); H5Sclose(hdf5_dataspace); H5Tclose(st);}
+#endif
 }
 
 

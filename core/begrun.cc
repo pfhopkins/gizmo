@@ -107,6 +107,9 @@ void begrun(void)
 #ifdef KETJU_REGULARIZATION
   ketju_open_output_file();
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_init();
+#endif
 
 #ifdef BOX_PERIODIC
   ewald_init();
@@ -1148,7 +1151,7 @@ void read_parameter_file(char *fname)
  * registration gated on DEVELOPER_MODE only, every non-developer build silently ignored it,
  * defaulted to 1e10, and wrote exactly ONE row (t=0) per run — the whole-fleet
  * "ENERGYinfo header-only" symptom (2026-07-06). Register whenever the ledger exists. */
-#if defined(DEVELOPER_MODE) || (defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB))
+#if defined(DEVELOPER_MODE) || (defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)
       strcpy(tag[nt], "TimeBetStatistics");
       strcpy(alternate_tag[nt], "Time_Between_Internal_Diagnostic_Statistics");
       addr[nt] = &All.TimeBetStatistics;
@@ -2412,6 +2415,16 @@ void read_parameter_file(char *fname)
 #endif
 #endif  // CHIMES
 
+#if defined(GALSF_RESOLVEDISM_DUST) && defined(EXPERIMENTAL_DUST_HU_MODEL)
+      strcpy(tag[nt], "DustGrowthTimescaleGyr");
+      addr[nt] = &All.DustGrowthTimescaleGyr;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "DustGrowthCoulombFactor");
+      addr[nt] = &All.DustGrowthCoulombFactor;
+      id[nt++] = REAL;
+#endif
+
 #ifdef CHEMCOOL
       strcpy(tag[nt], "G0");
       addr[nt] = &All.G0;
@@ -2512,6 +2525,48 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "MassPerStarIMF");
       addr[nt] = &All.MassPerStarIMF;
       id[nt++] = REAL;
+#endif
+
+#ifdef STARS_INTEGRATED_BY_RUMI
+      strcpy(tag[nt], "RumiConfigFile");
+      addr[nt] = All.RumiConfigFile;
+      id[nt++] = STRING;
+
+      strcpy(tag[nt], "RumiStarMaxTimestep");
+      addr[nt] = &All.RumiStarMaxTimestep;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiNumThreads");
+      addr[nt] = &All.RumiNumThreads;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiLengthUnitPc");
+      addr[nt] = &All.RumiLengthUnitPc;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiMassUnitMsun");
+      addr[nt] = &All.RumiMassUnitMsun;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiVelUnitKms");
+      addr[nt] = &All.RumiVelUnitKms;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiNumRanks");
+      addr[nt] = &All.RumiNumRanks;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiDeviceId");
+      addr[nt] = &All.RumiDeviceId;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiPrintInterval");
+      addr[nt] = &All.RumiPrintInterval;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiReplayDump");
+      addr[nt] = &All.RumiReplayDump;
+      id[nt++] = INT;
 #endif
 
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
@@ -2861,6 +2916,18 @@ void read_parameter_file(char *fname)
                 if(strcmp("WakeupTargetBin",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (waker bin - log2(WAKEUP))\n",tag[i]); continue;}
 #endif
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+                if(strcmp("RumiConfigFile",tag[i])==0) {strcpy((char *)addr[i],"rumi_config.txt"); printf("Tag %s not set: defaulting to rumi_config.txt\n",tag[i]); continue;}
+                if(strcmp("RumiStarMaxTimestep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (no cap beyond the stars' own criteria)\n",tag[i]); continue;}
+                if(strcmp("RumiNumThreads",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Kokkos default)\n",tag[i]); continue;}
+                if(strcmp("RumiLengthUnitPc",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in pc)\n",tag[i]); continue;}
+                if(strcmp("RumiMassUnitMsun",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in Msun)\n",tag[i]); continue;}
+                if(strcmp("RumiVelUnitKms",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in km/s)\n",tag[i]); continue;}
+                if(strcmp("RumiNumRanks",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1\n",tag[i]); continue;}
+                if(strcmp("RumiDeviceId",tag[i])==0) {*((int *)addr[i])=-1; printf("Tag %s not set: defaulting to -1 (Kokkos default)\n",tag[i]); continue;}
+                if(strcmp("RumiPrintInterval",tag[i])==0) {*((int *)addr[i])=64; printf("Tag %s not set: defaulting to 64\n",tag[i]); continue;}
+                if(strcmp("RumiReplayDump",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0\n",tag[i]); continue;}
+#endif
 #ifdef KETJU_REGULARIZATION
                 if(strcmp("KetjuMinBHMass",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Type 5 chain centers disabled)\n",tag[i]); continue;}
                 if(strcmp("KetjuMinStarMass",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Type 4 chain centers disabled)\n",tag[i]); continue;}
@@ -3028,6 +3095,10 @@ void read_parameter_file(char *fname)
                 if(strcmp("TestFixedWindMdot",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: wind Mdot from tables as normal (variable; =0)\n",tag[i]); continue;}
                 if(strcmp("TestFixedWindVel",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set in parameter file: wind velocity from tables as normal (=0)\n",tag[i]); continue;}
 #endif
+#if defined(GALSF_RESOLVEDISM_DUST) && defined(EXPERIMENTAL_DUST_HU_MODEL)
+                if(strcmp("DustGrowthTimescaleGyr",tag[i])==0) {*((double *)addr[i])=1.5; printf("Tag %s not set: dust growth time 1.5 Gyr at n=1, T=100 K (Hu+26)\n",tag[i]); continue;}
+                if(strcmp("DustGrowthCoulombFactor",tag[i])==0) {*((double *)addr[i])=1.0; printf("Tag %s not set: no Coulomb enhancement of growth, D_eff=1 (Hu+26)\n",tag[i]); continue;}
+#endif
                 if(strcmp("TimeBetStatistics",tag[i])==0) {*((double *)addr[i])=1.0e10; printf("Tag %s (%s) not set in parameter file: ENERGYinfo.txt will get only the t=0 row (=%g) \n",tag[i],alternate_tag[i],All.TimeBetStatistics); continue;}
 #ifdef EOS_ANEOS
                 if(strncmp(tag[i], "AneosTable", 10)==0) {strcpy((char *)addr[i], "none"); continue;} /* unused ANEOS table slots default to 'none' */
@@ -3180,7 +3251,9 @@ void read_parameter_file(char *fname)
      * TimeBetStatistics back to 1e10 (usedvalues showed the file value; runtime had
      * 1e10 -> exactly one t=0 row fleet-wide). When the conservation ledger exists
      * (CHEMCOOL+RESOLVEDISM_FB), the parsed cadence must survive. */
+#ifndef TEST_MHD_ENERGY_LEDGER_OUTPUT
     All.TimeBetStatistics = 1.0e10;
+#endif
 #endif
     strcpy(All.ResubmitCommand,"none");
     All.ResubmitOn = 0;

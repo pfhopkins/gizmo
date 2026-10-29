@@ -73,6 +73,19 @@ int eligible_for_hermite(int i);
 void do_hermite_prediction(void);
 void do_hermite_correction(int final_pass);
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+void rumi_init(void);
+void rumi_finalize(void);
+void rumi_limit_timesteps(void);
+void rumi_integrate(void);
+void rumi_finish_drift(void);
+void rumi_swap_output_state(void);
+void rumi_nonmember_star_gravity(void);
+void rumi_save_state(void);
+void rumi_load_state(void);
+const char *rumi_lib_id_string(void);
+void rumi_note_total_energy(double E0);
+#endif
 #ifdef KETJU_REGULARIZATION
 void ketju_limit_timesteps(void);
 void ketju_find_regions(void);
@@ -419,6 +432,15 @@ double INLINE_FUNC yhelium(int target, struct particle_data *pp);
 double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+double Get_Gas_CleaningSpeed(int i);
+double Get_Gas_Psi_Conservative(int i);
+extern double PsiDampEnergyCumul;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+#define MHD_ENERGY_LEDGER_N 9
+extern double MHDEnergyLedger[MHD_ENERGY_LEDGER_N];
+#endif
 #ifdef DIVBCLEANING_DEDNER
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id);
 double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id);
@@ -585,6 +607,9 @@ double evaluate_time_since_t_initial_in_Gyr(double t_initial);
 
 #ifdef GALSF
 int is_particle_single_star_eligible(long i);
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+int sf_channel_for_cell(int i);
+#endif
 double evaluate_stellar_age_Gyr(long i);
 double evaluate_light_to_mass_ratio(double stellar_age_in_gyr, int i);
 double calculate_relative_light_to_mass_ratio_from_imf(double stellar_age_in_gyr, int i, int mode);

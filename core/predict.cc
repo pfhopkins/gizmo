@@ -286,6 +286,11 @@ void drift_extra_physics(int i, integertime tstart, integertime tend, double dt_
         CellP[i].PhiPred *= exp( -dt_entr * t_damp );
     }
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    CellP[i].PsiZPred += sqrt(All.cf_atime) * CellP[i].DtPsiZ * dt_entr;
+    {double ch = Get_Gas_CleaningSpeed(i), h = 1.2 * P[i].Get_Particle_Size() * All.cf_atime; /* TP12 h = 1.2 (m/rho)^(1/d) */
+     if(ch > 0 && h > 0 && dt_entr > 0) {CellP[i].PsiZPred *= exp(-dt_entr * DIVBCLEANING_CONSERVATIVE_SIGMA * ch / h);}}
+#endif
 #ifdef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     CellP[i].B = CellP[i].BPred;
 #ifdef DIVBCLEANING_DEDNER
@@ -464,6 +469,27 @@ double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell
 #endif
 }
 
+
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+/* cleaning speed c_h = sqrt(c_s^2 + v_A^2), physical (TPB16; Steinwandel & Price) */
+double Get_Gas_CleaningSpeed(int i)
+{
+    if(CellP[i].Density <= 0) {return 0;}
+    double cs = CellP[i].effective_soundspeed();
+    double ch = sqrt(cs*cs + CellP[i].Bfield().norm_sq() / (All.cf_atime * CellP[i].Density));
+#ifdef TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED
+    if(((long)(All.Time / 0.05)) % 2) {ch *= 2;} /* test only: c_h doubles every other 0.05 (Tricco, Price & Bate 2016 sec. 3.2) */
+#endif
+    return ch;
+}
+/* physical psi = c_h (psi/c_h), with psi/c_h = PsiZ / sqrt(a V_phys) */
+double Get_Gas_Psi_Conservative(int i)
+{
+    if(CellP[i].Density <= 0 || P[i].Mass <= 0) {return 0;}
+    double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+    return Get_Gas_CleaningSpeed(i) * CellP[i].PsiZPred / sqrt(All.cf_atime * V_phys);
+}
+#endif
 
 #ifdef DIVBCLEANING_DEDNER
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id)

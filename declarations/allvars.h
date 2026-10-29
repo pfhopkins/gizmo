@@ -534,6 +534,12 @@ extern struct global_data_all_processes
   double G0;                    /*!< UV radiation field strength in Habing units */
   double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
   double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST) && defined(EXPERIMENTAL_DUST_HU_MODEL)
+  double DustGrowthTimescaleGyr;  /*!< ISM growth time at n_H=1, T=100 K, Z'=1, a_eff=0.035 um (Hu+26 eq 4) */
+  double DustGrowthCoulombFactor; /*!< area-weighted Coulomb enhancement D_eff (Hu+23: 10, Hu+26: 1) */
+#endif
+#ifdef CHEMCOOL
   double DeutAbund;             /*!< primordial deuterium abundance D/H by number */
   double InitialMetallicity;    /*!< initial metallicity in solar units */
 #endif
@@ -856,6 +862,17 @@ extern struct global_data_all_processes
 
 #ifdef COSMIC_RAY_FLUID
     double CosmicRayDiffusionCoeff;
+#endif
+
+#ifdef STARS_INTEGRATED_BY_RUMI
+  char   RumiConfigFile[256];            /*!< RUMI++ config file (integrator keys) */
+  double RumiStarMaxTimestep;            /*!< cap on the common star step [code units], 0 = none */
+  int    RumiNumThreads;                 /*!< Kokkos host threads per RUMI++ rank, 0 = Kokkos default */
+  double RumiLengthUnitPc, RumiMassUnitMsun, RumiVelUnitKms; /*!< RUMI++ units in code units (0: pc, Msun, km/s); tests in G = 1 units map 1:1 */
+  int    RumiNumRanks;                   /*!< tasks 0..RumiNumRanks-1 run RUMI++ (its distributed path), default 1 */
+  int    RumiDeviceId;                   /*!< GPU of the RUMI++ task, -1 = Kokkos default */
+  int    RumiPrintInterval;              /*!< star steps between RUMI++ energy/timer lines, 0 = off */
+  int    RumiReplayDump;                 /*!< 1: write the first RUMI++ state, G and step for a standalone replay */
 #endif
 
 #ifdef KETJU_REGULARIZATION
@@ -1324,7 +1341,7 @@ extern struct gravdata_out
     MyDouble UV_flux[NPIX];               /*!< HEALPix FUV flux per pixel, 6-13.6 eV (bins FUV_6_8EV + PHOTOELECTRIC) */
     MyDouble LW_flux[NPIX];               /*!< HEALPix LW flux per pixel, 11.2-13.6 eV (subset of FUV) */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-    MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-8 eV */
+    MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-8 eV (3.4-6 eV with EXPERIMENTAL_RADIATION_DISJOINT_BANDS) */
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyDouble OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
@@ -1658,6 +1675,7 @@ enum iofields
   IO_KETJU_SPIN,
   IO_KETJU_REMNANT_TYPE,
   IO_SHOCKMACHNUM,
+  IO_STAR_MODEL,
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 
@@ -1816,6 +1834,9 @@ extern struct star_direct_data
     MyIDType ID;
 #ifdef KETJU_REGULARIZATION
     MyIDType KetjuChainID; /* same-chain pairs within the region radius do not set dt_2body, as in the tree walk */
+#endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    MyFloat AGS_zeta; /* source zeta, so the pair force is the tree's (tree_pair_gravity_factors) */
 #endif
 }
  *StarDirect;

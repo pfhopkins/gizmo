@@ -479,6 +479,9 @@ void merge_and_split_particles(void)
 #endif
                         /* make sure we're not taking the same particle (and that its available to be merged into)! and that its the least-massive available candidate for merging onto */
                         if((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        if(do_allow_merger && P[j].Type==0 && sf_channel_for_cell(j)!=SF_CHANNEL_SSP && (P[i].Mass+P[j].Mass)*UNIT_MASS_IN_SOLAR > (GALSF_RESOLVEDISM_HYBRID_M_SSP)) {do_allow_merger=0;} /* a merge never lifts Stella-band gas above M_SSP */
+#endif
                         if(do_allow_merger) {threshold_val=m_eff; target_for_merger=j;} /* tell the code this can be merged! */
                     }
                     if (target_for_merger >= 0) { /* mark as merging pairs */
@@ -605,6 +608,9 @@ void merge_and_split_particles(void)
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
             {int kd_sp; for(kd_sp=0;kd_sp<NUM_RESOLVEDISM_DUST;kd_sp++) {CellP[j_sp].Dust[kd_sp] = 0;}} /* fresh ejecta carry no grains */
+#ifdef EXPERIMENTAL_DUST_HU_MODEL
+            memset(CellP[j_sp].DustVrel, 0, sizeof(CellP[j_sp].DustVrel));
+#endif
 #endif
 #if defined(SINK_THERMALFEEDBACK)
             CellP[j_sp].Injected_Sink_Energy = 0;
@@ -1238,6 +1244,10 @@ int merge_particles_ij(int i, int j)
 #endif
 #endif
 #if defined(GALSF_RESOLVEDISM_DUST)
+#ifdef EXPERIMENTAL_DUST_HU_MODEL
+    {double dj = 0, di = 0; for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {dj += wt_j*CellP[j].Dust[k]; di += wt_i*CellP[i].Dust[k];}
+     int b; for(b=0;b<NUM_RESOLVEDISM_DUST_BINS;b++) {for(k=0;k<3;k++) {CellP[j].DustVrel[b][k] = (dj+di > 0) ? (dj*CellP[j].DustVrel[b][k] + di*CellP[i].DustVrel[b][k])/(dj+di) : 0;}}} /* dust-mass weighted */
+#endif
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[j].Dust[k] = wt_j*CellP[j].Dust[k] + wt_i*CellP[i].Dust[k];} /* dust-mass conserving */
 #endif
 #if defined(CHEMCOOL)

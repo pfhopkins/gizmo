@@ -594,7 +594,15 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef HERMITE_INTEGRATION
     /* divide out the 2nd-order margin, as the 2-body criterion does below. After
      * tdyn_step_for_treeforce, so the tree-update cadence keeps the unscaled value. */
-    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Aarseth criterion replaces the tidal one; start-up step eta/2 |a|/|j| */
+        if(P[p].Hermite_dt_ratio > 0) {dt_tidal = P[p].Hermite_dt_ratio * get_particle_timestep_in_physical(p);}
+        else {double jm = P[p].GravJerk.norm(); if(jm > 0) {dt_tidal = DMIN(dt_tidal, 0.5 * STARS_HERMITE_AARSETH_ETA * P[p].GravAccel.norm() / jm);}}
+#endif
+    }
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    else {P[p].Hermite_dt_ratio = 0;} /* KDK step (e.g. KETJU member): no Hermite history to extrapolate from */
+#endif
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)
@@ -646,7 +654,11 @@ integertime get_timestep(int p,		/*!< particle index */
 
 #ifdef ADAPTIVE_GRAVSOFT_FORALL
     /* make sure smoothing length of non-gas particles doesn't change too much in one timestep */
+#ifdef STARS_INTEGRATED_BY_RUMI
+    if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) && (P[p].Type > 0) && (P[p].Type != 4)) /* Type 4: the star-star flow these limits follow is RUMI++'s */
+#else
     if(((1 << P[p].Type) & (ADAPTIVE_GRAVSOFT_FORALL)) && (P[p].Type > 0))
+#endif
     {
         double dt_divv = 0.1 / (MIN_REAL_NUMBER + All.cf_a2inv*fabs(P[p].Particle_DivVel)); // with new integration accuracy in gravtree, we may not need to be super-conservative here. old code used pre-factor 0.25 here, see if we can get away with the larger value which is standard for gas below
         if(dt_divv < dt) {dt = dt_divv;}
@@ -1090,7 +1102,11 @@ integertime get_timestep(int p,		/*!< particle index */
 
     // add a 'stellar evolution timescale' criterion to the timestep, to prevent too-large jumps in feedback //
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || (defined(GALSF) && defined(RADTRANSFER))
-    if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0))
+    if(((P[p].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[p].Type == 2)||(P[p].Type==3))))&&(P[p].Mass>0)
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+       && !STELLA_OWNS_STAR(P[p]) /* Stella stars use the Stella limiter below */
+#endif
+      )
     {
         double star_age = evaluate_stellar_age_Gyr(p);
         double dt_stellar_evol;
@@ -1118,7 +1134,7 @@ integertime get_timestep(int p,		/*!< particle index */
 
     /* Stellar timestep limiter for resolved single-star feedback */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
-    if(P[p].Type == 4 && P[p].Mass > 0) {
+    if(STELLA_OWNS_STAR(P[p]) && P[p].Mass > 0) {
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
         if(P[p].sampled == 1 && P[p].MstarSampleIMF[0] > 0) {
             double Mstar = P[p].MstarSampleIMF[0];

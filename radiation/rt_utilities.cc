@@ -74,7 +74,9 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     active_check += rt_get_lum_band_singlestar(i,mode,lum, pp, cell); // get luminosities for individual star/sink particles assuming they are protostars or stars
 #endif
 #else
-#if (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
+    if(!STELLA_OWNS_STAR(pp[i])) {active_check += rt_get_lum_band_stellarpopulation(i,mode,lum, pp, cell);} // Stella stars radiate through TREE_RAD, not here
+#elif (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
     active_check += rt_get_lum_band_resolvedism(i,mode,lum, pp, cell); // get luminosities from single-star stellar tables
 #else
     active_check += rt_get_lum_band_stellarpopulation(i,mode,lum, pp, cell); // get luminosities for star particles assuming they represent IMF-averaged populations
@@ -174,7 +176,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
 #ifdef GALSF_RESOLVEDISM_DUST
     if(i>=0) { /* use per-particle DGR from evolved dust fields instead of metallicity-based estimate */
         double DGR_actual = 0; int kd; for(kd=0;kd<NUM_RESOLVEDISM_DUST;kd++) {DGR_actual += CellP[i].Dust[kd];}
-        Zfac = 1.0; dust_to_metals_vs_standard = DGR_actual / 0.01; /* DGR / DGR_solar */
+        Zfac = 1.0; dust_to_metals_vs_standard = DGR_actual / RESOLVEDISM_DGR_MW_ABS; /* DGR / DGR_MW */
     }
 #endif
 
@@ -317,20 +319,20 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
 int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-    /* per-star band cache in erg/s (set each step in recompute_resolvedism_fuv_luminosities) */
+    /* per-star band cache is erg/s; lum[] = cache / RESOLVEDISM_STELLAR_LUM_TO_CGS */
     if(pp[i].Type != 4 && pp[i].Type != 5) return 0;
-    lum[RT_FREQ_BIN_FUV_6_8EV] = pp[i].UV_luminosity - pp[i].PE_luminosity; /* not clipped: FUV_total - FUV_M1 restores the 6-13.6 eV total */
-    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity;
-    lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity;
+    lum[RT_FREQ_BIN_FUV_6_8EV] = (pp[i].UV_luminosity - pp[i].PE_luminosity) / RESOLVEDISM_STELLAR_LUM_TO_CGS; /* not clipped: FUV_total - FUV_M1 restores the 6-13.6 eV total */
+    lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
+    lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #ifdef RT_NUV
 #ifdef RT_NUV_BAND_6_8EV
-    lum[RT_FREQ_BIN_NUV] = DMAX(0., pp[i].UV_luminosity - pp[i].PE_luminosity); /* 6-8 eV */
+    lum[RT_FREQ_BIN_NUV] = DMAX(0., pp[i].UV_luminosity - pp[i].PE_luminosity) / RESOLVEDISM_STELLAR_LUM_TO_CGS; /* 6-8 eV */
 #else
-    lum[RT_FREQ_BIN_NUV] = pp[i].NUV_luminosity;
+    lum[RT_FREQ_BIN_NUV] = pp[i].NUV_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #endif
 #endif
 #ifdef RT_OPTICAL_NIR
-    lum[RT_FREQ_BIN_OPTICAL_NIR] = pp[i].OPT_luminosity;
+    lum[RT_FREQ_BIN_OPTICAL_NIR] = pp[i].OPT_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #endif
     return 1;
 #else

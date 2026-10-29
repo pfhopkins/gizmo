@@ -229,7 +229,7 @@ void resolvedism_mass_balance_log(const char *tag)
 void energy_budget_sync_report(void)
 {
     if(All.HighestActiveTimeBin != All.HighestOccupiedTimeBin) {return;} /* not synchronized: sum is meaningless */
-    double loc[3] = {0,0,0}, glob[3]; int i;
+    double loc[6] = {0,0,0,0,0,0}, glob[6]; int i, k;
     for(i = 0; i < NumPart; i++)
     {
         if(P[i].Type == 0 && P[i].Mass > 0)
@@ -237,13 +237,14 @@ void energy_budget_sync_report(void)
             loc[0] += P[i].Mass * CellP[i].InternalEnergy;
             loc[1] += 0.5 * P[i].Mass * P[i].Vel.norm_sq() * All.cf_a2inv;
             loc[2] += P[i].Mass;
+            for(k = 0; k < 3; k++) {loc[3+k] += P[i].Mass * P[i].Vel[k] / All.cf_atime;} /* physical momentum */
         }
     }
-    MPI_Allreduce(loc, glob, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(loc, glob, 6, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0)
     {
-        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e\n",
-               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2]); fflush(stdout);
+        printf("Energy (synced) t=%.10g E_int=%.10e E_kin=%.10e E_tot=%.10e M_gas=%.10e P_gas=%.16e %.16e %.16e\n",
+               All.Time, glob[0], glob[1], glob[0]+glob[1], glob[2], glob[3], glob[4], glob[5]); fflush(stdout);
     }
 }
 
@@ -438,6 +439,9 @@ static void incode_total_energy(void)
 #ifdef KETJU_REGULARIZATION
                 ketju_note_total_energy(E, E0); /* printed evaluations only: all counted particles synchronised */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+                rumi_note_total_energy(E0); /* the collision energy RUMI++ booked, over |E0| (as KETJU ENERGY's collisions-dE) */
+#endif
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
                        (E_prop - E0_prop - ledger)/fabs(E0_prop), ledger, n_int, KE, PE, PE_prop);
@@ -526,12 +530,22 @@ void run(void)
 #if defined(KETJU_REGULARIZATION)  /* STARFORGE scheme: after find_timesteps */
         ketju_limit_timesteps();    /* force chain particles to shared timebin */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_limit_timesteps();     /* all stars onto one bin */
+#endif
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
+#if defined(STARS_HERMITE_DIRECT_GRAVITY) && defined(KETJU_TYPE4_STARS)
+        for(int i : ActiveParticleList) /* this pass set the kick a new KETJU member's start subtraction cancels */
+            if((P[i].Type == 4) && eligible_for_hermite(i)) {double s2[2], z2[2]; tree_pair_softening(i, s2, z2); for(int k = 0; k < 2; k++) {P[i].KetjuTreeSoft[k] = s2[k]; P[i].KetjuTreeZeta[k] = z2[k];}}
+#endif
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_integrate();           /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
+#endif
 
 
 #ifdef KETJU_REGULARIZATION
@@ -638,7 +652,7 @@ void run(void)
             double local_mass[6] = {0,0,0,0,0,0};
             int local_nstars = 0;
             for(int ii = 0; ii < NumPart; ii++) {
-                if(P[ii].Type != 4 || P[ii].Mass <= 0) continue;
+                if(!STELLA_OWNS_STAR(P[ii]) || P[ii].Mass <= 0) continue;
                 local_nstars++;
                 double age_gyr = evaluate_stellar_age_Gyr(ii);
                 double age_myr = age_gyr * 1e3;
@@ -1191,7 +1205,13 @@ void find_next_sync_point_and_drift(void)
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity, not the chord one */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();   /* stars ending their step here: RUMI++'s position and velocity, not the chord ones */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();
+#endif
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities();
 #endif
@@ -1268,6 +1288,9 @@ void find_next_sync_point_and_drift(void)
 
 #ifdef KETJU_REGULARIZATION
   ketju_set_final_velocities(); /* swap in true physical velocities after drift (velocity trick) */
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_finish_drift();          /* stars ending their RUMI++ step: its position and velocity */
 #endif
 
 }
@@ -1671,6 +1694,9 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+          "rumi          %10.2f  %5.1f%%\n"
+#endif
 #ifdef KETJU_REGULARIZATION
           "ketju         %10.2f  %5.1f%%\n"
           "   kj_limit   %10.2f  %5.1f%%\n"
@@ -1763,6 +1789,9 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+    All.CPU_Sum[CPU_RUMI], (All.CPU_Sum[CPU_RUMI]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
 #ifdef KETJU_REGULARIZATION
     All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH],
     (All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH]) / All.CPU_Sum[CPU_ALL] * 100,
@@ -1804,6 +1833,36 @@ void put_symbol(double t0, double t1, char c)
  */
 void energy_statistics(void)
 {
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+  { /* test: global E_th, E_kin, E_pot, E_B and cumulative MHD energy ledger [erg] to mhd_energy_ledger.txt */
+    compute_global_quantities_of_system();
+    double loc[2+MHD_ENERGY_LEDGER_N]={0}, glob[2+MHD_ENERGY_LEDGER_N]={0};
+    for(int ii=0;ii<NumPart;ii++) {if(P[ii].Type==0 && P[ii].Mass>0 && CellP[ii].Density>0) {
+        loc[0] += 0.5 * (CellP[ii].Bfield() * All.cf_a2inv).norm_sq() * P[ii].Mass / (CellP[ii].Density * All.cf_a3inv);
+#ifdef DIVBCLEANING_DEDNER
+        loc[1] += fabs(CellP[ii].divB);
+#endif
+    }}
+    for(int kl=0;kl<MHD_ENERGY_LEDGER_N;kl++) {loc[2+kl] = MHDEnergyLedger[kl];}
+    MPI_Reduce(loc, glob, 2+MHD_ENERGY_LEDGER_N, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    double psi_loc[2]={0,PsiDampEnergyCumul}, psi_glob[2]={0,0};
+    for(int ii=0;ii<NumPart;ii++) {if(P[ii].Type==0 && P[ii].Mass>0) {psi_loc[0] += 0.5*CellP[ii].PsiZ*CellP[ii].PsiZ/All.cf_atime;}}
+    MPI_Reduce(psi_loc, psi_glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+#endif
+    if(ThisTask==0) {
+        static FILE *fd_ledger = NULL; char fn[DEFAULT_PATH_BUFFERSIZE_TOUSE]; double ue = UNIT_ENERGY_IN_CGS;
+        if(!fd_ledger) {snprintf(fn, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%smhd_energy_ledger.txt", All.OutputDir); fd_ledger = fopen(fn, "w");
+            fprintf(fd_ledger, "# time E_th E_kin E_pot E_B [erg] sum|divB| | cumul [erg]: clip(limiter+floor) Powell DednerFace DednerPhiCorr closure halfB2dV_booked BdVB_booked EB_volume_change EB_kick_change\n");}
+        fprintf(fd_ledger, "%.8g %.8e %.8e %.8e %.8e %.4e", All.Time, SysState.EnergyIntComp[0]*ue, SysState.EnergyKinComp[0]*ue, SysState.EnergyPot*ue, glob[0]*ue, glob[1]);
+        for(int kl=0;kl<MHD_ENERGY_LEDGER_N;kl++) {fprintf(fd_ledger, " %+.8e", glob[2+kl]*ue);}
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        fprintf(fd_ledger, " %+.8e %+.8e", psi_glob[0]*ue, psi_glob[1]*ue); /* E_psi, cumulative damping loss */
+#endif
+        fprintf(fd_ledger, "\n"); fflush(fd_ledger);
+    }
+  }
+#endif
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
   compute_global_quantities_of_system();
 

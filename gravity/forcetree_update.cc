@@ -87,7 +87,11 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
     Vec3<MyDouble> dp_dm = (P[i].Type != 0) ? dp : Vec3<MyDouble>{};
 #endif
 #ifdef SINK_NODE_MOTION_TRACKED
+#if defined(STARS_INTEGRATED_BY_RUMI) || defined(STARS_HERMITE_DIRECT_GRAVITY)
+    Vec3<MyDouble> sink_dp = (P[i].Type == SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES) ? dp : Vec3<MyDouble>{}; /* the node moments track Type 4 here */
+#else
     Vec3<MyDouble> sink_dp = (P[i].Type == 5) ? dp : Vec3<MyDouble>{}; /* only sinks contribute to the sink moments */
+#endif
 #endif
 
   for(j = 0, vmax = 0; j < 3; j++)

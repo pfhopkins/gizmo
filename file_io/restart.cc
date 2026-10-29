@@ -456,6 +456,9 @@ void restart(int modus)
 
       domain_Decomposition(0, 0, 0);
     }
+#ifdef STARS_INTEGRATED_BY_RUMI
+  if(modus == 0) {rumi_save_state();} else {rumi_load_state();} /* RUMI++ library state beside GIZMO's */
+#endif
 }
 
 

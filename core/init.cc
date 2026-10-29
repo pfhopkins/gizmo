@@ -214,10 +214,19 @@ void init(void)
     All.SolarAbundances[8]=6.44e-4; // S   (7.12 -> 3.12e-4, AG=3.80e-4); PS=7.16->3.31e-4
     All.SolarAbundances[9]=1.01e-4; // Ca  (6.34 -> 0.65e-4, AG=0.67e-4); PS=6.38->6.87e-5
     All.SolarAbundances[10]=1.73e-3; // Fe (7.50 -> 1.31e-3, AG=1.92e-3); PS=7.54->1.38e-3
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) // new default abundances; using Asplund et al. 2009 proto-solar abundances
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && !(defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)) // new default abundances; using Asplund et al. 2009 proto-solar abundances
     All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES>=10) {
         All.SolarAbundances[1]=0.27030; All.SolarAbundances[2]=2.53e-3; All.SolarAbundances[3]=7.41e-4; All.SolarAbundances[4]=6.13e-3; All.SolarAbundances[5]=1.34e-3;
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
+#endif
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+    { /* coupled mode: Stella table solar (Asplund+09 present-day) for FIRE slots He..Fe, metals scaled to SolarAbundances[0] */
+        static const int el[11] = {-1, ELEM_He, ELEM_C, ELEM_N, ELEM_O, ELEM_Ne, ELEM_Mg, ELEM_Si, ELEM_S, ELEM_Ca, ELEM_Fe};
+        const double *solar_elem = resolvedism_solar_massfrac;
+        double zsum = 0; for(j = ELEM_C; j < 27; j++) {zsum += solar_elem[j];}
+        All.SolarAbundances[1] = solar_elem[ELEM_He];
+        for(j = 2; j <= 10; j++) {All.SolarAbundances[j] = solar_elem[el[j]] * All.SolarAbundances[0] / zsum;}
+    }
 #endif
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
@@ -321,6 +330,9 @@ void init(void)
 #endif
             }
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+            P[i].RumiIntegrated = 0; P[i].RumiMember = 0; P[i].RumiDirectAcc = {}; P[i].RumiTiStart = P[i].RumiTiEnd = 0; P[i].RumiMidTi = -1;
+#endif
 #ifdef HERMITE_INTEGRATION
             /* the retained start-of-step state, normally written by the first half-step kick; seed it
                here so anything that reads it before that kick -- the IO_HERMITE_SYNC output blocks of a
@@ -328,6 +340,9 @@ void init(void)
                than from whatever the allocator left behind */
             P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
             P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+            P[i].Hermite_dt_ratio = 0;
+#endif
 #ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
             P[i].dt_crit_last = P[i].dt_crit_prev = 0; /* no criterion history: the default step rule until there is one */
 #endif
@@ -346,6 +361,37 @@ void init(void)
 #endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
             P[i].SNe_ThisTimeStep = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            P[i].StellaFBEvent_ThisTimeStep = 0;
+            if(RestartFlag == 0 && P[i].Type == 4) {P[i].sampled = 0; for(int km = 0; km < N_STELLAR_MASS; km++) {P[i].MstarSampleIMF[km] = 0;}} /* fresh ICs skip these blocks */
+            if(P[i].StarModel == STAR_MODEL_UNKNOWN) /* not in the snapshot: infer from the Stella fields */
+            {
+                if(P[i].Type == 5) {P[i].StarModel = STAR_MODEL_STARFORGE_SINK;}
+                if(P[i].Type == 4)
+                {
+                    P[i].StarModel = STAR_MODEL_FIRE_SSP; /* fresh ICs carry no Stella star state */
+                    if(RestartFlag != 0 && (P[i].sampled == 1 || P[i].MstarSampleIMF[0] > 0)) {P[i].StarModel = (P[i].MstarSampleIMF[0] > 0) ? STAR_MODEL_STELLA : STAR_MODEL_STELLA_REMNANT;}
+                }
+            }
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            if(!STELLA_OWNS_STAR(P[i])) /* only Stella stars feed the Stella TREE_RAD sources */
+            {
+                P[i].UV_luminosity = 0; P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                P[i].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                P[i].OPT_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                P[i].Lyman_photons_per_sec = 0;
+#endif
+#ifdef TREE_RAY_PI
+                P[i].Ion_luminosity = 0;
+#endif
+            }
+#endif
 #endif
 #ifdef KETJU_REGULARIZATION
             P[i].KetjuIntegrated = 0;
@@ -750,6 +796,15 @@ void init(void)
             P[i].KernelRadius = 0;
 #endif
             CellP[i].Density = -1;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            CellP[i].LedgerEB = -1;
+#endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+            CellP[i].PsiZ = CellP[i].PsiZPred = CellP[i].DtPsiZ = 0;
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+            CellP[i].EB_last = -1;
+#endif
 #ifdef COOLING
 #ifndef CHIMES
             CellP[i].Ne = 1.0;
@@ -772,9 +827,9 @@ void init(void)
 #endif
             CellP[i].DustTemp = 10.0; /* initial dust temperature [K] */
             CellP[i].Temp = 100.0; /* initial gas temperature [K] */
+#endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
             CellP[i].Ionized = 0;
-#endif
 #endif
 #ifdef RT_TREECOL_GAS_TARGETS_ONLY
             {int ks, kp; for(ks = 0; ks < TREECOL_NSPECIES; ks++) {for(kp = 0; kp < NPIX; kp++) {CellP[i].ColumnDensityBins[ks][kp] = 0;}}}
@@ -1012,6 +1067,9 @@ void init(void)
 
 
     density();
+#if defined(CHEMCOOL) && defined(EXPERIMENTAL_SNAPSHOT_RESTART_TEMP_FROM_CHEMISTRY)
+    if(RestartFlag == 2) {for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].Temp = do_chemcool_step(i, 0, 0, 2);}}} /* snapshots carry no Temp: derive it before the first tree build reads it */
+#endif
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {
         int k __attribute__((unused)) = 0;

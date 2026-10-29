@@ -38,6 +38,15 @@ struct kernel_resolvedismFB_momentum {double dp[3], r, wk, dwk, hinv, hinv3, hin
 #include "../system/code_block_xchange_initialize.h"
 #include "../declarations/resolvedism_dgr.h"
 
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_NUV_VARIABLE)
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+/* NUV below 6 eV [erg/s]: the 6-8 eV part of NUV (3.4-8 eV) is already in UV_luminosity (6-13.6 eV) */
+static inline double resolvedism_L_NUV_below_6eV(int i) {return DMAX(0., (double)P[i].NUV_luminosity - ((double)P[i].UV_luminosity - (double)P[i].PE_luminosity));}
+#else
+static inline double resolvedism_L_NUV_below_6eV(int i) {return P[i].NUV_luminosity;} /* 3.4-8 eV */
+#endif
+#endif
+
 struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], KernelRadius, Mej;
@@ -56,6 +65,9 @@ struct INPUT_STRUCT_NAME
     int fb_channel; /* 1=AGB, 2=wind */
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    MyDouble FireYields[STELLA_FIRE_YIELD_SLOTS];
 #endif
 #ifdef GALSF_RESOLVEDISM_DUST
     MyDouble DustYields[NUM_RESOLVEDISM_DUST];
@@ -106,15 +118,22 @@ double resolvedism_radp_starside_dp_code(int i)
         double dt_cgs = dt * UNIT_TIME_IN_CGS;
 
 #ifdef GALSF_RESOLVEDISM_DUST
-        double DGR = P[i].DGR_around / RESOLVEDISM_DGR_SOLAR_ABS; /* kernel-avg dust around the star, solar units */
+        double DGR = P[i].DGR_around / RESOLVEDISM_DGR_MW_ABS; /* kernel-avg dust around the star, MW units */
 #else
         /* D_REF UNIFICATION (2026-07-28): was flat All.DGRnormalized (=MW-like)
          * regardless of Z -> at 0.1 Zsun the star-side f_abs was ~10x too dusty
          * vs the chemistry/tree convention. Mirror chemcool: dust-to-metal
          * efficiency x local Z / Zsun, capped at the certified 10x-solar domain. */
+#ifdef CHEMCOOL
         double DGR = All.DGRnormalized;
 #if defined(METALS) && !defined(CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY)
         DGR = All.DGRnormalized * P[i].Metallicity[0] / All.SolarAbundances[0];
+#endif
+#else
+        double DGR = 1.0; /* no CHEMCOOL: dust-to-metal ratio fixed at solar */
+#ifdef METALS
+        DGR = P[i].Metallicity[0] / All.SolarAbundances[0];
+#endif
 #endif
 #endif
         if(DGR > 10.0) {DGR = 10.0;} if(DGR < 0) {DGR = 0;}
@@ -134,14 +153,20 @@ double resolvedism_radp_starside_dp_code(int i)
         double L_FUV = P[i].UV_luminosity; /* erg/s (tables store cgs band luminosities) */
         double L_NUV = 0, L_OPT = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        L_NUV = P[i].NUV_luminosity;
+        L_NUV = resolvedism_L_NUV_below_6eV(i);
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         L_OPT = P[i].OPT_luminosity;
 #endif
 #else
         double L_FUV = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age)); /* no stored band lums without G0_VARIABLE */
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+        double L_FUV_8_13p6 = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
+        double L_NUV = DMAX(0., pow(10., stellar_log_L_NUV(logM, logZ, log_age)) - (L_FUV - L_FUV_8_13p6)); /* 3.4-6 eV: disjoint from L_FUV */
+        double L_OPT = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+#else
         double L_NUV = pow(10., stellar_log_L_NUV(logM, logZ, log_age)), L_OPT = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+#endif
 #endif
         double f_FUV = 1.0 - exp(-(2.0e-21 * DGR) * NH);
         double f_NUV = 1.0 - exp(-(1.3e-21 * DGR) * NH);
@@ -193,9 +218,12 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
     in->StarID = P[i].ID;
     in->StarMass = P[i].MstarSampleIMF[0];
-    in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
+    in->fb_channel = DMAX(STELLA_FB_EVENT(P[i]) - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    for(k=0; k<STELLA_FIRE_YIELD_SLOTS; k++) in->FireYields[k] = 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_DUST
     for(k=0; k<NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = 0;
@@ -217,15 +245,15 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
 
     /* ---- Pass 0: AGB and wind injection ---- */
-    if(P[i].SNe_ThisTimeStep != 2 && P[i].SNe_ThisTimeStep != 3) return;
+    if(STELLA_FB_EVENT(P[i]) != 2 && STELLA_FB_EVENT(P[i]) != 3) return;
 
-    /* ---- Wind injection (SNe_ThisTimeStep == 3) ---- */
+    /* ---- Wind injection (STELLA_FB_EVENT == 3) ---- */
     /* Per-element ejecta from telescoping cumulative table:
      *   delta_k = elem_ej_wind_cumulative(now, k) - elem_ej_wind_cumulative(prev, k)
      * sums exactly to the table's total wind ejecta over the star's life.
      * Momentum still uses WindMomentumAccum (v_wind × dM integrated externally). */
 #ifdef GALSF_RESOLVEDISM_WINDS
-    if(P[i].SNe_ThisTimeStep == 3) {
+    if(STELLA_FB_EVENT(P[i]) == 3) {
         /* Mass-conservation principle: gas-injected = star-removed = P[i].WindMassAccum,
          * which was set in the accumulator (fb.cc) to (cum_table - cum_injected_so_far).
          * Star Mass is reduced by exactly WindMassAccum in the cleanup loop, so we
@@ -256,10 +284,16 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
         double scale = (delta_sum > 0 && dM_wind_solar > 0) ? dM_wind_solar / delta_sum : 0;
 
         double metal_mass_solar = 0, sum_m_k = 0;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        double y_fire[STBL_NELEM];
+#endif
         for(int k = 0; k < STBL_NELEM; k++) {
             double m_k = delta_solar[k] * scale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+            y_fire[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
             sum_m_k += m_k;
             if(k >= ELEM_C) metal_mass_solar += m_k;
@@ -303,6 +337,12 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
             in->WindMomentum *= sqrt(1. - All.CosmicRay_SNeFraction);
         }
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
+#ifdef STELLA_SELFCHECK
+        if(loop_iteration == 0) {stella_fire_yields_log("wind", P[i].ID, y_fire, in->FireYields);}
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
         {
             double sum_y_code = 0;
@@ -324,7 +364,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     }
 #endif
 
-    /* ---- AGB death (SNe_ThisTimeStep == 2) ---- */
+    /* ---- AGB death (STELLA_FB_EVENT == 2) ---- */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     int rem_type = stellar_remnant_type(logM, logZ);
     double rem_mass = stellar_remnant_mass(logM, logZ);
@@ -349,10 +389,16 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
      * Mirror the SN thermal path: current-mass Mej, table composition. */
     double metal_mass_solar = 0;
     double Mej_table_solar = 0;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    double y_fire[STBL_NELEM];
+#endif
     for(k = 0; k < STBL_NELEM; k++) {
         double m_k = stellar_elem_ej_AGB(logM, logZ, k);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR; /* table-absolute; rescaled below */
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        y_fire[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
         Mej_table_solar += m_k;
         if(k >= ELEM_C) metal_mass_solar += m_k;
@@ -363,6 +409,13 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
     in->Mej = Mej_solar / UNIT_MASS_IN_SOLAR;                     /* current-mass ejecta (not table sum) */
     in->MetalMass = metal_mass_solar * zscale / UNIT_MASS_IN_SOLAR;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    for(k = 0; k < STBL_NELEM; k++) {y_fire[k] *= zscale;}
+    in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
+#ifdef STELLA_SELFCHECK
+    if(loop_iteration == 0) {stella_fire_yields_log("AGB", P[i].ID, y_fire, in->FireYields);}
+#endif
+#endif
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     {
@@ -445,9 +498,9 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration);
 int resolvedismFB_momentum_active_check(int i, int loop_iteration)
 {
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
-    if(FB_WindBatchOnly && P[i].SNe_ThisTimeStep != 3) {return 0;}   /* batch pass: winds only */
+    if(FB_WindBatchOnly && STELLA_FB_EVENT(P[i]) != 3) {return 0;}   /* batch pass: winds only */
 #endif
-    if(P[i].Type != 4) return 0;
+    if(!STELLA_OWNS_STAR(P[i])) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
 
@@ -460,7 +513,7 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
          * many low-rate sources; runs with the token released). */
         if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
         /* AGB (2) and wind (3) */
-        if(P[i].SNe_ThisTimeStep == 2 || P[i].SNe_ThisTimeStep == 3) return 1;
+        if(STELLA_FB_EVENT(P[i]) == 2 || STELLA_FB_EVENT(P[i]) == 3) return 1;
     }
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     if(loop_iteration == 1 || loop_iteration == -2) {
@@ -591,6 +644,9 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
 #else
                     double yield_metals = local.MetalMass;
 #endif
+#if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
+                    double X_fire_old[STELLA_FIRE_YIELD_SLOTS]; for(k = 0; k < STELLA_FIRE_YIELD_SLOTS; k++) {X_fire_old[k] = P[j].Metallicity[k];}
+#endif
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
@@ -616,6 +672,12 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                             CellP[j].MetalMassFrom[c] += dF;
                         }
                     }
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields); /* FIRE layout: no H slot, no closure */
+#ifdef STELLA_SELFCHECK
+                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, local.StarID);
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                     /* 28-slot layout: write yield Y[k] into Met[MET_OF(k)] via
@@ -903,7 +965,7 @@ void resolvedism_fb_momentum_calc(int fb_loop_iteration)
  * LEBRON-style DIRECT radiation-pressure force, computed PER GAS CELL from the
  * tree attenuated per-pixel band fluxes (Uli 2026-07-08).
  *
- * Every gas cell already carries CellP[i].{UV,LW,NUV,OPT}_flux[NPIX]: the flux
+ * Every gas cell already carries CellP[i].{UV,LW,NUV,OPT}_flux[NPIX] (LW dropped with EXPERIMENTAL_RADIATION_DISJOINT_BANDS): the flux
  * ARRIVING from each HEALPix pixel direction, stored WITHOUT the 1/4pi (i.e.
  * Sum_sources L_band[erg/s] * inv_r2[code_len^-2], per pixel; see gravtree.cc
  * ~657-664, capped for photon conservation ~714). The absorbed luminosity of a
@@ -923,7 +985,7 @@ void resolvedism_fb_momentum_calc(int fb_loop_iteration)
  *
  * This REPLACES the star-side DIRECT term (that block is #ifdef'd out above);
  * the IR-trapping boost stays in the star-side path. DGR is taken exactly as the
- * momentum path / tree cap use it (DUST -> P[i].DGR_around/0.01, else the global
+ * momentum path / tree cap use it (DUST -> P[i].DGR_around/RESOLVEDISM_DGR_MW_ABS, else the global
  * normalized DGR). Called once per step from resolvedism_inject_fb_energy(),
  * after the tree walk has finalized the fluxes. ========================== */
 void resolvedism_radpressure_treerad(void)
@@ -943,13 +1005,17 @@ void resolvedism_radpressure_treerad(void)
     {
         double L_emit = 0, A_abs = 0;
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type == 4 && P[i].Mass > 0) {
+            if(STELLA_OWNS_STAR(P[i]) && P[i].Mass > 0) {
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                L_emit += P[i].UV_luminosity; /* LW (11.2-13.6 eV) is inside UV (6-13.6 eV) */
+#else
                 L_emit += P[i].UV_luminosity + P[i].LW_luminosity;
+#endif
                 /* BAND-COMPLETE CAP (2026-07-29): deposit couples NUV/OPT too
                  * (auto-enabled by RADPRESSURE in precompiler_logic.h) -- the
                  * UV-only pre-pass under-counted both sums by exactly 1.3154x. */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                L_emit += P[i].NUV_luminosity;
+                L_emit += resolvedism_L_NUV_below_6eV(i); /* NUV_flux carries 3.4-6 eV */
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                 L_emit += P[i].OPT_luminosity;
@@ -966,7 +1032,11 @@ void resolvedism_radpressure_treerad(void)
             for(pfx_pp = 0; pfx_pp < NPIX; pfx_pp++)
             {
                 double att_pp = 1.0; /* matches deposit: no dust-column attenuation (see REVISION note) */
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                A_abs += se_uv_pp * att_pp * (double)CellP[i].UV_flux[pfx_pp] * inv4pi;
+#else
                 A_abs += se_uv_pp * att_pp * ((double)CellP[i].UV_flux[pfx_pp] + (double)CellP[i].LW_flux[pfx_pp]) * inv4pi;
+#endif
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 A_abs += (sig_nuv * DGR_pp * NH_cell_pp * area_conv) * att_pp * (double)CellP[i].NUV_flux[pfx_pp] * inv4pi;
 #endif
@@ -992,7 +1062,7 @@ void resolvedism_radpressure_treerad(void)
          * the per-cell radp absorption to use the SAME dust cross-section the tree
          * attenuation + the photon-conservation cap (gravtree.cc:690-693) used, so we
          * never absorb more momentum than the flux was attenuated by. NOTE: the
-         * star-side radp (line ~109) uses P[i].DGR_around/0.01 — but DGR_around is a
+         * star-side radp (line ~109) uses P[i].DGR_around/RESOLVEDISM_DGR_MW_ABS — but DGR_around is a
          * per-STAR kernel field (density.cc:399, DO_DENSITY_AROUND_NONGAS_PARTICLES)
          * and is NOT meaningful on gas cells; using it here would decouple absorption
          * from the tree's attenuation. */
@@ -1026,8 +1096,13 @@ void resolvedism_radpressure_treerad(void)
              * momentum at L t/c (exact in the thick limit) while leaving the thin
              * limit untouched; spatial distribution stays subgrid-approximate. */
             double att_uv = 1.0, att_nuv = 1.0, att_opt = 1.0;
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+            /* L_abs from this pixel, erg/s; disjoint bands UV 6-13.6 (LW inside), NUV 3.4-6, OPT 0.4-3.4 eV */
+            double L_abs = se_uv * att_uv * (double)CellP[i].UV_flux[pfx];
+#else
             /* L_abs from this pixel (all bands), erg/s; FUV cross-section also for LW sub-band */
             double L_abs = se_uv * att_uv * ((double)CellP[i].UV_flux[pfx] + (double)CellP[i].LW_flux[pfx]);
+#endif
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             L_abs += se_nuv * att_nuv * (double)CellP[i].NUV_flux[pfx];
 #endif

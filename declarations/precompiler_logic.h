@@ -13,6 +13,26 @@
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
 
+/* Stella x FIRE-3 coupled-mode preset: FIRE-3 SSPs above the cell-mass threshold [Msun], Stella single stars below */
+#ifdef GALSF_RESOLVEDISM_HYBRID_DEFAULTS
+#define GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+#define GALSF_RESOLVEDISM_HYBRID_M_SSP (GALSF_RESOLVEDISM_HYBRID_DEFAULTS) /* cells above this mass [Msun] form FIRE SSPs, at or below it Stella stars */
+#ifndef FIRE_PHYSICS_DEFAULTS
+#define FIRE_PHYSICS_DEFAULTS 3
+#endif
+#define GALSF_RESOLVEDISM
+#define GALSF_RESOLVEDISM_FB
+#define GALSF_RESOLVEDISM_SAMPLE_IMF
+#define GALSF_RESOLVEDISM_STELLAR_TABLES
+#define GALSF_RESOLVEDISM_WINDS
+#define GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+#define GALSF_RESOLVEDISM_WINDS_THERMAL
+#define GALSF_RESOLVEDISM_TYPE_IA
+#define GALSF_RESOLVEDISM_PHOTOION
+#define GALSF_RESOLVEDISM_G0_VARIABLE
+#define GALSF_RESOLVEDISM_RADPRESSURE
+#endif
+
 /* set default slope limiters */
 #if !defined(SLOPE_LIMITER_TOLERANCE)
 #define SLOPE_LIMITER_TOLERANCE 1
@@ -130,6 +150,10 @@
 #endif
 
 
+
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_SFR_CRITERION)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL sets the SF criteria itself (FIRE-3 would silently override GALSF_SFR_CRITERION): remove it from Config.sh"
+#endif
 
 /* set 'default' options for FIRE module packages as a whole */
 #ifdef FIRE_PHYSICS_DEFAULTS
@@ -638,6 +662,24 @@
 #endif
 #define TIDAL_TIMESTEP_CRITERION // use tidal tensor timestep criterion
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Type-4 stars: 4th-order Hermite, exact direct star-star gravity (and jerk), Aarseth steps */
+#if defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(PMGRID)
+#error "STARS_HERMITE_DIRECT_GRAVITY takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, another HERMITE_INTEGRATION mask, other SINK_CALC_DISTANCES users or PMGRID"
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL) && ((ADAPTIVE_GRAVSOFT_FORALL) & 16)
+#error "STARS_HERMITE_DIRECT_GRAVITY needs fixed Type-4 softening: adaptive softening changes between Hermite force evaluations and collapses the steps"
+#endif
+#define HERMITE_INTEGRATION 16
+#define SINGLE_STAR_DIRECT_GRAVITY
+#define STAR_DIRECT_GRAVITY_TYPE 4
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#ifndef STARS_HERMITE_AARSETH_ETA
+#define STARS_HERMITE_AARSETH_ETA 0.02 /* Aarseth (1985) step parameter */
+#endif
+#endif
+#if defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(STAR_DIRECT_GRAVITY_TYPE)
+#define STAR_DIRECT_GRAVITY_TYPE 5
+#endif
 #ifdef HERMITE_INTEGRATION
 #define COMPUTE_JERK_IN_GRAVTREE /* needs to be computed in order to do the Hermite integration */
 #ifndef HERMITE_CORRECTOR_ITERATIONS
@@ -688,6 +730,19 @@
    Silently losing binary detection would change the integration, so refuse the combination. */
 #error "SINGLE_STAR_DIRECT_GRAVITY does not yet supply the companion search that SINGLE_STAR_FIND_BINARIES (and hence SINGLE_STAR_TIMESTEPPING > 0) needs; use one or the other."
 #endif
+#endif
+
+
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by RUMI++ (galaxy_sf/rumi_coupling.cc): star-star pairs leave the tree */
+#if defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION) || defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, KETJU, other SINK_CALC_DISTANCES users or PMGRID"
+#endif
+#define SINK_CALC_DISTANCES /* node star moments (sink_mass/sink_pos) let star targets drop star sources */
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#define TREE_STAR_STAR_EXCLUDED_TYPE 4
+#endif
+#if defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(TREE_STAR_STAR_EXCLUDED_TYPE)
+#define TREE_STAR_STAR_EXCLUDED_TYPE (STAR_DIRECT_GRAVITY_TYPE) /* the tree leaves star-star pairs to star_direct_gravity.cc */
 #endif
 
 
@@ -742,8 +797,11 @@
    subtracts the sink monopole from mixed nodes and so needs sink_pos on the same clock as u.d.s; it can
    be set without SINGLE_STAR_TIMESTEPPING, and where it is, the sink_vel declaration and the moment sums
    that fill it widen to match this macro. */
-#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
+#error "STARS_INTEGRATED_BY_RUMI: GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE uses the sink node moments"
 #endif
 
 
@@ -820,6 +878,11 @@
 /* ----- giant block of options for RHD modules ------ */
 
 /* Stella tree radiation field: band luminosities ride on the gravity-tree source arrays (no LEBRON flux or force) */
+#ifdef EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS
+#define RESOLVEDISM_STELLAR_LUM_TO_CGS (UNIT_LUM_IN_CGS) /* node stellar_lum[] in code units */
+#else
+#define RESOLVEDISM_STELLAR_LUM_TO_CGS (1.0) /* node stellar_lum[] in erg/s */
+#endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
 #define RT_USE_GRAVTREE
 #define RT_PHOTOELECTRIC
@@ -1092,7 +1155,27 @@
 #endif
 
 #ifdef MAGNETIC /* recommended MHD switches -- only turn these off for de-bugging */
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+#error "MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE and MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY are alternatives"
+#endif
+#if defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) /* constrained psi/c_h cleaning (Tricco & Price 2012; Tricco, Price & Bate 2016; Steinwandel & Price arXiv:2511.19615) replaces Dedner */
+#if !defined(MAGNETIC) || !defined(HYDRO_MESHLESS_FINITE_MASS)
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH requires MAGNETIC and HYDRO_MESHLESS_FINITE_MASS"
+#endif
+#ifdef DIVBCLEANING_DEDNER
+#error "DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH replaces DIVBCLEANING_DEDNER: do not set both"
+#endif
+#ifndef DIVBCLEANING_CONSERVATIVE_SIGMA
+#if !defined(BOX_SPATIAL_DIMENSION) || (BOX_SPATIAL_DIMENSION == 3)
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 1.0 /* TPB16 optimum in 3D */
+#else
+#define DIVBCLEANING_CONSERVATIVE_SIGMA 0.3 /* TPB16 optimum in 2D */
+#endif
+#endif
+#endif
+#if !defined(TEST_MHD_NO_DEDNER_CLEANING) && !defined(DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH) /* test only: disables div-cleaning */
 #define DIVBCLEANING_DEDNER         /* hyperbolic/parabolic div-cleaing (Dedner 2002), with TP improvements */
+#endif
 #ifdef HYDRO_SPH /* MHD switches specific to SPH MHD */
 #define SPH_TP12_ARTIFICIAL_RESISTIVITY   /* turns on magnetic dissipation ('artificial resistivity'): uses tricco switch =h*|gradB|/|B| */
 #endif
@@ -1360,13 +1443,66 @@
    their own flags and Stella's by GALSF_RESOLVEDISM_FB, with nothing preventing both
    from being enabled — enforce the mutual exclusivity at compile time. */
 #ifdef GALSF_RESOLVEDISM_FB
-#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
-#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_MECHANICAL / GALSF_FB_THERMAL: Stella provides all SN/wind/thermal feedback via resolvedism_fb_*; the FIRE-2/3 modules would double-count. Disable them."
+#if defined(GALSF_FB_THERMAL)
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_THERMAL: Stella provides all SN/wind/thermal feedback via resolvedism_fb_*; the thermal module would double-count. Disable it."
 #endif
-#if defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-#error "GALSF_RESOLVEDISM_FB is mutually exclusive with the FIRE-2/3 GALSF_FB_FIRE_* modules: Stella handles radiation feedback + stellar evolution via GALSF_RESOLVEDISM_G0_VARIABLE/PHOTOION/RADPRESSURE/STELLAR_TABLES (or M1 RT). Disable the FIRE flags."
+#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_MECHANICAL unless GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL restricts each to its own stars: otherwise both act on every Type-4 star and double-count."
+#endif
+#if !defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && (defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_STELLAREVOLUTION))
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with the FIRE-2/3 GALSF_FB_FIRE_* modules unless GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL restricts each to its own stars: Stella handles radiation feedback + stellar evolution via GALSF_RESOLVEDISM_G0_VARIABLE/PHOTOION/RADPRESSURE/STELLAR_TABLES (or M1 RT)."
 #endif
 #endif /* GALSF_RESOLVEDISM_FB mutual exclusivity */
+
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || defined(GALSF_ISMDUSTCHEM_MODEL))
+#error "GALSF_RESOLVEDISM_METALS_INDIVIDUAL puts H in Metallicity[1], FIRE yields/dust write He..Fe into fixed slots 1..10: the layouts clash silently"
+#endif
+
+/* Stella x FIRE-3 coupled mode: allowed and forbidden combinations */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+#if !defined(GALSF_RESOLVEDISM_FB) || !defined(GALSF_RESOLVEDISM_SAMPLE_IMF)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL requires GALSF_RESOLVEDISM_FB and GALSF_RESOLVEDISM_SAMPLE_IMF"
+#endif
+#if defined(CHEMCOOL)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL uses the FIRE cooling for all gas: disable CHEMCOOL"
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && !defined(GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL carries the FIRE metal layout: disable GALSF_RESOLVEDISM_METALS_INDIVIDUAL"
+#endif
+#if defined(GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS)
+#error "GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS is not implemented yet"
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST) || defined(GALSF_ISMDUSTCHEM_MODEL)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL: no dust model yet, disable GALSF_RESOLVEDISM_DUST and GALSF_ISMDUSTCHEM_MODEL"
+#endif
+#if defined(CHIMES)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL is not compatible with CHIMES"
+#endif
+#if defined(FIRE_PHYSICS_DEFAULTS) && (FIRE_PHYSICS_DEFAULTS < 3)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL requires FIRE_PHYSICS_DEFAULTS=3"
+#endif
+#if defined(GALSF_RESOLVEDISM_BH_PROMOTION)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL keeps Stella remnants as Type-4 stars: disable GALSF_RESOLVEDISM_BH_PROMOTION"
+#endif
+#if defined(GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW)
+#error "GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW is not implemented yet"
+#endif
+#if defined(GALSF_RESOLVEDISM_SN_SPAWN)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL: the SN spawn payload carries the 27-element layout (SpawnEjZ), not the FIRE slots: disable GALSF_RESOLVEDISM_SN_SPAWN"
+#endif
+#if defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL has no STARFORGE sink tier yet: disable SINGLE_STAR_SINK_DYNAMICS and SINGLE_STAR_AND_SSP_HYBRID_MODEL"
+#endif
+#if !defined(GALSF_RESOLVEDISM_HYBRID_M_SSP)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL needs the SSP/Stella cell-mass threshold: set GALSF_RESOLVEDISM_HYBRID_DEFAULTS=(M_SSP)"
+#endif
+#ifndef GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION
+#define GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION (64) /* SF criteria of Stella-channel cells, bits as GALSF_SFR_CRITERION; default = Stella production (Jeans mass only) */
+#endif
+#if (GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & ~(2+64)) || ((GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & ~(SINGLE_STAR_SINK_FORMATION)) & (2+64))
+#error "GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION: only bits 2 (convergent flow) and 64 (Jeans mass) have Stella versions"
+#endif
+#endif /* GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL */
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #ifdef RADTRANSFER
@@ -1392,6 +1528,10 @@
 
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && defined(RADTRANSFER)
 #error "GALSF_RESOLVEDISM_PHOTOION and RADTRANSFER are mutually exclusive: use RT_CHEM_PHOTOION instead"
+#endif
+
+#if defined(GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE) && !defined(GALSF_RESOLVEDISM_PHOTOION)
+#error "GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE requires GALSF_RESOLVEDISM_PHOTOION"
 #endif
 
 #if defined(GALSF_RESOLVEDISM_RADPRESSURE) && defined(RADTRANSFER)
@@ -1483,6 +1623,21 @@
 #endif
 #ifndef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 #error "GALSF_RESOLVEDISM_DUST requires GALSF_RESOLVEDISM_METALS_INDIVIDUAL"
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST_SIZE_BINS
+#define NUM_RESOLVEDISM_DUST_BINS (GALSF_RESOLVEDISM_DUST_SIZE_BINS)  /* MRN log bins, each with its own v_rel (Hu+19) */
+#else
+#define NUM_RESOLVEDISM_DUST_BINS 1  /* single MRN a_eff = 0.035 um (Hu+26) */
+#endif
+#ifdef EXPERIMENTAL_DUST_HU_MODEL
+#ifdef GALSF_RESOLVEDISM_DUST_NO_MCKEE
+#error "GALSF_RESOLVEDISM_DUST_NO_MCKEE does not apply to EXPERIMENTAL_DUST_HU_MODEL: swept-mass SN destruction is off unless GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION"
+#endif
+#ifdef GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION
+#error "GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION does not apply to EXPERIMENTAL_DUST_HU_MODEL: nonthermal sputtering is explicit (dust v_rel)"
+#endif
+#elif defined(GALSF_RESOLVEDISM_DUST_SIZE_BINS) || defined(GALSF_RESOLVEDISM_DUST_NO_BETATRON) || defined(GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION) || defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION)
+#error "GALSF_RESOLVEDISM_DUST_SIZE_BINS/NO_BETATRON/SN_SWEPT_MASS_DESTRUCTION/SN_EJECTA_CONDENSATION require EXPERIMENTAL_DUST_HU_MODEL"
 #endif
 #endif
 #ifndef GALSF_RESOLVEDISM_DUST
@@ -1699,4 +1854,9 @@
 #endif
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif
+
+/* coupled mode: upstream RT bins next to FIRE-3 break FIRE's all-bins consumers (docs/stella_hybrid/P4_DESIGN.md) until P4 masks them */
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && !defined(GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY) && (defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_FUV_6_8EV))
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL with RT_PHOTOELECTRIC/LYMAN_WERNER/NUV/OPTICAL_NIR/FUV_6_8EV needs GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY (P4): FIRE's SSP light, LONGRANGE, EUV fallback, G0/H2/eos and dust-temperature paths would read Stella's bins"
 #endif

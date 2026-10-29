@@ -41,6 +41,9 @@ struct INPUT_STRUCT_NAME
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     MyDouble ElemYields[NUM_RESOLVEDISM_ELEMENTS];
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    MyDouble FireYields[STELLA_FIRE_YIELD_SLOTS];
+#endif
 #ifdef GALSF_RESOLVEDISM_DUST
     MyDouble DustYields[NUM_RESOLVEDISM_DUST];
 #endif
@@ -61,9 +64,12 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
     {int hp_; for(hp_=0;hp_<12;hp_++) {in->HpxCount[hp_] = P[i].FB_HpxCount[hp_];}}
 #endif
-    in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
+    in->fb_channel = DMAX(STELLA_FB_EVENT(P[i]) - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    for(k=0; k<STELLA_FIRE_YIELD_SLOTS; k++) in->FireYields[k] = 0;
 #endif
 #ifdef GALSF_RESOLVEDISM_DUST
     for(k=0; k<NUM_RESOLVEDISM_DUST; k++) in->DustYields[k] = 0;
@@ -75,7 +81,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 
     /* ---- Type Ia ---- */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
-    if(P[i].SNe_ThisTimeStep == 4) {
+    if(STELLA_FB_EVENT(P[i]) == 4) {
         in->Esne = IA_ENERGY_ERG / UNIT_ENERGY_IN_CGS;
         /* Eject the entire WD progenitor mass.  In our single-star sampling the
          * WD's P[i].Mass evolved through prior wind/AGB phases and may not equal
@@ -90,15 +96,27 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
         double Mej_actual_solar = MIa_solar;
         double yield_rescale = Mej_actual_solar / stellar_type_ia_yield_total(); /* yields sum to the ejecta mass */
         double metal_mass_solar = 0;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        double y_fire[STBL_NELEM];
+#endif
         for(int k = 0; k < STBL_NELEM; k++) {
             double y_k = stellar_type_ia_yield(k) * yield_rescale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
             in->ElemYields[k] = y_k / UNIT_MASS_IN_SOLAR;
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+            y_fire[k] = y_k / UNIT_MASS_IN_SOLAR;
+#endif
             if(k >= ELEM_C) metal_mass_solar += y_k;
         }
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
-#ifdef GALSF_RESOLVEDISM_DUST
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
+#ifdef STELLA_SELFCHECK
+        if(loop_iteration >= 0) {stella_fire_yields_log("Ia", P[i].ID, y_fire, in->FireYields);}
+#endif
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST) && (!defined(EXPERIMENTAL_DUST_HU_MODEL) || defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION))
         {
             double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
             for(int kk = 0; kk < STBL_NELEM; kk++) metal_yields_solar[kk] = in->ElemYields[kk] * UNIT_MASS_IN_SOLAR;
@@ -111,7 +129,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #endif
 
     /* ---- SN (CCSN/ECSN/PISN/PPISN) ---- */
-    if(P[i].SNe_ThisTimeStep != 1) return; /* only SN in this file */
+    if(STELLA_FB_EVENT(P[i]) != 1) return; /* only SN in this file */
 
     double Mstar, logM, logZ;
     if(!get_star_info(i, &Mstar, &logM, &logZ)) return;
@@ -168,15 +186,27 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     double scale = (Mej_table > 0) ? Mej_actual / Mej_table : 0;
 
     double metal_mass_solar = 0;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    double y_fire[STBL_NELEM];
+#endif
     for(k = 0; k < STBL_NELEM; k++) {
         double m_k = m_k_table[k] * scale;
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
         in->ElemYields[k] = m_k / UNIT_MASS_IN_SOLAR;
 #endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+        y_fire[k] = m_k / UNIT_MASS_IN_SOLAR;
+#endif
         if(k >= ELEM_C) metal_mass_solar += m_k;
     }
     in->Mej = Mej_actual / UNIT_MASS_IN_SOLAR;
     in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
+#ifdef STELLA_FIRE_YIELD_SLOTS
+    in->MetalMass = stella_pack_fire_yields(y_fire, in->FireYields, P[i].ID); /* Z deposit = sum of the packed table metals */
+#ifdef STELLA_SELFCHECK
+    if(loop_iteration >= 0) {stella_fire_yields_log("SN", P[i].ID, y_fire, in->FireYields);}
+#endif
+#endif
 
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     {
@@ -192,7 +222,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     }
 #endif
 
-#ifdef GALSF_RESOLVEDISM_DUST
+#if defined(GALSF_RESOLVEDISM_DUST) && (!defined(EXPERIMENTAL_DUST_HU_MODEL) || defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION)) /* Hu model: off unless asked (Hu+23 has no SN dust) */
     {
         double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
         for(k = 0; k < STBL_NELEM; k++) metal_yields_solar[k] = in->ElemYields[k] * UNIT_MASS_IN_SOLAR;
@@ -270,13 +300,13 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
 int resolvedismFB_thermal_active_check(int i);
 int resolvedismFB_thermal_active_check(int i)
 {
-    if(P[i].Type != 4) return 0;
+    if(!STELLA_OWNS_STAR(P[i])) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
     /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
      * when the token is set, only that single event is active in this walk */
     if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
-    if(P[i].SNe_ThisTimeStep == 1 || P[i].SNe_ThisTimeStep == 4) return 1;
+    if(STELLA_FB_EVENT(P[i]) == 1 || STELLA_FB_EVENT(P[i]) == 4) return 1;
     return 0;
 }
 
@@ -434,6 +464,9 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
 #else
                     double yield_metals = local.MetalMass;
 #endif
+#if defined(STELLA_FIRE_YIELD_SLOTS) && defined(STELLA_SELFCHECK)
+                    double X_fire_old[STELLA_FIRE_YIELD_SLOTS]; for(k = 0; k < STELLA_FIRE_YIELD_SLOTS; k++) {X_fire_old[k] = P[j].Metallicity[k];}
+#endif
 #ifdef METALS
                     {
                         double Z_old, M_old = Mass_j;
@@ -459,6 +492,12 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                             CellP[j].MetalMassFrom[c] += dF;
                         }
                     }
+#endif
+#ifdef STELLA_FIRE_YIELD_SLOTS
+                    stella_blend_fire_slots(j, Mass_j, dM, wk, local.FireYields); /* FIRE layout: no H slot, no closure */
+#ifdef STELLA_SELFCHECK
+                    stella_fire_receiver_check(j, Mass_j, dM, wk, local.FireYields, X_fire_old, (MyIDType)FB_SerialEventID);
+#endif
 #endif
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
                     /* 28-slot layout: write yield Y[k] for table element k (0..26)
@@ -567,7 +606,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 }
 
 #ifdef GALSF_RESOLVEDISM_DUST
-#if !defined(GALSF_RESOLVEDISM_DUST_NO_MCKEE) && !defined(GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION)
+#if (!defined(EXPERIMENTAL_DUST_HU_MODEL) && !defined(GALSF_RESOLVEDISM_DUST_NO_MCKEE) && !defined(GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION)) || (defined(EXPERIMENTAL_DUST_HU_MODEL) && defined(GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION))
                 /* SN shock destruction of pre-existing dust.
                  * REGIME NOTE (2026-07-05): McKee 1989 is an SNR-lifetime-integrated
                  * estimator for an UNRESOLVED remnant. Stella resolves the Sedov phase,
@@ -575,7 +614,8 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                  * -> potential double-count. Also: per-cell application saturates at
                  * frac=1 in ~Msun cells (kernel holds far less than the 984*wk Msun the
                  * formula wants to shock). GALSF_RESOLVEDISM_DUST_NO_MCKEE disables this
-                 * hook for the destruction-accounting A/B test (dust_mckee_on/off). */
+                 * hook for the destruction-accounting A/B test (dust_mckee_on/off).
+                 * EXPERIMENTAL_DUST_HU_MODEL: off unless GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION. */
                 if(local.Esne > 0) {
                     double E_into_cell = wk * local.Esne;
                     double Rho_j;
@@ -589,7 +629,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         }
                     }
                 }
-#endif /* !GALSF_RESOLVEDISM_DUST_NO_MCKEE */
+#endif
                 /* Inject new dust from SN/Ia ejecta */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;

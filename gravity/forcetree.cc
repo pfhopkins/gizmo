@@ -462,7 +462,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     { /* G0DBG: root node must carry the total stellar FUV of the local tree */
       double plum=0; int ip_; for(ip_=0;ip_<NumPart;ip_++) {if(P[ip_].Type==4||P[ip_].Type==5) plum+=P[ip_].UV_luminosity;}
       printf("G0DBG_BUILD task=%d t=%g root_uv=%g sumP_uv=%g\n", ThisTask, All.Time,
-             (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]), plum); fflush(stdout); }
+             (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) * RESOLVEDISM_STELLAR_LUM_TO_CGS, plum); fflush(stdout); }
 #endif
     
     if(last >= All.MaxPart)
@@ -2042,10 +2042,10 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
             
             if(no < maxPart) /* this is a particle, we will use it */
             {
-#ifdef SINGLE_STAR_DIRECT_GRAVITY
-                /* star-star pairs are summed exactly in star_direct_gravity_compute(); taking them
-                   here as well would double every such force */
-                if((ptype == 5) && (P[no].Type == 5)) {no = Nextnode[no]; continue;}
+#ifdef TREE_STAR_STAR_EXCLUDED_TYPE
+                /* star-star pairs are summed exactly in star_direct_gravity_compute() (or integrated by RUMI++);
+                   taking them here as well would double every such force */
+                if((ptype == TREE_STAR_STAR_EXCLUDED_TYPE) && (P[no].Type == TREE_STAR_STAR_EXCLUDED_TYPE)) {no = Nextnode[no]; continue;}
 #endif
                 /* the index of the node is the index of the particle */
                 if(P[no].Ti_current != ti_Current)
@@ -2336,7 +2336,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     no = nop->u.d.sibling;
                     continue;
                 }
-#ifdef SINGLE_STAR_DIRECT_GRAVITY
+#ifdef TREE_STAR_STAR_EXCLUDED_TYPE
                 /* A star target must take no star mass from the tree, since star_direct_gravity_compute()
                    supplies every star-star pair exactly. This tree carries monopoles only (u.d.mass at
                    u.d.s; there are no quadrupole moments in struct NODE), so removing the sinks is exact
@@ -2347,7 +2347,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                    Nodes made entirely of stars vanish and are skipped; everything else stays usable at
                    monopole level, so a star target keeps the tree's O(log N) walk instead of having to
                    open every node that happens to contain a star. */
-                if((ptype == 5) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;} /* pure-star node: nothing here for us. Checked before the drift below so we never bother drifting a node we discard; the COM shift itself has to wait until after it. */
+                if((ptype == TREE_STAR_STAR_EXCLUDED_TYPE) && (nop->sink_mass > 0) && (mass - nop->sink_mass <= 0)) {no = nop->u.d.sibling; continue;} /* pure-star node: nothing here for us. Checked before the drift below so we never bother drifting a node we discard; the COM shift itself has to wait until after it. */
 #endif
                 //if(nop->N_part <= 1)
                 if(!(nop->u.d.bitflags & (1 << BITFLAG_MULTIPLEPARTICLES)))
@@ -2384,7 +2384,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                     }
                 }
 
-#ifdef SINGLE_STAR_DIRECT_GRAVITY
+#ifdef TREE_STAR_STAR_EXCLUDED_TYPE
                 /* Remove the sinks from this node for a star target: star-star pairs come exactly from
                    star_direct_gravity_compute(), so taking them here too would double them. The tree
                    carries monopoles only (u.d.mass at u.d.s -- struct NODE has no quadrupole moments),
@@ -2396,7 +2396,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                    contains a star, costs an extra O(N_star log N) node visits per star target.
                    Note mass is reduced here, before the opening criteria below, so they judge the node on
                    the mass actually being used. */
-                if((ptype == 5) && (nop->sink_mass > 0))
+                if((ptype == TREE_STAR_STAR_EXCLUDED_TYPE) && (nop->sink_mass > 0))
                 {
                     double mass_nosink = mass - nop->sink_mass;
                     dr = (nop->u.d.s * mass - nop->sink_pos * nop->sink_mass) / mass_nosink - pos;
@@ -2532,7 +2532,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * (windres single-star box) purely from the COM offset. lum_s is the
                  * unnormalized Sum (L_uv+L_lw)*pos over the node's stars. */
                 {
-                    double wl = (nop->stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + nop->stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) + nop->stellar_lum[RT_FREQ_BIN_LYMAN_WERNER];
+                    double wl = ((nop->stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + nop->stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) + nop->stellar_lum[RT_FREQ_BIN_LYMAN_WERNER]) * RESOLVEDISM_STELLAR_LUM_TO_CGS; /* lum_s is erg/s-weighted */
 #ifdef TREE_RAY_PI
                     wl += ion_lum; /* include ionizing band: ion-only nodes (fixed-Q PI test) otherwise get no centroid (2026-07-14) */
 #endif
@@ -2889,13 +2889,18 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                const double uv_lum = mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] + mass_stellarlum[RT_FREQ_BIN_PHOTOELECTRIC]; /* 6-13.6 eV */
-                const double lw_lum = mass_stellarlum[RT_FREQ_BIN_LYMAN_WERNER];
+                /* pixel fluxes are erg/s per code_len^2 */
+                const double uv_lum = (mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] + mass_stellarlum[RT_FREQ_BIN_PHOTOELECTRIC]) * RESOLVEDISM_STELLAR_LUM_TO_CGS; /* 6-13.6 eV */
+                const double lw_lum = mass_stellarlum[RT_FREQ_BIN_LYMAN_WERNER] * RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #ifdef RT_NUV
-                const double nuv_lum = mass_stellarlum[RT_FREQ_BIN_NUV];
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                const double nuv_lum = DMAX(0., mass_stellarlum[RT_FREQ_BIN_NUV] - mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV]) * RESOLVEDISM_STELLAR_LUM_TO_CGS; /* 3.4-6 eV: 6-8 eV is in uv_lum */
+#else
+                const double nuv_lum = mass_stellarlum[RT_FREQ_BIN_NUV] * RESOLVEDISM_STELLAR_LUM_TO_CGS;
+#endif
 #endif
 #ifdef RT_OPTICAL_NIR
-                const double opt_lum = mass_stellarlum[RT_FREQ_BIN_OPTICAL_NIR];
+                const double opt_lum = mass_stellarlum[RT_FREQ_BIN_OPTICAL_NIR] * RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
                 if(r2_col > 0) {
