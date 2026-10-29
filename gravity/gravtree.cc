@@ -682,7 +682,16 @@ void gravity_tree(void)
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
+    /* a skipped element's GravAccel, extrapolated from its last walk, already holds the analytic terms added then:
+       keep it, rather than stack another copy on every skipped step */
+    std::vector<Vec3<MyDouble>> skipped_accel;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {skipped_accel.push_back(P[ActiveParticleList[ii]].GravAccel);}}
+#endif
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
+    {size_t k = 0; for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {P[ActiveParticleList[ii]].GravAccel = skipped_accel[k++];}}}
+#endif
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
