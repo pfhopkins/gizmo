@@ -130,7 +130,7 @@ static double fac_magnetic_pressure;
 /* --------------------------------------------------------------------------------- */
 /* --------------------------------------------------------------------------------- */
 #if defined(TURB_DIFF_METALS) && defined(OUTPUT_TURB_DIFF_METALS_BUDGET)
-/*! global gas metal budget after each hydro step: sum of M*Z, and the diffusive exchange still pending (none yet) */
+/*! global gas metal budget after each hydro step: sum of M*Z, and the diffusive exchange still pending (0 without TURB_DIFF_METALS_EXACT_CONSERVATION) */
 static void turb_diff_metals_budget_log(void)
 {
     double loc[2] = {0, 0}, tot[2];
@@ -138,6 +138,9 @@ static void turb_diff_metals_budget_log(void)
     {
         if(P[i].Type != 0 || P[i].Mass <= 0) {continue;}
         loc[0] += P[i].Mass * P[i].Metallicity[0];
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        loc[1] += CellP[i].Dyield_pending[0];
+#endif
     }
     MPI_Allreduce(loc, tot, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     if(ThisTask == 0) {printf("TURB_DIFF_METALS_BUDGET time= %.10e MZ= %.17e pending= %.17e\n", All.Time, tot[0], tot[1]);}
@@ -309,7 +312,12 @@ void hydro_final_operations_and_cleanup(void)
 
 
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME)) /* update the metal masses from exchange */
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION /* add the exchange received while inactive; floor at 0 (a fractional floor creates metal) */
+            for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] += CellP[i].Dyield_pending[k]; CellP[i].Dyield_pending[k] = 0;}
+            for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.);}
+#else
             for(k=0;k<NUM_METAL_SPECIES;k++) {P[i].Metallicity[k] = DMAX(P[i].Metallicity[k] + CellP[i].Dyield[k] / P[i].Mass , 0.01*P[i].Metallicity[k]);}
+#endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL) /* update the dust masses from exchange: offsets within Dyield match Metallicity layout */
             {int dc0 = ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY; /* base offset for dustchem in Metallicity/Dyield */
             for(k=0;k<NUM_ISMDUSTCHEM_ELEMENTS;k++) {CellP[i].ISMDustChem_Dust_Metal[k] = DMAX(CellP[i].ISMDustChem_Dust_Metal[k] + CellP[i].Dyield[dc0+k] / P[i].Mass , 0.01*CellP[i].ISMDustChem_Dust_Metal[k]);}
