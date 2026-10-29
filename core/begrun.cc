@@ -2864,6 +2864,12 @@ void read_parameter_file(char *fname)
         if(ThisTask==0) {printf("Divergence-Cleaning Damping Parameter DivBcleanHyperbolicSigma must be >0.5 and <2"); endrun(1);}
     }
 #endif
+#ifdef TURB_DIFF_DYNAMIC
+    if(All.TurbDynamicDiffFac < 1)
+    {
+        if(ThisTask==0) {printf("TurbDynamicDiffFac must be >= 1: the gradient pass searches TurbDynamicDiffFac x the kernel radius, so a smaller value drops ordinary gradient neighbours \n"); endrun(1);}
+    }
+#endif
     if((All.MaxNumNgbDeviation<=0)||(All.MaxNumNgbDeviation>0.1*All.DesNumNgb))
     {
         if(ThisTask==0) {printf("MaxNumNgbDeviation must be >0 and <0.1*DesNumNgb \n"); endrun(1);}
