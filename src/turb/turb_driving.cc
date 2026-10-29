@@ -412,7 +412,7 @@ void add_turb_accel()
     int N_active = 0;
     int *turb_indices = (int *) malloc(ActiveParticleList.size() * sizeof(int));
     for (int i : ActiveParticleList) {if(turb_accel_needs_update(i, P[i].Ti_begstep)) {turb_indices[N_active++] = i;}}
-    StTInitialFieldPending = 0;
+    StTInitialFieldPending = 0; /* cleared even when nothing is selected: every particle is active at this first call, so an empty list means this rank has no gas, and cells arriving later carry their TurbAccel with them */
     if(N_active == 0) {free(turb_indices); PRINT_STATUS("Finished turbulence driving (acceleration) computation"); return;}
 
     if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
