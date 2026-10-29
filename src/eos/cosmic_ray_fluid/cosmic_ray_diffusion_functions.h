@@ -71,7 +71,7 @@ void cosmic_ray_diffusion_compute_pair(
             double thold_hll;
             for(int k=0; k<3; k++) {
                 flux_i[k] = local.CosmicRayFlux[k_CRegy][k] / V_i_phys;
-                flux_j[k] = CellP[j].CosmicRayFlux[k_CRegy][k] / V_j_phys;
+                flux_j[k] = CellP[j].CosmicRayFluxPred[k_CRegy][k] / V_j_phys; /* predicted, like local.CosmicRayFlux: both sides of the face must see the same pair */
                 double flux_ij = 0.5 * (flux_i[k] + flux_j[k]);
                 flux_norm += flux_ij * flux_ij;
                 cmag += Face_Area_Vec[k] * flux_ij;
