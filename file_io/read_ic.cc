@@ -7,6 +7,17 @@
 
 
 #include "../declarations/allvars.h"
+
+/* datasets renamed CHEMCOOL -> SGCHEM (2026-10): open the old name when a snapshot predates the rename */
+static hid_t open_dataset_or_legacy(hid_t grp, const char *name)
+{
+    static const char *renamed[][2] = {{"SGChemTracAbund", "ChemcoolTracAbund"}, {"SGChemDustTemp", "ChemcoolDustTemp"}, {"SGChemCoolRates", "ChemcoolCoolRates"}, {"SGChemChemCoolRates", "ChemcoolChemCoolRates"}};
+    H5E_auto_t old_func; void *old_client_data; H5Eget_auto(&old_func, &old_client_data); H5Eset_auto(NULL, NULL);
+    hid_t d = H5Dopen(grp, name);
+    for(size_t k = 0; d < 0 && k < sizeof(renamed) / sizeof(renamed[0]); k++) {if(strcmp(name, renamed[k][0]) == 0) {d = H5Dopen(grp, renamed[k][1]);}}
+    H5Eset_auto(old_func, old_client_data);
+    return d;
+}
 #include "../core/proto.h"
 
 /*! This function reads initial conditions that are in the default file format
@@ -1331,7 +1342,7 @@ void read_file(char *fname, int readTask, int lastTask)
                             get_dataset_name(blocknr, buf);
                             H5E_auto_t old_func; void *old_client_data;
                             H5Eget_auto(&old_func, &old_client_data); H5Eset_auto(NULL, NULL);
-                            hid_t probe = H5Dopen(hdf5_grp[type], buf);
+                            hid_t probe = open_dataset_or_legacy(hdf5_grp[type], buf);
                             H5Eset_auto(old_func, old_client_data);
                             if(probe < 0)
                             {
@@ -1375,7 +1386,7 @@ void read_file(char *fname, int readTask, int lastTask)
                                         H5E_auto_t old_func; void *old_client_data;
                                         H5Eget_auto(&old_func, &old_client_data);
                                         H5Eset_auto(NULL, NULL);
-                                        hdf5_dataset = H5Dopen(hdf5_grp[type], buf);
+                                        hdf5_dataset = open_dataset_or_legacy(hdf5_grp[type], buf);
                                         H5Eset_auto(old_func, old_client_data);
 
                                       if(hdf5_dataset >= 0)

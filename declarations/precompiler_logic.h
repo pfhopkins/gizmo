@@ -1,6 +1,34 @@
 /*! \file precompiler_logic.h
  *  \brief logic statements that need to be near the top of variable definitions.
  */
+/* CHEMCOOL -> SGCHEM rename (2026-10): old option names stop the build */
+#ifdef CHEMCOOL
+#error "CHEMCOOL was renamed to SGCHEM"
+#endif
+#ifdef CHEMCOOL_CXX
+#error "CHEMCOOL_CXX was renamed to SGCHEM_CXX"
+#endif
+#ifdef CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY
+#error "CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY was renamed to SGCHEM_DGR_INDEPENDENT_OF_METALLICITY"
+#endif
+#ifdef CHEMCOOL_KEEP_IC_ABUNDANCES
+#error "CHEMCOOL_KEEP_IC_ABUNDANCES was renamed to SGCHEM_KEEP_IC_ABUNDANCES"
+#endif
+#ifdef CHEMCOOL_LEGACY_COOLING
+#error "CHEMCOOL_LEGACY_COOLING was renamed to SGCHEM_LEGACY_COOLING"
+#endif
+#ifdef CHEMCOOL_OMP_CROSSCHECK
+#error "CHEMCOOL_OMP_CROSSCHECK was renamed to SGCHEM_OMP_CROSSCHECK"
+#endif
+#ifdef CHEMCOOL_TNOCHEM
+#error "CHEMCOOL_TNOCHEM was renamed to SGCHEM_TNOCHEM"
+#endif
+#ifdef GALSF_CHEMCOOL_DEBUG_INPUT
+#error "GALSF_CHEMCOOL_DEBUG_INPUT was renamed to GALSF_SGCHEM_DEBUG_INPUT"
+#endif
+#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+#error "GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE was renamed to GALSF_SGCHEM_VARIABLE_XH_AND_ABHE"
+#endif
 
 /*------- Things that are always recommended (this must follow loading GIZMO_config.h!) -------*/
 /* also many logical options to force 'parent' or 'top-level' flags to be enabled for the appropriate methods, if we have enabled something using those methods */

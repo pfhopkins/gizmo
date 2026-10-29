@@ -63,6 +63,9 @@ PERL     =  /usr/bin/perl
 
 RESULT     := $(shell CONFIG=$(CONFIG) PERL=$(PERL) make -f config-makefile)
 CONFIGVARS := $(shell cat GIZMO_config.h)
+ifneq (,$(findstring CHEMCOOL,$(CONFIGVARS)))
+$(error Config.sh sets a CHEMCOOL option: CHEMCOOL was renamed to SGCHEM (CHEMCOOL_X -> SGCHEM_X, IO_CHEMCOOL_X -> IO_SGCHEM_X, GALSF_CHEMCOOL_X -> GALSF_SGCHEM_X))
+endif
 
 HG_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null)
 HG_REPO := $(shell git config --get remote.origin.url)
