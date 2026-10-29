@@ -56,6 +56,7 @@
  * in cool.h).  MOVED VERBATIM from chemcool.cc:13-81 (pre-Gate-0).  The
  * conditional members MUST track the Fortran cool.h layout exactly.
  * ---------------------------------------------------------------------- */
+#ifndef CHEMCOOL_CXX /* Fortran backend only: the C++ backend has no COMMON blocks */
 extern "C" {
 #include "chem_commons.h"
 
@@ -92,6 +93,15 @@ extern "C" {
     void EVOLVE_ABUNDANCES(double *timestep, double *dl, double *yn, double *divv,
                            double *energy, double *abundances, double *column_est);
 }
+#endif /* !CHEMCOOL_CXX */
+
+/* one-time chemistry settings, filled by chemcool_init for either backend */
+struct ChemInitParams {
+    int    iflag_mn, iflag_ad, iflag_atom, iflag_3bh2a, iflag_3bh2b, iflag_h3pra;
+    int    iphoto, isrf_option, irad_heat, no_chem;
+    double h2_form_ex, h2_form_kin, deff, phi_pah, AV_conversion_factor, AV_ext, dm_density;
+    double pdv_term, redshift, abundD, G0, G0_LW, cosmic_ray_ion_rate, cr_energy_density, dust_to_gas_ratio;
+};
 
 
 /* ------------------------------------------------------------------------
@@ -228,10 +238,14 @@ struct ChemOutputs {
 
 void chem_fill_inputs(int target, struct ChemInputs *in);
 void chem_fill_gas_abundances(int target, struct ChemInputs *in);
+#ifndef CHEMCOOL_CXX
 void chem_commit_to_fortran(const struct ChemInputs *in);
 void chem_percell_snapshot(void);
-#ifdef CHEMCOOL_CXX
-void chem_cxx_tables_init(void);
+void chem_read_outputs(struct ChemOutputs *out);
+#else
+void chem_cxx_tables_init(const struct ChemInitParams *p);
+double chem_cxx_abhe_default(void);
+double chem_cxx_xh_default(void);
 double chem_cxx_calc_temp(double abh2, double abhe, double ekn);
 void chem_cxx_begin_cell(const struct ChemInputs *in, double temp, double abh2, double abhd, double abco);
 void chem_cxx_evolve_cell(double timestep, double dl, double yn, double divv, double *energy, double *abundances);
@@ -245,7 +259,6 @@ void chem_cxx_net20_finish(double *abundances, double energy, double *temp);
 double chem_cxx_net20_electrons(void);
 #endif
 #endif
-void chem_read_outputs(struct ChemOutputs *out);
 
 
 #endif /* CHEMCOOL */
