@@ -44,25 +44,12 @@
  * accessors; misordered includes must compile-fail loudly, not silently
  * resolve to host-only `inline`. Same convention as neighbor_loop_runner.h. */
 
-/*! Pair key for the sink stochastic draws.
- *
- *  The claim token is unique per sink, so it separates the draws of DIFFERENT sinks. It cannot
- *  separate one sink's own neighbours, and the identifier cannot either: every wind-spawned cell
- *  carries one stamped value, so a key of (token, identifier) is CONSTANT across all of them and
- *  they draw the same number -- the whole group is then accreted or skipped together, which is the
- *  correlation this key exists to remove. The neighbour's position is what distinguishes them.
- *
- *  One-sided, unlike the SIDM pair key: only the sink evaluates this draw, so the key does not need
- *  to be symmetric under exchange and the two ends are composed in a fixed order. */
-KOKKOS_INLINE_FUNCTION uint64_t sink_pair_rng_key(MyIDType claim_token, MyIDType neighbor_id,
-                                                  double nx, double ny, double nz)
-{
-    uint64_t h = (uint64_t)claim_token * 0x9E3779B97F4A7C15ULL;
-    h ^= ((uint64_t)neighbor_id + 0xBF58476D1CE4E5B9ULL + (h << 6) + (h >> 2));
-    h ^= (gizmo_position_mix(nx, ny, nz) + 0x94D049BB133111EBULL + (h << 6) + (h >> 2));
-    h ^= h >> 31;
-    return h;
-}
+/* Stochastic capture/swallow draws: key = the sink's event key combined with the neighbour's, counter =
+ * the site's salt and the current time. Keyed on particles, never on the owning rank or slot, so a draw does
+ * not depend on the decomposition; the neighbour's position (in its event key) separates a sink's own
+ * neighbours that share an ID (every wind-spawned cell carries one). One-sided: only the sink evaluates it. */
+static constexpr uint64_t SINK_CAPTURE_RNG_SALT = gizmo_loop_rng_salt("sink_eddington_limited_capture");
+static constexpr uint64_t SINK_SWALLOW_RNG_SALT = gizmo_loop_rng_salt("sink_stochastic_swallow");
 
 /* Forward decls. */
 int  sink_isactive(int i);
@@ -75,13 +62,7 @@ int  sink_feed_is_active(int i);
 
 /* Per-call cosmology + sink globals captured once from All.* on the host
  * by populate_call_scalars. Passed to the inline pair body as its own
- * argument, once per call, so the body never reads All.* directly (TRAP 1).
- *
- * rng_step uses a sink_feed-unique constant XOR shift on top of
- * NumCurrentTiStep. This is load-bearing: if multiple sink loops in the
- * same timestep used identical rng_step bases, a per-particle draw
- * "fires" simultaneously across loops. See feedback_rng_loop_uniqueness.md
- * in project memory. */
+ * argument, once per call, so the body never reads All.* directly (TRAP 1). */
 struct SinkFeedCallScalars {
     NlrCommonScalars common;             /* cf_atime, cf_a2inv, newton_G, ... */
     double           sink_radius_grav;   /* SinkParticle_GravityKernelRadius */
@@ -90,7 +71,7 @@ struct SinkFeedCallScalars {
                                                  (zero otherwise) — pair-body readers are
                                                  themselves under matching #ifdefs, so the
                                                  fallback zero is never observed */
-    uint64_t         rng_step;           /* (uint64_t)NumCurrentTiStep ^ 0xfeed5117ULL */
+    uint64_t         rng_ti;             /* (uint64_t)All.Ti_Current, the event time of the draws */
 };
 
 /* Per-active host-fill struct, populated by populate_device_context() on
@@ -111,6 +92,7 @@ struct SinkFeedLocalIn {
     MyFloat Dt;
     MyIDType ID;
     MyIDType claim_token;   /* sink ownership for the claim protocol; see gizmo_sink_claim_token */
+    uint64_t rng_key;       /* the sink's event key (gizmo_rng_particle_event_key), for the stochastic draws */
 #ifdef SINK_GRAVCAPTURE_GAS
     MyFloat mass_to_swallow_edd;
 #endif
@@ -241,10 +223,8 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
  * stochastic-allowed and do NOT constitute a regression. The scratch field is
  * deliberately absent from the merge_accum manifest — see that manifest.
  *
- * RNG keys: per feedback_rng_loop_uniqueness.md, all per-pair draws key
- * on (local.ID ^ neighbor_particle.ID) and use scalars.rng_step which
- * carries a sink_feed-unique 0xfeed5117ULL XOR shift on top of
- * NumCurrentTiStep.
+ * RNG: per-pair draws are keyed on the sink and the neighbour (see the
+ * salts above).
  * ========================================================================== */
 
 KOKKOS_INLINE_FUNCTION
@@ -426,16 +406,8 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                     if(scalars.sink_accreted_fraction > 0)
                         p /= scalars.sink_accreted_fraction;
 #endif
-                    /* RNG site 1: per-loop-unique rng_step (0xfeed5117ULL shift in
-                     * populate_call_scalars).  Key = claim token + neighbour identifier + neighbour
-                     * position; the position is what separates a sink's own same-identifier
-                     * neighbours, which the first two cannot. */
-                    double w = gizmo_gpu_rand_double(sink_pair_rng_key(local.claim_token,
-                                                                       neighbor_particle.ID,
-                                                                       (double)neighbor_particle.Pos[0],
-                                                                       (double)neighbor_particle.Pos[1],
-                                                                       (double)neighbor_particle.Pos[2]),
-                                                     scalars.rng_step);
+                    double w = gizmo_gpu_rand_double(gizmo_rng_combine(local.rng_key, gizmo_rng_particle_event_key(neighbor_particle)),
+                                                     gizmo_rng_event_counter(SINK_CAPTURE_RNG_SALT, scalars.rng_ti, 0));
                     if(w < p) { SwallowID_j = local.claim_token; }
 #else
                     SwallowID_j = local.claim_token;
@@ -478,13 +450,8 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                 }
             }
 #endif
-            /* RNG site 2: same pairwise key + +1 counter offset to separate from site 1. */
-            double w = gizmo_gpu_rand_double(sink_pair_rng_key(local.claim_token,
-                                                               neighbor_particle.ID,
-                                                               (double)neighbor_particle.Pos[0],
-                                                               (double)neighbor_particle.Pos[1],
-                                                               (double)neighbor_particle.Pos[2]),
-                                             scalars.rng_step + 1);
+            double w = gizmo_gpu_rand_double(gizmo_rng_combine(local.rng_key, gizmo_rng_particle_event_key(neighbor_particle)),
+                                             gizmo_rng_event_counter(SINK_SWALLOW_RNG_SALT, scalars.rng_ti, 0));
             if(w < p) {
                 SwallowID_j = local.claim_token;
                 out.mass_markedswallow_scratch += (double)neighbor_particle.Mass * f_accreted;

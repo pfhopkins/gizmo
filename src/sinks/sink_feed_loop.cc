@@ -56,10 +56,7 @@ double SinkFeedSpec::search_radius(const neighbor_loop_args& args,
     return (double)args.P[i].KernelRadius;
 }
 
-/* Per-call scalars + sink_feed-unique RNG shift. The 0xfeed5117ULL XOR
- * shift on top of NumCurrentTiStep makes per-particle draws disjoint
- * across different sink loops in the same timestep — see
- * feedback_rng_loop_uniqueness.md in project memory. */
+/* Per-call scalars, including the event time of the stochastic draws. */
 SinkFeedSpec::CallScalars
 SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
 {
@@ -79,7 +76,7 @@ SinkFeedSpec::populate_call_scalars(const neighbor_loop_args& /*args*/)
                                               readers are all under matching #ifdefs, so the
                                               fallback value is never observed. */
 #endif
-    scalars.rng_step               = (uint64_t)h->NumCurrentTiStep ^ 0xfeed5117ULL;
+    scalars.rng_ti                 = (uint64_t)h->Ti_Current;
     return scalars;
 }
 
