@@ -214,10 +214,19 @@ void init(void)
     All.SolarAbundances[8]=6.44e-4; // S   (7.12 -> 3.12e-4, AG=3.80e-4); PS=7.16->3.31e-4
     All.SolarAbundances[9]=1.01e-4; // Ca  (6.34 -> 0.65e-4, AG=0.67e-4); PS=6.38->6.87e-5
     All.SolarAbundances[10]=1.73e-3; // Fe (7.50 -> 1.31e-3, AG=1.92e-3); PS=7.54->1.38e-3
-#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) // new default abundances; using Asplund et al. 2009 proto-solar abundances
+#if (GALSF_FB_FIRE_STELLAREVOLUTION > 2) && !(defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)) // new default abundances; using Asplund et al. 2009 proto-solar abundances
     All.SolarAbundances[0]=0.0142; if(NUM_METAL_SPECIES>=10) {
         All.SolarAbundances[1]=0.27030; All.SolarAbundances[2]=2.53e-3; All.SolarAbundances[3]=7.41e-4; All.SolarAbundances[4]=6.13e-3; All.SolarAbundances[5]=1.34e-3;
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
+#endif
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+    { /* coupled mode: Stella table solar (Asplund+09 present-day) for FIRE slots He..Fe, metals scaled to SolarAbundances[0] */
+        static const int el[11] = {-1, ELEM_He, ELEM_C, ELEM_N, ELEM_O, ELEM_Ne, ELEM_Mg, ELEM_Si, ELEM_S, ELEM_Ca, ELEM_Fe};
+        const double *solar_elem = resolvedism_solar_massfrac;
+        double zsum = 0; for(j = ELEM_C; j < 27; j++) {zsum += solar_elem[j];}
+        All.SolarAbundances[1] = solar_elem[ELEM_He];
+        for(j = 2; j <= 10; j++) {All.SolarAbundances[j] = solar_elem[el[j]] * All.SolarAbundances[0] / zsum;}
+    }
 #endif
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
