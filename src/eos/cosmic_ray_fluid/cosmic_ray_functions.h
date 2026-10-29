@@ -982,6 +982,8 @@ KOKKOS_INLINE_FUNCTION double CosmicRay_Update_DriftKick(int i, double dt_entr, 
         if(Bmag2 > 0) {Bmag=sqrt(Bmag2); bhat /= Bmag;}
         bbGB = -dot(bhat, cell[i].Gradients.B.matvec(bhat)) / Bmag;
         DtCosmicRayFlux = fac_for_DtCosmicRayFlux * (closure_f1*DtCRDotBhat*B0/Bmag2 + bhat*(closure_f2*P0_cr*bbGB));
+#else // no field: isotropic, the same form along grad(P_cr) (the field-line curvature term has no counterpart)
+        DtCosmicRayFlux = fac_for_DtCosmicRayFlux * closure_f1 * DtCosmicRayFlux;
 #endif
         double v_Alfven = three_chi * Get_Gas_ion_Alfven_speed_i(i, pp, cell) * return_CRbin_nuplusminus_asymmetry(i,k_CRegy, cell); /* define naive streaming and Alfven speeds */
         double dt_f_m=DtCosmicRayFlux.norm_sq();
