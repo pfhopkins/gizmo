@@ -847,8 +847,7 @@ void read_file(char *fname, int readTask, int lastTask)
 
         allocate_memory();
 
-        size_t MyBufferSize = All.BufferSize;
-        if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))
+        if(!(CommBuffer = mymalloc("CommBuffer", bytes = comm_buffer_bytes())))
         {
             printf("failed to allocate memory for `CommBuffer' (%g MB).\n", bytes / (1024.0 * 1024.0));
             endrun(2);
@@ -1105,8 +1104,7 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef METALS /* some trickery here to enable snapshot-restarts from runs with different numbers of metal species */
             if(blocknr==IO_Z && RestartFlag==2 && All.ICFormat==3 && header.flag_metals<NUM_METAL_SPECIES && header.flag_metals>0) {bytes_per_blockelement = (header.flag_metals) * sizeof(MyInputFloat);}
 #endif
-            size_t MyBufferSize = All.BufferSize;
-            blockmaxlen = (size_t) ((MyBufferSize * 1024 * 1024) / bytes_per_blockelement);
+            blockmaxlen = comm_buffer_bytes() / bytes_per_blockelement;
             npart = get_particles_in_block(blocknr, &typelist[0]);
 
             if(npart > 0)

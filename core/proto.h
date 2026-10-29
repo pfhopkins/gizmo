@@ -530,6 +530,7 @@ void cellcorrections_final_operations_and_cleanup(void);
 #endif
 
 size_t sizemax(size_t a, size_t b);
+size_t comm_buffer_bytes(void);
 
 void reconstruct_timebins(void);
 void init_peano_map(void);
