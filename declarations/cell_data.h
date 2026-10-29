@@ -329,7 +329,7 @@ extern struct gas_cell_data
        stored + output, not thrown away — required to validate M1 FUV-heating/LW-H2
        against the subgrid (tree-column) reference. */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
-    MyFloat G0;                           /*!< FUV radiation field in Habing units x All.G0, 6-13.6 eV (Stella M1: 6-8 + 8-13.6 eV bins) */
+    MyFloat G0;                           /*!< FUV radiation field in Habing units (All.G0 scales only the floor), 6-13.6 eV (Stella M1: 6-8 + 8-13.6 eV bins) */
     MyFloat G0_LW;                        /*!< LW radiation field in Habing units, 11.2-13.6 eV */
     MyFloat G0_atten;                     /*!< ATTENUATED FUV = G0 x f_dust: the effective FUV the chemistry
                                                sees. M1 (f_dust=1) -> = G0 already-attenuated field; tree columns

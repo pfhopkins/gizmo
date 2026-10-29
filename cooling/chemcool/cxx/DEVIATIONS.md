@@ -744,6 +744,11 @@ G0_LW by 2.705x (H2 and HD photodissociation were 2.7x too slow), and the 8-13.6
 1.488x. The LW floor (10% of the FUV floor flux) rises 2.705x in G0_LW. EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES
 (Habing 1968 spectrum, 8-13.6 eV 2.93e-14, 15% below the Draine shape) is retired (`#error`).
 
+## D-54. (2026-10-29) All.G0 scales only the background floor, not computed stellar fields
+G0 and G0_LW of the tree and M1 paths are u / u_unit (Uli). All.G0 (1.7 in the paper B params) multiplied the stellar
+field since gizmo2017 (sg_chemistry/chemcool.c:142), 1.7x above the physical field. The floors (0.324e-2 All.G0 per
+cell, LW 10% of the FUV floor flux) and the GHOSDT background keep All.G0.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

@@ -274,7 +274,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
     double UV_flux_tot = 0.0;
     double LW_flux_tot = 0.0;
-    double UV_flux_min_pix = 0.324e-2/NPIX / (fac_flux2energy / u_Hab_FUV);
+    double UV_flux_min_pix = 0.324e-2 * All.G0 / NPIX / (fac_flux2energy / u_Hab_FUV); /* All.G0 scales only the background floor */
     double LW_flux_min_pix = 0.1 * UV_flux_min_pix;
     for(i = 0; i < NPIX; i++) {
 #if defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && !defined(RADTRANSFER)
@@ -286,7 +286,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         LW_flux_tot += CellP[target].LW_flux[i];
     }
 
-    struct ChemFUVField fuv = chem_fuv_field_from_band_energy(UV_flux_tot * fac_flux2energy, u_Hab_FUV, LW_flux_tot * fac_flux2energy, 0, All.G0);
+    struct ChemFUVField fuv = chem_fuv_field_from_band_energy(UV_flux_tot * fac_flux2energy, u_Hab_FUV, LW_flux_tot * fac_flux2energy, 0, 1.0);
     double G0_tot = fuv.G0;
     double G0_LW  = fuv.G0_LW;
 
@@ -351,9 +351,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double u_NUV_cgs = 0;
 #endif
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
-        /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab x All.G0, G0_LW = u_LW/u_Hab_LW x All.G0, same per-pixel floors; stellar pixels arrive attenuated (pix_att=0) */
+        /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab, G0_LW = u_LW/u_Hab_LW, same per-pixel floors (x All.G0); stellar pixels arrive attenuated (pix_att=0) */
         double u_Hab_FUV = HABING_EGY_DENSITY_6_13P6EV_CGS;
-        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_NUV_cgs + u_PE_cgs, u_Hab_FUV, u_LW_cgs, 0, All.G0);
+        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_NUV_cgs + u_PE_cgs, u_Hab_FUV, u_LW_cgs, 0, 1.0); /* stellar field unscaled; All.G0 in the floors */
         double G0_star = fuv.G0;
         double G0_LW_star = fuv.G0_LW;
         /* direction split: (1-f) isotropic + f from the pixel facing the M1 flux source */
@@ -398,7 +398,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
            the diffuse field is represented by this floor, identically in both schemes. */
         double G0_floor_treerad = 0.324e-2 * All.G0;
-        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_PE_cgs, u_Hab_FUV_M1, u_LW_cgs, u_NUV_cgs, All.G0); /* x All.G0 as the tree path and the floor */
+        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_PE_cgs, u_Hab_FUV_M1, u_LW_cgs, u_NUV_cgs, 1.0);
         in->G0    = DMAX(fuv.G0, G0_floor_treerad);
         /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; the tree path floors LW at 10% of the FUV floor */
         in->G0_LW = DMAX(fuv.G0_LW, 0.1 * G0_floor_treerad);

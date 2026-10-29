@@ -9,7 +9,7 @@ For every cell the chemistry's own rates (OUTPUT_CHEM_PHOTORATES) are compared w
 the exact field L/(4 pi r^2 c) and the exact star-to-cell column N:
   k_H2 = 3.3e-11 G0_LW exp(-2e-21 N) fshield_H2,  k_CO = 1.411e-10 G0 exp(-2.5 A_V) fshield_CO,  G_dust = G0 exp(-2.5 A_V),
   dust-heating field = G0 chi_isrf / 1.7 (reference here G0 exp(-2.5 A_V) / 1.7),
-with G0 = u(6-13.6 eV)/5.257e-14 x 1.7, G0_LW = u(11.2-13.6 eV)/7.799e-15 x 1.7, A_V = 5.348e-22 N; the line self-shielding
+with G0 = u(6-13.6 eV)/5.257e-14, G0_LW = u(11.2-13.6 eV)/7.799e-15 (All.G0 scales only the floor), A_V = 5.348e-22 N; the line self-shielding
 factors fshield_H2, fshield_CO are the chemistry's own (ChemPhotoRates columns 4, 5).
 """
 
@@ -167,8 +167,8 @@ def ratios(snap, case, l_fuv, l_lw):
     m = sample_mask(case, d)
     r_cm = np.linalg.norm(d[m], axis=1) * PC
     av = AV_PER_NH * column_star_to_cell(case, d[m])
-    g0 = l_fuv / (4 * np.pi * r_cm**2 * C_LIGHT) / U_HAB_FUV * G0_PARAM
-    g0lw = l_lw / (4 * np.pi * r_cm**2 * C_LIGHT) / U_HAB_LW * G0_PARAM
+    g0 = l_fuv / (4 * np.pi * r_cm**2 * C_LIGHT) / U_HAB_FUV
+    g0lw = l_lw / (4 * np.pi * r_cm**2 * C_LIGHT) / U_HAB_LW
     att = np.exp(-2.5 * av)
     ref = {"k_H2": 3.3e-11 * g0lw * np.exp(-2e-21 * av / AV_PER_NH) * pr[m, 4],
            "k_CO": K_CO * g0 * att * pr[m, 5], "G_dust": g0 * att, "dust_heat": g0 * att / 1.7}
