@@ -255,7 +255,7 @@ void drift_particle(int i, integertime time1)
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
-    apply_special_boundary_conditions(i,P[i].Mass,0);
+    apply_special_boundary_conditions(i,P[i].Mass,0,time1);
 
     P[i].Ti_current = time1;
 }
