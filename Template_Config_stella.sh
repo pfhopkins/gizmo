@@ -151,6 +151,12 @@ OUTPUT_INDIVIDUAL_COOLRATES              % output per-process cooling rates
 #EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS  % PHYSICS: tree node stellar_lum[] in code units (pixel fluxes convert back to erg/s)
 #EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES  % PHYSICS: Habing 1968 band norms LW 7.86e-15, 8-13.6 eV 2.93e-14 (default 2.11e-14, 5.03e-14)
 #EXPERIMENTAL_RADIATION_DISJOINT_BANDS  % PHYSICS: radp/caps on disjoint bands (drop LW inside UV, NUV pixel flux 3.4-6 eV)
+#GALSF_RESOLVEDISM_HYBRID_DEFAULTS=(1000)  % EXPERIMENTAL prototype: Stella x FIRE-3 coupled mode, FIRE SSPs from cells above M_SSP [Msun], Stella stars below (docs/stella_hybrid/DESIGN.md)
+#GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL  % EXPERIMENTAL: per-star owner tag StarModel, each model's physics acts on its own stars  [auto by HYBRID_DEFAULTS]
+#GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION=(64)  % EXPERIMENTAL: SF criteria bits of Stella-channel cells (2 and/or 64)  [req PER_PARTICLE_STAR_MODEL]
+#GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY  % EXPERIMENTAL, NOT IMPLEMENTED (P4): required by the coupled mode with Stella tree bands
+#GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW=(M)  % EXPERIMENTAL, NOT IMPLEMENTED (#error): STARFORGE sink tier below M [Msun]
+#GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS  % EXPERIMENTAL, NOT IMPLEMENTED (#error): carry all 27 Stella elements in the coupled mode
 
 ########## Test-only ##########
 #GALSF_RESOLVEDISM_ISOLATED_FB_TEST      % TEST-ONLY: isolated-star FB test hooks
