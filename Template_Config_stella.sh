@@ -112,6 +112,16 @@ KETJU_MERGE_STARS                        % stellar collisions (Type 4+4)  [req K
 ########## MHD ##########
 MAGNETIC                                 % ideal MHD
 MHD_B_SET_IN_PARAMS                      % initial B from params
+#MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE  % EXPERIMENTAL PHYSICS: charge u with the actual cell E_B change (unused by decision 2026-10-23)
+#MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY  % EXPERIMENTAL PHYSICS: rescale |VB| to the booked E_B (rejected: breaks flux freezing)
+#DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH    % EXPERIMENTAL PHYSICS: constrained psi/c_h cleaning (Tricco & Price 2012) replaces Dedner  [req MFM]
+#DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB  % EXPERIMENTAL: conjugate pair with symmetric div.B  [req CONSERVATIVE_PSI_OVER_CH]
+#DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_NO_DAMPING_HEAT  % EXPERIMENTAL: psi damping loss not returned as heat  [req CONSERVATIVE_PSI_OVER_CH]
+#DIVBCLEANING_CONSERVATIVE_SIGMA=1.0      % EXPERIMENTAL: psi damping strength (default 1.0 in 3D, 0.3 in 2D)  [req CONSERVATIVE_PSI_OVER_CH]
+#TEST_MHD_ENERGY_LEDGER_OUTPUT            % TEST-ONLY: per-cell MHD energy ledger to mhd_energy_ledger.txt
+#TEST_MHD_NO_DEDNER_CLEANING              % TEST-ONLY: no div-B cleaning
+#TEST_MHD_NO_POWELL_SOURCE_TERMS          % TEST-ONLY: no Powell source terms
+#TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED  % TEST-ONLY: c_h doubles every other 0.05 time units  [req CONSERVATIVE_PSI_OVER_CH]
 
 ########## Box ##########
 #BOX_PERIODIC                            % only when the box contains all mass
