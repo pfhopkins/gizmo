@@ -116,6 +116,9 @@
             reconstruct_face_states(local.Vel[k] - v_frame[k], local.Gradients.Velocity[k], VelPred_j[k] - v_frame[k], CellP[j].Gradients.Velocity[k],
                                     distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
         }
+#ifdef EOS_ELASTIC
+        face_velocity_jump = Riemann_vec.R.v - Riemann_vec.L.v; /* the reconstructed jump (i minus j), before any fallback below resets the states */
+#endif
 #ifdef MAGNETIC
         int slim_mode = 1;
 #ifdef MHD_CONSTRAINED_GRADIENT
