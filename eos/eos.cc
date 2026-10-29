@@ -142,7 +142,7 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #endif
 #if defined(EOS_ENFORCE_ADIABAT) || defined(EOS_MHD_CORE_BAROTROPIC)
 #ifdef TURB_DRIVING
-    cell[i].EgyDiss += (cell[i].InternalEnergy - press / (cell[i].Density * (gamma_eos_index-1.))); /* save the change in energy imprinted by this enforced equation of state here */
+    cell[i].EgyDiss += pp[i].Mass * (cell[i].InternalEnergy - press / (cell[i].Density * (gamma_eos_index-1.))); /* save the energy (not specific energy, like EgyDrive) removed by this enforced equation of state here */
 #endif
     cell[i].InternalEnergy = cell[i].InternalEnergyPred = press / (cell[i].Density * (gamma_eos_index-1.)); /* reset internal energy: particles live -exactly- along this relation */
 #endif
