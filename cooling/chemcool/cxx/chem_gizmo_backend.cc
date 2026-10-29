@@ -1,9 +1,7 @@
 // chem_gizmo_backend.cc -- the CHEMCOOL_CXX entry points that GIZMO calls.
 //
-// ChemCell is filled straight from struct ChemInputs; calc_photo, temperature
-// lookup and solve are C++.  No per-cell COMMON block is read or written.  The
-// Fortran init (COOLINMO etc.) still runs once; its scalar settings seed the
-// cell template so both backends start from identical constants.
+// ChemCell is filled straight from struct ChemInputs; init, tables, calc_photo,
+// temperature lookup and solve are C++.  No Fortran is called or linked.
 //
 // THREAD SAFETY: tables are immutable after chem_cxx_tables_init(); the cell,
 // the last-solve rates and the CVODE workspace are thread_local.
@@ -27,7 +25,6 @@ extern "C" void chemcool_fatal_(int* code);
 Build without CHEMCOOL_CXX (the Fortran path) for the other networks."
 #endif
 
-void chem_bind_build_config(ChemBuildConfig& cfg, int net);  // chem_backend_fortran.cc
 
 #if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
 static_assert(NPIX <= CHEM_NPIX, "ChemCell pixel arrays are sized for RT_USE_TREECOL_FOR_NH=12");
@@ -39,28 +36,43 @@ static thread_local double tl_lambda[28], tl_lambda_chem[NRATES_CHEM];  // last 
 
 static_assert(28 <= CHEM_NRATES && NRATES_CHEM <= CHEM_NRATES_CHEM_MAX, "rate array sizes");
 
-void chem_cxx_tables_init(void)
+// coolinmo: abhe = ABHE stores a default-REAL literal; X_H_chem = 1d0/(1d0+4d0*ABHE)
+static const double g_abhe = (double)(float)ABHE;
+double chem_cxx_abhe_default(void) { return g_abhe; }
+double chem_cxx_xh_default(void) { return 1.0 / (1.0 + 4.0 * g_abhe); }
+
+void chem_cxx_tables_init(const struct ChemInitParams* p)
 {
     ChemBuildConfig cfg;
-    chem_bind_build_config(cfg, CHEMISTRYNETWORK);
+    cfg.net = CHEMISTRYNETWORK;
+    cfg.iflag_atom = p->iflag_atom; cfg.iflag_mn = p->iflag_mn; cfg.iflag_ad = p->iflag_ad;
+    cfg.iflag_3bh2a = p->iflag_3bh2a; cfg.iflag_3bh2b = p->iflag_3bh2b; cfg.iflag_h3pra = p->iflag_h3pra;
+#ifdef WSS_CIE_COOL
+    cfg.wss_cie = 1;
+#else
+    cfg.wss_cie = 0;
+#endif
+    cfg.deff = p->deff; cfg.phi_pah = p->phi_pah;
+    cfg.dust_to_gas_ratio = p->dust_to_gas_ratio;
+    cfg.cosmic_ray_ion_rate = p->cosmic_ray_ion_rate;
+    cfg.abhe = g_abhe;
     const char* dd = std::getenv("CHEMCXX_DATADIR");
     if (chem_cxx_tables_init(cfg, dd ? dd : "gizmo/cooling/chemcool")) { int c = 3; chemcool_fatal_(&c); }
 
-    // constants as chemcool_init / COOLINMO left them; per-cell fields keep the init
-    // values wherever chem_commit_to_fortran would not overwrite them
+    // init-time constants; per-cell fields are overwritten in chem_cxx_begin_cell
     ChemCell& c = g_tmpl;
     chem_cxx_cell_defaults(c, chem_cxx_tables(), CHEMISTRYNETWORK);
-    c.abhe = CHEM_COMP.abhe;
-    c.iphoto = COOLI.iphoto; c.isrf_option = COOLI.isrf_option;
-    c.iflag_mn = COOLI.iflag_mn; c.iflag_ad = COOLI.iflag_ad; c.iflag_atom = COOLI.iflag_atom;
-    c.iflag_3bh2a = COOLI.iflag_3bh2a; c.iflag_3bh2b = COOLI.iflag_3bh2b;
-    c.iflag_h3pra = COOLI.iflag_h3pra; c.iflag_h2opc = COOLI.iflag_h2opc;
-    c.deff = COOLR.deff; c.phi_pah = COOLR.phi_pah;
-    c.h2_form_ex = COOLR.h2_form_ex; c.h2_form_kin = COOLR.h2_form_kin;
-    c.f_rsc = COOLR.f_rsc; c.AV_conversion_factor = COOLR.AV_conversion_factor; c.AV_ext = COOLR.AV_ext;
-    c.abundN = COOLRC.abundN; c.G0_dust = COOLRC.G0_dust; c.cr_energy_density = COOLRC.cr_energy_density;
+    c.abhe = g_abhe;
+    c.iphoto = p->iphoto; c.isrf_option = p->isrf_option;
+    c.iflag_mn = p->iflag_mn; c.iflag_ad = p->iflag_ad; c.iflag_atom = p->iflag_atom;
+    c.iflag_3bh2a = p->iflag_3bh2a; c.iflag_3bh2b = p->iflag_3bh2b;
+    c.iflag_h3pra = p->iflag_h3pra; c.iflag_h2opc = 0;
+    c.deff = p->deff; c.phi_pah = p->phi_pah;
+    c.h2_form_ex = p->h2_form_ex; c.h2_form_kin = p->h2_form_kin;
+    c.f_rsc = 1.0; c.AV_conversion_factor = p->AV_conversion_factor; c.AV_ext = p->AV_ext;  // f_rsc as photoinit
+    c.abundN = 0.0; c.G0_dust = 0.0; c.cr_energy_density = p->cr_energy_density;
 #ifdef WSS_CIE_COOL
-    for (int k = 0; k < 12; k++) c.Zmass[k] = COOLRC.Zmass[k];
+    for (int k = 0; k < 12; k++) c.Zmass[k] = 0.0;
 #endif
 #if defined(RT_TREECOL_DUST_WEIGHTED) || defined(RT_TREECOL_H2_CO)
     c.npix = NPIX;

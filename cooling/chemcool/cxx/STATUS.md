@@ -9,6 +9,16 @@ complete and the backend is compiled INTO GIZMO behind the `CHEMCOOL_CXX` flag
 - Gate-2 results + PASS/FAIL: **`GATE2_ACCEPTANCE.md`**
 - Every conscious deviation: **`DEVIATIONS.md`**
 
+**2026-10-29 (branch chem/fortran-free):** until then the GIZMO `CHEMCOOL_CXX` build still
+ran the Fortran init (COOLINMO, CHEMINMO, INIT_TOLERANCES, LOAD_H2_TABLE,
+INIT_TEMPERATURE_LOOKUP), read its COMMON scalars and linked all chemcool `.F` objects
+and libgfortran; "ZERO Fortran" held only for the standalone golden binary. Now
+`chemcool_init` fills `ChemInitParams` and `chem_cxx_tables_init` builds everything in
+C++; the Makefile links no `.F`, no Fortran runtime, and neither `chem_backend_fortran.cc`
+nor `chem_backend_c_api.cc` (golden harness only). Identity proof:
+`golden/build_init_identity.sh` (config, cell template and tables bitwise identical to
+the old init). Frozen Fortran reference data and tools: `fortran_reference/`.
+
 Gate-3 headline: **38,918,708 golden comparisons, 0 failures, worst rel
 4.2e-13**; `cool_func` bit-exact over 10.7M rate comparisons; the pure C++
 binary links with `g++` alone and `nm` finds no Fortran symbol; 64 concurrent

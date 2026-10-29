@@ -23,10 +23,16 @@
  * A bare Fortran 'stop' killed one rank silently and deadlocked the rest in
  * the next MPI collective (zombie jobs; pisn200 2026-07-04).  endrun() ->
  * MPI_Abort kills the WHOLE job immediately and visibly. */
+#ifdef CHEMCOOL_CXX
+static thread_local int chem_id_current; /* particle ID for chemcool_fatal messages */
+#define CHEM_ID_CURRENT chem_id_current
+#else
+#define CHEM_ID_CURRENT COOLIC.id_current
+#endif
 extern "C" void chemcool_fatal_(int *code)
 {
     printf("CHEMCOOL FATAL: solver failure code %d (particle id_current=%d, task=%d) -- clean abort.\n",
-           *code, COOLIC.id_current, ThisTask);
+           *code, CHEM_ID_CURRENT, ThisTask);
     fflush(stdout);
     endrun(78100 + *code);
 }
@@ -38,48 +44,58 @@ void chemcool_init(void)
         fflush(stdout);
     }
 
-    /* Set COOLI flags before COOLINMO/CHEMINMO (they read these via common block); rate options as SGChem */
-    COOLI.iflag_mn   = 4;  /* H- + H+ mutual neutralization (CDG99) */
-    COOLI.iflag_ad   = 6;  /* H- + H associative detachment */
-    COOLI.iflag_atom = 2;  /* SD93 combined atomic cooling table */
+    /* rate options as SGChem; defaults matching gadget_tnt_new standard values */
+    struct ChemInitParams p;
+    p.iflag_mn   = 4;  /* H- + H+ mutual neutralization (CDG99) */
+    p.iflag_ad   = 6;  /* H- + H associative detachment */
+    p.iflag_atom = 2;  /* SD93 combined atomic cooling table */
 #if CHEMISTRYNETWORK == 1
-    COOLI.iflag_3bh2a = 6; /* H2+H: three-body formation (Forrey 2013) */
+    p.iflag_3bh2a = 6; /* H2+H: three-body formation (Forrey 2013) */
 #else
-    COOLI.iflag_3bh2a = 5; /* H2+H: high-density CID (MSM96), three-body formation (G07) */
+    p.iflag_3bh2a = 5; /* H2+H: high-density CID (MSM96), three-body formation (G07) */
 #endif
-    COOLI.iflag_3bh2b = 4; /* H2+H2: one-eighth of the H2+H rates */
-    COOLI.iflag_h3pra = 1; /* H3+ dissociative recombination (GP98) */
-    COOLI.iphoto     = 6;  /* TREECOL column densities (overridden per-particle) */
-    COOLIC.irad_heat  = 0;  /* no external radiative heating (handled via G0) */
-    COOLI.isrf_option = 1; /* Draine (1978) ISRF spectral shape */
-    COOLIC.no_chem    = 0;
+    p.iflag_3bh2b = 4; /* H2+H2: one-eighth of the H2+H rates */
+    p.iflag_h3pra = 1; /* H3+ dissociative recombination (GP98) */
+    p.iphoto      = 6; /* TREECOL column densities (overridden per-particle) */
+    p.irad_heat   = 0; /* no external radiative heating (handled via G0) */
+    p.isrf_option = 1; /* Draine (1978) ISRF spectral shape */
+    p.no_chem     = 0;
+    p.h2_form_ex  = 0.84;       /* fraction of H2 binding energy → vibrational excitation */
+    p.h2_form_kin = 0.12;       /* fraction → kinetic energy of H2 molecule */
+    p.deff        = 1.0;        /* H2 formation on dust efficiency factor */
+    p.phi_pah     = 0.5;        /* PAH charging parameter in the PE and grain-recombination fits */
+    p.AV_conversion_factor = 5.348e-22; /* N_H to A_V conversion (Bohlin+ 1978) */
+    p.AV_ext      = 0.0;        /* no external dust extinction */
+    p.dm_density  = 0.0;        /* no dark matter annihilation heating */
+    p.pdv_term    = 0.0;
+    p.redshift    = 0.0;        /* isolated galaxy, non-cosmological */
+    p.abundD      = All.DeutAbund;
+    p.G0          = All.G0;
+    p.G0_LW       = All.G0;
+    p.cosmic_ray_ion_rate = All.CosmicRayIonRate;
+    p.cr_energy_density = 0.0;  /* [erg/cm^3], overwritten per-cell if COSMIC_RAY_FLUID active */
+    p.dust_to_gas_ratio = All.DGRnormalized;
 
-    /* Set COOLR defaults before COOLINMO (matching gadget_tnt_new standard values) */
-    COOLR.h2_form_ex  = 0.84;       /* fraction of H2 binding energy → vibrational excitation */
-    COOLR.h2_form_kin = 0.12;       /* fraction → kinetic energy of H2 molecule */
-    COOLR.deff        = 1.0;        /* H2 formation on dust efficiency factor */
-    COOLR.phi_pah     = 0.5;        /* PAH charging parameter in the PE and grain-recombination fits */
-    COOLR.AV_conversion_factor = 5.348e-22; /* N_H to A_V conversion (Bohlin+ 1978) */
-    COOLR.AV_ext      = 0.0;        /* no external dust extinction */
-    COOLR.dm_density  = 0.0;        /* no dark matter annihilation heating */
-    COOLRC.pdv_term    = 0.0;
-    COOLRC.redshift    = 0.0;        /* isolated galaxy, non-cosmological */
-    COOLRC.abundD      = All.DeutAbund;
-    COOLRC.G0          = All.G0;
-    COOLRC.G0_LW       = All.G0;
-    COOLRC.cosmic_ray_ion_rate = All.CosmicRayIonRate;
-    COOLRC.cr_energy_density = 0.0;  /* [erg/cm^3], overwritten per-cell if COSMIC_RAY_FLUID active */
-    COOLRC.dust_to_gas_ratio = All.DGRnormalized;
+#ifdef CHEMCOOL_CXX
+    chem_cxx_tables_init(&p);
+#else
+    /* COOLI/COOLR set before COOLINMO/CHEMINMO (they read these via common block) */
+    COOLI.iflag_mn = p.iflag_mn; COOLI.iflag_ad = p.iflag_ad; COOLI.iflag_atom = p.iflag_atom;
+    COOLI.iflag_3bh2a = p.iflag_3bh2a; COOLI.iflag_3bh2b = p.iflag_3bh2b; COOLI.iflag_h3pra = p.iflag_h3pra;
+    COOLI.iphoto = p.iphoto; COOLIC.irad_heat = p.irad_heat; COOLI.isrf_option = p.isrf_option; COOLIC.no_chem = p.no_chem;
+    COOLR.h2_form_ex = p.h2_form_ex; COOLR.h2_form_kin = p.h2_form_kin; COOLR.deff = p.deff; COOLR.phi_pah = p.phi_pah;
+    COOLR.AV_conversion_factor = p.AV_conversion_factor; COOLR.AV_ext = p.AV_ext; COOLR.dm_density = p.dm_density;
+    COOLRC.pdv_term = p.pdv_term; COOLRC.redshift = p.redshift; COOLRC.abundD = p.abundD;
+    COOLRC.G0 = p.G0; COOLRC.G0_LW = p.G0_LW; COOLRC.cosmic_ray_ion_rate = p.cosmic_ray_ion_rate;
+    COOLRC.cr_energy_density = p.cr_energy_density; COOLRC.dust_to_gas_ratio = p.dust_to_gas_ratio;
 
     COOLINMO();
     CHEMINMO();
     INIT_TOLERANCES();
     LOAD_H2_TABLE();
     INIT_TEMPERATURE_LOOKUP();
-#ifdef CHEMCOOL_CXX
-    chem_cxx_tables_init();
-#endif
     chem_percell_snapshot(); /* per-thread COMMON copies start every cell from these values */
+#endif
 
     if(ThisTask == 0) {
         printf("initialization of SG cooling and chemistry finished.\n");
@@ -130,7 +146,7 @@ static double chemcool_step_core(int target, double dt, double dl, int mode, dou
     if(mode == 2) return chem_in.temp;
 
 #ifdef CHEMCOOL_CXX
-    COOLIC.id_current = chem_in.id_current;  /* only for chemcool_fatal messages */
+    chem_id_current = chem_in.id_current;  /* only for chemcool_fatal messages */
 #else
     chem_commit_to_fortran(&chem_in);
 #endif

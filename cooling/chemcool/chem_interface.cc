@@ -605,8 +605,13 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
      * (coolinmo default from the ABHE macro).  Mirror it READ-ONLY into the
      * struct for the He/D pool clamps in do_chemcool_step; commit does NOT
      * write it back in this configuration. */
+#ifdef CHEMCOOL_CXX
+    in->abhe     = chem_cxx_abhe_default();
+    in->X_H_chem = chem_cxx_xh_default();
+#else
     in->abhe     = CHEM_COMP.abhe;
     in->X_H_chem = CHEM_COMP.X_H_chem;
+#endif
     yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS); /* number density of hydrogen only */
 #endif
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
@@ -800,6 +805,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
  * original never wrote — e.g. CHEM_COMP without VARIABLE_XH_AND_ABHE, or
  * G0_dust without G0_VARIABLE/RADTRANSFER — stay Fortran-owned).
  * ========================================================================= */
+#ifndef CHEMCOOL_CXX
 /* per-cell COMMON values after chemcool_init; every cell starts from them on every thread (no copyin needed) */
 static struct chem_coolrc_t chem_coolrc_init;
 static struct chem_coolic_t chem_coolic_init;
@@ -890,4 +896,5 @@ void chem_read_outputs(struct ChemOutputs *out)
 }
 
 
+#endif /* !CHEMCOOL_CXX */
 #endif /* CHEMCOOL */
