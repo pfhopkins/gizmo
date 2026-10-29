@@ -712,6 +712,10 @@ chemcool_consts.h, precompiler_logic.h (`#error` without CHEMCOOL_CXX), rate_eq_
   Table 6: H 3.5e-10 T2^-0.03 / 1.7e-11 T2^0.17 / 5.0e-10 T2^0.17, H+ 7.2e-9 / 7.2e-9 / 2.2e-8); read as H and H+,
   no electron rates.  Open: the SiI 2-0 H file has 1.7e-10 (paper 1.7e-11); the FeI "e" column holds 1e-17..1e-11
   and the "H+" column 1.2e-7 / 9.3e-8 (electron-like values) -- left as in RTZ.
+- Field unit (2026-10-29): RTZ's FUV photorates are per Draine field (CI 3.39e-10, SiI 4.47e-9, CO 2.43e-10 = 1.7x the
+  SGChem per-Habing 2.0e-10/1.765e-10, 2.647e-9, 1.411e-10), so metal photoionization and photoheating, CO and CHx
+  photodissociation and H- photodetachment use chi = G/1.7; dust temperature 16.4 G^(1/6) (RTZ's 1.7 G0 converts chi to
+  Habing); grain recombination and PE heating (WD01, BT94) keep the Habing G. Until then all were 1.7x high.
 - GIZMO mapping: G0 for RTZ's FUV terms = G0 x exp(-2.5 A_V) (pixel average, 1 under M1/TreeRay); H2
   photodissociation (5.68e-11/1.7) G0_LW x f_dust x DB96 self-shielding (live; RTZ's 5.68e-11 is per Draine field,
   G0_LW is Habing: was 1.7x high until 2026-10-29); CO x fshield_CO; Bialy pumping/dissociation heating D0 I_UV = k_diss
