@@ -1343,6 +1343,9 @@ extern struct gravdata_out
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     MyDouble NUV_flux[NPIX];              /*!< HEALPix NUV flux per pixel, 3.4-8 eV (3.4-6 eV with EXPERIMENTAL_RADIATION_DISJOINT_BANDS) */
 #endif
+#ifdef GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+    MyDouble F68_flux_tot;                /*!< 6-8 eV flux summed over pixels */
+#endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     MyDouble OPT_flux[NPIX];              /*!< HEALPix optical+NIR flux per pixel, 0.4-3.4 eV */
 #endif

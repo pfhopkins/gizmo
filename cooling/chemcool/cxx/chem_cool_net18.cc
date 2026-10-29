@@ -21,7 +21,7 @@ namespace {
 const double KB = 1.380649E-16, C_CGS = 2.9979246E10, H_PLANCK = 6.626196E-27, EV2ERG = 1.602E-12;
 const double T_MIN = 2.725, T_MAX = 1E9;
 const double MIN_METAL_COOL_DENS = 1E-10, MIN_COOL_ION = 1E-10;
-// sub-ionizing (G0) photoionization of the neutral stage [s^-1 per G0] (rtz_main.c initialize_elements)
+// sub-ionizing photoionization of the neutral stage [s^-1 per Draine field] (rtz_main.c initialize_elements)
 const double G0_PHOTO[N18_NEL] = {0, 0, 3.39E-10, 0, 0, 0, 6.59E-11, 4.47E-9, 1.13E-9, 4.71E-10};
 
 inline int slot(int e, int j) { return n18_toff[e] + j; }
@@ -459,8 +459,9 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
 
     // radiation, cosmic rays, grains
     const double G = c.G0 * c.n18_df25;                        // dust-attenuated FUV [Habing]
+    const double chi = G / 1.7;                                // Draine field: RTZ photorates are per Draine ISRF
     const double fsh = (c.iphoto == 0) ? 1.0 : (tl_fsh >= 0.0) ? tl_fsh : cxx_calc_H2_shielding_factor(T, xH2, c.dl * nH, c);
-    const double kdiss = c.G0_LW * 5.68E-11 * c.fac_shield_dust * fsh;   // H2 photodissociation [s^-1]
+    const double kdiss = c.G0_LW * (5.68E-11 / 1.7) * c.fac_shield_dust * fsh;   // H2 photodissociation [s^-1]; 5.68e-11 per Draine field, G0_LW in Habing units
     const double zeta = c.cosmic_ray_ion_rate;
     const double phis = (1.0 - (xe / 1.20)) * (0.670 / (1.0 + (xe / 0.05)));
     const double ztot = zeta * (1.0 + phis), zH2 = 2.0 * zeta * (1.0 + phis), crsc = zH2 / 1E-16;
@@ -497,7 +498,7 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
             if (j < Z) {
                 double up = k.ci[si] * ne + n18_cr[e][j] * ztot + k.cti[si] * nHII;
                 if (uvb) up += tl_uvb_pi[si] * ss;
-                if (j == 0) up += G * G0_PHOTO[e] + n18_cr_uv[Z] * crsc;
+                if (j == 0) up += chi * G0_PHOTO[e] + n18_cr_uv[Z] * crsc;
                 if (e == 1) up += (j == 0) ? c.rt_phot_HeI : c.rt_phot_HeII;
                 double fl = up * x;
                 ds[si] -= fl; ds[si + 1] += fl;
@@ -515,7 +516,7 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
     // H2 (molecules.c; formation per H [s^-1], destruction rate [s^-1])
     double h2_form = 0.0, h2_dest = 0.0, hprim = 0.0;
     {
-        double crp = (1.28E-13 * (zH2 / 1.E-16) + 5.9E-9 * G) / (nH + 1e-40);
+        double crp = (1.28E-13 * (zH2 / 1.E-16) + 5.9E-9 * chi) / (nH + 1e-40);
         double coll = k.k2 * xHI + k.k5 * xHp + k.k13 * xe + k.k14 * xHI + k.k15 * xHp;
         hprim = k.k1 * k.k2 * xe * xHI / (coll + crp);
         h2_form = (fdg * k.adust + hprim) * xHI * nH;
@@ -526,10 +527,10 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
     double co_form = 0.0, co_dest = 0.0;
     if (!(c.n18_flags & N18_NOCO) && (c.n18_pool[2] + c.n18_pool[4]) > 1e-10) {
         double nCII = s[slot(2, 1)] * nH, xO = s[slot(4, 0)];
-        double gchx = (1.41E-10 * G) + 8.88E-15 * (zH2 / 1E-16);
+        double gchx = (1.41E-10 * chi) + 8.88E-15 * (zH2 / 1E-16);
         double beta = 5.E-10 * xO / (5.E-10 * xO + gchx / nH);
         co_form = std::fmax(5.E-16 * nCII * nH2 * beta, 1e-100) / nH;
-        co_dest = std::fmax(2.43E-10 * G * c.fshield_CO + 4.62E-15 * (zH2 / 1E-16), 1e-100) * xCO;
+        co_dest = std::fmax(2.43E-10 * chi * c.fshield_CO + 4.62E-15 * (zH2 / 1E-16), 1e-100) * xCO;
         f[2] = co_form - co_dest;
         ds[slot(2, 1)] += co_dest - co_form;
     }
@@ -578,7 +579,7 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
     if (ne > 0.0) L[19] = k.drc_pref * std::pow(G * k.sqT / (0.5 * ne), k.drc_beta) * ne * 0.5 * fdg * nH;
     {
         double hc = 1.0E-33 + (3.8E-33 - 1.0E-33) * std::fmax(std::fmin(2.0 * xH2, 1.0), 0.0);
-        double Td = std::fmax(16.4 * std::pow(1.7 * G, 1.0 / 6.0), 2.725 / a);
+        double Td = std::fmax(16.4 * std::pow(G, 1.0 / 6.0), 2.725 / a);
         c.tdust = Td;
         L[0] = hc * k.dgc * (T - Td) * nH * nH * fdg;
     }
@@ -616,12 +617,12 @@ void assemble(const double* y, double T, const Coef& k, ChemCell& c, double* f)
         double h = 0.0;
         for (int e = 2; e < N18_NEL; e++) {
             if (c.n18_pool[e] * nH < MIN_COOL_ION) continue;
-            h += s[slot(e, 0)] * nH * n18_g0_heat[n18_Z[e]] * G;
+            h += s[slot(e, 0)] * nH * n18_g0_heat[n18_Z[e]] * chi;
         }
         LC[2] = -h;
     }
-    {   // H2 pumping, photodissociation, formation (Bialy 2018); D0 I_UV = 1.7 k_diss
-        double ncf = 1.0 / (1.0 + (k.ncrit / nHtot)), DI = 1.7 * kdiss;
+    {   // H2 pumping, photodissociation, formation (Bialy 2018); D0 I_UV = k_diss
+        double ncf = 1.0 / (1.0 + (k.ncrit / nHtot)), DI = kdiss;
         double pump = 9.0 * DI * 1.12 * EV2ERG * nH2 * ncf, pd = DI * 0.4 * EV2ERG * nH2;
         double form = fdg * k.adust * (0.2 * EV2ERG + 4.48 * EV2ERG * ncf) * nHtot * nHtot * xHI
                     + hprim * (0.6 * EV2ERG + 3.13 * EV2ERG * ncf) * nHtot * nHtot * xHI;

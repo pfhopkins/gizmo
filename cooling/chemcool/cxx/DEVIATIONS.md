@@ -712,8 +712,14 @@ chemcool_consts.h, precompiler_logic.h (`#error` without CHEMCOOL_CXX), rate_eq_
   Table 6: H 3.5e-10 T2^-0.03 / 1.7e-11 T2^0.17 / 5.0e-10 T2^0.17, H+ 7.2e-9 / 7.2e-9 / 2.2e-8); read as H and H+,
   no electron rates.  Open: the SiI 2-0 H file has 1.7e-10 (paper 1.7e-11); the FeI "e" column holds 1e-17..1e-11
   and the "H+" column 1.2e-7 / 9.3e-8 (electron-like values) -- left as in RTZ.
+- Field unit (2026-10-29): RTZ's FUV photorates are per Draine field (CI 3.39e-10, SiI 4.47e-9, CO 2.43e-10 = 1.7x the
+  SGChem per-Habing 2.0e-10/1.765e-10, 2.647e-9, 1.411e-10), so metal photoionization and photoheating, CO and CHx
+  photodissociation and H- photodetachment use chi = G/1.7; dust temperature 16.4 G^(1/6) (RTZ's 1.7 G0 converts chi to
+  Habing); grain recombination and PE heating (WD01, BT94) keep the Habing G. Until then all were 1.7x high.
 - GIZMO mapping: G0 for RTZ's FUV terms = G0 x exp(-2.5 A_V) (pixel average, 1 under M1/TreeRay); H2
-  photodissociation 5.68e-11 G0_LW x f_dust x DB96 self-shielding (live); CO x fshield_CO; Bialy D0 I_UV = 1.7 k_diss;
+  photodissociation (5.68e-11/1.7) G0_LW x f_dust x DB96 self-shielding (live; RTZ's 5.68e-11 is per Draine field,
+  G0_LW is Habing: was 1.7x high until 2026-10-29); CO x fshield_CO; Bialy pumping/dissociation heating D0 I_UV = k_diss
+  (RTZ uses I_UV = 1.7 G0 against 5.68e-11 G0 for the destruction; was 2.89x high);
   zeta = cell CR rate; M1 rt_phot/rt_heat for HI, HeI, HeII added; UVB on in cosmological runs.  Pools: gas phase
   from the cell (dust model: C, O, Mg, Si, Fe minus Dust[]; N, Ne, S total); without the dust model RTZ depletion
   1 - (1 - d) min(DGR, 1); 10 Zsun cap as the other nets; He = abhe.  TracAbund keeps every stage (neutral
@@ -731,6 +737,33 @@ CHEMCOOL_CRHEAT_K23, _PE_K23, _H2FORM_K23, _GASDUST_K23, _CR_ATTEN_K23 and _H2SH
 backends and Template_Config.sh (`#error` if set): the TIGRESS-NCR physics is network 20 (D-29). The last version
 with the options (validated Fortran/C++ parity, B1/B2 harness chem_closeout/k23bench) is commit a7a25b1b. Net 16
 keeps its own Gong+17 CR heating and sigma_PE = 1e-21 (df187); grain recombination cooling (D-35) is unconditional.
+
+## D-53. (2026-10-29) Band energy densities per unit G0: Draine (1978) shape / 1.7, all bands, both backends
+The photorates (SGChem photoinit_ism.F, e.g. H2 3.3e-11 s^-1) assume the Draine (1978) spectrum scaled so that G0 = 1.7
+is the Draine field. The band energy densities that turn a radiation field into G0 (chem_interface.h) now use that
+spectrum for every band (scripts/habing_band_energy_densities.py, Draine 2011 eq. 12.7 divided by 1.7):
+6-13.6 eV 5.257e-14 (was 5.29e-14, Habing), 8-13.6 eV 3.380e-14 (was 5.03e-14 = 0.95 x the 6-13.6 value, not a band
+integral), 11.2-13.6 eV 7.799e-15 (was 2.11e-14, which matches no spectrum). For the same field G0 rises by 0.63%,
+G0_LW by 2.705x (H2 and HD photodissociation were 2.7x too slow), and the 8-13.6 eV G0 of the non-Stella M1 path by
+1.488x. The LW floor (10% of the FUV floor flux) rises 2.705x in G0_LW. EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES
+(Habing 1968 spectrum, 8-13.6 eV 2.93e-14, 15% below the Draine shape) is retired (`#error`).
+
+## D-54. (2026-10-29) All.G0 scales only the background floor, not computed stellar fields
+G0 and G0_LW of the tree and M1 paths are u / u_unit (Uli). All.G0 (1.7 in the paper B params) multiplied the stellar
+field since gizmo2017 (sg_chemistry/chemcool.c:142), 1.7x above the physical field. The floors (0.324e-2 All.G0 per
+cell, LW 10% of the FUV floor flux) and the GHOSDT background keep All.G0.
+
+## D-55. (2026-10-29) Band-resolved grain heating (G0_dust)
+The ISRF grain heating 5.8e-24 chi_isrf (G0_dust/1.7) DGR covers grain absorption of the whole ISRF; scaling it by the
+FUV G0 alone assumes the ISRF spectral shape. Now G0_dust = 0.2362 G0 + 0.1496 u(3.4-6 eV)/4.696e-14 + 0.6142
+u(0.4-3.4 eV)/5.141e-13 (+ the ISRF-shaped floor in the last two): MMP83 absorbed-power shares with the band opacities
+of rt_utilities.cc, exact for an ISRF-shaped field (scripts/habing_band_energy_densities.py). Bands that are not
+available stay ISRF-shaped (x G0). Tree path: 3.4-6 eV = NUV_flux minus the per-cell 6-8 eV total (F68_flux_tot), OPT_flux;
+Stella M1: OPT bin if transported (its NUV bin is 6-8 eV); non-Stella M1: NUV bin minus a Draine-shaped 6-8 eV part.
+NUV/optical heat only the grains (gas via gas-grain coupling); no gas photoelectric term below 6 eV (Bakes & Tielens 1994,
+Weingartner & Draine 2001 are calibrated on 6-13.6 eV). The former NUV term u(3.4-8)/3.85e-14 (non-Stella M1) is retired:
+3.85e-14 is the MMP83 energy density in 8-13.6 eV, not 3.4-8 eV (7.53e-14), and it double-counted the NUV already inside
+the ISRF coefficient.
 
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 

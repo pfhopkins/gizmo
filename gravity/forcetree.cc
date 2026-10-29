@@ -1797,6 +1797,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
     double treecol_NUV_flux[NPIX] = {0};
 #endif
+#ifdef GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+    double treecol_F68_flux = 0;
+#endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
     double treecol_OPT_flux[NPIX] = {0};
 #endif
@@ -2959,6 +2962,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                     treecol_NUV_flux[iheal] += nuv_lum * inv_r2;
 #endif
+#ifdef GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+                    treecol_F68_flux += mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] * RESOLVEDISM_STELLAR_LUM_TO_CGS * inv_r2;
+#endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                     treecol_OPT_flux[iheal] += opt_lum * inv_r2;
 #endif
@@ -3130,6 +3136,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             CellP[target].NUV_flux[kp] = treecol_NUV_flux[kp];
 #endif
+#ifdef GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+            CellP[target].F68_flux_tot = treecol_F68_flux;
+#endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             CellP[target].OPT_flux[kp] = treecol_OPT_flux[kp];
 #endif
@@ -3243,6 +3252,9 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
         {int kp; for(kp=0; kp<NPIX; kp++) {GravDataResult[target].UV_flux[kp] = treecol_UV_flux[kp]; GravDataResult[target].LW_flux[kp] = treecol_LW_flux[kp];
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             GravDataResult[target].NUV_flux[kp] = treecol_NUV_flux[kp];
+#endif
+#ifdef GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+            GravDataResult[target].F68_flux_tot = treecol_F68_flux;
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
             GravDataResult[target].OPT_flux[kp] = treecol_OPT_flux[kp];

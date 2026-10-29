@@ -321,7 +321,14 @@ int rt_get_lum_band_resolvedism(int i, int mode, double *lum, struct particle_da
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     /* per-star band cache is erg/s; lum[] = cache / RESOLVEDISM_STELLAR_LUM_TO_CGS */
     if(pp[i].Type != 4 && pp[i].Type != 5) return 0;
+#ifdef GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE
+    { /* 6-8 eV = per-source share of the NUV (3.4-8 eV) band, x L_NUV */
+        double s68 = (pp[i].NUV_luminosity > 0) ? ((double)pp[i].UV_luminosity - (double)pp[i].PE_luminosity) / (double)pp[i].NUV_luminosity : 0;
+        lum[RT_FREQ_BIN_FUV_6_8EV] = s68 * pp[i].NUV_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
+    }
+#else
     lum[RT_FREQ_BIN_FUV_6_8EV] = (pp[i].UV_luminosity - pp[i].PE_luminosity) / RESOLVEDISM_STELLAR_LUM_TO_CGS; /* not clipped: FUV_total - FUV_M1 restores the 6-13.6 eV total */
+#endif
     lum[RT_FREQ_BIN_PHOTOELECTRIC] = pp[i].PE_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
     lum[RT_FREQ_BIN_LYMAN_WERNER] = pp[i].LW_luminosity / RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #ifdef RT_NUV

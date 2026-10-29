@@ -40,6 +40,7 @@ GALSF_RESOLVEDISM_PHOTOION               % subgrid Stromgren photoionisation (pi
 #GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE % pisub photon cost per cell at case-B alpha(T_cell), T>=1e4 K  [req PHOTOION]
 GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req HEALPix RT_USE_TREECOL_FOR_NH, auto RADPRESSURE_TREERAD] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_NUV_VARIABLE          % NUV band field  [auto by RADPRESSURE]
+#GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE  % tree bands PE/LW/NUV/OPT + per-source 6-8 eV share of NUV; G0 = PE + share (GPU-port band set)  [tree path only]
 #GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from tree per-pixel fluxes  [auto by G0_VARIABLE without RADTRANSFER]
@@ -151,7 +152,6 @@ OUTPUT_INDIVIDUAL_COOLRATES              % output per-process cooling rates
 ########## Experimental (default OFF; unvalidated development, see the merge commits) ##########
 #EXPERIMENTAL_SNAPSHOT_RESTART_TEMP_FROM_CHEMISTRY  % RestartFlag 2: set CellP.Temp from chemistry after density()
 #EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS  % PHYSICS: tree node stellar_lum[] in code units (pixel fluxes convert back to erg/s)
-#EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES  % PHYSICS: Habing 1968 band norms LW 7.86e-15, 8-13.6 eV 2.93e-14 (default 2.11e-14, 5.03e-14)
 #EXPERIMENTAL_RADIATION_DISJOINT_BANDS  % PHYSICS: radp/caps on disjoint bands (drop LW inside UV, NUV pixel flux 3.4-6 eV)
 #GALSF_RESOLVEDISM_HYBRID_DEFAULTS=(1000)  % EXPERIMENTAL prototype: Stella x FIRE-3 coupled mode, FIRE SSPs from cells above M_SSP [Msun], Stella stars below (docs/stella_hybrid/DESIGN.md)
 #GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL  % EXPERIMENTAL: per-star owner tag StarModel, each model's physics acts on its own stars  [auto by HYBRID_DEFAULTS]

@@ -527,6 +527,9 @@ void gravity_tree(void)
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                     CellP[place].NUV_flux[kp] += GravDataOut[j].NUV_flux[kp];
 #endif
+#ifdef GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+                    if(kp == 0) {CellP[place].F68_flux_tot += GravDataOut[j].F68_flux_tot;}
+#endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                     CellP[place].OPT_flux[kp] += GravDataOut[j].OPT_flux[kp];
 #endif
