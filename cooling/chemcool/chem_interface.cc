@@ -398,7 +398,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
            the diffuse field is represented by this floor, identically in both schemes. */
         double G0_floor_treerad = 0.324e-2 * All.G0;
-        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_PE_cgs, u_Hab_FUV_M1, u_LW_cgs, u_NUV_cgs, 1.0);
+        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_PE_cgs, u_Hab_FUV_M1, u_LW_cgs, u_NUV_cgs, All.G0); /* x All.G0 as the tree path and the floor */
         in->G0    = DMAX(fuv.G0, G0_floor_treerad);
         /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; the tree path floors LW at 10% of the FUV floor */
         in->G0_LW = DMAX(fuv.G0_LW, 0.1 * G0_floor_treerad);
