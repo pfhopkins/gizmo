@@ -33,6 +33,16 @@
 #ifndef COMPUTE_FINITEVOL_FACES_FUNCTIONS_H
 #define COMPUTE_FINITEVOL_FACES_FUNCTIONS_H
 
+/* the kernel-gradient (RSPH) face of a pair: a scalar along dp */
+template <typename KernelT>
+KOKKOS_INLINE_FUNCTION
+double kernel_gradient_face_area(const KernelT &kernel, double wt_i, double wt_j, double V_i, double V_j)
+{
+    double face_kernel = -(wt_i*V_i*kernel.dwk_i + wt_j*V_j*kernel.dwk_j) / kernel.r;
+    face_kernel *= All.cf_atime * All.cf_atime;
+    return face_kernel;
+}
+
 template <typename LocalT, typename KernelT>
 KOKKOS_INLINE_FUNCTION
 void compute_finitevol_faces(
@@ -98,12 +108,29 @@ void compute_finitevol_faces(
     }
 #endif
 
+#ifdef EOS_ELASTIC
+    {
+        /* elastic solids: as the gradient matrix of either cell becomes ill-conditioned, blend the face smoothly toward the
+           kernel-gradient face; one weight per pair keeps the face antisymmetric, so the pair exchange stays conserving */
+        double condition_number_max = DMAX(fabs((double)local.ConditionNumber), fabs((double)CPj.ConditionNumber));
+        double s = DMIN(1., DMAX(0., (condition_number_max - CONDITION_NUMBER_FACE_BLEND_START) / (CONDITION_NUMBER_FACE_BLEND_FULL - CONDITION_NUMBER_FACE_BLEND_START)));
+        double w = s * s * (3. - 2. * s);
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        if(!solid_material_is_elastic(local.CompositionType) && !solid_material_is_elastic(CPj.CompositionType)) {w = 0;} /* gas pairs of a gas + solid build keep the matrix face */
+#endif
+        if(w > 0) {
+            Face_Area_Vec = (1. - w) * Face_Area_Vec + w * (kernel.dp * kernel_gradient_face_area(kernel, wt_i, wt_j, V_i, V_j));
+            Face_Area_Norm = Face_Area_Vec.norm_sq();
+            facenormal_dot_dp = dot(Face_Area_Vec, kernel.dp);
+        }
+    }
+#endif
+
     /* ill-conditioned gradient matrix: fall back to RSPH EOM for stability */
     if((CPj.ConditionNumber * CPj.ConditionNumber > 1.0e12 + cnumcrit2) || (facenormal_dot_dp < 0)) {
-        Face_Area_Norm = -(wt_i*V_i*kernel.dwk_i + wt_j*V_j*kernel.dwk_j) / kernel.r;
-        Face_Area_Norm *= All.cf_atime * All.cf_atime;
-        Face_Area_Vec  = kernel.dp * Face_Area_Norm;
-        Face_Area_Norm = Face_Area_Norm * Face_Area_Norm * r2;
+        double face_kernel = kernel_gradient_face_area(kernel, wt_i, wt_j, V_i, V_j);
+        Face_Area_Vec  = kernel.dp * face_kernel;
+        Face_Area_Norm = face_kernel * face_kernel * r2;
     }
 
     Face_Area_Norm = sqrt(Face_Area_Norm);

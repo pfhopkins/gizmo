@@ -351,6 +351,9 @@ struct GradientsSpec
 #endif
 #ifdef MHD_CONSTRAINED_GRADIENT
         local.ConditionNumber = kc[i].ConditionNumber;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+        local.CompositionType = kc[i].CompositionType;
+#endif
         local.NV_T            = kc[i].NV_T;
         for(int k = 0; k < 3; k++) {
             for(int k2 = 0; k2 < 3; k2++) {

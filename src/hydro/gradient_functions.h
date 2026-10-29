@@ -105,6 +105,9 @@ struct GasGraddata_in_
     MyFloat KernelRadius;
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble ConditionNumber;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    int CompositionType; /* the face construction tells gas pairs from solid pairs */
+#endif
     SymmetricTensor2<MyDouble> NV_T;
     MyFloat BGrad[3][3];
 #ifdef MHD_MODIFIED_GRADIENT
