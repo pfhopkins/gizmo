@@ -392,13 +392,18 @@ void resolvedism_determine_SNe(void)
     }
 
     /* MPI reduce counts for logging */
-    MPI_Allreduce(&n_sne_local, &n_sne_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&n_agb_local, &n_agb_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    int n_collapse_total = 0;
-    MPI_Allreduce(&n_collapse_local, &n_collapse_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    int n_collapse_total = 0, n_logged_total = 0;
+    { /* one reduction for all counts */
+        int cnt[5] = {n_sne_local, n_agb_local, n_collapse_local, 0, n_logged};
 #ifdef GALSF_RESOLVEDISM_WINDS
-    MPI_Allreduce(&n_wind_local, &n_wind_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        cnt[3] = n_wind_local;
 #endif
+        MPI_Allreduce(MPI_IN_PLACE, cnt, 5, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        n_sne_total = cnt[0]; n_agb_total = cnt[1]; n_collapse_total = cnt[2]; n_logged_total = cnt[4];
+#ifdef GALSF_RESOLVEDISM_WINDS
+        n_wind_total = cnt[3];
+#endif
+    }
     if(n_sne_total > 0 || n_agb_total > 0 || n_collapse_total > 0 || n_wind_total > 0)
     {
         if(ThisTask == 0) {
@@ -408,8 +413,6 @@ void resolvedism_determine_SNe(void)
         }
     }
 
-    int n_logged_total = 0;
-    MPI_Allreduce(&n_logged, &n_logged_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(n_logged_total > 0)
     {
         int *recvcounts = NULL, *displs = NULL;

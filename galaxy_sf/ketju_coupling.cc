@@ -23,6 +23,7 @@
 #include <cctype>
 #include <vector>
 #include <set>
+#include <map>
 #include <unordered_map>
 #include <queue>
 #include <utility>
@@ -148,6 +149,15 @@ struct ketju_extra_data {
  *  MPI task group for parallel KETJU computation
  *  Based on public GADGET4-KETJU (Mannerkoski+ 2023)
  * ============================================================ */
+/* task-group communicators by (tag, task list): every rank builds every region's groups, so the cache is rank-uniform; freed after domain changes */
+static std::map<std::pair<int, std::vector<int>>, std::pair<MPI_Group, MPI_Comm>> KetjuCommCache;
+static int KetjuCommCacheStale = 0;
+static void ketju_comm_cache_flush(void)
+{
+    for(auto &e : KetjuCommCache) {if(e.second.second != MPI_COMM_NULL) MPI_Comm_free(&e.second.second); MPI_Group_free(&e.second.first);}
+    KetjuCommCache.clear(); KetjuCommCacheStale = 0;
+}
+
 struct KetjuTaskGroup {
     MPI_Group group;
     MPI_Comm comm;
@@ -159,13 +169,19 @@ struct KetjuTaskGroup {
     KetjuTaskGroup() : group(MPI_GROUP_NULL), comm(MPI_COMM_NULL), rank(MPI_UNDEFINED), size(0), root(MPI_UNDEFINED), root_sim(MPI_UNDEFINED) {}
 
     void init(const std::vector<int> &task_sim_indices, int tag = 0) {
-        MPI_Group world_group;
-        MPI_Comm_group(MPI_COMM_WORLD, &world_group);
-        MPI_Group_incl(world_group, task_sim_indices.size(), task_sim_indices.data(), &group);
+        auto key = std::make_pair(tag, task_sim_indices);
+        auto it = KetjuCommCache.find(key);
+        if(it == KetjuCommCache.end()) {
+            MPI_Group world_group, g; MPI_Comm c;
+            MPI_Comm_group(MPI_COMM_WORLD, &world_group);
+            MPI_Group_incl(world_group, task_sim_indices.size(), task_sim_indices.data(), &g);
+            MPI_Comm_create_group(MPI_COMM_WORLD, g, tag, &c);
+            MPI_Group_free(&world_group);
+            it = KetjuCommCache.emplace(key, std::make_pair(g, c)).first;
+        }
+        group = it->second.first; comm = it->second.second;
         MPI_Group_size(group, &size);
         MPI_Group_rank(group, &rank);
-        MPI_Comm_create_group(MPI_COMM_WORLD, group, tag, &comm);
-        MPI_Group_free(&world_group);
         root = 0;
         root_sim = task_sim_indices[0];
     }
@@ -175,8 +191,7 @@ struct KetjuTaskGroup {
            freeing a handle then aborts the job with a nonzero status */
         int finalized = 0; MPI_Finalized(&finalized);
         if(finalized) { comm = MPI_COMM_NULL; group = MPI_GROUP_NULL; rank = MPI_UNDEFINED; size = 0; root = MPI_UNDEFINED; root_sim = MPI_UNDEFINED; return; }
-        if(comm != MPI_COMM_NULL) { MPI_Comm_free(&comm); comm = MPI_COMM_NULL; }
-        if(group != MPI_GROUP_NULL) { MPI_Group_free(&group); group = MPI_GROUP_NULL; }
+        comm = MPI_COMM_NULL; group = MPI_GROUP_NULL; /* owned by KetjuCommCache */
         rank = MPI_UNDEFINED; size = 0; root = MPI_UNDEFINED; root_sim = MPI_UNDEFINED;
     }
 
@@ -298,6 +313,16 @@ static std::vector<std::vector<ketju_mpi_particle>> CachedCenterGroups; /* the l
  * shorter / longer bin, timestep regions set, and those whose bin a limiting particle set (the
  * last two counted on task 0 only, since every task computes the same bins) */
 static long long LimitTally[4] = {0, 0, 0, 0};
+static int KetjuNumMultiRegions = 0; /* regions with >= 2 members this step (rank-uniform) */
+static int KetjuEnergyPending = 0; /* energy ledger terms may be nonzero on some task (rank-uniform) */
+static long long KetjuMemberStepEnd = -1; /* latest step end of any integrated chain member; -1 = not yet known */
+static void ketju_member_step_end_init(void) /* first call (also after a restart): from the flagged members */
+{
+    if(KetjuMemberStepEnd >= 0) return;
+    long long e = 0;
+    for(int i = 0; i < NumPart; i++) {if(P[i].KetjuIntegrated && P[i].KetjuChainID != 0) {e = std::max(e, (long long)P[i].Ti_begstep + (long long)P[i].dt_step);}}
+    MPI_Allreduce(&e, &KetjuMemberStepEnd, 1, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+}
 
 /* ============================================================
  *  Cost-based scheduling (Phase B)
@@ -2170,6 +2195,7 @@ static std::vector<long long> region_step_caps(const std::vector<std::vector<ket
 {
     const int n = (int)groups.size();
     std::vector<long long> caps(2 * n, (long long)TIMEBASE); /* [2r] motion, [2r+1] tide */
+    {int any = 0; for(int r = 0; r < n; r++) {if(groups[r].size() >= 2) {any = 1; break;}} if(!any) return caps;} /* groups are rank-uniform */
     const double R = All.KetjuRegionRadius, Rlim = DMAX(All.KetjuTimestepLimitingFactor, 2.0) * R; /* physical */
     const double a = All.cf_atime, Rlim_c = Rlim / a;
     auto to_ti = [](double dt) {double t = dt * All.cf_hubble_a / All.Timebase_interval; return (t >= (double)TIMEBASE) ? (long long)TIMEBASE : (long long)DMAX(t, 1.0);};
@@ -2465,6 +2491,8 @@ void ketju_find_regions(void)
     }
     ActiveRegions.clear();
     AllKetjuParticleIndices.clear();
+    KetjuNumMultiRegions = 0;
+    if(KetjuCommCacheStale) ketju_comm_cache_flush();
 
     /* validate parameters */
     if(All.KetjuRegionRadius <= 0) return;
@@ -2507,7 +2535,11 @@ void ketju_find_regions(void)
     /* member totals of all regions in one reduction, then per-task counts of the multi-member ones in one gather */
     std::vector<int> region_counts(n_regions);
     for(int r = 0; r < n_regions; r++) region_counts[r] = (int)ActiveRegions[r].local_member_indices.size();
-    MPI_Allreduce(MPI_IN_PLACE, region_counts.data(), n_regions, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    int need_counts = 1;
+#if defined(KETJU_TYPE4_STARS) && !defined(KETJU_VERBOSE_INTEGRATION)
+    need_counts = 0; for(int r = 0; r < n_regions; r++) {if(region_centers[r].size() >= 2) {need_counts = 1; break;}} /* members are a subset of the (rank-uniform) group: none can reach 2 */
+#endif
+    if(need_counts) MPI_Allreduce(MPI_IN_PLACE, region_counts.data(), n_regions, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     std::vector<int> multi; /* regions with >= 2 members; the rest stay as placeholders with nothing to integrate */
     for(int r = 0; r < n_regions; r++) {
         ActiveRegions[r].total_particle_count = region_counts[r];
@@ -2516,6 +2548,7 @@ void ketju_find_regions(void)
         for(int idx : ActiveRegions[r].local_member_indices) AllKetjuParticleIndices.insert(idx);
     }
     const int n_multi = (int)multi.size();
+    KetjuNumMultiRegions = n_multi;
     std::vector<int> task_counts((size_t)NTask * n_multi); /* [t * n_multi + k] */
     if(n_multi > 0) {
         std::vector<int> mine(n_multi);
@@ -2588,6 +2621,7 @@ void ketju_find_regions(void)
 void ketju_run_integration(void)
 {
     KjClock clk(CPU_KETJUFIND);
+    ketju_member_step_end_init(); /* before this step's regions raise it */
     if(ActiveRegions.empty()) return;
 
     /* Outer loop over sequential rounds. Within a round, regions run in
@@ -2607,9 +2641,14 @@ void ketju_run_integration(void)
             if(ti_i > ti_range[2*r+1]) ti_range[2*r+1] = ti_i;
         }
     }
-    MPI_Allreduce(MPI_IN_PLACE, ti_range.data(), 2 * n_act, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+    const int any_multi = (KetjuNumMultiRegions > 0); /* rank-uniform: otherwise nothing is integrated */
+    if(any_multi) {
+        MPI_Allreduce(MPI_IN_PLACE, ti_range.data(), 2 * n_act, MPI_LONG_LONG, MPI_MAX, MPI_COMM_WORLD);
+        KetjuEnergyPending = 1;
+        for(int r = 0; r < n_act; r++) {if(ActiveRegions[r].total_particle_count >= 2 && ti_range[2*r+1] > 0) {KetjuMemberStepEnd = std::max(KetjuMemberStepEnd, (long long)All.Ti_Current + ti_range[2*r+1]);}}
+    }
 
-    int n_rounds = g_ketju_num_sequential_runs > 0 ? g_ketju_num_sequential_runs : 1;
+    int n_rounds = !any_multi ? 0 : (g_ketju_num_sequential_runs > 0 ? g_ketju_num_sequential_runs : 1);
     for(int seq = 0; seq < n_rounds; seq++) {
     for(size_t r = 0; r < ActiveRegions.size(); r++) {
         KetjuRegion &reg = ActiveRegions[r];
@@ -2649,7 +2688,7 @@ void ketju_run_integration(void)
 
     /* update cost estimates for next step's load balancing */
     clk.rest = CPU_KETJUFINISH;
-    update_region_costs();
+    if(any_multi) update_region_costs(); /* no integrator anywhere: every cost is 0 and nothing is stored */
 
     /* Cumulative MSTAR statistics, printed every 1024 steps and on the step that reaches the end of
      * the timeline: the per-region log is compiled out, so otherwise nothing shows how hard the
@@ -2675,25 +2714,36 @@ void ketju_run_integration(void)
             if(dE > loc_max[1]) loc_max[1] = dE;
         }
         if(GET_INTEGERTIME_FROM_TIMEBIN(All.HighestActiveTimeBin) > max_ti_step) max_ti_step = GET_INTEGERTIME_FROM_TIMEBIN(All.HighestActiveTimeBin); /* end of run without a region reaching it */
-        MPI_Reduce(loc, glob, 8, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(loc_max, glob_max, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        static long long acc_loc[8] = {0, 0, 0, 0, 0, 0, 0, 0}; static double acc_max[2] = {0, 0}; /* this task's tallies since the last print */
         static double cum_energy[4] = {0, 0, 0, 0}; /* external kick work on internal motion (net, |.|), MSTAR error, collisions */
-        double eloc[4] = {KetjuEnergyLedger[0], KetjuEnergyLedger[1], KetjuEnergyLedger[2], KetjuCollisionEnergy}, eglob[4];
-        for(int k = 0; k < 3; k++) KetjuEnergyLedger[k] = 0;
-        KetjuCollisionEnergy = 0;
-        MPI_Reduce(eloc, eglob, 4, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        if(ThisTask == 0) {
-            cum_calls++; cum_regions += glob[0]; cum_ok += glob[1]; cum_failed += glob[2]; cum_big_dE += glob[3];
-            for(int k = 0; k < 4; k++) cum_energy[k] += eglob[k];
+        double eloc[4] = {KetjuEnergyLedger[0], KetjuEnergyLedger[1], KetjuEnergyLedger[2], KetjuCollisionEnergy}, eglob[4] = {0, 0, 0, 0};
+        if(KetjuEnergyPending) { /* else every term is 0 on every task */
+            for(int k = 0; k < 3; k++) KetjuEnergyLedger[k] = 0;
+            KetjuCollisionEnergy = 0;
+            MPI_Reduce(eloc, eglob, 4, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+            KetjuEnergyPending = 0;
+            if(ThisTask == 0) {for(int k = 0; k < 4; k++) cum_energy[k] += eglob[k];}
+        }
+        cum_calls++;
+        const int print_stats = ((cum_calls % 1024) == 0 || All.Ti_Current + max_ti_step >= TIMEBASE); /* rank-uniform */
+        for(int k = 0; k < 8; k++) acc_loc[k] += loc[k];
+        for(int k = 0; k < 2; k++) if(loc_max[k] > acc_max[k]) acc_max[k] = loc_max[k];
+        if(print_stats) { /* integer sums and maxima: deferring the reduction is exact */
+            MPI_Reduce(acc_loc, glob, 8, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+            MPI_Reduce(acc_max, glob_max, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+            for(int k = 0; k < 8; k++) acc_loc[k] = 0;
+            acc_max[0] = acc_max[1] = 0;
+        }
+        if(ThisTask == 0 && print_stats) {
+            cum_regions += glob[0]; cum_ok += glob[1]; cum_failed += glob[2]; cum_big_dE += glob[3];
             for(int k = 0; k < 4; k++) cum_limit[k] += glob[4 + k];
             if((long long)glob_max[0] > cum_max_steps) cum_max_steps = (long long)glob_max[0];
             if(glob_max[1] > cum_max_dE) cum_max_dE = glob_max[1];
-            if((cum_calls % 1024) == 0 || All.Ti_Current + max_ti_step >= TIMEBASE)
-                printf("KETJU STATS: t=%g steps=%lld region-integrations=%lld MSTAR accepted=%lld failed=%lld "
+            printf("KETJU STATS: t=%g steps=%lld region-integrations=%lld MSTAR accepted=%lld failed=%lld "
                        "max-per-region=%lld |dE/E|>1e-4: %lld max|dE/E|=%g limited-moves down=%lld up=%lld "
                        "timestep-regions=%lld set-by-limiting=%lld\n", All.Time, cum_calls, cum_regions,
                        cum_ok, cum_failed, cum_max_steps, cum_big_dE, cum_max_dE, cum_limit[0], cum_limit[1], cum_limit[2], cum_limit[3]);
-            if((cum_calls % 1024) == 0 || All.Ti_Current + max_ti_step >= TIMEBASE) {
+            {
                 /* coupling energy check: if the direct-sum drift is the kick work, the coupling (impulsive external field) dominates;
                  * if it is the MSTAR term, the integrator does. Normalised by |E0| of the direct sum when that is computed. */
                 double norm = (KetjuEtotSet && KetjuEtot0 != 0) ? fabs(KetjuEtot0) : 1;
@@ -2829,6 +2879,11 @@ void ketju_compute_com_quantities(void)
         local_data.push_back(d); local_index.push_back(i);
     }
     int n_local = local_data.size();
+    ketju_member_step_end_init();
+    if((long long)All.Ti_Current > KetjuMemberStepEnd) { /* rank-uniform: no member can end its step here */
+        if(n_local > 0) {printf("KETJU: task %d has %d chain members ending at Ti=%lld past the last region step end %lld\n", ThisTask, n_local, (long long)All.Ti_Current, KetjuMemberStepEnd); endrun(9431);}
+        return;
+    }
     std::vector<int> counts(NTask), byte_counts(NTask), byte_displs(NTask);
     MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
     int n_total = 0;
@@ -2838,6 +2893,7 @@ void ketju_compute_com_quantities(void)
         n_total += counts[t];
     }
     if(n_total == 0) return;
+    KetjuEnergyPending = 1; /* kick work booked below */
     std::vector<ChainMemberData> all_data(n_total);
     MPI_Allgatherv(local_data.data(), n_local * sizeof(ChainMemberData), MPI_BYTE,
                    all_data.data(), byte_counts.data(), byte_displs.data(), MPI_BYTE, MPI_COMM_WORLD);
@@ -2961,7 +3017,7 @@ int ketju_is_particle_in_region(int i)
     return (AllKetjuParticleIndices.find(i) != AllKetjuParticleIndices.end()) ? 1 : 0;
 }
 
-void ketju_mark_regions_stale(void) {} /* regions are rebuilt every step; kept for the domain/merge-split call sites */
+void ketju_mark_regions_stale(void) {KetjuCommCacheStale = 1;} /* rank-uniform call sites; cached communicators are freed at the next find_regions */
 
 /* ============================================================
  *  Phase C: HDF5 output for KETJU diagnostics

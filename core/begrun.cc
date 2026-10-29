@@ -12,6 +12,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#if defined(SGCHEM) || defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+#include "../galaxy_sf/stella_tables_check.h"
+#endif
 
 
 /*! \file begrun.c
@@ -83,6 +86,29 @@ void begrun(void)
 #endif // CHIMES_TURB_DIFF_IONS
 
   read_parameter_file(ParameterFile);	/* ... read in parameters for this run */
+#if defined(SGCHEM) || defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
+  { /* installed tables must be the version these sources expect */
+    int bad = 0;
+    if(ThisTask == 0) {
+      std::vector<std::string> paths;
+#ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
+      std::string st = All.StellarTablesFile; paths.push_back(st);
+      size_t k = st.rfind("stellar_tables_unified.hdf5"); if(k != std::string::npos) {paths.push_back(st.substr(0, k) + "stellar_wind_cumulative.hdf5");}
+#endif
+#ifdef SGCHEM
+#ifdef SGCHEM_FORTRAN
+      std::string cd = "gizmo/cooling/sgchem"; /* hard-wired in the Fortran readers */
+#else
+      const char *dd = getenv("CHEMCXX_DATADIR"); std::string cd = dd ? dd : All.SGCHEMTablesDir;
+#endif
+      for(const char *f : {"energy-table-x.txt", "eh2-table.txt", "H2-cooling-ratios.dat", "wss_z_collis.txt"}) {paths.push_back(cd + "/" + f);}
+#endif
+      bad = stella_tables_verify(paths);
+    }
+    MPI_Bcast(&bad, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if(bad) {endrun(6574);}
+  }
+#endif
 
   mymalloc_init();
 
@@ -2426,6 +2452,12 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.G0;
       id[nt++] = REAL;
 
+#ifndef SGCHEM_FORTRAN
+      strcpy(tag[nt], "SGCHEMTablesDir");
+      addr[nt] = All.SGCHEMTablesDir;
+      id[nt++] = STRING;
+#endif
+
 #if !defined(COSMIC_RAY_FLUID) /* with the CR fluid, zeta comes from e_CR only: the tag is reported as ignored */
       strcpy(tag[nt], "CosmicRayIonRate");
       addr[nt] = &All.CosmicRayIonRate;
@@ -2794,6 +2826,9 @@ void read_parameter_file(char *fname)
                 if(strcmp("ComovingIntegrationOn",tag[i])==0) {continue;}
                 if(strcmp("OutputListOn",tag[i])==0) {continue;}
                 if(strcmp("BufferSize",tag[i])==0) {continue;}
+#if defined(SGCHEM) && !defined(SGCHEM_FORTRAN)
+                if(strcmp("SGCHEMTablesDir",tag[i])==0) {strcpy((char *)addr[i], "gizmo/cooling/sgchem"); printf("Tag %s (%s) not set in parameter file: chemistry tables from %s\n",tag[i],alternate_tag[i],All.SGCHEMTablesDir); continue;}
+#endif
                 /* now move on to the flags we have not addressed already */
                 //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.99*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 /* below more like what is needed for safe runs on Frontera, notoriously picky about memory for the system */

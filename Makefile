@@ -1078,10 +1078,8 @@ ifneq (,$(findstring GALSF_RESOLVEDISM_SAMPLE_IMF,$(CONFIGVARS))$(findstring GAL
 OBJS    += galaxy_sf/resolvedism_imf_sampling.o
 endif
 
-# Stella stellar + SGCHEM tables: built from the stella-tables repo on first compile if missing (scripts/get_stella_tables.sh)
-ifneq (,$(findstring SGCHEM,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_HYBRID_DEFAULTS,$(CONFIGVARS)))
-STELLA_TABLES_DEP = stella_tables
-endif
+# Stella stellar + SGCHEM tables are an installed dependency, not built or fetched by make: install them once with
+# scripts/get_stella_tables.sh (or `make stella_tables`) and give their location by StellarTablesFile / SGCHEMTablesDir.
 
 # KETJU regularized integrator for BH and stellar dynamics
 ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
@@ -1193,10 +1191,10 @@ FFLAGS = $(FOPTIONS) -Icooling/sgchem
 
 # if we have Fortran objects (e.g. SGCHEM, EOS_HELMHOLTZ), link with FC; otherwise use CXX
 ifneq ($(FOBJS),)
-$(EXEC): $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) | $(STELLA_TABLES_DEP) $(KETJU_LIB_DEP)
+$(EXEC): $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) | $(KETJU_LIB_DEP)
 	$(FC) $(OPTIMIZE) $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) $(LIBS) -o $(EXEC)
 else
-$(EXEC): $(OBJS) $(CHEMCXX_OBJS) | $(STELLA_TABLES_DEP) $(KETJU_LIB_DEP)
+$(EXEC): $(OBJS) $(CHEMCXX_OBJS) | $(KETJU_LIB_DEP)
 	$(CXX) $(OPTIMIZE) $(OBJS) $(CHEMCXX_OBJS) $(LIBS) -o $(EXEC)
 endif
 
@@ -1223,7 +1221,7 @@ ketju-integrator/build-kokkos/libmstar.a:
 
 .PHONY: stella_tables
 stella_tables:
-	@./scripts/get_stella_tables.sh
+	@./scripts/get_stella_tables.sh $(STELLA_TABLES_PREFIX)
 
 # every object depends on compile_time_info.cc, so an edit to precompiler_logic.h rebuilds them all
 compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h

@@ -412,6 +412,26 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
 }
 
 
+/* marked cells 2->1, and the ionized-cell count */
+static void resolvedismPI_settle_marks(void)
+{
+    int j, sum_ionized = 0;
+    for(j = 0; j < N_gas; j++) {
+        if(P[j].Type != 0) continue;
+        if(CellP[j].Ionized == 2) {
+            CellP[j].Ionized = 1;
+        }
+        if(CellP[j].Ionized == 1)
+            sum_ionized++;
+    }
+    {
+        int total_ionized = 0;
+        MPI_Reduce(&sum_ionized, &total_ionized, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
+            printf("RESOLVEDISM PI: %d ionized\n", total_ionized);
+    }
+}
+
 void resolvedism_photoionize(void)
 {
     int i, j, k;
@@ -445,6 +465,14 @@ void resolvedism_photoionize(void)
         P[i].Lyman_photons_per_sec = compute_single_star_S_ly(i);
 #endif
     }
+
+    int nslots_tot = 0; /* ionizing sources on all tasks (the slot test below) */
+    {
+        int n_src = 0;
+        for(i = 0; i < NumPart; i++) {if(STELLA_OWNS_STAR(P[i]) && resolvedismPI_base_check(i) && compute_single_star_S_ly(i) > 0) {n_src++;}}
+        MPI_Allreduce(&n_src, &nslots_tot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    }
+    if(nslots_tot == 0) {resolvedismPI_settle_marks(); return;} /* no front to solve or mark anywhere */
 
     /* Allocate per-star driver state */
     PISearchRadius = (double *) mymalloc("PISearchRadius", NumPart * sizeof(double));
@@ -517,7 +545,6 @@ void resolvedism_photoionize(void)
      * stars' histograms (Ionized==2 skip, at zero cost — same multi-star
      * bookkeeping as v1). */
     PRINT_STATUS(" ..photo-ionizing gas around single stars");
-    int nslots_tot = 0; MPI_Allreduce(&nslots, &nslots_tot, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     int iter = 0, max_iter = (int)DMIN(20 + nslots_tot, 1000); /* ID serialization finalizes >=1 star per overlap cluster per pass */
     int incomplete_total = 0;
     do {
@@ -766,21 +793,7 @@ void resolvedism_photoionize(void)
         if(ThisTask == 0 && led_g[0] > 0) {printf("RESOLVEDISM PI LEDGER: t=%g Q=%g recomb=%g ratio=%.4f\n", All.Time, led_g[0], led_g[1], led_g[1] / led_g[0]);}
     }
 #endif
-    int sum_ionized = 0;
-    for(j = 0; j < N_gas; j++) {
-        if(P[j].Type != 0) continue;
-        if(CellP[j].Ionized == 2) {
-            CellP[j].Ionized = 1;
-        }
-        if(CellP[j].Ionized == 1)
-            sum_ionized++;
-    }
-    {
-        int total_ionized = 0;
-        MPI_Reduce(&sum_ionized, &total_ionized, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
-        if(ThisTask == 0)
-            printf("RESOLVEDISM PI: %d ionized\n", total_ionized);
-    }
+    resolvedismPI_settle_marks();
 
     /* Free in LIFO order */
     myfree(PIBinRmin); PIBinRmin = NULL;

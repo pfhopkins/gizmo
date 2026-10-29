@@ -531,6 +531,7 @@ extern struct global_data_all_processes
 #endif
 #endif // CHIMES
 #ifdef SGCHEM
+  char SGCHEMTablesDir[256];    /*!< directory of the installed chemistry tables (C++ backend) */
   double G0;                    /*!< UV radiation field strength in Habing units */
   double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
   double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
