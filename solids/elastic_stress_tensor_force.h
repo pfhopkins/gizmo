@@ -33,18 +33,26 @@
             if(ij_switch==0) {nvt[NUMDIMS*k_v + j_v] = local.Elastic_Stress_Tensor[k_v][j_v];} else {nvt[NUMDIMS*k_v + j_v] = CellP[j].Elastic_Stress_Tensor_Pred[k_v][j_v];}
             norm_m += nvt[NUMDIMS*k_v + j_v]*nvt[NUMDIMS*k_v + j_v];}} // initialize auxiliary array to store for feeding to GSL eigen routine
             if(norm_m > MIN_REAL_NUMBER) {
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(HYDRO_MESHLESS_FINITE_MASS)
+                /* no tensile correction: the sum over principal axes of lambda_k v_k (A.v_k) is exactly S.A */
+                for(j_v=0;j_v<NUMDIMS;j_v++) {
+                    double S_dot_A = 0; for(k_v=0;k_v<NUMDIMS;k_v++) {S_dot_A += nvt[NUMDIMS*j_v + k_v] * FVec[k_v];}
+                    cmag[j_v] += wtfac * S_dot_A * All.cf_a2inv;
+                }
+#else
+                /* the tensile correction acts on the positive principal stresses only, so this path needs the eigenpairs */
                 gsl_matrix_view M = gsl_matrix_view_array(nvt,NUMDIMS,NUMDIMS); gsl_vector *eigvals = gsl_vector_alloc(NUMDIMS); gsl_matrix *eigvecs = gsl_matrix_alloc(NUMDIMS,NUMDIMS);
                 gsl_eigen_symmv_workspace *v = gsl_eigen_symmv_alloc(NUMDIMS); gsl_eigen_symmv(&M.matrix, eigvals, eigvecs, v);
                 double eigenval_k=0, eigenvec_k[NUMDIMS]={0}, A_dot_v=0, prefac=0;
                 for(k_v=0;k_v<NUMDIMS;k_v++) {eigenval_k = gsl_vector_get(eigvals, k_v); A_dot_v = 0;
                     for(j_v=0;j_v<NUMDIMS;j_v++) {eigenvec_k[j_v] = gsl_matrix_get(eigvecs, j_v, k_v); A_dot_v += FVec[j_v]*eigenvec_k[j_v];}
                     prefac = wtfac * eigenval_k * (A_dot_v*All.cf_a2inv); 
-#if !defined(HYDRO_MESHLESS_FINITE_VOLUME) && !defined(HYDRO_MESHLESS_FINITE_MASS)
                     if(eigenval_k > 0) {prefac *= 1. - tensile_correction_factor;} /* for SPH, we want to apply the tensile correction to all positive eigenvalues */
-#endif
                     if(!isnan(eigenval_k)) {for(j_v=0;j_v<NUMDIMS;j_v++) {cmag[j_v] += prefac * eigenvec_k[j_v];}} // evaluate S.Face = S.[sum of eigenvalues times projection on Face onto each eigenvector]
                 }
-                gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs);} // free memory
+                gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs); // free memory
+#endif
+            }
         }
         for(j_v=0;j_v<3;j_v++) {cmag[j_v] -= wt_rt * kernel.dp[j_v]*All.cf_atime + wt_t * kernel.dv[j_v]/All.cf_atime;} // HLL-type fluxes
 
