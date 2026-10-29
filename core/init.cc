@@ -1012,7 +1012,7 @@ void init(void)
 
 
     density();
-#ifdef CHEMCOOL
+#if defined(CHEMCOOL) && defined(EXPERIMENTAL_SNAPSHOT_RESTART_TEMP_FROM_CHEMISTRY)
     if(RestartFlag == 2) {for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].Temp = do_chemcool_step(i, 0, 0, 2);}}} /* snapshots carry no Temp: derive it before the first tree build reads it */
 #endif
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
