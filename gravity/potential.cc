@@ -40,7 +40,8 @@ void compute_potential(void)
     {
         PRINT_STATUS("Tree construction");
         CPU_Step[CPU_MISC] += measure_time();
-        rearrange_particle_sequence();
+        if(domain_extent_outgrown()) {domain_Decomposition(0, 0, 0);} /* as in gravity_tree: never key a particle outside the extent */
+        rearrange_particle_sequence(1); /* the tree is rebuilt just below */
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time();
         force_treebuild(NumPart, NULL);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time();

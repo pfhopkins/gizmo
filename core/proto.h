@@ -318,6 +318,7 @@ int io_compare_P_ID(const void *a, const void *b);
 int io_compare_P_GrNr_SubNr(const void *a, const void *b);
 void drift_particle(int i, integertime time1);
 double drift_divv_factor(int i, double dt_drift);
+double particle_motion_speed_bound(int i);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
@@ -915,11 +916,13 @@ void prepare_decouple(void);
 void read_ic(char *fname);
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
-void rearrange_particle_sequence(void);
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
 void force_validate_tree_links(const char *tag);
 void force_tree_check_walkable(const char *tag);
 int domain_any_local_particle_escaped(void);
+int domain_particle_outside_extent(int i);
+int domain_extent_outgrown(void);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
 #endif
@@ -1176,6 +1179,7 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 #ifdef SINGLE_STAR_TIMESTEPPING
 void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
 void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
+double binary_relative_speed_bound(int i);
 double gravfac(double r, double mass);
 double gravfac2(double r, double mass);
 void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);

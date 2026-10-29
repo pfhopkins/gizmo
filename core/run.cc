@@ -272,6 +272,9 @@ void run(void)
 #endif
 
         compute_hydro_densities_and_forces();	/* densities, gradients, & hydro-accels for synchronous particles */
+#ifdef TREE_INTEGRITY_AUDITS
+        force_tree_walk_audit("forces"); /* the bounds this step's gravity and hydro walks just used */
+#endif
 
 #ifdef PARTICLE_MERGE_SPLIT_EVERY_TIMESTEP // do merge/split routines every single timestep - need to do it here if we didn't do it during domain decomp on a coarse timestep
         if(!reconstructed_tree)
