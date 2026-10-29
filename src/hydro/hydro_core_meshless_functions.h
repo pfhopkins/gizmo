@@ -377,7 +377,7 @@ void hydro_core_meshless_compute_pair(
             if(Fluxes.rho < 0) {
                 Fluxes.CosmicRayAlfvenEnergy[k][kAlf] += local.CosmicRayAlfvenEnergy[k][kAlf] * Fluxes.rho / local.Mass;
             } else {
-                Fluxes.CosmicRayAlfvenEnergy[k][kAlf] += CellP[j].CosmicRayAlfvenEnergy[k][kAlf] * Fluxes.rho / local.Mass;
+                Fluxes.CosmicRayAlfvenEnergy[k][kAlf] += CellP[j].CosmicRayAlfvenEnergyPred[k][kAlf] * Fluxes.rho / P[j].Mass;
             }
         }
 #endif

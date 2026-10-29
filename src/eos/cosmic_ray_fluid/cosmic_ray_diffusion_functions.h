@@ -137,12 +137,14 @@ void cosmic_ray_diffusion_compute_pair(
                 if(flux_tmp[k_i_to_j] * dt_hydrostep < -0.5) { flux_tmp[k_i_to_j] = -0.5 / dt_hydrostep; }
                 Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_j_to_i] += flux_tmp[k_j_to_i] * CellP[j].CosmicRayAlfvenEnergyPred[k_CRegy][k_j_to_i];
                 Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k_i_to_j] += flux_tmp[k_i_to_j] * local.CosmicRayAlfvenEnergy[k_CRegy][k_i_to_j];
-                for(int k=0; k<2; k++) { out.DtCosmicRayAlfvenEnergy[k_CRegy][k] += Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k]; }
             }
 #endif
         }
 
         out.DtCosmicRayEnergy[k_CRegy] += Fluxes.CosmicRayPressure[k_CRegy];
+#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
+        for(int k=0; k<2; k++) { out.DtCosmicRayAlfvenEnergy[k_CRegy][k] += Fluxes.CosmicRayAlfvenEnergy[k_CRegy][k]; }
+#endif
 #if defined(CRFLUID_EVOLVE_SPECTRUM)
         double CR_number_to_energy_ratio = 0;
         if(Fluxes.CosmicRayPressure[k_CRegy] > 0) {
