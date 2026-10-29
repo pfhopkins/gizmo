@@ -120,7 +120,7 @@ void cosmic_ray_diffusion_compute_pair(
                 if(sign_c0 < 0) { thold_hll *= 0.001; }
                 if(fabs(cmag) > thold_hll) { cmag *= thold_hll / fabs(cmag); }
                 cmag /= dt_hydrostep;
-                Fluxes.CosmicRayPressure[k_CRegy] = cmag;
+                Fluxes.CosmicRayPressure[k_CRegy] += cmag; /* on top of any advective flux from the Riemann solution (MFV) */
             }
 
 #ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
