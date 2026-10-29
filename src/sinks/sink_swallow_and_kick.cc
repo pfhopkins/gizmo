@@ -862,7 +862,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         P[j].TimestepDilationFactor = return_timestep_dilation_factor(j, P);
 #endif
 #ifdef TURB_DRIVING
-        turb_accel_refresh_for_new_step(j, 0);
+        turb_accel_refresh_for_new_step(j, -1);
 #endif
 
         /* condition number, smoothing length, and density */
