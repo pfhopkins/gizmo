@@ -84,6 +84,11 @@ GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS
 #CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY % no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
 #GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION % shock-tracked SN dust destruction
 #GALSF_RESOLVEDISM_DUST_NO_MCKEE         % disable McKee SN dust destruction
+#EXPERIMENTAL_DUST_HU_MODEL              % PHYSICS: Hu+19/23/26 dust (MRN sputtering with v_rel, drag, growth, MW anchor 4.74e-3, seed from C/Si); replaces the default dust physics  [req DUST]
+#GALSF_RESOLVEDISM_DUST_SIZE_BINS=8      % MRN log size bins with own v_rel (Hu+19); default 1 (a_eff=0.035 um, Hu+26)  [req EXPERIMENTAL_DUST_HU_MODEL]
+#GALSF_RESOLVEDISM_DUST_NO_BETATRON       % drop betatron acceleration of dust v_rel (Hu+26 unmagnetized)  [req EXPERIMENTAL_DUST_HU_MODEL]
+#GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION % McKee89 swept-mass SN dust destruction (coarse cells only; double counts resolved sputtering)  [req EXPERIMENTAL_DUST_HU_MODEL]
+#GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION % inject Choban+22 SN/Ia condensation dust into the hot deposit (off: Hu+23 has no SN dust)  [req EXPERIMENTAL_DUST_HU_MODEL]
 #GALSF_RESOLVEDISM_DUST_SELFTEST         % TEST-ONLY: dust physics self-test dump
 
 ########## Cosmic rays ##########

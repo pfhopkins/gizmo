@@ -1049,7 +1049,11 @@ endif
 
 # dust evolution for resolved ISM
 ifeq (GALSF_RESOLVEDISM_DUST,$(findstring GALSF_RESOLVEDISM_DUST,$(CONFIGVARS)))
+ifeq (EXPERIMENTAL_DUST_HU_MODEL,$(findstring EXPERIMENTAL_DUST_HU_MODEL,$(CONFIGVARS)))
+OBJS    += galaxy_sf/resolvedism_dust_hu.o
+else
 OBJS    += galaxy_sf/resolvedism_dust.o
+endif
 endif
 
 # stellar evolution tables for single-star feedback

@@ -115,7 +115,7 @@ double resolvedism_radp_starside_dp_code(int i)
         double dt_cgs = dt * UNIT_TIME_IN_CGS;
 
 #ifdef GALSF_RESOLVEDISM_DUST
-        double DGR = P[i].DGR_around / RESOLVEDISM_DGR_SOLAR_ABS; /* kernel-avg dust around the star, solar units */
+        double DGR = P[i].DGR_around / RESOLVEDISM_DGR_MW_ABS; /* kernel-avg dust around the star, MW units */
 #else
         /* D_REF UNIFICATION (2026-07-28): was flat All.DGRnormalized (=MW-like)
          * regardless of Z -> at 0.1 Zsun the star-side f_abs was ~10x too dusty
@@ -929,7 +929,7 @@ void resolvedism_fb_momentum_calc(int fb_loop_iteration)
  *
  * This REPLACES the star-side DIRECT term (that block is #ifdef'd out above);
  * the IR-trapping boost stays in the star-side path. DGR is taken exactly as the
- * momentum path / tree cap use it (DUST -> P[i].DGR_around/0.01, else the global
+ * momentum path / tree cap use it (DUST -> P[i].DGR_around/RESOLVEDISM_DGR_MW_ABS, else the global
  * normalized DGR). Called once per step from resolvedism_inject_fb_energy(),
  * after the tree walk has finalized the fluxes. ========================== */
 void resolvedism_radpressure_treerad(void)
@@ -1006,7 +1006,7 @@ void resolvedism_radpressure_treerad(void)
          * the per-cell radp absorption to use the SAME dust cross-section the tree
          * attenuation + the photon-conservation cap (gravtree.cc:690-693) used, so we
          * never absorb more momentum than the flux was attenuated by. NOTE: the
-         * star-side radp (line ~109) uses P[i].DGR_around/0.01 — but DGR_around is a
+         * star-side radp (line ~109) uses P[i].DGR_around/RESOLVEDISM_DGR_MW_ABS — but DGR_around is a
          * per-STAR kernel field (density.cc:399, DO_DENSITY_AROUND_NONGAS_PARTICLES)
          * and is NOT meaningful on gas cells; using it here would decouple absorption
          * from the tree's attenuation. */

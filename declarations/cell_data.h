@@ -73,6 +73,9 @@ extern struct gas_cell_data
     
 #ifdef GALSF_RESOLVEDISM_DUST
     MyFloat Dust[NUM_RESOLVEDISM_DUST];  /*!< dust mass fractions: [0]=C, [1]=O_sil, [2]=Mg_sil, [3]=Si_sil, [4]=Fe_sil (FeMgSiO4 stoichiometry) */
+#ifdef EXPERIMENTAL_DUST_HU_MODEL
+    MyFloat DustVrel[NUM_RESOLVEDISM_DUST_BINS][3];  /*!< dust-gas relative velocity per size bin [km/s] */
+#endif
 #endif
 
 #ifdef MAGNETIC

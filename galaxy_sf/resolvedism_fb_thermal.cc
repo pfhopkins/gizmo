@@ -98,7 +98,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
             if(k >= ELEM_C) metal_mass_solar += y_k;
         }
         in->MetalMass = metal_mass_solar / UNIT_MASS_IN_SOLAR;
-#ifdef GALSF_RESOLVEDISM_DUST
+#if defined(GALSF_RESOLVEDISM_DUST) && (!defined(EXPERIMENTAL_DUST_HU_MODEL) || defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION))
         {
             double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
             for(int kk = 0; kk < STBL_NELEM; kk++) metal_yields_solar[kk] = in->ElemYields[kk] * UNIT_MASS_IN_SOLAR;
@@ -192,7 +192,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
     }
 #endif
 
-#ifdef GALSF_RESOLVEDISM_DUST
+#if defined(GALSF_RESOLVEDISM_DUST) && (!defined(EXPERIMENTAL_DUST_HU_MODEL) || defined(GALSF_RESOLVEDISM_DUST_SN_EJECTA_CONDENSATION)) /* Hu model: off unless asked (Hu+23 has no SN dust) */
     {
         double metal_yields_solar[STBL_NELEM], dust_yields_solar[NUM_RESOLVEDISM_DUST];
         for(k = 0; k < STBL_NELEM; k++) metal_yields_solar[k] = in->ElemYields[k] * UNIT_MASS_IN_SOLAR;
@@ -558,7 +558,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                 }
 
 #ifdef GALSF_RESOLVEDISM_DUST
-#if !defined(GALSF_RESOLVEDISM_DUST_NO_MCKEE) && !defined(GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION)
+#if (!defined(EXPERIMENTAL_DUST_HU_MODEL) && !defined(GALSF_RESOLVEDISM_DUST_NO_MCKEE) && !defined(GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION)) || (defined(EXPERIMENTAL_DUST_HU_MODEL) && defined(GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION))
                 /* SN shock destruction of pre-existing dust.
                  * REGIME NOTE (2026-07-05): McKee 1989 is an SNR-lifetime-integrated
                  * estimator for an UNRESOLVED remnant. Stella resolves the Sedov phase,
@@ -566,7 +566,8 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                  * -> potential double-count. Also: per-cell application saturates at
                  * frac=1 in ~Msun cells (kernel holds far less than the 984*wk Msun the
                  * formula wants to shock). GALSF_RESOLVEDISM_DUST_NO_MCKEE disables this
-                 * hook for the destruction-accounting A/B test (dust_mckee_on/off). */
+                 * hook for the destruction-accounting A/B test (dust_mckee_on/off).
+                 * EXPERIMENTAL_DUST_HU_MODEL: off unless GALSF_RESOLVEDISM_DUST_SN_SWEPT_MASS_DESTRUCTION. */
                 if(local.Esne > 0) {
                     double E_into_cell = wk * local.Esne;
                     double Rho_j;
@@ -580,7 +581,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         }
                     }
                 }
-#endif /* !GALSF_RESOLVEDISM_DUST_NO_MCKEE */
+#endif
                 /* Inject new dust from SN/Ia ejecta */
                 if(local.Mej > 0) {
                     double dM = wk * local.Mej;

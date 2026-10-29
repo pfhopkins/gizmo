@@ -30,7 +30,7 @@
  * from the chemistry solver, called after cooling_parent_routine() each timestep.
  */
 
-#ifdef GALSF_RESOLVEDISM_DUST
+#if defined(GALSF_RESOLVEDISM_DUST) && !defined(EXPERIMENTAL_DUST_HU_MODEL) /* Hu model: resolvedism_dust_hu.cc */
 
 /* Silicate mass fractions within FeMgSiO4 (M_w = 172 amu) */
 #define DUST_SIL_FRAC_O  (64.0 / 172.0)
@@ -435,4 +435,4 @@ double resolvedism_dust_sn_destruction_frac(double rho_code, double E_sne_code, 
 }
 
 
-#endif /* GALSF_RESOLVEDISM_DUST */
+#endif /* GALSF_RESOLVEDISM_DUST && !EXPERIMENTAL_DUST_HU_MODEL */

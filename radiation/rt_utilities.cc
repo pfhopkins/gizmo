@@ -174,7 +174,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
 #ifdef GALSF_RESOLVEDISM_DUST
     if(i>=0) { /* use per-particle DGR from evolved dust fields instead of metallicity-based estimate */
         double DGR_actual = 0; int kd; for(kd=0;kd<NUM_RESOLVEDISM_DUST;kd++) {DGR_actual += CellP[i].Dust[kd];}
-        Zfac = 1.0; dust_to_metals_vs_standard = DGR_actual / 0.01; /* DGR / DGR_solar */
+        Zfac = 1.0; dust_to_metals_vs_standard = DGR_actual / RESOLVEDISM_DGR_MW_ABS; /* DGR / DGR_MW */
     }
 #endif
 
