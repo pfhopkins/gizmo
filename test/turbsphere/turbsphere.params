@@ -16,7 +16,7 @@ TimeLimitCPU                86400
 CpuTimeBetRestartFile       7200
 
 TimeBegin                   0
-TimeMax                     20     % 4 t_eddy, t_eddy = TurbDrive_MaxWavelength / TurbDrive_ApproxRMSVturb = 5
+TimeMax                     20     % 4 t_cross, t_cross = 2R / TurbDrive_ApproxRMSVturb = 5
 MaxSizeTimestep             0.05
 MinSizeTimestep             1e-12
 
@@ -59,10 +59,11 @@ SofteningBndryMaxPhys       1e-3
 
 %---- Turbulent driving (TURB_DRIVING): solenoidal, parabolic spectrum on wavelengths 2R/3 - 2R, peak at R
 TurbDrive_ApproxRMSVturb            2.0             % target 3D v_rms within 2R: Mach 10 at c_s = 0.2 km/s
-TurbDrive_MaxWavelength             10.0            % 2R, the cloud diameter
-TurbDrive_MinWavelength             3.3333333333    % 2R/3
+TurbDrive_MaxWavelength             5.0             % R: the Lane et al. (2022) band. Modes up to 2R torque the whole cloud and spin it up
+TurbDrive_MinWavelength             1.25            % R/4
 TurbDrive_DrivingSpectrum           1               % parabola, zero at kmin and kmax
 TurbDrive_SolenoidalFraction        1.0
-TurbDrive_CoherenceTime             2.5             % R / v_rms: turnover time at the peak wavelength
+TurbDrive_CoherenceTime             2.5             % R / v_rms = t_cross/2, as MakeCloud
 TurbDrive_TimeBetweenTurbUpdates    0.5             % t_cross/10, as STARFORGE stirring runs use with the lazy force
 TurbDrive_RandomNumberSeed          42
+TurbDrive_PID_Kp                    1.0             % the default 2 alternates update to update with this band and cadence

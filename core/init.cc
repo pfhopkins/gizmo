@@ -748,6 +748,10 @@ void init(void)
 #ifdef FB_G17_BOUNDARY_INJECTION
         CellP[i].FBinjFlag = 0; /* gizmo2017-mimicry FB-receiver flag starts clear */
 #endif
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+        CellP[i].KernelDensityForVolumeRelaxation = 0; /* set by the first density pass */
+        if(RestartFlag == 2) {CellP[i].Density_ExplicitInt = CellP[i].Density;} /* a snapshot's Density is the integrated density: continue it */
+#endif
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         CellP[i].MaxKineticEnergyNgb = 0;
 #endif
@@ -1113,12 +1117,10 @@ void init(void)
         }
 #endif
 #if defined(EOS_ELASTIC)
-        if(RestartFlag != 1)
-        {
-            CellP[i].Dt_Elastic_Stress_Tensor = CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor = {};
-        } else {
-            CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
-        }
+        /* the deviatoric stress is evolved state: it comes from the restart files, a snapshot, or an HDF5 IC's
+           StressTensor block (zero if absent); a binary IC does not carry it */
+        if(RestartFlag == 0 && All.ICFormat != 3) {CellP[i].Elastic_Stress_Tensor = {};}
+        CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
 #endif
         CellP[i].DtInternalEnergy = 0;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)

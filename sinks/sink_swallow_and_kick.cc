@@ -408,7 +408,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         double v_kick=All.Sink_outflow_velocity; Vec3<double> dir={dpos[0],dpos[1],dpos[2]}; // DAA: default direction is radially outwards
 #if defined(COSMIC_RAY_FLUID) && defined(SINK_COSMIC_RAYS) /* inject cosmic rays alongside wind injection */
                         double dEcr = All.Sink_CosmicRay_Injection_Efficiency * Mass_j * (All.Sink_accreted_fraction/(1.-All.Sink_accreted_fraction)) * C_LIGHT_CODE*C_LIGHT_CODE;
-                        inject_cosmic_rays(dEcr,All.Sink_outflow_velocity,5,j,dir.data_ptr(), P, CellP);
+                        inject_cosmic_rays(dEcr,All.Sink_outflow_velocity,5,j,dir.data_ptr(), CellP, -1);
 #endif
 #if (SINK_WIND_KICK < 0)  /* DAA: along polar axis defined by angular momentum within Kernel (we could add finite opening angle) work out the geometry w/r to the plane of the disk */
                         if(dot(dir,J_dir) > 0){dir=J_dir;} else {dir=-J_dir;}
@@ -1069,6 +1069,10 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         CellP[j].dMass = 0; CellP[j].DtMass = 0; CellP[j].MassTrue = P[j].Mass; CellP[j].GravWorkTerm = {};
+#endif
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+        CellP[j].Density_ExplicitInt = 0; /* unset: the first density pass starts it from this cell's own kernel density, not the template's */
+        CellP[j].KernelDensityForVolumeRelaxation = 0; /* set by this cell's first density pass */
 #endif
 #if defined(ADAPTIVE_GRAVSOFT_FORGAS) || defined(ADAPTIVE_GRAVSOFT_FORALL)
         P[j].AGS_zeta = 0;

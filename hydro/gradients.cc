@@ -903,7 +903,7 @@ void hydro_gradient_calc(void)
                     dbmax = DMIN(fabs(dbmax+dd),fabs(dbmax-dd));
                     for(k1=0;k1<3;k1++) {dbgrad += 2.*dh * fabs(b0*CellP[i].Gradients.B[k][k1]);}
                 }
-                dbmax /= dbgrad;
+                dbmax = (dbgrad > 0) ? dbmax / dbgrad : MAX_REAL_NUMBER; /* no field-gradient term (e.g. B=0): only the ordinary slope limit below applies */
                 for(k1=0;k1<3;k1++)
                 {
                     double d_abs = CellP[i].Gradients.B[k1].norm_sq();

@@ -201,6 +201,31 @@
 
 
 
+/* free-surface volume correction (HYDRO_KERNEL_SURFACE_VOLCORR): the cell volume factor is SLOPE * f_imb + OFFSET, held between
+   FLOOR and 1. 3D: the fits of Reinhardt & Stadel 2017 (arXiv:1701.08296, Fig. 3) for the cubic spline and the Wendland C2 kernel.
+   2D: the same form fitted to planar free surfaces of hexagonal lattices (cubic spline with 20 neighbours, Wendland C2 with 32; the
+   floor is the factor a 90-degree corner needs). Other kernels use the Wendland C2 fit; 1D uses the 3D one. */
+#ifdef HYDRO_KERNEL_SURFACE_VOLCORR
+#if (NUMDIMS == 2) && (KERNEL_FUNCTION == 3)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.33516)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.03536)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.40)
+#elif (NUMDIMS == 2)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.47918)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.02734)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.37)
+#elif (KERNEL_FUNCTION == 3)
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.39701)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.02918)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.4)   /* the plateau of the cubic-spline fit (reached at f_imb ~ 0.26) */
+#else
+#define KERNEL_SURFACE_VOLCORR_SLOPE   (-2.52444)
+#define KERNEL_SURFACE_VOLCORR_OFFSET  (1.0259)
+#define KERNEL_SURFACE_VOLCORR_FLOOR   (0.344301)
+#endif
+#endif
+
+
 static inline void kernel_hinv(double h, double *hinv, double *hinv3, double *hinv4)
 {
   *hinv = 1.0 / h;

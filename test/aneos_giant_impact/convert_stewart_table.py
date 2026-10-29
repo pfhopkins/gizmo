@@ -17,6 +17,16 @@ Output format (GIZMO SESAME):
   ...
   rho T P u S cs   (CGS: g/cm^3, K, dyn/cm^2, erg/g, erg/g/K, cm/s)
   ...  (rho-slow, T-fast ordering: for each rho, loop over all T)
+  lowest_valid_T_index
+  k[0] ... k[nrho-1]   (per density: index of the lowest temperature row the EOS is valid at)
+
+Invalid region: in these tables, states where ANEOS returned a negative entropy
+(the cold, tensile corner below each density's lowest valid temperature) had
+their energy replaced by a sentinel and their other values by filler, and the
+negative entropy survives as the marker (entropy is written signed). Those rows
+are a contiguous block at the bottom of every density column; the converter
+writes, per density, the lowest kept row above that block, and GIZMO treats it
+as the lower edge of the table at that density.
 """
 
 import numpy as np
@@ -55,8 +65,24 @@ def read_stewart_table(fname):
     return rho, T, data, nrho, nT
 
 
-def downsample(rho, T, data, target_nrho, target_nT):
-    """Downsample by picking evenly-spaced indices in log space."""
+def lowest_valid_rows(data):
+    """per density column, the index of the first row above the block of negative-entropy rows"""
+    bad = data[:, :, 3] < 0  # [iT, irho]
+    nT, nrho = bad.shape
+    low = np.zeros(nrho, dtype=int)
+    for i in range(nrho):
+        rows = np.where(bad[:, i])[0]
+        if len(rows) == 0: continue
+        if not bad[:rows[-1] + 1, i].all():
+            raise ValueError(f"density column {i}: the negative-entropy rows are not one block at the bottom of the column")
+        low[i] = rows[-1] + 1
+    return low
+
+
+def downsample(rho, T, data, low, target_nrho, target_nT):
+    """Downsample by keeping evenly spaced indices of the source axes (the source axes are
+    themselves irregular, so the kept points are too; GIZMO reads any strictly increasing axes).
+    Each kept density's lowest valid row becomes the first kept row at or above it."""
     nrho_orig, nT_orig = len(rho), len(T)
 
     idx_rho = np.unique(np.linspace(0, nrho_orig - 1, target_nrho).astype(int))
@@ -65,11 +91,12 @@ def downsample(rho, T, data, target_nrho, target_nT):
     rho_ds = rho[idx_rho]
     T_ds = T[idx_T]
     data_ds = data[np.ix_(idx_T, idx_rho)]  # data is [iT, irho, 4]
+    low_ds = np.minimum(np.searchsorted(idx_T, low[idx_rho]), len(idx_T) - 2)
 
-    return rho_ds, T_ds, data_ds
+    return rho_ds, T_ds, data_ds, low_ds
 
 
-def write_gizmo_sesame(fname, mat_id, rho, T, data):
+def write_gizmo_sesame(fname, mat_id, rho, T, data, low):
     """Write GIZMO SESAME format. data is [nT, nrho, 4] with (u, P, cs, S) in SI."""
     nrho, nT = len(rho), len(T)
 
@@ -94,10 +121,13 @@ def write_gizmo_sesame(fname, mat_id, rho, T, data):
 
                 P_cgs = max(P_si * PA_TO_DYNCM2, 1e-30)
                 u_cgs = max(u_si * JKG_TO_ERGG, 1e-30)
-                S_cgs = max(S_si * JKKG_TO_ERGKG, 1e-30)
+                S_cgs = S_si * JKKG_TO_ERGKG   # signed: the entropy zero point is a convention, and negative marks the invalid region
                 cs_cgs = max(cs_si * MS_TO_CMS, 1e-30)
 
                 f.write(f"{r_cgs:.10e} {t:.10e} {P_cgs:.10e} {u_cgs:.10e} {S_cgs:.10e} {cs_cgs:.10e}\n")
+
+        f.write("lowest_valid_T_index\n")
+        f.write(" ".join(str(int(k)) for k in low) + "\n")
 
     print(f"Wrote {fname}: mat_id={mat_id}, {nrho}x{nT} grid")
 
@@ -106,12 +136,14 @@ def convert(input_file, output_file, mat_id, target_nrho=200, target_nT=200):
     print(f"Reading {input_file}...")
     rho, T, data, nrho, nT = read_stewart_table(input_file)
     print(f"  Original grid: {nrho} x {nT}")
+    low = np.minimum(lowest_valid_rows(data), nT - 2)
 
     if target_nrho < nrho or target_nT < nT:
-        rho, T, data = downsample(rho, T, data, target_nrho, target_nT)
+        rho, T, data, low = downsample(rho, T, data, low, target_nrho, target_nT)
         print(f"  Downsampled to: {len(rho)} x {len(T)}")
+    print(f"  lowest valid T at the median density {T[low[len(rho) // 2]]:.4g} K, highest lowest-valid T {T[low.max()]:.4g} K")
 
-    write_gizmo_sesame(output_file, mat_id, rho, T, data)
+    write_gizmo_sesame(output_file, mat_id, rho, T, data, low)
 
 
 if __name__ == "__main__":

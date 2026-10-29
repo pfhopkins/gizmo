@@ -17,6 +17,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 from matplotlib import pyplot as plt
+from matplotlib import ticker
 
 from gizmo.test import build_and_run_test, default_mpi_ranks, variant_output_dir, variant_suffix
 from gizmo.units import UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_PER_S
@@ -24,14 +25,15 @@ from gizmo.units import UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_P
 GAMMA = 1.001
 CS = 0.2  # isothermal sound speed, km/s
 MACH_TARGET = 10.0
-T_EDDY = 5.0  # TurbDrive_MaxWavelength / TurbDrive_ApproxRMSVturb, the loop's unit of time
+T_EDDY = 5.0  # crossing time: box side (turbulent_box) or cloud diameter (turbsphere) over the target v_rms
 T_SETTLED = 2 * T_EDDY  # start of the window the steady-state checks use
 
 MAX_MEAN_ERROR = 0.03  # |<Mach>/target - 1| over the settled window
 MAX_SETTLED_DEVIATION = 0.1  # max |Mach/target - 1| at any settled snapshot
 MAX_OVERSHOOT = 0.1  # max Mach/target - 1 over the whole run, including spin-up from rest
 
-VARIANTS = {"hydro": (), "mhd": ("MAGNETIC",)}
+# MHD with constrained gradients at the level STARFORGE runs use (SINGLE_STAR_STARFORGE_DEFAULTS turns it on)
+VARIANTS = {"hydro": (), "mhd": ("MAGNETIC", "MHD_CONSTRAINED_GRADIENT=1")}
 # Lazy force: TurbAccel is recomputed only on driving updates, the way STARFORGE stirring runs use it,
 # with the update cadence they use, t_cross/10 (t_cross = TurbDrive_MaxWavelength / v_rms = T_EDDY)
 LAZY_FLAG = "TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE"
@@ -127,6 +129,10 @@ def plot(t, mach, beta, log, fname, r_half=None):
     axes[0].set_ylabel("Mach")
     axes[0].legend(frameon=False)
     axes[1].set_yscale("log")
+    if log.size and log[2].max() < 10 * log[2].min():  # under a decade, log ticks leave most of the axis unlabeled
+        axes[1].yaxis.set_major_locator(ticker.MaxNLocator(5))
+        axes[1].yaxis.set_major_formatter(ticker.ScalarFormatter())
+        axes[1].yaxis.set_minor_locator(ticker.NullLocator())
     axes[1].set_ylabel("driving gain")
     if mhd:
         axes[2].semilogy(t / T_EDDY, beta, "o-", color="k", ms=3, lw=0.8)
