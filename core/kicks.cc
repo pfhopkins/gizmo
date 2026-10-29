@@ -341,21 +341,29 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 }}
 #endif
 
+            double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none) */
+#ifdef EOS_ANEOS
+            {double rho_eos = CellP[i].Density;
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+            if(mode == 1) {rho_eos = CellP[i].Density_ExplicitInt;} /* the density the equation of state is evaluated at after this kick (assigned below) */
+#endif
+            u_floor = lowest_valid_internal_energy(CellP[i].CompositionType, rho_eos);}
+#endif
 #ifdef RADTRANSFER /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal, re-distribute the energy that would have taken us negative in gas back into radiation */
             int kfreq; double erad_tot=0,emin=0,enew=0,demin=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE;  for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma[kfreq];}
             if(erad_tot > 0) // do some checks if this helps or hurts (identical setup in predict) - seems relatively ok for now, in new form
             {
-                demin=0.025*CellP[i].InternalEnergy; emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
+                demin=DMAX(0.025*CellP[i].InternalEnergy, u_floor); emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
                 dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin;}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergy = dEnt; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma[kfreq] *= 1 + dErad/erad_tot;}
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
                 rt_diag_sc(RT_DIAG_SC_KICK_DERAD, dErad);
 #endif
             } else {
-                if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
+                CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
             }
 #else
-            if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
+            CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
 #endif
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
