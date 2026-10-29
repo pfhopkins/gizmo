@@ -846,11 +846,14 @@ void open_outputfiles(void)
       fprintf(FdENERGYinfo,"%s   (18) E_CR_shock_cumul[erg] (CR energy injected at shocks)\n",prefix_char);
 #endif
 #ifdef MAGNETIC
-      fprintf(FdENERGYinfo,"%s   then E_B[erg] magnetic energy (not in (8)), E_floor_cumul[erg] (kick u-limiter du > -u/2 and MinGasTemp floor), E_MHD_num_cumul[erg] (Powell/Dedner terms and the -B^2/2 dV/dt the u-equation omits)\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   then E_B[erg] magnetic energy (not in (8)), E_floor_cumul[erg] (kick u-limiter du > -u/2 and MinGasTemp floors), E_MHD_num_cumul[erg] (hydro/MHD energy change booked in the kicks: Powell/Dedner terms and the -B^2/2 dV/dt the u-equation omits)\n",prefix_char);
       fprintf(FdENERGYinfo,"%s   residual = (8)+E_B-[t=0] + (9) - (12) + (14) - E_floor_cumul - E_MHD_num_cumul (+ CR terms with COSMIC_RAY_FLUID)\n",prefix_char);
 #endif
 #ifndef MAGNETIC
-      fprintf(FdENERGYinfo,"%s   (last) E_floor_cumul[erg] kick u-limiter (du > -u/2) and MinGasTemp floor; residual = (8)-(8)[0]+(9)-(12)+(14)-(last)\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s   then E_floor_cumul[erg] kick u-limiter (du > -u/2) and MinGasTemp floors; residual = (8)-(8)[0]+(9)-(12)+(14)-E_floor_cumul\n",prefix_char);
+#endif
+#ifdef COSMIC_RAY_FLUID
+      fprintf(FdENERGYinfo,"%s   (last) E_CR_clip_cumul[erg] (CR energy added by the transport-step cap and zero floors); CR terms in residual: +E_CR-[t=0] + (17) - E_CR_clip_cumul\n",prefix_char);
 #endif
   }
 #endif

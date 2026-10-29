@@ -833,6 +833,7 @@ extern double CumulPIHeatErg;                         /* cumulative subgrid-PI h
 extern double PIHeatPendingErg, PIHeatPendingCells;   /* PI heating not yet written to FeedbackBudget */
 #ifdef COSMIC_RAY_FLUID
 extern double CumulCRLossEnergy;                      /* CR energy removed by the loss operator on this rank [code energy units] */
+extern double CumulCRClipEnergy;                      /* CR energy added by the transport-step cap and zero floor on this rank [code energy units] */
 #if defined(CRFLUID_INJECTION_AT_SHOCKS) && defined(GALSF_RESOLVEDISM)
 extern double CumulCRShockEnergy;                     /* CR energy injected at shocks on this rank [code energy units] */
 #endif
@@ -850,6 +851,7 @@ extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by st
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 extern double CumulFeedbackMetals;   /* cumulative metals returned to gas [Msun] */
+extern double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass] */
 extern int CumulSNe, CumulAGB, CumulIa; /* cumulative event counts */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)
