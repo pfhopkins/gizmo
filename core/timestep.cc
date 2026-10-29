@@ -594,7 +594,15 @@ integertime get_timestep(int p,		/*!< particle index */
 #ifdef HERMITE_INTEGRATION
     /* divide out the 2nd-order margin, as the 2-body criterion does below. After
      * tdyn_step_for_treeforce, so the tree-update cadence keeps the unscaled value. */
-    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;}
+    if(eligible_for_hermite(p)) {dt_tidal /= SINK_TIMESTEP_SAFETY_FACTOR;
+#ifdef STARS_HERMITE_DIRECT_GRAVITY /* Aarseth criterion replaces the tidal one; start-up step eta/2 |a|/|j| */
+        if(P[p].Hermite_dt_ratio > 0) {dt_tidal = P[p].Hermite_dt_ratio * get_particle_timestep_in_physical(p);}
+        else {double jm = P[p].GravJerk.norm(); if(jm > 0) {dt_tidal = DMIN(dt_tidal, 0.5 * STARS_HERMITE_AARSETH_ETA * P[p].GravAccel.norm() / jm);}}
+#endif
+    }
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    else {P[p].Hermite_dt_ratio = 0;} /* KDK step (e.g. KETJU member): no Hermite history to extrapolate from */
+#endif
 #endif
     
 #if (SINGLE_STAR_TIMESTEPPING > 0)

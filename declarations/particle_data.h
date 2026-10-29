@@ -35,6 +35,9 @@ extern ALIGN(32) struct particle_data
     Vec3<MyFloat> OldPos;
     Vec3<MyFloat> OldVel;
     Vec3<MyFloat> OldJerk;
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+    MyDouble Hermite_dt_ratio; /*!< Aarseth step / last step, from the last corrector; 0 = none yet */
+#endif
 #ifdef KETJU_REGULARIZATION
     short int HermiteHistoryStale;      /*!< 1 when particle just exited a KETJU chain — fall back to KDK for one step until OldX is reseeded */
 #endif

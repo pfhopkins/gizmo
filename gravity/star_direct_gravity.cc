@@ -7,6 +7,7 @@
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
 #include "./periodic_xy_images.h"
+#include "tree_pair_kernel.h"
 
 /*! \file star_direct_gravity.cc
  *  \brief exact direct-summation gravity between star (type-5) particles.
@@ -45,7 +46,7 @@ int N_StarDirect;
 void star_direct_gravity_build_table(void)
 {
     int i, n_local = 0;
-    for(i = 0; i < NumPart; i++) {if(P[i].Type == 5 && P[i].Mass > 0) {n_local++;}}
+    for(i = 0; i < NumPart; i++) {if(P[i].Type == STAR_DIRECT_GRAVITY_TYPE && P[i].Mass > 0) {n_local++;}}
 
     /* mymalloc is a LIFO stack allocator, so StarDirect -- the one buffer that has to outlive this
        function -- must sit at the bottom, underneath every temporary. That means we need the total
@@ -69,7 +70,7 @@ void star_direct_gravity_build_table(void)
     int k = 0;
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 5 || P[i].Mass <= 0) {continue;}
+        if(P[i].Type != STAR_DIRECT_GRAVITY_TYPE || P[i].Mass <= 0) {continue;}
         if(P[i].Ti_current != All.Ti_Current) {drift_particle(i, All.Ti_Current);}
         sendbuf[k].Pos = P[i].Pos;
         sendbuf[k].Vel = P[i].Vel;
@@ -95,6 +96,14 @@ void star_direct_gravity_build_table(void)
         sendbuf[k].ID = P[i].ID;
 #ifdef KETJU_REGULARIZATION
         sendbuf[k].KetjuChainID = P[i].KetjuChainID;
+#endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+        sendbuf[k].AGS_zeta = 0; /* source side of the tree leaf (forcetree.cc) */
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+        if(P[i].Type == 0) {sendbuf[k].AGS_zeta = P[i].AGS_zeta;}
+#elif defined(ADAPTIVE_GRAVSOFT_FORALL)
+        sendbuf[k].AGS_zeta = P[i].AGS_zeta;
+#endif
 #endif
         k++;
     }
@@ -135,12 +144,22 @@ void star_direct_gravity_compute(void)
     for(int ii = 0; ii < n_active; ii++)
     {
         int i = ActiveParticleList[ii];
-        if(P[i].Type != 5 || P[i].Mass <= 0) {continue;}
+        if(P[i].Type != STAR_DIRECT_GRAVITY_TYPE || P[i].Mass <= 0) {continue;}
 #ifdef HERMITE_INTEGRATION
         if(HermiteOnlyFlag) {if(!eligible_for_hermite(i)) {continue;}}
 #endif
         Vec3<double> pos = P[i].Pos, acc = {};
         double h_i = ForceSoftening_KernelRadius(i);
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+        double h_tree = h_i, zeta_i = 0; /* target side as force_treeevaluate sets it (mode 0) */
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS)
+        if(P[i].Type == 0) {h_tree = DMAX(h_tree, All.ForceSoftening[P[i].Type]); zeta_i = P[i].AGS_zeta;}
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+        h_tree = DMAX(h_tree, All.ForceSoftening[P[i].Type]); zeta_i = P[i].AGS_zeta;
+#endif
+        int ags_bitflag_i = ags_gravity_kernel_shared_BITFLAG(P[i].Type);
+#endif
         MyIDType id_i = P[i].ID;
 #ifdef KETJU_REGULARIZATION
         MyIDType chain_i = P[i].KetjuChainID;
@@ -179,6 +198,17 @@ void star_direct_gravity_compute(void)
 #ifdef EVALPOTENTIAL
             double fac_pot;
 #endif
+#ifdef STARS_HERMITE_DIRECT_GRAVITY
+            /* the tree's leaf-pair kernel, so KETJU's pair subtraction (same helper) cancels it exactly */
+            {double fp_, ft_, f2_, hg = DMAX(h_tree, StarDirect[j].Soft);
+             tree_pair_gravity_factors(r, r2, mass, h_tree, StarDirect[j].Soft, P[i].Type, STAR_DIRECT_GRAVITY_TYPE, zeta_i, StarDirect[j].AGS_zeta, P[i].Mass, ags_bitflag_i, fac_accel, fp_, ft_, f2_);
+             if(r >= hg) {fac2_tidal = 3.0 * mass / (r2 * r2 * r);} else {double hi = 1./hg; fac2_tidal = mass * kernel_gravity(r*hi, hi, hi*hi*hi, 2);}
+             (void)ft_; (void)f2_; (void)fp_;
+#ifdef EVALPOTENTIAL
+             fac_pot = fp_;
+#endif
+            }
+#else
             if(r >= h)
             {
                 fac_accel = mass / (r2 * r);
@@ -196,6 +226,7 @@ void star_direct_gravity_compute(void)
                 fac_pot = mass * kernel_gravity(u, h_inv, h3_inv, -1);
 #endif
             }
+#endif
             acc += fac_accel * dr;
 #ifdef EVALPOTENTIAL
             pot += fac_pot;
