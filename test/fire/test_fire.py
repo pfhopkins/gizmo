@@ -187,3 +187,44 @@ def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
                 assert m_final[pt] == pytest.approx(m_ref[pt], rel=0.1), \
                     f"{name} mass differs from reference: " \
                     f"{m_final[pt]:.6g} vs {m_ref[pt]:.6g}"
+
+
+TRACER_FLAGS = ("GALSF_FB_FIRE_AGE_TRACERS=16", "STARFORGE_FEEDBACK_TRACERS=2")
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_fire_metal_tracers(num_mpi_ranks, num_omp_threads):
+    """Age tracers and STARFORGE feedback tracers in one build: each block is addressed at its own offset in
+    Metallicity[]. The feedback tracers follow the age tracers, so a coupling that takes the last NUM_AGE_TRACERS
+    slots as the age tracers misses the first bins; and the yield writers fill one tracer per channel (jets, winds,
+    SNe), so three fields must exist whatever value the flag is given."""
+    test_name = "fire"
+    clean_test_outputs(test_name, TRACER_FLAGS)
+    stash_baseline_output(test_name, TRACER_FLAGS)
+    try:
+        run_fire_test(test_name, num_mpi_ranks, num_omp_threads, TRACER_FLAGS)
+    finally:
+        finalize_variant_output(test_name, TRACER_FLAGS)
+
+    def age_tracer_content(snapshot):
+        """the gas content of each age-tracer bin, sum of mass x tracer, located by the snapshot's own keys"""
+        with h5py.File(snapshot, "r") as F:
+            zkey = F["Header"].attrs["Metals_Atomic_Number_Or_Key"]
+            z = F["PartType0/Metallicity"][:].astype(np.float64)
+            m = F["PartType0/Masses"][:].astype(np.float64)
+        return zkey, m, z, (m[:, None] * z[:, zkey == -2]).sum(axis=0)
+
+    _, _, _, initial = age_tracer_content(f"test/{test_name}/fire_ics.hdf5")  # the IC carries the 16 bins already
+    zkey, m, z, final = age_tracer_content(get_final_snapshot(test_name, TRACER_FLAGS))
+    gain = (final - initial) / np.where(initial > 0, initial, np.nan)  # the oldest bins start empty
+    fb = np.flatnonzero(zkey == -3)
+    print(f"Metallicity keys: {(zkey == -2).sum()} age tracers, {len(fb)} feedback tracers; age-tracer gas content "
+          "gained over the run, per bin, relative to the IC:", np.array2string(gain, precision=3))
+    assert (zkey == -2).sum() == 16 and len(fb) == 3, f"{(zkey == -2).sum()} age-tracer and {len(fb)} feedback-tracer fields"
+    sne = z[:, fb[2]]
+    print(f"SNe tracer: max {sne.max():.4g}, mass-weighted mean {np.sum(m * sne) / m.sum():.4g}")
+    # stars 1-6 Myr old (bins 0-2) are present and deposit throughout the run; without deposits a bin only loses to
+    # star formation
+    assert np.all(gain[:3] > 0), "the first age-tracer bins received no deposits"
+    assert 0 < sne.max() <= 1 + 1e-6, f"SNe tracer max {sne.max():.4g}: not a mass fraction"
