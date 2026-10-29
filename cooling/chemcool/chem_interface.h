@@ -54,6 +54,17 @@
 #endif
 #define ISRF_EGY_DENSITY_3P4_8EV_CGS       (3.85e-14) /* NUV normalisation: 0.024 eV/cm^3, not Habing (fit invalid below 6 eV) */
 
+/* chemistry FUV inputs from band energy densities [erg/cm^3], one function for the tree and M1 paths; g0_scale = All.G0 */
+struct ChemFUVField {double G0, G0_LW, G0_dust;};
+static inline struct ChemFUVField chem_fuv_field_from_band_energy(double u_g0band, double u_g0band_per_G0, double u_lw, double u_nuv_dust, double g0_scale)
+{
+    struct ChemFUVField f;
+    f.G0 = u_g0band / u_g0band_per_G0 * g0_scale;
+    f.G0_LW = u_lw / HABING_EGY_DENSITY_11P2_13P6EV_CGS * g0_scale;
+    f.G0_dust = (u_g0band / u_g0band_per_G0 + u_nuv_dust / ISRF_EGY_DENSITY_3P4_8EV_CGS) * g0_scale; /* NUV enters the dust temperature only */
+    return f;
+}
+
 #include "../../declarations/allvars.h"
 #include "f2c.h"
 #include "chemcool_consts.h"

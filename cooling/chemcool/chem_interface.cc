@@ -270,7 +270,6 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
     double u_Hab_FUV = HABING_EGY_DENSITY_6_13P6EV_CGS;
-    double u_Hab_LW  = HABING_EGY_DENSITY_11P2_13P6EV_CGS;
     double fac_flux2energy = All.cf_a2inv / (4.*M_PI*C_LIGHT_CGS * pow(UNIT_LENGTH_IN_CGS, 2)); /* luminosity flux to energy density */
 
     double UV_flux_tot = 0.0;
@@ -287,8 +286,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         LW_flux_tot += CellP[target].LW_flux[i];
     }
 
-    double G0_tot = UV_flux_tot * fac_flux2energy / u_Hab_FUV * All.G0;
-    double G0_LW  = LW_flux_tot * fac_flux2energy / u_Hab_LW  * All.G0;
+    struct ChemFUVField fuv = chem_fuv_field_from_band_energy(UV_flux_tot * fac_flux2energy, u_Hab_FUV, LW_flux_tot * fac_flux2energy, 0, All.G0);
+    double G0_tot = fuv.G0;
+    double G0_LW  = fuv.G0_LW;
 
     /* For cosmological runs: add metagalactic FUV background floor from TREECOOL */
     if(All.ComovingIntegrationOn) {
@@ -328,7 +328,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         double rho_code = CellP[target].Density * All.cf_a3inv;
         /* Habing normalizations for M1 RT bands [erg/cm^3].
            FUV = 8-13.6 eV (narrower than tree-ray 6-13.6), LW = 11.2-13.6 eV */
-        double u_Hab_FUV_M1 = HABING_EGY_DENSITY_8_13P6EV_CGS, u_Hab_LW = HABING_EGY_DENSITY_11P2_13P6EV_CGS, u_Hab_NUV = ISRF_EGY_DENSITY_3P4_8EV_CGS;
+        double u_Hab_FUV_M1 = HABING_EGY_DENSITY_8_13P6EV_CGS, u_Hab_LW = HABING_EGY_DENSITY_11P2_13P6EV_CGS;
 
         /* Convert Rad_E_gamma (extensive: total energy per particle) to physical energy density (erg/cm^3):
            u_rad = Rad_E_gamma / V_i = Rad_E_gamma * Density / Mass  [code energy/volume]
@@ -352,9 +352,10 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #endif
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
         /* Stella M1 hand-off as TREE_RAD: G0 = u(6-13.6 eV)/u_Hab x All.G0, G0_LW = u_LW/u_Hab_LW x All.G0, same per-pixel floors; stellar pixels arrive attenuated (pix_att=0) */
-        double u_Hab_FUV = 5.29e-14;
-        double G0_star = (u_NUV_cgs + u_PE_cgs) / u_Hab_FUV * All.G0;
-        double G0_LW_star = u_LW_cgs / u_Hab_LW * All.G0;
+        double u_Hab_FUV = HABING_EGY_DENSITY_6_13P6EV_CGS;
+        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_NUV_cgs + u_PE_cgs, u_Hab_FUV, u_LW_cgs, 0, All.G0);
+        double G0_star = fuv.G0;
+        double G0_LW_star = fuv.G0_LW;
         /* direction split: (1-f) isotropic + f from the pixel facing the M1 flux source */
         double f_beam = 0; long ipix_src = 0;
 #if defined(RT_EVOLVE_FLUX)
@@ -397,15 +398,16 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
            M1 and subgrid share one far-field floor. RT_ISRF_BACKGROUND must be OFF —
            the diffuse field is represented by this floor, identically in both schemes. */
         double G0_floor_treerad = 0.324e-2 * All.G0;
-        in->G0    = DMAX(u_PE_cgs / u_Hab_FUV_M1, G0_floor_treerad);
+        struct ChemFUVField fuv = chem_fuv_field_from_band_energy(u_PE_cgs, u_Hab_FUV_M1, u_LW_cgs, u_NUV_cgs, 1.0);
+        in->G0    = DMAX(fuv.G0, G0_floor_treerad);
         /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; the tree path floors LW at 10% of the FUV floor */
-        in->G0_LW = DMAX(u_LW_cgs / u_Hab_LW, 0.1 * G0_floor_treerad);
+        in->G0_LW = DMAX(fuv.G0_LW, 0.1 * G0_floor_treerad);
         /* G0_dust: GRAIN photoelectric heating field (Bakes & Tielens gas PE heating in
            cool_func) = FUV(8-13.6) + NUV(3.4-8), each with its own Habing conversion.
            NUV photons above the grain work function eject grain photoelectrons -> heat gas.
            Optical (0.4-3.4 eV) is below the work function (no PE heating); its grain-heating
            role is carried by the M1 IR/dust solver, not here. */
-        in->G0_dust = DMAX(u_PE_cgs / u_Hab_FUV_M1 + u_NUV_cgs / u_Hab_NUV, G0_floor_treerad); /* same tree-path floor (G0_dust=G0_tot there) */
+        in->G0_dust = DMAX(fuv.G0_dust, G0_floor_treerad); /* same tree-path floor (G0_dust=G0_tot there) */
 
         /* Store the M1 FUV/LW field back to the cell so it is OUTPUT and inspectable,
            mirroring the subgrid G0_VARIABLE path (CellP.G0/.G0_LW at orig lines 345/347).
