@@ -484,3 +484,15 @@ HD/H₂ = 1.26e-3 this is what holds the Z = 0 track at 75 K (1e5) and 42 K (1e9
 200-400 K; with the HD term removed the track's minimum is 260-340 K at 1e3-1e5 and 550 K at 1e7-1e8. jaco's starforge
 model has the same cap form (`H2_cooling.py:109`, with HD = 5e-5 x_H₂). Fix: cap HD with its own LTE rate, Λ_HD,LTE(T)
 from the rotational ladder (B = 64.3 K, Abgrall et al. 1982 A-values), Λ_HD = n_HD Λ_thin n_H / (1 + Λ_thin n_H / Λ_LTE).
+
+**Status 2026-10-29: both fixed in jaco's non-legacy models (`starforge`, hence every model built from it), not in
+`starforge_legacy`, which stays faithful to this code.** 4.4: the H⁻ photodetachment rate is max(3.62e-17, 7.1e-7
+G₀/1.69) s⁻¹ (the Draine-field rate of Glover & Jappsen 2007, the one KROME/Menon et al. 2025 use; G₀ in Habing units,
+so GIZMO's ISRF = 1 ↔ G₀ = 1.7 ↔ χ = 1), the floor kept. 4.5: HD saturates at its own LTE rate, Λ_HD = Λ_LTE / (1 +
+Λ_LTE / (Λ_thin n_H)) with Coppola, Lodi & Tennyson 2011's LTE fit, the form and fit grackle uses (`HDlte_rate`,
+`HDlow_rate` in rate_functions.c; grackle's low-density coefficient is Wrathmall et al. 2007, within 1.4× of the Galli
+& Palla 1998 one jaco keeps below 1000 K). Checked against grackle and Lipovka et al. 2005 (Menon's table): the
+combined rate agrees to 10–30 % from 50 to 1000 K at n = 1e3–1e7; a bare J ≤ 6 rotational ladder (the first fix
+tried) falls short of both above 1000 K (0.43× at 1000 K, 0.1× at 2000 K: vibrational levels), hence the fit.
+A quick-check and the golden codegen hashes were regenerated; GIZMO's pinned shakedown binaries still carry the old
+model and need `jaco_codegen` regeneration before the next build.
