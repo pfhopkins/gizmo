@@ -56,7 +56,7 @@ HubbleParam             1.
 
 %----- Memory allocation
 MaxMemSize          5000
-PartAllocFactor     20.0
+PartAllocFactor     4.0
 BufferSize          500
 
 %---- Rebuild domains when >this fraction of particles active
