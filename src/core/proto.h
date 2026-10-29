@@ -390,7 +390,21 @@ void solid_material_check_cells(void);
 #endif
 #ifdef EOS_ANEOS
 #include "../eos/aneos.h"
+/* the lowest specific internal energy [code units] at which a cell's material has a valid equation of state at density rho
+   [code units]: for a table material, the energy at the table's lowest valid temperature there; 0 (no bound) otherwise */
+GIZMO_GPU_FUNCTION static inline double lowest_valid_internal_energy(const struct aneos_table *aneos_tables, int composition_type, double rho)
+{
+    if(!aneos_tables || eos_branch_of(composition_type) != EOS_BRANCH_ANEOS) {return 0;}
+    return aneos_min_specific_energy(aneos_tables, aneos_subindex(composition_type), rho * UNIT_DENSITY_IN_CGS) / UNIT_SPECEGY_IN_CGS;
+}
 #endif
+/* the positivity catch on a specific internal energy update u_old -> u_new: the energy halves when the update would take it
+   below half; and where the material has a lowest valid energy u_floor > 0, the result is never below that (0: no bound) */
+GIZMO_GPU_FUNCTION static inline double internal_energy_positivity_catch(double u_old, double u_new, double u_floor)
+{
+    double u = (u_new < 0.5*u_old) ? 0.5*u_old : u_new;
+    return (u_floor > 0 && u < u_floor) ? u_floor : u;
+}
 
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode);
