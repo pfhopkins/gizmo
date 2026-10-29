@@ -231,3 +231,35 @@ def test_forgedinfire(num_mpi_ranks, num_omp_threads):
                 assert m_final[pt] == pytest.approx(m_ref[pt], rel=0.1), \
                     f"{name} mass differs from reference: " \
                     f"{m_final[pt]:.6g} vs {m_ref[pt]:.6g}"
+
+
+def test_forgedinfire_bh_gravity():
+    """Gas near the BH feels the point mass plus the Paczynski-Wiita correction of the special
+    boundaries, added once. An element that skips its tree walk (ADAPTIVE_TREEFORCE_UPDATE)
+    extrapolates GravAccel, which already holds that correction: re-adding it every skipped step
+    stacks k extra copies, k = (a_r - Kepler - PW) / PW. Reads the output of test_forgedinfire;
+    gas self-gravity inside 30 AU is ~1e-9 of the BH and negligible."""
+    try:
+        snap = get_final_snapshot("forgedinfire")
+    except RuntimeError as e:
+        pytest.skip(f"no forgedinfire output: {e}")
+    G_cgs, c_cgs, msun, au, uv = 6.674e-8, 2.99792458e10, 1.989e33, 1.496e13, 1e7  # forgedinfire.params units
+    G = G_cgs * msun * (au / uv) ** 2 / au ** 3
+    c = c_cgs / uv
+    with h5py.File(snap, "r") as F:
+        x_bh = F["PartType3/Coordinates"][0]
+        m_bh = F["PartType3/Masses"][0]
+        dx = F["PartType0/Coordinates"][:] - x_bh
+        acc = F["PartType0/Acceleration"][:]
+    r = np.linalg.norm(dx, axis=1)
+    a_r = -np.sum(acc * dx, axis=1) / r
+    x = r / (2 * G * m_bh / c ** 2) - 1
+    kepler = G * m_bh / r ** 2
+    pw = kepler * (1 + 2 * x) / x ** 2
+    sel = (r >= 3) & (r < 30)
+    k = (a_r[sel] - kepler[sel] - pw[sel]) / pw[sel]
+    stacked = np.mean(k >= 0.5)
+    print(f"{snap}: {sel.sum()} cells at 3-30 AU, fraction with >=1 extra PW copy {stacked:.4f}, max k {k.max():.2f}")
+    assert sel.sum() > 1000
+    # stale accelerations of cells inactive at the snapshot give k ~ 1 for ~1%; stacking gave 57-78%
+    assert stacked < 0.05, f"{stacked:.3f} of the gas at 3-30 AU carries extra copies of the PW correction"

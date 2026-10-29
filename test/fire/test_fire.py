@@ -14,6 +14,7 @@ import pytest
 import numpy as np
 from os import path, system, chdir, environ, getcwd
 from os.path import isfile
+from glob import glob
 from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
 from matplotlib import pyplot as plt
@@ -129,8 +130,8 @@ def run_fire_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags=
 @pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
 @pytest.mark.parametrize(
     "extra_config_flags",
-    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06")],
-    ids=["baseline", "tidal_adaptive"],
+    [(), ("TIDAL_TIMESTEP_CRITERION", "ADAPTIVE_TREEFORCE_UPDATE=0.06"), ("GALSF_MERGER_STARCLUSTER_PARTICLES",)],
+    ids=["baseline", "tidal_adaptive", "starcluster"],
 )
 def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "fire"
@@ -174,6 +175,21 @@ def test_fire(num_mpi_ranks, num_omp_threads, extra_config_flags):
     if 2 in m_init and 2 in m_final:
         assert m_init[2] == pytest.approx(m_final[2], rel=MASS_CONSERVATION_TOL), \
             f"Low-res DM mass changed: {m_init[2]} -> {m_final[2]}"
+
+    if "GALSF_MERGER_STARCLUSTER_PARTICLES" in extra_config_flags:
+        # a star's softening is its effective size: stars from the ICs (which carry none) must start
+        # with a nonzero one, or they are unsoftened
+        first_snap = sorted(glob(f"{path.dirname(final_snap)}/snapshot_*.hdf5"))[0]
+        with h5py.File(initial_snap, "r") as F:
+            ic_ids = F["PartType4/ParticleIDs"][:]
+        with h5py.File(first_snap, "r") as F:
+            ids = F["PartType4/ParticleIDs"][:]
+            size = F["PartType4/StarParticleEffectiveSize"][:]
+        from_ic = np.isin(ids, ic_ids)
+        print(f"{first_snap}: {from_ic.sum()} stars from the ICs, effective size min={size[from_ic].min():.4g} "
+              f"max={size[from_ic].max():.4g}, {(size[from_ic] <= 0).sum()} unsoftened")
+        assert from_ic.sum() > 0 and np.all(size[from_ic] > 0), \
+            f"{(size[from_ic] <= 0).sum()} of {from_ic.sum()} stars from the ICs have no effective size"
 
     # Generate diagnostic plots
     test_dir = f"test/{test_name}"
