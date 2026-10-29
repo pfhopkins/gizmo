@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
+#include <algorithm>
 #include <gsl/gsl_math.h>
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
@@ -475,6 +477,9 @@ void star_formation_parent_routine(void)
 #endif
     for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {TimeBinSfr[bin] = 0;}}
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
+#ifdef GHOSDT_G0_CR
+    std::vector<int> ghosdt_converted; /* gas-block slots converted this call */
+#endif
     for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
 
 #ifdef GALSF_RESOLVEDISM
@@ -629,6 +634,9 @@ void star_formation_parent_routine(void)
                         num_sink_formed++;
                         Stars_converted++;
                         stars_converted++;
+#ifdef GHOSDT_G0_CR
+                        ghosdt_converted.push_back(i);
+#endif
                         P[i].StellarAge = All.Time;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                         /* TestStarInitAgeYr>0 (B10 AGB test, 2026-07-28): back-date the birth
@@ -767,6 +775,9 @@ void star_formation_parent_routine(void)
                         /* here we turn the gas particle itself into a star, so only change attributes, not the number of total particles */
                         Stars_converted++;
                         stars_converted++;
+#ifdef GHOSDT_G0_CR
+                        ghosdt_converted.push_back(i);
+#endif
                         TimeBinCountGas[P[i].TimeBin]--;
                         TimeBinSfr[P[i].TimeBin] -= CellP[i].Sfr;
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
@@ -1014,17 +1025,29 @@ void star_formation_parent_routine(void)
     if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
 #endif
     
+    int sf_counts[3] = {stars_spawned, stars_converted, 0}; /* one reduction: spawned, converted, GHOSDT sums changed */
 #ifdef GHOSDT_G0_CR
-    { /* GHOSDT (Hu+21): FactorG0 = [M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] */
-        double m_young = 0, m_young_tot = 0;
-        for(i = 0; i < NumPart; i++) {if(P[i].Type == 4 && evaluate_time_since_t_initial_in_Gyr(P[i].StellarAge) < 0.03) {m_young += P[i].Mass;}}
-        MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        All.FactorG0 = (m_young_tot / 0.03) / (All.Mgas0 / 4.0);
-        if(ThisTask == 0) {printf("GHOSDT: Time=%.17g Mgas0=%.17g M_young=%.17g FactorG0=%.17g\n", All.Time, All.Mgas0, m_young_tot, All.FactorG0);}
+    /* GHOSDT (Hu+21): FactorG0 = [M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] */
+    static double m_young_last = 0, m_young_tot = 0; static int m_young_have = 0;
+    double m_young = 0;
+    {
+#define GHOSDT_ADD_YOUNG(j) {if(P[j].Type == 4 && evaluate_time_since_t_initial_in_Gyr(P[j].StellarAge) < 0.03) {m_young += P[j].Mass;}}
+        if(Stars_converted == stars_converted) { /* non-gas in the gas block = this call's conversions: same index order as a full scan */
+            std::sort(ghosdt_converted.begin(), ghosdt_converted.end());
+            for(int j : ghosdt_converted) GHOSDT_ADD_YOUNG(j)
+            for(i = N_gas; i < NumPart; i++) GHOSDT_ADD_YOUNG(i)
+        } else {for(i = 0; i < NumPart; i++) GHOSDT_ADD_YOUNG(i)}
+#undef GHOSDT_ADD_YOUNG
+        sf_counts[2] = (!m_young_have || memcmp(&m_young, &m_young_last, sizeof(double)) != 0);
     }
 #endif
-    MPI_Allreduce(&stars_spawned, &tot_spawned, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&stars_converted, &tot_converted, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(MPI_IN_PLACE, sf_counts, 3, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    tot_spawned = sf_counts[0]; tot_converted = sf_counts[1];
+#ifdef GHOSDT_G0_CR
+    if(sf_counts[2]) {MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); m_young_last = m_young; m_young_have = 1;} /* unchanged local sums give the same total */
+    All.FactorG0 = (m_young_tot / 0.03) / (All.Mgas0 / 4.0);
+    if(ThisTask == 0) {printf("GHOSDT: Time=%.17g Mgas0=%.17g M_young=%.17g FactorG0=%.17g\n", All.Time, All.Mgas0, m_young_tot, All.FactorG0);}
+#endif
     if(tot_spawned > 0 || tot_converted > 0)
     {
         static long long cumul_spawned = 0; cumul_spawned += tot_spawned;
