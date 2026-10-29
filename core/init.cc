@@ -347,6 +347,37 @@ void init(void)
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
             P[i].SNe_ThisTimeStep = 0;
 #endif
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            P[i].StellaFBEvent_ThisTimeStep = 0;
+            if(RestartFlag == 0 && P[i].Type == 4) {P[i].sampled = 0; for(int km = 0; km < N_STELLAR_MASS; km++) {P[i].MstarSampleIMF[km] = 0;}} /* fresh ICs skip these blocks */
+            if(P[i].StarModel == STAR_MODEL_UNKNOWN) /* not in the snapshot: infer from the Stella fields */
+            {
+                if(P[i].Type == 5) {P[i].StarModel = STAR_MODEL_STARFORGE_SINK;}
+                if(P[i].Type == 4)
+                {
+                    P[i].StarModel = STAR_MODEL_FIRE_SSP; /* fresh ICs carry no Stella star state */
+                    if(RestartFlag != 0 && (P[i].sampled == 1 || P[i].MstarSampleIMF[0] > 0)) {P[i].StarModel = (P[i].MstarSampleIMF[0] > 0) ? STAR_MODEL_STELLA : STAR_MODEL_STELLA_REMNANT;}
+                }
+            }
+#ifdef GALSF_RESOLVEDISM_G0_VARIABLE
+            if(!STELLA_OWNS_STAR(P[i])) /* only Stella stars feed the Stella TREE_RAD sources */
+            {
+                P[i].UV_luminosity = 0; P[i].LW_luminosity = 0;
+#ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
+                P[i].NUV_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
+                P[i].OPT_luminosity = 0;
+#endif
+#ifdef GALSF_RESOLVEDISM_PHOTOION
+                P[i].Lyman_photons_per_sec = 0;
+#endif
+#ifdef TREE_RAY_PI
+                P[i].Ion_luminosity = 0;
+#endif
+            }
+#endif
+#endif
 #ifdef KETJU_REGULARIZATION
             P[i].KetjuIntegrated = 0;
             P[i].KetjuChainID = 0;
@@ -781,9 +812,9 @@ void init(void)
 #endif
             CellP[i].DustTemp = 10.0; /* initial dust temperature [K] */
             CellP[i].Temp = 100.0; /* initial gas temperature [K] */
+#endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
             CellP[i].Ionized = 0;
-#endif
 #endif
 #ifdef RT_TREECOL_GAS_TARGETS_ONLY
             {int ks, kp; for(ks = 0; ks < TREECOL_NSPECIES; ks++) {for(kp = 0; kp < NPIX; kp++) {CellP[i].ColumnDensityBins[ks][kp] = 0;}}}

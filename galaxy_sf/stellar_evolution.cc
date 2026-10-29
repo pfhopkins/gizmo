@@ -705,6 +705,9 @@ void update_stellarnumber_and_timedistribofstarformation(void)
 {
     int i; for (int i : ActiveParticleList)
     {
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+        if(STELLA_OWNS_STAR(P[i])) {continue;} /* Stella stars are single stars, not distributed SSPs */
+#endif
         if(P[i].Type == 4 && P[i].Mass > 0)
         {
             double dt_since_form_code = evaluate_time_since_t_initial_in_Gyr(P[i].StellarAge) / UNIT_TIME_IN_GYR; // time since spawn in code [physical] units

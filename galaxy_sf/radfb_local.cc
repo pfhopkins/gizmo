@@ -31,6 +31,9 @@ void radiation_pressure_winds_consolidated(void)
         if((P[i].Type == 4)||((All.ComovingIntegrationOn==0)&&((P[i].Type == 2)||(P[i].Type==3))))
         {
             if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) {continue;};
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            if(STELLA_OWNS_STAR(P[i])) {continue;} /* Stella stars use the Stella radiation modules */
+#endif
             double star_age = evaluate_stellar_age_Gyr(i);
             if( (star_age < age_threshold_in_gyr) && (P[i].Mass > 0) && (P[i].DensityAroundParticle > 0) )
             {
@@ -236,6 +239,9 @@ void HII_heating_singledomain(void)    /* this version of the HII routine only c
 #endif
         {
             if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) {continue;};
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            if(STELLA_OWNS_STAR(P[i])) {continue;} /* Stella stars use the Stella radiation modules */
+#endif
             dt = get_particle_feedback_timestep_in_physical(i);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
             if(P[i].Type == 5) {dt = P[i].dt_since_last_gas_search;}

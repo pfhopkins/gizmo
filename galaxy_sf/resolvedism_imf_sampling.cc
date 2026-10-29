@@ -189,7 +189,7 @@ void finalize_sampled_star(int i, double M_drawn)
 void recompute_resolvedism_fuv_luminosities(void)
 {
     int i;
-    for(int ia : ActiveParticleList) {if(P[ia].Type == 4) {TreeMomentsStaleFlag = 1; break;}} /* node luminosities follow per-step stellar lums */
+    for(int ia : ActiveParticleList) {if(STELLA_OWNS_STAR(P[ia])) {TreeMomentsStaleFlag = 1; break;}} /* node luminosities follow per-step stellar lums */
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     /* TestFUVZero=1: silence ALL stellar radiation (UV/LW/NUV/OPT + Lyman) for
      * quiescent-medium experiments (e.g. clean KO15 terminal-momentum ladder:
@@ -204,7 +204,7 @@ void recompute_resolvedism_fuv_luminosities(void)
      * TestFUVZero so it takes precedence. (Tier-2 variable-Q test: leave this =0.) */
     if(All.TestFixedQion > 0) {
         for(int i : ActiveParticleList) {
-            if(P[i].Type != 4) continue;
+            if(!STELLA_OWNS_STAR(P[i])) continue;
             P[i].UV_luminosity = 0; P[i].PE_luminosity = 0; P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0;
@@ -231,7 +231,7 @@ void recompute_resolvedism_fuv_luminosities(void)
     if(All.TestFixedLbol > 0) {
         double L = All.TestFixedLbol;
         for(int i : ActiveParticleList) {
-            if(P[i].Type != 4) continue;
+            if(!STELLA_OWNS_STAR(P[i])) continue;
             P[i].UV_luminosity = 0.5 * L; P[i].PE_luminosity = P[i].UV_luminosity; P[i].LW_luminosity = 0.15 * L;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0.2 * L;
@@ -250,7 +250,7 @@ void recompute_resolvedism_fuv_luminosities(void)
     }
     if(All.TestFUVZero) {
         for(int i : ActiveParticleList) {
-            if(P[i].Type != 4) continue;
+            if(!STELLA_OWNS_STAR(P[i])) continue;
             P[i].UV_luminosity = 0; P[i].PE_luminosity = 0; P[i].LW_luminosity = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             P[i].NUV_luminosity = 0;
@@ -273,7 +273,7 @@ void recompute_resolvedism_fuv_luminosities(void)
 #endif
     for(int i : ActiveParticleList)
     {
-        if(P[i].Type != 4) continue;
+        if(!STELLA_OWNS_STAR(P[i])) continue;
         if(P[i].sampled != 1) continue;             /* only finalized stars */
         double M_drawn = P[i].MstarSampleIMF[0];     /* ZAMS mass (table index) */
 
@@ -377,7 +377,7 @@ void resolvedism_update_ion_photon_energy(void)
     int i; double sumL = 0, sumQ = 0, glob[2];
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 4 || P[i].sampled != 1) continue;
+        if(!STELLA_OWNS_STAR(P[i]) || P[i].sampled != 1) continue;
         double M_drawn = P[i].MstarSampleIMF[0];
         if(M_drawn <= DMAX(All.IMFSampleStellarMassCut, 8.0)) continue; /* only ionizing stars matter */
         double star_age_yr = resolvedism_star_age_yr(i);
@@ -528,7 +528,7 @@ void out2particle_resolvedismIMF(struct OUTPUT_STRUCT_NAME *out, int i, int mode
 int resolvedismIMF_active_check(int i);
 int resolvedismIMF_active_check(int i)
 {
-    if(P[i].Type != 4) return 0;
+    if(!STELLA_OWNS_STAR(P[i])) return 0;
     if(P[i].sampled != 0) return 0;
     if(P[i].MstarSampleIMF[0] <= 0) return 0;
     if(P[i].MstarSampleIMF[2] <= 0) return 0; /* f_acc = 0 means converged or not active */
@@ -700,7 +700,7 @@ void assign_stellar_masses(void)
     int n_selfcheck_tree = 0;
 #endif
     for(i = 0; i < NumPart; i++)
-        if(P[i].Type == 4 && P[i].sampled == 0 && P[i].MstarSampleIMF[0] > 0) nstars_local++;
+        if(STELLA_OWNS_STAR(P[i]) && P[i].sampled == 0 && P[i].MstarSampleIMF[0] > 0) nstars_local++;
 
     int nstars_total;
     MPI_Allreduce(&nstars_local, &nstars_total, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
@@ -737,7 +737,7 @@ void assign_stellar_masses(void)
     do {
         /* --- Set R_acc for this iteration --- */
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+            if(!STELLA_OWNS_STAR(P[i]) || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
 
             double M_star_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
             double rho = P[i].FormationDensity / All.cf_a3inv; /* convert physical back to comoving for volume estimate */
@@ -782,7 +782,7 @@ void assign_stellar_masses(void)
 
         /* --- Compute correct f_acc from actual enclosed mass --- */
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+            if(!STELLA_OWNS_STAR(P[i]) || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
             if(P[i].MstarSampleIMF[2] <= 0) continue; /* already converged */
 
             double M_star_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
@@ -829,7 +829,7 @@ void assign_stellar_masses(void)
         /* Check for incomplete accretion */
         int incomplete_local = 0;
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+            if(!STELLA_OWNS_STAR(P[i]) || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
             double M_star_code = P[i].MstarSampleIMF[0] / UNIT_MASS_IN_SOLAR;
             double deficit = M_star_code - IMF_MassAccreted[i];
             if(deficit > 0.01 * M_star_code) incomplete_local++;
@@ -861,7 +861,7 @@ void assign_stellar_masses(void)
 
     for(i = 0; i < NumPart; i++)
     {
-        if(P[i].Type != 4 || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
+        if(!STELLA_OWNS_STAR(P[i]) || P[i].sampled != 0 || P[i].MstarSampleIMF[0] <= 0) continue;
 
         double M_drawn = P[i].MstarSampleIMF[0]; /* solar masses */
         double mass_acc = IMF_MassAccreted[i];

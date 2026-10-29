@@ -127,6 +127,9 @@ extern ALIGN(32) struct particle_data
     MyFloat Ion_luminosity;               /*!< ionizing (>13.6 eV) luminosity [erg/s] = Q_ion * <hnu>=27.2 eV (TreeRay PI band) */
 #endif
 #endif
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    signed char StarModel;     /* owner model of a star (STAR_MODEL_*), fixed at birth */
+#endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
     int sampled;                          /*!< flag: 1 if IMF has been sampled for this star */
     MyFloat MstarSampleIMF[N_STELLAR_MASS]; /*!< individual stellar masses from IMF sampling */
@@ -208,6 +211,9 @@ extern ALIGN(32) struct particle_data
 #endif
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL) || defined(GALSF_RESOLVEDISM_FB)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    MyFloat StellaFBEvent_ThisTimeStep; /* Stella event code: 1=SN, 2=AGB death, 3=wind, 4=Ia, -1=done */
+#endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
     MyFloat MassReturn_ThisTimeStep; /* gas return from stellar winds */
 #ifdef GALSF_FB_FIRE_RPROCESS
@@ -510,4 +516,17 @@ extern ALIGN(32) struct particle_data
 }
 *P,                /*!< holds particle data on local processor */
 *DomainPartBuf;        /*!< buffer for particle data used in domain decomposition */
+
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+#define STAR_MODEL_UNKNOWN 0          /* not a star, or not yet inferred (absent snapshot datasets read as 0) */
+#define STAR_MODEL_FIRE_SSP 1         /* FIRE-3 stellar population */
+#define STAR_MODEL_STELLA 2           /* Stella single star */
+#define STAR_MODEL_STARFORGE_SINK 3   /* STARFORGE sink */
+#define STAR_MODEL_STELLA_REMNANT 4   /* Stella remnant, gravity only */
+#define STELLA_OWNS_STAR(p) ((p).Type == 4 && ((p).StarModel == STAR_MODEL_STELLA || (p).StarModel == STAR_MODEL_STELLA_REMNANT))
+#define STELLA_FB_EVENT(p) ((p).StellaFBEvent_ThisTimeStep)
+#else
+#define STELLA_OWNS_STAR(p) ((p).Type == 4)
+#define STELLA_FB_EVENT(p) ((p).SNe_ThisTimeStep)
+#endif
 

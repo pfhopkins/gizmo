@@ -649,6 +649,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_STAR_MODEL:
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            for(n = 0; n < pc; n++) {P[offset + n].StarModel = (signed char) *ip_int++;}
+#endif
+            break;
+
         case IO_BIRTH_METALLICITY:
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             for(n = 0; n < pc; n++) {P[offset + n].BirthMetallicity = *fp++;}
@@ -1009,6 +1015,9 @@ void read_file(char *fname, int readTask, int lastTask)
 
 
         allocate_memory();
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+        for(i = 0; i < All.MaxPart; i++) {P[i].StarModel = STAR_MODEL_UNKNOWN;} /* absent datasets read as 0 = unknown; inferred in init() */
+#endif
 
         size_t MyBufferSize = All.BufferSize;
         if(!(CommBuffer = mymalloc("CommBuffer", bytes = MyBufferSize * 1024 * 1024)))

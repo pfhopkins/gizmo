@@ -74,7 +74,9 @@ int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data 
     active_check += rt_get_lum_band_singlestar(i,mode,lum, pp, cell); // get luminosities for individual star/sink particles assuming they are protostars or stars
 #endif
 #else
-#if (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
+    if(!STELLA_OWNS_STAR(pp[i])) {active_check += rt_get_lum_band_stellarpopulation(i,mode,lum, pp, cell);} // Stella stars radiate through TREE_RAD, not here
+#elif (defined(GALSF_RESOLVEDISM_STELLAR_TABLES) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)) && (defined(RADTRANSFER) || defined(RT_USE_GRAVTREE))
     active_check += rt_get_lum_band_resolvedism(i,mode,lum, pp, cell); // get luminosities from single-star stellar tables
 #else
     active_check += rt_get_lum_band_stellarpopulation(i,mode,lum, pp, cell); // get luminosities for star particles assuming they represent IMF-averaged populations

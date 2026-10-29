@@ -1030,6 +1030,17 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
+        case IO_STAR_MODEL:
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *ip_int++ = (int) P[pindex].StarModel;
+                    n++;
+                }
+#endif
+            break;
+
         case IO_BIRTH_METALLICITY:
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
             for(n = 0; n < pc; pindex++)
@@ -2379,6 +2390,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
         case IO_SAMPLED_IMF:
+        case IO_STAR_MODEL:
             bytes_per_blockelement = sizeof(int);
             break;
             
@@ -2822,6 +2834,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_EOSPHASE:
         case IO_STAGE_PROTOSTAR:
         case IO_SAMPLED_IMF:
+        case IO_STAR_MODEL:
             typekey = 0;		/* native int */
             break;
             
@@ -2957,6 +2970,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_FORMATION_DENSITY:
         case IO_SAMPLED_IMF:
         case IO_BIRTH_METALLICITY:
+        case IO_STAR_MODEL:
             values = 1;
             break;
 
@@ -3340,6 +3354,11 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_BIRTH_METALLICITY:
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
+            break;
+
+        case IO_STAR_MODEL:
+            for(i = 0; i < 6; i++) {if(i != 4 && i != 5) {typelist[i] = 0;}}
+            return header.npart[4] + header.npart[5];
             break;
 
         case IO_ELEMENT_ABUNDANCE:
@@ -3748,6 +3767,12 @@ int blockpresent(enum iofields blocknr)
 
         case IO_SAMPLED_IMF:
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+            return 1;
+#endif
+            break;
+
+        case IO_STAR_MODEL:
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
             return 1;
 #endif
             break;
@@ -4475,6 +4500,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SAMPLED_IMF:
             strncpy(label, "SAMF", 4);
             break;
+        case IO_STAR_MODEL:
+            strncpy(label, "SMOD", 4);
+            break;
         case IO_BIRTH_METALLICITY:
             strncpy(label, "BMET", 4);
             break;
@@ -5013,6 +5041,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_SAMPLED_IMF:
             strcpy(buf, "IMFSampledFlag");
+            break;
+        case IO_STAR_MODEL:
+            strcpy(buf, "StarModel");
             break;
         case IO_BIRTH_METALLICITY:
             strcpy(buf, "BirthMetallicity");

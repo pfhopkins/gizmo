@@ -281,9 +281,9 @@ extern struct gas_cell_data
     MyFloat Lambda[28];                   /*!< individual thermal cooling rates */
     MyFloat LambdaChem[6];                /*!< individual chemical cooling rates */
 #endif
+#endif
 #ifdef GALSF_RESOLVEDISM_PHOTOION
     int Ionized;                          /*!< flag: 1 if particle is in HII region */
-#endif
 #endif
 #ifdef RT_TREECOL_GAS_TARGETS_ONLY
     MyFloat ColumnDensityBins[TREECOL_NSPECIES][RT_USE_TREECOL_FOR_NH]; /*!< angular bins for column density, per column species (gas cells only) */

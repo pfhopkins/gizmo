@@ -121,9 +121,16 @@ double resolvedism_radp_starside_dp_code(int i)
          * regardless of Z -> at 0.1 Zsun the star-side f_abs was ~10x too dusty
          * vs the chemistry/tree convention. Mirror chemcool: dust-to-metal
          * efficiency x local Z / Zsun, capped at the certified 10x-solar domain. */
+#ifdef CHEMCOOL
         double DGR = All.DGRnormalized;
 #if defined(METALS) && !defined(CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY)
         DGR = All.DGRnormalized * P[i].Metallicity[0] / All.SolarAbundances[0];
+#endif
+#else
+        double DGR = 1.0; /* no CHEMCOOL: dust-to-metal ratio fixed at solar */
+#ifdef METALS
+        DGR = P[i].Metallicity[0] / All.SolarAbundances[0];
+#endif
 #endif
 #endif
         if(DGR > 10.0) {DGR = 10.0;} if(DGR < 0) {DGR = 0;}
@@ -208,7 +215,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
     in->StarID = P[i].ID;
     in->StarMass = P[i].MstarSampleIMF[0];
-    in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
+    in->fb_channel = DMAX(STELLA_FB_EVENT(P[i]) - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
 #endif
@@ -232,15 +239,15 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
 #endif
 
     /* ---- Pass 0: AGB and wind injection ---- */
-    if(P[i].SNe_ThisTimeStep != 2 && P[i].SNe_ThisTimeStep != 3) return;
+    if(STELLA_FB_EVENT(P[i]) != 2 && STELLA_FB_EVENT(P[i]) != 3) return;
 
-    /* ---- Wind injection (SNe_ThisTimeStep == 3) ---- */
+    /* ---- Wind injection (STELLA_FB_EVENT == 3) ---- */
     /* Per-element ejecta from telescoping cumulative table:
      *   delta_k = elem_ej_wind_cumulative(now, k) - elem_ej_wind_cumulative(prev, k)
      * sums exactly to the table's total wind ejecta over the star's life.
      * Momentum still uses WindMomentumAccum (v_wind × dM integrated externally). */
 #ifdef GALSF_RESOLVEDISM_WINDS
-    if(P[i].SNe_ThisTimeStep == 3) {
+    if(STELLA_FB_EVENT(P[i]) == 3) {
         /* Mass-conservation principle: gas-injected = star-removed = P[i].WindMassAccum,
          * which was set in the accumulator (fb.cc) to (cum_table - cum_injected_so_far).
          * Star Mass is reduced by exactly WindMassAccum in the cleanup loop, so we
@@ -339,7 +346,7 @@ void particle2in_resolvedismFB_momentum(struct INPUT_STRUCT_NAME *in, int i, int
     }
 #endif
 
-    /* ---- AGB death (SNe_ThisTimeStep == 2) ---- */
+    /* ---- AGB death (STELLA_FB_EVENT == 2) ---- */
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
     int rem_type = stellar_remnant_type(logM, logZ);
     double rem_mass = stellar_remnant_mass(logM, logZ);
@@ -453,9 +460,9 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration);
 int resolvedismFB_momentum_active_check(int i, int loop_iteration)
 {
 #ifdef GALSF_RESOLVEDISM_WINDS_CONTINUOUS
-    if(FB_WindBatchOnly && P[i].SNe_ThisTimeStep != 3) {return 0;}   /* batch pass: winds only */
+    if(FB_WindBatchOnly && STELLA_FB_EVENT(P[i]) != 3) {return 0;}   /* batch pass: winds only */
 #endif
-    if(P[i].Type != 4) return 0;
+    if(!STELLA_OWNS_STAR(P[i])) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
 
@@ -468,7 +475,7 @@ int resolvedismFB_momentum_active_check(int i, int loop_iteration)
          * many low-rate sources; runs with the token released). */
         if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
         /* AGB (2) and wind (3) */
-        if(P[i].SNe_ThisTimeStep == 2 || P[i].SNe_ThisTimeStep == 3) return 1;
+        if(STELLA_FB_EVENT(P[i]) == 2 || STELLA_FB_EVENT(P[i]) == 3) return 1;
     }
 #ifdef GALSF_RESOLVEDISM_RADPRESSURE
     if(loop_iteration == 1 || loop_iteration == -2) {
@@ -949,7 +956,7 @@ void resolvedism_radpressure_treerad(void)
     {
         double L_emit = 0, A_abs = 0;
         for(i = 0; i < NumPart; i++) {
-            if(P[i].Type == 4 && P[i].Mass > 0) {
+            if(STELLA_OWNS_STAR(P[i]) && P[i].Mass > 0) {
 #ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
                 L_emit += P[i].UV_luminosity; /* LW (11.2-13.6 eV) is inside UV (6-13.6 eV) */
 #else

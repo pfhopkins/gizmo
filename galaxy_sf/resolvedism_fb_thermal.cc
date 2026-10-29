@@ -61,7 +61,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #ifdef GALSF_RESOLVEDISM_FB_HEALPIX
     {int hp_; for(hp_=0;hp_<12;hp_++) {in->HpxCount[hp_] = P[i].FB_HpxCount[hp_];}}
 #endif
-    in->fb_channel = DMAX(P[i].SNe_ThisTimeStep - 1, 0);
+    in->fb_channel = DMAX(STELLA_FB_EVENT(P[i]) - 1, 0);
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
     for(k=0; k<NUM_RESOLVEDISM_ELEMENTS; k++) in->ElemYields[k] = 0;
 #endif
@@ -75,7 +75,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 
     /* ---- Type Ia ---- */
 #ifdef GALSF_RESOLVEDISM_TYPE_IA
-    if(P[i].SNe_ThisTimeStep == 4) {
+    if(STELLA_FB_EVENT(P[i]) == 4) {
         in->Esne = IA_ENERGY_ERG / UNIT_ENERGY_IN_CGS;
         /* Eject the entire WD progenitor mass.  In our single-star sampling the
          * WD's P[i].Mass evolved through prior wind/AGB phases and may not equal
@@ -111,7 +111,7 @@ void particle2in_resolvedismFB_thermal(struct INPUT_STRUCT_NAME *in, int i, int 
 #endif
 
     /* ---- SN (CCSN/ECSN/PISN/PPISN) ---- */
-    if(P[i].SNe_ThisTimeStep != 1) return; /* only SN in this file */
+    if(STELLA_FB_EVENT(P[i]) != 1) return; /* only SN in this file */
 
     double Mstar, logM, logZ;
     if(!get_star_info(i, &Mstar, &logM, &logZ)) return;
@@ -263,13 +263,13 @@ void out2particle_resolvedismFB_thermal(struct OUTPUT_STRUCT_NAME *out, int i, i
 int resolvedismFB_thermal_active_check(int i);
 int resolvedismFB_thermal_active_check(int i)
 {
-    if(P[i].Type != 4) return 0;
+    if(!STELLA_OWNS_STAR(P[i])) return 0;
     if(P[i].KernelRadius <= 0) return 0;
     if(P[i].NumNgb <= 0) return 0;
     /* per-event serialization (see resolvedism_fb_serialized_pass in resolvedism_fb.cc):
      * when the token is set, only that single event is active in this walk */
     if(FB_SerialEventID != 0 && P[i].ID != FB_SerialEventID) return 0;
-    if(P[i].SNe_ThisTimeStep == 1 || P[i].SNe_ThisTimeStep == 4) return 1;
+    if(STELLA_FB_EVENT(P[i]) == 1 || STELLA_FB_EVENT(P[i]) == 4) return 1;
     return 0;
 }
 

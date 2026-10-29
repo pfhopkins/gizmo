@@ -77,6 +77,9 @@ void determine_where_SNe_occur(void)
         if(All.ComovingIntegrationOn==0) {if((P[i].Type<2)||(P[i].Type>4)) {continue;}} // in non-cosmological sims, types 2,3,4 are valid 'stars'
 #endif
         if(P[i].Mass<=0) {continue;}
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+        if(STELLA_OWNS_STAR(P[i])) {continue;} /* Stella stars are evolved by resolvedism_fb */
+#endif
         dt = get_particle_feedback_timestep_in_physical(i);
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[i].Type == 5) {dt = P[i].dt_since_last_gas_search;}

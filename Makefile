@@ -1057,17 +1057,19 @@ endif
 endif
 
 # stellar evolution tables for single-star feedback
-ifeq (GALSF_RESOLVEDISM_STELLAR_TABLES,$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS)))
+# GALSF_RESOLVEDISM_HYBRID_DEFAULTS sets GALSF_RESOLVEDISM_STELLAR_TABLES in precompiler_logic.h
+ifneq (,$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_HYBRID_DEFAULTS,$(CONFIGVARS)))
 OBJS    += galaxy_sf/resolvedism_stellar_tables.o
 endif
 
 # expanded IMF sampling
-ifeq (GALSF_RESOLVEDISM_SAMPLE_IMF,$(findstring GALSF_RESOLVEDISM_SAMPLE_IMF,$(CONFIGVARS)))
+# GALSF_RESOLVEDISM_HYBRID_DEFAULTS sets GALSF_RESOLVEDISM_SAMPLE_IMF in precompiler_logic.h
+ifneq (,$(findstring GALSF_RESOLVEDISM_SAMPLE_IMF,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_HYBRID_DEFAULTS,$(CONFIGVARS)))
 OBJS    += galaxy_sf/resolvedism_imf_sampling.o
 endif
 
 # Stella stellar + CHEMCOOL tables: built from the stella-tables repo on first compile if missing (scripts/get_stella_tables.sh)
-ifneq (,$(findstring CHEMCOOL,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS)))
+ifneq (,$(findstring CHEMCOOL,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_HYBRID_DEFAULTS,$(CONFIGVARS)))
 STELLA_TABLES_DEP = stella_tables
 endif
 

@@ -562,6 +562,9 @@ void star_formation_parent_routine(void)
                         /* make a sink particle */
                         P[i].Mass = CellP[i].Mass; /* sync mass before type conversion */
                         P[i].Type = 5;
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        P[i].StarModel = STAR_MODEL_STARFORGE_SINK;
+#endif
                         TimeBinCountGas[P[i].TimeBin]--;
                         num_sink_formed++;
                         Stars_converted++;
@@ -639,6 +642,10 @@ void star_formation_parent_routine(void)
                             if(P[i].ID_generation > 30) {P[i].ID_generation = 0;}
                             P[ns].ID_generation = 0;
                             P[ns].Type = 4;
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                            P[ns].StarModel = STAR_MODEL_STELLA;
+                            P[ns].StellaFBEvent_ThisTimeStep = 0;
+#endif
                             P[ns].Mass = 1e-10 / UNIT_MASS_IN_SOLAR; /* tiny placeholder — filled by accretion walk */
                             P[ns].StellarAge = All.Time;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST

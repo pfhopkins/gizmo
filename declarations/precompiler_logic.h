@@ -13,6 +13,25 @@
 #define EXPAND_PREPROCESSOR_(VAL)     DO_PREPROCESSOR_EXPAND_(VAL) /* checks for a NON-ZERO value of this parameter */
 #define CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(VAL) !(EXPAND_PREPROCESSOR_(VAL) == 1) /* returns True if a non-zero int value of VAL is set */
 
+/* Stella x FIRE-3 coupled-mode preset: FIRE-3 SSPs above the cell-mass threshold [Msun], Stella single stars below */
+#ifdef GALSF_RESOLVEDISM_HYBRID_DEFAULTS
+#define GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL /* the cell-mass SF switch (SINGLE_STAR_AND_SSP_HYBRID_MODEL) is not wired yet: all SF is Stella */
+#ifndef FIRE_PHYSICS_DEFAULTS
+#define FIRE_PHYSICS_DEFAULTS 3
+#endif
+#define GALSF_RESOLVEDISM
+#define GALSF_RESOLVEDISM_FB
+#define GALSF_RESOLVEDISM_SAMPLE_IMF
+#define GALSF_RESOLVEDISM_STELLAR_TABLES
+#define GALSF_RESOLVEDISM_WINDS
+#define GALSF_RESOLVEDISM_WINDS_CONTINUOUS
+#define GALSF_RESOLVEDISM_WINDS_THERMAL
+#define GALSF_RESOLVEDISM_TYPE_IA
+#define GALSF_RESOLVEDISM_PHOTOION
+#define GALSF_RESOLVEDISM_G0_VARIABLE
+#define GALSF_RESOLVEDISM_RADPRESSURE
+#endif
+
 /* set default slope limiters */
 #if !defined(SLOPE_LIMITER_TOLERANCE)
 #define SLOPE_LIMITER_TOLERANCE 1
@@ -130,6 +149,10 @@
 #endif
 
 
+
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && defined(GALSF_SFR_CRITERION)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL sets the SF criteria itself (FIRE-3 would silently override GALSF_SFR_CRITERION): remove it from Config.sh"
+#endif
 
 /* set 'default' options for FIRE module packages as a whole */
 #ifdef FIRE_PHYSICS_DEFAULTS
@@ -1385,13 +1408,51 @@
    their own flags and Stella's by GALSF_RESOLVEDISM_FB, with nothing preventing both
    from being enabled — enforce the mutual exclusivity at compile time. */
 #ifdef GALSF_RESOLVEDISM_FB
-#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
-#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_MECHANICAL / GALSF_FB_THERMAL: Stella provides all SN/wind/thermal feedback via resolvedism_fb_*; the FIRE-2/3 modules would double-count. Disable them."
+#if defined(GALSF_FB_THERMAL)
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_THERMAL: Stella provides all SN/wind/thermal feedback via resolvedism_fb_*; the thermal module would double-count. Disable it."
 #endif
-#if defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-#error "GALSF_RESOLVEDISM_FB is mutually exclusive with the FIRE-2/3 GALSF_FB_FIRE_* modules: Stella handles radiation feedback + stellar evolution via GALSF_RESOLVEDISM_G0_VARIABLE/PHOTOION/RADPRESSURE/STELLAR_TABLES (or M1 RT). Disable the FIRE flags."
+#if defined(GALSF_FB_MECHANICAL) && !defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with GALSF_FB_MECHANICAL unless GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL restricts each to its own stars: otherwise both act on every Type-4 star and double-count."
+#endif
+#if !defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && (defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_STELLAREVOLUTION))
+#error "GALSF_RESOLVEDISM_FB is mutually exclusive with the FIRE-2/3 GALSF_FB_FIRE_* modules unless GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL restricts each to its own stars: Stella handles radiation feedback + stellar evolution via GALSF_RESOLVEDISM_G0_VARIABLE/PHOTOION/RADPRESSURE/STELLAR_TABLES (or M1 RT)."
 #endif
 #endif /* GALSF_RESOLVEDISM_FB mutual exclusivity */
+
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && (defined(GALSF_FB_FIRE_STELLAREVOLUTION) || defined(GALSF_ISMDUSTCHEM_MODEL))
+#error "GALSF_RESOLVEDISM_METALS_INDIVIDUAL puts H in Metallicity[1], FIRE yields/dust write He..Fe into fixed slots 1..10: the layouts clash silently"
+#endif
+
+/* Stella x FIRE-3 coupled mode: allowed and forbidden combinations */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+#if !defined(GALSF_RESOLVEDISM_FB) || !defined(GALSF_RESOLVEDISM_SAMPLE_IMF)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL requires GALSF_RESOLVEDISM_FB and GALSF_RESOLVEDISM_SAMPLE_IMF"
+#endif
+#if defined(CHEMCOOL)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL uses the FIRE cooling for all gas: disable CHEMCOOL"
+#endif
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && !defined(GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL carries the FIRE metal layout: disable GALSF_RESOLVEDISM_METALS_INDIVIDUAL"
+#endif
+#if defined(GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS)
+#error "GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS is not implemented yet"
+#endif
+#if defined(GALSF_RESOLVEDISM_DUST) || defined(GALSF_ISMDUSTCHEM_MODEL)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL: no dust model yet, disable GALSF_RESOLVEDISM_DUST and GALSF_ISMDUSTCHEM_MODEL"
+#endif
+#if defined(CHIMES)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL is not compatible with CHIMES"
+#endif
+#if defined(FIRE_PHYSICS_DEFAULTS) && (FIRE_PHYSICS_DEFAULTS < 3)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL requires FIRE_PHYSICS_DEFAULTS=3"
+#endif
+#if defined(GALSF_RESOLVEDISM_BH_PROMOTION)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL keeps Stella remnants as Type-4 stars: disable GALSF_RESOLVEDISM_BH_PROMOTION"
+#endif
+#if defined(GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW)
+#error "GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW is not implemented yet"
+#endif
+#endif /* GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL */
 
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
 #ifdef RADTRANSFER
@@ -1743,4 +1804,9 @@
 #endif
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif
+
+/* coupled mode: upstream RT bins next to FIRE-3 break FIRE's all-bins consumers (docs/stella_hybrid/P4_DESIGN.md) until P4 masks them */
+#if defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL) && !defined(GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY) && (defined(RT_PHOTOELECTRIC) || defined(RT_LYMAN_WERNER) || defined(RT_NUV) || defined(RT_OPTICAL_NIR) || defined(RT_FUV_6_8EV))
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL with RT_PHOTOELECTRIC/LYMAN_WERNER/NUV/OPTICAL_NIR/FUV_6_8EV needs GALSF_RESOLVEDISM_TREE_BANDS_PIXEL_FLUX_ONLY (P4): FIRE's SSP light, LONGRANGE, EUV fallback, G0/H2/eos and dust-temperature paths would read Stella's bins"
 #endif
