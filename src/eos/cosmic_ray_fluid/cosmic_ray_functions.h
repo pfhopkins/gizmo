@@ -1490,7 +1490,7 @@ KOKKOS_INLINE_FUNCTION double Get_CosmicRayIonizationRate_cgs(int i, struct part
 #endif
 #ifdef METALS
     zeta_cr += 1.e-21 * pp[i].Metallicity[0]/All.SolarAbundances[0]; // include radioactive decay of K-40 and other species, which scales with metallicity
-#if (NUM_METAL_SPECIES > 10)
+#if (NUM_METAL_SPECIES_BASE > 10)
     zeta_cr += 1.e-19 * pp[i].Metallicity[10]/All.SolarAbundances[10]; // Contribution from short-lived radioisotopes, here scaling to Fe abundance - Adams et al 2014 Apj 789 86
 #endif
 #endif

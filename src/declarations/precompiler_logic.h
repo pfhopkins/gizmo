@@ -1618,7 +1618,7 @@
 #endif
 
 /* NUM_METAL_SPECIES: total size of Metallicity[] array, including ALL passive scalars.
-   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear...]
+   Layout: [total_Z, cooling_species..., rprocess..., age_tracers..., starforge_tracers..., dustchem..., nuclear..., extra passive species...]
    Every module that adds fields must add its count here so that all loops, I/O, diffusion,
    merge/split, and MPI exchange automatically handle the correct number of species. */
 /* passive species appended at the end of Metallicity[] (carried, diffused, merged/split and written; not used by cooling) */
@@ -1630,6 +1630,7 @@
 #endif
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS+NUM_ISMDUSTCHEM_PASSIVE_SCALARS+NUM_NUCLEAR_PASSIVE_SCALARS+METALS_EXTRA_PASSIVE_SPECIES)
 #define METALS_EXTRA_PASSIVE_SPECIES_OFFSET (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* first appended slot */
+#define NUM_METAL_SPECIES_BASE (NUM_METAL_SPECIES-METALS_EXTRA_PASSIVE_SPECIES) /* species count without the appended slots, for the checks on the cooling-species layout */
 
 /* offset of ISM dustchem species within Metallicity array */
 #define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[]; other tracers and scalars follow */
