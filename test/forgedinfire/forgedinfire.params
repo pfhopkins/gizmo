@@ -1,6 +1,6 @@
 Initial_Conditions_File           ./forgedinfire_ics
 Initial_Simulation_Time           92800
-Final_Simulation_Time             100000
+Final_Simulation_Time             92820   % 20 time units (~400 steps at the RT light-crossing step): a smoke test, not the production run
 TimeBetSnapshot                   10
 Minimum_Timestep_Allowed          1.e-20
 Softening_Type0                   1e-3
@@ -18,7 +18,7 @@ UnitMass_in_g                     1.989e33
 UnitVelocity_in_cm_per_s          1e7
 UnitMagneticField_in_gauss        1
 Box_Size_In_Code_Units            1
-Max_Memory_Per_MPI_Task_in_MB     5000
+Max_Memory_Per_MPI_Task_in_MB     8000
 TreeRebuild_ActiveFraction        1.e-2
 Initial_Metallicity               0.35
 MPI_Buffersize_in_MB              100

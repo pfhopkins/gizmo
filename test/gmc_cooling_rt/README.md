@@ -4,16 +4,18 @@ This test initializes a $$2\times10^4 M_\odot$$ giant molecular cloud at $1M_\od
 
 This is a benchmark test. Failing this test does not necessarily imply that there is a problem, but rather indicates that something has changed that should be noted.
 
-The reference is `gmc_cooling_rt_exact_coldstart.hdf5` (generated at 6602963f, cold start, with the RT/microphysics fixes), fetched from the test-file mirror. Checkouts without those fixes still use the older `gmc_cooling_rt_exact.hdf5`.
+The reference is `gmc_cooling_rt_exact_coldstart_facemean.hdf5`, fetched from the test-file mirror: cold start, RT/microphysics fixes, and the arithmetic face-normal magnetic field under constrained gradients, which moves the urad_FUV statistic by ~30% and xe by ~20%. Older checkouts use `gmc_cooling_rt_exact_coldstart.hdf5` (before the face-normal change) or `gmc_cooling_rt_exact.hdf5` (before the RT/microphysics fixes).
 
 Compile-time flags used for this setup:
 ```
   SINGLE_STAR_STARFORGE_DEFAULTS
-  SINGLE_STAR_FB_RAD
-  COOLING
   MAGNETIC
+  COOLING
+  SINGLE_STAR_FB_RAD
+  METALS
+  COOL_METAL_LINES_BY_SPECIES
   BOX_PERIODIC
   GRAVITY_NOT_PERIODIC
   ADAPTIVE_TREEFORCE_UPDATE=0.0625
-  RT_SPEEDOFLIGHT_REDUCTION=3e-5
+  RT_SPEEDOFLIGHT_REDUCTION=1e-4
 ```

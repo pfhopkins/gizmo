@@ -6,6 +6,7 @@
 #include <string.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 /*
 * This file is largely written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
@@ -209,7 +210,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
                 MyIDType OriginallyMarkedSwallowID; OriginallyMarkedSwallowID = P[j].SwallowID; // record this to help prevent double-counting below
-                double Mass_j, Vel_j[3], InternalEnergy_j = 0; // velocity kicks to apply to 'j's, accumulate here to apply at bottom of code
+                double Mass_j, Vel_j[3], InternalEnergy_j; // velocity kicks to apply to 'j's, accumulate here to apply at bottom of code
                 #pragma omp atomic read
                 Mass_j = P[j].Mass; // this can get modified -a lot- below, so we need to read it carefully right now
                 if(P[j].Type==0)
@@ -483,6 +484,7 @@ int sink_swallow_and_kick_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic
                         P[j].dp[k] += Mass_j * Vel_j[k] - Mass_j_0*Vel_j_0[k]; // discrete momentum change
                     }
+                    force_note_motion_change(j);
 
                     if(P[j].Type==0) // gas variable, need to update the 'pred' and truemass and related variables as well
                     {
@@ -523,6 +525,7 @@ void sink_swallow_and_kick_loop(void)
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    force_raise_noted_motion_bounds();
     /* collect results on any swallow operations in this pass. Allreduce (not Reduce): every rank
        needs the global count -- it raises the moments flag, and it gates the cleanup rearrange in
        run.cc, both of which must be rank-uniform decisions. */
@@ -618,16 +621,17 @@ void spawn_sink_wind_feedback(void)
 }
 
 
-void get_random_orthonormal_basis(int seed, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz)
+/* random orthonormal basis drawn for particle i: site_salt names the call site, event says when (All.Ti_Current, or 0 at initialization) */
+void get_random_orthonormal_basis(int i, uint64_t site_salt, uint64_t event, Vec3<double>& nx, Vec3<double>& ny, Vec3<double>& nz)
 {
-    double phi, cos_theta, sin_theta, sin_phi, cos_phi;
-    phi=2.*M_PI*get_random_number(seed+1+ThisTask), cos_theta=2.*(get_random_number(seed+3+2*ThisTask)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
+    double phi, cos_theta, sin_theta, sin_phi, cos_phi; uint64_t draw = 0;
+    phi=2.*M_PI*particle_random_number(i, site_salt, event, draw++), cos_theta=2.*(particle_random_number(i, site_salt, event, draw++)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
     /* velocities (determined by wind velocity direction) */
     nz = {sin_theta*cos_phi, sin_theta*sin_phi, cos_theta}; // random z axis
 
     double norm=0;
     while(norm==0){ // necessary in case ny is parallel to nz - believe it or not this happened once!
-        phi=2.*M_PI*get_random_number(seed+4+ThisTask), cos_theta=2.*(get_random_number(seed+5+2*ThisTask)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
+        phi=2.*M_PI*particle_random_number(i, site_salt, event, draw++), cos_theta=2.*(particle_random_number(i, site_salt, event, draw++)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
         ny = {sin_theta*cos_phi, sin_theta*sin_phi, cos_theta}; // random y axis, needs to have its z component deprojected
         // do Gram-Schmidt to get an orthonormal basis
         ny -= nz * dot(ny, nz); // deproject component along z
@@ -658,23 +662,26 @@ void get_wind_spawn_direction(int i, int num_spawned_this_call, int mode, Vec3<d
     Vec3<double> nx = cross(ny, nz);
     // now do the actual direction based on the mode we're in
     double phi, cos_theta, sin_theta, sin_phi, cos_phi;
+    static constexpr uint64_t SPAWN_DIRECTION_RNG_SALT = gizmo_loop_rng_salt("spawned_cell_direction");
+    const uint64_t draw0 = 4 * (uint64_t) num_spawned_this_call; /* the source's key already changes with every cell it spawns (its generation); the index keeps the draws apart regardless */
     if(mode==0){ // fully random
-        phi=2.*M_PI*get_random_number(num_spawned_this_call+1+ThisTask), cos_theta=2.*(get_random_number(num_spawned_this_call+3+2*ThisTask)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
+        phi=2.*M_PI*particle_random_number(i, SPAWN_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, draw0), cos_theta=2.*(particle_random_number(i, SPAWN_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, draw0+1)-0.5); sin_theta=sqrt(1-cos_theta*cos_theta), sin_phi=sin(phi), cos_phi=cos(phi);
         veldir = {sin_theta*cos_phi, sin_theta*sin_phi, cos_theta}; dpdir = veldir;
     } else if (mode==1){ // collimated according to a conical velocity field
         double theta0=0.01, thetamax=30.*(M_PI/180.); // "flattening parameter" and max opening angle of jet velocity distribution from Matzner & McKee 1999, sets the collimation of the jets
 #if !defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
         theta0=1.e-4; thetamax=10.*(M_PI/180.); // narrower opening angle distribution for agn jets
 #endif
-        double theta=atan(theta0*tan(get_random_number(num_spawned_this_call+7+5*ThisTask)*atan(sqrt(1+theta0*theta0)*tan(thetamax)/theta0))/sqrt(1+theta0*theta0)); // biased sampling to get collimation
-        phi=2.*M_PI*get_random_number(num_spawned_this_call+1+ThisTask);
+        double theta=atan(theta0*tan(particle_random_number(i, SPAWN_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, draw0+2)*atan(sqrt(1+theta0*theta0)*tan(thetamax)/theta0))/sqrt(1+theta0*theta0)); // biased sampling to get collimation
+        phi=2.*M_PI*particle_random_number(i, SPAWN_DIRECTION_RNG_SALT, (uint64_t)All.Ti_Current, draw0+3);
         cos_theta = cos(theta), sin_theta=sin(theta), sin_phi=sin(phi), cos_phi=cos(phi);
         veldir = nx*(sin_theta*cos_phi) + ny*(sin_theta*sin_phi) + nz*cos_theta; dpdir = veldir; //converted from angular momentum relative to into standard coordinates
     }
 #if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION)
     else if (mode==2){ //random 3-axis isotropized - spawn along z axis, then y, then x
         if(((P[i].ID_generation-1) % 6) == 0) { // need to generate a brand new coordinate frame
-            get_random_orthonormal_basis(P[i].ID_generation, nx, ny, nz);
+            static constexpr uint64_t ISOTROPIZED_WIND_BASIS_RNG_SALT = gizmo_loop_rng_salt("isotropized_wind_basis");
+            get_random_orthonormal_basis(i, ISOTROPIZED_WIND_BASIS_RNG_SALT, (uint64_t)All.Ti_Current, nx, ny, nz);
             veldir = nz; for(k=0; k<3; k++) {P[i].Wind_direction[k]=nx[k]; P[i].Wind_direction[k+3]=ny[k];} dpdir = veldir;
         }
         else if(((P[i].ID_generation-1) % 6) == 2) {for(k=0; k<3; k++) {veldir[k] = P[i].Wind_direction[k];} dpdir = veldir;}
@@ -843,7 +850,8 @@ void set_spawn_orthonormal_basis(int i, int mode, Vec3<double>& jx, Vec3<double>
     }
 #endif
     if(mode == 3){ // if doing an angular grid, need some fixed coordinates to orient it, but want to switch em up each time to avoid artifacts
-        get_random_orthonormal_basis(P[i].ID_generation, jx, jy, jz);
+        static constexpr uint64_t EJECTA_GRID_BASIS_RNG_SALT = gizmo_loop_rng_salt("ejecta_grid_basis");
+        get_random_orthonormal_basis(i, EJECTA_GRID_BASIS_RNG_SALT, (uint64_t)All.Ti_Current, jx, jy, jz);
     }
 #ifdef SINK_WIND_SPAWN_SET_JET_PRECESSION /* rotate the jet angle according to the explicitly-included precession parameters */
     double degree = All.Sink_jet_precess_degree, period = All.Sink_jet_precess_period/UNIT_TIME_IN_GYR; Vec3<double> new_dir;
@@ -935,11 +943,14 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef SINK_GRAVCAPTURE_FIXEDSINKRADIUS
     d_r = DMIN(P[i].SinkRadius, d_r); //launch close to the sink
 #endif
+#if (defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && defined(PARTICLE_EXCISION)) || defined(SNE_NONSINK_SPAWN)
+    static constexpr uint64_t SPAWN_RADIUS_RNG_SALT = gizmo_loop_rng_salt("spawn_radius");
+#endif
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM) && defined(PARTICLE_EXCISION)
-    if(is_particle_a_special_zoom_target(i)) {double rmin=All.ForceSoftening[3], r=sqrt(r2), r0=0.5*(rmin+r)*(1.+0.1*get_random_number(i+NumPart+num_already_spawned)); d_r=r0;} // make sure to spawn OUTSIDE of the excision radius!
+    if(is_particle_a_special_zoom_target(i)) {double rmin=All.ForceSoftening[3], r=sqrt(r2), r0=0.5*(rmin+r)*(1.+0.1*particle_random_number(i, SPAWN_RADIUS_RNG_SALT, (uint64_t)All.Ti_Current, 0)); d_r=r0;} // make sure to spawn OUTSIDE of the excision radius!
 #endif
 #if defined(SNE_NONSINK_SPAWN)
-    if(P[i].Type == 4) {double rmin=All.ForceSoftening[4], r=sqrt(r2), r0=0.5*(rmin+r)*(0.5+1.5*get_random_number(i+NumPart+num_already_spawned)); d_r=r0;} // need a generous padding to ensure no overlaps
+    if(P[i].Type == 4) {double rmin=All.ForceSoftening[4], r=sqrt(r2), r0=0.5*(rmin+r)*(0.5+1.5*particle_random_number(i, SPAWN_RADIUS_RNG_SALT, (uint64_t)All.Ti_Current, 1)); d_r=r0;} // need a generous padding to ensure no overlaps
 #endif
     long bin, bin_0; for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin] > 0) break;} /* gives minimum active timebin of any particle */
     bin_0 = bin; int i0 = i; /* save minimum timebin, also save ID of sink particle for use below */
@@ -1024,7 +1035,8 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
             mode = mode_default; mass_of_new_particle=m0_newparticlemass_for_target_spawnedmass; v_magnitude_physical=v_magnitude_physical_default;
             if((j - (NumPart + num_already_spawned)) % 2) {mode=mode_prev; v_magnitude_physical=v_magnitude_physical_prev; mass_of_new_particle=mass_of_new_particle_prev;  /* for every-other particle, need to match previous for conservation */
             } else { /* collimated jet */
-                if(get_random_number(j) < fraction_to_spawn_in_jet) {
+                static constexpr uint64_t JET_OR_WIND_RNG_SALT = gizmo_loop_rng_salt("spawn_jet_or_wind");
+                if(particle_random_number(i, JET_OR_WIND_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)(j - (NumPart + num_already_spawned))) < fraction_to_spawn_in_jet) {
                     mode=1; mass_of_new_particle=m0_newparticlemass_for_target_spawnedmass/masscorrfac_fast; v_magnitude_physical = frac_clight_jet * C_LIGHT_CODE;
                 } else { /* isotropic/broad-angle wind */
                     mode=0; mass_of_new_particle=m0_newparticlemass_for_target_spawnedmass; v_magnitude_physical=v_magnitude_physical_default; /* isotropic slow wind */
@@ -1217,9 +1229,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #endif
         /* Splice the spawned cell into the live tree. This maintains list connectivity and total node
            mass (the mass was debited from the co-located sink), but NOT the type-conditioned moments
-           (gasmass, stellar_lum, ...) nor ancestor hmax beyond the immediate parent -- those are healed
-           by the next moments refresh / force_update_hmax pass. Runs on ordinary steps (the spawn gate
-           in run.cc), not only at decomposition. */
+           (gasmass, stellar_lum, ...) -- those are healed by the next moments refresh. It raises the
+           motion bounds above the cell, so this call must follow its final Pos/Vel. Runs on ordinary
+           steps (the spawn gate in run.cc), not only at decomposition. */
         force_add_element_to_tree(i0, j);
     }
     if(*unspawned_mass_ptr < 0) {*unspawned_mass_ptr=0;}

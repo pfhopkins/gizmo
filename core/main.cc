@@ -106,6 +106,18 @@ int main(int argc, char **argv)
       endrun(0);
     }
 
+  if(strlen(argv[1]) >= sizeof(ParameterFile)) /* every task sees the same arguments, so all leave here together */
+    {
+      if(ThisTask == 0)
+        {
+          printf("The parameterfile name '%s' is %d characters long, but at most %d are allowed.\n"
+                 "Run from the directory that holds the parameterfile and pass just its name.\n",
+                 argv[1], (int) strlen(argv[1]), (int) sizeof(ParameterFile) - 1);
+          fflush(stdout);
+        }
+      MPI_Finalize();
+      exit(1);
+    }
   strcpy(ParameterFile, argv[1]);
 
   if(argc >= 3)

@@ -15,7 +15,8 @@ import h5py
 import glob
 import os
 import shutil
-from gizmo.test import default_mpi_ranks, build_gizmo_for_test, download_test_files
+import shlex
+from gizmo.test import default_mpi_ranks, build_gizmo_for_test, download_test_files, mpi_launch_command
 
 
 # Common Config.sh flags shared by all variants
@@ -89,8 +90,8 @@ def _run_variant(test_name, variant, num_mpi_ranks, num_omp_threads):
     if num_omp_threads > 0:
         environ["OMP_NUM_THREADS"] = str(num_omp_threads)
     params_basename = f"{test_name}_{variant}.params"
-    os.system(f"mpirun -np {num_mpi_ranks} --use-hwthread-cpus ./GIZMO_{variant} {params_basename} 0 "
-              f"1>test_{test_name}_{variant}.out 2>test_{test_name}_{variant}.err")
+    launch = shlex.join(mpi_launch_command(num_mpi_ranks, num_omp_threads) + [f"./GIZMO_{variant}", params_basename, "0"])
+    os.system(f"{launch} 1>test_{test_name}_{variant}.out 2>test_{test_name}_{variant}.err")
     os.chdir("../../")
 
     return output_dir

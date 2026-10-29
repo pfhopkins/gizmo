@@ -179,12 +179,16 @@ int sink_environment_evaluate(int target, int mode, int *exportflag, int *export
             for(n = 0; n < numngb; n++)
             {
                 j = ngblist[n]; /* since we use the -threaded- version above of ngb-finding, its super-important this is the lower-case ngblist here! */
-                if( (P[j].Mass > 0) && (P[j].Type != 5) && (P[j].ID != local.ID) )
+                if( (P[j].Mass > 0) && (P[j].Type != 5) )
                 {
                     double wt = P[j].Mass;
                     Vec3<double> dP = P[j].Pos - local.Pos; Vec3<double> dv = P[j].Vel - local.Vel;
                     nearest_xyz(dP,-1); /*  find the closest image in the given box size  */
                     NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,dv,-1); /* wrap velocities for shearing boxes if needed */
+                    /* Identity is zero separation, not a matching ID: IDs repeat (spawned cells share one),
+                       so an ID test here dropped genuine neighbours from the sink's environment. Type != 5
+                       already excludes the sink itself; this catches a coincident pair. */
+                    if(!(dP.norm_sq() > 0)) {continue;}
 
 #ifdef SINK_REPOSITION_ON_POTMIN
                     if( (P[j].Type != 0) && (P[j].Type != 5) )

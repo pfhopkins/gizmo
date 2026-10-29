@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 #define GSLWORKSIZE 100000
@@ -42,12 +43,13 @@ double prob_of_interaction(double mass, double r, double h_si, Vec3<double>& dV,
 /*! This routine sets the kicks for each particle after it has been decided that they will
  *  interact. It uses an algorithm tha conserves energy and momentum but picks a random direction so it does not conserves angular momentum. */
 #if !defined(GRAIN_COLLISIONS) /* if using the 'grain collisions' module, these functions will be defined elsewhere [in the grains subroutines] */
-void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m)
+void calculate_interact_kick(Vec3<double>& dV, Vec3<double>& kick, double m, uint64_t rng_key, uint64_t rng_counter_base)
 {
     double dVmag = (1-All.DM_DissipationFactor)*sqrt(dV[0]*dV[0]+dV[1]*dV[1]+dV[2]*dV[2]);
     if(dVmag<0) {dVmag=0;}
     if(All.DM_KickPerCollision>0) {double v0=All.DM_KickPerCollision; dVmag=sqrt(dVmag*dVmag+v0*v0);}
-    double cos_theta = 2.0*gsl_rng_uniform(random_generator)-1.0, sin_theta = sqrt(1.-cos_theta*cos_theta), phi = gsl_rng_uniform(random_generator)*2.0*M_PI;
+    double u0 = gizmo_gpu_rand_double(rng_key, 2 * rng_counter_base), u1 = gizmo_gpu_rand_double(rng_key, 2 * rng_counter_base + 1); /* two draws of the pair's stream */
+    double cos_theta = 2.0*u0-1.0, sin_theta_sq = 1.-cos_theta*cos_theta, sin_theta = (sin_theta_sq > 0) ? sqrt(sin_theta_sq) : 0., phi = u1*2.0*M_PI;
     kick[0] = 0.5*(dV[0] + dVmag*sin_theta*cos(phi));
     kick[1] = 0.5*(dV[1] + dVmag*sin_theta*sin(phi));
     kick[2] = 0.5*(dV[2] + dVmag*cos_theta);

@@ -6,6 +6,7 @@
 #include <gsl/gsl_math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 
 
@@ -40,8 +41,10 @@ void do_cbe_initialization(void)
 if(j > 1)
 {
 
-                if(k==0) {P[i].CBE_basis_moments[j][0] = 1.e-5 * P[i].Mass * (0.5 + 0.01 + get_random_number(P[i].ID + i + 343*ThisTask + 912*k + 781*j));}
-                if((k>0)&&(k<4)) {P[i].CBE_basis_moments[j][k] = P[i].CBE_basis_moments[j][0] * 1.e-8 * (0*2.*P[i].Vel[k]*(get_random_number(P[i].ID + i + 343*ThisTask + 912*k + 781*j + 2)-0.5) + 1.e-5*v0*(get_random_number(P[i].ID + i + 343*ThisTask + 912*k + 781*j + 2)-0.5));}
+                static constexpr uint64_t CBE_INITIAL_MOMENTS_RNG_SALT = gizmo_loop_rng_salt("cbe_initial_basis_moments");
+                const uint64_t cbe_draw = 2 * (uint64_t)(CBE_INTEGRATOR_NMOMENTS*j + k); /* two draws per (basis, moment) */
+                if(k==0) {P[i].CBE_basis_moments[j][0] = 1.e-5 * P[i].Mass * (0.5 + 0.01 + particle_random_number(i, CBE_INITIAL_MOMENTS_RNG_SALT, 0, cbe_draw));}
+                if((k>0)&&(k<4)) {P[i].CBE_basis_moments[j][k] = P[i].CBE_basis_moments[j][0] * 1.e-8 * (0*2.*P[i].Vel[k]*(particle_random_number(i, CBE_INITIAL_MOMENTS_RNG_SALT, 0, cbe_draw)-0.5) + 1.e-5*v0*(particle_random_number(i, CBE_INITIAL_MOMENTS_RNG_SALT, 0, cbe_draw+1)-0.5));}
                 if(k>=4 && k<7) {P[i].CBE_basis_moments[j][k] = P[i].CBE_basis_moments[j][0] * 1.e-15;} //(P[i].Vel[k]*P[i].Vel[k] + 1.e-2*v0*v0 + 1.e-3*1.e-3);}
                 if(k>=7) {P[i].CBE_basis_moments[j][k] = 0;}
 
@@ -186,7 +189,8 @@ P[i].CBE_basis_moments[j][8] = S0*vhat[0]*vhat[2]; P[i].CBE_basis_moments[j][9] 
         for(k=0;k<CBE_INTEGRATOR_NMOMENTS;k++)
         {
             double dq = 0.5*P[i].CBE_basis_moments[jmax][k];
-            if(k>0 && k<4) {dq *= 1. + 0.001*(get_random_number(ThisTask+i+32*jmax+12427*k)-0.5);}
+            static constexpr uint64_t CBE_BASIS_SPLIT_RNG_SALT = gizmo_loop_rng_salt("cbe_basis_split");
+            if(k>0 && k<4) {dq *= 1. + 0.001*(particle_random_number(i, CBE_BASIS_SPLIT_RNG_SALT, (uint64_t)All.Ti_Current, (uint64_t)k)-0.5);}
             P[i].CBE_basis_moments[jmax][k] -= dq;
             P[i].CBE_basis_moments[jmin][k] += dq; // since we're just splitting mass, this is ok, since these are all mass-weighted quantities
         }
