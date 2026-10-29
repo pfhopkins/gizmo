@@ -383,7 +383,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 Mass_j += dM_ejecta_in;
                 out.M_coupled += dM_ejecta_in;
 #if defined(METALS) /* inject metals */
-                for(k=0;k<NUM_METAL_SPECIES-NUM_AGE_TRACERS;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}
+                for(k=0;k<NUM_METAL_SPECIES;k++) {if(k<AGE_TRACER_OFFSET || k>=AGE_TRACER_OFFSET+NUM_AGE_TRACERS) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // the age tracers are coupled below
                 if(NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION>0 && loop_iteration < 2) {
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
                     // treat like any other yield when doing stellar mass exchange 
@@ -391,8 +391,8 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
                 }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-                if(loop_iteration == 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
-                if(loop_iteration != 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
+                if(loop_iteration == 3) {for(k=AGE_TRACER_OFFSET;k<AGE_TRACER_OFFSET+NUM_AGE_TRACERS;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
+                if(loop_iteration != 3) {for(k=AGE_TRACER_OFFSET;k<AGE_TRACER_OFFSET+NUM_AGE_TRACERS;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
 #endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
                 if(loop_iteration >= 2) {couple_anything_but_scalar_mass_and_metals = 0;} // for r-process, age-tracers, etc., nothing left here to bother coupling //
@@ -730,7 +730,7 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
                 out.M_coupled += dM_ejecta_in;
                 
 #ifdef METALS   /* inject metals */
-                for(k=0;k<NUM_METAL_SPECIES-NUM_AGE_TRACERS;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}
+                for(k=0;k<NUM_METAL_SPECIES;k++) {if(k<AGE_TRACER_OFFSET || k>=AGE_TRACER_OFFSET+NUM_AGE_TRACERS) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // the age tracers are coupled below
                 if(NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION>0 && loop_iteration < 2) {
 #if defined(GALSF_ISMDUSTCHEM_MODEL) 
                     // treat like any other yield when doing stellar mass exchange 
@@ -738,8 +738,8 @@ int addFB_evaluate(int target, int mode, int *exportflag, int *exportnodecount, 
 #endif
                 }
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
-                if(loop_iteration == 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
-                if(loop_iteration != 3) {for(k=NUM_METAL_SPECIES-NUM_AGE_TRACERS;k<NUM_METAL_SPECIES;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
+                if(loop_iteration == 3) {for(k=AGE_TRACER_OFFSET;k<AGE_TRACER_OFFSET+NUM_AGE_TRACERS;k++) {Metallicity_j[k] += pnorm*local.yields[k]/Mass_j;}} // add age tracers in taking yields to mean MASS, so we can make it large without actually exchanging large masses
+                if(loop_iteration != 3) {for(k=AGE_TRACER_OFFSET;k<AGE_TRACER_OFFSET+NUM_AGE_TRACERS;k++) {Metallicity_j[k]=(1-massratio_ejecta)*Metallicity_j[k] + massratio_ejecta*local.yields[k];}} // treat like any other yield when doing stellar mass exchange
 #endif
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
                 if(loop_iteration >= 2) {couple_anything_but_scalar_mass_and_metals = 0;} // for r-process, age-tracers, etc., nothing left here to bother coupling //

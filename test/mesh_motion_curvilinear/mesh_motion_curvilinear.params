@@ -1,0 +1,21 @@
+% Mesh points with fixed curvilinear velocities (HYDRO_FIX_MESH_MOTION=2/3) in a cold, static, non-periodic ball of gas.
+% The test sets HYDRO_FIX_MESH_MOTION and writes the ICs (with ParticleVelocities) itself.
+InitCondFile                       mesh_motion_curvilinear_ics
+OutputDir                          output
+TimeBegin                          0
+TimeMax                            0.5
+TimeOfFirstSnapshot                0
+BoxSize                            4
+TimeBetSnapshot                    0.25
+MaxSizeTimestep                    0.01
+DesNumNgb                          32
+MaxNumNgbDeviation                 0.1
+CourantFac                         0.2
+ErrTolIntAccuracy                  0.01
+MaxRMSDisplacementFac              0.125
+ErrTolForceAcc                     0.001
+ErrTolTheta                        0.7
+TimeBetStatistics                  0.5
+MaxMemSize                         1000
+ResubmitOn                         0
+ResubmitCommand                    none

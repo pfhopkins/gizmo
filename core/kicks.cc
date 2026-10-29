@@ -5,6 +5,7 @@
 #include <math.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 /*!
  * This file was originally part of the GADGET3 code developed by
@@ -418,7 +419,7 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 
  
         /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
-        apply_special_boundary_conditions(i,mass_new,1);
+        apply_special_boundary_conditions(i,mass_new,1,All.Ti_Current);
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass)) {return;} /* exit if we have zero'd the particle mass, to avoid errors with dividing by zero */
 
         /* any other gas-specific kicks (e.g. B-fields, radiation) go here */
@@ -593,54 +594,90 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 
     
     
-void apply_special_boundary_conditions(int i, double mass_for_dp, int mode)
+/* Reflecting and outflow faces of the box. A reflecting face mirrors the particle's state through it: the position is folded
+   back into the box (with both faces of an axis reflecting, through as many crossings as the step carried it), and on an odd
+   number of crossings the normal components of its velocity, its finite-volume mesh velocity and its radiation and cosmic-ray
+   fluxes change sign; a particle, or its image, exactly on a face crosses it once more only when moving out. An image within
+   1e-8 of the box length of a reflecting face is set a small random distance off it, so particles cannot sit on the face or on
+   each other; the draw is keyed on the particle's identity and the target time. An outflow face removes the particle if its
+   path crossed that face, before or after a reflection. mass_for_dp is the caller's (the kick passes the mass it has just
+   assigned, the drift the particle's current mass); only the kick (mode 1) books the momentum change. */
+void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, integertime ti_target)
 {
 #if BOX_DEFINED_SPECIAL_XYZ_BOUNDARY_CONDITIONS_ARE_ACTIVE
+    static constexpr uint64_t SPECIAL_BOUNDARY_RNG_SALT = gizmo_loop_rng_salt("special_boundary");
     double box_upper[3]; int j;
     box_upper[0]=boxSize_X; box_upper[1]=boxSize_Y; box_upper[2]=boxSize_Z;
     for(j=0; j<3; j++)
     {
-        if(P[i].Pos[j] <= 0)
+        const double L = box_upper[j], x0 = P[i].Pos[j];
+        int lower_hit = (x0 <= 0), upper_hit = (x0 >= L); /* the faces the step's path crossed */
+        if(!lower_hit && !upper_hit) {continue;}
+        const int r = special_boundary_condition_xyz_def_reflect[j], o = special_boundary_condition_xyz_def_outflow[j];
+        const int reflect_lower = (r == 0 || r == -1), reflect_upper = (r == 0 || r == 1);
+        if((lower_hit && reflect_lower) || (upper_hit && reflect_upper))
         {
-            if(special_boundary_condition_xyz_def_reflect[j] == 0 || special_boundary_condition_xyz_def_reflect[j] == -1)
+            double x; long long crossings;
+            if(x0 == 0 || x0 == L) {x = x0; crossings = 0;}
+            else if(reflect_lower && reflect_upper)
             {
-                if(P[i].Vel[j]<0) {P[i].Vel[j]=-P[i].Vel[j]; if(P[i].Type==0) {CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;} if(mode==1) {P[i].dp[j]+=2*P[i].Vel[j]*mass_for_dp;}}
-                P[i].Pos[j]=DMAX((0.+((double)P[i].ID)*2.e-8)*box_upper[j], 0.1*P[i].Pos[j]); // old  was 1e-9, safer on some problems, but can artificially lead to 'trapping' in some low-res tests
+                const double n = floor(x0 / L);
+                if(!(fabs(n) < 9.e15)) {x = (x0 < 0) ? 0 : L; crossings = 0;} /* no finite path: put it on the face it left by */
+                else
+                {
+                    crossings = (long long) fabs(n);
+                    const double y = DMIN(DMAX(x0 - n * L, 0.), L); /* the position within its image cell */
+                    x = (crossings & 1) ? L - y : y;
+                    if(crossings >= 2) {lower_hit = upper_hit = 1;}
+                }
+            }
+            else if(lower_hit) {x = -x0; crossings = 1; if(x >= L) {upper_hit = 1;}}
+            else {x = 2 * L - x0; crossings = 1; if(x <= 0) {lower_hit = 1;}}
+            const double v_image = (crossings & 1) ? -P[i].Vel[j] : P[i].Vel[j]; /* an image exactly on a face crosses it once more if moving out through it */
+            if((x == 0 && reflect_lower && v_image < 0) || (x == L && reflect_upper && v_image > 0)) {crossings++;}
+            if(x <= 0) {lower_hit = 1;}
+            if(x >= L) {upper_hit = 1;}
+            if(crossings & 1)
+            {
+                const double vel_before = P[i].Vel[j];
+                P[i].Vel[j] = -P[i].Vel[j];
+                if(mode==1) {P[i].dp[j] += (P[i].Vel[j] - vel_before) * mass_for_dp;}
+                if(P[i].Type==0)
+                {
+                    CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+                    CellP[i].ParticleVel[j] = -CellP[i].ParticleVel[j];
+#endif
+#ifdef RT_EVOLVE_FLUX
+                    for(int kf=0;kf<N_RT_FREQ_BINS;kf++) {CellP[i].Rad_Flux[kf][j]=-CellP[i].Rad_Flux[kf][j]; CellP[i].Rad_Flux_Pred[kf][j]=CellP[i].Rad_Flux[kf][j];}
+#endif
+#ifdef COSMIC_RAY_FLUID
+                    for(int kf=0;kf<N_CR_PARTICLE_BINS;kf++) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}
+#endif
+                }
+            }
+            const double wall_gap = 1.e-8 * L;
+            if((reflect_lower && x < wall_gap) || (reflect_upper && L - x < wall_gap))
+            {
+                const int face = (reflect_lower && x < wall_gap) ? 0 : 1;
+                const double offset = wall_gap * (0.5 + gizmo_gpu_rand_double(gizmo_rng_particle_identity((uint64_t) P[i].ID, (uint64_t) P[i].ID_child_number, (uint64_t) P[i].ID_generation), gizmo_rng_event_counter(SPECIAL_BOUNDARY_RNG_SALT, (uint64_t) ti_target, (uint64_t) (6*crossings + 2*j + face))));
+                x = (face == 0) ? offset : L - offset;
+            }
+            P[i].Pos[j] = x;
 #ifdef GRAIN_RDI_TESTPROBLEM_LIVE_RADIATION_INJECTION
-                P[i].Pos[j]+=3.e-3*boxSize_X; P[i].Vel[j] += 0.1; /* special because of our wierd boundary condition for this problem, sorry to have so many hacks for this! */
+            if(lower_hit && reflect_lower) {P[i].Pos[j]+=3.e-3*boxSize_X; P[i].Vel[j] += 0.1;} /* special because of our wierd boundary condition for this problem, sorry to have so many hacks for this! */
 #endif
-#ifdef RT_EVOLVE_FLUX
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(CellP[i].Rad_Flux[kf][j]<0) {CellP[i].Rad_Flux[kf][j]=-CellP[i].Rad_Flux[kf][j]; CellP[i].Rad_Flux_Pred[kf][j]=CellP[i].Rad_Flux[kf][j];}}}
-#endif
-
-#ifdef COSMIC_RAY_FLUID
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]<0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
-#endif
-            }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == -1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
-#pragma omp atomic write
-                TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
-            }
         }
-        else if (P[i].Pos[j] >= box_upper[j])
+        const int outflow_lower = (o == 0 || o == -1), outflow_upper = (o == 0 || o == 1);
+        if((lower_hit && outflow_lower) || (upper_hit && outflow_upper))
         {
-            if(special_boundary_condition_xyz_def_reflect[j] == 0 || special_boundary_condition_xyz_def_reflect[j] == 1)
-            {
-                if(P[i].Vel[j]>0) {P[i].Vel[j]=-P[i].Vel[j]; if(P[i].Type==0) {CellP[i].VelPred[j]=P[i].Vel[j]; CellP[i].HydroAccel[j]=0;} if(mode==1) {P[i].dp[j]+=2*P[i].Vel[j]*mass_for_dp;}}
-                P[i].Pos[j]=box_upper[j]*(1.-((double)P[i].ID)*2.e-8);
-#ifdef RT_EVOLVE_FLUX
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_RT_FREQ_BINS;kf++) {if(CellP[i].Rad_Flux[kf][j]>0) {CellP[i].Rad_Flux[kf][j]=-CellP[i].Rad_Flux[kf][j]; CellP[i].Rad_Flux_Pred[kf][j]=CellP[i].Rad_Flux[kf][j];}}}
-#endif
-#ifdef COSMIC_RAY_FLUID
-                if(P[i].Type==0) {int kf; for(kf=0;kf<N_CR_PARTICLE_BINS;kf++) {if(CellP[i].CosmicRayFlux[kf][j]>0) {CellP[i].CosmicRayFlux[kf][j]=-CellP[i].CosmicRayFlux[kf][j]; CellP[i].CosmicRayFluxPred[kf][j]=CellP[i].CosmicRayFlux[kf][j];}}}
-#endif
-            }
-            if(special_boundary_condition_xyz_def_outflow[j] == 0 || special_boundary_condition_xyz_def_outflow[j] == 1) {P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
+            P[i].Mass=0; if(P[i].Type==0) {CellP[i].Mass=0;} if(mode==1) {P[i].dp[0]=P[i].dp[1]=P[i].dp[2]=0;}
 #pragma omp atomic write
-                TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
-            }
+            TreeMomentsStaleFlag=1; /* reached from the OpenMP-parallel drift; every thread writes the same value, but keep it a defined write */
         }
     }
+#else
+    (void)i; (void)mass_for_dp; (void)mode; (void)ti_target;
 #endif
     return;
 }

@@ -177,7 +177,9 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS == 3)
+#if !defined(CHIMES) /* CHIMES evolves its own chemistry and does not carry the electron fraction this model reads */
 #define COOL_MOLECFRAC_NONEQM
+#endif
 #define OUTPUT_MOLECULAR_FRACTION
 #define OUTPUT_COOLRATE
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
@@ -458,7 +460,9 @@
 #endif
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
+#if !defined(CHIMES) /* not compatible with CHIMES, which evolves its own chemistry */
 #define COOL_MOLECFRAC_NONEQM
+#endif
 #define EOS_SUBSTELLAR_ISM
 #define OUTPUT_MOLECULAR_FRACTION
 #if defined(MAGNETIC) && !defined(CONDUCTION) && !defined(VISCOSITY) // if we have cooling and magnetic fields, enable conduction + viscosity
@@ -742,7 +746,7 @@
 
 
 #if defined(COOL_MOLECFRAC)
-#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM)
+#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)
 #endif
 #endif
@@ -1169,7 +1173,7 @@
 #endif
 
 #ifdef STARFORGE_FEEDBACK_TRACERS
-#define NUM_STARFORGE_FEEDBACK_TRACERS (STARFORGE_FEEDBACK_TRACERS)
+#define NUM_STARFORGE_FEEDBACK_TRACERS ((STARFORGE_FEEDBACK_TRACERS) > 3 ? (STARFORGE_FEEDBACK_TRACERS) : 3) /* the writers fill one field per channel (0=jets, 1=winds, 2=SNe), so at least 3 */
 #else
 #define NUM_STARFORGE_FEEDBACK_TRACERS 0
 #endif
@@ -1181,6 +1185,8 @@
 #endif
 
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
+#define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[] */
+#define STARFORGE_FEEDBACK_TRACER_OFFSET (AGE_TRACER_OFFSET+NUM_AGE_TRACERS) /* first feedback-tracer slot in Metallicity[] */
 #endif // METALS //
 
 
