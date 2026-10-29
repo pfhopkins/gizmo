@@ -125,3 +125,33 @@ def test_aneos_shocktube(num_mpi_ranks, num_omp_threads):
     assert L1_rho < 0.08, f"Density L1 error {L1_rho:.4f} exceeds tolerance"
     assert L1_vel < 0.15, f"Velocity L1 error {L1_vel:.4f} exceeds tolerance"
     assert L1_u < 0.15, f"Internal energy L1 error {L1_u:.4f} exceeds tolerance"
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=4),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_aneos_shocktube_uniform_state_entropy(num_mpi_ranks, num_omp_threads):
+    """The uniform low-density state ahead of the shock must keep its entropy, as the ideal-gas build does (to ~1e-10 at
+    t=5). With the MFM face entropic switch compiled out for ANEOS, the Riemann energy flux grew its spread to ~6e-6."""
+    test_name = "aneos_shocktube"
+    clean_test_outputs(test_name)
+    build_gizmo_for_test(test_name, num_omp_threads)
+    chdir(f"test/{test_name}/")
+    generate_aneos_table()
+    if not isfile("shocktube_ics_emass.hdf5"):
+        urlretrieve(WEBSITE + "shocktube_ics_emass.hdf5", "shocktube_ics_emass.hdf5")
+    add_composition_type_to_ics("shocktube_ics_emass.hdf5")
+    run_test(test_name, num_mpi_ranks, num_omp_threads)
+    chdir("../../")
+
+    final_snap = get_final_snapshot(test_name)
+    assert_final_time(final_snap, test_name)
+    with h5py.File(final_snap, "r") as F:
+        x = F["PartType0/Coordinates"][:, 0]
+        rho = F["PartType0/Density"][:]
+        u = F["PartType0/InternalEnergy"][:]
+    gamma = 1.4
+    entropy = (gamma - 1) * u * rho ** (1 - gamma)
+    untouched = (x > 12) & (x < 28)  # the initial rho=0.25 state, which the waves have not reached by t=5
+    assert untouched.sum() > 10
+    spread = np.ptp(entropy[untouched]) / np.median(entropy[untouched])
+    assert spread < 1e-8, f"entropy spread {spread:.3e} in the uniform state ahead of the shock"
