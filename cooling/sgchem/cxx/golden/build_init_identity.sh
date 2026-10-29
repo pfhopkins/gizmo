@@ -1,12 +1,12 @@
 #!/bin/bash
-# Build + run test_init_identity: Fortran chemistry init vs the Fortran-free SGCHEM_CXX init.
-# Usage: build_init_identity.sh <gizmo tree with GIZMO_config.h from a SGCHEM_CXX build> <out dir>
+# Build + run test_init_identity: Fortran chemistry init vs the Fortran-free C++ init.
+# Usage: build_init_identity.sh <gizmo tree with GIZMO_config.h from a default SGCHEM build> <out dir>
 # Never point <out dir> inside the gizmo tree.
 set -e
 TREE=$(cd "${1:?gizmo tree}" && pwd)
 OUT=${2:?out dir}
 mkdir -p "$OUT/obj"; OUT=$(cd "$OUT" && pwd)
-grep -q "^#define SGCHEM_CXX" "$TREE/GIZMO_config.h" || { echo "GIZMO_config.h lacks SGCHEM_CXX"; exit 1; }
+grep -q "^#define SGCHEM$" "$TREE/GIZMO_config.h" && ! grep -q "^#define SGCHEM_FORTRAN" "$TREE/GIZMO_config.h" || { echo "GIZMO_config.h needs SGCHEM without SGCHEM_FORTRAN"; exit 1; }
 
 source /etc/profile.d/modules.sh 2>/dev/null || true
 module purge 2>/dev/null || true

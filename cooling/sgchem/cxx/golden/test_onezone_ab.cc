@@ -1,7 +1,7 @@
 // test_onezone_ab.cc -- Fortran vs C++ one-zone golden for networks 3, 15 and 16.
 //
 // Links the canonical Fortran (rate_eq, EVOLVE_ABUNDANCES/DVODE, calc_photo,
-// COOLINMO/CHEMINMO tables) and the C++ path GIZMO runs under SGCHEM_CXX
+// COOLINMO/CHEMINMO tables) and the C++ path GIZMO runs under SGCHEM (C++ backend)
 // (chem_tables_build, cxx_calc_photo, chem_rhs_net3/15/16, cxx_evolve_abundances
 // on CVODE) into ONE binary.
 //

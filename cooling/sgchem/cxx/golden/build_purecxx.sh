@@ -1,5 +1,5 @@
 #!/bin/bash
-# Gate-3 item 6: build the SGCHEM_CXX path with NO Fortran at all and prove it.
+# Gate-3 item 6: build the SGCHEM C++ backend with NO Fortran at all and prove it.
 #
 #   * links with g++, not gfortran
 #   * links no .F object and no -lgfortran

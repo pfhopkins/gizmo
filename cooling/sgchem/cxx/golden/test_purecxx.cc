@@ -1,4 +1,4 @@
-// test_purecxx.cc -- Gate-3 proof that the SGCHEM_CXX path is Fortran-free.
+// test_purecxx.cc -- Gate-3 proof that the SGCHEM C++ backend is Fortran-free.
 //
 // This driver links ONLY the C++ translation units of the port plus SUNDIALS.
 // No .F object, no libgfortran, no /coolr/ COMMON.  If any Fortran symbol were

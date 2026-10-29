@@ -850,3 +850,7 @@ the ISRF coefficient.
   from the Glover code — KEEP as-coded in both backends. Do not re-flag.
 Standing principle for all future paper-vs-code discrepancies in the chemistry:
 the Glover CODE is the reference implementation.
+
+## D-flip. Backend selection (2026-10-29)
+
+`SGCHEM` alone builds the C++/CVODE backend (default, no `.F`, no libgfortran). `SGCHEM_FORTRAN` selects the legacy Fortran backend (parity tests only). The former opt-in flag `SGCHEM_CXX` is an `#error` (precompiler_logic.h) and a `$(error)` (Makefile). Networks 18 and 20 are C++-only and `#error` with `SGCHEM_FORTRAN`. In this file, earlier `SGCHEM_CXX` mentions describe the pre-flip opt-in flag (= now the default; `#ifdef SGCHEM_CXX` = `#ifndef SGCHEM_FORTRAN`).

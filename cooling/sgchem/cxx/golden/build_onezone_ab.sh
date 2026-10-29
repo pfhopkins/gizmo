@@ -32,7 +32,7 @@ for f in $FSRC; do
     FO="$FO $OUT/obj/$f.o"
 done
 
-# every C++ TU GIZMO compiles under SGCHEM_CXX, minus the GIZMO glue
+# every C++ TU GIZMO compiles under SGCHEM (C++ backend), minus the GIZMO glue
 CO=""
 for s in $(cd "$CX" && ls *.cc | sed 's/\.cc$//'); do
     [ "$s" = chem_gizmo_backend ] && continue

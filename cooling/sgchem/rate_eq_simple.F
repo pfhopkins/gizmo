@@ -579,7 +579,7 @@ c
 c=======================================================================
 #endif /* CHEMISTRYNETWORK == 4 || 5 || 6 */
 #if CHEMISTRYNETWORK == 20 || CHEMISTRYNETWORK == 18
-c Networks 18 and 20 exist only in the C++ backend (SGCHEM_CXX); this stub satisfies the link.
+c Networks 18 and 20 exist only in the C++ backend (default SGCHEM); this stub satisfies the link.
       subroutine rate_eq(neq, time, y, ydot, rpar, ipar)
       implicit NONE
       integer neq, ipar(*), code

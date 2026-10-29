@@ -1,15 +1,15 @@
 # SGCHEM C++/CVODE port — STATUS (2026-07-29)
 
-**Gate 3 COMPLETE and PASSED: the SGCHEM_CXX path contains ZERO Fortran** —
+**Gate 3 COMPLETE and PASSED: the C++ backend contains ZERO Fortran** —
 no shims, no `/coolr/` COMMON views, no libgfortran. Gate 2 (solver layer) is
-complete and the backend is compiled INTO GIZMO behind the `SGCHEM_CXX` flag
-(default OFF).
+complete and the backend is compiled INTO GIZMO: `SGCHEM` alone selects it (the default);
+the legacy Fortran backend needs `SGCHEM_FORTRAN`; `SGCHEM_CXX` is an `#error` (flip 2026-10-29).
 
 - Gate-3 results + PASS/FAIL: **`GATE3_ACCEPTANCE.md`** (this directory)
 - Gate-2 results + PASS/FAIL: **`GATE2_ACCEPTANCE.md`**
 - Every conscious deviation: **`DEVIATIONS.md`**
 
-**2026-10-29 (branch chem/fortran-free):** until then the GIZMO `SGCHEM_CXX` build still
+**2026-10-29 (branch chem/fortran-free):** until then the GIZMO C++ build still
 ran the Fortran init (COOLINMO, CHEMINMO, INIT_TOLERANCES, LOAD_H2_TABLE,
 INIT_TEMPERATURE_LOOKUP), read its COMMON scalars and linked all sgchem `.F` objects
 and libgfortran; "ZERO Fortran" held only for the standalone golden binary. Now
@@ -54,15 +54,15 @@ The C++/CVODE chemistry sits behind the Gate-0 seam
 `do_sgchem_step()` the single solver call is now:
 
 ```c
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
     chem_evolve_cxx(&timestep, &dl_cgs, &yn, &divv, &energy, abundances, &column_est);
 #else
     EVOLVE_ABUNDANCES(&timestep, &dl_cgs, &yn, &divv, &energy, abundances, &column_est);
 #endif
 ```
 
-`SGCHEM_CXX` is documented in `Template_Config.sh` and **defaults OFF**: with
-the flag absent nothing changes — no cxx object is compiled, no SUNDIALS symbol
+(Historical, before the 2026-10-29 flip: the C++ backend was opt-in via `SGCHEM_CXX`.) Now `SGCHEM_FORTRAN` is documented in `Template_Config.sh` and **defaults OFF**: with
+the flag absent the C++ backend is built; with it nothing C++ is built — no cxx object is compiled, no SUNDIALS symbol
 is linked, and the Fortran DVODE path remains the reference implementation.
 Details of every canonical-tree change: `DEVIATIONS.md` D-11.
 
@@ -71,8 +71,8 @@ Details of every canonical-tree change: `DEVIATIONS.md` D-11.
 
 | build | result |
 |---|---|
-| `SGCHEM_CXX` OFF | links clean, 4,163,264 B, **0 CVODE symbols**, object list identical to pre-change |
-| `SGCHEM_CXX` ON | links clean, 5,631,216 B, 13 cxx objects, **110 CVODE symbols**; `nm` confirms `T chem_evolve_cxx` and `T cxx_evolve_abundances` |
+| `SGCHEM_FORTRAN` (was `SGCHEM_CXX` OFF) | links clean, 4,163,264 B, **0 CVODE symbols**, object list identical to pre-change |
+| default `SGCHEM` (was `SGCHEM_CXX` ON) | links clean, 5,631,216 B, 13 cxx objects, **110 CVODE symbols**; `nm` confirms `T chem_evolve_cxx` and `T cxx_evolve_abundances` |
 
 (The ON size/object count grew from the Gate-2 figure of 7 objects / 4.64 MB
 because a parallel session has begun Gate 3 — the C++ leaf kernels
@@ -84,8 +84,8 @@ and are retained as the golden reference implementations.)
 
 To build the ON variant without disturbing `Config.sh`:
 ```
-sed 's/^#SGCHEM_CXX  */SGCHEM_CXX   /' Config.sh > Config_cxx.sh
-make CONFIG=Config_cxx.sh EXEC=GIZMO_cxx -j16
+sed 's/^#SGCHEM_FORTRAN  */SGCHEM_FORTRAN   /' Config.sh > Config_fortran.sh
+make CONFIG=Config_fortran.sh EXEC=GIZMO_fortran -j16   # legacy Fortran; plain Config.sh = C++
 ```
 
 SUNDIALS link line (Makefile, under the flag):
@@ -157,7 +157,7 @@ rsync -a --exclude='.git' --exclude='*.o' --exclude='output*' --exclude='Config.
 cd /orion/ptmp/uli/orion/fb_tests/_sgchem_cxx_build/gizmo
 module purge && module load gcc openmpi gsl hwloc fftw-mpi hdf5-mpi
 export SYSTYPE=Orion-OpenMPI
-make clean && make -j16                # SGCHEM_CXX line present/absent in Config.sh
+make clean && make -j16                # SGCHEM_FORTRAN line absent/present in Config.sh
 
 # 3. one-zone benchmark driver (compiles the SAME cxx/ sources)
 bash /orion/ptmp/uli/orion/stella/tests/validation/chemistry_onezone/src/build3.sh
@@ -206,17 +206,17 @@ documented in DEVIATIONS D-16.
 
 ## Next steps
 
-1. **Gate 4, the remaining wiring.** A GIZMO `SGCHEM_CXX` build still links
+1. **Gate 4, the remaining wiring.** A GIZMO C++-backend build still links
    the Fortran objects because `do_sgchem_step()` uses
    `chem_commit_to_fortran()` + `CALC_PHOTO_WRAPPER` as the INPUT transport
    (and because the Fortran fallback is deliberately retained). Closing it:
    fill `ChemCell` directly from `struct ChemInputs` and call
    `cxx_calc_photo()`, i.e. route `chem_gizmo_backend.cc` at
    `chem_backend_cxx.cc` instead of `chem_backend_c_api.cc`. Everything needed
-   already exists and is tested. `OPENMP` + `SGCHEM_CXX` becomes legal at
+   already exists and is tested. `OPENMP` + the C++ backend becomes legal at
    that point — the C++ side is already safe.
 2. **Runtime validation in GIZMO.** The flag builds and the one-zone benchmark
-   passes, but no full GIZMO run has yet been made with `SGCHEM_CXX` ON.
+   passes, but no full GIZMO run has yet been made with the C++ backend.
    Next: an A/B on a short Stella test (e.g. the sn20 bench) comparing
    snapshots between OFF and ON.
 3. **Flip the default only after (1) and (2)**; the Fortran path stays

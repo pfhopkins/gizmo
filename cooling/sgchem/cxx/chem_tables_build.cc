@@ -144,13 +144,13 @@ static int read_wss(const std::string& dir, ChemTableStore& S)
 {
     std::string path = dir + "/wss_z_collis.txt";
     FILE* f = std::fopen(path.c_str(), "r");
-    if (!f) { std::printf("SGCHEM_CXX: cannot open %s\n", path.c_str()); return 1; }
+    if (!f) { std::printf("SGCHEM: cannot open %s\n", path.c_str()); return 1; }
     for (int k = 0; k < 9; k++) S.wss[k].assign(CHEM_NWSS, 0.0);
     for (int I = 0; I < CHEM_NWSS; I++) {
         double v[25];
         for (int k = 0; k < 25; k++)
             if (std::fscanf(f, "%lf", &v[k]) != 1) {
-                std::printf("SGCHEM_CXX: short read in %s at row %d\n",
+                std::printf("SGCHEM: short read in %s at row %d\n",
                             path.c_str(), I); std::fclose(f); return 1;
             }
         // columns: Temp, (l,n)x7, metal_only, C, N, O, Ne, Mg, Si, S, Ca, Fe
@@ -176,7 +176,7 @@ static int read_h2_opac(const std::string& dir, ChemTableStore& S)
 {
     std::string path = dir + "/H2-cooling-ratios.dat";
     FILE* f = std::fopen(path.c_str(), "r");
-    if (!f) { std::printf("SGCHEM_CXX: cannot open %s\n", path.c_str()); return 1; }
+    if (!f) { std::printf("SGCHEM: cannot open %s\n", path.c_str()); return 1; }
     const int n = CHEM_NH2OP;
     S.h2_opac_temp.assign(n, 0.0);
     S.h2_opac_column.assign(n, 0.0);
@@ -185,7 +185,7 @@ static int read_h2_opac(const std::string& dir, ChemTableStore& S)
         for (int J = 1; J <= n; J++) {
             double a, b, cval;
             if (std::fscanf(f, "%lf %lf %lf", &a, &b, &cval) != 3) {
-                std::printf("SGCHEM_CXX: short read in %s\n", path.c_str());
+                std::printf("SGCHEM: short read in %s\n", path.c_str());
                 std::fclose(f); return 1;
             }
             S.h2_opac_temp[I-1] = a;
@@ -204,12 +204,12 @@ static int read_temp_gamma(const std::string& dir, ChemTableStore& S)
 
     std::string p1 = dir + "/energy-table-x.txt";
     FILE* f = std::fopen(p1.c_str(), "r");
-    if (!f) { std::printf("SGCHEM_CXX: cannot open %s\n", p1.c_str()); return 1; }
+    if (!f) { std::printf("SGCHEM: cannot open %s\n", p1.c_str()); return 1; }
     for (int I = 0; I < CHEM_ISIZE; I++) {
         double foo;
         if (std::fscanf(f, "%lf %lf %lf", &foo, &S.temp_table[I],
                         &S.gamma_table[I]) != 3) {
-            std::printf("SGCHEM_CXX: short read in %s at %d\n", p1.c_str(), I);
+            std::printf("SGCHEM: short read in %s at %d\n", p1.c_str(), I);
             std::fclose(f); return 1;
         }
     }
@@ -217,11 +217,11 @@ static int read_temp_gamma(const std::string& dir, ChemTableStore& S)
 
     std::string p2 = dir + "/eh2-table.txt";
     f = std::fopen(p2.c_str(), "r");
-    if (!f) { std::printf("SGCHEM_CXX: cannot open %s\n", p2.c_str()); return 1; }
+    if (!f) { std::printf("SGCHEM: cannot open %s\n", p2.c_str()); return 1; }
     for (int I = 0; I < CHEM_ISIZE2; I++) {
         double foo;
         if (std::fscanf(f, "%lf %lf", &foo, &S.eh2_table[I]) != 2) {
-            std::printf("SGCHEM_CXX: short read in %s at %d\n", p2.c_str(), I);
+            std::printf("SGCHEM: short read in %s at %d\n", p2.c_str(), I);
             std::fclose(f); return 1;
         }
     }

@@ -1,7 +1,7 @@
 // chem_backend_cxx.cc -- the PURE C++ SGCHEM backend (Gate 3).
 //
 // This translation unit is what replaces chem_backend_fortran.cc on the
-// SGCHEM_CXX path.  It links NO Fortran: the tables are built by
+// SGCHEM C++ path.  It links NO Fortran: the tables are built by
 // chem_tables_build.cc, the kernels are chem_cool_func.cc / chem_cool_util.cc /
 // chem_calc_photo.cc / chem_calc_temp.cc, the RHS is chem_rhs_net{5,17}.cc and
 // the driver is cvode_driver.cc.  There is no /coolr/, no COMMON view and no

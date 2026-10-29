@@ -1,4 +1,4 @@
-// test_init_identity.cc -- SGCHEM_CXX init vs the Fortran init it replaced.
+// test_init_identity.cc -- C++ init vs the Fortran init it replaced.
 //
 // Runs the Fortran init exactly as sgchem_init did before (COMMON defaults,
 // COOLINMO, CHEMINMO, INIT_TOLERANCES, LOAD_H2_TABLE, INIT_TEMPERATURE_LOOKUP),
@@ -8,7 +8,7 @@
 //   3. C++ tables built from the old config vs the new GIZMO tables
 //   4. init-derived scalars (abhe, X_H_chem, f_rsc) and untouched COMMON scalars
 // and reports Fortran-built vs C++-built tables (bitwise count, max rel diff).
-// Build: build_init_identity.sh.  Needs a GIZMO_config.h with SGCHEM_CXX.
+// Build: build_init_identity.sh.  Needs a GIZMO_config.h of a default SGCHEM build.
 
 #include <cmath>
 #include <cstdio>
@@ -228,6 +228,6 @@ int main()
     chem_bind_tables(T_f);
     compare_tables(T_f, T_new, false);
 
-    std::printf("%s\n", g_fail ? "RESULT: FAIL" : "RESULT: PASS (old and new SGCHEM_CXX init bitwise identical)");
+    std::printf("%s\n", g_fail ? "RESULT: FAIL" : "RESULT: PASS (old and new C++ init bitwise identical)");
     return g_fail;
 }
