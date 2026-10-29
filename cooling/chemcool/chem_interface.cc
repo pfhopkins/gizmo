@@ -402,11 +402,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
         in->G0    = DMAX(fuv.G0, G0_floor_treerad);
         /* G0_LW: LW field (11.2-13.6 eV) in its own Habing units; the tree path floors LW at 10% of the FUV floor */
         in->G0_LW = DMAX(fuv.G0_LW, 0.1 * G0_floor_treerad);
-        /* G0_dust: GRAIN photoelectric heating field (Bakes & Tielens gas PE heating in
-           cool_func) = FUV(8-13.6) + NUV(3.4-8), each with its own Habing conversion.
-           NUV photons above the grain work function eject grain photoelectrons -> heat gas.
-           Optical (0.4-3.4 eV) is below the work function (no PE heating); its grain-heating
-           role is carried by the M1 IR/dust solver, not here. */
+        /* G0_dust: dust-temperature field only (chem_cool_util.cc ISRF grain heating); gas PE heating uses G0 (chem_calc_photo.cc G_dust) */
         in->G0_dust = DMAX(fuv.G0_dust, G0_floor_treerad); /* same tree-path floor (G0_dust=G0_tot there) */
 
         /* Store the M1 FUV/LW field back to the cell so it is OUTPUT and inspectable,
