@@ -262,3 +262,14 @@ def test_fire_ismdustchem_parameter_defaults(num_mpi_ranks, num_omp_threads):
     """Every ISM dust-chemistry scaling parameter has a default: fire.params sets none of them, and the run must start"""
     out = run_fire_dust_startup(num_mpi_ranks, num_omp_threads, DUST_STARTUP)
     assert "Tag AccretionTcutoffScaling" in out and "defaulting to one" in out
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_fire_ismdustchem_depletion_needs_ratio(num_mpi_ranks, num_omp_threads):
+    """An initial dust depletion with no silicon-to-carbon ratio is refused at startup: the ratio (default 0) divides the
+    initial carbonaceous depletion, which otherwise locks all the carbon into dust"""
+    with pytest.raises(RuntimeError):
+        run_fire_dust_startup(num_mpi_ranks, num_omp_threads, {**DUST_STARTUP, "Initial_ISMDustChem_Depletion": "0.5"})
+    out = open("test/fire/test_fire.out", errors="replace").read()
+    assert "Initial_ISMDustChem_Depletion > 0 requires Initial_ISMDustChem_SiltoCarbRatio > 0" in out
