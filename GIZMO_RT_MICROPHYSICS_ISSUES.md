@@ -458,3 +458,29 @@ the ejecta speed only at ProtoStellarStage 6, set as the ejecta are launched. Wi
 before the (deterministic) death (`SINGLE_STAR_FB_SNE_WARNING_STEPS`, sn_parity), the remnant's energy history tracks a
 MaxSizeTimestep = 1e-5 reference to 1-2% at every output, where the unwarned run lags by up to 30% at +200 yr
 (0.92 vs 0.70 E_SN), for +2% steps in the window and fewer steps overall. Runs: ab_snwarn/ (control2, warn, dtref).
+
+### 4.4 Primordial gas under an FUV background: H⁻ photodetachment ignores the field (by reading and a one-zone test, 2026-10-29)
+
+`cooling.cc:2287`: the equilibrium H⁻ abundance that sets the gas-phase H₂ formation rate uses a fixed photodetachment
+term `R51_n = 3.62e-17 / nH_cgs` ("serves only as a floor"). The photodetachment rate in a Draine field is 7.1e-7 χ s⁻¹
+(threshold 0.755 eV; the rate KROME and the Glover & Jappsen 2007 network use), 2e10 times the floor at χ = 1. In
+diffuse primordial gas (n ≲ 500 cm⁻³) the H⁻ channel is therefore photo-suppressed in reality but runs unhindered in
+GIZMO, so H₂ forms at n ~ 1 instead of n ~ 1e3 under a unit FUV field. Measured in the one-zone free-fall collapse
+(jaco.onezone, starforge_legacy at Z = 0, n₀ = 0.1, T₀ = 300 K, χ_FUV = 1): the gas leaves the 1e4 K Lyα plateau at
+n ≈ 30 (386 K at n = 100); with the 7.1e-7 χ rate it leaves at n ≈ 500 (8085 K at 100, 201 K at 1e3), which is where
+Menon et al. 2025 (Fig. 2, dashed Z = 0) place it. Dusty gas is barely affected (grain formation dominates). jaco's
+starforge model carries the same constant (h2_chemistry/photochemistry.py). Fix: rate ∝ the local FUV field (G₀, or
+the FUV band under RT), with the Habing/Draine normalization pinned down.
+
+### 4.5 HD cooling exceeds its own LTE limit at high density (by reading and the same test, 2026-10-29)
+
+`cooling.cc:1420-1421`: `Lambda_HD = f_HD * Lambda_HD_thin / (1 + (f_HD/f_molec) * nH_over_ncrit)` with
+`nH_over_ncrit = Lambda_H2_thin / Lambda_H2_thick`. The LTE cap of HD is thus H₂'s n/n_crit scaled by the HD/H₂ ratio
+(≤ 1.26e-3), i.e. ~1e3 times too weak: a critical density is a property of the molecule, not of its abundance. Above
+HD's own critical density (~5e3 cm⁻³ at 200 K) the HD cooling grows as n² instead of saturating at n_HD × Λ_LTE(T). In
+the primordial free-fall track: at n = 1e5, T = 200 K the HD term is 46× the H₂ term; at n = 1e9, T = 42 K it is
+1.6e-16 erg cm⁻³ s⁻¹ against an LTE maximum of ~4e-18 (40× over). Together with the saturated fractionation
+HD/H₂ = 1.26e-3 this is what holds the Z = 0 track at 75 K (1e5) and 42 K (1e9) where Menon et al. and Omukai sit at
+200-400 K; with the HD term removed the track's minimum is 260-340 K at 1e3-1e5 and 550 K at 1e7-1e8. jaco's starforge
+model has the same cap form (`H2_cooling.py:109`, with HD = 5e-5 x_H₂). Fix: cap HD with its own LTE rate, Λ_HD,LTE(T)
+from the rotational ladder (B = 64.3 K, Abgrall et al. 1982 A-values), Λ_HD = n_HD Λ_thin n_H / (1 + Λ_thin n_H / Λ_LTE).
