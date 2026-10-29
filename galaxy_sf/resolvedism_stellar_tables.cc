@@ -309,17 +309,18 @@ void resolvedism_load_stellar_tables(void)
 #endif
 
         /* Cumulative wind ejecta — lives in a sibling file (split for size).
-         * Derive the path from the unified-table path by replacing the suffix. */
+         * Same directory as the unified table. */
         {
             char wind_path[512];
             strncpy(wind_path, All.StellarTablesFile, sizeof(wind_path) - 1);
             wind_path[sizeof(wind_path) - 1] = 0;
-            char *suffix = strstr(wind_path, "stellar_tables_unified.hdf5");
-            if(suffix == NULL) {
-                printf("ERROR: cannot derive stellar_wind_cumulative.hdf5 path from '%s'\n", All.StellarTablesFile);
+            char *slash = strrchr(wind_path, '/');
+            char *name = slash ? slash + 1 : wind_path;
+            if(strlen(name) + strlen("stellar_wind_cumulative.hdf5") >= sizeof(wind_path) - (size_t)(name - wind_path)) {
+                printf("ERROR: StellarTablesFile path '%s' too long\n", All.StellarTablesFile);
                 endrun(1);
             }
-            strcpy(suffix, "stellar_wind_cumulative.hdf5");
+            strcpy(name, "stellar_wind_cumulative.hdf5");
             hid_t wf = H5Fopen(wind_path, H5F_ACC_RDONLY, H5P_DEFAULT);
             if(wf < 0) { printf("ERROR: cannot open '%s'\n", wind_path); endrun(1); }
             read_hdf5_dataset_as_float(wf, "elem_ej_wind_cumulative", StellarTbl.elem_ej_wind_cumulative, n3d * STBL_NELEM);

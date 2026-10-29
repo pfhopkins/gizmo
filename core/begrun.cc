@@ -93,7 +93,7 @@ void begrun(void)
       std::vector<std::string> paths;
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
       std::string st = All.StellarTablesFile; paths.push_back(st);
-      size_t k = st.rfind("stellar_tables_unified.hdf5"); if(k != std::string::npos) {paths.push_back(st.substr(0, k) + "stellar_wind_cumulative.hdf5");}
+      size_t k = st.rfind('/'); paths.push_back((k == std::string::npos ? std::string() : st.substr(0, k + 1)) + "stellar_wind_cumulative.hdf5");
 #endif
 #ifdef SGCHEM
 #ifdef SGCHEM_FORTRAN
