@@ -1,6 +1,6 @@
 # dust_hu_unit
 
-Unit test of `galaxy_sf/resolvedism_dust_kernels.h`, the Hu+19/23/26 dust microphysics used by `GALSF_RESOLVEDISM_DUST`.
+Unit test of `galaxy_sf/resolvedism_dust_kernels.h`, the Hu+19/23/26 dust microphysics used by `GALSF_RESOLVEDISM_DUST` with `EXPERIMENTAL_DUST_HU_MODEL`.
 
 Checks against analytic solutions or fine-step RK4 references:
 - MRN effective size and bin weights;
