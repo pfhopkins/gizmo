@@ -310,7 +310,7 @@
                 /* ok SM is small, we should use adiabatic equations instead */
 #ifdef MAGNETIC
                 // convert the face pressure P_M to a gas pressure alone (subtract the magnetic term) //
-                Riemann_out.P_M -= 0.5*Riemann_out.Face_B.norm_sq();
+                Riemann_out.P_M -= Riemann_out.Face_MagneticPressure;
 #endif
                 int use_entropic_energy_equation = 1;
                 double facenorm_pm = Riemann_out.P_M * Face_Area_Norm;

@@ -616,8 +616,8 @@ void inject_cosmic_rays(double CR_energy_to_inject, double injection_velocity, i
 }
 
 
-/* CR injection at resolved shocks: the hydro solve sets the rate DtCREgyNewInjectionFromShocks and removes it from the thermal energy
-   for the whole step, so each kick adds rate*dt to the evolved CRs and each drift to the predicted ones (the hydro solve resets the rate) */
+/* CR injection at resolved shocks: the hydro solve sets the rate DtCREgyNewInjectionFromShocks for the coming step and removes the same rate from the
+   thermal energy, so each kick adds rate*dt to the evolved CRs and each drift to the predicted ones, like the other rates (the hydro solve resets it). */
 void cosmic_ray_inject_from_resolved_shocks(int i, double dt_entr, int mode, struct gas_cell_data *cell)
 {
 #if defined(CRFLUID_INJECTION_AT_SHOCKS)
@@ -628,6 +628,7 @@ void cosmic_ray_inject_from_resolved_shocks(int i, double dt_entr, int mode, str
     }
 #endif
 }
+
 
 
 /* return CR pressure within a given bin */
