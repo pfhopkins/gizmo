@@ -859,7 +859,7 @@
 #endif
 
 
-#if defined(GALSF) && !defined(GALSF_GENERATIONS)
+#if (defined(GALSF) || defined(GALSF_RESOLVEDISM)) && !defined(GALSF_GENERATIONS) /* Stella defines GALSF further down */
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
