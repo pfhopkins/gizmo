@@ -84,6 +84,17 @@ void hydro_core_meshless_compute_pair(
     if((Pressure_i < 0) || (Pressure_j < 0)) {
         dummy_pressure = -DMIN(Pressure_i, Pressure_j);
         Pressure_i += dummy_pressure; Pressure_j += dummy_pressure;
+#ifdef EOS_ELASTIC
+        /* the correction guards elastic tension against pairing; in material that has recently flowed plastically it is not
+           needed and its repulsion feeds a tensile runaway, so it switches off smoothly as the pair's larger recent-yield memory
+           rises from TENSILE_CORRECTION_YIELD_MEMORY_ONSET to twice that */
+        double yield_memory = DMAX(local.RecentYieldMemory, CellP[j].RecentYieldMemory);
+        if(yield_memory > TENSILE_CORRECTION_YIELD_MEMORY_ONSET)
+        {
+            double s = DMIN(1., (yield_memory - TENSILE_CORRECTION_YIELD_MEMORY_ONSET) / TENSILE_CORRECTION_YIELD_MEMORY_ONSET);
+            tensile_correction_factor *= 1. - s * s * (3. - 2. * s);
+        }
+#endif
         dummy_pressure *= 1. - tensile_correction_factor;
     }
 #endif

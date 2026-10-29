@@ -1699,6 +1699,17 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
             break;
 
+        case IO_EOS_RECENT_YIELD_MEMORY:
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type)
+                {
+                    *fp++ = (MyOutputFloat) CellP[pindex].RecentYieldMemory;
+                    n++;
+                }
+#endif
+            break;
+
             case IO_EOSPHASE:
 #ifdef EOS_ANEOS
             for(n = 0; n < pc; pindex++)
@@ -2133,6 +2144,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
             if(mode)
                 bytes_per_blockelement = sizeof(MyInputFloat);
             else
@@ -2484,6 +2496,7 @@ int get_datatype_in_block(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
             typekey = 1;		/* native MyOutputFloat */
             break;
             
@@ -2624,6 +2637,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
             values = 1;
             break;
 
@@ -2942,6 +2956,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_DAMAGE_POROSITY_DAMAGE:
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
+        case IO_EOS_RECENT_YIELD_MEMORY:
             for(i = 1; i < 6; i++) {typelist[i] = 0;}
             return ngas;
             break;
@@ -3248,6 +3263,12 @@ int blockpresent(enum iofields blocknr)
         case IO_DAMAGE_POROSITY_DISTENTION:
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
 #ifdef EOS_DAMAGE_POROSITY
+            return 1;
+#endif
+            break;
+
+        case IO_EOS_RECENT_YIELD_MEMORY:
+#ifdef EOS_ELASTIC
             return 1;
 #endif
             break;
@@ -3860,6 +3881,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
             strncpy(label, "ACTV", 4);
             break;
+        case IO_EOS_RECENT_YIELD_MEMORY:
+            strncpy(label, "RYMM", 4);
+            break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strncpy(label, "DBNU", 4);
             break;
@@ -4329,6 +4353,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
             break;
         case IO_DAMAGE_POROSITY_ACTVCRACKS:
             strcpy(buf, "ActiveCracks");
+            break;
+        case IO_EOS_RECENT_YIELD_MEMORY:
+            strcpy(buf, "RecentYieldMemory");
             break;
         case IO_DUSTCHEMGRAINBINNUMBERS:
             strcpy(buf, "DustBinNumbers");

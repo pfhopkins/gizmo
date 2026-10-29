@@ -483,6 +483,7 @@ extern struct gas_cell_data
     Mat3<MyDouble> Elastic_Stress_Tensor; /* deviatoric stress tensor */
     Mat3<MyDouble> Elastic_Stress_Tensor_Pred;
     Mat3<MyDouble> Dt_Elastic_Stress_Tensor;
+    MyFloat RecentYieldMemory;            /* recent plastic flow: the overstress removed by the yield returns, in units of the yield strength, decaying over ten sound-crossing times of the kernel radius; switches the tensile-instability correction off in material that is flowing plastically (not an accumulated plastic strain) */
 #endif
 #ifdef EOS_DAMAGE_POROSITY
     MyFloat Damage;        /* scalar fracture damage D in [0,1] */

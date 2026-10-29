@@ -1032,6 +1032,12 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+        case IO_EOS_RECENT_YIELD_MEMORY: /* evolved history of the same kind: the tensile correction depends on it */
+#ifdef EOS_ELASTIC
+            for(n = 0; n < pc; n++) {CellP[offset + n].RecentYieldMemory = *fp++;}
+#endif
+            break;
+
 
         /* the other input fields (if present) are not needed to define the
              initial conditions of the code */
@@ -1439,7 +1445,7 @@ int read_file(char *fname, int readTask, int lastTask)
                    && blocknr != IO_EOSCOMP
 #endif
 #ifdef EOS_ELASTIC
-                   && blocknr != IO_EOS_STRESS_TENSOR
+                   && blocknr != IO_EOS_STRESS_TENSOR && blocknr != IO_EOS_RECENT_YIELD_MEMORY
 #endif
 #ifdef EOS_DAMAGE_POROSITY
                    && blocknr != IO_DAMAGE_POROSITY_DAMAGE && blocknr != IO_DAMAGE_POROSITY_DISTENTION && blocknr != IO_DAMAGE_POROSITY_ACTVCRACKS
@@ -1506,7 +1512,7 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
             
 #ifdef EOS_ELASTIC
-            if(blocknr == IO_EOS_STRESS_TENSOR && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* a fresh binary IC need not carry it (stress then starts from zero); snapshots of every format do */
+            if((blocknr == IO_EOS_STRESS_TENSOR || blocknr == IO_EOS_RECENT_YIELD_MEMORY) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* a fresh binary IC need not carry it (stress then starts from zero); snapshots of every format do */
 #endif
 #ifdef EOS_DAMAGE_POROSITY
             if((blocknr == IO_DAMAGE_POROSITY_DAMAGE || blocknr == IO_DAMAGE_POROSITY_DISTENTION || blocknr == IO_DAMAGE_POROSITY_ACTVCRACKS) && RestartFlag == 0 && All.ICFormat != 3) {continue;} /* likewise: an HDF5 IC may set them (e.g. a porous body), a fresh binary IC does not carry them */
@@ -1797,9 +1803,9 @@ int read_file(char *fname, int readTask, int lastTask)
                                         /* Optional HDF5 dataset absent: zero CommBuffer so empty_read_buffer's
                                          * dispatch defaults the field rather than reading stale buffer contents. */
                                         memset(CommBuffer, 0, bytes_per_blockelement * pc);
-                                        if(RestartFlag == 2 && blocknr == IO_EOS_STRESS_TENSOR && ThisTask == readTask && !printed_missing_stress)
+                                        if(RestartFlag == 2 && (blocknr == IO_EOS_STRESS_TENSOR || blocknr == IO_EOS_RECENT_YIELD_MEMORY) && ThisTask == readTask && !printed_missing_stress)
                                         {
-                                            printf("WARNING: the snapshot has no '%s' block for particle type %d: the deviatoric stress of these elements restarts from zero, not from its evolved value.\n", buf, type);
+                                            printf("WARNING: the snapshot has no '%s' block for particle type %d: this evolved solid state of these elements restarts from zero, not from its evolved value.\n", buf, type);
                                             printed_missing_stress = 1;
                                         }
                                       }

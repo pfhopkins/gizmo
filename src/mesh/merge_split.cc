@@ -1127,6 +1127,9 @@ int merge_particles_ij(int i, int j)
     CellP[j].InternalEnergyPred = wt_j*CellP[j].InternalEnergyPred + wt_i*CellP[i].InternalEnergyPred;
     CellP[j].MeanMolecularWeight = wt_j*CellP[j].MeanMolecularWeight + wt_i*CellP[i].MeanMolecularWeight; /* cached composition mixes with the mass, as the other terms do */
     CellP[j].Gamma = wt_j*CellP[j].Gamma + wt_i*CellP[i].Gamma;
+#ifdef EOS_ELASTIC
+    if(solid_material_is_elastic(CellP[j].CompositionType)) {CellP[j].RecentYieldMemory = DMAX(CellP[j].RecentYieldMemory, CellP[i].RecentYieldMemory);} /* the merged element keeps the tensile correction off if either part was flowing plastically; a gas survivor carries none */
+#endif
 /* the electron and neutral fractions are part of the same cached composition and mix the same way. each
    is declared by whichever of the cooling and photo-ionization modules owns it, so each line carries that
    field's own existence condition; they differ because only the neutral fraction is declared when the

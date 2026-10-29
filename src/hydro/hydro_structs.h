@@ -213,6 +213,7 @@ struct hydro_data_in
 #endif
 #ifdef EOS_ELASTIC
     MyFloat Elastic_Stress_Tensor[3][3];
+    MyFloat RecentYieldMemory;
 #endif
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
     MyFloat Damage; /* fracture damage D in [0,1] for i-particle */

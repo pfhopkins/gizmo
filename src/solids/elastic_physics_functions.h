@@ -64,10 +64,29 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_DRUCKER_PRAGER
         Y_eff = apply_drucker_prager(Y0, cell[i].Pressure, cell[i].CompositionType);
 #endif
+        volatile int yield_return_applied = 0;
         if(J2 > 0)
         {
             double f_Y = Y_eff*Y_eff/(NDim*J2); // (yield stress / equivalent stress)^2
-            if(f_Y < 1) {double return_factor = sqrt(f_Y); for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= return_factor;}}} // radial return: scale the deviator back onto the yield surface (Wilkins 1964)
+            if(f_Y < 1) {double return_factor = sqrt(f_Y); for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S_new[j][k] *= return_factor;}} yield_return_applied = 1;} // radial return: scale the deviator back onto the yield surface (Wilkins 1964)
+        }
+        /* recent-yield memory, at the kick only: decay it over RECENT_YIELD_MEMORY_SOUND_CROSSINGS sound-crossing times of the
+           (physical) kernel radius, then add the overstress the return just removed, in units of the material's yield strength
+           (for von Mises plasticity, summed over kicks, this is proportional to the plastic strain in yield strains, so the update
+           converges with the timestep); the hydro pair uses it to switch the tensile-instability correction off in material that
+           is flowing plastically. */
+        if(mode == 0)
+        {
+            double h_phys = pp[i].KernelRadius * All.cf_atime, c_s = cell[i].SoundSpeed;
+            if(h_phys > 0 && c_s > 0 && dt_entr > 0) {cell[i].RecentYieldMemory *= exp(-dt_entr * c_s / (RECENT_YIELD_MEMORY_SOUND_CROSSINGS * h_phys));}
+            if(yield_return_applied)
+            {
+                double Y_norm = (Y0 > 0) ? Y0 : Y_eff; /* a cohesionless (Drucker-Prager) material: its current pressure-dependent strength */
+                if(Y_norm > 0) {
+                    double overstress = (sqrt(NDim*J2) - Y_eff) / Y_norm;
+                    if(isfinite(overstress) && overstress > 0) {cell[i].RecentYieldMemory += overstress;}
+                } else {cell[i].RecentYieldMemory = DMAX(cell[i].RecentYieldMemory, 2.*TENSILE_CORRECTION_YIELD_MEMORY_ONSET);} /* no strength at all: the correction is fully off */
+            }
         }
 #if defined(EOS_DAMAGE_POROSITY) && DAMAGE_POROSITY_BIT_FRACTURE
         /* bit 0: fracture damage, updated at the kick (mode==0) only, by the law the material names */

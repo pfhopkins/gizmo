@@ -226,6 +226,8 @@
 #ifdef EOS_ELASTIC
 #define  CONDITION_NUMBER_FACE_BLEND_START  20.0 /*!< elastic solids: above this condition number (the larger of a pair) the meshless face starts to blend toward the kernel-gradient face */
 #define  CONDITION_NUMBER_FACE_BLEND_FULL   50.0 /*!< elastic solids: condition number at which that face is the kernel-gradient face alone */
+#define  TENSILE_CORRECTION_YIELD_MEMORY_ONSET  0.1 /*!< elastic solids: recent-yield memory (in yield strains) at which the tensile-instability correction starts to switch off; it is off at twice this value */
+#define  RECENT_YIELD_MEMORY_SOUND_CROSSINGS    10.0 /*!< elastic solids: the recent-yield memory decays on this many sound-crossing times of the cell's kernel radius */
 #endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */

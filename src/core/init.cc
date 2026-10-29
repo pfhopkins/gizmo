@@ -1026,6 +1026,8 @@ void init(void)
            block (zero if the block is absent); a fresh binary IC does not carry it */
         if((RestartFlag == 0 && All.ICFormat != 3) || !solid_material_is_elastic(CellP[i].CompositionType)) {CellP[i].Elastic_Stress_Tensor = {};} /* gas carries none, whatever the file holds */
         CellP[i].Elastic_Stress_Tensor_Pred = CellP[i].Elastic_Stress_Tensor; CellP[i].Dt_Elastic_Stress_Tensor = {};
+        /* the recent-yield memory is evolved history in the same way (a file without the block reads as zero) */
+        if((RestartFlag == 0 && All.ICFormat != 3) || !solid_material_is_elastic(CellP[i].CompositionType) || !(isfinite(CellP[i].RecentYieldMemory) && CellP[i].RecentYieldMemory > 0)) {CellP[i].RecentYieldMemory = 0;} /* a non-finite value read in would switch the correction off for good */
 #endif
         CellP[i].DtInternalEnergy = 0;
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
