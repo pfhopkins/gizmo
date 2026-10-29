@@ -928,11 +928,23 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h 
 endif
 
-# if grackle libraries are installed they must be a shared library as defined here
+comma := ,
+# Grackle (>= 3.0), built with Grackle's CMake build, which installs a grackle.pc file: pkg-config then gives the compile and link
+#   flags, including the Fortran/HDF5 dependencies of a static libgrackle.a. grackle.pc is looked up as
+#   $(GRACKLE_PATH)/lib{,64}/pkgconfig/grackle.pc, GRACKLE_PATH = Grackle's CMAKE_INSTALL_PREFIX set in your SYSTYPE block, the
+#   environment or on the make line; otherwise on PKG_CONFIG_PATH. Without a grackle.pc it falls back to -lgrackle from GRACKLE_PATH.
 ifeq (COOL_GRACKLE,$(findstring COOL_GRACKLE,$(CONFIGVARS)))
-OPTIONS += -DCONFIG_BFLOAT_8
-GRACKLEINCL =
-GRACKLELIBS = -lgrackle
+GRACKLE_PC := $(if $(GRACKLE_PATH),$(firstword $(wildcard $(GRACKLE_PATH)/lib/pkgconfig/grackle.pc $(GRACKLE_PATH)/lib64/pkgconfig/grackle.pc)))
+ifeq ($(GRACKLE_PC),)
+GRACKLE_PC := $(shell pkg-config --exists grackle 2>/dev/null && echo grackle)
+endif
+ifneq ($(GRACKLE_PC),)
+GRACKLEINCL = $(shell pkg-config --cflags $(GRACKLE_PC))
+GRACKLELIBS = $(shell pkg-config --libs $(GRACKLE_PC))
+else
+GRACKLEINCL = $(if $(GRACKLE_PATH),-I$(GRACKLE_PATH)/include)
+GRACKLELIBS = $(if $(GRACKLE_PATH),-L$(GRACKLE_PATH)/lib -Wl$(comma)-rpath$(comma)$(GRACKLE_PATH)/lib) -lgrackle
+endif
 else
 GRACKLEINCL =
 GRACKLELIBS =

@@ -670,6 +670,28 @@ void init(void)
             CellP[i].MolecularMassFraction = 0.0; CellP[i].MolecularMassFraction_perNeutralH = 0.0; // start atomic
 #endif
 #endif
+#if defined(COOL_GRACKLE) /* before the first density() -> set_eos_pressure(), which asks Grackle for the temperature */
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            CellP[i].grHI    = HYDROGEN_MASSFRAC;
+            CellP[i].grHII   = 1.0e-20;
+            CellP[i].grHM    = 1.0e-20;
+            CellP[i].grHeI   = 1.0 - HYDROGEN_MASSFRAC;
+            CellP[i].grHeII  = 1.0e-20;
+            CellP[i].grHeIII = 1.0e-20;
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+            CellP[i].grH2I   = 1.0e-20;
+            CellP[i].grH2II  = 1.0e-20;
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+            CellP[i].grDI    = 2.0 * 3.4e-5 * HYDROGEN_MASSFRAC; /* D/H = 2*3.4e-5 is a mass ratio (Grackle's DeuteriumToHydrogenRatio), so the D mass fraction carries X_H */
+            CellP[i].grDII   = 1.0e-20;
+            CellP[i].grHDI   = 1.0e-20;
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            CellP[i].Ne = (CellP[i].grHII + CellP[i].grHeII/4. + CellP[i].grHeIII/2.) / HYDROGEN_MASSFRAC; /* charge balance, per H nucleus */
+#endif
+#endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
             CellP[i].Rad_Flux_UV = 0;
             CellP[i].Rad_Flux_EUV = 0;
@@ -965,29 +987,6 @@ void init(void)
         
 #if (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES>=2)
         if(RestartFlag != 1) {if(P[i].ID == All.SpawnedWindCellID) {P[i].ID += 1;}} // reset any of these so can obey desired merge-split rules
-#endif
-
-#ifdef COOL_GRACKLE
-        if(RestartFlag == 0)
-        {
-#if (COOL_GRACKLE_CHEMISTRY >= 1)
-            CellP[i].grHI    = HYDROGEN_MASSFRAC;
-            CellP[i].grHII   = 1.0e-20;
-            CellP[i].grHM    = 1.0e-20;
-            CellP[i].grHeI   = 1.0 - HYDROGEN_MASSFRAC;
-            CellP[i].grHeII  = 1.0e-20;
-            CellP[i].grHeIII = 1.0e-20;
-#endif
-#if (COOL_GRACKLE_CHEMISTRY >= 2)
-            CellP[i].grH2I   = 1.0e-20;
-            CellP[i].grH2II  = 1.0e-20;
-#endif
-#if (COOL_GRACKLE_CHEMISTRY >= 3)
-            CellP[i].grDI    = 2.0 * 3.4e-5;
-            CellP[i].grDII   = 1.0e-20;
-            CellP[i].grHDI   = 1.0e-20;
-#endif
-        }
 #endif
 
     }

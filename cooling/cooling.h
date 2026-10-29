@@ -22,6 +22,10 @@ double evaluate_Compton_heating_cooling_rate(int target, double T, double nHcgs,
 double get_background_radiation_temperature_for_emission_corrections(int target, struct gas_cell_data *cell);
 void   set_PdV_work_heatingrate(int i, double dtime, struct particle_data *pp, struct gas_cell_data *cell);
 void   InitCool(void);
+#ifdef COOL_GRACKLE
+double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode, double *ne_eval, struct particle_data *pp, struct gas_cell_data *cell); /* ne_eval: updated electron abundance (mode 0), may be NULL; pp/cell: the arrays target indexes (the cooling loop passes compacted copies) */
+void   InitGrackle(void);
+#endif
 #ifndef CHIMES
 void   InitCoolMemory(void);
 void   IonizeParams(void);
