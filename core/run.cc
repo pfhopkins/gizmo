@@ -15,7 +15,8 @@
  * M_bary (total baryonic mass) OR M_Z (total gas metal mass) deviates from
  * the previous call by more than 1e-14 fractional.  M_Z change between
  * pre/post_diff_unpack catches metal-diffusion leaks; M_bary change at any
- * tag catches mass leaks.  Use it to bracket suspect operations. */
+ * tag catches mass leaks.  Use it to bracket suspect operations.
+ * M_Z_ledger = gas + star/remnant + in-flight diffusion metals - net yields; constant to roundoff. */
 void mbary_step_checkpoint(const char *tag)
 {
     static double last_M_tot = -1.0;
@@ -23,9 +24,11 @@ void mbary_step_checkpoint(const char *tag)
 #ifdef GALSF_RESOLVEDISM_DUST
     static double last_M_dust = -1.0;
 #endif
+    static double last_M_L = -1.0;
     static long long call_count = 0;
     int i;
     double M_gas_loc = 0, M_star_loc = 0, M_Z_loc = 0;
+    double ml_loc[3] = {0, 0, 0}; /* metal ledger: star+remnant metals, in-flight diffusion metals, net yields */
 #ifdef GALSF_RESOLVEDISM_DUST
     double M_dust_loc = 0;
 #endif
@@ -49,7 +52,21 @@ void mbary_step_checkpoint(const char *tag)
         else if(P[i].Type == 4) {
             M_star_loc += P[i].Mass;
         }
+#if defined(METALS)
+        if(P[i].Type == 4 || P[i].Type == 5) {ml_loc[0] += P[i].Mass * P[i].Metallicity[0];}
+#endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+        if(P[i].Type == 0) {ml_loc[1] += CellP[i].Dyield_pending[0];}
+#endif
     }
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+    if(strcmp(tag, "pre_diff_unpack") == 0) {for(int j : ActiveParticleList) {if(P[j].Type == 0 && P[j].Mass > 0) {ml_loc[1] += CellP[j].Dyield[0];}}} /* walked, not yet unpacked */
+#endif
+#if defined(GALSF_RESOLVEDISM_FB) && defined(METALS)
+    ml_loc[2] = CumulMetalYieldToGas - CumulMetalEjectedFromStars;
+#endif
+    double ml[3] = {0, 0, 0};
+    MPI_Allreduce(ml_loc, ml, 3, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     double M_gas = 0, M_star = 0, M_Z = 0;
     MPI_Allreduce(&M_gas_loc,  &M_gas,  1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&M_star_loc, &M_star, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -59,9 +76,10 @@ void mbary_step_checkpoint(const char *tag)
     MPI_Allreduce(&M_dust_loc, &M_dust, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 #endif
     double M_tot = M_gas + M_star;
+    double M_L = M_Z + ml[0] + ml[1] - ml[2];
     if(ThisTask == 0) {
         int should_log = 0;
-        double dM = 0.0, dZ = 0.0;
+        double dM = 0.0, dZ = 0.0, dL = 0.0;
 #ifdef GALSF_RESOLVEDISM_DUST
         double dDust = 0.0;
 #endif
@@ -72,6 +90,8 @@ void mbary_step_checkpoint(const char *tag)
             double frac_M = (last_M_tot > 0) ? fabs(dM) / last_M_tot : 0.0;
             double frac_Z = (last_M_Z   > 0) ? fabs(dZ) / last_M_Z   : 0.0;
             if(frac_M > 1.0e-14 || frac_Z > 1.0e-14) should_log = 1;
+            dL = M_L - last_M_L;
+            if(last_M_L > 0 && fabs(dL) / last_M_L > 1.0e-14) should_log = 1;
 #ifdef GALSF_RESOLVEDISM_DUST
             dDust = M_dust - last_M_dust;
             double frac_D = (last_M_dust > 0) ? fabs(dDust) / last_M_dust : 0.0;
@@ -85,25 +105,30 @@ void mbary_step_checkpoint(const char *tag)
             if(f) {
                 if(ftell(f) == 0) {
                     fprintf(f, "### Per-checkpoint M_bary + M_Z delta trace for leak localization.\n");
-                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, or M_dust (or first call).\n");
+                    fprintf(f, "###  Logs only when |delta|/value > 1e-14 for M_bary, M_Z, M_dust or M_Z_ledger (or first call).\n");
+                    fprintf(f, "###  M_Z = gas only.  M_Z_ledger = M_Z + M_Z_star + M_Z_inflight - M_Z_netyield: total metals, conserved to roundoff.\n");
 #ifdef GALSF_RESOLVEDISM_DUST
-                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]  (8) M_dust[code]  (9) deltaM_dust[code]\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]  (8) M_dust[code]  (9) deltaM_dust[code]");
+                    fprintf(f, "  (10) M_Z_star[code] (stars+remnants)  (11) M_Z_inflight[code] (diffusion exchange not yet applied)  (12) M_Z_netyield_cumul[code] (yield metals deposited - star metals ejected)  (13) M_Z_ledger[code]  (14) deltaM_Z_ledger[code]\n");
 #else
-                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]\n");
+                    fprintf(f, "###  (1) call_num  (2) tag  (3) t  (4) M_bary[code]  (5) deltaM_bary[code]  (6) M_Z[code]  (7) deltaM_Z[code]");
+                    fprintf(f, "  (8) M_Z_star[code] (stars+remnants)  (9) M_Z_inflight[code] (diffusion exchange not yet applied)  (10) M_Z_netyield_cumul[code] (yield metals deposited - star metals ejected)  (11) M_Z_ledger[code]  (12) deltaM_Z_ledger[code]\n");
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_DUST
-                fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e  %.16e  %+.16e\n",
+                fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e  %.16e  %+.16e",
                     call_count, tag, All.Time, M_tot, dM, M_Z, dZ, M_dust, dDust);
 #else
-                fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e\n",
+                fprintf(f, "%8lld  %-22s  %.10e  %.16e  %+.16e  %.16e  %+.16e",
                     call_count, tag, All.Time, M_tot, dM, M_Z, dZ);
 #endif
+                fprintf(f, "  %.16e  %+.16e  %+.16e  %.16e  %+.16e\n", ml[0], ml[1], ml[2], M_L, dL);
                 fclose(f);
             }
         }
         last_M_tot = M_tot;
         last_M_Z   = M_Z;
+        last_M_L   = M_L;
 #ifdef GALSF_RESOLVEDISM_DUST
         last_M_dust = M_dust;
 #endif

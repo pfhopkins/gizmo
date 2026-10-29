@@ -78,6 +78,7 @@ double CumulCRInjectedErg = 0;   /* CR energy measured at the feedback deposit [
 double CumulSFEnergyRemoved = 0; /* gas thermal+kinetic energy removed by star formation [erg] */
 double CumulFeedbackMass = 0;    /* cumulative mass returned to gas by feedback [Msun] */
 double CumulFeedbackMetals = 0;  /* cumulative metals returned to gas by feedback [Msun] */
+double CumulMetalYieldToGas = 0, CumulMetalEjectedFromStars = 0; /* metal ledger on this rank: yield metals deposited, star metal mass removed [code mass] */
 int CumulSNe = 0, CumulAGB = 0, CumulIa = 0; /* cumulative event counts */
 double CumulStarMassFormed = 0;  /* cumulative stellar mass formed [Msun] — set in IMF sampling */
 double RadPressure_dp_thisStep = 0; /* total radpressure momentum this step [g*cm/s] */

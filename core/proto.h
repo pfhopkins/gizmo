@@ -850,6 +850,7 @@ extern double CumulSFEnergyRemoved;  /* gas thermal+kinetic energy removed by st
 extern double CumulFeedbackMass;     /* cumulative mass returned to gas [Msun] */
 extern double CumulStarMassFormed;   /* cumulative stellar mass formed [Msun] */
 extern double CumulFeedbackMetals;   /* cumulative metals returned to gas [Msun] */
+extern double CumulMetalYieldToGas, CumulMetalEjectedFromStars; /* metal ledger on this rank [code mass] */
 extern int CumulSNe, CumulAGB, CumulIa; /* cumulative event counts */
 #endif
 #if defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_STOCHASTIC_IMF) || defined(GALSF_RESOLVEDISM_G0_VARIABLE)

@@ -19,11 +19,11 @@
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
 #if defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID) && defined(CRFLUID_INJECTION_AT_SHOCKS)
-#define RESTARTFILE_LAYOUT_VERSION 4u /* + CR shock injection total */
+#define RESTARTFILE_LAYOUT_VERSION 7u /* + metal ledger totals */
 #elif defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID)
-#define RESTARTFILE_LAYOUT_VERSION 3u /* + CR ledger totals */
+#define RESTARTFILE_LAYOUT_VERSION 6u /* + metal ledger totals */
 #elif defined(GALSF_RESOLVEDISM_FB)
-#define RESTARTFILE_LAYOUT_VERSION 2u /* + Stella cumulative ledger totals */
+#define RESTARTFILE_LAYOUT_VERSION 5u /* + metal ledger totals */
 #else
 #define RESTARTFILE_LAYOUT_VERSION 1u
 #endif
@@ -337,6 +337,8 @@ void restart(int modus)
 	  byten(&CumulSFEnergyRemoved, sizeof(double), modus);
 	  byten(&CumulFeedbackMass, sizeof(double), modus);
 	  byten(&CumulFeedbackMetals, sizeof(double), modus);
+	  byten(&CumulMetalYieldToGas, sizeof(double), modus);
+	  byten(&CumulMetalEjectedFromStars, sizeof(double), modus);
 	  byten(&CumulStarMassFormed, sizeof(double), modus);
 	  in(&CumulSNe, modus);
 	  in(&CumulAGB, modus);

@@ -426,8 +426,15 @@ void out2particle_resolvedismFB_momentum(struct OUTPUT_STRUCT_NAME *out, int i, 
         for(k = 0; k < 3; k++) {
             P[i].FB_RecoilAccum[k] += out->MomentumInjected[k]; /* applied once after the walk by resolvedism_fb_apply_recoil */
         }
+#ifdef METALS
+        double m_before = P[i].Mass;
+#endif
         P[i].Mass -= out->M_coupled;
         if((P[i].Mass < 0) || (isnan(P[i].Mass))) P[i].Mass = 0;
+#ifdef METALS
+        #pragma omp atomic
+        CumulMetalEjectedFromStars += (m_before - P[i].Mass) * P[i].Metallicity[0]; /* metal ledger: star metal mass removed */
+#endif
     }
 }
 
@@ -593,6 +600,8 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         double dZ = (dMZ - Z_old * dM) / (M_old + dM);
                         #pragma omp atomic
                         P[j].Metallicity[0] += dZ;
+                        #pragma omp atomic
+                        CumulMetalYieldToGas += dMZ; /* metal ledger: yield metals into gas */
                     }
                     {
                         int ch = local.fb_channel;
