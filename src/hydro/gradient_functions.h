@@ -371,7 +371,7 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
         kernel->dwk_j = kernel->wk_j = 0;
     }
 
-    double Particle_Size_j = P[j].Get_Particle_Size();
+    double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1./NUMDIMS); /* same cell-volume definition on both sides */
     double Particle_Size_i = pow(local->Mass / local->GQuant.Density, 1./NUMDIMS);
 
     /* ---- MHD constrained gradient face computation ---- */
@@ -692,7 +692,7 @@ void gradient_accumulate_neighbor_iter(struct GasGraddata_in_ *local, struct Gas
         kernel->dwk_j = kernel->wk_j = 0;
     }
 
-    double Particle_Size_j = P[j].Get_Particle_Size();
+    double Particle_Size_j = pow(P[j].Mass / CellP[j].Density, 1./NUMDIMS); /* same cell-volume definition on both sides */
     double Particle_Size_i = pow(local->Mass / local->GQuant.Density, 1./NUMDIMS);
 
     {
