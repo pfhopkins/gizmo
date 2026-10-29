@@ -419,6 +419,15 @@ double INLINE_FUNC yhelium(int target, struct particle_data *pp);
 double Get_Gas_Molecular_Mass_Fraction(int i, double temperature, double neutral_fraction, double free_electron_ratio, double urad_from_uvb_in_G0, struct particle_data *pp, struct gas_cell_data *cell);
 #ifdef MAGNETIC
 double Get_DtB_FaceArea_Limiter(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+double Get_Gas_CleaningSpeed(int i);
+double Get_Gas_Psi_Conservative(int i);
+extern double PsiDampEnergyCumul;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+#define MHD_ENERGY_LEDGER_N 9
+extern double MHDEnergyLedger[MHD_ENERGY_LEDGER_N];
+#endif
 #ifdef DIVBCLEANING_DEDNER
 double INLINE_FUNC Get_Gas_PhiField(int i_particle_id);
 double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id);

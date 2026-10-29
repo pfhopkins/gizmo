@@ -1145,7 +1145,7 @@ void read_parameter_file(char *fname)
  * registration gated on DEVELOPER_MODE only, every non-developer build silently ignored it,
  * defaulted to 1e10, and wrote exactly ONE row (t=0) per run — the whole-fleet
  * "ENERGYinfo header-only" symptom (2026-07-06). Register whenever the ledger exists. */
-#if defined(DEVELOPER_MODE) || (defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB))
+#if defined(DEVELOPER_MODE) || (defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)
       strcpy(tag[nt], "TimeBetStatistics");
       strcpy(alternate_tag[nt], "Time_Between_Internal_Diagnostic_Statistics");
       addr[nt] = &All.TimeBetStatistics;
@@ -3191,7 +3191,9 @@ void read_parameter_file(char *fname)
      * TimeBetStatistics back to 1e10 (usedvalues showed the file value; runtime had
      * 1e10 -> exactly one t=0 row fleet-wide). When the conservation ledger exists
      * (CHEMCOOL+RESOLVEDISM_FB), the parsed cadence must survive. */
+#ifndef TEST_MHD_ENERGY_LEDGER_OUTPUT
     All.TimeBetStatistics = 1.0e10;
+#endif
 #endif
     strcpy(All.ResubmitCommand,"none");
     All.ResubmitOn = 0;

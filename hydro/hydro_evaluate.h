@@ -395,16 +395,38 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #else
                 double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_i);
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                out.DtE_MHDLedger[4] += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+                out.DtEB_facevol += FluxCorrectionFactor_to_i * 0.5 * kernel.b2_i*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 for(k=0; k<3; k++)
                 {
                     out.DtB_PhiCorr[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_db * Face_Area_Vec[k];
                     out.DtB[k] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
                     out.DtInternalEnergy += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                    out.DtE_MHDLedger[1] += FluxCorrectionFactor_to_i * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * local.BPred[k]*All.cf_a2inv;
+#endif
                 }
 #endif
 #ifdef MHD_NON_IDEAL
                 out.DtInternalEnergy += FluxCorrectionFactor_to_i * dot(local.BPred, bflux_from_nonideal_effects) * All.cf_a2inv;
+#endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+                /* outward area of i is -Face_Area_Vec: -V grad psi = -sum S (psi_i+psi_j)/2 (symmetric), V div.B = sum S.(B_j-B_i)/2 (difference) */
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB
+                /* TP12 sec. 4.2.2 pair: V div.B = sum S.(B_i+B_j)/2 (symmetric, the form in the MFM Powell term), -V grad psi = sum S (psi_i-psi_j)/2 (difference), same sign on i and j */
+                Vec3<double> dB_psicons = Face_Area_Vec * (-0.5 * (local.PsiCons - Get_Gas_Psi_Conservative(j)));
+                double divb_diff_ij = -0.5 * dot(Face_Area_Vec, BPred_j + local.BPred) * All.cf_a2inv;
+#else
+                Vec3<double> dB_psicons = Face_Area_Vec * (0.5 * (local.PsiCons + Get_Gas_Psi_Conservative(j)));
+                double divb_diff_ij = -0.5 * dot(Face_Area_Vec, BPred_j - local.BPred) * All.cf_a2inv;
+#endif
+                out.DtB_PsiCons += dB_psicons * FluxCorrectionFactor_to_i;
+                out.DivBDiff += divb_diff_ij;
 #endif
 #endif
 #endif
@@ -438,16 +460,34 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #else
                     double wt_face_sum = Face_Area_Norm * (-face_area_dot_vel+face_vel_j);
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                    CellP[j].DtE_MHDLedger[4] -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+                    CellP[j].DtEB_facevol -= FluxCorrectionFactor_to_j * 0.5 * kernel.b2_j*All.cf_a2inv*All.cf_a2inv * wt_face_sum;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                     for(k=0; k<3; k++)
                     {
                         CellP[j].DtB_PhiCorr[k] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_db * Face_Area_Vec[k];
                         CellP[j].DtB[k] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k];
                         CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * BPred_j[k]*All.cf_a2inv;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                        CellP[j].DtE_MHDLedger[1] -= FluxCorrectionFactor_to_j * Riemann_out.phi_normal_mean * Face_Area_Vec[k] * BPred_j[k]*All.cf_a2inv;
+#endif
                     }
 #endif
 #ifdef MHD_NON_IDEAL
                     CellP[j].DtInternalEnergy -= FluxCorrectionFactor_to_j * dot(BPred_j, bflux_from_nonideal_effects) * All.cf_a2inv;
+#endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_SYMMETRIC_DIVB
+                    CellP[j].DtB_PsiCons += dB_psicons * FluxCorrectionFactor_to_j;
+                    CellP[j].DivBDiff -= divb_diff_ij;
+#else
+                    CellP[j].DtB_PsiCons -= dB_psicons * FluxCorrectionFactor_to_j;
+                    CellP[j].DivBDiff += divb_diff_ij;
+#endif
 #endif
 #endif
 #endif

@@ -274,6 +274,9 @@ struct INPUT_STRUCT_NAME
 #ifdef DIVBCLEANING_DEDNER
     MyFloat PhiPred;
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    MyDouble PsiCons;
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
     MyFloat MG_cgcoeff;
 #endif
@@ -360,6 +363,16 @@ struct OUTPUT_STRUCT_NAME
     Vec3<MyDouble> Face_Area;
     Vec3<MyFloat> DtB;
     MyFloat divB;
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    MyDouble DivBDiff;
+    Vec3<MyDouble> DtB_PsiCons;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MyDouble DtE_MHDLedger[5];
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+    MyDouble DtEB_facevol;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     MyFloat DtPhi;
@@ -559,6 +572,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
 #ifdef DIVBCLEANING_DEDNER
     in->PhiPred = Get_Gas_PhiField(i);
 #endif
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    in->PsiCons = Get_Gas_Psi_Conservative(i);
+#endif
 #ifdef MHD_MODIFIED_GRADIENT
     in->MG_cgcoeff = CellP[i].MG_cgcoeff;
 #endif
@@ -652,6 +668,15 @@ static inline void out2particle_hydra(struct OUTPUT_STRUCT_NAME *out, int i, int
     /* can't just do DtB += out-> DtB, because for some hydro methods, the induction equation is solved in the density loop; need to simply add it here */
     CellP[i].DtB += out->DtB; CellP[i].Face_Area += out->Face_Area;
     CellP[i].divB += out->divB;
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    CellP[i].DivBDiff += out->DivBDiff; CellP[i].DtB_PsiCons += out->DtB_PsiCons;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] += out->DtE_MHDLedger[kl];}
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+    CellP[i].DtEB_facevol += out->DtEB_facevol;
+#endif
 #if defined(DIVBCLEANING_DEDNER)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
     CellP[i].DtPhi += out->DtPhi;
@@ -734,10 +759,17 @@ void hydro_final_operations_and_cleanup(void)
                 Vec3<double> Bi = CellP[i].Bfield() * All.cf_a2inv;
 #ifndef HYDRO_SPH
                 /* this part of the induction equation has to do with advection of div-B, it is not present in SPH */
+#ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].DtB -= CellP[i].divB * (CellP[i].VelPred/All.cf_atime);
 #endif
+#endif
+#ifndef TEST_MHD_NO_POWELL_SOURCE_TERMS
                 CellP[i].HydroAccel -= CellP[i].divB * Bi;
                 CellP[i].DtInternalEnergy -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                CellP[i].DtE_MHDLedger[0] -= CellP[i].divB * dot(CellP[i].VelPred/All.cf_atime, Bi);
+#endif
+#endif
             }
 
             double magnorm_closure = Get_DtB_FaceArea_Limiter(i, P, CellP);
@@ -765,6 +797,9 @@ void hydro_final_operations_and_cleanup(void)
                 if(DtB_PhiCorr > tolerance_for_correction * DtB_UnCorr) {PhiCorr_Norm *= tolerance_for_correction * DtB_UnCorr / DtB_PhiCorr;}
                 CellP[i].DtB += PhiCorr_Norm * CellP[i].DtB_PhiCorr;
                 CellP[i].DtInternalEnergy += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                CellP[i].DtE_MHDLedger[2] += PhiCorr_Norm * dot(CellP[i].DtB_PhiCorr, CellP[i].Bfield() * All.cf_a2inv);
+#endif
             }
 
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME // mass-based phi-flux
@@ -775,6 +810,9 @@ void hydro_final_operations_and_cleanup(void)
             if((!isnan(CellP[i].divB))&&(P[i].KernelRadius>0)&&(CellP[i].divB!=0)&&(CellP[i].Density>0))
             {
                 double tmp_ded = 0.5 * CellP[i].MaxSignalVel / (fac_mu*All.cf_atime); // has units of v_physical now
+#ifdef TEST_DIVBCLEANING_ALTERNATING_CLEANING_SPEED
+                if(((long)(All.Time / 0.05)) % 2) {tmp_ded *= 2;} /* test only: c_h doubles every other 0.05 (Tricco, Price & Bate 2016 sec. 3.2) */
+#endif
                 /* do a check to make sure divB isn't something wildly divergent (owing to particles being too close) */
                 Vec3<double> Bfield_i = CellP[i].BPred * (CellP[i].Density / P[i].Mass);
                 double b2_max = Bfield_i.norm_sq();
@@ -806,7 +844,19 @@ void hydro_final_operations_and_cleanup(void)
 #ifndef HYDRO_SPH
             CellP[i].DtInternalEnergy -= dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
 #endif
+#if (defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)) && !defined(HYDRO_SPH)
+            CellP[i].DtEB_booked = dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) - CellP[i].DtEB_facevol; /* dE_B/dt the u equation assumes */
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            CellP[i].DtE_MHDLedger[3] += (magnorm_closure-1.) * dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB);
+#endif
             CellP[i].DtB *= magnorm_closure;
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+            /* conjugate cleaning pair, added after the u booking and the closure limiter: exchanges E_B <-> E_psi only */
+            CellP[i].DtB += CellP[i].DtB_PsiCons;
+            {double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
+             CellP[i].DtPsiZ = (V_phys > 0) ? -Get_Gas_CleaningSpeed(i) * CellP[i].DivBDiff / sqrt(V_phys) : 0;}
+#endif
 #endif
             CellP[i].DtInternalEnergy /= P[i].Mass;
             /* ok, now: HydroAccel = dv/dt, DtInternalEnergy = du/dt (energy per unit mass) */
@@ -1044,6 +1094,15 @@ void hydro_final_operations_and_cleanup(void)
                 CellP[i].HydroAccel = {};
 #ifdef MAGNETIC
                 CellP[i].DtB = {};
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+                CellP[i].DivBDiff = 0; CellP[i].DtB_PsiCons = {}; CellP[i].DtPsiZ = 0;
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+                for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+                CellP[i].DtEB_facevol = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
                 CellP[i].DtB_PhiCorr = {};
                 CellP[i].DtPhi = 0;
@@ -1131,6 +1190,15 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 #ifdef MAGNETIC
             CellP[i].divB = 0; CellP[i].Face_Area = {};
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+            CellP[i].DivBDiff = 0; CellP[i].DtB_PsiCons = {};
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            for(int kl=0;kl<5;kl++) {CellP[i].DtE_MHDLedger[kl] = 0;}
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) || defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY)
+            CellP[i].DtEB_facevol = 0;
+#endif
 #ifdef DIVBCLEANING_DEDNER
             CellP[i].DtB_PhiCorr = {};
 #endif

@@ -213,6 +213,12 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 #endif
 
 
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+double PsiDampEnergyCumul = 0; /* cumulative E_psi removed by parabolic damping, physical code energy, this task */
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+double MHDEnergyLedger[MHD_ENERGY_LEDGER_N]; /* cumulative code energy: clip, Powell, Dedner face, Dedner PhiCorr, closure, B^2 dV/2, B.d(VB) */
+#endif
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
@@ -294,6 +300,25 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             dEnt_Gravity += -dot(CellP[i].GravWorkTerm, grav_acc) * All.cf_atime * dt_hydrokick;
 #endif
             double du_tot = CellP[i].DtInternalEnergy * dt_hydrokick + dEnt_Gravity;
+#if defined(MHD_RESCALE_B_TO_BOOKED_MAGNETIC_ENERGY) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+            { /* rescale |VB| so the cell E_B after this kick equals the E_B the u equation booked (kernel-volume changes then move no energy) */
+                double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
+                Vec3<double> dVB = CellP[i].DtB * (dt_hydrokick / All.cf_atime), VB_new = CellP[i].B + dVB;
+                double eb_new = 0.5 * VB_new.norm_sq() * rho_over_m / All.cf_atime;
+                double eb_target = CellP[i].EB_last + CellP[i].DtEB_booked * dt_hydrokick;
+                if(CellP[i].EB_last >= 0 && eb_target > 0 && eb_new > 0) {CellP[i].B = VB_new * sqrt(eb_target / eb_new) - dVB; CellP[i].EB_last = eb_target;}
+                else {CellP[i].EB_last = eb_new;}
+            }
+#endif
+#if defined(MHD_CONSERVE_ENERGY_ON_KERNEL_VOLUME_CHANGE) && defined(MAGNETIC) && !defined(HYDRO_SPH) && !defined(MHD_ALTERNATIVE_LEAPFROG_SCHEME)
+            { /* charge u with the actual E_B change (kernel volume since last kick + this kick's dVB) minus what the u equation booked */
+                double rho_over_m = (CellP[i].Density > 0) ? CellP[i].Density / P[i].Mass : 0; /* physical E_B = |VB_code|^2 (rho/m)_code / (2a) */
+                Vec3<double> VB_new = CellP[i].B + CellP[i].DtB * (dt_hydrokick / All.cf_atime);
+                double eb_new = 0.5 * VB_new.norm_sq() * rho_over_m / All.cf_atime;
+                if(CellP[i].EB_last >= 0) {du_tot -= (eb_new - CellP[i].EB_last - CellP[i].DtEB_booked * dt_hydrokick) / P[i].Mass;}
+                CellP[i].EB_last = eb_new;
+            }
+#endif
 #if defined(COOLING) && !defined(COOLING_OPERATOR_SPLIT)
             if((mode == 1) && (du_tot != 0) && (dt_hydrokick > 0)) { /* if about to consider second-halfstep kick (just after hydro), decide if we need to split this particular cell on this particular timestep, since this un-split solver can lead to energy conservation problems if the mechanical heating is much larger than cooling */
                 CellP[i].CoolingIsOperatorSplitThisTimestep=1; /* default to assume split */
@@ -303,6 +328,12 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             if(CellP[i].CoolingIsOperatorSplitThisTimestep==0) {du_tot=0;} /* cooling in unsplit, so zero contribution here */
 #endif
             double dEnt = CellP[i].InternalEnergy + du_tot;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            double u_ledger_target = dEnt;
+#if defined(MAGNETIC) && !defined(HYDRO_SPH)
+            for(int kl=0;kl<5;kl++) {MHDEnergyLedger[kl+1] += CellP[i].DtE_MHDLedger[kl] * dt_hydrokick;}
+#endif
+#endif
             
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             /* if we're using a Riemann solver, we include an energy/entropy-type switch to ensure
@@ -389,6 +420,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
 #endif
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
             rt_diag_sc(RT_DIAG_SC_KICK_DU, (CellP[i].InternalEnergy - rt_diag_u0) * P[i].Mass);
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+            MHDEnergyLedger[0] += (CellP[i].InternalEnergy - u_ledger_target) * P[i].Mass;
 #endif
         }
         
@@ -494,6 +528,9 @@ void set_predicted_quantities_for_extra_physics(int i)
     {
         int k, kf; k=0, kf=0;
 #if defined(MAGNETIC)
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+        CellP[i].PsiZPred = CellP[i].PsiZ;
+#endif
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
         CellP[i].BPred = CellP[i].B;
 #if defined(DIVBCLEANING_DEDNER)
@@ -542,7 +579,31 @@ void do_kick_for_extra_physics(int i, integertime tstart, integertime tend, doub
 #ifdef MAGNETIC
 #ifndef MHD_ALTERNATIVE_LEAPFROG_SCHEME
     double BphysVolphys_to_BcodeVolCode = 1 / All.cf_atime;
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    MHDEnergyLedger[6] += dot(CellP[i].Bfield() * All.cf_a2inv, CellP[i].DtB) * dt_entr;
+    double eb_ledger_now = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / P[i].Mass : 0; /* non-cosmological test only */
+    if(CellP[i].LedgerEB >= 0) {MHDEnergyLedger[7] += eb_ledger_now - CellP[i].LedgerEB;}
+#endif
     CellP[i].B += CellP[i].DtB * (dt_entr * BphysVolphys_to_BcodeVolCode); // fluxes are always physical, convert to code units //
+#ifdef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH
+    { /* hyperbolic update, then parabolic damping; damped E_psi goes to heat unless _NO_DAMPING_HEAT */
+        CellP[i].PsiZ += sqrt(All.cf_atime) * CellP[i].DtPsiZ * dt_entr;
+        double ch = Get_Gas_CleaningSpeed(i), h = 1.2 * P[i].Get_Particle_Size() * All.cf_atime; /* TP12 h = 1.2 (m/rho)^(1/d) */
+        if(ch > 0 && h > 0 && dt_entr > 0)
+        {
+            double z0 = CellP[i].PsiZ; CellP[i].PsiZ *= exp(-dt_entr * DIVBCLEANING_CONSERVATIVE_SIGMA * ch / h);
+            double dE_damp = 0.5 * (z0*z0 - CellP[i].PsiZ*CellP[i].PsiZ) / All.cf_atime;
+            PsiDampEnergyCumul += dE_damp;
+#ifndef DIVBCLEANING_CONSERVATIVE_PSI_OVER_CH_NO_DAMPING_HEAT
+            if(P[i].Mass > 0) {CellP[i].InternalEnergy += dE_damp / P[i].Mass;}
+#endif
+        }
+    }
+#endif
+#ifdef TEST_MHD_ENERGY_LEDGER_OUTPUT
+    CellP[i].LedgerEB = (CellP[i].Density > 0) ? 0.5 * CellP[i].B.norm_sq() * CellP[i].Density / P[i].Mass : 0;
+    MHDEnergyLedger[8] += CellP[i].LedgerEB - eb_ledger_now;
+#endif
 #ifdef DIVBCLEANING_DEDNER
     double PhiphysVolphys_to_PhicodeVolCode = 1 / All.cf_a3inv; // for mass-based phi-fluxes (otherwise is just "1")
     /* phi units are [vcode][Bcode]=a^3 * vphys*Bphys */
