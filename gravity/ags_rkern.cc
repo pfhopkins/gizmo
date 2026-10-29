@@ -188,10 +188,10 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
 
                     out.Ngb += kernel.wk;
                     out.DrkernNgb += -(NUMDIMS * kernel.hinv * kernel.wk + u * kernel.dwk);
-                    out.AGS_zeta += P[j].Mass * kernel_gravity(u, kernel.hinv, kernel.hinv3, 0); // needs to be here, should include self-contribution
 
                     if(kernel.r > 0)
                     {
+                        out.AGS_zeta += P[j].Mass * kernel_gravity(u, kernel.hinv, kernel.hinv3, 0); // no self-contribution: the conservative derivation excludes an element's self-potential, as the gas sum does
                         if(P[j].Type==0) {kernel.dv = local.Vel - CellP[j].VelPred;}
                         else {kernel.dv = local.Vel - P[j].Vel;}
                         NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,kernel.dv,1); /* wrap velocities for shearing boxes if needed */
