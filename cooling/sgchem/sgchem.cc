@@ -23,7 +23,7 @@
  * A bare Fortran 'stop' killed one rank silently and deadlocked the rest in
  * the next MPI collective (zombie jobs; pisn200 2026-07-04).  endrun() ->
  * MPI_Abort kills the WHOLE job immediately and visibly. */
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
 static thread_local int chem_id_current; /* particle ID for sgchem_fatal messages */
 #define CHEM_ID_CURRENT chem_id_current
 #else
@@ -76,7 +76,7 @@ void sgchem_init(void)
     p.cr_energy_density = 0.0;  /* [erg/cm^3], overwritten per-cell if COSMIC_RAY_FLUID active */
     p.dust_to_gas_ratio = All.DGRnormalized;
 
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
     chem_cxx_tables_init(&p);
 #else
     /* COOLI/COOLR set before COOLINMO/CHEMINMO (they read these via common block) */
@@ -145,7 +145,7 @@ static double sgchem_step_core(int target, double dt, double dl, int mode, doubl
      * Fortran solve (and, now, before any COMMON write) */
     if(mode == 2) return chem_in.temp;
 
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
     chem_id_current = chem_in.id_current;  /* only for sgchem_fatal messages */
 #else
     chem_commit_to_fortran(&chem_in);
@@ -166,7 +166,7 @@ static double sgchem_step_core(int target, double dt, double dl, int mode, doubl
     double ekn, u_new = u_code;
 
 
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
     chem_cxx_begin_cell(&chem_in, temp, abh2, abhd, abco);
 #else
     CALC_PHOTO_WRAPPER(&temp, chem_in.rpar, &abh2, &abhd, &abco);
@@ -307,7 +307,7 @@ static double sgchem_step_core(int target, double dt, double dl, int mode, doubl
          * receives a consistent composition.  Amounts clamped are tiny
          * (trace species near their floors) so conservation is unaffected. */
         sgchem_clamp_pools(abundances, &chem_in);
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
         chem_cxx_evolve_cell(timestep, dl_cgs, yn, divv, &energy, abundances);
         chem_solved = 1;
 #else
@@ -318,7 +318,7 @@ static double sgchem_step_core(int target, double dt, double dl, int mode, doubl
     /* GATE 0 seam: read back the COMMON fields the solve updated.  When the
      * solve was skipped (PHOTOION-ionized cell) this reads the same
      * (stale-lambda) COMMON state the pre-refactor code read -- identical. */
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
     chem_cxx_read_outputs(&chem_out);
     if(!chem_solved) {chem_out.cr_ion_heat = 0;} /* skipped solve: no CR ionisation heating applied */
 #else
@@ -351,7 +351,7 @@ static double sgchem_step_core(int target, double dt, double dl, int mode, doubl
 #elif CHEMISTRYNETWORK == 20
     (void)ekn; (void)abe;
     chem_cxx_net20_finish(abundances, energy, &temp);  /* T with the equilibrium x_e; writes CO */
-#elif defined(SGCHEM_CXX)
+#elif !defined(SGCHEM_FORTRAN)
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
     temp = chem_cxx_calc_temp(abh2, chem_in.abhe, ekn);
 #else
@@ -387,7 +387,7 @@ static double sgchem_step_core(int target, double dt, double dl, int mode, doubl
         for(i = 0; i < TRAC_NUM; i++) {
             CellP[target].TracAbund[i] = abundances[i];
         }
-#if defined(COSMIC_RAY_FLUID) && defined(SGCHEM_CXX)
+#if defined(COSMIC_RAY_FLUID) && !defined(SGCHEM_FORTRAN)
         { /* the CR ionisation heating the solve applied, minus the radioactive share of zeta, comes out of e_CR (booked in E_CR_loss_cumul) */
             double zeta_cr = CR_IONRATE_SOLCIRC * (chem_in.cr_energy_density / 1.602e-12) / CR_ENDEN_SOLCIRC;
             double f_cr = (chem_in.cosmic_ray_ion_rate > 0) ? DMIN(zeta_cr / chem_in.cosmic_ray_ion_rate, 1.) : 0;

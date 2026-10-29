@@ -6,7 +6,10 @@
 #error "CHEMCOOL was renamed to SGCHEM"
 #endif
 #ifdef CHEMCOOL_CXX
-#error "CHEMCOOL_CXX was renamed to SGCHEM_CXX"
+#error "CHEMCOOL_CXX was removed: SGCHEM uses the C++ backend by default (SGCHEM_FORTRAN selects the legacy Fortran backend)"
+#endif
+#ifdef SGCHEM_CXX
+#error "C++ is now the default; drop SGCHEM_CXX (use SGCHEM_FORTRAN for the legacy backend)"
 #endif
 #ifdef CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY
 #error "CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY was renamed to SGCHEM_DGR_INDEPENDENT_OF_METALLICITY"
@@ -1749,13 +1752,13 @@
 #define TRAC_NUM 7
 #elif CHEMISTRYNETWORK == 18
 #define TRAC_NUM 113 /* H2, H+, CO and every ion stage of He C N O Ne Mg Si S Fe (cxx/chem_net18_layout.h) */
-#ifndef SGCHEM_CXX
-#error "CHEMISTRYNETWORK=18 (RTZ metal ions) exists only in the C++ backend: enable SGCHEM_CXX"
+#ifdef SGCHEM_FORTRAN
+#error "CHEMISTRYNETWORK=18 (RTZ metal ions) exists only in the C++ backend: drop SGCHEM_FORTRAN"
 #endif
 #elif CHEMISTRYNETWORK == 20
 #define TRAC_NUM 3   /* H2, H+ evolved; CO = equilibrium value written back */
-#ifndef SGCHEM_CXX
-#error "CHEMISTRYNETWORK=20 (TIGRESS-NCR) exists only in the C++ backend: enable SGCHEM_CXX"
+#ifdef SGCHEM_FORTRAN
+#error "CHEMISTRYNETWORK=20 (TIGRESS-NCR) exists only in the C++ backend: drop SGCHEM_FORTRAN"
 #endif
 #endif
 #if defined(TURB_DIFF_METALS)

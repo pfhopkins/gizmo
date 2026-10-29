@@ -90,7 +90,7 @@ static inline struct ChemFUVField chem_fuv_field_from_band_energy(double u_g0ban
  * in cool.h).  MOVED VERBATIM from sgchem.cc:13-81 (pre-Gate-0).  The
  * conditional members MUST track the Fortran cool.h layout exactly.
  * ---------------------------------------------------------------------- */
-#ifndef SGCHEM_CXX /* Fortran backend only: the C++ backend has no COMMON blocks */
+#ifdef SGCHEM_FORTRAN /* Fortran backend only: the C++ backend has no COMMON blocks */
 extern "C" {
 #include "chem_commons.h"
 
@@ -127,7 +127,7 @@ extern "C" {
     void EVOLVE_ABUNDANCES(double *timestep, double *dl, double *yn, double *divv,
                            double *energy, double *abundances, double *column_est);
 }
-#endif /* !SGCHEM_CXX */
+#endif /* SGCHEM_FORTRAN */
 
 /* one-time chemistry settings, filled by sgchem_init for either backend */
 struct ChemInitParams {
@@ -272,7 +272,7 @@ struct ChemOutputs {
 
 void chem_fill_inputs(int target, struct ChemInputs *in);
 void chem_fill_gas_abundances(int target, struct ChemInputs *in);
-#ifndef SGCHEM_CXX
+#ifdef SGCHEM_FORTRAN
 void chem_commit_to_fortran(const struct ChemInputs *in);
 void chem_percell_snapshot(void);
 void chem_read_outputs(struct ChemOutputs *out);

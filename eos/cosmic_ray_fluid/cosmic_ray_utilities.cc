@@ -385,7 +385,7 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 
     if(dtime_cgs <= 0) {return;} /* catch */
     int k_CRegy;
-#if defined(SGCHEM_CXX) && defined(GALSF_RESOLVEDISM)
+#if defined(SGCHEM) && !defined(SGCHEM_FORTRAN) && defined(GALSF_RESOLVEDISM)
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: sgchem.cc takes the chemistry's ionisation heating out of e_CR */
 #else
     double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);

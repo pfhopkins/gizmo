@@ -31,8 +31,8 @@
 #ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
 #include "../../gravity/healpix_utils.h"
 #endif
-#if defined(OUTPUT_CHEM_PHOTORATES) && (!defined(SGCHEM_CXX) || !(defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)))
-#error "OUTPUT_CHEM_PHOTORATES needs SGCHEM_CXX and a G0 field (GALSF_RESOLVEDISM_G0_VARIABLE or M1)"
+#if defined(OUTPUT_CHEM_PHOTORATES) && (defined(SGCHEM_FORTRAN) || !(defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)))
+#error "OUTPUT_CHEM_PHOTORATES needs the C++ backend (no SGCHEM_FORTRAN) and a G0 field (GALSF_RESOLVEDISM_G0_VARIABLE or M1)"
 #endif
 
 #ifdef SGCHEM
@@ -635,7 +635,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
      * (coolinmo default from the ABHE macro).  Mirror it READ-ONLY into the
      * struct for the He/D pool clamps in do_sgchem_step; commit does NOT
      * write it back in this configuration. */
-#ifdef SGCHEM_CXX
+#ifndef SGCHEM_FORTRAN
     in->abhe     = chem_cxx_abhe_default();
     in->X_H_chem = chem_cxx_xh_default();
 #else
@@ -676,7 +676,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     ekn = energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + abe) * yn);
 #if CHEMISTRYNETWORK == 18
     temp = chem_cxx_net18_temp(in->abundances, energy, yn, in->abhe);  /* all ions and electrons */
-#elif defined(SGCHEM_CXX)
+#elif !defined(SGCHEM_FORTRAN)
     temp = chem_cxx_calc_temp(abh2, in->abhe, ekn);  /* this cell's abhe (Fortran reads the last committed one) */
 #else
     CALC_TEMP(&abh2, &ekn, &temp);
@@ -714,7 +714,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
 #else
         NH = columni / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
 #endif
-#if defined(RADTRANSFER) && !(defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && defined(SGCHEM_CXX)) /* legacy Fortran keeps the zeroed column */
+#if defined(RADTRANSFER) && !(defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED) && !defined(SGCHEM_FORTRAN)) /* legacy Fortran keeps the zeroed column */
         /* M1 RT: the radiation transport already applies dust attenuation to the FUV/LW
            bands, so the field handed to the chemistry (Rad_E_gamma -> G0) is ALREADY
            dust-attenuated. The total-H column drives ONLY the dust f_dust in calc_photo
@@ -835,7 +835,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
  * original never wrote — e.g. CHEM_COMP without VARIABLE_XH_AND_ABHE, or
  * G0_dust without G0_VARIABLE/RADTRANSFER — stay Fortran-owned).
  * ========================================================================= */
-#ifndef SGCHEM_CXX
+#ifdef SGCHEM_FORTRAN
 /* per-cell COMMON values after sgchem_init; every cell starts from them on every thread (no copyin needed) */
 static struct chem_coolrc_t chem_coolrc_init;
 static struct chem_coolic_t chem_coolic_init;
@@ -926,5 +926,5 @@ void chem_read_outputs(struct ChemOutputs *out)
 }
 
 
-#endif /* !SGCHEM_CXX */
+#endif /* SGCHEM_FORTRAN */
 #endif /* SGCHEM */

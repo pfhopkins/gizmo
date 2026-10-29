@@ -997,11 +997,14 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h
 endif
 
-# sgchem non-equilibrium chemistry: fortran backend (no .F with SGCHEM_CXX) + C++ interface
+# sgchem non-equilibrium chemistry: C++ backend by default (no .F files); SGCHEM_FORTRAN selects the legacy Fortran backend
+ifneq (,$(findstring SGCHEM_CXX,$(CONFIGVARS)))
+$(error C++ is now the default; drop SGCHEM_CXX (use SGCHEM_FORTRAN for the legacy backend))
+endif
 ifeq (SGCHEM,$(findstring SGCHEM,$(CONFIGVARS)))
 OBJS    += cooling/sgchem/sgchem.o cooling/sgchem/chem_interface.o
 INCL    += cooling/sgchem/chem_interface.h
-ifneq (SGCHEM_CXX,$(findstring SGCHEM_CXX,$(CONFIGVARS)))
+ifeq (SGCHEM_FORTRAN,$(findstring SGCHEM_FORTRAN,$(CONFIGVARS)))
 FOBJS   += cooling/sgchem/coolinmo.o cooling/sgchem/cheminmo.o cooling/sgchem/spline.o cooling/sgchem/cool_func.o cooling/sgchem/photoinit_ism.o \
            cooling/sgchem/dvode.o cooling/sgchem/evolve_abundances.o cooling/sgchem/rate_eq_simple.o cooling/sgchem/rate_eq_ulli.o \
            cooling/sgchem/rate_eq_mol.o cooling/sgchem/rate_eq_nl99.o cooling/sgchem/rate_eq_gong17.o \
@@ -1010,10 +1013,9 @@ FOBJS   += cooling/sgchem/coolinmo.o cooling/sgchem/cheminmo.o cooling/sgchem/sp
            cooling/sgchem/compute_gamma.o cooling/sgchem/wss_z_collis.o
 endif
 
-# SGCHEM_CXX: C++/CVODE chemistry backend (cooling/sgchem/cxx/).
-# DEFAULT OFF -- with the flag absent the build is byte-for-byte the Fortran
-# DVODE path above.  With the flag ON init, tables and solve are C++; no .F
-# object and no Fortran runtime is linked.
+# C++/CVODE chemistry backend (cooling/sgchem/cxx/): the SGCHEM default.
+# Init, tables and solve are C++; no .F object and no Fortran runtime is linked.
+# With SGCHEM_FORTRAN the Fortran DVODE path above is built instead.
 #
 # SUNDIALS: point SUNDIALS_DIR at a local static build (CVODE >= 6.x).  Build it
 # once with:
@@ -1022,7 +1024,7 @@ endif
 # Default below is a stable copy (headers + the 6 static libs) of the tree
 # built for the Gate-2 benchmark (SUNDIALS 6.7.0, gcc; original build tree:
 # /orion/ptmp/uli/orion/fb_tests/_sgchem_cxx_build/sundials/).
-ifeq (SGCHEM_CXX,$(findstring SGCHEM_CXX,$(CONFIGVARS)))
+ifneq (SGCHEM_FORTRAN,$(findstring SGCHEM_FORTRAN,$(CONFIGVARS)))
 SUNDIALS_DIR ?= /orion/ptmp/uli/orion/fb_tests/_sundials/install
 SUNDIALS_LIBDIR := $(firstword $(wildcard $(SUNDIALS_DIR)/lib64 $(SUNDIALS_DIR)/lib))
 SUNDIALS_INCL = -I$(SUNDIALS_DIR)/include
@@ -1198,7 +1200,7 @@ endif
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-# SGCHEM_CXX sources: same compiler and flags, plus -std=c++14 (SUNDIALS)
+# SGCHEM C++ backend sources: same compiler and flags, plus -std=c++14 (SUNDIALS)
 $(CHEMCXX_OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -std=c++14 -I. -c $< -o $@
 
@@ -1225,9 +1227,9 @@ compile_time_info.cc: $(CONFIG)
 
 clean:
 	rm -f $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) $(EXEC)
-# CHEMCXX_OBJS is empty when SGCHEM_CXX is off, so clean it explicitly:
-# otherwise objects left over from a SGCHEM_CXX build survive a clean
-# made with the flag off (harmless -- they are not linked -- but stale).
+# CHEMCXX_OBJS is empty with SGCHEM_FORTRAN or without SGCHEM, so clean it explicitly:
+# otherwise objects left over from a C++-backend build survive a clean
+# made without it (harmless -- they are not linked -- but stale).
 	rm -f cooling/sgchem/cxx/*.o *.oo *.c~ compile_time_info.cc GIZMO_config.h
 	rm -f cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h cooling/jaco_interp.h
 

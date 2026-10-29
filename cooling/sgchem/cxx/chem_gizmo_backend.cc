@@ -1,4 +1,4 @@
-// chem_gizmo_backend.cc -- the SGCHEM_CXX entry points that GIZMO calls.
+// chem_gizmo_backend.cc -- the C++ backend entry points that GIZMO calls.
 //
 // ChemCell is filled straight from struct ChemInputs; init, tables, calc_photo,
 // temperature lookup and solve are C++.  No Fortran is called or linked.
@@ -8,7 +8,7 @@
 
 #include "GIZMO_config.h"
 
-#if defined(SGCHEM) && defined(SGCHEM_CXX)
+#if defined(SGCHEM) && !defined(SGCHEM_FORTRAN)
 
 #include "chem_types.h"
 #include "chem_net20.h"
@@ -21,8 +21,8 @@
 extern "C" void sgchem_fatal_(int* code);
 
 #if CHEMISTRYNETWORK != 3 && CHEMISTRYNETWORK != 5 && CHEMISTRYNETWORK != 15 && CHEMISTRYNETWORK != 16 && CHEMISTRYNETWORK != 17 && CHEMISTRYNETWORK != 18 && CHEMISTRYNETWORK != 20
-#error "SGCHEM_CXX currently supports CHEMISTRYNETWORK 3, 5, 15, 16, 17, 18 and 20 only. \
-Build without SGCHEM_CXX (the Fortran path) for the other networks."
+#error "The SGCHEM C++ backend currently supports CHEMISTRYNETWORK 3, 5, 15, 16, 17, 18 and 20 only. \
+Build with SGCHEM_FORTRAN (the legacy Fortran backend) for the other networks."
 #endif
 
 
@@ -210,4 +210,4 @@ void chem_cxx_net20_finish(double* abundances, double energy, double* temp)
 double chem_cxx_net20_electrons(void) { return tl_cell.n20_xe; }
 #endif
 
-#endif /* SGCHEM && SGCHEM_CXX */
+#endif /* SGCHEM && !SGCHEM_FORTRAN */
