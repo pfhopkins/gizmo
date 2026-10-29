@@ -18,7 +18,13 @@ TREE=""; if [ "${1:-}" = "--into-tree" ]; then TREE="$(cd "$2" && pwd)"; shift 2
 REF="$(sed -n 's/^#define STELLA_TABLES_REF "\([0-9a-f]*\)".*/\1/p' "$HDR")"
 PREFIX="${1:-${STELLA_TABLES_PREFIX:-$HOME/.stella-tables/$REF}}"
 REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"
-PY="${PYTHON:-python3}"
+if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"; else
+    PY=python3
+    if ! python3 -c "import h5py, numpy" 2>/dev/null; then
+        [ -f /etc/profile.d/modules.sh ] && source /etc/profile.d/modules.sh
+        if type module >/dev/null 2>&1 && module load python-waterboa >/dev/null 2>&1; then PY="$(command -v python3)"; fi
+    fi
+fi
 FILES=(stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5 energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt)
 
 verify() { # verify DIR: every table present with its expected hash
