@@ -861,6 +861,9 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
            the position just laid down, as any other timestep assignment would */
         P[j].TimestepDilationFactor = return_timestep_dilation_factor(j, P);
 #endif
+#ifdef TURB_DRIVING
+        turb_accel_refresh_for_new_step(j, 0);
+#endif
 
         /* condition number, smoothing length, and density */
         CellP[j].ConditionNumber *= 100.0; /* boost the condition number to be conservative, so we don't trigger madness in the kernel */

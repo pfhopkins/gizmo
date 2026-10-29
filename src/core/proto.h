@@ -38,6 +38,7 @@ void init_turb(void);
 void set_turb_ampl(void);
 int new_turbforce_needed_this_timestep(void);
 void add_turb_accel(void);
+void turb_accel_refresh_for_new_step(int i, integertime ti_previous_step_start);
 void log_turb_temp(void);
 uint64_t particle_event_rng_key(int i);
 double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);

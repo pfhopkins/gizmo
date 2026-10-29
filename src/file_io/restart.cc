@@ -452,6 +452,7 @@ void restart(int modus)
 	  byten(StAkb, StNModes*3*sizeof(double),modus);
 	  byten(StMode, StNModes*3*sizeof(double),modus);
 	  byten(&StTPrev, sizeof(StTPrev),modus);
+	  byten(&StTUpdatedAt, sizeof(StTUpdatedAt),modus);
 #endif
 
 	  /* write flags for active timebins */
