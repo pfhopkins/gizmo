@@ -48,7 +48,7 @@ static int N_gas_swallowed, N_star_swallowed, N_dm_swallowed, N_sink_swallowed;
  * (sink_lum_bol is host-only). */
 static void sink_swk_fill_local(int i, struct SinkSwallowLocalIn *loc)
 {
-    int j_tempinfo = P[i].IndexMapToTempStruc;
+    int j_tempinfo = sink_tempinfo_index(i, __FUNCTION__);
     loc->Pos             = P[i].Pos;
     loc->Vel             = P[i].Vel;
     loc->KernelRadius    = P[i].KernelRadius;
@@ -113,7 +113,7 @@ static void sink_swk_scatter(const int *active_list, int num_active,
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
         const struct SinkSwallowOut& out = per_active_accum[a];
-        int t = P[i].IndexMapToTempStruc;
+        int t = sink_tempinfo_index(i, __FUNCTION__);
 
 #define SCATTER_ADD(dst, src)        dst += out.src;
 #define SCATTER_ADD_VEC3(dst, src)   for(int k = 0; k < 3; k++) dst[k] += out.src[k];

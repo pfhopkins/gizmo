@@ -71,6 +71,21 @@ void sink_start(void)
 
 }
 
+/* P[i].IndexMapToTempStruc, checked against the SinkTempInfo bounds. sink_start() assigns the index only to
+   sinks passing sink_isactive(); a consumer that selects sinks by any other predicate can hold an index left
+   over from an earlier step and read or scatter through it past the end of SinkTempInfo. Fail loudly instead. */
+int sink_tempinfo_index(int i, const char *caller)
+{
+    int t = P[i].IndexMapToTempStruc;
+    if(t < 0 || t >= N_active_loc_Sink)
+    {
+        printf("%s: task %d sink slot %d (ID %llu, TimeBin %d) has IndexMapToTempStruc=%d outside [0,%d): selected by a predicate other than sink_isactive()\n",
+               caller, ThisTask, i, (unsigned long long) P[i].ID, (int) P[i].TimeBin, t, N_active_loc_Sink);
+        fflush(stdout); endrun(787201);
+    }
+    return t;
+}
+
 
 /* function for freeing temp BH data struc needed for feedback routines*/
 void sink_end(void)

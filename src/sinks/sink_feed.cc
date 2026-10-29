@@ -33,7 +33,7 @@
  * sink_feed_loop.cc::populate_device_context). */
 static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
 {
-    int j_tempinfo = P[i].IndexMapToTempStruc;
+    int j_tempinfo = sink_tempinfo_index(i, __FUNCTION__);
 
     loc->Pos          = P[i].Pos;
     loc->Vel          = P[i].Vel;
@@ -115,7 +115,7 @@ static void sink_feed_scatter_to_temp_info(const int *active_list,
 {
     for(int a = 0; a < num_active; a++) {
         int i = active_list[a];
-        int t = P[i].IndexMapToTempStruc;
+        int t = sink_tempinfo_index(i, __FUNCTION__);
 
 #define SCATTER_ADD(dst, src_field)        dst += per_active_accum[a].src_field;
 #define SCATTER_MIN_PAIR(dst_v, dst_p, src_v, src_p)                            \
