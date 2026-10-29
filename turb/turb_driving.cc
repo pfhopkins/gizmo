@@ -397,55 +397,107 @@ void set_turb_ampl(void)
 }
 
 
+/* sum the driving modes at the positions of the gas cells in 'cells' and store the result in their TurbAccel.
+   The mode wavevectors lie on the integer lattice k = 2pi (nx/Lx, ny/Ly, nz/Lz), so exp(i k.x) is the product of
+   three one-dimensional factors exp(i n theta_a), theta_a = 2pi x_a/L_a. These are tabulated per cell for every n
+   the modes use, which takes the transcendental functions out of the sum over modes. Cells are processed in tiles of
+   ST_TILE with the cell index innermost, so the sum vectorizes over cells and each pass over the (large) mode arrays
+   serves a whole tile. */
+#define ST_TILE 16
+static void st_evaluate_driving_force(const std::vector<int> &cells, double fac_sol)
+{
+    const double L[3] = {boxSize_X, boxSize_Y, boxSize_Z};
+    std::vector<int> nk[3]; std::vector<double> ca[3], cb[3]; int nmax[3] = {0, 0, 0};
+    for(int a = 0; a < 3; a++) {nk[a].resize(StNModes); ca[a].resize(StNModes); cb[a].resize(StNModes);}
+    for(int m = 0; m < StNModes; m++)
+    {
+        for(int a = 0; a < 3; a++)
+        {
+            nk[a][m] = (int) lround(StMode[3*m+a] * L[a] / (2.*M_PI));
+            nmax[a] = std::max(nmax[a], std::abs(nk[a][m]));
+            ca[a][m] = fac_sol * StAmpl[m] * StAka[3*m+a];
+            cb[a][m] = fac_sol * StAmpl[m] * StAkb[3*m+a];
+        }
+    }
+    for(int a = 0; a < 3; a++) {for(int m = 0; m < StNModes; m++) {nk[a][m] += nmax[a];}} /* offset into the tables below */
+    const int ntiles = ((int)cells.size() + ST_TILE - 1) / ST_TILE;
+#ifdef _OPENMP
+#pragma omp parallel
+#endif
+    {
+        std::vector<double> ctab[3], stab[3]; /* cos, sin(n theta_a) for n = -nmax..nmax, cell index fastest */
+        for(int a = 0; a < 3; a++) {ctab[a].resize((2*nmax[a]+1)*ST_TILE); stab[a].resize((2*nmax[a]+1)*ST_TILE);}
+#ifdef _OPENMP
+#pragma omp for schedule(dynamic)
+#endif
+        for(int tile = 0; tile < ntiles; tile++)
+        {
+            const int i0 = tile * ST_TILE, nt = std::min(ST_TILE, (int)cells.size() - i0);
+            for(int a = 0; a < 3; a++)
+            {
+                for(int t = 0; t < ST_TILE; t++)
+                {
+                    double theta = (t < nt) ? 2.*M_PI * P[cells[i0+t]].Pos[a] / L[a] : 0; /* lanes past the last cell are padding */
+                    for(int n = -nmax[a]; n <= nmax[a]; n++) {ctab[a][(n+nmax[a])*ST_TILE + t] = cos(n*theta); stab[a][(n+nmax[a])*ST_TILE + t] = sin(n*theta);}
+                }
+            }
+            double fx[ST_TILE] = {0}, fy[ST_TILE] = {0}, fz[ST_TILE] = {0};
+            for(int m = 0; m < StNModes; m++)
+            {
+                const double *cx = &ctab[0][nk[0][m]*ST_TILE], *sx = &stab[0][nk[0][m]*ST_TILE];
+                const double *cy = &ctab[1][nk[1][m]*ST_TILE], *sy = &stab[1][nk[1][m]*ST_TILE];
+                const double *cz = &ctab[2][nk[2][m]*ST_TILE], *sz = &stab[2][nk[2][m]*ST_TILE];
+                const double cax = ca[0][m], cay = ca[1][m], caz = ca[2][m], cbx = cb[0][m], cby = cb[1][m], cbz = cb[2][m];
+#ifdef _OPENMP
+#pragma omp simd
+#endif
+                for(int t = 0; t < ST_TILE; t++)
+                {
+                    double rxy = cx[t]*cy[t] - sx[t]*sy[t], ixy = cx[t]*sy[t] + sx[t]*cy[t];
+                    double re = rxy*cz[t] - ixy*sz[t], im = rxy*sz[t] + ixy*cz[t]; /* cos, sin(k.x) */
+                    fx[t] += cax*re - cbx*im; fy[t] += cay*re - cby*im; fz[t] += caz*re - cbz*im;
+                }
+            }
+            for(int t = 0; t < nt; t++)
+            {
+                int i = cells[i0+t];
+                if(P[i].Mass > 0.)
+                {
+                    Vec3<double> acc = {fx[t], 0, 0};
+#if (NUMDIMS > 1)
+                    acc[1] = fy[t];
+#endif
+#if (NUMDIMS > 2)
+                    acc[2] = fz[t];
+#endif
+                    CellP[i].TurbAccel = acc;
+                } else {
+                    CellP[i].TurbAccel = {};
+                }
+            }
+        }
+    }
+}
+
+
 /* routine to actually calculate the turbulent acceleration 'driving field' force on every resolution element */
 void add_turb_accel()
 {
     set_turb_ampl();
-    int i, m; double acc[3], fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
+    double fac_sol = 2.*solenoidal_frac_total_weight_renormalization();
 #ifdef TURB_DRIVING_TARGET_SIGMA
     fac_sol *= All.TurbDriving_DrivingNormFactor; /* applied to the force, not the OU noise amplitude, so it acts immediately */
 #endif
+    std::vector<int> cells;
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
     /* called only on driving updates, so refresh every cell: otherwise a cell keeps its old force (and gain) until it
        happens to be active on an update, which for coarse timebins can be many coherence times. Inactive cells are
        evaluated at their last-drifted position, at most one of their own steps old, well below the driving scale. */
-    for(int i = 0; i < NumPart; i++)
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0) {cells.push_back(i);}}
 #else
-    for (int i : ActiveParticleList)
+    for(int i : ActiveParticleList) {if(P[i].Type == 0) {cells.push_back(i);}}
 #endif
-    {
-        if(P[i].Type == 0)
-        {
-            double fx = 0, fy = 0, fz = 0;
-#ifdef _OPENMP
-#pragma omp parallel for reduction(+:fx) reduction(+:fy) reduction(+:fz) // parallelize the sum reduction over the different wavenumbers
-#endif
-            for(m=0; m<StNModes; m++) // calc force
-            {
-                double kxx = StMode[3*m+0]*P[i].Pos[0], kyy = StMode[3*m+1]*P[i].Pos[1], kzz = StMode[3*m+2]*P[i].Pos[2];
-                double kdotx = kxx+kyy+kzz, ampl = StAmpl[m], realt = cos(kdotx), imagt = sin(kdotx);
-                
-                fx += ampl*(StAka[3*m+0]*realt - StAkb[3*m+0]*imagt);
-                fy += ampl*(StAka[3*m+1]*realt - StAkb[3*m+1]*imagt);
-                fz += ampl*(StAka[3*m+2]*realt - StAkb[3*m+2]*imagt);
-            }
-            fx *= fac_sol; fy *= fac_sol; fz *= fac_sol;
-            
-            if(P[i].Mass > 0.)
-            {
-                acc[0] = fx; acc[1] = acc[2] = 0;
-#if (NUMDIMS > 1)
-                acc[1] = fy;
-#endif
-#if (NUMDIMS > 2)
-                acc[2] = fz;
-#endif
-                CellP[i].TurbAccel = {acc[0], acc[1], acc[2]};
-            } else {
-                CellP[i].TurbAccel = {};
-            }
-        }
-    }
+    st_evaluate_driving_force(cells, fac_sol);
     PRINT_STATUS("Finished turbulence driving (acceleration) computation");
 }
 
