@@ -9,6 +9,7 @@ Checks: dark matter mass conservation, and compares gas/star/BH masses
 and gas density-temperature distribution against a reference solution.
 """
 
+import re
 import pytest
 import numpy as np
 from os import path, system, chdir, environ, getcwd
@@ -273,3 +274,55 @@ def test_fire_ismdustchem_depletion_needs_ratio(num_mpi_ranks, num_omp_threads):
         run_fire_dust_startup(num_mpi_ranks, num_omp_threads, {**DUST_STARTUP, "Initial_ISMDustChem_Depletion": "0.5"})
     out = open("test/fire/test_fire.out", errors="replace").read()
     assert "Initial_ISMDustChem_Depletion > 0 requires Initial_ISMDustChem_SiltoCarbRatio > 0" in out
+
+
+_TIMEBIN_ROW = re.compile(r"^ [X ]  bin=\s*(\d+)\s+\d+\s+\d+\s+\S+\s+\d+ . .\s+(\S+)\s+(\S+)%$")
+
+
+def timebin_tables(logfile):
+    """(bin, avg-time, cpu-frac %) rows of every 'Occupied timebins' report in a GIZMO stdout log"""
+    tables, rows = [], None
+    for line in open(logfile, errors="replace"):
+        if line.startswith("Occupied timebins"):
+            rows = []
+        elif rows is not None:
+            m = _TIMEBIN_ROW.match(line.rstrip("\n"))
+            if m:
+                rows.append((int(m.group(1)), float(m.group(2)), float(m.group(3))))
+            else:
+                tables.append(rows)
+                rows = None
+    return tables
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_fire_timebin_report(num_mpi_ranks, num_omp_threads):
+    """The timebin report's cpu-frac column is each occupied bin's share of the CPU time, its average cost weighted by how
+    often it is active relative to the highest occupied bin (2^(H-bin), halved below the top), for every occupied bin
+    including those below an empty one. FIRE's timebin hierarchy has such gaps. Checked against the printed avg-time,
+    whose 2-decimal rounding sets the bounds on each share."""
+    test_name = "fire"
+    clean_test_outputs(test_name)
+    stash_baseline_output(test_name)
+    try:
+        run_fire_test(test_name, num_mpi_ranks, num_omp_threads)
+    finally:
+        finalize_variant_output(test_name)
+    tables = [t for t in timebin_tables(f"test/{test_name}/test_{test_name}.out") if t]
+    n_gap = n_bad = 0
+    for t in tables:
+        bins = np.array([r[0] for r in t])
+        avg, frac = np.array([r[1] for r in t]), np.array([r[2] for r in t])
+        n_gap += np.any(np.diff(bins) < -1)
+        w = 2.0 ** (bins.max() - bins)
+        w = np.where(w > 1, w / 2, w)
+        lo_t, hi_t = w * np.maximum(avg - 0.005, 0), w * (avg + 0.005)
+        lo = 100 * lo_t / np.maximum(lo_t + (hi_t.sum() - hi_t), 1e-300)
+        hi = 100 * np.minimum(hi_t / np.maximum(hi_t + (lo_t.sum() - lo_t), 1e-300), 1)
+        if np.any((frac < lo - 0.05) | (frac > hi + 0.05)):
+            n_bad += 1
+    print(f"{len(tables)} timebin reports, {n_gap} with an empty bin below the highest occupied one; "
+          f"{n_bad} with a cpu-frac outside its share")
+    assert n_gap > 0, "no timebin report has a gap: the check is not exercised"
+    assert n_bad == 0, f"{n_bad} of {len(tables)} timebin reports have a cpu-frac inconsistent with their avg-time column"
