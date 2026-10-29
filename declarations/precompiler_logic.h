@@ -877,6 +877,16 @@
 
 /* ----- giant block of options for RHD modules ------ */
 
+/* Stella tree bands PE, LW, NUV, OPT plus each source's 6-8 eV share of NUV; G0(6-13.6 eV) = PE + share */
+#ifdef GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE
+#if !defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID)
+#error "GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE needs the tree field (GALSF_RESOLVEDISM_G0_VARIABLE) without M1/RADTRANSFER"
+#endif
+#ifndef GALSF_RESOLVEDISM_NUV_VARIABLE
+#define GALSF_RESOLVEDISM_NUV_VARIABLE
+#endif
+#endif
+
 /* Stella tree radiation field: band luminosities ride on the gravity-tree source arrays (no LEBRON flux or force) */
 #ifdef EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS
 #define RESOLVEDISM_STELLAR_LUM_TO_CGS (UNIT_LUM_IN_CGS) /* node stellar_lum[] in code units */

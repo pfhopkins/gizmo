@@ -40,6 +40,7 @@ GALSF_RESOLVEDISM_PHOTOION               % subgrid Stromgren photoionisation (pi
 #GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE % pisub photon cost per cell at case-B alpha(T_cell), T>=1e4 K  [req PHOTOION]
 GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req HEALPix RT_USE_TREECOL_FOR_NH, auto RADPRESSURE_TREERAD] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_NUV_VARIABLE          % NUV band field  [auto by RADPRESSURE]
+#GALSF_RESOLVEDISM_G0_FROM_PE_PLUS_NUV_6_8EV_SHARE  % tree bands PE/LW/NUV/OPT + per-source 6-8 eV share of NUV; G0 = PE + share (GPU-port band set)  [tree path only]
 #GALSF_RESOLVEDISM_OPT_VARIABLE          % optical/NIR band field  [auto by RADPRESSURE]
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from tree per-pixel fluxes  [auto by G0_VARIABLE without RADTRANSFER]
