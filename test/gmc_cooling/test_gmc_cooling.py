@@ -79,3 +79,25 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_stats = compute_test_statistic(f"{output_dir}/snapshot_010.hdf5", plot=True)
     benchmark_stats = compute_test_statistic("test/gmc_cooling/gmc_cooling_exact.hdf5")
     assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
+
+
+# OUTPUT_COOLRATE writes the net cooling rate, -du/dt: positive where the gas cools, negative where it is net
+# heating. By the end of the run about a quarter of the cloud sits just below thermal balance, so both signs are
+# present; a rate derived from the cooling time came out as exactly zero for every heated cell.
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_gmc_cooling_coolrate_sign(num_mpi_ranks, num_omp_threads):
+    test_name = "gmc_cooling"
+    flags = ("OUTPUT_COOLRATE",)
+
+    get_cooling_tables(f"test/{test_name}")
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, flags)
+    final_snap = get_final_snapshot(test_name, flags)
+    assert_final_time(final_snap, test_name)
+
+    with h5py.File(final_snap, "r") as F:
+        rate = F["PartType0/CoolingRate"][:]
+    n_neg, n_zero, n_pos = int((rate < 0).sum()), int((rate == 0).sum()), int((rate > 0).sum())
+    print(f"CoolingRate: {n_neg} negative, {n_zero} zero, {n_pos} positive of {rate.size}")
+    assert n_pos > 0, "no cell is reported as cooling"
+    assert n_neg > 0, "no cell is reported as net heating"
