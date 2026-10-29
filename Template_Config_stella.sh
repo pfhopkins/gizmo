@@ -132,6 +132,9 @@ OUTPUT_INDIVIDUAL_COOLRATES              % output per-process cooling rates
 
 ########## Experimental (default OFF; unvalidated development, see the merge commits) ##########
 #EXPERIMENTAL_SNAPSHOT_RESTART_TEMP_FROM_CHEMISTRY  % RestartFlag 2: set CellP.Temp from chemistry after density()
+#EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS  % PHYSICS: tree node stellar_lum[] in code units (pixel fluxes convert back to erg/s)
+#EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES  % PHYSICS: Habing 1968 band norms LW 7.86e-15, 8-13.6 eV 2.93e-14 (default 2.11e-14, 5.03e-14)
+#EXPERIMENTAL_RADIATION_DISJOINT_BANDS  % PHYSICS: radp/caps on disjoint bands (drop LW inside UV, NUV pixel flux 3.4-6 eV)
 
 ########## Test-only ##########
 #GALSF_RESOLVEDISM_ISOLATED_FB_TEST      % TEST-ONLY: isolated-star FB test hooks

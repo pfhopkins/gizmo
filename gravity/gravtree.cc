@@ -124,7 +124,7 @@ void gravity_tree(void)
      double lf[2]={G0DBG_fluxP,G0DBG_fluxN}, gf[2]; long long ln[2]={G0DBG_nN,G0DBG_nNzero}, gn[2];
      MPI_Reduce(lf,gf,2,MPI_DOUBLE,MPI_SUM,0,MPI_COMM_WORLD); MPI_Reduce(ln,gn,2,MPI_LONG_LONG,MPI_SUM,0,MPI_COMM_WORLD);
      if(ThisTask==0) {printf("G0DBG_WALK t=%g root_uv=%g fluxP=%g fluxN=%g nN=%lld nNzero=%lld\n", All.Time,
-        (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]), gf[0], gf[1], gn[0], gn[1]); fflush(stdout);}
+        (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) * RESOLVEDISM_STELLAR_LUM_TO_CGS, gf[0], gf[1], gn[0], gn[1]); fflush(stdout);}
      G0DBG_fluxP=G0DBG_fluxN=0; G0DBG_nN=G0DBG_nNzero=0;}
 #endif
 
@@ -740,14 +740,22 @@ void gravity_tree(void)
         {
             double L_emit_uv = 0, A_abs_uv = 0;
             for(i = 0; i < NumPart; i++) {
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                if(P[i].Type == 4 && P[i].Mass > 0) {L_emit_uv += P[i].UV_luminosity;} /* LW is inside UV */
+#else
                 if(P[i].Type == 4 && P[i].Mass > 0) {L_emit_uv += P[i].UV_luminosity + P[i].LW_luminosity;}
+#endif
             }
             for(int i : ActiveParticleList) {
                 if(P[i].Type != 0 || P[i].Mass <= 0) continue;
                 /* implied absorbed luminosity of this cell, code units:
                  * L_abs = F_tot(code L/len^2) * sigma_eff(code len^2), with
                  * sigma_eff = sigma_cgs*DGR * N_H(cell) / UNIT_LENGTH^2 */
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2] * (tr_sig_fuv / tr_sig_lw);} /* LW is inside UV */
+#else
                 double F_tot = 0; int pfx2; for(pfx2 = 0; pfx2 < NPIX; pfx2++) {F_tot += CellP[i].UV_flux[pfx2] * (tr_sig_fuv / tr_sig_lw) + CellP[i].LW_flux[pfx2];} /* UV absorbs with its sweep sigma */
+#endif
                 double NH_cell = P[i].Mass * UNIT_MASS_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
                 /* per-cell DGR (2026-07-28): the implied absorption of each cell uses ITS
                  * OWN dust content, consistent with the per-cell leaf weighting in the

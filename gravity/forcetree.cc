@@ -462,7 +462,7 @@ int force_treebuild_single(int npart, struct unbind_data *mp)
     { /* G0DBG: root node must carry the total stellar FUV of the local tree */
       double plum=0; int ip_; for(ip_=0;ip_<NumPart;ip_++) {if(P[ip_].Type==4||P[ip_].Type==5) plum+=P[ip_].UV_luminosity;}
       printf("G0DBG_BUILD task=%d t=%g root_uv=%g sumP_uv=%g\n", ThisTask, All.Time,
-             (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]), plum); fflush(stdout); }
+             (double)(Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + Nodes[All.MaxPart].stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) * RESOLVEDISM_STELLAR_LUM_TO_CGS, plum); fflush(stdout); }
 #endif
     
     if(last >= All.MaxPart)
@@ -2532,7 +2532,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                  * (windres single-star box) purely from the COM offset. lum_s is the
                  * unnormalized Sum (L_uv+L_lw)*pos over the node's stars. */
                 {
-                    double wl = (nop->stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + nop->stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) + nop->stellar_lum[RT_FREQ_BIN_LYMAN_WERNER];
+                    double wl = ((nop->stellar_lum[RT_FREQ_BIN_FUV_6_8EV] + nop->stellar_lum[RT_FREQ_BIN_PHOTOELECTRIC]) + nop->stellar_lum[RT_FREQ_BIN_LYMAN_WERNER]) * RESOLVEDISM_STELLAR_LUM_TO_CGS; /* lum_s is erg/s-weighted */
 #ifdef TREE_RAY_PI
                     wl += ion_lum; /* include ionizing band: ion-only nodes (fixed-Q PI test) otherwise get no centroid (2026-07-14) */
 #endif
@@ -2889,13 +2889,18 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
 #endif
                 }
 #ifdef GALSF_RESOLVEDISM_G0_VARIABLE
-                const double uv_lum = mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] + mass_stellarlum[RT_FREQ_BIN_PHOTOELECTRIC]; /* 6-13.6 eV */
-                const double lw_lum = mass_stellarlum[RT_FREQ_BIN_LYMAN_WERNER];
+                /* pixel fluxes are erg/s per code_len^2 */
+                const double uv_lum = (mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV] + mass_stellarlum[RT_FREQ_BIN_PHOTOELECTRIC]) * RESOLVEDISM_STELLAR_LUM_TO_CGS; /* 6-13.6 eV */
+                const double lw_lum = mass_stellarlum[RT_FREQ_BIN_LYMAN_WERNER] * RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #ifdef RT_NUV
-                const double nuv_lum = mass_stellarlum[RT_FREQ_BIN_NUV];
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                const double nuv_lum = DMAX(0., mass_stellarlum[RT_FREQ_BIN_NUV] - mass_stellarlum[RT_FREQ_BIN_FUV_6_8EV]) * RESOLVEDISM_STELLAR_LUM_TO_CGS; /* 3.4-6 eV: 6-8 eV is in uv_lum */
+#else
+                const double nuv_lum = mass_stellarlum[RT_FREQ_BIN_NUV] * RESOLVEDISM_STELLAR_LUM_TO_CGS;
+#endif
 #endif
 #ifdef RT_OPTICAL_NIR
-                const double opt_lum = mass_stellarlum[RT_FREQ_BIN_OPTICAL_NIR];
+                const double opt_lum = mass_stellarlum[RT_FREQ_BIN_OPTICAL_NIR] * RESOLVEDISM_STELLAR_LUM_TO_CGS;
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)
                 if(r2_col > 0) {

@@ -38,6 +38,15 @@ struct kernel_resolvedismFB_momentum {double dp[3], r, wk, dwk, hinv, hinv3, hin
 #include "../system/code_block_xchange_initialize.h"
 #include "../declarations/resolvedism_dgr.h"
 
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_NUV_VARIABLE)
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+/* NUV below 6 eV [erg/s]: the 6-8 eV part of NUV (3.4-8 eV) is already in UV_luminosity (6-13.6 eV) */
+static inline double resolvedism_L_NUV_below_6eV(int i) {return DMAX(0., (double)P[i].NUV_luminosity - ((double)P[i].UV_luminosity - (double)P[i].PE_luminosity));}
+#else
+static inline double resolvedism_L_NUV_below_6eV(int i) {return P[i].NUV_luminosity;} /* 3.4-8 eV */
+#endif
+#endif
+
 struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], KernelRadius, Mej;
@@ -134,14 +143,20 @@ double resolvedism_radp_starside_dp_code(int i)
         double L_FUV = P[i].UV_luminosity; /* erg/s (tables store cgs band luminosities) */
         double L_NUV = 0, L_OPT = 0;
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-        L_NUV = P[i].NUV_luminosity;
+        L_NUV = resolvedism_L_NUV_below_6eV(i);
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
         L_OPT = P[i].OPT_luminosity;
 #endif
 #else
         double L_FUV = pow(10., stellar_log_L_FUV_total(logM, logZ, log_age)); /* no stored band lums without G0_VARIABLE */
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+        double L_FUV_8_13p6 = pow(10., stellar_log_L_FUV_M1(logM, logZ, log_age));
+        double L_NUV = DMAX(0., pow(10., stellar_log_L_NUV(logM, logZ, log_age)) - (L_FUV - L_FUV_8_13p6)); /* 3.4-6 eV: disjoint from L_FUV */
+        double L_OPT = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+#else
         double L_NUV = pow(10., stellar_log_L_NUV(logM, logZ, log_age)), L_OPT = pow(10., stellar_log_L_OPT_NIR(logM, logZ, log_age));
+#endif
 #endif
         double f_FUV = 1.0 - exp(-(2.0e-21 * DGR) * NH);
         double f_NUV = 1.0 - exp(-(1.3e-21 * DGR) * NH);
@@ -894,7 +909,7 @@ void resolvedism_fb_momentum_calc(int fb_loop_iteration)
  * LEBRON-style DIRECT radiation-pressure force, computed PER GAS CELL from the
  * tree attenuated per-pixel band fluxes (Uli 2026-07-08).
  *
- * Every gas cell already carries CellP[i].{UV,LW,NUV,OPT}_flux[NPIX]: the flux
+ * Every gas cell already carries CellP[i].{UV,LW,NUV,OPT}_flux[NPIX] (LW dropped with EXPERIMENTAL_RADIATION_DISJOINT_BANDS): the flux
  * ARRIVING from each HEALPix pixel direction, stored WITHOUT the 1/4pi (i.e.
  * Sum_sources L_band[erg/s] * inv_r2[code_len^-2], per pixel; see gravtree.cc
  * ~657-664, capped for photon conservation ~714). The absorbed luminosity of a
@@ -935,12 +950,16 @@ void resolvedism_radpressure_treerad(void)
         double L_emit = 0, A_abs = 0;
         for(i = 0; i < NumPart; i++) {
             if(P[i].Type == 4 && P[i].Mass > 0) {
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                L_emit += P[i].UV_luminosity; /* LW (11.2-13.6 eV) is inside UV (6-13.6 eV) */
+#else
                 L_emit += P[i].UV_luminosity + P[i].LW_luminosity;
+#endif
                 /* BAND-COMPLETE CAP (2026-07-29): deposit couples NUV/OPT too
                  * (auto-enabled by RADPRESSURE in precompiler_logic.h) -- the
                  * UV-only pre-pass under-counted both sums by exactly 1.3154x. */
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
-                L_emit += P[i].NUV_luminosity;
+                L_emit += resolvedism_L_NUV_below_6eV(i); /* NUV_flux carries 3.4-6 eV */
 #endif
 #ifdef GALSF_RESOLVEDISM_OPT_VARIABLE
                 L_emit += P[i].OPT_luminosity;
@@ -957,7 +976,11 @@ void resolvedism_radpressure_treerad(void)
             for(pfx_pp = 0; pfx_pp < NPIX; pfx_pp++)
             {
                 double att_pp = 1.0; /* matches deposit: no dust-column attenuation (see REVISION note) */
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+                A_abs += se_uv_pp * att_pp * (double)CellP[i].UV_flux[pfx_pp] * inv4pi;
+#else
                 A_abs += se_uv_pp * att_pp * ((double)CellP[i].UV_flux[pfx_pp] + (double)CellP[i].LW_flux[pfx_pp]) * inv4pi;
+#endif
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
                 A_abs += (sig_nuv * DGR_pp * NH_cell_pp * area_conv) * att_pp * (double)CellP[i].NUV_flux[pfx_pp] * inv4pi;
 #endif
@@ -1017,8 +1040,13 @@ void resolvedism_radpressure_treerad(void)
              * momentum at L t/c (exact in the thick limit) while leaving the thin
              * limit untouched; spatial distribution stays subgrid-approximate. */
             double att_uv = 1.0, att_nuv = 1.0, att_opt = 1.0;
+#ifdef EXPERIMENTAL_RADIATION_DISJOINT_BANDS
+            /* L_abs from this pixel, erg/s; disjoint bands UV 6-13.6 (LW inside), NUV 3.4-6, OPT 0.4-3.4 eV */
+            double L_abs = se_uv * att_uv * (double)CellP[i].UV_flux[pfx];
+#else
             /* L_abs from this pixel (all bands), erg/s; FUV cross-section also for LW sub-band */
             double L_abs = se_uv * att_uv * ((double)CellP[i].UV_flux[pfx] + (double)CellP[i].LW_flux[pfx]);
+#endif
 #ifdef GALSF_RESOLVEDISM_NUV_VARIABLE
             L_abs += se_nuv * att_nuv * (double)CellP[i].NUV_flux[pfx];
 #endif

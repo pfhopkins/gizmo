@@ -820,6 +820,11 @@
 /* ----- giant block of options for RHD modules ------ */
 
 /* Stella tree radiation field: band luminosities ride on the gravity-tree source arrays (no LEBRON flux or force) */
+#ifdef EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS
+#define RESOLVEDISM_STELLAR_LUM_TO_CGS (UNIT_LUM_IN_CGS) /* node stellar_lum[] in code units */
+#else
+#define RESOLVEDISM_STELLAR_LUM_TO_CGS (1.0) /* node stellar_lum[] in erg/s */
+#endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RADTRANSFER)
 #define RT_USE_GRAVTREE
 #define RT_PHOTOELECTRIC

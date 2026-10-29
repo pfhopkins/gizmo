@@ -43,6 +43,17 @@
 #define CHEMCOOL_ABUNDM_SOLAR 1.0e-7  /* NL99 "M" per H at solar Z (Glover & Clark 2012; SGChem MAbund default) */
 #endif
 
+/* Habing (1968) field energy density per band [erg/cm^3] (Draine 2011 eq. 12.6; scripts/habing_band_energy_densities.py) */
+#define HABING_EGY_DENSITY_6_13P6EV_CGS    (5.29e-14)
+#ifdef EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES
+#define HABING_EGY_DENSITY_8_13P6EV_CGS    (2.93e-14)
+#define HABING_EGY_DENSITY_11P2_13P6EV_CGS (7.86e-15)
+#else
+#define HABING_EGY_DENSITY_8_13P6EV_CGS    (5.03e-14) /* default: previous band normalisations */
+#define HABING_EGY_DENSITY_11P2_13P6EV_CGS (2.11e-14)
+#endif
+#define ISRF_EGY_DENSITY_3P4_8EV_CGS       (3.85e-14) /* NUV normalisation: 0.024 eV/cm^3, not Habing (fit invalid below 6 eV) */
+
 #include "../../declarations/allvars.h"
 #include "f2c.h"
 #include "chemcool_consts.h"
