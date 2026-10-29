@@ -994,22 +994,23 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h
 endif
 
-# chemcool non-equilibrium chemistry: fortran backend + C++ interface
+# chemcool non-equilibrium chemistry: fortran backend (no .F with CHEMCOOL_CXX) + C++ interface
 ifeq (CHEMCOOL,$(findstring CHEMCOOL,$(CONFIGVARS)))
 OBJS    += cooling/chemcool/chemcool.o cooling/chemcool/chem_interface.o
 INCL    += cooling/chemcool/chem_interface.h
+ifneq (CHEMCOOL_CXX,$(findstring CHEMCOOL_CXX,$(CONFIGVARS)))
 FOBJS   += cooling/chemcool/coolinmo.o cooling/chemcool/cheminmo.o cooling/chemcool/spline.o cooling/chemcool/cool_func.o cooling/chemcool/photoinit_ism.o \
            cooling/chemcool/dvode.o cooling/chemcool/evolve_abundances.o cooling/chemcool/rate_eq_simple.o cooling/chemcool/rate_eq_ulli.o \
            cooling/chemcool/rate_eq_mol.o cooling/chemcool/rate_eq_nl99.o cooling/chemcool/rate_eq_gong17.o \
            cooling/chemcool/jac.o cooling/chemcool/cool_util.o \
            cooling/chemcool/const_rates.o cooling/chemcool/validate_rates.o cooling/chemcool/calc_photo.o cooling/chemcool/calc_temp.o \
            cooling/chemcool/compute_gamma.o cooling/chemcool/wss_z_collis.o
+endif
 
 # CHEMCOOL_CXX: C++/CVODE chemistry backend (cooling/chemcool/cxx/).
 # DEFAULT OFF -- with the flag absent the build is byte-for-byte the Fortran
-# DVODE path above.  With the flag ON the per-cell chemistry is C++ (nets 5/17
-# direct from ChemInputs, net 15 via the COMMON blocks); the Fortran objects are
-# still linked for init and the net-15 photo rates.
+# DVODE path above.  With the flag ON init, tables and solve are C++; no .F
+# object and no Fortran runtime is linked.
 #
 # SUNDIALS: point SUNDIALS_DIR at a local static build (CVODE >= 6.x).  Build it
 # once with:
@@ -1033,7 +1034,8 @@ SUNDIALS_LIBS = -L$(SUNDIALS_LIBDIR) -lsundials_cvode -lsundials_nvecserial \
 # Wildcarded on purpose: cooling/chemcool/cxx/ is under active development
 # (Gate 3 is porting the leaf kernels), so a hand-maintained list goes stale and
 # fails at LINK time with undefined cxx_* references rather than at parse time.
-CHEMCXX_OBJS = $(patsubst %.cc,%.o,$(wildcard cooling/chemcool/cxx/*.cc))
+# chem_backend_fortran.cc / chem_backend_c_api.cc bind the Fortran COMMONs: golden harness only
+CHEMCXX_OBJS = $(patsubst %.cc,%.o,$(filter-out cooling/chemcool/cxx/chem_backend_fortran.cc cooling/chemcool/cxx/chem_backend_c_api.cc,$(wildcard cooling/chemcool/cxx/*.cc)))
 INCL    += $(wildcard cooling/chemcool/cxx/*.h)
 endif
 endif
