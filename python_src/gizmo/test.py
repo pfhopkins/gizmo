@@ -385,6 +385,43 @@ def _check_gizmo_exit(test_name: str, returncode: int, outfile: str, errfile: st
         )
 
 
+
+def mpi_launch_command(num_mpi_ranks: int, num_openmp_threads: int = 0) -> list:
+    """The launcher part of the command that runs GIZMO (everything before ./GIZMO), as an argument
+    list. Every test that starts GIZMO should launch it through this, so one setting covers the suite.
+
+    GIZMO_TEST_MPI_LAUNCHER, if set, is used as written, for systems that need their own launcher:
+    e.g. "srun --ntasks={ranks} --cpus-per-task={threads}" or "ibrun -n {ranks}"; {ranks} and
+    {threads} are replaced by the run's counts. Otherwise: srun inside a SLURM allocation, else
+    Open MPI's mpirun with placement left to the OS (several tests share a machine)."""
+    launcher = environ.get("GIZMO_TEST_MPI_LAUNCHER")
+    if launcher:
+        threads = num_openmp_threads if num_openmp_threads > 0 else 1
+        return shlex.split(launcher.format(ranks=num_mpi_ranks, threads=threads))
+    if environ.get("SLURM_JOB_ID"):
+        return ["srun", "-n", str(num_mpi_ranks), "--cpu-bind=none"]
+    cmd = ["mpirun", "-np", str(num_mpi_ranks)]
+    if mpirun_is_open_mpi():  # placement flags other mpiruns (Intel MPI, MPICH) reject
+        cmd += ["--use-hwthread-cpus", "--oversubscribe"]
+        if num_openmp_threads > 0:
+            cmd += ["--bind-to", "none"]
+    return cmd
+
+
+_MPIRUN_IS_OPEN_MPI = None
+
+
+def mpirun_is_open_mpi() -> bool:
+    """Whether the mpirun on PATH is Open MPI. Asked once per pytest process."""
+    global _MPIRUN_IS_OPEN_MPI
+    if _MPIRUN_IS_OPEN_MPI is None:
+        try:
+            version = subprocess.run(["mpirun", "--version"], capture_output=True, text=True, timeout=30)
+            _MPIRUN_IS_OPEN_MPI = "open mpi" in (version.stdout + version.stderr).lower()
+        except (OSError, subprocess.TimeoutExpired):
+            _MPIRUN_IS_OPEN_MPI = False
+    return _MPIRUN_IS_OPEN_MPI
+
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0, timeout: float | None = None,
              param_overrides: dict | None = None, restart_flag: int = 0):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
@@ -407,13 +444,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     paramsfile = f"{test_name}.params"
     if param_overrides:
         paramsfile = write_params_with_overrides(paramsfile, param_overrides)
-    if environ.get("SLURM_JOB_ID"):
-        cmd = ["srun", "-n", str(num_mpi_ranks), "--cpu-bind=none"]
-    else:
-        cmd = ["mpirun", "-np", str(num_mpi_ranks), "--use-hwthread-cpus", "--oversubscribe"]
-    if num_openmp_threads > 0 and not environ.get("SLURM_JOB_ID"):
-        cmd += ["--bind-to", "none"]
-    cmd += ["./GIZMO", paramsfile, str(restart_flag)]
+    cmd = mpi_launch_command(num_mpi_ranks, num_openmp_threads) + ["./GIZMO", paramsfile, str(restart_flag)]
 
     effective_timeout = _resolve_test_timeout(timeout)
     outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"

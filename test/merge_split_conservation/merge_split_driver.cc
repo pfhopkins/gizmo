@@ -364,7 +364,6 @@ int main(int argc, char **argv)
     set_cosmo_factors_for_current_time();
     All.Time = All.TimeBegin;
     All.Timebase_interval = (All.TimeMax - All.TimeBegin) / TIMEBASE;
-    random_generator = gsl_rng_alloc(gsl_rng_ranlxd1); gsl_rng_set(random_generator, 42);
     set_softenings();
 #ifdef METALS /* as init() sets them: the cooling chain divides by these */
     for(int k=0;k<NUM_METAL_SPECIES;k++) {All.SolarAbundances[k]=0;}

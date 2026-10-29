@@ -240,13 +240,6 @@ void transport_subcycle_kick(void)
         }
 #endif
 
-#ifdef COSMIC_RAY_FLUID
-        CosmicRay_Update_DriftKick(i, sub_dt, 0, P, CellP);
-        for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {
-            CellP[i].CosmicRayEnergyPred[kb] = CellP[i].CosmicRayEnergy[kb];
-            CellP[i].CosmicRayFluxPred[kb] = CellP[i].CosmicRayFlux[kb];
-        }
-#endif
     }
 }
 

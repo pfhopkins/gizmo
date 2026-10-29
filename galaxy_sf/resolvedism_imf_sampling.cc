@@ -881,6 +881,7 @@ void assign_stellar_masses(void)
         /* CoM velocity from all donor cells */
         if(mass_acc > 0) {
             for(k=0;k<3;k++) P[i].Vel[k] = IMF_MomAccreted[i*3+k] / mass_acc;
+            force_raise_motion_bound(i);
         }
 
         /* Mass-weighted metallicity */

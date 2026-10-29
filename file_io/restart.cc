@@ -19,13 +19,13 @@
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
 #if defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID) && defined(CRFLUID_INJECTION_AT_SHOCKS)
-#define RESTARTFILE_LAYOUT_VERSION 9u /* + metal ledger and CR clip totals */
+#define RESTARTFILE_LAYOUT_VERSION 12u /* + metal ledger and CR clip totals; no gsl stream */
 #elif defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID)
-#define RESTARTFILE_LAYOUT_VERSION 8u /* + metal ledger and CR clip totals */
+#define RESTARTFILE_LAYOUT_VERSION 11u /* + metal ledger and CR clip totals; no gsl stream */
 #elif defined(GALSF_RESOLVEDISM_FB)
-#define RESTARTFILE_LAYOUT_VERSION 5u /* + metal ledger totals */
+#define RESTARTFILE_LAYOUT_VERSION 10u /* + metal ledger totals; no gsl stream */
 #else
-#define RESTARTFILE_LAYOUT_VERSION 1u
+#define RESTARTFILE_LAYOUT_VERSION 2u
 #endif
 struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
 
@@ -225,6 +225,21 @@ void restart(int modus)
 #endif
           new_MaxPart = All.MaxPart;
 
+          /* The run's capacity ceiling was fixed when its initial conditions were read and travels in the
+             restart file.  Raising PartAllocFactor past it breaks that, so say so here where the cause is
+             obvious rather than at the first domain boundary.  A restart onto more memory does not move the
+             ceiling: a run that genuinely needs a larger one starts fresh. */
+          if(All.MaxPart > All.MaxPartExpandable)
+            {
+              if(ThisTask == 0)
+                {
+                  printf("PartAllocFactor was raised so far that %d particle slots would exceed this run's ceiling of %d, which was fixed when it started. "
+                         "Restart with the original value, or start a fresh run at the larger one.\n", All.MaxPart, All.MaxPartExpandable);
+                  fflush(stdout);
+                }
+              endrun(23);
+            }
+
 		  save_PartAllocFactor = -1;
 		}
 
@@ -305,8 +320,6 @@ void restart(int modus)
 #endif
 	    }
 
-	  /* write state of random number generator */
-	  byten(gsl_rng_state(random_generator), gsl_rng_size(random_generator), modus);
 	  byten(&SelRnd, sizeof(SelRnd), modus);
 
 #ifdef TURB_DRIVING

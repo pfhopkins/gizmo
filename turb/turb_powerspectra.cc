@@ -10,6 +10,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 /*
  *  This code was originally written for GADGET3 by Andreas Bauer; it has been
@@ -257,11 +258,9 @@ void powerspec_turb(int filenr)
 
   RandomValue = (float *) mymalloc("RndField", N_gas * sizeof(float));
 
-  gsl_rng *random_gen = gsl_rng_alloc(gsl_rng_ranlxd1);
-  gsl_rng_set(random_gen, 42 + ThisTask);	/* start-up seed */
-
+  static constexpr uint64_t POWERSPEC_RANDOM_FIELD_RNG_SALT = gizmo_loop_rng_salt("powerspectrum_random_field");
   for(i=0; i < N_gas; i++)
-    RandomValue[i] = gsl_ran_gaussian (random_gen, 1.0);
+    RandomValue[i] = (float)gizmo_gpu_rand_gaussian(particle_event_rng_key(i), gizmo_rng_event_counter(POWERSPEC_RANDOM_FIELD_RNG_SALT, (uint64_t)All.Ti_Current, 0));
 
   powerspec_turb_obtain_fields();
  

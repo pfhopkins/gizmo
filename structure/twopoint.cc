@@ -7,6 +7,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 
 /*! \file twopoint.c
  *  \brief computes the two-point mass correlation function on the fly
@@ -61,7 +62,7 @@ static MyFloat *RsList;
 void twopoint(void)
 {
     int i, j, k, bin, n, ndone, ndone_flag, dummy, nexport, nimport, place, recvTask, ngrp;
-    double p, rs, vol, scaled_frac, tstart, tend, mass, masstot; long long *countbuf; void *state_buffer;
+    double p, rs, vol, scaled_frac, tstart, tend, mass, masstot; long long *countbuf;
     PRINT_STATUS("begin two-point correlation function..."); tstart = my_second();
     /* set inner and outer radius for the bins that are used for the correlation function estimate */
     R0 = All.ForceSoftening[1] / 3.; R1 = All.BoxSize / 2; /* we assume that type=1 is the primary type */
@@ -75,17 +76,15 @@ void twopoint(void)
     All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + 2 * sizeof(struct twopointdata_in)));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
-    state_buffer = mymalloc("state_buffer", gsl_rng_size(random_generator));
-    memcpy(state_buffer, gsl_rng_state(random_generator), gsl_rng_size(random_generator));
-    gsl_rng_set(random_generator, P[0].ID + ThisTask);    /* seed things with first particle ID to make sure we are different on each CPU */
+    static constexpr uint64_t SAMPLE_CENTRE_RNG_SALT = gizmo_loop_rng_salt("twopoint_sample_centre"); /* which particles are sample centres: keyed on each particle, so independent of the decomposition */
     i = 0;            /* begin with this index */
     do
     {
         for(j = 0; j < NTask; j++) {Send_count[j] = 0; Exportflag[j] = -1;}
         for(nexport = 0; i < NumPart; i++) /* do local particles and prepare export list */
-        if(gsl_rng_uniform(random_generator) < scaled_frac)
+        if(particle_random_number(i, SAMPLE_CENTRE_RNG_SALT, (uint64_t)All.Ti_Current, 0) < scaled_frac)
         {
-          p = gsl_rng_uniform(random_generator); rs = pow(pow(R0, ALPHA) + p * (pow(R1, ALPHA) - pow(R0, ALPHA)), 1 / ALPHA);
+          p = particle_random_number(i, SAMPLE_CENTRE_RNG_SALT, (uint64_t)All.Ti_Current, 1); rs = pow(pow(R0, ALPHA) + p * (pow(R1, ALPHA) - pow(R0, ALPHA)), 1 / ALPHA);
           bin = (int) ((log(rs) - logR0) * binfac); rs = exp((bin + 1) / binfac + logR0); RsList[i] = rs;
           if(twopoint_count_local(i, 0, &nexport, Send_count) < 0) {break;}
           for(j = 0; j <= bin; j++) {CountSpheres[j]++;}
@@ -123,8 +122,7 @@ void twopoint(void)
         MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
         myfree(TwoPointDataGet);
     } while(ndone < NTask);
-    memcpy(gsl_rng_state(random_generator), state_buffer, gsl_rng_size(random_generator));
-    myfree(state_buffer); myfree(DataNodeList); myfree(DataIndexTable); myfree(RsList);
+    myfree(DataNodeList); myfree(DataIndexTable); myfree(RsList);
 
     /* Now compute the actual correlation function */
     countbuf = (long long int *) mymalloc("countbuf", NTask * BINS_TP * sizeof(long long));

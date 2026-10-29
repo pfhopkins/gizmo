@@ -213,13 +213,13 @@ static int MG_evaluate(int target, int mode, int *exportflag, int *exportnodecou
 
                 /* kernel weights */
                 double u;
-                if(kernel.r < h_i) { u = kernel.r * hinv_i; kernel_main(u, hinv3_i, hinv4_i, &kernel.wk_i, &kernel.dwk_i, -1); }
+                if(kernel.r < h_i) { u = kernel.r * hinv_i; kernel_main(u, hinv3_i, hinv4_i, &kernel.wk_i, &kernel.dwk_i, 0); } /* the face reads dwk in its ill-conditioned fallback */
                 else { kernel.wk_i = kernel.dwk_i = 0; }
                 if(kernel.r < h_j) {
                     double hinv_j, hinv3_j, hinv4_j;
                     kernel_hinv(h_j, &hinv_j, &hinv3_j, &hinv4_j);
                     u = kernel.r * hinv_j;
-                    kernel_main(u, hinv3_j, hinv4_j, &kernel.wk_j, &kernel.dwk_j, -1);
+                    kernel_main(u, hinv3_j, hinv4_j, &kernel.wk_j, &kernel.dwk_j, 0);
                 } else { kernel.wk_j = kernel.dwk_j = 0; }
 
                 /* compute face area (same as hydro loop) */

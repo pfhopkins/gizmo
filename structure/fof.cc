@@ -9,6 +9,7 @@
 #include <inttypes.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include <gsl/gsl_rng.h>
 #include <gsl/gsl_randist.h>
 
@@ -1742,8 +1743,7 @@ void fof_make_sink_particles(void)
   long nexport, nimport;
   int recvTask, level;
   int *import_indices, *export_indices;
-  gsl_rng *random_generator_forbh;
-  double random_number_forbh=0, unitmass_in_msun;
+  double unitmass_in_msun;
 
   for(n = 0; n < NTask; n++)
     Send_count[n] = 0;
@@ -1835,10 +1835,8 @@ void fof_make_sink_particles(void)
         if(All.SeedSinkMassSigma > 0)
         {
             /* compute gaussian random number: mean=0, sigma=All.SeedSinkMassSigma */
-            random_generator_forbh = gsl_rng_alloc(gsl_rng_ranlxd1);
-            gsl_rng_set(random_generator_forbh, P[import_indices[n]].ID + 17 + All.NumCurrentTiStep);
-            random_number_forbh = gsl_ran_gaussian(random_generator_forbh, All.SeedSinkMassSigma);
-            P[import_indices[n]].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + random_number_forbh );
+            static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_seed_mass"); /* same event kind as the seed mass drawn in sfr_eff.cc */
+            P[import_indices[n]].Sink_Mass = pow( 10., log10(All.SeedSinkMass) + gizmo_gpu_rand_gaussian(particle_event_rng_key(import_indices[n]), gizmo_rng_event_counter(SINK_SEED_MASS_RNG_SALT, (uint64_t)All.Ti_Current, 0)) * All.SeedSinkMassSigma );
             unitmass_in_msun = UNIT_MASS_IN_SOLAR;
             if( P[import_indices[n]].Sink_Mass < 100./unitmass_in_msun )
                 P[import_indices[n]].Sink_Mass = 100./unitmass_in_msun;      // enforce lower limit of Mseed = 100 x Msun

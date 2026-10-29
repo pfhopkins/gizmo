@@ -111,7 +111,7 @@ FINCL =
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Orion-OpenMPI")
 CC       =  mpicc
-CXX      =  mpicxx -std=c++11
+CXX      =  mpicxx -std=c++14
 FC       =  mpifort
 OPTIMIZE = -g -O3 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
@@ -405,7 +405,7 @@ endif
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"Raven-OpenMPI")
 CC       =  mpicc
-CXX      =  mpicxx -std=c++11
+CXX      =  mpicxx -std=c++14
 FC       =  mpifort
 OPTIMIZE = -g -O3 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
 ifeq (OPENMP,$(findstring OPENMP,$(CONFIGVARS)))
@@ -428,7 +428,7 @@ endif
 #----------------------------------------------------------------------------------------------
 ifeq ($(SYSTYPE),"ViperGccOpenMPI")
 CC       =  mpicc
-CXX      =  mpicxx -std=c++11
+CXX      =  mpicxx -std=c++14
 FC       =  mpifort
 OPTIMIZE = -g -O2 -march=native -Wall -Wextra -Wno-unused-parameter -Wno-unknown-pragmas
 GSL_INCL = -I$(GSL_HOME)/include
