@@ -788,7 +788,7 @@ void force_update_node_recursive(int no, int sib, int father)
                         if(divVel > divVmax) {divVmax = divVel;}
                     }
                     
-                    for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax) {vmax = v;}}
+                    if((v = particle_motion_speed_bound(p)) > vmax) {vmax = v;}
                     
                     /* update of the maximum gravitational softening  */
                     double soft_p = ForceSoftening_KernelRadius(p);
@@ -4049,8 +4049,7 @@ void force_refresh_node_moments(void)
         Extnodes[no].vs += pa->Mass * pa->Vel;
         Nodes[no].N_part++;
 
-        MyFloat v, vmax_p = 0;
-        for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax_p) {vmax_p = v;}}
+        MyFloat vmax_p = particle_motion_speed_bound(i);
         if(vmax_p > Extnodes[no].vmax) {Extnodes[no].vmax = vmax_p;}
 
         double soft_p = ForceSoftening_KernelRadius(i);
