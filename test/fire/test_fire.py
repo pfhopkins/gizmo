@@ -11,7 +11,7 @@ and gas density-temperature distribution against a reference solution.
 
 import pytest
 import numpy as np
-from os import path, system, chdir, environ
+from os import path, system, chdir, environ, getcwd
 from os.path import isfile
 from shutil import copy2
 from urllib.request import urlretrieve, HTTPError
@@ -19,6 +19,7 @@ from matplotlib import pyplot as plt
 import h5py
 import shlex
 from gizmo.test import (
+    run_test,
     mpi_launch_command,
     build_gizmo_for_test,
     clean_test_outputs,
@@ -228,3 +229,36 @@ def test_fire_metal_tracers(num_mpi_ranks, num_omp_threads):
     # star formation
     assert np.all(gain[:3] > 0), "the first age-tracer bins received no deposits"
     assert 0 < sne.max() <= 1 + 1e-6, f"SNe tracer max {sne.max():.4g}: not a mass fraction"
+
+
+DUST_FLAGS = ("GALSF_ISMDUSTCHEM_MODEL=(1+2+8)", "IO_DUST_NOT_IN_ICFILE")  # dust initialized from the parameters at flag 2
+# a few steps (these are startup checks); TimeMax sets the timebase, so the step cap must shrink with it
+DUST_STARTUP = {"Final_Simulation_Time": "0.25645", "Maximum_Timestep_Allowed": "1e-5"}
+
+
+def run_fire_dust_startup(num_mpi_ranks, num_omp_threads, overrides):
+    """Build the dust-chemistry variant and run it a few steps through run_test, which raises unless GIZMO reaches
+    TimeMax; returns its stdout"""
+    test_name = "fire"
+    clean_test_outputs(test_name, DUST_FLAGS)
+    build_gizmo_for_test(test_name, num_omp_threads, DUST_FLAGS)
+    stash_baseline_output(test_name, DUST_FLAGS)
+    cwd = getcwd()
+    try:
+        chdir(f"test/{test_name}")
+        try:
+            run_test(test_name, num_mpi_ranks, num_omp_threads, param_overrides=overrides, restart_flag=2)
+        finally:
+            out = open(f"test_{test_name}.out", errors="replace").read()
+    finally:
+        chdir(cwd)
+        finalize_variant_output(test_name, DUST_FLAGS)
+    return out
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(2),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_fire_ismdustchem_parameter_defaults(num_mpi_ranks, num_omp_threads):
+    """Every ISM dust-chemistry scaling parameter has a default: fire.params sets none of them, and the run must start"""
+    out = run_fire_dust_startup(num_mpi_ranks, num_omp_threads, DUST_STARTUP)
+    assert "Tag AccretionTcutoffScaling" in out and "defaulting to one" in out
