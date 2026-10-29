@@ -387,6 +387,10 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 #pragma omp atomic
                 CumulKickFloorEnergy += de_floor;}}
 #endif
+#if defined(MAGNETIC) && defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+            #pragma omp atomic
+            CumulMHDNumEnergy += CellP[i].DtEnergyMHDNum * dt_hydrokick; /* ledger: hydro/MHD energy rate over the dt this kick applies */
+#endif
 #if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED)
             rt_diag_sc(RT_DIAG_SC_KICK_DU, (CellP[i].InternalEnergy - rt_diag_u0) * P[i].Mass);
 #endif

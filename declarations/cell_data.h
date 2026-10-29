@@ -21,6 +21,9 @@ extern struct gas_cell_data
     MyDouble InternalEnergy;        /*!< specific internal energy [internal thermal energy per unit mass] of cell */
     MyDouble InternalEnergyPred;    /*!< predicted value of the specific internal energy at the current time */
     MyDouble DtInternalEnergy;      /*!< rate of change of specific internal energy */
+#if defined(MAGNETIC) && defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+    MyDouble DtEnergyMHDNum;        /*!< ledger: d(E_th+E_kin+E_B)/dt of the hydro step, booked in the kicks */
+#endif
 
 #ifdef GALSF_RESOLVEDISM_FB
     MyDouble FB_WeightMass;         /*!< cell mass frozen at the wind/AGB weighting pass: same weights in every pass of one batch */
