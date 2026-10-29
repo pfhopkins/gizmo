@@ -107,6 +107,9 @@ void begrun(void)
 #ifdef KETJU_REGULARIZATION
   ketju_open_output_file();
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_init();
+#endif
 
 #ifdef BOX_PERIODIC
   ewald_init();
@@ -2521,6 +2524,48 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+      strcpy(tag[nt], "RumiConfigFile");
+      addr[nt] = All.RumiConfigFile;
+      id[nt++] = STRING;
+
+      strcpy(tag[nt], "RumiStarMaxTimestep");
+      addr[nt] = &All.RumiStarMaxTimestep;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiNumThreads");
+      addr[nt] = &All.RumiNumThreads;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiLengthUnitPc");
+      addr[nt] = &All.RumiLengthUnitPc;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiMassUnitMsun");
+      addr[nt] = &All.RumiMassUnitMsun;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiVelUnitKms");
+      addr[nt] = &All.RumiVelUnitKms;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "RumiNumRanks");
+      addr[nt] = &All.RumiNumRanks;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiDeviceId");
+      addr[nt] = &All.RumiDeviceId;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiPrintInterval");
+      addr[nt] = &All.RumiPrintInterval;
+      id[nt++] = INT;
+
+      strcpy(tag[nt], "RumiReplayDump");
+      addr[nt] = &All.RumiReplayDump;
+      id[nt++] = INT;
+#endif
+
 #ifdef GALSF_RESOLVEDISM_STELLAR_TABLES
       strcpy(tag[nt], "StellarTablesFile");
       addr[nt] = All.StellarTablesFile;
@@ -2867,6 +2912,18 @@ void read_parameter_file(char *fname)
 #else
                 if(strcmp("WakeupTargetBin",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (waker bin - log2(WAKEUP))\n",tag[i]); continue;}
 #endif
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+                if(strcmp("RumiConfigFile",tag[i])==0) {strcpy((char *)addr[i],"rumi_config.txt"); printf("Tag %s not set: defaulting to rumi_config.txt\n",tag[i]); continue;}
+                if(strcmp("RumiStarMaxTimestep",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (no cap beyond the stars' own criteria)\n",tag[i]); continue;}
+                if(strcmp("RumiNumThreads",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Kokkos default)\n",tag[i]); continue;}
+                if(strcmp("RumiLengthUnitPc",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in pc)\n",tag[i]); continue;}
+                if(strcmp("RumiMassUnitMsun",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in Msun)\n",tag[i]); continue;}
+                if(strcmp("RumiVelUnitKms",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (the code unit in km/s)\n",tag[i]); continue;}
+                if(strcmp("RumiNumRanks",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s not set: defaulting to 1\n",tag[i]); continue;}
+                if(strcmp("RumiDeviceId",tag[i])==0) {*((int *)addr[i])=-1; printf("Tag %s not set: defaulting to -1 (Kokkos default)\n",tag[i]); continue;}
+                if(strcmp("RumiPrintInterval",tag[i])==0) {*((int *)addr[i])=64; printf("Tag %s not set: defaulting to 64\n",tag[i]); continue;}
+                if(strcmp("RumiReplayDump",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set: defaulting to 0\n",tag[i]); continue;}
 #endif
 #ifdef KETJU_REGULARIZATION
                 if(strcmp("KetjuMinBHMass",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s not set: defaulting to 0 (Type 5 chain centers disabled)\n",tag[i]); continue;}

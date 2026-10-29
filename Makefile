@@ -1075,7 +1075,7 @@ endif
 
 # KETJU regularized integrator for BH and stellar dynamics
 ifeq (KETJU_REGULARIZATION,$(findstring KETJU_REGULARIZATION,$(CONFIGVARS)))
-OBJS    += galaxy_sf/ketju_coupling.o
+OBJS    += galaxy_sf/ketju_coupling.o galaxy_sf/stella_star_mergers.o
 # submodules missing or at a stale pin (old layout): git submodule update --init
 $(if $(wildcard ketju-integrator-c/include/ketju_integrator/ketju_integrator.h),,$(error KETJU: ketju-integrator-c not checked out; run git submodule update --init ketju-integrator-c))
 ifeq (KETJU_LEGACY_C_LIBRARY,$(findstring KETJU_LEGACY_C_LIBRARY,$(CONFIGVARS)))
@@ -1098,6 +1098,41 @@ KETJU_INCL =
 KETJU_LIBS =
 endif
 
+# RUMI++ collisional N-body library integrating the Type-4 stars (STARS_INTEGRATED_BY_RUMI): build RUMI++ with
+# -DBUILD_RUMI_LIBRARY=ON and install it; RUMI_LIB_DIR is that prefix, whose rumi-lib.mk holds the include and link
+# flags of the Kokkos backend it was built for (OpenMP, CUDA or HIP)
+ifeq (STARS_INTEGRATED_BY_RUMI,$(findstring STARS_INTEGRATED_BY_RUMI,$(CONFIGVARS)))
+ifeq ($(MAKECMDGOALS),clean)
+RUMI_LIB_INCL =
+RUMI_LIB_LIBS =
+else
+ifeq ($(RUMI_LIB_DIR),)
+$(error STARS_INTEGRATED_BY_RUMI: set RUMI_LIB_DIR to the RUMI++ library install prefix)
+endif
+include $(RUMI_LIB_DIR)/rumi-lib.mk
+# interface check: the installed librumi.a must embed the API version rumi_coupling.cc is written for
+RUMI_LIB_ID := $(shell strings $(RUMI_LIB_DIR)/lib/librumi.a 2>/dev/null | grep -m1 '^RUMI_LIB_ID ')
+RUMI_LIB_API := $(patsubst api=%,%,$(filter api=%,$(RUMI_LIB_ID)))
+RUMI_COUPLING_API := $(shell sed -n 's/^\#define RUMI_COUPLING_API_VERSION *\([0-9]*\).*/\1/p' galaxy_sf/rumi_coupling.cc)
+ifneq ($(RUMI_LIB_API),$(RUMI_COUPLING_API))
+$(error STARS_INTEGRATED_BY_RUMI: $(RUMI_LIB_DIR)/lib/librumi.a has RUMI++ interface version '$(RUMI_LIB_API)' ($(RUMI_LIB_ID)), galaxy_sf/rumi_coupling.cc expects '$(RUMI_COUPLING_API)': rebuild RUMI++ at the matching version)
+endif
+$(info RUMI++ library: $(RUMI_LIB_ID))
+RUMI_LIB_INCL += -DRUMI_LIB_ID_MK='"$(RUMI_LIB_ID)"'
+ifeq ($(RUMI_LIB_MPI),ON)
+RUMI_LIB_INCL += -DRUMI_LIB_HAS_MPI
+endif
+RUMI_LIB_DEP = $(RUMI_LIB_DIR)/lib/librumi.a
+endif
+OBJS    += galaxy_sf/rumi_coupling.o galaxy_sf/stella_star_mergers.o
+else
+RUMI_LIB_INCL =
+RUMI_LIB_LIBS =
+endif
+
+# a reinstalled RUMI++ library recompiles the coupling (it embeds the library's id) and relinks
+galaxy_sf/rumi_coupling.o: $(RUMI_LIB_DEP)
+
 # HEALPix library for the RT_USE_TREECOL_FOR_NH angular column bins
 ifeq (NEED_HEALPIX,$(findstring NEED_HEALPIX,$(CONFIGVARS)))
 HEALPIXINCL =
@@ -1116,7 +1151,7 @@ endif
 
 # linking libraries (includes machine-dependent options above)
 CFLAGS = $(OPTIONS) $(GSL_INCL) $(FFTW_INCL) $(HDF5INCL) \
-         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL) $(KETJU_INCL) $(SUNDIALS_INCL) $(HYPRE_INCL) $(MKL_INCL)
+         $(GRACKLEINCL) $(CHIMESINCL) $(HEALPIXINCL) $(KETJU_INCL) $(RUMI_LIB_INCL) $(SUNDIALS_INCL) $(HYPRE_INCL) $(MKL_INCL)
 
 
 
@@ -1142,7 +1177,7 @@ endif
 
 
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
-	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS) $(KETJU_LIBS) $(SUNDIALS_LIBS) $(HYPRE_LIBS) $(MKL_LIBS)
+	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS) $(KETJU_LIBS) $(RUMI_LIB_LIBS) $(SUNDIALS_LIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
 FFLAGS = $(FOPTIONS) -Icooling/chemcool
 

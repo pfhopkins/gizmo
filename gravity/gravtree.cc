@@ -610,6 +610,9 @@ void gravity_tree(void)
     } /* Ewald_iter */
     myfree(DataNodeList); myfree(DataIndexTable);
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+    rumi_nonmember_star_gravity(); /* stars not yet integrated by RUMI++: exact star-star sum (G-free, as the tree) */
+#endif
 #ifdef SINGLE_STAR_DIRECT_GRAVITY
     /* the exact star-star sum, which the tree walk above deliberately left out. Here and not later:
        the tree's own contributions are complete (imports included) but not yet multiplied by All.G,

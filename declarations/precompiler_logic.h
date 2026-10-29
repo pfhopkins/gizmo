@@ -715,6 +715,19 @@
 #endif
 
 
+#ifdef STARS_INTEGRATED_BY_RUMI /* Type-4 stars integrated by RUMI++ (galaxy_sf/rumi_coupling.cc): star-star pairs leave the tree */
+#if defined(SINK_PARTICLES) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(HERMITE_INTEGRATION) || defined(SINK_CALC_DISTANCES) || defined(SPECIAL_POINT_MOTION) || defined(PMGRID) || defined(KETJU_REGULARIZATION) || defined(STARS_HERMITE_DIRECT_GRAVITY)
+#error "STARS_INTEGRATED_BY_RUMI takes over the tree's sink node moments for Type 4: not combinable with sinks, SINGLE_STAR_DIRECT_GRAVITY, Hermite, KETJU, other SINK_CALC_DISTANCES users or PMGRID"
+#endif
+#define SINK_CALC_DISTANCES /* node star moments (sink_mass/sink_pos) let star targets drop star sources */
+#define SPECIAL_POINT_TYPE_FOR_NODE_DISTANCES (4)
+#define TREE_STAR_STAR_EXCLUDED_TYPE 4
+#endif
+#if defined(SINGLE_STAR_DIRECT_GRAVITY) && !defined(TREE_STAR_STAR_EXCLUDED_TYPE)
+#define TREE_STAR_STAR_EXCLUDED_TYPE 5 /* the tree leaves star-star pairs to star_direct_gravity.cc */
+#endif
+
+
 #ifdef MHD_CONSTRAINED_GRADIENT
 /* make sure mid-point gradient calculation for cleaning terms is enabled */
 #ifndef MHD_CONSTRAINED_GRADIENT_MIDPOINT
@@ -766,8 +779,11 @@
    subtracts the sink monopole from mixed nodes and so needs sink_pos on the same clock as u.d.s; it can
    be set without SINGLE_STAR_TIMESTEPPING, and where it is, the sink_vel declaration and the moment sums
    that fill it widen to match this macro. */
-#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY))
+#if defined(SINK_CALC_DISTANCES) && (defined(SINGLE_STAR_TIMESTEPPING) || defined(SINGLE_STAR_FIND_BINARIES) || defined(SPECIAL_POINT_MOTION) || defined(SINGLE_STAR_DIRECT_GRAVITY) || defined(STARS_INTEGRATED_BY_RUMI))
 #define SINK_NODE_MOTION_TRACKED
+#endif
+#if defined(STARS_INTEGRATED_BY_RUMI) && defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE)
+#error "STARS_INTEGRATED_BY_RUMI: GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE uses the sink node moments"
 #endif
 
 

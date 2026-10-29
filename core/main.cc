@@ -128,6 +128,9 @@ int main(int argc, char **argv)
 
   run();			/* main simulation loop */
 
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_finalize();		/* Kokkos before MPI */
+#endif
   MPI_Finalize();		/* clean up & finalize MPI */
 
   return 0;

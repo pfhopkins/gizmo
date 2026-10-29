@@ -414,6 +414,9 @@ static void incode_total_energy(void)
 #ifdef KETJU_REGULARIZATION
                 ketju_note_total_energy(E, E0); /* printed evaluations only: all counted particles synchronised */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+                rumi_note_total_energy(E0); /* the collision energy RUMI++ booked, over |E0| (as KETJU ENERGY's collisions-dE) */
+#endif
                 printf("ETOT_INCODE: t=%.6f E=%.16g dE/|E0|=%.6e dEprop/|E0p|=%.6e dEcorr/|E0p|=%.6e ledger=%.6g | n_int=%d KE=%.6g PE=%.6g PEp=%.6g\n",
                        All.Time, E, (E - E0)/fabs(E0), (E_prop - E0_prop)/fabs(E0_prop),
                        (E_prop - E0_prop - ledger)/fabs(E0_prop), ledger, n_int, KE, PE, PE_prop);
@@ -502,12 +505,18 @@ void run(void)
 #if defined(KETJU_REGULARIZATION)  /* STARFORGE scheme: after find_timesteps */
         ketju_limit_timesteps();    /* force chain particles to shared timebin */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_limit_timesteps();     /* all stars onto one bin */
+#endif
 #ifdef HERMITE_INTEGRATION
         HermiteOnlyFlag = 1;
         gravity_tree();	/* re-compute gravitational accelerations for synchronous particles */
         HermiteOnlyFlag = 0;
 #endif
         do_first_halfstep_kick();	/* half-step kick at beginning of timestep for synchronous particles */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_integrate();           /* stars' mutual gravity over their step by RUMI++, chord velocities for the drift */
+#endif
 
 
 #ifdef KETJU_REGULARIZATION
@@ -1167,7 +1176,13 @@ void find_next_sync_point_and_drift(void)
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities(); /* members ending their step here: write the MSTAR velocity, not the chord one */
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();   /* stars ending their step here: RUMI++'s position and velocity, not the chord ones */
+#endif
         savepositions(All.SnapshotFileCount++);	/* write snapshot file */
+#ifdef STARS_INTEGRATED_BY_RUMI
+        rumi_swap_output_state();
+#endif
 #ifdef KETJU_REGULARIZATION
         ketju_swap_output_velocities();
 #endif
@@ -1244,6 +1259,9 @@ void find_next_sync_point_and_drift(void)
 
 #ifdef KETJU_REGULARIZATION
   ketju_set_final_velocities(); /* swap in true physical velocities after drift (velocity trick) */
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+  rumi_finish_drift();          /* stars ending their RUMI++ step: its position and velocity */
 #endif
 
 }
@@ -1647,6 +1665,9 @@ void write_cpu_log(void)
 #if defined(RADTRANSFER)
           "rt_nonfluxops %10.2f  %5.1f%%\n"
 #endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+          "rumi          %10.2f  %5.1f%%\n"
+#endif
 #ifdef KETJU_REGULARIZATION
           "ketju         %10.2f  %5.1f%%\n"
           "   kj_limit   %10.2f  %5.1f%%\n"
@@ -1738,6 +1759,9 @@ void write_cpu_log(void)
 #endif
 #if defined(RADTRANSFER)
     All.CPU_Sum[CPU_RTNONFLUXOPS], (All.CPU_Sum[CPU_RTNONFLUXOPS]) / All.CPU_Sum[CPU_ALL] * 100,
+#endif
+#ifdef STARS_INTEGRATED_BY_RUMI
+    All.CPU_Sum[CPU_RUMI], (All.CPU_Sum[CPU_RUMI]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
 #ifdef KETJU_REGULARIZATION
     All.CPU_Sum[CPU_KETJULIMIT] + All.CPU_Sum[CPU_KETJUFIND] + All.CPU_Sum[CPU_KETJUEXCH] + All.CPU_Sum[CPU_KETJUMSTAR] + All.CPU_Sum[CPU_KETJUSCATTER] + All.CPU_Sum[CPU_KETJUFINISH],

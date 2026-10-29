@@ -245,7 +245,7 @@
 #define CPU_KETJUMSTAR    50 /* KETJU negative kicks + MSTAR integration */
 #define CPU_KETJUSCATTER  51 /* KETJU write-back of MSTAR results */
 #define CPU_KETJUFINISH   52 /* KETJU end-of-step COM quantities, cache, final velocities, stats */
-#define CPU_DUMMY06       53
+#define CPU_RUMI          53 /* RUMI++ star integration: common-bin limiter, gather, library calls, scatter (STARS_INTEGRATED_BY_RUMI) */
 #define CPU_DUMMY07       54
 #define CPU_DUMMY08       55
 #define CPU_DUMMY09       56
