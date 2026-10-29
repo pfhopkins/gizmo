@@ -40,7 +40,6 @@ CO_SHIELDING
 WSS_CIE_COOL
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
 #GALSF_SGCHEM_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
-SGCHEM_CXX                     % C++/CVODE chemistry backend (default for Stella)
 #CR_SCALE_WITH_G0                % disabled for testing — using fixed CosmicRayIonRate from params
 TURB_DIFF_METALS
 

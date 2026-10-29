@@ -68,11 +68,11 @@ NEED_HEALPIX                             % HEALPix support
 COOLING                                  % cooling master switch  [auto by SGCHEM]
 COOLING_OPERATOR_SPLIT                   % operator-split cooling
 SGCHEM                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
+SGCHEM_FORTRAN                % legacy Fortran backend (SGCHEM alone = C++/CVODE)
 CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances
-#SGCHEM_CXX                            % C++/CVODE chemistry backend (in development)
 #GALSF_SGCHEM_DEBUG_INPUT              % DEBUG: validate species vs pools on DVODE entry
 #CR_SCALE_WITH_G0                        % CR ionisation rate scales with G0 (production: constant rate)
 

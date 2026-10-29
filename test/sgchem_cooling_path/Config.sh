@@ -31,6 +31,7 @@ GALSF_SFR_CRITERION=(64)       % Jeans mass only (Hu & Sternberg 2023): M_J < N_
 ## -- Cooling & chemistry --
 COOLING
 SGCHEM
+SGCHEM_FORTRAN                % legacy Fortran backend (SGCHEM alone = C++/CVODE)
 SINK_PARTICLES                  % sink thermal feedback through the cooling path
 SINK_THERMALFEEDBACK
 CHEMISTRYNETWORK=17
@@ -38,7 +39,6 @@ CO_SHIELDING
 WSS_CIE_COOL
 #GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
 #GALSF_SGCHEM_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
-#SGCHEM_CXX                    % C++/CVODE chemistry backend (cooling/sgchem/cxx/). DEFAULT OFF: Fortran DVODE stays the reference. Nets 5/17 only; needs SUNDIALS (Makefile SUNDIALS_DIR). See cxx/GATE2_ACCEPTANCE.md
 #CR_SCALE_WITH_G0                % disabled for testing — using fixed CosmicRayIonRate from params
 TURB_DIFF_METALS
 
