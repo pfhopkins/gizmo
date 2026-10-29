@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Test: under what conditions does the CHEMCOOL H+ abundance hit or exceed 1.0?
+Test: under what conditions does the SGCHEM H+ abundance hit or exceed 1.0?
 
 After SN thermal injection, a cold neutral particle can suddenly be at
-T ~ 10^7 K. CHEMCOOL must evolve H+ from ~0 to ~1.0 (full ionization).
+T ~ 10^7 K. SGCHEM must evolve H+ from ~0 to ~1.0 (full ionization).
 If the solver overshoots y(H+) > 1 + eps_max (1e-4), validate_input
 rejects it and the simulation crashes.
 

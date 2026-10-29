@@ -607,14 +607,14 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
-        case IO_CHEMCOOL_TRACABUND:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_TRACABUND:
+#ifdef SGCHEM
             for(n = 0; n < pc; n++) {for(k = 0; k < TRAC_NUM; k++) {CellP[offset + n].TracAbund[k] = *fp++;}}
 #endif
             break;
 
-        case IO_CHEMCOOL_DUSTTEMP:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef SGCHEM
             for(n = 0; n < pc; n++) {CellP[offset + n].DustTemp = *fp++;}
 #endif
             break;
@@ -1117,8 +1117,8 @@ void read_file(char *fname, int readTask, int lastTask)
 #ifdef INPUT_READ_COSMICRAYENERGY
                    && blocknr != IO_COSMICRAY_ENERGY
 #endif
-#ifdef CHEMCOOL_KEEP_IC_ABUNDANCES
-                   && blocknr != IO_CHEMCOOL_TRACABUND
+#ifdef SGCHEM_KEEP_IC_ABUNDANCES
+                   && blocknr != IO_SGCHEM_TRACABUND
 #endif
                    /* Temperature is derived output, not input: blockpresent() is keyed off
                     * OUTPUT_TEMPERATURE (implicit for any COOLING run), so this demanded a

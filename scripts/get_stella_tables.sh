@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build and install the Stella stellar + CHEMCOOL tables from the stella-tables repo when they are missing or were not
+# Build and install the Stella stellar + SGCHEM tables from the stella-tables repo when they are missing or were not
 # built from the pinned commit (per stella_tables.stamp); tables replaced that way are kept with a .replaced-<date> suffix.
 # Called by the Makefile (order-only prerequisite of the executable); safe to run by hand from the GIZMO root.
 #   STELLA_TABLES_REPO  git URL or local path of stella-tables (default: the public GitHub repo)
@@ -7,7 +7,7 @@
 #   STELLA_TABLES_DIR   where to clone and build (default: .stella-tables in the GIZMO root)
 set -euo pipefail
 GIZMO="$(cd "$(dirname "$0")/.." && pwd)"
-ST="$GIZMO/galaxy_sf/stellar_tables"; CC="$GIZMO/cooling/chemcool"
+ST="$GIZMO/galaxy_sf/stellar_tables"; CC="$GIZMO/cooling/sgchem"
 OUTS=("$ST/stellar_tables_unified.hdf5" "$ST/stellar_wind_cumulative.hdf5" "$CC/energy-table-x.txt")
 
 REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"

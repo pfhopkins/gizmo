@@ -19,8 +19,8 @@ static constexpr uint64_t SINK_SEED_MASS_RNG_SALT = gizmo_loop_rng_salt("sink_se
 #include "resolvedism_rng.h"
 #endif
 
-/* CellP[].Temp exists only under CHEMCOOL; SFinfo logging stores 0 without it */
-#ifdef CHEMCOOL
+/* CellP[].Temp exists only under SGCHEM; SFinfo logging stores 0 without it */
+#ifdef SGCHEM
 #define SF_LOG_TEMP(i) (CellP[i].Temp)
 #else
 #define SF_LOG_TEMP(i) (0.)
@@ -967,7 +967,7 @@ void star_formation_parent_routine(void)
                             sf_rho[n_sf_local] = CellP[i].Density;
                             sf_mstar[n_sf_local] = P[i_star].Mass;
                             sf_Z[n_sf_local] = P[i_star].Metallicity[0];
-                            sf_T[n_sf_local] = SF_LOG_TEMP(i); /* CHEMCOOL exact temperature from non-equilibrium abundances */
+                            sf_T[n_sf_local] = SF_LOG_TEMP(i); /* SGCHEM exact temperature from non-equilibrium abundances */
                             sf_id[n_sf_local] = (long long)P[i_star].ID;
                             n_sf_local++;
 #endif

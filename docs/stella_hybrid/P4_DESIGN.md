@@ -32,7 +32,7 @@ FIRE-3's LONGRANGE turns on `RT_LEBRON`, which turns on `RT_USE_GRAVTREE` and `.
 | X6 | Step 2 sets `RT_SOURCES (16+32)` before FIRE's all-types default, so non-cosmological FIRE IC disk/bulge stars (Types 2/3) stop emitting. | [S2] precompiler_logic.h:824-826 vs :932-933 |
 
 Two more findings that matter only in the mode:
-- Without CHEMCOOL, `resolvedism_cell_DGR_solar` returns 1 for every Z ([SD] declarations/resolvedism_dgr.h:29). The dust-weighted TreeCol column, and with it Stella G0 shielding, would be solar at any metallicity.
+- Without SGCHEM, `resolvedism_cell_DGR_solar` returns 1 for every Z ([SD] declarations/resolvedism_dgr.h:29). The dust-weighted TreeCol column, and with it Stella G0 shielding, would be solar at any metallicity.
 - `COSMIC_RAY_SUBGRID_LEBRON` treats every Type 4 as an SSP SN source, Stella stars included ([P3] cosmic_ray_utilities.cc:1723-1736).
 
 Already fine:
@@ -99,17 +99,17 @@ So FIRE goes first and Stella sits on top (decision H).
 - The mask is a per-bin skip in three loops plus one predicate in 7 guards. FIRE-only and Stella-only builds compile it away, so they stay bitwise.
 
 **Stella G0 into `Rad_Flux_UV`.**
-- *Extract.* Write `resolvedism_G0_attenuated(i)`, which does not depend on CHEMCOOL:
+- *Extract.* Write `resolvedism_G0_attenuated(i)`, which does not depend on SGCHEM:
   - `G0 = All.G0 · (fac_flux2energy/u_Hab_FUV) · Σ_pix UV_flux[pix] · exp(-2.5·A_V,pix)`
   - `A_V,pix = AV_conv·DGR·col[pix] + AV_local (+AV_ext)`
   - This is the net-5 photoelectric field `G_dust/f_rsc` ([SD] chem_interface.cc:231-238; chem_calc_photo.cc:212-213, 296-332, 569).
-  - `AV_conversion_factor` (5.348e-22) and `AV_ext` currently live in CHEMCOOL COMMON, so the mode needs its own copies.
-  - On stella_dev, CHEMCOOL calls the same function. Regression: bitwise.
+  - `AV_conversion_factor` (5.348e-22) and `AV_ext` currently live in SGCHEM COMMON, so the mode needs its own copies.
+  - On stella_dev, SGCHEM calls the same function. Regression: bitwise.
 - *Hook.* Call it right after `selfshield_local_incident_uv_flux()` ([P3] accel.cc:118), on the same `ActiveParticleList`, and add the result to `Rad_Flux_UV`. That field is already in Habing G0 after shielding (cooling.cc:2244).
   - No pixel floor (chem_interface.cc:229-235) and no UVB floor (:243-249): FIRE adds the UVB itself in `get_FUV_G0` (cooling.cc:2556).
   - Pixel fluxes are not overwritten in place in the mode.
 - *Consumers that then see Stella light automatically:* photoelectric heating (cooling.cc:1546-1550 → `get_FUV_G0` :2555), molecular fraction (:2299), eos dust G0 (eos.cc:324), SF bit 256 (sfr_eff.cc:88).
-- *DGR without CHEMCOOL* (fixes the resolvedism_dgr.h:29 finding): use FIRE's `return_dust_to_metals_ratio_vs_solar(i,0,…)·Z/Z☉` (eos.cc:246), the field FIRE shielding already uses. Use it for the dust-weighted column (forcetree.cc:570) and for Stella radp, so both see one DGR.
+- *DGR without SGCHEM* (fixes the resolvedism_dgr.h:29 finding): use FIRE's `return_dust_to_metals_ratio_vs_solar(i,0,…)·Z/Z☉` (eos.cc:246), the field FIRE shielding already uses. Use it for the dust-weighted column (forcetree.cc:570) and for Stella radp, so both see one DGR.
 - *LW:* FIRE has no separate LW field. The H2 model reads `Rad_Flux_UV`. Stella's `G0_LW` is not consumed in the mode (open question 6).
 - *Normalisation:* FIRE's G0 unit is 7.84e-4 erg s⁻¹ cm⁻² (1/1276.19, its narrow FIRE_UV band). Stella's is 1.59e-3 (c·5.29e-14, 6-13.6 eV). Both are "G0" to the consumers, so Stella's G0 is added unscaled (open question 1).
 
@@ -131,7 +131,7 @@ The models are coupled only through the shared outputs: `Rad_Flux_UV`, `DelayTim
 | FIRE-3 default (no CR flag) | constant 1 eV cm⁻³, ζ = 1.6e-17 (+Z terms); density ramp in cosmological runs ([SD] cosmic_ray_utilities.cc:1775-1795, 1798-1815). Unchanged. |
 | `COSMIC_RAY_FLUID` | each owner injects its own SNe: FIRE [P3] mechanical_fb.cc:414/760, Stella resolvedism_fb_thermal.cc:394-407. ζ comes from the fluid. No double count once tags gate the loops. |
 | `COSMIC_RAY_SUBGRID_LEBRON` | add a tag gate: Stella stars → 0 in `cr_get_source_injection_rate` ([P3] :1723). Open question 5. |
-| Stella `GHOSTD_G0_CR`, `CR_SCALE_WITH_G0` | CHEMCOOL inputs only (chem_interface.cc:217-229, 273), so silently inert in the mode → `#error`. |
+| Stella `GHOSTD_G0_CR`, `CR_SCALE_WITH_G0` | SGCHEM inputs only (chem_interface.cc:217-229, 273), so silently inert in the mode → `#error`. |
 
 **Radiation pressure.**
 
@@ -155,7 +155,7 @@ The models are coupled only through the shared outputs: `Rad_Flux_UV`, `DelayTim
 | HEALPix TreeCol columns | upstream machinery, Stella consumer |
 | 12-pixel band flux, luminosity centroid, per-star band cache | **Stella-only** (step 2 §3: upstream has no such field) |
 | Stella PI front solver, `Ionized` owner/wake flag | **Stella-only** |
-| `resolvedism_G0_attenuated` (extracted from chem_interface + calc_photo) | **Stella-only** function, CHEMCOOL-independent |
+| `resolvedism_G0_attenuated` (extracted from chem_interface + calc_photo) | **Stella-only** function, SGCHEM-independent |
 | TREERAD radp + IR boost | **Stella-only** |
 | LEBRON FIRE bins + Sobolev shielding, FIRE HII loop, LOCALRP, LONGRANGE | **FIRE-only**, tag-gated |
 
@@ -167,8 +167,8 @@ The models are coupled only through the shared outputs: `Rad_Flux_UV`, `DelayTim
 
 | Flag | Reason |
 |---|---|
-| `TREE_RAY`, `TREE_RAY_PI` | attenuated-in-walk fluxes and CHEMCOOL rt_phot rates are not mapped |
-| `GALSF_RESOLVEDISM_GHOSTD_G0_CR`, `CR_SCALE_WITH_G0` | silently inert without CHEMCOOL. DESIGN §3 lists GHOSTD, but P1 does not have it yet (renamed on stella_dev after the branch point). |
+| `TREE_RAY`, `TREE_RAY_PI` | attenuated-in-walk fluxes and SGCHEM rt_phot rates are not mapped |
+| `GALSF_RESOLVEDISM_GHOSTD_G0_CR`, `CR_SCALE_WITH_G0` | silently inert without SGCHEM. DESIGN §3 lists GHOSTD, but P1 does not have it yet (renamed on stella_dev after the branch point). |
 | `GALSF_RESOLVEDISM_PHOTOION` without `GALSF_FB_FIRE_RT_HIIHEATING`; `G0_VARIABLE` without `GALSF_FB_FIRE_RT_LONGRANGE` | Stella writes FIRE's HII state and `Rad_Flux_UV` |
 | `RT_SEPARATELY_TRACK_LUMPOS` | its all-bin `l_tot` centroid ([S2] forcetree.cc:784-788) would mix owners |
 | `CellP.Temp` readers | listed in DESIGN §4.5; guard or use FIRE's T |
@@ -178,7 +178,7 @@ The models are coupled only through the shared outputs: `Rad_Flux_UV`, `DelayTim
 | Test | Setup | Pass |
 |---|---|---|
 | T0 | mode off: stella_dev+step 2 goldens; FIRE-3 / forgedinfire dumps | bitwise |
-| T0b | stella_dev CHEMCOOL build: `resolvedism_G0_attenuated` vs `G_dust/f_rsc` | bitwise per cell |
+| T0b | stella_dev SGCHEM build: `resolvedism_G0_attenuated` vs `G_dust/f_rsc` | bitwise per cell |
 | T3a Strömgren | Stella star, pinned Q (TestFixedQion), uniform n = 100 cm⁻³; SSP twin of equal Q (age/mass chosen, or `HIIRegion_fLum_Coupled`) | R_S within the pisub ladder tolerances; cells carry `DelayTimeHII>0`, `Ne` ionised; T equals the SSP twin's within 10% |
 | T3b overlap | Stella star + SSP at one position | 0 cells claimed twice; billed ≤ own Q for each model; ionised mass ≈ M_S(Q1+Q2) within 10% |
 | T3c switch-off | Q → 0 mid-run | cells recombine via FIRE fixed-T within ≤2 cell steps; no stale `Ionized` |

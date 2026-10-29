@@ -40,7 +40,7 @@ def _link_driver(test_dir):
 
 
 def run_merge_split_checks(test_name, cooling_tables=False):
-    """Build test_name, run the driver, fail on any failed check. cooling_tables: non-CHEMCOOL cooling needs its tables."""
+    """Build test_name, run the driver, fail on any failed check. cooling_tables: non-SGCHEM cooling needs its tables."""
     if os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
         pytest.skip("builds GIZMO; nothing to validate from external snapshots")
     test_dir = join(REPO, "test", test_name)

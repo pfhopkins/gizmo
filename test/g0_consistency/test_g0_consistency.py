@@ -86,7 +86,7 @@ def make_ics(fname, case):
         p0["KernelMaxRadius"] = np.full(ng, 2.0 * dx * 1e-3)  # ~32 neighbours
         p0["Metallicity"] = np.tile(METALLICITY, (ng, 1))
         p0["ElementAbundance"] = np.tile(METALLICITY[1:], (ng, 1))
-        p0["ChemcoolTracAbund"] = np.tile([0.0, 1.0e-4, 0.0], (ng, 1))  # atomic, x_e = 1e-4, no CO
+        p0["SGChemTracAbund"] = np.tile([0.0, 1.0e-4, 0.0], (ng, 1))  # atomic, x_e = 1e-4, no CO
         p4 = f.create_group("PartType4")
         m_code = STAR_MASS * MSUN / 1.989e43
         p4["Coordinates"] = np.full((1, 3), 0.5 * BOX_PC * 1e-3)

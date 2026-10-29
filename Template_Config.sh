@@ -254,27 +254,27 @@
 ## with GALSF_RESOLVEDISM-specific implementations (Particle_DivVel, FacSfThreshMJ param)
 #GALSF_RESOLVEDISM_OUTPUT_SFINFO # log SF/SN events to stdout
 ## ----------------------------------------------------------------------------------------------------
-# ----- CHEMCOOL non-equilibrium chemistry (Fortran backend, mutually exclusive with CHIMES) ------
-#CHEMCOOL                       # master switch: non-equilibrium chemistry solver
+# ----- SGCHEM non-equilibrium chemistry (Fortran backend, mutually exclusive with CHIMES) ------
+#SGCHEM                       # master switch: non-equilibrium chemistry solver
 #CHEMISTRYNETWORK=5             # chemistry network selection (default=5)
 #WSS_CIE_COOL                   # CIE metal-line cooling
 #DGR_SCALE_WITH_Z               # dust-to-gas ratio scales with metallicity
 #BS19_XH2                       # Bialy & Sternberg 2019 H2 prescription
 #CR_HEATING_DM72                # Dalgarno & McCray 1972 cosmic ray heating
 #CR_SCALE_WITH_G0               # cosmic ray ionization rate scales with G0
-#CHEMCOOL_CXX                   # use the C++/CVODE chemistry backend (cooling/chemcool/cxx/) instead
-#CHEMCOOL_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
-#CHEMCOOL_KEEP_IC_ABUNDANCES  # keep ChemcoolTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
-#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY # no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
+#SGCHEM_CXX                   # use the C++/CVODE chemistry backend (cooling/sgchem/cxx/) instead
+#SGCHEM_OMP_CROSSCHECK      # test only: each step cools a copy serially and requires the threaded pass to match it byte for byte
+#SGCHEM_KEEP_IC_ABUNDANCES  # keep SGChemTracAbund from the IC on fresh starts (default zeroes it, x_H+ = 1e-4)
+#SGCHEM_DGR_INDEPENDENT_OF_METALLICITY # no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
                                 #   of the Fortran DVODE driver. DEFAULT OFF: the Fortran path stays the
                                 #   reference implementation. Networks 5, 15 and 17 only. Replaces the
                                 #   integrator + RHS assembly + driver policy; the RHS leaf kernels and
                                 #   the coolinmo/cheminmo tables are still Fortran (cxx/DEVIATIONS.md D-0).
                                 #   Needs SUNDIALS CVODE >= 6.x: set SUNDIALS_DIR in the Makefile.
                                 #   NOT thread-safe -- do not combine with OPENMP until Gate 3.
-                                #   Acceptance results: cooling/chemcool/cxx/GATE2_ACCEPTANCE.md
+                                #   Acceptance results: cooling/sgchem/cxx/GATE2_ACCEPTANCE.md
 ## ----------------------------------------------------------------------------------------------------
-# ----- tree column densities for CHEMCOOL: RT_USE_TREECOL_FOR_NH=12*NSIDE^2 (HEALPix, see the RT section). With CHEMCOOL
+# ----- tree column densities for SGCHEM: RT_USE_TREECOL_FOR_NH=12*NSIDE^2 (HEALPix, see the RT section). With SGCHEM
 #       the columns are cut at ShieldingLength, stored per gas cell, and carry H2 and CO (plus a dust-weighted column with
 #       GALSF_RESOLVEDISM_G0_VARIABLE). TREE_RAD, TREE_RAD_H2, TREE_RAD_CO and NSIDE were removed.
 ############################################################################################################################
@@ -469,7 +469,7 @@
 #RT_REPROCESS_INJECTED_PHOTONS          # re-process photon energy while doing the discrete injection operation conserving photon energy, put only the un-absorbed component of the current band into that band, putting the rest in its "donation" bin (ionizing->optical, all others->IR). This would happen anyway during the routine for resolved absorption, but this may more realistically handle situations where e.g. your dust destruction front is at totally unresolved scales and you don't want to spuriously ionize stuff on larger scales. Assume isotropic re-radiation, so inject only energy for the donated bin and not net flux/momentum. follows STARFORGE methods (Grudic+ arXiv:2010.11254) - cite this
 #RT_SINK_ANGLEWEIGHT_PHOTON_INJECTION   # uses a solid-angle as opposed to simple kernel weight (requires extra passes) for depositing radiation from sinks/BHs when the direct deposition is used. also ensures the sink uses a 2-way search to ensure overlapping diffuse gas gets radiation. cite Grudic+ arXiv:2010.11254
 #RT_ISRF_BACKGROUND=1                   # include Draine 1978 ISRF for photoelectric heating (appropriate for solar circle, must be re-scaled for different environments); its strength is the parameter InterstellarRadiationFieldStrength. Set =0 to switch it off, also where SINGLE_STAR_FB_RAD or SINGLE_STAR_STARFORGE_DEFAULTS+COOLING would turn it on: no field reset at the box edge, no ISRF parameters read, FUV for H2/photoelectric heating only from the RT bands (a G0=1 Habing default without them), and the cosmic-ray background falls back to the unattenuated Milky Way value used by builds without this flag
-#GHOSDT_G0_CR                   # GHOSDT (Hu+21, gizmo2017 tallbox): RT_ISRF_BACKGROUND field and background CR rate scaled every star-formation call by FactorG0 = [M(type-4 stars < 30 Myr)/30 Myr]/[Mgas0/4 Gyr], Mgas0 = initial gas mass; G0 floored at 0.324e-2 Habing; a CR fluid or COSMIC_RAY_SUBGRID_LEBRON still sets the CR rate. With CHEMCOOL: chemistry G0 = max(FactorG0*G0, 0.324e-2), CR rate = FactorG0*CosmicRayIonRate with CR_SCALE_WITH_G0; Stella G0_VARIABLE/M1 fields override it. requires GALSF and RT_ISRF_BACKGROUND or CHEMCOOL
+#GHOSDT_G0_CR                   # GHOSDT (Hu+21, gizmo2017 tallbox): RT_ISRF_BACKGROUND field and background CR rate scaled every star-formation call by FactorG0 = [M(type-4 stars < 30 Myr)/30 Myr]/[Mgas0/4 Gyr], Mgas0 = initial gas mass; G0 floored at 0.324e-2 Habing; a CR fluid or COSMIC_RAY_SUBGRID_LEBRON still sets the CR rate. With SGCHEM: chemistry G0 = max(FactorG0*G0, 0.324e-2), CR rate = FactorG0*CosmicRayIonRate with CR_SCALE_WITH_G0; Stella G0_VARIABLE/M1 fields override it. requires GALSF and RT_ISRF_BACKGROUND or SGCHEM
 ## ----------------------------------------------------------------------------------------------------
 # ----------- Transport subcycling: allow RT and/or CR transport to take multiple smaller steps per hydro step  [HIGHLY EXPERIMENTAL]
 ## ----------------------------------------------------------------------------------------------------

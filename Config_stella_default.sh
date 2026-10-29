@@ -28,19 +28,19 @@ GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 GALSF_RESOLVEDISM_RADPRESSURE
 GALSF_RESOLVEDISM_TYPE_IA
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
-#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
+#SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
 GALSF_SFR_CRITERION=(64)       % Jeans mass only (Hu & Sternberg 2023): M_J < N_ngb * m_gas
 
 ## -- Cooling & chemistry --
 COOLING
 COOLING_OPERATOR_SPLIT
-CHEMCOOL
+SGCHEM
 CHEMISTRYNETWORK=5
 CO_SHIELDING
 WSS_CIE_COOL
-#GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
-#GALSF_CHEMCOOL_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
-CHEMCOOL_CXX                     % C++/CVODE chemistry backend (default for Stella)
+#GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
+#GALSF_SGCHEM_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
+SGCHEM_CXX                     % C++/CVODE chemistry backend (default for Stella)
 #CR_SCALE_WITH_G0                % disabled for testing — using fixed CosmicRayIonRate from params
 TURB_DIFF_METALS
 
@@ -75,7 +75,7 @@ MHD_B_SET_IN_PARAMS
 #CR_BACKGROUND_IONRATE_ATTENUATED % CR fluid OFF only: chemistry zeta = CosmicRayIonRate x STARFORGE column attenuation (TreeCol N_H); no CR energy or pressure
 #CRFLUID_INJECTION_AT_SHOCKS=(0.1) % opt-in, not relied upon: resolved shock acceleration (CosmicRay_ShockAccelEfficiency)
 #INPUT_READ_COSMICRAYENERGY      % keep CosmicRayEnergy from the IC on fresh starts (transport tests)
-#CHEMCOOL_KEEP_IC_ABUNDANCES     % keep ChemcoolTracAbund from the IC on fresh starts (molecular cloud ICs; default zeroes it)
+#SGCHEM_KEEP_IC_ABUNDANCES     % keep SGChemTracAbund from the IC on fresh starts (molecular cloud ICs; default zeroes it)
 
 ## -- Turbulent metal diffusion --
 #TURB_DIFF_METALS

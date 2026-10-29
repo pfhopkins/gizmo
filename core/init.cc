@@ -8,9 +8,9 @@
 #include "../core/proto.h"
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
-#ifdef CHEMCOOL
-#include "../cooling/chemcool/chemcool_consts.h"
-#ifdef CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY
+#ifdef SGCHEM
+#include "../cooling/sgchem/sgchem_consts.h"
+#ifdef SGCHEM_DGR_INDEPENDENT_OF_METALLICITY
 #include "../declarations/resolvedism_dgr.h"
 #endif
 #endif
@@ -201,8 +201,8 @@ void init(void)
 
 #ifdef METALS
     for(j=0;j<NUM_METAL_SPECIES;j++) {All.SolarAbundances[j]=0;} // initialize all to zero
-#if defined(GALSF_RESOLVEDISM) || defined(CHEMCOOL)
-    All.SolarAbundances[0]=0.014;       // Stella/CHEMCOOL: Asplund+ 2009 present-day solar Z, as in resolvedism_stellar_tables.cc and chemcool
+#if defined(GALSF_RESOLVEDISM) || defined(SGCHEM)
+    All.SolarAbundances[0]=0.014;       // Stella/SGCHEM: Asplund+ 2009 present-day solar Z, as in resolvedism_stellar_tables.cc and sgchem
 #else
     All.SolarAbundances[0]=0.02;        // all metals (by mass); present photospheric abundances from Asplund et al. 2009 (Z=0.0134, proto-solar=0.0142) in notes;
 #endif
@@ -236,12 +236,12 @@ void init(void)
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     Initialize_ISMDustChem_Global_Variables();
 #endif
-#ifdef CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY
+#ifdef SGCHEM_DGR_INDEPENDENT_OF_METALLICITY
     { /* constant DGR: dust exceeds the metal mass below Z/Zsun = DGRnormalized x DGR_MW / Zsun */
         double z_dust_eq_metals = All.DGRnormalized * RESOLVEDISM_DGR_SOLAR_ABS / All.SolarAbundances[0];
-        if(ThisTask == 0) {printf("CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY: DGR = %g x MW at every Z; dust exceeds the metals below Z = %g Zsun\n", All.DGRnormalized, z_dust_eq_metals);}
+        if(ThisTask == 0) {printf("SGCHEM_DGR_INDEPENDENT_OF_METALLICITY: DGR = %g x MW at every Z; dust exceeds the metals below Z = %g Zsun\n", All.DGRnormalized, z_dust_eq_metals);}
         if(All.InitialMetallicity < z_dust_eq_metals) {
-            if(ThisTask == 0) {printf("CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY: InitialMetallicity %g Zsun < %g Zsun gives dust mass > metal mass; lower DGRnormalized (gizmo2017: 0.01) or use the Z-scaled default\n", All.InitialMetallicity, z_dust_eq_metals);}
+            if(ThisTask == 0) {printf("SGCHEM_DGR_INDEPENDENT_OF_METALLICITY: InitialMetallicity %g Zsun < %g Zsun gives dust mass > metal mass; lower DGRnormalized (gizmo2017: 0.01) or use the Z-scaled default\n", All.InitialMetallicity, z_dust_eq_metals);}
             endrun(78301);
         }
     }
@@ -583,7 +583,7 @@ void init(void)
         }
 #endif
 
-#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
+#if defined(SGCHEM) && (CHEMISTRYNETWORK == 17)
         /* D mass fraction = (D/H number ratio) * (m_D/m_H) * X_H = abundD * 2 * X_H */
         if (P[i].Type == 0) {
 #ifdef GALSF_RESOLVEDISM_METALS_INDIVIDUAL
@@ -838,8 +838,8 @@ void init(void)
 #ifdef CHIMES_STELLAR_FLUXES
 	    int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[i].Chimes_fluxPhotIon[kc] = 0; CellP[i].Chimes_G0[kc] = 0;}
 #endif
-#ifdef CHEMCOOL
-#ifndef CHEMCOOL_KEEP_IC_ABUNDANCES /* opt-in: keep ChemcoolTracAbund read from the IC on fresh starts */
+#ifdef SGCHEM
+#ifndef SGCHEM_KEEP_IC_ABUNDANCES /* opt-in: keep SGChemTracAbund read from the IC on fresh starts */
             {int ka; for(ka = 0; ka < TRAC_NUM; ka++) {CellP[i].TracAbund[ka] = 0;}}
             CellP[i].TracAbund[IHP] = 1.0e-4; /* initial ionization fraction */
 #endif
@@ -1075,8 +1075,8 @@ void init(void)
 
 
     density();
-#if defined(CHEMCOOL) && defined(EXPERIMENTAL_SNAPSHOT_RESTART_TEMP_FROM_CHEMISTRY)
-    if(RestartFlag == 2) {for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].Temp = do_chemcool_step(i, 0, 0, 2);}}} /* snapshots carry no Temp: derive it before the first tree build reads it */
+#if defined(SGCHEM) && defined(EXPERIMENTAL_SNAPSHOT_RESTART_TEMP_FROM_CHEMISTRY)
+    if(RestartFlag == 2) {for(i = 0; i < N_gas; i++) {if(P[i].Type == 0) {CellP[i].Temp = do_sgchem_step(i, 0, 0, 2);}}} /* snapshots carry no Temp: derive it before the first tree build reads it */
 #endif
     for(i = 0; i < N_gas; i++)	/* initialize gas/fluid cell properties */
     {

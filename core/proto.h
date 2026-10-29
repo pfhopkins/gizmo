@@ -868,15 +868,15 @@ void chimes_compute_depletions(double nH, double T, int thread_id);
 #else
 #endif
 void cooling_parent_routine(void);
-#ifdef CHEMCOOL
-void chemcool_init(void);
-double do_chemcool_step(int target, double dt, double dl, int mode);
-double chemcool_cool_cell(int target, double u_old, double dt);
-double chemcool_startup_electrons(int target, double *x_HII, double *x_HI);
+#ifdef SGCHEM
+void sgchem_init(void);
+double do_sgchem_step(int target, double dt, double dl, int mode);
+double sgchem_cool_cell(int target, double u_old, double dt);
+double sgchem_startup_electrons(int target, double *x_HII, double *x_HI);
 extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code energy units] */
 extern double CumulMHDNumEnergy; /* total energy created by the MHD source terms and the missing -B^2/2 dV/dt [code energy units] */
 extern double CumulKickFloorEnergy; /* thermal energy added by the kick u-limiter and temperature floor [code energy units] */
-extern double ChemcoolPIHeatErg, ChemcoolPIHeatCells; /* subgrid-PI floor heating in the current cooling pass [erg], cells */
+extern double SGChemPIHeatErg, SGChemPIHeatCells; /* subgrid-PI floor heating in the current cooling pass [erg], cells */
 extern double CumulPIHeatErg;                         /* cumulative subgrid-PI heating on this rank [erg] */
 extern double PIHeatPendingErg, PIHeatPendingCells;   /* PI heating not yet written to FeedbackBudget */
 #ifdef COSMIC_RAY_FLUID

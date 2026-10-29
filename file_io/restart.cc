@@ -18,9 +18,9 @@
 /* Restartfile layout sentinel (see restart()). The magic distinguishes a sentinel from the leading
    bytes of an All struct written by a pre-sentinel binary. */
 #define RESTARTFILE_MAGIC 0x52535446u
-#if defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID) && defined(CRFLUID_INJECTION_AT_SHOCKS)
+#if defined(GALSF_RESOLVEDISM_FB) && defined(SGCHEM) && defined(COSMIC_RAY_FLUID) && defined(CRFLUID_INJECTION_AT_SHOCKS)
 #define RESTARTFILE_LAYOUT_VERSION 12u /* + metal ledger and CR clip totals; no gsl stream */
-#elif defined(GALSF_RESOLVEDISM_FB) && defined(CHEMCOOL) && defined(COSMIC_RAY_FLUID)
+#elif defined(GALSF_RESOLVEDISM_FB) && defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
 #define RESTARTFILE_LAYOUT_VERSION 11u /* + metal ledger and CR clip totals; no gsl stream */
 #elif defined(GALSF_RESOLVEDISM_FB)
 #define RESTARTFILE_LAYOUT_VERSION 10u /* + metal ledger totals; no gsl stream */
@@ -356,7 +356,7 @@ void restart(int modus)
 	  in(&CumulSNe, modus);
 	  in(&CumulAGB, modus);
 	  in(&CumulIa, modus);
-#ifdef CHEMCOOL
+#ifdef SGCHEM
 	  byten(&CumulCoolingEnergyLoss, sizeof(double), modus);
 	  byten(&CumulKickFloorEnergy, sizeof(double), modus);
 	  byten(&CumulMHDNumEnergy, sizeof(double), modus);

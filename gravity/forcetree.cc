@@ -15,7 +15,7 @@
 #include "healpix_utils.h"     /* HEALPix pixel geometry: tree columns and per-pixel fluxes */
 #endif
 #ifdef RT_TREECOL_H2_CO
-#include "../cooling/chemcool/chemcool_consts.h"
+#include "../cooling/sgchem/sgchem_consts.h"
 #endif
 #ifdef SUBFIND
 #include "../structure/subfind/subfind.h"
@@ -2934,7 +2934,7 @@ int force_treeevaluate(int target, int mode, int *exportflag, int *exportnodecou
                      * interparticle spacing for adaptive gas softening). A source EXACTLY
                      * coincident with a cell (odd-N lattice ICs place a cell at the star
                      * position; roundoff separation r2~1e-25) otherwise receives F = L/r2
-                     * ~ 1e63 -> photoionization rate ~1e12 s^-1 -> CHEMCOOL DVODE code-100
+                     * ~ 1e63 -> photoionization rate ~1e12 s^-1 -> SGCHEM DVODE code-100
                      * fatal. Pure floor (DMAX): bit-identical for every source further than
                      * the floor; caps only sub-resolution separations at the physical
                      * "source inside the cell" flux. */

@@ -6,7 +6,7 @@ c
 c  Setup: feed the chemistry an initial state where abhep > ABHE
 c  (the bound the chemistry's compile-time He budget enforces).
 c  This is exactly what diffusion can deliver when X_He/(4*X_H) of a
-c  cell exceeds the compile-time ABHE and the GALSF_CHEMCOOL_VARIABLE_
+c  cell exceeds the compile-time ABHE and the GALSF_SGCHEM_VARIABLE_
 c  XH_AND_ABHE flag is OFF, so chemistry sees fixed ABHE.
 c
 c  Inside rate_eq_ulli, abheI = max(0, ABHE - abhep - abhepp) clamps
@@ -49,7 +49,7 @@ c=======================================================================
       t_vals(2) = 1d3
       t_vals(3) = 1d4
 
-c --- chemcool common-block defaults ---
+c --- sgchem common-block defaults ---
       deff = 1d0
       G0 = 1.7d0
       G0_dust = 1.7d0

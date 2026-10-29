@@ -926,8 +926,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
-        case IO_CHEMCOOL_TRACABUND:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_TRACABUND:
+#ifdef SGCHEM
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -938,8 +938,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
-        case IO_CHEMCOOL_DUSTTEMP:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef SGCHEM
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -949,8 +949,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
-        case IO_CHEMCOOL_COOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_COOLRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -961,8 +961,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
 #endif
             break;
 
-        case IO_CHEMCOOL_CHEMCOOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_SGCHEMRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
@@ -1676,8 +1676,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-#ifdef CHEMCOOL
-                    *fp++ = (MyOutputFloat) CellP[pindex].CoolingRate_CHEMCOOL;
+#ifdef SGCHEM
+                    *fp++ = (MyOutputFloat) CellP[pindex].CoolingRate_SGCHEM;
 #else
                     double ne = CellP[pindex].Ne, ne_out=ne; u = CellP[pindex].InternalEnergyPred; tcool = GetCoolingTime(u, CellP[pindex].Density * All.cf_a3inv, ne, &ne_out, pindex, P, CellP);
                     double coolrate_to_output = 0; if(tcool != 0) {coolrate_to_output = u / tcool;}
@@ -1905,8 +1905,8 @@ case IO_DUSTCHEM_SHAT_MASSRATE:    /* shattering rate for each grain size bin fo
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
-#ifdef CHEMCOOL
-                    *fp++ = (MyOutputFloat) CellP[pindex].Temp; /* CHEMCOOL exact T from non-equilibrium abundances */
+#ifdef SGCHEM
+                    *fp++ = (MyOutputFloat) CellP[pindex].Temp; /* SGCHEM exact T from non-equilibrium abundances */
 #else
                     *fp++ = (MyOutputFloat) CellP[pindex].Temperature;
 #endif
@@ -2479,7 +2479,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
-        case IO_CHEMCOOL_DUSTTEMP:
+        case IO_SGCHEM_DUSTTEMP:
         case IO_STOCHASTIC_IMF_MSTAR:
         case IO_FORMATION_DENSITY:
         case IO_BIRTH_METALLICITY:
@@ -2583,22 +2583,22 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
                 bytes_per_blockelement = sizeof(MyOutputFloat);
             break;
 
-        case IO_CHEMCOOL_TRACABUND:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_TRACABUND:
+#ifdef SGCHEM
             if(mode) bytes_per_blockelement = TRAC_NUM * sizeof(MyInputFloat);
             else bytes_per_blockelement = TRAC_NUM * sizeof(MyOutputFloat);
 #endif
             break;
 
-        case IO_CHEMCOOL_COOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_COOLRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             if(mode) bytes_per_blockelement = 28 * sizeof(MyInputFloat);
             else bytes_per_blockelement = 28 * sizeof(MyOutputFloat);
 #endif
             break;
 
-        case IO_CHEMCOOL_CHEMCOOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_SGCHEMRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             if(mode) bytes_per_blockelement = 6 * sizeof(MyInputFloat);
             else bytes_per_blockelement = 6 * sizeof(MyOutputFloat);
 #endif
@@ -2965,7 +2965,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_DENS_AROUND_STAR:
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
-        case IO_CHEMCOOL_DUSTTEMP:
+        case IO_SGCHEM_DUSTTEMP:
         case IO_STOCHASTIC_IMF_MSTAR:
         case IO_FORMATION_DENSITY:
         case IO_SAMPLED_IMF:
@@ -3019,20 +3019,20 @@ int get_values_per_blockelement(enum iofields blocknr)
             values = 1;
             break;
 
-        case IO_CHEMCOOL_TRACABUND:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_TRACABUND:
+#ifdef SGCHEM
             values = TRAC_NUM;
 #endif
             break;
 
-        case IO_CHEMCOOL_COOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_COOLRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             values = 28;
 #endif
             break;
 
-        case IO_CHEMCOOL_CHEMCOOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_SGCHEMRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             values = 6;
 #endif
             break;
@@ -3327,10 +3327,10 @@ long get_particles_in_block(enum iofields blocknr, int *typelist)
         case IO_DUSTCHEMZMET:
         case IO_DUSTCHEMSPECIESMET:
         case IO_ISMDUSTCHEMMOL:
-        case IO_CHEMCOOL_TRACABUND:
-        case IO_CHEMCOOL_DUSTTEMP:
-        case IO_CHEMCOOL_COOLRATES:
-        case IO_CHEMCOOL_CHEMCOOLRATES:
+        case IO_SGCHEM_TRACABUND:
+        case IO_SGCHEM_DUSTTEMP:
+        case IO_SGCHEM_COOLRATES:
+        case IO_SGCHEM_SGCHEMRATES:
         case IO_TREE_RAD_PROJECTION:
         case IO_MACHNUM:
         case IO_SHOCKMACHNUM:
@@ -3717,21 +3717,21 @@ int blockpresent(enum iofields blocknr)
 #endif
             break;
 
-        case IO_CHEMCOOL_TRACABUND:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_TRACABUND:
+#ifdef SGCHEM
             return 1;
 #endif
             break;
 
-        case IO_CHEMCOOL_DUSTTEMP:
-#ifdef CHEMCOOL
+        case IO_SGCHEM_DUSTTEMP:
+#ifdef SGCHEM
             return 1;
 #endif
             break;
 
-        case IO_CHEMCOOL_COOLRATES:
-        case IO_CHEMCOOL_CHEMCOOLRATES:
-#if defined(CHEMCOOL) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
+        case IO_SGCHEM_COOLRATES:
+        case IO_SGCHEM_SGCHEMRATES:
+#if defined(SGCHEM) && defined(OUTPUT_INDIVIDUAL_COOLRATES)
             return 1;
 #endif
             break;
@@ -4470,16 +4470,16 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_MOLECULARFRACTION:
             strncpy(label, "FMOL", 4);
             break;
-        case IO_CHEMCOOL_TRACABUND:
+        case IO_SGCHEM_TRACABUND:
             strncpy(label, "CCTA", 4);
             break;
-        case IO_CHEMCOOL_DUSTTEMP:
+        case IO_SGCHEM_DUSTTEMP:
             strncpy(label, "CCDT", 4);
             break;
-        case IO_CHEMCOOL_COOLRATES:
+        case IO_SGCHEM_COOLRATES:
             strncpy(label, "CCLR", 4);
             break;
-        case IO_CHEMCOOL_CHEMCOOLRATES:
+        case IO_SGCHEM_SGCHEMRATES:
             strncpy(label, "CCCH", 4);
             break;
         case IO_TREE_RAD_PROJECTION:
@@ -5012,17 +5012,17 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_MOLECULARFRACTION:
             strcpy(buf, "MolecularMassFraction");
             break;
-        case IO_CHEMCOOL_TRACABUND:
-            strcpy(buf, "ChemcoolTracAbund");
+        case IO_SGCHEM_TRACABUND:
+            strcpy(buf, "SGChemTracAbund");
             break;
-        case IO_CHEMCOOL_DUSTTEMP:
-            strcpy(buf, "ChemcoolDustTemp");
+        case IO_SGCHEM_DUSTTEMP:
+            strcpy(buf, "SGChemDustTemp");
             break;
-        case IO_CHEMCOOL_COOLRATES:
-            strcpy(buf, "ChemcoolCoolRates");
+        case IO_SGCHEM_COOLRATES:
+            strcpy(buf, "SGChemCoolRates");
             break;
-        case IO_CHEMCOOL_CHEMCOOLRATES:
-            strcpy(buf, "ChemcoolChemCoolRates");
+        case IO_SGCHEM_SGCHEMRATES:
+            strcpy(buf, "SGChemChemCoolRates");
             break;
         case IO_TREE_RAD_PROJECTION:
             strcpy(buf, "TreeRadProjection");

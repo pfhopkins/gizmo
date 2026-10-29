@@ -222,7 +222,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     if(k_freq==RT_FREQ_BIN_FIRE_OPT) {return (180.)  * fac;} /* note this is roughly equivalent to the specific extinction at R-band [bit higher in UBV, lower in IJHK] */
     if(k_freq==RT_FREQ_BIN_FIRE_IR)  {return (10.) * fac * (0.1 + Zfac);}
 #endif
-#ifdef RT_FUV_BANDS_CHEMCOOL_DUST_LAW
+#ifdef RT_FUV_BANDS_SGCHEM_DUST_LAW
     if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_NUV || k_freq==RT_FREQ_BIN_LYMAN_WERNER) { /* sigma per H at solar DGR: chemistry df25 (2.5 A_V, A_V = 5.348e-22 N_H) for 6-13.6 eV, f_dust (2e-21) for LW */
         double sig_H = (k_freq==RT_FREQ_BIN_LYMAN_WERNER) ? 2.0e-21 : 2.5*5.348e-22, dgr = (i>=0) ? resolvedism_cell_DGR_solar(i) : 1.;
         return DMAX(kappa_HHe, sig_H * dgr * HYDROGEN_MASSFRAC / PROTONMASS_CGS) * fac;
@@ -276,7 +276,7 @@ double rt_absorb_frac_albedo(int i, int k_freq, struct particle_data *pp, struct
     if(k_freq==RT_FREQ_BIN_GENERIC_USER_FREQ) {return DMAX(1.e-6, DMIN(1.0 - 1.e-6, All.Grain_Absorbed_Fraction_vs_Total_Extinction));}
 #endif
 
-#ifdef RT_FUV_BANDS_CHEMCOOL_DUST_LAW
+#ifdef RT_FUV_BANDS_SGCHEM_DUST_LAW
     if(k_freq==RT_FREQ_BIN_PHOTOELECTRIC || k_freq==RT_FREQ_BIN_NUV || k_freq==RT_FREQ_BIN_LYMAN_WERNER) {return 1.-1.e-6;} /* the chemistry's attenuation laws are effective extinction: no separate scattering */
 #endif
 #ifdef RT_CHEM_PHOTOION
@@ -1351,8 +1351,8 @@ void rt_set_simple_inits(int RestartFlag)
 #ifdef RT_CHEM_PHOTOION
             if(flag_to_reset_values_on_startup)
             {
-#ifdef CHEMCOOL
-                {double xHII, xHI; CellP[i].Ne = chemcool_startup_electrons(i, &xHII, &xHI); CellP[i].HII = DMAX(xHII, MIN_REAL_NUMBER); CellP[i].HI = xHI;} /* start from the chemistry abundances, not fully neutral */
+#ifdef SGCHEM
+                {double xHII, xHI; CellP[i].Ne = sgchem_startup_electrons(i, &xHII, &xHI); CellP[i].HII = DMAX(xHII, MIN_REAL_NUMBER); CellP[i].HI = xHI;} /* start from the chemistry abundances, not fully neutral */
 #else
                 CellP[i].HII = MIN_REAL_NUMBER;
                 CellP[i].HI = 1.0 - CellP[i].HII;

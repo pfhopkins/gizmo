@@ -836,7 +836,7 @@ void open_outputfiles(void)
   snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "ENERGYinfo.txt");
   if(!(FdENERGYinfo = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
   else if(RestartFlag == 0) {
-      fprintf(FdENERGYinfo,"%s Energy conservation log [GALSF_RESOLVEDISM_FB + CHEMCOOL]. Columns:\n",prefix_char);
+      fprintf(FdENERGYinfo,"%s Energy conservation log [GALSF_RESOLVEDISM_FB + SGCHEM]. Columns:\n",prefix_char);
       fprintf(FdENERGYinfo,"%s   (1) time  (2) M_gas[Msun]  (3) M_star[Msun]  (4) M_total[Msun]  (5) E_therm[erg]  (6) E_kin[erg]  (7) E_pot[erg]  (8) E_total[erg]  (9) E_cool_cumul[erg] (net chemistry loss, PI heating excluded)  (10) E_fb_cumul[erg] (booked, incl. PI)  (11) M_fb_returned[Msun]  (12) E_fb_coupled_cumul[erg] (measured, incl. PI)  (13) E_PI_cumul[erg]  (14) E_sf_removed_cumul[erg] (thermal+kinetic lost to star formation)\n",prefix_char);
 #ifdef COSMIC_RAY_FLUID
       fprintf(FdENERGYinfo,"%s   (15) E_CR[erg]  (16) E_CR_injected_cumul[erg] (measured at the feedback deposit)  (17) E_CR_loss_cumul[erg] (hadronic+Coulomb, removed from the CR fluid); (15)-(15)[t=0]-(16)+(17) = CR-gas exchange (adiabatic work, streaming losses)\n",prefix_char);
@@ -1147,7 +1147,7 @@ void read_parameter_file(char *fname)
  * registration gated on DEVELOPER_MODE only, every non-developer build silently ignored it,
  * defaulted to 1e10, and wrote exactly ONE row (t=0) per run — the whole-fleet
  * "ENERGYinfo header-only" symptom (2026-07-06). Register whenever the ledger exists. */
-#if defined(DEVELOPER_MODE) || (defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)
+#if defined(DEVELOPER_MODE) || (defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)) || defined(TEST_MHD_ENERGY_LEDGER_OUTPUT)
       strcpy(tag[nt], "TimeBetStatistics");
       strcpy(alternate_tag[nt], "Time_Between_Internal_Diagnostic_Statistics");
       addr[nt] = &All.TimeBetStatistics;
@@ -2421,7 +2421,7 @@ void read_parameter_file(char *fname)
       id[nt++] = REAL;
 #endif
 
-#ifdef CHEMCOOL
+#ifdef SGCHEM
       strcpy(tag[nt], "G0");
       addr[nt] = &All.G0;
       id[nt++] = REAL;
@@ -3241,12 +3241,12 @@ void read_parameter_file(char *fname)
     All.ErrTolTheta = 0.7;
     All.ErrTolForceAcc = 0.0025;
     All.MaxRMSDisplacementFac = 0.25;
-#if !(defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB))
+#if !(defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB))
     /* ENERGYinfo one-row ROOT CAUSE #3 (2026-07-10): this non-DEVELOPER_MODE default
      * block runs AFTER read_parameter_file and silently clobbered the parsed
      * TimeBetStatistics back to 1e10 (usedvalues showed the file value; runtime had
      * 1e10 -> exactly one t=0 row fleet-wide). When the conservation ledger exists
-     * (CHEMCOOL+RESOLVEDISM_FB), the parsed cadence must survive. */
+     * (SGCHEM+RESOLVEDISM_FB), the parsed cadence must survive. */
 #ifndef TEST_MHD_ENERGY_LEDGER_OUTPUT
     All.TimeBetStatistics = 1.0e10;
 #endif

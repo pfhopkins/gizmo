@@ -7,8 +7,8 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
-#include "../cooling/chemcool/chemcool_consts.h"
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM)
+#include "../cooling/sgchem/sgchem_consts.h"
 #endif
 
 /*! Routines for gas equation-of-state terms (collects things like calculation of gas pressure)
@@ -229,7 +229,7 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 #ifdef COOLING
 #ifdef CHIMES
   return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
-#elif defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
+#elif defined(SGCHEM) && defined(GALSF_RESOLVEDISM)
     { /* ions per H nucleus from the chemistry's electrons; ThermalProperties' nH0 is atomic H only, so 1-nH0 would count H2 as ionized */
         double x_ion = cell[i].Ne;
 #if CHEMISTRYNETWORK == 5
@@ -510,7 +510,7 @@ double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0,
 #ifdef METALS
     if(target >= 0)
     {
-#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && defined(CHEMCOOL) && !defined(GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE)
+#if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && defined(SGCHEM) && !defined(GALSF_SGCHEM_VARIABLE_XH_AND_ABHE)
         X = 1./(1.+4.*ABHE); Y = 1.-X; Z = 0; // H/He mix of the chemistry (n_He/n_H = ABHE, metals not counted)
 #elif defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
         Z = DMIN(0.25,pp[target].Metallicity[0]); Y = pp[target].Metallicity[MET_OF(ELEM_He)]; // slot 1 is H in this layout

@@ -994,20 +994,20 @@ OBJS    += cooling/chimes/chimes.o cooling/chimes/chimes_cooling.o cooling/chime
 INCL    += cooling/chimes/chimes_interpol.h cooling/chimes/chimes_proto.h cooling/chimes/chimes_vars.h
 endif
 
-# chemcool non-equilibrium chemistry: fortran backend (no .F with CHEMCOOL_CXX) + C++ interface
-ifeq (CHEMCOOL,$(findstring CHEMCOOL,$(CONFIGVARS)))
-OBJS    += cooling/chemcool/chemcool.o cooling/chemcool/chem_interface.o
-INCL    += cooling/chemcool/chem_interface.h
-ifneq (CHEMCOOL_CXX,$(findstring CHEMCOOL_CXX,$(CONFIGVARS)))
-FOBJS   += cooling/chemcool/coolinmo.o cooling/chemcool/cheminmo.o cooling/chemcool/spline.o cooling/chemcool/cool_func.o cooling/chemcool/photoinit_ism.o \
-           cooling/chemcool/dvode.o cooling/chemcool/evolve_abundances.o cooling/chemcool/rate_eq_simple.o cooling/chemcool/rate_eq_ulli.o \
-           cooling/chemcool/rate_eq_mol.o cooling/chemcool/rate_eq_nl99.o cooling/chemcool/rate_eq_gong17.o \
-           cooling/chemcool/jac.o cooling/chemcool/cool_util.o \
-           cooling/chemcool/const_rates.o cooling/chemcool/validate_rates.o cooling/chemcool/calc_photo.o cooling/chemcool/calc_temp.o \
-           cooling/chemcool/compute_gamma.o cooling/chemcool/wss_z_collis.o
+# sgchem non-equilibrium chemistry: fortran backend (no .F with SGCHEM_CXX) + C++ interface
+ifeq (SGCHEM,$(findstring SGCHEM,$(CONFIGVARS)))
+OBJS    += cooling/sgchem/sgchem.o cooling/sgchem/chem_interface.o
+INCL    += cooling/sgchem/chem_interface.h
+ifneq (SGCHEM_CXX,$(findstring SGCHEM_CXX,$(CONFIGVARS)))
+FOBJS   += cooling/sgchem/coolinmo.o cooling/sgchem/cheminmo.o cooling/sgchem/spline.o cooling/sgchem/cool_func.o cooling/sgchem/photoinit_ism.o \
+           cooling/sgchem/dvode.o cooling/sgchem/evolve_abundances.o cooling/sgchem/rate_eq_simple.o cooling/sgchem/rate_eq_ulli.o \
+           cooling/sgchem/rate_eq_mol.o cooling/sgchem/rate_eq_nl99.o cooling/sgchem/rate_eq_gong17.o \
+           cooling/sgchem/jac.o cooling/sgchem/cool_util.o \
+           cooling/sgchem/const_rates.o cooling/sgchem/validate_rates.o cooling/sgchem/calc_photo.o cooling/sgchem/calc_temp.o \
+           cooling/sgchem/compute_gamma.o cooling/sgchem/wss_z_collis.o
 endif
 
-# CHEMCOOL_CXX: C++/CVODE chemistry backend (cooling/chemcool/cxx/).
+# SGCHEM_CXX: C++/CVODE chemistry backend (cooling/sgchem/cxx/).
 # DEFAULT OFF -- with the flag absent the build is byte-for-byte the Fortran
 # DVODE path above.  With the flag ON init, tables and solve are C++; no .F
 # object and no Fortran runtime is linked.
@@ -1018,8 +1018,8 @@ endif
 #         -DEXAMPLES_ENABLE_C=OFF <sundials-src> && make install
 # Default below is a stable copy (headers + the 6 static libs) of the tree
 # built for the Gate-2 benchmark (SUNDIALS 6.7.0, gcc; original build tree:
-# /orion/ptmp/uli/orion/fb_tests/_chemcool_cxx_build/sundials/).
-ifeq (CHEMCOOL_CXX,$(findstring CHEMCOOL_CXX,$(CONFIGVARS)))
+# /orion/ptmp/uli/orion/fb_tests/_sgchem_cxx_build/sundials/).
+ifeq (SGCHEM_CXX,$(findstring SGCHEM_CXX,$(CONFIGVARS)))
 SUNDIALS_DIR ?= /orion/ptmp/uli/orion/fb_tests/_sundials/install
 SUNDIALS_LIBDIR := $(firstword $(wildcard $(SUNDIALS_DIR)/lib64 $(SUNDIALS_DIR)/lib))
 SUNDIALS_INCL = -I$(SUNDIALS_DIR)/include
@@ -1031,12 +1031,12 @@ SUNDIALS_LIBS = -L$(SUNDIALS_LIBDIR) -lsundials_cvode -lsundials_nvecserial \
 # most SYSTYPE blocks pin the rest of GIZMO to -std=c++11.  Compiling only
 # these files at c++14 avoids silently changing the standard for the whole
 # build (c++14 is appended after the SYSTYPE -std, and the last -std wins).
-# Wildcarded on purpose: cooling/chemcool/cxx/ is under active development
+# Wildcarded on purpose: cooling/sgchem/cxx/ is under active development
 # (Gate 3 is porting the leaf kernels), so a hand-maintained list goes stale and
 # fails at LINK time with undefined cxx_* references rather than at parse time.
 # chem_backend_fortran.cc / chem_backend_c_api.cc bind the Fortran COMMONs: golden harness only
-CHEMCXX_OBJS = $(patsubst %.cc,%.o,$(filter-out cooling/chemcool/cxx/chem_backend_fortran.cc cooling/chemcool/cxx/chem_backend_c_api.cc,$(wildcard cooling/chemcool/cxx/*.cc)))
-INCL    += $(wildcard cooling/chemcool/cxx/*.h)
+CHEMCXX_OBJS = $(patsubst %.cc,%.o,$(filter-out cooling/sgchem/cxx/chem_backend_fortran.cc cooling/sgchem/cxx/chem_backend_c_api.cc,$(wildcard cooling/sgchem/cxx/*.cc)))
+INCL    += $(wildcard cooling/sgchem/cxx/*.h)
 endif
 endif
 
@@ -1070,8 +1070,8 @@ ifneq (,$(findstring GALSF_RESOLVEDISM_SAMPLE_IMF,$(CONFIGVARS))$(findstring GAL
 OBJS    += galaxy_sf/resolvedism_imf_sampling.o
 endif
 
-# Stella stellar + CHEMCOOL tables: built from the stella-tables repo on first compile if missing (scripts/get_stella_tables.sh)
-ifneq (,$(findstring CHEMCOOL,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_HYBRID_DEFAULTS,$(CONFIGVARS)))
+# Stella stellar + SGCHEM tables: built from the stella-tables repo on first compile if missing (scripts/get_stella_tables.sh)
+ifneq (,$(findstring SGCHEM,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_STELLAR_TABLES,$(CONFIGVARS))$(findstring GALSF_RESOLVEDISM_HYBRID_DEFAULTS,$(CONFIGVARS)))
 STELLA_TABLES_DEP = stella_tables
 endif
 
@@ -1181,9 +1181,9 @@ endif
 LIBS = $(HDF5LIB) -g $(MPICHLIB) $(GSL_LIBS) -lgsl -lgslcblas \
 	   $(FFTW_LIBS) $(FFTW_LIBNAMES) -lm $(GRACKLELIBS) $(CHIMESLIBS) $(HEALPIXLIBS) $(KETJU_LIBS) $(RUMI_LIB_LIBS) $(SUNDIALS_LIBS) $(HYPRE_LIBS) $(MKL_LIBS)
 
-FFLAGS = $(FOPTIONS) -Icooling/chemcool
+FFLAGS = $(FOPTIONS) -Icooling/sgchem
 
-# if we have Fortran objects (e.g. CHEMCOOL, EOS_HELMHOLTZ), link with FC; otherwise use CXX
+# if we have Fortran objects (e.g. SGCHEM, EOS_HELMHOLTZ), link with FC; otherwise use CXX
 ifneq ($(FOBJS),)
 $(EXEC): $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) | $(STELLA_TABLES_DEP) $(KETJU_LIB_DEP)
 	$(FC) $(OPTIMIZE) $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) $(LIBS) -o $(EXEC)
@@ -1195,12 +1195,12 @@ endif
 $(OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -c $< -o $@
 
-# CHEMCOOL_CXX sources: same compiler and flags, plus -std=c++14 (SUNDIALS)
+# SGCHEM_CXX sources: same compiler and flags, plus -std=c++14 (SUNDIALS)
 $(CHEMCXX_OBJS): %.o: %.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(CXX) $(CFLAGS) -std=c++14 -I. -c $< -o $@
 
 $(FOBJS): %.o: %.F
-	$(FC) $(FOPTIONS) -I. -Icooling/chemcool -c $< -o $@
+	$(FC) $(FOPTIONS) -I. -Icooling/sgchem -c $< -o $@
 
 # KETJU_LEGACY_C_LIBRARY: the C integrator library (ketju-integrator-c/lib is not tracked), built and installed in place on first link
 ketju-integrator-c/lib/libketju-integrator.a:
@@ -1222,10 +1222,10 @@ compile_time_info.cc: $(CONFIG)
 
 clean:
 	rm -f $(OBJS) $(CHEMCXX_OBJS) $(FOBJS) $(EXEC)
-# CHEMCXX_OBJS is empty when CHEMCOOL_CXX is off, so clean it explicitly:
-# otherwise objects left over from a CHEMCOOL_CXX build survive a clean
+# CHEMCXX_OBJS is empty when SGCHEM_CXX is off, so clean it explicitly:
+# otherwise objects left over from a SGCHEM_CXX build survive a clean
 # made with the flag off (harmless -- they are not linked -- but stale).
-	rm -f cooling/chemcool/cxx/*.o *.oo *.c~ compile_time_info.cc GIZMO_config.h
+	rm -f cooling/sgchem/cxx/*.o *.oo *.c~ compile_time_info.cc GIZMO_config.h
 	rm -f cooling/jaco_eos.cc cooling/microphysics_func_jac.cc cooling/microphysics_func_jac.h cooling/jaco_interp.h
 
 

@@ -146,7 +146,7 @@ extern ALIGN(32) struct particle_data
 /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: per-species mass fractions live in P[].Metallicity[NUM_METAL_SPECIES=28]:
  *   [0] = total Z, [1] = H, [2] = He, [3..27] = C..Zn; slot = MET_OF(StellarElement) (see precompiler_logic.h).
  * No separate ElementAbundance[] array is stored. */
-#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
+#if defined(SGCHEM) && (CHEMISTRYNETWORK == 17)
     MyFloat DeuteriumAbundance;       /*!< total D mass fraction (free + D+ + HD), for diffusion of D pool in network 17 */
 #endif
 #ifdef GALSF_RESOLVEDISM_WINDS

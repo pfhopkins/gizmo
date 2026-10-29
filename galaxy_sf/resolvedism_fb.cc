@@ -1438,7 +1438,7 @@ void resolvedism_inject_fb_energy(void)
 #endif
     if(gE_inj[0] + gE_inj[4] + gN_ev[0] + gN_ev[4] <= 0 && gN_ev[5] > 0) {E_coupled[5] += E_mech3 - E_mech2;} /* failed SNe deposit ejecta: their own channel */
     else {fb_split(E_mech3 - E_mech2, 0, 4);}
-#ifdef CHEMCOOL
+#ifdef SGCHEM
     n_events[6] = PIHeatPendingCells; E_injected[6] = E_coupled[6] = PIHeatPendingErg; /* heated by the chemistry since the last row */
     PIHeatPendingErg = PIHeatPendingCells = 0;
 #endif
@@ -1535,7 +1535,7 @@ void resolvedism_inject_fb_energy(void)
             double nH = rho_cgs * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
             if(nH > local_gas[4]) local_gas[4] = nH;
             if(CellP[i].Density > local_gas[2]) local_gas[2] = CellP[i].Density;
-#ifdef CHEMCOOL
+#ifdef SGCHEM
             if(CellP[i].Temp > local_gas[3]) local_gas[3] = CellP[i].Temp;
 #endif
         }

@@ -45,7 +45,7 @@ GALSF_RESOLVEDISM_G0_VARIABLE            % variable ISRF from stellar FUV  [req 
 GALSF_RESOLVEDISM_RADPRESSURE            % radiation pressure (direct + IR boost)  [auto NUV/OPT_VARIABLE] [excl RADTRANSFER]
 #GALSF_RESOLVEDISM_RADPRESSURE_TREERAD   % per-cell direct radp from tree per-pixel fluxes  [auto by G0_VARIABLE without RADTRANSFER]
 #GHOSDT_G0_CR                            % GHOSDT defaults: uniform G0 (and CR rate with CR_SCALE_WITH_G0) scaled with the 30 Myr SFR; G0_VARIABLE/M1/CR fluid override it
-RT_USE_TREECOL_FOR_NH=12                 % tree columns, 12*NSIDE^2 HEALPix bins: gas + dust-weighted (G0_VARIABLE), H2 + CO (CHEMCOOL), cut at ShieldingLength
+RT_USE_TREECOL_FOR_NH=12                 % tree columns, 12*NSIDE^2 HEALPix bins: gas + dust-weighted (G0_VARIABLE), H2 + CO (SGCHEM), cut at ShieldingLength
 NEED_HEALPIX                             % HEALPix support
 
 ########## Alternative: TreeRay photoionisation ##########
@@ -65,15 +65,15 @@ NEED_HEALPIX                             % HEALPix support
 #RT_RAD_PRESSURE_FORCES                  % M1 radiation pressure
 
 ########## Chemistry / cooling ##########
-COOLING                                  % cooling master switch  [auto by CHEMCOOL]
+COOLING                                  % cooling master switch  [auto by SGCHEM]
 COOLING_OPERATOR_SPLIT                   % operator-split cooling
-CHEMCOOL                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
+SGCHEM                                 % non-equilibrium chemistry (Fortran DVODE)  [excl CHIMES]
 CHEMISTRYNETWORK=17                      % 17 = full network with CO; 5 = reduced (both ABHE 0.1)
 CO_SHIELDING                             % CO self-shielding
 WSS_CIE_COOL                             % WSS09 metal-line CIE cooling for hot gas
-#GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances
-#CHEMCOOL_CXX                            % C++/CVODE chemistry backend (in development)
-#GALSF_CHEMCOOL_DEBUG_INPUT              % DEBUG: validate species vs pools on DVODE entry
+#GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe from element abundances
+#SGCHEM_CXX                            % C++/CVODE chemistry backend (in development)
+#GALSF_SGCHEM_DEBUG_INPUT              % DEBUG: validate species vs pools on DVODE entry
 #CR_SCALE_WITH_G0                        % CR ionisation rate scales with G0 (production: constant rate)
 
 ########## Metals / dust ##########
@@ -82,7 +82,7 @@ GALSF_RESOLVEDISM_METALS_INDIVIDUAL      % 27 elements H-Zn in Metallicity[]
 #GALSF_RESOLVEDISM_METALS_ISOTOPES       % NOT IMPLEMENTED (#error): 40 isotopes instead of 27 elements
 TURB_DIFF_METALS                         % turbulent metal diffusion
 GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS_INDIVIDUAL]
-#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY % no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
+#SGCHEM_DGR_INDEPENDENT_OF_METALLICITY % no live dust: DGR = DGRnormalized (x MW) at every Z; with DGRnormalized 0.01 = gizmo2017. Default scales with local Z
 #GALSF_RESOLVEDISM_DUST_SHOCK_DESTRUCTION % shock-tracked SN dust destruction
 #GALSF_RESOLVEDISM_DUST_NO_MCKEE         % disable McKee SN dust destruction
 #EXPERIMENTAL_DUST_HU_MODEL              % PHYSICS: Hu+19/23/26 dust (MRN sputtering with v_rel, drag, growth, MW anchor 4.74e-3, seed from C/Si); replaces the default dust physics  [req DUST]
@@ -97,7 +97,7 @@ GALSF_RESOLVEDISM_DUST                   % 5-species dust model  [req FB, METALS
 #CRFLUID_DIFFUSION_MODEL=0               % constant CR diffusivity
 #CRFLUID_SPEEDOFLIGHT_REDUCTION=(1.e8/C_LIGHT_CGS) % 1000 km/s CR transport speed (default c); transport along B, no isotropic fallback at B = 0 (Stella setups carry a field)
 #INPUT_READ_COSMICRAYENERGY              % keep IC CR energy on fresh starts
-#CHEMCOOL_KEEP_IC_ABUNDANCES             % keep IC ChemcoolTracAbund on fresh starts
+#SGCHEM_KEEP_IC_ABUNDANCES             % keep IC SGChemTracAbund on fresh starts
 
 ########## Gravity / N-body / KETJU ##########
 ADAPTIVE_GRAVSOFT_FORALL=1+16            % adaptive softening for gas + stars

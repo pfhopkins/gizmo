@@ -128,8 +128,8 @@
 #define PI_ALPHA_B 2.6e-13
 
 #ifdef GALSF_RESOLVEDISM_PHOTOION_RECOMB_AT_CELL_TEMPERATURE
-#include "../cooling/chemcool/chemcool_consts.h"
-#include "../cooling/chemcool/chem_commons.h"
+#include "../cooling/sgchem/sgchem_consts.h"
+#include "../cooling/sgchem/chem_commons.h"
 /* chemistry's H+ case-B rate chtab(13) at T, rate_eq_simple.F table lookup */
 static double pi_chem_case_b_rate(double T)
 {
@@ -420,7 +420,7 @@ void resolvedism_photoionize(void)
      * Clear all previously-ionized cells. The marking sweep will re-mark cells
      * inside active HII regions as Ionized=2. After the sweeps, we
      * transition 2->1. Cells not re-ionized (dead/inactive stars) revert
-     * to Ionized=0 and recombine naturally via CHEMCOOL. */
+     * to Ionized=0 and recombine naturally via SGCHEM. */
     for(j = 0; j < N_gas; j++) {
         if(P[j].Type != 0) continue;
         if(CellP[j].Ionized == 1) CellP[j].Ionized = 0;
@@ -430,7 +430,7 @@ void resolvedism_photoionize(void)
      * BUGFIX 2026-07-31: this and the walk loop below iterated over ACTIVE
      * particles only, while the global reset above unflags EVERY cell EVERY
      * call — so on each fine step where an ionizing star's timebin left it
-     * inactive, its whole HII region was silently unflagged and CHEMCOOL
+     * inactive, its whole HII region was silently unflagged and SGCHEM
      * cooled/recombined the dense front cells (t_cool ~ 1 kyr at n=100 <
      * the star's timestep) before the next re-mark. The bubble was cold-
      * started over and over: no photo-evaporation refill, interior 7x
@@ -747,7 +747,7 @@ void resolvedism_photoionize(void)
     /* Post-evaluate ionization state transitions (gizmo2017 pattern):
      * The global reset already cleared 1->0 at the top.
      * Now transition 2->1. No wakeup: gizmo2017 photoionize.c:718 wakes SphP[j] with a stale j, never the ionized cell.
-     * Cells not re-ionized remain at 0 and recombine via CHEMCOOL. */
+     * Cells not re-ionized remain at 0 and recombine via SGCHEM. */
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
     {   /* photon ledger: recombination cost of the cells marked this call vs total Q */
         double led[2] = {0, 0}, led_g[2] = {0, 0};

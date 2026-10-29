@@ -385,8 +385,8 @@ void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime
 
     if(dtime_cgs <= 0) {return;} /* catch */
     int k_CRegy;
-#if defined(CHEMCOOL_CXX) && defined(GALSF_RESOLVEDISM)
-    double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: chemcool.cc takes the chemistry's ionisation heating out of e_CR */
+#if defined(SGCHEM_CXX) && defined(GALSF_RESOLVEDISM)
+    double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: sgchem.cc takes the chemistry's ionisation heating out of e_CR */
 #else
     double f_ion=DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell),1.),0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC; /* some coefficients; a_hadronic is the default coefficient, b_coulomb_ion_per_GeV the default Coulomb+ionization (the two scale nearly-identically) normalization divided by GeV, b/c we need to divide the energy per CR  */
@@ -490,7 +490,7 @@ void CalculateAndAssign_CosmicRay_DiffusionAndStreamingCoefficients(int i, struc
 #ifdef COOLING
     double ne=1, nh0=0, nHe0=0, nHepp, nhp, nHeII, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, rho_cgs, u0=cell[i].InternalEnergyPred;
     temperature = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, &nHe0, &nHeII, &nHepp, pp, cell); rho_cgs=rho*UNIT_DENSITY_IN_CGS; // get thermodynamic properties
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM)
     nh0 = DMAX(0., 1. - Get_Gas_Ionized_Fraction(i, pp, cell)); /* Stella: neutral H nuclei incl. H2 (ThermalProperties gives atomic H only), for ion-neutral damping */
 #endif
     f_ion = DMIN(DMAX(DMAX(DMAX(1-nh0, nhp), ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
@@ -851,7 +851,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         if(dCR > dCRmax) {dCR=dCRmax;} // don't allow excessively large values
         if(dCR < -eCR_tmp) {dCR=-eCR_tmp;} // don't allow it to go negative
         double eCR_0, eCR_00; eCR_00 = eCR_tmp; eCR_tmp += dCR; if((eCR_tmp<0)||(isnan(eCR_tmp))) {eCR_tmp=0;} // check against energy going negative or nan
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
         if(mode==0 && (dCR != dCR_dt*dt_entr || eCR_00 != cell[i].CosmicRayEnergy[k_CRegy] || eCR_tmp != eCR_00 + dCR)) { /* ledger: CR energy the cap and zero floors add */
             double de_clip = eCR_tmp - (cell[i].CosmicRayEnergy[k_CRegy] + dCR_dt*dt_entr);
             if(isfinite(de_clip)) {
@@ -879,7 +879,7 @@ double CosmicRay_Update_DriftKick(int i, double dt_entr, int mode, struct partic
         /* now need to account for the adiabatic heating/cooling of the 'fluid', here, with gamma=GAMMA_COSMICRAY(k_CRegy) */
         double dCR_div = CR_calculate_adiabatic_gasCR_exchange_term(i, dt_entr, (GAMMA_COSMICRAY(k_CRegy)-1.)*eCR_tmp, mode, pp, cell); // this will handle the update below - separate subroutine b/c we want to allow it to appear in a couple different places
         double uf = DMAX(u0 - dCR_div/pp[i].Mass , All.MinEgySpec); // final updated value of internal energy per above
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
         if(mode==0) { /* ledger: gas energy the MinEgySpec floors add */
             double u_in = cell[i].InternalEnergy, u_raw = u0 - dCR_div/pp[i].Mass, de_floor = 0;
             if(u_in < All.MinEgySpec) {de_floor += (All.MinEgySpec - u_in) * pp[i].Mass;}
@@ -1830,7 +1830,7 @@ double INLINE_FUNC Get_CosmicRayEnergyDensity_cgs(int i, struct particle_data *p
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     return cell[i].SubGrid_CosmicRayEnergyDensity*All.cf_a3inv * UNIT_PRESSURE_IN_CGS;
 #endif
-#if defined(GHOSDT_G0_CR) && !defined(CHEMCOOL) /* CHEMCOOL sets its CR rate in chem_fill_inputs */
+#if defined(GHOSDT_G0_CR) && !defined(SGCHEM) /* SGCHEM sets its CR rate in chem_fill_inputs */
     return All.FactorG0 * sqrt(All.InterstellarRadiationFieldStrength) * 1.6e-12; /* GHOSDT: uniform, linear in FactorG0 */
 #endif
 #ifdef RT_ISRF_BACKGROUND

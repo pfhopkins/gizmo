@@ -89,7 +89,7 @@ static void make_gas(int i, double x, double y, double z, double mass, double X_
 #if defined(GALSF_RESOLVEDISM_DUST)
     for(int k = 0; k < NUM_RESOLVEDISM_DUST; k++) {CellP[i].Dust[k] = 1e-3 * (k + 1) * (1. + seed);}
 #endif
-#if defined(CHEMCOOL)
+#if defined(SGCHEM)
     for(int k = 0; k < TRAC_NUM; k++) {CellP[i].TracAbund[k] = 1e-2 * (k + 1) * (1. + 2. * seed);}
 #endif
 #ifdef MAGNETIC
@@ -150,7 +150,7 @@ static Totals totals(int n)
 #if defined(SINK_THERMALFEEDBACK)
         t.E_sink += CellP[i].Injected_Sink_Energy;
 #endif
-#if defined(CHEMCOOL) && defined(HAVE_PARTICLE_HYDROGEN_MASSFRAC)
+#if defined(SGCHEM) && defined(HAVE_PARTICLE_HYDROGEN_MASSFRAC)
         double X_H = particle_hydrogen_massfrac(i); /* TracAbund are n_X/n_H */
         t.H2 += CellP[i].TracAbund[0] * 2. * X_H * P[i].Mass;
         if(TRAC_NUM > 2) {t.CO += CellP[i].TracAbund[2] * 28. * X_H * P[i].Mass;}
@@ -176,7 +176,7 @@ static void check_totals(const char *what, const Totals &a, const Totals &b)
 #if defined(SINK_THERMALFEEDBACK)
     snprintf(name, sizeof(name), "%s:injected_sink_energy", what); check_rel(name, b.E_sink, a.E_sink, a.E_sink);
 #endif
-#if defined(CHEMCOOL) && defined(HAVE_PARTICLE_HYDROGEN_MASSFRAC)
+#if defined(SGCHEM) && defined(HAVE_PARTICLE_HYDROGEN_MASSFRAC)
     snprintf(name, sizeof(name), "%s:H2_mass", what); check_rel(name, b.H2, a.H2, a.H2);
     if(TRAC_NUM > 2) {snprintf(name, sizeof(name), "%s:CO_mass", what); check_rel(name, b.CO, a.CO, a.CO);}
 #endif
@@ -372,7 +372,7 @@ int main(int argc, char **argv)
     {const double sa[11]={0.02,0.28,3.26e-3,1.32e-3,8.65e-3,2.22e-3,9.31e-4,1.08e-3,6.44e-4,1.01e-4,1.73e-3}; for(int k=1;k<11 && k<NUM_METAL_SPECIES;k++) {All.SolarAbundances[k]=sa[k];}}
 #endif
 #endif
-#if defined(COOLING) && !defined(CHEMCOOL)
+#if defined(COOLING) && !defined(SGCHEM)
     InitCool(); /* the merge calls set_eos_pressure, which reads the cooling tables */
 #endif
 

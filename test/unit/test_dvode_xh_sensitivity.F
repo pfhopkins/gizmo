@@ -59,7 +59,7 @@ c --- network 5 has no He/D/HD chemistry so Z=0 is ill-posed ---
       abundo_sol  = 3.16d-4
       abundsi_sol = 1.50d-5
 
-c --- chemcool common-block parameters ---
+c --- sgchem common-block parameters ---
       deff = 1d0
       G0 = 1.7d0
       G0_dust = 1.7d0

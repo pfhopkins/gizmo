@@ -1,4 +1,4 @@
-"""Cosmic-ray heating, ionisation and losses in CHEMCOOL network 5 with the CR fluid (Stella cloud Config + COSMIC_RAY_FLUID).
+"""Cosmic-ray heating, ionisation and losses in SGCHEM network 5 with the CR fluid (Stella cloud Config + COSMIC_RAY_FLUID).
 The driver evolves a real cell to equilibrium at fixed nH and fixed CR energy density for (nH, zeta) points and the test checks:
 zeta in the cell = 3e-17 e_CR / (1.8 eV cm^-3) (SGChem); chemistry CR heating = 20 eV per ionisation x (n_HI + n_H2) (Goldsmith & Langer 1978,
 as SGChem) plus hadronic and free-electron Coulomb heating (ionisation is in the zeta term); CR fluid loss per step = the hadronic + Coulomb rate; equilibrium T in the dark-cloud range.
@@ -46,7 +46,7 @@ def _link_driver(test_dir, repo=REPO):
 def run_driver(exe, repo=REPO):
     run = tempfile.mkdtemp(prefix=f"{DRIVER}_")
     os.makedirs(join(run, "output"))
-    os.symlink(repo, join(run, "gizmo"))  # CHEMCOOL and the stellar tables open their data under gizmo/
+    os.symlink(repo, join(run, "gizmo"))  # SGCHEM and the stellar tables open their data under gizmo/
     subprocess.run(["python3", join(DRIVER_DIR, f"make_{DRIVER}_ics.py"), join(run, f"{DRIVER}_ics.hdf5")], check=True)
     r = subprocess.run(["mpirun", "-np", "1", exe, join(DRIVER_DIR, f"{DRIVER}.params")], capture_output=True, text=True, cwd=run)
     assert "DONE" in r.stdout, "driver did not finish (exit %d):\n%s\n%s" % (r.returncode, r.stdout[-3000:], r.stderr[-3000:])

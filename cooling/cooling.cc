@@ -59,7 +59,7 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 double CumulCoolingEnergyLoss = 0; /* cumulative cooling energy loss on this rank [code energy units] */
 double CumulMHDNumEnergy = 0; /* MHD non-conservative energy on this rank [code energy units] */
 double CumulKickFloorEnergy = 0; /* kick u-limiter + temperature-floor energy on this rank [code energy units] */
-double ChemcoolPIHeatErg = 0, ChemcoolPIHeatCells = 0, CumulPIHeatErg = 0, PIHeatPendingErg = 0, PIHeatPendingCells = 0;
+double SGChemPIHeatErg = 0, SGChemPIHeatCells = 0, CumulPIHeatErg = 0, PIHeatPendingErg = 0, PIHeatPendingCells = 0;
 #ifdef COSMIC_RAY_FLUID
 double CumulCRLossEnergy = 0; /* CR energy removed by the loss operator on this rank [code energy units] */
 double CumulCRClipEnergy = 0; /* CR energy added by the transport-step cap and zero floor on this rank [code energy units] */
@@ -157,8 +157,8 @@ void cooling_parent_routine(void)
     int N_active = (int) cool_indices.size();
     if(N_active == 0) {return;}
 
-#ifdef CHEMCOOL
-    /* CHEMCOOL reads/writes the global P/CellP by global index (chem_interface, chemcool.cc), so it cannot run
+#ifdef SGCHEM
+    /* SGCHEM reads/writes the global P/CellP by global index (chem_interface, sgchem.cc), so it cannot run
        on the compact copies: cool in place with global indices (pp/cell = the global arrays, same data). */
     double *u_before_cool = (double *) malloc(N_active * sizeof(double));
     for(int j = 0; j < N_active; j++) {u_before_cool[j] = CellP[cool_indices[j]].InternalEnergy;}
@@ -166,8 +166,8 @@ void cooling_parent_routine(void)
     double *ecr_before_cool = (double *) malloc(N_active * sizeof(double));
     for(int j = 0; j < N_active; j++) {ecr_before_cool[j] = 0; for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ecr_before_cool[j] += CellP[cool_indices[j]].CosmicRayEnergy[k];}}
 #endif
-    ChemcoolPIHeatErg = ChemcoolPIHeatCells = 0;
-#ifdef CHEMCOOL_OMP_CROSSCHECK
+    SGChemPIHeatErg = SGChemPIHeatCells = 0;
+#ifdef SGCHEM_OMP_CROSSCHECK
     /* serial reference on the same inputs, then the threaded pass must reproduce it byte for byte */
     struct particle_data *xin_P = (struct particle_data *) mymalloc("xin_P", N_active * sizeof(struct particle_data));
     struct gas_cell_data *xin_C = (struct gas_cell_data *) mymalloc("xin_C", N_active * sizeof(struct gas_cell_data));
@@ -176,19 +176,19 @@ void cooling_parent_routine(void)
     for(int j = 0; j < N_active; j++) {xin_P[j] = P[cool_indices[j]]; xin_C[j] = CellP[cool_indices[j]];}
     for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
     for(int j = 0; j < N_active; j++) {int i = cool_indices[j]; xref_P[j] = P[i]; xref_C[j] = CellP[i]; P[i] = xin_P[j]; CellP[i] = xin_C[j];}
-    ChemcoolPIHeatErg = ChemcoolPIHeatCells = 0; /* count the threaded pass only */
+    SGChemPIHeatErg = SGChemPIHeatCells = 0; /* count the threaded pass only */
 #endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
     for(int j = 0; j < N_active; j++) {do_the_cooling_for_particle(cool_indices[j], P, CellP);}
-#ifdef CHEMCOOL_OMP_CROSSCHECK
+#ifdef SGCHEM_OMP_CROSSCHECK
     {
         int n_bad = 0, j_bad = -1;
         for(int j = 0; j < N_active; j++) {int i = cool_indices[j];
             if(memcmp(&xref_P[j], &P[i], sizeof(struct particle_data)) || memcmp(&xref_C[j], &CellP[i], sizeof(struct gas_cell_data))) {if(n_bad++ == 0) {j_bad = j;}}}
         if(n_bad > 0) {int i = cool_indices[j_bad];
-            PRINT_WARNING("CHEMCOOL_OMP_CROSSCHECK: %d of %d cells differ between serial and threaded chemistry; first ID=%llu InternalEnergy %.17g (threaded) vs %.17g (serial)",
+            PRINT_WARNING("SGCHEM_OMP_CROSSCHECK: %d of %d cells differ between serial and threaded chemistry; first ID=%llu InternalEnergy %.17g (threaded) vs %.17g (serial)",
                           n_bad, N_active, (unsigned long long) P[i].ID, CellP[i].InternalEnergy, xref_C[j_bad].InternalEnergy);
             endrun(8859);}
     }
@@ -224,10 +224,10 @@ void cooling_parent_routine(void)
         if(nH_i < nH_min) nH_min = nH_i;
         if(nH_i > nH_max) nH_max = nH_i;
     }
-    dE_cool_step += ChemcoolPIHeatErg / UNIT_ENERGY_IN_CGS; /* PI heating is booked as feedback, not as negative cooling */
+    dE_cool_step += SGChemPIHeatErg / UNIT_ENERGY_IN_CGS; /* PI heating is booked as feedback, not as negative cooling */
     CumulCoolingEnergyLoss += dE_cool_step;
-    CumulPIHeatErg += ChemcoolPIHeatErg; PIHeatPendingErg += ChemcoolPIHeatErg; PIHeatPendingCells += ChemcoolPIHeatCells;
-    PRINT_STATUS("CHEMCOOL_DIAG: N_active=%d  dE_cool=%.4e[code]  E_cool_cum=%.4e[code]  T=[%.2e,%.2e]K  nH=[%.2e,%.2e]cm^-3",
+    CumulPIHeatErg += SGChemPIHeatErg; PIHeatPendingErg += SGChemPIHeatErg; PIHeatPendingCells += SGChemPIHeatCells;
+    PRINT_STATUS("SGCHEM_DIAG: N_active=%d  dE_cool=%.4e[code]  E_cool_cum=%.4e[code]  T=[%.2e,%.2e]K  nH=[%.2e,%.2e]cm^-3",
         N_active, dE_cool_step, CumulCoolingEnergyLoss, T_min, T_max, nH_min, nH_max);
     free(u_before_cool);
 #ifdef COSMIC_RAY_FLUID
@@ -278,7 +278,7 @@ void cooling_parent_routine(void)
 
     myfree(compact_Cell);
     myfree(compact_P);
-#endif /* CHEMCOOL */
+#endif /* SGCHEM */
 
 #ifdef JACO
     jaco_report_solve_stats();
@@ -337,18 +337,18 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
     if((dtime>0)&&(cell[i].Mass>0)&&(pp[i].Type==0))  // upon start-up, need to protect against dt==0 //
     {
-#if defined(CHEMCOOL) && defined(CHEMCOOL_LEGACY_COOLING)
-        /* legacy: CHEMCOOL handles its own cooling, chemistry, and internal energy update, bypassing the steps below */
+#if defined(SGCHEM) && defined(SGCHEM_LEGACY_COOLING)
+        /* legacy: SGCHEM handles its own cooling, chemistry, and internal energy update, bypassing the steps below */
 #if defined(RADTRANSFER)
         {int k_rt; for(k_rt=0;k_rt<N_RT_FREQ_BINS;k_rt++) {CellP[i].Lambda_RadiativeCooling_toRHDBins[k_rt]=0;}} /* prevent stale values from affecting RT solver */
 #endif
-        double u_before_chemcool = CellP[i].InternalEnergy;
-        do_chemcool_step(i, dtime, 0, 0); /* dl=0: shielding columns come from the tree columns, not local approx */
+        double u_before_sgchem = CellP[i].InternalEnergy;
+        do_sgchem_step(i, dtime, 0, 0); /* dl=0: shielding columns come from the tree columns, not local approx */
         if(CellP[i].InternalEnergy < All.MinEgySpec) { CellP[i].InternalEnergy = All.MinEgySpec; CellP[i].InternalEnergyPred = All.MinEgySpec; }
 
 #if defined(RADTRANSFER)
         /* --- Radiation-chemistry-cooling coupling ---
-           do_chemcool_step already populated Lambda_RadiativeCooling_toRHDBins[] and called
+           do_sgchem_step already populated Lambda_RadiativeCooling_toRHDBins[] and called
            rt_ir_lambdadust (which sets Dust_Temperature). Now transfer energy between gas
            cooling/heating and Rad_E_gamma[k] to conserve total energy.
            Mirrors standard solver (cooling.cc lines 238-296). */
@@ -358,7 +358,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
             double unew_cc = CellP[i].InternalEnergy;
             int k;
             double ratefact = (C_LIGHT_CODE_REDUCED(i)/C_LIGHT_CODE) * nH2 / (CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS) * (dtime*UNIT_TIME_IN_CGS) / (UNIT_SPECEGY_IN_CGS) * P[i].Mass;
-            double de_u = (unew_cc - u_before_chemcool) * P[i].Mass;
+            double de_u = (unew_cc - u_before_sgchem) * P[i].Mass;
             double de_rad_tot_final = 0, de_rad_tot = 0;
             for(k=0;k<N_RT_FREQ_BINS;k++) {de_rad_tot += CellP[i].Lambda_RadiativeCooling_toRHDBins[k] * ratefact;}
             double de_u_rad = -de_rad_tot, de_u_work = de_u - de_u_rad;
@@ -418,7 +418,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
         /* Operator-split CR energy losses (hadronic, Coulomb, catastrophic).
            Gas heating from these losses is handled self-consistently inside
-           CHEMCOOL (cool_func.F R11), so we only remove energy from the CR fluid here. */
+           SGCHEM (cool_func.F R11), so we only remove energy from the CR fluid here. */
         CR_cooling_and_losses(i, CellP[i].TracAbund[1], CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS, P, CellP);
 #endif
         set_eos_pressure(i, pp, cell);
@@ -618,19 +618,19 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     double u, du; u=0; du=0;
     if(rho <= 0 || dt == 0) {return DMAX(u,All.MinEgySpec);}
 
-#if defined(CHEMCOOL) && !defined(CHEMCOOL_LEGACY_COOLING)
-    if(cell != CellP) {endrun(8858);} /* CHEMCOOL reads the global P/CellP by index, not the compact copies */
+#if defined(SGCHEM) && !defined(SGCHEM_LEGACY_COOLING)
+    if(cell != CellP) {endrun(8858);} /* SGCHEM reads the global P/CellP by index, not the compact copies */
 #ifndef COOLING_OPERATOR_SPLIT
     if(cell[target].CoolingIsOperatorSplitThisTimestep==0)
     { /* unsplit: hydro heating enters as for grackle, half before the solve and a corrected half after */
         du = dt * cell[target].DtInternalEnergy / ( (UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC));
         u_old += 0.5*du;
-        u = chemcool_cool_cell(target, u_old, dt);
+        u = sgchem_cool_cell(target, u_old, dt);
         double r=u/u_old; if(r>1) {r=1/r;} if(fabs(r-1)>1.e-4) {r=(r-1)/log(r);} r=DMAX(0,DMIN(r,1));
         du *= 0.5*r; if(du<-0.5*u) {du=-0.5*u;} u+=du;
     } else
 #endif
-    u = chemcool_cool_cell(target, u_old, dt);
+    u = sgchem_cool_cell(target, u_old, dt);
     *ne_eval = cell[target].Ne;
     return DMAX(u, All.MinEgySpec);
 #endif
@@ -1979,7 +1979,7 @@ void SetZeroIonization(void)
     gJHe0 = gJHep = gJH0 = 0; epsHe0 = epsHep = epsH0 = 0; J_UV = 0;
 }
 
-/* Expose UVB rates to CHEMCOOL */
+/* Expose UVB rates to SGCHEM */
 void get_uvb_rates(double *out_gJH0, double *out_gJHe0, double *out_gJHep, double *out_epsH0, double *out_epsHe0, double *out_epsHep)
 {
     if(out_gJH0) *out_gJH0 = gJH0;
@@ -2114,8 +2114,8 @@ void InitCool(void)
     return;
 #endif
 
-#ifdef CHEMCOOL
-    chemcool_init();
+#ifdef SGCHEM
+    sgchem_init();
 #endif
 
 #ifdef COOL_GRACKLE
@@ -2171,7 +2171,7 @@ void InitCool(void)
 #endif
 
 #else // CHIMES
-#ifndef CHEMCOOL
+#ifndef SGCHEM
     InitCoolMemory();
     MakeCoolingTable();
     ensure_cooling_tables_exist();
@@ -2180,7 +2180,7 @@ void InitCool(void)
 #ifdef COOL_METAL_LINES_BY_SPECIES
     LoadMultiSpeciesTables();
 #endif
-#else /* CHEMCOOL: need TREECOOL for UV background rates via get_uvb_rates() in cosmological runs */
+#else /* SGCHEM: need TREECOOL for UV background rates via get_uvb_rates() in cosmological runs */
     if(All.ComovingIntegrationOn) {
         ReadIonizeParams("TREECOOL");
         IonizeParams();
@@ -2767,9 +2767,9 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
     double temp = ChimesGasVars[target].temperature;
     *mu_guess = Get_Gas_Mean_Molecular_Weight_mu(temp, rho, nH0_guess, ne_guess, 0, target, pp, cell);
     return temp;
-#elif defined(CHEMCOOL)
-    /* CHEMCOOL tracks temperature and abundances in the Fortran chemistry — use stored values directly,
-       the C cooling tables (AlphaHp etc.) are never allocated when CHEMCOOL is active */
+#elif defined(SGCHEM)
+    /* SGCHEM tracks temperature and abundances in the Fortran chemistry — use stored values directly,
+       the C cooling tables (AlphaHp etc.) are never allocated when SGCHEM is active */
     double temp = 0;
     *ne_guess = 0; *nH0_guess = 1; *nHp_guess = 0; *nHe0_guess = yhelium(target, pp); *nHep_guess = 0; *nHepp_guess = 0;
     double abh2 = 0, abe = 0;

@@ -530,7 +530,7 @@ extern struct global_data_all_processes
   double Chimes_f_esc_G0;
 #endif
 #endif // CHIMES
-#ifdef CHEMCOOL
+#ifdef SGCHEM
   double G0;                    /*!< UV radiation field strength in Habing units */
   double CosmicRayIonRate;      /*!< cosmic ray ionization rate [s^-1] */
   double DGRnormalized;         /*!< dust-to-gas ratio normalized to solar */
@@ -539,7 +539,7 @@ extern struct global_data_all_processes
   double DustGrowthTimescaleGyr;  /*!< ISM growth time at n_H=1, T=100 K, Z'=1, a_eff=0.035 um (Hu+26 eq 4) */
   double DustGrowthCoulombFactor; /*!< area-weighted Coulomb enhancement D_eff (Hu+23: 10, Hu+26: 1) */
 #endif
-#ifdef CHEMCOOL
+#ifdef SGCHEM
   double DeutAbund;             /*!< primordial deuterium abundance D/H by number */
   double InitialMetallicity;    /*!< initial metallicity in solar units */
 #endif
@@ -1649,10 +1649,10 @@ enum iofields
   IO_DENS_AROUND_STAR,
   IO_DELAY_TIME_HII,
   IO_MOLECULARFRACTION,
-  IO_CHEMCOOL_TRACABUND,
-  IO_CHEMCOOL_DUSTTEMP,
-  IO_CHEMCOOL_COOLRATES,
-  IO_CHEMCOOL_CHEMCOOLRATES,
+  IO_SGCHEM_TRACABUND,
+  IO_SGCHEM_DUSTTEMP,
+  IO_SGCHEM_COOLRATES,
+  IO_SGCHEM_SGCHEMRATES,
   IO_TREE_RAD_PROJECTION,
   IO_SAMPLE_IMF_MSTAR,
   IO_STOCHASTIC_IMF_MSTAR,

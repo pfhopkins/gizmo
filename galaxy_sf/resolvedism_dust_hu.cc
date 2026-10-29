@@ -9,8 +9,8 @@
 #include "resolvedism_dust_kernels.h"
 #include "../declarations/resolvedism_dgr.h"
 #include "../declarations/resolvedism_depletion.h"
-#ifdef CHEMCOOL
-#include "../cooling/chemcool/chemcool_consts.h"
+#ifdef SGCHEM
+#include "../cooling/sgchem/sgchem_consts.h"
 #endif
 
 /*
@@ -30,7 +30,7 @@
  *   - thermal + nonthermal sputtering (Nozawa+06), dust v_rel from drag, hydro acceleration, betatron
  *   - ISM growth in cold gas
  *   - stellar condensation yields (resolvedism_fb_thermal.cc / resolvedism_fb_momentum.cc)
- *   - CHEMCOOL coupling via resolvedism_dgr.h and gas-phase C/O/Si
+ *   - SGCHEM coupling via resolvedism_dgr.h and gas-phase C/O/Si
  */
 
 #if defined(GALSF_RESOLVEDISM_DUST) && defined(EXPERIMENTAL_DUST_HU_MODEL)
@@ -74,7 +74,7 @@ static void resolvedism_dust_env(int i, struct dustk_env *e)
 {
     double rho_phys = CellP[i].Density * All.cf_a3inv;
     e->nH = rho_phys * UNIT_DENSITY_IN_NHCGS * DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 0); /* hydrogen number density (Hu+19/23) */
-#ifdef CHEMCOOL
+#ifdef SGCHEM
     e->T = CellP[i].Temp;
     e->x_e = DMAX(CellP[i].TracAbund[IHP], 0) + 1.4e-4 * DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0]; /* H+ plus C+ */
 #else
@@ -84,7 +84,7 @@ static void resolvedism_dust_env(int i, struct dustk_env *e)
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(RADTRANSFER)
     e->G0 = CellP[i].G0;
-#elif defined(CHEMCOOL)
+#elif defined(SGCHEM)
     e->G0 = All.G0;
 #else
     e->G0 = 1.0;
@@ -143,9 +143,9 @@ void resolvedism_dust_evolve(void)
         {
             double Zp = DMAX(P[i].Metallicity[0], 0) / All.SolarAbundances[0];
             double C_CO = 0, O_CO = 0;
-#if defined(CHEMCOOL) && (ICO != UNUSED)
+#if defined(SGCHEM) && (ICO != UNUSED)
             {
-#ifdef GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE
+#ifdef GALSF_SGCHEM_VARIABLE_XH_AND_ABHE
                 double X_H = DMAX(P[i].Metallicity[MET_OF(ELEM_H)], 1e-10);
 #else
                 double X_H = 1.0 / (1.0 + 4.0 * ABHE);

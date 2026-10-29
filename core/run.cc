@@ -998,7 +998,7 @@ void calculate_non_standard_physics(void)
     MCBAL_LOG("pre_photoion");
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && !defined(TREE_RAY_PI)
     /* TreeRay-PI supersedes the subgrid Stromgren search: continuous per-cell
-     * ionization rates from the tree bands feed rt_phot_HI in chemcool instead. */
+     * ionization rates from the tree bands feed rt_phot_HI in sgchem instead. */
     resolvedism_photoionize(); // resolved ISM Stromgren sphere photo-ionization
 #endif
 
@@ -1054,7 +1054,7 @@ void calculate_non_standard_physics(void)
 #ifdef GALSF /* star/sink particle formation */
     MCBAL_LOG("pre_starform_FB");
     MBARY_STEP("pre_sf_spawn");
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
     double E_pre_sf = resolvedism_mech_energy_local(); /* SF energy sink for ENERGYinfo */
 #endif
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
@@ -1064,7 +1064,7 @@ void calculate_non_standard_physics(void)
     assign_stellar_masses(); // sample individual stellar masses from Kroupa IMF for newly formed star particles
     MBARY_STEP("post_imf_accrete");
 #endif
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
     CumulSFEnergyRemoved += E_pre_sf - resolvedism_mech_energy_local();
 #endif
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
@@ -1908,7 +1908,7 @@ void energy_statistics(void)
     }
 #endif
 
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
   /* Conservation budget: mass and energy tracking.
    * BUGFIX 2026-07-03: this used to ALSO require HighestActiveTimeBin==HighestOccupiedTimeBin,
    * but energy_statistics() is triggered by the TimeBetStatistics threshold, which is almost

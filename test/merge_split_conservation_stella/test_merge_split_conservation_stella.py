@@ -1,4 +1,4 @@
-"""test/merge_split_conservation under the Stella configuration (CHEMCOOL net 17, RESOLVEDISM elements and dust, SN spawn)."""
+"""test/merge_split_conservation under the Stella configuration (SGCHEM net 17, RESOLVEDISM elements and dust, SN spawn)."""
 
 import os
 import sys

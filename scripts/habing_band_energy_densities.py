@@ -6,7 +6,7 @@ Spectral forms (Draine 2011, Physics of the ISM, eqs. 12.6-12.7), lam3 = lambda/
   Draine:  lam*u_lam = 6.84e-14 * lam3^-5 * (31.016 lam3^2 - 49.913 lam3 + 19.897)  erg cm^-3
 Band energy density u = int u_lam dlam. Cross-check: Habing 6-13.6 eV = 5.29e-14 (Draine 2011 sec. 12.5).
 Chemistry unit (SGChem photoinit_ism.F): Draine 1978 shape, scaled so that G0 = 1.7 is the Draine field, i.e. Draine/1.7.
-The Draine/1.7 values, rounded to 4 digits, are HABING_EGY_DENSITY_* in cooling/chemcool/chem_interface.h.
+The Draine/1.7 values, rounded to 4 digits, are HABING_EGY_DENSITY_* in cooling/sgchem/chem_interface.h.
 """
 from scipy.integrate import quad
 import numpy as np

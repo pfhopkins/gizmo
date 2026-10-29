@@ -92,13 +92,13 @@ BiniZ                           0
 %---- Tree column density (RT_USE_TREECOL_FOR_NH)
 ShieldingLength                 0.050             % 50 pc shielding length
 
-%---- CHEMCOOL (CHEMCOOL + CHEMISTRYNETWORK=5)
+%---- SGCHEM (SGCHEM + CHEMISTRYNETWORK=5)
 G0                              1.7               % initial Habing FUV field (Draine 1978)
 CosmicRayIonRate                3.0e-19           % CR ionization rate [s^-1] (testing value)
 DGRnormalized                   0.01              % linear DGR vs Z: 0.1% MW at 0.1 Z_sun, 1% MW at solar (ostensibly Dwek-like, low end)
 TestStarMass                    0.0               % no star — diffusion only
 DeutAbund                       2.6e-5            % primordial D/H ratio (BBN)
-InitialMetallicity              0.1               % CHEMCOOL fallback (dead code with METALS_INDIVIDUAL, but required param)
+InitialMetallicity              0.1               % SGCHEM fallback (dead code with METALS_INDIVIDUAL, but required param)
 MaxPISearchRadius               0.05              % maximum PI search radius [kpc] (50 pc, matching gizmo2017)
 ShieldingLength                 0.05              % max distance for self-shielding column density [kpc] (50 pc)
 

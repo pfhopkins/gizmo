@@ -1372,7 +1372,7 @@ double return_resolvedism_species_for_diffusion(int i, int k)
     if(k < NUM_RESOLVEDISM_DUST) return CellP[i].Dust[k];
     k -= NUM_RESOLVEDISM_DUST;
 #endif
-#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
+#if defined(SGCHEM) && defined(TURB_DIFF_METALS)
     if(k < TRAC_NUM) {
         /* Return mass fraction (not abundance ratio) to match input packing.
            X_k = (n_k/n_H) * A_k * X_H.  Network 5: H2=2, H+=1, CO=28 */

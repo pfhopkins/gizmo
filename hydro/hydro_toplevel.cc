@@ -7,8 +7,8 @@
 #include <gsl/gsl_eigen.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#ifdef CHEMCOOL
-#include "../cooling/chemcool/chemcool_network.h"
+#ifdef SGCHEM
+#include "../cooling/sgchem/sgchem_network.h"
 #endif
 #include "../mesh/kernel.h"
 
@@ -515,12 +515,12 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {in->Metallicity[k_offset+k] = CellP[i].Dust[k];}
     k_offset += NUM_RESOLVEDISM_DUST;
 #endif
-#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS)
+#if defined(SGCHEM) && defined(TURB_DIFF_METALS)
     {/* Convert TracAbund (abundance ratios n_X/n_H) to mass fractions for
         diffusion solver: mass_frac_k = (n_k/n_H) * A_k * X_H.
         Network 5:  {H2(2), H+(1), CO(28)}
         Network 17: {H2(2), H+(1), CO(28), He+(4), He++(4), D+(2), HD(3)} */
-     const double *trac_molwt = chemcool_trac_molwt;
+     const double *trac_molwt = sgchem_trac_molwt;
      double X_H_pack = DMAX(particle_hydrogen_massfrac(i), 1e-10);
      for(k=0;k<TRAC_NUM;k++) {
          double mf = CellP[i].TracAbund[k] * trac_molwt[k] * X_H_pack;
@@ -863,7 +863,7 @@ void hydro_final_operations_and_cleanup(void)
 
             /* zero out hydrodynamic PdV work terms if the particle is at the maximum smoothing, these will be incorrect */
             if(P[i].KernelRadius >= 0.99*All.MaxKernelRadius) {CellP[i].DtInternalEnergy = 0;}
-#if defined(MAGNETIC) && defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             { /* ledger: d(E_th+E_kin+E_B)/dt of this step (Powell/Dedner terms, the -B^2/2 dV/dt the u-equation omits); booked in do_the_kick */
                 Vec3<double> Bp = CellP[i].Bfield() * All.cf_a2inv; double V_phys = P[i].Mass / (CellP[i].Density * All.cf_a3inv);
                 CellP[i].DtEnergyMHDNum = CellP[i].DtInternalEnergy * P[i].Mass + P[i].Mass * dot(CellP[i].VelPred / All.cf_atime, CellP[i].HydroAccel) + dot(Bp, CellP[i].DtB)
@@ -996,9 +996,9 @@ void hydro_final_operations_and_cleanup(void)
             for(int k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[i].Dust[k] = DMAX(CellP[i].Dust[k] + CellP[i].Dyield[k_offset+k] / P[i].Mass, 0.0);}
             k_offset += NUM_RESOLVEDISM_DUST;
 #endif
-#if defined(CHEMCOOL) && defined(TURB_DIFF_METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
+#if defined(SGCHEM) && defined(TURB_DIFF_METALS) && !defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL)
             {/* TracAbund-only path (no individual elements) — should not happen in practice */
-             const double *trac_molwt = chemcool_trac_molwt;
+             const double *trac_molwt = sgchem_trac_molwt;
              double X_H = DMAX(particle_hydrogen_massfrac(i), 1e-10);
              for(int k=0;k<TRAC_NUM;k++) {
                  double da = CellP[i].Dyield[k_offset+k] / (P[i].Mass * trac_molwt[k] * X_H);

@@ -323,7 +323,7 @@ void recompute_resolvedism_fuv_luminosities(void)
             /* ionizing ENERGY luminosity for the TreeRay PI band: Q_ion [photons/s]
              * x the TABLE-DRIVEN population <hnu> (Resolvedism_Eion_eff_eV; was a
              * hard-wired 27.2 eV = 13.6 eV heat/ionization, ~3x the real O-star
-             * photoelectron energy). chemcool converts back with the same energy,
+             * photoelectron energy). sgchem converts back with the same energy,
              * so the photon count is conserved. */
             P[i].Ion_luminosity = pow(10., stellar_log_Q_ion(logM, logZ, log_age)) * Resolvedism_Eion_eff_eV * 1.60218e-12;
             if(!isfinite(P[i].Ion_luminosity) || P[i].Ion_luminosity < 0) P[i].Ion_luminosity = 0;
@@ -359,7 +359,7 @@ void recompute_resolvedism_fuv_luminosities(void)
  * the spectral hardness the tables actually assign to these stars.
  *
  * BUGFIX 2026-07-29: the M1/TreeRay ionizing band assumed a hard-wired
- * <hnu> = 27.2 eV (upstream rt_chem.cc bookkeeping convention), so the chemcool
+ * <hnu> = 27.2 eV (upstream rt_chem.cc bookkeeping convention), so the sgchem
  * seam deposited 27.2-13.6 = 13.6 eV of heat PER IONIZATION -- ~3x the real
  * O-star photoelectron energy (~3-5 eV). Every M1/TreeRay-ionized cell
  * equilibrated ~40% hot (14.5 kK measured vs ~10-11 kK expected at 0.1 Zsun).

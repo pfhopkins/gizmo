@@ -41,7 +41,7 @@ struct Cell {
 static double DMAX(double a, double b) { return a > b ? a : b; }
 
 // Verbatim mirror of hydro_toplevel.cc:984-1019 (network-5 path)
-static void chemcool_pack_diffuse_unpack(Cell &c,
+static void sgchem_pack_diffuse_unpack(Cell &c,
     const double dYield_free[NELEM], const double dYield_trac[TRAC_NUM])
 {
     double X_H = DMAX(c.X[ELEM_H], 1e-10);
@@ -126,8 +126,8 @@ TEST_CASE("dense + pristine pair-flux: total H conservation under repeated unpac
         double tracA[TRAC_NUM] = {0}; tracA[TRAC_H2] = +dY_trac_H2;
         double tracB[TRAC_NUM] = {0}; tracB[TRAC_H2] = -dY_trac_H2;
 
-        chemcool_pack_diffuse_unpack(cells[0], freeA, tracA);
-        chemcool_pack_diffuse_unpack(cells[1], freeB, tracB);
+        sgchem_pack_diffuse_unpack(cells[0], freeA, tracA);
+        sgchem_pack_diffuse_unpack(cells[1], freeB, tracB);
     }
 
     double H_after = total_mass_X(cells, 2, ELEM_H);
@@ -177,8 +177,8 @@ TEST_CASE("extreme: A's free_H ≈ 0 (chemistry locks 99.9% of H), conservative 
         double freeB[NELEM] = {0}; freeB[ELEM_H] = -dY_free_H;     // positive
         double zero_trac[TRAC_NUM] = {0};
 
-        chemcool_pack_diffuse_unpack(cells[0], freeA, zero_trac);
-        chemcool_pack_diffuse_unpack(cells[1], freeB, zero_trac);
+        sgchem_pack_diffuse_unpack(cells[0], freeA, zero_trac);
+        sgchem_pack_diffuse_unpack(cells[1], freeB, zero_trac);
     }
 
     double H_after = total_mass_X(cells, 2, ELEM_H);
@@ -199,7 +199,7 @@ TEST_CASE("extreme: A's free_H ≈ 0 (chemistry locks 99.9% of H), conservative 
 // =============================================================================
 // Test the proposed fix: same scenario but with floor at 0.0 instead of 0.01*old.
 // =============================================================================
-static void chemcool_pack_diffuse_unpack_FIXED(Cell &c,
+static void sgchem_pack_diffuse_unpack_FIXED(Cell &c,
     const double dYield_free[NELEM], const double dYield_trac[TRAC_NUM])
 {
     double X_H = DMAX(c.X[ELEM_H], 1e-10);
@@ -256,8 +256,8 @@ TEST_CASE("FIX: floor=0 should preserve H mass even in extreme regime") {
         double freeB[NELEM] = {0}; freeB[ELEM_H] = -dY_free_H;
         double zero_trac[TRAC_NUM] = {0};
 
-        chemcool_pack_diffuse_unpack_FIXED(cells[0], freeA, zero_trac);
-        chemcool_pack_diffuse_unpack_FIXED(cells[1], freeB, zero_trac);
+        sgchem_pack_diffuse_unpack_FIXED(cells[0], freeA, zero_trac);
+        sgchem_pack_diffuse_unpack_FIXED(cells[1], freeB, zero_trac);
     }
 
     double H_after = total_mass_X(cells, 2, ELEM_H);

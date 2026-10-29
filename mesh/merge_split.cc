@@ -13,8 +13,8 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
-#ifdef CHEMCOOL
-#include "../cooling/chemcool/chemcool_network.h"
+#ifdef SGCHEM
+#include "../cooling/sgchem/sgchem_network.h"
 #endif
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
@@ -1237,7 +1237,7 @@ int merge_particles_ij(int i, int j)
     for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[j].abundances[k] = (ChimesFloat) ((ChimesGasVars[j].abundances[k] * wt_j * wt_h_j) + (ChimesGasVars[i].abundances[k] * wt_i * wt_h_i));}
 #endif // CHIMES
 #ifdef METALS
-#if defined(CHEMCOOL)
+#if defined(SGCHEM)
     double X_H_i_premerge = DMAX(particle_hydrogen_massfrac(i), 1e-10), X_H_j_premerge = DMAX(particle_hydrogen_massfrac(j), 1e-10); /* before j's metallicity is overwritten */
 #endif
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving */
@@ -1275,10 +1275,10 @@ int merge_particles_ij(int i, int j)
 #endif
     for(k=0;k<NUM_RESOLVEDISM_DUST;k++) {CellP[j].Dust[k] = wt_j*CellP[j].Dust[k] + wt_i*CellP[i].Dust[k];} /* dust-mass conserving */
 #endif
-#if defined(CHEMCOOL)
+#if defined(SGCHEM)
     {/* TracAbund is n_X/n_H (abundance ratio).  Convert to mass fractions
         using each cell's pre-merge X_H, mass-weight, then back to ratios using merged X_H. */
-     const double *trac_molwt = chemcool_trac_molwt;
+     const double *trac_molwt = sgchem_trac_molwt;
      double X_H_i = X_H_i_premerge, X_H_j = X_H_j_premerge;
      double X_H_new = wt_j * X_H_j + wt_i * X_H_i;
      for(k=0;k<TRAC_NUM;k++) {
@@ -1294,7 +1294,7 @@ int merge_particles_ij(int i, int j)
     /* GALSF_RESOLVEDISM_METALS_INDIVIDUAL: per-element merge happens inside the
      * Metallicity[] block below (NUM_METAL_SPECIES=27 covers all 27 slots).  No
      * separate ElementAbundance[] array exists in this mode. */
-#if defined(CHEMCOOL) && (CHEMISTRYNETWORK == 17)
+#if defined(SGCHEM) && (CHEMISTRYNETWORK == 17)
     P[j].DeuteriumAbundance = wt_j*P[j].DeuteriumAbundance + wt_i*P[i].DeuteriumAbundance; /* D mass conserving */
 #endif
 #endif

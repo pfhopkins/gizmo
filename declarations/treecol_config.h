@@ -7,17 +7,17 @@
 #error "TREE_RAD was removed: use RT_USE_TREECOL_FOR_NH=12*NSIDE^2 (HEALPix tree columns), e.g. RT_USE_TREECOL_FOR_NH=12"
 #endif
 #if defined(TREE_RAD_H2) || defined(TREE_RAD_CO)
-#error "TREE_RAD_H2 and TREE_RAD_CO were removed: H2 and CO tree columns are on automatically for CHEMCOOL with HEALPix RT_USE_TREECOL_FOR_NH"
+#error "TREE_RAD_H2 and TREE_RAD_CO were removed: H2 and CO tree columns are on automatically for SGCHEM with HEALPix RT_USE_TREECOL_FOR_NH"
 #endif
 #if defined(NSIDE)
 #error "NSIDE was removed: use RT_USE_TREECOL_FOR_NH=12*NSIDE^2"
 #endif
 
-/* variable ISRF needs the HEALPix columns; M1 with CHEMCOOL needs the H2/CO columns for line self-shielding */
+/* variable ISRF needs the HEALPix columns; M1 with SGCHEM needs the H2/CO columns for line self-shielding */
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && !defined(RT_USE_TREECOL_FOR_NH)
 #define RT_USE_TREECOL_FOR_NH 12
 #endif
-#if (defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID)) && defined(CHEMCOOL) && !defined(RT_USE_TREECOL_FOR_NH)
+#if (defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID)) && defined(SGCHEM) && !defined(RT_USE_TREECOL_FOR_NH)
 #define RT_USE_TREECOL_FOR_NH 12
 #endif
 
@@ -47,7 +47,7 @@
 #endif
 
 /* deposit m/(4pi/NPIX r^2) for 0<r<ShieldingLength, unsoftened, stored for gas cells only; no SigmaEff */
-#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM) || defined(CHEMCOOL))
+#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM) || defined(SGCHEM))
 #define RT_TREECOL_SHIELDINGLENGTH
 #define RT_TREECOL_GAS_TARGETS_ONLY
 #else
@@ -55,15 +55,15 @@
 #endif
 
 /* Stella with a transported FUV field (TreeRay walk or M1): stellar pixel fluxes arrive dust-attenuated, the chemistry attenuates only the floor pixels */
-#if defined(RT_TREECOL_HEALPIX) && defined(CHEMCOOL) && (defined(TREE_RAY) || (defined(GALSF_RESOLVEDISM) && (defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID))))
+#if defined(RT_TREECOL_HEALPIX) && defined(SGCHEM) && (defined(TREE_RAY) || (defined(GALSF_RESOLVEDISM) && (defined(RADTRANSFER) || defined(RT_M1) || defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_LOCALRAYGRID))))
 #define RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
 #endif
 
-/* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSDT ISRF (or Stella M1); H2 and CO for CHEMCOOL */
-#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSDT_G0_CR) && defined(CHEMCOOL)) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED))
+/* column species: gas always; per-cell-DGR-weighted gas with the variable or GHOSDT ISRF (or Stella M1); H2 and CO for SGCHEM */
+#if defined(RT_TREECOL_HEALPIX) && (defined(GALSF_RESOLVEDISM_G0_VARIABLE) || (defined(GHOSDT_G0_CR) && defined(SGCHEM)) || defined(RT_TREECOL_STELLAR_PIXELS_PREATTENUATED))
 #define RT_TREECOL_DUST_WEIGHTED
 #endif
-#if defined(RT_TREECOL_HEALPIX) && defined(CHEMCOOL)
+#if defined(RT_TREECOL_HEALPIX) && defined(SGCHEM)
 #define RT_TREECOL_H2_CO
 #endif
 #define TREECOL_GAS 0

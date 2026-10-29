@@ -1,4 +1,4 @@
-/* Driver for test_cr_chemistry_onezone.py: begrun() on a small Stella box builds a real CHEMCOOL cell; do_the_cooling_for_particle
+/* Driver for test_cr_chemistry_onezone.py: begrun() on a small Stella box builds a real SGCHEM cell; do_the_cooling_for_particle
    then evolves copies of it to equilibrium at fixed density and fixed cosmic-ray energy density (reset every step), and prints one
    row per (nH, zeta) point: equilibrium state, the CR heating rate from the chemistry, the analytic rate, and the CR fluid loss rate. */
 #include <mpi.h>
@@ -9,7 +9,7 @@
 #include <cmath>
 #include "declarations/allvars.h"
 #include "core/proto.h"
-#include "cooling/chemcool/chemcool_consts.h"
+#include "cooling/sgchem/sgchem_consts.h"
 
 static FILE *out;
 static int c = -1;

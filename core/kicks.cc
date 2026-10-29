@@ -423,12 +423,12 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             if(dEnt < 0.5*CellP[i].InternalEnergy) {CellP[i].InternalEnergy *= 0.5;} else {CellP[i].InternalEnergy = dEnt;}
 #endif
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
-#if defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             {double de_floor = (CellP[i].InternalEnergy - dEnt) * P[i].Mass; if(de_floor != 0) { /* ledger: energy the 0.5u limiter and the floor add */
                 #pragma omp atomic
                 CumulKickFloorEnergy += de_floor;}}
 #endif
-#if defined(MAGNETIC) && defined(CHEMCOOL) && defined(GALSF_RESOLVEDISM_FB)
+#if defined(MAGNETIC) && defined(SGCHEM) && defined(GALSF_RESOLVEDISM_FB)
             #pragma omp atomic
             CumulMHDNumEnergy += CellP[i].DtEnergyMHDNum * dt_hydrokick; /* ledger: hydro/MHD energy rate over the dt this kick applies */
 #endif

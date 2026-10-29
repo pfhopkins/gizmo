@@ -24,7 +24,7 @@
  *   - Thermal sputtering: Nozawa et al. 2006 polynomial fits
  *   - Dust production: condensation fractions applied to SN/AGB/Ia metal yields (in resolvedism_fb.cc)
  *   - SN shock destruction: McKee 1989 (in resolvedism_fb.cc)
- *   - CHEMCOOL coupling: per-particle DGR, gas-phase metal depletion (in chemcool.cc)
+ *   - SGCHEM coupling: per-particle DGR, gas-phase metal depletion (in sgchem.cc)
  *
  * This file handles the ISM dust processing (sputtering) which is operator-split
  * from the chemistry solver, called after cooling_parent_routine() each timestep.
@@ -86,7 +86,7 @@ void resolvedism_dust_evolve(void)
         /* physical quantities */
         double rho_phys = CellP[i].Density * All.cf_a3inv;
         double nH = rho_phys * UNIT_DENSITY_IN_NHCGS;
-#ifdef CHEMCOOL
+#ifdef SGCHEM
         double T = CellP[i].Temp;
 #else
         double ne_dummy = 1, nh0_dummy = 0, nHe0_dummy, nHepp_dummy, nhp_dummy, nHeII_dummy, mu_dummy = 1;
@@ -159,10 +159,10 @@ void resolvedism_dust_evolve(void)
         /* Sticking efficiency S(T_gas, T_dust) = 1 / (1 + 0.04*sqrt(T_gas + T_dust))
            (Hirashita 2000).  Smoothly transitions from S~1 at low T to S~0 at high T. */
         /* Rates from Dwek 1998 / Draine 2009, same form as gizmo2017 evolve_abundances_dust.F */
-#ifdef CHEMCOOL
+#ifdef SGCHEM
         double T_dust = CellP[i].DustTemp;
 #else
-        double T_dust = DMIN(T, 100.); /* no chemcool dust-temp solve in cooling-off test builds */
+        double T_dust = DMIN(T, 100.); /* no sgchem dust-temp solve in cooling-off test builds */
 #endif
         double sticking = 1.0 / (1.0 + 0.04 * sqrt(T + T_dust));
         if(sticking > 1e-4 && dust_total > 0) {

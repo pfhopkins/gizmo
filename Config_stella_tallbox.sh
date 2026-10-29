@@ -35,19 +35,19 @@ GALSF_RESOLVEDISM_METALS_INDIVIDUAL
 GALSF_RESOLVEDISM_RADPRESSURE
 GALSF_RESOLVEDISM_TYPE_IA
 #GALSF_RESOLVEDISM_DUST          % off: dust-to-gas ratio fixed from metallicity
-#CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
+#SGCHEM_DGR_INDEPENDENT_OF_METALLICITY  % off: DGR = DGRnormalized x MW at every Z; with DGRnormalized 0.01 (relative to MW) reproduces gizmo2017
 GALSF_SFR_CRITERION=(64)       % Jeans mass only (Hu & Sternberg 2023): M_J < N_ngb * m_gas
 
 ## -- Cooling & chemistry --
 COOLING
 COOLING_OPERATOR_SPLIT
-CHEMCOOL
+SGCHEM
 CHEMISTRYNETWORK=5
 CO_SHIELDING
 WSS_CIE_COOL
-#GALSF_CHEMCOOL_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
-#GALSF_CHEMCOOL_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
-CHEMCOOL_CXX                     % C++/CVODE chemistry backend (default for Stella)
+#GALSF_SGCHEM_VARIABLE_XH_AND_ABHE     % per-particle X_H and abhe driven from ElementAbundance[H/He]
+#GALSF_SGCHEM_DEBUG_INPUT      % validate species-vs-pool invariants on DVODE entry, print full context on violation (debug runs)
+SGCHEM_CXX                     % C++/CVODE chemistry backend (default for Stella)
 CR_SCALE_WITH_G0                 % GHOSDT defaults: CR rate scaled with FactorG0
 TURB_DIFF_METALS
 

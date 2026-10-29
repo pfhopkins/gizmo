@@ -662,11 +662,11 @@ void gravity_tree(void)
      * shells plus half their own shell. Writes the ATTENUATED per-pixel fluxes
      * into CellP.UV/LW/NUV/OPT_flux — chemistry reads them unchanged (and under
      * TREE_RAY calc_photo must NOT re-apply f_dust to the stellar component).
-     * Column->N_H conversion mirrors chemcool.cc:572 (Sigma_code -> cgs -> per H).
+     * Column->N_H conversion mirrors sgchem.cc:572 (Sigma_code -> cgs -> per H).
      * Per-cell-DGR dust column; sigma per H: FUV 2.5 A_V/N_H, LW 2e-21 (the chemistry's df25/f_dust), NUV 1.3e-21, OPT 0.5e-21. */
     {
         double tr_colconv = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
-        const double tr_sig_fuv = 2.5 * 5.348e-22, tr_sig_lw = 2.0e-21; /* per H at solar DGR: chemistry df25 (2.5 A_V, A_V/N_H as chemcool.cc) and f_dust */
+        const double tr_sig_fuv = 2.5 * 5.348e-22, tr_sig_lw = 2.0e-21; /* per H at solar DGR: chemistry df25 (2.5 A_V, A_V/N_H as sgchem.cc) and f_dust */
 #ifdef TREE_RAY_PI
         /* per-species column conversions: shells hold the SPECIES mass Sigma directly */
         double tr_colconv_hi = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv / PROTONMASS_CGS;

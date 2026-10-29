@@ -937,12 +937,12 @@
 #endif /* end of options for our general RHD methods */
 
 /* Stella M1: the NUV bin carries 6-8 eV so NUV + PHOTOELECTRIC spans the 6-13.6 eV chemistry FUV band */
-#if defined(GALSF_RESOLVEDISM) && defined(RADTRANSFER) && defined(CHEMCOOL)
+#if defined(GALSF_RESOLVEDISM) && defined(RADTRANSFER) && defined(SGCHEM)
 #ifndef RT_NUV
 #define RT_NUV
 #endif
 #define RT_NUV_BAND_6_8EV
-#define RT_FUV_BANDS_CHEMCOOL_DUST_LAW /* NUV/PE/LW: pure absorption with the chemistry's dust cross sections and per-cell DGR */
+#define RT_FUV_BANDS_SGCHEM_DUST_LAW /* NUV/PE/LW: pure absorption with the chemistry's dust cross sections and per-cell DGR */
 #endif
 
 /* OTVET-specific options [uses the gravity tree to calculate the Eddington tensor] */
@@ -1488,8 +1488,8 @@
 #if !defined(GALSF_RESOLVEDISM_FB) || !defined(GALSF_RESOLVEDISM_SAMPLE_IMF)
 #error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL requires GALSF_RESOLVEDISM_FB and GALSF_RESOLVEDISM_SAMPLE_IMF"
 #endif
-#if defined(CHEMCOOL)
-#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL uses the FIRE cooling for all gas: disable CHEMCOOL"
+#if defined(SGCHEM)
+#error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL uses the FIRE cooling for all gas: disable SGCHEM"
 #endif
 #if defined(GALSF_RESOLVEDISM_METALS_INDIVIDUAL) && !defined(GALSF_RESOLVEDISM_HYBRID_CARRY_ALL_ELEMENTS)
 #error "GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL carries the FIRE metal layout: disable GALSF_RESOLVEDISM_METALS_INDIVIDUAL"
@@ -1538,17 +1538,17 @@
 #if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && defined(COSMIC_RAY_FLUID)
 #error "CR_BACKGROUND_IONRATE_ATTENUATED is the CR-fluid-off mode: with COSMIC_RAY_FLUID the ionisation rate comes from the CR fluid only"
 #endif
-#if defined(CHEMCOOL_CRHEAT_K23) || defined(CHEMCOOL_PE_K23) || defined(CHEMCOOL_H2FORM_K23) || defined(CHEMCOOL_H2SHIELD_B5) || defined(CHEMCOOL_GASDUST_K23) || defined(CHEMCOOL_CR_ATTEN_K23)
-#error "CHEMCOOL_*_K23 and CHEMCOOL_H2SHIELD_B5 were removed: the Kim+2023 (TIGRESS-NCR) physics is CHEMISTRYNETWORK=20"
+#if defined(SGCHEM_CRHEAT_K23) || defined(SGCHEM_PE_K23) || defined(SGCHEM_H2FORM_K23) || defined(SGCHEM_H2SHIELD_B5) || defined(SGCHEM_GASDUST_K23) || defined(SGCHEM_CR_ATTEN_K23)
+#error "SGCHEM_*_K23 and SGCHEM_H2SHIELD_B5 were removed: the Kim+2023 (TIGRESS-NCR) physics is CHEMISTRYNETWORK=20"
 #endif
-#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && (!defined(CHEMCOOL) || !defined(RT_USE_TREECOL_FOR_NH) || defined(CR_SCALE_WITH_G0))
-#error "CR_BACKGROUND_IONRATE_ATTENUATED needs CHEMCOOL and the TreeCol column (RT_USE_TREECOL_FOR_NH), and replaces CR_SCALE_WITH_G0"
+#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && (!defined(SGCHEM) || !defined(RT_USE_TREECOL_FOR_NH) || defined(CR_SCALE_WITH_G0))
+#error "CR_BACKGROUND_IONRATE_ATTENUATED needs SGCHEM and the TreeCol column (RT_USE_TREECOL_FOR_NH), and replaces CR_SCALE_WITH_G0"
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_SCALE_SFR) || defined(GALSF_RESOLVEDISM_GHOSTD_G0_CR) || defined(GHOSTD_G0_CR)
 #error "GALSF_RESOLVEDISM_G0_SCALE_SFR, GALSF_RESOLVEDISM_GHOSTD_G0_CR and GHOSTD_G0_CR were renamed: use GHOSDT_G0_CR"
 #endif
-#if defined(GHOSDT_G0_CR) && !(defined(GALSF) && (defined(RT_ISRF_BACKGROUND) || defined(CHEMCOOL)))
-#error "GHOSDT_G0_CR scales the RT_ISRF_BACKGROUND field (or the CHEMCOOL G0) and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND or CHEMCOOL"
+#if defined(GHOSDT_G0_CR) && !(defined(GALSF) && (defined(RT_ISRF_BACKGROUND) || defined(SGCHEM)))
+#error "GHOSDT_G0_CR scales the RT_ISRF_BACKGROUND field (or the SGCHEM G0) and CR rate with the star formation rate: requires GALSF and RT_ISRF_BACKGROUND or SGCHEM"
 #endif
 
 #if defined(GALSF_RESOLVEDISM_PHOTOION) && defined(RADTRANSFER)
@@ -1685,13 +1685,13 @@
 #endif
 #endif
 
-/* ---- CHEMCOOL: non-equilibrium chemistry solver (Fortran backend) ---- */
-#ifdef CHEMCOOL
+/* ---- SGCHEM: non-equilibrium chemistry solver (Fortran backend) ---- */
+#ifdef SGCHEM
 #ifndef COOLING
 #define COOLING
 #endif
 #if defined(CHIMES)
-#error "CHEMCOOL and CHIMES are mutually exclusive chemistry solvers"
+#error "SGCHEM and CHIMES are mutually exclusive chemistry solvers"
 #endif
 #ifndef CHEMISTRYNETWORK
 #define CHEMISTRYNETWORK 5
@@ -1721,17 +1721,17 @@
 #define TRAC_NUM 7
 #elif CHEMISTRYNETWORK == 18
 #define TRAC_NUM 113 /* H2, H+, CO and every ion stage of He C N O Ne Mg Si S Fe (cxx/chem_net18_layout.h) */
-#ifndef CHEMCOOL_CXX
-#error "CHEMISTRYNETWORK=18 (RTZ metal ions) exists only in the C++ backend: enable CHEMCOOL_CXX"
+#ifndef SGCHEM_CXX
+#error "CHEMISTRYNETWORK=18 (RTZ metal ions) exists only in the C++ backend: enable SGCHEM_CXX"
 #endif
 #elif CHEMISTRYNETWORK == 20
 #define TRAC_NUM 3   /* H2, H+ evolved; CO = equilibrium value written back */
-#ifndef CHEMCOOL_CXX
-#error "CHEMISTRYNETWORK=20 (TIGRESS-NCR) exists only in the C++ backend: enable CHEMCOOL_CXX"
+#ifndef SGCHEM_CXX
+#error "CHEMISTRYNETWORK=20 (TIGRESS-NCR) exists only in the C++ backend: enable SGCHEM_CXX"
 #endif
 #endif
 #if defined(TURB_DIFF_METALS)
-/* Include CHEMCOOL tracked abundances (H2, H+, CO, ...) in turbulent diffusion
+/* Include SGCHEM tracked abundances (H2, H+, CO, ...) in turbulent diffusion
    so that TracAbund is diffused consistently with ElementAbundance. Without this,
    diffusion can move carbon out of a cell while leaving CO behind, causing
    CO > abundc and crashing DVODE. Network 17 also tracks D (deuterium) as a
@@ -1750,7 +1750,7 @@
 #define NUM_ADDITIONAL_PASSIVESCALAR_SPECIES_FOR_YIELDS_AND_DIFFUSION (TRAC_NUM+NUM_D_DIFFUSE)
 #endif
 #endif
-#endif /* CHEMCOOL */
+#endif /* SGCHEM */
 
 
 /* tree columns: bins, deposit scheme and species (shared with the chemistry Fortran) */

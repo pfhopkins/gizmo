@@ -1,0 +1,902 @@
+#include "../../GIZMO_config.h"
+c=======================================================================
+c
+c
+c    \\\\\\\\\\      B E G I N   S U B R O U T I N E      //////////
+c    //////////     E V O L V E _ A B U N D A N C E S     \\\\\\\\\\
+c
+c=======================================================================
+c
+c     Written by S. Glover (AMNH, 2004-2005, AIP 2006-2007)
+c
+      subroutine evolve_abundances(time, dl, yn, divv, energy, 
+     $                             non_eq_abundances
+     $                            , column_est)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+#include "non_eq.h"
+c
+      REAL    time, dl, yn, divv, energy
+      REAL    non_eq_abundances(num_non_eq_species)
+      REAL    column_est
+      REAL    t_start, t_end, dt_est, dt, t_in, t_out
+      REAL    tdust_old
+      REAL    co_pool, eps_ctrl
+      REAL    yntot_byp, ekn_byp, temp_byp, gam_byp, dt_byp
+      integer new_step, nbyp
+c
+      integer nstep
+      parameter (nstep = NSTEP)
+c
+      REAL safety(nspec)
+      REAL ctrl_floor(nspec)
+      integer used_for_stepsize_control(nspec)
+#if CHEMISTRYNETWORK == 5
+      DATA safety /1d-1, 1d-1, 1d-1, DTCOOL_SCALE_FACTOR/
+      DATA used_for_stepsize_control /1, 1, 1, 1/
+#endif
+#if CHEMISTRYNETWORK == 17
+      DATA safety /1d-1, 1d-1, 1d-1, 1d-1, 1d-1, 1d-1, 1d-1,
+     $             DTCOOL_SCALE_FACTOR/
+      DATA used_for_stepsize_control /1, 1, 1, 1, 1, 1, 1, 1/
+#endif
+c Networks 3 and 15: Glover's original step-size control (gadget_tnt_new, SGChem)
+#if CHEMISTRYNETWORK == 3
+      DATA safety /1d-1, 1d-1, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0,
+     $             0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0, 0d0,
+     $             0d0, DTCOOL_SCALE_FACTOR/
+      DATA used_for_stepsize_control /1, 1, 0, 0, 0, 0, 0, 0, 0, 0,
+     $                                0, 0, 0, 0, 0, 0, 0, 0, 0, 1/
+#endif
+#if CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+      DATA safety /1d-1, 0d0, 1d-1, 0d0, 0d0, 1d-1, 0d0, 0d0,
+     $             0d0, DTCOOL_SCALE_FACTOR/
+      DATA used_for_stepsize_control /1, 0, 1, 0, 0, 1, 0, 0, 0, 1/
+#endif
+c
+      integer I, J
+c
+c DVODE control variables -- NB atol declared in non_eq.h
+c
+      REAL    rtol
+      integer itask, iopt, itol, mf, istate
+c
+c Other DVODE variables
+c
+      integer lrw, liw
+      parameter (lrw   = 2000)
+      parameter (liw   = 2000)
+      REAL    rpar(nrpar), rwork(lrw)
+      integer ipar(nipar), iwork(liw)
+      REAL    y(nspec), ydot(nspec), y_old(nspec)
+c
+      external jac, rate_eq
+c
+      do I = 1, nspec
+        y_old(I) = 0d0
+      enddo
+c
+c Sanity check for our input time
+c
+#ifdef TEST
+      time = t_start
+#endif
+      if (time .lt. 0d0) then
+        return
+      endif        
+c
+c Initialize abundance vector, treating the internal energy as 
+c an additional abundance. 
+c
+c N.B. We assume that abundances are stored consecutively, with
+c no gaps, and that itmp == nspec (i.e. that the energy is the last
+c value stored)
+c
+      do I = 1, nspec-1
+        y(I) = non_eq_abundances(I)
+      enddo
+      y(itmp)  = energy
+#ifdef CHEM_EQ_H2
+        y(0) = 1e-10
+#endif
+
+c
+c Setup initial parameters for DVODE integrator. These don't vary over 
+c the course of the timestep.
+c
+c Optional input supplied -- see iwork, rwork init. below:
+c
+      iopt = 1
+c
+c Evolve ODEs from t -> tout, allowing overshooting & interpolation
+c [See DVODE documentation for more details].
+c
+      itask = 1
+c
+c
+c Use same relative tolerance for each species, different absolute tolerances
+c (since magnitudes may vary by many orders of magnitude). 
+c
+      itol = 2
+c
+c Set relative tolerance -- for simplicity we keep this fixed at 0.1% for now  
+c
+      rtol = RTOL
+c
+c ODE integration method: 22 => BDF with an internally generated Jacobian
+c
+      mf = 22
+c
+c Start DVODE in start-up mode (which forces it to initialize all of its
+c internal arrays). Subsequent calls within the loop below use istate = 2
+c
+      istate = 1
+c
+c Optional input -- increase maximum number of steps that DVODE can take 
+c internally without returning an to 20000, as 500 doesn't appear to be 
+c enough for portions of our parameter space
+c
+      do I = 5, 10      
+        rwork(I) = 0d0
+        iwork(I) = 0
+      enddo
+c      
+      iwork(6) = 200000
+c
+c
+c Parameters to pass to rate_eq
+c
+      rpar(1) = yn
+      rpar(2) = dl
+      rpar(3) = divv
+c
+c Not using the Raytracing, so can put the values needed for
+c iphoto = 4 option into this array... note that do_sgchem_step()
+c puts everything into cgs units, before it gets passed through to here.
+c It then gets passed on from rate_eq* to calc_photo, where it finally gets
+c unpacked/used. Note that dl contains either the radius or the smoothing
+c by this point...
+c
+      rpar(5) = column_est
+c
+      ipar(1) = 0
+c
+#ifndef TEST
+      t_start  = 0d0
+      t_end    = time
+#endif
+      new_step = 1
+c
+c Step-size control floor.  A species may control the integration timestep
+c (via safety*y/|ydot|) only if its abundance exceeds max(atol, eps*pool),
+c where pool is the elemental reservoir it draws from.  Without the pool
+c term, a trace species sitting in the "death band" just above its atol --
+c e.g. D+ at ~1e-14 with ATOL_DP=1e-14, nine orders below abundD -- pins
+c dt to ~1e3 s in cold dense gas and exhausts the step budget (DVODE wedge).
+c Pools are per-particle (set in sgchem.cc common blocks), so compute here.
+c
+      eps_ctrl = 1d-6
+      do J = 1, nspec
+        ctrl_floor(J) = atol(J)
+      enddo
+#if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 6
+      co_pool = min(abundc, abundo)
+      ctrl_floor(ico) = max(atol(ico), eps_ctrl * co_pool)
+#endif
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+      co_pool = min(abundc, abundo)
+      ctrl_floor(ico)   = max(atol(ico),   eps_ctrl * co_pool)
+      ctrl_floor(idp)   = max(atol(idp),   eps_ctrl * abundD)
+      ctrl_floor(ihd)   = max(atol(ihd),   eps_ctrl * abundD)
+      ctrl_floor(ihep)  = max(atol(ihep),  eps_ctrl * abhe)
+      ctrl_floor(ihepp) = max(atol(ihepp), eps_ctrl * abhe)
+#endif
+#if CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+      co_pool = min(abundc, abundo)
+      ctrl_floor(ic)    = max(atol(ic),    eps_ctrl * abundc)
+      ctrl_floor(ichx)  = max(atol(ichx),  eps_ctrl * abundc)
+      ctrl_floor(iohx)  = max(atol(iohx),  eps_ctrl * abundo)
+      ctrl_floor(ico)   = max(atol(ico),   eps_ctrl * co_pool)
+      ctrl_floor(ihcop) = max(atol(ihcop), eps_ctrl * co_pool)
+      ctrl_floor(ihep)  = max(atol(ihep),  eps_ctrl * abhe)
+      ctrl_floor(imp)   = max(atol(imp),   eps_ctrl * abundM)
+#endif
+#if CHEMISTRYNETWORK == 3
+      co_pool = min(abundc, abundo)
+      do J = 1, nspec
+        if (J .eq. ic .or. J .eq. ic2 .or. J .eq. ich .or.
+     $      J .eq. ich2 .or. J .eq. ich3p)
+     $    ctrl_floor(J) = max(atol(J), eps_ctrl * abundc)
+        if (J .eq. io .or. J .eq. ioh .or. J .eq. ih2o .or.
+     $      J .eq. io2)
+     $    ctrl_floor(J) = max(atol(J), eps_ctrl * abundo)
+        if (J .eq. ico .or. J .eq. ihcop)
+     $    ctrl_floor(J) = max(atol(J), eps_ctrl * co_pool)
+        if (J .eq. isi .or. J .eq. isipp)
+     $    ctrl_floor(J) = max(atol(J), eps_ctrl * abundsi)
+        if (J .eq. idp .or. J .eq. ihd)
+     $    ctrl_floor(J) = max(atol(J), eps_ctrl * abundD)
+        if (J .eq. ihep .or. J .eq. ihepp)
+     $    ctrl_floor(J) = max(atol(J), eps_ctrl * abhe)
+      enddo
+#endif
+c
+c
+c Hot-gas equilibrium-cooling bypass (Uli 2026-07-04, both networks):
+c above T_NOCHEM the molecular species are physically extinct
+c and the ionization states are effectively frozen over a hydro step,
+c while the cooling is already the (equilibrium) WSS CIE + atomic
+c rates via cool_func.  Integrating the full stiff network there is
+c meaningless and wedges DVODE (post-PISN 1e7 K bubbles: molecular
+c abundances at denormal levels defeat the error test -> nstep
+c exceeded -> abort).  Here: zero the molecules, freeze the ions,
+c sub-cycle ONLY the energy equation (explicit, dt = 0.1 e/|edot|).
+c If the gas cools below T_NOCHEM mid-step, hand over to the normal
+c DVODE path below for the remaining time -- fully continuous.
+c T_NOCHEM defaults to 5d5 K; override at compile time with
+c -DSGCHEM_TNOCHEM=... for cutoff-sensitivity studies. (Above this T the
+c full stiff network is bypassed for equilibrium-cooling sub-cycling; the
+c 3e4-5e5 K range still runs the network, e.g. inside SN bubbles.)
+c
+#ifndef SGCHEM_TNOCHEM
+#define SGCHEM_TNOCHEM 5d5
+#endif
+      yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
+      ekn_byp   = y(itmp) / (kboltz * yntot_byp)
+      call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp, gam_byp)
+      if (temp_byp .gt. SGCHEM_TNOCHEM) then
+        y(ih2) = 0d0
+        y(ico) = 0d0
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        y(ihd) = 0d0
+#endif
+c HOTIONFIX (2026-07-08, tier-0 ledger catch #2): set the ion states to their
+c hot-gas equilibrium instead of FREEZING whatever came in.  SN shocks drive
+c NEUTRAL ambient gas straight past T_NOCHEM; frozen x_HI~1 makes rate_eq
+c evaluate neutral-H collisional excitation/ionization cooling at 1e7-1e8 K
+c -> Lambda ~1e5x the ionized-gas truth -> hot bubbles lost ~24% of their
+c energy PER ACTIVE STEP (measured: one-zone A/B neutral-frozen vs ionized;
+c in-sim staircase cliffs in the m10 injection ledger).  Real gas at these
+c temperatures collisionally ionizes in ~months (t_ci ~ 1/(n k_ci) << any
+c step), so full ionization IS the correct frozen state.  Also fixes hot
+c bubble interiors carrying x_HI=1 in TracAbund (wrong snapshot ionization
+c and shielding columns).  CIE above 5e5 K: H+ = 1, He = He++, D = D+.
+        y(ihp) = 1d0
+#if CHEMISTRYNETWORK == 1 || CHEMISTRYNETWORK == 17
+        y(ihep)  = 0d0
+        y(ihepp) = abhe
+        y(idp)   = abundD
+#endif
+#if CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+c       no He++, C++ or M++ in this network: their highest tracked stages
+        y(ichx)  = 0d0
+        y(iohx)  = 0d0
+        y(ihcop) = 0d0
+        y(ic)    = abundc
+        y(ihep)  = abhe
+        y(imp)   = abundM
+#endif
+#if CHEMISTRYNETWORK == 3
+        y(ihd)   = 0d0
+        y(ic2)   = 0d0
+        y(ioh)   = 0d0
+        y(ih2o)  = 0d0
+        y(io2)   = 0d0
+        y(ihcop) = 0d0
+        y(ich)   = 0d0
+        y(ich2)  = 0d0
+        y(ich3p) = 0d0
+        y(ic)    = abundc
+        y(io)    = abundo
+        y(isi)   = 0d0
+        y(isipp) = abundsi
+        y(ihep)  = 0d0
+        y(ihepp) = abhe
+        y(idp)   = abundD
+#endif
+        do nbyp = 1, 100000
+          call rate_eq(nspec, t_start, y, ydot, rpar, ipar)
+          ipar(1) = 0
+          if (abs(ydot(itmp)) .gt. 0d0) then
+            dt_byp = min(t_end - t_start,
+     $                   1d-1 * abs(y(itmp) / ydot(itmp)))
+          else
+            dt_byp = t_end - t_start
+          endif
+          y(itmp) = y(itmp) + dt_byp * ydot(itmp)
+          t_start = t_start + dt_byp
+c WEDGEFIX 3 (2026-07-07, THE production ABORT(100) root cause): the outer
+c loop accumulates t_start = t_start + dt; FP rounding can leave a residual
+c of a few ULPs of t_end (measured: 3.1e-5 s at t=3.6e10 s = 4 ULPs), the
+c .ge. test misses, and DVODE is asked to integrate an interval BELOW the
+c representable resolution of time (t+dt == t in double) -> corrector can
+c never advance -> dt halves to <1e-8 s -> ABORT(100). Declare completion
+c when the residual is relatively negligible (1e-10*t_end ~ hours of
+c chemistry on kyr steps; physically nil). Network-independent bug: hit the
+c snladder dense interiors, the TreeRay-PI stromgren star-neighbor, and was
+c knife-edge FP-sensitive (dt-sequence dependent) — all now explained.
+          if (t_start .ge. t_end - 1d-10*t_end) goto 100
+          yntot_byp = (1d0 + abhe + y(ihp) - y(ih2)) * yn
+          ekn_byp   = y(itmp) / (kboltz * yntot_byp)
+          call lookup_temp_gamma(y(ih2), ekn_byp, temp_byp,
+     $                           gam_byp)
+          if (temp_byp .le. SGCHEM_TNOCHEM) goto 90
+        enddo
+c   sub-cycle budget exhausted while still hot: accept the state --
+c   this is a smooth explicit integration, not an error path.
+        goto 100
+      endif
+90    continue
+c
+      do I = 1, nstep
+c        print*, "step", I, new_step, tdust, y(itmp)
+c
+c If we're starting a new step, then figure out a reasonable timestep to
+c pass to DVODE -- we need to do this here to avoid DVODE producing -ve
+c abundances or -ve temperatures, which can occur if it starts with too
+c large a timestep.
+c
+c If we're not starting a new step, then dt has already been set. 
+c
+        if (new_step .eq. 1) then
+c
+c First, save a copy of the current abundances
+c
+          do J = 1, nspec
+            y_old(J) = y(J)
+          enddo
+          tdust_old = tdust
+c
+c Now compute ydot. On the first step, we must use rate_eq directly,
+c but on subsequent steps, we can just call dvindy [if we're using
+c the dvode integrator]
+c
+c          if (I .eq. 1) then
+            call rate_eq(nspec, t_start, y, ydot, rpar, ipar)
+c          else
+c            call dvindy(t_start, 1, rwork(21), nspec, ydot, iflag_dvi)
+c          endif
+c
+c Init. dt_est to an unrealistic value
+c
+          dt_est = 1d18
+
+          do J = 1, nspec
+            if (used_for_stepsize_control(J) .eq. 1) then
+              if (ydot(J)   .ne. 0d0 .and.
+     $            safety(J) .ne. 0d0 .and.
+     $            y(J)      .gt. ctrl_floor(J)) then
+                dt_est = min(dt_est, abs(safety(J) * y(J) / ydot(J)))
+              endif
+            endif
+          enddo
+c
+          ipar(2) = 0 
+c
+c Don't evolve past the end of the global timestep
+c
+          dt = min(dt_est, t_end - t_start)
+        endif
+c
+        t_in  = t_start
+        t_out = t_start + dt
+        if (dt .lt. 0d0) then
+          print*, 'Negative timestep!'
+          ABORT(1)
+        endif
+        if (dt .eq. 0d0) then 
+          if (t_end .eq. t_start) then
+            return
+          else
+            print*, 'Zero timestep!'
+            ABORT(2)
+          endif
+        endif
+c
+        call dvode(rate_eq, nspec, y, t_in, t_out, itol, rtol, atol, 
+     $             itask, istate, iopt, rwork, lrw, iwork, liw, jac, 
+     $             mf, rpar, ipar)
+c
+c Ensure that dvode has produced sane output values -- if not, we
+c need to shrink the timestep. Note that if ipar(1) is non-zero, 
+c or if istate != 2 (indicating an integrator error), we're going
+c to shrink the timestep anyway, so we can skip the check.
+c
+        if (ipar(1) .eq. 0 .and. istate .eq. 2) then
+          call check_abundances(y, ipar)
+        endif
+c
+        if ((ipar(1) .ne. 0) .or. (istate .ne. 2)) then 
+#ifdef DEBUG_EVOLVE
+         if (istate .ne. 2) then
+           print*, "Error: istate = ", istate
+         endif
+#endif
+          do J = 1, nspec
+            y(J) = y_old(J)
+          enddo
+          tdust    = tdust_old
+          dt       = dt / 2d0
+          if (dt .lt. 1d-8) then
+            print*, "Excessively small timestep!"
+            print*, "dt, dt_est, t_start, t_end = "
+            print*, dt, dt_est, t_start, t_end
+            print*, "ID: ", id_current
+            print*, "n = ", yn
+            print*, "dl, divv = ", dl, divv
+            print*, "y = ", y
+	    print*, "ydot = ", ydot
+            print*, "pools: abundc, abundo, abundD = ",
+     $        abundc, abundo, abundD
+            print*, "pools: abhe, dgr, tdust = ",
+     $        abhe, dust_to_gas_ratio, tdust
+#ifdef RT_TREECOL_DUST_WEIGHTED
+            print*, "Tree rad totals: ", column_density_projection
+#endif
+#ifdef RT_TREECOL_H2_CO
+            print*, "Tree rad h2: ", column_density_projection_h2
+            if (nchem_network .ne. 1 .and. nchem_network .ne. 4) then
+              print*, "Tree rad co: ", column_density_projection_co
+            endif
+#endif
+#ifndef NOSTOP_WHEN_BELOW_MINTIMESTEP
+            ABORT(100)
+#endif
+          endif
+          new_step = 0
+          ipar(1)  = 0
+          istate   = 1
+        else
+          t_start = t_start + dt
+          new_step = 1
+        endif
+c
+        if (t_start .ge. t_end - 1d-10*t_end) then
+          goto 100
+        endif
+      enddo
+c
+      write(*,'(A)') 'EVOLVE_ABUNDANCES: nstep exceeded,'
+      print*, id_current
+      print*, dt
+      print*, rpar
+      print*, y
+      print*, ydot
+      print*, "pools: abundc, abundo, abundD = ",
+     $  abundc, abundo, abundD
+      print*, "pools: abhe, dgr, tdust = ",
+     $  abhe, dust_to_gas_ratio, tdust
+      ABORT(0)
+      return
+
+100   continue
+
+      do I = 1, nspec-1
+        non_eq_abundances(I) = y(I)
+      enddo
+      energy = y(itmp)
+c
+#endif /* SGCHEM */
+      return      
+      end
+c=======================================================================
+c
+c
+c    \\\\\\\\\\        E N D     S U B R O U T I N E      //////////
+c    //////////     E V O L V E _ A B U N D A N C E S     \\\\\\\\\\
+c
+c=======================================================================
+c
+c=======================================================================
+c
+c
+c    \\\\\\\\\\      B E G I N   S U B R O U T I N E      //////////
+c    //////////      C H E C K _ A B U N D A N C E S    \\\\\\\\\\
+c
+c=======================================================================
+c
+      subroutine check_abundances(y, ipar)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+#include "non_eq.h"
+      REAL y(nspec), max_abundance(nspec)
+      REAL current_carbon, current_oxygen
+      REAL diff
+      integer ipar(nipar)
+      integer J
+c
+      if (nchem_network .le. 3) then
+        max_abundance(ih2)   = 0.5d0
+        max_abundance(ihp)   = 1.0d0
+        max_abundance(idp)   = abundD
+        max_abundance(ihd)   = abundD
+        max_abundance(ihep)  = abhe
+        max_abundance(ihepp) = abhe
+      endif
+c
+      if (nchem_network .eq. 2 .or. nchem_network .eq. 3) then
+        max_abundance(io)    = abundo
+        max_abundance(ic)    = abundc
+        max_abundance(isi)   = abundsi
+        max_abundance(isipp) = abundsi
+      endif
+c
+      if (nchem_network .eq. 3) then
+        max_abundance(ico)    = min(abundo, abundc)
+        max_abundance(ic2)    = 0.5d0 * abundc
+        max_abundance(ioh)    = abundo
+        max_abundance(ih2o)   = abundo
+        max_abundance(io2)    = 0.5d0 * abundo 
+        max_abundance(ihcop)  = min(abundo, abundc)
+        max_abundance(ich)    = abundc
+        max_abundance(ich2)   = abundc
+        max_abundance(ich3p)  = abundc
+      endif
+c
+      if (nchem_network .eq. 4) then
+        max_abundance(ih2)   = 0.5d0
+        max_abundance(ihp)   = 1.0d0
+      endif
+c
+      if (nchem_network .eq. 5) then
+        max_abundance(ih2)   = 0.5d0
+        max_abundance(ihp)   = 1.0d0
+        max_abundance(ico)   = min(abundc, abundo)
+      endif
+c
+      if (nchem_network .eq. 6) then
+        max_abundance(ih2)   = 0.5d0
+        max_abundance(ihp)   = 1.0d0
+        max_abundance(ico)   = min(abundc, abundo)
+        max_abundance(icos)  = min(abundc, abundo)
+      endif
+c
+      if (nchem_network .eq. 17) then
+        max_abundance(ih2)   = 0.5d0
+        max_abundance(ihp)   = 1.0d0
+        max_abundance(ico)   = min(abundc, abundo)
+        max_abundance(ihep)  = abhe
+        max_abundance(ihepp) = abhe
+        max_abundance(idp)   = abundD
+        max_abundance(ihd)   = abundD
+      endif
+c
+      if (nchem_network .eq. 7 .or. nchem_network .eq. 8 .or.
+     $    nchem_network .eq. 11) then
+        max_abundance(ih2)    = 0.5d0
+        max_abundance(ihp)    = 1.0d0
+        max_abundance(ihep)   = abhe
+        max_abundance(io)     = abundo
+        max_abundance(ic)     = abundc
+        max_abundance(ico)    = min(abundo, abundc)
+        max_abundance(ic2)    = 0.5d0 * abundc
+        max_abundance(ioh)    = abundo
+        max_abundance(ih2o)   = abundo
+        max_abundance(io2)    = 0.5d0 * abundo 
+        max_abundance(ihcop)  = min(abundo, abundc)
+        max_abundance(ich)    = abundc
+        max_abundance(ich2)   = abundc
+        max_abundance(ich3p)  = abundc
+        if (nchem_network .eq. 8) then
+          max_abundance(ih3op) = abundo
+          max_abundance(io2p)  = 0.5d0 * abundo
+          max_abundance(ino)   = abundN
+          max_abundance(in2)   = 0.5d0 * abundN
+          max_abundance(in2hp) = abundN
+        endif
+        if (nchem_network .eq. 11) then
+          max_abundance(ich4s) = abundc
+          max_abundance(ich4)  = abundc
+          max_abundance(icos) = min(abundc, abundo)
+          max_abundance(ih2os) = abundo
+          max_abundance(io2s) = 0.5d0 * abundo
+        endif
+c
+        if (nchem_network .eq. 7) then
+          current_carbon = y(ic)  + y(ico) + 2d0 * y(ic2) + y(ihcop)
+     $                   + y(ich) + y(ich2) + y(ich3p)
+          current_oxygen = y(io)  + y(ico) + 2d0 * y(io2) + y(ihcop)
+     $                   + y(ih2o) + y(ioh)
+        elseif (nchem_network .eq. 8) then
+          current_carbon = y(ic)  + y(ico) + 2d0 * y(ic2) + y(ihcop)
+     $                   + y(ich) + y(ich2) + y(ich3p)
+          current_oxygen = y(io)  + y(ico) + 2d0 * y(io2) + y(ihcop)
+     $                   + y(ih2o) + y(ioh) + 2d0 * y(io2p) + y(ih3op)
+     $                   + y(ino)
+        elseif (nchem_network .eq. 11) then
+          current_carbon = y(ic)  + y(ico) + 2d0 * y(ic2) + y(ihcop)
+     $                   + y(ich) + y(ich2) + y(ich3p) + y(ich4)
+     $                   + y(ich4s) + y(icos)
+          current_oxygen = y(io)  + y(ico) + 2d0 * y(io2) + y(ihcop)
+     $                   + y(ih2o) + y(ioh) + 2d0 * y(io2s) + y(ih2os)
+     $                   + y(icos)
+        endif
+c
+        if (current_carbon .gt. 1.001 * abundc) then
+          print*, "Carbon overproduction, ", abundc, current_carbon
+          print*, "Particle ID ", id_current
+          ipar(1) = 1
+          return
+        elseif (current_oxygen .gt. 1.001 * abundo) then
+          print*, "Oxygen overproduction, ", abundo, current_oxygen
+          print*, "Particle ID ", id_current
+          ipar(1) = 1
+          return
+        endif
+      endif
+c                                                                                                                                                                                                         
+      if (nchem_network .eq. 15 .or. nchem_network .eq. 16) then
+        max_abundance(ih2) = 0.5d0
+        max_abundance(ihp) = 1.0d0
+        max_abundance(ic)  = abundc
+        max_abundance(ichx) = abundc
+        max_abundance(iohx) = abundo
+        max_abundance(ico)  = min(abundo, abundc)
+        max_abundance(ihcop) = min(abundo, abundc)
+        max_abundance(ihep) = abhe
+        max_abundance(imp)  = abundM
+      endif
+c
+c Check for NaNs
+c
+      do J = 1, nspec
+        if (y(J) .ne. y(J)) then
+#ifdef DEBUG_EVOLVE
+          print*, "NaN for ID ", id_current, y
+#endif
+          ipar(1) = 1
+          return
+        endif
+      enddo
+c
+c Check for negative abundances. Small negative values (which have
+c absolute values less than the corresponding absolute tolerance)
+c are accepted, but are clipped to zero. For large negative values,
+c we repeat the step with a smaller dt.
+c
+      do J = 1, nspec
+        if (y(J) .lt. 0d0) then
+          if (y(J) .lt. -atol(J)) then
+#ifdef DEBUG_EVOLVE
+            print*, "Negative abundance for ID ", id_current, y
+#endif
+            ipar(1) = 1
+            return
+          else
+            y(J) = 0d0
+          endif
+        endif
+      enddo
+c
+c Don't allow ion abundances to exceed corresponding total metal
+c abundances. Again, small errors are silently corrected, large
+c errors lead to us repeating with a smaller timestep
+c
+      do J = 1, nspec
+        if (J .ne. itmp .and. y(J) .gt. max_abundance(J)) then
+          diff = y(J) - max_abundance(J)
+          if (diff .lt. RTOL * y(J)) then
+#ifdef DEBUG_EVOLVE
+            if (J .eq. ico) n_co_clips = n_co_clips + 1
+#endif
+            y(J) = max_abundance(J)
+          else
+#ifdef DEBUG_EVOLVE
+            if (J .eq. ico) n_co_rejects = n_co_rejects + 1
+#endif
+#ifdef DEBUG_EVOLVE
+            print*, "Excess abundance for ID ", id_current, y
+#endif
+            ipar(1) = 1
+            return
+          endif
+        endif
+      enddo
+c
+c The caps above bound each species singly, not their sum: scale an
+c over-subscribed element group down proportionally (H last, as the
+c metal groups only lower H-bearing species)
+c
+#if CHEMISTRYNETWORK == 5
+      call clamp_pool_group(y, (/ ih2, ihp /), (/ 2d0, 1d0 /), 2, 1d0)
+#endif
+#if CHEMISTRYNETWORK == 17
+      call clamp_pool_group(y, (/ ihep, ihepp /), (/ 1d0, 1d0 /), 2,
+     $                      abhe)
+      call clamp_pool_group(y, (/ idp, ihd /), (/ 1d0, 1d0 /), 2,
+     $                      abundD)
+      call clamp_pool_group(y, (/ ih2, ihp, ihd /), (/ 2d0, 1d0, 1d0 /),
+     $                      3, 1d0)
+#endif
+#if CHEMISTRYNETWORK == 15 || CHEMISTRYNETWORK == 16
+      call clamp_pool_group(y, (/ ic, ichx, ico, ihcop /),
+     $                      (/ 1d0, 1d0, 1d0, 1d0 /), 4, abundc)
+      call clamp_pool_group(y, (/ iohx, ico, ihcop /),
+     $                      (/ 1d0, 1d0, 1d0 /), 3, abundo)
+      call clamp_pool_group(y, (/ ih2, ihp, ichx, iohx, ihcop /),
+     $                      (/ 2d0, 1d0, 1d0, 1d0, 1d0 /), 5, 1d0)
+#endif
+#if CHEMISTRYNETWORK == 3
+      call clamp_pool_group(y, (/ ic, ico, ic2, ihcop, ich, ich2,
+     $                      ich3p /), (/ 1d0, 1d0, 2d0, 1d0, 1d0, 1d0,
+     $                      1d0 /), 7, abundc)
+      call clamp_pool_group(y, (/ io, ico, ioh, ih2o, io2, ihcop /),
+     $                      (/ 1d0, 1d0, 1d0, 1d0, 2d0, 1d0 /), 6,
+     $                      abundo)
+      call clamp_pool_group(y, (/ isi, isipp /), (/ 1d0, 1d0 /), 2,
+     $                      abundsi)
+      call clamp_pool_group(y, (/ ihep, ihepp /), (/ 1d0, 1d0 /), 2,
+     $                      abhe)
+      call clamp_pool_group(y, (/ idp, ihd /), (/ 1d0, 1d0 /), 2,
+     $                      abundD)
+      call clamp_pool_group(y, (/ ih2, ihp, ihd, ioh, ih2o, ihcop, ich,
+     $                      ich2, ich3p /), (/ 2d0, 1d0, 1d0, 1d0, 2d0,
+     $                      1d0, 1d0, 2d0, 3d0 /), 9, 1d0)
+#endif
+c
+#endif /* SGCHEM */
+      return
+      end
+c=======================================================================
+c
+c
+c    \\\\\\\\\\        E N D   S U B R O U T I N E      //////////
+c    //////////      C H E C K _ A B U N D A N C E S    \\\\\\\\\\
+c
+c=======================================================================
+c=======================================================================
+c
+c
+c    \\\\\\\\\\      B E G I N   S U B R O U T I N E      //////////
+c    //////////       I N I T _ T O L E R A N C E S       \\\\\\\\\\
+c
+c=======================================================================
+c
+      subroutine init_tolerances
+#ifdef SGCHEM
+      implicit NONE
+#include "non_eq.h"
+#include "cool.h"
+c
+c Set-up absolute tolerances
+c
+      if (nchem_network .le. 3) then
+        atol(ih2)   = ATOL_H2
+        atol(ihp)   = ATOL_HP
+        atol(idp)   = ATOL_DP
+        atol(ihd)   = ATOL_HD
+        atol(ihep)  = ATOL_HEP       
+        atol(ihepp) = ATOL_HEPP
+      endif
+c
+      if (nchem_network .eq. 2 .or. nchem_network .eq. 3) then
+        atol(ic)    = ATOL_C
+        atol(isi)   = ATOL_SI
+        atol(io)    = ATOL_O
+        atol(isipp) = ATOL_SIPP
+      endif
+c
+      if (nchem_network .eq. 3) then
+        atol(ico)   = ATOL_CO
+        atol(ic2)   = ATOL_C2
+        atol(ioh)   = ATOL_OH
+        atol(ih2o)  = ATOL_H2O
+        atol(io2)   = ATOL_O2
+        atol(ihcop) = ATOL_HCOP
+        atol(ich)   = ATOL_CH
+        atol(ich2)  = ATOL_CH2
+        atol(ich3p) = ATOL_CH3P
+      endif
+c
+      if (nchem_network .eq. 4) then
+        atol(ihp) = ATOL_HP
+        atol(ih2) = ATOL_H2
+      endif
+c
+      if (nchem_network .eq. 5) then
+        atol(ihp) = ATOL_HP
+        atol(ih2) = ATOL_H2
+        atol(ico) = ATOL_CO
+      endif
+c
+      if (nchem_network .eq. 6) then
+        atol(ihp)  = ATOL_HP
+        atol(ih2)  = ATOL_H2
+        atol(ico)  = ATOL_CO
+        atol(icos) = ATOL_COS
+      endif
+c
+      if (nchem_network .eq. 7 .or. nchem_network .eq. 8 .or.
+     $    nchem_network .eq. 11) then
+        atol(ih2)   = ATOL_H2
+        atol(ihp)   = ATOL_HP
+        atol(ihep)  = ATOL_HEP
+        atol(ic)    = ATOL_C
+        atol(io)    = ATOL_O
+        atol(ico)   = ATOL_CO
+        atol(ic2)   = ATOL_C2
+        atol(ioh)   = ATOL_OH
+        atol(ih2o)  = ATOL_H2O
+        atol(io2)   = ATOL_O2
+        atol(ihcop) = ATOL_HCOP
+        atol(ich)   = ATOL_CH
+        atol(ich2)  = ATOL_CH2
+        atol(ich3p) = ATOL_CH3P
+        if (nchem_network .eq. 8) then
+          atol(ih3op) = ATOL_H3OP
+          atol(io2p)  = ATOL_O2P
+          atol(ino)   = ATOL_NO
+          atol(in2)   = ATOL_N2
+          atol(in2hp) = ATOL_N2HP
+        endif
+        if (nchem_network .eq. 11) then
+          atol(ich4s) = ATOL_CH4S
+          atol(ich4)  = ATOL_CH4
+          atol(icos)  = ATOL_COS
+          atol(ih2os) = ATOL_H2OS
+          atol(io2s)  = ATOL_O2S
+        endif
+      endif
+c
+      if (nchem_network .eq. 15 .or. nchem_network .eq. 16) then
+        atol(ih2)   = ATOL_H2
+        atol(ihp)   = ATOL_HP
+        atol(ic)    = ATOL_C
+        atol(ichx)  = ATOL_CHX
+        atol(iohx)  = ATOL_OHX
+        atol(ico)   = ATOL_CO
+        atol(ihcop) = ATOL_HCOP
+        atol(ihep)  = ATOL_HEP
+        atol(imp)   = ATOL_MP
+      endif
+c
+      if (nchem_network .eq. 17) then
+        atol(ih2)   = ATOL_H2
+        atol(ihp)   = ATOL_HP
+        atol(ico)   = ATOL_CO
+        atol(ihep)  = ATOL_HEP
+        atol(ihepp) = ATOL_HEPP
+        atol(idp)   = ATOL_DP
+        atol(ihd)   = ATOL_HD
+      endif
+c
+      atol(itmp)  = ATOL_TMP
+c
+#endif /* SGCHEM */
+      return
+      end
+c=======================================================================
+c
+c
+c    \\\\\\\\\\        E N D     S U B R O U T I N E      //////////
+c    //////////       I N I T _ T O L E R A N C E S       \\\\\\\\\\
+c
+c=======================================================================
+c=======================================================================
+c
+c    Scale species k(1..n), each holding w(j) atoms of an element, down
+c    proportionally so that together they hold at most pool of it
+c
+c=======================================================================
+      subroutine clamp_pool_group(y, k, w, n, pool)
+#ifdef SGCHEM
+      implicit NONE
+#include "cool.h"
+#include "non_eq.h"
+      integer n, k(n), J
+      REAL y(nspec), w(n), pool, s, f
+      s = 0d0
+      do J = 1, n
+        s = s + w(J) * y(k(J))
+      enddo
+      if (s .gt. pool .and. s .gt. 0d0) then
+        f = max(pool, 0d0) / s
+        do J = 1, n
+          y(k(J)) = f * y(k(J))
+        enddo
+      endif
+#endif /* SGCHEM */
+      return
+      end

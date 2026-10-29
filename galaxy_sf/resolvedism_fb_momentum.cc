@@ -122,15 +122,15 @@ double resolvedism_radp_starside_dp_code(int i)
 #else
         /* D_REF UNIFICATION (2026-07-28): was flat All.DGRnormalized (=MW-like)
          * regardless of Z -> at 0.1 Zsun the star-side f_abs was ~10x too dusty
-         * vs the chemistry/tree convention. Mirror chemcool: dust-to-metal
+         * vs the chemistry/tree convention. Mirror sgchem: dust-to-metal
          * efficiency x local Z / Zsun, capped at the certified 10x-solar domain. */
-#ifdef CHEMCOOL
+#ifdef SGCHEM
         double DGR = All.DGRnormalized;
-#if defined(METALS) && !defined(CHEMCOOL_DGR_INDEPENDENT_OF_METALLICITY)
+#if defined(METALS) && !defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY)
         DGR = All.DGRnormalized * P[i].Metallicity[0] / All.SolarAbundances[0];
 #endif
 #else
-        double DGR = 1.0; /* no CHEMCOOL: dust-to-metal ratio fixed at solar */
+        double DGR = 1.0; /* no SGCHEM: dust-to-metal ratio fixed at solar */
 #ifdef METALS
         DGR = P[i].Metallicity[0] / All.SolarAbundances[0];
 #endif
