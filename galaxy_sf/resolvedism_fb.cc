@@ -701,9 +701,10 @@ static void resolvedism_fb_apply_recoil(void)
     int ii, k;
     for(int ii : ActiveParticleList) {
         if(!STELLA_OWNS_STAR(P[ii])) continue;
-        if(P[ii].Mass > 0) {for(k = 0; k < 3; k++) {P[ii].Vel[k] -= P[ii].FB_RecoilAccum[k] * All.cf_atime / P[ii].Mass;}}
+        if(P[ii].Mass > 0) {for(k = 0; k < 3; k++) {P[ii].Vel[k] -= P[ii].FB_RecoilAccum[k] * All.cf_atime / P[ii].Mass;} force_raise_motion_bound(ii);}
         for(k = 0; k < 3; k++) {P[ii].FB_RecoilAccum[k] = 0;}
     }
+    force_raise_noted_motion_bounds(); /* gas kicked by the injection that preceded this call */
 }
 
 static void resolvedism_fb_serialized_pass(void (*calc_fn)(int), int flagA, int flagB)

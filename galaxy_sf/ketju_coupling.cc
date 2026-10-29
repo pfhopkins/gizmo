@@ -2034,6 +2034,7 @@ static void scatter_results(KetjuRegion &reg)
                 P[idx].KetjuFinalVel[j] = P[idx].Vel[j];
             }
         }
+        force_raise_motion_bound(idx); /* chord velocity set outside the kick: nodes must cover this drift */
 
 #ifdef KETJU_SINKS
         /* update spin for PN particles */

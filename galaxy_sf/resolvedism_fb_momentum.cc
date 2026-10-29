@@ -841,6 +841,7 @@ int resolvedismFB_momentum_evaluate(int target, int mode, int *exportflag, int *
                         out.MomentumInjected[k] += dp_k;
                         dv_mag2 += dv_k * dv_k;
                     }
+                    force_note_motion_change(j);
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                     if(loop_iteration == 0 && local.fb_channel == 2) {
                         double dpa = 0; for(k = 0; k < 3; k++) {dpa += (dp_share * dir_[k]) * (dp_share * dir_[k]);}
@@ -1126,6 +1127,7 @@ void resolvedism_radpressure_treerad(void)
             P[i].Vel[k] += dv;
             CellP[i].VelPred[k] += dv;
         }
+        force_raise_motion_bound(i);
         RadPressure_dp_thisStep += dpmag_cgs; /* channel-3 ledger (FeedbackBudget) */
     }
 }

@@ -581,6 +581,7 @@ int resolvedismFB_thermal_evaluate(int target, int mode, int *exportflag, int *e
                         #pragma omp atomic
                         CellP[j].VelPred[k] += dv_ej;
                     }
+                    force_note_motion_change(j);
                     if(local.Esne <= 0) { /* no SN energy: dilute here (SN branch above already did) */
                         double dil = Mass_j / (Mass_j + dM);
                         #pragma omp atomic
