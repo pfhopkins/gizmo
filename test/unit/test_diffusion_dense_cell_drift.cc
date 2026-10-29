@@ -166,7 +166,6 @@ TEST_CASE("extreme: A's free_H ≈ 0 (chemistry locks 99.9% of H), conservative 
     // — this should trigger the 0.01*free_H clamp because free_H is tiny.
     for(int n = 0; n < 1000; n++) {
         double X_H_A = DMAX(cells[0].X[ELEM_H], 1e-10);
-        double X_H_B = DMAX(cells[1].X[ELEM_H], 1e-10);
         double mf_H2_A = cells[0].TracAbund[TRAC_H2] * 2.0 * X_H_A;
         double free_H_A = cells[0].X[ELEM_H] - mf_H2_A - cells[0].TracAbund[TRAC_HP]*X_H_A;
 

@@ -85,11 +85,15 @@ def _run_log_text():
     ids=["no_temperature_block_is_fine", "sensitivity_demands_temperature"],
 )
 def test_read_ic_binary(num_mpi_ranks, num_omp_threads, extra_config_flags):
-    _build_and_run_local(num_mpi_ranks, num_omp_threads, extra_config_flags)
+    demands_temperature = "INPUT_READ_TEMPERATURE" in extra_config_flags
+    try:
+        _build_and_run_local(num_mpi_ranks, num_omp_threads, extra_config_flags)
+    except RuntimeError:
+        if not demands_temperature:
+            raise  # the sensitivity variant is expected to abort; run_test raises on any nonzero exit
 
     log = _run_log_text()
     snaps = sorted(glob.glob(variant_output_dir(TEST_NAME, extra_config_flags) + "/snapshot_*.hdf5"))
-    demands_temperature = "INPUT_READ_TEMPERATURE" in extra_config_flags
 
     assert log, f"no run log at {TEST_DIR}/test_{TEST_NAME}.out"
 

@@ -42,7 +42,7 @@ static void apply_diffusion_with_clamp(Cell &c) {
 }
 
 // Same update WITHOUT the clamp (truthful conservative arithmetic)
-static void apply_diffusion_no_clamp(Cell &c) {
+__attribute__((unused)) static void apply_diffusion_no_clamp(Cell &c) {
     for(int k = 0; k < NELEM; k++) {
         c.X[k] = c.X[k] + c.Dyield[k] / c.Mass;
     }
@@ -128,7 +128,8 @@ TEST_CASE("TURB_DIFF: 1000 small steps, moderate gradient — accumulating drift
     // Moderate gradient: enriched cell at X_H=0.05, normal at X_H=0.70
     A.X[ELEM_H] = 0.05; B.X[ELEM_H] = 0.70;
 
-    double H_before = total_mass_k((Cell[]){A, B}, 2, ELEM_H);
+    Cell AB[2] = {A, B};
+    double H_before = total_mass_k(AB, 2, ELEM_H);
 
     // 1000 small diffusion sub-steps, each transferring 1% of (B-A) gradient
     Cell cells[2] = {A, B};
