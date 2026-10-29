@@ -135,6 +135,7 @@ struct ChemInitParams {
     int    iphoto, isrf_option, irad_heat, no_chem;
     double h2_form_ex, h2_form_kin, deff, phi_pah, AV_conversion_factor, AV_ext, dm_density;
     double pdv_term, redshift, abundD, G0, G0_LW, cosmic_ray_ion_rate, cr_energy_density, dust_to_gas_ratio;
+    const char *tables_dir; /* installed chemistry tables (C++ backend) */
 };
 
 

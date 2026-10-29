@@ -57,7 +57,8 @@ void chem_cxx_tables_init(const struct ChemInitParams* p)
     cfg.cosmic_ray_ion_rate = p->cosmic_ray_ion_rate;
     cfg.abhe = g_abhe;
     const char* dd = std::getenv("CHEMCXX_DATADIR");
-    if (chem_cxx_tables_init(cfg, dd ? dd : "gizmo/cooling/sgchem")) { int c = 3; sgchem_fatal_(&c); }
+    if (!dd) dd = (p->tables_dir && *p->tables_dir) ? p->tables_dir : "gizmo/cooling/sgchem";
+    if (chem_cxx_tables_init(cfg, dd)) { int c = 3; sgchem_fatal_(&c); }
 
     // init-time constants; per-cell fields are overwritten in chem_cxx_begin_cell
     ChemCell& c = g_tmpl;

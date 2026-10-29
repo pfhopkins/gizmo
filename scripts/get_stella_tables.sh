@@ -1,41 +1,61 @@
 #!/bin/bash
-# Build and install the Stella stellar + SGCHEM tables from the stella-tables repo when they are missing or were not
-# built from the pinned commit (per stella_tables.stamp); tables replaced that way are kept with a .replaced-<date> suffix.
-# Called by the Makefile (order-only prerequisite of the executable); safe to run by hand from the GIZMO root.
-#   STELLA_TABLES_REPO  git URL or local path of stella-tables (default: the public GitHub repo)
-#   STELLA_TABLES_REF   commit/tag to build (default: the version pinned below)
-#   STELLA_TABLES_DIR   where to clone and build (default: .stella-tables in the GIZMO root)
+# Install the Stella stellar + SGCHEM tables these GIZMO sources expect into PREFIX, and check them against the hashes
+# recorded in galaxy_sf/stella_tables_check.h (GIZMO checks the same hashes at startup). Run once per machine/version,
+# before any run: GIZMO itself never builds or fetches tables, and needs no network.
+#   get_stella_tables.sh [--into-tree GIZMO_DIR] [PREFIX]
+#   PREFIX               install directory (default: $STELLA_TABLES_PREFIX, else ~/.stella-tables/<ref>)
+#   STELLA_TABLES_FROM   take already-built tables from this directory (an install, or a stella-tables build/) instead of building
+#   STELLA_TABLES_REPO   git URL or local path of stella-tables to build from (default: the public GitHub repo)
+#   STELLA_TABLES_DIR    where to clone and build (default: PREFIX/src)
+#   PYTHON               python with numpy and h5py, for the hash check (default: python3)
+#   --into-tree DIR      also link the tables into DIR's in-tree default locations (galaxy_sf/stellar_tables/, cooling/sgchem/),
+#                        for parameter files with the old default paths and for the SGCHEM_FORTRAN backend (hard-wired path)
+# Then set in the parameter file: StellarTablesFile PREFIX/stellar_tables_unified.hdf5, SGCHEMTablesDir PREFIX
 set -euo pipefail
 GIZMO="$(cd "$(dirname "$0")/.." && pwd)"
-ST="$GIZMO/galaxy_sf/stellar_tables"; CC="$GIZMO/cooling/sgchem"
-OUTS=("$ST/stellar_tables_unified.hdf5" "$ST/stellar_wind_cumulative.hdf5" "$CC/energy-table-x.txt")
-
+HDR="$GIZMO/galaxy_sf/stella_tables_check.h"
+TREE=""; if [ "${1:-}" = "--into-tree" ]; then TREE="$(cd "$2" && pwd)"; shift 2; fi
+REF="$(sed -n 's/^#define STELLA_TABLES_REF "\([0-9a-f]*\)".*/\1/p' "$HDR")"
+PREFIX="${1:-${STELLA_TABLES_PREFIX:-$HOME/.stella-tables/$REF}}"
 REPO="${STELLA_TABLES_REPO:-https://github.com/Ulli1991/stella-tables.git}"
-REF="${STELLA_TABLES_REF:-a4830ab18252c8786539e95598fc789f3b6d5142}"   # stella-tables version these GIZMO sources expect
-DIR="${STELLA_TABLES_DIR:-$GIZMO/.stella-tables}"
-STAMP="$ST/stella_tables.stamp"
+PY="${PYTHON:-python3}"
+FILES=(stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5 energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt)
 
-missing=0; for f in "${OUTS[@]}"; do [ -e "$f" ] || missing=1; done
-if [ $missing = 0 ]; then
-    grep -qx "commit: $REF" "$STAMP" 2>/dev/null && exit 0
-    echo "get_stella_tables: installed tables are not stella-tables $REF ($(grep -s '^commit:' "$STAMP" || echo 'no stamp')); rebuilding" >&2
+verify() { # verify DIR: every table present with its expected hash
+    local d="$1" f want got
+    for f in "${FILES[@]}"; do
+        [ -e "$d/$f" ] || { echo "get_stella_tables: $d/$f missing" >&2; return 1; }
+        want="$(sed -n "s/.*{\"$f\", *\"\([0-9a-f]*\)\"}.*/\1/p" "$HDR")"
+        got="$("$PY" -I "$GIZMO/scripts/stella_tables_hash.py" "$d/$f" | cut -d' ' -f1)"
+        [ "$got" = "$want" ] || { echo "get_stella_tables: $d/$f has hash $got, expected $want (stella-tables $REF)" >&2; return 1; }
+    done
+}
+
+mkdir -p "$PREFIX"; PREFIX="$(cd "$PREFIX" && pwd)"
+if ! verify "$PREFIX" 2>/dev/null; then
+    if [ -n "${STELLA_TABLES_FROM:-}" ]; then
+        SRC="$STELLA_TABLES_FROM"; echo "get_stella_tables: copying tables from $SRC"
+    else
+        DIR="${STELLA_TABLES_DIR:-$PREFIX/src}"
+        [ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
+        git -C "$DIR" fetch -q origin || true
+        git -C "$DIR" checkout -q "$REF"
+        echo "get_stella_tables: building tables from $REPO @ $REF in $DIR"
+        (cd "$DIR" && ./build.sh) || { echo "get_stella_tables: stella-tables build or tests FAILED; nothing installed" >&2; exit 1; }
+        SRC="$DIR/build"
+    fi
+    for f in "${FILES[@]}"; do
+        if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/";
+        else echo "get_stella_tables: $f not found in $SRC" >&2; exit 1; fi
+    done
+    verify "$PREFIX" || { echo "get_stella_tables: installed tables in $PREFIX do not match these sources" >&2; exit 1; }
+    { echo "stella-tables: $REF"; echo "source: ${STELLA_TABLES_FROM:-$REPO}"; date; } > "$PREFIX/stella_tables.stamp"
 fi
-
-if [ -e "$DIR" ] && [ ! -d "$DIR/.git" ]; then mv "$DIR" "$DIR.incomplete-$(date +%Y%m%d%H%M%S)"; fi   # e.g. copied without .git
-[ -d "$DIR/.git" ] || git clone -q "$REPO" "$DIR"
-git -C "$DIR" fetch -q origin
-git -C "$DIR" checkout -q "$REF"
-SRC="$DIR"
-echo "get_stella_tables: building tables from $REPO @ $REF in $SRC"
-
-if ! (cd "$SRC" && ./build.sh); then echo "get_stella_tables: stella-tables build or tests FAILED; nothing installed" >&2; exit 1; fi
-
-B="$SRC/build"
-for f in eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt; do  # GIZMO tracks these; they must be the tables the energy table was built from
-    cmp -s "$B/chemistry/$f" "$CC/$f" || { echo "get_stella_tables: $CC/$f differs from stella-tables; not installing" >&2; exit 1; }
-done
-old="replaced-$(date +%Y%m%d%H%M%S)"; for f in "${OUTS[@]}"; do [ -e "$f" ] && mv "$f" "$f.$old"; done
-cp "$B/stellar_tables_unified.hdf5" "$B/stellar_wind_cumulative.hdf5" "$ST/"
-cp "$B/chemistry/energy-table-x.txt" "$CC/"
-{ echo "source: $REPO"; echo "commit: $(git -C "$SRC" rev-parse -q --verify HEAD || echo uncommitted)"; date; } > "$ST/stella_tables.stamp"
-echo "get_stella_tables: installed ${OUTS[*]}"
+echo "get_stella_tables: $PREFIX holds stella-tables $REF (hashes checked)"
+if [ -n "$TREE" ]; then
+    mkdir -p "$TREE/galaxy_sf/stellar_tables" "$TREE/cooling/sgchem"
+    for f in stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5; do ln -sfn "$PREFIX/$f" "$TREE/galaxy_sf/stellar_tables/$f"; done
+    for f in energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt; do ln -sfn "$PREFIX/$f" "$TREE/cooling/sgchem/$f"; done
+    echo "get_stella_tables: linked into $TREE"
+fi
+echo "parameter file: StellarTablesFile $PREFIX/stellar_tables_unified.hdf5   SGCHEMTablesDir $PREFIX"

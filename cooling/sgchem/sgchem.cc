@@ -60,6 +60,7 @@ void sgchem_init(void)
     p.irad_heat   = 0; /* no external radiative heating (handled via G0) */
     p.isrf_option = 1; /* Draine (1978) ISRF spectral shape */
     p.no_chem     = 0;
+    p.tables_dir  = All.SGCHEMTablesDir;
     p.h2_form_ex  = 0.84;       /* fraction of H2 binding energy → vibrational excitation */
     p.h2_form_kin = 0.12;       /* fraction → kinetic energy of H2 molecule */
     p.deff        = 1.0;        /* H2 formation on dust efficiency factor */
