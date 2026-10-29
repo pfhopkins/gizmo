@@ -1,10 +1,10 @@
 """Scratch probes for I/O and parameter fixes (to be stripped at integration).
 
 One small binary-IC gas box (as in test/read_ic_binary), each case in its own run directory under output/:
-  readsnap_binary         scripts/readsnap.py and gizmo.readsnap read a SnapFormat 1 snapshot
+  readsnap_binary         scripts/readsnap.py and gizmo.readsnap read a legacy GADGET-2 binary snapshot
   numfiles_not_pow2       NumFilesWrittenInParallel 3 on 4 ranks runs and writes every restart file
   numfiles_default        omitted, NumFilesWrittenInParallel defaults to the number of ranks
-  buffersize_fraction     BufferSize 0.5 (MB) runs, rather than truncating to 0 bytes
+  buffersize_fraction     BufferSize 0.5 (MB) runs, rather than truncating to 0 bytes (gas and collisionless boxes)
   hdf5_snapshot_roundtrip a snapshot from this build (NumPart_ThisFile at 64 bits) reads back as an IC
   hdf5_count_above_int32  an HDF5 IC header holding 3e9 cells of one type is read at 64 bits
   binary_record_fit       SnapFormat 1/2 refuse a file whose block exceeds the 32-bit record marker
@@ -32,10 +32,9 @@ DRIVER = join(TEST_DIR, "output", "record_fit_driver")
 N_GAS = 512
 
 sys.path.insert(0, join(REPO, "test", "read_ic_binary"))
-from make_binary_ic import make_binary_ic  # noqa: E402
+from make_binary_ic import _block, make_binary_ic  # noqa: E402
 
 _driver_link_error = None
-_readsnap_run_done = []
 
 
 @pytest.fixture(scope="module")
@@ -115,23 +114,28 @@ def _load_module(path, name):
     return mod
 
 
+def _write_gadget2_snapshot(path):
+    """A legacy GADGET-2 SnapFormat 1 file (float32 positions, uint32 IDs), the layout readsnap's binary reader
+    parses. GIZMO's own SnapFormat 1 output has double positions and 64-bit IDs by default, which it does not."""
+    make_binary_ic(path, ngas=N_GAS)  # header, positions, velocities, IDs, masses, internal energy
+    with open(path, "ab") as fh:
+        _block(fh, np.full(N_GAS, 2.0, dtype=np.float32).tobytes())  # density
+        _block(fh, np.full(N_GAS, 0.1, dtype=np.float32).tobytes())  # kernel radius
+
+
 @pytest.mark.parametrize("reader", ["scripts/readsnap.py", "python_src/gizmo/readsnap.py"])
-def test_readsnap_binary(gizmo, reader):
-    rundir = join(RUNS, "readsnap_binary")
-    if not _readsnap_run_done:
-        rc, log, rundir = _run(gizmo, "readsnap_binary", overrides={"SnapFormat": 1})
-        assert rc == 0, log[-3000:]
-        _readsnap_run_done.append(rundir)
+def test_readsnap_binary(reader):
+    rundir = _fresh("readsnap_binary_" + reader.split("/")[0])
+    _write_gadget2_snapshot(join(rundir, "snapshot_000"))
     mod = _load_module(join(REPO, reader), "readsnap_probe")
-    P = mod.readsnap(join(rundir, "output"), 0, 0)
+    P = mod.readsnap(rundir, 0, 0)
     assert P["k"] == 1, P
     pos_ic, ids_ic = _ic_arrays()
-    order = np.argsort(P["id"])
-    assert np.array_equal(P["id"][order], ids_ic)
-    assert np.array_equal(P["p"][order], pos_ic.astype(np.float64))
+    assert np.array_equal(P["id"], ids_ic)
+    assert np.array_equal(P["p"], pos_ic.astype(np.float64))
     assert np.allclose(P["m"], 1.0 / N_GAS, rtol=1e-6, atol=0)
     assert np.allclose(P["u"], 0.05, rtol=1e-6, atol=0)
-    assert np.all(P["h"] > 0) and np.all(P["rho"] > 0)
+    assert np.allclose(P["rho"], 2.0, rtol=0, atol=0) and np.allclose(P["h"], 0.1, rtol=1e-6, atol=0)
 
 
 def test_numfiles_not_pow2(gizmo):
@@ -150,8 +154,32 @@ def test_numfiles_default(gizmo):
     assert lines[0].rstrip().endswith("(=4)"), lines[0]
 
 
-def test_buffersize_fraction(gizmo):
-    rc, log, rundir = _run(gizmo, "buffersize_fraction", overrides={"BufferSize": 0.5}, timeout=240)
+def _write_collisionless_ic(path, n=N_GAS):
+    """The same box with collisionless (type 1) particles only: no gas, so no hydro loop runs."""
+    import struct
+    rng = np.random.default_rng(42)
+    pos = rng.uniform(0.0, 1.0, size=(n, 3)).astype(np.float32)
+    npart = [0, n, 0, 0, 0, 0]
+    h = struct.pack("6i", *npart) + struct.pack("6d", *([0.0] * 6)) + struct.pack("dd", 0.0, 0.0) + struct.pack("ii", 0, 0)
+    h += struct.pack("6i", *npart) + struct.pack("ii", 0, 1) + struct.pack("dddd", 1.0, 0.0, 0.0, 1.0) + struct.pack("ii", 0, 0)
+    h += struct.pack("6I", *([0] * 6)) + struct.pack("i", 0)
+    h += b"\0" * (256 - len(h))
+    with open(path, "wb") as fh:
+        for payload in (h, pos.tobytes(), np.zeros((n, 3), np.float32).tobytes(), np.arange(1, n + 1, dtype=np.uint32).tobytes(),
+                        np.full(n, 1.0 / n, np.float32).tobytes()):
+            _block(fh, payload)
+
+
+@pytest.mark.parametrize("content", ["gas", "collisionless"])
+def test_buffersize_fraction(gizmo, content):
+    """BufferSize 0.5 MB. The collisionless box reaches only the I/O and exchange chunking; gas also the hydro loops."""
+    tag = f"buffersize_fraction_{content}"
+    if content == "gas":
+        rc, log, rundir = _run(gizmo, tag, overrides={"BufferSize": 0.5}, timeout=240)
+    else:
+        rundir = _fresh(tag)
+        _write_collisionless_ic(join(rundir, f"{TEST_NAME}_ics"))
+        rc, log = _launch(gizmo, rundir, _params({"BufferSize": 0.5, "SofteningHalo": 0.01}), timeout=240)
     assert rc == 0, f"exit {rc}:\n{log[-3000:]}"
     assert isfile(join(rundir, "output", "snapshot_002.hdf5"))
 
