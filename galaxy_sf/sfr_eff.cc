@@ -36,6 +36,20 @@
 #ifdef GALSF // top-level switch for compiling the routines below //
 
 
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+/* star-formation channel of gas cell i, by its mass against the band thresholds [Msun] */
+int sf_channel_for_cell(int i)
+{
+    double m_solar = P[i].Mass * UNIT_MASS_IN_SOLAR;
+#ifdef GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW
+    if(m_solar <= (GALSF_RESOLVEDISM_HYBRID_SINKS_BELOW)) {return SF_CHANNEL_SINK;}
+#endif
+    if(m_solar > (GALSF_RESOLVEDISM_HYBRID_M_SSP)) {return SF_CHANNEL_SSP;}
+    return SF_CHANNEL_STELLA;
+}
+#endif
+
+
 #if defined(GALSF_SFR_IMF_VARIATION) || defined(GALSF_SFR_IMF_SAMPLING)
 /* function to determine what the IMF of a new star particle will be, based
     on the gas properties of the particle out of which it forms */
@@ -216,6 +230,10 @@ double get_starformation_rate(int i, int mode)
     tsfr = sqrt(All.PhysDensThresh / (CellP[i].Density * All.cf_a3inv)) * All.MaxSfrTimescale; /* set default SFR timescale to scale appropriately with the gas dynamical time */
     rateOfSF = P[i].Mass / tsfr; /* 'normal' sfr from density law above */
     if(tsfr<=0 || rateOfSF<=0 || flag==0) {return 0;} /* nonsense here, return 0 */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    int sf_channel = sf_channel_for_cell(i);
+    if(sf_channel == SF_CHANNEL_SINK) {return 0;} /* STARFORGE tier not implemented */
+#endif
     
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
     int cell_can_be_singlestar = is_particle_single_star_eligible(i); // call function to determine if we're actually eligible to be a true single-star element
@@ -255,6 +273,9 @@ double get_starformation_rate(int i, int mode)
 #endif
 
 #if defined(GALSF_SFR_VIRIAL_SCALING) /* apply standard virial-parameter criteria here. note that our definition of virial parameter here is ratio of [Kinetic+Internal Energy]/|Gravitational Energy| -- so <1=bound, >1=unbound, 1/2=bound-and-virialized, etc. */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    if(sf_channel == SF_CHANNEL_SSP) { /* virial criterion: FIRE channel only */
+#endif
     double v_eff_touse = v_fast;
 #if defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
     v_eff_touse = cs_eff;
@@ -292,6 +313,9 @@ double get_starformation_rate(int i, int mode)
 #if (GALSF_SFR_VIRIAL_SCALING == 3)
     if(alpha_vir>alpha_crit) {rateOfSF *= 0.01;} /* Krumholz-McKee type model where assumed to be always 1% even above threshold */
 #endif
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    }
+#endif
 #endif // virial sf criteria/scaling block
 
 #if (SINGLE_STAR_SINK_FORMATION & 256) /* scale SFR to fraction of 'molecular' gas in cell */
@@ -301,11 +325,14 @@ double get_starformation_rate(int i, int mode)
 #endif
 
 #if (SINGLE_STAR_SINK_FORMATION & 2) /* restrict to convergent flows */
-#if defined(GALSF_RESOLVEDISM)
+#if defined(GALSF_RESOLVEDISM) && !defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
     if(P[i].Particle_DivVel * All.cf_a2inv >= 0) {rateOfSF=0;} /* resolved ISM: simple div(v) < 0 check using existing Particle_DivVel */
 #elif defined(SINGLE_STAR_SINK_DYNAMICS)
     if(divv >= 0) {rateOfSF=0;} /* diverging flow, no SF [simplest version of this] */
 #else
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    if(sf_channel == SF_CHANNEL_STELLA) {if((GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & 2) && (P[i].Particle_DivVel * All.cf_a2inv >= 0)) {rateOfSF=0;}} else /* Stella version on Stella cells */
+#endif
     if(divv < 0) { // here need to more carefully account for the fact that we are not trying to capture laminar collapse, but whether a patch should or should not -fragment-
         /* double t_compression = -1./divv; if(t_compression < tsfr) {rateOfSF *= tsfr/t_compression;} // if you are collapsing or being externally compressed faster than the local dynamical time, allow SF to characteristically follow -that- timescale, to prevent runaway densities from appearing spuriously (will have no effect in single star runs since sf is deterministic and this normalization is set to infinity at the end) */
     } else {
@@ -326,13 +353,20 @@ double get_starformation_rate(int i, int mode)
 
 #if (SINGLE_STAR_SINK_FORMATION & 64) /* check if Jeans mass is low enough for conceivable formation of 'stars' */
 #if defined(GALSF_RESOLVEDISM)
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    if(sf_channel == SF_CHANNEL_STELLA && (GALSF_RESOLVEDISM_HYBRID_STELLA_SFR_CRITERION & 64))
+#endif
     { /* resolved ISM Jeans mass: M_J = pi^(5/2)/6 * cs^3 / (G^(3/2) * sqrt(rho)) */
         double rho_phys = CellP[i].Density * All.cf_a3inv;
         double cs = CellP[i].effective_soundspeed() * All.cf_atime;
         double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* Jeans mass in code units */
         if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {rateOfSF=0;}
     }
-#else
+#endif
+#if !defined(GALSF_RESOLVEDISM) || defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    if(sf_channel == SF_CHANNEL_SSP) { /* FIRE version on SSP cells */
+#endif
     double cs_touse=cs_eff, MJ_crit=DMAX(DMIN(1.e6, 1.*P[i].Mass*UNIT_MASS_IN_SOLAR), 100.); /* for galaxy-scale SF, default to large ~1000 Msun threshold */
     if(exceeds_force_softening_threshold) {MJ_crit = DMAX(1.e6 , 100.*P[i].Mass*UNIT_MASS_IN_SOLAR);}
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
@@ -340,11 +374,17 @@ double get_starformation_rate(int i, int mode)
 #endif
     double MJ_solar = 2.*pow(cs_touse*UNIT_VEL_IN_KMS/0.2,3)/sqrt(CellP[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS / (HYDROGEN_MASSFRAC*1.0e3));
     if(MJ_solar > MJ_crit) {rateOfSF=0;} /* if too massive Jeans mass, go no further */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    }
+#endif
 #endif
 #endif
 
 #ifdef SINGLE_STAR_AND_SSP_HYBRID_MODEL
     if(cell_can_be_singlestar==0) {return rateOfSF;} // special call for our hybrid model - it's important that "sink-only" SF criteria fall below this line, otherwise wont be able to form stars in the more diffuse medium as you should
+#endif
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+    if(sf_channel != SF_CHANNEL_SINK) {return rateOfSF;} /* sink-only criteria below */
 #endif
     
 #ifdef GALSF_SFR_TIDAL_HILL_CRITERION /* check that the tidal tensor is negative-definite, ie. converging along all principal axes, indicating that we're dominating our environment gravitationally and are living in our own Hill sphere */
@@ -509,10 +549,21 @@ void star_formation_parent_routine(void)
                  * P = (M_cell / M_star) * pfac  (Gutcke+ 2021, eq. 3).
                  * Massive stars have low P; low-mass stars have high P.
                  * SFR is conserved on average: <M_star * P> = M_cell * pfac. */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                int sf_channel = sf_channel_for_cell(i);
+                double M_drawn_imf = 0, m_drawn_code = 0;
+                if(sf_channel == SF_CHANNEL_STELLA) { /* SSP cells keep the FIRE probability */
+                    unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
+                    M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
+                    m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
+                    prob = (P[i].Mass / m_drawn_code) * pfac;
+                }
+#else
                 unsigned long long imf_rng = resolvedism_rng_seed(i, RESOLVEDISM_RNG_DRAW_IMF_MASS); /* rank-independent per-event stream */
                 double M_drawn_imf = draw_one_mass_from_kroupa_IMF(&imf_rng);
                 double m_drawn_code = M_drawn_imf / UNIT_MASS_IN_SOLAR;
                 prob = (P[i].Mass / m_drawn_code) * pfac;
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                 /* Override IMF draw with the user-specified test star mass for the site particles (one-shot each) */
                 {
@@ -529,6 +580,9 @@ void star_formation_parent_routine(void)
 #endif
 
 #ifdef GALSF_RESOLVEDISM_SF_INSTANT_CUTOFF
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                if(sf_channel == SF_CHANNEL_STELLA)
+#endif
                 {double nH = CellP[i].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
                 if(nH > All.nHcutoffSF && prob < 2.0) { /* instant SF above density cutoff */
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
@@ -627,6 +681,9 @@ void star_formation_parent_routine(void)
 #endif /* closes ifdef(SINK_SEED_FROM_LOCALGAS) */
 
 #ifdef GALSF_RESOLVEDISM_SAMPLE_IMF
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        if(sf_channel == SF_CHANNEL_STELLA)
+#endif
                         /* === LYRA-style: always spawn, accretion walk fills mass === */
                         /* M_drawn_imf was drawn before the probability check above */
                         {
@@ -694,7 +751,11 @@ void star_formation_parent_routine(void)
                             if(All.SFCooldownFreeFallFraction > 0) {CellP[i].SFCooldown = All.SFCooldownFreeFallFraction * sqrt(3.*M_PI / (32.*All.G * CellP[i].Density * All.cf_a3inv));} /* physical t_ff */
                             stars_spawned++;
                         }
-#else /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
+#endif
+#if !defined(GALSF_RESOLVEDISM_SAMPLE_IMF) || defined(GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL)
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        else { /* SSP channel: generic FIRE spawn */
+#endif
                         
                     int i_star = i;
                     if(number_of_stars_generated == (GALSF_GENERATIONS - 1))
@@ -845,6 +906,9 @@ void star_formation_parent_routine(void)
 #endif // SINGLE_STAR_SINK_DYNAMICS
                         P[i_star].Mass = CellP[i_star].Mass; /* sync mass before type conversion */
                         if(P[i_star].Type != 5) {P[i_star].Type = 4;} // if we didn't set to type 5 above, default to type 4
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        if(P[i_star].Type == 4) {P[i_star].StarModel = STAR_MODEL_FIRE_SSP; P[i_star].StellaFBEvent_ThisTimeStep = 0; P[i_star].sampled = 0; for(int km = 0; km < N_STELLAR_MASS; km++) {P[i_star].MstarSampleIMF[km] = 0;}} /* no Stella state on SSPs */
+#endif
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
                         if(All.TestStarInitAgeYr > 0) {P[i_star].StellarAge = All.Time - All.TestStarInitAgeYr / (UNIT_TIME_IN_GYR * 1.0e9);} /* back-date birth (B10 AGB test) */
 #endif
@@ -903,7 +967,10 @@ void star_formation_parent_routine(void)
                             sf_id[n_sf_local] = (long long)P[i_star].ID;
                             n_sf_local++;
 #endif
-#endif /* !GALSF_RESOLVEDISM_SAMPLE_IMF */
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        } /* closes SSP channel */
+#endif
+#endif /* !GALSF_RESOLVEDISM_SAMPLE_IMF || GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL */
 
 #ifdef SINK_SEED_FROM_LOCALGAS
                     } /* closes else for decision to make a sink particle */

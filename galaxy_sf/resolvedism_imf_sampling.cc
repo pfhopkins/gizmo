@@ -572,6 +572,9 @@ int resolvedismIMF_evaluate(int target, int mode, int *exportflag, int *exportno
                 #pragma omp atomic read
                 Mass_j = P[j].Mass;
                 if(Mass_j <= 0) continue;
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                if(Mass_j * UNIT_MASS_IN_SOLAR > (GALSF_RESOLVEDISM_HYBRID_M_SSP)) continue; /* SSP-band cells are never Stella donors */
+#endif
 
                 double dp[3];
                 for(k=0;k<3;k++) {dp[k] = local.Pos[k] - P[j].Pos[k];}

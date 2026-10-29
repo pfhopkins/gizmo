@@ -479,6 +479,9 @@ void merge_and_split_particles(void)
 #endif
                         /* make sure we're not taking the same particle (and that its available to be merged into)! and that its the least-massive available candidate for merging onto */
                         if((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+                        if(do_allow_merger && P[j].Type==0 && sf_channel_for_cell(j)!=SF_CHANNEL_SSP && (P[i].Mass+P[j].Mass)*UNIT_MASS_IN_SOLAR > (GALSF_RESOLVEDISM_HYBRID_M_SSP)) {do_allow_merger=0;} /* a merge never lifts Stella-band gas above M_SSP */
+#endif
                         if(do_allow_merger) {threshold_val=m_eff; target_for_merger=j;} /* tell the code this can be merged! */
                     }
                     if (target_for_merger >= 0) { /* mark as merging pairs */

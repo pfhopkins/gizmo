@@ -594,6 +594,9 @@ double evaluate_time_since_t_initial_in_Gyr(double t_initial);
 
 #ifdef GALSF
 int is_particle_single_star_eligible(long i);
+#ifdef GALSF_RESOLVEDISM_PER_PARTICLE_STAR_MODEL
+int sf_channel_for_cell(int i);
+#endif
 double evaluate_stellar_age_Gyr(long i);
 double evaluate_light_to_mass_ratio(double stellar_age_in_gyr, int i);
 double calculate_relative_light_to_mass_ratio_from_imf(double stellar_age_in_gyr, int i, int mode);
