@@ -161,7 +161,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     if(i>=0) {Zfac = pp[i].Metallicity[0]/All.SolarAbundances[0];}
 #endif
 #if defined(COOLING) && !defined(CHIMES)
-    if(i>=0) {kappa_HHe=0.02 + 0.35*cell[i].Ne;}
+    if(i>=0 && pp[i].Type==0) {kappa_HHe=0.02 + 0.35*cell[i].Ne;} // gas-cell field: a star (or i<0) keeps the ionized default
 #endif
 
     
@@ -188,7 +188,7 @@ double rt_kappa(int i, int k_freq, struct particle_data *pp, struct gas_cell_dat
     // Use either MW (FIRE-3 default) or SMC (FIRE-2 default) opacities depending on the evolved local dust population composition
     // If silicate mass / carbonaceous mass >= 5 use SMC opacities, else MW opacities.
     double sil_to_C = 0;
-    if (cell[i].ISMDustChem_Dust_Metal[0]>0 && cell[i].ISMDustChem_Dust_Species[1]>0)
+    if (i>=0 && pp[i].Type==0 && cell[i].ISMDustChem_Dust_Metal[0]>0 && cell[i].ISMDustChem_Dust_Species[1]>0) // gas-cell fields: a star (or i<0) takes the no-dust-information branch
     {sil_to_C = (cell[i].ISMDustChem_Dust_Metal[0] - cell[i].ISMDustChem_Dust_Species[1])/cell[i].ISMDustChem_Dust_Species[1];} // Everything that isn't carbonaceous dust is silicates for our purpose
     else {sil_to_C = 100;}
     if (sil_to_C >= 5)
