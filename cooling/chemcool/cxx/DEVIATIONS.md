@@ -753,6 +753,18 @@ G0 and G0_LW of the tree and M1 paths are u / u_unit (Uli). All.G0 (1.7 in the p
 field since gizmo2017 (sg_chemistry/chemcool.c:142), 1.7x above the physical field. The floors (0.324e-2 All.G0 per
 cell, LW 10% of the FUV floor flux) and the GHOSDT background keep All.G0.
 
+## D-55. (2026-10-29) Band-resolved grain heating (G0_dust)
+The ISRF grain heating 5.8e-24 chi_isrf (G0_dust/1.7) DGR covers grain absorption of the whole ISRF; scaling it by the
+FUV G0 alone assumes the ISRF spectral shape. Now G0_dust = 0.2362 G0 + 0.1496 u(3.4-6 eV)/4.696e-14 + 0.6142
+u(0.4-3.4 eV)/5.141e-13 (+ the ISRF-shaped floor in the last two): MMP83 absorbed-power shares with the band opacities
+of rt_utilities.cc, exact for an ISRF-shaped field (scripts/habing_band_energy_densities.py). Bands that are not
+available stay ISRF-shaped (x G0). Tree path: 3.4-6 eV = NUV_flux minus the per-cell 6-8 eV total (F68_flux_tot), OPT_flux;
+Stella M1: OPT bin if transported (its NUV bin is 6-8 eV); non-Stella M1: NUV bin minus a Draine-shaped 6-8 eV part.
+NUV/optical heat only the grains (gas via gas-grain coupling); no gas photoelectric term below 6 eV (Bakes & Tielens 1994,
+Weingartner & Draine 2001 are calibrated on 6-13.6 eV). The former NUV term u(3.4-8)/3.85e-14 (non-Stella M1) is retired:
+3.85e-14 is the MMP83 energy density in 8-13.6 eV, not 3.4-8 eV (7.53e-14), and it double-counted the NUV already inside
+the ISRF coefficient.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1

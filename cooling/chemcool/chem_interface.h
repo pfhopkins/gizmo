@@ -50,16 +50,30 @@
 #ifdef EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES
 #error "EXPERIMENTAL_HABING_1968_BAND_ENERGY_DENSITIES was retired: all bands use the Draine (1978) shape / 1.7 unit of the SGChem photorates"
 #endif
-#define ISRF_EGY_DENSITY_3P4_8EV_CGS       (3.85e-14) /* NUV normalisation: 0.024 eV/cm^3, not Habing (fit invalid below 6 eV) */
+#define HABING_EGY_DENSITY_6_8EV_CGS       (1.877e-14)
+/* grain heating: ISRF (MMP83) absorbed-power shares per band, and band energy density per unit dust G0 = u_ISRF x 5.257e-14/u_ISRF(6-13.6) */
+#define DUST_ISRF_SHARE_6_13P6EV           (0.2362)
+#define DUST_ISRF_SHARE_3P4_6EV            (0.1496)
+#define DUST_ISRF_SHARE_0P4_3P4EV          (0.6142)
+#define DUST_EGY_DENSITY_3P4_6EV_CGS       (4.696e-14)
+#define DUST_EGY_DENSITY_0P4_3P4EV_CGS     (5.141e-13)
 
-/* chemistry FUV inputs from band energy densities [erg/cm^3], one function for the tree and M1 paths; g0_scale = All.G0 */
+/* G0_dust for the ISRF grain heating: band-resolved where 3.4-6 eV / 0.4-3.4 eV are known, else ISRF-shaped (x G0); g0_bg = ISRF-shaped background */
+static inline double chem_grain_heating_g0(double G0, double u_nuv36, double u_opt, int has_nuv36, int has_opt, double g0_bg)
+{
+    if(!has_nuv36 && !has_opt) {return G0;}
+    return DUST_ISRF_SHARE_6_13P6EV * G0 + DUST_ISRF_SHARE_3P4_6EV * (has_nuv36 ? u_nuv36 / DUST_EGY_DENSITY_3P4_6EV_CGS + g0_bg : G0)
+         + DUST_ISRF_SHARE_0P4_3P4EV * (has_opt ? u_opt / DUST_EGY_DENSITY_0P4_3P4EV_CGS + g0_bg : G0);
+}
+
+/* chemistry FUV inputs from band energy densities [erg/cm^3], one function for the tree and M1 paths */
 struct ChemFUVField {double G0, G0_LW, G0_dust;};
-static inline struct ChemFUVField chem_fuv_field_from_band_energy(double u_g0band, double u_g0band_per_G0, double u_lw, double u_nuv_dust, double g0_scale)
+static inline struct ChemFUVField chem_fuv_field_from_band_energy(double u_g0band, double u_g0band_per_G0, double u_lw, double u_nuv36, double u_opt, int has_nuv36, int has_opt, double g0_bg)
 {
     struct ChemFUVField f;
-    f.G0 = u_g0band / u_g0band_per_G0 * g0_scale;
-    f.G0_LW = u_lw / HABING_EGY_DENSITY_11P2_13P6EV_CGS * g0_scale;
-    f.G0_dust = (u_g0band / u_g0band_per_G0 + u_nuv_dust / ISRF_EGY_DENSITY_3P4_8EV_CGS) * g0_scale; /* NUV enters the dust temperature only */
+    f.G0 = u_g0band / u_g0band_per_G0;
+    f.G0_LW = u_lw / HABING_EGY_DENSITY_11P2_13P6EV_CGS;
+    f.G0_dust = chem_grain_heating_g0(f.G0, u_nuv36, u_opt, has_nuv36, has_opt, g0_bg); /* NUV and optical heat only the dust */
     return f;
 }
 

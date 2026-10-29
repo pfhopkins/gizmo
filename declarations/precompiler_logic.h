@@ -887,6 +887,11 @@
 #endif
 #endif
 
+/* per-cell 6-8 eV flux total: grain heating needs NUV below 6 eV while NUV_flux carries 3.4-8 eV */
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && (defined(GALSF_RESOLVEDISM_NUV_VARIABLE) || defined(GALSF_RESOLVEDISM_RADPRESSURE)) && !defined(EXPERIMENTAL_RADIATION_DISJOINT_BANDS) && !defined(TREE_RAY) && !defined(RADTRANSFER)
+#define GALSF_RESOLVEDISM_CELL_FLUX_6_8EV_TOTAL
+#endif
+
 /* Stella tree radiation field: band luminosities ride on the gravity-tree source arrays (no LEBRON flux or force) */
 #ifdef EXPERIMENTAL_G0_STELLAR_LUM_CODE_UNITS
 #define RESOLVEDISM_STELLAR_LUM_TO_CGS (UNIT_LUM_IN_CGS) /* node stellar_lum[] in code units */
