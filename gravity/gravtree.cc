@@ -102,8 +102,8 @@ void gravity_tree(void)
 #if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                              sizeof(struct gravdata_in) + sizeof(struct gravdata_out) +
                                              sizemax(sizeof(struct gravdata_in),sizeof(struct gravdata_out))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
