@@ -581,20 +581,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
        particle (a sink ejection) can outrun between full decompositions. So validate the sum the
        key is actually built from, and escalate to the full decomposition -- which remeasures the
        extent -- when any particle has left it. Negated comparisons so a NaN position also trips. */
-    int extent_bad_loc = 0, extent_bad_glob = 0;
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static) reduction(||:extent_bad_loc)
-#endif
-    for(i = 0; i < NumPart; i++)
-    {
-        int k; for(k = 0; k < 3; k++)
-        {
-            double s = ((P[i].Pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
-            if(!(s >= 1.0 && s < 2.0)) {extent_bad_loc = 1;}
-        }
-    }
-    MPI_Allreduce(&extent_bad_loc, &extent_bad_glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-    if(extent_bad_glob)
+    if(domain_extent_outgrown())
     {
         if(ThisTask == 0) {printf("  domain_light: a particle has left the stored domain extent; falling back to a full decomposition\n");}
         domain_Decomposition(UseAllTimeBins, 0, 1);
@@ -2858,18 +2845,48 @@ __attribute__((noinline)) peanokey domain_peano_key(int i, peanokey *morton)
  *  (u.d aliases u.suns), detaching its subtree -- its mass then enters no rank's moments. Until the
  *  kokkos retained-attachment machinery (068b4f33) is ported, the only safe answer to an escape is
  *  to restore ownership, i.e. decompose. Rank-local; callers reduce. Uses the same key mapping the
- *  decomposition assigned ownership with (domain_peano_key). */
+ *  decomposition assigned ownership with (domain_peano_key). Returns 2 for a particle outside the
+ *  domain extent, whose key would name some other cell -- possibly a local one, which the ownership
+ *  test alone would pass; only a full decomposition re-measures the extent. */
 int domain_any_local_particle_escaped(void)
 {
     int i;
     for(i = 0; i < NumPart; i++)
     {
+        if(domain_particle_outside_extent(i)) {return 2;} /* its key would name some other cell, possibly a local one */
         peanokey key = domain_peano_key(i, NULL);
         int no = 0;
         while(TopNodes[no].Daughter >= 0) {no = TopNodes[no].Daughter + (int) ((key - TopNodes[no].StartKey) / (TopNodes[no].Size / 8));}
         if(DomainTask[TopNodes[no].Leaf] != ThisTask) {return 1;}
     }
     return 0;
+}
+
+/*! Whether particle i lies outside the extent the domain was built on. A Peano key is the mantissa of
+ *  (Pos-DomainCorner)/DomainLen + 1 (domain_double_to_int is a bare mask, with no clamp), so it encodes
+ *  the position only while that sum is in [1,2) on every axis; outside it the key names some other cell.
+ *  Tested on the sum the key is read from, since rounding can carry a fraction just below 1 up to 2, and
+ *  negated so a NaN position counts as outside. Only a full decomposition re-measures the extent. */
+int domain_particle_outside_extent(int i)
+{
+    for(int k = 0; k < 3; k++)
+    {
+        double s = ((P[i].Pos[k] - DomainCorner[k]) / DomainLen) + 1.0;
+        if(!(s >= 1.0 && s < 2.0)) {return 1;}
+    }
+    return 0;
+}
+
+/*! Collective: whether any rank holds a particle outside the domain extent. */
+int domain_extent_outgrown(void)
+{
+    int bad_loc = 0, bad_glob = 0, i;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) reduction(||:bad_loc)
+#endif
+    for(i = 0; i < NumPart; i++) {if(domain_particle_outside_extent(i)) {bad_loc = 1;}}
+    MPI_Allreduce(&bad_loc, &bad_glob, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    return bad_glob;
 }
 
 /*! Coordinate conversion to integer. d is coordinate in double precision. returns coordinate in integer of type peano1D. written as part of arepo code dev, from public arepo code by V Springel. */

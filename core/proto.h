@@ -900,6 +900,8 @@ void swap_treewalk_pointers(int i, int j);
 void force_validate_tree_links(const char *tag);
 void force_tree_check_walkable(const char *tag);
 int domain_any_local_particle_escaped(void);
+int domain_particle_outside_extent(int i);
+int domain_extent_outgrown(void);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
 #endif
