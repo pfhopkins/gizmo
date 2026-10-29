@@ -92,7 +92,7 @@ void cosmic_ray_diffusion_compute_pair(
                                    / (4. + CRopticaldepth * (4. + CRopticaldepth * (4. + 3. * CRopticaldepth)));
             double reducedcM1 = reductionfactor * cr_m1_speed_touse * sqrtthreeinv;
             double c_light_eff = DMAX(2. * kernel.vsig, reducedcM1);
-            double v_eff_touse = DMIN(c_light_eff, kappa_ij / Particle_Size_j);
+            double v_eff_touse = DMIN(c_light_eff, kappa_ij / DMIN(Particle_Size_i, Particle_Size_j));
             double c_hll = 0.5 * fabs(face_vel_i - face_vel_j) + v_eff_touse;
             double hll_corr = 1. / (1. + 1.5 * c_light_eff * DMAX(Particle_Size_j / kappa_j, Particle_Size_i / kappa_i));
             double q = 0.5 * c_hll * (kernel.r * All.cf_atime) / fabs(MIN_REAL_NUMBER + kappa_ij);
