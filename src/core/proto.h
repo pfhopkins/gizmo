@@ -99,7 +99,7 @@ GIZMO_GPU_FUNCTION static inline double matrix_invert_ndims(double T[3][3], doub
 #ifdef HERMITE_INTEGRATION
 GIZMO_GPU_FUNCTION int eligible_for_hermite(int i, struct particle_data *pp); /* definition in core/timestep_functions.h (single source of truth) */
 void do_hermite_prediction(void);
-void do_hermite_correction(void);
+void do_hermite_correction(int final_pass);
 #endif
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
 int needs_new_treeforce(int i);
