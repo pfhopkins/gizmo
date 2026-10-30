@@ -11,7 +11,18 @@
 /* the fields: X(type, name, comment); a field is added together with its first user */
 #define SINGLE_STAR_RECORD_FIELDS(X) \
     X(double, M_drawn, "drawn IMF mass [Msun]: the evolution mass for the tables") \
-    X(double, Z_birth, "total metallicity at birth (mass fraction)")
+    X(double, Z_birth, "total metallicity at birth (mass fraction)") \
+    SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X)
+
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+#define SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \
+    X(double, M_at_SN_trigger, "particle mass when its supernova was triggered [code]; 0 = none pending") \
+    X(uint16_t, no_deposit_count, "steps a triggered event found no neighbour weight") \
+    X(uint8_t, event_bits, "single_star_event_bits")
+enum single_star_event_bits {SINGLE_STAR_EVENT_SN_DONE = 1};
+#else
+#define SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X)
+#endif
 
 /* one record, as it travels between ranks */
 struct single_star_record {

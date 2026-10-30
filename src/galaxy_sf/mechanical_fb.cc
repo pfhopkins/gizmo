@@ -312,8 +312,14 @@ void mechanical_fb_calc_toplevel(void)
         {int aa = 0; for(int ii : ActiveParticleList) {
             if(addFB_evaluate_active_check(ii, -2)) nl_active[aa++] = ii;
         }}
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        single_star_feedback_prepare(nl_active, num_active);
+#endif
         mechfb_run_iterative(nl_active, num_active,
                               LocalGasMechFBInfoTemp, N_gas);
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+        single_star_feedback_finalize(nl_active, num_active); /* remnant = table, or the event stays pending */
+#endif
         myfree(nl_active);
     }
 

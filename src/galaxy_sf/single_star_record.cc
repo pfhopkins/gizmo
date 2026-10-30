@@ -12,11 +12,14 @@
 #error "GALSF_SINGLE_STARS_FROM_IMF: the single-star records do not yet follow particles through the FoF/SUBFIND redistribution"
 #endif
 /* until the single-star source model drives them, the stellar-population feedback and radiation would treat a sampled star as a population */
-#if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
-#error "GALSF_SINGLE_STARS_FROM_IMF: single stars do not drive the stellar feedback yet; it would give sampled stars stellar-population rates"
+#if (defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_THERMAL) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#error "GALSF_SINGLE_STARS_FROM_IMF: single stars drive only the mechanical feedback loop, and only with GALSF_SINGLE_STARS_EVOLUTION_TABLES; other feedback would give sampled stars stellar-population rates"
 #endif
 #if defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
 #error "GALSF_SINGLE_STARS_FROM_IMF: no single-star branch in the stellar radiation sources yet; sampled stars would get stellar-population luminosities"
+#endif
+#if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+#error "GALSF_SINGLE_STARS_FROM_IMF: single-star supernovae inject no cosmic rays yet (the injection of the feedback loop is FIRE-only and the pure-thermal coupling heats with all the energy)"
 #endif
 #if defined(GALSF_SFR_IMF_SAMPLING) || defined(GALSF_SFR_IMF_VARIATION) || defined(SINGLE_STAR_SINK_DYNAMICS) || defined(GALSF_MERGER_STARCLUSTER_PARTICLES)
 #error "GALSF_SINGLE_STARS_FROM_IMF: another stellar-mass model is switched on (GALSF_SFR_IMF_SAMPLING, GALSF_SFR_IMF_VARIATION, SINGLE_STAR_SINK_DYNAMICS or GALSF_MERGER_STARCLUSTER_PARTICLES)"

@@ -726,6 +726,11 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
                 } else if(P[offset + n].StarIdx > 0) {SingleStars.Z_birth[single_star_slot(P[offset + n].StarIdx)] = v;}
             }
             break;
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+        case IO_SINGLE_STAR_EVENT_BITS: /* fills an existing record */
+            for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.event_bits[single_star_slot(P[offset + n].StarIdx)] = (uint8_t) v;}}
+            break;
+#endif
 #endif
 
         case IO_STAGE_PROTOSTAR:
@@ -1461,6 +1466,9 @@ int read_file(char *fname, int readTask, int lastTask)
 #endif
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
                    && blocknr != IO_SINGLE_STAR_DRAWN_MASS && blocknr != IO_SINGLE_STAR_BIRTH_Z /* initial conditions may carry single stars */
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
+                   && blocknr != IO_SINGLE_STAR_EVENT_BITS
+#endif
 #endif
 #ifdef EOS_CARRIES_ABAR
                    && blocknr != IO_EOSABAR
