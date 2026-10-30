@@ -169,6 +169,8 @@ struct ChemInputs {
     double rt_heat_HI;         /* -> COOLRC.rt_heat_HI   [erg s^-1 /atom]     */
     double rt_heat_HeI;        /* -> COOLRC.rt_heat_HeI                       */
     double rt_heat_HeII;       /* -> COOLRC.rt_heat_HeII                      */
+    double rt_phot_H2;         /* EUV H2 photoionization [s^-1 per H2]; C++ backend only */
+    double rt_heat_H2;         /* its heating [erg s^-1 per H2]; C++ backend only */
 
     /* --- cosmic rays ----------------------------------------------------- */
     double cosmic_ray_ion_rate; /* -> COOLRC.cosmic_ray_ion_rate [s^-1]       */

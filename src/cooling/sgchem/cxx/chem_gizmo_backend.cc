@@ -122,6 +122,7 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #endif
     c.rt_phot_HI = in->rt_phot_HI; c.rt_phot_HeI = in->rt_phot_HeI; c.rt_phot_HeII = in->rt_phot_HeII;
     c.rt_heat_HI = in->rt_heat_HI; c.rt_heat_HeI = in->rt_heat_HeI; c.rt_heat_HeII = in->rt_heat_HeII;
+    c.rt_phot_H2 = in->rt_phot_H2; c.rt_heat_H2 = in->rt_heat_H2;
     c.dust_to_gas_ratio = in->dust_to_gas_ratio;
     c.tdust = in->tdust;
     c.id_current = in->id_current;

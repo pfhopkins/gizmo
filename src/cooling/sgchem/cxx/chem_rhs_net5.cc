@@ -118,6 +118,8 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
     double gamma_chx = 2.94e-10 * c.G_dust;
     double ph38 = c.phrates[37];
     double ph42 = c.phrates[41];
+    double ph41 = c.phrates[40];                     // H2 EUV photoionization, per H2
+    double ph45 = c.phrates[44];                     // its heating, per H2
 
     // --- grain recombination (.F:232-253) ---
     double h_gr = chem_h_gr_phi100(temp, yn, abe, c.G_dust, c.dust_to_gas_ratio, ch34, ch35);
@@ -149,7 +151,8 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
               -   ykdis * abh2
               -   0.5 * cr2 * abh2   // "fudge factor of two gives correct HI production"
               -   cr10 * abh2
-              -   cr11 * abh2;
+              -   cr11 * abh2
+              -   ph41 * abh2;   // H2 -> H2+ [+ e] -> H + H (Arepo rate_eq_simple.F:291)
 
     // --- CO, NL97 (.F:302-324) ---
     const double k0 = 5e-16, k1 = 5e-10;
@@ -186,7 +189,8 @@ int chem_rhs_net5(double /*t*/, const double* y_in, double* ydot, ChemCell& c)
 
     double ylam_chem = rates_chem[0] + rates_chem[1] + rates_chem[2]
                      + rates_chem[3] + rates_chem[4] + rates_chem[5]
-                     - (ph42 * abHI) * yn;            // M1 photoheating add-on
+                     - (ph42 * abHI) * yn             // M1 photoheating add-on
+                     - (ph45 * abh2) * yn;            // H2 photoheating (Arepo rate_eq_simple.F:404)
 
     for (int i = 0; i < 6; i++) c.lambda_chem[i] = rates_chem[i];  // .F:422-427
     for (int i = 6; i < CHEM_NRATES_CHEM_MAX; i++) c.lambda_chem[i] = 0.0;
