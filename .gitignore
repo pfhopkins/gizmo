@@ -154,3 +154,7 @@ test/single_stars_gas_timestep/run/
 test/single_stars_gas_timestep/GIZMO
 test/single_stars_radpressure_cells/run_*/
 test/single_stars_radpressure_cells/GIZMO*
+test/single_stars_metals/run_*/
+test/single_stars_metals/GIZMO_*
+test/single_stars_metals/TREECOOL
+test/single_stars_metals/spcool_tables
