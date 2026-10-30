@@ -15,5 +15,8 @@ Checks:
   Per pixel the front is where the cells' recombination rates (case B, 2.6e-13 cm^3/s, at each cell's density), summed
   outward, use up Q/12. The smallest and largest of the 12 fronts (log columns 10, 11) lie within one cell of the
   Stromgren radius. Without the change there is no photoionisation log.
-- `test_ranks_and_order`: 1, 2 and 4 ranks and a permuted particle order give the same fronts and search passes (the
-  histogram sums are integers).
+  With the stamp (cells inside the fronts ionised until the next solve, `PhotoionizedUntil`): the recombination rate of
+  the ionised cells is Q to 2% (measured 0.9994-0.99999; log column 7), their volume radius lies within one cell of the
+  Stromgren radius, and static gas keeps the same cells at every solve. Without the stamp column 7 is 0.
+- `test_ranks_and_order`: 1, 2 and 4 ranks and a permuted particle order give the same fronts, search passes and
+  ionised cells (the histogram sums are integers).
