@@ -20,7 +20,7 @@
     X(uint16_t, no_deposit_count, "steps a triggered event found no neighbour weight") \
     X(double, last_wind_log_age, "table age (log10 yr) up to which winds have been returned; 0 = none yet") \
     X(uint8_t, event_bits, "single_star_event_bits")
-enum single_star_event_bits {SINGLE_STAR_EVENT_SN_DONE = 1};
+enum single_star_event_bits {SINGLE_STAR_EVENT_SN_DONE = 1, SINGLE_STAR_EVENT_AGB_DONE = 2};
 #else
 #define SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X)
 #endif
