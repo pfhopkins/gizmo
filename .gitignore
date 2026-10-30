@@ -136,3 +136,4 @@ test/single_star_record/run_*/
 test/single_stars_collect_gas/run_*/
 test/single_stars_collect_gas/GIZMO_default_merging
 test/single_stars_formation/run_*/
+test/single_stars_sf_criterion/run_*/
