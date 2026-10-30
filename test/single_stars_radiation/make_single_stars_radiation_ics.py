@@ -8,7 +8,8 @@ PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (co
 STAR_AGE_YR = 1.0e6
 
 
-def make_single_stars_radiation_ics(fname, n=20, n_H=100.0, T=100.0, z=0.014):
+def make_single_stars_radiation_ics(fname, n=20, n_H=100.0, T=100.0, z=0.014, stars=None):
+    """stars: (drawn mass, mass, age [yr], position [box], event bits, birth density [code]) each"""
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
@@ -16,7 +17,8 @@ def make_single_stars_radiation_ics(fname, n=20, n_H=100.0, T=100.0, z=0.014):
     pos = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
     N = len(pos)
     u = 1.5 * 1.380649e-16 * T / (1.27 * 1.6726e-24) / 1e10
-    stars = [(35.0, 35.0, STAR_AGE_YR, (0.25, 0.25, 0.25), 0), (20.0, 1.5, 2.0e7, (0.75, 0.75, 0.75), 1), (35.0, 35.0, 1.0e3, (0.75, 0.25, 0.25), 0)]
+    if stars is None:
+        stars = [(35.0, 35.0, STAR_AGE_YR, (0.25, 0.25, 0.25), 0, 0.0), (20.0, 1.5, 2.0e7, (0.75, 0.75, 0.75), 1, 0.0), (35.0, 35.0, 1.0e3, (0.75, 0.25, 0.25), 0, 0.0)]
     ns = len(stars)
     with h5py.File(fname, "w") as F:
         h = F.create_group("Header")
@@ -32,9 +34,10 @@ def make_single_stars_radiation_ics(fname, n=20, n_H=100.0, T=100.0, z=0.014):
         p["Masses"] = np.ones(N); p["InternalEnergy"] = np.full(N, u); p["Metallicity"] = np.full((N, 1), z)
         p["SmoothingLength"] = np.full(N, 2.0 * dx)
         s = F.create_group("PartType4")
-        s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, _, _, x, _ in stars])
+        s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, _, _, x, _, _ in stars])
         s["Velocities"] = np.zeros((ns, 3)); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)
-        s["Masses"] = np.array([m for _, m, _, _, _ in stars]); s["StellarFormationTime"] = -np.array([a for _, _, a, _, _ in stars]) / PC_KMS_IN_YR
-        s["Metallicity"] = np.full((ns, 1), z); s["SingleStarDrawnMass"] = np.array([md for md, _, _, _, _ in stars])
-        s["SingleStarBirthMetallicity"] = np.full(ns, z); s["SingleStarEventBits"] = np.array([b for _, _, _, _, b in stars], dtype=float)
+        s["Masses"] = np.array([m for _, m, _, _, _, _ in stars]); s["StellarFormationTime"] = -np.array([a for _, _, a, _, _, _ in stars]) / PC_KMS_IN_YR
+        s["Metallicity"] = np.full((ns, 1), z); s["SingleStarDrawnMass"] = np.array([md for md, _, _, _, _, _ in stars])
+        s["SingleStarBirthMetallicity"] = np.full(ns, z); s["SingleStarEventBits"] = np.array([b for _, _, _, _, b, _ in stars], dtype=float)
+        s["SingleStarBirthDensity"] = np.array([r for _, _, _, _, _, r in stars])
     return L
