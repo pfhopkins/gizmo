@@ -1504,6 +1504,9 @@ int read_file(char *fname, int readTask, int lastTask)
                     * (CBE_Moments_LoadedFromIC_PType stays 0). */
                    && blocknr != IO_CBE_MOMENTS
 #endif
+#ifdef SGCHEM_KEEP_IC_ABUNDANCES
+                   && blocknr != IO_SGCHEM_TRACABUND
+#endif
 #if defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) && defined(INPUT_READ_SINKPROPS)
                    && blocknr != IO_R_PROTOSTAR
                    && blocknr != IO_MASS_D_PROTOSTAR

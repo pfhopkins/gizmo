@@ -90,8 +90,10 @@ void sgchem_init(void)
 /* fresh-start cell state, as stella_dev init.cc: no H2 or CO, x(H+) = 1e-4, dust at 10 K, gas at 100 K until the first solve */
 void sgchem_init_cell_state(int i)
 {
+#ifndef SGCHEM_KEEP_IC_ABUNDANCES /* opt-in: keep the abundances read from the IC */
     for(int k = 0; k < TRAC_NUM; k++) {CellP[i].TracAbund[k] = 0;}
     CellP[i].TracAbund[IHP] = 1.0e-4;
+#endif
     CellP[i].DustTemp = 10.0;
     CellP[i].Temp = 100.0;
 }
