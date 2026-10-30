@@ -2,7 +2,8 @@
 // run's timesteps) through the C++ backend directly, written from the stella_dev input recipe (chem_interface.cc), not
 // from the GIZMO glue, so the box run is checked against an independent assembly of the same inputs.
 // Built by the test in the box build's src/ (same GIZMO_config.h), linked with its cooling/sgchem/cxx objects.
-// stdin: UnitMass UnitLength UnitVelocity HubbleParam zeta DGR D/H MinGasTemp ndt dt[ndt] / 11 metal slots / then "id rho u" per cell
+// stdin: UnitMass UnitLength UnitVelocity HubbleParam zeta DGR D/H MinGasTemp ndt dt[ndt] / 11 metal slots / then
+// "id rho u T_dust x[0..TRAC_NUM-1]" per cell (start state)
 // stdout: id u T Ne x(H2) x(H+) x(CO) T_dust per cell
 #include <cstdio>
 #include <cmath>
@@ -43,9 +44,10 @@ int main(int argc, char **argv)
     base.dust_to_gas_ratio = std::min(dgr * Z[0] / 0.014, 10.0);
     base.abhe = chem_cxx_abhe_default(); base.X_H_chem = chem_cxx_xh_default();
 
-    long id; double rho_c, u;
-    while(std::scanf("%ld %lf %lf", &id, &rho_c, &u) == 3) {
-        double ab[TRAC_NUM] = {0}; ab[IHP] = 1.0e-4; double tdust = 10.0, T = 0;
+    long id; double rho_c, u, tdust;
+    while(std::scanf("%ld %lf %lf %lf", &id, &rho_c, &u, &tdust) == 4) {
+        double ab[TRAC_NUM], T = 0;
+        for(double &x : ab) {if(std::scanf("%lf", &x) != 1) return 3;}
         ChemInputs in = base;
         double rho = rho_c * rho_u, yn = rho / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
         for(double dt : dts) {
