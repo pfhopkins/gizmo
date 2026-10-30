@@ -82,6 +82,9 @@ static inline double merge_kinetic_dissipation_fraction(int i, int j)
 int does_particle_need_to_be_merged(int i)
 {
     if(P[i].Mass <= 0) {return 0;}
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    if(P[i].Type == 4 && P[i].StarIdx > 0) {return 0;} /* an IMF-sampled star is one physical star, never merged */
+#endif
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
@@ -593,6 +596,9 @@ void merge_and_split_particles(void)
 #endif
 #endif
                     if ((j<0)||(j==i)||(P[j].Type!=P[i].Type)||(P[j].Mass<=0)||(Ptmp[j].flag!=0)||(m_eff>=threshold_val)) {do_allow_merger=0;}
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+                    if ((j>=0) && (P[j].Type==4) && (P[j].StarIdx>0)) {do_allow_merger=0;} /* nor the target of a merger */
+#endif
 #ifdef HYDRO_MULTIFLUID
                     if (do_allow_merger && !same_lagrangian_fluid_id(P[i].FluidType, P[j].FluidType)) {do_allow_merger = 0;}
 #endif
@@ -1023,6 +1029,11 @@ int merge_particles_ij(int i, int j)
     if(((P[i].Type==0)||(P[j].Type==0)) && (P[j].Type!=P[i].Type)) {printf("WARNING: code is trying to merge a gas cell with a non-gas particle. I dont know how to do this. Exiting the merge subroutine."); fflush(stdout); return 0;}
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
     if((P[i].Type==0) && (CellP[i].CompositionType != CellP[j].CompositionType)) {printf("WARNING: code is trying to merge cells of two different materials (CompositionType %d and %d). Exiting the merge subroutine.\n", (int)CellP[i].CompositionType, (int)CellP[j].CompositionType); fflush(stdout); return 0;}
+#endif
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    if((P[i].Type==4 && P[i].StarIdx>0) || (P[j].Type==4 && P[j].StarIdx>0)) { /* IMF-sampled stars are never merged */
+        static int warned = 0; if(!warned) {warned = 1; printf("WARNING: merge of IMF-sampled star refused (ID %llu, %llu) on task %d\n", (unsigned long long)P[i].ID, (unsigned long long)P[j].ID, ThisTask); fflush(stdout);}
+        return 0;}
 #endif
 
     int swap_ids = 0; if(P[i].Mass > P[j].Mass) {swap_ids = 1;} /* retain the IDs of the more massive progenitor */
