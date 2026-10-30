@@ -998,6 +998,7 @@ double return_probability_of_this_forming_sink_from_seed_model(int i);
 void particle2in_addFB_fromstars(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 double single_star_eventrates(int i, double dt);
+double single_star_max_timestep(int p);
 void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_loop_iteration);
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);

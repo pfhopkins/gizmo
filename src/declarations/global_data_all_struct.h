@@ -780,6 +780,9 @@ struct global_data_all_processes
 #endif
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     char StellarTablesFile[256]; /*!< stella-tables main table (scripts/get_stella_tables.sh); the wind table is read from the same directory */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    double MaxStellarTimestep; /*!< largest timestep of a single star [yr] */
+#endif
 #endif
 
 #ifdef NUCLEAR_NETWORK

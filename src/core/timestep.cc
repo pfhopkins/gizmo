@@ -1126,6 +1126,9 @@ integertime get_timestep(int p,		/*!< particle index */
         if(dt_stellar_evol>0) {if(dt_stellar_evol<dt) {dt = dt_stellar_evol;}}
     }
 #endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+    if(P[p].StarIdx > 0) {double dt_star = single_star_max_timestep(p); if(dt_star > 0 && dt_star < dt) {dt = dt_star;}} /* next stellar-evolution event of a single star */
+#endif
 
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM

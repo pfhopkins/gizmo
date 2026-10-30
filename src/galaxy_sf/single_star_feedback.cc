@@ -152,6 +152,19 @@ static inline int single_star_kind_this_step(int i)
     return SSE_NONE;
 }
 
+/* largest timestep of single star p [code]: MaxStellarTimestep, 1/50 of the time to death within 100 of those, and never
+   past the death (as the reference implementation, floor 10 yr) */
+double single_star_max_timestep(int p)
+{
+    int s = single_star_slot(P[p].StarIdx);
+    double logM, logZ; single_star_logMZ(s, &logM, &logZ);
+    double to_death = single_star_death_age_yr(logM, logZ) - single_star_age_yr(p), dt_yr = All.MaxStellarTimestep;
+    if(to_death > 0 && to_death < 100. * dt_yr) {dt_yr = DMIN(dt_yr, to_death / 50.);}
+    if(to_death > 0 && to_death < 2. * dt_yr) {dt_yr = DMIN(dt_yr, 0.9 * to_death);}
+    if(dt_yr < 10.) {dt_yr = 10.;}
+    return dt_yr / UNIT_TIME_IN_YR;
+}
+
 /* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova, Type Ia) or
    MassReturn_ThisTimeStep (wind, AGB death; the fraction of the star's mass) */
 double single_star_eventrates(int i, double dt)

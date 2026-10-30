@@ -1830,6 +1830,11 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "StellarTablesFile");
         addr[nt] = All.StellarTablesFile;
         id[nt++] = STRING;
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+        strcpy(tag[nt], "MaxStellarTimestep");
+        addr[nt] = &All.MaxStellarTimestep;
+        id[nt++] = REAL;
+#endif
 #endif
 
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION
@@ -3213,6 +3218,9 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+                if(strcmp("MaxStellarTimestep",tag[i])==0) {*((double *)addr[i])=50000.; printf("Tag %s not set in parameter file: defaulting to 50 kyr\n",tag[i]); continue;}
 #endif
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
                 if(strcmp("SingleStarsRNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to realisation 0\n",tag[i]); continue;}
