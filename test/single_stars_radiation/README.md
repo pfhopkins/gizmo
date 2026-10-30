@@ -13,3 +13,9 @@ implementation); a few steps.
 
 Checks: in every step exactly one source; the photon rate in the loop's log equals the table's (log luminosity linear in
 log age at the star's grid node, read with h5py) to the 6 digits the log prints.
+
+Ionising onset (test_ionising_onset): eight 10 Msun stars, two per case, at 0.995 and 1.005 of the onset age that
+stella_dev's rule gives (no ionising photons before min(t_KH, t_ff at the birth density), at most 1 Myr, nor during the
+pre-main sequence): no birth density and a dense birth (the pre-main sequence decides), a thin birth (t_KH decides) and a
+birth density whose free-fall time lies between the pre-main-sequence time and t_KH (t_ff decides). Exactly the four later
+stars ionise. Without the birth density in the record, only one does.
