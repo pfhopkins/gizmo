@@ -771,8 +771,14 @@ void star_formation_parent_routine(void)
     stars_spawned += single_star_test_births(stars_spawned);
 #endif
     {   /* every count this pass changed, in one reduction */
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        long long local[4] = {stars_spawned, stars_converted, num_sink_formed, photoion_new_sources_local()}, total[4]; /* ionising onsets ride this reduction */
+        MPI_Allreduce(local, total, 4, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        photoion_add_new_sources(total[3]);
+#else
         long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+#endif
         tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2];
     }
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)

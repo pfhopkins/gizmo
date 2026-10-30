@@ -48,6 +48,25 @@ static long long *pi_claim_sums(int n_gas)
     return pi_claim;
 }
 
+/* sources at the last solve plus onsets since (-1: unknown, as at start-up); the same on every rank */
+static long long pi_num_sources = -1;
+static long long pi_calls = 0; /* this module's reductions and runner calls since the last log row */
+
+/* single stars on this rank whose ionising onset falls in their step that ends now (counted in the SF reduction) */
+long long photoion_new_sources_local(void)
+{
+    long long n = 0;
+    for(int i : ActiveParticleList) {
+        if(P[i].StarIdx <= 0) {continue;}
+        double t_on = single_star_ionizing_onset_yr(i);
+        if(t_on < 0) {continue;}
+        double age = evaluate_stellar_age_Gyr(i) * 1.e9, dt = (P[i].TimeBin ? (double)((integertime)1 << P[i].TimeBin) : 0.) * All.Timebase_interval * UNIT_TIME_IN_YR;
+        if(age >= t_on && age - dt < t_on) {n++;}
+    }
+    return n;
+}
+void photoion_add_new_sources(long long n) {if(n > 0 && pi_num_sources >= 0) {pi_num_sources += n;}}
+
 /* ionising photon rate of source i [1/s] */
 static double photoion_source_rate(int i)
 {
@@ -136,7 +155,7 @@ static void pi_run(std::vector<int>& list, std::vector<PiSourceIn>& in, PiSpecBa
     aux.host_src = in.empty() ? nullptr : in.data();
     neighbor_loop_args args = nlr_default_args();
     args.active_list = list.empty() ? nullptr : list.data(); args.num_active = (int) list.size(); args.aux = &aux;
-    run_neighbor_loop<Spec>(args);
+    pi_calls++; run_neighbor_loop<Spec>(args);
 }
 
 /* ---- the front of each pixel ---- */
@@ -207,7 +226,7 @@ void photoionization_per_direction(void)
 {
     if(All.HIIRegion_fLum_Coupled <= 0 || All.Time <= 0) {return;}
     const int b_pi = photoion_timebin();
-    if(!TimeBinActive[b_pi]) {return;}
+    if(!TimeBinActive[b_pi] || pi_num_sources == 0) {return;} /* quiet: no work, no collective */
     const double max_r = All.PhotoionMaxSearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime);
     std::vector<pi_src> S;
     for(int i : ActiveParticleList) {
@@ -223,10 +242,11 @@ void photoionization_per_direction(void)
         s.R = R; S.push_back(s);
     }
     long long n_loc = (long long) S.size(), n_tot = 0;
-    MPI_Allreduce(&n_loc, &n_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    pi_calls++; MPI_Allreduce(&n_loc, &n_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    pi_num_sources = n_tot;
     if(n_tot == 0) {return;}
     int no_buffer = (pi_claim_sums(N_gas) == nullptr), any_no_buffer = 0;
-    MPI_Allreduce(&no_buffer, &any_no_buffer, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    pi_calls++; MPI_Allreduce(&no_buffer, &any_no_buffer, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(any_no_buffer) {return;}
     PRINT_STATUS(" ..per-direction photoionisation around %lld single stars", n_tot);
 
@@ -244,7 +264,7 @@ void photoionization_per_direction(void)
             s.open = pi_analyse(s, H[a], passes < PI_MAX_PASSES - 1, 1, max_r);
             n_open += s.open;
         }
-        MPI_Allreduce(&n_open, &any_open, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        pi_calls++; MPI_Allreduce(&n_open, &any_open, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
     /* sharing rounds: held cells bill q_sc / A_c, others q_sc / (A_c + q_sc); bills only fall, so fronts only advance.
@@ -264,7 +284,7 @@ void photoionization_per_direction(void)
             for(int k = 0; k < PI_NPIX; k++) {if(s.mark[k] > s.held[k]) {moved_local = 1;} else {s.mark[k] = s.held[k];}}
         }
         pi_claim_all(S);
-        MPI_Allreduce(&moved_local, &moved, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        pi_calls++; MPI_Allreduce(&moved_local, &moved, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
     /* stamp until the next solve; drain */
@@ -282,14 +302,15 @@ void photoionization_per_direction(void)
         loc[0] += S[a].Q; loc[1] += L[a].bill; loc[2] += L[a].n_new; loc[3] += L[a].m_new; loc[4] += L[a].mr_new;
         for(int k = 0; k < PI_NPIX; k++) {ext[0] = DMAX(ext[0], S[a].front[k]); ext[1] = DMAX(ext[1], -S[a].front[k]);}
     }
-    MPI_Reduce(loc, tot, 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(ext, ext_tot, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    pi_calls++; MPI_Reduce(loc, tot, 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    pi_calls++; MPI_Reduce(ext, ext_tot, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask == 0) {
         double to_kpc = All.cf_atime * UNIT_LENGTH_IN_KPC;
-        fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
-                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc);
+        fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g %lld\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
+                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc, pi_calls);
         fflush(FdHIIHeating);
     }
+    pi_calls = 0;
 }
 
 #endif /* GALSF_FB_PHOTOIONIZATION_PER_DIRECTION */

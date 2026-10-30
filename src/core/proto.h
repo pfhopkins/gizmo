@@ -1004,6 +1004,8 @@ double single_star_ionizing_onset_yr(int i);
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 void photoionization_per_direction(void);
 double photoion_max_timestep(int p);
+long long photoion_new_sources_local(void);
+void photoion_add_new_sources(long long n);
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 double single_star_eventrates(int i, double dt);
