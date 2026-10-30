@@ -1184,6 +1184,7 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #ifdef SGCHEM
 void sgchem_init(void);
 void sgchem_init_cell_state(int i);
+double sgchem_docooling(int i, double u_old, double dt, double *ne_eval);
 #endif
 #ifdef CHIMES
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);

@@ -50,6 +50,7 @@ static void sgchem_tables_check(void)
 void sgchem_init(void)
 {
     if(ThisTask == 0) {printf("SGCHEM: network %d, tables from %s\n", CHEMISTRYNETWORK, All.SGChemTablesPath); fflush(stdout);}
+    if(All.ComovingIntegrationOn) {if(ThisTask == 0) {printf("SGCHEM: cosmological runs (UV background coupling) are not supported in this tree yet\n");} endrun(78003);}
     sgchem_tables_check();
     struct ChemInitParams p;
     p.iflag_mn    = 4;   /* H- + H+ mutual neutralisation (CDG99) */

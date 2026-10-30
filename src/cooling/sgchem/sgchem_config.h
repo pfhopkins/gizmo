@@ -13,6 +13,11 @@
 #ifdef METALS
 #define GALSF_RESOLVEDISM_METALS_INDIVIDUAL /* N and the CIE element masses come from the cell metals */
 #endif
+#define SGCHEM_SOLAR_Z  0.014  /* Asplund+09 present-day solar Z: the chemistry's metallicity unit, as stella_dev */
+#define SGCHEM_DEPL_C   0.50   /* grain-locked fractions at the Milky Way dust-to-gas ratio, scaled with SGChemDustToGasRatio */
+#define SGCHEM_DEPL_SI  0.82
+#define SGCHEM_DEPL_O   0.217
+#define SGCHEM_DEPL_MAX 0.9
 #endif
 
 #ifdef TEST_SGCHEM_ONEZONE_WITH_12_PIXEL_COLUMNS

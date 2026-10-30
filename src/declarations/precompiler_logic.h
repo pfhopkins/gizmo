@@ -1692,6 +1692,9 @@
 #if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID)
 #error "SGCHEM: the coupling to RADTRANSFER and COSMIC_RAY_FLUID is not in this tree yet"
 #endif
+#if !defined(COOL_METAL_LINES_BY_SPECIES)
+#error "SGCHEM reads the element slots: set COOL_METAL_LINES_BY_SPECIES"
+#endif
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20 /* tracked species per cell (= TRAC_NUM of cooling/sgchem/sgchem_consts.h) */
 #define SGCHEM_NUM_TRACKED_SPECIES 3
 #elif CHEMISTRYNETWORK == 17

@@ -937,7 +937,7 @@ SGCHEM_SUNLIB = $(firstword $(wildcard $(SUNDIALS_DIR)/lib64 $(SUNDIALS_DIR)/lib
 SGCHEMINCL = -I$(SUNDIALS_DIR)/include -I.
 SGCHEMLIBS = -L$(SGCHEM_SUNLIB) -Wl,-rpath,$(SGCHEM_SUNLIB) -lsundials_cvode -lsundials_nvecserial -lsundials_sunmatrixdense \
              -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton $(if $(wildcard $(SGCHEM_SUNLIB)/libsundials_core.*),-lsundials_core,-lsundials_generic)
-OBJS    += cooling/sgchem/sgchem.o $(patsubst %.cc,%.o,$(wildcard cooling/sgchem/cxx/*.cc))
+OBJS    += cooling/sgchem/sgchem.o cooling/sgchem/sgchem_cell.o $(patsubst %.cc,%.o,$(wildcard cooling/sgchem/cxx/*.cc))
 INCL    += $(wildcard cooling/sgchem/*.h cooling/sgchem/cxx/*.h)
 endif
 
