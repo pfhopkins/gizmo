@@ -6,6 +6,8 @@ test_sgchem_cell_state: SGCHEM network 5 adds 40 B to the gas cell (three tracke
 test_sgchem_snapshot_io: start values in snapshot 0; SGChemTracAbund and SGChemDustTemp equal the standalone run; a
 restart from a snapshot whose datasets carry the old Chemcool* names reads them and continues as the standalone run.
 test_sgchem_restart: a run stopped at half time and continued from its restart files ends identical to the uninterrupted run.
+test_sgchem_habing_field: a uniform Habing-shaped field at G0 = 1, 10, 100 gives the inputs of stella_dev's production
+path, and the cells equal the standalone run on them.
 test_sgchem_cooling: the cells cool through SGChem: final energy, temperature, electrons and HI equal a standalone run of
 the backend on the same inputs and timesteps, and the snapshots are identical with 1 and 4 OpenMP threads.
 """
@@ -79,7 +81,7 @@ def test_sgchem_cell_state(box):
     assert grow == 8 * (3 + 2), f"gas cell grows by {grow} B with SGCHEM network 5"
 
 
-def standalone(tables, snap0, times, start=None, over={}):
+def standalone(tables, snap0, times, start=None, field=(0.0, 0.0, 0.0), stella_dev_inputs=False, over={}):
     """cell_standalone.cc built in the box build's src/ (same config), fed the cells' density and energy and the run's timesteps."""
     src = path.join(ROOT, "src")
     cc = subprocess.run("make -n -W cooling/sgchem/sgchem_cell.cc cooling/sgchem/sgchem_cell.o", shell=True, cwd=src,
@@ -104,14 +106,16 @@ def standalone(tables, snap0, times, start=None, over={}):
     assert np.allclose(dts, np.diff(times)[1:], rtol=1e-12, atol=0)
     lines = [f"{p['UnitMass_in_g']!r} {p['UnitLength_in_cm']!r} {p['UnitVelocity_in_cm_per_s']!r} {p['HubbleParam']!r} "
              f"{p['SGChemCosmicRayIonRate']!r} {p['SGChemDustToGasRatio']!r} {p['SGChemDeuteriumAbundance']!r} {p['MinGasTemp']!r} "
+             + " ".join(repr(float(x)) for x in field) + f" {int(stella_dev_inputs)} "
              f"{len(dts)} " + " ".join(repr(float(d)) for d in dts), " ".join(repr(float(z)) for z in g["Metallicity"][0])]
     if start is None:  # fresh start: the start values of the cells
         start = np.tile([10.0, 0.0, 1.0e-4, 0.0], (len(g["ParticleIDs"]), 1))
     lines += [f"{int(i)} {float(r)!r} {float(u)!r} " + " ".join(repr(float(x)) for x in s)
               for i, r, u, s in zip(g["ParticleIDs"][:], g["Density"][:], g["InternalEnergy"][:], start)]
     out = subprocess.run([exe, tables], input="\n".join(lines) + "\n", capture_output=True, text=True, check=True).stdout
-    res = {int(l.split()[0]): [float(x) for x in l.split()[1:]] for l in out.splitlines()}
+    res = {int(l.split()[0]): [float(x) for x in l.split()[1:]] for l in out.splitlines() if not l.startswith("FIELD")}
     assert len(res) == len(g["ParticleIDs"]), out[-2000:]
+    res["field"] = [float(x) for x in out.splitlines()[0].split()[1:]]
     return res
 
 
@@ -210,6 +214,39 @@ def test_sgchem_restart(tables, box):
         assert np.array_equal(snaps[0][k], snaps[1][k]), f"{k} differs after the restart"
 
 
+@pytest.mark.parametrize("g0", [1.0, 10.0, 100.0])
+def test_sgchem_habing_field(tables, box, g0):
+    """uniform Habing-shaped field: inputs as stella_dev's production path (12 pixels, floors, NUV/optical grain heating),
+    and the box cells equal the standalone run on those inputs"""
+    field = (1.7, g0, g0)  # SGChemBackgroundG0, SGChemG0, SGChemG0_LW
+    out = path.join(HERE, f"output_g0_{g0:g}")
+    shutil.rmtree(out, ignore_errors=True)
+    chdir(HERE)
+    try:
+        run_test(NAME, 2, default_omp_threads(), param_overrides={"SGChemTablesPath": tables, "OutputDir": path.basename(out),
+                 "SGChemBackgroundG0": field[0], "SGChemG0": field[1], "SGChemG0_LW": field[2]})
+    finally:
+        chdir(ROOT)
+    with h5py.File(path.join(out, "snapshot_000.hdf5")) as s0, h5py.File(path.join(out, "snapshot_002.hdf5")) as s2:
+        times = step_times(path.join(out, "cpu.txt"))
+        ref = standalone(tables, s0, times, field=field)
+        sd = standalone(tables, s0, times, field=field, stella_dev_inputs=True)
+        g = s2["PartType0"]
+        ids = [int(i) for i in g["ParticleIDs"][:]]
+        got = np.column_stack([g["InternalEnergy"][:], g["Temperature"][:], g["SGChemTracAbund"][:], g["SGChemDustTemp"][:]])
+        spread = g["Density"][:].max() / g["Density"][:].min() - 1  # the warm lattice moves: cell densities scatter
+    want = np.array([[ref[i][k] for k in (0, 1, 3, 4, 5, 6)] for i in ids])
+    one_zone = lambda r: np.array([r[ids[0]][k] for k in (0, 1, 3, 4, 5, 6)])
+    f = np.array(ref["field"])
+    din = np.abs(f[3:] / f[:3] - 1)
+    dev = np.max(np.abs(got / want - 1), axis=0)
+    dsd = np.abs(one_zone(ref) / one_zone(sd) - 1)
+    print(f"G0 = {g0:g}: inputs (G0, G0_LW, G0_dust) stella_dev path {f[:3]}, this tree {f[3:]}, relative {din}; "
+          f"cells vs standalone (u, T, H2, H+, CO, T_dust) {dev} (density spread {spread:.2g}); one-zone on this tree's vs stella_dev's inputs {dsd}; "
+          f"T = {got[0, 1]:.6g} K, x(H2) = {got[0, 2]:.4g}, x(CO) = {got[0, 4]:.4g}, T_dust = {got[0, 5]:.4g} K")
+    assert np.all(din < 1e-14) and np.all(dev < 1e-6) and np.all(dsd < 1e-5)
+
+
 def test_sgchem_startup(tables, box):
     log = open(box["sgchem"]).read()
     assert "SGCHEM: chemistry tables built" in log
@@ -263,7 +300,7 @@ def test_sgchem_floor_temperature(tables, box):
         o0, o1 = np.argsort(g0["ParticleIDs"][:]), np.argsort(g1["ParticleIDs"][:])
         assert np.array_equal(g0["InternalEnergy"][:][o0], g1["InternalEnergy"][:][o1])  # held at the floor
         start = np.column_stack([g0["SGChemDustTemp"][:], g0["SGChemTracAbund"][:]])
-        ref = standalone(tables, s0, np.array([ta, ta, tb]), start, {"MinGasTemp": floor})
+        ref = standalone(tables, s0, np.array([ta, ta, tb]), start, over={"MinGasTemp": floor})
         got, want = g1["Temperature"][:], np.array([ref[int(i)][1] for i in g1["ParticleIDs"][:]])
     print(f"snapshot Temperature {got.min():.6g}-{got.max():.6g} K, chemistry {want.min():.6g}-{want.max():.6g} K")
     assert np.all(np.abs(got / want - 1) < 1e-8)

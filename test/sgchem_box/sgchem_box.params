@@ -31,3 +31,6 @@ SGChemTablesPath            sgchem_tables          % overridden by the test
 SGChemCosmicRayIonRate      2.0e-16     % s^-1 per H
 SGChemDustToGasRatio        1.0         % Milky Way at solar metallicity
 SGChemDeuteriumAbundance    2.6e-5      % D/H
+SGChemG0                    0           % no radiation field (test_sgchem_habing_field sets one)
+SGChemG0_LW                 0
+SGChemBackgroundG0          0

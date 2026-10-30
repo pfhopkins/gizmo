@@ -2,7 +2,11 @@
 // run's timesteps) through the C++ backend directly, written from the stella_dev input recipe (chem_interface.cc), not
 // from the GIZMO glue, so the box run is checked against an independent assembly of the same inputs.
 // Built by the test in the box build's src/ (same GIZMO_config.h), linked with its cooling/sgchem/cxx objects.
-// stdin: UnitMass UnitLength UnitVelocity HubbleParam zeta DGR D/H MinGasTemp ndt dt[ndt] / 11 metal slots / then
+// The radiation input is a uniform Habing-shaped field (G0, G0_LW, floor scale G0_bg) handed in as stella_dev's production
+// path does (chem_interface.cc, GALSF_RESOLVEDISM_G0_VARIABLE): 12 equal pixels, per-pixel UV and LW floors, NUV 3.4-6 eV
+// and optical bands; the first output line compares those inputs with this tree's sgchem_uniform_field().
+// stdin: UnitMass UnitLength UnitVelocity HubbleParam zeta DGR D/H MinGasTemp G0_bg G0 G0_LW use_stella_dev_inputs ndt dt[ndt]
+// / 11 metal slots / then
 // "id rho u T_dust x[0..TRAC_NUM-1]" per cell (start state)
 // stdout: id u T Ne x(H2) x(H+) x(CO) T_dust per cell
 #include <cstdio>
@@ -18,8 +22,8 @@ extern "C" void sgchem_fatal_(int *code) { std::printf("FATAL %d\n", *code); std
 int main(int argc, char **argv)
 {
     if(argc < 2) {std::printf("usage: cell_standalone <tables dir> < input\n"); return 2;}
-    double UM, UL, UV, h, zeta, dgr, abD, Tmin; int ndt;
-    if(std::scanf("%lf %lf %lf %lf %lf %lf %lf %lf %d", &UM, &UL, &UV, &h, &zeta, &dgr, &abD, &Tmin, &ndt) != 9) return 3;
+    double UM, UL, UV, h, zeta, dgr, abD, Tmin, G0s, G0, G0LW; int use_sd, ndt;
+    if(std::scanf("%lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %lf %d %d", &UM, &UL, &UV, &h, &zeta, &dgr, &abD, &Tmin, &G0s, &G0, &G0LW, &use_sd, &ndt) != 13) return 3;
     std::vector<double> dts(ndt); for(auto &d : dts) {if(std::scanf("%lf", &d) != 1) return 3;}
     double Z[11]; for(double &z : Z) {if(std::scanf("%lf", &z) != 1) return 3;}
     const double M = UM / h, L = UL / h, V = UV, rho_u = M / (L*L*L), t_u = L / V, e_u = M*V*V;
@@ -43,6 +47,23 @@ int main(int argc, char **argv)
     base.abundD = abD; base.cosmic_ray_ion_rate = zeta;
     base.dust_to_gas_ratio = std::min(dgr * Z[0] / 0.014, 10.0);
     base.abhe = chem_cxx_abhe_default(); base.X_H_chem = chem_cxx_xh_default();
+
+    {   // stella_dev chem_interface.cc:323-372 for an isotropic field: pixel fluxes [luminosity flux units] and floors
+        const int npix = 12;
+        const double uH = HABING_EGY_DENSITY_6_13P6EV_CGS, fac = 1.0 / (4. * M_PI * 2.99792458e10 * L * L);
+        double uv_min = 0.324e-2 * G0s / npix / (fac / uH), lw_min = 0.1 * uv_min, uv_tot = 0, lw_tot = 0, nuv = 0, opt = 0;
+        for(int i = 0; i < npix; i++) {
+            uv_tot += std::max(G0 * uH / npix / fac, uv_min);
+            lw_tot += std::max(G0LW * HABING_EGY_DENSITY_11P2_13P6EV_CGS / npix / fac, lw_min);
+            nuv += G0 * DUST_EGY_DENSITY_3P4_6EV_CGS / npix / fac;
+            opt += G0 * DUST_EGY_DENSITY_0P4_3P4EV_CGS / npix / fac;
+        }
+        ChemFUVField sd = chem_fuv_field_from_band_energy(uv_tot * fac, uH, lw_tot * fac, std::max(nuv, 0.) * fac, opt * fac, 1, 1, 0.324e-2 * G0s);
+        ChemFUVField gk = sgchem_uniform_field(G0, G0LW, G0s);
+        std::printf("FIELD %.17g %.17g %.17g %.17g %.17g %.17g\n", sd.G0, sd.G0_LW, sd.G0_dust, gk.G0, gk.G0_LW, gk.G0_dust);
+        ChemFUVField f = use_sd ? sd : gk;
+        base.G0 = f.G0; base.G0_LW = f.G0_LW; base.G0_dust = f.G0_dust;
+    }
 
     long id; double rho_c, u, tdust;
     while(std::scanf("%ld %lf %lf %lf", &id, &rho_c, &u, &tdust) == 4) {
