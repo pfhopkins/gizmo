@@ -6,7 +6,8 @@
  * `hydro_accumulate_neighbor` is reused verbatim from
  * hydro/hydro_functions.h — physics unchanged. The j-side write block
  * (P[j].wakeup atomic-max, MFV CellP[j].dMass atomic-add, NeedToWakeup_flag
- * store) all happen at the end of that helper.
+ * store, TURB_DIFF_METALS_EXACT_CONSERVATION CellP[j].Dyield_pending
+ * atomic-add) all happen inside that helper.
  *
  * Ghost writeback (Mode A imported-ghost path): runner's snapshot-diff
  * bundle handles wakeup + MFV dMass reverse-comm via PARTICLE_MAX(wakeup)
@@ -135,11 +136,11 @@ struct HydroForceSpec
     static constexpr const char *loop_name = "hydro_force";
     static constexpr bool writeback_writes_only_own_particle = true;   /* writes CellP[i] and its own accumulator only */
     /* Eval-thread tier: j-side writes are CellP[j].dMass (Kokkos::atomic_add,
-     * MFV), P[j].wakeup (Kokkos::atomic_max, order-invariant), NeedToWakeup
-     * (Kokkos::atomic_store 1, idempotent) — all via HYDRO_ATOMIC_* in
-     * hydro_functions.h. Only dMass is
-     * order-sensitive (FP reduction across concurrent actives -> ulp class);
-     * neither dMass nor wakeup is read back in the kernel, so the i-side
+     * MFV), CellP[j].Dyield_pending (Kokkos::atomic_add,
+     * TURB_DIFF_METALS_EXACT_CONSERVATION), P[j].wakeup (Kokkos::atomic_max,
+     * order-invariant), NeedToWakeup (Kokkos::atomic_store 1, idempotent).
+     * Only the two additive fields are order-sensitive (FP reduction across
+     * concurrent actives -> ulp class); none is read back in the kernel, so the i-side
      * AccumData is order-independent. Threaded eval re-orders the SAME atomics
      * Mode A already applies -> EpsilonAtomic (not bitwise). */
     static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic;

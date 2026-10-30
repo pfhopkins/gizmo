@@ -1,5 +1,4 @@
 # STARFORGE defaults with sink thermal feedback: the Injected_Sink_Energy reservoir, and a metallicity layout without individual elements
-# (TURB_DIFF_METALS_EXACT_CONSERVATION is not on this branch)
 SINGLE_STAR_STARFORGE_DEFAULTS
 MAGNETIC
 COOLING
@@ -10,3 +9,4 @@ BOX_PERIODIC
 GRAVITY_NOT_PERIODIC
 ADAPTIVE_TREEFORCE_UPDATE=0.0625
 SINK_THERMALFEEDBACK
+TURB_DIFF_METALS_EXACT_CONSERVATION

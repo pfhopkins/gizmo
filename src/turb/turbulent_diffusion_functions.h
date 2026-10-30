@@ -5,11 +5,16 @@
  * the flag is off the function compiles to a no-op.
  *
  * Writes out.Dyield[k] (i-side, per-thread accumulator, no atomic needed).
- * j-side writes have been removed — they were gated on the legacy
- * j_is_active_for_fluxes flag which is always 0 in modern GIZMO.
  * Each side applies the exchange for its own step: the limiters bound the amount
  * over the pair step dt_pair = max(dt_i, dt_j), and cell i receives the fraction
- * dt_i/dt_pair of it.
+ * dt_i/dt_pair of it. Without TURB_DIFF_METALS_EXACT_CONSERVATION there is no
+ * j-side write (the legacy j_is_active_for_fluxes path is always off), so metal
+ * mass is conserved only to integration accuracy across timebins.
+ * With TURB_DIFF_METALS_EXACT_CONSERVATION each side moves half of the exchange
+ * over its own step and the other half is deposited into CellP[j].Dyield_pending
+ * (Kokkos::atomic_add: j is shared between concurrent actives), where it waits
+ * for j's next active step. Pairs then sum to zero to round-off. Exported
+ * neighbours carry this through the hydro_force ghost-writeback bundle.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h.
  *
@@ -25,7 +30,7 @@ KOKKOS_INLINE_FUNCTION
 void turb_diff_metals_compute_pair(
     const struct hydro_data_in &local,
     const struct particle_data &Pj,
-    const struct gas_cell_data &CPj,
+    struct gas_cell_data &CPj,                /* written (Dyield_pending) under TURB_DIFF_METALS_EXACT_CONSERVATION */
     const struct kernel_hydra &kernel,
     double rinv,
     const Vec3<double> &Face_Area_Vec,
@@ -93,7 +98,14 @@ void turb_diff_metals_compute_pair(
             double dmet = (Z_j - local.Metallicity[k_species]) * fabs(mdot_estimated) * dt_pair;
             cmag = MINMOD(dmet, cmag);
 #endif
+#ifdef TURB_DIFF_METALS_EXACT_CONSERVATION
+            /* each side moves half the exchange over its own timestep; j's share waits in its pending buffer */
+            cmag *= 0.5 * dt_fraction_i;
+            out.Dyield[k_species] += cmag;
+            Kokkos::atomic_add(&CPj.Dyield_pending[k_species], (MyDouble)(-cmag));
+#else
             out.Dyield[k_species] += cmag * dt_fraction_i;
+#endif
         }
     }
 #endif /* TURB_DIFF_METALS */

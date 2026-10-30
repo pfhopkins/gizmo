@@ -1892,3 +1892,7 @@
 #if defined(HYDRO_KERNEL_SURFACE_VOLCORR) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS))
 #define KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE /* cells carry a CompositionType: the surface correction stands down at material interfaces (mesh/kernel.h) */
 #endif
+
+#if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
+#error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
+#endif
