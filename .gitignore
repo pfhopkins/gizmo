@@ -153,3 +153,4 @@ test/wakeup_falling_sedov/*_ics.hdf5
 test/single_stars_radiation/run_*/
 test/single_stars_radiation/TREECOOL
 test/single_stars_radiation/spcool_tables
+test/photoion_per_direction/run_*/
