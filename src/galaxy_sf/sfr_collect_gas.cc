@@ -91,6 +91,9 @@ SscCallScalars SscSpecBase::populate_call_scalars(const neighbor_loop_args& args
     s.n_pairs = aux ? aux->n_pairs : nullptr; s.records = aux ? aux->records : nullptr;
     s.n_records = aux ? aux->n_records : nullptr; s.capacity = aux ? aux->capacity : 0;
     s.donor = ssc_donor; s.n_donor = DMIN(N_gas, ssc_donor_cap); s.task = ThisTask;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    s.ti_current = All.Ti_Current;
+#endif
     return s;
 }
 

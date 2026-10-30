@@ -2,7 +2,8 @@
  * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* galaxy_sf/photoion_per_direction.cc -- host side of the per-direction photoionisation (Specs in photoion_per_direction.h).
  * Ionising single stars share one cadence (PhotoionMaxTimestep); at each solve every source finds its fronts (search
- * sphere grown or refined as stella_dev). Reference: stella_dev galaxy_sf/resolvedism_photoion.cc. */
+ * sphere grown or refined as stella_dev), then stamps its cells ionised until the next solve. Reference: stella_dev
+ * galaxy_sf/resolvedism_photoion.cc. */
 #include <mpi.h>
 #include <cstdio>
 #include <cstdlib>
@@ -72,6 +73,8 @@ PiCallScalars PiSpecBase::populate_call_scalars(const neighbor_loop_args& args)
     PiCallScalars s;
     s.common = nlr_common_scalars_from_all();
     s.bill_fac = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC / (PROTONMASS_CGS * PROTONMASS_CGS) * All.cf_a3inv * UNIT_DENSITY_IN_CGS * UNIT_MASS_IN_CGS;
+    Aux *aux = nlr_aux<PiHistSpec>(args);
+    s.stamp = aux ? aux->stamp : 0;
     return s;
 }
 
@@ -99,6 +102,10 @@ void PiSpecBase::cleanup_device_context(const neighbor_loop_args&, DeviceContext
 void PiHistSpec::apply_active_writeback(const neighbor_loop_args& args, int slot, int, const AccumData& a)
 {
     ((PiHistOut *) nlr_aux<PiHistSpec>(args)->out)[slot] = a;
+}
+void PiStampSpec::apply_active_writeback(const neighbor_loop_args& args, int slot, int, const AccumData& a)
+{
+    ((PiLedgerOut *) nlr_aux<PiStampSpec>(args)->out)[slot] = a;
 }
 
 template <typename Spec>
@@ -158,11 +165,12 @@ static PiSourceIn pi_source_in(const pi_src& s)
     PiSourceIn x; std::memset(&x, 0, sizeof(x));
     for(int k = 0; k < 3; k++) {x.Pos[k] = P[s.i].Pos[k];}
     x.R = s.R; x.S_pix = s.Q / PI_NPIX;
+    for(int k = 0; k < PI_NPIX; k++) {x.mark[k] = s.mark[k];}
     return x;
 }
 
 /* solve when the photoionisation bin is active. Collectives: the source count; per pass the runner call and one
-   reduction; the log row. */
+   reduction; the stamp; the log row. */
 void photoionization_per_direction(void)
 {
     if(All.HIIRegion_fLum_Coupled <= 0 || All.Time <= 0) {return;}
@@ -192,7 +200,7 @@ void photoionization_per_direction(void)
         std::vector<int> list, which; std::vector<PiSourceIn> in;
         for(size_t a = 0; a < S.size(); a++) {if(S[a].open) {list.push_back(S[a].i); in.push_back(pi_source_in(S[a])); which.push_back((int)a);}}
         std::vector<PiHistOut> H(in.size() + 1);
-        PiSpecBase::Aux aux = {nullptr, H.data()};
+        PiSpecBase::Aux aux = {nullptr, H.data(), 0};
         pi_run<PiHistSpec>(list, in, aux);
         int n_open = 0;
         for(size_t a = 0; a < in.size(); a++) {
@@ -203,10 +211,18 @@ void photoionization_per_direction(void)
         MPI_Allreduce(&n_open, &any_open, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
-    /* log row (HIIheating.txt): sources, Q/X, (ionised cells: columns 4-7), passes, smallest and largest front */
+    /* stamp until the next solve */
+    const integertime dti = (integertime)1 << b_pi, stamp = (All.Ti_Current / dti + 1) * dti;
+    std::vector<int> list; std::vector<PiSourceIn> in;
+    for(pi_src& s : S) {list.push_back(s.i); in.push_back(pi_source_in(s));}
+    std::vector<PiLedgerOut> L(S.size() + 1);
+    PiSpecBase::Aux aux = {nullptr, L.data(), stamp};
+    pi_run<PiStampSpec>(list, in, aux);
+
+    /* log row (HIIheating.txt): sources, Q/X, cells newly ionised, their mass and mean distance, recombination / Q */
     double loc[5] = {0, 0, 0, 0, 0}, tot[5], ext[2] = {0, -MAX_REAL_NUMBER}, ext_tot[2]; /* front max, -(front min) */
     for(size_t a = 0; a < S.size(); a++) {
-        loc[0] += S[a].Q;
+        loc[0] += S[a].Q; loc[1] += L[a].bill; loc[2] += L[a].n_new; loc[3] += L[a].m_new; loc[4] += L[a].mr_new;
         for(int k = 0; k < PI_NPIX; k++) {ext[0] = DMAX(ext[0], S[a].front[k]); ext[1] = DMAX(ext[1], -S[a].front[k]);}
     }
     MPI_Reduce(loc, tot, 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);

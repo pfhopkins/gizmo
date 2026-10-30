@@ -214,6 +214,9 @@ double get_starformation_rate(int i, int mode)
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
         if(CellP[i].DelayTimeHII > 0) {return 0;}
 #endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        if(All.Ti_Current < CellP[i].PhotoionizedUntil) {return 0;}
+#endif
         double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
         double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
         if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}

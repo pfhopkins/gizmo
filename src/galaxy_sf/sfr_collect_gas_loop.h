@@ -59,6 +59,9 @@ struct SscCallScalars {
     long long *n_pairs;          /* this rank: pairs requested (sizes the grant records) */
     SscGrantRecord *records;     /* this rank: grants to its donors */
     long long *n_records, capacity;
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    integertime ti_current;      /* photoionised cells do not donate */
+#endif
 };
 
 struct SscActiveState {
@@ -88,6 +91,9 @@ static long long ssc_available_quanta(const SscStarIn& s, const struct particle_
     if(Pj.Type != 0 || Cj == nullptr || j >= cs.n_donor) {return -1;}
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
     if(Cj->DelayTimeHII > 0) {return -1;} /* ionised cells do not donate */
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    if(cs.ti_current < Cj->PhotoionizedUntil) {return -1;}
 #endif
     Vec3<double> dp;
     for(int k = 0; k < 3; k++) {dp[k] = s.Pos[k] - (double)Pj.Pos[k];}

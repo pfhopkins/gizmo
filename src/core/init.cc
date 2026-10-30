@@ -769,6 +769,9 @@ void init(void)
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING)
         CellP[i].DelayTimeHII = 0;
 #endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        if(RestartFlag != 1) {CellP[i].PhotoionizedUntil = 0;}
+#endif
 #ifdef GALSF_FB_TURNOFF_COOLING
         CellP[i].DelayTimeCoolingSNe = 0;
 #endif
