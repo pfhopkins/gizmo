@@ -3,12 +3,15 @@ The tables are installed once by scripts/get_stella_tables.sh (via the harness);
 the wind table is read from the same directory; GIZMO checks the content hashes of both at start-up.
   1. the installed files: GIZMO reports both ok and runs to TimeMax;
   2. a directory without tables: GIZMO stops at start-up, naming the file and the install script;
-  3. a file with the right name but other content: same, naming its hash.
+  3. a file with the right name but other content: same, naming its hash;
+  4. the lookups (node-shared tables, standalone build in unit/): exact at the grid nodes, closure of the ejecta,
+     lifetime monotone, agreement with the reference implementation to 1e-12, same on both ranks.
 """
+import subprocess
 import os
 from pathlib import Path
 import pytest
-from gizmo.test import build_gizmo_for_test, run_test, get_stellar_evolution_tables, default_mpi_ranks
+from gizmo.test import build_gizmo_for_test, run_test, get_stellar_evolution_tables, default_mpi_ranks, mpi_launch_command
 
 TEST_NAME = "stellar_evolution_tables"
 TEST_DIR = Path(__file__).parent
@@ -57,3 +60,41 @@ def test_wrong_table_stops(built, tmp_path):
     log = run({"StellarTablesFile": str(fake)}, allow_fail=True)
     assert f"{fake} has hash" in log and "get_stella_tables.sh" in log
     assert "Final time" not in log
+
+
+def test_lookups(built):
+    """the lookups, evaluated on a fixed grid of 64 masses x 8 metallicities x 7 ages (on, between and off the grid
+    nodes, past the end of life) by a standalone build (unit/), on 2 ranks:
+      - at the grid nodes the 2D tables are returned exactly (lifetime, remnant mass, PMS time, SN and AGB
+        element ejecta, compared with the HDF5 datasets);
+      - closure at the nodes: pre-SN mass (HDF5) = remnant + sum of the SN element ejecta (exploding stars) or of the AGB
+        element ejecta (white dwarfs), to 1e-12 relative;
+      - lifetime decreases with mass above 2 Msun at every metallicity;
+      - every value agrees with the reference implementation to 1e-12 relative (a stored sample of 3719 values; the
+        two codes interpolate alike, so on one machine they agree bitwise; across compilers only rounding differs);
+      - both ranks get the same values."""
+    import h5py
+    import numpy as np
+    unit = TEST_DIR / "unit"
+    exe, out = unit / "lookup_grid", unit / "lookups"
+    src = TEST_DIR.parent.parent / "src" / "galaxy_sf"
+    subprocess.run(["bash", str(unit / "build_lookup_grid.sh"), str(src / "stellar_evolution_tables.cc"), str(src / "stellar_evolution_tables.h"),
+                    str(exe), "-DGALSF_SINGLE_STARS_EVOLUTION_TABLES", "-DLOAD_TABLES=stellar_evolution_tables_load"], check=True)
+    subprocess.run(mpi_launch_command(2) + [str(exe), built["StellarTablesFile"], str(out)], check=True, capture_output=True)
+    v = np.fromfile(f"{out}.0")
+    assert np.fromfile(f"{out}.1").tobytes() == v.tobytes()
+    ref = np.loadtxt(unit / "lookup_reference.txt")
+    idx, val = ref[:, 0].astype(int), ref[:, 1]
+    assert len(v) == 226843
+    assert np.all(np.abs(v[idx] - val) <= 1e-12 * np.abs(val) + 1e-300)
+    with h5py.File(built["StellarTablesFile"], "r") as F:
+        NZ, NM, NE = len(F["log_Z"]), len(F["M_init"]), 27
+        nodes = np.fromfile(f"{out}.nodes.0").reshape(NZ, NM, 3 + 2 * NE)
+        for j, name in enumerate(["lifetime_yr", "remnant_mass", "t_PMS"]):
+            assert np.array_equal(nodes[:, :, j], F[name][()].reshape(NZ, NM)), name
+        assert np.array_equal(nodes[:, :, 3:3 + NE], F["elem_ej_SN_mass"][()].reshape(NZ, NM, NE))
+        assert np.array_equal(nodes[:, :, 3 + NE:], F["elem_ej_AGB_mass"][()].reshape(NZ, NM, NE))
+        wd, M, pre = F["remnant_type"][()].reshape(NZ, NM) == 0, F["M_init"][()], F["M_preSN"][()].reshape(NZ, NM)
+    ej = np.where(wd, nodes[:, :, 3 + NE:].sum(-1), nodes[:, :, 3:3 + NE].sum(-1))
+    assert np.all(np.abs(pre - nodes[:, :, 1] - ej) <= 1e-12 * pre)
+    assert np.all(np.diff(nodes[:, M >= 2, 0], axis=1) < 0)
