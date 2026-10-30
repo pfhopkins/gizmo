@@ -1,3 +1,4 @@
+C SGChem Jacobian. Author: Simon Glover (ITA Heidelberg); GPL as distributed in Arepo.
 #ifdef ROSENBROCK
       SUBROUTINE JAC (NEQ, T, Y, DFY, LDFY, RPAR, IPAR)
 #else

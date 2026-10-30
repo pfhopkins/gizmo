@@ -1,3 +1,4 @@
+/* SGChem Fortran/C name mangling (not the AT&T/Bell Labs f2c.h). Author: Simon Glover (ITA Heidelberg); GPL as distributed in Arepo. */
 #ifndef F2C_INC
 #define F2C_INC
 

@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef STELLA_STAR_MERGERS_H
 #define STELLA_STAR_MERGERS_H
 /* Stellar mergers handed back from an N-body integrator (KETJU, RUMI++): victims' metals, IMF masses and (Stella)

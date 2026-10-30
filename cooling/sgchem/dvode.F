@@ -1,3 +1,4 @@
+C DVODE: Brown, Byrne & Hindmarsh (LLNL); redistributed with the authors notice below. Not part of SGChem proper.
 #ifndef ROSENBROCK
 *DECK DVODE
       SUBROUTINE DVODE (F, NEQ, Y, T, TOUT, ITOL, RTOL, ATOL, ITASK,

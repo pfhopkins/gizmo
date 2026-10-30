@@ -1,3 +1,4 @@
+C Reader for the WSS09 (Wiersma, Schaye & Smith 2009) CIE cooling tables. Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
       subroutine read_wss_collis_table
       implicit none
 

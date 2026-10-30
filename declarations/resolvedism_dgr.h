@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef RESOLVEDISM_DGR_H
 #define RESOLVEDISM_DGR_H
 /* Single source of truth for the per-cell dust-to-gas ratio in SOLAR units

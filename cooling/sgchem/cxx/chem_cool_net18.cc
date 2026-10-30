@@ -1,3 +1,4 @@
+/* Network 18 rates and constants ported from RTZ (HarleyKatz, MIT licence); see cooling/sgchem/NOTICE. */
 /* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
    Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_net18.cc -- network 18: RTZ (mem_opt) ion rates, H2/CO, heating and cooling as a CVODE system.

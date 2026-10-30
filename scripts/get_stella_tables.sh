@@ -1,4 +1,6 @@
 #!/bin/bash
+# Copyright (c) 2026 Ulrich Steinwandel
+# Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de)
 # Install the Stella stellar + SGCHEM tables these GIZMO sources expect into PREFIX, and check them against the hashes
 # recorded in galaxy_sf/stella_tables_check.h (GIZMO checks the same hashes at startup). Run once per machine/version,
 # before any run: GIZMO itself never builds or fetches tables, and needs no network.

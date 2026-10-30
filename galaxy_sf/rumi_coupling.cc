@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #include <mpi.h>
 #include <cmath>
 #include <cstdio>

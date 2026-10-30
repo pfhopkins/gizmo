@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef RESOLVEDISM_DEPLETION_H
 #define RESOLVEDISM_DEPLETION_H
 /* MW grain-locked mass fraction of each element at DGRnormalized = 1, shared by the dust seed and the no-dust chemistry input. */

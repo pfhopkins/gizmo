@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# Copyright (c) 2026 Ulrich Steinwandel
+# Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de)
 """Content hash of a Stella table file, as checked by GIZMO at startup (galaxy_sf/stella_tables_check.h).
 
 HDF5: sha256 over every dataset, sorted by path: path, a zero byte, then the data in native byte order

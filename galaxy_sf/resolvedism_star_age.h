@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef RESOLVEDISM_STAR_AGE_H
 #define RESOLVEDISM_STAR_AGE_H
 /* true time since birth [yr]; evaluate_stellar_age_Gyr floors at 1e-5 Gyr, which biases rate integrals over the first 10 kyr */

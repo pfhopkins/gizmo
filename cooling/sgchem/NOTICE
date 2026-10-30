@@ -1,0 +1,50 @@
+Third-party code and data in cooling/sgchem
+
+SGChem Fortran (cooling/sgchem/*.F, *.h, except where noted)
+  Written by Simon Glover (ITA Heidelberg), with contributions credited in the file headers.
+  GNU GPL, as distributed in Arepo (the version is not stated there).
+
+SGChem C++ implementation (cooling/sgchem/cxx, sgchem.cc and hooks)
+  Ulrich Steinwandel (uli@mpa-garching.mpg.de), 2026. GPL, as the Fortran code it is based on.
+
+Network 18 (cooling/sgchem/cxx/chem_cool_net18.cc, chem_net18*.h)
+  Built on RTZ, released under the MIT licence:
+
+    MIT License
+    
+    Copyright (c) 2024 HarleyKatz
+    
+    Permission is hereby granted, free of charge, to any person obtaining a copy
+    of this software and associated documentation files (the "Software"), to deal
+    in the Software without restriction, including without limitation the rights
+    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+    copies of the Software, and to permit persons to whom the Software is
+    furnished to do so, subject to the following conditions:
+    
+    The above copyright notice and this permission notice shall be included in all
+    copies or substantial portions of the Software.
+    
+    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+    SOFTWARE.
+
+Network 20 (cooling/sgchem/cxx/chem_cool_net20.cc and related files)
+  Thermochemistry of TIGRESS-NCR, Kim et al. 2023, ApJS 264, 10 (arXiv:2210.08024), implemented from the paper.
+  Coefficients the paper only cites were taken from the authors' public implementation (pyathena, microphysics/cool.py,
+  commit f188a84; Athena++ shielding.cpp). Terms of that code: to be confirmed.
+
+dvode.F
+  DVODE by P. N. Brown, G. D. Byrne and A. C. Hindmarsh (LLNL). Terms: to be confirmed (netlib/LLNL release).
+
+f2c.h
+  A name-mangling header of SGChem, not the AT&T/Bell Labs f2c.h.
+
+wss_z_collis_test.F
+  Ulrich Steinwandel; reads the tables of Wiersma, Schaye & Smith 2009.
+
+Used as installed libraries (not included): SUNDIALS/CVODE (BSD-3), Kokkos.
+Sutherland & Dopita 1993 cooling data (sd_metal.h): published data, cited in the header.

@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef RESOLVEDISM_RNG_H
 #define RESOLVEDISM_RNG_H
 

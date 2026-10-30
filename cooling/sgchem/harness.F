@@ -1,3 +1,5 @@
+C Stand-alone SGChem test driver, derived from SGChem test.F by Simon Glover (ITA Heidelberg) (GPL as distributed in Arepo);
+C adapted by Ulrich Steinwandel.
       program test
       implicit none
 #include "cool.h"

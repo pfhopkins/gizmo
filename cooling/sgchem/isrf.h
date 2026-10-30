@@ -1,3 +1,4 @@
+c SGChem ISRF shielding tables. Author: Simon Glover (ITA Heidelberg); GPL as distributed in Arepo.
       REAL chi_tab_black(200), chi_tab_mathis(200)
       REAL chi_tab_black_noscatter(200)
       REAL chi_tab_mathis_noscatter(200)

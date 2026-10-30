@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* Startup check of the installed Stella tables against the hashes this source version expects.
  * Hash definition as scripts/stella_tables_hash.py: HDF5 = sha256 over the datasets sorted by path (path, zero byte,
  * native-order data); other files = sha256 of the bytes. Tables come from scripts/get_stella_tables.sh; never fetched here. */

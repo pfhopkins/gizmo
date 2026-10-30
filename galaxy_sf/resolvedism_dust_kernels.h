@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef RESOLVEDISM_DUST_KERNELS_H
 #define RESOLVEDISM_DUST_KERNELS_H
 /* Hu+19/23/26 dust microphysics on plain doubles (um, yr, km/s, cm^-3, K); no GIZMO state. */

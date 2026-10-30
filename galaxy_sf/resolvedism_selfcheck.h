@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 #ifndef RESOLVEDISM_SELFCHECK_H
 #define RESOLVEDISM_SELFCHECK_H
 /* Runtime invariant checks for the test harness; compiled only with STELLA_SELFCHECK.

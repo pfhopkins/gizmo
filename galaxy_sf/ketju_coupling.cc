@@ -1,3 +1,7 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de)
+ * Based on the architecture of GADGET4-KETJU: Copyright Rantala, Mannerkoski, Johansson, Naab, Springel and contributors (GPL;
+ * Rantala+ 2017, 2018; Mannerkoski+ 2023; GADGET-4: Springel+ 2021). Parts by Mike Grudic. */
 /* KETJU regularized integrator coupling for GIZMO
  *
  * Implements the coupling between GIZMO's gravity tree and the MSTAR

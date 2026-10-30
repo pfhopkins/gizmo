@@ -1,3 +1,4 @@
+c SGChem H2 ro-vibrational heating table. Author: Simon Glover (ITA Heidelberg); GPL as distributed in Arepo.
       integer nh2rv
       parameter (nh2rv = 1914)
       REAL h2_rv_heat(nh2rv)

@@ -1,3 +1,5 @@
+/* Copyright (c) 2026 Ulrich Steinwandel
+ * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* KETJU default: the KETJU C interface used by ketju_coupling.cc, mapped onto the C++/Kokkos MSTAR library mstar::mstar
  * (submodule ketju-integrator, Steinwandel 2026; physics and options of the C library, Rantala+ 2020, Mannerkoski+ 2023). */
 #include <mpi.h>
