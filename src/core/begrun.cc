@@ -496,7 +496,7 @@ void begrun(void)
 #if defined(GALSF) && defined(GALSF_FB_FIRE_RT_LOCALRP)
         All.RP_Local_Momentum_Renormalization = all.RP_Local_Momentum_Renormalization;
 #endif
-#if defined(GALSF) && defined(GALSF_FB_FIRE_RT_HIIHEATING)
+#if defined(GALSF) && (defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION))
         All.HIIRegion_fLum_Coupled = all.HIIRegion_fLum_Coupled;
 #endif
 #ifdef RT_LEBRON
@@ -1881,9 +1881,14 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #endif
 
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
         strcpy(tag[nt], "HIIRegion_fLum_Coupled");
         addr[nt] = &All.HIIRegion_fLum_Coupled;
+        id[nt++] = REAL;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        strcpy(tag[nt], "PhotoionMaxTimestep");
+        addr[nt] = &All.PhotoionMaxTimestep;
         id[nt++] = REAL;
 #endif
 
@@ -3303,7 +3308,10 @@ void read_parameter_file(char *fname)
 #ifdef GALSF_FB_FIRE_RT_LOCALRP
                 if(strcmp("WindMomentumLoading",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to standard stellar-evolution-defaults (=%g) \n",tag[i],alternate_tag[i],All.RP_Local_Momentum_Renormalization); continue;}
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+                if(strcmp("PhotoionMaxTimestep",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s not set in parameter file: defaulting to 10 kyr\n",tag[i]); continue;}
+#endif
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
                 if(strcmp("HIIRegion_fLum_Coupled",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to standard stellar-evolution-defaults (=%g) \n",tag[i],alternate_tag[i],All.HIIRegion_fLum_Coupled); continue;}
 #endif
 #ifdef RT_LEBRON

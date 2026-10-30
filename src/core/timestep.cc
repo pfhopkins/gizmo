@@ -1129,6 +1129,9 @@ integertime get_timestep(int p,		/*!< particle index */
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
     if(P[p].StarIdx > 0) {double dt_star = single_star_max_timestep(p); if(dt_star > 0 && dt_star < dt) {dt = dt_star;}} /* next stellar-evolution event of a single star */
 #endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    if(P[p].StarIdx > 0) {double dt_pi = photoion_max_timestep(p); if(dt_pi > 0 && dt_pi < dt) {dt = dt_pi;}} /* ionising sources: the photoionisation cadence */
+#endif
 
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM

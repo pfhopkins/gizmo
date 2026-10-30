@@ -492,8 +492,11 @@ struct global_data_all_processes
     double CosmicRay_SNeFraction;
 #endif
 #endif
-#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)
     double HIIRegion_fLum_Coupled;
+#endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source, and the photoionisation cadence [yr] */
 #endif
 
 #ifdef GALSF_FB_FIRE_AGE_TRACERS
