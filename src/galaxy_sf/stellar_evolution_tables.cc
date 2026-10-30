@@ -264,6 +264,9 @@ void stellar_evolution_tables_load(void)
     }
     MPI_Win_fence(0, stbl_win); MPI_Barrier(GizmoNodeComm); MPI_Win_fence(0, stbl_win);
     StellarTbl.loaded = 1;
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+    stellar_ia_fdead_init();
+#endif
     if(ThisTask == 0) {printf("Stellar evolution tables: %d Z x %d M x %d ages, %.0f MB per node\n", STBL_NZ, STBL_NM, STBL_NAGE, nfloat * sizeof(float) / 1e6);}
 }
 
@@ -382,5 +385,50 @@ double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age,
 
 
 
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+/* f_dead(t, Z): fraction of the formed mass (Kroupa, IMF lower end .. 350 Msun) in white-dwarf progenitors that have died
+   by age t; normalises the per-white-dwarf Type Ia hazard (as the reference implementation) */
+#define IA_FDEAD_NT 96
+static double IaFdead[STBL_NZ][IA_FDEAD_NT];
+static const double IaFdead_logt_min = 6.5, IaFdead_logt_max = 10.3; /* log10 yr */
+
+void stellar_ia_fdead_init(void)
+{
+    const int NM = 4000;
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+    double Mmin = DMAX(All.IMFSampleMinMass, 0.08), Mmax = 350.;
+#else
+    double Mmin = 0.08, Mmax = 350.;
+#endif
+    double lmin = log10(Mmin), dl = (log10(Mmax) - lmin) / NM;
+    std::vector<double> tdie(NM), w(NM);
+    for(int iz = 0; iz < STBL_NZ; iz++) {
+        double logZ = StellarTbl.log_Z[iz], wtot = 0;
+        for(int im = 0; im < NM; im++) {
+            double lM = lmin + (im + 0.5) * dl, M = pow(10., lM);
+            w[im] = ((M < 0.5) ? 2.0 * pow(M, -0.3) : pow(M, -1.3)) * M * dl * log(10.); /* (M dN/dM) dM */
+            wtot += w[im];
+            tdie[im] = (stellar_remnant_type(lM, logZ) == REM_WD) ? stellar_t_PMS(lM, logZ) + stellar_lifetime(lM, logZ) : -1;
+        }
+        for(int it = 0; it < IA_FDEAD_NT; it++) {
+            double t = pow(10., IaFdead_logt_min + it * (IaFdead_logt_max - IaFdead_logt_min) / (IA_FDEAD_NT - 1)), wd = 0;
+            for(int im = 0; im < NM; im++) {if(tdie[im] > 0 && tdie[im] <= t) {wd += w[im];}}
+            IaFdead[iz][it] = wd / wtot;
+        }
+    }
+}
+
+double stellar_ia_fdead(double t_yr, double logZ)
+{
+    if(t_yr <= 0) {return 0;}
+    int iz; double fz; stbl_idx_Z(logZ, &iz, &fz);
+    double x = (log10(t_yr) - IaFdead_logt_min) / (IaFdead_logt_max - IaFdead_logt_min) * (IA_FDEAD_NT - 1);
+    x = DMAX(0, DMIN(x, IA_FDEAD_NT - 1));
+    int it = (int)x; if(it > IA_FDEAD_NT - 2) {it = IA_FDEAD_NT - 2;}
+    double ft = x - it;
+    int iz1 = (iz < STBL_NZ - 1) ? iz + 1 : iz;
+    return (1 - fz) * ((1 - ft) * IaFdead[iz][it] + ft * IaFdead[iz][it + 1]) + fz * ((1 - ft) * IaFdead[iz1][it] + ft * IaFdead[iz1][it + 1]);
+}
+#endif
 
 #endif /* GALSF_SINGLE_STARS_EVOLUTION_TABLES */

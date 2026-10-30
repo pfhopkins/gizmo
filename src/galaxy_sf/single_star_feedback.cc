@@ -7,6 +7,7 @@
 #include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../declarations/gpu_rng.h"
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
 
@@ -23,6 +24,9 @@
  *   - supernova classes (table remnant type): CCSN, ECSN, PPISN and PISN 1e51 erg; failed SN and direct BH no energy;
  *     ejecta = frozen mass - table remnant, composition from the table's SN element ejecta scaled to that mass;
  *   - white-dwarf remnants (AGB death): ejecta = frozen mass - table remnant at 30 km/s, AGB element ejecta scaled;
+ *   - with GALSF_SINGLE_STARS_TYPE_IA a white dwarf explodes with the per-step hazard of the reference implementation
+ *     (t^-1 delay-time distribution normalised to the dead-progenitor fraction, keyed random number): the whole mass at
+ *     1e51 erg with the table's Type Ia yields, no remnant;
  *   - after the loop the star keeps exactly the table remnant mass; the difference to what the loop removed (rounding
  *     of the weight sums) is booked in the event log. An event that found no neighbour weight stays pending and fires
  *     again next step (counted).
@@ -34,11 +38,17 @@
 #define SINGLE_STAR_WIND_MIN_MASS 8.0    /* drawn mass [Msun] above which winds are returned during the star's life */
 #define SINGLE_STAR_WIND_FLUSH_MIN 1.e-6 /* wind mass [Msun] still owed at death that is returned before the death event */
 #define SINGLE_STAR_AGB_SPEED_KMS 30.0   /* planetary-nebula ejection speed */
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+#define IA_T_MIN_GYR 0.04     /* minimum delay [Gyr] */
+#define IA_F_WD 0.76          /* mass fraction of the IMF in white-dwarf progenitors */
+#define IA_DTD_NORM 2.93e-4   /* rate = IA_DTD_NORM / t per Msun formed */
+static constexpr uint64_t SINGLE_STAR_IA_RNG_SALT = gizmo_loop_rng_salt("single_star_type_ia");
+#endif
 
 /* table element of each FIRE metal slot 1..10 (slot 0 = sum of all table metals C..Zn; H implicit) */
 static const int single_star_fire_slot_elem[11] = {-1, ELEM_He, ELEM_C, ELEM_N, ELEM_O, ELEM_Ne, ELEM_Mg, ELEM_Si, ELEM_S, ELEM_Ca, ELEM_Fe};
 
-enum single_star_event_kind {SSE_NONE = 0, SSE_SN = 1, SSE_AGB = 2, SSE_WIND = 3};
+enum single_star_event_kind {SSE_NONE = 0, SSE_SN = 1, SSE_AGB = 2, SSE_WIND = 3, SSE_IA = 4};
 
 struct single_star_event {
     int kind, remnant_type;
@@ -112,6 +122,12 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
         return;
     }
     ev->M_trigger = SingleStars.M_at_SN_trigger[s] * UNIT_MASS_IN_SOLAR;
+    if(kind == SSE_IA) {
+        ev->M_rem = 0; ev->E = 1.e51; ev->Mej = ev->M_trigger;
+        for(int k = 0; k < STBL_NELEM; k++) {ev->y[k] = stellar_type_ia_yield(k);}
+        single_star_scale(ev->y, ev->Mej);
+        return;
+    }
     ev->M_rem = DMIN(stellar_remnant_mass(logM, logZ), ev->M_trigger); /* a star never gains mass at death */
     ev->Mej = ev->M_trigger - ev->M_rem;
     if(kind == SSE_AGB) {
@@ -131,12 +147,12 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
 static inline int single_star_kind_this_step(int i)
 {
     int s = single_star_slot(P[i].StarIdx);
-    if(P[i].SNe_ThisTimeStep > 0) {return SSE_SN;}
+    if(P[i].SNe_ThisTimeStep > 0) {return (SingleStars.event_bits[s] & SINGLE_STAR_EVENT_AGB_DONE) ? SSE_IA : SSE_SN;}
     if(P[i].MassReturn_ThisTimeStep > 0) {return (SingleStars.M_at_SN_trigger[s] > 0) ? SSE_AGB : SSE_WIND;}
     return SSE_NONE;
 }
 
-/* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova) or
+/* single-star branch of mechanical_fb_calculate_eventrates: sets SNe_ThisTimeStep (supernova, Type Ia) or
    MassReturn_ThisTimeStep (wind, AGB death; the fraction of the star's mass) */
 double single_star_eventrates(int i, double dt)
 {
@@ -145,7 +161,21 @@ double single_star_eventrates(int i, double dt)
     uint8_t bits = SingleStars.event_bits[s];
     double logM, logZ; single_star_logMZ(s, &logM, &logZ);
     if(bits & SINGLE_STAR_EVENT_SN_DONE) {return 0;}
-    if(bits & SINGLE_STAR_EVENT_AGB_DONE) {return 0;} /* white dwarf */
+    if(bits & SINGLE_STAR_EVENT_AGB_DONE) { /* white dwarf */
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+        if(SingleStars.M_at_SN_trigger[s] > 0) {P[i].SNe_ThisTimeStep = 1; return 1;} /* pending */
+        double t_Gyr = evaluate_stellar_age_Gyr(i), dt_Gyr = dt * UNIT_TIME_IN_GYR;
+        if(t_Gyr < IA_T_MIN_GYR || dt_Gyr <= 0) {return 0;}
+        double p = (IA_DTD_NORM / t_Gyr) * SingleStars.M_drawn[s] * dt_Gyr * IA_F_WD / DMAX(stellar_ia_fdead(t_Gyr * 1.e9, logZ), 1.e-6);
+#ifdef TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER
+        p *= (TEST_SINGLE_STARS_TYPE_IA_RATE_MULTIPLIER); /* test only */
+#endif
+        if(particle_random_number(i, SINGLE_STAR_IA_RNG_SALT, (uint64_t)All.Ti_Current, 0) < p) {
+            SingleStars.M_at_SN_trigger[s] = P[i].Mass; P[i].SNe_ThisTimeStep = 1; return 1;
+        }
+#endif
+        return 0;
+    }
     int is_wd = (stellar_remnant_type(logM, logZ) == REM_WD);
     if(SingleStars.M_at_SN_trigger[s] > 0) { /* a death that did not couple yet */
         if(is_wd) {P[i].MassReturn_ThisTimeStep = 1;} else {P[i].SNe_ThisTimeStep = 1;}
@@ -174,7 +204,7 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 {
     in->Msne = 0; in->SNe_v_ejecta = 0;
     int kind = single_star_kind_this_step(i);
-    if(kind == SSE_NONE || fb_loop_iteration != ((kind == SSE_SN) ? 0 : 1)) {return;}
+    if(kind == SSE_NONE || fb_loop_iteration != ((kind == SSE_SN || kind == SSE_IA) ? 0 : 1)) {return;}
     struct single_star_event ev; single_star_event_of(i, kind, &ev);
     if(ev.Mej <= 0) {return;}
     in->Msne = ev.Mej / UNIT_MASS_IN_SOLAR;
@@ -213,7 +243,7 @@ static void single_star_events_flush(void)
         char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
         snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "single_star_events.txt");
         FdSingleStarEvents = fopen(buf, (RestartFlag == 0) ? "w" : "a");
-        if(FdSingleStarEvents && RestartFlag == 0) {fprintf(FdSingleStarEvents, "# time ID kind(1=SN,2=AGB,3=wind) remnant_type M_drawn[Msun] M_trigger[Msun] M_ejecta[Msun] M_remnant[Msun] E[erg] M_Z_ejecta[Msun] mass_residual[Msun] no_deposit_steps\n");}
+        if(FdSingleStarEvents && RestartFlag == 0) {fprintf(FdSingleStarEvents, "# time ID kind(1=SN,2=AGB,3=wind,4=Ia) remnant_type M_drawn[Msun] M_trigger[Msun] M_ejecta[Msun] M_remnant[Msun] E[erg] M_Z_ejecta[Msun] mass_residual[Msun] no_deposit_steps\n");}
     }
     if(!FdSingleStarEvents) {return;}
     for(int r = 0; r < tot / SSFB_LOG_COLS; r++) {
@@ -259,7 +289,7 @@ void single_star_feedback_finalize(const int *list, int n)
             continue; /* winds are frequent: not logged per step */
         }
         ssfb_rows.insert(ssfb_rows.end(), row, row + SSFB_LOG_COLS);
-        P[i].Mass = ev.M_rem / UNIT_MASS_IN_SOLAR; /* exactly the table remnant; 0 (PISN) removes the particle */
+        P[i].Mass = ev.M_rem / UNIT_MASS_IN_SOLAR; /* exactly the table remnant; 0 (PISN, Type Ia) removes the particle */
         SingleStars.event_bits[s] |= (kind == SSE_AGB) ? SINGLE_STAR_EVENT_AGB_DONE : SINGLE_STAR_EVENT_SN_DONE;
         SingleStars.M_at_SN_trigger[s] = 0;
         P[i].SNe_ThisTimeStep = 0; P[i].MassReturn_ThisTimeStep = 0;

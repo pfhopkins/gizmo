@@ -69,6 +69,10 @@ double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age,
 double stellar_elem_ej_SN(double logM, double logZ, int elem);   /* [Msun], table birth composition */
 double stellar_elem_ej_AGB(double logM, double logZ, int elem);  /* [Msun], table birth composition */
 double stellar_type_ia_yield(int elem);                          /* [Msun] per Ia */
+#ifdef GALSF_SINGLE_STARS_TYPE_IA
+void   stellar_ia_fdead_init(void);
+double stellar_ia_fdead(double t_yr, double logZ);              /* dead white-dwarf-progenitor mass fraction at age t */
+#endif
 #endif
 
 #endif
