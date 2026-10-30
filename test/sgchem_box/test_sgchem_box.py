@@ -5,6 +5,7 @@ TimeMax, with a changed table it stops with a message naming the install script.
 test_sgchem_cell_state: SGCHEM network 5 adds 40 B to the gas cell (three tracked species, dust and gas temperature).
 test_sgchem_snapshot_io: start values in snapshot 0; SGChemTracAbund and SGChemDustTemp equal the standalone run; a
 restart from a snapshot whose datasets carry the old Chemcool* names reads them and continues as the standalone run.
+test_sgchem_restart: a run stopped at half time and continued from its restart files ends identical to the uninterrupted run.
 test_sgchem_cooling: the cells cool through SGChem: final energy, temperature, electrons and HI equal a standalone run of
 the backend on the same inputs and timesteps, and the snapshots are identical with 1 and 4 OpenMP threads.
 """
@@ -185,6 +186,28 @@ def test_sgchem_snapshot_io(tables, box):
     dev = np.max(np.abs(got / want - 1), axis=0)
     print(f"restart from old names: u, x(H2), x(H+), x(CO), T_dust vs standalone, max relative deviation: {dev}")
     assert np.all(dev < 1e-8)
+
+
+def test_sgchem_restart(tables, box):
+    """stop at t = 0.064 (restart files written at TimeMax), continue to 0.128 from them: identical to the uninterrupted run"""
+    shutil.rmtree(path.join(HERE, "output_restart1"), ignore_errors=True)
+    chdir(HERE)
+    try:
+        run_test(NAME, 2, default_omp_threads(), param_overrides={"SGChemTablesPath": tables, "OutputDir": "output_restart1", "TimeMax": 0.064})
+        params = write_params_with_overrides(f"{NAME}.params", {"SGChemTablesPath": tables, "OutputDir": "output_restart1"})
+        with open(path.join(HERE, "output_restart1", "test.out"), "w") as o:
+            subprocess.run(mpi_launch_command(2, default_omp_threads()) + ["./GIZMO", params, "1"], stdout=o, stderr=o, check=True)
+    finally:
+        chdir(ROOT)
+    fields = ("InternalEnergy", "Temperature", "ElectronAbundance", "NeutralHydrogenAbundance", "SGChemTracAbund", "SGChemDustTemp")
+    snaps = []
+    for d in ("output", "output_restart1"):
+        with h5py.File(path.join(HERE, d, "snapshot_002.hdf5")) as f:
+            assert f["Header"].attrs["Time"] == 0.128
+            o = np.argsort(f["PartType0/ParticleIDs"][:])
+            snaps.append({k: f["PartType0"][k][:][o] for k in fields})
+    for k in fields:
+        assert np.array_equal(snaps[0][k], snaps[1][k]), f"{k} differs after the restart"
 
 
 def test_sgchem_startup(tables, box):
