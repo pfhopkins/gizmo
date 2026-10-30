@@ -961,6 +961,7 @@ void begrun(void);
 void check_omega(void);
 void compute_global_quantities_of_system(void);
 void star_formation_parent_routine(void);
+int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
 #if defined(GRAIN_FLUID) && defined(GRAIN_FLUID_PROMOTION)
 void grain_promotion_parent_routine(void);
 #endif

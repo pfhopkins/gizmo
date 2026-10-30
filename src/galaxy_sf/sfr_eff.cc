@@ -394,6 +394,55 @@ void update_internalenergy_for_galsf_effective_eos(int i, double tcool, double t
 
 
 
+/* spawn a new star particle of the given mass from gas cell i (the cell keeps the rest of its mass): a new index after
+   the existing particles, linked into i's timebin, with a child ID, inserted into the standing tree. Returns its index,
+   or -1 if it cannot be placed now (it can form after the next tree rebuild). stars_spawned = spawns so far this call. */
+int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned)
+{
+    int i_star = NumPart + stars_spawned;
+    if(!gizmo_particle_index_fits_live_tree(i_star))
+    {
+        /* Storage has room, but the tree standing right now cannot index this
+         * slot, and a star has to be inserted into it.  Skip this one and let it
+         * form after the next rebuild -- the same deferral the code already takes
+         * when it declines to spawn. */
+        PRINT_WARNING("On Task=%d we skip spawning a star at index %d: the standing tree has only %d particle slots. It can form after the next tree rebuild.",ThisTask, i_star, All.TreeParticleSlots);
+        fflush(stdout);
+        return -1;
+    }
+    if(i_star >= All.MaxPart)
+    {
+        PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. Sorry, no space left...(All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);
+        fflush(stdout);
+        endrun(8888);
+        return -1; /* no space to spawn: soft-stop and skip this particle's spawn (no OOB P[i_star] write / push_back / timebin mutation). The ActiveParticleList loop has no in-body collective, so skipping can't desync the post-loop Allreduces; drains at the next poll. */
+    }
+    P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
+    wakeup_sidecar_mark(i_star);   /* whole-struct copy inherits P[i].wakeup into the new star slot */
+    ActiveParticleList.push_back(i_star);
+    NumForceUpdate++;
+    TimeBinCount[P[i_star].TimeBin]++;
+    PrevInTimeBin[i_star] = i;
+    NextInTimeBin[i_star] = NextInTimeBin[i];
+    if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = i_star;}
+    NextInTimeBin[i] = i_star;
+    if(LastInTimeBin[P[i].TimeBin] == i) {LastInTimeBin[P[i].TimeBin] = i_star;}
+    P[i_star].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation)); // particle 'i' retains its child number; this ensures uniqueness
+    P[i].ID_generation = P[i].ID_generation + 1;
+    if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
+    P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
+    P[i_star].Mass = mass_of_star; /* i_star = NumPart+stars_spawned (>= MaxPartGas); no CellP[i_star] write — CellP[] is sized All.MaxPartGas */
+    P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass; /* i is still gas here */
+    if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
+#ifdef HYDRO_MESHLESS_FINITE_VOLUME
+    CellP[i].MassTrue -= P[i_star].Mass;
+    if(CellP[i].MassTrue<0) {CellP[i].MassTrue=0;}
+#endif
+    force_add_element_to_tree(i, i_star);
+    return i_star;
+}
+
+
 /* parent routine for star formation. for 'effective equation of state' models for star-forming gas, this also updates their effective EOS parameters */
 void star_formation_parent_routine(void)
 {
@@ -532,46 +581,8 @@ void star_formation_parent_routine(void)
 #endif
                     } else {
                         /* here we spawn a new star particle, so have to do some extra work to note that the total number of particles in the code is modified, and create the new particle */
-                        i_star = NumPart + stars_spawned;
-                        if(!gizmo_particle_index_fits_live_tree(i_star))
-                        {
-                            /* Storage has room, but the tree standing right now cannot index this
-                             * slot, and a star has to be inserted into it.  Skip this one and let it
-                             * form after the next rebuild -- the same deferral the code already takes
-                             * when it declines to spawn. */
-                            PRINT_WARNING("On Task=%d we skip spawning a star at index %d: the standing tree has only %d particle slots. It can form after the next tree rebuild.",ThisTask, i_star, All.TreeParticleSlots);
-                            fflush(stdout);
-                            continue;
-                        }
-                        if(i_star >= All.MaxPart)
-                        {
-                            PRINT_WARNING("On Task=%d with NumPart=%d we try to spawn %d particles. Sorry, no space left...(All.MaxPart=%d)",ThisTask, NumPart, stars_spawned, All.MaxPart);
-                            fflush(stdout);
-                            endrun(8888);
-                            continue; /* no space to spawn: soft-stop and skip this particle's spawn (no OOB P[i_star] write / push_back / timebin mutation). The ActiveParticleList loop has no in-body collective, so continue can't desync the post-loop Allreduces; drains at the next poll. */
-                        }
-                        P[i_star] = P[i]; // copy the entire structure to the new particle, needed to initialize
-                        wakeup_sidecar_mark(i_star);   /* whole-struct copy inherits P[i].wakeup into the new star slot */
-                        ActiveParticleList.push_back(i_star);
-                        NumForceUpdate++;
-                        TimeBinCount[P[i_star].TimeBin]++;
-                        PrevInTimeBin[i_star] = i;
-                        NextInTimeBin[i_star] = NextInTimeBin[i];
-                        if(NextInTimeBin[i] >= 0) {PrevInTimeBin[NextInTimeBin[i]] = i_star;}
-                        NextInTimeBin[i] = i_star;
-                        if(LastInTimeBin[P[i].TimeBin] == i) {LastInTimeBin[P[i].TimeBin] = i_star;}
-                        P[i_star].ID_child_number = P[i].ID_child_number + (MyIDType)(1 << ((int)P[i].ID_generation)); // particle 'i' retains its child number; this ensures uniqueness
-                        P[i].ID_generation = P[i].ID_generation + 1;
-                        if(P[i].ID_generation > 30) {P[i].ID_generation=0;} // roll over at 32 generations (unlikely to ever reach this)
-                        P[i_star].ID_generation = P[i].ID_generation; // ok, all set!
-                        P[i_star].Mass = mass_of_star; /* i_star = NumPart+stars_spawned (>= MaxPartGas); no CellP[i_star] write — CellP[] is sized All.MaxPartGas */
-                        P[i].Mass -= P[i_star].Mass; CellP[i].Mass = P[i].Mass; /* i is still gas here */
-                        if(P[i].Mass<0) {P[i].Mass=0;} CellP[i].Mass = P[i].Mass;
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-                        CellP[i].MassTrue -= P[i_star].Mass;
-                        if(CellP[i].MassTrue<0) {CellP[i].MassTrue=0;}
-#endif
-                        force_add_element_to_tree(i, i_star);
+                        i_star = spawn_star_from_gas(i, mass_of_star, stars_spawned);
+                        if(i_star < 0) {continue;}
                         stars_spawned++;
                     }
 
