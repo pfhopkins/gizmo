@@ -158,6 +158,20 @@ def test_node_species_masses(tables, ranks, step):
     np.testing.assert_allclose(root, cells[:, 1:4].sum(0), rtol=1e-12)
 
 
+def test_dust_to_gas_independent_of_metallicity(tables):
+    """SGCHEM_DGR_INDEPENDENT_OF_METALLICITY: the dust-weighted mass of every cell is SGChemDustToGasRatio x its mass,
+    whatever its metallicity (as stella_dev); the chemistry and radiation pressure read the same function"""
+    L = 20.0
+    pos, z, ab = gas_with_species(12, L)
+    exe = build("pix12_dgr_const", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY"))
+    tab = Tables(tables["StellarTablesFile"])
+    out = run(exe, "species_dgr_const", tables, L, pos, star_list(tab, L)[:3], ranks=2, z_gas=z, tracabund=ab,
+              overrides={"SGChemDustToGasRatio": 0.5})
+    cells = load(out, "cells")
+    cells = cells[np.argsort(cells[:, 0])]
+    np.testing.assert_allclose(cells[:, 1], 0.5, rtol=1e-12)
+
+
 PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (100.0, 0.05)]
 SHIELD = 8.0  # TreeColShieldingLength [pc]
 

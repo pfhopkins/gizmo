@@ -175,3 +175,14 @@ def test_27_element_supernova_yields(tables):
     ledger = abs(dZ[0] - rows[0, 9]) / (m1 * Z1[:, 0]).sum()
     print(f"element gains vs table, max relative deviation {rel.max():.3g}; total Z gain - event metals, relative to the gas metals {ledger:.3g}")
     assert np.all(rel <= 1e-11) and ledger <= 1e-12
+
+
+def test_dust_above_metals_stops(tables):
+    """SGCHEM_DGR_INDEPENDENT_OF_METALLICITY on a fresh start: a constant dust-to-gas ratio above the metal mass
+    (SGChemDustToGasRatio 1 = 0.01, InitMetallicity 0.3 = Z 0.0042) stops at start-up with a message, as stella_dev;
+    at InitMetallicity 1 it runs"""
+    exe = build("dgr_const", ("SGCHEM_DGR_INDEPENDENT_OF_METALLICITY",))
+    with pytest.raises(subprocess.CalledProcessError):
+        run(exe, "dgr_const_low_z", tables, np.zeros(11), flag=0, over={"InitMetallicity": 0.3})
+    assert "dust mass above the metal mass" in (TEST_DIR / "run_dgr_const_low_z" / f"test_{TEST_NAME}.out").read_text()
+    run(exe, "dgr_const_solar", tables, np.zeros(11), flag=0, over={"InitMetallicity": 1.0})
