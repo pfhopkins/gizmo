@@ -9,6 +9,9 @@
 #include "../declarations/gpu_rng.h"
 #include "../mesh/kernel.h"
 #include "../eos/composition_registry.h"
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#include "../galaxy_sf/stellar_solar_abundances.h"
+#endif
 
 
 /*! \file init.c
@@ -203,6 +206,9 @@ void init(void)
         All.SolarAbundances[1]=0.27030; All.SolarAbundances[2]=2.53e-3; All.SolarAbundances[3]=7.41e-4; All.SolarAbundances[4]=6.13e-3; All.SolarAbundances[5]=1.34e-3;
         All.SolarAbundances[6]=7.57e-4; All.SolarAbundances[7]=7.12e-4; All.SolarAbundances[8]=3.31e-4; All.SolarAbundances[9]=6.87e-5; All.SolarAbundances[10]=1.38e-3;}
 #endif
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    stellar_solar_abundances_fire_slots(All.SolarAbundances, NUM_LIVE_SPECIES_FOR_COOLTABLES); /* the stellar tables' solar composition (Z = 0.014), as stella_dev */
 #endif
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
     Initialize_ISMDustChem_Global_Variables();
