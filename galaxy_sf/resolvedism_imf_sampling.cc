@@ -371,8 +371,9 @@ void recompute_resolvedism_fuv_luminosities(void)
 double Resolvedism_Eion_eff_eV = 27.2;   /* updated per step; startup fallback = old convention */
 void resolvedism_update_ion_photon_energy(void)
 {
+    int fixedq = 0;
 #ifdef GALSF_RESOLVEDISM_ISOLATED_FB_TEST
-    if(All.TestFixedQion > 0) {return;} /* pinned-Q test source: keep current <hnu>, skip table lookups on the synthetic star */
+    fixedq = (All.TestFixedQion > 0); /* pinned-Q carrier: table hardness from birth, no PMS delay */
 #endif
     int i; double sumL = 0, sumQ = 0, glob[2];
     for(i = 0; i < NumPart; i++)
@@ -385,7 +386,7 @@ void resolvedism_update_ion_photon_energy(void)
         double logM = log10(M_drawn);
         double logZ = log10(DMAX(P[i].BirthMetallicity, 1e-10));
         double table_age = star_age_yr - stellar_t_PMS(logM, logZ);
-        if(table_age <= 0) continue;
+        if(table_age <= 0) {if(!fixedq) continue; table_age = 0;}
         double log_age = log10(DMAX(table_age, 100.0));
         double L = pow(10., stellar_log_L_ion_tot(logM, logZ, log_age));
         double Q = pow(10., stellar_log_Q_ion(logM, logZ, log_age));
@@ -396,7 +397,9 @@ void resolvedism_update_ion_photon_energy(void)
     if(glob[1] > 0)
     {
         double E_eV = glob[0] / glob[1] / ELECTRONVOLT_IN_ERGS;
-        if(isfinite(E_eV)) {Resolvedism_Eion_eff_eV = DMIN(DMAX(E_eV, 13.6), 100.0);}
+        if(isfinite(E_eV)) {
+            if(fixedq && ThisTask == 0 && fabs(E_eV - Resolvedism_Eion_eff_eV) > 1e-3 * E_eV) {printf("FIXEDQ <hnu>_ion = %.3f eV (tables)\n", E_eV);}
+            Resolvedism_Eion_eff_eV = DMIN(DMAX(E_eV, 13.6), 100.0);}
     } /* no living ionizing stars: keep previous value (no photons in flight anyway) */
 #if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION) && !defined(RT_PHOTOION_MULTIFREQUENCY)
     rt_nu_eff_eV[RT_FREQ_BIN_H0] = Resolvedism_Eion_eff_eV;
