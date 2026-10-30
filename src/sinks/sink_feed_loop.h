@@ -359,7 +359,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                            vrel, vesc, r, sink_radius)) allow_sink_merger = 0;
 #endif
             if(r >= max_rmerge)                  allow_sink_merger = 0;
-            if(neighbor_particle.Mass > max_mmerge) allow_sink_merger = 0;
+            if(!(neighbor_particle.Mass <= max_mmerge)) allow_sink_merger = 0; /* negated so a non-finite ceiling blocks rather than permits */
             if(allow_sink_merger == 1)
 #endif
             {
