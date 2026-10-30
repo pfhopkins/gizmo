@@ -115,6 +115,13 @@ def event_stars(tables_file):
 EVENT_RUNS = {}
 
 
+def event_life(tables_file, m):
+    """table main-sequence lifetime [yr] of a star of drawn mass m at Z = 0.014"""
+    with h5py.File(tables_file, "r") as F:
+        Zt, Mt = F["Z"][()], F["M_init"][()]
+        return float(F["lifetime_yr"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - m)))])
+
+
 def run_events(tables, exe, tag, n_metals):
     if tag in EVENT_RUNS:
         return EVENT_RUNS[tag]
@@ -186,3 +193,71 @@ def test_dust_above_metals_stops(tables):
         run(exe, "dgr_const_low_z", tables, np.zeros(11), flag=0, over={"InitMetallicity": 0.3})
     assert "dust mass above the metal mass" in (TEST_DIR / "run_dgr_const_low_z" / f"test_{TEST_NAME}.out").read_text()
     run(exe, "dgr_const_solar", tables, np.zeros(11), flag=0, over={"InitMetallicity": 1.0})
+
+
+DUST = ("GALSF_ISMDUSTCHEM_MODEL=(1+2)",)  # silicate, carbon, metallic iron
+DUST_PARAMS = {"Initial_ISMDustChem_Depletion": 0, "Initial_ISMDustChem_SiltoCarbRatio": 2.0, "SNeIIDustScaling": 1, "SNeIaDustScaling": 1,
+               "AGBDustScaling": 1, "DustAccretionScaling": 0, "ThermalSputteringScaling": 0, "SNeGasClearedOfDustScaling": 0, "AccretionTcutoffScaling": 1}
+SIL_ATOMS = {4: 3.63, 6: 1.06, 7: 1.0, 10: 0.571}  # O, Mg, Si, Fe per Si in the model's default silicate
+ATOMIC = {2: 12.01, 4: 15.99, 6: 24.305, 7: 28.086, 10: 55.845}
+
+
+def stella_dust(y, kind):
+    """dust from an event's ejecta y (FIRE slots, Msun) by stella_dev's condensation (Choban+22 efficiencies), in the
+    species of GALSF_ISMDUSTCHEM_MODEL: element dust (FIRE slots, slot 0 total) and species (silicate, carbon, iron)"""
+    y = np.array(y, dtype=float)
+    f_sil = f_c = f_fe = 0.0; carb = None
+    if kind == "sn":
+        f_c, f_sil, f_fe = 0.15, 3.5e-4, 1e-3
+    elif kind == "ia":
+        f_fe = 5e-3
+    elif y[2] / 12.0 > y[4] / 16.0:
+        carb = max(y[2] - 0.75 * y[4], 0.0)  # carbon-rich: C not in CO
+    else:
+        f_sil = 0.8; y[4] = max(y[4] - 4.0 / 3.0 * y[2], 0.0) / 0.8  # oxygen-rich: O not in CO
+    W = sum(n * ATOMIC[k] for k, n in SIL_ATOMS.items())
+    key = min(SIL_ATOMS, key=lambda k: y[k] / ATOMIC[k] / SIL_ATOMS[k])
+    sil = f_sil * y[key] * W / (SIL_ATOMS[key] * ATOMIC[key]) if all(y[k] > 0 for k in SIL_ATOMS) else 0.0
+    species = np.array([sil, f_c * y[2] if carb is None else carb, f_fe * y[10]])
+    dust = np.zeros(11)
+    for k, n in SIL_ATOMS.items():
+        dust[k] += sil * n * ATOMIC[k] / W
+    dust[2] += species[1]; dust[10] += species[2]; dust[0] = dust[1:].sum()
+    return dust, species
+
+
+def test_single_star_dust_yields(tables):
+    """GALSF_ISMDUSTCHEM_MODEL with single stars: a 20 Msun core collapse, a 3 Msun AGB death and a white dwarf's Type Ia
+    give the gas the dust of stella_dev's condensation of their table ejecta, in the model's element
+    dust, species and sources (1e-10); the model's accretion, sputtering and SN shock destruction off for the test"""
+    T = tables["StellarTablesFile"]
+    stars = event_stars(T)[:3]
+    stars[1] = stars[1] + (np.log10(event_life(T, 3.0)),)  # AGB: winds counted as returned
+    d = run(build("dust", DUST), "dust", tables, np.concatenate([solar27(T)[:11], np.zeros(18)]), stars,
+            over={"TimeMax": 5e-4, "TimeBetSnapshot": 5e-4, **DUST_PARAMS})
+    snaps = sorted((d / "output").glob("snapshot_*.hdf5"))
+    rows = np.atleast_2d(np.loadtxt(d / "output" / "single_star_events.txt"))
+    rows = rows[rows[:, 0] < 5e-4 * (1 - 1e-9)]  # an event at TimeMax deposits after the last snapshot
+    assert sorted(rows[:, 2].astype(int).tolist()) == [1, 2, 4]
+    with h5py.File(T, "r") as F:
+        Zt, Mt = F["Z"][()], F["M_init"][()]
+        iz, n3 = int(np.argmin(np.abs(Zt - 0.014))), (len(Zt), len(Mt), -1)
+        ej = {"sn": F["elem_ej_SN_mass"][()].reshape(n3)[iz, int(np.argmin(np.abs(Mt - 20.0)))],
+              "agb": F["elem_ej_AGB_mass"][()].reshape(n3)[iz, int(np.argmin(np.abs(Mt - 3.0)))], "ia": F["type_ia_yields"][()]}
+    want_d, want_s, want_src = np.zeros(11), np.zeros(3), np.zeros(4)
+    for r in rows:
+        kind, src = {1: ("sn", 2), 2: ("agb", 3), 4: ("ia", 1)}[int(r[2])]
+        y = np.asarray(ej[kind], dtype=float); y = y * r[6] / y.sum()
+        dd, ss = stella_dust(np.concatenate([[y[2:].sum()], y[FIRE_ELEMENTS]]), kind)
+        want_d += dd; want_s += ss; want_src[src] += dd[0]
+    with h5py.File(snaps[-1], "r") as F:
+        m = F["PartType0/Masses"][()]
+        dz = F["PartType0/DustMetallicity"][()].reshape(len(m), -1)  # element dust, then the sources as fractions of it
+        got_d = np.concatenate([(m[:, None] * dz[:, :11]).sum(0), ((m * dz[:, 0])[:, None] * dz[:, 11:15]).sum(0)])
+        got_s = (m[:, None] * F["PartType0/DustSpeciesAbundance"][()].reshape(len(m), -1)).sum(0)
+    print(f"dust from the stars [Msun]: total {got_d[0]:.10g} (expected {want_d[0]:.10g}), species {got_s} (expected {want_s}), "
+          f"max relative deviation {np.max(np.abs(got_d[:11] - want_d)) / want_d.max():.3g}")
+    for got, want in ((got_d[:11], want_d), (got_s, want_s)):
+        assert np.all(np.abs(got - want) <= 1e-10 * want.max()), (got, want)
+    if len(got_d) >= 15:
+        assert np.all(np.abs(got_d[11:15] - want_src) <= 1e-10 * want_src.max())
