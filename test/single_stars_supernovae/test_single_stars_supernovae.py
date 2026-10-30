@@ -1,6 +1,6 @@
 """single_stars_supernovae test: IMF-sampled single stars as supernova sources of the shared mechanical feedback loop,
 from the stellar-evolution tables (GALSF_SINGLE_STARS_EVOLUTION_TABLES + GALSF_SINGLE_STARS_FROM_IMF +
-GALSF_FB_MECHANICAL). See README.md."""
+GALSF_FB_MECHANICAL, pure-thermal coupling). See README.md."""
 import os
 import shutil
 import subprocess
@@ -12,6 +12,7 @@ from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_c
 
 TEST_NAME = "single_stars_supernovae"
 TEST_DIR = Path(__file__).parent
+E_UNIT = 1.989e33 * 1e10  # erg per code energy unit (Msun (km/s)^2)
 ELEMENTS = ("COOLING", "COOL_METAL_LINES_BY_SPECIES")  # the FIRE metal layout: total Z, He, C, N, O, Ne, Mg, Si, S, Ca, Fe
 FIRE_ELEMENTS = [1, 2, 3, 4, 6, 8, 10, 12, 16, 22]  # table element index of slots 1..10
 EXPECTED_TYPES = {20.0: 2, 40.0: 3, 150.0: 4, 320.0: 5}  # CCSN, failed SN, PPISN, PISN at Z = 0.014
@@ -96,6 +97,11 @@ def test_supernovae(built):
     assert abs(b["M"] - a["M"] - rows[:, 5].sum()) <= 1e-12 * b["M"]
     assert abs(b["MZ"][0] - a["MZ"][0] - rows[:, 8].sum()) <= 1e-10 * rows[:, 8].sum()
     assert np.all(b["MZ"][1:] >= a["MZ"][1:])
+    # energy: the explosion energies (failed SN: none) as heat; the hydro step conserves energy
+    dE = (b["E"] - a["E"]) * E_UNIT
+    assert abs(dE / rows[:, 7].sum() - 1) < 1e-3, dE / rows[:, 7].sum()
+    # momentum: ejecta carry the stars' velocity, nothing radial is added
+    assert np.all(np.abs(b["p"] - a["p"]) <= 1e-10 * np.abs(a["p"]).max())
 
 
 def test_ranks_and_threads(built):
