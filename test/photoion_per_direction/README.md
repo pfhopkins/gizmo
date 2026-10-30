@@ -11,3 +11,9 @@ Checks:
   PhotoionMaxTimestep 1 kyr, a 35 Msun star 1 Myr old steps at most 1 kyr, while the gas keeps its coarse step. A 35 Msun
   star 1000 yr old steps onto its ionising onset (15 kyr) and then keeps to the same bin. Without the change both stars
   step with the gas.
+- `test_stromgren_sphere`: a 35 Msun star 1 Myr old near the centre (Q = 7.7e48 /s, Stromgren radius 12.7 pc, 9 cells).
+  Per pixel the front is where the cells' recombination rates (case B, 2.6e-13 cm^3/s, at each cell's density), summed
+  outward, use up Q/12. The smallest and largest of the 12 fronts (log columns 10, 11) lie within one cell of the
+  Stromgren radius. Without the change there is no photoionisation log.
+- `test_ranks_and_order`: 1, 2 and 4 ranks and a permuted particle order give the same fronts and search passes (the
+  histogram sums are integers).
