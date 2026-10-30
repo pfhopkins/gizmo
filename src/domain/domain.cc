@@ -918,6 +918,9 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
 
     /* recompute keys for particles that may have drifted across cell boundaries */
     Key = PersistentKey; /* reuse persistent key storage directly */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt())
+#endif
     for(i = 0; i < NumPart; i++)
     {
         peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);
@@ -1034,6 +1037,9 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     }
 
     /* flag particles that need to move */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) private(no) if(gizmo_pcie_opt())
+#endif
     for(i = 0; i < NumPart; i++)
     {
         no = domain_toptree_leaf(Key[i], topNodes);
@@ -1081,6 +1087,9 @@ void domain_Decomposition_light(int UseAllTimeBins, int do_particle_mergesplit_k
     CPU_Step[CPU_DOMAIN] += measure_time();
 
     /* update persistent keys for moved particles */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt())
+#endif
     for(i = 0; i < NumPart; i++)
     {
         peano1D xb = domain_double_to_int(((P[i].Pos[0] - DomainCorner[0]) / DomainLen) + 1.0);

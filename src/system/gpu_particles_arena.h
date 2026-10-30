@@ -85,6 +85,28 @@ void gpu_particles_arena_refresh_from_host(int min_capacity,
                                            struct gas_cell_data *CellP_host,
                                            const char *site);
 
+/* Bulk migration of the live particle storage (P[0,NumPart), CellP[0,N_gas)) between host and
+ * device, for a PCIe-attached GPU whose managed memory is not host-coherent. There every phase that
+ * sweeps the particles on the other side otherwise moves the pages one fault at a time; a prefetch
+ * moves them in one pass at copy-engine bandwidth. Called where a sweep of the whole particle set
+ * begins: _to_device before the bulk device phases (neighbour loops, tree build), _to_host before
+ * the bulk host phases (writebacks, finalizes, kicks, domain). A pure placement hint: it never
+ * changes what any code reads or writes, so a missing or extra call only costs time. No-op on
+ * coherent systems (Grace-Hopper), on non-CUDA builds, and when GIZMO_UVM_PREFETCH=0 is set in the
+ * environment. */
+void gizmo_particles_prefetch_to_device(const char *site);
+void gizmo_particles_prefetch_to_host(const char *site);
+/* As _to_device for P only, for a device phase that reads no cell data (the tree build). */
+void gizmo_particles_prefetch_P_to_device(const char *site);
+/* Where the last bulk prefetch sent the particle storage: 1 the device, 2 the host, 0 none yet or
+ * prefetching off. A hint for code that can run either side, to run where the particles are. */
+int gizmo_particles_prefetch_side(void);
+/* The same bulk move for one other managed buffer about to be swept on the host (e.g. a kernel's
+ * per-active results read back by a host writeback). Same conditions and no-op cases as above. */
+void gizmo_managed_prefetch_to_host(const void *ptr, size_t bytes, const char *site);
+/* Seconds and bytes spent in the prefetches so far (for the run's timing report). */
+void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls);
+
 /* DIAGNOSTIC: tag the upcoming acquire with a short descriptive string so
  * that GIZMO_GPU_ARENA_DEBUG mismatch messages identify the call site. */
 void gpu_particles_arena_set_site(const char *site);

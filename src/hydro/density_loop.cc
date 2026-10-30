@@ -158,9 +158,16 @@ std::vector<int> density_build_active_list(void)
 {
     std::vector<int> active_list_concat;
     active_list_concat.reserve(NumPart);
-    for (int i : ActiveParticleList) {
-        if (density_isactive(i)) active_list_concat.push_back(i);
-    }
+    /* The predicate only reads its own particle, so it is evaluated on several threads; the list is then
+     * compacted in ActiveParticleList order, exactly the list the one-thread loop built. */
+    const int n_act = (int) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+    std::vector<unsigned char> keep((size_t) (n_act > 0 ? n_act : 1));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && n_act >= 4096)
+#endif
+    for (int k = 0; k < n_act; k++) {keep[k] = density_isactive(act[k]) ? 1 : 0;}
+    for (int k = 0; k < n_act; k++) {if (keep[k]) active_list_concat.push_back(act[k]);}
     return active_list_concat;
 }
 
@@ -294,7 +301,7 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
     /* Parallel-for: legacy uses #pragma omp parallel for schedule(dynamic)
      * around density.cc:629-795. Preserved here. */
 #ifdef _OPENMP
-    #pragma omp parallel for schedule(dynamic)
+    #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
 #endif
     for (int slot = 0; slot < N; ++slot) {
         const int i = active_list_concat[slot];

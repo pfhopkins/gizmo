@@ -140,8 +140,11 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
     }
     if(n_need <= 0) {return drift_batch_status_();}
 
-    /* Tiny-N and everything below the offload threshold stays exactly as it was. */
-    if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_DRIFT, n_need)) {
+    /* Tiny-N and everything below the offload threshold stays exactly as it was. So does a drift
+       that finds the particles moved in bulk to the host (a GPU whose managed memory is not
+       host-coherent, between host phases): there the device would pull every page across PCIe and
+       the host phase that follows would pull it back, for a pass the host threads finish sooner. */
+    if(!gizmo_gpu_offload_takes(GPU_OFFLOAD_DRIFT, n_need) || gizmo_particles_prefetch_side() == 2) {
         drift_particles_host_(needs_drift.data(), n_need, time1);
         return drift_batch_status_();
     }

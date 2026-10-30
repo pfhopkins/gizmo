@@ -31,6 +31,9 @@
 #include <type_traits>
 #include <utility>                                   /* std::declval for SFINAE hook detection */
 #include <Kokkos_Core.hpp>
+#if defined(KOKKOS_ENABLE_CUDA)
+#include <cuda_runtime.h>                           /* cudaMemGetInfo, for the Mode A staging cap */
+#endif
 
 #include "../declarations/gpu_all_mirror.h"          /* per-TU AllDeviceMirror + device-pass `All` redirect; include before allvars.h */
 #include "../declarations/allvars.h"
@@ -523,6 +526,10 @@ template <typename Spec>
 static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int first, int n,
                                         const typename Spec::AccumData *accums)
 {
+    if((long long) n * 8 >= (long long) NumPart) {   /* a sweep of most of the particles and of the kernel's results: move them in bulk */
+        gizmo_particles_prefetch_to_host(Spec::loop_name);
+        gizmo_managed_prefetch_to_host(accums, (size_t) n * sizeof(typename Spec::AccumData), Spec::loop_name);
+    }
     if constexpr (nlr_spec_writeback_writes_only_own_particle_v<Spec>) {
         const bool threaded = nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads());
         (void) threaded;
@@ -1811,6 +1818,7 @@ static void run_mode_d(const neighbor_loop_args& args, const double *radii, Mode
     typename Spec::CallScalars cs = Spec::populate_call_scalars(args);
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
+    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
 
@@ -2026,7 +2034,25 @@ nlr_stage_external_csr_into_gnl(const nlr_external_csr *ext,
  * by "i-side" or "no ghost writeback" -- so it is an explicit opt-in trait
  * (Spec::mode_a_chunked_active_staging) the Spec author sets after auditing it.
  * Absent -> the Spec always stages the full set (K == N). */
-static constexpr size_t NLR_MODE_A_STAGING_BYTES_CAP = (size_t)128 * 1024 * 1024;
+static constexpr size_t NLR_MODE_A_STAGING_BYTES_CAP_MIN = (size_t)128 * 1024 * 1024;
+/* The cap is at least the fixed 128 MB and at most an eighth of the device memory free when it is first
+ * asked for. Every chunk boundary costs a host writeback between two device launches, and on a GPU whose
+ * managed memory is not host-coherent each writeback moves the written pages to the host and the next
+ * chunk's kernel moves them back; a cap sized to the device keeps a full-active loop in one chunk. */
+static size_t nlr_mode_a_staging_bytes_cap()
+{
+    static size_t cap = 0;
+    if(cap == 0) {
+        cap = NLR_MODE_A_STAGING_BYTES_CAP_MIN;
+#if defined(KOKKOS_ENABLE_CUDA) && defined(GPU_PCIE_OPTIMIZATIONS)
+        size_t free_b = 0, total_b = 0;
+        if(cudaMemGetInfo(&free_b, &total_b) == cudaSuccess && free_b / 8 > cap) {cap = free_b / 8;}
+        else {(void) cudaGetLastError();}
+#endif
+    }
+    return cap;
+}
+#define NLR_MODE_A_STAGING_BYTES_CAP (nlr_mode_a_staging_bytes_cap())
 
 /* Opt-in Spec trait gating the staging chunker above. Absent -> false. */
 template <typename Spec, typename = void>
@@ -2293,6 +2319,7 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
      * caller is responsible for the args.CellP=NULL-when-no-gas decision;
      * runner does not read All.TotN_gas. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
+    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
     struct particle_data *P_gpu    = gpu_particles_arena_P();
@@ -4055,6 +4082,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_a()
 
     /* === (2) Arena acquire ONCE per call, with refreshed args === */
     GIZMO_GPU_ENSURE_ALL_FRESH();
+    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total,
                                  args.P, args.CellP);
@@ -4082,6 +4110,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_d()
     if (arena_acquired) {return;}
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
+    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
     arena_acquired = true;
@@ -4206,6 +4235,7 @@ void NlrIterDriver<Spec>::rebuild_mode_a_arena_and_ctx_for_current_active_union(
 
     /* === (6) Fresh arena view of new pool === */
     GIZMO_GPU_ENSURE_ALL_FRESH();
+    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total,
                                  args.P, args.CellP);
@@ -6603,6 +6633,7 @@ static bool nlr_mode_d_evaluate_single_rank(const typename Spec::DeviceContext& 
     nlr_mode_d_local_reduce<Spec>(ctx, cs, idx_d, slot_d, rad_d, n, supply_mask, tree, acc_d, anomaly_d);
 
     const int anomaly_seen = *anomaly_d;
+    gizmo_managed_prefetch_to_host(acc_d, (size_t)n * sizeof(AccumData), Spec::loop_name);   /* read back whole: move it in bulk */
     for(int k = 0; k < n; k++) {accums_out[k] = acc_d[k];}
 
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_d);
@@ -7333,12 +7364,43 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         }
         if(!after_on_device) {
         drv.local_active_total = 0;
+        /* A Spec that can iterate on the device has an after_iter that reads and writes only its own
+         * active (the device runs it for all actives at once), so on the host it is evaluated on
+         * several threads into a per-slot result, and the compaction below stays serial and in
+         * order: the same lists and radii as the one-thread loop. Any other Spec keeps evaluating
+         * inline, one active at a time. */
+        static std::vector<IterResult> after_iter_results;
         for (int sg = 0; sg < args.num_subgroups; sg++) {
             int n_compacted   = drv.active_set_size[sg];
             int write_idx     = 0;
+            bool presolved    = false;
+            if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
+                if (gizmo_pcie_opt() && nlr_modeb_use_omp(n_compacted, nlr_modeb_omp_nthreads())) {
+                    if((long long) n_compacted * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* most of the particles: move them in bulk */
+                    if (after_iter_results.size() < (size_t) n_compacted) {after_iter_results.resize((size_t) n_compacted);}
+                    IterResult *res = after_iter_results.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+                    for (int k = 0; k < n_compacted; k++) {
+                        int  slot = drv.active_set_uvm[sg][k];
+                        int  i    = args.subgroups[sg].active_indices[slot];
+                        AfterIterContext<Spec> ctx{
+                            args, sg, slot, drv.call_slot_base[sg] + slot, i, drv.iter_index,
+                            drv.radii_uvm[sg][slot], drv.cs, drv.scratch_uvm[sg][slot], drv.ctx
+                        };
+                        res[k] = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
+                    }
+                    presolved = true;
+                }
+            }
             for (int k = 0; k < n_compacted; k++) {
                 int  slot = drv.active_set_uvm[sg][k];
                 int  i    = args.subgroups[sg].active_indices[slot];
+                IterResult r;
+                if (presolved) {
+                    r = after_iter_results[k];
+                } else {
                 AfterIterContext<Spec> ctx{
                     args, sg, slot, drv.call_slot_base[sg] + slot, i, drv.iter_index,
                     /* h_search_current */ drv.radii_uvm[sg][slot],
@@ -7346,7 +7408,8 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
                     /* scratch (mutable ref) */          drv.scratch_uvm[sg][slot],
                     /* device context (driver-owned) */  drv.ctx
                 };
-                IterResult r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
+                r = Spec::after_iter(ctx, drv.accum_uvm[sg][slot]);
+                }
                 switch (r.status) {
                     case IterStatus::Converged:
                         /* Drop slot from compacted active_set; its accum_uvm
