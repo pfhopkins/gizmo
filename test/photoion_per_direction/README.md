@@ -27,3 +27,8 @@ Checks:
   union recombines at the summed photon rate (0.999); 1, 2 and 4 ranks give the same cells and rounds.
 - `test_bright_and_faint_source`: a 35 and a 20 Msun star (Q ratio 7) 0.9 pc apart: the union recombines at the summed
   rate and its cells scale with it (1.146 vs 1.144; without sharing 1.002).
+- `test_sgchem_reads_the_ionised_cells` (second build, SGChem network 5 as the cooling): inside the fronts the cells have
+  ionised abundances (H+ 0.9998, molecules destroyed) and at least the energy of 1e4 K ionised gas, with no network solve
+  (as stella_dev). Outside, the photons leave the cells untouched. The heating to 1e4 K is booked in the ledger row
+  E_photoionisation_heating_erg, within 5% of the thermal energy the ionised cells gained; the chemistry rows hold the
+  network only. Without the change the ionised cells stay neutral and cold.
