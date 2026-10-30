@@ -59,7 +59,11 @@ void sgchem_init(void)
     p.iflag_3bh2a = 5;   /* H2 + H: CID (MSM96), three-body formation (G07) */
     p.iflag_3bh2b = 4;   /* H2 + H2: 1/8 of the H2 + H rates */
     p.iflag_h3pra = 1;   /* H3+ dissociative recombination (GP98) */
-    p.iphoto      = 0;   /* no tree columns in this tree yet: optically thin */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    p.iphoto      = 6;   /* per-pixel columns from the gravity walk: dust, H2 and CO shielding (as stella_dev) */
+#else
+    p.iphoto      = 0;   /* no columns: optically thin */
+#endif
     p.irad_heat   = 0;
     p.isrf_option = 1;   /* Draine (1978) ISRF shape */
     p.no_chem     = 0;
