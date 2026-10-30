@@ -1446,6 +1446,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
         case IO_SINGLE_STAR_BIRTH_Z:
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
 #endif
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
@@ -1454,6 +1455,7 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                     double v = (blocknr == IO_SINGLE_STAR_DRAWN_MASS) ? r.M_drawn : r.Z_birth;
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
                     if(blocknr == IO_SINGLE_STAR_EVENT_BITS) {v = r.event_bits;}
+                    if(blocknr == IO_SINGLE_STAR_LAST_WIND_LOG_AGE) {v = r.last_wind_log_age;}
 #endif
                     *fp++ = (MyOutputFloat) v;
                     n++;
@@ -2239,6 +2241,7 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_SINGLE_STAR_BIRTH_Z:
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
 #endif
 #endif
         case IO_LUM_SINGLESTAR:
@@ -2636,6 +2639,7 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_SINGLE_STAR_BIRTH_Z:
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
 #endif
 #endif
         case IO_STAGE_PROTOSTAR:
@@ -3079,6 +3083,7 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_SINGLE_STAR_BIRTH_Z:
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
 #endif
             for(i = 0; i < 6; i++) {if(i != 4) {typelist[i] = 0;}}
             return nstars;
@@ -3628,6 +3633,7 @@ int blockpresent(enum iofields blocknr)
         case IO_SINGLE_STAR_BIRTH_Z:
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
 #endif
             return 1;
             break;
@@ -4146,6 +4152,9 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SINGLE_STAR_EVENT_BITS:
             strncpy(label, "SSEB", 4);
             break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+            strncpy(label, "SSWA", 4);
+            break;
 #endif
 #endif
         case IO_LUM_SINGLESTAR:
@@ -4628,6 +4637,9 @@ void get_dataset_name(enum iofields blocknr, char *buf)
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
             strcpy(buf, "SingleStarEventBits");
+            break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
+            strcpy(buf, "SingleStarLastWindLogAge");
             break;
 #endif
 #endif

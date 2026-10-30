@@ -18,6 +18,7 @@
 #define SINGLE_STAR_RECORD_FEEDBACK_FIELDS(X) \
     X(double, M_at_SN_trigger, "particle mass when its supernova was triggered [code]; 0 = none pending") \
     X(uint16_t, no_deposit_count, "steps a triggered event found no neighbour weight") \
+    X(double, last_wind_log_age, "table age (log10 yr) up to which winds have been returned; 0 = none yet") \
     X(uint8_t, event_bits, "single_star_event_bits")
 enum single_star_event_bits {SINGLE_STAR_EVENT_SN_DONE = 1};
 #else

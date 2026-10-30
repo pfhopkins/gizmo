@@ -1013,6 +1013,9 @@
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_SNE_MECHANICAL_COUPLING) && !defined(GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY)
 #define GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY /* single stars: pure-thermal supernovae by default */
 #endif
+#if defined(GALSF_FB_FIRE_STELLAREVOLUTION) || (defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL))
+#define GALSF_FB_MASS_RETURN_EVENTS /* the mechanical feedback loop also returns stellar mass (mode 1) */
+#endif
 
 
 #ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE

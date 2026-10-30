@@ -28,7 +28,7 @@ int addFB_evaluate_active_check(int i, int fb_loop_iteration)
     if(P[i].Type == 5 && !P[i].do_gas_search_this_timestep) {return 0;}
 #endif
     if(P[i].SNe_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==0) {return 1;}}
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     if(P[i].MassReturn_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==1) {return 1;}}
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P[i].RProcessEvent_ThisTimeStep>0) {if(fb_loop_iteration<0 || fb_loop_iteration==2) {return 1;}}
@@ -55,7 +55,7 @@ void determine_where_SNe_occur(void)
     for (int i : ActiveParticleList)
     {
         P[i].SNe_ThisTimeStep=0;
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
         P[i].MassReturn_ThisTimeStep=0;
 #ifdef GALSF_FB_FIRE_RPROCESS
         P[i].RProcessEvent_ThisTimeStep=0;

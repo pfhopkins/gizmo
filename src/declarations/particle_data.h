@@ -132,7 +132,7 @@ extern ALIGN(32) struct particle_data
     
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
     MyFloat SNe_ThisTimeStep; /* flag that indicated number of SNe for the particle in the timestep */
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     MyFloat MassReturn_ThisTimeStep; /* gas return from stellar winds */
 #ifdef GALSF_FB_FIRE_RPROCESS
     MyFloat RProcessEvent_ThisTimeStep; /* R-process event tracker */

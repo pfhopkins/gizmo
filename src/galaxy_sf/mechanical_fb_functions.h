@@ -248,7 +248,7 @@ static int mechanical_fb_star_active_check(int i, int fb_loop_iteration,
     if(P_arr[i].Type == 5 && !P_arr[i].do_gas_search_this_timestep) return 0;
 #endif
     if(P_arr[i].SNe_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 0) return 1; }
-#ifdef GALSF_FB_FIRE_STELLAREVOLUTION
+#ifdef GALSF_FB_MASS_RETURN_EVENTS
     if(P_arr[i].MassReturn_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 1) return 1; }
 #ifdef GALSF_FB_FIRE_RPROCESS
     if(P_arr[i].RProcessEvent_ThisTimeStep > 0) { if(fb_loop_iteration < 0 || fb_loop_iteration == 2) return 1; }

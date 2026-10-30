@@ -730,6 +730,9 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
         case IO_SINGLE_STAR_EVENT_BITS: /* fills an existing record */
             for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.event_bits[single_star_slot(P[offset + n].StarIdx)] = (uint8_t) v;}}
             break;
+        case IO_SINGLE_STAR_LAST_WIND_LOG_AGE: /* fills an existing record */
+            for(n = 0; n < pc; n++) {double v = *fp++; if(P[offset + n].StarIdx > 0) {SingleStars.last_wind_log_age[single_star_slot(P[offset + n].StarIdx)] = v;}}
+            break;
 #endif
 #endif
 
@@ -1467,7 +1470,7 @@ int read_file(char *fname, int readTask, int lastTask)
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
                    && blocknr != IO_SINGLE_STAR_DRAWN_MASS && blocknr != IO_SINGLE_STAR_BIRTH_Z /* initial conditions may carry single stars */
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
-                   && blocknr != IO_SINGLE_STAR_EVENT_BITS
+                   && blocknr != IO_SINGLE_STAR_EVENT_BITS && blocknr != IO_SINGLE_STAR_LAST_WIND_LOG_AGE
 #endif
 #endif
 #ifdef EOS_CARRIES_ABAR

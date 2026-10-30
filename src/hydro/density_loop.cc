@@ -72,7 +72,7 @@ int density_isactive(int n)
     {
 #if defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)
         if(P[n].SNe_ThisTimeStep>0) return 1;
-#if defined(GALSF_FB_FIRE_STELLAREVOLUTION)
+#if defined(GALSF_FB_MASS_RETURN_EVENTS)
         if(P[n].MassReturn_ThisTimeStep>0) return 1;
 #ifdef GALSF_FB_FIRE_RPROCESS
         if(P[n].RProcessEvent_ThisTimeStep>0) return 1;
