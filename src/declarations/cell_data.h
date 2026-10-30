@@ -489,6 +489,9 @@ extern struct gas_cell_data
     float RadpAbsorbedLum;     /*!< luminosity this cell absorbed at its last update [code]: its share of the photon cap */
 #endif
 #endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    float TreeColCRAttenuation; /*!< background cosmic-ray rate attenuation by the gas column (STARFORGE), pixel mean */
+#endif
 #endif
     
     /* Temperature, Gamma and MeanMolecularWeight are the cached thermodynamic state. Gamma and

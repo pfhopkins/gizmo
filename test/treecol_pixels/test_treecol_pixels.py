@@ -311,7 +311,7 @@ def cr_attenuation(sigma):
 
 @pytest.mark.parametrize("mode", ["CR_SCALE_WITH_G0", "CR_BACKGROUND_IONRATE_ATTENUATED"])
 def test_cosmic_ray_rate(tables, mode):
-    rate, m_gas = 3.0e-17, 30.0
+    rate, m_gas = (1.0e-18 if mode == "CR_SCALE_WITH_G0" else 3.0e-17), 30.0  # G0 ~ 70-2e4 here
     cells = pixel_run(tables, 1, tag=f"_{mode}", flags=(mode,), gas_mass=m_gas,
                       overrides={"SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": rate})[0]
     zeta = cells[:, 59]

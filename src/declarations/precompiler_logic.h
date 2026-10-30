@@ -1759,6 +1759,9 @@
 #endif
 
 
+#if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED)) && !defined(SGCHEM)
+#error "CR_SCALE_WITH_G0 and CR_BACKGROUND_IONRATE_ATTENUATED set the SGChem cosmic-ray rate: set SGCHEM"
+#endif
 #ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
 #if defined(CHIMES)
 #error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"
@@ -1771,6 +1774,12 @@
 #endif
 #if !defined(COOL_METAL_LINES_BY_SPECIES)
 #error "SGCHEM reads the element slots: set COOL_METAL_LINES_BY_SPECIES"
+#endif
+#if defined(CR_SCALE_WITH_G0) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
+#error "CR_SCALE_WITH_G0 scales the SGChem cosmic-ray rate with the stars' field: set GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES"
+#endif
+#if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "CR_BACKGROUND_IONRATE_ATTENUATED attenuates by the gas column of the pixel walk: set GALSF_RESOLVEDISM_TREECOL_PIXELS"
 #endif
 #if CHEMISTRYNETWORK == 5 || CHEMISTRYNETWORK == 20 /* tracked species per cell (= TRAC_NUM of cooling/sgchem/sgchem_consts.h) */
 #define SGCHEM_NUM_TRACKED_SPECIES 3

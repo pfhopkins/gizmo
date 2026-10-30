@@ -137,6 +137,9 @@ struct treecol_pixels_sums_t {
     double radp[4];                                        /* sigma-weighted flux: vector over pixel centres, scalar */
 #endif
 #endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    double gas[TREECOL_PIXELS_N];                          /* gas column [code mass / code length^2] */
+#endif
 };
 
 KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
@@ -148,6 +151,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
     for(int k = 0; k < 4; k++) {a.radp[k] = 0;}
 #endif
+#endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.gas[k] = 0;}
 #endif
 }
 
@@ -162,6 +168,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_add(treecol_pixels_sums_t &a, const t
     for(int k = 0; k < 4; k++) {a.radp[k] += b.radp[k];}
 #endif
 #endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.gas[k] += b.gas[k];}
+#endif
 }
 
 /* one accepted source (leaf or node) for a gas target: column in the pixel of its mass centre dr, inside
@@ -169,7 +178,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_add(treecol_pixels_sums_t &a, const t
    centroid d_lum (a second lookup only for luminous nodes, whose light and mass centres differ), r_L floored at r_floor
    (the target's Plummer-equivalent softening) */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, const Vec3<double> &dr, double r, double fac_accel,
-                                                      double mass, const double *species, const Vec3<double> &d_lum, const double *lum, double r_floor)
+                                                      double mass, double gasmass, const double *species, const Vec3<double> &d_lum, const double *lum, double r_floor)
 {
     if(r <= 0 || mass <= 0) {return;}
     const int ip = treecol_hpx_pixel(dr);
@@ -177,6 +186,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
     {
         const double w = 1.0 / ((4.0 * M_PI / TREECOL_PIXELS_N) * r * r); /* unsoftened, as stella_dev */
         for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {a.col[s][ip] += w * species[s];}
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+        a.gas[ip] += w * gasmass;
+#endif
     }
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     const double l_pe = lum[RT_FREQ_BIN_PHOTOELECTRIC], l_68 = lum[RT_FREQ_BIN_GENERIC_USER_FREQ], l_lw = lum[RT_FREQ_BIN_LYMAN_WERNER];
@@ -196,6 +208,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
 #else
     (void) d_lum; (void) lum; (void) r_floor;
 #endif
+    (void) gasmass;
 }
 
 /* walk end: write a gas cell's columns and band energy densities [erg/cm^3]; Lyman-Werner floored per pixel at
@@ -213,6 +226,16 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, c
     for(int k = 0; k < 4; k++) {c.TreeColRadpFlux[k] = (float) a.radp[k];}
 #endif
 #endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    { /* STARFORGE, as stella_dev: 1 below N_H = 1e21 cm^-2 (2.23e-3 g cm^-2), then exp(-Sigma / 100 g cm^-2) (1e21 cm^-2 / N_H), pixel mean */
+        double f = 0, sigma_0 = 2.23e-3;
+        for(int k = 0; k < TREECOL_PIXELS_N; k++) {
+            double sigma = a.gas[k] * UNIT_SURFDEN_IN_CGS * All.cf_a2inv;
+            f += (sigma < sigma_0) ? 1. : exp(fmax(-sigma / 100., -90.)) * sigma_0 / sigma;
+        }
+        c.TreeColCRAttenuation = (float) (f / TREECOL_PIXELS_N);
+    }
+#endif
 }
 
 /* device walk: the cell outputs from the device particle mirror back to the host cell */
@@ -225,6 +248,9 @@ static inline void treecol_pixels_copy_cell(struct gas_cell_data &d, const struc
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
     for(int k = 0; k < 4; k++) {d.TreeColRadpFlux[k] = c.TreeColRadpFlux[k];}
 #endif
+#endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    d.TreeColCRAttenuation = c.TreeColCRAttenuation;
 #endif
 }
 

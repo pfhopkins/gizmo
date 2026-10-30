@@ -97,11 +97,24 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
         case IO_SGCHEM_SHIELDFAC_DUST: return CellP[i].ShieldFacDust;
         case IO_SGCHEM_G0_NUV: return CellP[i].TreeColEgyNUV / HABING_EGY_DENSITY_6_13P6EV_CGS;
         case IO_SGCHEM_G0_OPT: return CellP[i].TreeColEgyOPT / HABING_EGY_DENSITY_6_13P6EV_CGS;
-        case IO_SGCHEM_CR_ZETA: return All.SGChemCosmicRayIonRate;
+        case IO_SGCHEM_CR_ZETA: return sgchem_cr_ion_rate(i, f.G0);
         default: return 0;
     }
 }
 #endif
+
+/* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing], as stella_dev chem_interface.cc */
+double sgchem_cr_ion_rate(int i, double G0)
+{
+    double zeta = All.SGChemCosmicRayIonRate;
+#ifdef CR_SCALE_WITH_G0
+    zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
+#endif
+#ifdef CR_BACKGROUND_IONRATE_ATTENUATED
+    zeta = All.SGChemCosmicRayIonRate * CellP[i].TreeColCRAttenuation; /* replaces the scaling, as stella_dev */
+#endif
+    return zeta;
+}
 
 /* evolves cell i from specific energy u_code over dt_code [code units]; writes TracAbund, Temp, DustTemp, Ne; returns the new u */
 static double sgchem_cell_step(int i, double u_code, double dt_code)
@@ -122,7 +135,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
 #endif
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
-    in.cosmic_ray_ion_rate = All.SGChemCosmicRayIonRate;
+    in.cosmic_ray_ion_rate = sgchem_cr_ion_rate(i, fuv.G0);
     in.id_current = (int) P[i].ID;
     in.dust_to_gas_ratio = sgchem_dust_to_gas_ratio(P[i].Metallicity[0]);
 #if CHEMISTRYNETWORK == 18
