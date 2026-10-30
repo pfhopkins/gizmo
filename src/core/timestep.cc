@@ -147,6 +147,34 @@ void find_timesteps(void)
 #else
         ti_step = get_timestep(i, &aphys, 0);
         ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+        /* Time-symmetric step choice (Hut, Makino & McMillan 1995; block form Makino et al. 2006).
+           The default rule sets a step from the criterion f at its start alone: the largest f over
+           the step while f falls (inbound), the smallest while it rises (outbound). The hierarchy
+           then shrinks and grows one full step late at every bin level, the step sequence is not
+           reversible, and an eccentric orbit drifts in energy although each Hermite step is
+           time-symmetric. Instead take the largest h' in {2h, h, h/2, ...} with
+           h' <= (f_start + f_end)/2, f_end extrapolated linearly from f at the start of the step
+           just completed. f depends on positions and |velocities| only, so it is even under time
+           reversal. Without a criterion history the default rule applies. Ti_begstep still holds
+           the start of the step just completed here; it advances below. */
+        if(P[i].dt_crit_last > 0 && P[i].dt_crit_prev > 0 && All.Ti_Current > P[i].Ti_begstep && P[i].TimeBin > 1)
+        {
+            double ticks_per_unit = 1. / (All.Timebase_interval * timestep_dilation_factor(i, P));
+            double f1 = P[i].dt_crit_last * ticks_per_unit, f0 = P[i].dt_crit_prev * ticks_per_unit; /* in ticks */
+            double dfdh = (f1 - f0) / (double)(All.Ti_Current - P[i].Ti_begstep);
+            double hmax = DMIN(All.MaxSizeTimestep, dt_displacement) * ticks_per_unit;
+            int b;
+            for(b = P[i].TimeBin + 1; b > 1; b--)
+            {
+                double h_try = (double) GET_INTEGERTIME_FROM_TIMEBIN(b);
+                if(h_try > hmax) {continue;}
+                double f2 = DMAX(f1 + dfdh * h_try, 0.01 * f1); /* floor: keeps a steep extrapolated decline positive */
+                if(h_try <= 0.5 * (f1 + f2)) {break;}
+            }
+            ti_step = GET_INTEGERTIME_FROM_TIMEBIN(b); /* growth still goes through the sync-point rule below */
+        }
+#endif
 #endif
         
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
@@ -1333,6 +1361,9 @@ static_assert((TIDAL_TIMESTEP_PREFAC) > 0.0 && (TIDAL_TIMESTEP_PREFAC) <= 1.0, "
     }
 
     if(dt > 0.5 * TIMEBASE * All.Timebase_interval) {dt = 0.5 * TIMEBASE * All.Timebase_interval;} /* prevent integer timeline overflow */
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+    P[p].dt_crit_last = eligible_for_hermite(p, P) ? dt : 0; /* every factor and cap applied, not yet quantised */
+#endif
     ti_step = (integertime) (dt / All.Timebase_interval);
     /* Floor the step on the integer timeline. This is not the MinSizeTimestep policy: a run that
        has asked for a controlled stop still has to reach the next phase boundary to take it, and a
