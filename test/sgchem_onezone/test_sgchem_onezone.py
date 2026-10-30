@@ -1,6 +1,8 @@
 """SGChem one-zone parity: chemistry tables, cool_func rates and one-zone runs of every network against the frozen
 reference (nets 3/5/15/16/17: the SGChem Fortran; nets 18/20: the C++ backend when it was introduced), plus serial vs
-OpenMP-concurrent solves bit-identical (nets 5, 17).
+OpenMP-concurrent solves bit-identical (nets 5, 17). Network 5 with ionising photons on molecular gas (euv_h2.cc): the
+H2 channel adds exactly its rate and heating, and a molecular cell in an EUV field loses its H2 and ionises; without the
+H2 channel (r = 0) it does not.
 
 Standalone: no GIZMO run. Needs mpicxx, SUNDIALS_DIR (6.x or 7.x), KOKKOS_PATH, the four chemistry tables
 (SGCHEM_TABLES_DIR, else installed with scripts/get_stella_tables.sh) and the frozen reference data
@@ -68,3 +70,25 @@ def test_sgchem_onezone(net, env):
                            env={**env, "OMP_NUM_THREADS": env.get("OMP_NUM_THREADS", "4")})
         print(t.stdout)
         assert t.returncode == 0 and "bit-identical to serial: YES" in t.stdout, t.stdout[-3000:]
+
+
+@pytest.mark.parametrize("nH", (10.0, 100.0))
+def test_sgchem_net5_euv_h2(nH, env):
+    """Gamma_HI = 1e-9 s^-1, <h nu> = 18.6 eV, r = sigma_H2/sigma_HI = 1.34 (stella_dev DEVIATIONS D-56), WSS CIE cooling;
+    G0 = 1.7 as stella_dev's test, and G0 = 1e-4 (shielded), where only the H2 channel clears the H2"""
+    tables = chemistry_tables_dir(5)
+    out = path.join(HERE, "output", "net5")
+    if not path.exists(path.join(out, "euv_h2")):
+        makedirs(out, exist_ok=True)
+        b = subprocess.run(["bash", path.join(HERE, "build_onezone_dump.sh"), "5", out], capture_output=True, text=True,
+                           env={**env, "CHEMCXX_DATADIR": tables})
+        assert b.returncode == 0, f"build failed:\n{b.stdout[-4000:]}\n{b.stderr[-4000:]}"
+    run = lambda r, g0: subprocess.run([path.join(out, "euv_h2"), tables, "1", "1e-9", "18.6", str(r), str(nH), str(g0)],
+                                       capture_output=True, text=True)
+    for g0 in (1.7, 1e-4):  # unshielded, and shielded from the FUV (G0 = 0 would switch every photo-rate off)
+        t = run(1.34, g0)
+        print(f"G0 = {g0}:", [l for l in t.stdout.splitlines() if l.startswith(("RHS", "RESULT", "EVOL "))])
+        assert t.returncode == 0 and "RHS" in t.stdout and "EVOL PASS" in t.stdout, t.stdout[-3000:]
+    t0 = run(0.0, 1e-4)  # without the H2 channel (the network before this change) shielded molecular gas stays molecular
+    print("no H2 channel, G0 = 1e-4:", [l for l in t0.stdout.splitlines() if l.startswith("RESULT")])
+    assert "EVOL FAIL" in t0.stdout

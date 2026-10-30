@@ -28,6 +28,11 @@ mpicxx $OPT $INC -c "$CX/fortran_reference/reference_dump.cc" -o "$OUT/obj/refer
 mpicxx "$OUT/obj/reference_dump.o" $O -L"$SUNLIB" -Wl,-rpath,"$SUNLIB" -lsundials_cvode -lsundials_nvecserial \
     -lsundials_sunmatrixdense -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton -lsundials_generic \
     -L"$KKLIB" -Wl,-rpath,"$KKLIB" -lkokkoscore -ldl -lm -o "$OUT/reference_dump"
+if [ "$NET" = 5 ]; then   # EUV photons on molecular gas
+mpicxx $OPT $INC -c "$HERE/euv_h2.cc" -o "$OUT/obj/euv_h2.o"
+mpicxx "$OUT/obj/euv_h2.o" $O -L"$SUNLIB" -Wl,-rpath,"$SUNLIB" -lsundials_cvode -lsundials_nvecserial \
+    -lsundials_sunmatrixdense -lsundials_sunlinsoldense -lsundials_sunnonlinsolnewton -lsundials_generic -lm -o "$OUT/euv_h2"
+fi
 if [ "$NET" = 5 ] || [ "$NET" = 17 ]; then   # the driver's species layout covers nets 5 and 17
 mpicxx $OPT -fopenmp -DPURE_NET=$NET $INC -c "$HERE/threads_identity.cc" -o "$OUT/obj/threads_identity.o"
 mpicxx -fopenmp "$OUT/obj/threads_identity.o" $O -L"$SUNLIB" -Wl,-rpath,"$SUNLIB" -lsundials_cvode -lsundials_nvecserial \
