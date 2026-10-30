@@ -26,6 +26,9 @@ stops) and checks them against exact values.
     CR_BACKGROUND_IONRATE_ATTENUATED SGChemCosmicRayIonRate x the STARFORGE attenuation of the 12-pixel gas column
     within TreeColShieldingLength (1 below 2.23e-3 g cm^-2, else exp(-Sigma / 100) 2.23e-3 / Sigma, pixel mean), against
     the same formula on direct-sum columns to the tree-error bars of the columns (median 1e-2, p99 5e-2).
+  test_cosmic_ray_fluid_rate: with COSMIC_RAY_FLUID the SGChem rate of every cell is his Get_CosmicRayIonizationRate_cgs:
+    1e-5 e_CR [erg cm^-3] + 1e-21 Z/Zsun + 1e-19 Fe/Fe_sun with his solar abundances (1e-12); against stella_dev's
+    3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/0.014 the e_CR term is lower by the stated factor 0.9612 (1e-10).
 """
 import os
 import shutil
@@ -167,7 +170,7 @@ PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (10
 SHIELD = 8.0  # TreeColShieldingLength [pc]
 
 
-def pixel_run(tables, ranks, threads=1, tag="", overrides=None, flags=(), gas_mass=1.0):
+def pixel_run(tables, ranks, threads=1, tag="", overrides=None, flags=(), gas_mass=1.0, e_cr=None):
     L, n = 20.0, 12
     pos, z, ab = gas_with_species(n, L)
     tab = Tables(tables["StellarTablesFile"])
@@ -178,7 +181,7 @@ def pixel_run(tables, ranks, threads=1, tag="", overrides=None, flags=(), gas_ma
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
     exe = build("_".join(("pix12",) + flags), ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + flags)
     out = run(exe, f"pixels_np{ranks}{tag}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab, threads=threads,
-              gas_mass=gas_mass, overrides={"TreeColShieldingLength": SHIELD, **(overrides or {})})
+              gas_mass=gas_mass, e_cr=e_cr, overrides={"TreeColShieldingLength": SHIELD, **(overrides or {})})
     cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
     lum = load(out, "stars"); lum = lum[np.argsort(lum[:, 0])]
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
@@ -330,3 +333,22 @@ def test_cosmic_ray_rate(tables, mode):
     r = rel(f, cr_attenuation(sigma))
     print(f"f_cr {f.min():.3f}-{f.max():.3f}; tree vs direct 12-pixel gas columns: median {np.median(r):.1e} p99 {np.percentile(r, 99):.1e}")
     assert np.median(r) <= 1e-2 and np.percentile(r, 99) <= 5e-2
+
+
+def test_cosmic_ray_fluid_rate(tables):
+    n = 12 ** 3
+    rng = np.random.default_rng(5)
+    e_cr = 10.0 ** rng.uniform(0, 2, n)  # per cell [code energy]: ~0.1-10 eV cm^-3 at these densities
+    cells = pixel_run(tables, 1, tag="_crfluid", flags=("COSMIC_RAY_FLUID",), e_cr=e_cr, overrides={"CosmicRayDiffusionCoeff": 690.0})[0]
+    assert cells.shape[1] == 64, "dump: ID, species, columns, energy densities, G0 G0_LW G0_dust zeta e_CR, position"
+    zeta, e_cgs = cells[:, 59], cells[:, 60]
+    pos, zg, _ = gas_with_species(12, 20.0)
+    zc = dict(zip(np.arange(1, n + 1), zg))  # every metal slot scales with z (Fe = 1.38e-3 z / 0.0142)
+    z = np.array([zc[int(i)] for i in cells[:, 0]])
+    radio = 1e-21 * z / 0.02 + 1e-19 * (1.38e-3 * z / 0.0142) / 1.73e-3  # his All.SolarAbundances without FIRE-3 stellar evolution
+    np.testing.assert_allclose(zeta, 1e-5 * e_cgs + radio, rtol=1e-12, atol=0)
+    stella_dev = 3e-17 * e_cgs / (1.8 * 1.602e-12) + 1e-21 * z / 0.014  # stella_dev: Zsun = 0.014, no Fe term
+    ratio = (zeta - radio) / (stella_dev - 1e-21 * z / 0.014)
+    print(f"e_CR {e_cgs.min() / 1.602e-12:.2g}-{e_cgs.max() / 1.602e-12:.2g} eV cm^-3; zeta / stella_dev: "
+          f"{np.min(zeta / stella_dev):.4f}-{np.max(zeta / stella_dev):.4f}; e_CR term ratio {ratio.mean():.6f}")
+    np.testing.assert_allclose(ratio, 1e-5 * 1.8 * 1.602e-12 / 3e-17, rtol=1e-10)
