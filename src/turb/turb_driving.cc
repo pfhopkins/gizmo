@@ -417,19 +417,28 @@ void add_turb_accel()
 
     if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* All-mirror dispatch-boundary belt; the turb_accel kernel itself reads no All.* but keep the call at the GPU dispatch point per the All-mirror convention */
+        /* Where the canonical arrays are device-visible (UVM), drive them in place over an index list, as the
+           drift does: the kernel writes only CellP[i].TurbAccel, so this matches the gather/scatter route
+           without its two serial whole-record copies. */
+        const bool in_place = Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, GIZMO_KOKKOS_SHARED_SPACE>::accessible;
         /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
         const size_t mode_bytes = (size_t) StNModes * 3 * sizeof(double);
         const size_t ampl_bytes = (size_t) StNModes * sizeof(double);
-        const size_t compact_bytes = (size_t) N_active * (sizeof(struct particle_data)
-                                                          + sizeof(struct gas_cell_data));
+        const size_t compact_bytes = in_place ? (size_t) N_active * sizeof(int)
+                                              : (size_t) N_active * (sizeof(struct particle_data) + sizeof(struct gas_cell_data));
         double *gpu_mode = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
         double *gpu_aka  = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
         double *gpu_akb  = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
         double *gpu_ampl = (double *) gizmo_gpu_alloc_shared(ampl_bytes, NULL);
-        /* Gather into compact SharedSpace arrays */
-        struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct particle_data), NULL);
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct gas_cell_data), NULL);
-        if(!gpu_mode || !gpu_aka || !gpu_akb || !gpu_ampl || !compact_P || !compact_Cell) {
+        /* In place: an index list. Otherwise: compact SharedSpace copies of the active records. */
+        int *idx_dev = NULL; struct particle_data *compact_P = NULL; struct gas_cell_data *compact_Cell = NULL;
+        if(in_place) {idx_dev = (int *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(int), "turb_accel_idx");}
+        else {
+            compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct particle_data), NULL);
+            compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct gas_cell_data), NULL);
+        }
+        if(!gpu_mode || !gpu_aka || !gpu_akb || !gpu_ampl || (in_place ? !idx_dev : (!compact_P || !compact_Cell))) {
+            if(idx_dev)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_dev);}
             if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
             if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
             if(gpu_ampl)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_ampl);}
@@ -451,33 +460,45 @@ void add_turb_accel()
         memcpy(gpu_akb,  StAkb,  StNModes * 3 * sizeof(double));
         memcpy(gpu_ampl, StAmpl, StNModes * sizeof(double));
 
-        for(int j = 0; j < N_active; j++)
+        const double *km = gpu_mode, *ka = gpu_aka, *kb = gpu_akb, *kamp = gpu_ampl;
+        int nm = StNModes; double fs = fac_sol;
+        if(in_place)
         {
-            compact_P[j]    = P[turb_indices[j]];
-            compact_Cell[j] = CellP[turb_indices[j]];
+            memcpy(idx_dev, turb_indices, (size_t) N_active * sizeof(int));
+            struct particle_data *kp = P;
+            struct gas_cell_data *kc = CellP;
+            const int *kidx = idx_dev;
+            const bool bulk = (long long) N_active * 8 >= (long long) NumPart;
+            if(bulk) {gizmo_particles_prefetch_to_device("turb_accel");}
+            gizmo_gpu_kernel_launch("turb_accel_inplace", N_active, KOKKOS_LAMBDA(int j) {
+                add_turb_accel_for_particle(kidx[j], kp, kc, km, ka, kb, kamp, nm, fs);
+            });
+            if(bulk) {gizmo_particles_prefetch_to_host("turb_accel");}   /* the second half kick follows on the host */
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_dev);
         }
-
-        /* Dispatch to GPU */
+        else
         {
+            for(int j = 0; j < N_active; j++)
+            {
+                compact_P[j]    = P[turb_indices[j]];
+                compact_Cell[j] = CellP[turb_indices[j]];
+            }
             struct particle_data *kp = compact_P;
             struct gas_cell_data *kc = compact_Cell;
-            const double *km = gpu_mode, *ka = gpu_aka, *kb = gpu_akb, *kamp = gpu_ampl;
-            int nm = StNModes; double fs = fac_sol;
             gizmo_gpu_kernel_launch("turb_accel", N_active, KOKKOS_LAMBDA(int j) {
                 add_turb_accel_for_particle(j, kp, kc, km, ka, kb, kamp, nm, fs);
             });
-        }
-
-        /* Scatter back */
-        for(int j = 0; j < N_active; j++)
-        {
-            int ii = turb_indices[j];
-            CellP[ii] = compact_Cell[j];
+            /* Scatter back */
+            for(int j = 0; j < N_active; j++)
+            {
+                int ii = turb_indices[j];
+                CellP[ii] = compact_Cell[j];
+            }
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
         }
         gpu_particles_arena_invalidate();
 
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_ampl);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_akb);
         Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_aka);
