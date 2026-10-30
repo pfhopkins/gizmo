@@ -136,6 +136,7 @@ int TreeReconstructFlag;
 int DomainReconstructFlag;
 int DomainExtentOutgrownLocal;
 int TreeMomentsStaleFlag;
+int NtotSwallowedThisStep;
 int TypePresenceMaskTrusted = 0;
 long long ForceAddElementToTree_CallsSinceBuild = 0;
 int NeedToWakeupParticles;      /*!< Flags used to signal that wakeups need to be processed at the beginning of the next timestep */
