@@ -20,18 +20,16 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
     const double expmx = exp(-x);
     const double expmx4 = pow(expmx, 4);
 
+    /* Para (even j) and ortho (odd j) are kept in separate named scalars rather than z[s]/zterm[s]
+       indexed by the loop-variant s = j % 2. Intel icpx at -O2 and above miscompiles the indexed form
+       (the ortho update is dropped, its error term stays pinned at 1 and the loop never exits). */
     double error = 1e100;
-    double z[2] = {0}; // index 0 for para, 1 for ortho
-    double dz_dtemp[2] = {0};
-    double d2z_dtemp2[2] = {0};
-    double zterm[2] = {0};
-
-    z[0] = zterm[0] = 1.0;
-    z[1] = zterm[1] = 9.0;
+    double z_para = 1.0, z_ortho = 9.0;          // partition function sums
+    double zterm_para = 1.0, zterm_ortho = 9.0;  // current term
+    double dz_para = 0, dz_ortho = 0, d2z_para = 0, d2z_ortho = 0;
     double expterm = expmx4 * expmx * expmx;
 
     int j = 2;
-    double dzterm, d2zterm;
     /* Bounded. EPSILON is DBL_EPSILON, so the exit test asks the series to converge to machine
        precision; if the terms stagnate at FP granularity the loop never terminates. This body is
        device-callable and reached from the offloaded cooling chain, where that hangs the kernel
@@ -39,30 +37,27 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
        dissociated, so this cap cannot bind in normal operation. */
     const int max_partition_terms = 200;
     for (int iter = 0; error > EPSILON && iter < max_partition_terms; ++iter) {
-        int s = j % 2;
-        zterm[s] *= (2 * j + 1) * expterm / (2 * j - 3);
         int jjplusone = j * (j + 1);
-        if (s == 1) {
-            dzterm = (jjplusone - 2) * x * zterm[1];
-            d2zterm = ((jjplusone - 2) * x - 2) * dzterm;
-        } else {
-            dzterm = jjplusone * x * zterm[0];
-            d2zterm = (jjplusone * x - 2) * dzterm;
+        if (j & 1) { // ortho (odd j)
+            zterm_ortho *= (2 * j + 1) * expterm / (2 * j - 3);
+            double dzterm = (jjplusone - 2) * x * zterm_ortho;
+            z_ortho += zterm_ortho; dz_ortho += dzterm; d2z_ortho += ((jjplusone - 2) * x - 2) * dzterm;
+        } else { // para (even j)
+            zterm_para *= (2 * j + 1) * expterm / (2 * j - 3);
+            double dzterm = jjplusone * x * zterm_para;
+            z_para += zterm_para; dz_para += dzterm; d2z_para += (jjplusone * x - 2) * dzterm;
         }
-        z[s] += zterm[s];
-        dz_dtemp[s] += dzterm;
-        d2z_dtemp2[s] += d2zterm;
-        double err0 = zterm[0] / z[0];
-        double err1 = zterm[1] / z[1];
-        error = (err1 > err0) ? err1 : err0;
+        double err_para = zterm_para / z_para;
+        double err_ortho = zterm_ortho / z_ortho;
+        error = (err_ortho > err_para) ? err_ortho : err_para;
         expterm *= expmx4;
         j++;
     }
 
-    result[0] = exp(para_frac * log(z[0]) + ortho_frac * log(z[1]));
-    result[1] = BOLTZMANN_CGS * temp * (para_frac * dz_dtemp[0] / z[0] + ortho_frac * dz_dtemp[1] / z[1]);
-    result[2] = BOLTZMANN_CGS * (ortho_frac * (2 * dz_dtemp[1] + d2z_dtemp2[1] - dz_dtemp[1] * dz_dtemp[1] / z[1]) / z[1] +
-                                 para_frac * (2 * dz_dtemp[0] + d2z_dtemp2[0] - dz_dtemp[0] * dz_dtemp[0] / z[0]) / z[0]);
+    result[0] = exp(para_frac * log(z_para) + ortho_frac * log(z_ortho));
+    result[1] = BOLTZMANN_CGS * temp * (para_frac * dz_para / z_para + ortho_frac * dz_ortho / z_ortho);
+    result[2] = BOLTZMANN_CGS * (ortho_frac * (2 * dz_ortho + d2z_ortho - dz_ortho * dz_ortho / z_ortho) / z_ortho +
+                                 para_frac * (2 * dz_para + d2z_para - dz_para * dz_para / z_para) / z_para);
 }
 
 KOKKOS_INLINE_FUNCTION
