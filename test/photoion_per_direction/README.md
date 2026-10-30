@@ -20,3 +20,10 @@ Checks:
   Stromgren radius, and static gas keeps the same cells at every solve. Without the stamp column 7 is 0.
 - `test_ranks_and_order`: 1, 2 and 4 ranks and a permuted particle order give the same fronts, search passes and
   ionised cells (the histogram sums are integers).
+- `test_overlapping_sources_share`: two identical stars 0.5 Stromgren radii apart. Every source first claims its own
+  sphere; then, in rounds, a cell claimed by several sources bills each its share q_sc / A_c (integer weights from the
+  photons each delivers to the cell), so fronts advance until the bills are paid once. The pair ionises 2.0 x the cells of
+  one star (measured 6068 / 3035 = 1.999; 1.385 without sharing, where both stars bill the shared cells in full) and the
+  union recombines at the summed photon rate (0.999); 1, 2 and 4 ranks give the same cells and rounds.
+- `test_bright_and_faint_source`: a 35 and a 20 Msun star (Q ratio 7) 0.9 pc apart: the union recombines at the summed
+  rate and its cells scale with it (1.146 vs 1.144; without sharing 1.002).
