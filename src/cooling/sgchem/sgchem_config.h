@@ -13,6 +13,7 @@
 #ifdef METALS
 #define GALSF_RESOLVEDISM_METALS_INDIVIDUAL /* N and the CIE element masses come from the cell metals */
 #endif
+#define SGCHEM_CELL_GRAIN_HEATING_FIELD /* the cell call sets G0_dust (uniform field from parameters) */
 #define SGCHEM_SOLAR_Z  0.014  /* Asplund+09 present-day solar Z: the chemistry's metallicity unit, as stella_dev */
 #define SGCHEM_DEPL_C   0.50   /* grain-locked fractions at the Milky Way dust-to-gas ratio, scaled with SGChemDustToGasRatio */
 #define SGCHEM_DEPL_SI  0.82

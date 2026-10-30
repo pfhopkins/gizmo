@@ -147,6 +147,9 @@ struct global_data_all_processes
   double SGChemCosmicRayIonRate;/*!< cosmic-ray ionisation rate per H [s^-1] */
   double SGChemDustToGasRatio;  /*!< dust-to-gas ratio relative to the Milky Way at solar metallicity, scaled with the cell Z */
   double SGChemDeuteriumAbundance; /*!< D/H by number */
+  double SGChemG0;              /*!< uniform ISRF-shaped field, 6-13.6 eV [Habing units, Draine 1978 / 1.7] */
+  double SGChemG0_LW;           /*!< its Lyman-Werner part, 11.2-13.6 eV [Habing units] */
+  double SGChemBackgroundG0;    /*!< scales the background floors (0.324e-2 x this), never the field (stella_dev G0) */
 #endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */

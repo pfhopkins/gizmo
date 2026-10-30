@@ -2838,6 +2838,18 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "SGChemDeuteriumAbundance");
       addr[nt] = &All.SGChemDeuteriumAbundance;
       id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemG0");
+      addr[nt] = &All.SGChemG0;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemG0_LW");
+      addr[nt] = &All.SGChemG0_LW;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemBackgroundG0");
+      addr[nt] = &All.SGChemBackgroundG0;
+      id[nt++] = REAL;
 #endif
 
 #ifdef CHIMES

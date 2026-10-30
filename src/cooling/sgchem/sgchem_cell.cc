@@ -58,7 +58,8 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #endif
     sgchem_gas_abundances(i, &in);
     in.abundD = All.SGChemDeuteriumAbundance;
-    in.G0 = 0; in.G0_LW = 0; /* no radiation field yet */
+    struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
+    in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
     in.cosmic_ray_ion_rate = All.SGChemCosmicRayIonRate;
     in.id_current = (int) P[i].ID;
     in.dust_to_gas_ratio = DMIN(All.SGChemDustToGasRatio * P[i].Metallicity[0] / SGCHEM_SOLAR_Z, 10.0); /* DGR from Z, capped at 10 */

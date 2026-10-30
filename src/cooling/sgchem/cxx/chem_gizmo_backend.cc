@@ -113,7 +113,7 @@ void chem_cxx_begin_cell(const struct ChemInputs* in, double temp, double abh2, 
 #endif
     c.abundD = in->abundD; c.abundM = in->abundM;
     c.G0 = in->G0; c.G0_LW = in->G0_LW;
-#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER)
+#if defined(GALSF_RESOLVEDISM_G0_VARIABLE) || defined(GHOSDT_G0_CR) || defined(RADTRANSFER) || defined(SGCHEM_CELL_GRAIN_HEATING_FIELD)
     c.G0_dust = in->G0_dust;
 #endif
     c.cosmic_ray_ion_rate = in->cosmic_ray_ion_rate;
