@@ -248,7 +248,7 @@ void gravity_tree(void)
     }
 
     CPU_Step[CPU_TREEMISC] += measure_time(); t0 = my_second(); double child0_span = CPU_ChildCharged;
-#ifndef SELFGRAVITY_OFF
+#ifdef GRAVTREE_WALK_ACTIVE /* the walk also serves RT and the sink feedback timestep limiter, so it runs under SELFGRAVITY_OFF when those are on; GravAccel_set_zeros_if_needed discards the force */
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
     /* These two tables only RECORD targets whose gravity the locally-built tree cannot supply:
@@ -262,8 +262,8 @@ void gravity_tree(void)
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     int k, ewald_max, ndone, ndone_flag, place, recvTask; double tstart, tend, ax, ay, az; MPI_Status status;
     Ewaldcount = 0; Costtotal = 0; N_nodesinlist = 0; ewald_max=0;
-#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID)
-    ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
+#if defined(BOX_PERIODIC) && !defined(GRAVITY_NOT_PERIODIC) && !defined(PMGRID) && !defined(SELFGRAVITY_OFF)
+    ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections; not when the force is discarded anyway (SELFGRAVITY_OFF), where ewald_init has also not run */
 #endif
 
 
@@ -760,7 +760,7 @@ gravity_walk_attempt:
     /* Arena mirror-update is a no-op under UVM-canonical (arena_P
      * aliases host P[]); the post-loop above already wrote canonical state. */
 
-#endif /* end SELFGRAVITY operations (check if SELFGRAVITY_OFF not enabled) */
+#endif /* GRAVTREE_WALK_ACTIVE */
 
 
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
@@ -833,7 +833,7 @@ gravity_walk_attempt:
     /* The real-valued report, one sum and one maximum. The interaction total the walks recorded into GravWork
      * is summed beside Costtotal for the consistency check below. */
     double gravwork_new = 0;
-#ifndef SELFGRAVITY_OFF
+#ifdef GRAVTREE_WALK_ACTIVE
     for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {gravwork_new += (double) P[ActiveParticleList[ii]].GravWork - (double) grav_work_at_call_start[ii];}
 #endif
     const double timetree = timetree1 + timetree2, plb = (NumPart / ((double) All.TotNumPart)) * NTask;

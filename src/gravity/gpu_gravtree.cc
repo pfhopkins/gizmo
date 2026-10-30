@@ -365,9 +365,11 @@ static int gpu_ewald_acquire_pot_data(struct gpu_ewald_pot_data_t *out);
  * is supported via the GPU Ewald walk (gpu_ewald_walk_primary), dispatched
  * from gravtree.cc on the Ewald_iter==1 pass. Implementation later in this
  * file. */
-/* SELFGRAVITY_OFF: gravtree.cc wraps the entire tree dispatch (including GPU
- * dispatch) in #ifndef SELFGRAVITY_OFF, so this TU is never compiled into the
- * walk when gravity is disabled.  No guard needed here. */
+/* GRAVTREE_WALK_ACTIVE: gravtree.cc wraps the entire tree dispatch (including GPU
+ * dispatch) in it, so this TU is never compiled into the walk when the walk is
+ * off.  Under SELFGRAVITY_OFF the walk still runs when RT or the sink feedback
+ * timestep limiter consumes it; the force it produces is zeroed afterwards.
+ * No guard needed here. */
 
 
 /* -------------------------------------------------------------------------
