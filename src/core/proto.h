@@ -1239,14 +1239,16 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #define LEDGER_ROWS_STARS(X)
 #endif
 #if defined(GALSF_FB_MECHANICAL)
-#define LEDGER_ROWS_FB(X) X(LEDGER_M_FB_TO_GAS, "M_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_FB_TO_GAS, "MZ_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0)
+#define LEDGER_ROWS_FB(X) X(LEDGER_M_FB_TO_GAS, "M_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_FB_TO_GAS, "MZ_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_E_FB_THERMAL_NOW, "E_fb_thermal_now_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_FB_THERMAL_DEFERRED, "E_fb_thermal_deferred_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_FB_KINETIC, "E_fb_kinetic_erg", UNIT_ENERGY_IN_CGS, 0)
 #else
 #define LEDGER_ROWS_FB(X)
 #endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 #define LEDGER_ROWS_SINGLE_STARS(X) X(LEDGER_M_EJECTA, "M_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) \
     X(LEDGER_MZ_EJECTA, "MZ_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_M_REMNANT_RESET, "M_remnant_reset_Msun", UNIT_MASS_IN_SOLAR, 0) \
-    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0)
+    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_E_EJECTA, "E_single_star_ejecta_erg", UNIT_ENERGY_IN_CGS, 0)
 #else
 #define LEDGER_ROWS_SINGLE_STARS(X)
 #endif

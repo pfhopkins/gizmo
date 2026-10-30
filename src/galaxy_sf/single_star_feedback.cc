@@ -294,7 +294,7 @@ void single_star_feedback_finalize(const int *list, int n)
         double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
         {double dm = ssfb_mass_before[a] - P[i].Mass; /* taken from the star by the loop [code] */
-         ledger_add(LEDGER_M_EJECTA, dm); ledger_add(LEDGER_MZ_EJECTA, (ev.Mej > 0) ? dm * z / ev.Mej : 0); ledger_add(LEDGER_MZ_STARS_LOST, dm * P[i].Metallicity[0]);
+         ledger_add(LEDGER_M_EJECTA, dm); ledger_add(LEDGER_E_EJECTA, (ev.E > 0) ? dm * (ev.E / UNIT_ENERGY_IN_CGS) / (ev.Mej / UNIT_MASS_IN_SOLAR) : 0.5 * dm * pow(ev.v_kms / UNIT_VEL_IN_KMS, 2)); /* 1/2 dm v_ej^2, v_ej as the loop's */ ledger_add(LEDGER_MZ_EJECTA, (ev.Mej > 0) ? dm * z / ev.Mej : 0); ledger_add(LEDGER_MZ_STARS_LOST, dm * P[i].Metallicity[0]);
          if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);}}
 #endif
         double residual = (kind == SSE_WIND) ? removed - ev.Mej : P[i].Mass * UNIT_MASS_IN_SOLAR - ev.M_rem;
