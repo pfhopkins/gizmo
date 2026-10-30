@@ -319,6 +319,17 @@ void init(void)
             Vec3<double> nx,ny,nz; int kw; get_random_orthonormal_basis(i, INITIAL_WIND_BASIS_RNG_SALT, 0, nx,ny,nz); for(kw=0;kw<3;kw++) {P[i].Wind_direction[kw] = nx[kw]; P[i].Wind_direction[kw+3] = ny[kw];}
 #endif
 #endif
+#ifdef SINK_WIND_SPAWN
+            /* spawn reservoirs of a sink read from an IC rather than formed in-run would otherwise hold whatever
+               was in the slot: both are skipped by read_ic on a fresh start and read back on a snapshot restart */
+            if(RestartFlag == 0)
+            {
+                P[i].unspawned_wind_mass = 0;
+#ifdef SINGLE_STAR_FB_JETS
+                P[i].unspawned_jet_mass = 0;
+#endif
+            }
+#endif
 #if defined(GALSF_FB_FIRE_RT_LOCALRP)
             P[i].NewStar_Momentum_For_JetFeedback = 0;
 #endif
