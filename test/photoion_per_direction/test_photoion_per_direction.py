@@ -26,7 +26,7 @@ def built():
     return tables
 
 
-def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None):
+def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None, exe="GIZMO", extra="", n_metals=1):
     """the run directory and the lattice (cell size, n_H)"""
     import sys
     sys.path.insert(0, str(TEST_DIR))
@@ -35,14 +35,14 @@ def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None
     if d.exists():
         shutil.rmtree(d)  # this run's own directory: no stale logs
     (d / "output").mkdir(parents=True)
-    L, dx, n_H = make_photoion_per_direction_ics(str(d / "output" / "snapshot_000.hdf5"), stars, seed=seed)
+    L, dx, n_H = make_photoion_per_direction_ics(str(d / "output" / "snapshot_000.hdf5"), stars, seed=seed, n_metals=n_metals)
     params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
     params = params.replace("BoxSize                            45.0", f"BoxSize                            {L}")
     for k, v in (overrides or {}).items():
         params = "\n".join(f"{k:34s} {v}" if l.split() and l.split()[0] == k else l for l in params.splitlines()) + "\n"
-    (d / f"{TEST_NAME}.params").write_text(params)
+    (d / f"{TEST_NAME}.params").write_text(params + extra)
     with open(d / f"test_{TEST_NAME}.out", "w") as out:
-        subprocess.run(mpi_launch_command(ranks, threads) + [str(TEST_DIR / "GIZMO"), f"{TEST_NAME}.params", "2", "0"],
+        subprocess.run(mpi_launch_command(ranks, threads) + [str(TEST_DIR / exe), f"{TEST_NAME}.params", "2", "0"],
                        cwd=d, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": str(threads)}, check=True)
     return d, dx, n_H
 
@@ -141,3 +141,52 @@ def test_bright_and_faint_source(built):
     two = first_row(run("asym_pair", built, stars=stars)[0])
     assert two[1] == 2 and 0.98 < two[6] < 1.02, two[6]
     assert abs(two[3] / one[3] - two[2] / one[2]) < 0.02, (two[3] / one[3], two[2] / one[2])
+
+
+SGCHEM = ("COOLING", "COOL_METAL_LINES_BY_SPECIES", "SGCHEM", "CHEMISTRYNETWORK=5", "OUTPUT_MASS_METAL_ENERGY_LEDGER")
+
+
+@pytest.fixture(scope="module")
+def built_sgchem(built):
+    """the same build with SGChem (network 5) as the cooling; its parameters"""
+    import sys
+    sys.path.insert(0, str(TEST_DIR.parent / "sgchem_box"))
+    from test_sgchem_box import chemistry_tables_dir
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=SGCHEM)
+        os.replace(TEST_DIR / "GIZMO", TEST_DIR / "GIZMO_sgchem")
+        build_gizmo_for_test(TEST_NAME)
+    return built, "".join(f"{k:34s} {v}\n" for k, v in [("SGChemTablesPath", chemistry_tables_dir()), ("SGChemCosmicRayIonRate", 2.0e-16),
+            ("SGChemDustToGasRatio", 1.0), ("SGChemDeuteriumAbundance", 2.6e-5), ("SGChemG0", 0), ("SGChemG0_LW", 0), ("SGChemBackgroundG0", 0)])
+
+
+def gas(snap):
+    import h5py
+    with h5py.File(snap, "r") as F:
+        g = F["PartType0"]
+        c = F["PartType4"]["Coordinates"][0]
+        x = g["SGChemTracAbund"][()][:, 1] if "SGChemTracAbund" in g else np.zeros(len(g["Masses"]))
+        return dict(r=np.linalg.norm(g["Coordinates"][()] - c, axis=1), x=x, u=g["InternalEnergy"][()], m=g["Masses"][()],
+                    id=g["ParticleIDs"][()])
+
+
+def test_sgchem_reads_the_ionised_cells(built_sgchem):
+    """with SGChem as the cooling, cells inside the fronts are ionised (H+ 0.9998) at 1e4 K or above, cells outside are
+    untouched by the photons; the heating to 1e4 K is booked in the ledger"""
+    tables, extra = built_sgchem
+    d, dx, n_H = run("sgchem", tables, exe="GIZMO_sgchem", extra=extra, n_metals=11)
+    rows = log(d)
+    x_sgchem = 0.7065  # HYDROGEN_MASSFRAC of SGChem builds
+    R_S = stromgren_pc(rows[0, 2] * x_sgchem, n_H * x_sgchem / X_H)
+    a, b = gas(sorted((d / "output").glob("snapshot_*.hdf5"))[0]), gas(sorted((d / "output").glob("snapshot_*.hdf5"))[-1])
+    o = np.argsort(a["id"]); a = {k: v[o] for k, v in a.items()}; o = np.argsort(b["id"]); b = {k: v[o] for k, v in b.items()}
+    inner, outer = b["r"] < R_S - dx, b["r"] > R_S + 2 * dx
+    u_hii = 1.5 * 1.380649e-16 * 1e4 / (0.6 * 1.6726e-24) / 1e10  # 1e4 K ionised gas [km^2/s^2], roughly
+    assert np.all(b["x"][inner] > 0.999) and np.all(b["u"][inner] > 0.9 * u_hii)
+    assert np.all(b["x"][outer] < 0.01) and np.all(b["u"][outer] < 0.05 * u_hii)
+    ion = b["x"] > 0.99
+    led = np.atleast_2d(np.loadtxt(d / "output" / "ledger.txt"))
+    E_pi = led[-1, 3]  # erg
+    dE = np.sum(b["m"][ion] * (b["u"][ion] - a["u"][ion])) * 1.989e33 * 1e10
+    assert E_pi > 0 and abs(E_pi / dE - 1) < 0.05, (E_pi, dE)
+    assert led[-1, 1] < 0.01 * E_pi, (led[-1, 1], E_pi)  # chemistry heating: the network only, not the photoionisation
