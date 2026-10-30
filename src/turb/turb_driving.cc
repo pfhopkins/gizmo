@@ -341,22 +341,31 @@ void set_turb_ampl(void)
  * Evaluates the Fourier-mode driving field at particle position.
  * Mode arrays (mode/aka/akb/ampl) are passed as arguments since the
  * host-side global pointers (StMode etc.) are not device-accessible. */
+/* The driving field at one position, before the mass test (shared by both device routes). */
+KOKKOS_INLINE_FUNCTION
+void turb_accel_mode_sum(double x, double y, double z, const double *mode, const double *aka, const double *akb,
+                         const double *ampl, int nmodes, double fac_sol, double *fx_out, double *fy_out, double *fz_out)
+{
+    double fx = 0, fy = 0, fz = 0;
+    for(int m = 0; m < nmodes; m++)
+    {
+        double kdotx = mode[3*m+0]*x + mode[3*m+1]*y + mode[3*m+2]*z;
+        double a = ampl[m], realt = cos(kdotx), imagt = sin(kdotx);
+        fx += a*(aka[3*m+0]*realt - akb[3*m+0]*imagt);
+        fy += a*(aka[3*m+1]*realt - akb[3*m+1]*imagt);
+        fz += a*(aka[3*m+2]*realt - akb[3*m+2]*imagt);
+    }
+    *fx_out = fx * fac_sol; *fy_out = fy * fac_sol; *fz_out = fz * fac_sol;
+}
+
 KOKKOS_FUNCTION
 void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell,
                                   const double *mode, const double *aka, const double *akb,
                                   const double *ampl, int nmodes, double fac_sol)
 {
     if(pp[i].Type != 0) return;
-    double fx = 0, fy = 0, fz = 0;
-    for(int m = 0; m < nmodes; m++)
-    {
-        double kdotx = mode[3*m+0]*pp[i].Pos[0] + mode[3*m+1]*pp[i].Pos[1] + mode[3*m+2]*pp[i].Pos[2];
-        double a = ampl[m], realt = cos(kdotx), imagt = sin(kdotx);
-        fx += a*(aka[3*m+0]*realt - akb[3*m+0]*imagt);
-        fy += a*(aka[3*m+1]*realt - akb[3*m+1]*imagt);
-        fz += a*(aka[3*m+2]*realt - akb[3*m+2]*imagt);
-    }
-    fx *= fac_sol; fy *= fac_sol; fz *= fac_sol;
+    double fx, fy, fz;
+    turb_accel_mode_sum(pp[i].Pos[0], pp[i].Pos[1], pp[i].Pos[2], mode, aka, akb, ampl, nmodes, fac_sol, &fx, &fy, &fz);
 
     if(pp[i].Mass > 0.)
     {
@@ -421,6 +430,10 @@ void add_turb_accel()
            drift does: the kernel writes only CellP[i].TurbAccel, so this matches the gather/scatter route
            without its two serial whole-record copies. */
         const bool in_place = Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, GIZMO_KOKKOS_SHARED_SPACE>::accessible;
+        /* With the particles moved in bulk to the host (GPU_PCIE_OPTIMIZATIONS, non-coherent GPU), driving them in
+           place would move every page of P and CellP to the device and back for one field per cell. Ship the
+           positions instead and bring back the accelerations: 48 bytes per cell. */
+        const bool compact = in_place && gizmo_particles_prefetch_side() == 2;
         /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
         const size_t mode_bytes = (size_t) StNModes * 3 * sizeof(double);
         const size_t ampl_bytes = (size_t) StNModes * sizeof(double);
@@ -462,7 +475,61 @@ void add_turb_accel()
 
         const double *km = gpu_mode, *ka = gpu_aka, *kb = gpu_akb, *kamp = gpu_ampl;
         int nm = StNModes; double fs = fac_sol;
-        if(in_place)
+        if(compact)
+        {
+            static double *h_buf = NULL, *d_buf = NULL;   /* [3n positions | 3n accelerations], grown as needed */
+            static size_t cap = 0;
+            const size_t need = (size_t) 6 * N_active;
+            if(need > cap) {
+                if(h_buf) {gizmo_gpu_free_pinned_host(h_buf);}
+                if(d_buf) {gizmo_gpu_free_device(d_buf);}
+                cap = need + need / 4;
+                h_buf = (double *) gizmo_gpu_alloc_pinned_host(cap * sizeof(double), "turb_accel_compact_h");
+                d_buf = (double *) gizmo_gpu_alloc_device(cap * sizeof(double), "turb_accel_compact_d");
+                if(!h_buf || !d_buf) {cap = 0;}
+            }
+            if(cap == 0) {
+                gizmo_request_controlled_stop(7716, "turbulent driving: could not allocate the compact staging buffers",
+                                              __FILE__, __LINE__, __FUNCTION__);
+            } else {
+                const int n = N_active;
+                const int *ti = turb_indices;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+                for(int j = 0; j < n; j++) {const int i = ti[j]; for(int k = 0; k < 3; k++) {h_buf[3*j + k] = P[i].Pos[k];}}
+                using HV = Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+                using DV = Kokkos::View<double*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
+                Kokkos::deep_copy(DV(d_buf, (size_t) 3 * n), HV(h_buf, (size_t) 3 * n));
+                double *dpos = d_buf, *dacc = d_buf + (size_t) 3 * n;
+                gizmo_gpu_kernel_launch("turb_accel_compact", n, KOKKOS_LAMBDA(int j) {
+                    turb_accel_mode_sum(dpos[3*j], dpos[3*j+1], dpos[3*j+2], km, ka, kb, kamp, nm, fs, &dacc[3*j], &dacc[3*j+1], &dacc[3*j+2]);
+                });
+                Kokkos::deep_copy(HV(h_buf + (size_t) 3 * n, (size_t) 3 * n), DV(dacc, (size_t) 3 * n));
+                const double *hacc = h_buf + (size_t) 3 * n;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+                for(int j = 0; j < n; j++) {
+                    const int i = ti[j];
+                    if(P[i].Mass > 0.) {
+                        double acc[3];
+                        acc[0] = hacc[3*j]; acc[1] = acc[2] = 0;
+#if (NUMDIMS > 1)
+                        acc[1] = hacc[3*j+1];
+#endif
+#if (NUMDIMS > 2)
+                        acc[2] = hacc[3*j+2];
+#endif
+                        CellP[i].TurbAccel = {acc[0], acc[1], acc[2]};
+                    } else {
+                        CellP[i].TurbAccel = {};
+                    }
+                }
+            }
+            if(idx_dev) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(idx_dev);}
+        }
+        else if(in_place)
         {
             memcpy(idx_dev, turb_indices, (size_t) N_active * sizeof(int));
             struct particle_data *kp = P;
