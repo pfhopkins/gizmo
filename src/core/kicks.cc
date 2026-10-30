@@ -46,7 +46,7 @@ void do_first_halfstep_kick(void)
     }
 #endif
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk()) private(ti_step, tstart, tend)
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     /* as currently written with some revisions to MFV methods, should only update on active timesteps */
@@ -126,7 +126,7 @@ void do_second_halfstep_kick(void)
     }
 #endif
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(ti_step, tstart, tend)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk()) private(ti_step, tstart, tend)
 #endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     for(i = 0; i < NumPart; i++)

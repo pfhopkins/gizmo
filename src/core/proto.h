@@ -473,6 +473,19 @@ void report_memory_ledger(const char *when);
 void report_memory_ledger_on_growth(const char *when);
 int gizmo_memory_preflight(void);
 void gizmo_nlr_report_dispatch_thresholds(void);   /* rank 0 prints the resolved neighbour-loop Mode B/D thresholds */
+/* GPU_PCIE_OPTIMIZATIONS (Template_Config.sh): host-loop threading and placement changes for a GPU whose
+ * managed memory is not host-coherent. These two helpers are what the OpenMP clauses read, so that without
+ * the option every changed loop keeps its original schedule (dynamic with chunk 1 is OpenMP's default
+ * dynamic schedule) and runs on one thread where it did before. */
+static inline int gizmo_pcie_opt(void)
+{
+#ifdef GPU_PCIE_OPTIMIZATIONS
+    return 1;
+#else
+    return 0;
+#endif
+}
+static inline int gizmo_omp_particle_chunk(void) {return gizmo_pcie_opt() ? 256 : 1;}   /* schedule(dynamic, ...) chunk of per-particle loops */
 /* The work a device takes over from the host is chosen by a per-MPI-task count: below it the work stays on the host,
  * at or above it the device takes it (0: the device whenever there is any work).  gizmo_gpu_offload_min_count resolves each from the
  * parameter file (core/begrun.cc), so every reader of a count and the startup report agree on its value. */

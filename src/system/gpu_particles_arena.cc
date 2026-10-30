@@ -62,6 +62,92 @@ extern "C" void gpu_particles_arena_acquire(int min_capacity,
 
 extern "C" void gpu_particles_arena_invalidate(void) {}
 
+/* ---- bulk prefetch of the live particle storage (contract in gpu_particles_arena.h) ---- */
+static int    prefetch_enabled_ = -1;   /* -1: not decided yet */
+static int    prefetch_side_    = 0;    /* where the last bulk prefetch went: 1 device, 2 host */
+static double prefetch_seconds_ = 0, prefetch_bytes_dev_ = 0, prefetch_bytes_host_ = 0;
+static long long prefetch_calls_ = 0;
+#if defined(KOKKOS_ENABLE_CUDA)
+static int cuda_managed_memory_is_host_coherent(void);
+#endif
+
+static int particles_prefetch_enabled(void)
+{
+    if(prefetch_enabled_ < 0) {
+        prefetch_enabled_ = 0;
+#if defined(KOKKOS_ENABLE_CUDA) && defined(GPU_PCIE_OPTIMIZATIONS)
+        if(std::is_same<GIZMO_KOKKOS_SHARED_SPACE, Kokkos::CudaUVMSpace>::value && !cuda_managed_memory_is_host_coherent()) {prefetch_enabled_ = 1;}
+        const char *env = getenv("GIZMO_UVM_PREFETCH");
+        if(env && env[0]) {prefetch_enabled_ = (atoi(env) != 0) && std::is_same<GIZMO_KOKKOS_SHARED_SPACE, Kokkos::CudaUVMSpace>::value;}
+#endif
+#if defined(GPU_PCIE_OPTIMIZATIONS)
+        if(ThisTask == 0) {printf("Particle storage: bulk prefetch between host and device phases is %s.\n", prefetch_enabled_ ? "on" : "off"); fflush(stdout);}
+#endif
+    }
+    return prefetch_enabled_;
+}
+
+static void particles_prefetch(int to_device, const char *site, int with_cells = 1)
+{
+    (void) site;
+    if(!particles_prefetch_enabled()) {return;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    const size_t bytes_p = (P && NumPart > 0) ? (size_t) NumPart * sizeof(struct particle_data) : 0;
+    const size_t bytes_c = (with_cells && CellP && N_gas > 0) ? (size_t) N_gas * sizeof(struct gas_cell_data) : 0;
+    if(bytes_p + bytes_c == 0) {return;}
+    const double t0 = my_second();
+    int dev = 0;
+    if(cudaGetDevice(&dev) != cudaSuccess) {return;}
+    const int dst = to_device ? dev : cudaCpuDeviceId;
+    /* Ordered after all device work already queued (the device must be done with the pages
+       before they go to the host), and complete before return (the host phase that follows
+       touches them at once; a kernel launched after this finds them resident). */
+    Kokkos::fence("gizmo_particles_prefetch");
+    if(bytes_p) {cudaMemPrefetchAsync(P, bytes_p, dst, 0);}
+    if(bytes_c) {cudaMemPrefetchAsync(CellP, bytes_c, dst, 0);}
+    cudaError_t rc = cudaStreamSynchronize(0);
+    if(rc != cudaSuccess) {(void) cudaGetLastError(); prefetch_enabled_ = 0; if(ThisTask == 0) {printf("Particle storage: bulk prefetch failed at %s (%s); switched off.\n", site, cudaGetErrorString(rc)); fflush(stdout);}}
+    prefetch_side_ = prefetch_enabled_ ? (to_device ? 1 : 2) : 0;
+    prefetch_seconds_ += timediff(t0, my_second());
+    if(to_device) {prefetch_bytes_dev_ += (double) (bytes_p + bytes_c);} else {prefetch_bytes_host_ += (double) (bytes_p + bytes_c);}
+    prefetch_calls_++;
+#else
+    (void) to_device;
+#endif
+}
+
+extern "C" void gizmo_managed_prefetch_to_host(const void *ptr, size_t bytes, const char *site)
+{
+    if(!ptr || bytes == 0 || !particles_prefetch_enabled()) {return;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaPointerAttributes attr;
+    if(cudaPointerGetAttributes(&attr, ptr) != cudaSuccess) {(void) cudaGetLastError(); return;}
+    if(attr.type != cudaMemoryTypeManaged) {return;}   /* ordinary host or device memory: nothing to move */
+    const double t0 = my_second();
+    Kokkos::fence("gizmo_managed_prefetch_to_host");
+    cudaMemPrefetchAsync(ptr, bytes, cudaCpuDeviceId, 0);
+    cudaError_t rc = cudaStreamSynchronize(0);
+    if(rc != cudaSuccess) {(void) cudaGetLastError(); if(ThisTask == 0) {printf("Particle storage: buffer prefetch failed at %s (%s).\n", site, cudaGetErrorString(rc)); fflush(stdout);}}
+    prefetch_seconds_ += timediff(t0, my_second());
+    prefetch_bytes_host_ += (double) bytes;
+    prefetch_calls_++;
+#else
+    (void) site;
+#endif
+}
+
+extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
+extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
+extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
+extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}
+extern "C" void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls)
+{
+    if(seconds) {*seconds = prefetch_seconds_;}
+    if(bytes_to_device) {*bytes_to_device = prefetch_bytes_dev_;}
+    if(bytes_to_host) {*bytes_to_host = prefetch_bytes_host_;}
+    if(calls) {*calls = prefetch_calls_;}
+}
+
 extern "C" void gpu_particles_arena_mark_clean_after_scatter(const char *site)
 {
     (void)site;

@@ -52,7 +52,15 @@
  * The fences are required, not decorative: the device work ahead of these passes has to land before
  * the host touches the same managed pages, and the host's writes have to be visible to the device
  * passes that follow. */
+#if defined(KOKKOS_ENABLE_CUDA) && defined(GPU_PCIE_OPTIMIZATIONS)
+/* Measured on a PCIe A100 (x86 host, managed memory not host-coherent): the host execution space of the
+ * CUDA build is Kokkos::Serial, so these passes ran on one host thread and pulled the pages of the
+ * managed arrays they write over PCIe between two device phases (~0.2 s per step at 2.1M particles).
+ * On the device they cost milliseconds and the pages stay where the next passes read them. */
+using GxTreeHostRange = Kokkos::RangePolicy<>;
+#else
 using GxTreeHostRange = Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>;
+#endif
 #include "gpu_topology_finalize.h"
 #include "forcetree.h"
 

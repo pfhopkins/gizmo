@@ -752,7 +752,7 @@ void force_update_hmax(void)
       }
   }
   /* Phase 2: update hmax/divVmax/per-type bands with atomics (parallel). */
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
   {
     int i = ActiveParticleList[idx];

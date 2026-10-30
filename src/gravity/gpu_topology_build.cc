@@ -172,6 +172,7 @@ static int topo_acquire_(int npart, const struct unbind_data *mp, const char *si
     ctx->keys = gpu_morton_keys_acquire(npart);
     if(!ctx->keys) {return 1;}
 
+    if((long long) npart * 8 >= (long long) NumPart) {gizmo_particles_prefetch_P_to_device(site);}   /* a build over most of the particles: move them in bulk (it reads no cell data) */
     gpu_particles_arena_set_site(site);
     gpu_particles_arena_acquire(NumPart, P, CellP);
     ctx->P_dev = gpu_particles_arena_P();

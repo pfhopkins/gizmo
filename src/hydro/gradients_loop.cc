@@ -788,7 +788,7 @@ void hydro_gradient_calc(void)
     if(!nothing_to_do) {
     const int n_active_total = (int)ActiveParticleList.size();
     const int *active_list_data = ActiveParticleList.data();
-#pragma omp parallel for schedule(dynamic)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
     for(int aa = 0; aa < n_active_total; aa++) {
         int i = active_list_data[aa];
         if(P[i].Type != 0) continue;
