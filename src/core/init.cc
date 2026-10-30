@@ -116,6 +116,7 @@ void init(void)
     set_softenings();
 
     All.NumCurrentTiStep = 0;	/* setup some counters */
+    All.DomainFacWork = 0.5; All.DomainFacLoad = 0.5; All.DomainFacWorkGas = 0.0;	/* seed the adaptive load-balance weights (a restartfile resume restores them with All) */
 #ifdef RANDOMIZE_GRAVTREE
     All.RandomTreeDraws = 0;
 #endif

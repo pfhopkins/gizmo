@@ -298,6 +298,10 @@ void begrun(void)
 				   Note:  All.PartAllocFactor is treated in restart() separately.
 				 */
 
+      /* P[].wakeup is serialized; the flag that gates process_wake_ups on it is not. Force one pass so the
+         requests that came back are serviced, instead of resuming with the gate shut over them. */
+      NeedToWakeupParticles_local = 1;
+
       All.MinSizeTimestep = all.MinSizeTimestep;
       All.MaxSizeTimestep = all.MaxSizeTimestep;
       All.CommChunkSize = all.CommChunkSize;
@@ -444,8 +448,11 @@ void begrun(void)
 #if defined(MAGNETIC) && defined(DIVBCLEANING_DEDNER)
         All.DivBcleanParabolicSigma = all.DivBcleanParabolicSigma;
         All.DivBcleanHyperbolicSigma = all.DivBcleanHyperbolicSigma;
-        All.FastestWaveSpeed = 0.0;
-        All.FastestWaveDecay = 0.0;
+        /* FastestWaveSpeed/FastestWaveDecay are derived state, not parameters, and restart() has just
+           restored them. They are recomputed only on a global timestep or when zero (find_timesteps), so
+           zeroing them here forced an off-schedule recompute at the resume step, which off a global sync
+           gives a different value than the resumed run was carrying and perturbs the Dedner damping rate
+           of every cell. */
 #endif
 #ifdef SINK_PARTICLES
         All.SinkEddingtonFactor = all.SinkEddingtonFactor;
