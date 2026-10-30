@@ -102,6 +102,9 @@ static void free_arrays_(void)
     if(soa_.suns_backup)  {gizmo_gpu_tree_soa_release(soa_.suns_backup);  soa_.suns_backup  = NULL;}
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     if(soa_.gasmass)        {gizmo_gpu_tree_soa_release(soa_.gasmass);        soa_.gasmass        = NULL;}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    if(soa_.treecol_species_mass) {gizmo_gpu_tree_soa_release(soa_.treecol_species_mass); soa_.treecol_species_mass = NULL;}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     if(soa_.stellar_lum)    {gizmo_gpu_tree_soa_release(soa_.stellar_lum);    soa_.stellar_lum    = NULL;}
@@ -235,6 +238,10 @@ static int alloc_arrays_(int n)
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     soa_.gasmass = (MyGravFloat *) tree_soa_alloc(n * sizeof(MyGravFloat));
     if(!soa_.gasmass) {printf("gpu_gravity_tree: gasmass alloc failed (%d)\n", n); return 0;}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    soa_.treecol_species_mass = (MyGravFloat *) tree_soa_alloc((long) n * TREECOL_PIXELS_NSPECIES * sizeof(MyGravFloat));
+    if(!soa_.treecol_species_mass) {printf("gpu_gravity_tree: treecol_species_mass alloc failed (%d)\n", n); return 0;}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     soa_.stellar_lum = (MyGravFloat *) tree_soa_alloc(n * N_RT_FREQ_BINS * sizeof(MyGravFloat));
@@ -442,6 +449,9 @@ extern "C" int gpu_gravity_tree_grow_foreign(int min_nodes)
      * scatter overwrites for every slot it installs. */
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     GIZMO_SOA_COPY(gasmass, n_old);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    GIZMO_SOA_COPY(treecol_species_mass, (long) n_old * TREECOL_PIXELS_NSPECIES);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     GIZMO_SOA_COPY(stellar_lum, (long) n_old * N_RT_FREQ_BINS);

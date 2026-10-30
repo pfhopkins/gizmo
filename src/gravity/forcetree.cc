@@ -1051,6 +1051,9 @@ struct DomainNODE
         MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
         MyFloat gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES];
+#endif
 #endif
         MyFloat hmax;
         MyFloat hmax_per_type[6];   /* cross-rank per-type h band (mirror of Extnodes.hmax_per_type) */
@@ -1142,6 +1145,9 @@ void force_exchange_pseudodata_issue(void)
             DomainMoment[i].mass = Nodes[no].u.d.mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             DomainMoment[i].gasmass = Nodes[no].gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+            for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {DomainMoment[i].treecol_species_mass[ks] = Nodes[no].treecol_species_mass[ks];}
+#endif
 #endif
             DomainMoment[i].hmax = Extnodes[no].hmax;
             for(int t = 0; t < 6; t++) DomainMoment[i].hmax_per_type[t] = Extnodes[no].hmax_per_type[t];
@@ -1285,6 +1291,9 @@ int force_exchange_pseudodata_complete(void)
                     Nodes[no].u.d.mass = DomainMoment[i].mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     Nodes[no].gasmass = DomainMoment[i].gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {Nodes[no].treecol_species_mass[ks] = DomainMoment[i].treecol_species_mass[ks];}
+#endif
 #endif
                     Extnodes[no].hmax = DomainMoment[i].hmax;
                     for(int t = 0; t < 6; t++) Extnodes[no].hmax_per_type[t] = DomainMoment[i].hmax_per_type[t];
@@ -1376,6 +1385,9 @@ void force_treeupdate_pseudos(int no)
     Vec3<MyFloat> s, vs; MyFloat mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyFloat gasmass = 0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES] = {0};
+#endif
 #endif
 
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1443,6 +1455,9 @@ void force_treeupdate_pseudos(int no)
             mass += (Nodes[p].u.d.mass);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
             gasmass += Nodes[p].gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+            for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {treecol_species_mass[ks] += Nodes[p].treecol_species_mass[ks];}
+#endif
 #endif
             s += Nodes[p].u.d.mass * Nodes[p].u.d.s;
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
@@ -1570,6 +1585,9 @@ void force_treeupdate_pseudos(int no)
     Nodes[no].u.d.mass = mass;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Nodes[no].gasmass = gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {Nodes[no].treecol_species_mass[ks] = treecol_species_mass[ks];}
+#endif
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     Nodes[no].cr_injection = cr_injection;

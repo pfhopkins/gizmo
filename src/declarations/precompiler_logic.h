@@ -1054,6 +1054,24 @@
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS /* per-direction columns and band fluxes in the gravity walk (gravity/gravtree_treecol_pixels.h) */
+#if GALSF_RESOLVEDISM_TREECOL_PIXELS == 12
+#define TREECOL_PIXELS_NSIDE 1
+#elif GALSF_RESOLVEDISM_TREECOL_PIXELS == 48
+#define TREECOL_PIXELS_NSIDE 2
+#elif GALSF_RESOLVEDISM_TREECOL_PIXELS == 192
+#define TREECOL_PIXELS_NSIDE 4
+#else
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS must be 12, 48 or 192 (HEALPix NSIDE 1, 2, 4)"
+#endif
+#ifndef SGCHEM
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS feeds the SGChem chemistry: set SGCHEM"
+#endif
+#define TREECOL_PIXELS_NSPECIES 3 /* dust-weighted gas, H2, CO */
+#ifndef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
+#define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE /* the species masses ride the gas-mass node paths */
+#endif
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES /* single stars shine in disjoint table bands through the gravity-tree source arrays */
 #if !defined(SGCHEM) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
 #error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES needs SGCHEM, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"

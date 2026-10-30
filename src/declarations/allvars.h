@@ -870,6 +870,9 @@ extern ALIGN(32) struct NODE
     MyFloat maxsoft;        /*!< hold the maximum gravitational softening of particle in the node */
 #if defined(GRAVTREE_CALCULATE_GAS_MASS_IN_NODE)
   MyFloat gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+  MyFloat treecol_species_mass[TREECOL_PIXELS_NSPECIES]; /*!< dust-weighted gas, H2 and CO masses (gravity/gravtree_treecol_pixels.h) */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
   MyFloat stellar_lum[N_RT_FREQ_BINS]; /*!< luminosity in the node*/

@@ -346,6 +346,9 @@ struct mr_scratch_t {
     Kokkos::View<unsigned int*,  MrMemSpace, MrUnmanaged> bitflags;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> treecol_species_mass;  /* [n * TREECOL_PIXELS_NSPECIES] */
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     Kokkos::View<MyGravFloat*,   MrMemSpace, MrUnmanaged> stellar_lum;  /* [n * N_RT_FREQ_BINS] */
@@ -405,6 +408,9 @@ struct mr_rawpool_t {
     unsigned int*      bitflags;
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MyGravFloat*       gasmass;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MyGravFloat*       treecol_species_mass;
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     MyGravFloat*       stellar_lum;
@@ -460,6 +466,9 @@ static void mr_rawpool_free_(void)
     MRFREE(hmax);    MRFREE(vmax);    MRFREE(divVmax); MRFREE(maxsoft); MRFREE(bitflags);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MRFREE(gasmass);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MRFREE(treecol_species_mass);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     MRFREE(stellar_lum);
@@ -514,6 +523,9 @@ static int mr_rawpool_ensure_(int n)
     MRALLOC(hmax, n);    MRALLOC(vmax, n);    MRALLOC(divVmax, n); MRALLOC(maxsoft, n); MRALLOC(bitflags, n);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MRALLOC(gasmass, n);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MRALLOC(treecol_species_mass, (long)n * TREECOL_PIXELS_NSPECIES);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     MRALLOC(stellar_lum, (long)n * N_RT_FREQ_BINS);
@@ -564,6 +576,9 @@ static int mr_scratch_bind_(mr_scratch_t& scr, int n)
     MRBIND(hmax, n);    MRBIND(vmax, n);    MRBIND(divVmax, n); MRBIND(maxsoft, n); MRBIND(bitflags, n);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     MRBIND(gasmass, n);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    MRBIND(treecol_species_mass, (long)n * TREECOL_PIXELS_NSPECIES);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     MRBIND(stellar_lum, (long)n * N_RT_FREQ_BINS);
@@ -622,6 +637,9 @@ static moment_node_ref<MyGravFloat> mr_ref_(const mr_scratch_t& scr, int k)
     r.bitflags = &scr.bitflags(k);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     r.gasmass  = &scr.gasmass(k);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    r.treecol_species_mass = &scr.treecol_species_mass((long)k * TREECOL_PIXELS_NSPECIES);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     r.stellar_lum = &scr.stellar_lum((long)k * N_RT_FREQ_BINS);
@@ -684,6 +702,9 @@ static moment_node_accum<MyGravFloat> mr_child_accum_(const mr_scratch_t& scr, i
     c.maxsoft = scr.maxsoft(curr);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     c.gasmass = scr.gasmass(curr);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {c.treecol_species_mass[ks] = scr.treecol_species_mass((long)curr * TREECOL_PIXELS_NSPECIES + ks);}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) {c.stellar_lum[b] = scr.stellar_lum((long)curr * N_RT_FREQ_BINS + b);}
@@ -882,6 +903,9 @@ extern "C" int gpu_moment_refresh(int active_root_node)
         ps.force_softening   = gpu_force_softening_kernelradius(P_dev, i);
         ps.particle_divvel   = particle_radius_growth_rate(i, P_dev);
         ps.radius_drifts     = particle_radius_drifts_with_divergence_P(i, P_dev);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        treecol_pixels_species_masses(P_dev, CellP_dev, i, ps.treecol_species_mass);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
         ps.sink_mass_reservoir = pa->Sink_Mass_Reservoir;
 #endif
@@ -967,6 +991,9 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     Kokkos::deep_copy(ShU32  (soa->bitflags,n), scr.bitflags);
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     Kokkos::deep_copy(ShSpace(soa->gasmass, n), scr.gasmass);
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    Kokkos::deep_copy(ShSpace(soa->treecol_species_mass, (long)n * TREECOL_PIXELS_NSPECIES), scr.treecol_species_mass);
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     Kokkos::deep_copy(ShSpace(soa->stellar_lum, (long)n * N_RT_FREQ_BINS), scr.stellar_lum);
@@ -1077,6 +1104,9 @@ KOKKOS_INLINE_FUNCTION static void mr_writeback_node_(const struct gpu_gravity_t
     extnodes[k].divVmax  = (MyFloat) soa.divVmax[k];
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     nodes[k].gasmass     = (MyFloat) soa.gasmass[k];
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {nodes[k].treecol_species_mass[ks] = (MyFloat) soa.treecol_species_mass[(long)k * TREECOL_PIXELS_NSPECIES + ks];}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     for(int b = 0; b < N_RT_FREQ_BINS; b++) {

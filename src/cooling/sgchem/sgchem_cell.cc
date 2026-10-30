@@ -8,6 +8,7 @@
 #include "../../core/proto.h"
 #include "chem_interface.h"
 #include "sgchem_network.h"
+#include "sgchem_dust_to_gas.h"
 #if CHEMISTRYNETWORK == 18
 #include "cxx/chem_net18_layout.h"
 #endif
@@ -62,7 +63,7 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
     in.cosmic_ray_ion_rate = All.SGChemCosmicRayIonRate;
     in.id_current = (int) P[i].ID;
-    in.dust_to_gas_ratio = DMIN(All.SGChemDustToGasRatio * P[i].Metallicity[0] / SGCHEM_SOLAR_Z, 10.0); /* DGR from Z, capped at 10 */
+    in.dust_to_gas_ratio = sgchem_dust_to_gas_ratio(P[i].Metallicity[0]);
 #if CHEMISTRYNETWORK == 18
     {double yd = DMIN(DMAX(in.dust_to_gas_ratio, 0), 1); /* RTZ depletion scaled with the DGR */
      in.abundc *= 1 - (1 - n18_depl[2]) * yd; in.abundN *= 1 - (1 - n18_depl[3]) * yd; in.abundo *= 1 - (1 - n18_depl[4]) * yd; in.abundNe *= 1 - (1 - n18_depl[5]) * yd;

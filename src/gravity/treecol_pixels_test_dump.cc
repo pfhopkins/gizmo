@@ -1,13 +1,18 @@
 /* Copyright (c) 2026 Ulrich Steinwandel
    Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
-/* TEST_DUMP_TREECOL_PIXELS_AND_EXIT (test only): after the first gravity computation, write the gravity-tree radiation inputs
-   and results as text to <OutputDir>/treecol_dump_<what>_<rank>.txt and stop. Read by test/treecol_pixels. */
+/* TEST_DUMP_TREECOL_PIXELS_AND_EXIT (test only): after the gravity computation of step TEST_DUMP_TREECOL_PIXELS_AT_STEP (default 0),
+   write the gravity-tree radiation inputs and results as text to <OutputDir>/treecol_dump_<what>_<rank>.txt and stop.
+   Read by test/treecol_pixels. */
 #include <mpi.h>
 #include <stdio.h>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "gravtree_treecol_pixels.h"
 
 #ifdef TEST_DUMP_TREECOL_PIXELS_AND_EXIT
+#ifndef TEST_DUMP_TREECOL_PIXELS_AT_STEP
+#define TEST_DUMP_TREECOL_PIXELS_AT_STEP 0
+#endif
 
 static FILE *treecol_dump_open(const char *what)
 {
@@ -18,6 +23,7 @@ static FILE *treecol_dump_open(const char *what)
 
 void test_dump_treecol_pixels_and_exit(void)
 {
+    if(All.NumCurrentTiStep < TEST_DUMP_TREECOL_PIXELS_AT_STEP) {return;}
 #ifdef RT_USE_GRAVTREE
     FILE *fd = treecol_dump_open("stars"); /* ID, time, band luminosities [erg/s] as the tree sources see them */
     for(int i = 0; i < NumPart; i++)
@@ -31,12 +37,30 @@ void test_dump_treecol_pixels_and_exit(void)
     fclose(fd);
     if(ThisTask == 0)
     {
-        fd = treecol_dump_open("root"); /* the root node's band luminosities [erg/s] */
+        fd = treecol_dump_open("root_lum"); /* the root node's band luminosities [erg/s] */
         for(int k = 0; k < N_RT_FREQ_BINS; k++) {fprintf(fd, "%.17g ", Nodes[All.TreeNodeIndexBase].stellar_lum[k] * UNIT_LUM_IN_CGS);}
         fprintf(fd, "\n"); fclose(fd);
         fd = treecol_dump_open("bins"); /* bin indices: PE LW 6-8 NUV OPT */
         fprintf(fd, "%d %d %d %d %d\n", RT_FREQ_BIN_PHOTOELECTRIC, RT_FREQ_BIN_LYMAN_WERNER, RT_FREQ_BIN_GENERIC_USER_FREQ, RT_FREQ_BIN_NUV, RT_FREQ_BIN_OPTICAL_NIR);
         fclose(fd);
+    }
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    FILE *fc = treecol_dump_open("cells"); /* ID, species masses [code units] */
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Type != 0) {continue;}
+        double m[TREECOL_PIXELS_NSPECIES]; treecol_pixels_species_masses(P, CellP, i, m);
+        fprintf(fc, "%llu", (unsigned long long) P[i].ID);
+        for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {fprintf(fc, " %.17g", m[k]);}
+        fprintf(fc, "\n");
+    }
+    fclose(fc);
+    if(ThisTask == 0)
+    {
+        fc = treecol_dump_open("root_species"); /* the root node's species masses [code units] */
+        for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {fprintf(fc, "%.17g ", Nodes[All.TreeNodeIndexBase].treecol_species_mass[k]);}
+        fprintf(fc, "\n"); fclose(fc);
     }
 #endif
     MPI_Barrier(MPI_COMM_WORLD);
