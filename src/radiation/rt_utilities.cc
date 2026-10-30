@@ -119,6 +119,10 @@ void rt_define_effective_frequencies_in_bands(void)
 #ifdef RT_GENERIC_USER_FREQ
     k=RT_FREQ_BIN_GENERIC_USER_FREQ; rhd_bins_nu_min_ev[k]=0; rhd_bins_nu_max_ev[k]=MAX_REAL_NUMBER;
 #endif
+#ifdef RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+    k=RT_FREQ_BIN_NUV; rhd_bins_nu_max_ev[k]=6.; /* disjoint bands: 6-8 eV is carried by the generic bin */
+    k=RT_FREQ_BIN_GENERIC_USER_FREQ; rhd_bins_nu_min_ev[k]=6.; rhd_bins_nu_max_ev[k]=8.;
+#endif
 #ifdef GALSF_FB_FIRE_RT_LONGRANGE
     k=RT_FREQ_BIN_FIRE_UV; rhd_bins_nu_min_ev[k]=3.444; rhd_bins_nu_max_ev[k]=13.6;
     k=RT_FREQ_BIN_FIRE_OPT; rhd_bins_nu_min_ev[k]=0.365; rhd_bins_nu_max_ev[k]=3.444;

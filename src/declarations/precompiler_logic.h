@@ -1054,6 +1054,26 @@
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES /* single stars shine in disjoint table bands through the gravity-tree source arrays */
+#if !defined(SGCHEM) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES needs SGCHEM, GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#if (defined(RADTRANSFER) || defined(RT_LEBRON) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RT_USE_GRAVTREE)) && !defined(RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND) /* this file is read twice */
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES excludes RADTRANSFER, RT_LEBRON, GALSF_FB_FIRE_RT_LONGRANGE and other gravity-tree radiation (own band meanings)"
+#endif
+#define RT_USE_GRAVTREE
+#define RT_SEPARATELY_TRACK_LUMPOS
+#define RT_PHOTOELECTRIC      /* 8-13.6 eV */
+#define RT_LYMAN_WERNER       /* 11.2-13.6 eV, inside the photoelectric band */
+#define RT_NUV                /* 3.444-6 eV with the split below */
+#define RT_OPTICAL_NIR        /* 0.4133-3.444 eV */
+#define RT_GENERIC_USER_FREQ  /* 6-8 eV with the split below */
+#define RT_NUV_SPLIT_AT_6EV_WITH_6_8EV_IN_GENERIC_USER_BAND
+#ifndef RT_SOURCES
+#define RT_SOURCES 16
+#endif
+#endif
+
 
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
@@ -1838,7 +1858,8 @@
  * This is a COMPILE-TIME capability predicate; the eager-vs-lazy choice at
  * runtime is made by a separate structural (num_active) threshold. */
 #if !defined(GR_TABULATED_COSMOLOGY) && !defined(GR_TABULATED_COSMOLOGY_W) \
- && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H)
+ && !defined(GR_TABULATED_COSMOLOGY_G) && !defined(GR_TABULATED_COSMOLOGY_H) \
+ && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) /* single-star bands: host-only table lookups */
 #define GRAVTREE_SOURCE_LAZY_SUPPORTED
 #endif
 

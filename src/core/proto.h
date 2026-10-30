@@ -1003,6 +1003,12 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
 void single_star_feedback_prepare(const int *list, int n);
 void single_star_feedback_finalize(const int *list, int n);
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp); /* host only */
+#endif
+#ifdef TEST_DUMP_TREECOL_PIXELS_AND_EXIT
+void test_dump_treecol_pixels_and_exit(void);
+#endif
 double mechanical_fb_calculate_eventrates(int i, double dt);
 double Z_for_stellar_evol(int i);
 #ifdef METALS

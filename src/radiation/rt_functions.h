@@ -1468,6 +1468,9 @@ KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum
     if(!((1 << pp[i].Type) & (RT_SOURCES))) {return 0;}; // boolean test of whether i is a source or not - end if not a valid source particle
     if(pp[i].Mass <= 0 || !isfinite(pp[i].Mass)) {return 0;} // reject invalid particles scheduled for deletion (P[].Mass is the SSOT for particle mass; CellP[].Mass is gas-only and is uninitialized for non-gas types, which would silently filter Type 4/5 sources)
     int active_check = 0; // default to inactive //
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    if(pp[i].Type == 4) {return single_star_rt_band_luminosities(i, mode, lum, pp);} /* single stars: table bands only */
+#endif
 
 #if defined(GALSF)
 #if defined(SINGLE_STAR_SINK_DYNAMICS)

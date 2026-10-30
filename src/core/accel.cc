@@ -53,6 +53,9 @@ void compute_grav_accelerations(void)
        so the repeat pass has to rebuild -- otherwise it walks the first pass's tree and seeds nothing. */
     if(All.TypeOfOpeningCriterion == 1 && All.Ti_Current == 0) {TreeReconstructFlag = 1; gravity_tree();}
   }
+#ifdef TEST_DUMP_TREECOL_PIXELS_AND_EXIT
+  if(All.Ti_Current == 0) {test_dump_treecol_pixels_and_exit();}
+#endif
 
   PRINT_STATUS(" ..gravity force computation done");
 }
