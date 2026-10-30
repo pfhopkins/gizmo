@@ -465,6 +465,9 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
             CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
 #endif
+#ifdef RT_DIAG_IR_LEDGER
+            rt_diag_sc(RT_DIAG_SC_DTIE_DISCARD, CellP[i].DtInternalEnergy * P[i].Mass * 0.5 * get_particle_timestep_in_physical(i, P)); /* dropped here, as energy over a half-step */
+#endif
             CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
 #if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
             CellP[i].DtInternalEnergy_FromConduction = 0;

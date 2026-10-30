@@ -264,6 +264,9 @@ void apply_long_range_kick(integertime tstart, integertime tend)
 
 void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurrent, int mode)
 {
+#ifdef RT_DIAG_IR_LEDGER
+    rt_diag_kick_mode = mode;
+#endif
     Vec3<double> dp; double dt_entr, dt_gravkick, dt_hydrokick;
     double mass_old, mass_pred, mass_new;
     mass_old = mass_pred = mass_new = P[i].Mass;    
@@ -313,6 +316,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
         if(P[i].Type==0)
         {
             Vec3<double> grav_acc; double dEnt_Gravity = 0;
+#ifdef RT_DIAG_IR_LEDGER
+            double rt_diag_u0 = CellP[i].InternalEnergy;
+#endif
             grav_acc = P[i].GravAccel * All.cf_a2inv;
 #ifdef PMGRID
             grav_acc += P[i].GravPM * All.cf_a2inv;
@@ -428,6 +434,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
                 demin=DMAX(0.025*CellP[i].InternalEnergy, u_floor); emin=0.025*(erad_tot/rsol_fac + CellP[i].InternalEnergy*P[i].Mass); enew=DMAX(erad_tot/rsol_fac + dEnt*P[i].Mass, emin);
                 dEnt=(enew - erad_tot/rsol_fac) / P[i].Mass; if(dEnt < demin) {dErad=rsol_fac*(dEnt-demin); dEnt=demin;}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergy = dEnt; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma[kfreq] *= 1 + dErad/erad_tot;}
+#ifdef RT_DIAG_IR_LEDGER
+                rt_diag_sc(RT_DIAG_SC_KICK_DERAD, dErad);
+#endif
             } else {
                 CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
             }
@@ -435,6 +444,9 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             CellP[i].InternalEnergy = internal_energy_positivity_catch(CellP[i].InternalEnergy, dEnt, u_floor);
 #endif
             CellP[i].enforce_temperature_floor(); /* if we've fallen below the minimum temperature, force the 'floor' */
+#ifdef RT_DIAG_IR_LEDGER
+            rt_diag_sc(RT_DIAG_SC_KICK_DU, (CellP[i].InternalEnergy - rt_diag_u0) * P[i].Mass);
+#endif
         }
         
         /* now, kick for non-gas/fluid quantities (accounting for momentum conservation if masses are changing) */

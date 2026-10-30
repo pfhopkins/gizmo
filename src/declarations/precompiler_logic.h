@@ -635,14 +635,24 @@
 #if defined(SINGLE_STAR_FB_WINDS) && defined(SINGLE_STAR_STARFORGE_PROTOSTELLAR_EVOLUTION) || defined(COOLING)
 #define GALSF_FB_FIRE_STELLAREVOLUTION 3 // enable multi-loop feedback from such sources [this is specific to the DG-MG implementations here, not for public use right now!]. for now set to =2, which should force the code version to match previous iterations, as compared to the newer implementations.
 #endif
-#if defined(RT_ISRF_BACKGROUND)
-#if CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(RT_ISRF_BACKGROUND)
-#if (RT_ISRF_BACKGROUND <= 0)
-#undef RT_ISRF_BACKGROUND /* use the negative or zero value above as a key to specifically -undefine- this variable, otherwise it will cause problems below by calling 0 to reset quantities it should not */
-#endif
-#endif
-#endif
 #endif // closes SINGLE_STAR_STARFORGE_DEFAULTS settings
+
+/* RT_ISRF_BACKGROUND=0 (or any value <= 0) in Config.sh switches the interstellar background off, including where an
+   umbrella above would turn it on (those only define it if it is not defined yet). Defined without a value it stays on.
+   The value test is written so that an empty definition is not read as 0: CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_
+   cannot tell 0 from empty. This header has no include guard and is reached twice in a translation unit (through
+   global_data_all_struct.h and allvars.h); on the second pass the umbrellas above would define the flag again, so the
+   switch-off is remembered in RT_ISRF_BACKGROUND_DISABLED and re-applied. */
+#if defined(RT_ISRF_BACKGROUND) && !defined(RT_ISRF_BACKGROUND_DISABLED)
+#if !((1 - RT_ISRF_BACKGROUND - 1 == 2) && (RT_ISRF_BACKGROUND + 0 == 0)) /* given a value */
+#if (RT_ISRF_BACKGROUND + 0 <= 0)
+#define RT_ISRF_BACKGROUND_DISABLED
+#endif
+#endif
+#endif
+#ifdef RT_ISRF_BACKGROUND_DISABLED
+#undef RT_ISRF_BACKGROUND
+#endif
 
 /* starforge names this INPUT_READ_TEMPERATURE; we already had the same capability as
    INPUT_READ_EOSTEMP. Alias them rather than renaming either, so a Config.sh written against
@@ -1039,6 +1049,12 @@
 
 #ifdef RT_INFRARED
 #define COOL_LOWTEMP_THIN_ONLY // don't want to double-count trapping of radiation if we're doing it self-consistently
+#endif
+/* RT_DIAG_IR_DOUBLE_COUNT (radiation/rt_ir_ledger.h) tallies into host state: per-rank statics, MPI, files. Its
+   accumulation sites sit in device-callable code (rt_functions.h, cooling.cc, rt_source_injection_loop.h), so they
+   are compiled in the host pass only; a CUDA/HIP device pass leaves them out. */
+#if defined(RT_DIAG_IR_DOUBLE_COUNT) && defined(RT_INFRARED) && !(defined(__CUDA_ARCH__) || __HIP_DEVICE_COMPILE__)
+#define RT_DIAG_IR_LEDGER
 #endif
 
 
