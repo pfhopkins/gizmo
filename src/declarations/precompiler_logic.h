@@ -1702,6 +1702,16 @@
    Every module that adds fields must add its count here so that all loops, I/O, diffusion,
    merge/split, and MPI exchange automatically handle the correct number of species. */
 /* passive species appended at the end of Metallicity[] (carried, diffused, merged/split and written; not used by cooling) */
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS /* the 16 table elements outside the FIRE slots go into the first 16 extra passive slots */
+#if !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) || !defined(COOL_METAL_LINES_BY_SPECIES)
+#error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs GALSF_SINGLE_STARS_EVOLUTION_TABLES and COOL_METAL_LINES_BY_SPECIES"
+#endif
+#ifndef METALS_EXTRA_PASSIVE_SPECIES
+#define METALS_EXTRA_PASSIVE_SPECIES 16
+#elif (METALS_EXTRA_PASSIVE_SPECIES < 16)
+#error "GALSF_SINGLE_STARS_27_ELEMENT_YIELDS needs METALS_EXTRA_PASSIVE_SPECIES >= 16"
+#endif
+#endif
 #ifndef METALS_EXTRA_PASSIVE_SPECIES
 #define METALS_EXTRA_PASSIVE_SPECIES 0
 #endif

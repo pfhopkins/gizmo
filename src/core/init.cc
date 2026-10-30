@@ -452,6 +452,9 @@ void init(void)
             /* need to allow for a primordial He abundance */
             if(NUM_LIVE_SPECIES_FOR_COOLTABLES>=10) P[i].Metallicity[1]=(1.-HYDROGEN_MASSFRAC)+(All.SolarAbundances[1]-(1.-HYDROGEN_MASSFRAC))*P[i].Metallicity[0]/All.SolarAbundances[0];
             }
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+            for(j=0;j<STELLAR_EXTRA_NELEM;j++) {P[i].Metallicity[METALS_EXTRA_PASSIVE_SPECIES_OFFSET+j]=stellar_solar_massfrac[stellar_extra_slot_elem[j]]*(P[i].Metallicity[0]/All.SolarAbundances[0]);} /* the other 16 elements, solar */
+#endif
         } // if(RestartFlag == 0)
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)

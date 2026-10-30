@@ -18,6 +18,10 @@ static const double stellar_solar_massfrac[STELLAR_SOLAR_NELEM] = {
 /* element (H = 0 .. Zn = 26) of each FIRE metal slot 1..10; slot 0 is total Z */
 static const int stellar_fire_slot_elem[11] = {-1, 1, 2, 3, 4, 6, 8, 10, 12, 16, 22};
 
+/* the 16 elements outside the FIRE slots (F Na Al P Cl Ar K Sc Ti V Cr Mn Co Ni Cu Zn), in extra-slot order */
+#define STELLAR_EXTRA_NELEM 16
+static const int stellar_extra_slot_elem[STELLAR_EXTRA_NELEM] = {5, 7, 9, 11, 13, 14, 15, 17, 18, 19, 20, 21, 23, 24, 25, 26};
+
 /* SolarAbundances in the FIRE layout from the tables' solar composition */
 static inline void stellar_solar_abundances_fire_slots(double *solar, int n_cooling_species)
 {

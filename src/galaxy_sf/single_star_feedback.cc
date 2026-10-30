@@ -10,6 +10,7 @@
 #include "../declarations/gpu_rng.h"
 #include "single_star_record.h"
 #include "stellar_evolution_tables.h"
+#include "stellar_solar_abundances.h"
 
 /* Single-star source model for the shared mechanical feedback loop: IMF-sampled stars (single_star_record.h) take their
  * event times, ejecta, energies, yields and remnants from the stellar-evolution tables (stellar_evolution_tables.h).
@@ -228,6 +229,9 @@ void single_star_particle2in(struct addFB_evaluate_data_in_ *in, int i, int fb_l
     in->yields[0] = z / ev.Mej;
 #if (NUM_LIVE_SPECIES_FOR_COOLTABLES >= 10)
     for(int k = 1; k <= 10; k++) {in->yields[k] = ev.y[single_star_fire_slot_elem[k]] / ev.Mej;}
+#endif
+#ifdef GALSF_SINGLE_STARS_27_ELEMENT_YIELDS
+    for(int k = 0; k < STELLAR_EXTRA_NELEM; k++) {in->yields[METALS_EXTRA_PASSIVE_SPECIES_OFFSET + k] = ev.y[stellar_extra_slot_elem[k]] / ev.Mej;}
 #endif
 #endif
 }
