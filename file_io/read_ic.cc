@@ -718,7 +718,7 @@ void read_file(char *fname, int readTask, int lastTask)
 {
     size_t blockmaxlen;
     long long i, n_in_file, n_for_this_task, ntask, pc, offset = 0, task, nall, nread, nstart, npart;
-    int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6];
+    int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6], id_bytes_in_file = sizeof(MyIDType);
     MPI_Status status;
     FILE *fd = 0;
     char label[4], buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
@@ -1098,7 +1098,6 @@ void read_file(char *fname, int readTask, int lastTask)
             }
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
-            if(blocknr == IO_ID && ((RestartFlag == 0 && All.ICFormat == 1) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);} /* in this special case, the old unformatted fortran binary GADGET-2 format needs to be respected, which used unsigned int for IDs */
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * sizeof(MyInputFloat);}
 #endif
@@ -1125,6 +1124,9 @@ void read_file(char *fname, int readTask, int lastTask)
                               SKIP2;
                               SKIP;
                             }
+                            /* binary IDs are 32-bit (legacy GADGET-2) or 64-bit (LONGIDS, MUSIC, our own binary snapshots): the record length says which */
+                            id_bytes_in_file = sizeof(MyIDType);
+                            if(blocknr == IO_ID && (unsigned int) blksize1 == (unsigned int) (npart * sizeof(unsigned int))) {id_bytes_in_file = sizeof(unsigned int);}
                         }
                     }
 
@@ -1188,8 +1190,13 @@ void read_file(char *fname, int readTask, int lastTask)
                                 {
                                     if(All.ICFormat == 1 || All.ICFormat == 2)
                                     {
-                                            my_fread(CommBuffer, bytes_per_blockelement, pc, fd);
-                                            nread += pc;
+                                        if(blocknr == IO_ID && id_bytes_in_file == sizeof(unsigned int))
+                                        {   /* widen to MyIDType in place, last first so no unread ID is overwritten; memcpy because the two views alias */
+                                            my_fread(CommBuffer, sizeof(unsigned int), pc, fd);
+                                            for(long long k = pc - 1; k >= 0; k--) {unsigned int id32; memcpy(&id32, (char *) CommBuffer + k * sizeof(unsigned int), sizeof(id32)); ((MyIDType *) CommBuffer)[k] = id32;}
+                                        }
+                                        else {my_fread(CommBuffer, bytes_per_blockelement, pc, fd);}
+                                        nread += pc;
                                     }
 
 
