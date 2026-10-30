@@ -2542,6 +2542,9 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
      * so search_radius_factor multiplies the RAW kernel radius, as the runner
      * Spec path does with its explicit fac*raw radii. */
     std::vector<double> symlist_raw_radii((num_active > 0) ? (size_t)num_active : 1);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && num_active >= 4096)
+#endif
     for(int aa = 0; aa < num_active; aa++) {
         symlist_raw_radii[aa] = (double) P_shared[active_indices[aa]].KernelRadius;
     }

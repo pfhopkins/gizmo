@@ -298,7 +298,10 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
     /* The host passes from here to the density loop (this seed, the active-gas counts and the density
        active list) all sweep the particles, which the tree build has just pulled to the device: move
        them back in bulk rather than one fault at a time. */
-    if((long long) nseed * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("force_refresh_hmax_per_type_host");}
+    if((long long) nseed * 8 >= (long long) NumPart) {
+        gizmo_particles_prefetch_to_host("force_refresh_hmax_per_type_host");
+        gizmo_managed_prefetch_to_host(Father, (size_t) nseed * sizeof(int), "force_refresh_hmax_per_type_host");   /* written on the device by the father pass */
+    }
     /* Threaded with an atomic max: a maximum does not depend on the order its terms arrive in, so the
      * bands are the ones the one-thread loop produced. */
 #ifdef _OPENMP

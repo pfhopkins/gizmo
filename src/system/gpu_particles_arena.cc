@@ -140,6 +140,28 @@ extern "C" void gizmo_managed_prefetch_to_host(const void *ptr, size_t bytes, co
 #endif
 }
 
+extern "C" void gizmo_managed_prefetch_to_device(const void *ptr, size_t bytes, const char *site)
+{
+    if(!ptr || bytes == 0 || !particles_prefetch_enabled()) {return;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    cudaPointerAttributes attr;
+    if(cudaPointerGetAttributes(&attr, ptr) != cudaSuccess) {(void) cudaGetLastError(); return;}
+    if(attr.type != cudaMemoryTypeManaged) {return;}   /* ordinary host or device memory: nothing to move */
+    int dev_ = 0;
+    if(cudaGetDevice(&dev_) != cudaSuccess) {(void) cudaGetLastError(); return;}
+    const double t0 = my_second();
+    Kokkos::fence("gizmo_managed_prefetch_to_device");
+    cudaMemPrefetchAsync(ptr, bytes, dev_, 0);
+    cudaError_t rc = cudaStreamSynchronize(0);
+    if(rc != cudaSuccess) {(void) cudaGetLastError(); if(ThisTask == 0) {printf("Particle storage: buffer prefetch failed at %s (%s).\n", site, cudaGetErrorString(rc)); fflush(stdout);}}
+    prefetch_seconds_ += timediff(t0, my_second());
+    prefetch_bytes_dev_ += (double) bytes;
+    prefetch_calls_++;
+#else
+    (void) site;
+#endif
+}
+
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}

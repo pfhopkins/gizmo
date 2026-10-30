@@ -106,6 +106,8 @@ int gizmo_particles_prefetch_side(void);
 /* The same bulk move for one other managed buffer about to be swept on the host (e.g. a kernel's
  * per-active results read back by a host writeback). Same conditions and no-op cases as above. */
 void gizmo_managed_prefetch_to_host(const void *ptr, size_t bytes, const char *site);
+/* The same for one managed buffer about to be swept on the device. */
+void gizmo_managed_prefetch_to_device(const void *ptr, size_t bytes, const char *site);
 /* Seconds and bytes spent in the prefetches so far (for the run's timing report). */
 void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls);
 

@@ -62,6 +62,7 @@ using GxTreeHostRange = Kokkos::RangePolicy<>;
 using GxTreeHostRange = Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>;
 #endif
 #include "gpu_topology_finalize.h"
+#include "../system/gpu_particles_arena.h"   /* gizmo_managed_prefetch_to_device */
 #include "forcetree.h"
 
 
@@ -110,6 +111,9 @@ extern "C" int gpu_topology_finalize_father(int n)
         bitflags_soa[k] = 0u;
     });
     Kokkos::fence();
+#if defined(KOKKOS_ENABLE_CUDA) && defined(GPU_PCIE_OPTIMIZATIONS)
+    gizmo_managed_prefetch_to_device(Father_uvm, (size_t) tree_slots * sizeof(int), "topo_father");   /* the fill and the main pass write it on the device */
+#endif
     Kokkos::parallel_for("topo_father_init_parts", GxTreeHostRange(0, tree_slots), KOKKOS_LAMBDA(int i) {
         Father_uvm[i] = -1;
     });
