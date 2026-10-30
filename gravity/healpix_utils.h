@@ -1,5 +1,5 @@
-/* Minimal HEALPix utility for tree-column angular binning.
 /* Algorithm: HEALPix ring scheme, Gorski et al. 2005, ApJ 622, 759. */
+/* Minimal HEALPix utility for tree-column angular binning.
  * Provides vec2pix_ring() - maps a 3D direction vector to a HEALPix pixel index (ring ordering).
  * This avoids requiring the external chealpix library for this single function.
  */
