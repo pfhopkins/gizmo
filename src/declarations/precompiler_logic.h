@@ -1784,6 +1784,9 @@
 #if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && !defined(SGCHEM)
 #error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY needs SGCHEM"
 #endif
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && defined(GALSF_ISMDUSTCHEM_MODEL)
+#error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY has no effect with GALSF_ISMDUSTCHEM_MODEL (live dust sets the dust-to-gas ratio)"
+#endif
 #ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
 #if defined(CHIMES)
 #error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"

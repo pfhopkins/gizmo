@@ -21,14 +21,25 @@ static void sgchem_gas_abundances(int i, struct ChemInputs *in)
 {
     const MyFloat *Z = P[i].Metallicity;
     double X_H = 1.0 / (1.0 + 4.0 * ABHE); /* the H reference of yn below */
+#ifdef GALSF_ISMDUSTCHEM_MODEL
+    const MyDouble *D = CellP[i].ISMDustChem_Dust_Metal; /* gas phase = metals minus the live dust, as stella_dev with its dust model */
+    in->abundc  = DMAX(Z[2] - D[2], 0) / 12.0 / X_H;
+    in->abundo  = DMAX(Z[4] - D[4], 0) / 16.0 / X_H;
+    in->abundsi = DMAX(Z[7] - D[7], 0) / 28.0 / X_H;
+#else
     double g_dep = DMAX(All.SGChemDustToGasRatio, 0);
     in->abundc  = (1 - DMIN(SGCHEM_DEPL_C  * g_dep, SGCHEM_DEPL_MAX)) * (Z[2] / 12.0) / X_H;
     in->abundo  = (1 - DMIN(SGCHEM_DEPL_O  * g_dep, SGCHEM_DEPL_MAX)) * (Z[4] / 16.0) / X_H;
     in->abundsi = (1 - DMIN(SGCHEM_DEPL_SI * g_dep, SGCHEM_DEPL_MAX)) * (Z[7] / 28.0) / X_H;
+#endif
     in->abundN  = (Z[3] / 14.0) / X_H;
 #if CHEMISTRYNETWORK == 18
     in->abundNe = (Z[5] / 20.0) / X_H; in->abundS = (Z[8] / 32.0) / X_H;
+#ifdef GALSF_ISMDUSTCHEM_MODEL
+    in->abundMg = DMAX(Z[6] - D[6], 0) / 24.0 / X_H; in->abundFe = DMAX(Z[10] - D[10], 0) / 56.0 / X_H;
+#else
     in->abundMg = (Z[6] / 24.0) / X_H; in->abundFe = (Z[10] / 56.0) / X_H;
+#endif
 #endif
     double zm[12] = {Z[1], Z[2], Z[6], Z[4], Z[10], Z[7], 1.0 - Z[0] - Z[1], Z[3], Z[5], Z[8], Z[9], 0.0}; /* He C Mg O Fe Si H N Ne S Ca Zn (Zn not tracked) */
     for(int k = 0; k < 12; k++) {in->Zmass[k] = zm[k];}
@@ -124,8 +135,8 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
     in.cosmic_ray_ion_rate = All.SGChemCosmicRayIonRate;
     in.id_current = (int) P[i].ID;
-    in.dust_to_gas_ratio = sgchem_dust_to_gas_ratio(P[i].Metallicity[0]);
-#if CHEMISTRYNETWORK == 18
+    in.dust_to_gas_ratio = sgchem_cell_dust_to_gas_ratio(P, CellP, i);
+#if CHEMISTRYNETWORK == 18 && !defined(GALSF_ISMDUSTCHEM_MODEL)
     {double yd = DMIN(DMAX(in.dust_to_gas_ratio, 0), 1); /* RTZ depletion scaled with the DGR */
      in.abundc *= 1 - (1 - n18_depl[2]) * yd; in.abundN *= 1 - (1 - n18_depl[3]) * yd; in.abundo *= 1 - (1 - n18_depl[4]) * yd; in.abundNe *= 1 - (1 - n18_depl[5]) * yd;
      in.abundMg *= 1 - (1 - n18_depl[6]) * yd; in.abundsi *= 1 - (1 - n18_depl[7]) * yd; in.abundS *= 1 - (1 - n18_depl[8]) * yd; in.abundFe *= 1 - (1 - n18_depl[9]) * yd;}
