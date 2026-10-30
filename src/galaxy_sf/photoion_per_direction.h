@@ -3,7 +3,8 @@
 /* galaxy_sf/photoion_per_direction.h -- Specs of the per-direction Stromgren photoionisation (GALSF_FB_PHOTOIONIZATION_PER_DIRECTION).
  * Each source splits Q over 12 HEALPix pixels (NSIDE 1); per pixel the front is where the cells' recombination bills,
  * summed outward, use up Q/12. histogram: per pixel and radial bin, the summed bills (integer units, so independent of
- * order, threads and ranks) and the innermost cell radius; with sharing, a cell claimed by several sources bills each its
+ * order, threads and ranks) and the innermost cell radius, kept in a pool on the cell's rank and sent to the source's rank
+ * in one exchange (not in the reply records); with sharing, a cell claimed by several sources bills each its
  * share q_sc / A_c. claim: A_c += q_sc for cells newly inside a source's fronts. stamp: cells inside the fronts are
  * ionised until the next solve. drain: A_c = 0. All run where the cell lives; A_c is a side buffer by local gas index,
  * zero between solves. Design note: design_photoionisation_pixelised.md. */
@@ -27,6 +28,7 @@ struct PiSourceIn {
     double S_pix;                 /* Q/12 [1/s] */
     double held[PI_NPIX];         /* fronts of the cells it has claimed; -1 = none */
     double mark[PI_NPIX];         /* marking fronts */
+    int g;                        /* global index of the source in this solve */
 };
 struct PiCallScalars {
     NlrCommonScalars common;
@@ -35,11 +37,16 @@ struct PiCallScalars {
     long long *claim;             /* A_c by local gas index */
     int n_claim;
     int share;                    /* histogram: shared bills */
+    int *pool_slot, *pool_g, *pool_n, *pool_full; /* histogram pool: slot of global source g (-1: none), g of a slot, slots used, overflow */
+    long long *pool_cost;         /* [slot][PI_NPIX * PI_NBIN] */
+    double *pool_rmin;
+    int pool_cap;
 };
 struct PiActiveState {Vec3<double> pos; double h_search; PiSourceIn src;};
 struct PiDeviceContext : NeighborLoopDeviceContextBase {const PiSourceIn *per_active_local;};
 struct PiNeighborData {struct particle_data *neighbor_particle; struct gas_cell_data *neighbor_cell; int j;};
-struct PiHistOut {long long cost[PI_NPIX * PI_NBIN]; double rmin[PI_NPIX * PI_NBIN];};
+struct PiHistOut {long long cost[PI_NPIX * PI_NBIN]; double rmin[PI_NPIX * PI_NBIN];}; /* one source, assembled on its rank */
+struct PiCountOut {long long n;};
 struct PiLedgerOut {double bill, n_new, m_new, mr_new;}; /* bills of its cells; cells newly stamped, their mass, mass x radius */
 
 /* HEALPix NSIDE 1 ring pixel of direction (x, y, z) (Gorski et al. 2005) */
@@ -85,6 +92,28 @@ static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const st
 }
 
 KOKKOS_INLINE_FUNCTION static long long pi_sat_add(long long a, long long b) {long long c = a + b; return (c > PI_BIN_MAX) ? PI_BIN_MAX : c;}
+KOKKOS_INLINE_FUNCTION static void pi_atomic_sat_add(long long *x, long long b)
+{
+    long long old = Kokkos::atomic_load(x);
+    while(true) {
+        long long want = pi_sat_add(old, b);
+        if(want == old) {return;}
+        long long seen = Kokkos::atomic_compare_exchange(x, old, want);
+        if(seen == old) {return;}
+        old = seen;
+    }
+}
+/* the pool slot of global source g on this rank, claimed at first use; -1 if the pool is full */
+KOKKOS_INLINE_FUNCTION static int pi_pool_claim(const PiCallScalars& cs, int g)
+{
+    int s = Kokkos::atomic_load(&cs.pool_slot[g]);
+    if(s >= 0) {return s;}
+    int n = Kokkos::atomic_fetch_add(cs.pool_n, 1);
+    if(n >= cs.pool_cap) {Kokkos::atomic_store(cs.pool_full, 1); return -1;}
+    int seen = Kokkos::atomic_compare_exchange(&cs.pool_slot[g], -1, n);
+    if(seen == -1) {cs.pool_g[n] = g; return n;}
+    return seen; /* another thread claimed it; slot n stays empty */
+}
 
 struct PiSpecBase {
     static constexpr int                    search_mode        = MODE_B_SEARCH_ONEWAY;
@@ -129,13 +158,11 @@ struct PiSpecBase {
 
 struct PiHistSpec : PiSpecBase {
     static constexpr const char *loop_name = "photoion_per_direction_histogram";
-    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::BitwiseReadonly;
-    using AccumData = PiHistOut;
-    static void apply_active_writeback(const neighbor_loop_args& args, int active_slot, int i, const AccumData& accum);
-    KOKKOS_INLINE_FUNCTION static void zero_accum(AccumData& a) {for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {a.cost[k] = 0; a.rmin[k] = PI_RMIN_EMPTY;}}
-    KOKKOS_INLINE_FUNCTION static void merge_accum(AccumData& l, const AccumData& p) {
-        for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {l.cost[k] = pi_sat_add(l.cost[k], p.cost[k]); if(p.rmin[k] < l.rmin[k]) {l.rmin[k] = p.rmin[k];}}
-    }
+    static constexpr ModeBEvalOMP modeb_eval_omp = ModeBEvalOMP::EpsilonAtomic; /* integer adds and minima into the pool: bitwise in any order */
+    using AccumData = PiCountOut; /* the histogram stays in the pool of the cell's rank, out of the reply record */
+    static void apply_active_writeback(const neighbor_loop_args&, int, int, const AccumData&) {}
+    KOKKOS_INLINE_FUNCTION static void zero_accum(AccumData& a) {a.n = 0;}
+    KOKKOS_INLINE_FUNCTION static void merge_accum(AccumData& l, const AccumData& p) {l.n += p.n;}
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& a, const NeighborData& nb, AccumData& out, NoScatter&, const CallScalars& cs) {
         double r, bill; int pix; long long q;
@@ -148,8 +175,12 @@ struct PiHistSpec : PiSpecBase {
         double u = bill / a.src.S_pix * PI_BIN_UNIT;
         long long iu = (u >= (double)PI_BIN_MAX) ? PI_BIN_MAX : (long long)llround(u);
         int b = (int)(r * PI_NBIN / a.src.R); if(b >= PI_NBIN) {b = PI_NBIN - 1;}
-        out.cost[pix * PI_NBIN + b] = pi_sat_add(out.cost[pix * PI_NBIN + b], iu);
-        if(r < out.rmin[pix * PI_NBIN + b]) {out.rmin[pix * PI_NBIN + b] = r;}
+        int s = pi_pool_claim(cs, a.src.g);
+        if(s < 0) {return;}
+        size_t k = (size_t)s * PI_NPIX * PI_NBIN + pix * PI_NBIN + b;
+        pi_atomic_sat_add(&cs.pool_cost[k], iu);
+        Kokkos::atomic_min(&cs.pool_rmin[k], r);
+        out.n++;
     }
 };
 

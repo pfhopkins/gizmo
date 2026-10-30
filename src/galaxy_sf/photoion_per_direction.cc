@@ -11,6 +11,7 @@
 #include <cstring>
 #include <cmath>
 #include <vector>
+#include <algorithm>
 #include <Kokkos_Core.hpp>
 #include "../declarations/gpu_all_mirror.h"  /* before allvars.h */
 #include "../declarations/allvars.h"
@@ -67,6 +68,41 @@ long long photoion_new_sources_local(void)
 }
 void photoion_add_new_sources(long long n) {if(n > 0 && pi_num_sources >= 0) {pi_num_sources += n;}}
 
+/* histogram pool: partial histograms of the sources whose cells live on this rank, by slot; grown when a pass fills it */
+static int *pi_pool_slot = nullptr, *pi_pool_g = nullptr, *pi_pool_ctl = nullptr; /* ctl: slots used, full */
+static long long *pi_pool_cost = nullptr;
+static double *pi_pool_rmin = nullptr;
+static int pi_pool_cap = 0, pi_pool_ng = 0;
+static void pi_pool_reset(int n_g, int cap)
+{
+    if(cap > pi_pool_cap || n_g > pi_pool_ng || !pi_pool_ctl) {
+        for(void *q : {(void *)pi_pool_slot, (void *)pi_pool_g, (void *)pi_pool_ctl, (void *)pi_pool_cost, (void *)pi_pool_rmin}) {if(q) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(q);}}
+        pi_pool_cap = DMAX(cap, pi_pool_cap); pi_pool_ng = DMAX(n_g, pi_pool_ng);
+        size_t nb = (size_t) pi_pool_cap * PI_NPIX * PI_NBIN;
+        pi_pool_slot = (int *) gizmo_gpu_alloc_shared((size_t) pi_pool_ng * sizeof(int), "photoion_pool_slot");
+        pi_pool_g = (int *) gizmo_gpu_alloc_shared((size_t) pi_pool_cap * sizeof(int), "photoion_pool_g");
+        pi_pool_ctl = (int *) gizmo_gpu_alloc_shared(2 * sizeof(int), "photoion_pool_ctl");
+        pi_pool_cost = (long long *) gizmo_gpu_alloc_shared(nb * sizeof(long long), "photoion_pool_cost");
+        pi_pool_rmin = (double *) gizmo_gpu_alloc_shared(nb * sizeof(double), "photoion_pool_rmin");
+        if(!pi_pool_slot || !pi_pool_g || !pi_pool_ctl || !pi_pool_cost || !pi_pool_rmin) {gizmo_request_controlled_stop(7903, "per-direction photoionisation: could not allocate the histogram pool", __FILE__, __LINE__, __FUNCTION__); return;}
+        Kokkos::fence();
+        for(int g = 0; g < pi_pool_ng; g++) {pi_pool_slot[g] = -1;}
+        for(size_t k = 0; k < nb; k++) {pi_pool_cost[k] = 0; pi_pool_rmin[k] = PI_RMIN_EMPTY;}
+        pi_pool_ctl[0] = pi_pool_ctl[1] = 0;
+    }
+}
+/* empties the slots a pass used (all-zero between passes) */
+static void pi_pool_clear(void)
+{
+    int n = DMIN(pi_pool_ctl[0], pi_pool_cap);
+    for(int s = 0; s < n; s++) {
+        if(pi_pool_g[s] >= 0) {pi_pool_slot[pi_pool_g[s]] = -1;}
+        pi_pool_g[s] = -1;
+        for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {pi_pool_cost[(size_t)s * PI_NPIX * PI_NBIN + k] = 0; pi_pool_rmin[(size_t)s * PI_NPIX * PI_NBIN + k] = PI_RMIN_EMPTY;}
+    }
+    pi_pool_ctl[0] = pi_pool_ctl[1] = 0;
+}
+
 /* ionising photon rate of source i [1/s] */
 static double photoion_source_rate(int i)
 {
@@ -116,6 +152,8 @@ PiCallScalars PiSpecBase::populate_call_scalars(const neighbor_loop_args& args)
     Aux *aux = nlr_aux<PiHistSpec>(args);
     s.stamp = aux ? aux->stamp : 0; s.share = aux ? aux->share : 0;
     s.claim = pi_claim; s.n_claim = DMIN(N_gas, pi_claim_cap);
+    s.pool_slot = pi_pool_slot; s.pool_g = pi_pool_g; s.pool_n = pi_pool_ctl; s.pool_full = pi_pool_ctl ? pi_pool_ctl + 1 : nullptr;
+    s.pool_cost = pi_pool_cost; s.pool_rmin = pi_pool_rmin; s.pool_cap = pi_pool_cap;
     return s;
 }
 
@@ -140,10 +178,6 @@ void PiSpecBase::cleanup_device_context(const neighbor_loop_args&, DeviceContext
     if(ctx.per_active_local) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(const_cast<PiSourceIn *>(ctx.per_active_local)); ctx.per_active_local = nullptr;}
 }
 
-void PiHistSpec::apply_active_writeback(const neighbor_loop_args& args, int slot, int, const AccumData& a)
-{
-    ((PiHistOut *) nlr_aux<PiHistSpec>(args)->out)[slot] = a;
-}
 void PiStampSpec::apply_active_writeback(const neighbor_loop_args& args, int slot, int, const AccumData& a)
 {
     ((PiLedgerOut *) nlr_aux<PiStampSpec>(args)->out)[slot] = a;
@@ -160,7 +194,7 @@ static void pi_run(std::vector<int>& list, std::vector<PiSourceIn>& in, PiSpecBa
 
 /* ---- the front of each pixel ---- */
 
-struct pi_src {int i; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX], held[PI_NPIX];};
+struct pi_src {int i, g; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX], held[PI_NPIX];};
 
 /* per pixel, where the summed bills cross the budget (fractional front, for diagnostics and refinement) and the marking
    front, rounded up through the innermost cell of the crossing bin (stella_dev v6). Returns 1 if the source searches
@@ -207,7 +241,53 @@ static PiSourceIn pi_source_in(const pi_src& s)
     for(int k = 0; k < 3; k++) {x.Pos[k] = P[s.i].Pos[k];}
     x.R = s.R; x.S_pix = s.Q / PI_NPIX;
     for(int k = 0; k < PI_NPIX; k++) {x.held[k] = s.held[k]; x.mark[k] = s.mark[k];}
+    x.g = s.g;
     return x;
+}
+
+/* histograms of the sources S[which[..]] (global offsets off[rank]): the cells' ranks fill their pools, then send the
+   non-empty bins to the sources' ranks (Alltoall, Alltoallv); integer sums and minima, so the order of arrival is free */
+struct pi_bin {int g, k; long long cost; double rmin;};
+static void pi_histograms(std::vector<pi_src>& S, const std::vector<int>& which, int share, const std::vector<long long>& off, std::vector<PiHistOut>& H)
+{
+    std::vector<int> list; std::vector<PiSourceIn> in;
+    for(int a : which) {list.push_back(S[a].i); in.push_back(pi_source_in(S[a]));}
+    for(int full = 1; full; ) {
+        PiSpecBase::Aux aux = {nullptr, nullptr, 0, share};
+        pi_run<PiHistSpec>(list, in, aux);
+        int need[2] = {pi_pool_ctl[1], pi_pool_ctl[0]}, need_all[2];
+        pi_calls++; MPI_Allreduce(need, need_all, 2, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        full = need_all[0];
+        if(full) {pi_pool_clear(); pi_pool_reset((int) off[NTask], 2 * need_all[1]);} /* grow and repeat the pass */
+    }
+    std::vector<std::vector<pi_bin>> out(NTask);
+    for(int s = 0; s < DMIN(pi_pool_ctl[0], pi_pool_cap); s++) {
+        int g = pi_pool_g[s]; if(g < 0) {continue;}
+        int dest = (int)(std::upper_bound(off.begin(), off.end(), (long long) g) - off.begin()) - 1;
+        for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {
+            size_t q = (size_t)s * PI_NPIX * PI_NBIN + k;
+            if(pi_pool_cost[q] > 0 || pi_pool_rmin[q] < PI_RMIN_EMPTY) {out[dest].push_back({g, k, pi_pool_cost[q], pi_pool_rmin[q]});}
+        }
+    }
+    pi_pool_clear();
+    std::vector<int> sc(NTask), rc(NTask), sd(NTask), rd(NTask);
+    for(int t = 0; t < NTask; t++) {sc[t] = (int)(out[t].size() * sizeof(pi_bin));}
+    pi_calls++; MPI_Alltoall(sc.data(), 1, MPI_INT, rc.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    std::vector<char> sbuf, rbuf; int ns = 0, nr = 0;
+    for(int t = 0; t < NTask; t++) {sd[t] = ns; ns += sc[t]; rd[t] = nr; nr += rc[t];}
+    sbuf.resize(DMAX(ns, 1)); rbuf.resize(DMAX(nr, 1));
+    for(int t = 0; t < NTask; t++) {if(sc[t]) {std::memcpy(&sbuf[sd[t]], out[t].data(), sc[t]);}}
+    pi_calls++; MPI_Alltoallv(sbuf.data(), sc.data(), sd.data(), MPI_BYTE, rbuf.data(), rc.data(), rd.data(), MPI_BYTE, MPI_COMM_WORLD);
+    std::vector<int> pos(S.size(), -1);
+    for(size_t a = 0; a < which.size(); a++) {pos[S[which[a]].g - off[ThisTask]] = (int) a;}
+    H.assign(which.size(), PiHistOut());
+    for(PiHistOut& h : H) {for(int k = 0; k < PI_NPIX * PI_NBIN; k++) {h.cost[k] = 0; h.rmin[k] = PI_RMIN_EMPTY;}}
+    const pi_bin *rb = (const pi_bin *) rbuf.data();
+    for(size_t m = 0; m < nr / sizeof(pi_bin); m++) {
+        int a = pos[rb[m].g - off[ThisTask]]; if(a < 0) {continue;}
+        H[a].cost[rb[m].k] = pi_sat_add(H[a].cost[rb[m].k], rb[m].cost);
+        if(rb[m].rmin < H[a].rmin[rb[m].k]) {H[a].rmin[rb[m].k] = rb[m].rmin;}
+    }
 }
 
 /* claim the cells between each source's held and marking fronts; they are held from now on */
@@ -242,24 +322,27 @@ void photoionization_per_direction(void)
         s.R = R; S.push_back(s);
     }
     long long n_loc = (long long) S.size(), n_tot = 0;
-    pi_calls++; MPI_Allreduce(&n_loc, &n_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    std::vector<long long> cnt(NTask), off(NTask + 1, 0);
+    pi_calls++; MPI_Allgather(&n_loc, 1, MPI_LONG_LONG, cnt.data(), 1, MPI_LONG_LONG, MPI_COMM_WORLD); /* the global source indices */
+    for(int t = 0; t < NTask; t++) {off[t + 1] = off[t] + cnt[t];}
+    n_tot = off[NTask];
+    for(size_t a = 0; a < S.size(); a++) {S[a].g = (int)(off[ThisTask] + (long long) a);}
     pi_num_sources = n_tot;
     if(n_tot == 0) {return;}
     int no_buffer = (pi_claim_sums(N_gas) == nullptr), any_no_buffer = 0;
     pi_calls++; MPI_Allreduce(&no_buffer, &any_no_buffer, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     if(any_no_buffer) {return;}
+    pi_pool_reset((int) n_tot, DMAX(pi_pool_cap, 16));
     PRINT_STATUS(" ..per-direction photoionisation around %lld single stars", n_tot);
 
     /* fronts */
     int passes = 0, any_open = 1;
     for(; passes < PI_MAX_PASSES && any_open; passes++) {
-        std::vector<int> list, which; std::vector<PiSourceIn> in;
-        for(size_t a = 0; a < S.size(); a++) {if(S[a].open) {list.push_back(S[a].i); in.push_back(pi_source_in(S[a])); which.push_back((int)a);}}
-        std::vector<PiHistOut> H(in.size() + 1);
-        PiSpecBase::Aux aux = {nullptr, H.data(), 0, 0};
-        pi_run<PiHistSpec>(list, in, aux);
+        std::vector<int> which; std::vector<PiHistOut> H;
+        for(size_t a = 0; a < S.size(); a++) {if(S[a].open) {which.push_back((int)a);}}
+        pi_histograms(S, which, 0, off, H);
         int n_open = 0;
-        for(size_t a = 0; a < in.size(); a++) {
+        for(size_t a = 0; a < which.size(); a++) {
             pi_src& s = S[which[a]];
             s.open = pi_analyse(s, H[a], passes < PI_MAX_PASSES - 1, 1, max_r);
             n_open += s.open;
@@ -272,11 +355,9 @@ void photoionization_per_direction(void)
     pi_claim_all(S);
     int rounds = 0, moved = (n_tot > 1);
     for(; rounds < All.PhotoionMaxRounds && moved; rounds++) {
-        std::vector<int> list; std::vector<PiSourceIn> in;
-        for(pi_src& s : S) {list.push_back(s.i); in.push_back(pi_source_in(s));}
-        std::vector<PiHistOut> H(in.size() + 1);
-        PiSpecBase::Aux aux = {nullptr, H.data(), 0, 1};
-        pi_run<PiHistSpec>(list, in, aux);
+        std::vector<int> which; std::vector<PiHistOut> H;
+        for(size_t a = 0; a < S.size(); a++) {which.push_back((int)a);}
+        pi_histograms(S, which, 1, off, H);
         int moved_local = 0;
         for(size_t a = 0; a < S.size(); a++) {
             pi_src& s = S[a];
