@@ -22,6 +22,7 @@ static const char *const StellaTablesExpected[][2] = { /* basename, content hash
     {"eh2-table.txt",                "d423c682d6e9036edc9100e9e2ee990084ee191d500289dc485ce0a486f4450b"},
     {"H2-cooling-ratios.dat",        "13cf3c756a6b9e4e993ba9fb5fa93883e1dedd788d6415149497ef1fee893a0d"},
     {"wss_z_collis.txt",             "eaa290e0895be4846147e99880f18e5b981d9293cde632e4b3c4be71f10f8372"},
+    {"sgchem_net18_tables.bin",      "e3c41f2c5a676557d06f44854b14a1ee64b0d98142e1459779b1b8c8631f928d"}, /* SGChem network 18 only */
 };
 
 struct StellaSha256 {

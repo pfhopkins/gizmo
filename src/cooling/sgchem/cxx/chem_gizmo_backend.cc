@@ -59,6 +59,9 @@ void chem_cxx_tables_init(const struct ChemInitParams* p)
     cfg.abhe = g_abhe;
     const char* dd = (p->tables_dir && *p->tables_dir) ? p->tables_dir : std::getenv("CHEMCXX_DATADIR"); // parameter, else environment (standalone drivers)
     if (!dd || chem_cxx_tables_init(cfg, dd)) { int c = 3; sgchem_fatal_(&c); }
+#if CHEMISTRYNETWORK == 18
+    if (n18_tables_load(dd)) { int c = 3; sgchem_fatal_(&c); }
+#endif
 
     // init-time constants; per-cell fields are overwritten in chem_cxx_begin_cell
     ChemCell& c = g_tmpl;
