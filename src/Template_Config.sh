@@ -306,6 +306,7 @@
 #SINK_SPAWN_MERGE_WHEN_AMBIENT  # retire a spawned jet/wind cell only once it is subsonic and thermally equilibrated with the non-spawned gas around it, not merely subsonic wrt its merge target. auto-set with the STARFORGE protostellar model
 #SINK_SPAWN_MERGE_MAX_THERMAL_CONTRAST=(1.0)  # max |ln(u_cell/u_ambient)| for a spawned cell to count as having joined the ambient medium
 #SINK_SPAWN_MERGE_ANY_NEIGHBOR  # opt out of SINK_SPAWN_MERGE_WHEN_AMBIENT, restoring the retire-when-subsonic-wrt-target behaviour
+#SINK_SPAWN_NO_MERGE            # never merge spawned jet/wind cells, in either direction (compare merged vs unmerged outflows). Diagnostic: removes retirement, so cell counts grow without bound
 #MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION  # never retire a spawned cell into a target if that would thermalize the majority of the energy involved, which is an unresolved shock. auto-set with the STARFORGE protostellar model
 #MERGE_SPLIT_MAX_KINETIC_DISSIPATION_FRACTION=(0.5)  # max KE_com/(KE_com+E_light) allowed by the above; lower is stricter (~0.34 is Mach 1 on the lighter cell)
 #MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION  # opt out of MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION
@@ -347,6 +348,7 @@
 #SINK_ALPHADISK_ACCRETION=(10)    # gas accreted goes into a 'virtual' alpha-disk (mass reservoir), which then accretes onto the BH at the viscous rate (determining luminosity, etc). cite GIZMO methods. should be set to a value, which limits the maximum mass of the reservoir to that multiple of the central sink mass
 #SINK_SUBGRIDBHVARIABILITY        # model variability below resolved dynamical time for BH (convolve accretion rate with a uniform power spectrum of fluctuations on timescales below the minimum resolved dynamical time). cite Hopkins & Quataert 2011, MNRAS, 415, 1027. Requires GALSF.
 #SINK_GRAVCAPTURE_NONGAS          # accretion determined only by resolved gravitational capture by the BH, for non-gas particles (can be enabled with other accretion models for gas). cite Hopkins et al., 2016, MNRAS, 458, 816
+#DISABLE_SINK_MERGERS             # never merge two sink particles, whatever the pair satisfies otherwise
 ## ----
 #SINK_GRAVCAPTURE_GAS             # accretion determined only by resolved gravitational capture by the BH (for gas particles). cite Hopkins et al., 2016, MNRAS, 458, 816
 #SINK_GRAVACCRETION=1             # family of gravitational/torque/angular-momentum-driven accretion models from Hopkins & Quataert (2011): cite Hopkins & Quataert 2011, MNRAS, 415, 1027 and Angles-Alcazar et al. 2017, MNRAS, 464, 2840. see `notes_blackholes` for details:
@@ -629,6 +631,7 @@
 # ----- Particle Merging/Splitting/Deletion/Boundaries
 #MAINTAIN_TREE_IN_REARRANGE        # don't rebuild the domains/tree every time a particle is spawned - salvage the existing one by redirecting pointers as needed. cite Grudic+ arXiv:2010.11254
 #PREVENT_PARTICLE_MERGE_SPLIT      # don't allow gas particle splitting/merging operations
+#PREVENT_PARTICLE_MERGE            # don't allow gas merging but still allow splitting: diffusion-free, finest-resolution reference for spawned outflows (cf. SINK_SPAWN_NO_MERGE, which protects only spawned cells)
 #PARTICLE_EXCISION                 # enable dynamical excision (remove particles within some radius)
 #MERGESPLIT_HARDCODE_MAX_MASS=(1.0e-6)   # manually set maximum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
 #MERGESPLIT_HARDCODE_MIN_MASS=(1.0e-7)   # manually set minimum mass for particle merge-split operations (in code units): useful for snapshot restarts and other special circumstances
