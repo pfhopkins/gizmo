@@ -60,6 +60,9 @@
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
 double particle_ionizing_luminosity_in_cgs(long i)
 {
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+    if(P[i].StarIdx > 0) {return single_star_ionizing_luminosity_cgs((int)i);} /* single star: table ionising luminosity */
+#endif
     return particle_ionizing_luminosity_in_cgs_core(i, P);
 }
 #endif

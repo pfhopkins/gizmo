@@ -207,9 +207,9 @@ void stellar_evolution_tables_free(void)
 void stellar_evolution_tables_load(void)
 {
     const size_t n2d = (size_t)STBL_NZ * STBL_NM, n3d = n2d * STBL_NAGE, n4d = n3d * STBL_NELEM;
-    float **f3[1] = {&StellarTbl.v_wind};
-    const char *n3[1] = {"v_wind"};
-    const size_t nfloat = 1 * n3d + 2 * n4d;
+    float **f3[3] = {&StellarTbl.v_wind, &StellarTbl.log_Q_ion, &StellarTbl.log_L_ion_tot};
+    const char *n3[3] = {"v_wind", "log_Q_ion", "log_L_ion_tot"};
+    const size_t nfloat = 3 * n3d + 2 * n4d;
 
     /* one shared segment per node, owned by node rank 0 */
     gizmo_node_comm_init();
@@ -218,9 +218,9 @@ void stellar_evolution_tables_load(void)
     MPI_Win_allocate_shared(segsize, sizeof(float), MPI_INFO_NULL, GizmoNodeComm, &seg, &stbl_win);
     gizmo_mem_account_add(GIZMO_MEM_SINGLE_STARS, (long long) segsize + (long long) sizeof(StellarTbl)); /* the segment on its node's lead rank; the plain tables on every rank */
     { MPI_Aint sz; int du; MPI_Win_shared_query(stbl_win, 0, &sz, &du, &seg); }
-    for(int k = 0; k < 1; k++) {*f3[k] = seg + k * n3d;}
-    StellarTbl.surface_abundances = seg + 1 * n3d;
-    StellarTbl.elem_ej_wind_cumulative = seg + 1 * n3d + n4d;
+    for(int k = 0; k < 3; k++) {*f3[k] = seg + k * n3d;}
+    StellarTbl.surface_abundances = seg + 3 * n3d;
+    StellarTbl.elem_ej_wind_cumulative = seg + 3 * n3d + n4d;
 
     int err = 0;
     if(ThisTask == 0)
@@ -239,7 +239,7 @@ void stellar_evolution_tables_load(void)
         err |= stbl_read(f, "remnant_mass", H5T_NATIVE_DOUBLE, StellarTbl.remnant_mass, n2d);
         err |= stbl_read(f, "remnant_type", H5T_NATIVE_INT, StellarTbl.remnant_type, n2d);
         err |= stbl_read(f, "t_PMS", H5T_NATIVE_DOUBLE, StellarTbl.t_PMS, n2d);
-        for(int k = 0; k < 1; k++) {err |= stbl_read(f, n3[k], H5T_NATIVE_FLOAT, *f3[k], n3d);}
+        for(int k = 0; k < 3; k++) {err |= stbl_read(f, n3[k], H5T_NATIVE_FLOAT, *f3[k], n3d);}
         err |= stbl_read(f, "surface_abundances", H5T_NATIVE_FLOAT, StellarTbl.surface_abundances, n4d);
         err |= stbl_read(f, "elem_ej_SN_mass", H5T_NATIVE_DOUBLE, StellarTbl.elem_ej_SN_mass, n2d * STBL_NELEM);
         err |= stbl_read(f, "elem_ej_AGB_mass", H5T_NATIVE_DOUBLE, StellarTbl.elem_ej_AGB_mass, n2d * STBL_NELEM);
@@ -305,6 +305,16 @@ double stellar_t_PMS(double logM, double logZ)
 double stellar_v_wind(double logM, double logZ, double log_age)
 {
     return interp3d(StellarTbl.v_wind, logM, logZ, log_age);
+}
+
+double stellar_log_Q_ion(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_Q_ion, logM, logZ, log_age);
+}
+
+double stellar_log_L_ion_tot(double logM, double logZ, double log_age)
+{
+    return interp3d(StellarTbl.log_L_ion_tot, logM, logZ, log_age);
 }
 
 /* --- Surface abundances --- */

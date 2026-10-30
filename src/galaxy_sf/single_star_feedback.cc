@@ -32,6 +32,61 @@
  *     again next step (counted).
  * Reference: stella_dev resolvedism_fb.cc, resolvedism_fb_thermal.cc, resolvedism_fb_momentum.cc. */
 
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF)
+
+/* luminosities of a living single star from the tables, at its current age (log age >= 2 during the pre-main sequence, as
+   the reference implementation); a star whose death has happened emits nothing */
+static int single_star_luminosity_age(int i, double *logM, double *logZ, double *log_age)
+{
+    if(P[i].StarIdx <= 0 || P[i].Mass <= 0) {return 0;}
+    int s = single_star_slot(P[i].StarIdx);
+#if defined(GALSF_FB_MECHANICAL)
+    if(SingleStars.event_bits[s] & (SINGLE_STAR_EVENT_SN_DONE | SINGLE_STAR_EVENT_AGB_DONE)) {return 0;}
+#endif
+    *logM = log10(SingleStars.M_drawn[s]); *logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+    double age = evaluate_stellar_age_Gyr(i) * 1.e9;
+    if(age > stellar_t_PMS(*logM, *logZ) + stellar_lifetime(*logM, *logZ)) {return 0;}
+    *log_age = log10(DMAX(age - stellar_t_PMS(*logM, *logZ), 100.));
+    return 1;
+}
+
+/* age [yr] from which single star i ionises: stars of at least 8 Msun, from the end of the pre-main sequence and of the
+   Kelvin-Helmholtz time 1.5e7 yr (M/Msun)^-2.1 (at most 1 Myr), as the reference implementation; -1 if it never does */
+double single_star_ionizing_onset_yr(int i)
+{
+    if(P[i].StarIdx <= 0) {return -1;}
+    int s = single_star_slot(P[i].StarIdx);
+    double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+    if(logM < log10(8.0)) {return -1;}
+    return DMAX(stellar_t_PMS(logM, logZ) * (1. + 1.e-12), DMIN(1.5e7 * pow(10., -2.1 * logM), 1.e6));
+}
+
+/* as single_star_luminosity_age, for the ionising band (from single_star_ionizing_onset_yr) */
+static int single_star_ionizing_age(int i, double *logM, double *logZ, double *log_age)
+{
+    if(!single_star_luminosity_age(i, logM, logZ, log_age)) {return 0;}
+    double t_on = single_star_ionizing_onset_yr(i);
+    return (t_on >= 0 && evaluate_stellar_age_Gyr(i) * 1.e9 >= t_on);
+}
+
+/* ionising luminosity (> 13.6 eV) [erg/s] */
+double single_star_ionizing_luminosity_cgs(int i)
+{
+    double logM, logZ, la;
+    if(!single_star_ionizing_age(i, &logM, &logZ, &la)) {return 0;}
+    return pow(10., stellar_log_L_ion_tot(logM, logZ, la));
+}
+
+/* ionising photon rate [1/s] */
+double single_star_ionizing_photon_rate(int i)
+{
+    double logM, logZ, la;
+    if(!single_star_ionizing_age(i, &logM, &logZ, &la)) {return 0;}
+    return pow(10., stellar_log_Q_ion(logM, logZ, la));
+}
+
+#endif
+
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
 
 #define SINGLE_STAR_NO_DEPOSIT_MAX 1000  /* steps an event may wait for neighbour weight */
