@@ -1,5 +1,6 @@
-"""SGChem one-zone parity: chemistry tables, cool_func rates and one-zone runs of each network against the frozen
-reference (the SGChem Fortran networks), plus serial vs OpenMP-concurrent solves bit-identical.
+"""SGChem one-zone parity: chemistry tables, cool_func rates and one-zone runs of every network against the frozen
+reference (nets 3/5/15/16/17: the SGChem Fortran; nets 18/20: the C++ backend when it was introduced), plus serial vs
+OpenMP-concurrent solves bit-identical (nets 5, 17).
 
 Standalone: no GIZMO run. Needs mpicxx, SUNDIALS_DIR (6.x or 7.x), KOKKOS_PATH, the four chemistry tables
 (SGCHEM_TABLES_DIR, else installed with scripts/get_stella_tables.sh) and the frozen reference data
@@ -20,7 +21,7 @@ REFDIR = path.join(ROOT, "src", "cooling", "sgchem", "cxx", "fortran_reference")
 CHEM_TABLES = ("energy-table-x.txt", "eh2-table.txt", "H2-cooling-ratios.dat", "wss_z_collis.txt")
 
 
-def chemistry_tables_dir():
+def chemistry_tables_dir(net):
     """Directory with the four chemistry tables, their content hashes checked against galaxy_sf/stella_tables_check.h."""
     d = environ.get("SGCHEM_TABLES_DIR")
     if not d:
@@ -29,7 +30,7 @@ def chemistry_tables_dir():
         assert out.returncode == 0, f"get_stella_tables.sh failed:\n{out.stdout}\n{out.stderr}"
         d = [l for l in out.stdout.splitlines() if " holds " in l][-1].split()[1]
     hdr = open(path.join(ROOT, "src", "galaxy_sf", "stella_tables_check.h")).read()
-    for f in CHEM_TABLES:
+    for f in CHEM_TABLES + (("sgchem_net18_tables.bin",) if net == 18 else ()):
         want = re.search(r'\{"' + re.escape(f) + r'",\s*"([0-9a-f]+)"\}', hdr).group(1)
         got = subprocess.run([sys.executable, "-I", path.join(ROOT, "scripts", "stella_tables_hash.py"), path.join(d, f)],
                              capture_output=True, text=True).stdout.split()
@@ -48,9 +49,9 @@ def env():
     return environ
 
 
-@pytest.mark.parametrize("net", (3, 5, 15, 16, 17))
+@pytest.mark.parametrize("net", (3, 5, 15, 16, 17, 18, 20))
 def test_sgchem_onezone(net, env):
-    env = {**env, "CHEMCXX_DATADIR": chemistry_tables_dir()}
+    env = {**env, "CHEMCXX_DATADIR": chemistry_tables_dir(net)}
     out = path.join(HERE, "output", f"net{net}")
     makedirs(out, exist_ok=True)
     b = subprocess.run(["bash", path.join(HERE, "build_onezone_dump.sh"), str(net), out], capture_output=True, text=True, env=env)
@@ -62,7 +63,7 @@ def test_sgchem_onezone(net, env):
                        capture_output=True, text=True)
     print(c.stdout)
     assert c.returncode == 0, f"net {net} differs from {ref}:\n{c.stdout[-4000:]}"
-    if net in (5, 17):  # the thread driver covers these layouts
+    if net in (5, 17):
         t = subprocess.run([path.join(out, "threads_identity"), env["CHEMCXX_DATADIR"]], capture_output=True, text=True,
                            env={**env, "OMP_NUM_THREADS": env.get("OMP_NUM_THREADS", "4")})
         print(t.stdout)
