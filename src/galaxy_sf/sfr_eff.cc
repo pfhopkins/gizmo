@@ -661,6 +661,9 @@ void star_formation_parent_routine(void)
 
                         /* ok, we're going to make a star!  -- assign all the properties we need now */
                         sum_mass_stars += P[i_star].Mass;
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+                        ledger_add(LEDGER_M_STARS_FORMED, P[i_star].Mass); ledger_add(LEDGER_MZ_STARS_FORMED, P[i_star].Mass * P[i_star].Metallicity[0]);
+#endif
                         P[i_star].StellarAge = All.Time;
 #if defined(GALSF_SFR_IMF_VARIATION) || defined(GALSF_SFR_IMF_SAMPLING)
                         /* if we're allowing for a variable IMF, this is where we will calculate the IMF properties produced from the gas forming stars */

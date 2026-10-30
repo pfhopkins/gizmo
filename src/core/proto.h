@@ -1224,7 +1224,35 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 
 
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
-enum ledger_rows {LEDGER_CHEM_HEATING, LEDGER_CHEM_COOLING, LEDGER_NROWS}; /* energy rows [code units]; names in system/ledger.cc */
+/* rows X(id, name in ledger.txt, code unit -> output unit, state): state rows are sums over the particles at output, the
+   others cumulative bookings; each row is compiled with its module */
+#ifdef SGCHEM
+#define LEDGER_ROWS_SGCHEM(X) X(LEDGER_CHEM_HEATING, "E_chem_heating_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_CHEM_COOLING, "E_chem_cooling_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_SGCHEM(X)
+#endif
+#ifdef GALSF
+#define LEDGER_ROWS_STARS(X) X(LEDGER_M_GAS, "M_gas_Msun", UNIT_MASS_IN_SOLAR, 1) X(LEDGER_M_STARS, "M_stars_Msun", UNIT_MASS_IN_SOLAR, 1) \
+    X(LEDGER_MZ_GAS, "MZ_gas_Msun", UNIT_MASS_IN_SOLAR, 1) X(LEDGER_MZ_STARS, "MZ_stars_Msun", UNIT_MASS_IN_SOLAR, 1) \
+    X(LEDGER_M_STARS_FORMED, "M_stars_formed_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_STARS_FORMED, "MZ_stars_formed_Msun", UNIT_MASS_IN_SOLAR, 0)
+#else
+#define LEDGER_ROWS_STARS(X)
+#endif
+#if defined(GALSF_FB_MECHANICAL)
+#define LEDGER_ROWS_FB(X) X(LEDGER_M_FB_TO_GAS, "M_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_MZ_FB_TO_GAS, "MZ_fb_to_gas_Msun", UNIT_MASS_IN_SOLAR, 0)
+#else
+#define LEDGER_ROWS_FB(X)
+#endif
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_FB_MECHANICAL)
+#define LEDGER_ROWS_SINGLE_STARS(X) X(LEDGER_M_EJECTA, "M_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_MZ_EJECTA, "MZ_single_star_ejecta_Msun", UNIT_MASS_IN_SOLAR, 0) X(LEDGER_M_REMNANT_RESET, "M_remnant_reset_Msun", UNIT_MASS_IN_SOLAR, 0) \
+    X(LEDGER_MZ_STARS_LOST, "MZ_stars_lost_Msun", UNIT_MASS_IN_SOLAR, 0)
+#else
+#define LEDGER_ROWS_SINGLE_STARS(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X)
+#define LEDGER_ROW_ENUM(id, name, unit, state) id,
+enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);
 void ledger_add(int row, double x);
 void ledger_output(void);

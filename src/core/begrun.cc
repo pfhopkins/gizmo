@@ -270,6 +270,9 @@ void begrun(void)
     InitNuclearNetwork();
 #endif
 
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_init(); /* before the restart files are read */
+#endif
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     stellar_evolution_tables_init();
     if(gizmo_poll_controlled_stop()) return;

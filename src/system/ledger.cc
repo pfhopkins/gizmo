@@ -17,7 +17,10 @@
 
 #define LEDGER_NLIMB 72          /* 32-bit limbs from 2^LEDGER_EXP0 up: every finite double fits */
 #define LEDGER_EXP0  (-1152)
-static const char *ledger_row_names[LEDGER_NROWS] = {"E_chem_heating_erg", "E_chem_cooling_erg"};
+#define LEDGER_ROW_NAME(id, name, unit, state) name,
+#define LEDGER_ROW_STATE(id, name, unit, state) state,
+static const char *ledger_row_names[LEDGER_NROWS] = {LEDGER_ROWS(LEDGER_ROW_NAME)};
+static const int ledger_row_is_state[LEDGER_NROWS] = {LEDGER_ROWS(LEDGER_ROW_STATE)};
 
 struct ledger_sum {int64_t limb[LEDGER_NLIMB]; int64_t n_add;};
 static struct ledger_sum *ledger_thread = NULL;      /* [thread][row]: since the last fold */
@@ -79,27 +82,41 @@ void ledger_add(int row, double x) /* from inside a module's (threaded) loop; no
     ledger_add_exact(&ledger_thread[(size_t) t * LEDGER_NROWS + row], x);
 }
 
+static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
+{
+    for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {memset(&ledger_total[r], 0, sizeof(ledger_total[r]));}}
+#ifdef GALSF
+    for(int i = 0; i < NumPart; i++) {
+        if(P[i].Type == 0) {ledger_add_exact(&ledger_total[LEDGER_M_GAS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_GAS], P[i].Mass * P[i].Metallicity[0]);}
+        if(P[i].Type == 4) {ledger_add_exact(&ledger_total[LEDGER_M_STARS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_STARS], P[i].Mass * P[i].Metallicity[0]);}
+    }
+#endif
+}
+
 void ledger_output(void) /* at every snapshot: fold the threads, one MPI_Reduce, rank 0 writes a row */
 {
     if(!ledger_thread) {return;}
     for(int t = 0; t < ledger_nthreads; t++) {for(int r = 0; r < LEDGER_NROWS; r++) {ledger_merge(&ledger_total[r], &ledger_thread[(size_t) t * LEDGER_NROWS + r]);}}
+    ledger_state_rows();
     static int64_t glob[LEDGER_NROWS][LEDGER_NLIMB];
     int64_t loc[LEDGER_NROWS][LEDGER_NLIMB];
     for(int r = 0; r < LEDGER_NROWS; r++) {memcpy(loc[r], ledger_total[r].limb, sizeof(loc[r]));}
     MPI_Reduce(loc, glob, LEDGER_NROWS * LEDGER_NLIMB, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
     if(ThisTask != 0) {return;}
+#define LEDGER_ROW_UNIT(id, name, unit, state) (double) (unit),
+    const double ledger_row_unit[LEDGER_NROWS] = {LEDGER_ROWS(LEDGER_ROW_UNIT)}; /* booked in code units */
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%sledger.txt", All.OutputDir);
     static FILE *fd = NULL;
     if(!fd) {
-        int fresh = (RestartFlag == 0);
-        if(!(fd = fopen(buf, fresh ? "w" : "a"))) {printf("ledger: cannot open '%s'\n", buf); endrun(78202);}
-        if(fresh) {fprintf(fd, "# time"); for(int r = 0; r < LEDGER_NROWS; r++) {fprintf(fd, " %s", ledger_row_names[r]);} fprintf(fd, "  (cumulative)\n");}
+        if(!(fd = fopen(buf, (RestartFlag == 0) ? "w" : "a"))) {printf("ledger: cannot open '%s'\n", buf); endrun(78202);}
+        fseek(fd, 0, SEEK_END);
+        if(ftell(fd) == 0) {fprintf(fd, "# time"); for(int r = 0; r < LEDGER_NROWS; r++) {fprintf(fd, " %s", ledger_row_names[r]);} fprintf(fd, "  (cumulative; M_gas M_stars MZ_gas MZ_stars: at output)\n");} /* a new file, also on a start from a snapshot */
     }
     fprintf(fd, "%.17g", All.Time);
     for(int r = 0; r < LEDGER_NROWS; r++) {
         struct ledger_sum s; memcpy(s.limb, glob[r], sizeof(s.limb)); ledger_normalize(&s);
-        fprintf(fd, " %.17g", ledger_value(&s) * UNIT_ENERGY_IN_CGS /* energy rows, booked in code units */);
+        fprintf(fd, " %.17g", ledger_value(&s) * ledger_row_unit[r]);
     }
     fprintf(fd, "\n"); fflush(fd);
 }

@@ -292,6 +292,11 @@ void single_star_feedback_finalize(const int *list, int n)
             continue;
         }
         double z = 0; for(int k = ELEM_C; k < STBL_NELEM; k++) {z += ev.y[k];}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+        {double dm = ssfb_mass_before[a] - P[i].Mass; /* taken from the star by the loop [code] */
+         ledger_add(LEDGER_M_EJECTA, dm); ledger_add(LEDGER_MZ_EJECTA, (ev.Mej > 0) ? dm * z / ev.Mej : 0); ledger_add(LEDGER_MZ_STARS_LOST, dm * P[i].Metallicity[0]);
+         if(kind != SSE_WIND) {double dr = P[i].Mass - ev.M_rem / UNIT_MASS_IN_SOLAR; ledger_add(LEDGER_M_REMNANT_RESET, dr); ledger_add(LEDGER_MZ_STARS_LOST, dr * P[i].Metallicity[0]);}}
+#endif
         double residual = (kind == SSE_WIND) ? removed - ev.Mej : P[i].Mass * UNIT_MASS_IN_SOLAR - ev.M_rem;
         double row[SSFB_LOG_COLS] = {All.Time, (double)P[i].ID, (double)kind, (double)ev.remnant_type, SingleStars.M_drawn[s],
                                      (kind == SSE_WIND) ? ssfb_mass_before[a] * UNIT_MASS_IN_SOLAR : ev.M_trigger, ev.Mej, (kind == SSE_WIND) ? P[i].Mass * UNIT_MASS_IN_SOLAR : ev.M_rem,

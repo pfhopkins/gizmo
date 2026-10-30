@@ -148,6 +148,9 @@ void verify_and_assign_local_mechfb_integrals(void)
         {
             kicked.push_back(j);
             double m0=P[j].Mass, dm=LocalGasMechFBInfoTemp[j].m_injected; P[j].Mass += dm; /* update mass */ if(P[j].Type==0) {CellP[j].Mass = P[j].Mass;}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+            ledger_add(LEDGER_M_FB_TO_GAS, dm); ledger_add(LEDGER_MZ_FB_TO_GAS, LocalGasMechFBInfoTemp[j].Z_injected[0]);
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             m0=CellP[j].MassTrue; CellP[j].MassTrue += dm; /* update conserved mass */
 #endif
