@@ -48,7 +48,7 @@ def env():
     return environ
 
 
-@pytest.mark.parametrize("net", (5,))
+@pytest.mark.parametrize("net", (3, 5, 15, 16, 17))
 def test_sgchem_onezone(net, env):
     env = {**env, "CHEMCXX_DATADIR": chemistry_tables_dir()}
     out = path.join(HERE, "output", f"net{net}")
