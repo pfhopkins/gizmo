@@ -92,6 +92,9 @@ def test_stromgren_sphere(built):
     for r in rows:
         R_S = stromgren_pc(r[2] * X_H, n_H)
         assert abs(r[9] * 1e3 - R_S) < dx and abs(r[10] * 1e3 - R_S) < dx, (r[9] * 1e3, r[10] * 1e3, R_S)
+        assert 0.98 < r[6] < 1.02, r[6]  # recombinations of the ionised cells / Q
+        assert abs((3 * r[3] * dx ** 3 / (4 * np.pi)) ** (1 / 3) - R_S) < dx  # their volume radius
+        assert abs(r[3] / rows[0, 3] - 1) < 2e-3  # static gas: the same cells at every solve, up to the slow rise of Q
 
 
 def test_ranks_and_order(built):
@@ -100,5 +103,6 @@ def test_ranks_and_order(built):
     for tag, kw in [("single_r2", dict(ranks=2)), ("single_r4", dict(ranks=4)), ("single_perm", dict(ranks=2, seed=7))]:
         rows = log(run(tag, built, **kw)[0])
         assert rows.shape == ref.shape, tag
-        assert np.array_equal(rows[:, [1, 8]], ref[:, [1, 8]]), tag  # sources, passes
+        assert np.array_equal(rows[:, [1, 3, 8]], ref[:, [1, 3, 8]]), tag  # sources, ionised cells, passes
+        assert np.allclose(rows[:, 6], ref[:, 6], rtol=1e-9), tag  # ledger
         assert np.allclose(rows[:, [9, 10]], ref[:, [9, 10]], rtol=1e-6, atol=0), tag  # fronts
