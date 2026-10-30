@@ -12,6 +12,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../mesh/kernel.h"
+#include "../galaxy_sf/stellar_evolution_tables.h"
 #include "../sidm/dm_cooling_tables.h"   /* InitCool_dm() declaration only; the full dm_fluid_functions.h chain belongs in GPU_OBJS TUs where Kokkos_Core.hpp is in-scope, not in host TUs like this one */
 
 
@@ -267,6 +268,11 @@ void begrun(void)
 
 #ifdef NUCLEAR_NETWORK
     InitNuclearNetwork();
+#endif
+
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    stellar_evolution_tables_init();
+    if(gizmo_poll_controlled_stop()) return;
 #endif
 
 #ifdef TURB_DRIVING
@@ -1810,6 +1816,12 @@ void read_parameter_file(char *fname)
         addr[nt] = &All.ISMDustChem_PhotodestructionScaling;
         id[nt++] = REAL;
 #endif
+#endif
+
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        strcpy(tag[nt], "StellarTablesFile");
+        addr[nt] = All.StellarTablesFile;
+        id[nt++] = STRING;
 #endif
 
 #ifdef GALSF_FB_FIRE_STELLAREVOLUTION

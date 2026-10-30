@@ -787,6 +787,8 @@ EOSCOOL_OBJS =  \
 
 STARFORM_OBJS = galaxy_sf/sfr_eff.o \
                 galaxy_sf/stellar_evolution.o \
+                galaxy_sf/stellar_evolution_tables.o \
+                galaxy_sf/stellar_tables_check.o \
                 galaxy_sf/mechanical_fb.o \
                 galaxy_sf/radfb_local.o \
                 galaxy_sf/dm_heating.o

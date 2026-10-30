@@ -767,6 +767,10 @@ struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    char StellarTablesFile[256]; /*!< stella-tables main table (scripts/get_stella_tables.sh); the wind table is read from the same directory */
+#endif
+
 #ifdef NUCLEAR_NETWORK
     char NuclearNetworkDataFile[256];
     double NuclearBurningFloor_T;
