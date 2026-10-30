@@ -190,3 +190,21 @@ def test_sgchem_reads_the_ionised_cells(built_sgchem):
     dE = np.sum(b["m"][ion] * (b["u"][ion] - a["u"][ion])) * 1.989e33 * 1e10
     assert E_pi > 0 and abs(E_pi / dE - 1) < 0.05, (E_pi, dE)
     assert led[-1, 1] < 0.01 * E_pi, (led[-1, 1], E_pi)  # chemistry heating: the network only, not the photoionisation
+
+
+def test_quiet_steps(built):
+    """a 35 Msun star 10 kyr old turns on at its onset (15.3 kyr, the pre-main sequence of the tables). Before, the
+    photoionisation does no work and no collective on its ~5 steps, except one count at start-up (unknown sources);
+    it solves from the first photoionisation step after the onset. Log column 12: the module's reductions and
+    neighbour-loop calls since the previous row; a solve with one source and p search passes makes 7 + 2 p."""
+    import h5py
+    d, _, _ = run("quiet", built, stars=[(35.0, 1.0e4, (0.5, 0.5, 0.5))],
+                  overrides={"MaxSizeTimestep": "1e-3", "PhotoionMaxTimestep": "1000", "TimeMax": "0.03", "TimeBetSnapshot": "0.03", "TimeBetStatistics": "0.03"})
+    rows = log(d)
+    with h5py.File(built["StellarTablesFile"], "r") as F:
+        Zt, Mt = F["Z"][()], F["M_init"][()]
+        onset = F["t_PMS"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 35.0)))]
+    t_first = 1.0e4 + rows[0, 0] * PC_KMS_IN_YR
+    assert onset <= t_first < onset + 1000.0, (t_first, onset)
+    assert rows[0, 11] == 7 + 2 * rows[0, 8] + 1, rows[0]  # this solve, and the one start-up count
+    assert np.all(rows[1:, 11] == 7 + 2 * rows[1:, 8]), rows[1:, [8, 11]]
