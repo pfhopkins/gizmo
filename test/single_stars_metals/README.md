@@ -28,5 +28,12 @@ Checks:
 5. `test_dust_above_metals_stops` (build with `SGCHEM_DGR_INDEPENDENT_OF_METALLICITY`): a fresh start with the
    constant dust-to-gas ratio 0.01 (`SGChemDustToGasRatio` 1) and `InitMetallicity` 0.3 (Z = 0.0042, dust above the
    metals) stops at start-up with a message, as stella_dev; with `InitMetallicity` 1 it runs.
+6. `test_single_star_dust_yields` (build with `GALSF_ISMDUSTCHEM_MODEL=(1+2)`: silicate, carbon, metallic iron): a 20
+   Msun core collapse, a 3 Msun AGB death (winds counted as returned) and a 1 Gyr white dwarf's Type Ia at Z = 0.014,
+   dust-free gas; the model's accretion, thermal sputtering and SN shock destruction off (its scaling parameters 0), so
+   only the stars' dust is measured. The gas gains the dust of stella_dev's condensation of the table ejecta (SN: carbon
+   0.15 of C, silicate 3.5e-4 and iron 1e-3 of the key element; AGB by C/O; Type Ia iron 5e-3) in the model's element
+   dust, species and sources: 1.4e-15 (bar 1e-10). Events at `TimeMax` deposit after the last snapshot and are not
+   counted. Before: no dust from single stars (the deposit only diluted the dust).
 
 Reference: the stellar tables (stella-tables a4830ab) and stella_dev `core/init.cc`.
