@@ -81,7 +81,7 @@ def test_supernovae(built):
     # one event per star, of the class the table gives its drawn mass
     assert len(rows) == 4 and len(set(rows[:, 1])) == 4
     assert np.all(rows[:, 2] == 1)  # kind: supernova
-    rows = rows[:, [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11]]  # drop the kind
+    rows = rows[:, [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11]]  # the columns as before winds were returned (drop the kind)
     for r in rows:
         assert EXPECTED_TYPES[r[3]] == int(r[2])
         assert r[4] == r[3]  # mass at the trigger = drawn mass (the initial conditions count the winds as returned)
@@ -116,6 +116,17 @@ def test_ranks_and_threads(built):
         t = totals(s)
         # energy: a few hydro steps of hot gas after the deposit, which are not bitwise rank-independent
         assert abs(t["M"] / t2["M"] - 1) < 1e-13 and abs(t["E"] / t2["E"] - 1) < 1e-5, tag
+
+
+def test_deaths_on_time_with_long_steps(built):
+    """the stars are 37 kyr from death and the largest allowed step is the whole 60 kyr run: each dies within 1 kyr of its table death
+    time (a single star's step is limited by the time to its next stellar-evolution event, not by the population rule)"""
+    kyr = 1e3 / (3.085678e13 / 3.155e7)  # code time per kyr, with the code's year
+    _, _, rows = run("long_steps", built, before_death_yr=37e3,
+                     overrides=dict(MaxSizeTimestep=60 * kyr, TimeMax=60 * kyr, TimeBetSnapshot=60 * kyr, TimeBetStatistics=60 * kyr))
+    assert len(rows) == 4
+    t_kyr = rows[:, 0] / kyr
+    assert np.all((t_kyr >= 37.0) & (t_kyr <= 38.0)), t_kyr
 
 
 def test_element_yields(built):
