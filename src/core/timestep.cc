@@ -538,9 +538,46 @@ integertime get_timestep(int p,		/*!< particle index */
 #define SINK_TIMESTEP_SAFETY_FACTOR (0.3)
 #endif
 
+/* Coefficients on dt_tidal, for collisionless particles and for gas. GIZMO's value is 1.0: dt_tidal
+   already scales as sqrt(ErrTolIntAccuracy), so a fixed coefficient is a smaller accuracy parameter,
+   which belongs in the parameter file. That holds only while the tidal criterion is the one being
+   tuned in isolation. Under SINGLE_STAR_SINK_DYNAMICS it is not: ErrTolIntAccuracy also sets the
+   acceleration criterion, the gas self-gravity floor below and the sink two-body criterion, all as
+   sqrt(eta), so the parameter cannot move the tidal step relative to the others; this coefficient is
+   the only knob that does. STARFORGE builds take the starforge_dev values, so the two branches step
+   identically there:
+     gas                                        0.5   (floored anyway by sqrt(eta/(G rho)) below)
+     collisionless, with SINGLE_STAR_TIMESTEPPING 0.5   (dt_tidal must stay above dt_2body so the
+                                                      symmetric two-body criterion binds for both
+                                                      members of a bound pair; see the safety factor)
+     collisionless otherwise                    0.10  (calibrated on an equilibrium Hernquist sphere at
+                                                      ErrTolIntAccuracy=0.01, the published worst case:
+                                                      at 0.5 the tidal criterion is 142x worse than the
+                                                      acceleration criterion in secular energy drift and
+                                                      215x in |dE/E0|; 0.10 brings |dE/E0| to 0.59x of
+                                                      it, for 6.2x the substeps)
+   Without SINGLE_STAR_SINK_DYNAMICS both are 1.0 and this block is a no-op. */
+#ifndef TIDAL_TIMESTEP_PREFAC
+#if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_TIMESTEPPING)
+#define TIDAL_TIMESTEP_PREFAC (0.5)
+#elif defined(SINGLE_STAR_SINK_DYNAMICS)
+#define TIDAL_TIMESTEP_PREFAC (0.10)
+#else
+#define TIDAL_TIMESTEP_PREFAC (1.0)
+#endif
+#endif
+#ifndef TIDAL_TIMESTEP_PREFAC_GAS
+#if defined(SINGLE_STAR_SINK_DYNAMICS)
+#define TIDAL_TIMESTEP_PREFAC_GAS (0.5)
+#else
+#define TIDAL_TIMESTEP_PREFAC_GAS (1.0)
+#endif
+#endif
+
 #ifdef TIDAL_TIMESTEP_CRITERION // tidal criterion obtains the same energy error in an optimally-softened Plummer sphere over ~100 crossing times as the Power 2003 criterion
     double tidal_mag_dt = P[p].tidal_tensorps.frobenius_norm_sq();
-    double dt_tidal = sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
+    double tidal_prefac = (P[p].Type == 0) ? TIDAL_TIMESTEP_PREFAC_GAS : TIDAL_TIMESTEP_PREFAC;
+    double dt_tidal = tidal_prefac * sqrt(All.ErrTolIntAccuracy / (All.cf_a3inv * sqrt(tidal_mag_dt / 6))); // recovers sqrt(eta) * tdyn for a Keplerian potential
     if(P[p].Type == 0) {dt_tidal = DMIN(sqrt(All.ErrTolIntAccuracy/(All.G*CellP[p].Density*All.cf_a3inv)), dt_tidal);} // gas self-gravity timescale as a bare minimum
     if(All.ComovingIntegrationOn){ // floor to the dynamical time of the universe
         double rho0 = (H0_CGS*H0_CGS*(3./(8.*M_PI*GRAVITY_G_CGS))*All.cf_a3inv / UNIT_DENSITY_IN_CGS);
