@@ -142,6 +142,12 @@ struct global_data_all_processes
   double Chimes_f_esc_G0;
 #endif
 #endif // CHIMES
+#ifdef SGCHEM
+  char SGChemTablesPath[256];   /*!< directory of the installed SGChem tables (scripts/get_stella_tables.sh) */
+  double SGChemCosmicRayIonRate;/*!< cosmic-ray ionisation rate per H [s^-1] */
+  double SGChemDustToGasRatio;  /*!< dust-to-gas ratio relative to the Milky Way at solar metallicity, scaled with the cell Z */
+  double SGChemDeuteriumAbundance; /*!< D/H by number */
+#endif
 
   double MinEgySpec;		/*!< the minimum allowed temperature expressed as energy per unit mass */
 #ifdef SPHAV_ARTIFICIAL_CONDUCTIVITY

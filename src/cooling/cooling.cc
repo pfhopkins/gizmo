@@ -1940,6 +1940,10 @@ void InitCool(void)
     InitGrackle();
 #endif
 
+#ifdef SGCHEM
+    sgchem_init();
+#endif
+
 #ifdef CHIMES
     snprintf(ChimesGlobalVars.MainDataTablePath, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/chimes_main_data.hdf5", ChimesDataPath);
     snprintf(ChimesGlobalVars.EqAbundanceTablePath, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s/EqAbundancesTables/%s", ChimesDataPath, ChimesEqAbundanceTable);

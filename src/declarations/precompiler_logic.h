@@ -1682,6 +1682,17 @@
 #endif
 
 
+#ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
+#if defined(CHIMES)
+#error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"
+#endif
+#if !defined(COOLING) || !defined(METALS) || defined(COOL_GRACKLE)
+#error "SGCHEM needs COOLING and METALS, and excludes COOL_GRACKLE"
+#endif
+#if defined(RADTRANSFER) || defined(COSMIC_RAY_FLUID)
+#error "SGCHEM: the coupling to RADTRANSFER and COSMIC_RAY_FLUID is not in this tree yet"
+#endif
+#endif
 #ifdef CHIMES_STELLAR_FLUXES /* The following defines the stellar age bins that we will use to define the UV spectra from stars used in CHIMES. */
 #define CHIMES_LOCAL_UV_NBINS 8
 #define CHIMES_LOCAL_UV_AGE_LOW 0.0

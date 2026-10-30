@@ -2822,6 +2822,24 @@ void read_parameter_file(char *fname)
          */
 #endif
 
+#ifdef SGCHEM
+      strcpy(tag[nt], "SGChemTablesPath");
+      addr[nt] = All.SGChemTablesPath;
+      id[nt++] = STRING;
+
+      strcpy(tag[nt], "SGChemCosmicRayIonRate");
+      addr[nt] = &All.SGChemCosmicRayIonRate;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemDustToGasRatio");
+      addr[nt] = &All.SGChemDustToGasRatio;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SGChemDeuteriumAbundance");
+      addr[nt] = &All.SGChemDeuteriumAbundance;
+      id[nt++] = REAL;
+#endif
+
 #ifdef CHIMES
       strcpy(tag[nt], "Chimes_data_path");
       addr[nt] = ChimesDataPath;
