@@ -1,4 +1,4 @@
-% winds of a 35 Msun star
+% winds of a 35 Msun star and an AGB death (3 Msun)
 InitCondFile                       snapshot
 OutputDir                          output
 TimeMax                            0.01

@@ -1,5 +1,6 @@
-"""Lattice of 1 Msun gas cells at n_H = 10 cm^-3, T = 100 K, Z = 0.014 (total metallicity), at rest, with a 35 Msun
-single star 1 Myr old (main-sequence winds; units pc, Msun, km/s). Written as a snapshot (start flag 2)."""
+"""Lattice of 1 Msun gas cells at n_H = 10 cm^-3, T = 100 K, Z = 0.014 (total metallicity), at rest, with two single
+stars, each alone in its region (units pc, Msun, km/s): a 35 Msun star 1 Myr old (main-sequence winds) and a 3 Msun star
+just past its table lifetime (AGB death, white-dwarf remnant). Written as a snapshot (start flag 2)."""
 import numpy as np
 import h5py
 
@@ -14,8 +15,14 @@ def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100
     pos = np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
     N = len(pos)
     u = 1.5 * 1.380649e-16 * T / (1.27 * 1.6726e-24) / 1e10
+    with h5py.File(tables_file, "r") as F:
+        Zt, Mt = F["Z"][()], F["M_init"][()]
+        iz, im = int(np.argmin(np.abs(Zt - z))), int(np.argmin(np.abs(Mt - 3.0)))
+        n2 = (len(Zt), len(Mt))
+        death3 = (F["lifetime_yr"][()] + F["t_PMS"][()]).reshape(n2)[iz, im]
     stars = [  # drawn mass, mass, age [yr], position, event bits
-        (35.0, 35.0, 1.0e6, (0.25, 0.25, 0.25), 0)]
+        (35.0, 35.0, 1.0e6, (0.25, 0.25, 0.25), 0),
+        (3.0, 3.0, 1.001 * death3, (0.75, 0.75, 0.25), 0)]
     ns = len(stars)
     with h5py.File(fname, "w") as F:
         h = F.create_group("Header")
@@ -35,5 +42,5 @@ def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100
         s["Velocities"] = np.array([[5.0, 2.0, -1.0]] * ns); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)
         s["Masses"] = np.array([m for _, m, _, _, _ in stars]); s["StellarFormationTime"] = -np.array([a for _, _, a, _, _ in stars]) / PC_KMS_IN_YR
         s["Metallicity"] = np.full((ns, 1), z); s["SingleStarDrawnMass"] = np.array([md for md, _, _, _, _ in stars])
-        s["SingleStarBirthMetallicity"] = np.full(ns, z)
+        s["SingleStarBirthMetallicity"] = np.full(ns, z); s["SingleStarEventBits"] = np.array([b for _, _, _, _, b in stars], dtype=float)
     return L
