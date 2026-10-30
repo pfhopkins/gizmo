@@ -1,9 +1,9 @@
 """single_star_record test: the compact record of IMF-sampled single stars (GALSF_SINGLE_STARS_FROM_IMF) follows its
-star. 64 stars of 1-50 Msun (above the merge threshold of 0.49 Msun set by the 1 Msun gas cells) with drawn masses and
-birth metallicities from the initial conditions move at 20-60 km/s through a 5.3 pc periodic box (1.5-4.5 crossings by
-the end), so on 4 ranks they change rank many times.
+star, and such stars are never merged. 64 stars of 0.1-50 Msun (some below the merge threshold of 0.49 Msun set by the
+1 Msun gas cells) with drawn masses and birth metallicities from the initial conditions move at 20-60 km/s through a
+5.3 pc periodic box (1.5-4.5 crossings by the end), so on 4 ranks they change rank many times.
   1. every snapshot (4 ranks) holds all 64 stars, each with its mass, drawn mass and birth metallicity bitwise as in the
-     initial conditions;
+     initial conditions (without the merge guard one star, ID 532, is merged in the first 0.1 time units);
   2. a run stopped halfway and continued from its restart files ends with the same records;
   3. 1 rank gives the same records.
 """

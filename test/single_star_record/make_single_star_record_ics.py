@@ -23,7 +23,7 @@ def make_single_star_record_ics(fname):
         p = F.create_group("PartType0"); p["Coordinates"] = pos; p["Velocities"] = np.zeros_like(pos)
         p["ParticleIDs"] = np.arange(1, N + 1, dtype=np.uint32); p["Masses"] = np.ones(N); p["InternalEnergy"] = np.ones(N)
         s = F.create_group("PartType4"); s["Coordinates"] = spos; s["Velocities"] = svel
-        s["ParticleIDs"] = np.arange(N + 1, N + N_STARS + 1, dtype=np.uint32); s["Masses"] = np.maximum(rng.uniform(0.1, 50, N_STARS), 1.0)  # above the merge threshold of 0.49 Msun set by the 1 Msun cells
+        s["ParticleIDs"] = np.arange(N + 1, N + N_STARS + 1, dtype=np.uint32); s["Masses"] = rng.uniform(0.1, 50, N_STARS)  # some below the merge threshold of 0.49 Msun: sampled stars are never merged
         s["StellarFormationTime"] = np.zeros(N_STARS)
         s["SingleStarDrawnMass"] = rng.uniform(0.08, 150, N_STARS); s["SingleStarBirthMetallicity"] = rng.uniform(1e-4, 0.03, N_STARS)
     return L
