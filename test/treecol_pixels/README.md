@@ -14,6 +14,7 @@ computation: `TEST_DUMP_TREECOL_PIXELS_AND_EXIT` (test only) writes the tree rad
 | `test_slab_shielding` | n_H ~ 1e3 slab lit by one 40 Msun star 3 pc in front (G0 ~ 300 at the face), 20 steps of chemistry (0.15 Myr): on the star's axis the cells more than 2 pc deep (N_H >~ 5e21 toward it) reach x_H2 > 1e-2 and >= 30x the lit face (the chemistry uses the pixel columns for dust, H2 and CO shielding) |
 | `test_host_equals_device` | device walk = host walk cell outputs (float storage, at most one rounding step) and device repeat bitwise; 2 ranks x 2 threads and 1 rank x 4 threads (parameter `GravityHostWalkBelowActive` selects the walk) |
 | `test_node_species_masses` | node dust-weighted gas, H2 and CO masses: cells as the chemistry inputs, root node = sum of the cells (1e-12) after the first tree build and after three steps of chemistry and drift; 1 and 2 ranks |
+| `test_dust_to_gas_independent_of_metallicity` | build with `SGCHEM_DGR_INDEPENDENT_OF_METALLICITY`, `SGChemDustToGasRatio` 0.5, cell Z from 0.1 to 3 solar: every cell's dust-weighted mass is 0.5 x its mass (1e-12), as stella_dev; the chemistry and radiation pressure read the same function. Before: scaled with Z (up to 3x off) |
 | `test_star_band_luminosities` | single-star band luminosities (PE, LW, 6-8 eV, NUV 3.444-6 eV, OPT) equal the stella-tables interpolation at the current age (1e-10), disjoint sum identity (1e-12), LW <= PE, root node = sum of the stars; 1 and 2 ranks |
 
 Parameter: `TreeColShieldingLength` [pc], pixel columns only from mass closer than this (0 = no limit).

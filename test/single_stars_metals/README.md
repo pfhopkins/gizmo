@@ -25,5 +25,8 @@ Checks:
 4. `test_27_element_supernova_yields`: one 20 Msun core collapse: each of the 26 element slots gains the table SN
    element ejecta scaled to the ejecta mass (measured 5.5e-13, bar 1e-11; Ni: none in the table, none in the gas); the
    total Z gain equals the event's metals to 1.3e-14 of the gas metal mass (bar 1e-12).
+5. `test_dust_above_metals_stops` (build with `SGCHEM_DGR_INDEPENDENT_OF_METALLICITY`): a fresh start with the
+   constant dust-to-gas ratio 0.01 (`SGChemDustToGasRatio` 1) and `InitMetallicity` 0.3 (Z = 0.0042, dust above the
+   metals) stops at start-up with a message, as stella_dev; with `InitMetallicity` 1 it runs.
 
 Reference: the stellar tables (stella-tables a4830ab) and stella_dev `core/init.cc`.
