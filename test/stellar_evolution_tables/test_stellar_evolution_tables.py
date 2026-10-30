@@ -105,3 +105,7 @@ def test_lookups(built):
     assert np.fromfile(f"{out}.ia.1").tobytes() == ia.tobytes()
     assert ia.shape == ref_ia.shape and np.all(np.abs(ia - ref_ia) <= 1e-12 * np.abs(ref_ia) + 1e-300)
     assert ia.min() >= 0 and ia.max() <= 1 and np.all(np.diff(ia.reshape(8, 40), axis=1) >= 0)
+    bands, ref_bands = np.fromfile(f"{out}.bands.0"), np.loadtxt(unit / "lookup_reference_bands.txt")
+    assert np.fromfile(f"{out}.bands.1").tobytes() == bands.tobytes() and len(bands) == 8 * 64 * 7 * 5
+    i_bands = ref_bands[:, 0].astype(int)
+    assert np.all(np.abs(bands[i_bands] - ref_bands[:, 1]) <= 1e-12 * np.abs(ref_bands[:, 1]) + 1e-300)

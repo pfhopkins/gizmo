@@ -61,6 +61,17 @@ int main(int argc, char **argv)
     }
     fclose(fd);
 #endif
+    /* band luminosities of the gravity-tree sources, on the same (M, Z, age) grid */
+    snprintf(fn, sizeof(fn), "%s.bands.%d", argv[2], ThisTask);
+    fd = fopen(fn, "wb");
+    for(int iz = 0; iz < (int)(sizeof(logZs) / sizeof(double)); iz++) {
+        for(int im = 0; im < 64; im++) {
+            double logM = log10(0.07) + im * (log10(400.) - log10(0.07)) / 63.0, logZ = logZs[iz], lt = stellar_lifetime(logM, logZ);
+            const double fage[] = {1e-4, 0.01, 0.3, 0.7, 0.95, 0.999, 1.2};
+            for(int ia = 0; ia < 7; ia++) {double la = log10(DMAX(fage[ia] * lt, 100.)); W(stellar_log_L_LW(logM, logZ, la)); W(stellar_log_L_FUV_total(logM, logZ, la)); W(stellar_log_L_FUV_M1(logM, logZ, la)); W(stellar_log_L_NUV(logM, logZ, la)); W(stellar_log_L_OPT_NIR(logM, logZ, la));}
+        }
+    }
+    fclose(fd);
     if(ThisTask == 0) {printf("lookup_grid: %ld values\n", n);}
     MPI_Finalize();
     return 0;
