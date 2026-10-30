@@ -1820,6 +1820,12 @@ void read_parameter_file(char *fname)
 #endif
 #endif
 
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+        strcpy(tag[nt], "TestSingleStarBirths");
+        addr[nt] = All.TestSingleStarBirths;
+        id[nt++] = STRING;
+#endif
+
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
         strcpy(tag[nt], "StellarTablesFile");
         addr[nt] = All.StellarTablesFile;

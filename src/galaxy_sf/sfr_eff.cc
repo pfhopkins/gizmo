@@ -733,6 +733,9 @@ void star_formation_parent_routine(void)
     
     
     
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+    stars_spawned += single_star_test_births(stars_spawned);
+#endif
     {   /* every count this pass changed, in one reduction */
         long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
         MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
@@ -755,6 +758,9 @@ void star_formation_parent_routine(void)
         /* Note: N_gas is only reduced once rearrange_particle_sequence is called */
         /* Note: New tree construction can be avoided because of  `force_add_element_to_tree()' */
     } //(tot_spawned > 0 || tot_converted > 0)
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+    sum_mass_stars += single_stars_collect_gas(tot_spawned); /* new single stars take their drawn mass from the gas around them */
+#endif
     
     for(bin = 0, sfrrate = 0; bin < TIMEBINS; bin++) {if(TimeBinCount[bin]) {sfrrate += TimeBinSfr[bin];}}
     

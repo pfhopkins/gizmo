@@ -767,6 +767,9 @@ struct global_data_all_processes
   double Sink_jet_precess_degree;
   double Sink_jet_precess_period;
 #endif
+#ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
+    char TestSingleStarBirths[256]; /*!< test only: "ID:M_drawn,..." single stars formed at these gas cells at the first star-formation step */
+#endif
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     char StellarTablesFile[256]; /*!< stella-tables main table (scripts/get_stella_tables.sh); the wind table is read from the same directory */
 #endif
