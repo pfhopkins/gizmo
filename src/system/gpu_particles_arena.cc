@@ -533,7 +533,18 @@ extern "C" void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_
     void *p = NULL;
     try { p = Kokkos::kokkos_malloc<GIZMO_KOKKOS_SHARED_SPACE>(label ? label : "particle_soa_unlabeled", nbytes); }
     catch(const std::exception &) { return NULL; }
-    if(p) {particle_storage_apply_placement(p, nbytes, particle_arena_bytes); memset(p, 0, nbytes);}
+    if(p) {
+        particle_storage_apply_placement(p, nbytes, particle_arena_bytes);
+#if defined(KOKKOS_ENABLE_CUDA)
+        /* The zeroing below, and a capacity change's copy into this buffer, are host writes: populate the pages on
+           the host in bulk rather than one first-touch fault at a time. */
+        if(particle_arena_bytes > 0 && particles_prefetch_enabled()) {
+            cudaMemPrefetchAsync(p, nbytes, cudaCpuDeviceId, 0);
+            if(cudaStreamSynchronize(0) != cudaSuccess) {(void) cudaGetLastError();}
+        }
+#endif
+        memset(p, 0, nbytes);
+    }
     return p;
 }
 

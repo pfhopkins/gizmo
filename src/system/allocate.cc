@@ -370,6 +370,7 @@ int resize_particle_storage(int new_maxpart)
       order[k] = s;
     }
 
+  gizmo_particles_prefetch_to_host("resize_particle_storage");   /* the copies below read the old buffers on the host */
   int failed_slot = -1;
   const char *failed_what = NULL;
   for(int step = 0; step < nsteps && failed_slot < 0; step++)
