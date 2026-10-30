@@ -229,6 +229,7 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  * macros below are thin wrappers so the existing call sites are unchanged. */
 #include "gravity_box_distance.h"
 #include "gravtree_opening.h"
+#include "gravtree_treecol_pixels.h"
 #define GRAVITY_NEAREST_XYZ(x,y,z,sign)             gravity_box_nearest_image(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_X(x,y,z,sign) gravity_box_long_abs_x(x,y,z,sign)
 #define GRAVITY_NGB_PERIODIC_BOX_LONG_Y(x,y,z,sign) gravity_box_long_abs_y(x,y,z,sign)
@@ -2024,6 +2025,9 @@ struct grav_walk_member_t {
 #ifdef RT_USE_TREECOL_FOR_NH
     double treecol_angular_bins[RT_USE_TREECOL_FOR_NH];
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_sums_t tcpix;
+#endif
 #ifdef COUNT_MASS_IN_GRAVTREE
     MyFloat tree_mass;
 #endif
@@ -2113,6 +2117,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     double gasmass;
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    double tcpix_species[TREECOL_PIXELS_NSPECIES];
 #endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
     double center[3]={0};
@@ -2248,6 +2255,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #ifdef RT_USE_TREECOL_FOR_NH
         {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {mem.treecol_angular_bins[k] = 0;}}
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        treecol_pixels_zero(mem.tcpix);
+#endif
 #ifdef COUNT_MASS_IN_GRAVTREE
         mem.tree_mass = 0;
 #endif
@@ -2368,6 +2378,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
                             * dark-matter/star particles. Nodes assign unconditionally below; only gas leaves
                             * (and the sink alpha-disk reservoir, where enabled) carry gas mass. */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {tcpix_species[ks] = 0;}
+#endif
                 if(no < treeSlots) /* this is a particle, we will use it */
                 {
                     if(P[no].Ti_current != ti_Current) {endrun(90001051);}   /* accepted during traversal, which drifted it */
@@ -2402,6 +2415,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     if(P[no].Type == 0) {gasmass = P[no].Mass;}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    treecol_pixels_species_masses(P, CellP, no, tcpix_species);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
                     if(P[no].Type == 5) {gasmass = P[no].Sink_Mass_Reservoir;} // gas at the inner edge of a disk should not see a hole due to the sink
 #endif
@@ -2536,6 +2552,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
                     gasmass = nop->gasmass;
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {tcpix_species[ks] = nop->treecol_species_mass[ks];}
+#endif
 #ifdef GRAVITY_SPHERICAL_SYMMETRY
                     r_source = grav_spherical_symmetry_r_from_center(nop->u.d.s[0],nop->u.d.s[1],nop->u.d.s[2],center[0],center[1],center[2]);
 #endif
@@ -2635,6 +2654,16 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
                     grav_treecol_accumulate(dr, r, fac_accel, gasmass, mass, angular_bin_size, mem.treecol_angular_bins);
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+                    if(grav_target_valid_gas_for_rt(ptype, soft, pmass))
+                    {
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, tcpix_species, d_stellarlum, mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * soft);
+#else
+                        treecol_pixels_accumulate(mem.tcpix, dr, r, fac_accel, mass, tcpix_species, dr, NULL, 0);
+#endif
+                    }
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
                     grav_cr_lebron_accumulate(ptype, r, soft, cr_injection, cr_active_gate, cr_t_max, tgt.pm, SubGrid_CosmicRayEnergyDensity);
@@ -3029,6 +3058,9 @@ int force_treeevaluate(const int *targets, int n_targets, int cap, int *ninter_o
         P[target_m].GravAccel = out.core.acc;
 #ifdef RT_USE_TREECOL_FOR_NH
         int k; for(k=0; k < RT_USE_TREECOL_FOR_NH; k++) P[target_m].ColumnDensityBins[k] = mem.treecol_angular_bins[k];
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+        if(P[target_m].Type == 0) {treecol_pixels_write_cell(CellP[target_m], mem.tcpix);}
 #endif
 #ifdef COUNT_MASS_IN_GRAVTREE
         P[target_m].TreeMass = mem.tree_mass;

@@ -136,7 +136,7 @@ KOKKOS_INLINE_FUNCTION void grav_target_select_soft_and_zeta(int ptype, double a
 }
 #endif
 
-#ifdef RT_USE_GRAVTREE
+#if defined(RT_USE_GRAVTREE) || defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
 /* Valid-gas gate for every RT payload load/accumulate (both walks store the result; the GPU
  * walk keeps it in a volatile int — nvc++ constant-propagates plain int gates in device code). */
 KOKKOS_INLINE_FUNCTION int grav_target_valid_gas_for_rt(int ptype, double soft, double pmass)

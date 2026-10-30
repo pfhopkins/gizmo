@@ -875,6 +875,7 @@ OBJS  = $(CORE_OBJS) $(SYSTEM_OBJS) $(GRAVITY_OBJS) $(HYDRO_OBJS) \
 INCL    += 	declarations/allvars.h \
 			core/proto.h \
 			gravity/forcetree.h \
+			gravity/gravtree_treecol_pixels.h cooling/sgchem/sgchem_dust_to_gas.h \
 			gravity/myfftw3.h \
 			domain/domain.h \
 			system/myqsort.h \

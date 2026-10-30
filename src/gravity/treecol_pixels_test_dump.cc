@@ -46,14 +46,19 @@ void test_dump_treecol_pixels_and_exit(void)
     }
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
-    FILE *fc = treecol_dump_open("cells"); /* ID, species masses [code units] */
+    FILE *fc = treecol_dump_open("cells"); /* ID, species masses [code units], pixel columns [code], band energy densities [erg/cm^3] */
     for(int i = 0; i < NumPart; i++)
     {
         if(P[i].Type != 0) {continue;}
         double m[TREECOL_PIXELS_NSPECIES]; treecol_pixels_species_masses(P, CellP, i, m);
         fprintf(fc, "%llu", (unsigned long long) P[i].ID);
         for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {fprintf(fc, " %.17g", m[k]);}
-        fprintf(fc, "\n");
+        for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", CellP[i].TreeColColumn[k][j]);}}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+        for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", CellP[i].TreeColEgyUV[j]);}
+        fprintf(fc, " %.9g %.9g %.9g %.9g", CellP[i].TreeColEgyLW, CellP[i].TreeColEgyNUV, CellP[i].TreeColEgyOPT, CellP[i].TreeColEgy68);
+#endif
+        fprintf(fc, " %.17g %.17g %.17g\n", P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);
     }
     fclose(fc);
     if(ThisTask == 0)

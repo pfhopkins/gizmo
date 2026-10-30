@@ -476,6 +476,13 @@ extern struct gas_cell_data
 #endif
     MyFloat Temp;                         /*!< gas temperature from the chemistry [K] */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    float TreeColColumn[TREECOL_PIXELS_NSPECIES][GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel dust-weighted gas, H2, CO columns from the gravity walk [code mass/length^2] */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    float TreeColEgyUV[GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel unattenuated stellar 6-13.6 eV energy density [erg/cm^3] */
+    float TreeColEgyLW, TreeColEgyNUV, TreeColEgyOPT, TreeColEgy68; /*!< totals: 11.2-13.6 (per-pixel floored), 3.444-6, 0.4133-3.444, 6-8 eV [erg/cm^3] */
+#endif
+#endif
     
     /* Temperature, Gamma and MeanMolecularWeight are the cached thermodynamic state. Gamma and
        MeanMolecularWeight describe the COMPOSITION, which only the cooling/chemistry solver (or a
