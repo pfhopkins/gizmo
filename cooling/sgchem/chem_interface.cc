@@ -43,6 +43,58 @@
  * No COMMON block is written here.  The only Fortran call is CALC_TEMP,
  * a pure table lookup (init-time temp/gamma tables + explicit args only).
  * ========================================================================= */
+/* EUV on H2 (net 5): blackbody-band-averaged sigma_H2/sigma_HI, blackbody chosen to reproduce the band's <hnu>.
+ * sigma_H2: Arepo MRT/RT_init.cc H2_ionization_crosssection (15.2 eV threshold); sigma_HI: Osterbrock fit as rt_chem.cc. */
+#define H2EUV_NT 64
+static double h2euv_E[2][H2EUV_NT], h2euv_r[2][H2EUV_NT];
+static double h2euv_sigma_H2(double e)
+{
+    static const double Epw[12] = {15.20, 15.45, 15.70, 15.95, 16.20, 16.40, 16.65, 16.85, 17.00, 17.20, 17.65, 18.10};
+    static const double Spw[11] = {0.09e-18, 1.15e-18, 3.0e-18, 5.0e-18, 6.75e-18, 8.0e-18, 9.0e-18, 9.5e-18, 9.8e-18, 10.1e-18, 9.8e-18};
+    if(e < 15.2) {return 0;}
+    if(e < 18.1) {int k; for(k = 0; k < 11; k++) {if(e < Epw[k+1]) {return Spw[k];}}}
+    return 9.75e-18 * pow(18.1 / e, 3);
+}
+static double h2euv_sigma_HI(double e)
+{
+    double f = sqrt(DMAX(e / 13.6 - 1.0, 1.e-10));
+    return 6.3e-18 * pow(13.6 / e, 4) * exp(4 - 4 * atan(f) / f) / (1.0 - exp(-2 * M_PI / f));
+}
+void sgchem_h2_euv_init(void) /* serial, once: tables for the 13.6-500 eV band [0] and the M1 multifrequency H0 band 13.6-24.6 eV [1] */
+{
+    const double e_hi[2] = {500.0, 24.6};
+    int b, it, j, nint = 4000;
+    for(b = 0; b < 2; b++) {
+        for(it = 0; it < H2EUV_NT; it++) {
+            double kT = 1.0e4 * pow(30.0, it / (double)(H2EUV_NT - 1)) * BOLTZMANN_CGS / ELECTRONVOLT_IN_ERGS;
+            double de = (e_hi[b] - 13.6) / (nint - 1), sw = 0, swe = 0, s1 = 0, s2 = 0;
+            for(j = 0; j < nint; j++) {
+                double e = 13.6 + de * j, x = e / kT;
+                double w = (x < 500.) ? e * e / expm1(x) : 0; /* photon number per eV */
+                sw += w; swe += w * e; s1 += w * h2euv_sigma_HI(e); s2 += w * h2euv_sigma_H2(e);
+            }
+            h2euv_E[b][it] = swe / sw; h2euv_r[b][it] = s2 / s1;
+        }
+    }
+    if(ThisTask == 0) {printf("SGCHEM EUV-H2: sigma_H2/sigma_HI = %.3f (<hnu>=%.2f eV, 13.6-500) %.3f (<hnu>=%.2f eV, 13.6-24.6)\n",
+                              sgchem_h2_euv_ratio(18.63, 500.), 18.63, sgchem_h2_euv_ratio(17.38, 24.6), 17.38);}
+}
+double sgchem_h2_euv_ratio(double E_mean_eV, double e_hi_eV) /* sigma_H2 per molecule / sigma_HI per atom for a band of mean photon energy E_mean */
+{
+    int b = (e_hi_eV < 100.) ? 1 : 0, k;
+    if(E_mean_eV <= h2euv_E[b][0]) {return h2euv_r[b][0];}
+    if(E_mean_eV >= h2euv_E[b][H2EUV_NT-1]) {return h2euv_r[b][H2EUV_NT-1];}
+    for(k = 1; k < H2EUV_NT - 1 && h2euv_E[b][k] < E_mean_eV; k++) {}
+    double t = (E_mean_eV - h2euv_E[b][k-1]) / (h2euv_E[b][k] - h2euv_E[b][k-1]);
+    return h2euv_r[b][k-1] + t * (h2euv_r[b][k] - h2euv_r[b][k-1]);
+}
+#if defined(SGCHEM_EUV_H2) && defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+double sgchem_m1_h2_absorbers(int i) /* M1 H0-band absorbers from H2, in HI equivalents per H nucleus */
+{
+    return sgchem_h2_euv_ratio(rt_nu_eff_eV[RT_FREQ_BIN_H0], RT_H0_BAND_TOP_EV) * CellP[i].TracAbund[IH2];
+}
+#endif
+
 #if defined(COSMIC_RAY_FLUID)
 static void chem_zeta_from_crfluid(int target, struct ChemInputs *in) /* zeta = 3e-17 (e_CR / 1.8 eV cm^-3) + 1e-21 Z/Zsun radioactive; no CosmicRayIonRate floor */
 {
@@ -329,6 +381,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
     /* [orig sgchem.cc:382-384] Default RT photoionization rates to zero */
     in->rt_phot_HI = in->rt_phot_HeI = in->rt_phot_HeII = 0;
     in->rt_heat_HI = in->rt_heat_HeI = in->rt_heat_HeII = 0;
+    in->rt_phot_H2 = in->rt_heat_H2 = 0;
     /* Mirror of the init-time COOLIC.irad_heat default (sgchem_init sets 0; the
      * pre-refactor per-cell path only ever wrote it in the cosmological branch
      * below, so in non-cosmological runs the committed 0 == the value the COMMON
@@ -458,6 +511,11 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             double Gamma  = C_LIGHT_CGS * (u_cgs / E_phot) * sigma;
             in->rt_phot_HI = Gamma;
             in->rt_heat_HI = Gamma * (rt_nu_eff_eV[RT_FREQ_BIN_H0] - 13.6) * ELECTRONVOLT_IN_ERGS;
+#if defined(SGCHEM_EUV_H2)
+            double r_h2 = sgchem_h2_euv_ratio(rt_nu_eff_eV[RT_FREQ_BIN_H0], RT_H0_BAND_TOP_EV); /* same ratio as rt_kappa */
+            in->rt_phot_H2 = r_h2 * Gamma;
+            in->rt_heat_H2 = r_h2 * Gamma * DMAX(rt_nu_eff_eV[RT_FREQ_BIN_H0] - 15.2, 0.0) * ELECTRONVOLT_IN_ERGS;
+#endif
         }
 #if defined(RT_PHOTOION_MULTIFREQUENCY)
         { /* HeI band */
@@ -502,7 +560,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
      * applies on top, exactly as for M1. */
     {
         int b_pi, p_pi;
-        double gHI = 0, hHI = 0;
+        double gHI = 0, hHI = 0, gH2 = 0, hH2 = 0;
 #ifdef TREERAY_PI_HE
         double gHeI = 0, hHeI = 0, gHeII = 0, hHeII = 0;
 #endif
@@ -515,7 +573,12 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             double rho_c  = CellP[target].Density * All.cf_a3inv * UNIT_DENSITY_IN_CGS;
             double L_c    = pow(P[target].Mass * UNIT_MASS_IN_CGS / rho_c, 1.0/3.0);
             double nH_c   = HYDROGEN_MASSFRAC * rho_c / PROTONMASS_CGS;
+#if defined(SGCHEM_EUV_H2) && (N_TRPI_BANDS == 1)
+            double xH2_c  = CellP[target].TracAbund[IH2];
+            double nHI_c  = (DMAX(0.0, 1.0 - CellP[target].TracAbund[IHP] - 2.0 * xH2_c) + TRPI_H2_per_HI * xH2_c) * nH_c; /* HI-equivalent, as the tree column */
+#else
             double nHI_c  = DMAX(0.0, 1.0 - CellP[target].TracAbund[IHP]) * nH_c;
+#endif
 #ifdef TREERAY_PI_HE
             double nHeII_c  = CellP[target].TracAbund[IHEP]  * nH_c;
             double nHeIII_c = CellP[target].TracAbund[IHEPP] * nH_c;
@@ -534,6 +597,9 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
                 double E_b = TRPI_Eev[b_pi] * ELECTRONVOLT_IN_ERGS;
                 double G_b = fpc * TRPI_sigma_HI[b_pi] * F_b / E_b;   /* s^-1 per HI atom */
                 gHI += G_b; hHI += G_b * DMAX(TRPI_Eev[b_pi] - 13.6, 0.0) * ELECTRONVOLT_IN_ERGS;
+#if defined(SGCHEM_EUV_H2) && (N_TRPI_BANDS == 1)
+                gH2 += TRPI_H2_per_HI * G_b; hH2 += TRPI_H2_per_HI * G_b * DMAX(TRPI_Eev[b_pi] - 15.2, 0.0) * ELECTRONVOLT_IN_ERGS;
+#endif
 #ifdef TREERAY_PI_HE
                 double GheI = fpc * TRPI_sigma_HeI[b_pi] * F_b / E_b;
                 gHeI += GheI; hHeI += GheI * DMAX(TRPI_Eev[b_pi] - 24.6, 0.0) * ELECTRONVOLT_IN_ERGS;
@@ -543,6 +609,7 @@ void chem_fill_inputs(int target, struct ChemInputs *in)
             }
         }
         in->rt_phot_HI = gHI; in->rt_heat_HI = hHI;
+        in->rt_phot_H2 = gH2; in->rt_heat_H2 = hH2;
 #ifdef TREERAY_PI_HE
         in->rt_phot_HeI = gHeI; in->rt_heat_HeI = hHeI;
         in->rt_phot_HeII = gHeII; in->rt_heat_HeII = hHeII;

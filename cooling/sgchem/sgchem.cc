@@ -43,6 +43,7 @@ void sgchem_init(void)
         printf("initialize SG cooling and chemistry...\n");
         fflush(stdout);
     }
+    sgchem_h2_euv_init();
 
     /* rate options as SGChem; defaults matching gadget_tnt_new standard values */
     struct ChemInitParams p;

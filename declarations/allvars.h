@@ -168,6 +168,7 @@ extern int N_chimes_full_output_freq;
  * treeray_pi_init_bands() (called at gravity_tree entry, before any consumer). */
 extern double TRPI_sigma_HI[N_TRPI_BANDS], TRPI_sigma_HeI[N_TRPI_BANDS], TRPI_sigma_HeII[N_TRPI_BANDS];
 extern double TRPI_Eev[N_TRPI_BANDS], TRPI_lumfrac[N_TRPI_BANDS];
+extern double TRPI_H2_per_HI;
 extern int TRPI_bands_ready;
 void treeray_pi_init_bands(void);
 #endif

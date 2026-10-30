@@ -488,6 +488,9 @@ void cxx_calc_photo(double temp, double abh2, double abhd, double abco,
         // shared HI block below is skipped by this early exit, so replicate it.
         c.phrates[37] = T.phtab[37] * c.G0 + c.rt_phot_HI;
         c.phrates[41] = T.phtab[41] * c.G0 + c.rt_heat_HI;
+        // EUV on H2 (Arepo SGChem rate_eq_simple.F:291,404 h2phih/h2vphih); phtab 41/45 are 0 for ISM
+        c.phrates[40] = T.phtab[40] * c.G0 + c.rt_phot_H2;
+        c.phrates[44] = T.phtab[44] * c.G0 + c.rt_heat_H2;
         goto done;
     }
 

@@ -330,6 +330,7 @@ struct ChemCell {
     // M1 per-cell photoionization / photoheating rates (0 unless RADTRANSFER)
     double rt_phot_HI, rt_phot_HeI, rt_phot_HeII;
     double rt_heat_HI, rt_heat_HeI, rt_heat_HeII;
+    double rt_phot_H2, rt_heat_H2;   // EUV H2 -> H2+ -> 2H, per H2 (net 5)
 
     // algebraic state riding outside the ODE vector (audit §3.1 item 2):
     // mutated by calc_dust_temp inside every RHS eval; snapshot/restored by

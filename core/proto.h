@@ -877,6 +877,19 @@ void sgchem_init(void);
 double do_sgchem_step(int target, double dt, double dl, int mode);
 double sgchem_cool_cell(int target, double u_old, double dt);
 double sgchem_startup_electrons(int target, double *x_HII, double *x_HI);
+#if (CHEMISTRYNETWORK == 5) && !defined(SGCHEM_FORTRAN)
+#define SGCHEM_EUV_H2 /* net 5 (C++) consumes ionising photons on H2: RT absorption must count them */
+#endif
+void sgchem_h2_euv_init(void);
+double sgchem_h2_euv_ratio(double E_mean_eV, double e_hi_eV);
+#if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+double sgchem_m1_h2_absorbers(int i);
+#endif
+#ifdef RT_CHEM_PHOTOION_HE
+#define RT_H0_BAND_TOP_EV 24.6 /* M1 H0 band upper edge (rt_chem.cc nu_vec) */
+#else
+#define RT_H0_BAND_TOP_EV 500.
+#endif
 extern double CumulCoolingEnergyLoss; /* cumulative cooling energy loss [code energy units] */
 extern double CumulMHDNumEnergy; /* total energy created by the MHD source terms and the missing -B^2/2 dV/dt [code energy units] */
 extern double CumulKickFloorEnergy; /* thermal energy added by the kick u-limiter and temperature floor [code energy units] */

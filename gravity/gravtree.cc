@@ -24,6 +24,7 @@
  * nested He/H front physics. Single band (net-5): sigma_HI=6.3e-18, <hnu>=27.2. */
 double TRPI_sigma_HI[N_TRPI_BANDS], TRPI_sigma_HeI[N_TRPI_BANDS], TRPI_sigma_HeII[N_TRPI_BANDS];
 double TRPI_Eev[N_TRPI_BANDS], TRPI_lumfrac[N_TRPI_BANDS];
+double TRPI_H2_per_HI = 2.0; /* H2 absorption in sigma_HI units per molecule; 2 = every unionised H nucleus (nets without the H2 channel) */
 int TRPI_bands_ready = 0;
 void treeray_pi_init_bands(void)
 {
@@ -118,6 +119,9 @@ void gravity_tree(void)
     if(!TRPI_bands_ready) {treeray_pi_init_bands();}   /* MUST precede the walk: deposits read TRPI_lumfrac */
 #if (N_TRPI_BANDS == 1) && defined(GALSF_RESOLVEDISM_SAMPLE_IMF) && defined(GALSF_RESOLVEDISM_STELLAR_TABLES)
     TRPI_Eev[0] = Resolvedism_Eion_eff_eV;  /* must match the <hnu> Ion_luminosity was built with, else Q is rescaled */
+#endif
+#if defined(SGCHEM_EUV_H2) && (N_TRPI_BANDS == 1)
+    TRPI_H2_per_HI = sgchem_h2_euv_ratio(TRPI_Eev[0], 500.); /* net 5 consumes these photons as H2 -> H2+ -> 2H */
 #endif
 #endif
 #if defined(GALSF_RESOLVEDISM_G0_VARIABLE) && defined(GALSF_RESOLVEDISM_ISOLATED_FB_TEST)

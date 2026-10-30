@@ -631,7 +631,11 @@ static inline struct stella_pmom stella_particle_node_moments(int p)
 #ifdef TREE_RAY_PI
     if(P[p].Type == 0) { /* PI-band absorber masses, per-H-nucleus abundances: mass_X = A_X * x_X * X_H * m; neutral He = Y*m - He+ - He++ */
         double m_h_x = HYDROGEN_MASSFRAC * P[p].Mass;
+#if defined(SGCHEM_EUV_H2) && (N_TRPI_BANDS == 1)
+        m.nh = (DMAX(0.0, 1.0 - CellP[p].TracAbund[IHP] - 2.0 * CellP[p].TracAbund[IH2]) + TRPI_H2_per_HI * CellP[p].TracAbund[IH2]) * m_h_x; /* HI-equivalent absorbers */
+#else
         m.nh = (1.0 - CellP[p].TracAbund[IHP]) * m_h_x;
+#endif
 #ifdef TREERAY_PI_HE
         double m_heii = 4.0 * CellP[p].TracAbund[IHEP] * m_h_x, m_heiii = 4.0 * CellP[p].TracAbund[IHEPP] * m_h_x;
         double m_he_tot = (1.0 - HYDROGEN_MASSFRAC - P[p].Metallicity[0]) * P[p].Mass;

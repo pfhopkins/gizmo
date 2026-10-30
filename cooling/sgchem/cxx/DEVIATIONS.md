@@ -765,6 +765,29 @@ Weingartner & Draine 2001 are calibrated on 6-13.6 eV). The former NUV term u(3.
 3.85e-14 is the MMP83 energy density in 8-13.6 eV, not 3.4-8 eV (7.53e-14), and it double-counted the NUV already inside
 the ISRF coefficient.
 
+## D-56. (2026-10-30) Net 5: ionising photons on H2, C++ only
+Arepo SGChem net 5 destroys H2 by EUV photons, H2 -> H2+ [+ e] -> H + H, and heats by them (rate_eq_simple.F:291
+`h2phih*abh2`, :403-404 `h2vphih*abh2*yn`; rates from MRT, RT_init.cc:172-186 / RT_sgchem.cc). Our port predates that
+and had no H2 channel, so fully molecular gas next to an ionising source never became ionised (TREE_RAY_PI fixed-Q,
+x_H2 = 0.4999: x_HII stayed 2e-4). Now chem_rhs_net5.cc carries both terms (ph41 = rt_phot_H2, ph45 = rt_heat_H2).
+Differences to Arepo:
+- sigma_H2 enters as a ratio r = <sigma_H2>/<sigma_HI> (Arepo's H2_ionization_crosssection, 15.2 eV threshold, and the
+  Osterbrock HI fit, averaged over a blackbody whose mean photon energy in the band is the code's <hnu>;
+  chem_interface.cc sgchem_h2_euv_ratio). r = 1.34 at <hnu> = 18.6 eV (13.6-500 eV), 1.29 in the M1 H0 band
+  (13.6-24.6 eV, 4e4 K). The rate per H2 is r x the HI rate, so one HI-equivalent absorber count
+  (x_HI + r x_H2) serves the RT and the chemistry and the photon budget closes exactly.
+- Heating per H2 ionisation is <hnu> - 15.2 eV, as the HI convention of these paths (<hnu> - 13.6 eV), not
+  Arepo's cross-section-weighted excess energy.
+- Photon budget: TREE_RAY_PI absorber column and cell limiter counted each H2 as 2 sigma_HI (every unionised H
+  nucleus) while the chemistry used none of those photons; now r sigma_HI. M1 opacity (rt_kappa, H0 band) counted no
+  H2 at all; it now adds r x_H2 sigma_HI. Subgrid photoionisation (GALSF_RESOLVEDISM_PHOTOION) passes no rate
+  (ionised-cell bypass) and is unchanged.
+- C++ backend only (SGCHEM_EUV_H2 = net 5 without SGCHEM_FORTRAN); the Fortran reference keeps the old equation and
+  its RT paths keep the old absorber counts.
+- Net 5 has no photoionised-metal line cooling: a one-zone ionised cell (n_H = 10-100, Gamma = 1e-9 s^-1, <hnu> =
+  18.6 eV, WSS_CIE_COOL) settles at 2.3-2.6e4 K, cooled by HI Lyman alpha (golden/test_euv_h2.cc).
+  Fixed-Q TreeRay-PI cloud (gmc_Z1_m1.0, Q = 1e49 s^-1, table <hnu> 18.8 eV): 13.7 kK with WSS_CIE_COOL, 3-4e4 K without.
+
 ## KEPT deliberately (audit KEEP items — listed so they are not "fixed" later)
 
 * **R1/R4 — the outer substep loop is kept literally.** Safety factors 0.1
