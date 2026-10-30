@@ -497,6 +497,7 @@ struct global_data_all_processes
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
     double PhotoionMaxSearchRadius; /*!< largest search radius of a source [physical kpc] */
+    int PhotoionMaxRounds;          /*!< largest number of sharing rounds per solve */
     double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source, and the photoionisation cadence [yr] */
 #endif
 

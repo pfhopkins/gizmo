@@ -7628,6 +7628,8 @@ template void run_neighbor_loop<SscApplySpec>(const neighbor_loop_args&);
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
 template void run_neighbor_loop<PiHistSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<PiStampSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<PiClaimSpec>(const neighbor_loop_args&);
+template void run_neighbor_loop<PiDrainSpec>(const neighbor_loop_args&);
 #endif
 
 /* Cellcorrections corridor: CellcorrectionsSpec — first-pass

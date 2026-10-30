@@ -3,8 +3,10 @@
 /* galaxy_sf/photoion_per_direction.h -- Specs of the per-direction Stromgren photoionisation (GALSF_FB_PHOTOIONIZATION_PER_DIRECTION).
  * Each source splits Q over 12 HEALPix pixels (NSIDE 1); per pixel the front is where the cells' recombination bills,
  * summed outward, use up Q/12. histogram: per pixel and radial bin, the summed bills (integer units, so independent of
- * order, threads and ranks) and the innermost cell radius. stamp: cells inside the fronts are ionised until the next
- * solve. Both run where the cell lives. Design note: design_photoionisation_pixelised.md. */
+ * order, threads and ranks) and the innermost cell radius; with sharing, a cell claimed by several sources bills each its
+ * share q_sc / A_c. claim: A_c += q_sc for cells newly inside a source's fronts. stamp: cells inside the fronts are
+ * ionised until the next solve. drain: A_c = 0. All run where the cell lives; A_c is a side buffer by local gas index,
+ * zero between solves. Design note: design_photoionisation_pixelised.md. */
 #ifndef PHOTOION_PER_DIRECTION_H
 #define PHOTOION_PER_DIRECTION_H
 #include <Kokkos_Core.hpp>
@@ -23,12 +25,16 @@ struct PiSourceIn {
     Vec3<double> Pos;
     double R;                     /* search radius (comoving) */
     double S_pix;                 /* Q/12 [1/s] */
-    double mark[PI_NPIX];         /* marking fronts (stamp) */
+    double held[PI_NPIX];         /* fronts of the cells it has claimed; -1 = none */
+    double mark[PI_NPIX];         /* marking fronts */
 };
 struct PiCallScalars {
     NlrCommonScalars common;
     double bill_fac;              /* bill [1/s] = bill_fac * rho_code * m_code */
     integertime stamp;            /* stamp: ionised until this time */
+    long long *claim;             /* A_c by local gas index */
+    int n_claim;
+    int share;                    /* histogram: shared bills */
 };
 struct PiActiveState {Vec3<double> pos; double h_search; PiSourceIn src;};
 struct PiDeviceContext : NeighborLoopDeviceContextBase {const PiSourceIn *per_active_local;};
@@ -57,10 +63,10 @@ static int pi_healpix_pixel(double x, double y, double z)
 
 /* cell j seen from source s: radius, pixel, bill alpha_B n_e n_H V [1/s]; 0 outside the search sphere */
 KOKKOS_INLINE_FUNCTION
-static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const struct gas_cell_data *Cj, const PiCallScalars& cs,
-                   double *r, int *pix, double *bill)
+static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const struct gas_cell_data *Cj, int j, const PiCallScalars& cs,
+                   double *r, int *pix, double *bill, long long *q)
 {
-    if(Pj.Type != 0 || Cj == nullptr || Pj.Mass <= 0) {return 0;}
+    if(Pj.Type != 0 || Cj == nullptr || Pj.Mass <= 0 || j >= cs.n_claim) {return 0;}
 #ifdef HYDRO_MULTIFLUID_DM
     if(Pj.FluidType == FLUID_DM) {return 0;}
 #endif
@@ -72,7 +78,10 @@ static int pi_cell(const PiSourceIn& s, const struct particle_data& Pj, const st
     *r = sqrt(r2);
     *pix = pi_healpix_pixel(d[0], d[1], d[2]);
     *bill = cs.bill_fac * (double)Cj->Density * (double)Pj.Mass;
-    return (*bill > 0);
+    if(!(*bill > 0)) {return 0;}
+    double h = (double)Pj.Get_Particle_Size(), w = ldexp(s.S_pix * h * h / (4.0 * (r2 + h * h)) / *bill, 32); /* photons it delivers per bill, x 2^32 */
+    *q = (w >= 18014398509481984.0) ? 18014398509481984LL : ((w < 1.0) ? 1LL : (long long)llround(w)); /* claim weight in [1, 2^54] */
+    return 1;
 }
 
 KOKKOS_INLINE_FUNCTION static long long pi_sat_add(long long a, long long b) {long long c = a + b; return (c > PI_BIN_MAX) ? PI_BIN_MAX : c;}
@@ -94,7 +103,7 @@ struct PiSpecBase {
     using ScatterData    = NoScatter;
     using IdentityFields = NoIdentity;
     using IterControl    = NotIterative;
-    struct Aux {const PiSourceIn *host_src; void *out; integertime stamp;};
+    struct Aux {const PiSourceIn *host_src; void *out; integertime stamp; int share;};
     static bool        is_active(int i);
     static double      search_radius(const neighbor_loop_args& args, int active_slot, int i);
     static CallScalars populate_call_scalars(const neighbor_loop_args& args);
@@ -129,8 +138,13 @@ struct PiHistSpec : PiSpecBase {
     }
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& a, const NeighborData& nb, AccumData& out, NoScatter&, const CallScalars& cs) {
-        double r, bill; int pix;
-        if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, cs, &r, &pix, &bill)) {return;}
+        double r, bill; int pix; long long q;
+        if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, nb.j, cs, &r, &pix, &bill, &q)) {return;}
+        if(cs.share) { /* its share: held cells q / A_c, others as if it joined */
+            long long A = Kokkos::atomic_load(&cs.claim[nb.j]);
+            if(r > a.src.held[pix]) {A += q;}
+            if(A > 0) {bill *= (double)q / (double)A;}
+        }
         double u = bill / a.src.S_pix * PI_BIN_UNIT;
         long long iu = (u >= (double)PI_BIN_MAX) ? PI_BIN_MAX : (long long)llround(u);
         int b = (int)(r * PI_NBIN / a.src.R); if(b >= PI_NBIN) {b = PI_NBIN - 1;}
@@ -149,12 +163,36 @@ struct PiStampSpec : PiSpecBase {
     KOKKOS_INLINE_FUNCTION static void merge_accum(AccumData& l, const AccumData& p) {l.bill += p.bill; l.n_new += p.n_new; l.m_new += p.m_new; l.mr_new += p.mr_new;}
     KOKKOS_INLINE_FUNCTION
     static void pair_kernel(const ActiveData& a, const NeighborData& nb, AccumData& out, NoScatter&, const CallScalars& cs) {
-        double r, bill; int pix;
-        if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, cs, &r, &pix, &bill)) {return;}
+        double r, bill; int pix; long long q;
+        if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, nb.j, cs, &r, &pix, &bill, &q)) {return;}
         if(r > a.src.mark[pix]) {return;}
-        out.bill += bill;
+        long long A = Kokkos::atomic_load(&cs.claim[nb.j]);
+        out.bill += (A > 0) ? bill * (double)q / (double)A : bill; /* its share: the shares of a cell sum to its bill */
         integertime old = Kokkos::atomic_fetch_max(&nb.neighbor_cell->PhotoionizedUntil, cs.stamp);
         if(old < cs.stamp) {double m = (double)nb.neighbor_particle->Mass; out.n_new += 1; out.m_new += m; out.mr_new += m * r;}
+    }
+};
+
+/* claim: A_c += q_sc for cells between the held and the marking front (integer adds: order-free) */
+struct PiClaimSpec : PiStampSpec {
+    static constexpr const char *loop_name = "photoion_per_direction_claim";
+    static void apply_active_writeback(const neighbor_loop_args&, int, int, const AccumData&) {}
+    KOKKOS_INLINE_FUNCTION
+    static void pair_kernel(const ActiveData& a, const NeighborData& nb, AccumData&, NoScatter&, const CallScalars& cs) {
+        double r, bill; int pix; long long q;
+        if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, nb.j, cs, &r, &pix, &bill, &q)) {return;}
+        if(r > a.src.held[pix] && r <= a.src.mark[pix]) {Kokkos::atomic_add(&cs.claim[nb.j], q);}
+    }
+};
+
+/* drain: A_c = 0 inside the search sphere */
+struct PiDrainSpec : PiClaimSpec {
+    static constexpr const char *loop_name = "photoion_per_direction_drain";
+    KOKKOS_INLINE_FUNCTION
+    static void pair_kernel(const ActiveData& a, const NeighborData& nb, AccumData&, NoScatter&, const CallScalars& cs) {
+        double r, bill; int pix; long long q;
+        if(!pi_cell(a.src, *nb.neighbor_particle, nb.neighbor_cell, nb.j, cs, &r, &pix, &bill, &q)) {return;}
+        Kokkos::atomic_store(&cs.claim[nb.j], 0LL);
     }
 };
 

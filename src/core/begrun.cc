@@ -1899,6 +1899,9 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "PhotoionMaxSearchRadius");
         addr[nt] = &All.PhotoionMaxSearchRadius;
         id[nt++] = REAL;
+        strcpy(tag[nt], "PhotoionMaxRounds");
+        addr[nt] = &All.PhotoionMaxRounds;
+        id[nt++] = INT;
         strcpy(tag[nt], "PhotoionMaxTimestep");
         addr[nt] = &All.PhotoionMaxTimestep;
         id[nt++] = REAL;
@@ -3322,6 +3325,7 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
                 if(strcmp("PhotoionMaxSearchRadius",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s not set in parameter file: defaulting to 0.05 kpc\n",tag[i]); continue;}
+                if(strcmp("PhotoionMaxRounds",tag[i])==0) {*((int *)addr[i])=16; printf("Tag %s not set in parameter file: defaulting to 16\n",tag[i]); continue;}
                 if(strcmp("PhotoionMaxTimestep",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s not set in parameter file: defaulting to 10 kyr\n",tag[i]); continue;}
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)

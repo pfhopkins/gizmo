@@ -1,8 +1,9 @@
 /* Copyright (c) 2026 Ulrich Steinwandel
  * Author: Ulrich Steinwandel (uli@mpa-garching.mpg.de) */
 /* galaxy_sf/photoion_per_direction.cc -- host side of the per-direction photoionisation (Specs in photoion_per_direction.h).
- * Ionising single stars share one cadence (PhotoionMaxTimestep); at each solve every source finds its fronts (search
- * sphere grown or refined as stella_dev), then stamps its cells ionised until the next solve. Reference: stella_dev
+ * Ionising single stars share one cadence (PhotoionMaxTimestep); at each solve every source finds its fronts alone (search
+ * sphere grown or refined as stella_dev) and claims its cells; then, in rounds, sources share the bills of cells claimed by
+ * several (fronts only advance), until no front moves; the cells are stamped ionised until the next solve. Reference: stella_dev
  * galaxy_sf/resolvedism_photoion.cc. */
 #include <mpi.h>
 #include <cstdio>
@@ -29,6 +30,23 @@
 #define PI_MAX_PASSES 20
 #define PI_ALPHA_B 2.6e-13   /* case B at 1e4 K [cm^3/s] */
 #define PI_TOLERANCE 0.01    /* a pixel with less than this fraction of its budget unspent counts as converged */
+
+/* A_c by local gas index: grown when needed, zero between solves (the drain empties what was touched) */
+static long long *pi_claim = nullptr;
+static int pi_claim_cap = 0;
+static long long *pi_claim_sums(int n_gas)
+{
+    const int n = (n_gas > 0) ? n_gas : 1;
+    if(n > pi_claim_cap) {
+        long long *q = (long long *) gizmo_gpu_alloc_shared((size_t) n * sizeof(long long), "photoion_claim_sums");
+        if(!q) {gizmo_request_controlled_stop(7901, "per-direction photoionisation: could not grow the claim buffer", __FILE__, __LINE__, __FUNCTION__); return nullptr;}
+        Kokkos::fence();
+        std::memset(q, 0, (size_t) n * sizeof(long long));
+        if(pi_claim) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(pi_claim);}
+        pi_claim = q; pi_claim_cap = n;
+    }
+    return pi_claim;
+}
 
 /* ionising photon rate of source i [1/s] */
 static double photoion_source_rate(int i)
@@ -74,7 +92,8 @@ PiCallScalars PiSpecBase::populate_call_scalars(const neighbor_loop_args& args)
     s.common = nlr_common_scalars_from_all();
     s.bill_fac = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC / (PROTONMASS_CGS * PROTONMASS_CGS) * All.cf_a3inv * UNIT_DENSITY_IN_CGS * UNIT_MASS_IN_CGS;
     Aux *aux = nlr_aux<PiHistSpec>(args);
-    s.stamp = aux ? aux->stamp : 0;
+    s.stamp = aux ? aux->stamp : 0; s.share = aux ? aux->share : 0;
+    s.claim = pi_claim; s.n_claim = DMIN(N_gas, pi_claim_cap);
     return s;
 }
 
@@ -119,7 +138,7 @@ static void pi_run(std::vector<int>& list, std::vector<PiSourceIn>& in, PiSpecBa
 
 /* ---- the front of each pixel ---- */
 
-struct pi_src {int i; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX];};
+struct pi_src {int i; double Q, R; int refine, open; double front[PI_NPIX], mark[PI_NPIX], held[PI_NPIX];};
 
 /* per pixel, where the summed bills cross the budget (fractional front, for diagnostics and refinement) and the marking
    front, rounded up through the innermost cell of the crossing bin (stella_dev v6). Returns 1 if the source searches
@@ -165,12 +184,22 @@ static PiSourceIn pi_source_in(const pi_src& s)
     PiSourceIn x; std::memset(&x, 0, sizeof(x));
     for(int k = 0; k < 3; k++) {x.Pos[k] = P[s.i].Pos[k];}
     x.R = s.R; x.S_pix = s.Q / PI_NPIX;
-    for(int k = 0; k < PI_NPIX; k++) {x.mark[k] = s.mark[k];}
+    for(int k = 0; k < PI_NPIX; k++) {x.held[k] = s.held[k]; x.mark[k] = s.mark[k];}
     return x;
 }
 
+/* claim the cells between each source's held and marking fronts; they are held from now on */
+static void pi_claim_all(std::vector<pi_src>& S)
+{
+    std::vector<int> list; std::vector<PiSourceIn> in;
+    for(pi_src& s : S) {list.push_back(s.i); in.push_back(pi_source_in(s));}
+    PiSpecBase::Aux aux = {nullptr, nullptr, 0, 0};
+    pi_run<PiClaimSpec>(list, in, aux);
+    for(pi_src& s : S) {for(int k = 0; k < PI_NPIX; k++) {s.held[k] = s.mark[k];}}
+}
+
 /* solve when the photoionisation bin is active. Collectives: the source count; per pass the runner call and one
-   reduction; the stamp; the log row. */
+   reduction; claims; per sharing round the runner calls and one reduction; stamp, drain; the log row. */
 void photoionization_per_direction(void)
 {
     if(All.HIIRegion_fLum_Coupled <= 0 || All.Time <= 0) {return;}
@@ -183,6 +212,7 @@ void photoionization_per_direction(void)
         double Q = photoion_source_rate(i);
         if(Q <= 0) {continue;}
         pi_src s; std::memset(&s, 0, sizeof(s)); s.i = i; s.Q = Q; s.open = 1;
+        for(int k = 0; k < PI_NPIX; k++) {s.held[k] = -1;}
         double nH = (P[i].DensityAroundParticle > 0) ? HYDROGEN_MASSFRAC * P[i].DensityAroundParticle * All.cf_a3inv * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS : 1.0;
         double R = pow(3.0 * Q / (4.0 * M_PI * PI_ALPHA_B * nH * nH), 1.0/3.0) / (UNIT_LENGTH_IN_CGS * All.cf_atime); /* the mean-density guess */
         R = DMAX(R, P[i].KernelRadius); if(R <= 0) {R = All.ForceSoftening[P[i].Type];}
@@ -192,6 +222,9 @@ void photoionization_per_direction(void)
     long long n_loc = (long long) S.size(), n_tot = 0;
     MPI_Allreduce(&n_loc, &n_tot, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
     if(n_tot == 0) {return;}
+    int no_buffer = (pi_claim_sums(N_gas) == nullptr), any_no_buffer = 0;
+    MPI_Allreduce(&no_buffer, &any_no_buffer, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(any_no_buffer) {return;}
     PRINT_STATUS(" ..per-direction photoionisation around %lld single stars", n_tot);
 
     /* fronts */
@@ -200,7 +233,7 @@ void photoionization_per_direction(void)
         std::vector<int> list, which; std::vector<PiSourceIn> in;
         for(size_t a = 0; a < S.size(); a++) {if(S[a].open) {list.push_back(S[a].i); in.push_back(pi_source_in(S[a])); which.push_back((int)a);}}
         std::vector<PiHistOut> H(in.size() + 1);
-        PiSpecBase::Aux aux = {nullptr, H.data(), 0};
+        PiSpecBase::Aux aux = {nullptr, H.data(), 0, 0};
         pi_run<PiHistSpec>(list, in, aux);
         int n_open = 0;
         for(size_t a = 0; a < in.size(); a++) {
@@ -211,13 +244,34 @@ void photoionization_per_direction(void)
         MPI_Allreduce(&n_open, &any_open, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
     }
 
-    /* stamp until the next solve */
+    /* sharing rounds: held cells bill q_sc / A_c, others q_sc / (A_c + q_sc); bills only fall, so fronts only advance.
+       Unspent photons escape: they are not handed to another source. */
+    pi_claim_all(S);
+    int rounds = 0, moved = (n_tot > 1);
+    for(; rounds < All.PhotoionMaxRounds && moved; rounds++) {
+        std::vector<int> list; std::vector<PiSourceIn> in;
+        for(pi_src& s : S) {list.push_back(s.i); in.push_back(pi_source_in(s));}
+        std::vector<PiHistOut> H(in.size() + 1);
+        PiSpecBase::Aux aux = {nullptr, H.data(), 0, 1};
+        pi_run<PiHistSpec>(list, in, aux);
+        int moved_local = 0;
+        for(size_t a = 0; a < S.size(); a++) {
+            pi_src& s = S[a];
+            moved_local |= pi_analyse(s, H[a], 1, 0, max_r); /* the sphere grew */
+            for(int k = 0; k < PI_NPIX; k++) {if(s.mark[k] > s.held[k]) {moved_local = 1;} else {s.mark[k] = s.held[k];}}
+        }
+        pi_claim_all(S);
+        MPI_Allreduce(&moved_local, &moved, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    }
+
+    /* stamp until the next solve; drain */
     const integertime dti = (integertime)1 << b_pi, stamp = (All.Ti_Current / dti + 1) * dti;
     std::vector<int> list; std::vector<PiSourceIn> in;
     for(pi_src& s : S) {list.push_back(s.i); in.push_back(pi_source_in(s));}
     std::vector<PiLedgerOut> L(S.size() + 1);
-    PiSpecBase::Aux aux = {nullptr, L.data(), stamp};
+    PiSpecBase::Aux aux = {nullptr, L.data(), stamp, 0};
     pi_run<PiStampSpec>(list, in, aux);
+    pi_run<PiDrainSpec>(list, in, aux);
 
     /* log row (HIIheating.txt): sources, Q/X, cells newly ionised, their mass and mean distance, recombination / Q */
     double loc[5] = {0, 0, 0, 0, 0}, tot[5], ext[2] = {0, -MAX_REAL_NUMBER}, ext_tot[2]; /* front max, -(front min) */
@@ -230,7 +284,7 @@ void photoionization_per_direction(void)
     if(ThisTask == 0) {
         double to_kpc = All.cf_atime * UNIT_LENGTH_IN_KPC;
         fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
-                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., 0, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc);
+                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc);
         fflush(FdHIIHeating);
     }
 }
