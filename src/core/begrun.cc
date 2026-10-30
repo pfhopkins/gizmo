@@ -2427,6 +2427,15 @@ void read_parameter_file(char *fname)
             density given above. use the dimensionless SfEffPerFreeFall
             to calculate this */
 #endif
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+      strcpy(tag[nt], "IMFSampleMinMass");
+      addr[nt] = &All.IMFSampleMinMass;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SingleStarsRNGRealisation");
+      addr[nt] = &All.SingleStarsRNGRealisation;
+      id[nt++] = INT;
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
       strcpy(tag[nt], "FactorSN");
@@ -3195,6 +3204,10 @@ void read_parameter_file(char *fname)
 #endif
 #ifdef TURB_DIFFUSION
                 if(strcmp("TurbDiffusionCoefficient",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: code was compiled with turbulent diffusion, so will default to calculating the coefficients without arbitrary re-normalization (i.e. user-specified additional coefficient/multipler=%g) \n",tag[i],alternate_tag[i],All.TurbDiffusion_Coefficient); continue;}
+#endif
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+                if(strcmp("SingleStarsRNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to realisation 0\n",tag[i]); continue;}
+                if(strcmp("IMFSampleMinMass",tag[i])==0) {*((double *)addr[i])=0.08; printf("Tag %s not set in parameter file: defaulting to the full IMF (0.08 Msun)\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}

@@ -8,6 +8,9 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+#include "single_star_imf.h"
+#endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
 static constexpr uint64_t NEW_SINK_SPIN_RNG_SALT = gizmo_loop_rng_salt("new_sink_spin"); /* the spin direction of a sink made here */
 #endif
@@ -493,6 +496,11 @@ void star_formation_parent_routine(void)
                 if(dtime>0) {TimeBinSfr[P[i].TimeBin] += CellP[i].Sfr;}
                 
                 prob = P[i].Mass / mass_of_star * pfac;
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* draw the star's mass first; P = (m_cell / M_star) pfac keeps the SFR on average (LYRA, Gutcke+21; as the reference implementation, P may exceed 1 when M_star < m_cell) */
+                double M_drawn = single_star_imf_draw_massweighted(All.IMFSampleMinMass, gizmo_rng_combine(particle_event_rng_key(i), (uint64_t)All.SingleStarsRNGRealisation), (uint64_t)All.Ti_Current);
+                prob = (P[i].Mass / (M_drawn / UNIT_MASS_IN_SOLAR)) * pfac;
+                if(prob > 1) {static int warned = 0; if(!warned) {warned = 1; PRINT_WARNING("single-star formation probability %g > 1 (drawn mass %g Msun below the cell mass): the realised SFR is capped there (reference rule); further cases on task %d not reported", prob, M_drawn, ThisTask);}}
+#endif
                 
 #if defined(METALS) && defined(GALSF_EFFECTIVE_EQS) // does instantaneous enrichment //
                 static constexpr uint64_t SF_ENRICHMENT_RNG_SALT = gizmo_loop_rng_salt("star_formation_enrichment");
@@ -504,6 +512,11 @@ void star_formation_parent_routine(void)
                 static constexpr uint64_t STAR_FORMATION_RNG_SALT = gizmo_loop_rng_salt("star_formation");
                 if(particle_random_number(i, STAR_FORMATION_RNG_SALT, (uint64_t)All.Ti_Current, 0) < prob)    /* ok, make a star */
                 {
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* a zero-mass single star that collects its drawn mass after this loop; its mass enters the SF statistics there */
+                    {int i_star = spawn_star_from_gas(i, 0, stars_spawned);
+                     if(i_star >= 0) {single_star_attach_to_new_star(i_star, i, M_drawn); stars_spawned++;}}
+                    continue;
+#endif
                     
 #ifdef SINK_SEED_FROM_LOCALGAS
                     /* before making a star, assess whether or not we can instead make a sink seed particle */

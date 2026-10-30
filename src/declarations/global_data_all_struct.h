@@ -433,6 +433,10 @@ struct global_data_all_processes
   double OverDensThresh;
   double PhysDensThresh;
   double MaxSfrTimescale;
+#ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
+  double IMFSampleMinMass;           /*!< lower end of the sampled IMF [Msun] (0.08 = full IMF) */
+  int SingleStarsRNGRealisation;     /*!< folded into the keys of the IMF draws: another value gives another realisation */
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
   double EgySpecSN;
