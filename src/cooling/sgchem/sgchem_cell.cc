@@ -124,20 +124,23 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
    Temperature follow the chemistry, so his Temperature is the chemistry temperature */
 double sgchem_docooling(int i, double u_old, double dt, double *ne_eval)
 {
-    double u_before = CellP[i].InternalEnergy, u, u_solve;
+    double u_before = CellP[i].InternalEnergy, u, u_solve, u_in;
 #ifndef COOLING_OPERATOR_SPLIT
     if(CellP[i].CoolingIsOperatorSplitThisTimestep == 0)
     { /* unsplit: half the hydro heating before the solve, a corrected half after (as for grackle) */
         double du = dt * CellP[i].DtInternalEnergy / ((UNIT_SPECEGY_IN_CGS/UNIT_TIME_IN_CGS) * (PROTONMASS_CGS/HYDROGEN_MASSFRAC));
         u_old += 0.5*du;
-        u = u_solve = sgchem_cell_step(i, u_old, dt);
+        u = u_solve = sgchem_cell_step(i, u_in = u_old, dt);
         double r=u/u_old; if(r>1) {r=1/r;} if(fabs(r-1)>1.e-4) {r=(r-1)/log(r);} r=DMAX(0,DMIN(r,1));
         du *= 0.5*r; if(du<-0.5*u) {du=-0.5*u;} u+=du;
     } else
 #endif
-    {u = u_solve = sgchem_cell_step(i, u_old, dt);}
+    {u = u_solve = sgchem_cell_step(i, u_in = u_old, dt);}
     if(!isfinite(u)) {printf("SGCHEM: non-finite energy after cooling, ID=%llu u=%g, keeping %g\n", (unsigned long long) P[i].ID, u, u_before); u = u_solve = u_before;}
     u = DMAX(u, All.MinEgySpec);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    {double dE = (u_solve - u_in) * P[i].Mass; ledger_add(dE > 0 ? LEDGER_CHEM_HEATING : LEDGER_CHEM_COOLING, fabs(dE));} /* the solve only */
+#endif
     *ne_eval = CellP[i].Ne;
     CellP[i].HI = DMAX(0, 1. - CellP[i].TracAbund[IHP]); /* neutral H nuclei (atomic and molecular) per H */
     CellP[i].Gamma = CellP[i].gamma_eos_value();

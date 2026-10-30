@@ -388,6 +388,9 @@ void restart(int modus)
 
 	  /* Particle data  */
 	  byten(&P[0], NumPart * sizeof(struct particle_data), modus);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+	  ledger_restart_io(byten, modus); /* this rank's cumulative ledger rows */
+#endif
 
 	  in(&N_gas, modus);
 	  if(N_gas > 0)

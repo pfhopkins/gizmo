@@ -526,6 +526,7 @@
 ####################################################################################################
 # --------------------------------------- Input/Output options
 ####################################################################################################
+#OUTPUT_MASS_METAL_ENERGY_LEDGER # ledger.txt: cumulative budget rows (now: SGChem heating and cooling energy), exact per-thread sums reduced only at snapshot output
 #OUTPUT_ADDITIONAL_RUNINFO      # enables extended simulation output data (can slow down machines significantly in massively-parallel runs)
 #OUTPUT_IN_DOUBLEPRECISION      # snapshot files will be written in double precision
 #INPUT_IN_DOUBLEPRECISION       # input files assumed to be in double precision (otherwise float is assumed)

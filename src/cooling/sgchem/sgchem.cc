@@ -80,6 +80,9 @@ void sgchem_init(void)
     p.cr_energy_density = 0.0;
     p.dust_to_gas_ratio = All.SGChemDustToGasRatio;
     chem_cxx_tables_init(&p);
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_init();
+#endif
     if(ThisTask == 0) {printf("SGCHEM: chemistry tables built\n"); fflush(stdout);}
     if(ThisTask == 0) {printf("SGCHEM: hydrogen mass fraction %g, MinEgySpec %.8g\n", (double) HYDROGEN_MASSFRAC, All.MinEgySpec); fflush(stdout);}
 }

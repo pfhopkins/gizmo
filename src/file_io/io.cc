@@ -100,6 +100,9 @@ void savepositions(int num)
     int n, filenr, gr, ngroups, primaryTask, lastTask;
 
     CPU_Step[CPU_MISC] += measure_time();
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_output(); /* the ledger's only reduction */
+#endif
 
 #ifdef CHIMES_REDUCED_OUTPUT
     if (num % N_chimes_full_output_freq == 0) {Chimes_incl_full_output = 1;} else {Chimes_incl_full_output = 0;}

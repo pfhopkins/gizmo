@@ -941,6 +941,10 @@ OBJS    += cooling/sgchem/sgchem.o cooling/sgchem/sgchem_cell.o $(patsubst %.cc,
 INCL    += $(wildcard cooling/sgchem/*.h cooling/sgchem/cxx/*.h)
 endif
 
+ifneq (,$(filter OUTPUT_MASS_METAL_ENERGY_LEDGER,$(CONFIGVARS)))
+OBJS    += system/ledger.o
+endif
+
 comma := ,
 # Grackle (>= 3), built with Grackle's CMake build, which installs a grackle.pc file: pkg-config then gives the compile and link
 #   flags, including the Fortran/HDF5 dependencies of a static libgrackle.a. grackle.pc is looked up as
