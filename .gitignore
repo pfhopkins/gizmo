@@ -141,3 +141,4 @@ test/single_stars_supernovae/run_*/
 test/single_stars_supernovae/GIZMO_elements
 test/single_stars_supernovae/TREECOOL
 test/single_stars_supernovae/spcool_tables
+test/single_stars_winds_agb_ia/run_*/

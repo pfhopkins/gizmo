@@ -25,6 +25,7 @@ def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0
         Zt, Mt = F["Z"][()], F["M_init"][()]
         iz = int(np.argmin(np.abs(np.log10(Zt) - np.log10(z))))
         life = (F["lifetime_yr"][()] + F["t_PMS"][()]).reshape(len(Zt), len(Mt))[iz]
+        ms_life = F["lifetime_yr"][()].reshape(len(Zt), len(Mt))[iz]
     death = [np.interp(np.log10(m), np.log10(Mt), life) for m, _ in stars]
     ages = [(1.01 * t if before_death_yr is None else t - before_death_yr) / PC_KMS_IN_YR for t in death]  # past death, or this long before it
     ns = len(stars)
@@ -47,4 +48,6 @@ def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0
         s["Masses"] = star_mass_factor * np.array([m for m, _ in stars]); s["StellarFormationTime"] = -np.array(ages)
         Zs = np.tile(SOLAR * z / SOLAR[0], (ns, 1)); Zs[:, 1] = SOLAR[1]
         s["Metallicity"] = Zs[:, :n_metals]; s["SingleStarDrawnMass"] = np.array([m for m, _ in stars]); s["SingleStarBirthMetallicity"] = np.full(ns, z)
+        # winds counted as returned up to the end of life (these stars have no history): the deaths come at once
+        s["SingleStarLastWindLogAge"] = np.array([np.log10(np.interp(np.log10(m), np.log10(Mt), ms_life)) for m, _ in stars])
     return L, dx

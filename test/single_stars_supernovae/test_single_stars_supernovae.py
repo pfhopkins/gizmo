@@ -84,7 +84,7 @@ def test_supernovae(built):
     rows = rows[:, [0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11]]  # drop the kind
     for r in rows:
         assert EXPECTED_TYPES[r[3]] == int(r[2])
-        assert r[4] == r[3]  # mass at the trigger = drawn mass (no winds are returned)
+        assert r[4] == r[3]  # mass at the trigger = drawn mass (the initial conditions count the winds as returned)
     # each star keeps exactly its table remnant; the pair-instability SN leaves none
     for r in rows:
         sid = int(r[1])
