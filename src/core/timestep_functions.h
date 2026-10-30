@@ -510,14 +510,26 @@ static inline struct HermiteWalkState hermite_walk_state_snapshot(void)
  *  be empty and would return the start of its previous step. On the corrector pass
  *  do_hermite_prediction has already written the predicted state into Pos and Vel.
  *
+ *  The prediction is also gated on the extrapolation span. The Old* polynomial interpolates
+ *  the source over its OWN step; used past that it is an extrapolation outside its convergence
+ *  radius, and for a close pair it can displace the source by multiples of the separation with
+ *  a sign correlated to the orbit, which rectifies into a centre-of-mass drift rather than
+ *  averaging out. Outside the span the caller falls through to the leapfrog-drifted state:
+ *  larger-order error, but unbiased. A span beyond the step can only come from a stale
+ *  Ti_begstep; find_timesteps now re-derives the marker from the clock, so this is the
+ *  consumer-side guard for whatever still slips through.
+ *
  *  The type test comes first because it is a mask compare, while the full predicate
- *  below it reads several fields and computes a timestep. */
+ *  below it reads several fields and computes a timestep; the span test is two integer
+ *  compares and goes ahead of it for the same reason. */
 KOKKOS_INLINE_FUNCTION
 int hermite_source_needs_prediction(int no, struct particle_data *pp, struct HermiteWalkState hw)
 {
     if(!hw.hermite_only) {return 0;}
     if(!(HERMITE_INTEGRATION & (1 << pp[no].Type))) {return 0;}
     if(hw.active_bins & (1ULL << pp[no].TimeBin)) {return 0;}
+    if(hw.ti_current < pp[no].Ti_begstep) {return 0;}
+    if(hw.ti_current - pp[no].Ti_begstep > pp[no].integertime_step()) {return 0;}
     return eligible_for_hermite(no, pp);
 }
 
