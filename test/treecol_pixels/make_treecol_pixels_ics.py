@@ -1,6 +1,6 @@
 """Initial conditions for the treecol_pixels tests, written as a snapshot (start flag 2 reads stellar ages and star
 records). Units pc, Msun, km/s. Gas: given positions, 1 Msun cells, T = 100 K, solar metals (11 slots); stars: given
-drawn masses, ages [yr] and positions, at rest."""
+drawn masses, ages [yr] and positions, at rest. Optional per-cell metallicity z_gas and SGChem abundances tracabund."""
 import numpy as np
 import h5py
 
@@ -13,11 +13,12 @@ def lattice(n, L, offset=0.0):
     return np.stack(np.meshgrid(g, g, g, indexing="ij"), -1).reshape(-1, 3)
 
 
-def make_treecol_pixels_ics(fname, L, gas_pos, stars, gas_mass=1.0, z=0.0142, T=100.0, hsml=1.0):
+def make_treecol_pixels_ics(fname, L, gas_pos, stars, gas_mass=1.0, z=0.0142, T=100.0, hsml=1.0, z_gas=None, tracabund=None):
     """stars: list of (M_drawn [Msun], age [yr], position)"""
     N, ns = len(gas_pos), len(stars)
     u = 1.5 * 1.380649e-16 * T / (1.27 * 1.6726e-24) / 1e10
-    Zg = np.tile(SOLAR * z / SOLAR[0], (N, 1)); Zg[:, 1] = SOLAR[1]
+    zg = np.full(N, z) if z_gas is None else np.asarray(z_gas)
+    Zg = SOLAR[None, :] * (zg / SOLAR[0])[:, None]; Zg[:, 1] = SOLAR[1]
     with h5py.File(fname, "w") as F:
         h = F.create_group("Header")
         npart = np.array([N, 0, 0, 0, ns, 0])
@@ -32,6 +33,8 @@ def make_treecol_pixels_ics(fname, L, gas_pos, stars, gas_mass=1.0, z=0.0142, T=
         p["ParticleIDs"] = np.arange(1, N + 1, dtype=np.uint32)
         p["Masses"] = np.full(N, float(gas_mass)); p["InternalEnergy"] = np.full(N, u); p["Metallicity"] = Zg
         p["SmoothingLength"] = np.full(N, hsml)
+        if tracabund is not None:
+            p["SGChemTracAbund"] = np.asarray(tracabund, dtype=np.float64)
         s = F.create_group("PartType4")
         s["Coordinates"] = np.array([np.asarray(x, dtype=np.float64) for _, _, x in stars]).reshape(ns, 3)
         s["Velocities"] = np.zeros((ns, 3)); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)

@@ -6,6 +6,9 @@ stops) and checks them against exact values.
     disjoint table bands (PE 8-13.6, LW 11.2-13.6, 6-8, NUV 3.444-6, OPT eV) at their current age: each band equals the
     table interpolation to 1e-10, OPT + NUV + 6-8 + PE = OPT + NUV(3.444-8) + PE(8-13.6) of the tables, LW <= PE, and
     the root node of the tree holds their sum (1 and 2 ranks).
+  test_node_species_masses: gas cells of 0.1-3 solar metallicity with H2 and CO carry dust-weighted gas, H2 and CO
+    masses (dust-to-gas ratio as the chemistry input, H nuclei per mass 1/(1+4 ABHE)); the root node holds their sums
+    (1e-12) after the first tree build and after three steps of chemistry and drift (1 and 2 ranks).
 """
 import os
 import shutil
@@ -111,5 +114,32 @@ def test_star_band_luminosities(tables, ranks):
             assert got[1] <= got[0]
         np.testing.assert_allclose(got[4] + got[3] + got[2] + got[0], want.sum() - want[1], rtol=1e-12)
     assert shone == len(stars) - 2  # the pre-main-sequence and the dead star are dark
-    root = np.loadtxt(out / "treecol_dump_root_0.txt")
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
     np.testing.assert_allclose(root[bins], rows[:, 2:][:, bins].sum(0), rtol=1e-12)
+
+
+def gas_with_species(n, L, seed=7):
+    rng = np.random.default_rng(seed)
+    pos = lattice(n, L) + rng.uniform(-0.2, 0.2, (n ** 3, 3)) * (L / n)
+    z = 0.0142 * 10.0 ** rng.uniform(-1, np.log10(3), n ** 3)
+    ab = np.zeros((n ** 3, 3)); ab[:, 0] = rng.uniform(0, 0.5, n ** 3); ab[:, 1] = 1e-4; ab[:, 2] = rng.uniform(0, 1e-4, n ** 3)
+    return pos, z, ab
+
+
+@pytest.mark.parametrize("ranks,step", [(1, 0), (2, 0), (2, 3)])
+def test_node_species_masses(tables, ranks, step):
+    L = 20.0
+    pos, z, ab = gas_with_species(12, L)
+    tag = "pix12" if step == 0 else f"pix12_step{step}"
+    exe = build(tag, ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + (() if step == 0 else (f"TEST_DUMP_TREECOL_PIXELS_AT_STEP={step}",)))
+    tab = Tables(tables["StellarTablesFile"])
+    out = run(exe, f"species_np{ranks}_s{step}", tables, L, pos, star_list(tab, L)[:3], ranks=ranks, z_gas=z, tracabund=ab)
+    cells = load(out, "cells")
+    assert len(cells) == len(pos)
+    o = np.argsort(cells[:, 0]); cells = cells[o]
+    if step == 0:  # the initial conditions, exactly
+        np.testing.assert_allclose(cells[:, 1], np.minimum(z / 0.014, 10.0), rtol=1e-12)
+        np.testing.assert_allclose(cells[:, 2], 2 * ab[:, 0] / 1.4, rtol=1e-12)
+        np.testing.assert_allclose(cells[:, 3], 28 * ab[:, 2] / 1.4, rtol=1e-12)
+    root = np.loadtxt(out / "treecol_dump_root_species_0.txt")
+    np.testing.assert_allclose(root, cells[:, 1:].sum(0), rtol=1e-12)
