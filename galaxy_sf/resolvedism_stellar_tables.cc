@@ -223,7 +223,7 @@ void resolvedism_load_stellar_tables(void)
     StellarTbl.log_L_OPT_NIR   = (float *)mymalloc("stbl_logLOPT",    n3d * sizeof(float));
 
     /* Ionizing sub-band luminosities for M1 RT */
-#ifdef RADTRANSFER
+#if defined(RADTRANSFER) || defined(TREE_RAY_PI) /* TREE_RAY_PI: per-step <hnu>_ion reads log_L_ion_tot */
     StellarTbl.log_L_ion_tot   = (float *)mymalloc("stbl_logLiont", n3d * sizeof(float));
     StellarTbl.log_L_ion_H0    = (float *)mymalloc("stbl_logLiH0",  n3d * sizeof(float));
     StellarTbl.log_L_ion_He0   = (float *)mymalloc("stbl_logLiHe0", n3d * sizeof(float));
@@ -298,7 +298,7 @@ void resolvedism_load_stellar_tables(void)
         read_hdf5_dataset_as_float(file, "log_L_OPT_NIR",  StellarTbl.log_L_OPT_NIR,   n3d);
 
         /* Ionizing sub-band luminosities (only for M1 RT) */
-#ifdef RADTRANSFER
+#if defined(RADTRANSFER) || defined(TREE_RAY_PI)
         read_hdf5_dataset_as_float(file, "log_L_ion_tot",  StellarTbl.log_L_ion_tot,   n3d);
         read_hdf5_dataset_as_float(file, "log_L_ion_H0",   StellarTbl.log_L_ion_H0,    n3d);
 #if (RT_CHEM_PHOTOION >= 2)
@@ -389,7 +389,7 @@ void resolvedism_load_stellar_tables(void)
     MPI_Bcast(StellarTbl.log_L_FUV_M1,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD); /* 2026-07-04: was MISSING from bcast -> non-root ranks read 0 -> M1 FUV field (G0) dead on any star not on rank 0 */
     MPI_Bcast(StellarTbl.log_L_OPT_NIR,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 
-#ifdef RADTRANSFER
+#if defined(RADTRANSFER) || defined(TREE_RAY_PI)
     MPI_Bcast(StellarTbl.log_L_ion_tot,   n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
     MPI_Bcast(StellarTbl.log_L_ion_H0,    n3d, MPI_FLOAT, 0, MPI_COMM_WORLD);
 #if (RT_CHEM_PHOTOION >= 2)
@@ -940,7 +940,7 @@ void resolvedism_free_stellar_tables(void)
     if(StellarTbl.surface_abundances) { myfree(StellarTbl.surface_abundances); StellarTbl.surface_abundances = NULL; }
 #endif
     if(StellarTbl.elem_ej_wind_cumulative) { myfree(StellarTbl.elem_ej_wind_cumulative); StellarTbl.elem_ej_wind_cumulative = NULL; }
-#ifdef RADTRANSFER
+#if defined(RADTRANSFER) || defined(TREE_RAY_PI)
     if(StellarTbl.log_L_ion_He2)   { myfree(StellarTbl.log_L_ion_He2);   StellarTbl.log_L_ion_He2 = NULL; }
     if(StellarTbl.log_L_ion_He1)   { myfree(StellarTbl.log_L_ion_He1);   StellarTbl.log_L_ion_He1 = NULL; }
     if(StellarTbl.log_L_ion_He0)   { myfree(StellarTbl.log_L_ion_He0);   StellarTbl.log_L_ion_He0 = NULL; }
