@@ -56,6 +56,14 @@
 
 
 
+/* host external wrapper for the ionizing-luminosity core (body in rt_functions.h) */
+#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
+double particle_ionizing_luminosity_in_cgs(long i)
+{
+    return particle_ionizing_luminosity_in_cgs_core(i, P);
+}
+#endif
+
 #if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
 
 
@@ -74,13 +82,6 @@
 /* rt_get_source_luminosity, rt_get_lum_band_{stellarpopulation,agn,singlestar}:
    bodies now in rt_functions.h (single source for host + device). */
 
-/* host external wrapper for the ionizing-luminosity core (body in rt_functions.h) */
-#if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
-double particle_ionizing_luminosity_in_cgs(long i)
-{
-    return particle_ionizing_luminosity_in_cgs_core(i, P);
-}
-#endif
 
 
 
