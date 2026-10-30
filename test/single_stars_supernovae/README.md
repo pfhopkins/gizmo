@@ -8,8 +8,10 @@ weights as the ejecta mass, no radial ejecta momentum, the ejecta carrying the s
 
 Problem: a 32^3 lattice of 1 Msun cells at n_H = 10 cm^-3 and 100 K, no gravity, no cooling (an adiabatic test: the
 budgets do not depend on a cooling module), with four stars moving at 12 km/s, each alone in its region and just past its
-table lifetime at Z = 0.014: a core-collapse SN (20 Msun), a failed SN (40 Msun, no energy), a pulsational
-pair-instability SN (150 Msun) and a pair-instability SN (320 Msun, no remnant). A few steps.
+table lifetime at Z = 0.014: a core-collapse SN (20 Msun), a failed SN (40 Msun, no energy, the wind mass as ejecta), a
+pulsational pair-instability SN (150 Msun) and a pair-instability SN (320 Msun, no remnant). A few steps. The initial
+conditions count each star's winds as returned up to the end of its life (`SingleStarLastWindLogAge`), so the deaths
+come at once.
 
 Checks:
 1. one event per star, of the class the table gives (`single_star_events.txt`);
