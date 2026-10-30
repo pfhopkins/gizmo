@@ -210,6 +210,7 @@ def test_quiet_steps(built):
     assert onset <= t_first < onset + 1000.0, (t_first, onset)
     assert rows[0, 11] == 7 + 5 * rows[0, 8] + 1, rows[0]  # this solve, and the one start-up count
     assert np.all(rows[1:, 11] == 7 + 5 * rows[1:, 8]), rows[1:, [8, 11]]
+    assert rows.shape[1] == 13 and np.all(rows[:, 12] > 0) and np.all(rows[:, 12] < 10), rows[:, 12]  # wall time of each solve [s]
 
 
 def test_compact_exchange(built):
