@@ -137,17 +137,47 @@ void find_timesteps(void)
     }
 #endif
 
+#if defined(GPU_PCIE_OPTIMIZATIONS) && !defined(FORCE_EQUAL_TIMESTEPS) && !defined(SINGLE_STAR_TIMESTEPPING)
+    /* Each particle's timestep depends only on its own state and on TimeBinActive, which the bin bookkeeping below
+       does not change, so it is evaluated on several threads first. (SINGLE_STAR_TIMESTEPPING reads TimeBinCount,
+       which the bookkeeping does change, so it keeps the one-thread order.) */
+#define GIZMO_TIMESTEPS_PRECOMPUTED
+    static std::vector<integertime> ti_step_pre;
+    {
+        const int n_act = (int) ActiveParticleList.size();
+        const int *act = ActiveParticleList.data();
+        if(ti_step_pre.size() < (size_t) n_act) {ti_step_pre.resize((size_t) n_act);}
+        integertime *tsp = ti_step_pre.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk()) if(n_act >= 4096)
+#endif
+        for(int k = 0; k < n_act; k++) {
+            double aphys_k;
+            const integertime t = get_timestep(act[k], &aphys_k, 0);
+            tsp[k] = (integertime)(((double)t) / timestep_dilation_factor(act[k], P));
+        }
+    }
+    int k_active = 0;
+#endif
+
     /* Now assign new timesteps  */
     for (int i : ActiveParticleList)
     {
+#ifdef GIZMO_TIMESTEPS_PRECOMPUTED
+        const int k_this = k_active++;
+#endif
 #ifndef GPU_PCIE_OPTIMIZATIONS
         domain_record_step_work(i);   /* this step's work, before the timebin below changes */
 #endif
 #ifdef FORCE_EQUAL_TIMESTEPS
         ti_step = ti_min_glob;  /* note that the dilation factor is already applied to ti_min_glob above - re-applying here would double-count it */
 #else
+#ifdef GIZMO_TIMESTEPS_PRECOMPUTED
+        ti_step = ti_step_pre[k_this];
+#else
         ti_step = get_timestep(i, &aphys, 0);
         ti_step = (integertime)(((double)ti_step) / timestep_dilation_factor(i, P)); /* get_timestep above froze the factor for this particle */
+#endif
 #endif
         
 #if !defined(FORCE_EQUAL_TIMESTEPS) && defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)
