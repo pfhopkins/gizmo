@@ -313,6 +313,9 @@ void single_star_attach_to_new_star(int i_star, int i, double M_drawn)
 #endif
     force_tree_note_type_presence(i_star);
     struct single_star_record r; memset(&r, 0, sizeof(r)); r.M_drawn = M_drawn;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+    r.rho_birth = (float)(CellP[i].Density * All.cf_a3inv); /* physical, as stella_dev FormationDensity */
+#endif
     P[i_star].StarIdx = single_star_record_new(&r);
     ssc_births.push_back({i_star, i, CellP[i].Density});
 }

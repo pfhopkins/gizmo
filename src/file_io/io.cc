@@ -1477,6 +1477,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -1486,6 +1489,9 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
                 {
                     struct single_star_record r; single_star_record_get(P[pindex].StarIdx, &r); /* zeros without a record */
                     double v = (blocknr == IO_SINGLE_STAR_DRAWN_MASS) ? r.M_drawn : r.Z_birth;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+                    if(blocknr == IO_SINGLE_STAR_BIRTH_DENSITY) {v = r.rho_birth;}
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
                     if(blocknr == IO_SINGLE_STAR_EVENT_BITS) {v = r.event_bits;}
                     if(blocknr == IO_SINGLE_STAR_LAST_WIND_LOG_AGE) {v = r.last_wind_log_age;}
@@ -2279,6 +2285,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -2701,6 +2710,9 @@ int get_values_per_blockelement(enum iofields blocknr)
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -3181,6 +3193,9 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -3746,6 +3761,9 @@ int blockpresent(enum iofields blocknr)
 #ifdef GALSF_SINGLE_STARS_FROM_IMF
         case IO_SINGLE_STAR_DRAWN_MASS:
         case IO_SINGLE_STAR_BIRTH_Z:
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
         case IO_SINGLE_STAR_LAST_WIND_LOG_AGE:
@@ -4286,6 +4304,11 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_SINGLE_STAR_BIRTH_Z:
             strncpy(label, "SSZB", 4);
             break;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+            strncpy(label, "SSRB", 4);
+            break;
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
             strncpy(label, "SSEB", 4);
@@ -4795,6 +4818,11 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_SINGLE_STAR_BIRTH_Z:
             strcpy(buf, "SingleStarBirthMetallicity");
             break;
+#ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
+        case IO_SINGLE_STAR_BIRTH_DENSITY:
+            strcpy(buf, "SingleStarBirthDensity");
+            break;
+#endif
 #if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
         case IO_SINGLE_STAR_EVENT_BITS:
             strcpy(buf, "SingleStarEventBits");
