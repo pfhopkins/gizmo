@@ -251,6 +251,9 @@ void init(void)
         P[i].OldPos = P[i].Pos; P[i].OldVel = P[i].Vel;
         P[i].Hermite_OldAcc = {}; P[i].OldJerk = {};
         P[i].AccretedThisTimestep = 0;
+#ifdef HERMITE_SYMMETRIC_TIMESTEP_ACTIVE
+        P[i].dt_crit_last = P[i].dt_crit_prev = 0; /* no criterion history: the default step rule until there is one */
+#endif
 #endif        
         
 
