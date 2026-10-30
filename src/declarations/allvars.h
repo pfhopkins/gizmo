@@ -765,6 +765,10 @@ enum iofields
   IO_DAMAGE_POROSITY_DISTENTION,  /* Jutzi P-alpha alpha in [1,alpha_0] */
   IO_DAMAGE_POROSITY_ACTVCRACKS,  /* Grady-Kipp active-crack radius */
   IO_FLUIDTYPE,
+#ifdef SGCHEM
+  IO_SGCHEM_TRACABUND,          /* last, so that builds without SGCHEM keep every block number */
+  IO_SGCHEM_DUSTTEMP,
+#endif
   IO_LASTENTRY			/* This should be kept - it signals the end of the list */
 };
 

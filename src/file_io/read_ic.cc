@@ -843,6 +843,16 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 #endif
             break;
 
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            for(n = 0; n < pc; n++) {for(k = 0; k < SGCHEM_NUM_TRACKED_SPECIES; k++) {CellP[offset + n].TracAbund[k] = *fp++;}}
+            break;
+
+        case IO_SGCHEM_DUSTTEMP:
+            for(n = 0; n < pc; n++) {CellP[offset + n].DustTemp = *fp++;}
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES) && !defined(CHIMES_INITIALISE_IN_EQM)
             {

@@ -806,6 +806,18 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
 #endif
         break;
 
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {for(k = 0; k < SGCHEM_NUM_TRACKED_SPECIES; k++) {*fp++ = (MyOutputFloat) CellP[pindex].TracAbund[k];} n++;}
+            break;
+
+        case IO_SGCHEM_DUSTTEMP:
+            for(n = 0; n < pc; pindex++)
+                if(P[pindex].Type == type) {*fp++ = (MyOutputFloat) CellP[pindex].DustTemp; n++;}
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
             for (n = 0; n < pc; pindex++)
@@ -2170,6 +2182,9 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
         case IO_RHO:
         case IO_NE:
         case IO_NH:
+#ifdef SGCHEM
+        case IO_SGCHEM_DUSTTEMP:
+#endif
         case IO_HII:
         case IO_HeI:
         case IO_HeII:
@@ -2401,6 +2416,12 @@ int get_bytes_per_blockelement(enum iofields blocknr, int mode)
 #endif
             break;
             
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            bytes_per_blockelement = SGCHEM_NUM_TRACKED_SPECIES * (mode ? sizeof(MyInputFloat) : sizeof(MyOutputFloat));
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
             if(mode)
@@ -2555,6 +2576,9 @@ int get_values_per_blockelement(enum iofields blocknr)
         case IO_RHO:
         case IO_NE:
         case IO_NH:
+#ifdef SGCHEM
+        case IO_SGCHEM_DUSTTEMP:
+#endif
         case IO_HII:
         case IO_HeI:
         case IO_HeII:
@@ -2748,6 +2772,12 @@ int get_values_per_blockelement(enum iofields blocknr)
 #endif
             break; 
 
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            values = SGCHEM_NUM_TRACKED_SPECIES;
+            break;
+#endif
+
         case IO_CHIMES_ABUNDANCES:
 #ifdef CHIMES
             values = ChimesGlobalVars.totalNumberOfSpecies;
@@ -2888,6 +2918,9 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_RHO:
         case IO_NE:
         case IO_NH:
+#ifdef SGCHEM
+        case IO_SGCHEM_DUSTTEMP:
+#endif
         case IO_HII:
         case IO_HeI:
         case IO_HeII:
@@ -2955,6 +2988,9 @@ long long get_particles_in_block(enum iofields blocknr, int *typelist, const lon
         case IO_DELAY_TIME_HII:
         case IO_MOLECULARFRACTION:
         case IO_CHIMES_ABUNDANCES:
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+#endif
         case IO_CHIMES_MU:
         case IO_CHIMES_REDUCED:
         case IO_CHIMES_NH:
@@ -3205,6 +3241,12 @@ int blockpresent(enum iofields blocknr)
             return 1;
 #endif
             break;
+
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+        case IO_SGCHEM_DUSTTEMP:
+            return 1;
+#endif
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES_REDUCED_OUTPUT)
@@ -3914,6 +3956,14 @@ void get_Tab_IO_Label(enum iofields blocknr, char *label)
         case IO_DUSTCHEMGRAINBINMASS:
             strncpy(label, "DBMA", 4);
             break;
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            strncpy(label, "CCTA", 4);
+            break;
+        case IO_SGCHEM_DUSTTEMP:
+            strncpy(label, "CCDT", 4);
+            break;
+#endif
         case IO_CHIMES_ABUNDANCES:
             strncpy(label, "CHIM", 4);
             break;
@@ -4390,6 +4440,14 @@ void get_dataset_name(enum iofields blocknr, char *buf)
         case IO_DUSTCHEMGRAINBINMASS:
             strcpy(buf, "DustBinMasses");
             break;
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:
+            strcpy(buf, "SGChemTracAbund");
+            break;
+        case IO_SGCHEM_DUSTTEMP:
+            strcpy(buf, "SGChemDustTemp");
+            break;
+#endif
         case IO_CHIMES_ABUNDANCES:
             strcpy(buf, "ChimesAbundances");
             break;
@@ -4705,6 +4763,10 @@ void get_dataset_name_legacy_alias(enum iofields blocknr, char *buf)
         case IO_ACRB:           strcpy(buf, "BH_AccretionLength");    break;
         case IO_SINKRAD:        strcpy(buf, "SinkRadius");            break;
         case IO_SINK_FORM_MASS: strcpy(buf, "SinkInitialMass");       break;
+#ifdef SGCHEM
+        case IO_SGCHEM_TRACABUND:   strcpy(buf, "ChemcoolTracAbund");     break;   /* SGChem datasets before the rename */
+        case IO_SGCHEM_DUSTTEMP:    strcpy(buf, "ChemcoolDustTemp");      break;
+#endif
         case IO_SINKMDOT:       strcpy(buf, "BH_Mdot");               break;
         case IO_SINKPROGS:      strcpy(buf, "BH_NProgs");             break;
         case IO_SINK_DIST:      strcpy(buf, "BH_Dist");               break;
