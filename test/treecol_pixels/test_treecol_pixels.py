@@ -14,6 +14,8 @@ stops) and checks them against exact values.
     pixel; 11.2-13.6, 3.444-6, 0.4133-3.444, 6-8 eV totals) against direct sums over all particles: medians and 99th
     percentiles of the relative differences within the tree-error bars below (1 and 2 ranks; 2 ranks = 1 rank to the
     same bars).
+  test_host_equals_device: the device walk (team-scratch sums, fixed fold order) gives the same cell outputs as the
+    host walk, and repeats bitwise (2 ranks x 2 threads; 1 rank x 4 threads, where every target takes the device walk).
 """
 import os
 import shutil
@@ -56,7 +58,7 @@ def build(tag, extra=()):
     return BUILDS[tag]
 
 
-def run(exe, tag, tables, L, gas_pos, stars, ranks=1, overrides=None, **ic):
+def run(exe, tag, tables, L, gas_pos, stars, ranks=1, overrides=None, threads=1, **ic):
     d = TEST_DIR / f"run_{tag}"
     if d.exists():
         shutil.rmtree(d)  # this run's own directory
@@ -73,8 +75,8 @@ def run(exe, tag, tables, L, gas_pos, stars, ranks=1, overrides=None, **ic):
     params = "\n".join(lines + [f"{k:27s} {v}" for k, v in over.items()]) + "\n"
     (d / f"{TEST_NAME}.params").write_text(params)
     with open(d / f"test_{TEST_NAME}.out", "w") as out:
-        subprocess.run(mpi_launch_command(ranks) + [str(exe), f"{TEST_NAME}.params", "2", "0"], cwd=d, stdout=out,
-                       stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
+        subprocess.run(mpi_launch_command(ranks, threads) + [str(exe), f"{TEST_NAME}.params", "2", "0"], cwd=d, stdout=out,
+                       stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": str(threads)}, check=True)
     assert "TREECOL DUMP written" in (d / f"test_{TEST_NAME}.out").read_text()
     return d / "output"
 
@@ -155,7 +157,7 @@ PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (10
 SHIELD = 8.0  # TreeColShieldingLength [pc]
 
 
-def pixel_run(tables, ranks, tag="", over=None):
+def pixel_run(tables, ranks, threads=1, tag="", overrides=None):
     L, n = 20.0, 12
     pos, z, ab = gas_with_species(n, L)
     tab = Tables(tables["StellarTablesFile"])
@@ -165,8 +167,8 @@ def pixel_run(tables, ranks, tag="", over=None):
         lM, lZ = np.log10(M), np.log10(0.0142)
         stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
     exe = build("pix12", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",))
-    out = run(exe, f"pixels{tag}_np{ranks}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab,
-              overrides={"TreeColShieldingLength": SHIELD, **(over or {})})
+    out = run(exe, f"pixels_np{ranks}{tag}", tables, L, pos, stars, ranks=ranks, z_gas=z, tracabund=ab, threads=threads,
+              overrides={"TreeColShieldingLength": SHIELD, **(overrides or {})})
     cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
     lum = load(out, "stars"); lum = lum[np.argsort(lum[:, 0])]
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
@@ -204,9 +206,18 @@ def test_pixel_columns_and_fluxes(tables, ranks):
 def test_columns_unsoftened(tables):
     """softening of 1 pc on a 1.7 pc lattice: the columns still follow the unsoftened direct sum, m / (4 pi / 12 r^2)"""
     soft = {f"Softening{t}": 1.0 for t in ("Gas", "Halo", "Disk", "Bulge", "Stars", "Bndry")}
-    cells, _, _ = pixel_run(tables, 1, tag="_soft", over=soft)
+    cells, _, _ = pixel_run(tables, 1, tag="_soft", overrides=soft)
     gpos, msp = cells[:, -3:], cells[:, 1:4]
     col = cells[:, 4:40].reshape(-1, 3, 12)
     for s in range(3):
         d = [rel(col[i, s].sum(), direct_columns(gpos[i], gpos, msp[:, s], r_max=SHIELD).sum()) for i in range(len(cells))]
         assert np.median(d) <= 1e-2 and np.percentile(d, 99) <= 5e-2, (s, np.median(d), np.percentile(d, 99))
+
+
+@pytest.mark.parametrize("ranks,threads", [(2, 2), (1, 4)])
+def test_host_equals_device(tables, ranks, threads):
+    runs = {}
+    for tag, below in (("dev_a", 0), ("dev_b", 0), ("host", 10 ** 9)):  # GravityHostWalkBelowActive: 0 = device for any work
+        runs[tag] = pixel_run(tables, ranks, threads, f"_t{threads}_{tag}", {"GravityHostWalkBelowActive": below})[0]
+    assert runs["dev_a"].tobytes() == runs["dev_b"].tobytes()
+    np.testing.assert_allclose(runs["dev_a"], runs["host"], rtol=2.5e-7, atol=0)  # float storage: at most a rounding step
