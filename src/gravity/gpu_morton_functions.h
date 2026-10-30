@@ -31,8 +31,8 @@
  *   - LCP (longest common prefix) bit count, in [0, 126].
  *   - Octant extraction at a given octree depth (0 = root, max = 41).
  *   - 8-way split-range location within a sorted Morton range.
- *   - IEEE-754-mantissa-bit-trick double->42-bit-int conversion (matches
- *     the host domain_double_to_int).
+ * The position -> integer coordinate mapping the keys are built from is
+ * NOT here: it is domain/domain_key_functions.h, shared with the host.
  *
  * Pure / stateless / header-only -- no device linker requirements.
  *
@@ -119,19 +119,6 @@ KOKKOS_INLINE_FUNCTION Morton128 gpu_morton_encode128(uint64_t x42, uint64_t y42
     k.hi = gpu_morton_encode63(xh, yh, zh);
     k.lo = gpu_morton_encode63(xl, yl, zl);
     return k;
-}
-
-/* IEEE-754 mantissa-bit-trick conversion of a double in [1.0, 2.0) to a
- * 42-bit unsigned integer in [0, 2^42).  Matches host domain_double_to_int
- * with BITS_PER_DIMENSION = 42 (domain/domain.cc:2711).
- *
- * Caller must arrange the input as (Pos - DomainCorner) / DomainLen + 1.0
- * to land in [1.0, 2.0); positions outside the domain box clamp at the
- * caller layer. */
-KOKKOS_INLINE_FUNCTION uint64_t gpu_morton_double_to_int42(double d) {
-    union { double d; uint64_t ull; } u;
-    u.d = d;
-    return (u.ull & 0xFFFFFFFFFFFFFull) >> (52 - 42);
 }
 
 /* ------------------------- LCP / octant / split --------------------------- */
