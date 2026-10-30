@@ -32,3 +32,7 @@ Checks:
   (as stella_dev). Outside, the photons leave the cells untouched. The heating to 1e4 K is booked in the ledger row
   E_photoionisation_heating_erg, within 5% of the thermal energy the ionised cells gained; the chemistry rows hold the
   network only. Without the change the ionised cells stay neutral and cold.
+- `test_quiet_steps`: a 35 Msun star 10 kyr old, onset at 15.3 kyr. Log column 12 counts the module's reductions and
+  neighbour-loop calls since the previous row. The first solve comes within one photoionisation step of the onset and
+  costs 11 (7 + 2 per search pass) plus the one source count at start-up. Before the change it cost 16: one reduction on
+  each of the 5 photoionisation steps without a source. Ionising onsets ride the existing star-formation reduction.
