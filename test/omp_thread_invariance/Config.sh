@@ -1,0 +1,15 @@
+# hydro scheme left at the default (MFM); the test's MFV variant appends HYDRO_MESHLESS_FINITE_VOLUME.
+# METALS + STARFORGE_FEEDBACK_TRACERS gives NUM_METAL_SPECIES = 1 + 3 passive scalars here (the tracer count is fixed
+# at 3 whatever value the flag carries); N_METAL_SPECIES in the test and the IC generator must match it.
+BOX_PERIODIC
+EOS_GAMMA=(5.0/3.0)
+MAGNETIC
+SELFGRAVITY_OFF
+METALS
+TURB_DIFF_METALS
+TURB_DIFF_METALS_LOWORDER
+STARFORGE_FEEDBACK_TRACERS=13
+INPUT_IN_DOUBLEPRECISION
+OUTPUT_IN_DOUBLEPRECISION
+DEVELOPER_MODE
+BUILD_UNOPTIMIZED

@@ -2741,6 +2741,7 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 #FORCE_EQUAL_TIMESTEPS          # force the code to use a single universal timestep (can change in time, but all particles advance together). chosen as minimum of any particle that step.
 #STOP_WHEN_BELOW_MINTIMESTEP    # forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile
 #CONTINUE_BELOW_MINTIMESTEP        # opts out of the above, clamping the stepsize to MinSizeTimestep and carrying on. only for a problem where reaching the floor is expected and survivable
+#BUILD_UNOPTIMIZED              # compile with -O0 (overrides the systype's optimization level). slow; for debugging, and for tests that need unoptimized code generation to expose OpenMP data-sharing races
 # --------------------
 # ----- Hydrodynamics
 #FREEZE_HYDRO                   # zeros all fluxes from RP and doesn't let particles move (for testing additional physics layers)
@@ -2853,6 +2854,8 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 **STOP\_WHEN\_BELOW\_MINTIMESTEP**: Forces code to quit when stepsize wants to go below MinSizeTimestep specified in the parameterfile.
 
 **CONTINUE\_BELOW\_MINTIMESTEP**: Opts out of the above. `STOP_WHEN_BELOW_MINTIMESTEP` is on by default, because a run whose timestep has collapsed to the floor has almost always gone unstable, and allowing it to continue will burn an entire allocation making no progress. Setting this instead clamps the stepsize at `MinSizeTimestep` and carries on. Use it only for a problem where reaching the floor is both expected and survivable -- if you are not certain that it is, you want the default.
+
+**BUILD\_UNOPTIMIZED**: Appends `-O0` to the compiler flags, overriding the optimization level of the systype (the last `-O` wins). Slow; for debugging, and for tests that need unoptimized code generation: at `-O1` and above a loop counter that is wrongly shared between OpenMP threads is kept in a register and the race never reaches the binary, at `-O0` every access goes to the shared location. `test/omp_thread_invariance` uses it.
 
 <a name="config-debug-hydro"></a>
 ### _Hydrodynamics_ 

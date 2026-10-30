@@ -854,6 +854,14 @@ MISC_OBJS = sidm/cbe_integrator.o \
 			sidm/dm_fuzzy.o \
 			sidm/sidm_core.o
 
+## BUILD_UNOPTIMIZED (Config.sh): append -O0, which overrides the systype's level since the last -O wins.
+## Unoptimized codegen keeps loop variables in memory, so OpenMP data-sharing bugs that register
+## promotion hides at -O1 and above become visible. Applies to the Kokkos translation units too:
+## GPU_CFLAGS carries no optimization level of its own.
+ifeq (BUILD_UNOPTIMIZED,$(findstring BUILD_UNOPTIMIZED,$(CONFIGVARS)))
+OPTIMIZE += -O0
+endif
+
 ## name of executable and optimizations
 EXEC   = GIZMO
 OPTIONS = $(OPTIMIZE) $(OPT)
