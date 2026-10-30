@@ -41,3 +41,16 @@ Checks:
   source's rank in one exchange per pass. Four separate stars on 4 ranks with a 0.02 MB communication chunk trigger no
   'cap ineffective' round (before the change: 2 records of 12.6 kB from one source already exceeded a round), and
   give the cells and fronts of 1 rank. All other photoion logs are bitwise unchanged by the change.
+
+Performance (`run_performance.sh`, not part of pytest; Orion, 8 ranks x 8 threads, one source, 10 steps with every cell
+active; log column 13 is the wall time of each solve on the slowest rank):
+
+| cells | solve [ms] | of which runner calls and exchanges | of which source scan | whole run (cpu.txt total), flag on / off |
+|---|---|---|---|---|
+| 1e6 | 3.8 | 1.9 | 1.9 (with the first reduction) | 20.7 / 19.6 s |
+| 8e6 | 18.8 | 1.5 (+2.4 first reduction) | 14.4 | 105.0 / 102.5 s |
+
+The work of the solve itself does not grow with the cell count. What grows is the scan of the active particles for
+sources, one particle read per active particle (here all 1e6 per rank), about 0.3% of the run at 8e6. Memory: +8 B per gas
+cell in the cell struct (368 vs 360 B), +8 B per local gas cell in the claim buffer from the first solve, about 200 kB
+per rank of histogram pool; nothing per particle; 4 B per single star (birth density).
