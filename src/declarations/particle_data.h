@@ -17,6 +17,9 @@ extern ALIGN(32) struct particle_data
 #else
     MyIDType ID_generation;
 #endif
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+    int StarIdx;                    /*!< single-star record slot + 1, 0 = none (galaxy_sf/single_star_record.h); in the padding after ID_generation */
+#endif
     
     integertime Ti_begstep;         /*!< marks start of current timestep of particle on integer timeline */
     integertime Ti_current;         /*!< current time of the particle */

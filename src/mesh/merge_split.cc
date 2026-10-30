@@ -13,6 +13,7 @@
 #include "../declarations/allvars.h"
 #include "../declarations/multifluid_helpers.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../declarations/gpu_rng.h"
 #include "ghost_writeback.h"   /* ghost_get_num_local/num_ghosts */
 #include "../core/wakeup_sidecar.h"
@@ -1622,6 +1623,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     for(i = 0; i < numpart_local; i++)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+            if(P[i].StarIdx > 0) {single_star_record_free(P[i].StarIdx); P[i].StarIdx = 0;}
+#endif
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;}
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}

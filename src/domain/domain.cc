@@ -9,6 +9,7 @@
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
+#include "../galaxy_sf/single_star_record.h"
 #include "../declarations/gpu_rng.h"
 #include "../core/wakeup_sidecar.h"
 #include "../system/gpu_particles_arena.h"
@@ -1980,6 +1981,9 @@ void domain_exchange(void)
   tempAbundanceArray = (ChimesFloat *) malloc(ChimesGlobalVars.totalNumberOfSpecies * sizeof(ChimesFloat));
 #endif
   keyBuf = (peanokey *) mymalloc("keyBuf", count_togo * sizeof(peanokey));
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+  std::vector<std::vector<struct single_star_record>> ssr_send(NTask), ssr_recv(NTask); /* records travel with their stars, in send order */
+#endif
 
   for(i = 0; i < NTask; i++) {count[i] = count_gas[i] = 0;}
 
@@ -2014,6 +2018,9 @@ void domain_exchange(void)
 	    {
 	      partBuf[offset[target] + count[target]] = P[n];
 	      keyBuf[offset[target] + count[target]] = Key[n];
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+	      if(P[n].StarIdx > 0) {struct single_star_record r; single_star_record_get(P[n].StarIdx, &r); single_star_record_free(P[n].StarIdx); ssr_send[target].push_back(r);}
+#endif
 	      count[target]++;
 	    }
 
@@ -2152,6 +2159,15 @@ void domain_exchange(void)
 			   MPI_BYTE, target, TAG_KEY,
 			   Key + offset_recv[target], count_recv[target] * sizeof(peanokey),
 			   MPI_BYTE, target, TAG_KEY, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+	      {
+	        int n_send = (int) ssr_send[target].size(), n_recv = 0; /* the receiver counts the stars with records it just received */
+	        for(int q = 0; q < count_recv[target]; q++) {if(P[offset_recv[target] + q].StarIdx > 0) {n_recv++;}}
+	        ssr_recv[target].resize(n_recv);
+	        MPI_Sizelimited_Sendrecv(ssr_send[target].data(), n_send * sizeof(struct single_star_record), MPI_BYTE, target, TAG_SINGLESTAR_DATA,
+			   ssr_recv[target].data(), n_recv * sizeof(struct single_star_record), MPI_BYTE, target, TAG_SINGLESTAR_DATA, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+	      }
+#endif
 	    }
 	}
     }
@@ -2172,6 +2188,19 @@ void domain_exchange(void)
     }
 #endif 
 
+#ifdef GALSF_SINGLE_STARS_FROM_IMF
+  /* received stars take new local slots, in the order their records were sent */
+  for(target = 0; target < NTask; target++)
+    {
+      size_t k = 0;
+      for(i = 0; i < count_recv[target]; i++)
+        {
+          struct particle_data *p = &P[offset_recv[target] + i];
+          if(p->StarIdx > 0) {p->StarIdx = (k < ssr_recv[target].size()) ? single_star_record_new(&ssr_recv[target][k]) : 0; k++;}
+        }
+      if(k != ssr_recv[target].size()) {endrun(7822);} /* records and stars out of step */
+    }
+#endif
   NumPart += count_get;
   N_gas += count_get_gas;
 

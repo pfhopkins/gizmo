@@ -471,8 +471,8 @@ enum {
   GIZMO_MEM_PARTICLE_SOA = 0,   /* P / CellP / WakeupDirty persistent particle storage (UVM) */
   GIZMO_MEM_TREE_NODES,         /* local + foreign tree-node arrays (UVM) */
   GIZMO_MEM_STL_TIMEBIN,        /* ActiveParticleList / Next- / PrevInTimeBin (host STL) */
-#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
-  GIZMO_MEM_SINGLE_STARS,       /* stellar-evolution tables (galaxy_sf/) */
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) || defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+  GIZMO_MEM_SINGLE_STARS,       /* single-star records, stellar-evolution tables (galaxy_sf/) */
 #endif
   GIZMO_MEM_NFAMILY
 };
