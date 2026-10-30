@@ -383,6 +383,8 @@
 ####################################################################################################
 ## ----------------------------------------------------------------------------------------------------
 #COOLING                        # top-level switch to enable radiative cooling and heating. if nothing else enabled, uses Hopkins et al. arXiv:1702.06148 cooling physics. if GALSF, also external UV background read from file "TREECOOL" (included in the cooling folder; be sure to cite its source as well, given in the TREECOOL file)
+#SGCHEM                         # SGChem non-equilibrium chemistry and cooling (cooling/sgchem/, C++ on SUNDIALS CVODE 6.x/7.x: set SUNDIALS_DIR). Needs METALS; excludes CHIMES; cools on the host loop. Tables installed with scripts/get_stella_tables.sh (parameter SGChemTablesPath), hash-checked at start-up
+#CHEMISTRYNETWORK=5             # SGChem network: 5 (H2, H+, CO; default), 3, 15, 16, 17, 18 (metal ions) or 20 (Kim+23)
 #METALS                         # top-level switch to enable tracking metallicities / different heavy elements (with multiple species optional) for gas and stars [must be included in ICs or injected via dynamical feedback; needed for some routines]
 #DISK_BETA_COOL                 # simple 'beta-cooling' for protoplanetary-disk problems: relax gas internal energy to a constant irradiation floor on t_cool=beta/Omega (params BetaCool_Beta, BetaCool_Tirr). mutually exclusive with COOLING
 ## ----------------------------------------------------------------------------------------------------

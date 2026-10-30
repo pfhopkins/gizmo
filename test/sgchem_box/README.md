@@ -1,0 +1,10 @@
+# sgchem_box
+
+Uniform periodic gas box (8^3 cells, n_H = 100 cm^-3, T0 = 8000 K, FIRE-3 solar metals, at rest; IC from
+`make_sgchem_box_ics.py`) built with `SGCHEM` (network 5), 2 ranks.
+
+- `test_sgchem_startup`: the four chemistry tables are hash-checked at start-up against `src/galaxy_sf/stella_tables_check.h`.
+  With the installed tables the run reaches `TimeMax` and builds the network tables; with one table changed by a byte
+  the run stops before any step, naming the table, its hash and `scripts/get_stella_tables.sh`.
+
+Inputs: `SUNDIALS_DIR`; the chemistry tables from `SGCHEM_TABLES_DIR`, else installed by `scripts/get_stella_tables.sh`.
