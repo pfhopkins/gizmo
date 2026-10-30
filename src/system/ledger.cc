@@ -17,7 +17,11 @@
 
 #define LEDGER_NLIMB 72          /* 32-bit limbs from 2^LEDGER_EXP0 up: every finite double fits */
 #define LEDGER_EXP0  (-1152)
-static const char *ledger_row_names[LEDGER_NROWS] = {"E_chem_heating_erg", "E_chem_cooling_erg"};
+static const char *ledger_row_names[LEDGER_NROWS] = {"E_chem_heating_erg", "E_chem_cooling_erg",
+#if defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION) && defined(SGCHEM)
+    "E_photoionisation_heating_erg",
+#endif
+};
 
 struct ledger_sum {int64_t limb[LEDGER_NLIMB]; int64_t n_add;};
 static struct ledger_sum *ledger_thread = NULL;      /* [thread][row]: since the last fold */

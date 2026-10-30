@@ -52,6 +52,9 @@ static long long *pi_claim_sums(int n_gas)
 static double photoion_source_rate(int i)
 {
     if(P[i].StarIdx <= 0 || P[i].Mass <= 0) {return 0;}
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    if(All.TestPhotoionFixedRate > 0) {return (single_star_ionizing_onset_yr(i) >= 0) ? All.TestPhotoionFixedRate : 0;} /* every star of at least 8 Msun, at any age */
+#endif
     return All.HIIRegion_fLum_Coupled * single_star_ionizing_photon_rate(i);
 }
 

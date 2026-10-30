@@ -1209,7 +1209,11 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 
 
 #ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
-enum ledger_rows {LEDGER_CHEM_HEATING, LEDGER_CHEM_COOLING, LEDGER_NROWS}; /* energy rows [code units]; names in system/ledger.cc */
+enum ledger_rows {LEDGER_CHEM_HEATING, LEDGER_CHEM_COOLING,
+#if defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION) && defined(SGCHEM)
+    LEDGER_PI_HEATING,
+#endif
+    LEDGER_NROWS}; /* energy rows [code units]; names in system/ledger.cc */
 void ledger_init(void);
 void ledger_add(int row, double x);
 void ledger_output(void);

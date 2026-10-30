@@ -1899,6 +1899,14 @@ void read_parameter_file(char *fname)
         strcpy(tag[nt], "PhotoionMaxSearchRadius");
         addr[nt] = &All.PhotoionMaxSearchRadius;
         id[nt++] = REAL;
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+        strcpy(tag[nt], "TestPhotoionFixedRate");
+        addr[nt] = &All.TestPhotoionFixedRate;
+        id[nt++] = REAL;
+        strcpy(tag[nt], "TestPhotoionNeutralTemp");
+        addr[nt] = &All.TestPhotoionNeutralTemp;
+        id[nt++] = REAL;
+#endif
         strcpy(tag[nt], "PhotoionMaxRounds");
         addr[nt] = &All.PhotoionMaxRounds;
         id[nt++] = INT;

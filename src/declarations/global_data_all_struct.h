@@ -497,6 +497,10 @@ struct global_data_all_processes
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
     double PhotoionMaxSearchRadius; /*!< largest search radius of a source [physical kpc] */
+#ifdef TEST_PHOTOIONIZATION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    double TestPhotoionFixedRate;   /*!< test: every ionising star emits this photon rate [1/s] */
+    double TestPhotoionNeutralTemp; /*!< test: SGChem holds neutral gas at this temperature [K], ionised gas at 1e4 K, no network */
+#endif
     int PhotoionMaxRounds;          /*!< largest number of sharing rounds per solve */
     double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source, and the photoionisation cadence [yr] */
 #endif
