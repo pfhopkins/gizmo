@@ -385,6 +385,9 @@ void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cel
 #define STATE_COPY_COMMITTED 1
 #define STATE_COPY_PREDICTED 2
 void refresh_eos_and_project(int i, int state_copies);
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+void eos_gamma_probe_report(void);
+#endif
 #ifdef HYDRO_GENERATE_TARGET_MESH
 /* Declared under the same flag the definitions in eos/eos_functions.h carry: they
    used to be defined unconditionally in eos.cc, so an unguarded declaration would

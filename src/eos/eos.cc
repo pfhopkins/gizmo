@@ -105,10 +105,40 @@
    non-inline host symbols for ThermalProperties/convert_u_to_temp/
    find_abundances_and_rates which override cooling.cc's at link time, with the same
    silent CUDA-only result. Both were bisected empirically. */
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+/* Inert diagnostic: after every host-path EOS update, |SoundSpeed^2 rho / (gamma P) - 1| with gamma = gamma_eos_value() at
+   the cell's current state, i.e. whether the sound speed uses the adiabatic index of the temperature just computed. Only
+   meaningful where SoundSpeed is the ideal-gas one (no CR, radiation-pressure or tabulated EOS). Host wrapper only: the
+   device pass calls set_eos_pressure_impl directly and is not sampled. */
+static double eos_gamma_probe_max = 0, eos_gamma_probe_gmin = 1e30, eos_gamma_probe_gmax = 0;
+static long long eos_gamma_probe_n = 0, eos_gamma_probe_bad = 0;
+static void eos_gamma_probe_add(double rel, double g)
+{
+#pragma omp critical(eos_gamma_probe)
+    {
+        eos_gamma_probe_n++; if(rel > 1e-12) {eos_gamma_probe_bad++;}
+        if(rel > eos_gamma_probe_max) {eos_gamma_probe_max = rel;}
+        if(g < eos_gamma_probe_gmin) {eos_gamma_probe_gmin = g;}
+        if(g > eos_gamma_probe_gmax) {eos_gamma_probe_gmax = g;}
+    }
+}
+void eos_gamma_probe_report(void) /* collective; rank 0 prints the totals since the previous call */
+{
+    double mx[3] = {eos_gamma_probe_max, -eos_gamma_probe_gmin, eos_gamma_probe_gmax}, mx_g[3]; long long n[2] = {eos_gamma_probe_n, eos_gamma_probe_bad}, n_g[2];
+    MPI_Reduce(mx, mx_g, 3, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD); MPI_Reduce(n, n_g, 2, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0 && n_g[0] > 0) {printf("EOS_GAMMA_PROBE t=%.10g updates=%lld above_1e-12=%lld max_rel=%.6e gamma_range=[%.8f, %.8f]\n", All.Time, n_g[0], n_g[1], mx_g[0], -mx_g[1], mx_g[2]);}
+    eos_gamma_probe_max = 0; eos_gamma_probe_gmin = 1e30; eos_gamma_probe_gmax = 0; eos_gamma_probe_n = eos_gamma_probe_bad = 0;
+}
+#endif
+
 void set_eos_pressure(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
     struct EosTableView eos_tables = eos_tables_view();
     set_eos_pressure_impl(i, pp, cell, &eos_tables);
+#if defined(EOS_GAMMA_PROBE) && defined(EOS_GENERAL)
+    {double g = cell[i].gamma_eos_value(); double press = cell[i].Pressure;
+     eos_gamma_probe_add((press > 0) ? fabs(cell[i].SoundSpeed*cell[i].SoundSpeed*cell[i].density_for_energy()/(g*press) - 1.) : 0, g);}
+#endif
 }
 
 /* refresh_eos_and_project -- the host entry for every ACCEPTED state change (kick, density pass and its final operations, cooling, star
