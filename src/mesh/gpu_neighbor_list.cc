@@ -2114,6 +2114,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
          * position, and every particle that becomes gas, advances the owned epoch, which is not so for the
          * other types.  (A particle that stops being gas leaves its slot to be retired, not the order.) */
         const int presorted = (P_shared == P) && (type_bitmask == 1) && sidx_particles_still_ordered(owned_end, t_now);
+        /* The rebuild reads every owned particle's P and CellP on the device: move them in bulk rather than by
+           device faults (this also lets the query setup below run on the device). */
+        if(P_shared == P && (long long) owned_end * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device("sidx_build");}
         if(sidx_build_segment_now(src, maintained, presorted, radius_policy, caller_label, own, &report)) {
             ngl_leave_csr_empty(gnl, num_active);
             return;
