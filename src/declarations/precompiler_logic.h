@@ -1088,9 +1088,18 @@
 #error "GALSF_RESOLVEDISM_TREECOL_PIXELS feeds the SGChem chemistry: set SGCHEM"
 #endif
 #define TREECOL_PIXELS_NSPECIES 3 /* dust-weighted gas, H2, CO */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT
+#define TREECOL_PIXEL_STORAGE_T float /* parity builds */
+#else
+#define TREECOL_PIXELS_LOG16 /* per-pixel cell values as 16-bit log10 fixed point (gravtree_treecol_pixels.h) */
+#define TREECOL_PIXEL_STORAGE_T uint16_t
+#endif
 #ifndef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
 #define GRAVTREE_CALCULATE_GAS_MASS_IN_NODE /* the species masses ride the gas-mass node paths */
 #endif
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
+#error "GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT is a storage option of GALSF_RESOLVEDISM_TREECOL_PIXELS"
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES /* single stars shine in disjoint table bands through the gravity-tree source arrays */
 #if !defined(SGCHEM) || !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)

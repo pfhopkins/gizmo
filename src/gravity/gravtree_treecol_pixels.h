@@ -198,16 +198,41 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
 #endif
 }
 
+/* per-pixel cell storage: 16-bit log10 fixed point over 20 dex above log10_min (step 3.05e-4 dex, rounded to nearest),
+   0 = zero, saturating at the top, x scaled to the range unit; float with GALSF_RESOLVEDISM_TREECOL_PIXELS_STORED_AS_FLOAT */
+#define TREECOL_PIXELS_LOG16_SPAN 20.0
+#define TREECOL_PIXELS_LOG16_MIN_COLUMN (-16.0) /* [g/cm^2 at the code normalisation] */
+#define TREECOL_PIXELS_LOG16_MIN_EGY (-24.0)    /* [erg/cm^3] */
+KOKKOS_INLINE_FUNCTION TREECOL_PIXEL_STORAGE_T treecol_pixel_store(double x, double scale, double log10_min)
+{
+#ifdef TREECOL_PIXELS_LOG16
+    const double q = (x > 0) ? (log10(x * scale) - log10_min) * (65535.0 / TREECOL_PIXELS_LOG16_SPAN) : 0;
+    return (TREECOL_PIXEL_STORAGE_T) ((q < 0.5) ? 0 : ((q >= 65534.5) ? 65535 : (int) (q + 0.5)));
+#else
+    (void) scale; (void) log10_min; return (TREECOL_PIXEL_STORAGE_T) x;
+#endif
+}
+KOKKOS_INLINE_FUNCTION double treecol_pixel_load(TREECOL_PIXEL_STORAGE_T v, double scale, double log10_min)
+{
+#ifdef TREECOL_PIXELS_LOG16
+    return v ? pow(10., log10_min + v * (TREECOL_PIXELS_LOG16_SPAN / 65535.0)) / scale : 0;
+#else
+    (void) scale; (void) log10_min; return v;
+#endif
+}
+#define TREECOL_PIXELS_COLUMN(c, s, k) treecol_pixel_load((c).TreeColColumn[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN) /* [code] */
+#define TREECOL_PIXELS_EGY_UV(c, k) treecol_pixel_load((c).TreeColEgyUV[k], 1.0, TREECOL_PIXELS_LOG16_MIN_EGY) /* [erg/cm^3] */
+
 /* walk end: write a gas cell's columns and band energy densities [erg/cm^3]; Lyman-Werner floored per pixel at
    0.1 x the 6-13.6 eV background floor 0.324e-2 SGChemBackgroundG0 / N (stella_dev), then summed */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, const treecol_pixels_sums_t &a)
 {
-    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColColumn[s][k] = (float) a.col[s][k];}}
+    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColColumn[s][k] = treecol_pixel_store(a.col[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN);}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     const double u = All.cf_a2inv / (4.0 * M_PI * C_LIGHT_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* flux [erg/s / code length^2] to energy density */
     const double lw_floor = 0.1 * 0.324e-2 * All.SGChemBackgroundG0 / TREECOL_PIXELS_N * HABING_EGY_DENSITY_6_13P6EV_CGS;
     double lw = 0;
-    for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColEgyUV[k] = (float) (a.uv[k] * u); lw += fmax(a.lw[k] * u, lw_floor);}
+    for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColEgyUV[k] = treecol_pixel_store(a.uv[k] * u, 1.0, TREECOL_PIXELS_LOG16_MIN_EGY); lw += fmax(a.lw[k] * u, lw_floor);}
     c.TreeColEgyLW = (float) lw; c.TreeColEgyNUV = (float) (a.nuv * u); c.TreeColEgyOPT = (float) (a.opt * u); c.TreeColEgy68 = (float) (a.f68 * u);
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
     for(int k = 0; k < 4; k++) {c.TreeColRadpFlux[k] = (float) a.radp[k];}

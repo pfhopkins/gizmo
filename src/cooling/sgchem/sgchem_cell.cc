@@ -55,10 +55,10 @@ static void sgchem_treecol_columns(int i, struct ChemInputs *in)
     double to_cgs = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv; /* code surface density to g cm^-2 */
     for(int k = 0; k < NPIX; k++)
     {
-        double col_dust = CellP[i].TreeColColumn[TREECOL_PIXELS_DUST][k] * to_cgs / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
+        double col_dust = TREECOL_PIXELS_COLUMN(CellP[i], TREECOL_PIXELS_DUST, k) * to_cgs / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
         in->column_density_projection[k] = (in->dust_to_gas_ratio > 1.0e-10) ? col_dust / in->dust_to_gas_ratio : 0;
-        in->column_density_projection_h2[k] = CellP[i].TreeColColumn[TREECOL_PIXELS_H2][k] * to_cgs / (2.0 * PROTONMASS_CGS);
-        in->column_density_projection_co[k] = CellP[i].TreeColColumn[TREECOL_PIXELS_CO][k] * to_cgs / (28.0 * PROTONMASS_CGS);
+        in->column_density_projection_h2[k] = TREECOL_PIXELS_COLUMN(CellP[i], TREECOL_PIXELS_H2, k) * to_cgs / (2.0 * PROTONMASS_CGS);
+        in->column_density_projection_co[k] = TREECOL_PIXELS_COLUMN(CellP[i], TREECOL_PIXELS_CO, k) * to_cgs / (28.0 * PROTONMASS_CGS);
     }
 }
 #endif
@@ -69,7 +69,7 @@ static void sgchem_treecol_columns(int i, struct ChemInputs *in)
 struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv)
 {
     double floor_pix = 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_uv = 0, u_pix[NPIX];
-    for(int k = 0; k < NPIX; k++) {u_pix[k] = DMAX(CellP[i].TreeColEgyUV[k], floor_pix); u_uv += u_pix[k];}
+    for(int k = 0; k < NPIX; k++) {u_pix[k] = DMAX(TREECOL_PIXELS_EGY_UV(CellP[i], k), floor_pix); u_uv += u_pix[k];}
     for(int k = 0; k < NPIX; k++) {fac_uv[k] = (u_uv > 0) ? u_pix[k] / u_uv : 1.0 / NPIX;}
     return chem_fuv_field_from_band_energy(u_uv, HABING_EGY_DENSITY_6_13P6EV_CGS, CellP[i].TreeColEgyLW, CellP[i].TreeColEgyNUV,
                                            CellP[i].TreeColEgyOPT, 1, 1, 0.324e-2 * All.SGChemBackgroundG0);

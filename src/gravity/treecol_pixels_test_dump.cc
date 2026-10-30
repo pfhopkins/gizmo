@@ -56,9 +56,9 @@ void test_dump_treecol_pixels_and_exit(void)
         double m[TREECOL_PIXELS_NSPECIES]; treecol_pixels_species_masses(P, CellP, i, m);
         fprintf(fc, "%llu", (unsigned long long) P[i].ID);
         for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {fprintf(fc, " %.17g", m[k]);}
-        for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", CellP[i].TreeColColumn[k][j]);}}
+        for(int k = 0; k < TREECOL_PIXELS_NSPECIES; k++) {for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", TREECOL_PIXELS_COLUMN(CellP[i], k, j));}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
-        for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", CellP[i].TreeColEgyUV[j]);}
+        for(int j = 0; j < GALSF_RESOLVEDISM_TREECOL_PIXELS; j++) {fprintf(fc, " %.9g", TREECOL_PIXELS_EGY_UV(CellP[i], j));}
         fprintf(fc, " %.9g %.9g %.9g %.9g", CellP[i].TreeColEgyLW, CellP[i].TreeColEgyNUV, CellP[i].TreeColEgyOPT, CellP[i].TreeColEgy68);
         {double fac_uv[NPIX]; struct ChemFUVField f = sgchem_treecol_field(i, fac_uv); fprintf(fc, " %.17g %.17g %.17g", f.G0, f.G0_LW, f.G0_dust);} /* chemistry inputs */
 #endif
