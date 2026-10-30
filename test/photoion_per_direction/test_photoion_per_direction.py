@@ -106,3 +106,38 @@ def test_ranks_and_order(built):
         assert np.array_equal(rows[:, [1, 3, 8]], ref[:, [1, 3, 8]]), tag  # sources, ionised cells, passes
         assert np.allclose(rows[:, 6], ref[:, 6], rtol=1e-9), tag  # ledger
         assert np.allclose(rows[:, [9, 10]], ref[:, [9, 10]], rtol=1e-6, atol=0), tag  # fronts
+
+
+def first_row(d):
+    return log(d)[0]
+
+
+def test_overlapping_sources_share(built):
+    """two identical stars 0.5 Stromgren radii apart ionise twice the single star's cells (photon-conserving overlap),
+    with the recombinations of the union matching their summed photon rate; the same on 1, 2 and 4 ranks"""
+    d1, dx, n_H = run("ovl_single", built)
+    one = first_row(d1)
+    R_S = stromgren_pc(one[2] * X_H, n_H)
+    L = 32 * dx
+    off = 0.25 * R_S / L
+    pair = [(35.0, 1.0e6, (0.5 - off, 0.5, 0.5)), (35.0, 1.0e6, (0.5 + off, 0.5, 0.5))]
+    rows = {}
+    for tag, kw in [("ovl_pair_r1", {}), ("ovl_pair_r2", dict(ranks=2)), ("ovl_pair_r4", dict(ranks=4))]:
+        rows[tag] = first_row(run(tag, built, stars=pair, **kw)[0])
+    two = rows["ovl_pair_r1"]
+    assert two[1] == 2
+    assert abs(two[3] / one[3] - 2.0) < 0.05, two[3] / one[3]  # union / single
+    assert 0.98 < two[6] < 1.02, two[6]  # recombinations of the union / summed Q
+    for tag in ("ovl_pair_r2", "ovl_pair_r4"):
+        assert rows[tag][3] == two[3] and rows[tag][7] == two[7], tag  # cells, rounds
+
+
+def test_bright_and_faint_source(built):
+    """a bright and a faint star (Q ratio 7) 0.9 pc apart: the union recombines at their summed photon rate, and in
+    uniform gas its cells grow with the summed rate"""
+    d1, _, _ = run("asym_single", built)
+    one = first_row(d1)
+    stars = [(35.0, 1.0e6, (0.5, 0.5, 0.5)), (20.0, 1.0e6, (0.52, 0.5, 0.5))]
+    two = first_row(run("asym_pair", built, stars=stars)[0])
+    assert two[1] == 2 and 0.98 < two[6] < 1.02, two[6]
+    assert abs(two[3] / one[3] - two[2] / one[2]) < 0.02, (two[3] / one[3], two[2] / one[2])
