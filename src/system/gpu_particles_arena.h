@@ -98,6 +98,8 @@ void gizmo_particles_prefetch_to_device(const char *site);
 void gizmo_particles_prefetch_to_host(const char *site);
 /* As _to_device for P only, for a device phase that reads no cell data (the tree build). */
 void gizmo_particles_prefetch_P_to_device(const char *site);
+/* As _to_host for P only, after a device phase that touched no cell data. */
+void gizmo_particles_prefetch_P_to_host(const char *site);
 /* Where the last bulk prefetch sent the particle storage: 1 the device, 2 the host, 0 none yet or
  * prefetching off. A hint for code that can run either side, to run where the particles are. */
 int gizmo_particles_prefetch_side(void);

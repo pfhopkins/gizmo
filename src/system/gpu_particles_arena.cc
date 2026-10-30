@@ -144,6 +144,7 @@ extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
 extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}
+extern "C" void gizmo_particles_prefetch_P_to_host(const char *site) {particles_prefetch(0, site, 0);}
 extern "C" void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls)
 {
     if(seconds) {*seconds = prefetch_seconds_;}

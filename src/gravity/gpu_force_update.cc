@@ -307,6 +307,7 @@ extern "C" void gpu_force_update_tree(void)
 #endif
 
         /* Stage 2: GPU kick kernel — per-active-particle Father-chain walk. */
+        if((long long) num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_P_to_device("gpu_force_kick");}   /* reads P[i].dp of every active */
         Kokkos::parallel_for("gpu_force_kick", num_active,
             KOKKOS_LAMBDA(const int idx) {
                 const int i = active_dev[idx];
@@ -406,6 +407,9 @@ extern "C" void gpu_force_update_tree(void)
             endrun(929705);
         }
 
+        /* The kick pulled the actives' P pages to the device; the host loop below and the phases after it sweep them.
+           On the step after a full step the active list is still the full one, so this is every page of P. */
+        if((long long) num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_P_to_host("gpu_force_update_tree");}
         /* Zero P[i].dp on the host.  On UVM systems Pp==P so the kernel zero above
          * already did this; on non-UVM (Mac CPU Kokkos) the arena is a separate
          * SharedSpace buffer and this host loop is the authoritative zero. */
