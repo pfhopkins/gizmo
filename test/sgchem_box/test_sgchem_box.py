@@ -3,6 +3,8 @@
 test_sgchem_startup: the installed chemistry tables are checked at start-up; with the right tables the run reaches
 TimeMax, with a changed table it stops with a message naming the install script.
 test_sgchem_cell_state: SGCHEM network 5 adds 40 B to the gas cell (three tracked species, dust and gas temperature).
+test_sgchem_cooling: the cells cool through SGChem: final energy, temperature, electrons and HI equal a standalone run of
+the backend on the same inputs and timesteps, and the snapshots are identical with 1 and 4 OpenMP threads.
 """
 
 import re
@@ -11,6 +13,8 @@ import subprocess
 import sys
 from os import chdir, environ, path, makedirs
 
+import h5py
+import numpy as np
 import pytest
 
 from gizmo.test import build_and_run_test, build_gizmo_for_test, run_test, get_cooling_tables, default_omp_threads
@@ -68,6 +72,69 @@ def box(tables):
 def test_sgchem_cell_state(box):
     grow = cell_size(box["sgchem"]) - cell_size(box["no_sgchem"])
     assert grow == 8 * (3 + 2), f"gas cell grows by {grow} B with SGCHEM network 5"
+
+
+def standalone(tables, snap0, times):
+    """cell_standalone.cc built in the box build's src/ (same config), fed the cells' density and energy and the run's timesteps."""
+    src = path.join(ROOT, "src")
+    cc = subprocess.run("make -n -W cooling/sgchem/sgchem_cell.cc cooling/sgchem/sgchem_cell.o", shell=True, cwd=src,
+                        capture_output=True, text=True).stdout
+    cc = [l for l in cc.splitlines() if "sgchem_cell.cc" in l][-1]
+    ln = [l for l in subprocess.run("make -n -W core/main.cc GIZMO", shell=True, cwd=src, capture_output=True,
+                                    text=True).stdout.splitlines() if " -o GIZMO" in l][-1]
+    exe = path.join(HERE, "output", "cell_standalone")
+    obj = exe + ".o"
+    cc = cc.replace("cooling/sgchem/sgchem_cell.cc", path.join(HERE, "cell_standalone.cc")).replace(
+        "cooling/sgchem/sgchem_cell.o", obj) + " -Icooling/sgchem"
+    subprocess.run(cc, shell=True, cwd=src, check=True)
+    toks = ln.split()
+    libs = " ".join(t for t in toks[1:] if not t.endswith(".o") and t not in ("-o", "GIZMO"))
+    subprocess.run(f"{toks[0]} {obj} cooling/sgchem/cxx/*.o {libs} -o {exe}", shell=True, cwd=src, check=True)
+    p = {k: float(v) for k, v in (l.split()[:2] for l in open(path.join(HERE, f"{NAME}.params")) if l.strip() and l[0] != "%"
+                                  if len(l.split()) > 1 and l.split()[1][0] in "0123456789.-")}
+    g = snap0["PartType0"]
+    q = np.diff(times)[1:] / p["TimeMax"]  # no cooling at the first sync point (zero timestep); the steps are power-of-two
+    dts = p["TimeMax"] * np.exp2(np.round(np.log2(q)))  # fractions of TimeMax: rebuild them exactly
+    assert np.allclose(dts, np.diff(times)[1:], rtol=1e-12, atol=0)
+    lines = [f"{p['UnitMass_in_g']!r} {p['UnitLength_in_cm']!r} {p['UnitVelocity_in_cm_per_s']!r} {p['HubbleParam']!r} "
+             f"{p['SGChemCosmicRayIonRate']!r} {p['SGChemDustToGasRatio']!r} {p['SGChemDeuteriumAbundance']!r} {p['MinGasTemp']!r} "
+             f"{len(dts)} " + " ".join(repr(float(d)) for d in dts), " ".join(repr(float(z)) for z in g["Metallicity"][0])]
+    lines += [f"{int(i)} {float(r)!r} {float(u)!r}" for i, r, u in zip(g["ParticleIDs"][:], g["Density"][:], g["InternalEnergy"][:])]
+    out = subprocess.run([exe, tables], input="\n".join(lines) + "\n", capture_output=True, text=True, check=True).stdout
+    res = {int(l.split()[0]): [float(x) for x in l.split()[1:]] for l in out.splitlines()}
+    assert len(res) == len(g["ParticleIDs"]), out[-2000:]
+    return res
+
+
+def step_times(cpu_txt):
+    return np.array([float(m) for m in re.findall(r"^Step \d+, Time: (\S+),", open(cpu_txt).read(), re.M)])
+
+
+def test_sgchem_cooling(tables, box):
+    out = path.join(HERE, "output")
+    with h5py.File(path.join(out, "snapshot_000.hdf5")) as s0, h5py.File(path.join(out, "snapshot_002.hdf5")) as s2:
+        ref = standalone(tables, s0, step_times(path.join(out, "cpu.txt")))
+        g = s2["PartType0"]
+        ids = [int(i) for i in g["ParticleIDs"][:]]
+        got = {"u": g["InternalEnergy"][:], "T": g["Temperature"][:], "Ne": g["ElectronAbundance"][:], "HI": g["NeutralHydrogenAbundance"][:]}
+    want = {"u": [ref[i][0] for i in ids], "T": [ref[i][1] for i in ids], "Ne": [ref[i][2] for i in ids], "HI": [1 - ref[i][4] for i in ids]}
+    dev = {k: float(np.max(np.abs(got[k] / np.array(want[k]) - 1))) for k in got}
+    print(f"box vs standalone, max relative deviation: {dev}; T: {np.min(got['T']):.6g}-{np.max(got['T']):.6g} K, "
+          f"x(H2) = {ref[ids[0]][3]:.6g}, x(CO) = {ref[ids[0]][5]:.6g}, T_dust = {ref[ids[0]][6]:.6g} K")
+    assert max(dev.values()) < 1e-8 and np.max(got["T"]) < 0.01 * 8000  # cell densities differ from snapshot 0 at 1e-10
+
+    snaps = {}
+    for nt in (1, 4):  # same executable and inputs, 1 and 4 OpenMP threads per rank
+        chdir(HERE)
+        try:
+            run_test(NAME, 2, nt, param_overrides={"SGChemTablesPath": tables})
+        finally:
+            chdir(ROOT)
+        with h5py.File(path.join(out, "snapshot_002.hdf5")) as f:
+            o = np.argsort(f["PartType0/ParticleIDs"][:])
+            snaps[nt] = {k: f["PartType0"][k][:][o] for k in ("InternalEnergy", "Temperature", "ElectronAbundance", "NeutralHydrogenAbundance")}
+    for k in snaps[1]:
+        assert np.array_equal(snaps[1][k], snaps[4][k]), f"{k} differs between 1 and 4 threads"
 
 
 def test_sgchem_startup(tables, box):
