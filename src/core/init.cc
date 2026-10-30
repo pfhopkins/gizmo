@@ -740,6 +740,9 @@ void init(void)
 #ifdef CHIMES_STELLAR_FLUXES
 	    int kc; for (kc = 0; kc < CHIMES_LOCAL_UV_NBINS; kc++) {CellP[i].Chimes_fluxPhotIon[kc] = 0; CellP[i].Chimes_G0[kc] = 0;}
 #endif
+#ifdef SGCHEM
+            sgchem_init_cell_state(i); /* fresh start: start abundances and temperatures */
+#endif
 #ifdef SINK_COMPTON_HEATING
             CellP[i].Rad_Flux_AGN = 0;
 #endif

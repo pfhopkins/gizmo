@@ -13,6 +13,8 @@
 
 #ifdef SGCHEM
 
+static_assert(SGCHEM_NUM_TRACKED_SPECIES == TRAC_NUM, "SGCHEM_NUM_TRACKED_SPECIES (precompiler_logic.h) must equal TRAC_NUM (sgchem_consts.h)");
+
 #ifdef TEST_SGCHEM_ONEZONE_WITH_12_PIXEL_COLUMNS
 #error "TEST_SGCHEM_ONEZONE_WITH_12_PIXEL_COLUMNS is for the standalone one-zone drivers (test/sgchem_onezone) only"
 #endif
@@ -79,6 +81,15 @@ void sgchem_init(void)
     chem_cxx_tables_init(&p);
     if(ThisTask == 0) {printf("SGCHEM: chemistry tables built\n"); fflush(stdout);}
     if(ThisTask == 0) {printf("SGCHEM: hydrogen mass fraction %g, MinEgySpec %.8g\n", (double) HYDROGEN_MASSFRAC, All.MinEgySpec); fflush(stdout);}
+}
+
+/* fresh-start cell state, as stella_dev init.cc: no H2 or CO, x(H+) = 1e-4, dust at 10 K, gas at 100 K until the first solve */
+void sgchem_init_cell_state(int i)
+{
+    for(int k = 0; k < TRAC_NUM; k++) {CellP[i].TracAbund[k] = 0;}
+    CellP[i].TracAbund[IHP] = 1.0e-4;
+    CellP[i].DustTemp = 10.0;
+    CellP[i].Temp = 100.0;
 }
 
 #endif /* SGCHEM */

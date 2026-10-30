@@ -461,6 +461,11 @@ extern struct gas_cell_data
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
     MyFloat SubGrid_CosmicRayEnergyDensity;
 #endif
+#ifdef SGCHEM
+    MyFloat TracAbund[SGCHEM_NUM_TRACKED_SPECIES]; /*!< SGChem tracked species, number per H nucleus */
+    MyFloat DustTemp;                     /*!< dust temperature from the chemistry [K] */
+    MyFloat Temp;                         /*!< gas temperature from the chemistry [K] */
+#endif
     
     /* Temperature, Gamma and MeanMolecularWeight are the cached thermodynamic state. Gamma and
        MeanMolecularWeight describe the COMPOSITION, which only the cooling/chemistry solver (or a
