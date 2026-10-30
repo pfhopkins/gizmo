@@ -62,11 +62,14 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
 /* photon momentum a single star hands to the gas this step [g cm/s] (stella_dev estimator): band luminosities absorbed
    over the kernel column at the star, f_b = 1 - exp(-sigma_b DGR N_H) with sigma = 2.0 (PE + 6-8), 1.3 (NUV), 0.5 (OPT)
    x 1e-21 cm^2, LW not counted (inside PE), capped at L_bol; plus the IR boost tau_IR = 5 DGR Sigma [cm^2/g] on the
-   absorbed light. GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds 6-8 eV to the NUV term as stella_dev production */
+   absorbed light. GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE adds 6-8 eV to the NUV term as stella_dev production.
+   Stars below SINGLE_STAR_RADPRESSURE_MIN_MASS push nothing (stella_dev) */
+#define SINGLE_STAR_RADPRESSURE_MIN_MASS 2.0 /* [Msun] drawn mass */
 double single_star_radpressure_momentum_cgs(int i, double dt_cgs, double *tau_IR)
 {
     double L[SINGLE_STAR_NBANDS], L_bol;
     *tau_IR = 0;
+    if(P[i].StarIdx <= 0 || SingleStars.M_drawn[single_star_slot(P[i].StarIdx)] < SINGLE_STAR_RADPRESSURE_MIN_MASS) {return 0;}
     if(!single_star_band_luminosities_cgs(i, L, &L_bol)) {return 0;}
 #ifdef SGCHEM
     double dgr = DMAX(sgchem_dust_to_gas_ratio(P[i].Metallicity[0]), 0.);
