@@ -26,5 +26,8 @@ metals from `InitMetallicity`, GIZMO's element pattern) built with `SGCHEM` (net
   isotropic field (12 pixels, per-pixel UV and LW floors, 3.4-6 eV and optical grain heating; transcribed in
   `cell_standalone.cc`) to 1 ulp. The one-zone results on the two input sets agree to 1e-12. The cells equal the standalone
   run to 1e-6 (measured 1.8e-7, 6e-10, 1.4e-10; at G0 = 1 the warm lattice's densities scatter by 1.2e-7).
+- `test_sgchem_ledger` (build flag `OUTPUT_MASS_METAL_ENERGY_LEDGER`, G0 = 10): `ledger.txt` has one row per snapshot
+  (chemistry heating and cooling energy, cumulative). The rows close the box's thermal-energy change to 1e-6 (measured
+  7e-16). The file is byte-identical with 1 and 4 threads. `test_sgchem_restart` checks that the totals survive a restart.
 
 Inputs: `SUNDIALS_DIR`; the chemistry tables from `SGCHEM_TABLES_DIR`, else installed by `scripts/get_stella_tables.sh`.
