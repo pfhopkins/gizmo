@@ -393,8 +393,9 @@ def mpi_launch_command(num_mpi_ranks: int, num_openmp_threads: int = 0) -> list:
 
 def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0,
              timeout: float = None, param_overrides: dict = None,
-             allow_nonzero_exit: bool = False, params_name: str = None):
+             allow_nonzero_exit: bool = False, params_name: str = None, restart_flag: int = 0):
     """Runs the test. If num_openmp_threads > 0, sets OMP_NUM_THREADS for the run.
+    restart_flag is GIZMO's second argument: 0 = start from InitCondFile, 2 = snapshot restart from it.
     If the GIZMO subprocess exceeds the timeout, it is killed and the test is skipped via
     pytest.skip; the timeout defaults to GIZMO_TEST_TIMEOUT, or to no timeout at all.
     param_overrides replaces parameter values for this run only, via a sibling params file.
@@ -418,7 +419,7 @@ def run_test(test_name: str, num_mpi_ranks: int = 1, num_openmp_threads: int = 0
     if param_overrides:
         paramsfile = write_params_with_overrides(paramsfile, param_overrides)
 
-    cmd = mpi_launch_command(num_mpi_ranks, num_openmp_threads) + ["./GIZMO", paramsfile, "0"]
+    cmd = mpi_launch_command(num_mpi_ranks, num_openmp_threads) + ["./GIZMO", paramsfile, str(restart_flag)]
 
     effective_timeout = _resolve_test_timeout(timeout)
     outfile, errfile = f"test_{test_name}.out", f"test_{test_name}.err"
