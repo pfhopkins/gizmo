@@ -24,4 +24,5 @@ CritPhysDensity                    1e30
 SfEffPerFreeFall                   0.01
 StellarTablesFile                  SET_BY_TEST
 HIIRegion_fLum_Coupled             1.0
+PhotoionMaxSearchRadius            0.02
 PhotoionMaxTimestep                1e4

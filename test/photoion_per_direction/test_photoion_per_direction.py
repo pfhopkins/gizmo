@@ -12,6 +12,9 @@ from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, mpi_l
 TEST_NAME = "photoion_per_direction"
 TEST_DIR = Path(__file__).parent
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7
+X_H = 0.76
+ALPHA_B = 2.6e-13
+PC = 3.085678e18
 CENTRE = [(35.0, 1.0e6, (0.5, 0.5, 0.5))]  # a 35 Msun star 1 Myr old
 
 
@@ -44,6 +47,11 @@ def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None
     return d, dx, n_H
 
 
+def log(d):
+    """the photoionisation log rows (HIIheating.txt)"""
+    return np.atleast_2d(np.loadtxt(d / "output" / "HIIheating.txt"))
+
+
 def timebins(out):
     """per step: [(non-cells, cells, dt)] of the occupied bins, from the run's timebin tables"""
     steps, cur = [], None
@@ -70,3 +78,27 @@ def test_ionising_stars_in_the_photoionisation_bin(built):
         assert sum(n for n, _, dt in s if 0 < dt <= cap) >= 1, s  # the ionising star
         assert all(dt > 10 * cap for _, c, dt in s if c > 0), s  # the gas: its own, coarse step
     assert sum(n for n, _, dt in steps[-1] if dt <= cap) == 2, steps[-1]  # both, after the onset
+
+
+def stromgren_pc(Q, n_H):
+    return (3 * Q / (4 * np.pi * ALPHA_B * n_H ** 2)) ** (1 / 3) / PC
+
+
+def test_stromgren_sphere(built):
+    """one source: every pixel front lies within one cell of the Stromgren radius"""
+    d, dx, n_H = run("single", built)
+    rows = log(d)
+    assert len(rows) >= 3 and np.all(rows[:, 1] == 1)
+    for r in rows:
+        R_S = stromgren_pc(r[2] * X_H, n_H)
+        assert abs(r[9] * 1e3 - R_S) < dx and abs(r[10] * 1e3 - R_S) < dx, (r[9] * 1e3, r[10] * 1e3, R_S)
+
+
+def test_ranks_and_order(built):
+    """the fronts do not depend on the rank count or the particle order (integer sums)"""
+    ref = log(run("single_r1", built)[0])
+    for tag, kw in [("single_r2", dict(ranks=2)), ("single_r4", dict(ranks=4)), ("single_perm", dict(ranks=2, seed=7))]:
+        rows = log(run(tag, built, **kw)[0])
+        assert rows.shape == ref.shape, tag
+        assert np.array_equal(rows[:, [1, 8]], ref[:, [1, 8]]), tag  # sources, passes
+        assert np.allclose(rows[:, [9, 10]], ref[:, [9, 10]], rtol=1e-6, atol=0), tag  # fronts
