@@ -2386,6 +2386,9 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     /* Free temporaries.  The staged query radii and positions are kept for the trim below. */
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
+    /* The owned-index build (and the query setup, when it ran on the device) read every owned particle's P and
+       CellP on the device; the host phases that follow (trim, ghost refresh, gradients zero loop) sweep them. */
+    if(P_shared == P && (long long) num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("gpu_ngb_list_build");}
 
 
     /* Two things may remain to be done to the walk's list, both on one host copy of it.
