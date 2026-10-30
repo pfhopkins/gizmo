@@ -1004,6 +1004,9 @@
 #define  GALSF_GENERATIONS     1    /*!< Number of star particles that may be created per gas particle */
 #endif
 
+#if defined(GALSF_SINGLE_STARS_SF_CRITERION) && !defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS)
+#define GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS /* the single-star criterion forms stars that collect their drawn mass */
+#endif
 #if defined(GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS) && !defined(GALSF_SINGLE_STARS_FROM_IMF)
 #define GALSF_SINGLE_STARS_FROM_IMF /* the collected stars carry their drawn mass in the single-star record */
 #endif

@@ -2436,6 +2436,15 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.SingleStarsRNGRealisation;
       id[nt++] = INT;
 #endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+      strcpy(tag[nt], "FacSfThreshMJ");
+      addr[nt] = &All.FacSfThreshMJ;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "SFCooldownFreeFallFraction");
+      addr[nt] = &All.SFCooldownFreeFallFraction;
+      id[nt++] = REAL;
+#endif
 
 #ifdef GALSF_EFFECTIVE_EQS
       strcpy(tag[nt], "FactorSN");

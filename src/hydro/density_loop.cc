@@ -338,6 +338,9 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
         if (P[i].Type == 0) {
             /* Type==0 scatters: CellP[i].* fields. */
             CellP[i].Density = (MyFloat)accum.Rho;
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+            CellP[i].SingleStarSpawnBlock = 0; /* density is fresh after a birth: the cell may form stars again */
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
             CellP[i].ParticleVel[0] = (MyFloat)accum.ParticleVel[0];
             CellP[i].ParticleVel[1] = (MyFloat)accum.ParticleVel[1];

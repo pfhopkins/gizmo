@@ -11,6 +11,9 @@
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "single_star_imf.h"
 #endif
+#if defined(GALSF_SINGLE_STARS_SF_CRITERION) && defined(GALSF_SFR_CRITERION)
+#error "GALSF_SINGLE_STARS_SF_CRITERION replaces GALSF_SFR_CRITERION"
+#endif
 #if defined(SINK_FOLLOW_ACCRETED_ANGMOM)
 static constexpr uint64_t NEW_SINK_SPIN_RNG_SALT = gizmo_loop_rng_salt("new_sink_spin"); /* the spin direction of a sink made here */
 #endif
@@ -206,6 +209,17 @@ double get_starformation_rate(int i, int mode)
     tsfr = sqrt(All.PhysDensThresh / (CellP[i].Density * All.cf_a3inv)) * All.MaxSfrTimescale; /* set default SFR timescale to scale appropriately with the gas dynamical time */
     rateOfSF = P[i].Mass / tsfr; /* 'normal' sfr from density law above */
     if(tsfr<=0 || rateOfSF<=0 || flag==0) {return 0;} /* nonsense here, return 0 */
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* single stars (the reference implementation's criterion): no SF in ionised cells, Jeans mass below FacSfThreshMJ x N_ngb x m */
+    {
+#ifdef GALSF_FB_FIRE_RT_HIIHEATING
+        if(CellP[i].DelayTimeHII > 0) {return 0;}
+#endif
+        double rho_phys = CellP[i].Density * All.cf_a3inv, cs = CellP[i].effective_soundspeed(); /* physical, from the gas pressure (no magnetic term), as the reference implementation */
+        double MJ = 2.9155697 * cs*cs*cs / (pow(All.G, 1.5) * sqrt(rho_phys)); /* pi^(5/2)/6 c_s^3 / (G^(3/2) rho^(1/2)) */
+        if(MJ >= All.FacSfThreshMJ * All.DesNumNgb * P[i].Mass) {return 0;}
+        return rateOfSF;
+    }
+#endif
     
 #if defined(SINGLE_STAR_SINK_DYNAMICS) && defined(SINGLE_STAR_SINK_FORMATION)
     int cell_can_be_singlestar = is_particle_single_star_eligible(i); // call function to determine if we're actually eligible to be a true single-star element
@@ -475,6 +489,10 @@ void star_formation_parent_routine(void)
 #endif
 #ifdef GALSF_FB_TURNOFF_COOLING
             if(CellP[i].DelayTimeCoolingSNe > 0) {flag=1; CellP[i].DelayTimeCoolingSNe -= dtime;} /* no star formation for particles in the wind; update our wind delay-time calculations */
+#endif
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION
+            if(CellP[i].SingleStarSpawnBlock) {flag=1;} /* a star formed here: wait for the density to be recomputed */
+            if(CellP[i].SingleStarSFCooldown > 0) {flag=1; CellP[i].SingleStarSFCooldown -= dtime; if(CellP[i].SingleStarSFCooldown < 0) {CellP[i].SingleStarSFCooldown = 0;}} /* free-fall cool-down after a birth */
 #endif
             
             if((flag == 0)&&(dtime>0))        /* active star formation (upon start-up, we need to protect against dt==0) */

@@ -260,6 +260,10 @@ double single_stars_collect_gas(long long tot_spawned)
             SingleStars.Z_birth[single_star_slot(P[t.i].StarIdx)] = P[t.i].Metallicity[0];
 #endif
             moved.push_back(t.i); M_collected_here += M;
+#ifdef GALSF_SINGLE_STARS_SF_CRITERION /* the parent forms no star until its density is recomputed, then for a fraction of its free-fall time */
+            CellP[t.parent].SingleStarSpawnBlock = 1;
+            if(All.SFCooldownFreeFallFraction > 0) {CellP[t.parent].SingleStarSFCooldown = All.SFCooldownFreeFallFraction * sqrt(3. * M_PI / (32. * All.G * t.rho_form * All.cf_a3inv));}
+#endif
         } else {
             P[t.i].Mass = 0; /* removed with the next rearrangement */
             single_star_record_free(P[t.i].StarIdx); P[t.i].StarIdx = 0;
