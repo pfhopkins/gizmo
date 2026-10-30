@@ -47,11 +47,12 @@ def state(fname):
     with h5py.File(fname, "r") as F:
         g = F["PartType0"]
         m = g["Masses"][()]
-        out = dict(t=float(F["Header"].attrs["Time"]), M=m.sum(), MZ=(m * g["Metallicity"][()].reshape(len(m), -1)[:, 0]).sum(),
+        out = dict(t=float(F["Header"].attrs["Time"]), M=m.sum(), E=(0.5 * m * (g["Velocities"][()] ** 2).sum(1) + m * g["InternalEnergy"][()]).sum(), MZ=(m * g["Metallicity"][()].reshape(len(m), -1)[:, 0]).sum(),
                    p=(m[:, None] * g["Velocities"][()]).sum(0), stars={})
         if "PartType4" in F:
             s = F["PartType4"]
             out["p"] = out["p"] + (s["Masses"][()][:, None] * s["Velocities"][()]).sum(0)
+            out["E"] += 0.5 * (s["Masses"][()] * (s["Velocities"][()] ** 2).sum(1)).sum()
             for k, i in enumerate(s["ParticleIDs"][()]):
                 get = lambda name: float(s[name][k]) if name in s else 0.0
                 out["stars"][int(i)] = dict(m=float(s["Masses"][k]), md=get("SingleStarDrawnMass"), bits=int(get("SingleStarEventBits")),
@@ -68,6 +69,14 @@ def wind_cumulative(tables_file, M, Z, log_age):
     with h5py.File(str(Path(tables_file).parent / "stellar_wind_cumulative.hdf5"), "r") as W:
         cum = W["elem_ej_wind_cumulative"][iz, im, :, :].astype(np.float64)
     return sum(np.interp(log_age, la, cum[:, k]) for k in range(cum.shape[1]))
+
+
+def wind_speed(tables_file, M, Z, log_age):
+    """table wind speed [km/s] at a (Z, M) grid node: linear in log age, as the code"""
+    with h5py.File(tables_file, "r") as F:
+        Zt, Mt, la = F["Z"][()], F["M_init"][()], F["log_age_yr"][()]
+        iz, im = int(np.argmin(np.abs(Zt - Z))), int(np.argmin(np.abs(Mt - M)))
+        return float(np.interp(log_age, la, F["v_wind"][iz, im, :].astype(np.float64)))
 
 
 def test_winds(built):
@@ -92,6 +101,12 @@ def test_winds(built):
     M1 = s1["M"] + sum(v["m"] for v in s1["stars"].values())
     assert abs(M1 - M0) <= 1e-12 * M0
     assert s1["MZ"] > s0["MZ"]  # the wind metals
+    # energy: what the gas and the star gained (kinetic + thermal) against what the loop books, 1/2 M v^2 of the mass returned
+    # at the table speed (the speed changes by 0.1% over the run, so the speed at the last delivery stands for all)
+    Msun_kms2_in_erg = 1.989e33 * 1.0e10
+    booked = 0.5 * delivered * wind_speed(built["StellarTablesFile"], 35.0, 0.014, w["wa"]) ** 2 * Msun_kms2_in_erg
+    coupled = (s1["E"] - s0["E"]) * Msun_kms2_in_erg
+    assert 0.99 * booked <= coupled <= 1.08 * booked, (coupled, booked)  # measured 1.045, see the README
     assert len(rows) == 0  # winds are not logged per step
     # momentum: the momentum-conserving wind coupling of the loop balances its radial kicks only
     # approximately on this lattice (measured: 3% of the first step's wind momentum, 0.35 Msun at ~2000 km/s)
