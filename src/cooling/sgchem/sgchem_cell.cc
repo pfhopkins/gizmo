@@ -128,6 +128,31 @@ double sgchem_cr_ion_rate(int i, double G0)
     return zeta;
 }
 
+#ifdef COSMIC_RAY_FLUID
+/* the solve's CR ionisation heating de_heat [code energy], minus the radioactive share of zeta (his terms), comes out of
+   the CR energy of cell i, capped at it (as stella_dev sgchem.cc) */
+static void sgchem_cr_ionisation_from_fluid(int i, const struct ChemInputs *in, double de_heat)
+{
+    double zeta_radio = 0;
+#ifdef METALS
+    zeta_radio += 1.e-21 * P[i].Metallicity[0] / All.SolarAbundances[0];
+#if (NUM_METAL_SPECIES > 10)
+    zeta_radio += 1.e-19 * P[i].Metallicity[10] / All.SolarAbundances[10];
+#endif
+#endif
+    double f_cr = (in->cosmic_ray_ion_rate > 0) ? DMIN(DMAX(1. - zeta_radio / in->cosmic_ray_ion_rate, 0.), 1.) : 0;
+    double de = f_cr * DMAX(de_heat, 0), ecr = 0;
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ecr += CellP[i].CosmicRayEnergy[k];}
+    if(!(de > 0 && ecr > 0)) {return;}
+    if(de > ecr) {static long n_capped = 0; if(n_capped++ == 0) {printf("SGCHEM: CR ionisation heating %g exceeds e_CR %g (ID %llu); capped at e_CR (first of possibly more)\n", de, ecr, (unsigned long long) P[i].ID);} de = ecr;}
+    double q = 1. - de / ecr;
+    for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {CellP[i].CosmicRayEnergy[k] *= q; CellP[i].CosmicRayEnergyPred[k] *= q; CellP[i].CosmicRayFlux[k] *= q; CellP[i].CosmicRayFluxPred[k] *= q;}
+#ifdef OUTPUT_MASS_METAL_ENERGY_LEDGER
+    ledger_add(LEDGER_E_CR_IONISATION_FROM_FLUID, de); ledger_add(LEDGER_E_CHEM_CR_IONISATION, DMAX(de_heat, 0));
+#endif
+}
+#endif
+
 /* evolves cell i from specific energy u_code over dt_code [code units]; writes TracAbund, Temp, DustTemp, Ne; returns the new u */
 static double sgchem_cell_step(int i, double u_code, double dt_code)
 {
@@ -193,6 +218,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     sgchem_clamp_pools(ab, &in);
     chem_cxx_evolve_cell(timestep, dl, yn, divv, &energy, ab);
     chem_cxx_read_outputs(&out);
+#ifdef COSMIC_RAY_FLUID
+    sgchem_cr_ionisation_from_fluid(i, &in, out.cr_ion_heat * (P[i].Mass / (CellP[i].Density * All.cf_a3inv)) * pow(UNIT_LENGTH_IN_CGS, 3) / UNIT_ENERGY_IN_CGS);
+#endif
 #if CHEMISTRYNETWORK == 18
     chem_cxx_net18_finish(ab, energy, &temp);
 #elif CHEMISTRYNETWORK == 20

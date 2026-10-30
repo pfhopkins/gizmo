@@ -837,8 +837,13 @@ KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses_multibin(int target, double n_
 #if !defined(CRFLUID_EVOLVE_SPECTRUM)
 KOKKOS_INLINE_FUNCTION void CR_cooling_and_losses(int target, double n_elec, double nHcgs, double dtime_cgs, struct particle_data *pp, struct gas_cell_data *cell) {
     if(dtime_cgs <= 0) {return;}
-    int k_CRegy; double f_ion = DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell), 1.), 0.);
+    int k_CRegy;
+#ifdef SGCHEM
+    double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*n_elec*HYDROGEN_MASSFRAC; /* Coulomb on free electrons only: the ionisation loss is the chemistry's ionisation heating, taken out of e_CR there (as stella_dev) */
+#else
+    double f_ion = DMAX(DMIN(Get_Gas_Ionized_Fraction(target, pp, cell), 1.), 0.);
     double a_hadronic = 6.37e-16, b_coulomb_ion_per_GeV = 3.09e-16*(n_elec + 0.57*(1.-f_ion))*HYDROGEN_MASSFRAC;
+#endif
     for(k_CRegy=0; k_CRegy<N_CR_PARTICLE_BINS; k_CRegy++) {
         double CR_coolrate, Z, species_ID; CR_coolrate=0; Z=fabs(return_CRbin_CR_charge_in_e(target,k_CRegy)); species_ID=return_CRbin_CR_species_ID(k_CRegy);
         if(species_ID > 0) {

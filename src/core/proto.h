@@ -1252,7 +1252,13 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #else
 #define LEDGER_ROWS_SINGLE_STARS(X)
 #endif
-#define LEDGER_ROWS(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X)
+#if defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
+#define LEDGER_ROWS_CR(X) X(LEDGER_E_CR, "E_CR_erg", UNIT_ENERGY_IN_CGS, 1) X(LEDGER_E_CR_LOSSES, "E_cr_losses_erg", UNIT_ENERGY_IN_CGS, 0) \
+    X(LEDGER_E_CR_IONISATION_FROM_FLUID, "E_cr_ionisation_from_fluid_erg", UNIT_ENERGY_IN_CGS, 0) X(LEDGER_E_CHEM_CR_IONISATION, "E_chem_cr_ionisation_heating_erg", UNIT_ENERGY_IN_CGS, 0)
+#else
+#define LEDGER_ROWS_CR(X)
+#endif
+#define LEDGER_ROWS(X) LEDGER_ROWS_CR(X) LEDGER_ROWS_SGCHEM(X) LEDGER_ROWS_STARS(X) LEDGER_ROWS_FB(X) LEDGER_ROWS_SINGLE_STARS(X)
 #define LEDGER_ROW_ENUM(id, name, unit, state) id,
 enum ledger_rows {LEDGER_ROWS(LEDGER_ROW_ENUM) LEDGER_NROWS};
 void ledger_init(void);

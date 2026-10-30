@@ -85,6 +85,9 @@ void ledger_add(int row, double x) /* from inside a module's (threaded) loop; no
 static void ledger_state_rows(void) /* the state rows: sums over this rank's particles now */
 {
     for(int r = 0; r < LEDGER_NROWS; r++) {if(ledger_row_is_state[r]) {memset(&ledger_total[r], 0, sizeof(ledger_total[r]));}}
+#if defined(SGCHEM) && defined(COSMIC_RAY_FLUID)
+    for(int i = 0; i < N_gas; i++) {if(P[i].Type == 0) {for(int k = 0; k < N_CR_PARTICLE_BINS; k++) {ledger_add_exact(&ledger_total[LEDGER_E_CR], CellP[i].CosmicRayEnergy[k]);}}}
+#endif
 #ifdef GALSF
     for(int i = 0; i < NumPart; i++) {
         if(P[i].Type == 0) {ledger_add_exact(&ledger_total[LEDGER_M_GAS], P[i].Mass); ledger_add_exact(&ledger_total[LEDGER_MZ_GAS], P[i].Mass * P[i].Metallicity[0]);}

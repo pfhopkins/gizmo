@@ -674,7 +674,13 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 
 #if defined(COSMIC_RAY_FLUID) && !defined(CRFLUID_ALT_DISABLE_LOSSES)
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+        {double e0 = 0, e1 = 0; for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e0 += cell[i].CosmicRayEnergy[kb];}
+#endif
         CR_cooling_and_losses(i, cell[i].Ne, cell[i].Density*All.cf_a3inv*UNIT_DENSITY_IN_NHCGS, dtime*UNIT_TIME_IN_CGS , pp, cell);
+#if defined(SGCHEM) && defined(OUTPUT_MASS_METAL_ENERGY_LEDGER)
+         for(int kb = 0; kb < N_CR_PARTICLE_BINS; kb++) {e1 += cell[i].CosmicRayEnergy[kb];} ledger_add(LEDGER_E_CR_LOSSES, e0 - e1);}
+#endif
 #endif
         
 
