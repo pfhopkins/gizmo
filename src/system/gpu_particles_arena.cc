@@ -28,6 +28,7 @@
 #include "../core/timestep_functions.h"
 #include "gpu_particles_arena.h"
 #include "../mesh/gpu_neighbor_list.h"
+#include "../mesh/ghost_writeback.h"   /* ghost_get_num_ghosts */
 
 
 /* Under UVM-canonical particles, P[] and CellP[] live in
@@ -93,7 +94,10 @@ static void particles_prefetch(int to_device, const char *site, int with_cells =
     if(!particles_prefetch_enabled()) {return;}
 #if defined(KOKKOS_ENABLE_CUDA)
     const size_t bytes_p = (P && NumPart > 0) ? (size_t) NumPart * sizeof(struct particle_data) : 0;
-    const size_t bytes_c = (with_cells && CellP && N_gas > 0) ? (size_t) N_gas * sizeof(struct gas_cell_data) : 0;
+    /* Imported ghosts sit at the end of [0, NumPart) in both arrays, past N_gas: cover them while the
+       corridor holds any (unused cell slots between N_gas and the ghosts only cost the copy). */
+    const int n_cells = (ghost_get_num_ghosts() > 0) ? ((NumPart < All.MaxPartGas) ? NumPart : All.MaxPartGas) : N_gas;
+    const size_t bytes_c = (with_cells && CellP && n_cells > 0) ? (size_t) n_cells * sizeof(struct gas_cell_data) : 0;
     if(bytes_p + bytes_c == 0) {return;}
     const double t0 = my_second();
     int dev = 0;
