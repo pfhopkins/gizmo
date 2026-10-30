@@ -8,6 +8,8 @@ restart from a snapshot whose datasets carry the old Chemcool* names reads them 
 test_sgchem_restart: a run stopped at half time and continued from its restart files ends identical to the uninterrupted run.
 test_sgchem_habing_field: a uniform Habing-shaped field at G0 = 1, 10, 100 gives the inputs of stella_dev's production
 path, and the cells equal the standalone run on them.
+test_sgchem_ledger: ledger.txt rows (chemistry heating and cooling) at every snapshot close the box's thermal energy
+budget and are identical with 1 and 4 threads; test_sgchem_restart also checks they survive a restart.
 test_sgchem_cooling: the cells cool through SGChem: final energy, temperature, electrons and HI equal a standalone run of
 the backend on the same inputs and timesteps, and the snapshots are identical with 1 and 4 OpenMP threads.
 """
@@ -212,6 +214,8 @@ def test_sgchem_restart(tables, box):
             snaps.append({k: f["PartType0"][k][:][o] for k in fields})
     for k in fields:
         assert np.array_equal(snaps[0][k], snaps[1][k]), f"{k} differs after the restart"
+    led = [np.loadtxt(path.join(HERE, d, "ledger.txt"))[-1] for d in ("output", "output_restart1")]
+    assert np.array_equal(led[0], led[1]), "ledger totals differ after the restart"
 
 
 @pytest.mark.parametrize("g0", [1.0, 10.0, 100.0])
@@ -245,6 +249,36 @@ def test_sgchem_habing_field(tables, box, g0):
           f"cells vs standalone (u, T, H2, H+, CO, T_dust) {dev} (density spread {spread:.2g}); one-zone on this tree's vs stella_dev's inputs {dsd}; "
           f"T = {got[0, 1]:.6g} K, x(H2) = {got[0, 2]:.4g}, x(CO) = {got[0, 4]:.4g}, T_dust = {got[0, 5]:.4g} K")
     assert np.all(din < 1e-14) and np.all(dev < 1e-6) and np.all(dsd < 1e-5)
+
+
+def test_sgchem_ledger(tables, box):
+    """chemistry heating/cooling rows: one row per snapshot; they close the thermal energy budget of the box at rest;
+    identical with 1 and 4 threads (exact per-thread sums)"""
+    led = {}
+    for nt in (1, 4):
+        d = f"output_ledger_{nt}"
+        shutil.rmtree(path.join(HERE, d), ignore_errors=True)
+        chdir(HERE)
+        try:
+            run_test(NAME, 2, nt, param_overrides={"SGChemTablesPath": tables, "OutputDir": d, "SGChemG0": 10.0, "SGChemG0_LW": 10.0,
+                                                   "SGChemBackgroundG0": 1.7})
+        finally:
+            chdir(ROOT)
+        led[nt] = open(path.join(HERE, d, "ledger.txt")).read()
+    assert led[1] == led[4], "ledger differs between 1 and 4 threads"
+    rows = np.loadtxt(path.join(HERE, "output_ledger_4", "ledger.txt"))
+    e = []
+    for k in range(3):
+        with h5py.File(path.join(HERE, "output_ledger_4", f"snapshot_00{k}.hdf5")) as f:
+            assert f["Header"].attrs["Time"] == rows[k, 0]
+            g = f["PartType0"]
+            e.append(np.sum(g["Masses"][:] * g["InternalEnergy"][:]) * 1.989e33 * 1e10)  # erg (box units)
+    assert np.all(rows[0, 1:] == 0)
+    for k in (1, 2):
+        net = rows[k, 1] - rows[k, 2]
+        print(f"t = {rows[k, 0]:g}: heating {rows[k, 1]:.6e} erg, cooling {rows[k, 2]:.6e} erg, net {net:.6e}, "
+              f"thermal energy change {e[k] - e[0]:.6e} erg, relative residual {(e[k] - e[0]) / net - 1:.2e}")
+        assert abs((e[k] - e[0]) / net - 1) < 1e-6
 
 
 def test_sgchem_startup(tables, box):
