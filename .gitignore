@@ -137,3 +137,7 @@ test/single_stars_collect_gas/run_*/
 test/single_stars_collect_gas/GIZMO_default_merging
 test/single_stars_formation/run_*/
 test/single_stars_sf_criterion/run_*/
+test/single_stars_supernovae/run_*/
+test/single_stars_supernovae/GIZMO_elements
+test/single_stars_supernovae/TREECOOL
+test/single_stars_supernovae/spcool_tables
