@@ -307,6 +307,7 @@ void photoionization_per_direction(void)
     if(All.HIIRegion_fLum_Coupled <= 0 || All.Time <= 0) {return;}
     const int b_pi = photoion_timebin();
     if(!TimeBinActive[b_pi] || pi_num_sources == 0) {return;} /* quiet: no work, no collective */
+    const double t_start = MPI_Wtime();
     const double max_r = All.PhotoionMaxSearchRadius / (UNIT_LENGTH_IN_KPC * All.cf_atime);
     std::vector<pi_src> S;
     for(int i : ActiveParticleList) {
@@ -378,17 +379,18 @@ void photoionization_per_direction(void)
     pi_run<PiDrainSpec>(list, in, aux);
 
     /* log row (HIIheating.txt): sources, Q/X, cells newly ionised, their mass and mean distance, recombination / Q */
-    double loc[5] = {0, 0, 0, 0, 0}, tot[5], ext[2] = {0, -MAX_REAL_NUMBER}, ext_tot[2]; /* front max, -(front min) */
+    double loc[5] = {0, 0, 0, 0, 0}, tot[5], ext[3] = {0, -MAX_REAL_NUMBER, 0}, ext_tot[3]; /* front max, -(front min), wall time */
     for(size_t a = 0; a < S.size(); a++) {
         loc[0] += S[a].Q; loc[1] += L[a].bill; loc[2] += L[a].n_new; loc[3] += L[a].m_new; loc[4] += L[a].mr_new;
         for(int k = 0; k < PI_NPIX; k++) {ext[0] = DMAX(ext[0], S[a].front[k]); ext[1] = DMAX(ext[1], -S[a].front[k]);}
     }
     pi_calls++; MPI_Reduce(loc, tot, 5, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    pi_calls++; MPI_Reduce(ext, ext_tot, 2, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    ext[2] = MPI_Wtime() - t_start;
+    pi_calls++; MPI_Reduce(ext, ext_tot, 3, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     if(ThisTask == 0) {
         double to_kpc = All.cf_atime * UNIT_LENGTH_IN_KPC;
-        fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g %lld\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
-                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc, pi_calls);
+        fprintf(FdHIIHeating, "%.16g %lld %g %g %g %g %.8g %d %d %.10g %.10g %lld %.4g\n", All.Time, n_tot, tot[0] / HYDROGEN_MASSFRAC, tot[2], tot[3] * UNIT_MASS_IN_SOLAR,
+                (tot[3] > 0) ? tot[4] / tot[3] * to_kpc : 0., (tot[0] > 0) ? tot[1] / tot[0] : 0., rounds, passes, -ext_tot[1] * to_kpc, ext_tot[0] * to_kpc, pi_calls, ext_tot[2]);
         fflush(FdHIIHeating);
     }
     pi_calls = 0;
