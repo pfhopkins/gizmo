@@ -116,6 +116,16 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
 #endif
 }
 
+/* combine two partial sums (lane partials, in the engine's fixed fold order) */
+KOKKOS_INLINE_FUNCTION void treecol_pixels_add(treecol_pixels_sums_t &a, const treecol_pixels_sums_t &b)
+{
+    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.col[s][k] += b.col[s][k];}}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.uv[k] += b.uv[k]; a.lw[k] += b.lw[k];}
+    a.nuv += b.nuv; a.opt += b.opt; a.f68 += b.f68;
+#endif
+}
+
 /* one accepted source (leaf or node) for a gas target: column in the pixel of its mass centre dr, inside
    TreeColShieldingLength (0 = no limit), unsoftened; band fluxes L/r_L^2 in the pixel of the light
    centroid d_lum (a second lookup only for luminous nodes, whose light and mass centres differ), r_L floored at r_floor
@@ -156,6 +166,16 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, c
     double lw = 0;
     for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColEgyUV[k] = (float) (a.uv[k] * u); lw += fmax(a.lw[k] * u, lw_floor);}
     c.TreeColEgyLW = (float) lw; c.TreeColEgyNUV = (float) (a.nuv * u); c.TreeColEgyOPT = (float) (a.opt * u); c.TreeColEgy68 = (float) (a.f68 * u);
+#endif
+}
+
+/* device walk: the cell outputs from the device particle mirror back to the host cell */
+static inline void treecol_pixels_copy_cell(struct gas_cell_data &d, const struct gas_cell_data &c)
+{
+    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {d.TreeColColumn[s][k] = c.TreeColColumn[s][k];}}
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    for(int k = 0; k < TREECOL_PIXELS_N; k++) {d.TreeColEgyUV[k] = c.TreeColEgyUV[k];}
+    d.TreeColEgyLW = c.TreeColEgyLW; d.TreeColEgyNUV = c.TreeColEgyNUV; d.TreeColEgyOPT = c.TreeColEgyOPT; d.TreeColEgy68 = c.TreeColEgy68;
 #endif
 }
 

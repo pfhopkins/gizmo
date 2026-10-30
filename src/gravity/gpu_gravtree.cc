@@ -460,6 +460,12 @@ struct gpu_grav_member_inputs_t {
 #endif
 };
 
+/* the per-member pixel sums (GALSF_RESOLVEDISM_TREECOL_PIXELS, ~75 doubles) go to team scratch, as the tidal state does */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+static constexpr bool grav_walk_carries_treecol_pixels = true;
+#else
+static constexpr bool grav_walk_carries_treecol_pixels = false;
+#endif
 struct gpu_grav_member_optional_sums_t {
 #ifdef COUNT_MASS_IN_GRAVTREE
     double tree_mass;
@@ -469,6 +475,9 @@ struct gpu_grav_member_optional_sums_t {
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     double treecol_angular_bins[RT_USE_TREECOL_FOR_NH];
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_sums_t tcpix;
 #endif
 #ifdef SINK_COMPTON_HEATING
     double incident_flux_agn;
@@ -525,6 +534,9 @@ KOKKOS_INLINE_FUNCTION void gpu_grav_member_sums_combine(gpu_grav_member_sums_t 
 #ifdef RT_USE_TREECOL_FOR_NH
     for(int k = 0; k < RT_USE_TREECOL_FOR_NH; k++) {a.treecol_angular_bins[k] += b.treecol_angular_bins[k];}
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_add(a.tcpix, b.tcpix);
+#endif
 #ifdef SINK_COMPTON_HEATING
     a.incident_flux_agn += b.incident_flux_agn;
 #endif
@@ -558,6 +570,9 @@ KOKKOS_INLINE_FUNCTION void gpu_grav_member_sums_combine(gpu_grav_member_sums_t 
 struct gpu_grav_src_payload_t {
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     double gasmass;
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    double tcpix_species[TREECOL_PIXELS_NSPECIES];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
     Vec3<double> d_dm;   /* displacement to the DM mass centre (= the total CoM only for a pure-DM leaf) */
@@ -648,6 +663,9 @@ gpu_grav_member_optional_sums_init(gpu_grav_member_optional_sums_t &optional)
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     {int kb; for(kb=0; kb<RT_USE_TREECOL_FOR_NH; kb++) {optional.treecol_angular_bins[kb]=0.0;}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_zero(optional.tcpix);
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     optional.m_enc_in_rcrit = 0.0;
@@ -1049,6 +1067,19 @@ gpu_grav_evaluate_pair(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
         grav_treecol_accumulate(src.dr, r, fac_accel, pl.gasmass, src.mass, angular_bin_size, optional_sums.treecol_angular_bins);
     }
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    {
+        volatile int valid_gas_target = grav_target_valid_gas_for_rt(in.open.ptype, in.open.soft, in.tgt.pmass);
+        if(valid_gas_target)
+        {
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.tcpix_species, pl.d_stellarlum, pl.mass_stellarlum, KERNEL_FAC_FROM_FORCESOFT_TO_PLUMMER * in.open.soft);
+#else
+            treecol_pixels_accumulate(optional_sums.tcpix, src.dr, r, fac_accel, src.mass, pl.tcpix_species, src.dr, NULL, 0);
+#endif
+        }
+    }
+#endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     /* per-interaction mass accumulation: each visited node contributes its multipole mass when within Rcrit */
     if(r < in.r_for_total_menclosed) {optional_sums.m_enc_in_rcrit += src.mass;}
@@ -1185,6 +1216,9 @@ gpu_grav_evaluate_leaf(const gpu_grav_walk_ctx_t &ctx, int no, const gpu_grav_me
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     pl.gasmass = (P_dev[no].Type == 0) ? motion.mass : 0.0;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    treecol_pixels_species_masses(P_dev, ctx.CellP_dev, no, pl.tcpix_species);
+#endif
 #if defined(SINK_ALPHADISK_ACCRETION) && defined(RT_USE_TREECOL_FOR_NH)
     /* gas at the inner edge of a sink's alpha-disk should not see a hole due to
      * the sink (mirrors forcetree.cc leaf branch + the node-moment kernel). */
@@ -1343,6 +1377,9 @@ gpu_grav_evaluate_node(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_node_prelu
 #endif
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
     pl.gasmass = tree_soa->gasmass[idx];
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    for(int ks = 0; ks < TREECOL_PIXELS_NSPECIES; ks++) {pl.tcpix_species[ks] = tree_soa->treecol_species_mass[(long)idx * TREECOL_PIXELS_NSPECIES + ks];}
+#endif
 #endif
 #ifdef RT_USE_GRAVTREE
     /* Load node stellar luminosity only for valid gas targets (mirrors forcetree.cc; the RT
@@ -1445,6 +1482,9 @@ gpu_grav_member_finish(const gpu_grav_walk_ctx_t &ctx, const gpu_grav_member_inp
 #endif
 #ifdef RT_USE_TREECOL_FOR_NH
     {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P_dev[target].ColumnDensityBins[k] = optional.treecol_angular_bins[k];}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    if(P_dev[target].Type == 0) {treecol_pixels_write_cell(ctx.CellP_dev[target], optional.tcpix);}
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
     P_dev[target].MencInRcrit = optional.m_enc_in_rcrit;
@@ -1791,7 +1831,7 @@ struct GravPacketMaskedPolicy {
        tidal tensor and the jerk, whose per-member state otherwise spills from registers to slower
        thread-private memory; in registers otherwise, which measured faster for the smaller state.
        Compile-time, for the layout reason given at GravPacketMaskedTeamPolicy. */
-    static constexpr bool sums_in_scratch  = grav_pair_carries_tidal_tensor_and_jerk;
+    static constexpr bool sums_in_scratch  = grav_pair_carries_tidal_tensor_and_jerk || grav_walk_carries_treecol_pixels;
     /* Compile-time so the walker's ring index stays a mask rather than a division. */
     static constexpr int  local_stack      = GRAV_PACKET_LOCAL_STACK;
     /* Members share one traversal and then evaluate its records in parallel, so the packet is
@@ -3006,6 +3046,9 @@ extern "C" int gpu_gravtree_walk_primary(int *host_candidates_left)
              * but kept explicit for correctness on non-UVM targets. */
 #ifdef RT_USE_TREECOL_FOR_NH
             {int k; for(k=0; k<RT_USE_TREECOL_FOR_NH; k++) {P[i].ColumnDensityBins[k] = P_dev[i].ColumnDensityBins[k];}}
+#endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+            if(P[i].Type == 0 && CellP != CellP_dev) {treecol_pixels_copy_cell(CellP[i], CellP_dev[i]);}
 #endif
 #ifdef SINK_SEED_FROM_LOCALGAS_TOTALMENCCRITERIA
             P[i].MencInRcrit = P_dev[i].MencInRcrit;

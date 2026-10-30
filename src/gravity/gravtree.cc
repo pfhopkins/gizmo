@@ -25,9 +25,6 @@
  *  need not coincide. */
 int gravity_walk_route_to_host(long long n_local_active)
 {
-#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
-    return 1; /* the pixel sums are not yet in the device walk */
-#endif
     return gizmo_gpu_offload_takes(GPU_OFFLOAD_GRAVITY_WALK, n_local_active) ? 0 : 1;
 }
 
