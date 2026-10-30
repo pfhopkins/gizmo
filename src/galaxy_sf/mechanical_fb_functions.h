@@ -316,6 +316,12 @@ static void mechanical_fb_per_source_setup(
         double egy_RHS = p_coupled * p_coupled * S2 + p_coupled * S1;
         m.momentum_to_couple_term_units = p_coupled;
         m.U_thermal_residual_tocouple = Energy_injected_codeunits - egy_RHS;
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+        if(m.feedback_type_is_SNe) { /* pure-thermal SNe: the whole explosion energy as heat, no radial ejecta momentum */
+            m.momentum_to_couple_term_units = 0;
+            m.U_thermal_residual_tocouple = 0.5 * (double)local.Msne * (double)local.SNe_v_ejecta * (double)local.SNe_v_ejecta;
+        }
+#endif
     }
 
 #if defined(CR_DYNAMICAL_INJECTION_IN_SNE)
@@ -560,7 +566,11 @@ static void mechanical_fb_pair_kernel(
                                        home_gas_delta, ghost_gas_delta);
 #endif
         double mom_prefactor = scalars.common.cf_atime * m.momentum_to_couple_term_units / Mass_j;
+#ifdef GALSF_FB_MECHANICAL_SNE_THERMAL_ONLY
+        if(mom_prefactor > 0 || m.feedback_type_is_SNe) { /* pure-thermal SNe: the ejecta carry the star's velocity */
+#else
         if(mom_prefactor > 0) {
+#endif
             for(int k = 0; k < 3; k++) {
                 double d_vel = mom_prefactor * pvec[k] + massratio_ejecta * ((double)local.Vel[k] - Vel_j[k]);
                 KE_initial += Vel_j_0[k] * Vel_j_0[k];
