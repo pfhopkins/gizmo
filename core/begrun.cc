@@ -102,6 +102,9 @@ void begrun(void)
       const char *dd = getenv("CHEMCXX_DATADIR"); std::string cd = dd ? dd : All.SGCHEMTablesDir;
 #endif
       for(const char *f : {"energy-table-x.txt", "eh2-table.txt", "H2-cooling-ratios.dat", "wss_z_collis.txt"}) {paths.push_back(cd + "/" + f);}
+#if CHEMISTRYNETWORK == 18 && !defined(SGCHEM_FORTRAN)
+      paths.push_back(cd + "/sgchem_net18_tables.bin");
+#endif
 #endif
       bad = stella_tables_verify(paths);
     }

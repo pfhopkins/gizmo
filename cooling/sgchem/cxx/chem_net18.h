@@ -31,4 +31,7 @@ int n18_evolve(double dt, double* trac, double* energy, ChemCell& c);
 // solver statistics of the calling thread
 void n18_stats(long* calls, long* steps, long* rhs, long* jac);
 
+// read the rate tables from <dir>/sgchem_net18_tables.bin (installed data); 0 on success
+int n18_tables_load(const char* dir);
+
 #endif

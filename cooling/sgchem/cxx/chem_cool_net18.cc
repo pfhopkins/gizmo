@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace {
@@ -937,4 +938,19 @@ int n18_evolve(double dt, double* trac, double* energy, ChemCell& c)
 void n18_stats(long* calls, long* steps, long* rhs, long* jac)
 {
     *calls = st_calls; *steps = st_steps; *rhs = st_rhs; *jac = st_jac;
+}
+
+// the arrays of chem_net18_tables.h in order, little-endian float64, nothing after them
+int n18_tables_load(const char* dir)
+{
+    static_assert(sizeof(double) == 8, "float64 tables");
+    const std::string p = std::string(dir) + "/sgchem_net18_tables.bin";
+    FILE* f = std::fopen(p.c_str(), "rb");
+    if (!f) { std::fprintf(stderr, "net 18: cannot open %s\n", p.c_str()); return 1; }
+    bool bad = false;
+    for (const auto& t : n18_table_list) bad |= (std::fread(t.p, sizeof(double), t.n, f) != t.n);
+    bad |= (std::fgetc(f) != EOF);
+    std::fclose(f);
+    if (bad) std::fprintf(stderr, "net 18: %s does not have the size these sources expect\n", p.c_str());
+    return bad ? 1 : 0;
 }

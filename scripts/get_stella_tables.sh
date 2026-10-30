@@ -26,11 +26,18 @@ if [ -n "${PYTHON:-}" ]; then PY="$PYTHON"; else
     fi
 fi
 FILES=(stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5 energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt)
+OPTIONAL=(sgchem_net18_tables.bin)   # installed and checked when the source provides it (SGChem network 18 only)
 
 verify() { # verify DIR: every table present with its expected hash
     local d="$1" f want got
     for f in "${FILES[@]}"; do
         [ -e "$d/$f" ] || { echo "get_stella_tables: $d/$f missing" >&2; return 1; }
+        want="$(sed -n "s/.*{\"$f\", *\"\([0-9a-f]*\)\"}.*/\1/p" "$HDR")"
+        got="$("$PY" -I "$GIZMO/scripts/stella_tables_hash.py" "$d/$f" | cut -d' ' -f1)"
+        [ "$got" = "$want" ] || { echo "get_stella_tables: $d/$f has hash $got, expected $want (stella-tables $REF)" >&2; return 1; }
+    done
+    for f in "${OPTIONAL[@]}"; do
+        [ -e "$d/$f" ] || continue
         want="$(sed -n "s/.*{\"$f\", *\"\([0-9a-f]*\)\"}.*/\1/p" "$HDR")"
         got="$("$PY" -I "$GIZMO/scripts/stella_tables_hash.py" "$d/$f" | cut -d' ' -f1)"
         [ "$got" = "$want" ] || { echo "get_stella_tables: $d/$f has hash $got, expected $want (stella-tables $REF)" >&2; return 1; }
@@ -54,6 +61,9 @@ if ! verify "$PREFIX" 2>/dev/null; then
         if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/";
         else echo "get_stella_tables: $f not found in $SRC" >&2; exit 1; fi
     done
+    for f in "${OPTIONAL[@]}"; do
+        if [ -e "$SRC/$f" ]; then cp "$SRC/$f" "$PREFIX/"; elif [ -e "$SRC/chemistry/$f" ]; then cp "$SRC/chemistry/$f" "$PREFIX/"; fi
+    done
     verify "$PREFIX" || { echo "get_stella_tables: installed tables in $PREFIX do not match these sources" >&2; exit 1; }
     { echo "stella-tables: $REF"; echo "source: ${STELLA_TABLES_FROM:-$REPO}"; date; } > "$PREFIX/stella_tables.stamp"
 fi
@@ -62,6 +72,7 @@ if [ -n "$TREE" ]; then
     mkdir -p "$TREE/galaxy_sf/stellar_tables" "$TREE/cooling/sgchem"
     for f in stellar_tables_unified.hdf5 stellar_wind_cumulative.hdf5; do ln -sfn "$PREFIX/$f" "$TREE/galaxy_sf/stellar_tables/$f"; done
     for f in energy-table-x.txt eh2-table.txt H2-cooling-ratios.dat wss_z_collis.txt; do ln -sfn "$PREFIX/$f" "$TREE/cooling/sgchem/$f"; done
+    if [ -e "$PREFIX/sgchem_net18_tables.bin" ]; then ln -sfn "$PREFIX/sgchem_net18_tables.bin" "$TREE/cooling/sgchem/sgchem_net18_tables.bin"; fi
     echo "get_stella_tables: linked into $TREE"
 fi
 echo "parameter file: StellarTablesFile $PREFIX/stellar_tables_unified.hdf5   SGCHEMTablesDir $PREFIX"
