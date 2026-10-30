@@ -1411,21 +1411,11 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
  * truth; host externals emitted by radiation/rt_utilities.cc.
  * ====================================================================== */
 #if defined(GRAVTREE_SOURCE_HOST_OWNER_TU) || (defined(GRAVTREE_SOURCE_DEVICE_TU) && defined(GRAVTREE_SOURCE_LAZY_SUPPORTED))
-#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
-
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE) || defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #include "../galaxy_sf/stellar_evolution_functions.h"
 #include "../sinks/sink_functions.h"
 #include "../core/predict_functions.h"
-
-#define SET_ACTIVE_RT_CHECK() if(mode<0) {return 1;} else {active_check=1;}
-
-/* forward declarations so the dispatcher can call the band helpers below */
-KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
-KOKKOS_INLINE_FUNCTION double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+#endif
 
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || (defined(RT_CHEM_PHOTOION) && defined(GALSF))
 KOKKOS_INLINE_FUNCTION double particle_ionizing_luminosity_in_cgs_core(long i, struct particle_data *pp)
@@ -1461,6 +1451,19 @@ KOKKOS_INLINE_FUNCTION double particle_ionizing_luminosity_in_cgs_core(long i, s
     return 0; // catch
 }
 #endif /* GALSF_FB_FIRE_RT_HIIHEATING || (RT_CHEM_PHOTOION && GALSF) */
+
+#if defined(RADTRANSFER) || defined(RT_USE_GRAVTREE)
+
+#define SET_ACTIVE_RT_CHECK() if(mode<0) {return 1;} else {active_check=1;}
+
+/* forward declarations so the dispatcher can call the band helpers below */
+KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION int rt_get_lum_band_stellarpopulation(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION int rt_get_lum_band_agn(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION int rt_get_lum_band_singlestar(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION void rt_get_lum_gas(int target, double *je, struct particle_data *pp, struct gas_cell_data *cell);
+KOKKOS_INLINE_FUNCTION double stellar_lum_in_band(int i, double E_lower, double E_upper, struct particle_data *pp, struct gas_cell_data *cell);
+
 
 KOKKOS_INLINE_FUNCTION int rt_get_source_luminosity(int i, int mode, double *lum, struct particle_data *pp, struct gas_cell_data *cell)
 {
