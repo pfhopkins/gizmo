@@ -273,6 +273,8 @@ void begrun(void)
 #ifdef GALSF_SINGLE_STARS_EVOLUTION_TABLES
     stellar_evolution_tables_init();
     if(gizmo_poll_controlled_stop()) return;
+    stellar_evolution_tables_load();
+    if(gizmo_poll_controlled_stop()) return;
 #endif
 
 #ifdef TURB_DRIVING

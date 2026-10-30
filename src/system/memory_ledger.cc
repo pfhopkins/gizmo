@@ -314,6 +314,10 @@ static void report_memory_ledger_impl(const char *when, int always)
                       node_family_bytes[GIZMO_MEM_STL_TIMEBIN] / (1024.0 * 1024.0),
                       node_let[0] / (1024.0 * 1024.0), node_let[1] / (1024.0 * 1024.0), node_let[2] / (1024.0 * 1024.0),
                       node_let[3] / (1024.0 * 1024.0), node_let[4] / (1024.0 * 1024.0), node_let[5] / (1024.0 * 1024.0));
+#if defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+        n += snprintf(buf + n, (n < (int) sizeof(buf)) ? sizeof(buf) - n : 0, "  single stars: %.3f\n",
+                      node_family_bytes[GIZMO_MEM_SINGLE_STARS] / (1024.0 * 1024.0));
+#endif
         /* Tree-node breakdown: split the "Tree nodes" total into local vs foreign-LET vs
            Father/Nextnode aux, and report the foreign storage that exists vs the since-start
            used high-water (rank-max). "used" is NOT current-at-print: force_treeallocate resets
