@@ -8,6 +8,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "gravtree_treecol_pixels.h"
+#ifdef COSMIC_RAY_FLUID
+#include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 #include "../cooling/sgchem/sgchem_network.h"
 #endif
@@ -49,7 +52,7 @@ void test_dump_treecol_pixels_and_exit(void)
     }
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
-    FILE *fc = treecol_dump_open("cells"); /* ID, species masses [code units], pixel columns [code], band energy densities [erg/cm^3], G0 G0_LW G0_dust zeta [CR attenuation], position */
+    FILE *fc = treecol_dump_open("cells"); /* ID, species masses [code units], pixel columns [code], band energy densities [erg/cm^3], G0 G0_LW G0_dust zeta [CR attenuation] [e_CR], position */
     for(int i = 0; i < NumPart; i++)
     {
         if(P[i].Type != 0) {continue;}
@@ -63,6 +66,9 @@ void test_dump_treecol_pixels_and_exit(void)
         {double fac_uv[NPIX]; struct ChemFUVField f = sgchem_treecol_field(i, fac_uv); fprintf(fc, " %.17g %.17g %.17g %.17g", f.G0, f.G0_LW, f.G0_dust, sgchem_cr_ion_rate(i, f.G0));} /* chemistry inputs */
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
         fprintf(fc, " %.9g", CellP[i].TreeColCRAttenuation);
+#endif
+#ifdef COSMIC_RAY_FLUID
+        fprintf(fc, " %.17g", Get_CosmicRayEnergyDensity_cgs(i, P, CellP)); /* [erg cm^-3] */
 #endif
 #endif
         fprintf(fc, " %.17g %.17g %.17g\n", P[i].Pos[0], P[i].Pos[1], P[i].Pos[2]);

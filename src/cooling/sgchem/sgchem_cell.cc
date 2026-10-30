@@ -10,6 +10,9 @@
 #include "sgchem_network.h"
 #include "sgchem_dust_to_gas.h"
 #include "../../gravity/gravtree_treecol_pixels.h"
+#ifdef COSMIC_RAY_FLUID
+#include "../../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
+#endif
 #if CHEMISTRYNETWORK == 18
 #include "cxx/chem_net18_layout.h"
 #endif
@@ -106,6 +109,9 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
 /* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing], as stella_dev chem_interface.cc */
 double sgchem_cr_ion_rate(int i, double G0)
 {
+#ifdef COSMIC_RAY_FLUID
+    return Get_CosmicRayIonizationRate_cgs(i, P, CellP); /* his rate from the CR fluid (Cummings+16), radioactive terms included */
+#endif
     double zeta = All.SGChemCosmicRayIonRate;
 #ifdef CR_SCALE_WITH_G0
     zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
@@ -136,6 +142,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #endif
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
     in.cosmic_ray_ion_rate = sgchem_cr_ion_rate(i, fuv.G0);
+#ifdef COSMIC_RAY_FLUID
+    in.cr_energy_density = Get_CosmicRayEnergyDensity_cgs(i, P, CellP); /* hadronic and Coulomb heating by the CR fluid */
+#endif
     in.id_current = (int) P[i].ID;
     in.dust_to_gas_ratio = sgchem_dust_to_gas_ratio(P[i].Metallicity[0]);
 #if CHEMISTRYNETWORK == 18
