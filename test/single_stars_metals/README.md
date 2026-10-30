@@ -35,5 +35,8 @@ Checks:
    0.15 of C, silicate 3.5e-4 and iron 1e-3 of the key element; AGB by C/O; Type Ia iron 5e-3) in the model's element
    dust, species and sources: 1.4e-15 (bar 1e-10). Events at `TimeMax` deposit after the last snapshot and are not
    counted. Before: no dust from single stars (the deposit only diluted the dust).
+7. `test_chemistry_gas_phase_from_live_dust` (same build): n_H = 1e3, 100 K, all carbon in carbonaceous dust at the
+   start, 20 kyr with the model's processes on: the chemistry sees no gas-phase carbon, x(CO) stays exactly 0 (the
+   carbon stays in dust). Before: the fixed 50 % depletion left half the carbon in the gas, x(CO) = 2.1e-7.
 
 Reference: the stellar tables (stella-tables a4830ab) and stella_dev `core/init.cc`.
