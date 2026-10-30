@@ -1050,6 +1050,15 @@ void open_outputfiles(void)
     }
 #endif
 
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "HIIheating.txt");
+    if(!(FdHIIHeating = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
+    else if(RestartFlag == 0) {
+        fprintf(FdHIIHeating,"%s Per-direction photoionisation log [GALSF_FB_PHOTOIONIZATION_PER_DIRECTION], one row per solve. Columns 1-6 as the HII-region loop's log: \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (1) time [code] (2) ionising sources (3) their photon rate / X_H [1/s] (4) cells newly ionised (5) their mass [Msun] (6) their mass-weighted distance [kpc] \n",prefix_char);
+        fprintf(FdHIIHeating,"%s   (7) recombination rate of the ionised cells / photon rate (8) sharing rounds (9) search passes of the first round (10, 11) smallest and largest pixel front [kpc] \n",prefix_char);
+    }
+#endif
 #ifdef GALSF_FB_FIRE_RT_HIIHEATING
     snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%s%s", All.OutputDir, "HIIheating.txt");
     if(!(FdHIIHeating = fopen(buf, mode))) {printf("error in opening file '%s'\n", buf); endrun(1);}
@@ -1887,6 +1896,9 @@ void read_parameter_file(char *fname)
         id[nt++] = REAL;
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+        strcpy(tag[nt], "PhotoionMaxSearchRadius");
+        addr[nt] = &All.PhotoionMaxSearchRadius;
+        id[nt++] = REAL;
         strcpy(tag[nt], "PhotoionMaxTimestep");
         addr[nt] = &All.PhotoionMaxTimestep;
         id[nt++] = REAL;
@@ -3309,6 +3321,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("WindMomentumLoading",tag[i])==0) {*((double *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to standard stellar-evolution-defaults (=%g) \n",tag[i],alternate_tag[i],All.RP_Local_Momentum_Renormalization); continue;}
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+                if(strcmp("PhotoionMaxSearchRadius",tag[i])==0) {*((double *)addr[i])=0.05; printf("Tag %s not set in parameter file: defaulting to 0.05 kpc\n",tag[i]); continue;}
                 if(strcmp("PhotoionMaxTimestep",tag[i])==0) {*((double *)addr[i])=1.e4; printf("Tag %s not set in parameter file: defaulting to 10 kyr\n",tag[i]); continue;}
 #endif
 #if defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_PHOTOIONIZATION_PER_DIRECTION)

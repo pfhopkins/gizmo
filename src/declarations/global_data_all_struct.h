@@ -496,6 +496,7 @@ struct global_data_all_processes
     double HIIRegion_fLum_Coupled;
 #endif
 #ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+    double PhotoionMaxSearchRadius; /*!< largest search radius of a source [physical kpc] */
     double PhotoionMaxTimestep;     /*!< largest timestep of an ionising source, and the photoionisation cadence [yr] */
 #endif
 

@@ -91,6 +91,9 @@
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 #include "../galaxy_sf/sfr_collect_gas_loop.h"
 #endif
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+#include "../galaxy_sf/photoion_per_direction.h"
+#endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 #include "../hydro/cellcorrections_loop.h"
@@ -7618,6 +7621,12 @@ template void run_neighbor_loop<SscRequestSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<SscGrantSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<SscClearSpec>(const neighbor_loop_args&);
 template void run_neighbor_loop<SscApplySpec>(const neighbor_loop_args&);
+#endif
+
+/* per-direction photoionisation: one-way Specs over the ionising sources, evaluated where the cells live.
+ * See galaxy_sf/photoion_per_direction.h. */
+#ifdef GALSF_FB_PHOTOIONIZATION_PER_DIRECTION
+template void run_neighbor_loop<PiHistSpec>(const neighbor_loop_args&);
 #endif
 
 /* Cellcorrections corridor: CellcorrectionsSpec — first-pass
