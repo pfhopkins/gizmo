@@ -7,9 +7,9 @@ import h5py
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (constants.h)
 
 
-def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.0, z=0.014):
+def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.0, z=0.014, gas_fields=None):
     """metals: the gas (and star) metal slots; stars: (drawn mass, mass, age [yr], position in box units, event bits[,
-    log10 table age [yr] up to which the winds count as returned])"""
+    log10 table age [yr] up to which the winds count as returned]); gas_fields: more gas datasets, one row per cell"""
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
@@ -30,6 +30,8 @@ def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.
         p["Coordinates"] = pos; p["Velocities"] = np.zeros((N, 3)); p["ParticleIDs"] = np.arange(1, N + 1, dtype=np.uint32)
         p["Masses"] = np.ones(N); p["InternalEnergy"] = np.full(N, u); p["Metallicity"] = np.tile(metals, (N, 1))
         p["SmoothingLength"] = np.full(N, 2.0 * dx)
+        for k, v in (gas_fields or {}).items():
+            p[k] = np.tile(v, (N, 1))
         if ns:
             s = F.create_group("PartType4")
             s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, _, _, x, *_ in stars])

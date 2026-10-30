@@ -28,6 +28,7 @@ import subprocess
 import sys
 from pathlib import Path
 import numpy as np
+import h5py
 import pytest
 from gizmo.test import build_gizmo_for_test, get_stellar_evolution_tables, get_cooling_tables, mpi_launch_command
 
@@ -63,12 +64,14 @@ def build(tag, extra=()):
     return BUILDS[tag]
 
 
-def run(exe, tag, tables, L, gas_pos, stars, ranks=1, overrides=None, threads=1, **ic):
+def run(exe, tag, tables, L, gas_pos, stars, ranks=1, overrides=None, threads=1, post_ic=None, **ic):
     d = TEST_DIR / f"run_{tag}"
     if d.exists():
         shutil.rmtree(d)  # this run's own directory
     (d / "output").mkdir(parents=True)
     make_treecol_pixels_ics(str(d / "output" / "snapshot_000.hdf5"), L, gas_pos, stars, **ic)
+    if post_ic:
+        post_ic(d / "output" / "snapshot_000.hdf5")
     for f in ("TREECOOL", "spcool_tables"):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)
@@ -170,6 +173,33 @@ def test_dust_to_gas_independent_of_metallicity(tables):
     cells = load(out, "cells")
     cells = cells[np.argsort(cells[:, 0])]
     np.testing.assert_allclose(cells[:, 1], 0.5, rtol=1e-12)
+
+
+def test_dust_to_gas_from_live_dust(tables):
+    """GALSF_ISMDUSTCHEM_MODEL: the dust-weighted mass of every cell is its live dust mass / 0.01 (Milky Way units, as
+    stella_dev with its dust model), not its metallicity / 0.014"""
+    L = 20.0
+    pos, z, ab = gas_with_species(12, L)
+    dust = np.random.default_rng(3).uniform(0, 2e-2, len(pos))  # dust mass fraction, up to 2x Milky Way
+
+    def with_dust(fname):
+        with h5py.File(fname, "r+") as F:
+            g = F["PartType0"]
+            Z = g["Metallicity"][()]
+            del g["Metallicity"]
+            g["Metallicity"] = np.hstack([Z, np.zeros((len(Z), 18))])  # element, source and species dust slots
+            dz = np.zeros((len(Z), 15)); dz[:, 2] = dz[:, 0] = dust; dz[:, 13] = 1.0
+            g["DustMetallicity"] = dz; g["DustSpeciesAbundance"] = np.column_stack([np.zeros(len(Z)), dust, np.zeros(len(Z))])
+            F["Header"].attrs["Flag_Metals"] = 29
+
+    exe = build("pix12_live_dust", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "GALSF_ISMDUSTCHEM_MODEL=(1+2)"))
+    tab = Tables(tables["StellarTablesFile"])
+    over = {"Initial_ISMDustChem_Depletion": 0, "Initial_ISMDustChem_SiltoCarbRatio": 2.0, "SNeIIDustScaling": 1, "SNeIaDustScaling": 1, "AGBDustScaling": 1,
+            "DustAccretionScaling": 1, "ThermalSputteringScaling": 1, "SNeGasClearedOfDustScaling": 1, "AccretionTcutoffScaling": 1}
+    out = run(exe, "species_live_dust", tables, L, pos, star_list(tab, L)[:3], ranks=2, z_gas=z, tracabund=ab, overrides=over, post_ic=with_dust)
+    cells = load(out, "cells")
+    cells = cells[np.argsort(cells[:, 0])]
+    np.testing.assert_allclose(cells[:, 1], dust / 0.01, rtol=1e-12)
 
 
 PIX_STARS = [(8.0, 0.3), (15.0, 0.5), (25.0, 0.2), (40.0, 0.1), (60.0, 0.4), (100.0, 0.05)]

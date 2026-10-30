@@ -48,13 +48,13 @@ def solar_table(tables_file):
         return F["X_init"][()].reshape(len(Zt), -1)[iz].astype(float)
 
 
-def run(exe, tag, tables, metals, stars=(), flag=2, over=None, ranks=2):
+def run(exe, tag, tables, metals, stars=(), flag=2, over=None, ranks=2, **ic_args):
     d = TEST_DIR / f"run_{tag}"
     if d.exists():
         shutil.rmtree(d)
     (d / "output").mkdir(parents=True)
     ic = d / ("snapshot.hdf5" if flag == 0 else "output/snapshot_000.hdf5")
-    L = make_single_stars_metals_ics(str(ic), metals, stars)
+    L = make_single_stars_metals_ics(str(ic), metals, stars, **ic_args)
     for f in ("TREECOOL", "spcool_tables"):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)
@@ -261,3 +261,21 @@ def test_single_star_dust_yields(tables):
         assert np.all(np.abs(got - want) <= 1e-10 * want.max()), (got, want)
     if len(got_d) >= 15:
         assert np.all(np.abs(got_d[11:15] - want_src) <= 1e-10 * want_src.max())
+
+
+def test_chemistry_gas_phase_from_live_dust(tables):
+    """GALSF_ISMDUSTCHEM_MODEL with SGChem: the chemistry's gas-phase C, O, Si are the cell's metals minus its live dust
+    (as stella_dev with its dust model): with all carbon in dust, no CO forms (n_H = 1e3, 100 K, 20 kyr); the
+    default 50 % carbon depletion would leave half of it in the gas"""
+    X = solar_table(tables["StellarTablesFile"])
+    Z = np.concatenate([solar27(tables["StellarTablesFile"])[:11], np.zeros(18)])
+    dust = np.zeros(15); dust[2] = Z[2]; dust[0] = Z[2]; dust[11 + 2] = 1.0  # all C as carbonaceous dust, from SNe
+    d = run(build("dust", DUST), "dust_all_carbon", tables, Z, n_H=1e3, over={"TimeMax": 2e-2, "TimeBetSnapshot": 2e-2, **DUST_PARAMS},
+            gas_fields={"DustMetallicity": dust, "DustSpeciesAbundance": np.array([0.0, Z[2], 0.0])})
+    with h5py.File(sorted((d / "output").glob("snapshot_*.hdf5"))[-1], "r") as F:
+        g = F["PartType0"]
+        x_co, x_h2 = g["SGChemTracAbund"][()][:, 2], g["SGChemTracAbund"][()][:, 0]
+        c_dust = g["DustMetallicity"][()][:, 2]
+    print(f"all C in dust: x(CO) max {x_co.max():.3g}, x(H2) {x_h2.mean():.3g}, C dust / C {np.mean(c_dust) / Z[2]:.6f}")
+    assert x_h2.mean() > 1e-4 and np.all(c_dust > 0.99 * Z[2])  # the chemistry ran; the carbon stayed in dust
+    assert np.all(x_co == 0)
