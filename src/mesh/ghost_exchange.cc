@@ -888,6 +888,10 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                a run that finished in an earlier round would address past its end. */
             if(round_send_count[t] <= 0) {continue;}
             const int *home = send_home_idx + send_disp[t] + taken;
+            /* Each slot is an independent whole-record copy into its own staging row. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && round_send_count[t] >= 4096)
+#endif
             for(int k = 0; k < round_send_count[t]; k++)
             {
                 const int j = home[k];
@@ -936,11 +940,18 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                                           recv_CellP, round_recv_count, staged_disp,
                                           sizeof(struct gas_cell_data), MPI_COMM_WORLD);
             }
+            /* Copied out record by record across threads: each record lands in its own destination slot. */
+#ifdef _OPENMP
+#pragma omp parallel if(gizmo_pcie_opt())
+#endif
             for(int t = 0; t < NTask; t++) {
                 if(round_recv_count[t] <= 0) {continue;}
-                memcpy(&dst_P[round_recv_disp[t]], &recv_P[staged_disp[t]], (size_t) round_recv_count[t] * sizeof(struct particle_data));
-                if(recv_cellp) {
-                    memcpy(&dst_CellP[round_recv_disp[t]], &recv_CellP[staged_disp[t]], (size_t) round_recv_count[t] * sizeof(struct gas_cell_data));
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+                for(int k = 0; k < round_recv_count[t]; k++) {
+                    dst_P[round_recv_disp[t] + k] = recv_P[staged_disp[t] + k];
+                    if(recv_cellp) {dst_CellP[round_recv_disp[t] + k] = recv_CellP[staged_disp[t] + k];}
                 }
             }
             if(recv_CellP) {myfree(recv_CellP);}
