@@ -36,6 +36,7 @@
 #include "../declarations/lifecycle_counters.h"
 #include "../core/proto.h"
 #include "../system/mpi_alltoallv_typed.h"
+#include "../system/gpu_particles_arena.h" /* gizmo_particles_prefetch_to_host */
 #include "gpu_neighbor_list.h" /* gpu_sidx_ghost_pool_cleanup */
 #include "sfc_tiles.h"           /* build_sfc_supply_pool, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
@@ -1588,6 +1589,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
 
     /* === Step 6: pack and Alltoallv particles + cells, then home_idx === */
+    if((long long) total_send * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("ghost_exchange_pack");}   /* the receiver walk ran on the device */
     gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
                                           &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
 
