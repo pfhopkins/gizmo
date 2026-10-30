@@ -2,6 +2,7 @@
 
 test_sgchem_startup: the installed chemistry tables are checked at start-up; with the right tables the run reaches
 TimeMax, with a changed table it stops with a message naming the install script.
+test_sgchem_cell_state: SGCHEM network 5 adds 40 B to the gas cell (three tracked species, dust and gas temperature).
 """
 
 import re
@@ -12,7 +13,7 @@ from os import chdir, environ, path, makedirs
 
 import pytest
 
-from gizmo.test import build_and_run_test, run_test, get_cooling_tables, default_omp_threads
+from gizmo.test import build_and_run_test, build_gizmo_for_test, run_test, get_cooling_tables, default_omp_threads
 
 HERE = path.dirname(path.abspath(__file__))
 ROOT = path.dirname(path.dirname(HERE))
@@ -40,9 +41,37 @@ def tables():
     return chemistry_tables_dir()
 
 
-def test_sgchem_startup(tables):
+def cell_size(log):
+    return int(re.search(r"Size of hydro-cell structure\s+(\d+)", open(log).read()).group(1))
+
+
+@pytest.fixture(scope="module")
+def box(tables):
+    """The same box built without SGCHEM (output_no_sgchem/, built first: every build removes test/*/GIZMO), then with it."""
+    var = path.join(HERE, "output_no_sgchem")
+    makedirs(var, exist_ok=True)
+    with open(path.join(var, "Config.sh"), "w") as f:
+        f.writelines(l for l in open(path.join(HERE, "Config.sh")) if not l.startswith(("SGCHEM", "CHEMISTRYNETWORK")))
+    for f in ("sgchem_box_ics.hdf5", "sgchem_box.params", "TREECOOL", "spcool_tables"):
+        if not path.exists(path.join(var, f)):
+            shutil.copytree(path.join(HERE, f), path.join(var, f)) if path.isdir(path.join(HERE, f)) else shutil.copy(path.join(HERE, f), var)
+    build_gizmo_for_test(f"{NAME}/output_no_sgchem", default_omp_threads())
+    chdir(var)
+    try:
+        run_test("no_sgchem", 2, default_omp_threads(), params_name=NAME)
+    finally:
+        chdir(ROOT)
     build_and_run_test(NAME, 2, default_omp_threads(), param_overrides={"SGChemTablesPath": tables})
-    log = open(path.join(HERE, f"test_{NAME}.out")).read()
+    return {"no_sgchem": path.join(var, "test_no_sgchem.out"), "sgchem": path.join(HERE, f"test_{NAME}.out")}
+
+
+def test_sgchem_cell_state(box):
+    grow = cell_size(box["sgchem"]) - cell_size(box["no_sgchem"])
+    assert grow == 8 * (3 + 2), f"gas cell grows by {grow} B with SGCHEM network 5"
+
+
+def test_sgchem_startup(tables, box):
+    log = open(box["sgchem"]).read()
     assert "SGCHEM: chemistry tables built" in log
     # the energy floor of MinGasTemp = 2.73 K: atomic gas with X_H = 0.7065 (ABHE = 0.1), 3/2 k T per particle
     xh, floor = re.search(r"SGCHEM: hydrogen mass fraction (\S+), MinEgySpec (\S+)", log).groups()
