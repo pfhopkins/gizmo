@@ -285,13 +285,25 @@ static void radfb_rp_pair_kick(
 
     /* --- multiple-scattering (IR re-radiation) kick.
      * Canonical rt_kappa via the same one-element view pattern as above. --- */
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS
+    double dv_ms = 0; /* single stars: the IR boost is in the source budget */
+#else
     double kappa_ir = rt_kappa(0, RT_FREQ_BIN_FIRE_IR, &Pj, &Cj);
     double cf_a_for_ms = scalars.common.cf_atime;
     double dv_ms = scalars.rp_renorm
                  * dE / Mass_j * kappa_ir
                  * (Mass_j / (4.0 * M_PI * r2 * cf_a_for_ms * cf_a_for_ms));
+#endif
 
-#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
+#if defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+    /* single stars: every neighbour takes its weight's share of the budget, radially outward (stella_dev) */
+    Vec3<double> dv_kick = dp_ij;
+    {
+        double norm = sqrt(dv_kick.norm_sq()), scale = (norm > 0) ? dv_ss * scalars.common.cf_atime / norm : 0;
+        dv_kick[0] *= scale; dv_kick[1] *= scale; dv_kick[2] *= scale;
+    }
+    (void) dv_ms;
+#elif (GALSF_FB_FIRE_STELLAREVOLUTION <= 2)
     /* stochastic gate per neighbor — order-independent RNG stream */
     double dv_imparted = (double)loc.delta_v_imparted_rp;
     double prob = (dv_ms + dv_ss) / dv_imparted;

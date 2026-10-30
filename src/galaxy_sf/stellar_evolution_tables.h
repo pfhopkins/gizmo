@@ -42,7 +42,7 @@ struct StellarEvolutionTables {
     int    remnant_type[STBL_NZ * STBL_NM];
     double t_PMS[STBL_NZ * STBL_NM];   /* pre-main-sequence duration (feedback delay) [yr] */
     /* [NZ * NM * NAGE], node-shared */
-    float *v_wind, *log_L_LW, *log_L_FUV_total, *log_L_FUV_M1, *log_L_NUV, *log_L_OPT_NIR;
+    float *v_wind, *log_L_LW, *log_L_FUV_total, *log_L_FUV_M1, *log_L_NUV, *log_L_OPT_NIR, *log_L_bol;
     /* [NZ * NM * NAGE * NELEM], node-shared */
     float *surface_abundances, *elem_ej_wind_cumulative; /* mass fraction; cumulative wind ejecta [Msun] */
     /* [NZ * NM * NELEM]: absolute SN and AGB ejecta [Msun] with the table's birth composition */
@@ -69,6 +69,7 @@ double stellar_log_L_FUV_total(double logM, double logZ, double log_age);
 double stellar_log_L_FUV_M1(double logM, double logZ, double log_age);
 double stellar_log_L_NUV(double logM, double logZ, double log_age);
 double stellar_log_L_OPT_NIR(double logM, double logZ, double log_age);
+double stellar_log_L_bol(double logM, double logZ, double log_age);
 double stellar_surface_abundance(double logM, double logZ, double log_age, int elem);
 double stellar_elem_ej_wind_cumulative(double logM, double logZ, double log_age, int elem); /* [Msun] from birth */
 double stellar_elem_ej_SN(double logM, double logZ, int elem);   /* [Msun], table birth composition */

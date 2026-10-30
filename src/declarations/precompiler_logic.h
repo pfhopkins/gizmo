@@ -1054,6 +1054,17 @@
 #if defined(GALSF_SINGLE_STARS_FROM_IMF) && !defined(WAKEUP_TARGET_BIN_PARAMETER)
 #define WAKEUP_TARGET_BIN_PARAMETER /* feedback wakes cells: woken-cell bin is a parameter, default 2 */
 #endif
+#ifdef GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS /* single stars: band-resolved photon momentum at the star, in the local radiation-pressure loop */
+#if !defined(GALSF_SINGLE_STARS_FROM_IMF) || !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+#error "GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS needs GALSF_SINGLE_STARS_FROM_IMF and GALSF_SINGLE_STARS_EVOLUTION_TABLES"
+#endif
+#ifndef GALSF_FB_FIRE_RT_LOCALRP
+#define GALSF_FB_FIRE_RT_LOCALRP
+#endif
+#endif
+#if defined(GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+#error "GALSF_FB_RADPRESSURE_COUNT_6_8EV_TWICE is an option of GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS"
+#endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS /* per-direction columns and band fluxes in the gravity walk (gravity/gravtree_treecol_pixels.h) */
 #if GALSF_RESOLVEDISM_TREECOL_PIXELS == 12
 #define TREECOL_PIXELS_NSIDE 1

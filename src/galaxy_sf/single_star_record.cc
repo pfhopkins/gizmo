@@ -15,7 +15,7 @@
 #if (defined(GALSF_FB_MECHANICAL) && !defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)) || defined(GALSF_FB_THERMAL) || defined(GALSF_FB_FIRE_STELLAREVOLUTION)
 #error "GALSF_SINGLE_STARS_FROM_IMF: single stars drive only the mechanical feedback loop, and only with GALSF_SINGLE_STARS_EVOLUTION_TABLES; other feedback would give sampled stars stellar-population rates"
 #endif
-#if defined(GALSF_FB_FIRE_RT_LOCALRP) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RADTRANSFER) || (defined(RT_USE_GRAVTREE) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
+#if (defined(GALSF_FB_FIRE_RT_LOCALRP) && !defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)) || defined(GALSF_FB_FIRE_RT_HIIHEATING) || defined(GALSF_FB_FIRE_RT_LONGRANGE) || defined(RADTRANSFER) || (defined(RT_USE_GRAVTREE) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
 #error "GALSF_SINGLE_STARS_FROM_IMF: no single-star branch in the stellar radiation sources yet; sampled stars would get stellar-population luminosities"
 #endif
 #if defined(COSMIC_RAY_FLUID) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES) && defined(GALSF_FB_MECHANICAL)
