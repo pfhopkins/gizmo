@@ -8,7 +8,8 @@ PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (co
 
 
 def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.0, z=0.014):
-    """metals: the gas (and star) metal slots; stars: (drawn mass, mass, age [yr], position in box units, event bits)"""
+    """metals: the gas (and star) metal slots; stars: (drawn mass, mass, age [yr], position in box units, event bits[,
+    log10 table age [yr] up to which the winds count as returned])"""
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
@@ -31,9 +32,10 @@ def make_single_stars_metals_ics(fname, metals, stars=(), n=16, n_H=10.0, T=100.
         p["SmoothingLength"] = np.full(N, 2.0 * dx)
         if ns:
             s = F.create_group("PartType4")
-            s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, _, _, x, _ in stars])
+            s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, _, _, x, *_ in stars])
             s["Velocities"] = np.zeros((ns, 3)); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)
-            s["Masses"] = np.array([m for _, m, _, _, _ in stars]); s["StellarFormationTime"] = -np.array([a for _, _, a, _, _ in stars]) / PC_KMS_IN_YR
-            s["Metallicity"] = np.tile(metals, (ns, 1)); s["SingleStarDrawnMass"] = np.array([md for md, _, _, _, _ in stars])
-            s["SingleStarBirthMetallicity"] = np.full(ns, z); s["SingleStarEventBits"] = np.array([b for _, _, _, _, b in stars], dtype=float)
+            s["Masses"] = np.array([m for _, m, *_ in stars]); s["StellarFormationTime"] = -np.array([a for _, _, a, *_ in stars]) / PC_KMS_IN_YR
+            s["Metallicity"] = np.tile(metals, (ns, 1)); s["SingleStarDrawnMass"] = np.array([md for md, *_ in stars])
+            s["SingleStarBirthMetallicity"] = np.full(ns, z); s["SingleStarEventBits"] = np.array([x[4] for x in stars], dtype=float)
+            s["SingleStarLastWindLogAge"] = np.array([x[5] if len(x) > 5 else 0.0 for x in stars])
     return L
