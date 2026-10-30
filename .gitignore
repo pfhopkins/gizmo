@@ -150,3 +150,6 @@ test/wakeup_falling_sedov/output*/
 test/wakeup_falling_sedov/GIZMO
 test/wakeup_falling_sedov/used2
 test/wakeup_falling_sedov/*_ics.hdf5
+test/single_stars_radiation/run_*/
+test/single_stars_radiation/TREECOOL
+test/single_stars_radiation/spcool_tables
