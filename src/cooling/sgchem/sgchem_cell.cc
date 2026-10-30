@@ -106,6 +106,10 @@ double sgchem_radiation_field_for_snapshot(int i, int blocknr)
 }
 #endif
 
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+double sgchem_recent_sfr_g0(void) {return DMAX(All.FactorG0 * All.SGChemG0, 0.324e-2);} /* G0 = G0_LW = G0_dust, as stella_dev GHOSDT_G0_CR */
+#endif
+
 /* cosmic-ray ionisation rate per H [s^-1] of cell i under the field G0 [Habing], as stella_dev chem_interface.cc */
 double sgchem_cr_ion_rate(int i, double G0)
 {
@@ -113,7 +117,9 @@ double sgchem_cr_ion_rate(int i, double G0)
     return Get_CosmicRayIonizationRate_cgs(i, P, CellP); /* his rate from the CR fluid (Cummings+16), radioactive terms included */
 #endif
     double zeta = All.SGChemCosmicRayIonRate;
-#ifdef CR_SCALE_WITH_G0
+#if defined(CR_SCALE_WITH_G0) && defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+    zeta = All.FactorG0 * zeta; /* unclamped, as stella_dev GHOSDT_G0_CR */
+#elif defined(CR_SCALE_WITH_G0)
     zeta = DMAX(1e-21, DMIN(2e-16, (G0 / 1.7) * zeta)); /* with the stars' field */
 #endif
 #ifdef CR_BACKGROUND_IONRATE_ATTENUATED
@@ -137,6 +143,8 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.abundD = All.SGChemDeuteriumAbundance;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     struct ChemFUVField fuv = sgchem_treecol_field(i, in.fac_uv); /* the stars' field from the gravity walk */
+#elif defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+    struct ChemFUVField fuv; fuv.G0 = fuv.G0_LW = fuv.G0_dust = sgchem_recent_sfr_g0(); /* uniform, scaled with the recent SFR */
 #else
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
 #endif

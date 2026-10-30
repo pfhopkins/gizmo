@@ -1759,8 +1759,8 @@
 #endif
 
 
-#if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED)) && !defined(SGCHEM)
-#error "CR_SCALE_WITH_G0 and CR_BACKGROUND_IONRATE_ATTENUATED set the SGChem cosmic-ray rate: set SGCHEM"
+#if (defined(CR_SCALE_WITH_G0) || defined(CR_BACKGROUND_IONRATE_ATTENUATED) || defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)) && !defined(SGCHEM)
+#error "CR_SCALE_WITH_G0, CR_BACKGROUND_IONRATE_ATTENUATED and ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR set the SGChem field and cosmic-ray rate: set SGCHEM"
 #endif
 #ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
 #if defined(CHIMES)
@@ -1778,8 +1778,11 @@
 #if !defined(COOL_METAL_LINES_BY_SPECIES)
 #error "SGCHEM reads the element slots: set COOL_METAL_LINES_BY_SPECIES"
 #endif
-#if defined(CR_SCALE_WITH_G0) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES)
-#error "CR_SCALE_WITH_G0 scales the SGChem cosmic-ray rate with the stars' field: set GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES"
+#if defined(CR_SCALE_WITH_G0) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) && !defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)
+#error "CR_SCALE_WITH_G0 scales the SGChem cosmic-ray rate with the stars' field (GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) or the recent SFR (ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR)"
+#endif
+#if defined(ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR) && (!defined(GALSF) || defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES))
+#error "ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR scales the uniform SGChem field: needs GALSF, excludes the stars' field GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES"
 #endif
 #if defined(CR_BACKGROUND_IONRATE_ATTENUATED) && !defined(GALSF_RESOLVEDISM_TREECOL_PIXELS)
 #error "CR_BACKGROUND_IONRATE_ATTENUATED attenuates by the gas column of the pixel walk: set GALSF_RESOLVEDISM_TREECOL_PIXELS"

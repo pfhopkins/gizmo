@@ -964,6 +964,11 @@ void star_formation_parent_routine(void);
 int spawn_star_from_gas(int i, double mass_of_star, int stars_spawned);
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
 double single_stars_collect_gas(long long tot_spawned);
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+void recent_sfr_young_mass_add(double t_birth, double dm);
+double sgchem_recent_sfr_g0(void);
+double sgchem_cr_ion_rate(int i, double G0);
+#endif
 void single_star_attach_to_new_star(int i_star, int i, double M_drawn);
 #ifdef TEST_SINGLE_STARS_BIRTH_AT_GIVEN_CELLS
 int single_star_test_births(int stars_spawned);

@@ -306,7 +306,11 @@ void single_star_feedback_finalize(const int *list, int n)
         SingleStars.event_bits[s] |= (kind == SSE_AGB) ? SINGLE_STAR_EVENT_AGB_DONE : SINGLE_STAR_EVENT_SN_DONE;
         SingleStars.M_at_SN_trigger[s] = 0;
         P[i].SNe_ThisTimeStep = 0; P[i].MassReturn_ThisTimeStep = 0;
-    }    single_star_events_flush();
+    }
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    for(int a = 0; a < n; a++) {recent_sfr_young_mass_add(P[list[a]].StellarAge, P[list[a]].Mass - ssfb_mass_before[a]);} /* winds and deaths */
+#endif
+    single_star_events_flush();
 }
 
 #endif

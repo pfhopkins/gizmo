@@ -990,6 +990,10 @@ void init(void)
 
 
     /* HELLO! This here is where you should insert custom code for hard-wiring the ICs of various test problems */
+#ifdef ISRF_AND_CR_RATE_SCALE_WITH_RECENT_SFR
+    {double m_gas = 0; for(i = 0; i < N_gas; i++) {m_gas += P[i].Mass;} /* as stella_dev GHOSDT_G0_CR */
+     MPI_Allreduce(&m_gas, &All.Mgas0, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); All.FactorG0 = 0;}
+#endif
 
 
 
