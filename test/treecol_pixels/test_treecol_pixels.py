@@ -131,6 +131,32 @@ def test_star_band_luminosities(tables, ranks):
     np.testing.assert_allclose(root[bins], rows[:, 2:][:, bins].sum(0), rtol=1e-12)
 
 
+def test_radiation_mass_cut(tables):
+    """IMFSampleStellarMassCut 0.5 (stella_dev production): main-sequence stars at or below 0.5 Msun are dark in every
+    band, the others shine as the tables; the root node holds only the shining stars"""
+    tab = Tables(tables["StellarTablesFile"])
+    L, cut = 20.0, 0.5
+    rng = np.random.default_rng(5)
+    stars = []
+    for M in (0.1, 0.2, 0.3, 0.45, 0.5, 0.6, 1.0, 8.0):
+        lM, lZ = np.log10(M), np.log10(0.0142)
+        stars.append((M, tab._i2(tab.t_pms, lM, lZ) + 0.01 * tab._i2(tab.life, lM, lZ), rng.uniform(0.2, 0.8, 3) * L))
+    out = run(build("pix12", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",)), "masscut", tables, L, lattice(12, L), stars,
+              overrides={"IMFSampleStellarMassCut": cut})
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    rows = load(out, "stars")
+    assert len(rows) == len(stars)
+    N_gas = 12 ** 3
+    for row in rows:
+        M, age, _ = stars[int(row[0]) - N_gas - 1]
+        age += row[1] * 3.085678e13 / 3.155e7
+        want = tab.bands(M, 0.0142, age) if M > cut else np.zeros(5)
+        assert M <= cut or want.all(), (M, want)
+        np.testing.assert_allclose(row[2:][bins], want, rtol=1e-10, atol=0, err_msg=f"M={M}")
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    np.testing.assert_allclose(root[bins], rows[:, 2:][:, bins].sum(0), rtol=1e-12)
+
+
 def gas_with_species(n, L, seed=7):
     rng = np.random.default_rng(seed)
     pos = lattice(n, L) + rng.uniform(-0.2, 0.2, (n ** 3, 3)) * (L / n)
