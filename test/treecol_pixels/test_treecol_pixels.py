@@ -16,6 +16,11 @@ stops) and checks them against exact values.
     same bars).
   test_host_equals_device: the device walk (team-scratch sums, fixed fold order) gives the same cell outputs as the
     host walk, and repeats bitwise (2 ranks x 2 threads; 1 rank x 4 threads, where every target takes the device walk).
+  test_chemistry_inputs: the SGChem field of every cell from the tree energy densities (pixels floored at
+    0.324e-2 SGChemBackgroundG0 / 12 Habing): G0, G0_LW and the band-resolved grain-heating G0_dust as stella_dev (1e-6).
+  test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
+    equals the direct sum over the stars' current luminosities (median |ratio - 1| <= 1e-2, p99 <= 5e-2): node
+    luminosities are refreshed, the dead star is dark (2 ranks).
 """
 import os
 import shutil
@@ -106,7 +111,7 @@ def test_star_band_luminosities(tables, ranks):
     tab = Tables(tables["StellarTablesFile"])
     L = 20.0
     stars = star_list(tab, L)
-    out = run(build("bands"), f"bands_np{ranks}", tables, L, lattice(12, L), stars, ranks=ranks)
+    out = run(build("pix12", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",)), f"bands_np{ranks}", tables, L, lattice(12, L), stars, ranks=ranks)
     bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
     rows = load(out, "stars")
     assert len(rows) == len(stars)
@@ -221,3 +226,41 @@ def test_host_equals_device(tables, ranks, threads):
         runs[tag] = pixel_run(tables, ranks, threads, f"_t{threads}_{tag}", {"GravityHostWalkBelowActive": below})[0]
     assert runs["dev_a"].tobytes() == runs["dev_b"].tobytes()
     np.testing.assert_allclose(runs["dev_a"], runs["host"], rtol=2.5e-7, atol=0)  # float storage: at most a rounding step
+
+
+def test_chemistry_inputs(tables):
+    cells = pixel_run(tables, 1, tag="_chem", overrides={"SGChemBackgroundG0": 1.7})[0]
+    g0bg = 0.324e-2 * 1.7
+    uv = np.maximum(cells[:, 40:52], g0bg / 12 * 5.257e-14).sum(1)
+    G0 = uv / 5.257e-14
+    G0_LW = cells[:, 52] / 7.799e-15
+    G0_dust = 0.2362 * G0 + 0.1496 * (cells[:, 53] / 4.696e-14 + g0bg) + 0.6142 * (cells[:, 54] / 5.141e-13 + g0bg)
+    for got, want in ((cells[:, 56], G0), (cells[:, 57], G0_LW), (cells[:, 58], G0_dust)):
+        np.testing.assert_allclose(got, want, rtol=1e-6)
+    assert np.median(G0) > 10 * g0bg  # the stars dominate the floor
+
+
+def test_far_field_g0(tables):
+    L, n = 20.0, 12
+    pos, z, ab = gas_with_species(n, L)
+    tab = Tables(tables["StellarTablesFile"])
+    rng = np.random.default_rng(11)
+    stars = []
+    for M, f in PIX_STARS:
+        lM, lZ = np.log10(M), np.log10(0.0142)
+        stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
+    lM, lZ = np.log10(60.0), np.log10(0.0142)
+    stars.append((60.0, tab._i2(tab.t_pms, lM, lZ) + tab._i2(tab.life, lM, lZ) - 150.0, np.array([0.5, 0.5, 0.5]) * L))  # dies at ~150 yr
+    exe = build("pix12_step5", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=5"))
+    out = run(exe, "far_field", tables, L, pos, stars, ranks=2, z_gas=z, tracabund=ab, overrides={"MaxSizeTimestep": 1e-4})
+    cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
+    st = load(out, "stars"); st = st[np.argsort(st[:, 0])]
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    assert st[0, 1] * 3.085678e13 / 3.155e7 > 150.0  # the run went past the death
+    lum = st[:, 2:][:, bins]
+    assert lum[-1].sum() == 0  # the dead star is dark
+    L_uv = lum[:, 0] + lum[:, 2]
+    ref = np.array([direct_energy_density(p, st[:, -3:], L_uv).sum() for p in cells[:, -3:]])
+    r = np.abs(cells[:, 40:52].sum(1) / ref - 1)
+    print(f"far field: median {np.median(r):.1e} p99 {np.percentile(r, 99):.1e}")
+    assert np.median(r) <= 1e-2 and np.percentile(r, 99) <= 5e-2
