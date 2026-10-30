@@ -1821,16 +1821,24 @@ void force_add_element_to_tree(int iparent, int ichild)
     /* The child's speed bound goes up its whole chain, to the top-level node other ranks route by; the
      * parent's node alone would let it outrun every ancestor box until its first kick or the next build. */
     gravity_note_inserted_motion_bound(ichild);
-    // update parent node property [maximum softening] for opening criteria
-    MyFloat new_hmax = DMAX(Extnodes[father].hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[iparent].KernelRadius, All.MaxKernelRadius));
+    /* update parent node property [maximum kernel radius] for opening criteria. The bound must
+     * cover the CHILD's kernel: for a sink-spawn call the parent is the sink, whose kernel radius is
+     * the wrong particle's, so the old form both missed a larger gas child and put sink kernels
+     * into the gas band. The miss is the direction that breaks neighbour-search completeness.
+     * Scalar-band eligibility follows force_update_hmax: gas only, every type under AGS-FORALL. */
+#if defined(ADAPTIVE_GRAVSOFT_FORALL)
+    const int child_scalar_eligible = 1;
+#else
+    const int child_scalar_eligible = (P[ichild].Type == 0);
+#endif
+    MyFloat new_hmax = Extnodes[father].hmax;
+    if(child_scalar_eligible) {new_hmax = DMAX(new_hmax, (MyFloat) moment_gas_hmax_from_kernelradius(P[ichild].KernelRadius, All.MaxKernelRadius));}
     Extnodes[father].hmax = new_hmax;
-    /* Mode B per-type incremental update — only the band corresponding to
-     * iparent's type. Other bands unchanged (correct: this insertion adds
-     * one particle, only its type's band can grow). Conservative across every
-     * leaf-policy-selectable source via the shared helper. */
+    /* Mode B per-type incremental update: only the band of the CHILD's type can grow from this
+     * insertion. Conservative across every leaf-policy-selectable source via the shared helper. */
     {
-        int ptype = (int)P[iparent].Type;
-        double htmp = force_hmax_per_type_particle_radius(iparent);
+        int ptype = (int)P[ichild].Type;
+        double htmp = force_hmax_per_type_particle_radius(ichild);
         if(htmp > Extnodes[father].hmax_per_type[ptype]) {
             Extnodes[father].hmax_per_type[ptype] = (MyFloat)htmp;
         }
