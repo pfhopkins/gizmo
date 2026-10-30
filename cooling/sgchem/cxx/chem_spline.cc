@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_spline.cc -- port of the SGCHEM spline layer (spline.F) and of the
 // four genuinely table/spline-driven cooling entries cl1, cl2, cl3, cl6.
 //

@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_backend_cxx.cc -- the PURE C++ SGCHEM backend (Gate 3).
 //
 // This translation unit is what replaces chem_backend_fortran.cc on the

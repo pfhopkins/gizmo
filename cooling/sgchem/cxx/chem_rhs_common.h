@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_rhs_common.h -- shared RHS helpers for the net-5 / net-15 / net-17 ports.
 //
 // validate_input (validate_rates.F:9-77) ported per audit R3 REDESIGN:

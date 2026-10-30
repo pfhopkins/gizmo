@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 /* cooling/sgchem/chem_interface.h
  *
  * GATE 0 of the SGCHEM C++/CVODE migration (strangler plan; see

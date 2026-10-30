@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_net18.h -- network 18: non-equilibrium ions of H, He, C, N, O, Ne, Mg, Si, S, Fe with RTZ rates and
 // cooling, all stages and the temperature integrated together in CVODE.  Provenance: DEVIATIONS.md D-51.
 #ifndef CHEM_NET18_H

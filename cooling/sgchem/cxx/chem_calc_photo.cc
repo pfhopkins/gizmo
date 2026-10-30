@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_calc_photo.cc -- Gate-3 port of calc_photo.F.
 //
 //   chi                         (calc_photo.F:683-735)

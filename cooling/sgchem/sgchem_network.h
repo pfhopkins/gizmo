@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 /* Per-network species facts used on the C side of SGCHEM: molecular weights of the tracked species (TracAbund, n_X/n_H),
    and, with chem_interface.h included first, the electrons per H, the photoionized (HII) state and the element-pool clamps.
    Networks 5 and 17 reproduce the code these replace; 3 and 15 follow their rate_eq files (rate_eq_mol.F, rate_eq_nl99.F). */

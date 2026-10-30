@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_rhs_net15.cc -- verbatim-in-structure port of rate_eq_nl99.F
 // (CHEMISTRYNETWORK=15, Nelson & Langer 1999 CO network; KOYAMA branch not ported).
 //

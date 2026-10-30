@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_calc_temp.cc -- Gate-3 port of calc_temp.F and compute_gamma.F.
 //
 //   lookup_temp_gamma  (calc_temp.F:159-211)  -- the T/gamma table lookup used

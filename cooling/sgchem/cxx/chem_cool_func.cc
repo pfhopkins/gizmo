@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_func.cc -- Gate-3 port of cool_func.F (all 28 radiative
 // heating/cooling rates) and of get_coolrates_wssCIE (wss_z_collis.F).
 //

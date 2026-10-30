@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_rhs_net17.cc -- verbatim-in-structure port of rate_eq_ulli.F
 // (CHEMISTRYNETWORK=17) + comp_equilib.
 // Source: /orion/ptmp/uli/orion/test/gizmo/cooling/sgchem/rate_eq_ulli.F

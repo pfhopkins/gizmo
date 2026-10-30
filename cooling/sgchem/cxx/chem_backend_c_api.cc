@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_backend_c_api.cc -- plain-C entry points so a C driver (onezone3.c)
 // can drive the C++/CVODE chemistry backend.
 //

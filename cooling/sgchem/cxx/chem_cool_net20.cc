@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_net20.cc -- network 20 (TIGRESS-NCR): rates, equilibrium species, heating, cooling,
 // dust temperature and the frozen per-cell radiation inputs.  Equation map: DEVIATIONS.md D-29.
 

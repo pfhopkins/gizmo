@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_tables_build.cc -- Gate-3 port of the SGCHEM table layer:
 //
 //   coolinmo.F              -> cltab / dtcltab, the CO+H2O spline tables,

@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // cvode_driver.cc -- port of evolve_abundances.F (driver loop, TNOCHEM bypass,
 // check_abundances, init_tolerances) on SUNDIALS CVODE (BDF + dense internal
 // difference-quotient Jacobian == DVODE mf=22).

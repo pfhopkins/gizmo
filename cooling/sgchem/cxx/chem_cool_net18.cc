@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_net18.cc -- network 18: RTZ (mem_opt) ion rates, H2/CO, heating and cooling as a CVODE system.
 // Species per H; neutral stages from the element pools and n_e from the ion charges, so every element and the
 // charge are conserved by construction.  Provenance and changes: DEVIATIONS.md D-51.

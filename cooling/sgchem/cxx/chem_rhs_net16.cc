@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_rhs_net16.cc -- verbatim-in-structure port of rate_eq_gong17.F
 // (CHEMISTRYNETWORK=16, Gong, Ostriker & Wolfire 2017; M is silicon).
 //

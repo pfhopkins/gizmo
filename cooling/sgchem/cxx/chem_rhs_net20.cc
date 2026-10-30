@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_rhs_net20.cc -- network 20 (TIGRESS-NCR) RHS.  y = {x_H2, x_H+, e [erg cm^-3]}.
 // Neutral H, C, O and electrons follow from conservation inside n20_solve_state, so the
 // element and charge budgets close by construction.

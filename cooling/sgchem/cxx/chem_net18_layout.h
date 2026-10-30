@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 /* chem_net18_layout.h -- network 18 (RTZ metal ions) species layout; plain C, shared by GIZMO and the C++ backend.
  * TracAbund (n_X/n_H): 0 H2, 1 H+, 2 CO, 3-5 He0-He2, then every stage 0..Z of C N O Ne Mg Si S Fe.
  * ODE: 0 H2, 1 H+, 2 CO, then Z slots per element He..Fe (all stages but one reference stage, which follows

@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_backend_fortran.cc -- Gate-2 leaf-kernel + table binding layer.
 //
 // See DEVIATIONS.md D-0 for the scope decision.  Short version: Gate 2 ports

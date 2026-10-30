@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_rhs_net3.cc -- verbatim-in-structure port of rate_eq_mol.F
 // (CHEMISTRYNETWORK=3, Glover+10 molecular network) + comp_equilib.
 //

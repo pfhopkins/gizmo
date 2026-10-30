@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_net18_tables.h -- network 18 rate tables (RTZ), read at start-up from the installed sgchem_net18_tables.bin:
 // the arrays below, in this order, as little-endian float64; content hash checked with the other chemistry tables.
 #ifndef CHEM_NET18_TABLES_H

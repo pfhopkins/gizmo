@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_types.h -- Gate-2 shared interface for the SGCHEM C++/CVODE port.
 //
 // Design contract (see /orion/ptmp/uli/orion/stella/SGCHEM_CONTROL_FLOW_AUDIT.md §7):

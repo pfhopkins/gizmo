@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_gizmo_backend.cc -- the C++ backend entry points that GIZMO calls.
 //
 // ChemCell is filled straight from struct ChemInputs; init, tables, calc_photo,

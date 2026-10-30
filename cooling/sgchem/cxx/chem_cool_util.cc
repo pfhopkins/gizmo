@@ -1,3 +1,5 @@
+/* C++ implementation: Ulrich Steinwandel (uli@mpa-garching.mpg.de).
+   Based on the SGChem Fortran networks by Simon Glover (GNU GPL, as distributed in Arepo). */
 // chem_cool_util.cc -- Gate-3 port of cool_util.F.
 //
 // Ported here, in the order they appear in the Fortran:
