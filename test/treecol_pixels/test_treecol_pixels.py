@@ -219,6 +219,36 @@ def test_columns_unsoftened(tables):
         assert np.median(d) <= 1e-2 and np.percentile(d, 99) <= 5e-2, (s, np.median(d), np.percentile(d, 99))
 
 
+def slab_ics(L=8.0, z0=4.5, n_xy=20, n_z=9):
+    """n_H ~ 1e3 slab z in [z0, L] (N_H ~ 1e22 through it), sparse fill below, one 40 Msun star 3 pc in front of the face"""
+    g = (np.arange(n_xy) + 0.5) * L / n_xy; zs = z0 + (np.arange(n_z) + 0.5) * (L - z0) / n_z
+    slab = np.array(np.meshgrid(g, g, zs, indexing="ij")).reshape(3, -1).T
+    gf = (np.arange(6) + 0.5) * L / 6; zf = (np.arange(3) + 0.5) * z0 / 3
+    fill = np.array(np.meshgrid(gf, gf, zf, indexing="ij")).reshape(3, -1).T
+    return np.vstack([slab, fill])
+
+
+def test_slab_shielding(tables):
+    """cells deep in a slab lit by one star (N_H >~ 5e21 toward it) are shielded by the pixel columns: after 20 steps of
+    chemistry (0.15 Myr) their H2 fraction exceeds 1e-2 and 30x that of the lit face (cells on the star's axis; off-axis
+    face cells see the star through a 57 degree pixel that also holds slab gas)"""
+    tab = Tables(tables["StellarTablesFile"])
+    L, z0 = 8.0, 4.5
+    pos = slab_ics(L, z0)
+    lM, lZ = np.log10(40.0), np.log10(0.0142)
+    star = (40.0, tab._i2(tab.t_pms, lM, lZ) + 0.3 * tab._i2(tab.life, lM, lZ), np.array([4.0, 4.0, 1.5]))
+    exe = build("pix12_step20", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12", "TEST_DUMP_TREECOL_PIXELS_AT_STEP=20"))
+    out = run(exe, "slab", tables, L, pos, [star], gas_mass=1.0, hsml=0.6,
+              overrides={"TimeMax": 1.0, "MaxSizeTimestep": 0.01, "SGChemBackgroundG0": 1.7, "SGChemCosmicRayIonRate": 3.0e-17})
+    cells = load(out, "cells"); z = cells[:, -1]
+    axis = (np.abs(cells[:, -3] - 4.0) < 1.2) & (np.abs(cells[:, -2] - 4.0) < 1.2)
+    x_h2 = cells[:, 2] * 1.4 / (2.0 * 1.0)  # H2 mass of a 1 Msun cell, per H nucleus
+    t = np.loadtxt(out / "treecol_dump_stars_0.txt", ndmin=2)[0, 1]
+    face, deep = x_h2[axis & (z > z0) & (z < z0 + 0.4)].mean(), x_h2[axis & (z > z0 + 2.0)].mean()
+    print(f"t = {t * 0.978:.3f} Myr: x_H2 face {face:.2e}, deep {deep:.2e}")
+    assert deep >= 30 * face and deep > 1e-2, (face, deep)
+
+
 @pytest.mark.parametrize("ranks,threads", [(2, 2), (1, 4)])
 def test_host_equals_device(tables, ranks, threads):
     runs = {}
