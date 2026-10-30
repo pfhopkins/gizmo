@@ -229,6 +229,18 @@ struct SinkFeedDeviceContext : NeighborLoopDeviceContextBase {
  * salts above).
  * ========================================================================== */
 
+/* Picks which of two sinks that cannot be ordered by mass acts on the other, the same way from
+ * either side. Identifiers may repeat, so the tie is broken on the wrapped separation j - i, which is
+ * antisymmetric: the first axis on which it is nonzero is negative for exactly one of the pair. All
+ * three zero is r2 == 0, which the caller excludes. */
+KOKKOS_INLINE_FUNCTION
+static int sink_merger_tiebreak_this_side(const Vec3<double>& dpos)
+{
+    if(dpos[0] != 0) return dpos[0] < 0;
+    if(dpos[1] != 0) return dpos[1] < 0;
+    return dpos[2] < 0;
+}
+
 KOKKOS_INLINE_FUNCTION
 static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
                                   const SinkFeedCallScalars& scalars,
@@ -313,11 +325,17 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
 #endif
 
     /* ---- sink-sink merger check ---- */
+#ifndef DISABLE_SINK_MERGERS
     if(neighbor_particle.Type == 5) {
         /* Identity is a separation of zero: IDs are not unique, so the identifier half of this test
-         * did nothing the distance does not already do, and could only mis-fire. */
-        if((r2 > 0) &&
-           (SwallowID_j == 0) && (neighbor_particle.Sink_Mass < local.Sink_Mass)) {
+         * did nothing the distance does not already do, and could only mis-fire.
+         * The more massive sink swallows the other. An exact tie must still admit one side: with a
+         * strict '<' neither direction passed and the block below, including its own tie-break, was
+         * unreachable, so two sinks that had not yet accreted (bit-identical seed mass from a glass
+         * or grid IC) could never merge. */
+        if((r2 > 0) && (SwallowID_j == 0) &&
+           ((neighbor_particle.Sink_Mass < local.Sink_Mass) ||
+            ((neighbor_particle.Sink_Mass == local.Sink_Mass) && sink_merger_tiebreak_this_side(dpos)))) {
 #ifdef SINGLE_STAR_SINK_DYNAMICS
             /* volatile per [[feedback_gpu]] §D.3 (nvc++ device-lambda
              * const-prop bug on int gate vars assigned conditionally —
@@ -326,16 +344,8 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             if(r >= 1.0001 * neighbor_particle.Min_Distance_to_Sink)  allow_sink_merger = 0;
             if(r >= heff_j)                                            allow_sink_merger = 0;
             if(neighbor_particle.Mass > local.Mass)                    allow_sink_merger = 0;
-            /* Two sinks of exactly equal mass need one of them picked, the same way on both sides.
-             * Ordering on the identifier cannot do that when identifiers repeat -- it left this
-             * gate OPEN on both, so each swallowed the other.  The wrapped separation is
-             * antisymmetric, so the first axis on which it is nonzero is positive for exactly one
-             * of the pair; all three zero is r2 == 0, already excluded above. */
-            if(neighbor_particle.Mass == local.Mass) {
-                if(dpos[0] != 0)      {if(dpos[0] > 0) {allow_sink_merger = 0;}}
-                else if(dpos[1] != 0) {if(dpos[1] > 0) {allow_sink_merger = 0;}}
-                else if(dpos[2] > 0)  {allow_sink_merger = 0;}
-            }
+            /* Equal total mass: the same side must be picked as the outer gate picks, so the two agree. */
+            if((neighbor_particle.Mass == local.Mass) && !sink_merger_tiebreak_this_side(dpos)) allow_sink_merger = 0;
             double max_rmerge = scalars.sink_merger_max_radius_factor * sink_radius;
             double max_mmerge = (scalars.sink_merger_max_mass > 0) ? scalars.sink_merger_max_mass
                                                                     : 10. * neighbor_particle.Sink_Formation_Mass;
@@ -370,6 +380,7 @@ static void sink_feed_pair_kernel(const SinkFeedActiveState& active,
             }
         }
     }
+#endif /* DISABLE_SINK_MERGERS */
 
     /* ---- grav-capture check (non-Type5) ---- */
 #if defined(SINK_GRAVCAPTURE_GAS) || defined(SINK_GRAVCAPTURE_NONGAS)

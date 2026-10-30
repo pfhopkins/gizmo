@@ -81,6 +81,11 @@ static inline double merge_kinetic_dissipation_fraction(int i, int j)
 int does_particle_need_to_be_merged(int i)
 {
     if(P[i].Mass <= 0) {return 0;}
+#ifdef PREVENT_PARTICLE_MERGE
+    /* no merging, splitting still allowed (PREVENT_PARTICLE_MERGE_SPLIT disables both): the
+       diffusion-free, finest-resolution reference case. */
+    return 0;
+#endif
 #ifdef PREVENT_PARTICLE_MERGE_SPLIT
     return 0;
 #else
@@ -559,6 +564,11 @@ void merge_and_split_particles(void)
                         }}
 #endif
                     if (P[j].ID==All.SpawnedWindCellID && P[j].Type==0) {m_eff *= 1.0e10;}
+#ifdef SINK_SPAWN_NO_MERGE
+                    /* never merge a spawned cell, in either direction: holds the spawned population fixed so
+                       merged and unmerged outflows can be compared directly. */
+                    if (is_spawned_i || (P[j].ID==All.SpawnedWindCellID && P[j].Type==0)) {do_allow_merger = 0;}
+#endif
 #ifdef SINK_SPAWN_MERGE_WHEN_AMBIENT
                     /* Retire a spawned cell only once it has actually joined the ambient medium, rather
                        than as soon as its velocity relative to one neighbour drops below that neighbour's
