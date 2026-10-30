@@ -41,7 +41,7 @@ void find_timesteps(void)
     CPU_Step[CPU_MISC] += measure_time();
 
     int i, bin, binold, prev, next;
-    integertime ti_step, ti_step_old, ti_min, ti_stepmax, ti_max;
+    integertime ti_step, ti_min, ti_stepmax, ti_max;
     double aphys;
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     int special_particle_active_with_this_index[SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM], j_specialpartical_counter=0;
@@ -125,6 +125,9 @@ void find_timesteps(void)
 
 
     /* Now assign new timesteps  */
+#ifdef DEVELOPER_MODE
+    int n_stale_marker_warnings = 0; /* the stale-marker report below is capped per call: one line per particle would swamp the log */
+#endif
     for (int i : ActiveParticleList)
     {
         domain_record_step_work(i);   /* this step's work, before the timebin below changes */
@@ -216,8 +219,25 @@ void find_timesteps(void)
             P[i].TimeBin = bin;
         }
 
-        ti_step_old = P[i].dt_step;
-        P[i].Ti_begstep += ti_step_old;
+        /* Start the new step at the clock, not at the old step plus its length. Being in
+           ActiveParticleList here IS the statement that the particle is synchronized at
+           All.Ti_Current, so for consistent bookkeeping the two forms are bit-identical. They
+           differ only when something upstream left the marker wrong, and then the incremental
+           form advances faithfully from the wrong origin forever -- there is no other absolute
+           write on this path, so a single bad step is permanent. Downstream that shows up as a
+           Hermite source prediction extrapolated over many times the source's own step, far
+           outside the interpolant's convergence radius. Kick intervals are unaffected: kicks
+           take differences of endpoints derived from the same marker, and this lands between
+           the closing and opening kicks, not inside either. */
+#ifdef DEVELOPER_MODE
+        if(P[i].Ti_begstep + P[i].dt_step != All.Ti_Current)
+        {   /* the absolute write heals silently, so report what it healed -- otherwise the next
+               thing that corrupts the marker is invisible */
+            if(n_stale_marker_warnings < 8) {PRINT_WARNING("find_timesteps: step marker for particle ID=%llu type=%d was %lld ticks from the clock (Ti_begstep=%lld dt_step=%lld Ti_Current=%lld); re-deriving", (unsigned long long)P[i].ID, (int)P[i].Type, (long long)(All.Ti_Current - P[i].Ti_begstep - P[i].dt_step), (long long)P[i].Ti_begstep, (long long)P[i].dt_step, (long long)All.Ti_Current);}
+            n_stale_marker_warnings++;
+        }
+#endif
+        P[i].Ti_begstep = All.Ti_Current;
         P[i].dt_step = ti_step;
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
         if(P[i].Type == 5){
@@ -241,6 +261,10 @@ void find_timesteps(void)
 #endif
         
     }
+
+#ifdef DEVELOPER_MODE
+    if(n_stale_marker_warnings > 8) {PRINT_WARNING("find_timesteps: %d stale step markers re-derived on this task this step (first 8 reported above)", n_stale_marker_warnings);}
+#endif
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
     MPI_Allreduce(xyz_local, xyz_global, 3*SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM, MPI_DOUBLE, MPI_MAX, MPI_COMM_WORLD); // broadcast the new position of the special particle
