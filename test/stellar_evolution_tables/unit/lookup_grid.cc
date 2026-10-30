@@ -52,6 +52,15 @@ int main(int argc, char **argv)
     }
     fclose(fd);
 #endif
+#if defined(GALSF_SINGLE_STARS_TYPE_IA) || defined(GALSF_RESOLVEDISM_TYPE_IA)
+    /* dead white-dwarf-progenitor fraction (Type Ia hazard normalisation) at 40 ages, 10^6.3 to 10^10.5 yr, past both ends of its table */
+    snprintf(fn, sizeof(fn), "%s.ia.%d", argv[2], ThisTask);
+    fd = fopen(fn, "wb");
+    for(int iz = 0; iz < (int)(sizeof(logZs) / sizeof(double)); iz++) {
+        for(int it = 0; it < 40; it++) {W(stellar_ia_fdead(pow(10., 6.3 + it * (10.5 - 6.3) / 39.), logZs[iz]));}
+    }
+    fclose(fd);
+#endif
     if(ThisTask == 0) {printf("lookup_grid: %ld values\n", n);}
     MPI_Finalize();
     return 0;

@@ -72,14 +72,17 @@ def test_lookups(built):
       - lifetime decreases with mass above 2 Msun at every metallicity;
       - every value agrees with the reference implementation to 1e-12 relative (a stored sample of 3719 values; the
         two codes interpolate alike, so on one machine they agree bitwise; across compilers only rounding differs);
-      - both ranks get the same values."""
+      - both ranks get the same values;
+      - the dead white-dwarf-progenitor fraction that normalises the Type Ia hazard (8 metallicities x 40 ages, past both ends of its
+        table) agrees with the reference implementation to 1e-12 relative (all 320 values), lies in [0, 1], never falls with age and
+        is the same on both ranks."""
     import h5py
     import numpy as np
     unit = TEST_DIR / "unit"
     exe, out = unit / "lookup_grid", unit / "lookups"
     src = TEST_DIR.parent.parent / "src" / "galaxy_sf"
     subprocess.run(["bash", str(unit / "build_lookup_grid.sh"), str(src / "stellar_evolution_tables.cc"), str(src / "stellar_evolution_tables.h"),
-                    str(exe), "-DGALSF_SINGLE_STARS_EVOLUTION_TABLES", "-DLOAD_TABLES=stellar_evolution_tables_load"], check=True)
+                    str(exe), "-DGALSF_SINGLE_STARS_EVOLUTION_TABLES", "-DGALSF_SINGLE_STARS_TYPE_IA", "-DLOAD_TABLES=stellar_evolution_tables_load"], check=True)
     subprocess.run(mpi_launch_command(2) + [str(exe), built["StellarTablesFile"], str(out)], check=True, capture_output=True)
     v = np.fromfile(f"{out}.0")
     assert np.fromfile(f"{out}.1").tobytes() == v.tobytes()
@@ -98,3 +101,7 @@ def test_lookups(built):
     ej = np.where(wd, nodes[:, :, 3 + NE:].sum(-1), nodes[:, :, 3:3 + NE].sum(-1))
     assert np.all(np.abs(pre - nodes[:, :, 1] - ej) <= 1e-12 * pre)
     assert np.all(np.diff(nodes[:, M >= 2, 0], axis=1) < 0)
+    ia, ref_ia = np.fromfile(f"{out}.ia.0"), np.loadtxt(unit / "lookup_reference_ia.txt")
+    assert np.fromfile(f"{out}.ia.1").tobytes() == ia.tobytes()
+    assert ia.shape == ref_ia.shape and np.all(np.abs(ia - ref_ia) <= 1e-12 * np.abs(ref_ia) + 1e-300)
+    assert ia.min() >= 0 and ia.max() <= 1 and np.all(np.diff(ia.reshape(8, 40), axis=1) >= 0)
