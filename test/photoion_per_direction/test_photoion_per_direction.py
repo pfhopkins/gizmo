@@ -39,6 +39,8 @@ def run(tag, tables, stars=CENTRE, ranks=1, threads=1, seed=None, overrides=None
     params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
     params = params.replace("BoxSize                            45.0", f"BoxSize                            {L}")
     for k, v in (overrides or {}).items():
+        if not any(l.split() and l.split()[0] == k for l in params.splitlines()):
+            params += f"{k:34s} {v}\n"
         params = "\n".join(f"{k:34s} {v}" if l.split() and l.split()[0] == k else l for l in params.splitlines()) + "\n"
     (d / f"{TEST_NAME}.params").write_text(params + extra)
     with open(d / f"test_{TEST_NAME}.out", "w") as out:
@@ -196,7 +198,7 @@ def test_quiet_steps(built):
     """a 35 Msun star 10 kyr old turns on at its onset (15.3 kyr, the pre-main sequence of the tables). Before, the
     photoionisation does no work and no collective on its ~5 steps, except one count at start-up (unknown sources);
     it solves from the first photoionisation step after the onset. Log column 12: the module's reductions and
-    neighbour-loop calls since the previous row; a solve with one source and p search passes makes 7 + 2 p."""
+    neighbour-loop calls since the previous row; a solve with one source and p search passes makes 7 + 5 p."""
     import h5py
     d, _, _ = run("quiet", built, stars=[(35.0, 1.0e4, (0.5, 0.5, 0.5))],
                   overrides={"MaxSizeTimestep": "1e-3", "PhotoionMaxTimestep": "1000", "TimeMax": "0.03", "TimeBetSnapshot": "0.03", "TimeBetStatistics": "0.03"})
@@ -206,5 +208,17 @@ def test_quiet_steps(built):
         onset = F["t_PMS"][()].reshape(len(Zt), len(Mt))[int(np.argmin(np.abs(Zt - 0.014))), int(np.argmin(np.abs(Mt - 35.0)))]
     t_first = 1.0e4 + rows[0, 0] * PC_KMS_IN_YR
     assert onset <= t_first < onset + 1000.0, (t_first, onset)
-    assert rows[0, 11] == 7 + 2 * rows[0, 8] + 1, rows[0]  # this solve, and the one start-up count
-    assert np.all(rows[1:, 11] == 7 + 2 * rows[1:, 8]), rows[1:, [8, 11]]
+    assert rows[0, 11] == 7 + 5 * rows[0, 8] + 1, rows[0]  # this solve, and the one start-up count
+    assert np.all(rows[1:, 11] == 7 + 5 * rows[1:, 8]), rows[1:, [8, 11]]
+
+
+def test_compact_exchange(built):
+    """the histograms do not travel in the neighbour-loop reply records: four separate stars on 4 ranks with a 0.02 MB
+    communication chunk; no source's export set exceeds a round (the runner's 'cap ineffective' warning, which a 12 kB
+    histogram record per peer triggered), and cells and fronts are those of 1 rank"""
+    four = [(35.0, 1.0e6, x) for x in ((0.25, 0.25, 0.25), (0.75, 0.75, 0.25), (0.25, 0.75, 0.75), (0.75, 0.25, 0.75))]
+    ref = log(run("chunk_r1", built, stars=four)[0])
+    d = run("chunk_r4", built, stars=four, ranks=4, overrides={"CommChunkSize": "0.02"})[0]
+    rows = log(d)
+    assert "cap ineffective" not in (d / f"test_{TEST_NAME}.out").read_text()
+    assert np.array_equal(rows[:, [1, 3, 8]], ref[:, [1, 3, 8]]) and np.allclose(rows[:, [9, 10]], ref[:, [9, 10]], rtol=1e-6, atol=0)
