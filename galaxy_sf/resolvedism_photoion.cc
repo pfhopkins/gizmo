@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
+#include <algorithm>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "resolvedism_star_age.h"
@@ -24,8 +26,8 @@
  * is solved by accumulating each candidate cell's recombination cost
  * (alpha_B X^2 rho M / m_p^2, i.e. its actual density — no mean-density
  * bias) into a radial histogram of PI_NBIN bins per pixel. The histograms
- * are summed across MPI ranks through the standard xchange output-struct
- * reduction, which makes the result INDEPENDENT of the local/remote
+ * are summed across MPI ranks (remote parts sent back sparse after the
+ * sweep, pi_return_partials), which makes the result INDEPENDENT of the local/remote
  * evaluation order: the v1 walk spent the running photon budget on local
  * cells first and shipped only the remainder to remote ranks, so whenever
  * a domain boundary cut the HII region the budget was spent on far local
@@ -171,9 +173,9 @@ static double compute_stromgren_radius_cgs(double S_ly, double nH_cgs)
  * PIDoWalk       : per-star participation flag for the current tree sweep.
  * PIBinCost      : per-slot per-pixel radial recombination-cost histogram
  *                  [nslots * HEALPIX_NPIX * PI_NBIN], MPI-summed via
- *                  out2particle (order-independent).
+ *                  pi_return_partials (order-independent).
  * PIBinRmin      : per-slot per-pixel per-bin minimum cell radius [code units]
- *                  (0 = empty bin), min-combined via out2particle; locates the
+ *                  (0 = empty bin), min-combined via pi_return_partials; locates the
  *                  straddling cell of the crossing bin. */
 static double *PISearchRadius = NULL;
 static double *PIFrontRadius = NULL;
@@ -251,6 +253,7 @@ struct INPUT_STRUCT_NAME
 {
     MyDouble Pos[3], SearchRadius, S_ly;
     MyDouble Front[HEALPIX_NPIX]; /* finalized per-pixel MARKING radii (v3: majority-quantized to crossing-bin edges) [code units] — used by the marking sweep (PIWalkMode=1) */
+    int SrcTask, SrcSlot; /* owner task and histogram slot, to return the remote partial histogram */
     int NodeList[NODELISTLENGTH];
 }
 *DATAIN_NAME, *DATAGET_NAME;
@@ -263,32 +266,77 @@ void particle2in_resolvedismPI(struct INPUT_STRUCT_NAME *in, int i, int loop_ite
      * resolvedism_photoionize); no state is consumed inside the walk, so the
      * export packing order relative to the local evaluation does not matter. */
     in->SearchRadius = (PISearchRadius != NULL) ? PISearchRadius[i] : 0;
+    in->SrcTask = ThisTask; in->SrcSlot = (PISlot != NULL) ? PISlot[i] : -1;
     for(k = 0; k < HEALPIX_NPIX; k++)
         in->Front[k] = (PIFrontMark != NULL) ? PIFrontMark[i * HEALPIX_NPIX + k] : 0; /* v3: marking sweep uses the majority-quantized front, not the fractional one */
 }
 
+/* histograms stay out of the exchange record (12 kB each): remote parts go back sparse via pi_return_partials */
 struct OUTPUT_STRUCT_NAME
 {
-    double BinCost[HEALPIX_NPIX * PI_NBIN]; /* per-pixel radial recombination-cost histogram [photons/s] */
-    double BinRmin[HEALPIX_NPIX * PI_NBIN]; /* per-pixel per-bin minimum cell radius [code units], 0 = empty (v6 straddling-cell round-up) */
-    double NMarked;                         /* cells newly marked ionized (marking sweep diagnostic) */
+    double NMarked; /* cells newly marked ionized (marking sweep diagnostic) */
 }
 *DATARESULT_NAME, *DATAOUT_NAME;
 
-void out2particle_resolvedismPI(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration)
+void out2particle_resolvedismPI(struct OUTPUT_STRUCT_NAME *out, int i, int mode, int loop_iteration) {}
+
+/* add one histogram bin to a slot: cost summed, minimum radius min-combined (order-independent) */
+static inline void pi_add_bin(int slot, int k, double cost, double rmin)
 {
-    if(PIWalkMode != 0) return; /* marking sweep writes gas cells directly; nothing to reduce onto the star */
-    if(PIBinCost == NULL || PISlot == NULL) return;
-    if(PISlot[i] < 0) return;
-    int k;
-    double *bins = &PIBinCost[(size_t)PISlot[i] * HEALPIX_NPIX * PI_NBIN];
-    for(k = 0; k < HEALPIX_NPIX * PI_NBIN; k++) {bins[k] += out->BinCost[k];}
-    /* '+=' over mode 0 and all mode-1 imports: a plain order-independent sum,
-     * unlike the v1 running-budget subtraction. */
-    double *rmins = &PIBinRmin[(size_t)PISlot[i] * HEALPIX_NPIX * PI_NBIN];
-    for(k = 0; k < HEALPIX_NPIX * PI_NBIN; k++) {
-        if(out->BinRmin[k] > 0 && (rmins[k] <= 0 || out->BinRmin[k] < rmins[k])) {rmins[k] = out->BinRmin[k];}
-    } /* min-combine, order-independent like the sum above */
+    PIBinCost[(size_t)slot * HEALPIX_NPIX * PI_NBIN + k] += cost;
+    double *rm = &PIBinRmin[(size_t)slot * HEALPIX_NPIX * PI_NBIN + k];
+    if(rmin > 0 && (*rm <= 0 || rmin < *rm)) {*rm = rmin;}
+}
+
+/* remote partial histograms of this sweep: one record per import, nonzero bins as (bin, cost, rmin) */
+struct pi_partial {int task, slot, seq, nnz; size_t off;};
+static std::vector<pi_partial> PIPartials;
+static std::vector<double> PIPartialBins;
+
+static void pi_store_partial(int task, int slot, int seq, const double *cost, const double *rmin)
+{
+    int k, nnz = 0;
+    for(k = 0; k < HEALPIX_NPIX * PI_NBIN; k++) {if(cost[k] != 0 || rmin[k] > 0) {nnz++;}}
+    if(nnz == 0) return;
+#ifdef _OPENMP
+#pragma omp critical(pi_partials)
+#endif
+    {
+        pi_partial r = {task, slot, seq, nnz, PIPartialBins.size()};
+        PIPartials.push_back(r);
+        for(k = 0; k < HEALPIX_NPIX * PI_NBIN; k++) {if(cost[k] != 0 || rmin[k] > 0) {PIPartialBins.push_back(k); PIPartialBins.push_back(cost[k]); PIPartialBins.push_back(rmin[k]);}}
+    }
+}
+
+/* send the partials to their owners and add them in the order the exchange returned results (task, then export order) */
+static void pi_return_partials(void)
+{
+    int t, n = (int)PIPartials.size();
+    std::vector<int> order(n); for(t = 0; t < n; t++) {order[t] = t;}
+    std::sort(order.begin(), order.end(), [](int a, int b) {
+        const pi_partial &x = PIPartials[a], &y = PIPartials[b];
+        if(x.task != y.task) {return x.task < y.task;}
+        if(x.slot != y.slot) {return x.slot < y.slot;}
+        return x.seq < y.seq;}); /* one star's imports share one chunk, so seq is their export order */
+    std::vector<int> scount(NTask, 0), rcount(NTask, 0), sdisp(NTask, 0), rdisp(NTask, 0);
+    long long ssum = 0, rsum = 0;
+    for(t = 0; t < n; t++) {scount[PIPartials[t].task] += 2 + 3 * PIPartials[t].nnz;}
+    MPI_Alltoall(scount.data(), 1, MPI_INT, rcount.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    for(t = 0; t < NTask; t++) {sdisp[t] = (int)ssum; rdisp[t] = (int)rsum; ssum += scount[t]; rsum += rcount[t];}
+    if(ssum > INT_MAX || rsum > INT_MAX) {endrun(113313);}
+    std::vector<double> sbuf(ssum > 0 ? ssum : 1), rbuf(rsum > 0 ? rsum : 1);
+    size_t m = 0;
+    for(t = 0; t < n; t++) {
+        const pi_partial &r = PIPartials[order[t]];
+        sbuf[m++] = r.slot; sbuf[m++] = r.nnz;
+        memcpy(&sbuf[m], &PIPartialBins[r.off], 3 * (size_t)r.nnz * sizeof(double)); m += 3 * (size_t)r.nnz;
+    }
+    std::vector<pi_partial>().swap(PIPartials); std::vector<double>().swap(PIPartialBins);
+    MPI_Alltoallv(sbuf.data(), scount.data(), sdisp.data(), MPI_DOUBLE, rbuf.data(), rcount.data(), rdisp.data(), MPI_DOUBLE, MPI_COMM_WORLD);
+    for(m = 0; m < (size_t)rsum;) {
+        int slot = (int)rbuf[m++], nnz = (int)rbuf[m++];
+        for(t = 0; t < nnz; t++, m += 3) {pi_add_bin(slot, (int)rbuf[m], rbuf[m+1], rbuf[m+2]);}
+    }
 }
 
 /* base eligibility: massive single star (the >=8 Msun activity gate) */
@@ -322,6 +370,8 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
     struct INPUT_STRUCT_NAME local;
     struct OUTPUT_STRUCT_NAME out;
     memset(&out, 0, sizeof(struct OUTPUT_STRUCT_NAME));
+    double BinCost[HEALPIX_NPIX * PI_NBIN], BinRmin[HEALPIX_NPIX * PI_NBIN]; /* this walk's histogram [photons/s], per-bin minimum radius [code units] */
+    if(PIWalkMode == 0) {memset(BinCost, 0, sizeof(BinCost)); memset(BinRmin, 0, sizeof(BinRmin));}
 
     if(mode == 0) {particle2in_resolvedismPI(&local, target, loop_iteration);} else {local = DATAGET_NAME[target];}
     if(local.S_ly <= 0) return 0;
@@ -378,8 +428,8 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
                     double recomb  = PI_ALPHA_B * HYDROGEN_MASSFRAC * HYDROGEN_MASSFRAC
                                      * rho_cgs * M_cgs / (PROTONMASS_CGS * PROTONMASS_CGS);
 #endif
-                    out.BinCost[ipix * PI_NBIN + b] += recomb;
-                    if(out.BinRmin[ipix * PI_NBIN + b] <= 0 || r < out.BinRmin[ipix * PI_NBIN + b]) {out.BinRmin[ipix * PI_NBIN + b] = r;} /* v6: innermost cell of each bin */
+                    BinCost[ipix * PI_NBIN + b] += recomb;
+                    if(BinRmin[ipix * PI_NBIN + b] <= 0 || r < BinRmin[ipix * PI_NBIN + b]) {BinRmin[ipix * PI_NBIN + b] = r;} /* v6: innermost cell of each bin */
                 }
                 else
                 {
@@ -409,6 +459,10 @@ int resolvedismPI_evaluate(int target, int mode, int *exportflag, int *exportnod
         }
     }
 
+    if(PIWalkMode == 0) {
+        if(mode == 0) {if(PIBinCost != NULL && PISlot != NULL && PISlot[target] >= 0) {for(k = 0; k < HEALPIX_NPIX * PI_NBIN; k++) {pi_add_bin(PISlot[target], k, BinCost[k], BinRmin[k]);}}}
+        else if(local.SrcSlot >= 0) {pi_store_partial(local.SrcTask, local.SrcSlot, target, BinCost, BinRmin);}
+    }
     if(mode == 0) {out2particle_resolvedismPI(&out, target, 0, loop_iteration);} else {DATARESULT_NAME[target] = out;}
     return 0;
 }
@@ -568,6 +622,7 @@ void resolvedism_photoionize(void)
             #include "../system/code_block_xchange_perform_ops_malloc.h"
             #include "../system/code_block_xchange_perform_ops.h"
             #include "../system/code_block_xchange_perform_ops_demalloc.h"
+            pi_return_partials();
         }
 
         /* --- v4 serialization gather: (ID, pos, R) of every still-unfinalized
