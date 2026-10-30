@@ -34,5 +34,10 @@ Checks:
   network only. Without the change the ionised cells stay neutral and cold.
 - `test_quiet_steps`: a 35 Msun star 10 kyr old, onset at 15.3 kyr. Log column 12 counts the module's reductions and
   neighbour-loop calls since the previous row. The first solve comes within one photoionisation step of the onset and
-  costs 11 (7 + 2 per search pass) plus the one source count at start-up. Before the change it cost 16: one reduction on
+  costs 7 + 5 per search pass plus the one source count at start-up. Before the change it cost 16: one reduction on
   each of the 5 photoionisation steps without a source. Ionising onsets ride the existing star-formation reduction.
+- `test_compact_exchange`: the histograms (12 pixels x 64 bins, 12 kB per source) do not travel in the neighbour-loop
+  reply records. The rank holding the cells fills a pool by global source index; the non-empty bins go to the
+  source's rank in one exchange per pass. Four separate stars on 4 ranks with a 0.02 MB communication chunk trigger no
+  'cap ineffective' round (before the change: 2 records of 12.6 kB from one source already exceeded a round), and
+  give the cells and fronts of 1 rank. All other photoion logs are bitwise unchanged by the change.
