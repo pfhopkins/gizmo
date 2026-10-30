@@ -275,6 +275,13 @@ struct global_data_all_processes
      on steps that keep the existing decomposition. */
   double TreeRebuild_ActiveFraction;	/*!< rebuild the gravity tree once this fraction of the system is active */
   double DomainBuild_ActiveFraction;	/*!< redo the domain decomposition once this fraction of the system is active */
+  /* Adaptive load-balance weights: exponential moving averages over the decomposition history
+     (domain_update_adaptive_weights). Cross-step state, kept in All so a resume carries them: reset to
+     their seeds, the next split lands on different topnode boundaries and every rank gets a different
+     particle set. */
+  double DomainFacWork;		/*!< weight for gravity work */
+  double DomainFacWorkGas;	/*!< weight for hydro work (0 when no gas is present) */
+  double DomainFacLoad;		/*!< weight for particle count (memory) */
 #ifdef MHD_MODIFIED_GRADIENT
   double ActiveFractionForMGSweep;  /*!< minimum active gas fraction to trigger the global MG div(B) solve; on smaller timesteps the local CG correction is used instead */
   int Flag_SkipMGSolve;             /*!< per-timestep flag: 1 = skip MG global solve this step (use CG fallback), 0 = run MG */

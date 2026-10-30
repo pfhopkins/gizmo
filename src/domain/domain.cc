@@ -95,12 +95,10 @@ static double *list_workgas;
 extern int old_MaxPart, new_MaxPart;
 #define N_DOMAINDECOMP_QUEUES 4
 
-/* Adaptive domain balance weights: these are updated after each decomposition based
-   on measured imbalance, following the GADGET-4 approach of dynamically adjusting
-   the relative importance of work vs memory balance. */
-static double domain_fac_work = 0.5;    /* weight for gravity work */
-static double domain_fac_workgas = 0.0; /* weight for hydro work (set >0 when gas is present) */
-static double domain_fac_load = 0.5;    /* weight for particle count (memory) */
+/* The adaptive domain balance weights (All.DomainFacWork/WorkGas/Load) are updated after each
+   decomposition from the measured imbalance, following the GADGET-4 approach of dynamically adjusting
+   the relative importance of work vs memory balance. They live in All, not here: they are moving
+   averages over the decomposition history, and a resume that reset them would split differently. */
 
 static struct local_topnode_data
 {
@@ -1624,17 +1622,17 @@ void domain_update_adaptive_weights(void)
     target_workgas /= target_total;
 
     /* exponential moving average update */
-    domain_fac_work = (1.0 - alpha) * domain_fac_work + alpha * target_work;
-    domain_fac_load = (1.0 - alpha) * domain_fac_load + alpha * target_load;
-    domain_fac_workgas = (1.0 - alpha) * domain_fac_workgas + alpha * target_workgas;
+    All.DomainFacWork = (1.0 - alpha) * All.DomainFacWork + alpha * target_work;
+    All.DomainFacLoad = (1.0 - alpha) * All.DomainFacLoad + alpha * target_load;
+    All.DomainFacWorkGas = (1.0 - alpha) * All.DomainFacWorkGas + alpha * target_workgas;
 
     /* ensure minimum floor */
-    if(domain_fac_work < eps) domain_fac_work = eps;
-    if(domain_fac_load < eps) domain_fac_load = eps;
+    if(All.DomainFacWork < eps) All.DomainFacWork = eps;
+    if(All.DomainFacLoad < eps) All.DomainFacLoad = eps;
 
     if(ThisTask == 0) {
         printf("Domain adaptive weights: work=%.3f  load=%.3f  workgas=%.3f  (imbalance: work=%.3f load=%.3f gas=%.3f)\n",
-               domain_fac_work, domain_fac_load, domain_fac_workgas, imbal_work, imbal_load, imbal_workgas);
+               All.DomainFacWork, All.DomainFacLoad, All.DomainFacWorkGas, imbal_work, imbal_load, imbal_workgas);
     }
 }
 
@@ -1779,9 +1777,9 @@ int domain_decompose(void)
 
     /* update adaptive weights for next decomposition based on current imbalance */
     if(ThisTask == 0) {domain_update_adaptive_weights();}
-    MPI_Bcast(&domain_fac_work, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&domain_fac_load, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-    MPI_Bcast(&domain_fac_workgas, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&All.DomainFacWork, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&All.DomainFacLoad, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&All.DomainFacWorkGas, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
 
     /* flag the particles that need to be exported */
 
@@ -2226,19 +2224,19 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
     }
  
       /* Use adaptive weights that are updated after each decomposition based on measured
-         imbalance (GADGET-4 approach). The static variables domain_fac_work/workgas/load
-         are adjusted in domain_update_adaptive_weights() after each decomposition. */
+         imbalance (GADGET-4 approach). All.DomainFacWork/WorkGas/Load are adjusted in
+         domain_update_adaptive_weights() after each decomposition. */
       if(workgas <= 0) {
           /* no gas work: redistribute gas weight to gravity and load */
-          double total = domain_fac_work + domain_fac_load + domain_fac_workgas;
-          fac_work = (domain_fac_work + 0.5 * domain_fac_workgas) / (total * work);
-          fac_load = (domain_fac_load + 0.5 * domain_fac_workgas) / (total * load);
+          double total = All.DomainFacWork + All.DomainFacLoad + All.DomainFacWorkGas;
+          fac_work = (All.DomainFacWork + 0.5 * All.DomainFacWorkGas) / (total * work);
+          fac_load = (All.DomainFacLoad + 0.5 * All.DomainFacWorkGas) / (total * load);
           fac_workgas = 0.0;
       } else {
-          double total = domain_fac_work + domain_fac_load + domain_fac_workgas;
-          fac_work = domain_fac_work / (total * work);
-          fac_load = domain_fac_load / (total * load);
-          fac_workgas = domain_fac_workgas / (total * workgas);
+          double total = All.DomainFacWork + All.DomainFacLoad + All.DomainFacWorkGas;
+          fac_work = All.DomainFacWork / (total * work);
+          fac_load = All.DomainFacLoad / (total * load);
+          fac_workgas = All.DomainFacWorkGas / (total * workgas);
       }
 
   workavg = 1.0 / ncpu;

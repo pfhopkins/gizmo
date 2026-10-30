@@ -24,6 +24,29 @@ static ChimesFloat *gasAbundancesBuf;
 static void in(int *x, int modus);
 static void byten(void *x, size_t n, int modus);
 
+/* Restartfile layout sentinel (see restart()). The magic distinguishes a header from the leading bytes
+   of an All struct written by a pre-sentinel binary. Struct sizes are checked automatically; bump
+   RESTARTFILE_LAYOUT_VERSION whenever a byten() field is added or removed in restart() without a struct
+   size changing. Version 1 is the layout the sentinel arrived with, which also changed All and the list
+   of serialized globals, so no header-less file matches it. */
+#define RESTARTFILE_MAGIC 0x52535446u
+#define RESTARTFILE_LAYOUT_VERSION 1u
+struct restart_layout_header {unsigned int magic, layout_version; unsigned long long size_all, size_p, size_cell;};
+
+static struct restart_layout_header restart_layout_header_of_this_binary(void)
+{
+    struct restart_layout_header hdr = {RESTARTFILE_MAGIC, RESTARTFILE_LAYOUT_VERSION,
+        (unsigned long long) sizeof(struct global_data_all_processes), (unsigned long long) sizeof(struct particle_data), (unsigned long long) sizeof(struct gas_cell_data)};
+    return hdr;
+}
+
+/*! Reads the layout header at the start of f. Returns 1 when one is present (f is left past it), 0 when
+ *  the bytes there are not a header: a pre-sentinel file, which begins with All. */
+static int restart_read_layout_header(FILE *f, struct restart_layout_header *hdr)
+{
+    return (fread(hdr, sizeof(*hdr), 1, f) == 1 && hdr->magic == RESTARTFILE_MAGIC);
+}
+
 int old_MaxPart = 0, new_MaxPart;
 
 
@@ -60,7 +83,10 @@ long long peek_total_particles_in_restart(void)
             if((f = fopen(path, "r")))
             {
                 struct global_data_all_processes stored;
-                if(fread(&stored, sizeof(stored), 1, f) == 1) {total = (long long) stored.TotNumPart;}
+                struct restart_layout_header hdr;
+                /* The header sits before All; a file without one or with a different All would misread
+                   here, so leave it unreadable for restart() to explain. */
+                if(restart_read_layout_header(f, &hdr) && hdr.size_all == (unsigned long long) sizeof(stored) && fread(&stored, sizeof(stored), 1, f) == 1) {total = (long long) stored.TotNumPart;}
                 fclose(f);
             }
         }
@@ -219,7 +245,35 @@ void restart(int modus)
 
 	  save_PartAllocFactor = All.PartAllocFactor;
 
-	  /* common data (skip if the file failed to open -- fd is NULL) */
+	  /* Layout sentinel. What follows is a raw byte image of All, P, CellP and a hand-picked list of
+	     globals, so any change to those structs or to that list makes older restartfiles unreadable --
+	     and without this header they misread silently (every later field shifted) or crash somewhere far
+	     downstream. Written first; on read a missing or different header is a clean, explained stop.
+	     (Skipped if the file failed to open.) */
+	  if(!restart_status)
+	    {
+	      struct restart_layout_header want = restart_layout_header_of_this_binary(), hdr = want;
+	      if(modus == 0) {byten(&hdr, sizeof(hdr), modus);}
+	      else if(!restart_read_layout_header(fd, &hdr))
+		{
+		  /* No header: written before the sentinel existed, and the layout changed with it, so no such
+		     file matches this build. */
+		  printf("Restart file '%s' carries no layout header: it was written before this build's restartfile layout and cannot be read by it. "
+			 "Resume with the binary that wrote it, or restart from a snapshot.\n", buf);
+		  fflush(stdout);
+		  endrun(7879); restart_status = 7879;   /* soft: skip this rank's payload, drain at the per-turn poll */
+		}
+	      else if(hdr.layout_version != want.layout_version || hdr.size_all != want.size_all || hdr.size_p != want.size_p || hdr.size_cell != want.size_cell)
+		{
+		  printf("Restart file '%s' was written with a different data layout (file/binary: layout version %u/%u, sizeof All %llu/%llu, P %llu/%llu, CellP %llu/%llu). "
+			 "Restartfiles are byte images and do not survive changes to these structures: resume with the binary that wrote them, or restart from a snapshot.\n",
+			 buf, hdr.layout_version, want.layout_version, hdr.size_all, want.size_all, hdr.size_p, want.size_p, hdr.size_cell, want.size_cell);
+		  fflush(stdout);
+		  endrun(7879); restart_status = 7879;   /* soft: skip this rank's payload, drain at the per-turn poll */
+		}
+	    }
+
+	  /* common data (skip if the file failed to open or its layout header disagrees) */
 	  if(!restart_status)
 	    {
 	      byten(&All, sizeof(struct global_data_all_processes), modus);
@@ -454,6 +508,15 @@ void restart(int modus)
 	  byten(&StTPrev, sizeof(StTPrev),modus);
 	  byten(&StTUpdatedAt, sizeof(StTUpdatedAt),modus);
 #endif
+
+	  /* Cross-step tree/domain request state. Plain globals, not in All, so without this a request
+	     raised during the step that wrote the file vanished on resume: the ladder at the top of the next
+	     step consumes these, and the resume-path tree build in run() does not clear or repair them.
+	     DomainExtentOutgrownLocal is rank-local, as is this file. */
+	  byten(&TreeReconstructFlag, sizeof(TreeReconstructFlag), modus);
+	  byten(&DomainReconstructFlag, sizeof(DomainReconstructFlag), modus);
+	  byten(&TreeMomentsStaleFlag, sizeof(TreeMomentsStaleFlag), modus);
+	  byten(&DomainExtentOutgrownLocal, sizeof(DomainExtentOutgrownLocal), modus);
 
 	  /* write flags for active timebins */
 	  byten(TimeBinActive, TIMEBINS * sizeof(int), modus);
