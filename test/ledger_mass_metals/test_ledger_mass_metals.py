@@ -8,6 +8,8 @@ remnant); 2 ranks, 0.29 Myr, a ledger row at each of 6 snapshots.
       ejecta delivered to gas = ejecta taken from the stars, for mass and metals;
       MZ_stars - MZ_stars,0 = MZ formed - MZ lost by stars; MZ_gas - MZ_gas,0 = MZ delivered to gas - MZ formed;
     and the state rows equal the snapshot sums (1e-12).
+  test_ledger_feedback_energy: the ejecta energy booked from the tables (1/2 dm v_ej^2) against the energy the feedback
+    loop gives the gas (heat now, heat to the deferred branch, kinetic); the residual is reported per row (bar 5 %).
 """
 import os
 import shutil
@@ -99,3 +101,19 @@ def test_ledger_mass_metals(ledger):
         zg, zs = f["PartType0/Metallicity"][:, 0], f["PartType4/Metallicity"][:, 0]
     np.testing.assert_allclose([b["M_gas_Msun"][-1], b["M_stars_Msun"][-1], b["MZ_gas_Msun"][-1], b["MZ_stars_Msun"][-1]],
                                [mg.sum(), ms.sum(), (mg * zg).sum(), (ms * zs).sum()], rtol=1e-12)
+
+
+def test_ledger_feedback_energy(ledger):
+    """the energy the single stars' ejecta carry (1/2 dm v_ej^2 per coupled event, as the loop is asked to couple)
+    against what the feedback loop gives the gas: heat now, heat sent to the deferred DtInternalEnergy branch, kinetic"""
+    b, _, _ = ledger
+    need = ("E_single_star_ejecta_erg", "E_fb_thermal_now_erg", "E_fb_thermal_deferred_erg", "E_fb_kinetic_erg")
+    assert all(k in b for k in need), f"ledger columns: {sorted(b)}"
+    booked = b["E_single_star_ejecta_erg"]
+    coupled = b["E_fb_thermal_now_erg"] + b["E_fb_thermal_deferred_erg"] + b["E_fb_kinetic_erg"]
+    for k in range(len(booked)):
+        print(f"t = {b['time'][k]:.2f}: ejecta {booked[k]:.6e} erg; to gas: heat now {b['E_fb_thermal_now_erg'][k]:.4e}, "
+              f"deferred {b['E_fb_thermal_deferred_erg'][k]:.4e}, kinetic {b['E_fb_kinetic_erg'][k]:.4e}; "
+              f"residual (gas - ejecta) / ejecta {coupled[k] / booked[k] - 1:+.3e}")
+    assert booked[-1] > 0 and np.all(np.diff(booked) >= 0)
+    assert np.all(np.abs(coupled / booked - 1) < 0.05)  # the loop's relative-velocity and momentum terms, not a gap

@@ -10,6 +10,7 @@ at the first step, a young 8 Msun star losing wind mass, a 3 Msun star dying on 
 
 | test | checks |
 |---|---|
+| `test_ledger_feedback_energy` | ejecta energy booked from the tables (1/2 dm v_ej^2 per coupled event) against heat now, heat to the deferred `DtInternalEnergy` branch and kinetic energy given to the gas; residual reported per row, bar 5 % |
 | `test_ledger_mass_metals` | every row closes, relative to the total mass and metal mass (1e-12): star and gas mass and metal changes = their bookings; ejecta delivered to gas = ejecta taken from stars; state rows = snapshot sums |
 
 Inputs: `SUNDIALS_DIR`; stellar and chemistry tables from `GIZMO_STELLA_TABLES_DIR` (else installed by
