@@ -1781,6 +1781,9 @@
 #endif
 
 
+#if defined(SGCHEM_DGR_INDEPENDENT_OF_METALLICITY) && !defined(SGCHEM)
+#error "SGCHEM_DGR_INDEPENDENT_OF_METALLICITY needs SGCHEM"
+#endif
 #ifdef SGCHEM /* SGChem chemistry (cooling/sgchem/) */
 #if defined(CHIMES)
 #error "SGCHEM and CHIMES are exclusive (one SUNDIALS per build)"

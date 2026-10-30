@@ -6,6 +6,10 @@
 #include "sgchem_config.h"
 
 /* relative to the Milky Way at solar metallicity, scaled with the cell metallicity Z, capped at 10 */
+#ifdef SGCHEM_DGR_INDEPENDENT_OF_METALLICITY
+KOKKOS_INLINE_FUNCTION double sgchem_dust_to_gas_ratio(double Z) {return fmin(All.SGChemDustToGasRatio, 10.0);} /* the same at every Z */
+#else
 KOKKOS_INLINE_FUNCTION double sgchem_dust_to_gas_ratio(double Z) {return fmin(All.SGChemDustToGasRatio * Z / SGCHEM_SOLAR_Z, 10.0);}
+#endif
 
 #endif
