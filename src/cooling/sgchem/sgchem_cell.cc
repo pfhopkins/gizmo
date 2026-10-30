@@ -9,6 +9,7 @@
 #include "chem_interface.h"
 #include "sgchem_network.h"
 #include "sgchem_dust_to_gas.h"
+#include "../../gravity/gravtree_treecol_pixels.h"
 #if CHEMISTRYNETWORK == 18
 #include "cxx/chem_net18_layout.h"
 #endif
@@ -46,6 +47,35 @@ static void sgchem_gas_abundances(int i, struct ChemInputs *in)
 #endif
 }
 
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+/* the gravity walk's pixel columns (dust-weighted, H2, CO) as chemistry inputs [cm^-2]; dust columns divided by the local
+   dust-to-gas ratio (the chemistry multiplies it back), zero where there is no dust */
+static void sgchem_treecol_columns(int i, struct ChemInputs *in)
+{
+    double to_cgs = UNIT_DENSITY_IN_CGS * UNIT_LENGTH_IN_CGS * All.cf_a2inv; /* code surface density to g cm^-2 */
+    for(int k = 0; k < NPIX; k++)
+    {
+        double col_dust = CellP[i].TreeColColumn[TREECOL_PIXELS_DUST][k] * to_cgs / ((1.0 + 4.0 * ABHE) * PROTONMASS_CGS);
+        in->column_density_projection[k] = (in->dust_to_gas_ratio > 1.0e-10) ? col_dust / in->dust_to_gas_ratio : 0;
+        in->column_density_projection_h2[k] = CellP[i].TreeColColumn[TREECOL_PIXELS_H2][k] * to_cgs / (2.0 * PROTONMASS_CGS);
+        in->column_density_projection_co[k] = CellP[i].TreeColColumn[TREECOL_PIXELS_CO][k] * to_cgs / (28.0 * PROTONMASS_CGS);
+    }
+}
+#endif
+
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+/* the unattenuated stellar field of cell i from the gravity walk, as stella_dev: each 6-13.6 eV pixel floored at
+   0.324e-2 SGChemBackgroundG0 / NPIX Habing, the pixel weights fac_uv, G0 / G0_LW / band-resolved G0_dust */
+struct ChemFUVField sgchem_treecol_field(int i, double *fac_uv)
+{
+    double floor_pix = 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS, u_uv = 0, u_pix[NPIX];
+    for(int k = 0; k < NPIX; k++) {u_pix[k] = DMAX(CellP[i].TreeColEgyUV[k], floor_pix); u_uv += u_pix[k];}
+    for(int k = 0; k < NPIX; k++) {fac_uv[k] = (u_uv > 0) ? u_pix[k] / u_uv : 1.0 / NPIX;}
+    return chem_fuv_field_from_band_energy(u_uv, HABING_EGY_DENSITY_6_13P6EV_CGS, CellP[i].TreeColEgyLW, CellP[i].TreeColEgyNUV,
+                                           CellP[i].TreeColEgyOPT, 1, 1, 0.324e-2 * All.SGChemBackgroundG0);
+}
+#endif
+
 /* evolves cell i from specific energy u_code over dt_code [code units]; writes TracAbund, Temp, DustTemp, Ne; returns the new u */
 static double sgchem_cell_step(int i, double u_code, double dt_code)
 {
@@ -59,7 +89,11 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
 #endif
     sgchem_gas_abundances(i, &in);
     in.abundD = All.SGChemDeuteriumAbundance;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
+    struct ChemFUVField fuv = sgchem_treecol_field(i, in.fac_uv); /* the stars' field from the gravity walk */
+#else
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
+#endif
     in.G0 = fuv.G0; in.G0_LW = fuv.G0_LW; in.G0_dust = fuv.G0_dust;
     in.cosmic_ray_ion_rate = All.SGChemCosmicRayIonRate;
     in.id_current = (int) P[i].ID;
@@ -91,6 +125,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     temp = chem_cxx_calc_temp(abh2, in.abhe, energy / (BOLTZMANN_CGS * (1.0 + ABHE - abh2 + ab[IHP]) * yn));
 #endif
     if(temp > 1.0e5) {in.dust_to_gas_ratio = 0;} /* hot gas: grains sputtered */
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
+    sgchem_treecol_columns(i, &in);
+#endif
 
     chem_cxx_begin_cell(&in, temp, abh2, abhd, abco);
 #if CHEMISTRYNETWORK == 17
