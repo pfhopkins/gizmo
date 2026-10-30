@@ -1,5 +1,6 @@
-"""single_stars_winds_agb_ia test: stellar winds and AGB deaths of IMF-sampled single stars, from the stellar-evolution
-tables, through the mass-return mode of the shared mechanical feedback loop. See README.md."""
+"""single_stars_winds_agb_ia test: stellar winds, AGB deaths and Type Ia SNe of IMF-sampled single stars, from the
+stellar-evolution tables, through the mass-return (winds, AGB) and supernova (Type Ia) modes of the shared mechanical
+feedback loop. See README.md."""
 import os
 import shutil
 import subprocess
@@ -22,7 +23,7 @@ def built():
     return tables
 
 
-def run(tag, tables, ranks=2):
+def run(tag, tables, ranks=2, which=("wind", "agb", "wd")):
     import sys
     sys.path.insert(0, str(TEST_DIR))
     from make_single_stars_winds_agb_ia_ics import make_single_stars_winds_agb_ia_ics
@@ -32,7 +33,7 @@ def run(tag, tables, ranks=2):
     (d / "output").mkdir(parents=True, exist_ok=True)
     ic = d / "output" / "snapshot_000.hdf5"
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"])
+        L = make_single_stars_winds_agb_ia_ics(str(ic), tables["StellarTablesFile"], which=which)
         params = Path(TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SET_BY_TEST", tables["StellarTablesFile"])
         params = params.replace("BoxSize                            45.0", f"BoxSize                            {L}")
         (d / f"{TEST_NAME}.params").write_text(params)
@@ -79,11 +80,24 @@ def wind_speed(tables_file, M, Z, log_age):
         return float(np.interp(log_age, la, F["v_wind"][iz, im, :].astype(np.float64)))
 
 
-def test_winds_agb(built):
+def test_wind_energy(built):
+    """the 35 Msun star alone: the energy the gas and the star gained (kinetic + thermal) against what the loop books, 1/2 M v^2
+    of the mass returned at the table speed (the speed changes by 0.1% over the run, so the speed at the last delivery stands
+    for all). The supernovae of the other test are left out: their 1e51 erg would hide the wind's 4e49."""
+    ic, snaps, _ = run("wind", built, which=("wind",))
+    s0, s1 = state(ic), state(snaps[-1])
+    (w,) = s1["stars"].values()
+    Msun_kms2_in_erg = 1.989e33 * 1.0e10
+    booked = 0.5 * (35.0 - w["m"]) * wind_speed(built["StellarTablesFile"], 35.0, 0.014, w["wa"]) ** 2 * Msun_kms2_in_erg
+    coupled = (s1["E"] - s0["E"]) * Msun_kms2_in_erg
+    assert abs(coupled / booked - 1) < 1e-3, (coupled, booked)
+
+
+def test_winds_agb_ia(built):
     ic, snaps, rows = run("r2", built)
     s0, s1 = state(ic), state(snaps[-1])
     ids = sorted(s0["stars"])
-    wind, agb = ids
+    wind, agb, wd = ids
     # the 35 Msun star has returned exactly the table's cumulative wind mass up to its last delivery
     w = s1["stars"][wind]
     assert w["wa"] > 0
@@ -100,25 +114,30 @@ def test_winds_agb(built):
     r_agb = rows[rows[:, 2] == 2]
     assert len(r_agb) == 1 and int(r_agb[0, 1]) == agb and int(r_agb[0, 3]) == 0
     assert abs(r_agb[0, 6] - (3.0 - r_agb[0, 7])) < 1e-12
+    # Type Ia (hazard multiplied so that every eligible white dwarf explodes at once): the white dwarf of the initial
+    # conditions at the first step, the new one from the AGB death at a later step; the whole mass at 1e51 erg, no remnant
+    r_ia = rows[rows[:, 2] == 4]
+    assert sorted(r_ia[:, 1].astype(int).tolist()) == sorted([wd, agb])
+    assert wd not in s1["stars"] and agb not in s1["stars"]
+    t_ia = dict(zip(r_ia[:, 1].astype(int), r_ia[:, 0]))
+    assert t_ia[agb] > r_agb[0, 0]
+    for r in r_ia:
+        m_wd = s0["stars"][wd]["m"] if int(r[1]) == wd else r_agb[0, 7]
+        assert r[5] == m_wd and r[6] == m_wd and r[8] == 1e51 and r[7] == 0
+        assert r[9] > 0.9 * r[6]  # Type Ia ejecta are almost all metals
     # conservation: gas + stars mass and metal mass, total momentum
     M0 = s0["M"] + sum(v["m"] for v in s0["stars"].values())
     M1 = s1["M"] + sum(v["m"] for v in s1["stars"].values())
     assert abs(M1 - M0) <= 1e-12 * M0
-    assert s1["MZ"] - s0["MZ"] >= r_agb[0, 9] - 1e-9  # plus the wind metals
-    # energy: what the gas and the stars gained (kinetic + thermal) against what the loop books: 1/2 M v^2 of the wind returned
-    # at the table speed (it changes by 0.1% over the run, so the speed at the last delivery stands for all) and of the AGB ejecta
-    Msun_kms2_in_erg = 1.989e33 * 1.0e10
-    booked = (0.5 * delivered * wind_speed(built["StellarTablesFile"], 35.0, 0.014, w["wa"]) ** 2 + 0.5 * r_agb[0, 6] * 30.0 ** 2) * Msun_kms2_in_erg
-    coupled = (s1["E"] - s0["E"]) * Msun_kms2_in_erg
-    assert 0.99 * booked <= coupled <= 1.08 * booked, (coupled, booked)  # measured 1.045 (wind), see the README
-    # momentum: the momentum-conserving wind coupling of the loop balances its radial kicks only
+    assert s1["MZ"] - s0["MZ"] >= r_ia[:, 9].sum() + r_agb[0, 9] - 1e-9  # plus the wind metals
+    # momentum: the supernovae add none; the momentum-conserving wind coupling of the loop balances its radial kicks only
     # approximately on this lattice (measured: 3% of the first step's wind momentum, 0.35 Msun at ~2000 km/s)
     v_max = 3000.0  # km/s, above the table wind speed
     assert np.all(np.abs(s1["p"] - s0["p"]) <= 0.05 * delivered * v_max)
 
 
 def test_one_and_four_ranks(built):
-    """the same wind mass and AGB death on 1 and 4 ranks (wind mass to rounding: the loop removes a sum of
+    """the same wind mass, AGB death and Type Ia on 1 and 4 ranks (wind mass to rounding: the loop removes a sum of
     deposits)"""
     _, s_ref, rows_ref = run("r2", built)
     for r in (1, 4):

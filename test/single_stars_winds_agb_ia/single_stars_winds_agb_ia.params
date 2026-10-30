@@ -1,4 +1,4 @@
-% winds of a 35 Msun star and an AGB death (3 Msun)
+% winds of a 35 Msun star, an AGB death (3 Msun) and a Type Ia SN of a white dwarf
 InitCondFile                       snapshot
 OutputDir                          output
 TimeMax                            0.01

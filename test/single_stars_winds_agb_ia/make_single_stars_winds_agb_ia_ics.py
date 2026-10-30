@@ -1,13 +1,14 @@
-"""Lattice of 1 Msun gas cells at n_H = 10 cm^-3, T = 100 K, Z = 0.014 (total metallicity), at rest, with two single
-stars, each alone in its region (units pc, Msun, km/s): a 35 Msun star 1 Myr old (main-sequence winds) and a 3 Msun star
-just past its table lifetime (AGB death, white-dwarf remnant). Written as a snapshot (start flag 2)."""
+"""Lattice of 1 Msun gas cells at n_H = 10 cm^-3, T = 100 K, Z = 0.014 (total metallicity), at rest, with three single
+stars, each alone in its region (units pc, Msun, km/s): a 35 Msun star 1 Myr old (main-sequence winds), a 3 Msun star
+just past its table lifetime (AGB death, white-dwarf remnant), and a white dwarf of drawn mass 3 Msun, 1 Gyr old, whose
+AGB death is already done (event bit 2), which explodes as a Type Ia SN (`which` picks a subset). Written as a snapshot (start flag 2)."""
 import numpy as np
 import h5py
 
 PC_KMS_IN_YR = 3.085678e13 / 3.155e7  # time unit [yr], with the code's year (constants.h)
 
 
-def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100.0, z=0.014):
+def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100.0, z=0.014, which=("wind", "agb", "wd")):
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
@@ -20,9 +21,12 @@ def make_single_stars_winds_agb_ia_ics(fname, tables_file, n=24, n_H=10.0, T=100
         iz, im = int(np.argmin(np.abs(Zt - z))), int(np.argmin(np.abs(Mt - 3.0)))
         n2 = (len(Zt), len(Mt))
         death3 = (F["lifetime_yr"][()] + F["t_PMS"][()]).reshape(n2)[iz, im]
+        wd3 = F["remnant_mass"][()].reshape(n2)[iz, im]
     stars = [  # drawn mass, mass, age [yr], position, event bits
         (35.0, 35.0, 1.0e6, (0.25, 0.25, 0.25), 0),
-        (3.0, 3.0, 1.001 * death3, (0.75, 0.75, 0.25), 0)]
+        (3.0, 3.0, 1.001 * death3, (0.75, 0.75, 0.25), 0),
+        (3.0, wd3, 1.0e9, (0.25, 0.75, 0.75), 2)]
+    stars = [st for k, st in zip(("wind", "agb", "wd"), stars) if k in which]
     ns = len(stars)
     with h5py.File(fname, "w") as F:
         h = F.create_group("Header")
