@@ -7527,6 +7527,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
             nlr_mode_b_switched_on<Spec>()) {
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}   /* Mode B reads the host's copy */
+            if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* Mode B walks them on the host */
             mode_d_lease.release();
             drv.mode_d_lease = nullptr;
             path = DispatchPath::ModeB_HostWalker;
@@ -7541,6 +7542,9 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
         if(drv.mode_d_lease && !drv.mode_d_lease->stopped) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}
     }
+    /* With more than one rank the iteration ran on the device to its end (after_iter included), so the
+       host after_iter path above never moved the particles back; the finalize that follows sweeps them. */
+    if(drv.mode_d_lease && (long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host(Spec::loop_name);}
 
     /* ===== Max-iter exceeded check (matches legacy density / ags_density endrun(1155)) ===== */
     if (drv.iter_index >= Spec::max_iters && drv.global_active_total > 0) {
