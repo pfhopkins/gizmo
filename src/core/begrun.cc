@@ -2446,6 +2446,11 @@ void read_parameter_file(char *fname)
       addr[nt] = &All.SingleStarsRNGRealisation;
       id[nt++] = INT;
 #endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+      strcpy(tag[nt], "IMFSampleStellarMassCut");
+      addr[nt] = &All.IMFSampleStellarMassCut;
+      id[nt++] = REAL;
+#endif
 #ifdef GALSF_SINGLE_STARS_SF_CRITERION
       strcpy(tag[nt], "FacSfThreshMJ");
       addr[nt] = &All.FacSfThreshMJ;
@@ -3268,6 +3273,9 @@ void read_parameter_file(char *fname)
 #ifdef GALSF_SINGLE_STARS_COLLECT_GAS_FROM_NEIGHBORS
                 if(strcmp("SingleStarsRNGRealisation",tag[i])==0) {*((int *)addr[i])=0; printf("Tag %s not set in parameter file: defaulting to realisation 0\n",tag[i]); continue;}
                 if(strcmp("IMFSampleMinMass",tag[i])==0) {*((double *)addr[i])=0.08; printf("Tag %s not set in parameter file: defaulting to the full IMF (0.08 Msun)\n",tag[i]); continue;}
+#endif
+#if defined(GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES) || defined(GALSF_FB_RADPRESSURE_SINGLE_STAR_BANDS)
+                if(strcmp("IMFSampleStellarMassCut",tag[i])==0) {*((double *)addr[i])=0.5; printf("Tag %s not set in parameter file: defaulting to 0.5 Msun (stars at or below emit no radiation)\n",tag[i]); continue;}
 #endif
 #if defined(INIT_STELLAR_METALS_AGES_DEFINED)
                 if(strcmp("InitMetallicity",tag[i])==0) {*((double *)addr[i])=0; printf("Tag %s (%s) not set in parameter file: defaulting to zero (Z=%g) \n",tag[i],alternate_tag[i],All.InitMetallicityinSolar); continue;}

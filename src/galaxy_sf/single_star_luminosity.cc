@@ -19,13 +19,14 @@
 static inline double single_star_band_lum_cgs(double log_l) {double l = pow(10., log_l); return (isfinite(l) && l > 0) ? l : 0;}
 
 /* L[SINGLE_STAR_BAND_*] [erg/s] and the bolometric luminosity; returns 0 (all zero) before the main sequence, after death
-   or without a record. 6-8 eV = L(6-13.6) - L(8-13.6), unclipped as stella_dev */
+   without a record or at or below IMFSampleStellarMassCut. 6-8 eV = L(6-13.6) - L(8-13.6), unclipped as stella_dev */
 int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
 {
     for(int b = 0; b < SINGLE_STAR_NBANDS; b++) {L[b] = 0;}
     *L_bol = 0;
     if(P[i].StarIdx <= 0) {return 0;}
     int s = single_star_slot(P[i].StarIdx);
+    if(SingleStars.M_drawn[s] <= All.IMFSampleStellarMassCut) {return 0;}
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
     double age_yr = evaluate_stellar_age_Gyr(i) * 1.e9, t_pms = stellar_t_PMS(logM, logZ);
     if(age_yr >= t_pms + stellar_lifetime(logM, logZ) || age_yr - t_pms <= 0) {return 0;}
