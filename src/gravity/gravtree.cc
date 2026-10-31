@@ -186,9 +186,12 @@ void gravity_tree(void)
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
         rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
-        gizmo_treehost_begin((long long) ActiveParticleList.size());   /* P stays on the device from here to the density pass */
+        /* P stays on the device from here to the density pass.  The build's move of P then happens in the OldAcc
+           promotion, and is charged to the tree build as it is when the build makes it. */
+        const int treehost = gizmo_treehost_begin((long long) ActiveParticleList.size());
+        if(treehost) {CPU_Step[CPU_DRIFT] += measure_time();}
         refresh_old_acceleration_for_tree_opening();
-        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
+        gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[treehost ? CPU_TREEBUILD : CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         int build_status = force_treebuild_gravity();
         if(build_status == FORCE_TREE_NEEDS_DOMAIN_REBUILD)
         {
