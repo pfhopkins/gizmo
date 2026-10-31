@@ -194,7 +194,7 @@ void *gizmo_treehost_device_scratch(int slot, size_t bytes);
  *     there first); src_CellP may be NULL.  0 on success; 1 on a failed copy, after which the caller copies on
  *     the host.
  *   _pinned_buffer: grow-only page-locked scratch of the ghost transport (slots 0/1 receive P/CellP, 2/3 send
- *     P/CellP, 4/5 send/receive trimmed records); never zeroed; NULL when the memory cannot be had.
+ *     P/CellP, 4/5 send/receive trimmed records, 6 discovery candidates); never zeroed; NULL when the memory cannot be had.
  *   _zero_wakeup / _gather_wakeup: P[j].wakeup over the ghost range, set to 0 / copied into dst[0,n), on the device. */
 int gizmo_ghostdev_enabled(void);
 void gizmo_ghostdev_set_live(int base, int n);

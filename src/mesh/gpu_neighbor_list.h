@@ -372,7 +372,11 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                             mode_b_radius_policy_t radius_policy,
                             double j_radius_scale, double safety_factor,
                             const int *j_to_pool, int npart_bound,
-                            int num_pool, struct ghost_send_set *send_set);
+                            int num_pool, struct ghost_send_set *send_set,
+                            int allow_symmetric);   /* nonzero: answer NGB_SEARCH_SYMMETRIC too (else declined) */
+/* Seconds the last gx_device_receiver_walk call spent staging the leaves and node bands, on the device (walks,
+   compaction, copies) and in the host accept. */
+extern double gx_recv_diag_seconds[3];
 
 /* Describe this rank's tree to the device walk, or say why it cannot be
    described.  Returns 0 with *out filled, 1 with *out untouched and a one-shot
