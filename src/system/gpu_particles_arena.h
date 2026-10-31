@@ -194,7 +194,7 @@ void *gizmo_treehost_device_scratch(int slot, size_t bytes);
  *     there first); src_CellP may be NULL.  0 on success; 1 on a failed copy, after which the caller copies on
  *     the host.
  *   _pinned_buffer: grow-only page-locked scratch of the ghost transport (slots 0/1 receive P/CellP, 2/3 send
- *     P/CellP); never zeroed; NULL when the memory cannot be had.
+ *     P/CellP, 4/5 send/receive trimmed records); never zeroed; NULL when the memory cannot be had.
  *   _zero_wakeup / _gather_wakeup: P[j].wakeup over the ghost range, set to 0 / copied into dst[0,n), on the device. */
 int gizmo_ghostdev_enabled(void);
 void gizmo_ghostdev_set_live(int base, int n);
@@ -204,6 +204,11 @@ void *gizmo_ghost_pinned_buffer(int slot, size_t bytes);
 void gizmo_ghost_range_zero_wakeup_on_device(int base, int n);
 void gizmo_ghost_range_gather_wakeup(int base, int n, int *dst);
 void gizmo_particles_prefetch_to_host_all(const char *site);
+/* n packed records of rec_bytes each (host memory) into P/CellP[base, base+n), on the device: segment s of a record,
+ * words[s] 4-byte words at rec_off[s], lands at byte obj_off[s] of the slot's P (cell[s] == 0) or CellP record.  At
+ * most 8 segments.  0 on the device; 1 when it fell back to the host (correct, slower). */
+int gizmo_ghost_range_scatter_records(int base, int n, const void *records, int rec_bytes, int nseg,
+                                      const int *cell, const int *obj_off, const int *rec_off, const int *words);
 /* Seconds and bytes of the ghost copies to the device so far. */
 void gizmo_ghostdev_stats(double *seconds, double *bytes, long long *calls);
 

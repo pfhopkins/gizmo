@@ -38,6 +38,7 @@
 #include "../core/proto.h"
 #include "../system/mpi_alltoallv_typed.h"
 #include "../system/gpu_particles_arena.h" /* gizmo_particles_prefetch_to_host */
+#include "../system/gpu_ghostdev_config.h"
 #include "gpu_neighbor_list.h" /* gpu_sidx_ghost_pool_cleanup */
 #include "sfc_tiles.h"           /* build_sfc_supply_pool, sfc_tile_t, tile_bvh_node_t */
 #include "neighbor_list.h"       /* NGB_SEARCH_ONEWAY, NGB_SEARCH_SYMMETRIC */
@@ -2090,6 +2091,132 @@ int ghost_refresh_values(void)
     if(send_list_current == 0) {g_ghost_pool_current_ti = All.Ti_Current;}
     ghost_refresh_make_device_visible(NumPart_before_ghost, NumGhostParticles);
     return GHOST_REFRESH_OK;
+}
+
+#if defined(GHOSTDEV_AUDITED_CONFIG)
+/* What the owners write between the import and the hydro pass in the audited configuration, with no drift in between:
+   the hydro preloop's zeroed wakeup, energy rate, acceleration and signal speed, and the gradients pass's gradients
+   (zeroed, accumulated, limited) and vorticity.  Each a run of 4-byte words. */
+struct gx_trim_layout {int n, rec_bytes; int cell[8], obj_off[8], rec_off[8], words[8];};
+static const struct gx_trim_layout &gx_trim_layout_get(void)
+{
+    static struct gx_trim_layout L = {};
+    if(L.n == 0) {
+        static struct particle_data p;
+        static struct gas_cell_data c;
+        auto add = [&](int cell, const void *field, size_t bytes) {
+            const char *obj = cell ? (const char *) &c : (const char *) &p;
+            L.cell[L.n] = cell; L.obj_off[L.n] = (int) ((const char *) field - obj);
+            L.words[L.n] = (int) (bytes / sizeof(unsigned int)); L.rec_off[L.n] = L.rec_bytes;
+            L.rec_bytes += (int) bytes; L.n++;
+        };
+        add(0, &p.wakeup, sizeof(p.wakeup));
+        add(1, &c.DtInternalEnergy, sizeof(c.DtInternalEnergy));
+        add(1, &c.HydroAccel, sizeof(c.HydroAccel));
+        add(1, &c.Gradients, sizeof(c.Gradients));
+        add(1, &c.MaxSignalVel, sizeof(c.MaxSignalVel));
+#if defined(TURB_DRIVING) || defined(OUTPUT_VORTICITY)
+        add(1, &c.Vorticity, sizeof(c.Vorticity));
+#endif
+    }
+    return L;
+}
+#endif
+
+int ghost_refresh_values_trimmed(void)
+{
+#if defined(GHOSTDEV_AUDITED_CONFIG)
+    static int enabled = -1, verify = -1;
+    if(enabled < 0) {
+        const char *env = getenv("GIZMO_GHOST_TRIM");
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
+        env = getenv("GIZMO_GHOST_TRIM_VERIFY");
+        verify = (env && env[0] && atoi(env) != 0) ? 1 : 0;
+    }
+    if(!enabled || NTask <= 1 || !gizmo_ghostdev_enabled()) {return 0;}   /* rank-uniform */
+    const struct gx_trim_layout &L = gx_trim_layout_get();
+    const int R = L.rec_bytes;
+    const int ns = ghost_send_home_count, nr = NumGhostParticles;
+    /* Every rank's pool lives on the device, no owner record was drifted since its import, it is current, and the owners
+       are on the host for the pack (otherwise the full refresh, which can gather on the device). */
+    int ok = gizmo_ghostdev_live() && !ghost_owner_written_since_import() && ghost_pool_current_ti() == All.Ti_Current &&
+             !gizmo_particles_owned_kept_on_device() && ghost_send_home_idx && ghost_wb_send_count && ghost_wb_send_disp &&
+             ghost_wb_recv_count && ghost_wb_recv_disp && NumPart == NumPart_before_ghost + NumGhostParticles;
+    if(ok) {
+        long long send_tot = 0, recv_tot = 0;
+        for(int t = 0; t < NTask; t++) {send_tot += ghost_wb_send_count[t]; recv_tot += ghost_wb_recv_count[t];}
+        ok = (send_tot == (long long) ns && recv_tot == (long long) nr);
+    }
+    char *sbuf = ok ? (char *) gizmo_ghost_pinned_buffer(4, (size_t) (ns + 1) * (size_t) R) : NULL;
+    char *rbuf = ok ? (char *) gizmo_ghost_pinned_buffer(5, (size_t) (nr + 1) * (size_t) R) : NULL;
+    if(!sbuf || !rbuf) {ok = 0;}
+    int all_ok = 0;
+    MPI_Allreduce(&ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!all_ok) {return 0;}
+
+    /* Verify: the full transport into scratch first, as the full refresh would deliver it. */
+    struct particle_data *vP = NULL;
+    struct gas_cell_data *vC = NULL;
+    if(verify) {
+        vP = new struct particle_data[nr > 0 ? nr : 1];
+        vC = new struct gas_cell_data[nr > 0 ? nr : 1];
+        (void) gx_pack_and_forward_particle_exchange(ghost_send_home_idx, ghost_wb_send_count, ghost_wb_send_disp, vP, vC,
+                                                     ghost_wb_recv_count, ghost_wb_recv_disp);
+    }
+
+    /* Pack: the listed words of P[j], and of CellP[j] for gas below N_gas (zeros otherwise, as gx_pack_send_slot sends). */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(ns >= 4096)
+#endif
+    for(int k = 0; k < ns; k++) {
+        char *rec = sbuf + (size_t) k * R;
+        memset(rec, 0, (size_t) R);
+        const int j = ghost_send_home_idx[k];
+        if(j < 0) {continue;}
+        const int gas = (P[j].Type == 0 && j < N_gas);
+        for(int s = 0; s < L.n; s++) {
+            if(L.cell[s] && !gas) {continue;}
+            const char *obj = L.cell[s] ? (const char *) &CellP[j] : (const char *) &P[j];
+            memcpy(rec + L.rec_off[s], obj + L.obj_off[s], (size_t) L.words[s] * sizeof(unsigned int));
+        }
+    }
+    gizmo_mpi_alltoallv_typed(sbuf, ghost_wb_send_count, ghost_wb_send_disp, rbuf, ghost_wb_recv_count, ghost_wb_recv_disp,
+                              (size_t) R, MPI_COMM_WORLD);
+    gizmo_ghost_range_scatter_records(NumPart_before_ghost, nr, rbuf, R, L.n, L.cell, L.obj_off, L.rec_off, L.words);
+    g_ghost_copy_valid = 0;   /* the page-locked copy no longer matches the range */
+
+    if(verify) {
+        /* Read the range on the host (verify only: faults it over) and compare whole records; report which bytes differ. */
+        const int bp = (int) sizeof(struct particle_data), bc = (int) sizeof(struct gas_cell_data);
+        std::vector<unsigned char> mask((size_t) (bp + bc), 0), all_mask((size_t) (bp + bc), 0);
+        long long n_diff = 0, all_diff = 0;
+        for(int g = 0; g < nr; g++) {
+            const unsigned char *a = (const unsigned char *) &P[NumPart_before_ghost + g], *b = (const unsigned char *) &vP[g];
+            const unsigned char *ac = (All.TotN_gas > 0) ? (const unsigned char *) &CellP[NumPart_before_ghost + g] : NULL;
+            const unsigned char *bcp = (const unsigned char *) &vC[g];
+            int d = 0;
+            for(int x = 0; x < bp; x++) {if(a[x] != b[x]) {mask[(size_t) x] = 1; d = 1;}}
+            if(ac) {for(int x = 0; x < bc; x++) {if(ac[x] != bcp[x]) {mask[(size_t) (bp + x)] = 1; d = 1;}}}
+            n_diff += d;
+        }
+        MPI_Allreduce(&n_diff, &all_diff, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        MPI_Allreduce(mask.data(), all_mask.data(), bp + bc, MPI_UNSIGNED_CHAR, MPI_BOR, MPI_COMM_WORLD);
+        if(ThisTask == 0) {
+            printf("Ghost refresh trimmed to %d bytes of %d per slot; verify: %lld ghost slots differ from the full refresh", R, bp + bc, all_diff);
+            for(int x = 0; x < bp + bc; x++) {
+                if(!all_mask[(size_t) x]) {continue;}
+                int y = x; while(y + 1 < bp + bc && all_mask[(size_t) (y + 1)] && (y + 1 != bp)) {y++;}
+                printf(" %s[%d,%d)", x < bp ? "P" : "CellP", x < bp ? x : x - bp, (x < bp ? y : y - bp) + 1);
+                x = y;
+            }
+            printf("\n"); fflush(stdout);
+        }
+        delete[] vC; delete[] vP;
+    }
+    return 1;
+#else
+    return 0;
+#endif
 }
 
 /* Import-epoch accessor (see g_ghost_provenance_epoch): read by the hydro

@@ -296,12 +296,13 @@ static int corridor_owner_side_clean(void)
 #endif
 }
 
-static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean);
+static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean, int trimmed = 0);
 
 void gizmo_hydro_corridor_refresh_ghost_values(const char *stage) {corridor_refresh_impl(stage, 0);}
 void gizmo_hydro_corridor_refresh_ghost_values_unless_owner_clean(const char *stage) {corridor_refresh_impl(stage, 1);}
+void gizmo_hydro_corridor_refresh_ghost_values_trimmed(const char *stage) {corridor_refresh_impl(stage, 0, 1);}
 
-static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean)
+static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean, int trimmed)
 {
     /* No-op unless the corridor owns a published Mode-A view this step —
      * Mode B / fallback paths keep their own refresh semantics. At NTask==1
@@ -337,6 +338,7 @@ static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean)
         return;
     }
     if(same_pool) {
+        if(trimmed && ghost_refresh_values_trimmed()) {return;}   /* collective: every rank or none */
         int refresh_rc = ghost_refresh_values();
         if(refresh_rc == GHOST_REFRESH_OK) {
             return;

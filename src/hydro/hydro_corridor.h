@@ -173,6 +173,9 @@ void gizmo_hydro_corridor_begin(void);
 void gizmo_hydro_corridor_refresh_ghost_values(const char *stage);
 /* The same, skipped (collectively) when no rank's owner records changed since the import (the pre-gradients refresh). */
 void gizmo_hydro_corridor_refresh_ghost_values_unless_owner_clean(const char *stage);
+/* The same, carrying only the fields written since the import where that is known (ghost_refresh_values_trimmed;
+ * the pre-hydro refresh). */
+void gizmo_hydro_corridor_refresh_ghost_values_trimmed(const char *stage);
 
 /* Accessor for downstream corridor consumers. Returns a non-null pointer
  * iff gizmo_hydro_corridor_begin populated a usable Mode-A CSR for this

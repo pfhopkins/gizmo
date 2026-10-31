@@ -493,12 +493,14 @@ extern "C" void gizmo_ghostdev_stats(double *seconds, double *bytes, long long *
     if(calls) {*calls = ghostdev_calls_;}
 }
 
-static void *ghost_pinned_[4] = {NULL, NULL, NULL, NULL};
-static size_t ghost_pinned_bytes_[4] = {0, 0, 0, 0};
+#define GHOST_PINNED_SLOTS 6
+static void *ghost_pinned_[GHOST_PINNED_SLOTS] = {};
+static size_t ghost_pinned_bytes_[GHOST_PINNED_SLOTS] = {};
 extern "C" void *gizmo_ghost_pinned_buffer(int slot, size_t bytes)
 {
-    static const char *labels[4] = {"ghost_recv_P_pinned", "ghost_recv_CellP_pinned", "ghost_send_P_pinned", "ghost_send_CellP_pinned"};
-    if(slot < 0 || slot > 3) {return NULL;}
+    static const char *labels[GHOST_PINNED_SLOTS] = {"ghost_recv_P_pinned", "ghost_recv_CellP_pinned", "ghost_send_P_pinned",
+                                                     "ghost_send_CellP_pinned", "ghost_send_trim_pinned", "ghost_recv_trim_pinned"};
+    if(slot < 0 || slot >= GHOST_PINNED_SLOTS) {return NULL;}
     if(bytes == 0) {bytes = 1;}
     if(bytes > ghost_pinned_bytes_[slot]) {
         if(ghost_pinned_[slot]) {gizmo_gpu_free_pinned_host(ghost_pinned_[slot]);}
@@ -528,6 +530,48 @@ extern "C" void gizmo_ghost_range_gather_wakeup(int base, int n, int *dst)
     Kokkos::View<int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(dst, (size_t) n);
     Kokkos::View<const int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_w, (size_t) n);
     Kokkos::deep_copy(h, d);
+}
+
+struct GhostScatterSegments {int n, cell[8], obj_off[8], rec_off[8], words[8];};
+extern "C" int gizmo_ghost_range_scatter_records(int base, int n, const void *records, int rec_bytes, int nseg,
+                                                 const int *cell, const int *obj_off, const int *rec_off, const int *words)
+{
+    if(n <= 0 || nseg <= 0) {return 0;}
+    typedef unsigned int W;
+    const size_t bytes = (size_t) n * (size_t) rec_bytes;
+    char *d_rec = (nseg <= 8 && rec_bytes % (int) sizeof(W) == 0) ? (char *) kept_scratch(bytes) : NULL;
+    if(!d_rec) {   /* no scratch: scatter on the host (correct, only slower) */
+        for(int g = 0; g < n; g++) {
+            const char *rec = (const char *) records + (size_t) g * rec_bytes;
+            for(int s = 0; s < nseg; s++) {
+                char *obj = cell[s] ? (char *) &CellP[base + g] : (char *) &P[base + g];
+                memcpy(obj + obj_off[s], rec + rec_off[s], (size_t) words[s] * sizeof(W));
+            }
+        }
+        return 1;
+    }
+    struct GhostScatterSegments seg = {};
+    seg.n = nseg;
+    for(int s = 0; s < nseg; s++) {seg.cell[s] = cell[s]; seg.obj_off[s] = obj_off[s] / (int) sizeof(W); seg.rec_off[s] = rec_off[s] / (int) sizeof(W); seg.words[s] = words[s];}
+    {
+        Kokkos::View<const char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h((const char *) records, bytes);
+        Kokkos::View<char *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_rec, bytes);
+        Kokkos::deep_copy(d, h);
+    }
+    W *Pw = (W *) (P + base);
+    W *Cw = CellP ? (W *) (CellP + base) : NULL;
+    const int wp = (int) (sizeof(struct particle_data) / sizeof(W)), wc = (int) (sizeof(struct gas_cell_data) / sizeof(W));
+    const int wr = rec_bytes / (int) sizeof(W);
+    const W *Rw = (const W *) d_rec;
+    Kokkos::parallel_for("gizmo_ghost_scatter_records", n, KOKKOS_LAMBDA(int g) {
+        const W *rec = Rw + (size_t) g * wr;
+        for(int s = 0; s < seg.n; s++) {
+            W *obj = seg.cell[s] ? (Cw + (size_t) g * wc) : (Pw + (size_t) g * wp);
+            for(int w = 0; w < seg.words[s]; w++) {obj[seg.obj_off[s] + w] = rec[seg.rec_off[s] + w];}
+        }
+    });
+    Kokkos::fence("gizmo_ghost_scatter_records");
+    return 0;
 }
 
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}

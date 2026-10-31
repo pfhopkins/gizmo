@@ -462,7 +462,7 @@ void hydro_force(void)
      * own runner import+cleanup may have torn the corridor pool down — the
      * refresh re-imports and republishes the CSR view, so a fetch before it
      * would be stale. No-op on Mode B / unpublished corridor. */
-    gizmo_hydro_corridor_refresh_ghost_values("pre_hydro_force");
+    gizmo_hydro_corridor_refresh_ghost_values_trimmed("pre_hydro_force");
     const nlr_external_csr        *corridor_csr  = gizmo_hydro_corridor_external_csr();
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
 

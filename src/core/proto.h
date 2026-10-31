@@ -886,6 +886,11 @@ enum ghost_refresh_status {
     GHOST_REFRESH_FAIL_ON_PEER          /* this rank could refresh, another could not */
 };
 int ghost_refresh_values(void);
+/* The same refresh carrying only the fields the owners write between the import and the hydro pass, where that set is
+ * known (system/gpu_ghostdev_config.h) and no owner record was drifted since the import.  Collective: returns 1 when
+ * every rank refreshed this way, 0 when none did and the caller runs the full refresh.  GIZMO_GHOST_TRIM=0 turns it
+ * off; GIZMO_GHOST_TRIM_VERIFY=1 also runs the full transport into scratch and reports the slots that differ. */
+int ghost_refresh_values_trimmed(void);
 /* Whether an owner-side particle record may have changed since the last ghost import packed it: raised by the
  * drifts (drift_particle, drift_particles_batch) and cleared when an import completes.  Read by the corridor's
  * pre-gradients refresh, which is skipped when no rank's owners changed (the ghosts already hold the bytes it
