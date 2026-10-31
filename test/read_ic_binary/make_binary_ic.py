@@ -21,13 +21,13 @@ def _block(fh, payload_bytes):
     fh.write(struct.pack("i", len(payload_bytes)))
 
 
-def make_binary_ic(outfile, ngas=512, boxsize=1.0, u0=0.05, seed=42):
+def make_binary_ic(outfile, ngas=512, boxsize=1.0, u0=0.05, seed=42, id_dtype=np.uint32, id_offset=0):
     rng = np.random.default_rng(seed)
 
     # a uniform-random gas cube filling the box, at rest
     pos = rng.uniform(0.0, boxsize, size=(ngas, 3)).astype(np.float32)
     vel = np.zeros((ngas, 3), dtype=np.float32)
-    ids = np.arange(1, ngas + 1, dtype=np.uint32)
+    ids = (np.arange(1, ngas + 1, dtype=np.uint64) + np.uint64(id_offset)).astype(id_dtype)
     mass = np.full(ngas, 1.0 / ngas, dtype=np.float32)
     u = np.full(ngas, u0, dtype=np.float32)
 
