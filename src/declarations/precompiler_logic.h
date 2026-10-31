@@ -1660,6 +1660,10 @@
 #error "GALSF_EFFECTIVE_EQS requires GALSF_SFR_CRITERION=0; molecular/virial/etc. criteria are not defined for this model (molecular fraction is undefined in the effective EOS)."
 #endif
 
+#if defined(GALSF_SUBGRID_WINDS) && !defined(GALSF_EFFECTIVE_EQS)
+#error "GALSF_SUBGRID_WINDS requires GALSF_EFFECTIVE_EQS; the wind energy and speed are normalized by the effective-EOS supernova energy (FactorSN, EgySpecSN), which exists only with that model."
+#endif
+
 
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
 #if !(CHECK_IF_PREPROCESSOR_HAS_NUMERICAL_VALUE_(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM)) // allow to be set to integer value to represent a >1 number of special zoom sites
