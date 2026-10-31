@@ -2829,6 +2829,9 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
     {size_t stack_size = 65536; /* 64KB per thread — cooling kernel is deeply nested:
          DoCooling → CoolingRateFromU → convert_u_to_temp → find_abundances_and_rates
          plus metal cooling table lookups. 32KB may overflow on some GPU architectures. */
+     /* The runtime reserves stack x resident threads in every context (~17 GB at 64 KB on an H100), which caps how many
+        ranks can share a GPU. Environment GIZMO_GPU_STACK_BYTES overrides it, for builds without the deep kernels. */
+     {const char *e = getenv("GIZMO_GPU_STACK_BYTES"); if(e && atol(e) > 0) {stack_size = (size_t) atol(e);}}
      cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, stack_size);
      if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,%zu) failed: %s\n", stack_size, cudaGetErrorString(_e)); fflush(stdout);}
      else {printf("[GPU] CUDA thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
