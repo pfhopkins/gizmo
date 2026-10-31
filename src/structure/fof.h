@@ -35,6 +35,7 @@ extern long long TotNids;
 typedef struct
 {
   MyIDType MinID;
+  MyIDType MinIDOwner;   /* with MinID, names the group (see fof_key_cmp); MinIDTask routes it and is reused as scratch */
   MyIDType MinIDTask;
   int LocCount;
   int ExtCount;
@@ -50,6 +51,7 @@ typedef struct
   int Len;
   long long Offset;   /* into the global ID list, which spans every rank */
   MyIDType MinID;
+  MyIDType MinIDOwner;
   MyIDType MinIDTask;
   int GrNr;
   int LenType[6];
