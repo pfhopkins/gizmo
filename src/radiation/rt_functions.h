@@ -1118,31 +1118,42 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     a0_abs = -rt_absorption_rate(i,kf, pp, cell); // update absorption rate using the new radiation temperature //
                 }
 #endif
-                double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0; // add the summed absorption and equate to dust emission //
+                double e0_band = e0, dt_e_band = dt_e_gamma_band; int update_band_temperatures = 1; // the dust and radiation temperatures belong to the whole band: set them once per band, from its totals
+#if defined(RT_EVOLVE_INTENSITIES)
+                update_band_temperatures = (k_angle == 0); e0_band = dt_e_band = 0; // on the first angle no IR bin has been updated yet
+                {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {e0_band += RT_INTENSITY_BINS_DOMEGA*((mode==0) ? cell[i].Rad_Intensity[kf][k_q] : cell[i].Rad_Intensity_Pred[kf][k_q]); dt_e_band += RT_INTENSITY_BINS_DOMEGA*cell[i].Dt_Rad_Intensity[kf][k_q];}}
+#ifdef RT_COMOVING
+                dt_e_band += (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * (-e0_band * ET_dotdot_GradVcom * All.cf_a2inv);
+#endif
+#endif
+                double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0_band; // add the summed absorption and equate to dust emission //
 #ifdef COOLING
                 /* the dust temperature is stiffly coupled to the gas and radiation temperatures, so it is advanced
                    with them on kicks; a drift reads the value the last kick left rather than re-solving it from a
                    drifted energy with the other two held fixed. */
-                if((mode==0) && (dt_entr>0)) {cell[i].Dust_Temperature = rt_eqm_dust_temp(i, T_gas, total_absorption_rate * vol_inv_phys * C_LIGHT_CODE / C_LIGHT_CODE_REDUCED, pp, cell);}
+                if((mode==0) && (dt_entr>0) && update_band_temperatures) {cell[i].Dust_Temperature = rt_eqm_dust_temp(i, T_gas, total_absorption_rate * vol_inv_phys * C_LIGHT_CODE / C_LIGHT_CODE_REDUCED, pp, cell);}
 #endif
                 if(cell[i].Dust_Temperature < T_min) {cell[i].Dust_Temperature = T_min;}
                 double Tdust_eff = cell[i].Dust_Temperature, Trad_eff = cell[i].Radiation_Temperature;
                 double kappa_gas = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,-1,-1, pp, cell), kappa_total = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,0,0, pp, cell);
                 IRBand_opacity_fraction_from_gas_absorption = kappa_gas / (kappa_total + MIN_REAL_NUMBER); /* gas absorption opacity only, relative to total opacity (all sources+scattering) */
                 total_de_dt = f_angle*(E_abs_tot_toIR + cell[i].Rad_Je[kf]) + dt_e_gamma_band;
-                if((mode==0) && (Tdust_eff <= MAX_DUST_TEMP)) // only update temperatures on kick operations and Tdust is meaningful //
+                if((mode==0) && (Tdust_eff <= MAX_DUST_TEMP) && update_band_temperatures) // only update temperatures on kick operations and Tdust is meaningful //
                 {
                     /* dust absorption and re-emission brings T_rad towards T_dust: */
                     double T_max = DMAX(DMAX(Trad_eff , Tdust_eff), T_gas); /* should not exceed either initial temperature */
                     double frac_unabsorbed = exp(-fabs(a0_abs*dt_entr));
-                    double e_absorbed = E_abs_tot_toIR*dt_entr + e0*(1.-frac_unabsorbed);
-                    double e_unabsorbed = e0*frac_unabsorbed + DMAX(dt_e_gamma_band*dt_entr, 0); /* include incoming radiation, which has already been used to corect Trad, but outgoing doesn't modify T */
+                    double e_absorbed = E_abs_tot_toIR*dt_entr + e0_band*(1.-frac_unabsorbed);
+                    double e_unabsorbed = e0_band*frac_unabsorbed + DMAX(dt_e_band*dt_entr, 0); /* include incoming radiation, which has already been used to corect Trad, but outgoing doesn't modify T */
                     double etot_em_gas = e_absorbed * IRBand_opacity_fraction_from_gas_absorption + cell[i].Rad_Je[kf]*dt_entr;
                     double etot_em_dust = e_absorbed * (1.-IRBand_opacity_fraction_from_gas_absorption);
                     double Trad_new = (e_unabsorbed + etot_em_gas + etot_em_dust + MIN_REAL_NUMBER) / (MIN_REAL_NUMBER + e_unabsorbed/Trad_eff + etot_em_gas/DMAX(Trad_eff,T_gas) + etot_em_dust/Tdust_eff);
                     cell[i].Radiation_Temperature = DMIN( Trad_new , T_max );
                 }
                 if(cell[i].Radiation_Temperature < T_min) {cell[i].Radiation_Temperature = T_min;} // radiation temperature shouldn't be below CMB
+#if defined(RT_EVOLVE_INTENSITIES)
+                if(update_band_temperatures) {a0_abs = -rt_absorption_rate(i,kf, pp, cell);} // later angle bins read the updated temperatures, so the first one absorbs at the same opacity
+#endif
             }
 #endif
 
