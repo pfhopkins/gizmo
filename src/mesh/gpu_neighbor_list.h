@@ -409,7 +409,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
 /* Seconds the last gx_device_receiver_walk call spent staging the leaves and node bands, on the device (walks,
    compaction, copies) and in the host accept. */
 extern double gx_recv_diag_seconds[3];
-/* ... of which: envelopes to the device, the counting walk and scan, the filling walk, candidates to the host;
+/* ... of which: envelopes to the device, the walk and scan, the packing (and accept), candidates to the host;
    and how many candidates came back. */
 extern double gx_recv_diag_split[4];
 extern long long gx_recv_diag_pairs;

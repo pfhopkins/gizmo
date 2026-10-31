@@ -1157,8 +1157,8 @@ struct gx_walk_export_result {
 };
 
 
-/* GIZMO_GPU_GHOST_DISCOVERY: the receiver half of discovery answers symmetric searches on the device as well
-   (gx_device_receiver_walk; ONEWAY was already answered there).  On by default in the audited corridor
+/* GIZMO_GPU_GHOST_DISCOVERY: discovery's sender walk, receiver walk (symmetric searches too) and exact accept on
+   the device (gx_device_sender_walk, gx_device_receiver_walk).  On by default in the audited corridor
    configuration (GHOSTDEV_AUDITED_CONFIG), off elsewhere; =0 / =1 overrides.  Rank-uniform (environment). */
 static int gx_ghost_discovery_device_on(void)
 {
@@ -1180,8 +1180,8 @@ static int gx_env_on(const char *name, int *cache)
     if(*cache < 0) {const char *env = getenv(name); *cache = (env && env[0] && atoi(env) != 0) ? 1 : 0;}
     return *cache;
 }
-/* GIZMO_GHOST_DISCOVERY_VERIFY=1: a send set built on the device is built again by the host walk from the same
-   envelopes and compared peer by peer (count, order, slots). */
+/* GIZMO_GHOST_DISCOVERY_VERIFY=1: after a discovery that used the device, the whole discovery runs again on the
+   host walks and the two send sets are compared peer by peer (count, order, slots). */
 static int gx_ghost_discovery_verify_on(void) {static int c = -1; return gx_env_on("GIZMO_GHOST_DISCOVERY_VERIFY", &c);}
 /* GIZMO_GHOST_DISCOVERY_DIAG=1: per-stage discovery times, rank 0 and the maximum over ranks. */
 static int gx_ghost_discovery_diag_on(void) {static int c = -1; return gx_env_on("GIZMO_GHOST_DISCOVERY_DIAG", &c);}

@@ -50,9 +50,8 @@ struct neighbor_list_t {
  * (query,peer) needing more than GX_ENVELOPE_NODES nodes SPLITS into multiple
  * envelopes; the receiver walks each independently and dedups through the
  * send set, so a split costs an extra envelope and nothing else.  Three slots
- * fill the record to 48 bytes with no padding; a query reaches ~1.1 top leaves
- * per peer on average (256^3, 24 ranks), so wider records mostly carry empty
- * slots over the wire.
+ * fill the record to 48 bytes with no padding; a query typically reaches about
+ * one top leaf per peer, so wider records mostly carry empty slots.
  *
  * Lives here rather than beside the host exchange code because both the host
  * receiver walk and the device receiver traversal consume it, and the device

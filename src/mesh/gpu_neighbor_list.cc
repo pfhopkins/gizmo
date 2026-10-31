@@ -2860,7 +2860,7 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
 /* Envelopes are walked in chunks and their candidates emitted through a capped buffer, so neither footprint is
  * set by however many envelopes arrived or how many pairs they admit.  Rows are independent and the answer is a
  * set, so splitting changes nothing about the result. */
-static const long GX_RECV_CHUNK  = 1L << 20;   /* envelopes per count/fill pass */
+static const long GX_RECV_CHUNK  = 1L << 20;   /* envelopes per walk */
 static const long GX_RECV_PAIR_CAP = 1L << 26; /* candidate pairs per emission pass (256 MB of ints) */
 static const int  GX_RECV_PINNED_SLOT = 6;     /* gizmo_ghost_pinned_buffer slot of the candidates' host copy */
 static const int  GX_SEND_PINNED_SLOT = 7;     /* ... and of the sender walk's records */
@@ -3757,9 +3757,9 @@ static const double *gx_discovery_node_band(unsigned int supply_mask, double sca
  * root and, at every top leaf another rank owns that it opens, records (owner, that leaf's node) and steps to the
  * sibling; a top leaf this rank owns it steps past.  That is Mode D's export rule (ModeDExportTopology,
  * device_export_topology.h), used here as is, with the symmetric opener added: a node opens on the larger of the
- * query's reach and the node's band.  A pseudo-particle of another rank is recorded unconditionally (the host re-tests it against
- * the top leaf's box; recording it is a superset).  Count, scan, fill: each query's records land in its own
- * slice in walk order. */
+ * query's reach and the node's band.  A pseudo-particle of another rank is recorded unconditionally (the host
+ * re-tests it against the top leaf's box; recording it is a superset).  Count, scan, fill: each query's records
+ * land in its own slice in walk order. */
 struct GxSenderExport {
     static constexpr bool has_node_hook = true;
     static constexpr bool has_node_reach = true;
