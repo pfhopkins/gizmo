@@ -331,6 +331,37 @@ int gx_send_set_accept_rows(struct ghost_send_set *send_set, struct gx_candidate
                             double j_radius_scale, double safety_factor,
                             int candidates_current);   /* nonzero: every candidate is known to be at All.Ti_Current */
 
+/* The receiver walk's per-leaf staged record.  `type` is negative for a particle the receiver can never send --
+ * no mass, or not in the supply pool.  `pos` is where the particle is once drifted to the current time, and
+ * `half_width` how far from there it can be along any axis (particle_motion_envelope), negative when its motion
+ * cannot be bounded.  The leaf test adds its own rounding allowance (motion_envelope_test_slack), so the walk's
+ * candidates are a superset of what the exact accept keeps.  For the exact accept on the device: `hj_accept`
+ * the accept's neighbour radius, `pool` the supply-pool slot, `current` whether the particle is at the current
+ * time (its `pos` is then its position). */
+struct gx_recv_leaf_t {
+    double pos[3];
+    double half_width;
+    double reach_j;    /* symmetric search: how far the particle reaches once drifted (radius times the walk's
+                          j-side scale, as the host leaf test computes it); unused for ONEWAY */
+    double hj_accept;
+    int    type;
+    int    pool;
+    int    current;
+    int    _pad;
+};
+
+/* The exact accept of discovery (gx_pair_accept_wrap_and_test), compiled for the host and the device in one
+ * translation unit without contraction to fused multiply-add (mesh/gx_discovery_accept.cc), so both give the
+ * same bits.  The host accept (gx_send_set_accept_rows) decides through gx_discovery_accept_host; the device
+ * receiver, when every candidate is current, through gx_discovery_accept_rows_on_device, which replaces each
+ * candidate j of rows [r0, r1) (pairs[offsets[b] - sub_base ...]) by its pool slot if accepted, else -1. */
+int  gx_discovery_accept_host(double dx0, double dy0, double dz0, double h_q, double h_j, int search_mode);
+void gx_discovery_accept_rows_on_device(const struct gx_export_envelope_t *env, const int64_t *offsets, int r0, int r1,
+                                        int64_t sub_base, int *pairs, const struct gx_recv_leaf_t *leaves, int search_mode);
+/* GIZMO_GPU_GHOST_ACCEPT=0 keeps the exact accept on the host when the receiver walk runs on the device. */
+int  gx_discovery_device_accept_on(void);
+int  gx_send_set_emit(struct ghost_send_set *s, int peer, const int *slots, int n);
+
 /* What a receiver backend did with the envelopes it was handed. */
 enum {
     GX_RECEIVER_COMPLETED = 0,   /* every accepted pair is in the send set */

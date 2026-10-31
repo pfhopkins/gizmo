@@ -2723,20 +2723,8 @@ void gpu_build_cross_type_neighbor_list(struct particle_data *P_host, int num_to
  * the same exchange can withdraw device legality.  Ordering violations therefore
  * make the test fail and route to the host, never corrupt a result. */
 
-/* Per-leaf staged record.  `type` is negative for a particle the receiver can never
- * send -- no mass, or not in the supply pool -- so the kernel tests one integer where
- * the host tests three conditions across two arrays.  `pos` is where the particle is
- * once drifted to the current time, and `half_width` how far from there it can be
- * along any axis (particle_motion_envelope), negative when its motion cannot be
- * bounded.  The leaf test adds its own rounding allowance (motion_envelope_test_slack),
- * so the device's candidates are a superset of what the host's exact test accepts. */
-struct gx_recv_leaf_t {
-    double pos[3];
-    double half_width;
-    double reach_j;    /* symmetric search: how far the particle reaches once drifted (radius times the walk's
-                          j-side scale, as the host leaf test computes it); unused for ONEWAY */
-    int    type;
-};
+/* The per-leaf staged record (struct gx_recv_leaf_t) is declared in gpu_neighbor_list.h: the exact accept on the
+ * device (mesh/gx_discovery_accept.cc) reads it too. */
 
 /* The leaf half of the receiver walk: record a locally-owned particle that may be a
  * neighbour of the query once drifted to the current time: kept if the box round the
@@ -4043,11 +4031,17 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             rec.pos[0] = (double)P[j].Pos[0]; rec.pos[1] = (double)P[j].Pos[1]; rec.pos[2] = (double)P[j].Pos[2];
             rec.half_width = 0.0;
             rec.reach_j = 0.0;
+            rec.hj_accept = 0.0;
+            rec.pool = in_pool ? j_to_pool[j] : -1;
+            rec.current = 0;
+            rec._pad = 0;
             if(rec.type >= 0) {
                 double hw = 0.0;
                 const int motion = particle_motion_envelope(j, P, CellP, ti_now, &drift_tables, rec.pos, &hw);
                 rec.half_width = (motion == PARTICLE_MOTION_UNBOUNDED) ? -1.0 : hw;
-                if(motion != PARTICLE_MOTION_CURRENT) {n_behind++;}
+                if(motion != PARTICLE_MOTION_CURRENT) {n_behind++;} else {rec.current = 1;}
+                /* the exact accept's neighbour radius, as gx_send_set_accept_rows computes it (gx_policy_scaled_h) */
+                rec.hj_accept = nlr_particle_symmetric_radius(P[j], radius_policy) * j_radius_scale * safety_factor;
                 /* the host leaf test's reach: the radius now for a current particle, the radius a drift can
                    grow it to for one behind (mode_b_local_walker.cc particle_passes / particle_may_pass) */
                 if(symmetric) {
@@ -4074,6 +4068,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     }
     gx_recv_diag_seconds[0] = timediff(t_diag, my_second());
     t_diag = my_second();
+    const int device_accept = allow_symmetric && n_behind == 0 && gx_discovery_device_accept_on();
 
     {   /* clear the malformed-tree report */
         int zero = 0;
@@ -4195,6 +4190,9 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                 });
                 gizmo_gpu_check_last_error("gx_recv_fill", r1 - r0);
             }
+            /* Every candidate stands at the current time (no sendable particle was staged behind), so the exact
+               accept can run where the candidates are; the host then only emits. */
+            if(device_accept) {gx_discovery_accept_rows_on_device(env_d, offsets_d, r0, r1, sub_base, pairs_d, leaf_d, search_mode);}
             double t_fill = my_second();
             Kokkos::fence("gx_recv_fill");
             gx_recv_diag_split[2] += timediff(t_fill, my_second()); t_fill = my_second();
@@ -4225,7 +4223,15 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                 rows_h[(size_t)n_rows++] = row;
             }
             const double t_acc = my_second();
-            if(status == GX_RECEIVER_COMPLETED &&
+            if(status == GX_RECEIVER_COMPLETED && device_accept) {
+                /* each row holds its accepted pool slots, -1 where the accept refused: keep the former, in order */
+                for(long r = 0; r < n_rows && status == GX_RECEIVER_COMPLETED; r++) {
+                    struct gx_candidate_row &row = rows_h[(size_t)r];
+                    int n_kept = 0;
+                    for(int c = 0; c < row.count; c++) {const int slot = row.local_index[c]; if(slot >= 0) {row.local_index[n_kept++] = slot;}}
+                    if(n_kept > 0 && gx_send_set_emit(send_set, row.peer, row.local_index, n_kept) != 0) {status = GX_RECEIVER_FAILED;}
+                }
+            } else if(status == GX_RECEIVER_COMPLETED &&
                gx_send_set_accept_rows(send_set, rows_h.data(), n_rows, search_mode,
                                        radius_policy, j_radius_scale, safety_factor, n_behind == 0) != 0) {
                 status = GX_RECEIVER_FAILED;
