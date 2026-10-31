@@ -3,7 +3,9 @@
  * Which supply particles a rank sends is decided by gx_pair_accept_wrap_and_test (ghost_exchange_functions.h).
  * This translation unit is compiled without contraction to fused multiply-add on both sides (target-specific flags
  * in the Makefile), and both instantiations that decide a send set live here, so the host accept
- * (gx_send_set_accept_rows) and the device one give the same bits.  Contract: mesh/gpu_neighbor_list.h. */
+ * (gx_send_set_accept_rows) and the device one give the same bits.  Only in the audited corridor configuration
+ * (GHOSTDEV_AUDITED_CONFIG): elsewhere the host accept keeps its own inline instantiation, compiled as before, and
+ * the device accept is off.  Contract: mesh/gpu_neighbor_list.h. */
 
 #include <mpi.h>
 #include <cstdio>
@@ -17,6 +19,7 @@
 #include "neighbor_list.h"
 #include "ghost_exchange_functions.h"
 #include "gpu_neighbor_list.h"
+#include "../system/gpu_ghostdev_config.h"
 
 int gx_discovery_accept_host(double dx0, double dy0, double dz0, double h_q, double h_j, int search_mode)
 {
@@ -27,8 +30,12 @@ int gx_discovery_device_accept_on(void)
 {
     static int on = -1;
     if(on < 0) {
+#if defined(GHOSTDEV_AUDITED_CONFIG)
         const char *env = getenv("GIZMO_GPU_GHOST_ACCEPT");
         on = (env && env[0]) ? (atoi(env) != 0) : 1;
+#else
+        on = 0;   /* the host accept is not built here, so the device one would not match its bits */
+#endif
         if(ThisTask == 0) {printf("Ghost discovery: exact accept on the device when every candidate is current (GIZMO_GPU_GHOST_ACCEPT) is %s.\n", on ? "on" : "off"); fflush(stdout);}
     }
     return on;

@@ -747,11 +747,18 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
             const int j = row->local_index[c];
             if(!(P[j].Mass > 0)) {continue;}
             const double hj = gx_policy_scaled_h(j, radius_policy, j_radius_scale, safety_factor);
+#if defined(GHOSTDEV_AUDITED_CONFIG)
             /* the one instantiation shared with the device accept (mesh/gx_discovery_accept.cc) */
             if(gx_discovery_accept_host(e->pos[0] - (double)P[j].Pos[0],
                                         e->pos[1] - (double)P[j].Pos[1],
                                         e->pos[2] - (double)P[j].Pos[2],
                                         e->h, hj, search_mode)) {
+#else
+            if(gx_pair_accept_wrap_and_test(e->pos[0] - (double)P[j].Pos[0],
+                                            e->pos[1] - (double)P[j].Pos[1],
+                                            e->pos[2] - (double)P[j].Pos[2],
+                                            e->h, hj, search_mode)) {
+#endif
                 row->local_index[n_accepted++] = s->j_to_pool[j];
             }
         }

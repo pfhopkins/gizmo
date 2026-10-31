@@ -356,9 +356,11 @@ struct gx_recv_leaf_t {
 
 /* The exact accept of discovery (gx_pair_accept_wrap_and_test), compiled for the host and the device in one
  * translation unit without contraction to fused multiply-add (mesh/gx_discovery_accept.cc), so both give the
- * same bits.  The host accept (gx_send_set_accept_rows) decides through gx_discovery_accept_host; the device
- * receiver, when every candidate is current, through gx_discovery_accept_rows_on_device, which replaces each
- * candidate j of rows [r0, r1) (pairs[offsets[b] - sub_base ...]) by its pool slot if accepted, else -1. */
+ * same bits.  In the audited corridor configuration (GHOSTDEV_AUDITED_CONFIG) the host accept
+ * (gx_send_set_accept_rows) decides through gx_discovery_accept_host; the device receiver, when every candidate is
+ * current, through gx_discovery_accept_rows_on_device, which replaces each candidate j of rows [r0, r1)
+ * (pairs[offsets[b] - sub_base ...]) by its pool slot if accepted, else -1.  Elsewhere the host accept keeps its
+ * inline instantiation and gx_discovery_device_accept_on() is 0. */
 int  gx_discovery_accept_host(double dx0, double dy0, double dz0, double h_q, double h_j, int search_mode);
 void gx_discovery_accept_rows_on_device(const struct gx_export_envelope_t *env, const int64_t *offsets, int r0, int r1,
                                         int64_t sub_base, int *pairs, const struct gx_recv_leaf_t *leaves, int search_mode);
