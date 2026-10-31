@@ -56,6 +56,7 @@ static void gx_walk_drift_tables_refresh(void)
 #include "ghost_writeback.h"  /* ghost_write_detector_resnapshot_after_lazy_drift, ghost_get_num_local */
 #include "ghost_exchange_functions.h"   /* the shared accept predicates (canonical box wrap) */
 #include "device_tree_walk.h"          /* the one device tree traversal */
+#include "device_export_topology.h"    /* the export rule the sender walk shares with Mode D */
 #include "../gravity/forcetree.h"       /* BITFLAG_TOPLEVEL, force_host_lazy_drift_ti */
 #include "../gravity/gpu_gravity_tree.h" /* node SoA + drift certification */
 #include "../gravity/gpu_peano_walk.h"   /* the domain mirrors the top-leaf map reads */
@@ -3754,36 +3755,25 @@ static const double *gx_discovery_node_band(unsigned int supply_mask, double sca
  *
  * The host sender walk (mode_b_walk_and_export with no candidate sink) descends the top-level tree from the
  * root and, at every top leaf another rank owns that it opens, records (owner, that leaf's node) and steps to the
- * sibling; a top leaf this rank owns it steps past.  That is Mode D's export rule (mode_d_export.h,
- * ModeDExportTopology), with the symmetric opener added: a node opens on the larger of the query's reach and
- * the node's band.  A pseudo-particle of another rank is recorded unconditionally (the host re-tests it against
+ * sibling; a top leaf this rank owns it steps past.  That is Mode D's export rule (ModeDExportTopology,
+ * device_export_topology.h), used here as is, with the symmetric opener added: a node opens on the larger of the
+ * query's reach and the node's band.  A pseudo-particle of another rank is recorded unconditionally (the host re-tests it against
  * the top leaf's box; recording it is a superset).  Count, scan, fill: each query's records land in its own
  * slice in walk order. */
 struct GxSenderExport {
     static constexpr bool has_node_hook = true;
     static constexpr bool has_node_reach = true;
-    GxTopLeafMapView map;
-    int this_task;
+    ModeDExportTopology topo;
     const double *band;   /* symmetric only, else null */
     int n_band;
     int *out;             /* (peer, node) pairs; null when counting */
     int cap, n;
 
-    KOKKOS_INLINE_FUNCTION GxNodeDecision node_decision(int kn) const
-    {
-        const int leaf = (kn >= 0 && kn < map.span) ? map.leaf_of_node[kn] : -1;
-        if(leaf < 0) {return GxNodeDecision{GxNodeAction::Descend, -1};}
-        if(map.domain_task[leaf] != this_task) {return GxNodeDecision{GxNodeAction::RecordAndSibling, leaf};}
-        return GxNodeDecision{GxNodeAction::Sibling, leaf};
-    }
-    KOKKOS_INLINE_FUNCTION GxNodeDecision pseudo_decision(int leaf) const
-    {
-        if(leaf >= 0 && leaf < map.n_topleaves && map.domain_task[leaf] != this_task) {return GxNodeDecision{GxNodeAction::RecordAndSibling, leaf};}
-        return GxNodeDecision{GxNodeAction::Descend, -1};
-    }
+    KOKKOS_INLINE_FUNCTION GxNodeDecision node_decision(int kn) const {return topo.node_decision(kn);}
+    KOKKOS_INLINE_FUNCTION GxNodeDecision pseudo_decision(int leaf) const {return topo.pseudo_decision(leaf);}
     KOKKOS_INLINE_FUNCTION void record(int leaf)
     {
-        if(n < cap) {out[2 * n] = map.domain_task[leaf]; out[2 * n + 1] = map.domain_node_index[leaf];}
+        if(n < cap) {out[2 * n] = topo.map.domain_task[leaf]; out[2 * n + 1] = topo.map.domain_node_index[leaf];}
         n++;
     }
     KOKKOS_INLINE_FUNCTION void visit(int, double, double, double, double) {}   /* never below a top leaf */
@@ -3831,7 +3821,7 @@ int gx_device_sender_walk(const struct gx_query_t *queries, int n, unsigned int 
     Kokkos::parallel_for("gx_send_flag_clear", 2, KOKKOS_LAMBDA(int k) {flag_d[k] = 0;});
 
     GxSenderExport proto;
-    proto.map = map; proto.this_task = ThisTask; proto.band = band; proto.n_band = n_band;
+    proto.topo.map = map; proto.topo.this_task = ThisTask; proto.band = band; proto.n_band = n_band;
     proto.out = nullptr; proto.cap = 0; proto.n = 0;
     Kokkos::parallel_for("gx_send_count", n, KOKKOS_LAMBDA(int k) {
         GxSenderExport pol = proto;
@@ -4040,13 +4030,13 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                 const int motion = particle_motion_envelope(j, P, CellP, ti_now, &drift_tables, rec.pos, &hw);
                 rec.half_width = (motion == PARTICLE_MOTION_UNBOUNDED) ? -1.0 : hw;
                 if(motion != PARTICLE_MOTION_CURRENT) {n_behind++;} else {rec.current = 1;}
+                const double r_now = nlr_particle_symmetric_radius(P[j], radius_policy);
                 /* the exact accept's neighbour radius, as gx_send_set_accept_rows computes it (gx_policy_scaled_h) */
-                rec.hj_accept = nlr_particle_symmetric_radius(P[j], radius_policy) * j_radius_scale * safety_factor;
+                rec.hj_accept = r_now * j_radius_scale * safety_factor;
                 /* the host leaf test's reach: the radius now for a current particle, the radius a drift can
                    grow it to for one behind (mode_b_local_walker.cc particle_passes / particle_may_pass) */
                 if(symmetric) {
-                    const double rj = (motion == PARTICLE_MOTION_CURRENT) ? nlr_particle_symmetric_radius(P[j], radius_policy)
-                                                                          : nlr_particle_symmetric_radius_after_drift(j, P, radius_policy);
+                    const double rj = (motion == PARTICLE_MOTION_CURRENT) ? r_now : nlr_particle_symmetric_radius_after_drift(j, P, radius_policy);
                     rec.reach_j = rj * walker_j_reach_scale;
                 }
             }
