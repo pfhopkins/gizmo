@@ -231,11 +231,15 @@ void gizmo_hydro_corridor_begin(void)
      * symmetric, gas only, the default radius policy, both radii scaled by the
      * ghost safety factor); each consumer is checked against it. */
     g_corridor_query_radii.resize((size_t)gizmo_sym_num_active);
+    /* With the particles left on the device for the gradients pass, the rows' radii come from the list's own
+       host copy of them, read from the same KernelRadius before the search. */
+    const double *raw_radii = gizmo_particles_owned_kept_on_device() ?
+                              gizmo_symlist_raw_radii(gizmo_sym_active_indices, gizmo_sym_num_active) : NULL;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(gizmo_sym_num_active >= 16)
 #endif
     for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
-        g_corridor_query_radii[aa] = gsl_safety * (double)P[gizmo_sym_active_indices[aa]].KernelRadius;
+        g_corridor_query_radii[aa] = gsl_safety * (raw_radii ? raw_radii[aa] : (double)P[gizmo_sym_active_indices[aa]].KernelRadius);
     }
     g_corridor_csr.active_indices        = gizmo_sym_active_indices;
     g_corridor_csr.num_active            = gizmo_sym_num_active;
@@ -297,6 +301,9 @@ void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
         }
         /* fall through: fail-closed */
     }
+
+    /* The full path imports on the host: bring back particles a device pass left on the device. */
+    if(gizmo_particles_owned_kept_on_device()) {gizmo_particles_prefetch_to_host("corridor_refresh_full");}
 
     /* FULL PATH (also the fail-closed fallback): ghost teardown + re-import +
      * CSR rebuild, then REPUBLISH (the rebuild reallocates offsets/neighbors —

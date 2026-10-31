@@ -24,6 +24,8 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
+#include "../mesh/gpu_neighbor_list.h"        /* gizmo_symlist_raw_radii */
+#include "../system/gpu_particles_arena.h"    /* gizmo_particles_owned_kept_on_device */
 #include "gradient_functions.h"               /* Quantities_for_Gradients,
                                                 * GasGraddata_in_/out_,
                                                 * kernel_GasGrad,
@@ -229,9 +231,14 @@ struct GradientsSpec
     /* The filter also admits pairs inside the neighbour's widened radius. */
     static double symmetric_neighbor_radius_scale();
 #else
-    static double search_radius(const neighbor_loop_args& /*args*/,
-                                 int /*active_slot*/, int i)
+    static double search_radius(const neighbor_loop_args& args,
+                                 int active_slot, int i)
     {
+        /* While the corridor keeps the particles on the device, from the corridor list's host copy of the radii. */
+        if(gizmo_particles_owned_kept_on_device()) {
+            const double *r = gizmo_symlist_raw_radii(args.active_list, args.num_active);
+            if(r) {return r[active_slot];}
+        }
         return (double)P[i].KernelRadius;
     }
 #endif

@@ -1901,6 +1901,23 @@ static bool ngl_query_setup_on_device(const struct particle_data *P_shared, cons
 #endif
 }
 
+/* Set by gpu_build_symmetric_neighbor_list around its build when the list's device copy is kept for
+   device consumers (the hydro corridor), read by the to-host decision at the end of gpu_ngb_list_build. */
+static int symlist_device_consumer_follows = 0;
+
+/* The raw search radii ((double) KernelRadius) of the rows of the last list kept for device consumers,
+   read on the host before the build while the particles were there (gizmo_symlist_raw_radii). */
+static std::vector<double> symlist_kept_raw_radii;
+static const int *symlist_kept_rows = NULL;
+static int symlist_kept_nrows = -1;
+
+const double *gizmo_symlist_raw_radii(const int *rows, int n)
+{
+    if(rows == NULL || rows != symlist_kept_rows || n != symlist_kept_nrows) {return NULL;}
+    return symlist_kept_raw_radii.data();
+}
+void gizmo_symlist_raw_radii_forget(void) {symlist_kept_rows = NULL; symlist_kept_nrows = -1;}
+
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
                         int search_mode, int type_bitmask,
@@ -2390,8 +2407,15 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
     Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
     /* The owned-index build (and the query setup, when it ran on the device) read every owned particle's P and
-       CellP on the device; the host phases that follow (trim, ghost refresh, gradients zero loop) sweep them. */
-    if(P_shared == P && (long long) num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("gpu_ngb_list_build");}
+       CellP on the device; the host phases that follow (trim, ghost refresh, gradients zero loop) sweep them.
+       The hydro corridor's list is followed by the gradients pass on the device: when no host trim or drift
+       runs below, the particles stay there (gizmo_particles_keep_owned_on_device) and the corridor reads them
+       through the device helpers until that pass. */
+    if(P_shared == P && (long long) num_active * 8 >= (long long) NumPart) {
+        const int keep = symlist_device_consumer_follows && pool_current && own_frame.exact &&
+                         gizmo_particles_keep_owned_on_device("gpu_ngb_list_build");
+        if(!keep) {gizmo_particles_prefetch_to_host("gpu_ngb_list_build");}
+    }
 
 
     /* Two things may remain to be done to the walk's list, both on one host copy of it.
@@ -2549,10 +2573,17 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
         symlist_raw_radii[aa] = (double) P_shared[active_indices[aa]].KernelRadius;
     }
     gpu_neighbor_list_t gpu_nl;
+    symlist_device_consumer_follows = (keep_device != NULL);
     gpu_ngb_list_build(P_shared, num_total, active_indices, num_active,
                        NGB_SEARCH_SYMMETRIC, 1 /* gas only */, &gpu_nl, gpu_step_sidx_ptr(),
                        search_radius_factor, symlist_raw_radii.data(), NULL, "symlist",
                        search_radius_factor /* j_kernel_radius_scale */);
+    symlist_device_consumer_follows = 0;
+    if(keep_device) {
+        symlist_kept_raw_radii.swap(symlist_raw_radii);
+        symlist_kept_rows = active_indices;
+        symlist_kept_nrows = num_active;
+    }
 
 
     /* Copy CSR into the host neighbor_list_t */

@@ -110,6 +110,23 @@ int gizmo_particles_prefetch_side(void);
 void gizmo_managed_prefetch_to_host(const void *ptr, size_t bytes, const char *site);
 /* The same for one managed buffer about to be swept on the device. */
 void gizmo_managed_prefetch_to_device(const void *ptr, size_t bytes, const char *site);
+/* Leaving the rank's own particles on the device across a short host interval that touches no
+ * particle storage of its own, so the next device pass finds them resident instead of costing a
+ * to-host and a to-device bulk move.  _keep_owned_on_device is asked where a to-host prefetch would
+ * otherwise be issued: it returns 1 (the caller skips the prefetch) only when bulk prefetching is on,
+ * the last bulk prefetch went to the device, and GIZMO_UVM_KEEP_DEVICE is not 0 in the environment.
+ * The state lasts until the next bulk particle prefetch in either direction; while it lasts,
+ * _owned_kept_on_device returns 1 and host code in the interval must read particles through the
+ * device helpers below (or take the to-host prefetch itself).  Placement only: a host touch in the
+ * interval stays correct and only costs page faults. */
+int gizmo_particles_keep_owned_on_device(const char *site);
+int gizmo_particles_owned_kept_on_device(void);
+/* Device-side helpers for that interval.  _count_not_at_time: how many of idx[0,n) (host array; entries
+ * outside [0,NumPart) ignored) have P[j].Ti_current != t_now.  _gather_send_records: the ghost-export
+ * pack (whole P[j] record, CellP[j] for gas below N_gas, else zeros; idx[k] < 0 gives a zero slot),
+ * gathered on the device and copied into the host buffers dst_P[0,n) / dst_CellP[0,n). */
+long long gizmo_particles_count_not_at_time(const int *idx, int n, long long t_now);   /* t_now: an integertime */
+void gizmo_particles_gather_send_records(const int *idx, int n, struct particle_data *dst_P, struct gas_cell_data *dst_CellP);
 /* Seconds and bytes spent in the prefetches so far (for the run's timing report). */
 void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls);
 

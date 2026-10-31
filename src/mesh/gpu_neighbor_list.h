@@ -275,6 +275,11 @@ void gpu_ngb_list_free(gpu_neighbor_list_t *gnl);
 void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_total, int *active_indices, int num_active,
                                        neighbor_list_t *out, double search_radius_factor, int try_heap,
                                        gpu_neighbor_list_t *keep_device);
+/* The raw search radius ((double) P[i].KernelRadius, read before the search) of each row of the last list
+   built with keep_device, when `rows`/`n` are that list's rows; NULL otherwise.  For host code that must not
+   touch the particles while gizmo_particles_owned_kept_on_device() holds.  _forget drops it (corridor end). */
+const double *gizmo_symlist_raw_radii(const int *rows, int n);
+void gizmo_symlist_raw_radii_forget(void);
 /* The device-resident twin of gizmo_sym_neighbor_list: the same rows and pairs, built and freed with it. */
 extern gpu_neighbor_list_t gizmo_sym_neighbor_list_device;
 

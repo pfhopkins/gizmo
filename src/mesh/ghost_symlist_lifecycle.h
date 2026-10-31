@@ -347,6 +347,7 @@ static inline void gizmo_gradients_refresh_symlist(double safety, double search_
 static inline void gizmo_hydro_cleanup_symlist_and_ghosts(void)
 {
     gpu_ngb_list_free(&gizmo_sym_neighbor_list_device);   /* only the hydro pass's device consumers read it; the sub-steps read the host list */
+    gizmo_symlist_raw_radii_forget();
 #ifdef TRANSPORT_SUBCYCLE
     if(transport_subcycle_keep_topology()) {return;}   /* the transport sub-steps take the list and the pool over */
 #endif

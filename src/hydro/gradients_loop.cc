@@ -34,6 +34,7 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
+#include "../declarations/gpu_dispatch_templates.h"   /* gizmo_gpu_kernel_launch */
 #include "../mesh/kernel.h"                   /* MUST precede gradients_loop.h
                                                 * — kernel.h has no include guards */
 #include "../mesh/neighbor_loop_runner.h"
@@ -409,6 +410,121 @@ void GradientsIterSpec::apply_active_writeback(const neighbor_loop_args& args,
  *      per-i purity audit of calculate_and_assign_* first).
  *   7. No final refresh here — hydro_force refreshes at its own top.
  * ========================================================================== */
+/* The per-active part of the gradients zero loop below (step 3) that writes the particle storage: the
+ * same assignments on the host or, while the corridor keeps the particles on the device, in a kernel. */
+KOKKOS_INLINE_FUNCTION
+static void gradients_zero_active_fields(struct particle_data *Pp, struct gas_cell_data *Cp, int i, double smoothInv)
+{
+    int k2;
+    (void)smoothInv; (void)Pp;
+#ifdef HYDRO_SPH
+#ifdef MAGNETIC
+    Cp[i].DtB = {};
+#endif
+#ifdef DIVBCLEANING_DEDNER
+    Cp[i].divB = 0;
+#endif
+#ifdef SPHAV_CD10_VISCOSITY_SWITCH
+    Cp[i].alpha_limiter = 0;
+#endif
+#endif
+#ifdef TURB_DIFF_DYNAMIC
+    Cp[i].Velocity_hat = Cp[i].Velocity_bar * smoothInv;   /* Velocity_bar already smoothed in (0) */
+#endif
+#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
+    Pp[i].AGS_zeta = 0;
+#endif
+    Cp[i].Gradients.Density  = {};
+    Cp[i].Gradients.Pressure = {};
+    Cp[i].Gradients.Velocity = {};
+#ifdef DOGRAD_INTERNAL_ENERGY
+    Cp[i].Gradients.InternalEnergy = {};
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
+    Cp[i].Gradients.ElectronNumberDensity = {};
+    Cp[i].Gradients.ElectronTemperature   = {};
+#endif
+#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
+    Cp[i].Gradients.E_battery_T2 = {};
+#endif
+#ifdef COSMIC_RAY_FLUID
+    for(k2 = 0; k2 < N_CR_PARTICLE_BINS; k2++) { Cp[i].Gradients.CosmicRayPressure[k2] = {}; }
+#endif
+#ifdef DOGRAD_SOUNDSPEED
+    Cp[i].Gradients.SoundSpeed = {};
+#endif
+#ifdef MAGNETIC
+#ifndef MHD_CONSTRAINED_GRADIENT
+    Cp[i].Gradients.B = {};
+#else
+    Cp[i].Face_Area = {};
+#endif
+#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
+    Cp[i].Gradients.Phi = {};
+#endif
+#endif
+#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
+    for(k2 = 0; k2 < NUM_METAL_SPECIES; k2++) { Cp[i].Gradients.Metallicity[k2] = {}; }
+#endif
+#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
+    for(k2 = 0; k2 < N_RT_FREQ_BINS; k2++) { Cp[i].Gradients.Rad_E_gamma_ET[k2] = {}; }
+#endif
+#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
+    for(k2 = 0; k2 < N_RT_FREQ_BINS; k2++) {
+        for(int k3 = 0; k3 < 3; k3++) { Cp[i].Gradients.Rad_E_gamma_Grad[k2][k3] = 0; }
+        for(int k4 = 0; k4 < 3; k4++) for(int k5 = 0; k5 < 3; k5++) {
+            Cp[i].Gradients.Rad_Flux_Grad[k2][k4][k5] = 0;
+        }
+    }
+#endif
+    (void)k2;
+}
+
+/* Step 3 with the particles on the device: the field zeroing as a kernel over the active list, and the
+ * host-side passer zeroing driven by the kernel's gas test, so the host reads no particle. */
+static void gradients_zero_actives_on_device(struct temporary_data_topass *passer_base, int n, double smoothInv)
+{
+    static int *d_list = NULL;
+    static unsigned char *d_gas = NULL;
+    static size_t cap = 0;
+    if(n <= 0) {return;}
+    if((size_t) n > cap) {
+        if(d_list) {gizmo_gpu_free_device(d_list);}
+        if(d_gas) {gizmo_gpu_free_device(d_gas);}
+        cap = (size_t) n + (size_t) n / 4;
+        d_list = (int *) gizmo_gpu_alloc_device(cap * sizeof(int), "gradients_zero_list");
+        d_gas = (unsigned char *) gizmo_gpu_alloc_device(cap, "gradients_zero_gas");
+        if(!d_list || !d_gas) {cap = 0;}
+    }
+    std::vector<unsigned char> gas((size_t) n, 0);
+    if(cap == 0) {   /* no scratch: the host loop (correct, only slower) */
+        for(int idx = 0; idx < n; idx++) {const int i = ActiveParticleList[idx]; gas[idx] = (P[i].Type == 0); if(gas[idx]) {gradients_zero_active_fields(P, CellP, i, smoothInv);}}
+    } else {
+        Kokkos::View<const int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h_list(ActiveParticleList.data(), (size_t) n);
+        Kokkos::View<int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_list(d_list, (size_t) n);
+        Kokkos::deep_copy(dv_list, h_list);
+        struct particle_data *Pp = P;
+        struct gas_cell_data *Cp = CellP;
+        int *dl = d_list;
+        unsigned char *dg = d_gas;
+        gizmo_gpu_kernel_launch("gradients_zero_actives", n, KOKKOS_LAMBDA(int idx) {
+            const int i = dl[idx];
+            const unsigned char g = (Pp[i].Type == 0) ? 1 : 0;
+            dg[idx] = g;
+            if(g) {gradients_zero_active_fields(Pp, Cp, i, smoothInv);}
+        });
+        Kokkos::View<unsigned char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h_gas(gas.data(), (size_t) n);
+        Kokkos::View<const unsigned char *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dv_gas(d_gas, (size_t) n);
+        Kokkos::deep_copy(h_gas, dv_gas);
+    }
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n >= 16)
+#endif
+    for(int idx = 0; idx < n; idx++) {
+        if(gas[idx]) {memset(&passer_base[ActiveParticleList[idx]], 0, sizeof(struct temporary_data_topass));}
+    }
+}
+
 void hydro_gradient_calc(void)
 {
     CPU_Step[CPU_DENSMISC] += measure_time();
@@ -466,81 +582,26 @@ void hydro_gradient_calc(void)
     }
     struct temporary_data_topass *passer_base = gas_grad_passer_storage.data();
 
-    /* (3) Zero CellP[i].Gradients.*, P[i].AGS_zeta, passer[i], etc. on host
+    /* (3) Zero CellP[i].Gradients.*, P[i].AGS_zeta, passer[i], etc.
      * for every active gas particle. Mirrors hydro/gradients.cc:552-620
-     * verbatim. */
+     * verbatim (gradients_zero_active_fields). */
 #ifdef TURB_DIFF_DYNAMIC
     double smoothInv = 1.0 / All.TurbDynamicDiffSmoothing;
+#else
+    double smoothInv = 0;
 #endif
+    if(gizmo_particles_owned_kept_on_device()) {
+        gradients_zero_actives_on_device(passer_base, n_active_list, smoothInv);
+    } else {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(n_active_list >= 16)
 #endif
     for(int idx = 0; idx < n_active_list; idx++) {
         const int i = ActiveParticleList[idx];
         if(P[i].Type != 0) continue;
-        int k2;
         memset(&passer_base[i], 0, sizeof(struct temporary_data_topass));
-#ifdef HYDRO_SPH
-#ifdef MAGNETIC
-        CellP[i].DtB = {};
-#endif
-#ifdef DIVBCLEANING_DEDNER
-        CellP[i].divB = 0;
-#endif
-#ifdef SPHAV_CD10_VISCOSITY_SWITCH
-        CellP[i].alpha_limiter = 0;
-#endif
-#endif
-#ifdef TURB_DIFF_DYNAMIC
-        CellP[i].Velocity_hat = CellP[i].Velocity_bar * smoothInv;   /* Velocity_bar already smoothed in (0) */
-#endif
-#if defined(ADAPTIVE_GRAVSOFT_FORGAS) || (ADAPTIVE_GRAVSOFT_FORALL & 1)
-        P[i].AGS_zeta = 0;
-#endif
-        CellP[i].Gradients.Density  = {};
-        CellP[i].Gradients.Pressure = {};
-        CellP[i].Gradients.Velocity = {};
-#ifdef DOGRAD_INTERNAL_ENERGY
-        CellP[i].Gradients.InternalEnergy = {};
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & 1)
-        CellP[i].Gradients.ElectronNumberDensity = {};
-        CellP[i].Gradients.ElectronTemperature   = {};
-#endif
-#if defined(MHD_BATTERY_MECHANISMS) && (MHD_BATTERY_MECHANISMS & (2|4|8))
-        CellP[i].Gradients.E_battery_T2 = {};
-#endif
-#ifdef COSMIC_RAY_FLUID
-        for(k2 = 0; k2 < N_CR_PARTICLE_BINS; k2++) { CellP[i].Gradients.CosmicRayPressure[k2] = {}; }
-#endif
-#ifdef DOGRAD_SOUNDSPEED
-        CellP[i].Gradients.SoundSpeed = {};
-#endif
-#ifdef MAGNETIC
-#ifndef MHD_CONSTRAINED_GRADIENT
-        CellP[i].Gradients.B = {};
-#else
-        CellP[i].Face_Area = {};
-#endif
-#if defined(DIVBCLEANING_DEDNER) && !defined(MHD_CONSTRAINED_GRADIENT_MIDPOINT)
-        CellP[i].Gradients.Phi = {};
-#endif
-#endif
-#if defined(TURB_DIFF_METALS) && !defined(TURB_DIFF_METALS_LOWORDER)
-        for(k2 = 0; k2 < NUM_METAL_SPECIES; k2++) { CellP[i].Gradients.Metallicity[k2] = {}; }
-#endif
-#ifdef RT_COMPGRAD_EDDINGTON_TENSOR
-        for(k2 = 0; k2 < N_RT_FREQ_BINS; k2++) { CellP[i].Gradients.Rad_E_gamma_ET[k2] = {}; }
-#endif
-#if defined(RT_M1_SECONDORDER) && defined(RT_EVOLVE_FLUX)
-        for(k2 = 0; k2 < N_RT_FREQ_BINS; k2++) {
-            for(int k3 = 0; k3 < 3; k3++) { CellP[i].Gradients.Rad_E_gamma_Grad[k2][k3] = 0; }
-            for(int k4 = 0; k4 < 3; k4++) for(int k5 = 0; k5 < 3; k5++) {
-                CellP[i].Gradients.Rad_Flux_Grad[k2][k4][k5] = 0;
-            }
-        }
-#endif
-        (void)k2;
+        gradients_zero_active_fields(P, CellP, i, smoothInv);
+    }
     }
 
     /* (4) Arena invalidation: host zeroed CellP[i].Gradients.* / AGS_zeta;

@@ -12,6 +12,7 @@
 
 #include <Kokkos_Core.hpp>
 #include <exception>
+#include <vector>
 #if defined(KOKKOS_ENABLE_HIP)
 #include <hip/hip_runtime.h>   /* hipMemAdvise, for the particle-storage placement policy below */
 #elif defined(KOKKOS_ENABLE_CUDA)
@@ -88,10 +89,13 @@ static int particles_prefetch_enabled(void)
     return prefetch_enabled_;
 }
 
+static int owned_kept_on_device_ = 0;   /* see gizmo_particles_keep_owned_on_device */
+
 static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1)
 {
     (void) site;
     if(!particles_prefetch_enabled()) {return;}
+    owned_kept_on_device_ = 0;
 #if defined(KOKKOS_ENABLE_CUDA)
     /* n_owned >= 0: only the rank's own particles [0, n_owned) and their cells, leaving imported ghosts where they are. */
     const int n_part = (n_owned >= 0 && n_owned < NumPart) ? n_owned : NumPart;
@@ -163,6 +167,117 @@ extern "C" void gizmo_managed_prefetch_to_device(const void *ptr, size_t bytes, 
 #else
     (void) site;
 #endif
+}
+
+/* GIZMO_UVM_KEEP_DEVICE: 0 off, 1 the corridor span (default). */
+static int keep_device_level(void)
+{
+    static int level = -1;
+    if(level < 0) {
+        level = 1;
+        const char *env = getenv("GIZMO_UVM_KEEP_DEVICE");
+        if(env && env[0]) {level = atoi(env); if(level < 0) {level = 0;}}
+        if(ThisTask == 0 && particles_prefetch_enabled()) {printf("Particle storage: keeping particles on the device between device passes: level %d.\n", level); fflush(stdout);}
+    }
+    return level;
+}
+
+extern "C" int gizmo_particles_keep_owned_on_device(const char *site)
+{
+    (void) site;
+    if(keep_device_level() < 1 || !particles_prefetch_enabled() || prefetch_side_ != 1) {return 0;}
+    owned_kept_on_device_ = 1;
+    return 1;
+}
+extern "C" int gizmo_particles_owned_kept_on_device(void) {return owned_kept_on_device_;}
+
+/* Grow-only device scratch for the helpers below (released at exit with the context). */
+static void *kept_scratch_ = NULL;
+static size_t kept_scratch_bytes_ = 0;
+static void *kept_scratch(size_t bytes)
+{
+    if(bytes > kept_scratch_bytes_) {
+        if(kept_scratch_) {gizmo_gpu_free_device(kept_scratch_);}
+        kept_scratch_bytes_ = bytes + bytes / 4;
+        kept_scratch_ = gizmo_gpu_alloc_device(kept_scratch_bytes_, "kept_device_scratch");
+        if(!kept_scratch_) {kept_scratch_bytes_ = 0;}
+    }
+    return kept_scratch_;
+}
+
+extern "C" long long gizmo_particles_count_not_at_time(const int *idx, int n, integertime t_now)
+{
+    if(n <= 0) {return 0;}
+    int *d_idx = (int *) kept_scratch((size_t) n * sizeof(int));
+    if(!d_idx) {   /* no scratch: answer on the host (correct, only slower) */
+        long long c = 0;
+        for(int k = 0; k < n; k++) {const int j = idx[k]; if(j >= 0 && j < NumPart && P[j].Ti_current != t_now) {c++;}}
+        return c;
+    }
+    Kokkos::View<const int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(idx, (size_t) n);
+    Kokkos::View<int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_idx, (size_t) n);
+    Kokkos::deep_copy(d, h);
+    const struct particle_data *Pd = P;
+    const int npart = NumPart;
+    long long count = 0;
+    Kokkos::parallel_reduce("gizmo_count_not_at_time", n, KOKKOS_LAMBDA(int k, long long &c) {
+        const int j = d_idx[k];
+        if(j >= 0 && j < npart && Pd[j].Ti_current != t_now) {c++;}
+    }, count);
+    Kokkos::fence("gizmo_count_not_at_time");
+    return count;
+}
+
+/* Copies whole records as words; padding included, which a host struct copy may leave alone (never read). */
+template <typename W>
+KOKKOS_INLINE_FUNCTION void kept_copy_words(W *dst, const W *src, int nw) {for(int w = 0; w < nw; w++) {dst[w] = src[w];}}
+template <typename W>
+KOKKOS_INLINE_FUNCTION void kept_zero_words(W *dst, int nw) {for(int w = 0; w < nw; w++) {dst[w] = 0;}}
+
+extern "C" void gizmo_particles_gather_send_records(const int *idx, int n, struct particle_data *dst_P, struct gas_cell_data *dst_CellP)
+{
+    if(n <= 0) {return;}
+    static_assert(sizeof(struct particle_data) % sizeof(unsigned int) == 0 && sizeof(struct gas_cell_data) % sizeof(unsigned int) == 0,
+                  "particle records are copied as 4-byte words");
+    typedef unsigned int W;
+    const int wp = (int) (sizeof(struct particle_data) / sizeof(W)), wc = (int) (sizeof(struct gas_cell_data) / sizeof(W));
+    const size_t idx_bytes = ((size_t) n * sizeof(int) + 255) & ~(size_t) 255;
+    const size_t p_bytes = (size_t) n * sizeof(struct particle_data), c_bytes = (size_t) n * sizeof(struct gas_cell_data);
+    char *base = (char *) kept_scratch(idx_bytes + p_bytes + c_bytes);
+    if(!base) {   /* no scratch: pack on the host, as the import does (correct, only slower) */
+        for(int k = 0; k < n; k++) {
+            const int j = idx[k];
+            if(j < 0) {memset(&dst_P[k], 0, sizeof(struct particle_data)); memset(&dst_CellP[k], 0, sizeof(struct gas_cell_data)); continue;}
+            dst_P[k] = P[j];
+            if(P[j].Type == 0 && j < N_gas) {dst_CellP[k] = CellP[j];} else {memset(&dst_CellP[k], 0, sizeof(struct gas_cell_data));}
+        }
+        return;
+    }
+    int *d_idx = (int *) base;
+    W *d_p = (W *) (base + idx_bytes);
+    W *d_c = (W *) (base + idx_bytes + p_bytes);
+    {
+        Kokkos::View<const int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(idx, (size_t) n);
+        Kokkos::View<int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_idx, (size_t) n);
+        Kokkos::deep_copy(d, h);
+    }
+    const W *Pw = (const W *) P;
+    const W *Cw = (const W *) CellP;
+    const struct particle_data *Pd = P;
+    const int ngas = N_gas;
+    Kokkos::parallel_for("gizmo_gather_send_records", n, KOKKOS_LAMBDA(int k) {
+        const int j = d_idx[k];
+        W *op = d_p + (size_t) k * wp;
+        W *oc = d_c + (size_t) k * wc;
+        if(j < 0) {kept_zero_words(op, wp); kept_zero_words(oc, wc); return;}
+        kept_copy_words(op, Pw + (size_t) j * wp, wp);
+        if(Pd[j].Type == 0 && j < ngas) {kept_copy_words(oc, Cw + (size_t) j * wc, wc);} else {kept_zero_words(oc, wc);}
+    });
+    Kokkos::fence("gizmo_gather_send_records");
+    Kokkos::View<W *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hp((W *) dst_P, (size_t) n * wp), hc((W *) dst_CellP, (size_t) n * wc);
+    Kokkos::View<const W *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dp(d_p, (size_t) n * wp), dc(d_c, (size_t) n * wc);
+    Kokkos::deep_copy(hp, dp);
+    Kokkos::deep_copy(hc, dc);
 }
 
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}

@@ -719,7 +719,8 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                                                   const int *send_count, const int *send_disp,
                                                   struct particle_data *dst_P,
                                                   struct gas_cell_data *dst_CellP,
-                                                  const int *recv_count, const int *recv_disp)
+                                                  const int *recv_count, const int *recv_disp,
+                                                  int pack_on_device = 0)   /* gather the send slots on the device (gizmo_particles_gather_send_records) */
 {
     const size_t slot_bytes = sizeof(struct particle_data) + sizeof(struct gas_cell_data);
     /* Where the particle storage is CUDA managed memory, MPI does not write it directly: each round is received
@@ -882,7 +883,17 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
         struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_fwd_sC",
             staging_slots * sizeof(struct gas_cell_data));
 
-        for(int t = 0; t < NTask; t++)
+        if(pack_on_device) {
+            /* The same slots in the same order, gathered where the particles are. */
+            std::vector<int> round_j((size_t) (staged > 0 ? staged : 1), -1);
+            for(int t = 0; t < NTask; t++) {
+                if(round_send_count[t] <= 0) {continue;}
+                const int *home = send_home_idx + send_disp[t] + taken;
+                for(int k = 0; k < round_send_count[t]; k++) {round_j[(size_t) (round_send_disp[t] + k)] = home[k];}
+            }
+            gizmo_particles_gather_send_records(round_j.data(), staged, send_P, send_CellP);
+        }
+        for(int t = 0; t < NTask && !pack_on_device; t++)
         {
             /* Only step into the list for a peer this round still has slots for:
                a run that finished in an earlier round would address past its end. */
@@ -1849,16 +1860,24 @@ int ghost_refresh_values(void)
     if(any_failed_global) {return (rc != GHOST_REFRESH_OK) ? rc : GHOST_REFRESH_FAIL_ON_PEER;}
 
     int ns = ghost_send_home_count;
+    /* With the owners' particles kept on the device (gizmo_particles_owned_kept_on_device), the send list is
+       certified and packed there; a send list with anything behind the current time is drifted on the host
+       as always, after the particles are brought back. */
+    int pack_on_device = gizmo_particles_owned_kept_on_device();
+    if(pack_on_device && gizmo_particles_count_not_at_time(ghost_send_home_idx, ns, All.Ti_Current) > 0) {
+        gizmo_particles_prefetch_to_host("ghost_refresh_values");
+        pack_on_device = 0;
+    }
     /* Re-pack current owner values via the SAME transport import uses, in the SAME
        send order (ghost_send_home_idx) that produced this pool. */
-    const int send_list_current = gx_certify_send_list_current(ghost_send_home_idx, ns, All.Ti_Current);
+    const int send_list_current = pack_on_device ? 0 : gx_certify_send_list_current(ghost_send_home_idx, ns, All.Ti_Current);
     /* Replay ONLY the forward transport, overwriting the EXISTING ghost slots at
        [NumPart_before_ghost, NumPart). Slots land at identical offsets by
        construction, so ghost_home_rank/index maps + any built CSR stay valid. */
     gx_pack_and_forward_particle_exchange(ghost_send_home_idx,
                                           ghost_wb_send_count, ghost_wb_send_disp,
                                           &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
-                                          ghost_wb_recv_count, ghost_wb_recv_disp);
+                                          ghost_wb_recv_count, ghost_wb_recv_disp, pack_on_device);
     /* The refresh re-packed at the current time, so the pool is current to it --
        re-stamp, or the guarantee would lag the pool it describes. Withheld when the
        advance did not complete, for the same reason the import path withholds it. */
