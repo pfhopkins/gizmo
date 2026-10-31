@@ -2,9 +2,10 @@
  * device kernels, for the span from the big-step gradients pass to the hydro pass in which the rank's own particles
  * stay on the device. Contract, admitted configurations and the knob: hydro/gpu_hydro_tails.h.
  *
- * This translation unit is compiled without contraction to fused multiply-add (target-specific flag in the
- * Makefile): the bodies are the host loops' own (hydro/gradients_tail.h, hydro/gpu_hydro_tails.h) and give the
- * same bits only under the host's arithmetic. Keep every device instantiation of those bodies in this file. */
+ * The bodies are the host loops' own (hydro/gradients_tail.h, hydro/gpu_hydro_tails.h). This translation unit is
+ * compiled without contraction to fused multiply-add on both sides (target-specific flags in the Makefile), and the
+ * one host loop with products in it (gradients_finalize_host_loop) is built here too, so host and device give the
+ * same bits. Keep every instantiation of those bodies that does arithmetic in this file. */
 
 #include <mpi.h>
 #include <cstdio>
@@ -259,6 +260,7 @@ extern "C" int gizmo_gradients_finalize_on_device(void)
         std::vector<struct gas_cell_data> C1;
         hydro_tails_gather_actives(dl, n, P1, C1);
         long long n_gas = 0, n_cell_diff = 0, n_p_diff = 0, n_grad_diff = 0, n_vort_diff = 0;
+        double rel_max = 0;   /* largest relative difference of a gradient component */
         for(int k = 0; k < n; k++) {
             if(verify_.P0[(size_t) k].Type != 0) {continue;}
             n_gas++;
@@ -266,15 +268,22 @@ extern "C" int gizmo_gradients_finalize_on_device(void)
             const struct gas_cell_data &a = verify_.C0[(size_t) k], &b = C1[(size_t) k];
             if(memcmp(&a, &b, sizeof(a)) != 0) {n_cell_diff++;}
             if(memcmp(&verify_.P0[(size_t) k], &P1[(size_t) k], sizeof(struct particle_data)) != 0) {n_p_diff++;}
-            if(memcmp(&a.Gradients, &b.Gradients, sizeof(a.Gradients)) != 0) {n_grad_diff++;}
+            if(memcmp(&a.Gradients, &b.Gradients, sizeof(a.Gradients)) != 0) {
+                n_grad_diff++;
+                const double *ga = (const double *) &a.Gradients, *gb = (const double *) &b.Gradients;
+                for(size_t q = 0; q < sizeof(a.Gradients) / sizeof(double); q++) {
+                    const double den = fmax(fabs(ga[q]), fabs(gb[q]));
+                    if(den > 0 && fabs(ga[q] - gb[q]) / den > rel_max) {rel_max = fabs(ga[q] - gb[q]) / den;}
+                }
+            }
 #if defined(TURB_DRIVING) || defined(OUTPUT_VORTICITY)
             if(memcmp(&a.Vorticity, &b.Vorticity, sizeof(a.Vorticity)) != 0) {n_vort_diff++;}
 #endif
         }
         if(ThisTask == 0 || n_cell_diff || n_p_diff || verify_.unmapped) {
             printf("Gradients tail verify (task %d, span %d): %lld active gas cells; records differing from the host loops: "
-                   "cell %lld (gradients %lld, vorticity %lld), particle %lld; rows not in the active list %lld\n",
-                   ThisTask, verify_.spans, n_gas, n_cell_diff, n_grad_diff, n_vort_diff, n_p_diff, verify_.unmapped);
+                   "cell %lld (gradients %lld, largest relative difference %.3g; vorticity %lld), particle %lld; rows not in the active list %lld\n",
+                   ThisTask, verify_.spans, n_gas, n_cell_diff, n_grad_diff, rel_max, n_vort_diff, n_p_diff, verify_.unmapped);
             fflush(stdout);
         }
         verify_.P0.clear(); verify_.P0.shrink_to_fit(); verify_.C0.clear(); verify_.C0.shrink_to_fit();
@@ -285,6 +294,20 @@ extern "C" int gizmo_gradients_finalize_on_device(void)
     return 0;
 #endif
 }
+
+#if GIZMO_HYDRO_TAILS_DEVICE
+void gradients_finalize_host_loop(struct temporary_data_topass *passer_base)
+{
+    const int n = (int) ActiveParticleList.size();
+    const int *list = ActiveParticleList.data();
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
+    for(int aa = 0; aa < n; aa++) {
+        const int i = list[aa];
+        if(P[i].Type != 0) {continue;}
+        gradients_finalize_cell(P, CellP, passer_base[i], i);
+    }
+}
+#endif
 
 extern "C" int gizmo_hydro_preloop_on_device(void)
 {

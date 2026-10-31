@@ -1006,12 +1006,12 @@ hydro/gradients_loop.o: hydro/gradients_loop.cc $(INCL) $(CONFIG) compile_time_i
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 hydro/hydro_force_loop.o: hydro/hydro_force_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-## Device ports of host loops (hydro/gpu_hydro_tails.h). They agree with the host loops bit for bit only without
-## contraction to fused multiply-add, which the host build (no -march) never emits: target-specific flag, as for
-## galaxy_sf/mechanical_fb.o below.
+## Device ports of host loops (hydro/gpu_hydro_tails.h) and the host loops they must match bit for bit: no
+## contraction to fused multiply-add on either side (device: --fmad=false; host: -ffp-contract=off, since a host
+## compiler whose default target has FMA contracts). Target-specific flag, as for galaxy_sf/mechanical_fb.o below.
 hydro/gpu_hydro_tails.o: hydro/gpu_hydro_tails.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
-hydro/gpu_hydro_tails.o: CFLAGS := $(CFLAGS) $(if $(findstring nvcc_wrapper,$(GPU_CXX)),--fmad=false,-ffp-contract=off)
+hydro/gpu_hydro_tails.o: CFLAGS := $(CFLAGS) $(if $(findstring nvcc_wrapper,$(GPU_CXX)),--fmad=false) -ffp-contract=off
 gravity/ags_force_loop.o: gravity/ags_force_loop.cc $(INCL) $(CONFIG) compile_time_info.cc
 	$(GPU_CC) $(CFLAGS) $(GPU_CFLAGS) -c $< -o $@
 ## sidm/dm_fuzzy_gpu.o retired by DMGradSpec (dm_fuzzy port). dm_fuzzy.o stays

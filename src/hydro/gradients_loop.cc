@@ -658,6 +658,9 @@ void hydro_gradient_calc(void)
      * writeback ran on the device the same body runs there, on the scratch
      * the device writeback filled. */
     if(!nothing_to_do && !gizmo_gradients_finalize_on_device()) {
+#if GIZMO_HYDRO_TAILS_DEVICE
+    gradients_finalize_host_loop(passer_base);   /* the same loop, built like the device one */
+#else
     const int n_active_total = (int)ActiveParticleList.size();
     const int *active_list_data = ActiveParticleList.data();
 #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
@@ -666,6 +669,7 @@ void hydro_gradient_calc(void)
         if(P[i].Type != 0) continue;
         gradients_finalize_cell(P, CellP, passer_base[i], i);
     } /* end finalization for-each-active */
+#endif
     } /* end if !nothing_to_do */
 
     /* (7) NO ghost refresh here: hydro_force runs the corridor refresh at

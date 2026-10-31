@@ -5,9 +5,12 @@
  * the gradients writeback, the gradients finalization loop and the hydro preloop. Those loops then run as
  * kernels (hydro/gpu_hydro_tails.cc) on the SAME bodies the host loops run (this header and
  * hydro/gradients_tail.h), so the two paths cannot drift apart. Bitwise contract: the bodies admitted here use
- * only + - * / sqrt, fabs and compares, and the device TU is compiled without FMA contraction (Makefile);
- * a configuration whose bodies call a transcendental or a host-only routine is not admitted and always takes
- * the host loops. GIZMO_GPU_GRADTAIL=0 in the environment selects the host loops in an admitted build.
+ * only + - * / sqrt, fabs and compares, and every instantiation that multiplies (the kernels and the admitted
+ * host finalization loop) is compiled in one TU without FMA contraction on either side (Makefile; the host
+ * compiler contracts by default where its target has FMA). A configuration whose bodies call a transcendental or
+ * a host-only routine is not admitted and keeps its host loops as they were. GIZMO_GPU_GRADTAIL=0 in the
+ * environment selects the host loops in an admitted build; GIZMO_GPU_GRADTAIL_VERIFY=N checks the kernels against
+ * them for the first N spans.
  */
 #ifndef GIZMO_GPU_HYDRO_TAILS_H
 #define GIZMO_GPU_HYDRO_TAILS_H

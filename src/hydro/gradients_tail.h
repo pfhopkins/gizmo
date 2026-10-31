@@ -684,4 +684,11 @@ HYDRO_TAIL_FUNCTION void gradients_finalize_cell(struct particle_data *Pp, struc
 #endif
 }
 
+#if GIZMO_HYDRO_TAILS_DEVICE
+/* The host finalization loop of an admitted configuration (hydro/gpu_hydro_tails.cc). It is compiled with the
+ * device kernels' translation unit, without contraction to fused multiply-add on either side, so the host and the
+ * device loops give the same bits (the host compiler contracts by default where its target has FMA). */
+void gradients_finalize_host_loop(struct temporary_data_topass *passer_base);
+#endif
+
 #endif /* GIZMO_GRADIENTS_TAIL_H */
