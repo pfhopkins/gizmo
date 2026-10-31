@@ -1914,6 +1914,14 @@ static void nlr_stop_no_staging_memory(const char *loop_name, const char *what, 
     gizmo_request_controlled_stop(7713, msg, __FILE__, __LINE__, __FUNCTION__);
 }
 
+/* Whether a caller-built list's device copy can be read in place (then its host pairs are not needed). */
+static inline bool nlr_external_csr_device_usable(const nlr_external_csr *ec)
+{
+    const gpu_neighbor_list_t *dev = ec->device;
+    return dev && dev->num_active == ec->num_active && dev->total_pairs == ec->total_pairs && dev->offsets && dev->d_active
+           && (dev->total_pairs == 0 || dev->neighbors);
+}
+
 /* Whether a caller-built list answers this loop's search (contract on struct
  * nlr_external_csr).  `rows`, `radii` and `type_mask` are the loop's own: its
  * active list, the search radius it gives each row, its effective neighbour-type
@@ -1938,7 +1946,7 @@ nlr_external_csr_mismatch(const nlr_external_csr *ec, const int *rows, int n,
     if(!ec->query_radii)                              {*code = 7302; return "null query_radii";}
     if(!ec->offsets)                                  {*code = 7303; return "null offsets";}
     if(ec->total_pairs < 0)                           {*code = 7304; return "negative total_pairs";}
-    if(ec->total_pairs > 0 && !ec->neighbors)         {*code = 7305; return "null neighbors with total_pairs>0";}
+    if(ec->total_pairs > 0 && !ec->neighbors && !nlr_external_csr_device_usable(ec)) {*code = 7305; return "null neighbors with total_pairs>0 and no usable device copy";}
     if(n > 0 && ec->offsets[0] != 0)                  {*code = 7306; return "offsets[0]!=0";}
     if(n > 0 && ec->offsets[n] != ec->total_pairs)    {*code = 7307; return "offsets[N]!=total_pairs";}
     for(int aa = 0; aa < n; aa++) {
@@ -2354,10 +2362,8 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
             Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(radii_uvm);
             return;
         }
-        const gpu_neighbor_list_t *dev = ec->device;
-        if(dev && dev->num_active == ec->num_active && dev->total_pairs == ec->total_pairs && dev->offsets && dev->d_active
-           && (dev->total_pairs == 0 || dev->neighbors)) {
-            gnl = *dev;
+        if(nlr_external_csr_device_usable(ec)) {
+            gnl = *ec->device;
             gnl_borrowed = true;
         } else if(!nlr_stage_external_csr_into_gnl(ec, &gnl, Spec::loop_name)) {
             gpu_ngb_list_free(&gnl);

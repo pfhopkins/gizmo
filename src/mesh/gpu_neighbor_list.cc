@@ -1901,6 +1901,18 @@ static bool ngl_query_setup_on_device(const struct particle_data *P_shared, cons
 #endif
 }
 
+/* Whether the symmetric list kept for device consumers also needs its pairs on the host (see its use). */
+static int symlist_host_pairs_wanted(void)
+{
+#if defined(MHD_MODIFIED_GRADIENT) || defined(TRANSPORT_SUBCYCLE)
+    return 1;
+#else
+    static int forced = -1;
+    if(forced < 0) {const char *env = getenv("GIZMO_SYMLIST_HOST_COPY"); forced = (env && env[0] && atoi(env) != 0) ? 1 : 0;}
+    return forced;
+#endif
+}
+
 /* Set by gpu_build_symmetric_neighbor_list around its build when the list's device copy is kept for
    device consumers (the hydro corridor), read by the to-host decision at the end of gpu_ngb_list_build. */
 static int symlist_device_consumer_follows = 0;
@@ -2602,14 +2614,19 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
         if(all_got) {out->on_heap = 1; gizmo_kept_list_grow((long long)(offsets_bytes + neighbors_bytes)); gizmo_kept_list_note_refused(0);}
         else {free(out->offsets); free(out->neighbors); gizmo_kept_list_note_refused(kept_bytes);}
     } else if(try_heap) {gizmo_kept_list_note_refused(kept_bytes);}
+    /* The host copy of the pairs is needed only by host readers of the list: none when the device copy is kept for
+     * the corridor's device consumers (gradients, hydro, cellcorrections borrow it) and no host consumer of the
+     * corridor list is compiled in (MHD_MODIFIED_GRADIENT, TRANSPORT_SUBCYCLE). The rows' offsets are always
+     * copied (the consumers check the list against them on the host). GIZMO_SYMLIST_HOST_COPY=1 copies anyway. */
+    const int host_pairs = !keep_device || out->on_heap || symlist_host_pairs_wanted();
     if(!out->on_heap) {
         out->offsets = (int64_t *) mymalloc("ngb_offsets", offsets_bytes);
-        out->neighbors = (int *) mymalloc("ngb_neighbors", neighbors_bytes);
+        out->neighbors = host_pairs ? (int *) mymalloc("ngb_neighbors", neighbors_bytes) : NULL;
     }
     /* gpu_nl.offsets is SharedSpace (UVM) → host memcpy is fine.
      * gpu_nl.neighbors is DEVICE_SPACE (CudaSpace) → must use deep_copy, not host memcpy. */
     memcpy(out->offsets, gpu_nl.offsets, (size_t)(num_active + 1) * sizeof(int64_t));
-    if(gpu_nl.total_pairs > 0) {
+    if(gpu_nl.total_pairs > 0 && out->neighbors) {
         Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
             h_neighbors(out->neighbors, (size_t)gpu_nl.total_pairs);
         Kokkos::View<const int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
