@@ -1170,7 +1170,7 @@ int read_file(char *fname, int readTask, int lastTask)
     int parallel_ic = (All.ICFormat == 3) && (lastTask > readTask);   /* every task reads its own slice (see above); cleared below for a file some task cannot open */
     size_t blockmaxlen;
     long long i, n_in_file, n_for_this_task, ntask, pc, offset = 0, task, nall, nread, nstart, npart;
-    int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6];
+    int blksize1, blksize2, type, bnr, bytes_per_blockelement, nextblock, typelist[6], id_bytes_in_file = sizeof(MyIDType);
     MPI_Status status;
     FILE *fd = 0;
     char label[4], buf[DEFAULT_PATH_BUFFERSIZE_TOUSE];
@@ -1594,12 +1594,7 @@ int read_file(char *fname, int readTask, int lastTask)
             int printed_missing_stress = 0; /* and the missing-stress warning */
 
             bytes_per_blockelement = get_bytes_per_blockelement(blocknr, 1);
-            /* the old unformatted fortran binary GADGET-2 format used unsigned int for IDs, so that
-             * width has to be respected when reading one. All.ICFormat is what the reader actually
-             * parses the file as (it selects every format branch below), so it gates this too --
-             * All.SnapFormat alone described the file the run WRITES, and on a format-3 read with
-             * SnapFormat=1 it mis-sized the block against the HDF5 dtype. */
-            if(blocknr == IO_ID && All.ICFormat == 1 && ((RestartFlag == 0) || (RestartFlag == 2 && All.SnapFormat == 1))) {bytes_per_blockelement = sizeof(unsigned int);}
+            id_bytes_in_file = sizeof(MyIDType); /* binary IDs may be narrower than MyIDType: set from the record length below */
 #if (CRFLUID_ALT_SPECTRUM_SPECIALSNAPRESTART==1)
             if(RestartFlag == 2 && blocknr == IO_COSMICRAY_ENERGY) {bytes_per_blockelement = (1) * get_input_float_bytes(blocknr);}
 #endif
@@ -1630,6 +1625,19 @@ int read_file(char *fname, int readTask, int lastTask)
                             if (blksize1 == 0) { /* workaround for MUSIC ICs */
                               SKIP2;
                               SKIP;
+                            }
+                            /* binary IDs are 32-bit (legacy GADGET-2) or 64-bit (MUSIC, our own binary snapshots): the record length
+                             * says which (the markers are 4-byte, so compared mod 2^32) */
+                            if(blocknr == IO_ID || blocknr == IO_CHILD_ID || blocknr == IO_GENERATION_ID)
+                            {
+                                if((unsigned int) blksize1 == (unsigned int) (npart * sizeof(unsigned int))) {id_bytes_in_file = sizeof(unsigned int);}
+                                else if((unsigned int) blksize1 != (unsigned int) (npart * sizeof(MyIDType)))
+                                {
+                                    printf("ID block %d: record length %u bytes fits neither 32- nor 64-bit IDs for %lld particles\n", bnr, (unsigned int) blksize1, npart);
+                                    fflush(stdout);
+                                    if(read_status == 0) {endrun(1890);}
+                                    read_status = 1890;
+                                }
                             }
                         }
                     }
@@ -1678,7 +1686,10 @@ int read_file(char *fname, int readTask, int lastTask)
                                     {
                                         if(read_status == 0)
                                         {
-                                            my_fread(CommBuffer, bytes_per_blockelement, pc, fd);
+                                            int narrow_ids = (id_bytes_in_file < (int) sizeof(MyIDType));
+                                            my_fread(CommBuffer, narrow_ids ? id_bytes_in_file : bytes_per_blockelement, pc, fd);
+                                            /* widen to MyIDType in place, last first so no unread ID is overwritten; memcpy because the two views alias */
+                                            if(narrow_ids) {for(long long k = pc - 1; k >= 0; k--) {unsigned int id32; memcpy(&id32, (char *) CommBuffer + k * sizeof(unsigned int), sizeof(id32)); ((MyIDType *) CommBuffer)[k] = id32;}}
                                             nread += pc;
                                         }
                                         else
@@ -1842,7 +1853,7 @@ int read_file(char *fname, int readTask, int lastTask)
                             {
                                 printf("incorrect block-sizes detected!\n");
                                 printf("Task=%d   blocknr=%d  blksize1=%d  blksize2=%d\n", ThisTask, bnr, blksize1, blksize2);
-                                if(blocknr == IO_ID) {printf("Possible mismatch of 32bit and 64bit ID's in IC file and GIZMO compilation !\n");}
+                                if(blocknr == IO_ID) {printf("The ID block's leading and trailing record lengths disagree: corrupt or inconsistent file\n");}
                                 fflush(stdout);
                                 /* soft: corrupt/misaligned binary block. This block's P2P already completed; keep the
                                  * outer block loop running (readTask keeps Ssending, peers keep Recv-ing) so no peer is
