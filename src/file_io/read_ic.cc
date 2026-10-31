@@ -2052,7 +2052,7 @@ int find_files(char *fname)
         fflush(stdout);
     }
 
-    endrun(0);
+    endrun(1); /* a failure, not a normal end: the caller drains it at read_ic:header before the header is used */
     return 0;
 }
 
