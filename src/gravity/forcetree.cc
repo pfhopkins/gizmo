@@ -281,7 +281,24 @@ double force_hmax_per_type_particle_radius(int i)
                                                 (double)All.MaxKernelRadius);
 }
 
-static void force_refresh_hmax_per_type_host(int Numnodestree)
+/* Steps 1-2 below on the device, where the tree build left the particles (gizmo_treehost_begin): only the bands
+ * cross, and the particles stay for the density pass.  Returns 1 when the bands were written. */
+static int force_refresh_hmax_per_type_device(int Numnodestree, int nseed)
+{
+    static std::vector<MyFloat> bands;
+    if(Numnodestree > 0) {bands.resize((size_t) Numnodestree * 6);}
+    if(gpu_hmax_per_type_seed_device(nseed, Numnodestree, (double) All.MaxKernelRadius, bands.data()) != 0) {return 0;}
+    const MyFloat *b = bands.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(Numnodestree >= 65536)
+#endif
+    for(int k = 0; k < Numnodestree; k++) {
+        for(int t = 0; t < 6; t++) {Extnodes[All.TreeNodeIndexBase + k].hmax_per_type[t] = b[(size_t) k * 6 + t];}
+    }
+    return 1;
+}
+
+static void force_seed_hmax_per_type_on_host(int Numnodestree)
 {
     /* Step 1: zero per-type bands in all internal nodes. */
     for(int no = All.TreeNodeIndexBase; no < All.TreeNodeIndexBase + Numnodestree; no++) {
@@ -319,6 +336,18 @@ static void force_refresh_hmax_per_type_host(int Numnodestree)
         __atomic_load(band, &cur, __ATOMIC_RELAXED);
         while(htmp > cur && !__atomic_compare_exchange(band, &cur, &htmp, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {}
     }
+}
+
+static void force_refresh_hmax_per_type_host(int Numnodestree)
+{
+    const int nseed = (NumPart < All.TreeParticleSlots) ? NumPart : All.TreeParticleSlots;
+    if((long long) nseed * 8 >= (long long) NumPart && gizmo_treehost_armed() && gizmo_particles_prefetch_side() == 1
+       && force_refresh_hmax_per_type_device(Numnodestree, nseed))
+    {
+        gizmo_managed_prefetch_to_host(Father, (size_t) nseed * sizeof(int), "force_refresh_hmax_per_type_host");   /* its host readers follow the density pass */
+        gizmo_treehost_open();
+    }
+    else {force_seed_hmax_per_type_on_host(Numnodestree);}
     /* Step 3: bottom-up max-over-children via father chain. Children always
      * allocated at higher indices than parents, so reverse iteration gives
      * children-before-parent order without an explicit DAG sort. */

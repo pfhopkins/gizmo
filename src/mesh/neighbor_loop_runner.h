@@ -1433,6 +1433,12 @@ nlr_effective_neighbor_type_mask(const neighbor_loop_args& args,
 struct neighbor_loop_args_iterative : neighbor_loop_args {
     NlrSubgroup *subgroups;          /* host array, length num_subgroups */
     int          num_subgroups;      /* >= 1; caller short-circuits if 0 globally */
+    const double *initial_radii = nullptr;
+                                     /* nullptr (default) => the runner seeds each active's radius from
+                                      * Spec::search_radius.  Non-null => [num_active], in active_list order:
+                                      * the values Spec::search_radius would return, already read by a caller
+                                      * whose particles are not on the host (density, when the tree build
+                                      * left them on the device). */
 };
 
 /* ============================================================================

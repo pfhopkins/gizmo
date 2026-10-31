@@ -92,15 +92,21 @@ static int particles_prefetch_enabled(void)
 
 static int owned_kept_on_device_ = 0;   /* see gizmo_particles_keep_owned_on_device */
 
-static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1)
+/* Device-resident tree-to-density span (contract in gpu_particles_arena.h). */
+static int treehost_armed_ = 0;   /* between gizmo_treehost_begin and _disarm */
+static int treehost_span_  = 0;   /* P left on the device by the tree build, density pass not reached yet */
+static int treehost_cells_ = 0;   /* within the span: the cells were moved to the device too */
+
+static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1, int with_particles = 1)
 {
     (void) site;
     if(!particles_prefetch_enabled()) {return;}
     owned_kept_on_device_ = 0;
+    if(!to_device || (with_cells && with_particles)) {treehost_span_ = 0; treehost_cells_ = 0;}   /* P goes to the host, or both arrays end up on the device */
 #if defined(KOKKOS_ENABLE_CUDA)
     /* n_owned >= 0: only the rank's own particles [0, n_owned) and their cells, leaving imported ghosts where they are. */
     const int n_part = (n_owned >= 0 && n_owned < NumPart) ? n_owned : NumPart;
-    const size_t bytes_p = (P && n_part > 0) ? (size_t) n_part * sizeof(struct particle_data) : 0;
+    const size_t bytes_p = (with_particles && P && n_part > 0) ? (size_t) n_part * sizeof(struct particle_data) : 0;
     /* Imported ghosts sit at the end of [0, NumPart) in both arrays, past N_gas: cover them while the
        corridor holds any (unused cell slots between N_gas and the ghosts only cost the copy). */
     const int n_cells = (n_owned >= 0) ? ((n_part < N_gas) ? n_part : N_gas)
@@ -387,6 +393,116 @@ extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particle
 extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}
 extern "C" void gizmo_particles_prefetch_owned_to_device(int n_owned, const char *site) {particles_prefetch(1, site, 1, n_owned);}
 extern "C" void gizmo_particles_prefetch_P_to_host(const char *site) {particles_prefetch(0, site, 0);}
+extern "C" int gizmo_treehost_begin(long long n_active)
+{
+    treehost_armed_ = 0;
+#if defined(GIZMO_GPU_TREEHOST_SUPPORTED) && defined(KOKKOS_ENABLE_CUDA)
+    static int enabled = -1;
+    if(enabled < 0) {
+        const char *env = getenv("GIZMO_GPU_TREEHOST");
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
+        if(ThisTask == 0 && particles_prefetch_enabled()) {printf("Particle storage: tree build to density pass on the device (GIZMO_GPU_TREEHOST) is %s.\n", enabled ? "on" : "off"); fflush(stdout);}
+    }
+    if(enabled && particles_prefetch_enabled() && NumPart > 0 && All.TotN_gas > 0 && n_active * 8 >= (long long) NumPart) {treehost_armed_ = 1;}
+#else
+    (void) n_active;
+#endif
+    return treehost_armed_;
+}
+extern "C" int  gizmo_treehost_armed(void) {return treehost_armed_;}
+extern "C" void gizmo_treehost_disarm(void) {treehost_armed_ = 0;}
+extern "C" void gizmo_treehost_open(void)
+{
+    if(!treehost_armed_ || prefetch_side_ != 1) {return;}
+    treehost_span_ = 1; treehost_cells_ = 0;
+}
+extern "C" int  gizmo_treehost_span_active(void) {return treehost_span_;}
+extern "C" void gizmo_treehost_cells_to_device(const char *site)
+{
+    if(!treehost_span_ || treehost_cells_) {return;}
+    particles_prefetch(1, site, 1, -1, 0);
+    treehost_cells_ = 1;
+}
+extern "C" int gizmo_treehost_consume(const char *site)
+{
+    if(!treehost_span_) {return 0;}
+    if(!treehost_cells_) {particles_prefetch(1, site, 1, -1, 0);}
+    treehost_span_ = 0; treehost_cells_ = 0;
+    return 1;
+}
+extern "C" void gizmo_treehost_end(const char *site)
+{
+    if(!treehost_span_) {return;}
+    particles_prefetch(0, site, treehost_cells_ ? 1 : 0);   /* ends the span */
+}
+
+static void *treehost_scratch_[4] = {NULL, NULL, NULL, NULL};
+static size_t treehost_scratch_bytes_[4] = {0, 0, 0, 0};
+extern "C" void *gizmo_treehost_device_scratch(int slot, size_t bytes)
+{
+    if(slot < 0 || slot >= 4) {return NULL;}
+    if(bytes > treehost_scratch_bytes_[slot]) {
+        if(treehost_scratch_[slot]) {gizmo_gpu_free_device(treehost_scratch_[slot]);}
+        treehost_scratch_bytes_[slot] = bytes + bytes / 4;
+        treehost_scratch_[slot] = gizmo_gpu_alloc_device(treehost_scratch_bytes_[slot], "treehost_scratch");
+        if(!treehost_scratch_[slot]) {treehost_scratch_bytes_[slot] = 0;}
+    }
+    return treehost_scratch_[slot];
+}
+/* The index list on the device (scratch slot 0), or NULL when the scratch cannot be had. */
+static int *treehost_upload_indices(const int *idx, int n)
+{
+    int *d_idx = (int *) gizmo_treehost_device_scratch(0, (size_t) n * sizeof(int));
+    if(!d_idx) {return NULL;}
+    Kokkos::View<const int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(idx, (size_t) n);
+    Kokkos::View<int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_idx, (size_t) n);
+    Kokkos::deep_copy(d, h);
+    return d_idx;
+}
+
+extern "C" void gizmo_particles_copy_oldacc_on_device(int n)
+{
+    if(n <= 0) {return;}
+    struct particle_data *Pd = P;
+    Kokkos::parallel_for("treehost_oldacc", n, KOKKOS_LAMBDA(int i) {Pd[i].OldAcc = Pd[i].OldAcc_LatestWalk;});
+    Kokkos::fence("treehost_oldacc");
+}
+
+extern "C" void gizmo_particles_zero_gravaccel_on_device(const int *idx, int n)
+{
+    if(n <= 0) {return;}
+    int *d_idx = treehost_upload_indices(idx, n);
+    if(!d_idx) {for(int k = 0; k < n; k++) {P[idx[k]].GravAccel = {};} return;}   /* no scratch: on the host (correct, only slower) */
+    struct particle_data *Pd = P;
+    Kokkos::parallel_for("treehost_zero_gravaccel", n, KOKKOS_LAMBDA(int k) {
+        const int i = d_idx[k];
+        Pd[i].GravAccel[0] = 0; Pd[i].GravAccel[1] = 0; Pd[i].GravAccel[2] = 0;
+    });
+    Kokkos::fence("treehost_zero_gravaccel");
+}
+
+extern "C" void gizmo_particles_count_active_gas_on_device(const int *idx, int n, long long *n_gas_with_mass, long long *n_gas)
+{
+    *n_gas_with_mass = 0; *n_gas = 0;
+    if(n <= 0) {return;}
+    int *d_idx = treehost_upload_indices(idx, n);
+    if(!d_idx) {   /* no scratch: on the host (correct, only slower) */
+        for(int k = 0; k < n; k++) {const int i = idx[k]; if(P[i].Type != 0) {continue;} (*n_gas)++; if(P[i].Mass > 0) {(*n_gas_with_mass)++;}}
+        return;
+    }
+    const struct particle_data *Pd = P;
+    /* Both counts in one sum: gas in the high 32 bits, gas with mass in the low ones (each count is below 2^31). */
+    long long packed = 0;
+    Kokkos::parallel_reduce("treehost_count_active_gas", n, KOKKOS_LAMBDA(int k, long long &c) {
+        const int i = d_idx[k];
+        if(Pd[i].Type != 0) {return;}
+        c += (1LL << 32) + ((Pd[i].Mass > 0) ? 1 : 0);
+    }, packed);
+    Kokkos::fence("treehost_count_active_gas");
+    *n_gas = packed >> 32;
+    *n_gas_with_mass = packed & 0xffffffffLL;
+}
+
 extern "C" void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls)
 {
     if(seconds) {*seconds = prefetch_seconds_;}

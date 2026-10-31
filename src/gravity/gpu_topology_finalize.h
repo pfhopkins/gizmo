@@ -48,6 +48,15 @@ int gpu_topology_finalize_sibling(int n);
  * [0, n).  Idempotent.  Returns 0 on success. */
 int gpu_topology_writeback_d_to_aos(int n);
 
+/* Steps 1-2 of the per-type hmax seed (force_refresh_hmax_per_type_host) on the device, for particles that are
+ * device-resident: every band of nodes [TreeNodeIndexBase, TreeNodeIndexBase + numnodes) starts at 0 and takes, by
+ * atomic max, force_hmax_per_type_particle_radius of each particle i < nseed with Father[i] >= 0 and positive mass,
+ * in the band of its type.  The bands land in bands_host[(no - TreeNodeIndexBase) * 6 + type].  A maximum does not
+ * depend on the order its terms arrive in, so these are the host loop's bands.  Returns 0 on success; 1, with
+ * bands_host not written, when the device scratch cannot be had or a seeded particle's Father[] or Type lies outside
+ * what the bands cover (the host loop then answers). */
+int gpu_hmax_per_type_seed_device(int nseed, int numnodes, double max_kernel_radius, MyFloat *bands_host);
+
 /* GPU kernel that resets per-node ephemeral fields (Ti_current, dp, Ti_lastkicked, Flag, optional payloads) after topology
  * finalize and before moment_refresh accumulates fresh moments.  Operates
  * on the absolute Nodes[] index range [TreeNodeIndexBase .. TreeNodeIndexBase+n).  On the CPU

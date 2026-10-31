@@ -64,6 +64,51 @@ using GxTreeHostRange = Kokkos::RangePolicy<Kokkos::DefaultHostExecutionSpace>;
 #include "gpu_topology_finalize.h"
 #include "../system/gpu_particles_arena.h"   /* gizmo_managed_prefetch_to_device */
 #include "forcetree.h"
+#include "../mesh/nlr_radius_policy.h"       /* nlr_particle_symmetric_radius_capped: the hmax seed's per-particle radius */
+
+
+extern "C" int gpu_hmax_per_type_seed_device(int nseed, int numnodes, double max_kernel_radius, MyFloat *bands_host)
+{
+    if(numnodes <= 0) {return 0;}
+    const size_t nb = (size_t) numnodes * 6;
+    MyFloat *d_band = (MyFloat *) gizmo_treehost_device_scratch(3, nb * sizeof(MyFloat));
+    int *d_bad = (int *) gizmo_treehost_device_scratch(2, sizeof(int));
+    if(!d_band || !d_bad || !Father) {return 1;}
+    const int base = All.TreeNodeIndexBase;
+    const int *Fa = Father;
+    const struct particle_data *Pd = P;
+    Kokkos::parallel_for("treehost_hmax_zero", Kokkos::RangePolicy<>(0, (long long) nb), KOKKOS_LAMBDA(long long k) {
+        d_band[k] = 0;
+        if(k == 0) {*d_bad = 0;}
+    });
+    if(nseed > 0) {
+        Kokkos::parallel_for("treehost_hmax_seed", nseed, KOKKOS_LAMBDA(int i) {
+            const int no = Fa[i];
+            if(no < 0) {return;}
+            if(Pd[i].Mass <= 0) {return;}
+            const int k = no - base, t = (int) Pd[i].Type;
+            if(k < 0 || k >= numnodes || t < 0 || t >= 6) {Kokkos::atomic_increment(d_bad); return;}
+            const MyFloat htmp = (MyFloat) nlr_particle_symmetric_radius_capped(Pd[i], MODE_B_RADIUS_ALL_SOURCES, max_kernel_radius);
+            MyFloat *band = &d_band[(size_t) k * 6 + t];
+            MyFloat cur = Kokkos::atomic_load(band);
+            while(htmp > cur) {   /* the host loop's compare-and-swap, so a NaN radius is never stored there either */
+                const MyFloat prev = Kokkos::atomic_compare_exchange(band, cur, htmp);
+                if(prev == cur) {break;}
+                cur = prev;
+            }
+        });
+    }
+    int bad = 0;
+    Kokkos::View<int, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h_bad(&bad);
+    Kokkos::View<const int, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> v_bad(d_bad);
+    Kokkos::fence("treehost_hmax_seed");
+    Kokkos::deep_copy(h_bad, v_bad);
+    if(bad) {return 1;}
+    Kokkos::View<MyFloat *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(bands_host, nb);
+    Kokkos::View<const MyFloat *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_band, nb);
+    Kokkos::deep_copy(h, d);
+    return 0;
+}
 
 
 extern "C" int gpu_topology_finalize_father(int n)

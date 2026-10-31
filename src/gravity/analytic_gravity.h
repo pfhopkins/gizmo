@@ -78,7 +78,10 @@ void add_analytic_gravitational_forces()
 void GravAccel_set_zeros_if_needed()
 {
 #if defined(SELFGRAVITY_OFF) || defined(RT_SELFGRAVITY_OFF) /* zero gravaccel [difference is that RT_SELFGRAVITY_OFF... option still computes everything above ]*/
-    int i; for (int i : ActiveParticleList) {P[i].GravAccel = {};}
+#ifdef GIZMO_GPU_TREEHOST_SUPPORTED
+    if(gizmo_treehost_span_active()) {gizmo_particles_zero_gravaccel_on_device(ActiveParticleList.data(), (int) ActiveParticleList.size());} else   /* the particles are on the device */
+#endif
+    {int i; for (int i : ActiveParticleList) {P[i].GravAccel = {};}}
 #if defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE)
     for (int i : ActiveParticleList) {for(int k=0;k<6;k++) {P[i].tidal_tensorps.data[k]=0;}}
 #endif

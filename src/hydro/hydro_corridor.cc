@@ -54,6 +54,10 @@ global_active_gas_counts(long long *out_sum, int *out_max, long long *out_sum_al
         const int n_act = (int) ActiveParticleList.size();
         const int *act = ActiveParticleList.data();
         long long n_mass = 0, n_gas = 0;
+#ifdef GIZMO_GPU_TREEHOST_SUPPORTED
+        if(gizmo_treehost_span_active()) {gizmo_particles_count_active_gas_on_device(act, n_act, &n_mass, &n_gas);} else   /* the particles are on the device */
+#endif
+        {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) reduction(+:n_mass,n_gas) if(gizmo_pcie_opt() && n_act >= 4096)
 #endif
@@ -62,6 +66,7 @@ global_active_gas_counts(long long *out_sum, int *out_max, long long *out_sum_al
             if(P[ii].Type != 0) continue;
             n_gas++;
             if(P[ii].Mass > 0) n_mass++;
+        }
         }
         local_sums[0] = n_mass; local_sums[1] = n_gas;
     }

@@ -171,6 +171,64 @@ std::vector<int> density_build_active_list(void)
     return active_list_concat;
 }
 
+#ifdef GIZMO_GPU_TREEHOST_SUPPORTED
+/* Steps (2) and (2.5) of density() on the device, for particles the tree build left there (gizmo_treehost_begin):
+ * density_isactive (which reduces to the tests below in the configurations the span supports), the prepass clamp,
+ * and each kept entry's search radius (DensitySpec::search_radius), so the runner reads no particle on the host.
+ * Compares and copies only; the clamp value is the host's own product.  Only the keep flags and the radii cross,
+ * and the list is compacted on the host in ActiveParticleList order, as density_build_active_list does.  Returns
+ * false, having done nothing, when the device scratch cannot be had. */
+static bool density_prep_on_device(std::vector<int>& list, std::vector<double>& radii,
+                                   const struct global_data_all_processes *host_all)
+{
+    gizmo_treehost_cells_to_device("density");   /* the predicate reads the refinement flag; the pass reads the cells anyway */
+    const int n_act = (int) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+    list.clear(); radii.clear();
+    if(n_act <= 0) {return true;}
+    int *d_idx = (int *) gizmo_treehost_device_scratch(0, (size_t) n_act * sizeof(int));
+    unsigned char *d_keep = (unsigned char *) gizmo_treehost_device_scratch(1, (size_t) n_act);
+    double *d_rad = (double *) gizmo_treehost_device_scratch(2, (size_t) n_act * sizeof(double));
+    if(!d_idx || !d_keep || !d_rad) {return false;}
+    {
+        Kokkos::View<const int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(act, (size_t) n_act);
+        Kokkos::View<int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_idx, (size_t) n_act);
+        Kokkos::deep_copy(d, h);
+    }
+    const double clamp = 0.99 * host_all->MaxKernelRadius;
+    struct particle_data *Pd = P;
+    const struct gas_cell_data *Cd = CellP;
+    Kokkos::parallel_for("treehost_density_prep", n_act, KOKKOS_LAMBDA(int k) {
+        const int i = d_idx[k];
+        int keep = 0;
+        if(Pd[i].TimeBin >= 0) {
+            if(Pd[i].Type == 0 && Cd[i].recent_refinement_flag == 1) {keep = 1;}
+            else if(Pd[i].Type == 0 && Pd[i].Mass > 0) {keep = 1;}
+        }
+        d_keep[k] = (unsigned char) keep;
+        if(keep) {
+            if((Pd[i].KernelRadius < 0) || !Kokkos::isfinite(Pd[i].KernelRadius) || (Pd[i].KernelRadius > clamp)) {Pd[i].KernelRadius = clamp;}
+            d_rad[k] = (double) Pd[i].KernelRadius;
+        }
+    });
+    Kokkos::fence("treehost_density_prep");
+    static std::vector<unsigned char> keep;
+    static std::vector<double> rad;
+    keep.resize((size_t) n_act); rad.resize((size_t) n_act);
+    {
+        Kokkos::View<unsigned char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hk(keep.data(), (size_t) n_act);
+        Kokkos::View<const unsigned char *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dk(d_keep, (size_t) n_act);
+        Kokkos::deep_copy(hk, dk);
+        Kokkos::View<double *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hr(rad.data(), (size_t) n_act);
+        Kokkos::View<const double *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dr(d_rad, (size_t) n_act);
+        Kokkos::deep_copy(hr, dr);
+    }
+    list.reserve(NumPart); radii.reserve((size_t) n_act);
+    for(int k = 0; k < n_act; k++) {if(keep[k]) {list.push_back(act[k]); radii.push_back(rad[k]);}}
+    return true;
+}
+#endif
+
 /* ====================================================================
  * density_build_subgroups — single gas-only subgroup.
  *
@@ -770,7 +828,13 @@ void density(void)
     const double gsl_safety = gizmo_ghost_safety_factor();
 
     /* (2) Build active list. */
-    std::vector<int> active_list_concat = density_build_active_list();
+    std::vector<int> active_list_concat;
+    std::vector<double> active_radii;   /* each entry's search radius, when (2)-(2.5) ran on the device */
+    bool prepped_on_device = false;
+#ifdef GIZMO_GPU_TREEHOST_SUPPORTED
+    if(gizmo_treehost_span_active()) {prepped_on_device = density_prep_on_device(active_list_concat, active_radii, host_all);}
+#endif
+    if(!prepped_on_device) {active_list_concat = density_build_active_list();}
 
     /* (2.5) Legacy pre-iteration active prepass — port of density.cc:183-205.
      *       Mirrors legacy verbatim: gpu_particles_arena_invalidate() so the
@@ -784,6 +848,7 @@ void density(void)
      *       IterScratch.{left,right} are zeroed by the runner at allocation
      *       so the legacy `Left[i] = Right[i] = 0` is already covered. */
     gpu_particles_arena_invalidate();
+    if(!prepped_on_device)
     {
         for (int i : active_list_concat) {
 #ifdef SINK_PARTICLES
@@ -840,7 +905,9 @@ void density(void)
     args.num_subgroups       = (int)subgroups.size();
     args.subgroups           = subgroups.data();
     args.ghost_safety_factor = gsl_safety;
+    args.initial_radii       = prepped_on_device ? active_radii.data() : nullptr;
     run_neighbor_loop_iterative<DensitySpec>(args);
+    gizmo_treehost_end("density");   /* a pass that did not take the particles on the device: back to the host for the finalize */
 
     /* (6) Post-runner finalize: per-active normalization + NV_T inversion
      *     + scatter accum -> P/CellP + legacy 620-795 post-loop physics. */

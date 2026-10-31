@@ -125,6 +125,12 @@ void refresh_old_acceleration_for_tree_opening(void)
      * follows this build does not read OldAcc anyway, because the criterion stays Barnes-Hut for
      * exactly this case. */
     if(header.flag_ic_info == FLAG_SECOND_ORDER_ICS && All.Ti_Current == 0 && RestartFlag == 0) {return;}
+    if(gizmo_treehost_armed()) {
+        /* The build is about to move the particles to the device: move them now and promote there. */
+        gizmo_particles_prefetch_P_to_device("refresh_old_acceleration_for_tree_opening");
+        gizmo_particles_copy_oldacc_on_device(NumPart);
+        return;
+    }
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static)
 #endif
@@ -142,6 +148,10 @@ void gravity_tree(void)
     double timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0, sum_costtotal, ewaldtot;
     double maxt, sumt, maxt1, sumt1, maxt2, sumt2, sumcommall, sumwaitall, plb, plb_max;
     CPU_Step[CPU_MISC] += measure_time();
+
+    /* An earlier call this step (the first step evaluates twice) may have left the particles on the device for a
+       density pass that has not run yet; the host passes below read them. */
+    gizmo_treehost_end("gravity_tree");
 
     /* set new softening lengths */
     if(All.ComovingIntegrationOn) {set_softenings();}
@@ -176,6 +186,7 @@ void gravity_tree(void)
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
         rearrange_particle_sequence(1);   /* the tree is rebuilt just below */
+        gizmo_treehost_begin((long long) ActiveParticleList.size());   /* P stays on the device from here to the density pass */
         refresh_old_acceleration_for_tree_opening();
         gizmo_exit_bad_stop_if_requested("gravtree:before_treebuild"); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         int build_status = force_treebuild_gravity();
@@ -222,6 +233,7 @@ void gravity_tree(void)
          * controlled stop during GPU finalize / LET / pseudo handling and still
          * return, and a tree whose build asked to stop must never be recorded as
          * current -- not even for the few statements before the poll exits. */
+        gizmo_treehost_disarm();
         gizmo_exit_bad_stop_if_requested("gravtree:after_treebuild"); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
         if(gizmo_full_drift_ti() == All.Ti_Current) {gpu_gravity_tree_mark_born_current(All.Ti_Current);}
         report_memory_ledger_on_growth("post-treebuild");  /* after force_treebuild (LET exchange ran); rebuild-only all-rank boundary */

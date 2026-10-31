@@ -142,6 +142,43 @@ void gizmo_particles_mirror_copy_back_writes(void);
 /* Seconds and bytes spent in the prefetches so far (for the run's timing report). */
 void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls);
 
+/* Device-resident tree-to-density span (GIZMO_GPU_TREEHOST).  On a step that rebuilds the tree over most of the
+ * particles and then runs a density pass over most of them, the tree build moves P to the device and the host work
+ * between the build and the density pass (the OldAcc promotion, the per-type hmax seed, zeroing GravAccel, the
+ * active-gas counts, the density active list, its radius clamp and the runner's radii) used to pull P back to the
+ * host only for the density pass to push it to the device again.  With the span that work runs as device kernels and
+ * P stays on the device until the density pass, whose own bulk move then carries only the cells.
+ *  _begin(n_active): asked by the tree build before it starts; arms the span (returns 1) when GIZMO_GPU_TREEHOST is
+ *     not 0 in the environment, the configuration is one whose host work in that interval has a device port
+ *     (GIZMO_GPU_TREEHOST_SUPPORTED), bulk prefetching is on and n_active is at least 1/8 of the particles.
+ *  _armed(): between _begin and _disarm; the OldAcc promotion and the hmax seed take their device form.
+ *  _open(): the hmax seed ran on the device and P was left there; host code until the density pass reads and
+ *     writes P only through the device helpers below while _span_active() returns 1.
+ *  _cells_to_device(site): the density pass's bulk move of the cells, taken early by a device kernel that reads them.
+ *  _consume(site): at a density pass's bulk move to the device; returns 1 when the span leaves both arrays resident
+ *     (moving the cells first if they are not yet), so the caller skips its own move.  Ends the span.
+ *  _end(site): ends a span nothing consumed, moving P back to the host.
+ * Any bulk move of P to the host also ends it.  Placement only: a host touch missed while the span lasts costs page
+ * faults, never a wrong value. */
+int  gizmo_treehost_begin(long long n_active);
+int  gizmo_treehost_armed(void);
+void gizmo_treehost_disarm(void);
+void gizmo_treehost_open(void);
+int  gizmo_treehost_span_active(void);
+void gizmo_treehost_cells_to_device(const char *site);
+int  gizmo_treehost_consume(const char *site);
+void gizmo_treehost_end(const char *site);
+/* Device forms of the host work in the span.  Each is the host loop it replaces with the same reads and writes
+ * (copies, zeros, compares and integer counts only).  idx is a host array of particle indices.
+ *  _copy_oldacc: P[i].OldAcc = P[i].OldAcc_LatestWalk for i in [0, n).
+ *  _zero_gravaccel: P[idx[k]].GravAccel = 0.
+ *  _count_active_gas: how many of idx[0,n) are gas, and gas with positive mass. */
+void gizmo_particles_copy_oldacc_on_device(int n);
+void gizmo_particles_zero_gravaccel_on_device(const int *idx, int n);
+void gizmo_particles_count_active_gas_on_device(const int *idx, int n, long long *n_gas_with_mass, long long *n_gas);
+/* Grow-only device scratch for the span's kernels in other translation units: `slot` 0..3 are independent buffers. */
+void *gizmo_treehost_device_scratch(int slot, size_t bytes);
+
 /* DIAGNOSTIC: tag the upcoming acquire with a short descriptive string so
  * that GIZMO_GPU_ARENA_DEBUG mismatch messages identify the call site. */
 void gpu_particles_arena_set_site(const char *site);
@@ -300,6 +337,23 @@ int gpu_particles_arena_valid(void);
 
 #ifdef __cplusplus
 }
+#endif
+
+/* The configurations the device-resident tree-to-density span is written for: hydro MFM with no self-gravity and
+ * none of the physics that adds host work on the particles between the tree build and the density pass (analytic
+ * gravity, sinks, star formation and feedback, grains, RT sources, AGS, magnetic fields, transport subcycling).  The
+ * density active-list predicate's device form is exact only here.  Evaluated only after allvars.h (which brings the
+ * Config macros); elsewhere the span is compiled out and the host path stays. */
+#if defined(ALLVARS_H) && defined(GPU_PCIE_OPTIMIZATIONS) && defined(SELFGRAVITY_OFF) && defined(HYDRO_MESHLESS_FINITE_MASS) \
+    && !defined(SUBFIND) && !defined(PMGRID) && !defined(HERMITE_INTEGRATION) \
+    && !defined(GRAVITY_ANALYTIC) && !defined(GRAVITY_ANALYTIC_HARMONIC) && !defined(STARFORGE_GMC_TURBINIT) \
+    && !defined(STARFORGE_FILAMENT_TURBINIT) && !defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) \
+    && !defined(BOX_SHEARING) && !defined(GRAIN_RDI_TESTPROBLEM) && !defined(COMPUTE_TIDAL_TENSOR_IN_GRAVTREE) \
+    && !defined(SINK_PARTICLES) && !defined(SINK_INTERACT_ON_GAS_TIMESTEP) && !defined(GALSF) \
+    && !defined(GALSF_FB_MECHANICAL) && !defined(GALSF_FB_THERMAL) && !defined(GRAIN_FLUID) \
+    && !defined(RT_SOURCE_INJECTION) && !defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && !defined(DM_DISPERSION_LOOP_ACTIVE) \
+    && !defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && !defined(MAGNETIC) && !defined(TRANSPORT_SUBCYCLE)
+#define GIZMO_GPU_TREEHOST_SUPPORTED 1
 #endif
 
 

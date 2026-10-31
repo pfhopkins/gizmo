@@ -3821,8 +3821,9 @@ NlrIterDriver<Spec>::NlrIterDriver(neighbor_loop_args_iterative& a,
         sub.active_list = sgr.active_indices;
         sub.num_active  = n;
 
+        const double *given = args.initial_radii ? args.initial_radii + call_slot_base[sg] : nullptr;
         for (int slot = 0; slot < n; slot++) {
-            radii_uvm[sg][slot]      = Spec::search_radius(sub, slot, sgr.active_indices[slot]);
+            radii_uvm[sg][slot]      = given ? given[slot] : Spec::search_radius(sub, slot, sgr.active_indices[slot]);
             active_set_uvm[sg][slot] = slot;     /* {0..n-1} initial */
         }
         local_active_total += n;
@@ -4127,7 +4128,7 @@ void NlrIterDriver<Spec>::acquire_arena_and_init_ctx_mode_d()
     if (arena_acquired) {return;}
 
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
+    if((long long) args.num_active * 8 >= (long long) NumPart && !gizmo_treehost_consume(Spec::loop_name)) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk (unless the tree build left them there) */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
     arena_acquired = true;
@@ -7132,6 +7133,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
      * Mode A: acquire_arena_and_init_ctx_mode_a — arena_acquire ONCE per call
      *         then bind ctx to arena-resident P_gpu/CellP_gpu. */
     if (path == DispatchPath::ModeB_HostWalker) {
+        gizmo_treehost_end(Spec::loop_name);   /* the host walker reads the particles where they are */
         drv.initialize_device_context_mode_b();
     } else if (path == DispatchPath::ModeD_DeviceFused) {
         drv.mode_d_tree = mode_d_lease.tree;
