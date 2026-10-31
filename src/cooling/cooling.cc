@@ -2851,6 +2851,13 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
          else if(ThisTask == 0) {printf("[GPU] default mempool release threshold set to %ld MB\n", pool_mb); fflush(stdout);}}
      else if(ThisTask == 0) {printf("[GPU] default mempool release threshold left at the driver default\n"); fflush(stdout);}
      cudaGetLastError();} /* clear any failure above, so the next post-kernel check does not report it */
+#if defined(GPU_PCIE_OPTIMIZATIONS) && defined(OPEN_MPI)
+    /* Open MPI's CUDA support probes the memory type of every MPI buffer; under MPS those driver calls queue behind
+       other ranks' GPU work. Advice only: turning it off changes MPI semantics for device pointers. */
+    if(ThisTask == 0) {const char *e = getenv("OMPI_MCA_opal_cuda_support");
+        if(!e || strcmp(e, "0") != 0) {printf("[GPU] NOTE: Open MPI CUDA memory-type probing measured at ~1.5x wall on PCIe H100 nodes under MPS; "
+            "OMPI_MCA_opal_cuda_support=0 is recommended when no device pointers are passed to MPI\n"); fflush(stdout);}}
+#endif
 #elif defined(__HIPCC__)
     {size_t stack_size = 16384; /* see the CUDA branch */
      {const char *e = getenv("GIZMO_GPU_STACK_BYTES"); if(e && atol(e) > 0) {stack_size = (size_t) atol(e);}}
