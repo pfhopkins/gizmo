@@ -132,6 +132,9 @@ int gizmo_particles_owned_kept_on_device(void);
  * gathered on the device and copied into the host buffers dst_P[0,n) / dst_CellP[0,n). */
 long long gizmo_particles_count_not_at_time(const int *idx, int n, long long t_now);   /* t_now: an integertime */
 void gizmo_particles_gather_send_records(const int *idx, int n, struct particle_data *dst_P, struct gas_cell_data *dst_CellP);
+/* While the rank's own particles are kept on the device: move the imported ghosts' records (P and cells at
+ * [n_owned, NumPart)) to the host for a host phase that reads or writes only them, leaving the rest in place. */
+void gizmo_particles_prefetch_ghosts_to_host(int n_owned, const char *site);
 /* A device-only copy of the live particle storage for a device pass that writes none of it except P[].wakeup
  * and (MFV) CellP[].dMass, which _mirror_copy_back_writes returns to the storage afterwards: the host keeps its
  * pages, so no to-host move follows the pass.  _mirror_fill copies P[0,n_part) and the cells over the range a

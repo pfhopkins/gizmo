@@ -780,6 +780,25 @@ struct nlr_spec_writeback_writes_only_own_particle<Spec, std::void_t<decltype(Sp
 template <typename Spec>
 constexpr bool nlr_spec_writeback_writes_only_own_particle_v = nlr_spec_writeback_writes_only_own_particle<Spec>::value;
 
+/* SFINAE detection of an optional device writeback for run_mode_a.  A Spec may define
+ *   static bool device_writeback_begin(const neighbor_loop_args& args, int num_active);
+ *   static void device_writeback(const neighbor_loop_args& args, const int *d_active_idx, int first, int n,
+ *                                const AccumData *accums);
+ *   static void device_writeback_end(const neighbor_loop_args& args);
+ * device_writeback_begin is asked once per call, before the first chunk; when it returns true every chunk's
+ * writeback goes to device_writeback (d_active_idx: the device copy of the active list, accums: that chunk's
+ * device-resident results) instead of apply_active_writeback, and device_writeback_end runs after the last
+ * chunk's pair kernel and writeback.  The device writeback must leave the particle storage exactly as the host
+ * writeback would. */
+template <typename Spec, typename = void>
+struct nlr_spec_has_device_writeback : std::false_type {};
+template <typename Spec>
+struct nlr_spec_has_device_writeback<Spec, std::void_t<decltype(&Spec::device_writeback_begin), decltype(&Spec::device_writeback),
+                                                       decltype(&Spec::device_writeback_end)>>
+    : std::true_type {};
+template <typename Spec>
+constexpr bool nlr_spec_has_device_writeback_v = nlr_spec_has_device_writeback<Spec>::value;
+
 /* RAII cleanup guard for the runner's DeviceContext. Construct one right
  * after Spec::populate_device_context returns; destruction at function exit
  * (any path) conditionally invokes Spec::cleanup_device_context if the Spec

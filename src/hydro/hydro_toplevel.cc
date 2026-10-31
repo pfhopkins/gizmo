@@ -10,6 +10,7 @@
 #endif
 #include "../eos/cosmic_ray_fluid/cosmic_ray_functions.h"
 #include "../mesh/kernel.h"
+#include "gpu_hydro_tails.h"                  /* hydro_preloop_cell, gizmo_hydro_preloop_on_device */
 #if defined(GALSF_ISMDUSTCHEM_MODEL) && defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
 /* get_ISMDustChemEvo_bin_mass + update_ISMDustChemEvo_bin_number_and_slope are
  * KOKKOS_INLINE_FUNCTION in this header (Chunk 1, 2026-05-26); no plain proto. */
@@ -439,96 +440,15 @@ void hydro_force_initial_operations_preloop(void)
 #endif
 
     /* need to zero out all numbers that can be set -EITHER- by an active particle in the domain, or by one of the neighbors we will get sent */
-    int i;
+    /* While a device pass keeps the rank's particles on the device, the same body runs there (hydro/gpu_hydro_tails.h). */
+    if(gizmo_hydro_preloop_on_device()) {return;}
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk()) private(i)
+#pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
 #endif
     for (int _apl = 0; _apl < (int)ActiveParticleList.size(); _apl++)
-    {   int i = ActiveParticleList[_apl]; int k = 0; /* thread-private k — same OMP race fix as hydro_final_operations_and_cleanup */
-        if(P[i].Type==0)
-        {
-            CellP[i].MaxSignalVel = MIN_REAL_NUMBER;
-#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
-            {   /* the face fluxes must see the evolved non-ideal field relaxed toward the current from THIS step's gradients, as the
-                   standard solver uses them: the drift predicted it with the previous step's gradients, which lags the non-ideal
-                   EMF one step behind the ideal one. Re-predict it from the kicked value over the second half-step with the fresh
-                   gradients -- the same update the second half-step kick then applies to the kicked value. */
-                integertime ti_step = P[i].integertime_step();
-                double dt_second_half = (ti_step - ti_step/2) * unit_integertime_in_physical(i, P);
-                CellP[i].NonIdealMHDFluxPred = CellP[i].NonIdealMHDFlux;
-                nonideal_mhd_flux_update_driftkick(i, dt_second_half, 1, P, CellP);
-            }
-#endif
-#ifdef OUTPUT_SHOCK_MACH_NUMBER
-            CellP[i].ShockMachNumber = 0;
-#endif
-#ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
-            CellP[i].MaxKineticEnergyNgb = MIN_REAL_NUMBER;
-#endif
-            CellP[i].DtInternalEnergy = 0; //CellP[i].dInternalEnergy = 0;//manifest-indiv-timestep-debug//
-#if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
-            CellP[i].DtInternalEnergy_FromConduction = 0;
-#endif
-            CellP[i].HydroAccel = {};
-#ifdef HYDRO_MESHLESS_FINITE_VOLUME
-            CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
-#endif
-#if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
-            for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}
-#endif
-#if defined(RT_SOLVER_EXPLICIT)
-#if defined(RT_EVOLVE_ENERGY)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] = 0;}
-#ifdef TRANSPORT_SUBCYCLE
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma_Work[k] = 0;}
-#endif
-#endif
-#if defined(RT_EVOLVE_FLUX)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
-#endif
-#if defined(RT_INFRARED)
-            CellP[i].Dt_Rad_E_gamma_T_weighted_IR = 0;
-#endif
-#if defined(RT_EVOLVE_FLUX)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_Flux[k] = {};}
-#endif
-#if defined(RT_EVOLVE_INTENSITIES)
-            for(k=0;k<N_RT_FREQ_BINS;k++) {int k_dir; for(k_dir=0;k_dir<N_RT_INTENSITY_BINS;k_dir++) {CellP[i].Dt_Rad_Intensity[k][k_dir] = 0;}}
-#endif
-#endif
-#ifdef MAGNETIC
-            CellP[i].divB = 0; CellP[i].Face_Area = {};
-#ifdef DIVBCLEANING_DEDNER
-            CellP[i].DtB_PhiCorr = {};
-#endif
-#ifndef HYDRO_SPH
-            CellP[i].DtB = {};
-#ifdef DIVBCLEANING_DEDNER
-            CellP[i].DtPhi = 0;
-#endif
-#endif
-#endif // magnetic //
-#ifdef COSMIC_RAY_FLUID
-            CellP[i].Face_DivVel_ForAdOps = 0;
-#if defined(CRFLUID_INJECTION_AT_SHOCKS)
-            CellP[i].DtCREgyNewInjectionFromShocks = 0;
-#endif
-            for(k=0;k<N_CR_PARTICLE_BINS;k++)
-            {
-                CellP[i].DtCosmicRayEnergy[k] = 0;
-#if defined(TRANSPORT_SUBCYCLE) && !defined(CRFLUID_EVOLVE_SCATTERINGWAVES) && !defined(CRFLUID_EVOLVE_SPECTRUM)
-                CellP[i].DtCosmicRayEnergy_StreamingLoss[k] = 0;
-#endif
-#if defined(CRFLUID_EVOLVE_SPECTRUM)
-                CellP[i].DtCosmicRay_Number_in_Bin[k] = 0;
-#endif
-#ifdef CRFLUID_EVOLVE_SCATTERINGWAVES
-                int kAlf; for(kAlf=0;kAlf<2;kAlf++) {CellP[i].DtCosmicRayAlfvenEnergy[k][kAlf] = 0;}
-#endif
-            }
-#endif
-            P[i].wakeup = 0;
-        }
+    {
+        int i = ActiveParticleList[_apl];
+        if(P[i].Type==0) {hydro_preloop_cell(P, CellP, i);}
     } // for (_apl over ActiveParticleList) //
 }
 

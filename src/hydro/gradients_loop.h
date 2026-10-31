@@ -256,6 +256,13 @@ struct GradientsSpec
     static void populate_device_context(const neighbor_loop_args& args,
                                          DeviceContext& ctx);
 
+    /* Writeback on the device, the particles staying there for the finalization loop and the hydro preloop
+     * (the runner's device-writeback contract; bodies in hydro/gpu_hydro_tails.cc). */
+    static bool device_writeback_begin(const neighbor_loop_args& args, int num_active);
+    static void device_writeback(const neighbor_loop_args& args, const int *d_active_idx, int first, int n,
+                                 const AccumData *accums);
+    static void device_writeback_end(const neighbor_loop_args& args);
+
     /* ----- Device hooks ----- */
 
     KOKKOS_INLINE_FUNCTION

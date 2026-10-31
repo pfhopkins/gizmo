@@ -199,6 +199,31 @@ extern "C" int gizmo_particles_keep_owned_on_device(const char *site)
 }
 extern "C" int gizmo_particles_owned_kept_on_device(void) {return owned_kept_on_device_;}
 
+extern "C" void gizmo_particles_prefetch_ghosts_to_host(int n_owned, const char *site)
+{
+    if(!particles_prefetch_enabled() || !owned_kept_on_device_ || n_owned < 0 || n_owned >= NumPart || !P) {return;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    const size_t bytes_p = (size_t) (NumPart - n_owned) * sizeof(struct particle_data);
+    const int c_end = (NumPart < All.MaxPartGas) ? NumPart : All.MaxPartGas;
+    const size_t bytes_c = (CellP && c_end > n_owned) ? (size_t) (c_end - n_owned) * sizeof(struct gas_cell_data) : 0;
+    const double t0 = my_second();
+    Kokkos::fence("gizmo_particles_prefetch_ghosts_to_host");
+    cudaMemPrefetchAsync(P + n_owned, bytes_p, cudaCpuDeviceId, 0);
+    if(bytes_c) {cudaMemPrefetchAsync(CellP + n_owned, bytes_c, cudaCpuDeviceId, 0);}
+    cudaError_t rc = cudaStreamSynchronize(0);
+    if(rc != cudaSuccess) {   /* as particles_prefetch: report, switch prefetching off, leave nothing kept */
+        (void) cudaGetLastError(); prefetch_enabled_ = 0; prefetch_side_ = 0; owned_kept_on_device_ = 0;
+        if(ThisTask == 0) {printf("Particle storage: bulk prefetch failed at %s (%s); switched off.\n", site, cudaGetErrorString(rc)); fflush(stdout);}
+        return;
+    }
+    prefetch_seconds_ += timediff(t0, my_second());
+    prefetch_bytes_host_ += (double) (bytes_p + bytes_c);
+    prefetch_calls_++;
+#else
+    (void) site;
+#endif
+}
+
 /* Grow-only device scratch for the helpers below (released at exit with the context). */
 static void *kept_scratch_ = NULL;
 static size_t kept_scratch_bytes_ = 0;

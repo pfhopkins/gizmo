@@ -2497,6 +2497,12 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
         team_width = nlr_mode_a_team_width<Spec>(probe);
     }
 
+    /* A Spec with a device writeback decides once, for every chunk, whether it takes it (the trait's contract). */
+    bool device_writeback = false;
+    if constexpr (nlr_spec_has_device_writeback_v<Spec>) {
+        device_writeback = !mirrored && Spec::device_writeback_begin(args, N);
+    }
+
     for(int c0 = 0; c0 < N; c0 += K) {
         const int n = (N - c0 < K) ? (N - c0) : K;
 
@@ -2556,10 +2562,16 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
         /* Launches fenced internally by gizmo_gpu_kernel_launch. UVM coherent ->
          * host reads d_accums[0,n) directly. */
 
-        /* (4) host writeback for [c0, c0+n) before the next chunk reuses arrays. */
+        /* (4) writeback for [c0, c0+n) before the next chunk reuses arrays: on the host, or on the device. */
+        if constexpr (nlr_spec_has_device_writeback_v<Spec>) {
+            if(device_writeback) {Spec::device_writeback(args, d_active_idx, c0, n, d_accums); continue;}
+        }
         nlr_apply_active_writebacks<Spec>(args, c0, n, d_accums, mirrored);
     }
     if(mirrored) {gizmo_particles_mirror_copy_back_writes();}   /* before the ghost writeback reads the ghosts' wakeup */
+    if constexpr (nlr_spec_has_device_writeback_v<Spec>) {
+        if(device_writeback) {Spec::device_writeback_end(args);}
+    }
 
 
     /* Cleanup. The list holds no index memory, so the cached index stays for

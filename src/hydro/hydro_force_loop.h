@@ -29,6 +29,8 @@
 #include "../declarations/multifluid_helpers.h"
 #include "../mesh/neighbor_loop_runner.h"
 #include "../mesh/mode_b_local_walker.h"      /* MODE_B_SEARCH_*, MODE_B_RADIUS_* */
+#include "../mesh/gpu_neighbor_list.h"        /* gizmo_symlist_raw_radii */
+#include "../system/gpu_particles_arena.h"    /* gizmo_particles_owned_kept_on_device */
 #include "../core/timestep_functions.h"       /* get_particle_timestep_in_physical */
 #include "hydro_structs.h"                    /* hydro_data_in / hydro_data_out */
 
@@ -176,10 +178,15 @@ struct HydroForceSpec
     using IterControl    = NotIterative;
     using DeviceContext  = HydroForceDeviceContext;
 
-    /* Pre-arena per-active search radius. */
-    static double search_radius(const neighbor_loop_args& /*args*/,
-                                 int /*active_slot*/, int i)
+    /* Pre-arena per-active search radius. While the rank's particles stay on the device from the gradients pass
+     * (hydro/gpu_hydro_tails.h), from the corridor list's host copy of the same KernelRadius. */
+    static double search_radius(const neighbor_loop_args& args,
+                                 int active_slot, int i)
     {
+        if(gizmo_particles_owned_kept_on_device()) {
+            const double *r = gizmo_symlist_raw_radii(args.active_list, args.num_active);
+            if(r) {return r[active_slot];}
+        }
         return (double)P[i].KernelRadius;
     }
 
