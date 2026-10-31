@@ -2826,18 +2826,20 @@ void chimes_gizmo_exit(void)
 void gizmo_kokkos_initialize(int argc, char *argv[]) {
     Kokkos::initialize(argc, argv);
 #if defined(__CUDACC__)
-    {size_t stack_size = 65536; /* 64KB per thread — cooling kernel is deeply nested:
-         DoCooling → CoolingRateFromU → convert_u_to_temp → find_abundances_and_rates
-         plus metal cooling table lookups. 32KB may overflow on some GPU architectures. */
-     /* The runtime reserves stack x resident threads in every context (~17 GB at 64 KB on an H100), which caps how many
-        ranks can share a GPU. Environment GIZMO_GPU_STACK_BYTES overrides it, for builds without the deep kernels. */
+    /* Per-thread device stack. Largest static frame from `cuobjdump -res-usage GIZMO | grep STACK` (2026-10-31): 768 B
+       in a hydro-only build, 7584 B in the STARFORGE cooling build (gradients pair kernel; cooling kernel 1632 B); 16 KB
+       is 2x that. The runtime reserves stack x resident threads in every context (~4.3 GB at 16 KB on an H100, ~17 GB
+       at 64 KB), which caps how many ranks can share a GPU. Static frames exclude recursion and indirect calls; an
+       overflow surfaces as a kernel error in the post-kernel check, not silently. GIZMO_GPU_STACK_BYTES overrides it. */
+    {size_t stack_size = 16384;
      {const char *e = getenv("GIZMO_GPU_STACK_BYTES"); if(e && atol(e) > 0) {stack_size = (size_t) atol(e);}}
      cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, stack_size);
      if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,%zu) failed: %s\n", stack_size, cudaGetErrorString(_e)); fflush(stdout);}
      else {printf("[GPU] CUDA thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
     /* Kokkos allocates device views with cudaMallocAsync from the default pool, whose release threshold of 0 hands
-       freed memory back to the driver at every synchronization, so the next allocation is a driver call again. Keep up to GIZMO_GPU_POOL_RELEASE_MB (default 2048; 0 = leave the driver default) cached per rank.
-       Capped, not unlimited: several ranks share each GPU. */
+       freed memory back to the driver at every synchronization, so the next allocation is a driver call again. Keep up
+       to GIZMO_GPU_POOL_RELEASE_MB (default 2048; 0 = leave the driver default) cached per rank. Capped, not
+       unlimited: several ranks share each GPU. */
     {long pool_mb = 2048; const char *e = getenv("GIZMO_GPU_POOL_RELEASE_MB"); if(e) {pool_mb = atol(e);}
      int dev = 0, pools_ok = 0;
      if(pool_mb > 0 && cudaGetDevice(&dev) == cudaSuccess &&
@@ -2850,7 +2852,8 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
      else if(ThisTask == 0) {printf("[GPU] default mempool release threshold left at the driver default\n"); fflush(stdout);}
      cudaGetLastError();} /* clear any failure above, so the next post-kernel check does not report it */
 #elif defined(__HIPCC__)
-    {size_t stack_size = 65536;
+    {size_t stack_size = 16384; /* see the CUDA branch */
+     {const char *e = getenv("GIZMO_GPU_STACK_BYTES"); if(e && atol(e) > 0) {stack_size = (size_t) atol(e);}}
      hipError_t _e = hipDeviceSetLimit(hipLimitStackSize, stack_size);
      if(_e != hipSuccess) {printf("[GPU] WARNING: hipDeviceSetLimit(stack,%zu) failed: %s\n", stack_size, hipGetErrorString(_e)); fflush(stdout);}
      else {printf("[GPU] HIP thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
