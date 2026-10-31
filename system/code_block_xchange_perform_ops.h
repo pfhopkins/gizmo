@@ -4,7 +4,7 @@ be copy-pasted and can be generically optimized in a single place */
     int j, k, ndone=0, ndone_flag=0, recvTask, place, save_NextParticle; long long n_exported = 0; double tstart, tend, tstart_loop; /* define some variables used only below */
     NextParticle = 0;    /* begin the main loop; start with this index into ActiveParticleList */
     tstart_loop = my_second();
-    memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
+    for(int i_pf : ActiveParticleList) {ProcessedFlag[i_pf] = 0;} /* only active indices are ever read below; clearing all MaxPart slots (PartAllocFactor x NumPart bytes) per loop is wasted bandwidth in a deep hierarchy */
     BufferCollisionFlag = 0; /* set to zero before operations begin */
     do /* primary point-element loop */
     {
