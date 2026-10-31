@@ -11,6 +11,7 @@
 #ifndef GHOST_SYMLIST_LIFECYCLE_H
 #define GHOST_SYMLIST_LIFECYCLE_H
 
+#include <vector>
 #include "neighbor_list.h"
 #include "sfc_tiles.h"
 #include "ghost_exchange_spec.h"
@@ -251,13 +252,36 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
 {
     /* active-index allocation (persists across gradients + hydro; used by the
        request-driven Mode B walkers as their active list) */
-    gizmo_sym_num_active = 0;
-    for(int ii : ActiveParticleList) {if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_num_active++;}
-    gizmo_sym_active_indices_on_heap = 0;
-    gizmo_sym_active_indices = (int *) mymalloc("sym_active",
-        (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
-    {int aa = 0; for(int ii : ActiveParticleList) {
-        if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}}
+    {   /* ordered compaction over fixed blocks of the active list (count, prefix, fill): the list keeps
+           active-list order whatever the thread count */
+        const long n_act = (long) ActiveParticleList.size();
+        const long block = 16384;
+        const long nblocks = (n_act + block - 1) / block;
+        const int threaded = gizmo_pcie_opt() && nblocks > 1;
+        std::vector<int> astart((size_t) nblocks + 1, 0);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+        for(long b = 0; b < nblocks; b++) {
+            const long k1 = (b + 1) * block < n_act ? (b + 1) * block : n_act;
+            int n = 0;
+            for(long kk = b * block; kk < k1; kk++) {const int ii = ActiveParticleList[kk]; if(P[ii].Type == 0 && P[ii].Mass > 0) n++;}
+            astart[(size_t) b + 1] = n;
+        }
+        for(long b = 0; b < nblocks; b++) {astart[(size_t) b + 1] += astart[(size_t) b];}
+        gizmo_sym_num_active = astart[(size_t) nblocks];
+        gizmo_sym_active_indices_on_heap = 0;
+        gizmo_sym_active_indices = (int *) mymalloc("sym_active",
+            (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+        for(long b = 0; b < nblocks; b++) {
+            const long k1 = (b + 1) * block < n_act ? (b + 1) * block : n_act;
+            int aa = astart[(size_t) b];
+            for(long kk = b * block; kk < k1; kk++) {const int ii = ActiveParticleList[kk]; if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}
+        }
+    }
 
     /* Whether any rank has active gas: decides, identically on every rank, the
        collective ghost refresh below and refresh's matching skip. A flag, not a

@@ -639,8 +639,21 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
         return 1;
     }
 
-    /* Every candidate must be a particle of this set with a supply-pool slot (above). */
+    /* Every candidate must be a particle of this set with a supply-pool slot (above).  The rows are tested on
+       several threads; a failure is then reported by the serial scan, so the message names the first bad one. */
+    int any_outside = 0;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) reduction(|:any_outside) if(gizmo_pcie_opt() && n_rows >= 256)
+#endif
     for(long r = 0; r < n_rows; r++) {
+        const struct gx_candidate_row *row = &rows[r];
+        for(int c = 0; c < row->count; c++) {
+            const int j = row->local_index[c];
+            const int pp = (j >= 0 && j < NumPart) ? s->j_to_pool[j] : -1;
+            if(pp < 0 || pp >= s->num_pool) {any_outside = 1;}
+        }
+    }
+    for(long r = 0; any_outside && r < n_rows; r++) {
         const struct gx_candidate_row *row = &rows[r];
         for(int c = 0; c < row->count; c++) {
             const int j = row->local_index[c];
@@ -668,7 +681,10 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
      * from whatever policy the cached pool happened to be built under: pool
      * membership is reused across differing radius policies, and only the tile/BVH/
      * compact geometry may use the build-time policy, because its leaf h was baked
-     * with it. */
+     * with it.  Each row compacts only its own list, so the rows are accepted on several threads. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 64) if(gizmo_pcie_opt() && n_rows >= 256)
+#endif
     for(long r = 0; r < n_rows; r++) {
         struct gx_candidate_row *row = &rows[r];
         const struct gx_export_envelope_t *e = row->envelope;
@@ -1331,33 +1347,57 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
                 gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) q_bad = q;
         }
     } else {
-        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
-            int i = ActiveParticleList[kk];
-            if(i < 0 || i >= NumPart) continue;
-            if(P[i].Mass <= 0) continue;
-            if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
-            n_local_queries++;
+        /* Ordered compaction over fixed blocks of the active list (count, prefix, fill), so the queries come
+           out in active-list order and q_bad is the first bad query, whatever the thread count. */
+        const long n_act = (long) ActiveParticleList.size();
+        const long block = 16384;
+        const long nblocks = (n_act + block - 1) / block;
+        const int threaded = gizmo_pcie_opt() && nblocks > 1;
+        std::vector<int> qstart((size_t) nblocks + 1, 0), qbad_block((size_t) (nblocks > 0 ? nblocks : 1), -1);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+        for(long b = 0; b < nblocks; b++) {
+            const long k1 = (b + 1) * block < n_act ? (b + 1) * block : n_act;
+            int n = 0;
+            for(long kk = b * block; kk < k1; kk++) {
+                int i = ActiveParticleList[kk];
+                if(i < 0 || i >= NumPart) continue;
+                if(P[i].Mass <= 0) continue;
+                if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
+                n++;
+            }
+            qstart[(size_t) b + 1] = n;
         }
+        for(long b = 0; b < nblocks; b++) {qstart[(size_t) b + 1] += qstart[(size_t) b];}
+        n_local_queries = qstart[(size_t) nblocks];
         local_queries = (struct gx_query_t *)
             malloc((size_t)(n_local_queries > 0 ? n_local_queries : 1) * sizeof(struct gx_query_t));
-        int q = 0;
-        for(size_t kk = 0; kk < ActiveParticleList.size(); kk++) {
-            int i = ActiveParticleList[kk];
-            if(i < 0 || i >= NumPart) continue;
-            if(P[i].Mass <= 0) continue;
-            if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
-            local_queries[q].pos[0] = P[i].Pos[0];
-            local_queries[q].pos[1] = P[i].Pos[1];
-            local_queries[q].pos[2] = P[i].Pos[2];
-            double h = (double)P[i].KernelRadius;
-            local_queries[q].h    = h * safety_factor;
-            local_queries[q].type = (int)P[i].Type;
-            local_queries[q]._pad = 0;
-            if(q_bad < 0 &&
-               (gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
-                gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) q_bad = q;
-            q++;
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(threaded)
+#endif
+        for(long b = 0; b < nblocks; b++) {
+            const long k1 = (b + 1) * block < n_act ? (b + 1) * block : n_act;
+            int q = qstart[(size_t) b];
+            for(long kk = b * block; kk < k1; kk++) {
+                int i = ActiveParticleList[kk];
+                if(i < 0 || i >= NumPart) continue;
+                if(P[i].Mass <= 0) continue;
+                if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
+                local_queries[q].pos[0] = P[i].Pos[0];
+                local_queries[q].pos[1] = P[i].Pos[1];
+                local_queries[q].pos[2] = P[i].Pos[2];
+                double h = (double)P[i].KernelRadius;
+                local_queries[q].h    = h * safety_factor;
+                local_queries[q].type = (int)P[i].Type;
+                local_queries[q]._pad = 0;
+                if(qbad_block[(size_t) b] < 0 &&
+                   (gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
+                    gx_query_nonfinite(local_queries[q].pos[2]) || gx_query_nonfinite(local_queries[q].h))) qbad_block[(size_t) b] = q;
+                q++;
+            }
         }
+        for(long b = 0; b < nblocks && q_bad < 0; b++) {q_bad = qbad_block[(size_t) b];}
     }
 
     /* Fail-closed: a non-finite query position or radius makes every distance test
@@ -1459,8 +1499,15 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             cache_alloc_failed = 1;
         }
         if(!cache_alloc_failed) {
+        /* The pool lists distinct particles, so every slot of the reverse map is written by at most one entry. */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && NumPart >= 65536)
+#endif
         for(int j = 0; j < NumPart; j++) c_jtop[j] = -1;
         if(tmp_num_pool > 0) memcpy(c_pool, tmp_pool, (size_t)tmp_num_pool * sizeof(int));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && tmp_num_pool >= 65536)
+#endif
         for(int p = 0; p < tmp_num_pool; p++) {
             int j = tmp_pool[p];
             if(j >= 0 && j < NumPart) c_jtop[j] = p;
