@@ -1215,7 +1215,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                         if(mode==0) {double dv_rt=radacc_eff*All.cf_atime; pp[i].Vel[kx]+=dv_rt; pp[i].dp[kx]+=dv_rt*cell[i].Mass;} else {cell[i].VelPred[kx] += radacc_eff * All.cf_atime;}
                     }
                     double d_egy_rad = (2.*f_kappa_abs-1.)*work_band , d_egy_int = -2.*f_kappa_abs*work_band * (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED); // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
-                    if(mode==0) {cell[i].InternalEnergy += d_egy_int;} else {cell[i].InternalEnergyPred += d_egy_int;}
+                    if(mode==0) {cell[i].InternalEnergy += d_egy_int/cell[i].Mass;} else {cell[i].InternalEnergyPred += d_egy_int/cell[i].Mass;} // work_band is a total energy, InternalEnergy is specific
 #if defined(RT_EVOLVE_INTENSITIES)
                     {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {if(mode==0) {cell[i].Rad_Intensity[kf][k_q]+=d_egy_rad/RT_INTENSITY_BINS_DOMEGA;} else {cell[i].Rad_Intensity_Pred[kf][k_q]+=d_egy_rad/RT_INTENSITY_BINS_DOMEGA;}}}
 #else
