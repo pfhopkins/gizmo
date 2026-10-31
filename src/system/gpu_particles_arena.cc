@@ -88,15 +88,18 @@ static int particles_prefetch_enabled(void)
     return prefetch_enabled_;
 }
 
-static void particles_prefetch(int to_device, const char *site, int with_cells = 1)
+static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1)
 {
     (void) site;
     if(!particles_prefetch_enabled()) {return;}
 #if defined(KOKKOS_ENABLE_CUDA)
-    const size_t bytes_p = (P && NumPart > 0) ? (size_t) NumPart * sizeof(struct particle_data) : 0;
+    /* n_owned >= 0: only the rank's own particles [0, n_owned) and their cells, leaving imported ghosts where they are. */
+    const int n_part = (n_owned >= 0 && n_owned < NumPart) ? n_owned : NumPart;
+    const size_t bytes_p = (P && n_part > 0) ? (size_t) n_part * sizeof(struct particle_data) : 0;
     /* Imported ghosts sit at the end of [0, NumPart) in both arrays, past N_gas: cover them while the
        corridor holds any (unused cell slots between N_gas and the ghosts only cost the copy). */
-    const int n_cells = (ghost_get_num_ghosts() > 0) ? ((NumPart < All.MaxPartGas) ? NumPart : All.MaxPartGas) : N_gas;
+    const int n_cells = (n_owned >= 0) ? ((n_part < N_gas) ? n_part : N_gas)
+                      : (ghost_get_num_ghosts() > 0) ? ((NumPart < All.MaxPartGas) ? NumPart : All.MaxPartGas) : N_gas;
     const size_t bytes_c = (with_cells && CellP && n_cells > 0) ? (size_t) n_cells * sizeof(struct gas_cell_data) : 0;
     if(bytes_p + bytes_c == 0) {return;}
     const double t0 = my_second();
@@ -166,6 +169,7 @@ extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
 extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}
+extern "C" void gizmo_particles_prefetch_owned_to_device(int n_owned, const char *site) {particles_prefetch(1, site, 1, n_owned);}
 extern "C" void gizmo_particles_prefetch_P_to_host(const char *site) {particles_prefetch(0, site, 0);}
 extern "C" void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls)
 {

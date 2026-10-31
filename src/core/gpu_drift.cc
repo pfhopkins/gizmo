@@ -118,6 +118,32 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
     /* Threaded above a handful of indices: the full-drift site hands over every particle, and reading
        Ti_current out of the particle array is a strided pass over the whole of it, which is a large part
        of what running the drift in bulk is meant to remove. */
+    bool tested_on_device = false;
+#if defined(GPU_PCIE_OPTIMIZATIONS)
+    /* With the particles moved in bulk to the device (non-coherent GPU), reading Ti_current here would fault their
+       pages back one at a time; test it on the device and bring back only the per-index verdicts. */
+    if(gizmo_particles_prefetch_side() == 1 && n_idx >= 4096 &&
+       Kokkos::SpaceAccessibility<Kokkos::DefaultExecutionSpace, GIZMO_KOKKOS_SHARED_SPACE>::accessible)
+    {
+        int *dbuf = (int *) gizmo_gpu_alloc_shared((size_t) (idx ? 2 : 1) * n_idx * sizeof(int), "drift_compact_slots");
+        if(dbuf) {
+            int *dslot = dbuf, *didx = idx ? dbuf + n_idx : NULL;
+            if(didx) {memcpy(didx, idx, (size_t) n_idx * sizeof(int));}
+            const struct particle_data *kp = P;
+            const integertime t1 = time1;
+            gizmo_gpu_kernel_launch("drift_compact_test", n_idx, KOKKOS_LAMBDA(int k) {
+                const int i = didx ? didx[k] : k;
+                dslot[k] = (kp[i].Ti_current != t1) ? i : -1;
+            });
+            gizmo_managed_prefetch_to_host(dslot, (size_t) n_idx * sizeof(int), "drift_compact_slots");
+            memcpy(slot, dslot, (size_t) n_idx * sizeof(int));
+            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(dbuf);
+            tested_on_device = true;
+        }
+    }
+#endif
+    if(!tested_on_device)
+    {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(n_idx >= 16)
 #endif
@@ -125,6 +151,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
     {
         const int i = idx ? idx[k] : k;
         slot[k] = (P[i].Ti_current != time1) ? i : -1;
+    }
     }
     int n_kept = 0;
     for(int k = 0; k < n_idx; k++) {if(slot[k] >= 0) {slot[n_kept++] = slot[k];}}

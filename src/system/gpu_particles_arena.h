@@ -96,6 +96,8 @@ void gpu_particles_arena_refresh_from_host(int min_capacity,
  * environment. */
 void gizmo_particles_prefetch_to_device(const char *site);
 void gizmo_particles_prefetch_to_host(const char *site);
+/* As _to_device for the rank's own particles [0, n_owned) and their cells only, leaving imported ghosts in place. */
+void gizmo_particles_prefetch_owned_to_device(int n_owned, const char *site);
 /* As _to_device for P only, for a device phase that reads no cell data (the tree build). */
 void gizmo_particles_prefetch_P_to_device(const char *site);
 /* As _to_host for P only, after a device phase that touched no cell data. */
