@@ -951,8 +951,9 @@ int domain_decompose(void)
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
-    { /* What this decomposition balances on. Unconditional printf: PRINT_STATUS is silent on
-         sub-steps, and that is where half the decompositions of a deep hierarchy happen. */
+#ifdef DEVELOPER_MODE
+    { /* What this decomposition balances on. Plain printf: PRINT_STATUS is silent on sub-steps,
+         and that is where half the decompositions of a deep hierarchy happen. */
         double loc[2] = {0, 0}, glob[2];
         for(i = 0; i < NumPart; i++) {double g = P[i].GravCost[TakeLevel]; loc[0] += g; if(g > 0) {loc[1] += 1;}}
         MPI_Reduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -967,6 +968,7 @@ int domain_decompose(void)
            costed. sum(GravCost) ~ 0, or a few-percent subset costed, means the decomposition is
            count-balanced (or sink-skewed), not work-balanced. */
     }
+#endif
 
 #if (DOMAIN_TIMEBINS == 1)
     domain_init_timebin_costs(); /* compute per-timebin normalization before tree building / cost accumulation */
