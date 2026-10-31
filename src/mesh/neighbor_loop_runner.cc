@@ -7561,7 +7561,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
          * (the arena acquire aliases them, and no ghosts were imported), so Mode B continues from the same state through
          * the same context.  With Mode B switched off the call stays on Mode D, as it was routed. */
         if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
-            nlr_mode_b_switched_on<Spec>()) {
+            nlr_mode_b_switched_on<Spec>() && !(gizmo_densfin_armed() && gizmo_densfin_moded_tail())) {
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}   /* Mode B reads the host's copy */
             /* A pass armed for a staged finalize keeps the particles on the device and walks host copies of them, when
              * nothing is behind the current time (the tail then writes no particle); otherwise they move in bulk. */

@@ -202,6 +202,9 @@ void *gizmo_treehost_device_scratch(int slot, size_t bytes);
  *     (_host_P) and full-size cell records holding the fields the density tail reads (VelPred, ConditionNumber; the
  *     rest unspecified, a signalling-NaN pattern under GIZMO_STAGE_VERIFY).  The caller points the call's views and
  *     the globals at them for the tail and back after it.  0 (nothing taken) otherwise: move the particles.
+ *  _moded_tail(): GIZMO_GPU_DENSFIN_MODED_TAIL=1 in the environment (default 0): an armed pass stays on Mode D to its
+ *     last iteration instead of finishing on Mode B.  Not a copy: the tail's pair sums run on the device walk instead
+ *     of the host walker, so results differ at the rounding level.  For measurement only.
  *  _take(site): at the pass's bulk move to the host; when armed and the particles are on the device it keeps them
  *     there (gizmo_particles_keep_owned_on_device), opens the span and returns 1: the caller skips the move.
  *  _span_active(): the span is open and the particles are still where it left them (any bulk move ends it).
@@ -221,6 +224,7 @@ void gizmo_densfin_reserve_host_P(void);
 int  gizmo_densfin_arm(long long n_active);
 int  gizmo_densfin_take(const char *site);
 int  gizmo_densfin_host_tail(const char *site, struct particle_data **P_copy, struct gas_cell_data **CellP_copy);
+int  gizmo_densfin_moded_tail(void);
 int  gizmo_densfin_armed(void);
 void gizmo_densfin_disarm(void);
 int  gizmo_densfin_span_active(void);

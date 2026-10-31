@@ -777,6 +777,12 @@ extern "C" int gizmo_densfin_take(const char *site)
     return 1;
 }
 extern "C" int gizmo_densfin_armed(void) {return densfin_armed_;}
+extern "C" int gizmo_densfin_moded_tail(void)
+{
+    static int on = -1;
+    if(on < 0) {const char *env = getenv("GIZMO_GPU_DENSFIN_MODED_TAIL"); on = (env && env[0] && atoi(env) != 0) ? 1 : 0;}
+    return on;
+}
 extern "C" int gizmo_densfin_host_tail(const char *site, struct particle_data **P_copy, struct gas_cell_data **CellP_copy)
 {
     *P_copy = NULL; *CellP_copy = NULL;
