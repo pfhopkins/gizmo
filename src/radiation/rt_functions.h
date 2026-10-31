@@ -1340,6 +1340,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             // ok -now- calculate the net change in momentum and energy, for updating the gas quantities
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_f+=i0[k_om]; for(k=0;k<3;k++) {flux_f[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
             Vec3<double> dv_gas = -(flux_f-flux_0)/(ceff*cell[i].Mass); double ke_gas_0=0, ke_gas_f=0, v0g=0, u0=0;
+#if !defined(RT_RAD_PRESSURE_FORCES)
+            dv_gas = {}; // radiation forces off: no kick, so the exchanged energy all goes to the gas internal energy below
+#endif
             {Vec3<double> v0_gas = ctrue*beta; ke_gas_0 = v0_gas.norm_sq(); ke_gas_f = (v0_gas+dv_gas).norm_sq();} // note everything is volume-integrated, accounted for above, and we defined flux for convience without the c, so just one power of c here.
             double d_ke_gas = 0.5*(ke_gas_f - ke_gas_0)*cell[i].Mass, de_gas=-(ctrue/ceff)*(egy_f-egy_0), de_gas_internal=(de_gas-d_ke_gas)/cell[i].Mass; // note ctrue/ceff factor here, accounting for rsol difference in gas heating/cooling rates vs RHD
             if(mode==0) {u0=cell[i].InternalEnergy;} else {u0=cell[i].InternalEnergyPred;} // for updating gas internal energy (work terms, after subtracting kinetic energy changes)
