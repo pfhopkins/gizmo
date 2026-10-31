@@ -393,7 +393,7 @@
 #ifdef SINGLE_STAR_STARFORGE_DEFAULTS /* bunch of options -NOT- strictly required here, but this is a temporary convenience block */
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
-#ifndef SINGLE_STAR_AND_SSP_HYBRID_MODEL
+#if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(IO_NO_GRADUAL_SNAPSHOT_RESTART) /* opt-out: restart from a snapshot at physical timesteps, no ramp */
 #define IO_GRADUAL_SNAPSHOT_RESTART
 #endif
 #ifndef IO_SINKS_ONLY_SNAPSHOT_FREQUENCY
