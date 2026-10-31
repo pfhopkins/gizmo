@@ -26,7 +26,7 @@ SnapshotFileBase            snapshot   % base name for snapshot files [Default='
 OutputListOn                0   % =1 to use list in "OutputListFilename", =0 to specify [Default=0]
 OutputListFilename          output_times.txt   % list of times (in code units) for snaps if OutputListOn=1
 NumFilesPerSnapshot         1   % number of sub-files to break each snapshot into [Default=1]
-NumFilesWrittenInParallel   1   % must be < N_processors & power of 2 [Default=1]
+NumFilesWrittenInParallel   1   % must be <= N_processors [Default=number of MPI ranks]
 TimeOfFirstSnapshot         0.1   % time (code units) of first snapshot, ignored if 'OutputListOn'  [Default=TimeBegin]
 TimeBetSnapshot             1.1   % (or ScaleFac_Between_Snapshots) time/scale factor between snapshot writes (if OutputListOn=0)
 

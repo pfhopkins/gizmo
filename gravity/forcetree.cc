@@ -788,7 +788,7 @@ void force_update_node_recursive(int no, int sib, int father)
                         if(divVel > divVmax) {divVmax = divVel;}
                     }
                     
-                    for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax) {vmax = v;}}
+                    if((v = particle_motion_speed_bound(p)) > vmax) {vmax = v;}
                     
                     /* update of the maximum gravitational softening  */
                     double soft_p = ForceSoftening_KernelRadius(p);
@@ -4049,8 +4049,7 @@ void force_refresh_node_moments(void)
         Extnodes[no].vs += pa->Mass * pa->Vel;
         Nodes[no].N_part++;
 
-        MyFloat v, vmax_p = 0;
-        for(k = 0; k < 3; k++) {if((v = fabs(pa->Vel[k])) > vmax_p) {vmax_p = v;}}
+        MyFloat vmax_p = particle_motion_speed_bound(i);
         if(vmax_p > Extnodes[no].vmax) {Extnodes[no].vmax = vmax_p;}
 
         double soft_p = ForceSoftening_KernelRadius(i);
@@ -4505,6 +4504,56 @@ void force_tree_geometry_audit(const char *tag)
         }
         fflush(stdout);
         if(nbad[1] || nbad[2]) {endrun(91573);} /* the exact checks are fatal; the box excess is reported */
+    }
+}
+
+
+/*! Tier-2 walk-time audit (TREE_INTEGRITY_AUDITS builds only). The geometry audit runs where the
+ *  bounds have just been re-derived from the members, so it cannot see how they evolve under lazy
+ *  drift. This one runs after the step's force walks, when the nodes they opened and the members they
+ *  drifted are current, and checks every (current member, current ancestor) pair exactly, with no
+ *  prediction: (a) the member lies inside the node's box, center +- len/2, which the drift widens by
+ *  the members' motion bound -- REPORTED and counted with the geometry audit's box totals, as there;
+ *  (b) a gas member's kernel is within the node's hmax, which a symmetric search discards a node by --
+ *  fatal. Lagging nodes and members are skipped. Rank-local. */
+void force_tree_walk_audit(const char *tag)
+{
+    if(Numnodestree <= 0) {return;}
+    double xtmp, ytmp, ztmp; (void) xtmp; (void) ytmp; (void) ztmp; /* scratch for the periodic macros */
+    long long nbox = 0, nh = 0; double worst_box = 0, worst_box_h = 0, worst_h = 0; int box_i = -1, box_f = -1, h_i = -1, h_f = -1;
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(P[i].Mass <= 0 || P[i].Ti_current != All.Ti_Current) {continue;}
+        double hneed = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0;
+        double hscale = (P[i].Type == 0) ? P[i].KernelRadius : ForceSoftening_KernelRadius(i);
+        for(int f = Father[i]; f >= All.MaxPart && f < All.MaxPart + Numnodestree; f = Nodes[f].u.d.father)
+        {
+            if(Nodes[f].Ti_current != All.Ti_Current) {continue;}
+            double dx = P[i].Pos[0] - Nodes[f].center[0], dy = P[i].Pos[1] - Nodes[f].center[1], dz = P[i].Pos[2] - Nodes[f].center[2];
+            double excess = DMAX(NGB_PERIODIC_BOX_LONG_X(dx,dy,dz,-1), DMAX(NGB_PERIODIC_BOX_LONG_Y(dx,dy,dz,-1), NGB_PERIODIC_BOX_LONG_Z(dx,dy,dz,-1))) - 0.5 * Nodes[f].len;
+            if(excess > 0) {nbox++; if(excess / Nodes[f].len > worst_box) {worst_box = excess / Nodes[f].len; box_i = i; box_f = f;} if(hscale > 0) {worst_box_h = DMAX(worst_box_h, excess / hscale);}}
+            if(hneed > 0 && Extnodes[f].hmax < 0.999999 * hneed)
+            {
+                nh++; double r = hneed / DMAX(Extnodes[f].hmax, MIN_REAL_NUMBER);
+                if(r > worst_h) {worst_h = r; h_i = i; h_f = f;}
+            }
+        }
+    }
+    TreeGeoAuditCount++;
+    if(nbox)
+    {
+        TreeGeoAuditBoxCount++; TreeGeoAuditWorstLen = DMAX(TreeGeoAuditWorstLen, worst_box); TreeGeoAuditWorstH = DMAX(TreeGeoAuditWorstH, worst_box_h);
+        printf("TREE-WALK-AUDIT task %d [%s] t=%.10g: %lld (current member, current ancestor) pairs outside the node box (worst %.3g len, %.3g h): particle %d ID=%llu Type=%d TimeBin=%d; node %d N_part=%d vmax=%g len=%g\n",
+               ThisTask, tag, All.Time, nbox, worst_box, worst_box_h, box_i, (unsigned long long) P[box_i].ID, P[box_i].Type, P[box_i].TimeBin, box_f, Nodes[box_f].N_part, Extnodes[box_f].vmax, Nodes[box_f].len);
+        fflush(stdout);
+    }
+    if(nh)
+    {
+        printf("TREE-WALK-AUDIT task %d [%s] t=%.10g: %lld (gas member, current ancestor) pairs with the kernel above the node hmax; worst x%.6g: particle %d ID=%llu TimeBin=%d DivVel=%g h=%g, node %d hmax=%g divVmax=%g N_part=%d\n",
+               ThisTask, tag, All.Time, nh, worst_h, h_i, (unsigned long long) P[h_i].ID, P[h_i].TimeBin, P[h_i].Particle_DivVel, P[h_i].KernelRadius,
+               h_f, Extnodes[h_f].hmax, Extnodes[h_f].divVmax, Nodes[h_f].N_part);
+        fflush(stdout);
+        endrun(91574); /* the exact check is fatal; the box excess is reported */
     }
 }
 #endif

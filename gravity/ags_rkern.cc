@@ -188,10 +188,10 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
 
                     out.Ngb += kernel.wk;
                     out.DrkernNgb += -(NUMDIMS * kernel.hinv * kernel.wk + u * kernel.dwk);
-                    out.AGS_zeta += P[j].Mass * kernel_gravity(u, kernel.hinv, kernel.hinv3, 0); // needs to be here, should include self-contribution
 
                     if(kernel.r > 0)
                     {
+                        out.AGS_zeta += P[j].Mass * kernel_gravity(u, kernel.hinv, kernel.hinv3, 0); // no self-contribution: the conservative derivation excludes an element's self-potential, as the gas sum does
                         if(P[j].Type==0) {kernel.dv = local.Vel - CellP[j].VelPred;}
                         else {kernel.dv = local.Vel - P[j].Vel;}
                         NGB_SHEARBOX_BOUNDARY_VELCORR_(local.Pos,P[j].Pos,kernel.dv,1); /* wrap velocities for shearing boxes if needed */
@@ -534,11 +534,13 @@ void ags_density(void)
         {
             if((P[i].Mass>0)&&(P[i].AGS_KernelRadius>0)&&(P[i].NumNgb>0))
             {
-                double minsoft = ags_return_minsoft(i);
+                double minsoft_floor = ags_return_minsoft(i);
                 double maxsoft = ags_return_maxsoft(i);
-                minsoft = DMAX(minsoft , AGS_Prev[i]*AGS_DSOFT_TOL);
+                double minsoft = DMAX(minsoft_floor , AGS_Prev[i]*AGS_DSOFT_TOL);
                 maxsoft = DMIN(maxsoft , AGS_Prev[i]/AGS_DSOFT_TOL);
-                if(P[i].AGS_KernelRadius >= maxsoft) {P[i].AGS_zeta = 0;} /* check that we're within the 'valid' range for adaptive softening terms, otherwise zeta=0 */
+                /* radius held at the maximum or at this step's lower limit: it does not vary with the density, so no correction term.
+                   At the softening floor itself zeta is kept, as the gravity walk uses it there on both sides of a pair */
+                if((P[i].AGS_KernelRadius >= maxsoft) || ((P[i].AGS_KernelRadius <= minsoft) && (minsoft > minsoft_floor))) {P[i].AGS_zeta = 0;}
 
                 double z0 = 0.5 * P[i].AGS_zeta * P[i].AGS_KernelRadius / (NUMDIMS * P[i].Mass * P[i].NumNgb / ( VOLUME_NORM_COEFF_FOR_NDIMS * pow(P[i].AGS_KernelRadius,NUMDIMS) )); // zeta before various prefactors
                 double h_eff = 2. * (KERNEL_CORE_SIZE*All.ForceSoftening[P[i].Type]); // force softening defines where Jeans pressure needs to kick in; prefactor = NJeans [=2 here]

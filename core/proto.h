@@ -29,7 +29,7 @@ double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
  */
 
 
-void write_header_attributes_in_hdf5(hid_t handle);
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
 void read_header_attributes_in_hdf5(char *fname);
 void write_parameters_attributes_in_hdf5(hid_t handle);
 void write_units_attributes_in_hdf5(hid_t handle);
@@ -211,6 +211,23 @@ void tillotson_eos_init(void);
 #ifdef EOS_ANEOS
 #include "../eos/aneos.h"
 #endif
+/* the positivity catch on a specific internal energy update u_old -> u_new: the energy halves when the update would take it
+   below half; and where the material has a lowest valid energy u_floor > 0, the result is never below that (0: no bound) */
+static inline double internal_energy_positivity_catch(double u_old, double u_new, double u_floor)
+{
+    double u = (u_new < 0.5*u_old) ? 0.5*u_old : u_new;
+    return (u_floor > 0 && u < u_floor) ? u_floor : u;
+}
+/* the lowest specific internal energy [code units] at which a cell's material has a valid equation of state at density rho
+   [code units]: for an ANEOS table material, the energy at the table's lowest valid temperature there; 0 (no bound) otherwise */
+static inline double lowest_valid_internal_energy(int composition_type, double rho)
+{
+#ifdef EOS_ANEOS
+    return aneos_min_specific_energy(composition_type, rho * UNIT_DENSITY_IN_CGS) / UNIT_SPECEGY_IN_CGS;
+#else
+    (void)composition_type; (void)rho; return 0;
+#endif
+}
 
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode);
@@ -301,6 +318,7 @@ int io_compare_P_ID(const void *a, const void *b);
 int io_compare_P_GrNr_SubNr(const void *a, const void *b);
 void drift_particle(int i, integertime time1);
 double drift_divv_factor(int i, double dt_drift);
+double particle_motion_speed_bound(int i);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
@@ -489,7 +507,8 @@ void get_dataset_name(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
-long get_particles_in_block(enum iofields blocknr, int *typelist);
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_file);
+int binary_snapshot_file_fits(const long long *counts, int filenr);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
 void read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);
@@ -530,6 +549,7 @@ void cellcorrections_final_operations_and_cleanup(void);
 #endif
 
 size_t sizemax(size_t a, size_t b);
+size_t comm_buffer_bytes(void);
 
 void reconstruct_timebins(void);
 void init_peano_map(void);
@@ -857,6 +877,7 @@ void hydro_force(void);
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
@@ -895,11 +916,13 @@ void prepare_decouple(void);
 void read_ic(char *fname);
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
-void rearrange_particle_sequence(void);
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
 void force_validate_tree_links(const char *tag);
 void force_tree_check_walkable(const char *tag);
 int domain_any_local_particle_escaped(void);
+int domain_particle_outside_extent(int i);
+int domain_extent_outgrown(void);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
 #endif
@@ -914,7 +937,7 @@ double my_second(void);
 void set_softenings(void);
 void set_units(void);
 void setup_smoothinglengths(void);
-void apply_special_boundary_conditions(int i, double mass_for_dp, int mode);
+void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, integertime ti_target);
 
 void minimum_large_ints(int n, long long *src, long long *res);
 void sumup_large_ints(int n, int *src, long long *res);
@@ -1156,6 +1179,7 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 #ifdef SINGLE_STAR_TIMESTEPPING
 void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
 void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
+double binary_relative_speed_bound(int i);
 double gravfac(double r, double mass);
 double gravfac2(double r, double mass);
 void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);

@@ -175,6 +175,9 @@ struct INPUT_STRUCT_NAME
     MyFloat SoundSpeed;
     MyFloat dt_hydrostep_i;
     MyFloat DrkernNgbFactor;
+#ifdef EOS_ANEOS
+    MyFloat Temperature; /* orders the two sides of a face in the MFM entropic energy switch */
+#endif
 #ifdef HYDRO_SPH
     MyFloat DrkernHydroSumFactor;
     MyFloat alpha;
@@ -412,6 +415,9 @@ static inline void particle2in_hydra(struct INPUT_STRUCT_NAME *in, int i, int lo
     if(CellP[i].FlagForConstrainedGradients == 0) {in->ConditionNumber *= -1;}
 #endif
     in->DrkernNgbFactor = P[i].DrkernNgbFactor;
+#ifdef EOS_ANEOS
+    in->Temperature = CellP[i].Temperature;
+#endif
 #ifdef HYDRO_SPH
     in->DrkernHydroSumFactor = CellP[i].DrkernHydroSumFactor;
 #if defined(SPHAV_CD10_VISCOSITY_SWITCH)

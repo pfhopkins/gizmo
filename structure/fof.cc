@@ -362,8 +362,8 @@ void fof_find_groups(void)
 
   Ngblist.resize(NumPart);
 
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
 					     2 * sizeof(struct fofdata_in)));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
@@ -1456,8 +1456,8 @@ void fof_find_nearest_dmparticle(void)
 
   Ngblist.resize(NumPart);
 
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
 					     sizeof(struct fofdata_in) + sizeof(struct fofdata_out) +
 					     sizemax(sizeof(struct fofdata_in), sizeof(struct fofdata_out))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
@@ -1826,7 +1826,8 @@ void fof_make_sink_particles(void)
 #endif
                 endrun(7772);
         
-        P[import_indices[n]].Mass = CellP[import_indices[n]].Mass; /* sync mass before type conversion */
+        int seed_was_gas = (P[import_indices[n]].Type == 0); /* gas seeds carry cell data; star seeds have no CellP entry */
+        if(seed_was_gas) {P[import_indices[n]].Mass = CellP[import_indices[n]].Mass;} /* sync mass before type conversion */
         P[import_indices[n]].Type = 5;    /* make it a sink particle particle */
 #ifdef GALSF
         P[import_indices[n]].StellarAge = All.Time; /* reset formation time to match BH formation */
@@ -1845,7 +1846,7 @@ void fof_make_sink_particles(void)
         }
         P[import_indices[n]].Sink_Mdot = 0;
         /* set hydro-ish variables */
-        if(P[import_indices[n]].Type == 0){
+        if(seed_was_gas) {
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             P[import_indices[n]].Mass = CellP[import_indices[n]].MassTrue + CellP[import_indices[n]].dMass;
 #endif
@@ -1878,7 +1879,9 @@ void fof_make_sink_particles(void)
 
     }
 
-  All.TotN_gas -= ntot;
+#if (SINK_SEED_FROM_FOF != 1)
+  All.TotN_gas -= ntot; /* only gas seeds leave the gas count */
+#endif
 
   myfree(export_indices);
   myfree(import_indices);

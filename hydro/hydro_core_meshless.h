@@ -116,6 +116,9 @@
             reconstruct_face_states(local.Vel[k] - v_frame[k], local.Gradients.Velocity[k], VelPred_j[k] - v_frame[k], CellP[j].Gradients.Velocity[k],
                                     distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
         }
+#ifdef EOS_ELASTIC
+        face_velocity_jump = Riemann_vec.R.v - Riemann_vec.L.v; /* the reconstructed jump (i minus j), before any fallback below resets the states */
+#endif
 #ifdef MAGNETIC
         int slim_mode = 1;
 #ifdef MHD_CONSTRAINED_GRADIENT
@@ -301,8 +304,10 @@
 #endif
 #endif // MAGNETIC
 
-#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && !(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) // below is defined for adiabatic ideal fluids, don't use for materials
-            /* for MFM, do the face correction for adiabatic flows here */
+#if defined(HYDRO_MESHLESS_FINITE_MASS) && (SLOPE_LIMITER_TOLERANCE < 2) && (!(defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) || (defined(EOS_ANEOS) && !defined(EOS_TILLOTSON)))
+            /* for MFM, do the face correction for adiabatic flows here: on slow faces, the PdV form of the energy flux replaces the Riemann one,
+               unless that would move energy against the thermal ordering of the two sides. It edits only the isotropic (P_M) energy flux, so with
+               EOS_ELASTIC the deviatoric-stress force and its work (added afterwards) are untouched. Tillotson builds keep the Riemann flux. */
             double SM_over_ceff = fabs(Riemann_out.S_M) / DMIN(kernel.sound_i,kernel.sound_j); // for now use sound speed here (more conservative) vs magnetosonic speed //
             /* if SM is sufficiently large, we do nothing to the equations */
             if((SM_over_ceff < epsilon_entropic_eos_big && All.ComovingIntegrationOn >= 0) || (leak_vs_tol>1))
@@ -321,20 +326,31 @@
                 double du_new = 0.5 * (PdV_i - PdV_j + facenorm_pm * (face_vel_i+face_vel_j));
                 // more detailed check for intermediate cases //
                 double cnum2 = CellP[j].ConditionNumber*CellP[j].ConditionNumber;
-                if(SM_over_ceff > epsilon_entropic_eos_small && cnum2 < cnumcrit2)
+                double epsilon_threshold_entropic_eos_ratio = 1.001; /* thermal orderings within this band of 1 count as equal, so roundoff cannot flip the ordering below */
+#ifdef EOS_ANEOS
+                /* a tabulated condensed-matter EOS: P/rho does not order the thermal state (a cold compressed cell can have the larger P/rho), so order
+                   by temperature; without a valid temperature on both sides, keep the Riemann flux */
+                double thermal_order_i = local.Temperature, thermal_order_j = CellP[j].Temperature;
+                if(!(thermal_order_i > 0 && thermal_order_j > 0 && isfinite(thermal_order_i) && isfinite(thermal_order_j))) {use_entropic_energy_equation=0;}
+#else
+                double thermal_order_i = Pressure_i/local.Density, thermal_order_j = Pressure_j/CellP[j].Density;
+#endif
+                if(use_entropic_energy_equation && SM_over_ceff > epsilon_entropic_eos_small && cnum2 < cnumcrit2)
                 {
-                    if(Pressure_i/local.Density != Pressure_j/CellP[j].Density)
+                    if(thermal_order_i > epsilon_threshold_entropic_eos_ratio * thermal_order_j)
                     {
-                        if(Pressure_i/local.Density > Pressure_j/CellP[j].Density)
-                        {
-                            double dtoj = -du_old + facenorm_pm * face_vel_j;
-                            if(dtoj > 0) {use_entropic_energy_equation=0;} else
-                                {if(dtoj < 0) {if(dtoj > -du_new+facenorm_pm*face_vel_j) {use_entropic_energy_equation=0;}}}
-                        } else {
-                            double dtoi = +du_old - facenorm_pm * face_vel_i;
-                            if(dtoi > 0) {use_entropic_energy_equation=0;} else
-                                {if(dtoi < 0) {if(dtoi > +du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}}
-                        }
+                        double dtoj = -du_old + facenorm_pm * face_vel_j;
+                        if(dtoj > 0) {use_entropic_energy_equation=0;} else
+                            {if(dtoj < 0) {if(dtoj > -du_new+facenorm_pm*face_vel_j) {use_entropic_energy_equation=0;}}}
+                    } else if(epsilon_threshold_entropic_eos_ratio * thermal_order_i < thermal_order_j) {
+                        double dtoi = +du_old - facenorm_pm * face_vel_i;
+                        if(dtoi > 0) {use_entropic_energy_equation=0;} else
+                            {if(dtoi < 0) {if(dtoi > +du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}}
+                    } else { /* no clear ordering: check both directions */
+                        double dtoj = -du_old + facenorm_pm * face_vel_j;
+                        double dtoi = +du_old - facenorm_pm * face_vel_i;
+                        if(dtoj < 0) {if(dtoj > -du_new+facenorm_pm*face_vel_j) {use_entropic_energy_equation=0;}}
+                        if(dtoi < 0) {if(dtoi > +du_new-facenorm_pm*face_vel_i) {use_entropic_energy_equation=0;}}
                     }
                 }
                 if(cnum2 >= cnumcrit2) {use_entropic_energy_equation=1;}

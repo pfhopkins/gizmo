@@ -236,6 +236,9 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
 #if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
                 double tensile_correction_factor = get_negative_pressure_tensilecorrfac(kernel.r, kernel.h_i, kernel.h_j);
 #endif
+#if defined(EOS_ELASTIC) && !defined(HYDRO_SPH)
+                Vec3<double> face_velocity_jump = {}; /* velocity jump (i minus j) between the reconstructed face states, for the elastic face dissipation */
+#endif
                 
                 /* --------------------------------------------------------------------------------- */
                 /* calculate the kernel functions (centered on both 'i' and 'j') */

@@ -569,8 +569,8 @@ void hydro_gradient_calc(void)
     /* allocate buffers to arrange communication */
     long long NTaskTimesNumPart;
     GasGradDataPasser = (struct temporary_data_topass *) mymalloc("GasGradDataPasser",N_gas * sizeof(struct temporary_data_topass));
-    NTaskTimesNumPart = maxThreads * NumPart; size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    NTaskTimesNumPart = maxThreads * NumPart; size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                                              sizeof(struct GasGraddata_in) + sizeof(struct GasGraddata_out) +
                                                              sizemax(sizeof(struct GasGraddata_in),sizeof(struct GasGraddata_out))));
     Ngblist.resize(NTaskTimesNumPart);

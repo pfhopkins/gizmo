@@ -100,24 +100,44 @@ void reconstruct_timebins(void)
 
 /*! The clamped volume-change exponent divV*dt a drift of dt_drift applies to particle i: kernel radii
  *  scale by exp(result/NUMDIMS), densities by exp(-result). Also used to predict a lagging particle's
- *  kernel without drifting it. */
+ *  kernel without drifting it. The cap, the same for every particle type and both directions, keeps a
+ *  prediction near the last solved value. It applies to ONE drift: a bound spanning several (a tree
+ *  node's hmax) grows by force_drift_node's uncapped rule instead. */
 double drift_divv_factor(int i, double dt_drift)
 {
+    const double divv_fac_max = 0.3;
     double divv_fac = P[i].Particle_DivVel * dt_drift;
-    /* How far the predicted kernel radius may move in one drift. The two directions are not the
-       same risk: growing follows the flow and simply predicts a larger search, while shrinking
-       can empty a kernel of the neighbours the next density solve needs. So growth carries the
-       looser bound, which also tracks the divergence it approximates more closely than the old
-       symmetric 0.3 did -- that tight cap lowers the guess's order and fails the density guess
-       more often. Adaptive softening has used the loose bound on both sides for the same reason. */
-    double divv_fac_max_grow   = 4.0;
-    double divv_fac_max_shrink = 1.5;
-#ifdef AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE
-    if(ags_density_isactive(i) && P[i].Type>0) {divv_fac_max_grow = 4; divv_fac_max_shrink = 4;} // can [should] allow larger changes when using adapting soft for all
-#endif
-    if(divv_fac > +divv_fac_max_grow)   divv_fac = +divv_fac_max_grow;
-    if(divv_fac < -divv_fac_max_shrink) divv_fac = -divv_fac_max_shrink;
+    if(divv_fac > +divv_fac_max) divv_fac = +divv_fac_max;
+    if(divv_fac < -divv_fac_max) divv_fac = -divv_fac_max;
     return divv_fac;
+}
+
+
+/*! The fastest particle i can move along any one axis, per unit of UNDILATED drift interval: a tree
+ *  node's box grows by this bound (over its members) times the interval since it was last drifted, so
+ *  a member not yet brought current is still inside it. Follows drift_particle's position update term
+ *  by term -- a finite-volume cell moves with its mesh-generating point, a super-timestepped sink adds
+ *  its orbit about the binary's centre of mass, and a dilated particle covers only its dilated share of
+ *  the interval -- so a change to how a particle moves belongs in both. */
+double particle_motion_speed_bound(int i)
+{
+#if defined(FREEZE_HYDRO)
+    return 0;
+#else
+    Vec3<double> v = P[i].Vel; double extra = 0;
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    if(P[i].Type == 0) {v = CellP[i].ParticleVel;}
+#endif
+#if (SINGLE_STAR_TIMESTEPPING > 0)
+    if((P[i].Type == 5) && (P[i].SuperTimestepFlag >= 2))
+    {
+        double share = P[i].comp_Mass / (P[i].Mass + P[i].comp_Mass); /* the sink's share of the relative motion */
+        v += P[i].comp_dv * share; extra = share * binary_relative_speed_bound(i);
+    }
+#endif
+    double bound = DMAX(fabs(v[0]), DMAX(fabs(v[1]), fabs(v[2]))) + extra;
+    return bound * return_timestep_dilation_factor(i, 0);
+#endif
 }
 
 
@@ -133,11 +153,14 @@ void drift_particle(int i, integertime time1)
     
     dt_drift = get_drift_factor(time0, time1, i, 0);
         
+#if (SINGLE_STAR_TIMESTEPPING > 0)
+    Vec3<double> fewbody_drift_dx = {}, fewbody_kick_dv = {}; /* a super-timestepped sink's internal orbit, on top of its binary's centre-of-mass drift */
+#endif
 #if !defined(FREEZE_HYDRO)
-#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
-    if(P[i].Type==0) {advect_mesh_point(i,dt_drift);} else {P[i].Pos += P[i].Vel * dt_drift;}
-#elif (SINGLE_STAR_TIMESTEPPING > 0)
-    Vec3<double> fewbody_drift_dx, fewbody_kick_dv; // if super-timestepping, the updates above account for COM motion of the binary; now we account for the internal motion
+    /* A finite-volume gas cell moves with its mesh-generating point, a super-timestepped sink with its
+       binary, everything else with its own velocity. The two special cases are different particle
+       types, so both are live in a build that has both. particle_motion_speed_bound follows these rules. */
+#if (SINGLE_STAR_TIMESTEPPING > 0)
     if( (P[i].Type == 5) && (P[i].SuperTimestepFlag>=2) )
     {
         Vec3<double> COM_Vel = P[i].Vel + P[i].comp_dv * (P[i].comp_Mass/(P[i].Mass+P[i].comp_Mass)); //center of mass velocity
@@ -146,12 +169,14 @@ void drift_particle(int i, integertime time1)
         P[i].GravAccel = P[i].COM_GravAccel; //Overwrite the acceleration with center of mass value
         P[i].Pos += fewbody_drift_dx; //Keplerian evolution
         P[i].Vel += fewbody_kick_dv; //move on binary.orbit
-    } else {
-       P[i].Pos += P[i].Vel * dt_drift;
     }
-#else
-    P[i].Pos += P[i].Vel * dt_drift;
+    else
 #endif
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    if(P[i].Type==0) {advect_mesh_point(i,dt_drift);}
+    else
+#endif
+    {P[i].Pos += P[i].Vel * dt_drift;}
 #endif // FREEZE_HYDRO clause
 #if (NUMDIMS==1)
     P[i].Pos[1]=P[i].Pos[2]=0; // force zero-ing
@@ -222,18 +247,22 @@ void drift_particle(int i, integertime time1)
             
             CellP[i].Density *= exp(-divv_fac);
             double etmp = CellP[i].InternalEnergyPred + CellP[i].DtInternalEnergy * dt_entr;
+            double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none), at the predicted density */
+#ifdef EOS_ANEOS
+            u_floor = lowest_valid_internal_energy(CellP[i].CompositionType, CellP[i].Density);
+#endif
 #if defined(RADTRANSFER) && defined(RT_EVOLVE_ENERGY) /* block here to deal with tricky cases where radiation energy density is -much- larger than thermal */ 
             int kfreq; double erad_tot=0,tot_e_min=0,enew=0,int_e_min=0,dErad=0,rsol_fac=C_LIGHT_CODE_REDUCED/C_LIGHT_CODE; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {erad_tot+=CellP[i].Rad_E_gamma_Pred[kfreq];}
             if(erad_tot > 0)
             {
-                int_e_min=0.025*CellP[i].InternalEnergyPred; tot_e_min=0.025*(erad_tot/rsol_fac+CellP[i].InternalEnergyPred*P[i].Mass);
+                int_e_min=DMAX(0.025*CellP[i].InternalEnergyPred, u_floor); tot_e_min=0.025*(erad_tot/rsol_fac+CellP[i].InternalEnergyPred*P[i].Mass);
                 enew=DMAX(erad_tot/rsol_fac+etmp*P[i].Mass,tot_e_min); etmp=(enew-erad_tot/rsol_fac)/P[i].Mass; if(etmp<int_e_min) {dErad=rsol_fac*(etmp-int_e_min); etmp=int_e_min;}
                 if(dErad<-0.975*erad_tot) {dErad=-0.975*erad_tot;} CellP[i].InternalEnergyPred = etmp; for(kfreq=0;kfreq<N_RT_FREQ_BINS;kfreq++) {CellP[i].Rad_E_gamma_Pred[kfreq] *= 1 + dErad/erad_tot;}
             } else {
-                if(etmp<0.5*CellP[i].InternalEnergyPred) {CellP[i].InternalEnergyPred *= 0.5;} else {CellP[i].InternalEnergyPred=etmp;}
+                CellP[i].InternalEnergyPred = internal_energy_positivity_catch(CellP[i].InternalEnergyPred, etmp, u_floor);
             }
 #else
-            if(etmp<0.5*CellP[i].InternalEnergyPred) {CellP[i].InternalEnergyPred *= 0.5;} else {CellP[i].InternalEnergyPred=etmp;}
+            CellP[i].InternalEnergyPred = internal_energy_positivity_catch(CellP[i].InternalEnergyPred, etmp, u_floor);
 #endif
             if(CellP[i].InternalEnergyPred<All.MinEgySpec) CellP[i].InternalEnergyPred=All.MinEgySpec;
             
@@ -255,7 +284,7 @@ void drift_particle(int i, integertime time1)
         }
     
     /* check for reflecting or outflow or otherwise special boundaries: if so, do the reflection/boundary! */
-    apply_special_boundary_conditions(i,P[i].Mass,0);
+    apply_special_boundary_conditions(i,P[i].Mass,0,time1);
 
     P[i].Ti_current = time1;
 }
@@ -553,11 +582,14 @@ double INLINE_FUNC Get_Gas_PhiField_DampingTimeInv(int i_particle_id)
 void advect_mesh_point(int i, double dt)
 {
 #if (HYDRO_FIX_MESH_MOTION == 2) || (HYDRO_FIX_MESH_MOTION == 3) // cylindrical or spherical coordinates
-    // define the location relative to the origin (needed in these coordinate systems)
-    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // assume center is at coordinate origin
-#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // unless we use a special anchor, to define the center
-    dp_offset = P[i].Pos - P[i].Min_xyz_to_Sink;
-#elif defined(BOX_PERIODIC) // or if periodic, the box mid-point is instead the center
+    /* The mesh velocity is read as a turn about the centre plus a radial (and, for the cylindrical case, a vertical) motion:
+       the point's direction from the centre is turned in the plane it and its tangential velocity span, through the angle
+       that velocity sweeps in dt, and its velocity is turned with it, keeping its speed. A rigidly rotating cylindrical mesh
+       stays rigid; in the spherical case each point follows the great circle of its radius and velocity. */
+    Vec3<double> dp = P[i].Pos; Vec3<double> dp_offset = {}; // location relative to the centre; the centre is the coordinate origin ...
+#if defined(GRAVITY_ANALYTIC_ANCHOR_TO_PARTICLE) // ... unless a special anchor defines it
+    for(int k=0;k<3;k++) {dp_offset[k] = -(P[i].Pos[k] + P[i].Min_xyz_to_Sink[k]);} /* Min_xyz_to_Sink = x_sink - x, so dp = x - x_sink */
+#elif defined(BOX_PERIODIC) // ... or the box is periodic, when it is the box mid-point
 #if (NUMDIMS==1)
     dp_offset[0] = -boxHalf_X;
 #elif (NUMDIMS==2)
@@ -567,31 +599,42 @@ void advect_mesh_point(int i, double dt)
 #endif
 #endif
     dp += dp_offset;
-#if (HYDRO_FIX_MESH_MOTION == 2) // cylindrical
-    double r2=dp[0]*dp[0]+dp[1]*dp[1], r=sqrt(r2), c0=dp[0]/r, s0=dp[1]/r, z=dp[2]; // get r, sin/cos theta, z
-    double vr=c0*CellP[i].ParticleVel[0] + s0*CellP[i].ParticleVel[1], vt=s0*CellP[i].ParticleVel[0] - c0*CellP[i].ParticleVel[1], vz=CellP[i].ParticleVel[2]; // velocities in these directions
-    double r_n=r+vr*dt, z_n=z+vz*dt, c_n=c0-s0*(vt/r)*dt, s_n=s0+c0*(vt/r)*dt; // updated cylindrical values
-    dp[0] = c_n*r_n; dp[1] = s_n*r_n; dp[2] = z_n; // back to coordinates
-    CellP[i].ParticleVel[0] = c_n*vr + s_n*vt; // re-set velocities in these coordinates //
-    CellP[i].ParticleVel[1] = s_n*vr - c_n*vt;
-    CellP[i].ParticleVel[2] = vz;
-    return;
-#elif (HYDRO_FIX_MESH_MOTION == 3) // spherical
-    Vec3<double> v = CellP[i].ParticleVel; double r2=dp.norm_sq(); // assume center is at coordinate origin
-    double r=sqrt(r2), rxy=sqrt(dp[0]*dp[0]+dp[1]*dp[1]), vr=dot(dp,v)/r; // updated r is easy
-    double ct = 1./sqrt(1.+dp[1]*dp[1]/(dp[0]*dp[0])), st = (dp[1]/dp[0])*ct; // cos and sin theta
-    double cp = sqrt(1.-dp[2]*dp[2]/(r*r)), sp = dp[2]/r; // cos and sin phi
-    double t_dot = (v[0]*dp[1]-v[1]*dp[0])/(rxy*rxy), p_dot = (dp[2]*(dp[0]*v[0]+dp[1]*v[1])-rxy*rxy*v[2])/(r*r*rxy); // theta, phi derivatives
-    double r_n=r+vr*dt, ct_n=ct-st*t_dot, st_n=st+ct*t_dot, cp_n=cp-sp*t_dot, sp_n=sp+cp*t_dot; // updated angles and positions in spherical
-    dp[0] = r_n * ct_n * cp_n; dp[1] = r_n * st_n * cp_n; dp[2] = r_n * sp_n; // back to coordinates
-    rxy = sqrt(dp[0]*dp[0] + dp[1]*dp[1]); // updated rxy
-    CellP[i].ParticleVel[0] = (dp[0]/r_n) * vr + dp[1] * t_dot + dp[0]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[1] = (dp[1]/r_n) * vr - dp[0] * t_dot + dp[1]*dp[2]/rxy * p_dot; // back to cartesian velocities
-    CellP[i].ParticleVel[2] = (dp[2]/r_n) * vr - rxy * p_dot; // back to cartesian velocities
-    return;
+    Vec3<double> v = CellP[i].ParticleVel;
+    Vec3<double> radial = dp; // the part of the position that rotates
+#if (HYDRO_FIX_MESH_MOTION == 2)
+    radial[2] = 0; // cylindrical: z advances on its own
 #endif
-    // ok now have the updated x/y/z positions relative to the origin, convert these back to the simulation coordinate frame
-    P[i].Pos = dp - dp_offset;
+    const double r = radial.norm();
+    if(r > 0)
+    {
+        const Vec3<double> e_r = radial / r;
+        const double v_r = dot(v, e_r);
+        Vec3<double> v_t = v - v_r * e_r; // tangential velocity, in the plane of rotation
+#if (HYDRO_FIX_MESH_MOTION == 2)
+        v_t[2] = 0;
+#endif
+        const double vt = v_t.norm();
+        const double r_new = r + v_r * dt;
+        if(r_new <= 0) {P[i].Pos += v * dt; return;} // carried through the centre in one step: the turn is undefined, so advance straight
+        Vec3<double> e_r_new = e_r, e_t_new = {};
+        if(vt > 0)
+        {
+            const Vec3<double> e_t = v_t / vt;
+            const double angle = vt * dt / r_new, c = cos(angle), s = sin(angle); // tangential distance over the final radius: the chord is at most vt*dt
+            e_r_new = c * e_r + s * e_t; // the direction turned through the swept angle
+            e_t_new = c * e_t - s * e_r; // and the tangential direction with it
+        }
+        dp = r_new * e_r_new;
+        v  = v_r * e_r_new + vt * e_t_new; // the same speed, turned with the point
+#if (HYDRO_FIX_MESH_MOTION == 2)
+        dp[2] = P[i].Pos[2] + dp_offset[2] + CellP[i].ParticleVel[2] * dt;
+        v[2]  = CellP[i].ParticleVel[2];
+#endif
+        CellP[i].ParticleVel = v;
+    }
+    else {dp += v * dt;} // a point at the centre has no direction to turn
+    P[i].Pos = dp - dp_offset; // back to the simulation frame
+    return;
 #endif // ok done with cylindrical/spherical coordinates
     
     

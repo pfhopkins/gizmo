@@ -921,7 +921,7 @@ void read_parameter_file(char *fname)
 
     FILE *fd, *fdout;
     char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf1[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf2[DEFAULT_PATH_BUFFERSIZE_TOUSE], buf3[DEFAULT_PATH_BUFFERSIZE_TOUSE], tag[MAXTAGS][50], alternate_tag[MAXTAGS][50];
-    int i, j, nt, id[MAXTAGS], pnum, errorFlag = 0;
+    int i, j, nt, id[MAXTAGS], errorFlag = 0;
     void *addr[MAXTAGS];
     double safe_memorypertask = mpi_report_comittable_memory(0,0); /* used for some checks below */
 #ifdef CHIMES
@@ -2393,7 +2393,7 @@ void read_parameter_file(char *fname)
                 //if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.93*safe_memorypertask-All.BufferSize); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 if(strcmp("MaxMemSize",tag[i])==0) {*((int *)addr[i])=(int)(0.90*safe_memorypertask); printf("Tag %s (%s) not set in parameter file: We will try to assign a memory-per-MPI task according to the number of MPI tasks in total and average number of tasks per node, and the minimum available memory per node. This gives %d MB per task. Depending on your configuration, and system memory overhead, you may need to increase or decrease this.\n",tag[i],alternate_tag[i],All.MaxMemSize); continue;}
                 if(strcmp("ICFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 ICs format (=%d) - change this if needed for your ICs (many codes generate ICs in the old GADGET unformatted binary format, which requires value=1 here) \n",tag[i],alternate_tag[i],All.ICFormat); continue;}
-                if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to only main-task writes (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
+                if(strcmp("NumFilesWrittenInParallel",tag[i])==0) {*((int *)addr[i]) = NTask; printf("Tag %s (%s) not set in parameter file: defaulting to the number of MPI ranks, so every rank writes or reads its restart file at once (=%d) \n",tag[i],alternate_tag[i],All.NumFilesWrittenInParallel); continue;}
                 if(strcmp("NumFilesPerSnapshot",tag[i])==0) {*((int *)addr[i])=1; printf("Tag %s (%s) not set in parameter file: defaulting to single-file snapshots (=%d) \n",tag[i],alternate_tag[i],All.NumFilesPerSnapshot); continue;}
                 if(strcmp("SnapFormat",tag[i])==0) {*((int *)addr[i])=3; printf("Tag %s (%s) not set in parameter file: defaulting to standard hdf5 snapshot format (=%d) \n",tag[i],alternate_tag[i],All.SnapFormat); continue;}
                 if(strcmp("RestartFile",tag[i])==0) {strcpy((char *)addr[i],"restart"); printf("Tag %s (%s) not set in parameter file: defaulting to value = 'restart' \n",tag[i],alternate_tag[i]); continue;}
@@ -2494,6 +2494,7 @@ void read_parameter_file(char *fname)
                 if(strcmp("AGBDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_AGBDustScaling); continue;}
                 if(strcmp("DustAccretionScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_DustAccretionScaling); continue;}
                 if(strcmp("ThermalSputteringScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_ThermalSputteringScaling); continue;}
+                if(strcmp("AccretionTcutoffScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_AccretionTcutoffScaling); continue;}
                 if(strcmp("SNeGasClearedOfDustScaling",tag[i])==0) {*((double *)addr[i])=1.; printf("Tag %s (%s) not set in parameter file: defaulting to one (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_SNeGasClearedOfDustScaling); continue;}
 #if defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
                 if(strcmp("ISMDustChem_Grain_Size_Min",tag[i])==0) {*((double *)addr[i])=1E-7; printf("Tag %s (%s) not set in parameter file: defaulting to 1E-7 (=%g)\n",tag[i],alternate_tag[i],All.ISMDustChem_Grain_Size_Min); continue;}
@@ -2863,6 +2864,12 @@ void read_parameter_file(char *fname)
         if(ThisTask==0) {printf("Divergence-Cleaning Damping Parameter DivBcleanHyperbolicSigma must be >0.5 and <2"); endrun(1);}
     }
 #endif
+#ifdef TURB_DIFF_DYNAMIC
+    if(All.TurbDynamicDiffFac < 1)
+    {
+        if(ThisTask==0) {printf("TurbDynamicDiffFac must be >= 1: the gradient pass searches TurbDynamicDiffFac x the kernel radius, so a smaller value drops ordinary gradient neighbours \n"); endrun(1);}
+    }
+#endif
     if((All.MaxNumNgbDeviation<=0)||(All.MaxNumNgbDeviation>0.1*All.DesNumNgb))
     {
         if(ThisTask==0) {printf("MaxNumNgbDeviation must be >0 and <0.1*DesNumNgb \n"); endrun(1);}
@@ -2890,16 +2897,9 @@ void read_parameter_file(char *fname)
 #endif
 
 
-    for(pnum = 0; All.NumFilesWrittenInParallel > (1 << pnum); pnum++);
-
-    if(All.NumFilesWrittenInParallel != (1 << pnum))
+    if(All.NumFilesWrittenInParallel < 1 || All.NumFilesWrittenInParallel > NTask)
     {
-        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be a power of 2\n"); endrun(1);}
-    }
-
-    if(All.NumFilesWrittenInParallel > NTask)
-    {
-        if(ThisTask == 0) {printf("NumFilesWrittenInParallel MUST be smaller than number of processors\n"); endrun(1);}
+        if(ThisTask == 0) {printf("NumFilesWrittenInParallel must be at least 1 and no larger than the number of MPI ranks (%d)\n", NTask);} endrun(1);
     }
 
 #if defined(BOX_LONG_X) ||  defined(BOX_LONG_Y) || defined(BOX_LONG_Z)

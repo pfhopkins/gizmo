@@ -64,7 +64,10 @@ void gravity_tree(void)
         PRINT_STATUS("Tree construction initiated (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
         CPU_Step[CPU_MISC] += measure_time();
         move_particles(All.Ti_Current);
-        rearrange_particle_sequence();
+        /* the build keys particles against the standing domain: one outside its extent would be filed
+           under the wrong cell, so re-measure the extent with a decomposition first */
+        if(domain_extent_outgrown()) {domain_Decomposition(0, 0, 0);}
+        rearrange_particle_sequence(1); /* the tree is rebuilt just below */
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_DRIFT] += measure_time(); /* sync before we do the treebuild */
         force_treebuild(NumPart, NULL);
         MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_TREEBUILD] += measure_time(); /* and sync after treebuild as well */
@@ -99,8 +102,8 @@ void gravity_tree(void)
 #if !defined(SELFGRAVITY_OFF) || defined(RT_USE_GRAVTREE) || defined(RT_USE_TREECOL_FOR_NH) || defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
     /* allocate buffers to arrange communication */
     PRINT_STATUS(" ..Begin tree force. (presently allocated=%g MB)", AllocatedBytes / (1024.0 * 1024.0));
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                                              sizeof(struct gravdata_in) + sizeof(struct gravdata_out) +
                                              sizemax(sizeof(struct gravdata_in),sizeof(struct gravdata_out))));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
@@ -682,7 +685,16 @@ void gravity_tree(void)
 #endif /* end tree walk (guarded by SELFGRAVITY_OFF unless non-gravity tree features are active) */
 
 
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
+    /* a skipped element's GravAccel, extrapolated from its last walk, already holds the analytic terms added then:
+       keep it, rather than stack another copy on every skipped step */
+    std::vector<Vec3<MyDouble>> skipped_accel;
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {skipped_accel.push_back(P[ActiveParticleList[ii]].GravAccel);}}
+#endif
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF)
+    {size_t k = 0; for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {if(treeforce_skip_flag[ii]) {P[ActiveParticleList[ii]].GravAccel = skipped_accel[k++];}}}
+#endif
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
@@ -973,14 +985,20 @@ int needs_new_treeforce(int n){
 #ifdef HERMITE_INTEGRATION
     if((1 << P[n].Type) & HERMITE_INTEGRATION) {return 1;} // Hermite-integrated particles must always get a fresh tree force; the lazy-cache path is incompatible with the predictor-corrector sub-stepping
 #endif
-    if(P[n].Type > 0){ // in this implementation we only do the lazy updating for gas cells whose timesteps are otherwise constrained by multiphysics (e.g. radiation, feedback)
-        return 1;
-    } else {
-        if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+    if(P[n].Type == 5) {return 1;} // single-star sinks take a full tree force every step: their dynamics are followed more carefully
+#endif
+    /* types whose GravAccel also carries terms added after the walk: the skip path extrapolates GravAccel and would stack them */
+#ifdef GRAIN_FLUID
+    if((1 << P[n].Type) & (GRAIN_PTYPES)) {return 1;}
+#endif
+#if defined(DM_FUZZY) || defined(CBE_INTEGRATOR)
+    if(P[n].Type == 1) {return 1;}
+#endif
+    if(P[n].time_since_last_treeforce >= P[n].tdyn_step_for_treeforce * ADAPTIVE_TREEFORCE_UPDATE) {return 1;}
 #ifdef SINGLE_STAR_FB_TIMESTEPLIMIT
-        else if(P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
-#endif        
-        else {return 0;}
-    }
+    else if(P[n].Type == 0 && P[n].time_since_last_treeforce >= P[n].Min_Sink_FeedbackTime) {return 1;} // gas only, as the feedback-time step limit it serves: we want ejecta to re-calculate their feedback time so they don't get stuck on a short timestep
+#endif
+    else {return 0;}
 }
 #endif

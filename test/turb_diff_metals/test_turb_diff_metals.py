@@ -234,3 +234,13 @@ def test_turb_diff_metals_comoving_matches_physical():
     print(f"comoving/physical: cold-side gain {gain_com / gain_phys:.4f}, hot-side loss {loss_com / loss_phys:.4f}")
     for name, com, phys in [("gained by the cold side", gain_com, gain_phys), ("lost by the hot side", loss_com, loss_phys)]:
         assert abs(com / phys - 1) < 0.1, f"metal {name} in the comoving run is {com / phys:.3f}x that in the physical run"
+
+
+def test_turb_diff_metals_dynamic_fac_below_one_refused():
+    """TURB_DIFF_DYNAMIC's first gradient pass searches TurbDynamicDiffFac x the kernel radius, so a factor below 1 would
+    drop ordinary gradient neighbours: the run must refuse to start"""
+    with pytest.raises(RuntimeError):
+        run_case("dynamic_fac_below_one", extra_config_flags=("TURB_DIFF_DYNAMIC",), exact=False,
+                 param_overrides={"TurbDynamicDiffFac": "0.5", "TurbDynamicDiffSmoothing": "0.8", "TurbDynamicDiffMax": "1"})
+    out = open(f"{TEST_DIR}/test_{TEST_NAME}.out", errors="replace").read()
+    assert "TurbDynamicDiffFac must be >= 1" in out

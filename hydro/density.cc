@@ -454,6 +454,28 @@ void density_evaluate_extra_physics_gas(struct INPUT_STRUCT_NAME *local, struct 
 
 
 
+#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES
+/* Whether a particle of this type searches for gas neighbours as a feedback or radiation source: with a looser neighbour-number
+   tolerance (it needs only enough neighbours to couple to) and, with star formation, a cap on the search radius. By default the
+   star types 1-4; in idealized grain or radiation problems without star formation, type 4 only; and with radiation, every type that
+   injects radiation. Never gas (it searches to its own target), sinks (capped by their accretion radius) or grains. */
+static inline int density_is_coupling_source_type(int type)
+{
+    int valid_types = 2+4+8+16, invalid_types = 1+32;
+#if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
+    valid_types = 16;
+#endif
+#ifdef RT_SOURCES
+    valid_types |= RT_SOURCES;
+#endif
+#ifdef GRAIN_FLUID
+    invalid_types |= GRAIN_PTYPES;
+#endif
+    return ((1 << type) & valid_types) && !((1 << type) & invalid_types);
+}
+#endif
+
+
 /*! This function computes the local neighbor kernel for each active hydro element, the number of neighbours in the current kernel radius, and the divergence
  * and rotation of the velocity field.  This is used then to compute the effective volume of the element in MFM/MFV/SPH-type methods, which is then used to
  * update volumetric quantities like density and pressure. The routine iterates to attempt to find a target kernel size set adaptively -- see code user guide for details
@@ -465,19 +487,6 @@ void density(void)
     int i, npleft, iter=0, redo_particle, particle_set_to_minrkern_flag = 0, particle_set_to_maxrkern_flag = 0;
     Left = (MyFloat *) mymalloc("Left", NumPart * sizeof(MyFloat));
     Right = (MyFloat *) mymalloc("Right", NumPart * sizeof(MyFloat));
-    
-#ifdef DO_DENSITY_AROUND_NONGAS_PARTICLES /* define a variable for below to know which stellar types qualify here */
-    int valid_stellar_types = 2+4+8+16, invalid_stellar_types = 1+32; // allow types 1,2,3,4 here //
-#if (defined(GRAIN_FLUID) || defined(RADTRANSFER)) && (!defined(GALSF) && !(defined(GALSF_FB_MECHANICAL) || defined(GALSF_FB_THERMAL)))
-    valid_stellar_types = 16; invalid_stellar_types = 1+2+4+8+32; // -only- type-4 sources in these special problems
-#ifdef RADTRANSFER
-    invalid_stellar_types = 64; valid_stellar_types = RT_SOURCES; // any valid 'injection' source is allowed
-#endif
-#ifdef GRAIN_FLUID
-    invalid_stellar_types = GRAIN_PTYPES;
-#endif
-#endif
-#endif
     
     /* initialize anything we need to about the active particles before their loop */
     for (int i : ActiveParticleList) {
@@ -494,7 +503,7 @@ void density(void)
 #endif
             double maxsoft = All.MaxKernelRadius; /* before the first pass, need to ensure the particles do not exceed the maximum KernelRadius allowed */
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && defined(GALSF)
-            if( ((1 << P[i].Type) & (valid_stellar_types)) && !((1 << P[i].Type) & (invalid_stellar_types)) ) {maxsoft = 2.0 / (UNIT_LENGTH_IN_KPC*All.cf_atime);}
+            if(density_is_coupling_source_type(P[i].Type)) {maxsoft = 2.0 / (UNIT_LENGTH_IN_KPC*All.cf_atime);}
 #endif
 #ifdef SINK_PARTICLES
             if(P[i].Type == 5) {maxsoft = All.SinkMaxAccretionRadius / All.cf_atime;}  // MaxAccretionRadius is now defined in params.txt in PHYSICAL units
@@ -632,7 +641,7 @@ void density(void)
                 /* use a much looser check for N_neighbors when the central point is a star particle,
                  since the accuracy is limited anyways to the coupling efficiency -- the routines use their
                  own estimators+neighbor loops, anyways, so this is just to get some nearby particles */
-                if( ((1 << P[i].Type) & (valid_stellar_types)) && !((1 << P[i].Type) & (invalid_stellar_types)) )
+                if(density_is_coupling_source_type(P[i].Type))
                 {
                     desnumngb = All.DesNumNgb;
 #if defined(RT_SOURCE_INJECTION)

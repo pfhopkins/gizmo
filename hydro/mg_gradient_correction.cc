@@ -392,8 +392,8 @@ static void mg_build_matrix(void)
     double tstart, tend;
 
     /* Allocate communication buffers */
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long)((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
+    size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long)((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) +
                            sizeof(struct MGdata_in) + sizeof(struct MGdata_out) +
                            sizemax(sizeof(struct MGdata_in), sizeof(struct MGdata_out))));
     Ngblist.resize(NTaskTimesNumPart);

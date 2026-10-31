@@ -72,8 +72,8 @@ void twopoint(void)
     for(i = 0; i < BINS_TP; i++) {Count[i] = 0; CountSpheres[i] = 0;}
     /* allocate buffers to arrange communication */
     RsList = (MyFloat *) mymalloc("RsList", NumPart * sizeof(MyFloat));
-    size_t MyBufferSize = All.BufferSize;
-    All.BunchSize = (long) ((MyBufferSize * 1024 * 1024) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + 2 * sizeof(struct twopointdata_in)));
+    size_t MyBufferBytes = comm_buffer_bytes();
+    All.BunchSize = (long) ((MyBufferBytes) / (sizeof(struct data_index) + sizeof(struct data_nodelist) + 2 * sizeof(struct twopointdata_in)));
     DataIndexTable = (struct data_index *) mymalloc("DataIndexTable", All.BunchSize * sizeof(struct data_index));
     DataNodeList = (struct data_nodelist *) mymalloc("DataNodeList", All.BunchSize * sizeof(struct data_nodelist));
     static constexpr uint64_t SAMPLE_CENTRE_RNG_SALT = gizmo_loop_rng_salt("twopoint_sample_centre"); /* which particles are sample centres: keyed on each particle, so independent of the decomposition */

@@ -76,7 +76,7 @@
 #endif
 
 
-#if !defined(RT_HYDROGEN_GAS_ONLY) || defined(RT_CHEM_PHOTOION_HE)
+#if !(defined(RT_HYDROGEN_GAS_ONLY) || (defined(CHIMES_HYDROGEN_ONLY) && !defined(METALS))) || defined(RT_CHEM_PHOTOION_HE)
 #define  HYDROGEN_MASSFRAC 0.76 /*!< mass fraction of hydrogen, relevant only for radiative cooling */
 #else
 #define  HYDROGEN_MASSFRAC 1.0  /*!< mass fraction of hydrogen, relevant only for radiative cooling */
@@ -90,6 +90,10 @@
 #define  CONDITION_NUMBER_DANGER  1.0e7 /*!< condition number above which we will not trust matrix-based gradients */
 #else
 #define  CONDITION_NUMBER_DANGER  1.0e3 /*!< condition number above which we will not trust matrix-based gradients */
+#endif
+#ifdef EOS_ELASTIC
+#define  CONDITION_NUMBER_FACE_BLEND_START  20.0 /*!< elastic solids: above this condition number (the larger of a pair) the meshless face starts to blend toward the kernel-gradient face */
+#define  CONDITION_NUMBER_FACE_BLEND_FULL   50.0 /*!< elastic solids: condition number at which that face is the kernel-gradient face alone */
 #endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */
