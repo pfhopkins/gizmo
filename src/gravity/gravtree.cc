@@ -601,12 +601,7 @@ gravity_walk_attempt:
         double dt = get_particle_timestep_in_physical(i, P);
         if(!gravity_treeforce_candidate_frozen(ii)) { // the one decision this call froze before any walk ran, the same one the walk dispatchers used
 #ifdef HERMITE_INTEGRATION
-            if(HermiteOnlyFlag) { // a Hermite pass evaluates at the time of the latest main pass, which already advanced this particle: no time has elapsed
-#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
-                P[i].GravAccel = P[i].GravAccel_Retained;
-#endif
-                continue;
-            }
+            if(HermiteOnlyFlag) {continue;} // a Hermite pass evaluates at the time of the latest main pass, which already advanced this particle and left its full acceleration: no time has elapsed
 #endif
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
             P[i].GravAccel_Retained += P[i].GravJerk * (dt * All.cf_a2inv); P[i].GravAccel = P[i].GravAccel_Retained; // the kept gravity, without the forces added after the last gravity call
