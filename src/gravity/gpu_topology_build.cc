@@ -39,9 +39,41 @@ static int *g_sorted_idx          = NULL;  /* [npart]              */
 static int *g_particle_topleaf    = NULL;  /* [npart]              */
 static int *g_topleaf_start       = NULL;  /* [NTopleaves + 1]     */
 static int *g_topleaf_count       = NULL;  /* [NTopleaves]         */
-static int *g_topleaf_cursor      = NULL;  /* [NTopleaves] -- scatter cursors */
 static int  g_npart_cap           = 0;
 static int  g_topleaf_cap         = 0;
+
+/* Every counter that device threads update with atomics lives in DEVICE memory, never in SharedSpace.
+ * A managed page need not be device-resident when a kernel runs -- the host touches these pages
+ * between kernels -- and where the platform reports cudaDevAttrHostNativeAtomicSupported == 0 (PCIe
+ * H100s among them) device atomics on a page that is not device-resident lose updates.  They do so
+ * silently: the bucket scatter handed two particles one slot, leaving one in two top-leaf ranges and
+ * one in none (pfhopkins/gizmo#83), and a prefetch to the device is only a hint the driver may undo.
+ * Plain loads and stores are unaffected, so arrays that are only written or read stay in SharedSpace.
+ * Still on SharedSpace here: error flags (a lost increment only under-counts a reported error) and the
+ * node-length maximum in gpu_topology_grow_retained_paths, which is not yet moved. */
+static int *g_topleaf_count_dev   = NULL;  /* [NTopleaves] bucket counts, accumulated here, then copied */
+static int *g_topleaf_cursor_dev  = NULL;  /* [NTopleaves] scatter cursors */
+static int  g_topleaf_dev_cap     = 0;
+enum {TOPO_CTR_BFS_A = 0, TOPO_CTR_BFS_B, TOPO_CTR_BFS_NODES, TOPO_CTR_BFS_FAIL, TOPO_CTR_LEAF_CHAIN,
+      TOPO_CTR_PREP_CROSSED, TOPO_CTR_PREP_UNRECOVERED, TOPO_CTR_PREP_OUTSIDE, TOPO_NCOUNTERS};
+static int *g_counters_dev        = NULL;  /* [TOPO_NCOUNTERS] */
+
+static int *topo_counters_dev(void)
+{
+    if(!g_counters_dev) {g_counters_dev = (int *) gizmo_gpu_alloc_device(TOPO_NCOUNTERS * sizeof(int), "treescratch_build_counters");}
+    return g_counters_dev;
+}
+static void topo_counters_put(int first, const int *vals, int n)
+{
+    Kokkos::deep_copy(Kokkos::View<int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged> >(g_counters_dev + first, n),
+                      Kokkos::View<const int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged> >(vals, n));
+}
+static void topo_counters_get(int first, int *vals, int n)
+{
+    Kokkos::fence();
+    Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged> >(vals, n),
+                      Kokkos::View<const int*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged> >(g_counters_dev + first, n));
+}
 
 /* Subset-build slot->particle map. force_treebuild(npart, mp) may request a
  * tree over an arbitrary subset of P[] (mp[i].index, e.g. SUBFIND per-species
@@ -72,7 +104,7 @@ struct LeafChainRecord {
     int successor;     /* where the walk goes after this leaf; filled in after threading */
 };
 static struct LeafChainRecord *g_leaf_chain = NULL;
-static int  *g_leaf_chain_n   = NULL;   /* device-visible count, reset per emit */
+static int   g_leaf_chain_count = 0;    /* records written by the last emit; counted on the device (TOPO_CTR_LEAF_CHAIN) */
 static int   g_leaf_chain_cap = 0;
 #endif
 
@@ -213,10 +245,19 @@ static int topo_acquire_(int npart, const struct unbind_data *mp, const char *si
         int newcap = NTopleaves + 1;
         g_topleaf_start  = grow_int_buffer(g_topleaf_start,  g_topleaf_cap, newcap, "treescratch_build_topleaf_start");
         g_topleaf_count  = grow_int_buffer(g_topleaf_count,  g_topleaf_cap, newcap, "treescratch_build_topleaf_count");
-        g_topleaf_cursor = grow_int_buffer(g_topleaf_cursor, g_topleaf_cap, newcap, "treescratch_build_topleaf_cursor");
-        if(!g_topleaf_start || !g_topleaf_count || !g_topleaf_cursor) {g_topleaf_cap = 0; return 1;}
+        if(!g_topleaf_start || !g_topleaf_count) {g_topleaf_cap = 0; return 1;}
         g_topleaf_cap = newcap;
     }
+    if(g_topleaf_dev_cap < NTopleaves + 1) {
+        const int newcap = NTopleaves + 1;
+        gizmo_gpu_free_device(g_topleaf_count_dev);
+        gizmo_gpu_free_device(g_topleaf_cursor_dev);
+        g_topleaf_count_dev  = (int *) gizmo_gpu_alloc_device((size_t) newcap * sizeof(int), "treescratch_build_topleaf_count_dev");
+        g_topleaf_cursor_dev = (int *) gizmo_gpu_alloc_device((size_t) newcap * sizeof(int), "treescratch_build_topleaf_cursor_dev");
+        if(!g_topleaf_count_dev || !g_topleaf_cursor_dev) {printf("gpu_topology_build: device bucket counters alloc failed (n=%d)\n", newcap); g_topleaf_dev_cap = 0; return 1;}
+        g_topleaf_dev_cap = newcap;
+    }
+    if(!topo_counters_dev()) {printf("gpu_topology_build: device counter block alloc failed\n"); return 1;}
     return 0;
 }
 
@@ -235,7 +276,8 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     int  ntl  = NTopleaves;
     int *pt   = g_particle_topleaf;
     int *tcnt = g_topleaf_count;
-    int *tcur = g_topleaf_cursor;
+    int *dcnt = g_topleaf_count_dev;
+    int *tcur = g_topleaf_cursor_dev;
     int *tsta = g_topleaf_start;
     int *sidx = g_sorted_idx;
 
@@ -381,17 +423,24 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
      * kernel above: a retained attachment changes which bucket a particle belongs to
      * after its key has been computed. */
     Kokkos::parallel_for("topo_zero_counts", ntl, KOKKOS_LAMBDA(int t) {
-        tcnt[t] = 0;
+        dcnt[t] = 0;
         tcur[t] = 0;
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_zero_counts", ntl);
 
     Kokkos::parallel_for("topo_count_buckets", npart, KOKKOS_LAMBDA(int i) {
-        Kokkos::atomic_fetch_add(&tcnt[pt[i]], 1);
+        Kokkos::atomic_fetch_add(&dcnt[pt[i]], 1);
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_count_buckets", npart);
+    /* The counts are read on the host (the sort loop below) and by later device passes, so they are
+     * published to the shared array with plain stores once accumulated. */
+    Kokkos::parallel_for("topo_publish_counts", ntl, KOKKOS_LAMBDA(int t) {
+        tcnt[t] = dcnt[t];
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_publish_counts", ntl);
 
     /* Kernel 2: exclusive prefix scan to compute topleaf_start[]. */
     Kokkos::parallel_scan("topo_scan", ntl,
@@ -486,9 +535,8 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
     struct NODE *Nodes_uvm = Nodes;
     const int   *father    = Father;
 
-    int *ctr = (int *) gizmo_gpu_alloc_shared(3 * sizeof(int), "treescratch_build_ctr");
-    if(!ctr) {printf("gpu_topology_build: retained counter alloc failed\n"); return 1;}
-    ctr[0] = 0; ctr[1] = 0; ctr[2] = 0;
+    int *ctr = g_counters_dev + TOPO_CTR_PREP_CROSSED;   /* device memory: see g_counters_dev */
+    {const int zero3[3] = {0, 0, 0}; topo_counters_put(TOPO_CTR_PREP_CROSSED, zero3, 3);}
 
     Kokkos::parallel_for("topo_keys_and_assign", npart, KOKKOS_LAMBDA(int i) {
         /* Tested before the key is formed: outside the extent the key would name another cell. */
@@ -523,8 +571,8 @@ extern "C" int gpu_topology_prepare_retained_attachment(int npart, int topology_
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_keys_and_assign", npart);
 
-    int n_crossed = ctr[0], n_unrecovered = ctr[1], n_outside_extent = ctr[2];
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ctr);
+    int prep[3]; topo_counters_get(TOPO_CTR_PREP_CROSSED, prep, 3);
+    int n_crossed = prep[0], n_unrecovered = prep[1], n_outside_extent = prep[2];
     if(n_crossed_out)     {*n_crossed_out = (long) n_crossed;}
     if(n_unrecovered_out) {*n_unrecovered_out = (long) n_unrecovered;}
     if(n_outside_extent_out) {*n_outside_extent_out = (long) n_outside_extent;}
@@ -713,20 +761,17 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                 (long) cap_needed * sizeof(struct LeafChainRecord), "treescratch_build_leaf_chain");
             g_leaf_chain_cap = g_leaf_chain ? cap_needed : 0;
         }
-        if(!g_leaf_chain_n) {
-            g_leaf_chain_n = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
-        }
-        if(!g_leaf_chain || !g_leaf_chain_n) {
+        if(!g_leaf_chain) {
             printf("gpu_topology_emit_bfs: rank %d could not reserve %d leaf records; the tree is not\n"
                    "built rather than retried, because this is an allocation failure and not a shortage\n"
                    "of tree nodes.\n", ThisTask, cap_needed);
             fflush(stdout);
             return 3;
         }
-        *g_leaf_chain_n = 0;
+        g_leaf_chain_count = 0;
     }
     struct LeafChainRecord *chain_out = g_leaf_chain;
-    int *chain_n   = g_leaf_chain_n;
+    int *chain_n   = g_counters_dev + TOPO_CTR_LEAF_CHAIN;   /* device memory: see g_counters_dev */
     int  chain_cap = g_leaf_chain_cap;
 #endif
 
@@ -734,20 +779,17 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     int max_nodes = MaxNodes;
     int tree_base  = All.TreeNodeIndexBase;
 
-    /* SharedSpace single-int counters: easy host/device coordination. */
-    int *sz_curr = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
-    int *sz_next = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
-    int *ncount  = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
-    int *fail    = (int *) gizmo_gpu_alloc_shared(sizeof(int), "treescratch_build_ctr");
-    if(!sz_curr || !sz_next || !ncount || !fail) {
-        printf("gpu_topology_emit_bfs: counter alloc failed\n");
-        if(sz_curr) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
-        if(sz_next) Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
-        if(ncount)  Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
-        if(fail)    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
-        return 3;
-    }
-    *sz_curr = 0; *sz_next = 0; *ncount = start_node_index; *fail = 0;
+    /* The worklist sizes, the node counter and the failure flag are taken by device atomics, so they
+     * live in device memory (see g_counters_dev); the host reads them with an explicit copy, h[] below,
+     * once per level.  Slots BFS_A and BFS_B alternate as the current and the next worklist size. */
+    if(!topo_counters_dev()) {printf("gpu_topology_emit_bfs: counter alloc failed\n"); return 3;}
+    int h[TOPO_CTR_LEAF_CHAIN + 1] = {0, 0, start_node_index, 0, 0};
+    topo_counters_put(TOPO_CTR_BFS_A, h, TOPO_CTR_LEAF_CHAIN + 1);
+    int cur = TOPO_CTR_BFS_A;   /* which slot holds the current worklist's size */
+    int *sz_curr = g_counters_dev + TOPO_CTR_BFS_A;
+    int *sz_next = g_counters_dev + TOPO_CTR_BFS_B;
+    int *ncount  = g_counters_dev + TOPO_CTR_BFS_NODES;
+    int *fail    = g_counters_dev + TOPO_CTR_BFS_FAIL;
 
     /* Worklist Views in device-local memory.  Sized at max_nodes upper
      * bound; in practice the worklist size at any one level is <= live
@@ -786,14 +828,11 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     });
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_bfs_init", ntl);
+    topo_counters_get(TOPO_CTR_BFS_A, h, TOPO_CTR_LEAF_CHAIN + 1);
 
-    if(*fail) {
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
-        int rc = *fail; Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
+    if(h[TOPO_CTR_BFS_FAIL]) {
         printf("gpu_topology_emit_bfs: worklist overflow at init\n");
-        return rc;
+        return h[TOPO_CTR_BFS_FAIL];
     }
 
 
@@ -801,9 +840,9 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
     Kokkos::View<BfsItem*, MemSpace> wl_curr = wl_a;
     Kokkos::View<BfsItem*, MemSpace> wl_next = wl_b;
     int level_guard = 0;
-    while(*sz_curr > 0 && *fail == 0 && level_guard < GIZMO_GPU_MORTON_MAX_DEPTH + 4) {
-        int curr_size = *sz_curr;
-        *sz_next = 0;
+    while(h[cur] > 0 && h[TOPO_CTR_BFS_FAIL] == 0 && level_guard < GIZMO_GPU_MORTON_MAX_DEPTH + 4) {
+        int curr_size = h[cur];
+        {const int zero = 0; topo_counters_put(TOPO_CTR_BFS_A + TOPO_CTR_BFS_B - cur, &zero, 1);}
 
         Kokkos::parallel_for("topo_bfs_level", curr_size, KOKKOS_LAMBDA(int i) {
             BfsItem w = wl_curr(i);
@@ -952,8 +991,13 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         /* Swap worklists. */
         Kokkos::View<BfsItem*, MemSpace> tmp = wl_curr; wl_curr = wl_next; wl_next = tmp;
         int *tmpp = sz_curr; sz_curr = sz_next; sz_next = tmpp;
+        cur = TOPO_CTR_BFS_A + TOPO_CTR_BFS_B - cur;
         level_guard++;
+        topo_counters_get(TOPO_CTR_BFS_A, h, TOPO_CTR_LEAF_CHAIN + 1);
     }
+#if TREE_LEAF_BUCKET_SIZE > 1
+    g_leaf_chain_count = h[TOPO_CTR_LEAF_CHAIN];
+#endif
 
 
 #if TREE_LEAF_BUCKET_SIZE > 1
@@ -963,8 +1007,8 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
      * consumer has to, and neither is the first place a bad range would be noticed.  Reported with
      * the offending record rather than as a count, because one bad range is a build fault and the
      * rest tell you nothing further. */
-    if(*g_leaf_chain_n >= 0 && *g_leaf_chain_n <= g_leaf_chain_cap) {
-        const int nrec_chk = *g_leaf_chain_n;
+    if(g_leaf_chain_count >= 0 && g_leaf_chain_count <= g_leaf_chain_cap) {
+        const int nrec_chk = g_leaf_chain_count;
         const struct LeafChainRecord *chk = g_leaf_chain;
         const int *sidx_chk  = g_sorted_idx;
         const int *stp_chk   = g_slot_map_active ? g_slot_to_particle : NULL;
@@ -974,10 +1018,6 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
         int *badrec = (int *) gizmo_gpu_alloc_shared(2 * sizeof(int), "treescratch_build_ctr");
         if(!badrec) {
             printf("gpu_topology_emit_bfs: could not allocate the record check\n");
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
             return 3;
         }
         badrec[0] = -1; badrec[1] = 0;
@@ -1012,37 +1052,22 @@ extern "C" int gpu_topology_emit_bfs(int start_node_index, int *new_node_count_o
                    "which has %s. Nothing is indexed through these, so the tree is not built.\n",
                    ThisTask, nbad, first / 8, why_text[first % 8]);
             fflush(stdout);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
-            Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
             return 3;
         }
     }
-    if(*g_leaf_chain_n > g_leaf_chain_cap) {
+    if(g_leaf_chain_count > g_leaf_chain_cap) {
         printf("gpu_topology_emit_bfs: rank %d found %d multi-particle leaves but reserved room for %d.\n"
                "Each holds at least two particles, so this cannot happen for a well-formed tree; the\n"
                "build stops rather than leaving part of the tree unthreaded.\n",
-               ThisTask, *g_leaf_chain_n, g_leaf_chain_cap);
+               ThisTask, g_leaf_chain_count, g_leaf_chain_cap);
         fflush(stdout);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
         return 3;
     }
 #endif
-    int rc = (*fail == 0) ? 0 : *fail;
-    int new_total = *ncount;
-    int work_left = *sz_curr;   /* read here: the depth-guard test below runs after these are freed */
+    int rc = (h[TOPO_CTR_BFS_FAIL] == 0) ? 0 : h[TOPO_CTR_BFS_FAIL];
+    int new_total = h[TOPO_CTR_BFS_NODES];
+    int work_left = h[cur];
     if(new_node_count_out) {*new_node_count_out = new_total;}
-
-    /* After ping-pong swaps, sz_curr / sz_next still refer to the two
-     * originally-allocated pointers (in some order); free both. */
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_curr);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(sz_next);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ncount);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(fail);
 
     /* Ask whether work was LEFT, not whether the last allowed level was used: a breadth-first walk
      * that finishes exactly on that level leaves an empty worklist and has not exceeded anything.
@@ -1120,8 +1145,8 @@ extern "C" int gpu_leaf_chain_assign_fathers(void)
     return 0;
 #else
     if(Numnodestree <= 0) {return 0;}
-    if(!g_leaf_chain || !g_leaf_chain_n) {return 0;}
-    const int nrec = *g_leaf_chain_n;
+    if(!g_leaf_chain) {return 0;}
+    const int nrec = g_leaf_chain_count;
     if(nrec <= 0) {return 0;}
     if(!Father)     {printf("gpu_leaf_chain_assign_fathers: Father[] null\n");     return 1;}
     if(!g_sorted_idx) {printf("gpu_leaf_chain_assign_fathers: sorted order gone\n"); return 1;}
@@ -1191,8 +1216,8 @@ extern "C" int gpu_leaf_chain_materialize(void)
     return 0;
 #else
     if(Numnodestree <= 0) {return 0;}
-    if(!g_leaf_chain || !g_leaf_chain_n) {return 0;}
-    const int nrec = *g_leaf_chain_n;
+    if(!g_leaf_chain) {return 0;}
+    const int nrec = g_leaf_chain_count;
     if(nrec <= 0) {return 0;}
     if(!g_sorted_idx) {printf("gpu_leaf_chain_materialize: sorted order gone\n"); return 1;}
 
@@ -1263,7 +1288,7 @@ extern "C" int gpu_leaf_chain_materialize(void)
     Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);
     g_leaf_chain     = NULL;
     g_leaf_chain_cap = 0;
-    *g_leaf_chain_n  = 0;
+    g_leaf_chain_count  = 0;
     return 0;
 #endif
 }
@@ -1274,12 +1299,15 @@ extern "C" void gpu_topology_build_release(void)
     if(g_particle_topleaf) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_particle_topleaf); g_particle_topleaf = NULL;}
     if(g_topleaf_start)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_start);    g_topleaf_start    = NULL;}
     if(g_topleaf_count)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_count);    g_topleaf_count    = NULL;}
-    if(g_topleaf_cursor)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_topleaf_cursor);   g_topleaf_cursor   = NULL;}
+    gizmo_gpu_free_device(g_topleaf_count_dev);  g_topleaf_count_dev  = NULL;
+    gizmo_gpu_free_device(g_topleaf_cursor_dev); g_topleaf_cursor_dev = NULL;
+    g_topleaf_dev_cap = 0;
+    gizmo_gpu_free_device(g_counters_dev);       g_counters_dev       = NULL;
     if(g_slot_to_particle) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_slot_to_particle); g_slot_to_particle = NULL;}
     if(g_retained_slots)   {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_retained_slots);   g_retained_slots   = NULL;}
 #if TREE_LEAF_BUCKET_SIZE > 1
     if(g_leaf_chain)       {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain);       g_leaf_chain       = NULL;}
-    if(g_leaf_chain_n)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(g_leaf_chain_n);     g_leaf_chain_n     = NULL;}
+    g_leaf_chain_count = 0;
     g_leaf_chain_cap = 0;
 #endif
     g_slot_map_active = 0;
