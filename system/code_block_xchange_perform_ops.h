@@ -81,9 +81,25 @@ be copy-pasted and can be generically optimized in a single place */
         for(j = 0; j < NTask; j++) {Send_count[j] = 0;}
         for(j = 0; j < Nexport; j++) {Send_count[DataIndexTable[j].Task]++;}
         mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
+        /* One Alltoall carries, per destination, the export count plus three rank-wide words: the done flag
+           (NextParticle is final here; nothing below moves it before the old ndone test), the total export count
+           and the arena bytes left once the two export buffers below are taken. Every rank derives the same ndone
+           and the same bound on every rank's import from the gathered words, so the trailing ndone Allreduce is
+           gone and the import-memory Allreduce runs only when that bound fails. */
+        if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
+        long long *xch_send = (long long *) mymalloc("xch_send", 4 * NTask * sizeof(long long));
+        long long *xch_recv = (long long *) mymalloc("xch_recv", 4 * NTask * sizeof(long long));
+        {
+            long long free_after = (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME)) - 1048576; /* 1 MB slack covers mymalloc's alignment rounding */
+            for(j = 0; j < NTask; j++) {xch_send[4*j] = Send_count[j]; xch_send[4*j+1] = ndone_flag; xch_send[4*j+2] = Nexport; xch_send[4*j+3] = free_after;}
+        }
         tstart = my_second();
-        MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD); /* broadcast import/export counts */
+        MPI_Alltoall(xch_send, 4, MPI_LONG_LONG, xch_recv, 4, MPI_LONG_LONG, MPI_COMM_WORLD); /* broadcast import/export counts (+ done flag, export total, free bytes) */
         tend = my_second(); timewait += timediff(tstart, tend);
+        long long xch_export_total = 0, xch_free_min = xch_recv[3];
+        for(j = 0, ndone = 0; j < NTask; j++) {Recv_count[j] = (int) xch_recv[4*j]; ndone += (int) xch_recv[4*j+1]; xch_export_total += xch_recv[4*j+2]; if(xch_recv[4*j+3] < xch_free_min) {xch_free_min = xch_recv[4*j+3];}}
+        int xch_import_fits_everywhere = (xch_export_total * (long long) (sizeof(struct INPUT_STRUCT_NAME) + sizeof(struct OUTPUT_STRUCT_NAME)) + 16384 <= xch_free_min); /* every rank's Nimport <= the global export total: identical inputs on every rank, identical answer */
+        myfree(xch_recv); myfree(xch_send);
 
         for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */
         DATAIN_NAME = (struct INPUT_STRUCT_NAME *) mymalloc("DATAIN_NAME", Nexport * sizeof(struct INPUT_STRUCT_NAME));
@@ -113,8 +129,7 @@ be copy-pasted and can be generically optimized in a single place */
                 }
                 size_t space_needed = Nimport * sizeof(struct INPUT_STRUCT_NAME) + Nimport * sizeof(struct OUTPUT_STRUCT_NAME) + 16384; /* extra bitflag is a padding, to avoid overflows */
                 if(space_needed > FreeBytes) {flag = 1;}
-
-                MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                if(xch_import_fits_everywhere) {flagall = 0;} else {MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);} /* the bound gathered with the counts makes flag==0 on every rank; skip the reduce */
                 if(flagall) {N_chunks_for_import /= 2;} else {break;}
             } while(N_chunks_for_import > 0);
             if(N_chunks_for_import == 0) {printf("Memory is insufficient for even one import-chunk: N_chunks_for_import=%d  ngrp_initial=%d  Nimport=%ld  FreeBytes=%lld , but we need to allocate=%lld \n",N_chunks_for_import, ngrp_initial, Nimport, (long long)FreeBytes,(long long)(Nimport * sizeof(struct INPUT_STRUCT_NAME) + Nimport * sizeof(struct OUTPUT_STRUCT_NAME) + 16384)); endrun(9977);}
@@ -188,10 +203,7 @@ be copy-pasted and can be generically optimized in a single place */
         tend = my_second(); timecomp += timediff(tstart, tend);
         myfree(DATAOUT_NAME); myfree(DATAIN_NAME); /* free the structures used to prepare our initial export data, we're done here! */
 
-        if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
-        tstart = my_second();
-        MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
-        tend = my_second(); timewait += timediff(tstart, tend);
+        /* ndone was gathered with the export counts above */
     }
     while(ndone < NTask);
     timeall += timediff(tstart_loop, my_second());

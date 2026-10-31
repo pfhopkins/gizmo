@@ -48,8 +48,10 @@ void gravity_tree(void)
     /* initialize variables */
     long long n_exported = 0; int i, j, maxnumnodes, iter; i = 0; j = 0; iter = 0; maxnumnodes=0;
     double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timetree, timewait, timecomm;
-    double timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0, sum_costtotal, ewaldtot;
-    double maxt, sumt, maxt1, sumt1, maxt2, sumt2, sumcommall, sumwaitall, plb, plb_max;
+    double timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0;
+#ifdef OUTPUT_ADDITIONAL_RUNINFO
+    double sum_costtotal, ewaldtot, maxt, sumt, maxt1, sumt1, maxt2, sumt2, sumcommall, sumwaitall, plb, plb_max; /* FdTimings report only */
+#endif
     CPU_Step[CPU_MISC] += measure_time();
 
     /* set new softening lengths */
@@ -172,7 +174,7 @@ void gravity_tree(void)
     for(Ewald_iter = 0; Ewald_iter <= ewald_max; Ewald_iter++)
     {
         NextParticle = 0;	/* begin with this index */
-        memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
+        for(int i_pf : ActiveParticleList) {ProcessedFlag[i_pf] = 0;} /* only active indices are read below (same change as code_block_xchange_perform_ops.h) */
         BufferCollisionFlag = 0; /* set to zero before operations begin */
         do /* primary point-element loop */
         {
@@ -245,9 +247,25 @@ void gravity_tree(void)
             for(j = 0; j < NTask; j++) {Send_count[j] = 0;}
             for(j = 0; j < Nexport; j++) {Send_count[DataIndexTable[j].Task]++;}
             mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
+            /* One Alltoall carries, per destination, the export count plus three rank-wide words: the done flag
+               (NextParticle is final here; nothing below moves it before the old ndone test), the total export
+               count and the arena bytes left once the two export buffers below are taken. Every rank derives the
+               same ndone and the same bound on every rank's import from the gathered words, so the trailing ndone
+               Allreduce is gone and the import-memory Allreduce runs only when that bound fails. */
+            if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
+            long long *xch_send = (long long *) mymalloc("xch_send", 4 * NTask * sizeof(long long));
+            long long *xch_recv = (long long *) mymalloc("xch_recv", 4 * NTask * sizeof(long long));
+            {
+                long long free_after = (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576; /* 1 MB slack covers mymalloc's alignment rounding */
+                for(j = 0; j < NTask; j++) {xch_send[4*j] = Send_count[j]; xch_send[4*j+1] = ndone_flag; xch_send[4*j+2] = Nexport; xch_send[4*j+3] = free_after;}
+            }
             tstart = my_second();
-            MPI_Alltoall(Send_count, 1, MPI_INT, Recv_count, 1, MPI_INT, MPI_COMM_WORLD); /* broadcast import/export counts */
+            MPI_Alltoall(xch_send, 4, MPI_LONG_LONG, xch_recv, 4, MPI_LONG_LONG, MPI_COMM_WORLD); /* broadcast import/export counts (+ done flag, export total, free bytes) */
             tend = my_second(); timewait1 += timediff(tstart, tend);
+            long long xch_export_total = 0, xch_free_min = xch_recv[3];
+            for(j = 0, ndone = 0; j < NTask; j++) {Recv_count[j] = (int) xch_recv[4*j]; ndone += (int) xch_recv[4*j+1]; xch_export_total += xch_recv[4*j+2]; if(xch_recv[4*j+3] < xch_free_min) {xch_free_min = xch_recv[4*j+3];}}
+            int xch_import_fits_everywhere = (xch_export_total * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) + 16384 <= xch_free_min); /* every rank's Nimport <= the global export total: identical inputs on every rank, identical answer */
+            myfree(xch_recv); myfree(xch_send);
 
             for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */
             GravDataIn = (struct gravdata_in *) mymalloc("GravDataIn", Nexport * sizeof(struct gravdata_in));
@@ -306,7 +324,7 @@ void gravity_tree(void)
                     }
                     size_t space_needed = Nimport * sizeof(struct gravdata_in) + Nimport * sizeof(struct gravdata_out) + 16384; /* extra bitflag is a padding, to avoid overflows */
                     if(space_needed > FreeBytes) {flag = 1;}
-                    MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+                    if(xch_import_fits_everywhere) {flagall = 0;} else {MPI_Allreduce(&flag, &flagall, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);} /* the bound gathered with the counts makes flag==0 on every rank; skip the reduce */
                     if(flagall) {N_chunks_for_import /= 2;} else {break;}
                 } while(N_chunks_for_import > 0);
                 if(N_chunks_for_import == 0) {printf("Memory is insufficient for even one import-chunk: N_chunks_for_import=%d  ngrp_initial=%d  Nimport=%ld  FreeBytes=%lld , but we need to allocate=%lld \n",N_chunks_for_import, ngrp_initial, Nimport, (long long)FreeBytes,(long long)(Nimport * sizeof(struct gravdata_in) + Nimport * sizeof(struct gravdata_out) + 16384)); endrun(9966);}
@@ -332,7 +350,7 @@ void gravity_tree(void)
                     }
                 }
                 tend = my_second(); timecommsumm1 += timediff(tstart, tend);
-                report_memory_usage(&HighMark_gravtree, "GRAVTREE");
+                if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {report_memory_usage(&HighMark_gravtree, "GRAVTREE");} /* an Allgather per iteration otherwise, for a high-mark log that only moves on big steps; the gate is rank-uniform */
 
                 /* now do the particles that were sent to us */
                 tstart = my_second(); NextJ = 0;
@@ -472,10 +490,7 @@ void gravity_tree(void)
             tend = my_second(); timetree1 += timediff(tstart, tend);
             myfree(GravDataOut); myfree(GravDataIn);
 
-            if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;} /* figure out if we are done with the particular active set here */
-            tstart = my_second();
-            MPI_Allreduce(&ndone_flag, &ndone, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD); /* call an allreduce to figure out if all tasks are also done here, otherwise we need to iterate */
-            tend = my_second(); timewait2 += timediff(tstart, tend);
+            /* ndone was gathered with the export counts above */
         }
         while(ndone < NTask);
     } /* Ewald_iter */
@@ -700,6 +715,14 @@ void gravity_tree(void)
     /* Now the force computation is finished: gather timing and diagnostic information */
     t1 = WallclockTime = my_second(); timeall = timediff(t0, t1);
     timetree = timetree1 + timetree2; timewait = timewait1 + timewait2; timecomm = timecommsumm1 + timecommsumm2;
+    All.TotNumOfForces += GlobNumForceUpdate;
+    CPU_Step[CPU_TREEMISC] += timeall - (timetree + timewait + timecomm);
+    CPU_Step[CPU_TREEWALK1] += timetree1; CPU_Step[CPU_TREEWALK2] += timetree2;
+    CPU_Step[CPU_TREESEND] += timecommsumm1; CPU_Step[CPU_TREERECV] += timecommsumm2;
+    CPU_Step[CPU_TREEWAIT1] += timewait1; CPU_Step[CPU_TREEWAIT2] += timewait2;
+#ifdef OUTPUT_ADDITIONAL_RUNINFO
+    /* Everything reduced here feeds the FdTimings report and nothing else: 12 rooted reduces and two Allgathers
+       per call, three calls per step under HERMITE_INTEGRATION, on a step that may have seven active particles. */
     MPI_Reduce(&timetree, &sumt, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     MPI_Reduce(&timetree, &maxt, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&timetree1, &sumt1, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
@@ -712,15 +735,9 @@ void gravity_tree(void)
     MPI_Reduce(&Ewaldcount, &ewaldtot, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
     sumup_longs(1, &n_exported, &n_exported);
     sumup_longs(1, &N_nodesinlist, &N_nodesinlist);
-    All.TotNumOfForces += GlobNumForceUpdate;
     plb = (NumPart / ((double) All.TotNumPart)) * NTask;
     MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
     MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    CPU_Step[CPU_TREEMISC] += timeall - (timetree + timewait + timecomm);
-    CPU_Step[CPU_TREEWALK1] += timetree1; CPU_Step[CPU_TREEWALK2] += timetree2;
-    CPU_Step[CPU_TREESEND] += timecommsumm1; CPU_Step[CPU_TREERECV] += timecommsumm2;
-    CPU_Step[CPU_TREEWAIT1] += timewait1; CPU_Step[CPU_TREEWAIT2] += timewait2;
-#ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(ThisTask == 0)
     {
         fprintf(FdTimings, "Step= %lld  t= %.16g  dt= %.16g \n",(long long) All.NumCurrentTiStep, All.Time, All.TimeStep);

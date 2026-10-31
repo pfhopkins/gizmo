@@ -767,6 +767,7 @@ void selfshield_local_incident_uv_flux(void);
 
 #ifdef GALSF_FB_MECHANICAL
 void determine_where_SNe_occur(void);
+int addFB_evaluate_active_check(int i, int fb_loop_iteration);
 void mechanical_fb_calc(int fb_loop_iteration);
 void mechanical_fb_calc_toplevel(void);
 void verify_and_assign_local_mechfb_integrals(void);

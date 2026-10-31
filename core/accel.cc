@@ -156,7 +156,16 @@ void compute_stellar_feedback(void)
 #endif
 
 #ifdef GALSF_FB_MECHANICAL /* check the mechanical sources of feedback */
-    mechanical_fb_calc_toplevel();  /* call the parent loop for the different mechanical fb sub-loops */
+    {   /* Rank-uniform early-out, as rt_source_injection does. With no active source on any rank the sub-loops
+           are exact no-ops (nothing is evaluated, so nothing is exported or imported) but each still pays an
+           Alltoall, a Barrier and its buffer setup. The gate predicate is the loops' own CONDITIONFUNCTION with
+           fb_loop_iteration = -1, which is true iff any channel's condition is, so the set of steps on which
+           anything is deposited is unchanged. */
+        int any_fb_local = 0, any_fb_global = 0;
+        for(int i : ActiveParticleList) {if(addFB_evaluate_active_check(i, -1)) {any_fb_local = 1; break;}}
+        MPI_Allreduce(&any_fb_local, &any_fb_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+        if(any_fb_global) {mechanical_fb_calc_toplevel();}  /* call the parent loop for the different mechanical fb sub-loops */
+    }
     MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SNIIHEATING] += measure_time(); /* collect timings and reset clock for next timing */
 #endif
 
