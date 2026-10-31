@@ -672,7 +672,7 @@ static int gx_certify_send_list_current(const int *home_idx, int n_slots, intege
  * its own if it ever costs enough to matter. */
 int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *rows, long n_rows,
                             int search_mode, mode_b_radius_policy_t radius_policy,
-                            double j_radius_scale, double safety_factor)
+                            double j_radius_scale, double safety_factor, int candidates_current)
 {
     if(s->failed) {return 1;}
     const integertime t_now = All.Ti_Current;
@@ -719,11 +719,15 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
         }
     }
 
-    if(gx_drift_distinct_begin() != 0) {s->failed = 1; return 1;}
-    for(long r = 0; r < n_rows; r++) {
-        if(gx_drift_distinct_add(rows[r].local_index, rows[r].count, t_now) != 0) {s->failed = 1; return 1;}
+    /* A caller that knows every candidate already stands at t_now (candidates_current: the device receiver
+       staged no particle behind) skips the gather, which would find nothing to drift. */
+    if(!candidates_current) {
+        if(gx_drift_distinct_begin() != 0) {s->failed = 1; return 1;}
+        for(long r = 0; r < n_rows; r++) {
+            if(gx_drift_distinct_add(rows[r].local_index, rows[r].count, t_now) != 0) {s->failed = 1; return 1;}
+        }
+        if(gx_drift_distinct_to_time(t_now) != 0) {s->failed = 1; return 1;}
     }
-    if(gx_drift_distinct_to_time(t_now) != 0) {s->failed = 1; return 1;}
 
     /* Exact acceptance at current positions; accepted pool slots replace the
      * candidates at the front of each row.  Mass is tested again because the drift
@@ -1225,7 +1229,7 @@ static int gx_host_receiver_backend(const struct ghost_exchange_spec_t *spec, co
         }
     } catch(const std::bad_alloc &) {ok = 0;}
     if(ok && gx_send_set_accept_rows(send_set, rows.data(), (long)rows.size(), search_mode,
-                                     spec->radius_policy, spec->j_radius_scale, spec->safety_factor) != 0) {ok = 0;}
+                                     spec->radius_policy, spec->j_radius_scale, spec->safety_factor, 0) != 0) {ok = 0;}
     return ok;
 }
 
@@ -1444,11 +1448,15 @@ static void gx_walk_export_discover(
         }
     }
     struct gx_export_envelope_t *sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
-    struct gx_export_envelope_t *recv    = (struct gx_export_envelope_t *) malloc((size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t));
+    /* Received into page-locked memory when the device receiver walk may read them (a faster copy up). */
+    const int recv_pinned = device_walks;
+    struct gx_export_envelope_t *recv = recv_pinned
+        ? (struct gx_export_envelope_t *) gizmo_ghost_pinned_buffer(9, (size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t))
+        : (struct gx_export_envelope_t *) malloc((size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t));
     /* buffer alloc — collective before the Alltoallv (a NULL recv would fault the collective). */
     int buf_ok_local = (sendbuf && recv) ? 1 : 0, buf_ok_all = 0;
     MPI_Allreduce(&buf_ok_local, &buf_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    if(!buf_ok_all) { free(sendbuf); free(recv); free(sc); free(sd); free(rc); free(rd);
+    if(!buf_ok_all) { free(sendbuf); if(!recv_pinned) {free(recv);} free(sc); free(sd); free(rc); free(rd);
                       if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     for(int t = 0; t < NTask; t++)
         if(sc[t] > 0) memcpy(sendbuf + sd[t], send[t].data(), (size_t)sc[t] * sizeof(struct gx_export_envelope_t));
@@ -1507,7 +1515,8 @@ static void gx_walk_export_discover(
             receiver_ok = 0;
         }
     }
-    free(recv); free(rc); free(rd);
+    if(!recv_pinned) {free(recv);}
+    free(rc); free(rd);
     if(!receiver_ok) {gx_send_set_abandon(send_set);}
 
     /* The send set grows as it is filled, so whether it could be built is known only
@@ -1547,6 +1556,8 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     double t_ghost_start = my_second();
     gx_disc_mark(GX_DISC_T_START);
     gx_recv_diag_seconds[0] = gx_recv_diag_seconds[1] = gx_recv_diag_seconds[2] = 0;
+    for(int k = 0; k < 4; k++) {gx_recv_diag_split[k] = 0;}
+    gx_recv_diag_pairs = 0;
     gx_disc_device_receiver = 0; gx_disc_device_sender = 0;
     NumPart_before_ghost = NumPart;
     N_gas_before_ghost = N_gas;
@@ -1935,22 +1946,25 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
     gx_disc_mark(GX_DISC_T_SENDLIST);
     if(gx_ghost_discovery_diag_on()) {   /* rank-uniform: same environment everywhere */
-        double mine[13], most[13];
+        double mine[17], most[17];
         for(int k = 1; k < GX_DISC_T_N; k++) {mine[k - 1] = timediff(gx_disc_t[k - 1], gx_disc_t[k]);}
         mine[8] = timediff(gx_disc_t[GX_DISC_T_START], gx_disc_t[GX_DISC_T_SENDLIST]);
         for(int k = 0; k < 3; k++) {mine[9 + k] = gx_recv_diag_seconds[k];}
         mine[12] = gx_disc_device_sender ? gx_send_diag_seconds[0] : 0;
-        MPI_Reduce(mine, most, 13, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        for(int k = 0; k < 4; k++) {mine[13 + k] = gx_recv_diag_split[k];}
+        MPI_Reduce(mine, most, 17, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
         int ndev[2] = {gx_disc_device_sender, gx_disc_device_receiver}, ndev_all[2] = {0, 0};
         MPI_Reduce(ndev, ndev_all, 2, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
         if(ThisTask == 0) {
-            static const char *name[13] = {"queries", "pool", "skew", "sender", "exchange", "receiver", "agree", "sendlist",
-                                           "total", "recv_stage", "recv_device", "recv_accept", "send_device"};
+            static const char *name[17] = {"queries", "pool", "skew", "sender", "exchange", "receiver", "agree", "sendlist",
+                                           "total", "recv_stage", "recv_device", "recv_accept", "send_device",
+                                           "recv_env_up", "recv_count", "recv_fill", "recv_pairs_down"};
             printf("Ghost discovery diag (%s, %d sends, sender/receiver on the device on %d/%d of %d ranks; rank 0 %d queries, "
-                   "%lld records, %ld/%ld envelopes out/in): rank 0 / max s:",
+                   "%lld records, %ld/%ld envelopes out/in, %lld candidates): rank 0 / max s:",
                    spec->caller_name ? spec->caller_name : "?", total_send, ndev_all[0], ndev_all[1], NTask, n_local_queries,
-                   gx_disc_device_sender ? gx_send_diag_records : -1LL, gx_disc_envelopes[0], gx_disc_envelopes[1]);
-            for(int k = 0; k < 13; k++) {printf(" %s %.4f/%.4f", name[k], mine[k], most[k]);}
+                   gx_disc_device_sender ? gx_send_diag_records : -1LL, gx_disc_envelopes[0], gx_disc_envelopes[1],
+                   gx_disc_device_receiver ? gx_recv_diag_pairs : -1LL);
+            for(int k = 0; k < 17; k++) {printf(" %s %.4f/%.4f", name[k], mine[k], most[k]);}
             printf("\n"); fflush(stdout);
         }
     }

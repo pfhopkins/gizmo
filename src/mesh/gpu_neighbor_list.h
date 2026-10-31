@@ -328,7 +328,8 @@ struct gx_candidate_row {
    failure rather than trying another backend. */
 int gx_send_set_accept_rows(struct ghost_send_set *send_set, struct gx_candidate_row *rows, long n_rows,
                             int search_mode, mode_b_radius_policy_t radius_policy,
-                            double j_radius_scale, double safety_factor);
+                            double j_radius_scale, double safety_factor,
+                            int candidates_current);   /* nonzero: every candidate is known to be at All.Ti_Current */
 
 /* What a receiver backend did with the envelopes it was handed. */
 enum {
@@ -377,6 +378,10 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
 /* Seconds the last gx_device_receiver_walk call spent staging the leaves and node bands, on the device (walks,
    compaction, copies) and in the host accept. */
 extern double gx_recv_diag_seconds[3];
+/* ... of which: envelopes to the device, the counting walk and scan, the filling walk, candidates to the host;
+   and how many candidates came back. */
+extern double gx_recv_diag_split[4];
+extern long long gx_recv_diag_pairs;
 
 /* Device traversal of this rank's queries over the top-level tree (the sender half of request-driven ghost
    discovery): for query k, the (peer, top-leaf node) pairs the host sender walk would export to, in walk order --

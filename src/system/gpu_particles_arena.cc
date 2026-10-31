@@ -494,14 +494,16 @@ extern "C" void gizmo_ghostdev_stats(double *seconds, double *bytes, long long *
     if(calls) {*calls = ghostdev_calls_;}
 }
 
-#define GHOST_PINNED_SLOTS 8
+#define GHOST_PINNED_SLOTS 11
 static void *ghost_pinned_[GHOST_PINNED_SLOTS] = {};
 static size_t ghost_pinned_bytes_[GHOST_PINNED_SLOTS] = {};
 extern "C" void *gizmo_ghost_pinned_buffer(int slot, size_t bytes)
 {
     static const char *labels[GHOST_PINNED_SLOTS] = {"ghost_recv_P_pinned", "ghost_recv_CellP_pinned", "ghost_send_P_pinned",
                                                      "ghost_send_CellP_pinned", "ghost_send_trim_pinned", "ghost_recv_trim_pinned",
-                                                     "ghost_discovery_pairs_pinned", "ghost_discovery_records_pinned"};
+                                                     "ghost_discovery_pairs_pinned", "ghost_discovery_records_pinned",
+                                                     "ghost_discovery_leaves_pinned", "ghost_discovery_envelopes_pinned",
+                                                     "ghost_discovery_offsets_pinned"};
     if(slot < 0 || slot >= GHOST_PINNED_SLOTS) {return NULL;}
     if(bytes == 0) {bytes = 1;}
     if(bytes > ghost_pinned_bytes_[slot]) {

@@ -2875,6 +2875,10 @@ static const long GX_RECV_CHUNK  = 1L << 20;   /* envelopes per count/fill pass 
 static const long GX_RECV_PAIR_CAP = 1L << 26; /* candidate pairs per emission pass (256 MB of ints) */
 static const int  GX_RECV_PINNED_SLOT = 6;     /* gizmo_ghost_pinned_buffer slot of the candidates' host copy */
 static const int  GX_SEND_PINNED_SLOT = 7;     /* ... and of the sender walk's records */
+static const int  GX_LEAF_PINNED_SLOT = 8;     /* ... and of the receiver's leaf records */
+static const int  GX_OFFSETS_PINNED_SLOT = 10; /* ... and of the receiver's candidate offsets */
+static constexpr int GX_RECV_STRIDE = 32;      /* candidates per envelope written by the walk itself (mean ~4) */
+static const long GX_SEND_QUERIES_PER_NODE = 16;   /* sender dispatch floor: queries x this >= local nodes */
 
 
 
@@ -3812,7 +3816,9 @@ int gx_device_sender_walk(const struct gx_query_t *queries, int n, unsigned int 
     gx_send_diag_seconds[0] = gx_send_diag_seconds[1] = 0; gx_send_diag_records = 0;
     const int symmetric = (search_mode != NGB_SEARCH_ONEWAY);
     if(symmetric && search_mode != NGB_SEARCH_SYMMETRIC) {return GX_RECEIVER_DECLINED;}
-    if(n <= 0) {return GX_RECEIVER_DECLINED;}
+    /* DISPATCH FLOOR: staging the bands costs O(nodes) whatever the query count, so a call with few queries
+       is answered by the host walk (rank-local; no collectives here). */
+    if(n <= 0 || (long)n * GX_SEND_QUERIES_PER_NODE < (long)Numnodestree) {return GX_RECEIVER_DECLINED;}
     double t0 = my_second();
     struct GxDeviceTreeView tree;
     if(gx_device_tree_view_build(&tree, ghost_get_num_local(), "gx_device_sender_walk") != 0) {return GX_RECEIVER_DECLINED;}
@@ -3901,6 +3907,8 @@ int gx_device_sender_walk(const struct gx_query_t *queries, int n, unsigned int 
 }
 
 double gx_recv_diag_seconds[3] = {0, 0, 0};
+double gx_recv_diag_split[4] = {0, 0, 0, 0};
+long long gx_recv_diag_pairs = 0;
 
 int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
                             const int *envelope_peer,
@@ -3953,29 +3961,26 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
 
     using DevSp = GIZMO_KOKKOS_DEVICE_SPACE;
 
-    /* Envelopes are walked in chunks of up to GX_RECV_CHUNK, each in two passes over the whole chunk: one that
-     * counts each envelope's candidates, a scan that places them, and one that writes them at their final
-     * offsets -- so a chunk costs a handful of launches and copies however many envelopes it holds, and no row
-     * ever overflows a scratch slot.  The candidates come back in passes of at most `pair_cap`, split at row
-     * boundaries; one envelope's candidates are distinct local particles, so a row never exceeds num_local and
-     * a pass of at least that size always holds the next row whole. */
+    /* Envelopes are walked in chunks of up to GX_RECV_CHUNK: one walk writes each envelope's first
+     * GX_RECV_STRIDE candidates into its scratch row and returns its true count, a scan places the rows, and a
+     * copy packs them (an envelope that overflowed its row is walked again straight into place) -- so a chunk
+     * costs a handful of launches and copies however many envelopes it holds.  The candidates come back in
+     * passes of at most `pair_cap`, split at row boundaries; one envelope's candidates are distinct local
+     * particles, so a row never exceeds num_local and a pass of at least that size always holds the next row
+     * whole. */
     const long chunk_cap = (n_env < GX_RECV_CHUNK) ? n_env : GX_RECV_CHUNK;
 
     /* Host buffers first: std::vector throws rather than returning null, and a
      * throw escaping this function would take the rank down between the envelope
      * exchange and the caller's reduction.  Reserving them here turns that into
      * the same decline every other resource failure produces. */
-    std::vector<struct gx_recv_leaf_t>     leaf_h;
-    std::vector<int>     counts_h;
-    std::vector<int64_t> offsets_h;
+    struct gx_recv_leaf_t *leaf_h = (struct gx_recv_leaf_t *) gizmo_ghost_pinned_buffer(GX_LEAF_PINNED_SLOT, (size_t)num_local * sizeof(struct gx_recv_leaf_t));
+    if(!leaf_h) {return GX_RECEIVER_DECLINED;}
     std::vector<struct gx_candidate_row> rows_h;
     int n_band = 0;
     const double *band_v = NULL;
     if(symmetric && !(band_v = gx_discovery_node_band(supply_mask, walker_j_reach_scale, &n_band))) {return GX_RECEIVER_DECLINED;}
     try {
-        leaf_h.resize((size_t)num_local);
-        counts_h.resize((size_t)chunk_cap);
-        offsets_h.resize((size_t)chunk_cap + 1);
         rows_h.resize((size_t)chunk_cap);
     } catch(const std::bad_alloc &) {
         printf("gx_device_receiver_walk: task %d could not reserve host staging for %d local leaves; answering on the host\n",
@@ -3990,15 +3995,17 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     struct gx_export_envelope_t *env_d = (struct gx_export_envelope_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_ENV, (size_t)chunk_cap * sizeof(struct gx_export_envelope_t), "gx_recv_env");
     int     *counts_d  = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_COUNTS, (size_t)chunk_cap * sizeof(int), "gx_recv_counts");
     int64_t *offsets_d = (int64_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_OFFSETS, ((size_t)chunk_cap + 1) * sizeof(int64_t), "gx_recv_offsets");
+    int     *scratch_d = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_SCRATCH, (size_t)chunk_cap * GX_RECV_STRIDE * sizeof(int), "gx_recv_scratch");
+    int64_t *offsets_h = (int64_t *) gizmo_ghost_pinned_buffer(GX_OFFSETS_PINNED_SLOT, ((size_t)chunk_cap + 1) * sizeof(int64_t));
     int     *anomaly_d = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_FLAG, 2 * sizeof(int), "gx_recv_anomaly");
     auto give_back = [&](void) {
         Kokkos::fence("gx_recv_done");
         gizmo_gpu_pool_give(GIZMO_POOL_GX_LEAF, leaf_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_ENV, env_d);
         gizmo_gpu_pool_give(GIZMO_POOL_GX_COUNTS, counts_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_OFFSETS, offsets_d);
-        gizmo_gpu_pool_give(GIZMO_POOL_GX_FLAG, anomaly_d);
+        gizmo_gpu_pool_give(GIZMO_POOL_GX_FLAG, anomaly_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_SCRATCH, scratch_d);
     };
 
-    if(!leaf_d || !env_d || !counts_d || !offsets_d || !anomaly_d) {
+    if(!leaf_d || !env_d || !counts_d || !offsets_d || !anomaly_d || !scratch_d || !offsets_h) {
         printf("gx_device_receiver_walk: task %d could not reserve device buffers for %d local leaves; answering on the host\n",
                ThisTask, num_local);
         fflush(stdout);
@@ -4012,6 +4019,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     using UmDevI64  = Kokkos::View<int64_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>;
 
     int status_staging_failed = 0;
+    long n_behind = 0;   /* sendable particles not at the current time: none means no candidate needs a drift */
     /* Stage the leaf fields the walk reads.  One pass over the local particles,
      * host-side, into a compact record; the AoS is never touched from device.  The
      * position a particle that is behind will be drifted to is taken here, from the host
@@ -4020,7 +4028,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         const integertime ti_now = All.Ti_Current;
         const struct DriftKickTableView drift_tables = drift_kick_table_view_host();
         long n_unmapped = 0;
-#pragma omp parallel for schedule(static) reduction(+:n_unmapped)
+#pragma omp parallel for schedule(static) reduction(+:n_unmapped) reduction(+:n_behind)
         for(int j = 0; j < num_local; j++) {
             struct gx_recv_leaf_t rec;
             int in_pool = 0;
@@ -4039,6 +4047,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                 double hw = 0.0;
                 const int motion = particle_motion_envelope(j, P, CellP, ti_now, &drift_tables, rec.pos, &hw);
                 rec.half_width = (motion == PARTICLE_MOTION_UNBOUNDED) ? -1.0 : hw;
+                if(motion != PARTICLE_MOTION_CURRENT) {n_behind++;}
                 /* the host leaf test's reach: the radius now for a current particle, the radius a drift can
                    grow it to for one behind (mode_b_local_walker.cc particle_passes / particle_may_pass) */
                 if(symmetric) {
@@ -4047,7 +4056,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                     rec.reach_j = rj * walker_j_reach_scale;
                 }
             }
-            leaf_h[(size_t)j] = rec;
+            leaf_h[j] = rec;
         }
         if(n_unmapped > 0) {
             printf("gx_device_receiver_walk: task %d has %ld particles of positive mass with no supply-pool slot\n",
@@ -4058,7 +4067,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             status_staging_failed = 1;
         }
         Kokkos::View<struct gx_recv_leaf_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
-            lh(leaf_h.data(), (size_t)num_local);
+            lh(leaf_h, (size_t)num_local);
         Kokkos::View<struct gx_recv_leaf_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>
             ld(leaf_d, (size_t)num_local);
         Kokkos::deep_copy(ld, lh);
@@ -4099,13 +4108,17 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
 
     for(long base = 0; base < n_env && status == GX_RECEIVER_COMPLETED; base += chunk_cap) {
         const int nb = (int)((n_env - base < chunk_cap) ? (n_env - base) : chunk_cap);
+        double t_split = my_second();
         Kokkos::deep_copy(Kokkos::View<struct gx_export_envelope_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(env_d, (size_t)nb),
                           Kokkos::View<const struct gx_export_envelope_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(envelopes + base, (size_t)nb));
+        gx_recv_diag_split[0] += timediff(t_split, my_second()); t_split = my_second();
 
-        /* count */
+        /* walk: each envelope's first GX_RECV_STRIDE candidates into its scratch row, and its true count */
         {
-            const struct gx_export_envelope_t *env_v = env_d; int *counts_v = counts_d;
-            Kokkos::parallel_for("gx_recv_count", nb, KOKKOS_LAMBDA(int b) {counts_v[b] = walk_one(env_v[b], nullptr, 0);});
+            const struct gx_export_envelope_t *env_v = env_d; int *counts_v = counts_d; int *scratch_v = scratch_d;
+            Kokkos::parallel_for("gx_recv_walk", nb, KOKKOS_LAMBDA(int b) {
+                counts_v[b] = walk_one(env_v[b], &scratch_v[(size_t)b * GX_RECV_STRIDE], GX_RECV_STRIDE);
+            });
         }
         int64_t batch_total = 0;
         {
@@ -4125,9 +4138,10 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             endrun(90001025);
             status = GX_RECEIVER_FAILED; break;
         }
-        if(batch_total == 0) {continue;}
-        Kokkos::deep_copy(UmHostI(counts_h.data(), (size_t)nb),  UmDevI(counts_d, (size_t)nb));
-        Kokkos::deep_copy(UmHostI64(offsets_h.data(), (size_t)nb + 1), UmDevI64(offsets_d, (size_t)nb + 1));
+        if(batch_total == 0) {gx_recv_diag_split[1] += timediff(t_split, my_second()); continue;}
+        Kokkos::deep_copy(UmHostI64(offsets_h, (size_t)nb + 1), UmDevI64(offsets_d, (size_t)nb + 1));
+        gx_recv_diag_split[1] += timediff(t_split, my_second());
+        gx_recv_diag_pairs += batch_total;
 
         /* The emission buffer: grown to this chunk's pairs, capped; never below one whole row. */
         const long pair_cap_want = (batch_total < GX_RECV_PAIR_CAP) ? (long)batch_total : GX_RECV_PAIR_CAP;
@@ -4147,34 +4161,45 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         int r0 = 0;
         while(r0 < nb && status == GX_RECEIVER_COMPLETED) {
             int r1 = r0;
-            while(r1 < nb && offsets_h[(size_t)r1 + 1] - offsets_h[(size_t)r0] <= pair_cap) {r1++;}
+            while(r1 < nb && offsets_h[r1 + 1] - offsets_h[r0] <= pair_cap) {r1++;}
             if(r1 == r0) {
                 /* The buffer holds num_local, and one envelope cannot admit a
                  * local particle twice -- the exported subtrees are disjoint --
                  * so a row this large means the traversal emitted a duplicate. */
                 printf("gx_device_receiver_walk: task %d envelope %ld admits %d pairs against %d local particles; the traversal has emitted a duplicate\n",
-                       ThisTask, base + r0, counts_h[(size_t)r0], num_local);
+                       ThisTask, base + r0, (int)(offsets_h[r0 + 1] - offsets_h[r0]), num_local);
                 fflush(stdout);
                 endrun(90001026);
                 status = GX_RECEIVER_FAILED; break;
             }
-            const int64_t sub_base = offsets_h[(size_t)r0];
-            const int64_t sub_total = offsets_h[(size_t)r1] - sub_base;
+            const int64_t sub_base = offsets_h[r0];
+            const int64_t sub_total = offsets_h[r1] - sub_base;
             {
                 const struct gx_export_envelope_t *env_v = env_d;
-                const int *counts_v = counts_d; const int64_t *offsets_v = offsets_d;
+                const int *counts_v = counts_d; const int64_t *offsets_v = offsets_d; const int *scratch_v = scratch_d;
                 int *pairs_v = pairs_d; int *anom_v = anomaly_d;
                 const int rr0 = r0;
                 Kokkos::parallel_for("gx_recv_fill", r1 - r0, KOKKOS_LAMBDA(int t) {
                     const int b = rr0 + t;
                     const int n = counts_v[b];
                     if(n <= 0) {return;}
-                    /* the same walk over the same inputs: it finds exactly what it counted */
-                    if(walk_one(env_v[b], &pairs_v[offsets_v[b] - sub_base], n) != n) {Kokkos::atomic_store(anom_v, GX_WALK_ANOMALY_MALFORMED_TREE);}
+                    int *dst = &pairs_v[offsets_v[b] - sub_base];
+                    if(n <= GX_RECV_STRIDE) {
+                        const int *src = &scratch_v[(size_t)b * GX_RECV_STRIDE];
+                        for(int c = 0; c < n; c++) {dst[c] = src[c];}
+                    } else if(walk_one(env_v[b], dst, n) != n) {
+                        /* overflowed its scratch row: walked again into place; the same walk over the same inputs
+                           finds exactly what it counted */
+                        Kokkos::atomic_store(anom_v, GX_WALK_ANOMALY_MALFORMED_TREE);
+                    }
                 });
                 gizmo_gpu_check_last_error("gx_recv_fill", r1 - r0);
             }
+            double t_fill = my_second();
+            Kokkos::fence("gx_recv_fill");
+            gx_recv_diag_split[2] += timediff(t_fill, my_second()); t_fill = my_second();
             Kokkos::deep_copy(UmHostI(pairs_h, (size_t)sub_total), UmDevI(pairs_d, (size_t)sub_total));
+            gx_recv_diag_split[3] += timediff(t_fill, my_second());
             /* Hand each row's candidates to the shared accept, which drifts them and
              * keeps the exact set.  Envelopes arrive grouped by peer in ascending
              * order, so a peer that spans a pass or a chunk boundary simply carries
@@ -4193,15 +4218,16 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                     status = GX_RECEIVER_FAILED;
                     break;
                 }
-                if(t == ThisTask || counts_h[(size_t)b] == 0) {continue;}   /* an envelope that found nothing has no row */
-                const int64_t off = offsets_h[(size_t)b] - sub_base;
-                struct gx_candidate_row row = {&envelopes[base + b], t, &pairs_h[(size_t)off], counts_h[(size_t)b]};
+                const int nb_b = (int)(offsets_h[b + 1] - offsets_h[b]);
+                if(t == ThisTask || nb_b == 0) {continue;}   /* an envelope that found nothing has no row */
+                const int64_t off = offsets_h[b] - sub_base;
+                struct gx_candidate_row row = {&envelopes[base + b], t, &pairs_h[(size_t)off], nb_b};
                 rows_h[(size_t)n_rows++] = row;
             }
             const double t_acc = my_second();
             if(status == GX_RECEIVER_COMPLETED &&
                gx_send_set_accept_rows(send_set, rows_h.data(), n_rows, search_mode,
-                                       radius_policy, j_radius_scale, safety_factor) != 0) {
+                                       radius_policy, j_radius_scale, safety_factor, n_behind == 0) != 0) {
                 status = GX_RECEIVER_FAILED;
             }
             gx_recv_diag_seconds[2] += timediff(t_acc, my_second());

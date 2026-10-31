@@ -194,7 +194,7 @@ void *gizmo_treehost_device_scratch(int slot, size_t bytes);
  *     there first); src_CellP may be NULL.  0 on success; 1 on a failed copy, after which the caller copies on
  *     the host.
  *   _pinned_buffer: grow-only page-locked scratch of the ghost transport (slots 0/1 receive P/CellP, 2/3 send
- *     P/CellP, 4/5 send/receive trimmed records, 6/7 discovery candidates/sender records); never zeroed; NULL when the memory cannot be had.
+ *     P/CellP, 4/5 send/receive trimmed records, 6-10 discovery candidates/sender records/receiver leaves/received envelopes/candidate offsets); never zeroed; NULL when the memory cannot be had.
  *   _zero_wakeup / _gather_wakeup: P[j].wakeup over the ghost range, set to 0 / copied into dst[0,n), on the device. */
 int gizmo_ghostdev_enabled(void);
 void gizmo_ghostdev_set_live(int base, int n);
@@ -375,6 +375,7 @@ enum gizmo_gpu_pool_site {
     GIZMO_POOL_GX_QOFF,           /* sender record offsets per query */
     GIZMO_POOL_GX_RECORDS,        /* sender records */
     GIZMO_POOL_GX_FLAG,           /* the walks' anomaly flag */
+    GIZMO_POOL_GX_SCRATCH,        /* receiver: each envelope's first candidates */
     GIZMO_POOL_NSITES
 };
 void *gizmo_gpu_pool_take(int site, size_t bytes, const char *label);
