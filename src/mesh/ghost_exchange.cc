@@ -1109,13 +1109,6 @@ static void gx_ghost_copy_stamp(int delivered, int base, int count)
     g_ghost_copy_epoch = g_ghost_provenance_epoch;
 }
 
-struct gx_query_t {
-    double pos[3];
-    double h;
-    int    type;       /* for caller diagnostics; predicate uses h_i directly */
-    int    _pad;
-};
-
 /* gx_export_envelope_t (the sender->supply wire record) is declared in
  * mesh/neighbor_list.h: the device receiver traversal compiles in another
  * translation unit and consumes the same records. */
@@ -1191,7 +1184,8 @@ static int gx_ghost_discovery_diag_on(void) {static int c = -1; return gx_env_on
 enum {GX_DISC_T_START = 0, GX_DISC_T_QUERIES, GX_DISC_T_POOL, GX_DISC_T_SKEW, GX_DISC_T_SENDER, GX_DISC_T_EXCHANGE,
       GX_DISC_T_RECEIVER, GX_DISC_T_AGREE, GX_DISC_T_SENDLIST, GX_DISC_T_N};
 static double gx_disc_t[GX_DISC_T_N];
-static int gx_disc_device_receiver = 0;
+static int gx_disc_device_receiver = 0, gx_disc_device_sender = 0;
+static long gx_disc_envelopes[2] = {0, 0};   /* sent, received */
 static inline void gx_disc_mark(int k) {gx_disc_t[k] = my_second();}
 
 /* The host receiver backend: the walk per received envelope (threaded, each envelope into its own candidate
@@ -1235,28 +1229,15 @@ static int gx_host_receiver_backend(const struct ghost_exchange_spec_t *spec, co
     return ok;
 }
 
-/* Build the host walk's send set from the same envelopes, with the same pool marker (clear between sets), and
- * compare it with `dev` peer by peer.  v[0] += 1 (this rank compared), v[1] += peers whose runs differ,
+/* Compare two finished send sets peer by peer (count, then each slot in order).  v[1] += peers whose runs differ,
  * v[2] += slots that differ (a length difference counts its excess), v[3] += slots in `dev`. */
-static void gx_send_set_verify_against_host(const struct ghost_exchange_spec_t *spec, const struct gx_export_envelope_t *recv,
-                                            const int *rc, const int *rd, long tot_r, unsigned int supply_mask, int search_mode,
-                                            double walker_j_reach_scale, int num_pool, const struct ghost_send_set *dev, long v[4])
+static void gx_send_set_compare(const struct ghost_send_set *dev, const struct ghost_send_set *ref, long v[4])
 {
-    static struct ghost_send_set ref = {NULL, 0, 0, NULL, NULL, 0, NULL, 0, 0, -1, -1, 0, NULL, 0};
-    v[0] += 1; v[3] += dev->used;
-    int ok = (gx_send_set_begin(&ref, g_glt_cache.mark, num_pool, g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built) == 0);
-    if(ok) {ok = gx_host_receiver_backend(spec, recv, rc, rd, tot_r, supply_mask, search_mode, walker_j_reach_scale, &ref);}
-    if(ok) {gx_send_set_finish_peer(&ref);}
-    if(!ok) {
-        printf("Ghost discovery verify: task %d could not build the host walk's send set\n", ThisTask); fflush(stdout);
-        v[1] += 1; v[2] += 1;
-        gx_send_set_abandon(&ref);
-        return;
-    }
+    v[3] += dev->used;
     int reported = 0;
     for(int t = 0; t < NTask; t++) {
-        const int nd = dev->count[t], nh = ref.count[t];
-        const int *a = dev->slots + (nd > 0 ? dev->start[t] : 0), *b = ref.slots + (nh > 0 ? ref.start[t] : 0);
+        const int nd = dev->count[t], nh = ref->count[t];
+        const int *a = dev->slots + (nd > 0 ? dev->start[t] : 0), *b = ref->slots + (nh > 0 ? ref->start[t] : 0);
         long diff = (nd > nh) ? (nd - nh) : (nh - nd);
         int first = -1;
         const int n = (nd < nh) ? nd : nh;
@@ -1269,7 +1250,6 @@ static void gx_send_set_verify_against_host(const struct ghost_exchange_spec_t *
             fflush(stdout);
         }
     }
-    gx_send_set_abandon(&ref);
 }
 
 static void gx_walk_export_discover(
@@ -1277,9 +1257,12 @@ static void gx_walk_export_discover(
     const struct gx_query_t *local_queries, int n_local_queries,
     int num_pool, unsigned int supply_mask, int search_mode,
     struct ghost_send_set *send_set,
-    struct gx_walk_export_result *res)
+    struct gx_walk_export_result *res,
+    int allow_device)   /* 0: host walks only (the verify's reference) */
 {
     if(res) memset(res, 0, sizeof(*res));
+    const int device_walks = allow_device && gx_ghost_discovery_device_on();
+    gx_discovery_begin_call();
     /* The walk searches with the SAME j-side reach the accept admits with.
      * The accept uses gx_policy_scaled_h = radius(j,policy) * j_radius_scale *
      * safety_factor, so both factors are folded here; the query side already
@@ -1302,15 +1285,68 @@ static void gx_walk_export_discover(
      * per-peer send buffers; the walker's node lazy-drift is race-safe (omp
      * critical(_modebdrift_) + release/acquire).  Merge is serial.  The routed SET is
      * unchanged (order-independent bitmap); only per-peer envelope ORDER differs (D6: FP-reorder only). */
-    const ModeBTopleafMap &map = mode_b_topleaf_map_current();
     std::vector<std::vector<struct gx_export_envelope_t>> send(NTask);
-    {
+    int sender_done_on_device = 0;
 #ifdef _OPENMP
-        int nthr = omp_get_max_threads();
+    int nthr = omp_get_max_threads();
 #else
-        int nthr = 1;
+    int nthr = 1;
 #endif
-        if(nthr < 1) nthr = 1;
+    if(nthr < 1) nthr = 1;
+    if(device_walks && n_local_queries > 0) {
+        /* The device records, per query in walk order, the (peer, node) pairs this walk would export; the
+         * envelopes are cut here exactly as below (peers ascending, nodes in walk order, NODELISTLENGTH per
+         * envelope).  Blocks of queries per thread in query order, merged in block order: each peer's
+         * envelopes come out in query order. */
+        const int64_t *rec_off = NULL; const int *rec = NULL;
+        const int dev = gx_device_sender_walk(local_queries, n_local_queries, supply_mask, search_mode,
+                                              walker_j_reach_scale, &rec_off, &rec);
+        if(dev == GX_RECEIVER_COMPLETED) {
+            std::vector<std::vector<std::vector<struct gx_export_envelope_t>>> tsend(nthr);
+            for(int th = 0; th < nthr; th++) tsend[th].assign(NTask, std::vector<struct gx_export_envelope_t>{});
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+            for(int qi = 0; qi < n_local_queries; qi++) {
+                const int64_t r0 = rec_off[qi], r1 = rec_off[qi + 1];
+                if(r1 <= r0) continue;
+#ifdef _OPENMP
+                const int tid = omp_get_thread_num();
+#else
+                const int tid = 0;
+#endif
+                int last = -1;
+                while(1) {   /* the next peer above `last`: a query reaches few peers */
+                    int t = INT_MAX;
+                    for(int64_t r = r0; r < r1; r++) {const int p = rec[2 * r]; if(p > last && p < t) t = p;}
+                    if(t == INT_MAX) break;
+                    last = t;
+                    if(t == ThisTask || t < 0 || t >= NTask) continue;
+                    struct gx_export_envelope_t e;
+                    e.pos[0] = local_queries[qi].pos[0];
+                    e.pos[1] = local_queries[qi].pos[1];
+                    e.pos[2] = local_queries[qi].pos[2];
+                    e.h = local_queries[qi].h;
+                    e._pad = 0;
+                    e.n_nodes = 0;
+                    for(int64_t r = r0; r < r1; r++) {
+                        if(rec[2 * r] != t) continue;
+                        e.nodes[e.n_nodes++] = rec[2 * r + 1];
+                        if(e.n_nodes == NODELISTLENGTH) {tsend[tid][t].push_back(e); e.n_nodes = 0;}
+                    }
+                    if(e.n_nodes > 0) {tsend[tid][t].push_back(e);}
+                }
+            }
+            for(int th = 0; th < nthr; th++) {
+                for(int t = 0; t < NTask; t++)
+                    send[t].insert(send[t].end(), tsend[th][t].begin(), tsend[th][t].end());
+            }
+            sender_done_on_device = 1;
+        }
+        /* FAILED has requested a stop (malformed tree); the host walk below would meet the same tree */
+    }
+    if(!sender_done_on_device) {
+        const ModeBTopleafMap &map = mode_b_topleaf_map_current();
         std::vector<ModeBExportSink> tsink(nthr);
         for(int th = 0; th < nthr; th++) tsink[th].ensure_size(NTask);
         std::vector<std::vector<std::vector<struct gx_export_envelope_t>>> tsend(nthr);
@@ -1352,6 +1388,7 @@ static void gx_walk_export_discover(
                 send[t].insert(send[t].end(), tsend[th][t].begin(), tsend[th][t].end());
         }
     }
+    gx_disc_device_sender = sender_done_on_device;
     gx_disc_mark(GX_DISC_T_SENDER);
 
     /* (c) EXCHANGE: counts Alltoall + typed Alltoallv of fixed-size envelopes. */
@@ -1435,7 +1472,7 @@ static void gx_walk_export_discover(
     int receiver_ok = (gx_send_set_begin(send_set, g_glt_cache.mark, num_pool,
                                          g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built) == 0);
     int receiver_done_on_device = 0;
-    if(receiver_ok && tot_r > 0) {
+    if(receiver_ok && tot_r > 0 && allow_device) {
         std::vector<int> envelope_peer((size_t)tot_r, -1);
         for(int t = 0; t < NTask; t++) {
             for(int r = 0; r < rc[t]; r++) {envelope_peer[(size_t)rd[t] + r] = t;}
@@ -1445,7 +1482,7 @@ static void gx_walk_export_discover(
                                     supply_mask, search_mode,
                                     spec->radius_policy, spec->j_radius_scale, spec->safety_factor,
                                     g_glt_cache.j_to_pool, g_glt_cache.NumPart_when_built,
-                                    num_pool, send_set, gx_ghost_discovery_device_on());
+                                    num_pool, send_set, device_walks);
         if(device_outcome == GX_RECEIVER_COMPLETED) {
             receiver_done_on_device = 1;
         } else if(device_outcome != GX_RECEIVER_DECLINED || send_set->used != 0 || send_set->peer >= 0) {
@@ -1470,23 +1507,6 @@ static void gx_walk_export_discover(
             receiver_ok = 0;
         }
     }
-    /* GIZMO_GHOST_DISCOVERY_VERIFY: the host walk answers the same envelopes into a second set, compared slot by
-       slot.  Every rank takes part in the summary whatever its backend did, so the call sequence stays uniform. */
-    if(gx_ghost_discovery_verify_on()) {
-        long v[4] = {0, 0, 0, 0};   /* ranks compared, peers whose run differs, slots that differ, slots compared */
-        if(receiver_ok && receiver_done_on_device) {
-            gx_send_set_verify_against_host(spec, recv, rc, rd, tot_r, supply_mask, search_mode,
-                                            walker_j_reach_scale, num_pool, send_set, v);
-        }
-        long vs[4] = {0, 0, 0, 0};
-        MPI_Reduce(v, vs, 4, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-        if(ThisTask == 0) {
-            printf("Ghost discovery verify (%s): device send set compared with the host walk's on %ld of %d ranks: "
-                   "%ld slots, %ld differ (%ld peer runs differ)\n",
-                   spec->caller_name ? spec->caller_name : "?", vs[0], NTask, vs[3], vs[2], vs[1]);
-            fflush(stdout);
-        }
-    }
     free(recv); free(rc); free(rd);
     if(!receiver_ok) {gx_send_set_abandon(send_set);}
 
@@ -1497,6 +1517,7 @@ static void gx_walk_export_discover(
     MPI_Allreduce(&receiver_ok, &receiver_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     gx_disc_mark(GX_DISC_T_AGREE);
     gx_disc_device_receiver = receiver_done_on_device;
+    gx_disc_envelopes[0] = tot_s; gx_disc_envelopes[1] = tot_r;
     if(!receiver_ok_all) {
         if(receiver_ok) {gx_send_set_abandon(send_set);}
         if(res) res->status = GX_WALK_EXPORT_RECEIVER_FAIL;
@@ -1526,7 +1547,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     double t_ghost_start = my_second();
     gx_disc_mark(GX_DISC_T_START);
     gx_recv_diag_seconds[0] = gx_recv_diag_seconds[1] = gx_recv_diag_seconds[2] = 0;
-    gx_disc_device_receiver = 0;
+    gx_disc_device_receiver = 0; gx_disc_device_sender = 0;
     NumPart_before_ghost = NumPart;
     N_gas_before_ghost = N_gas;
     NumGhostParticles = 0;
@@ -1774,7 +1795,43 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     struct gx_walk_export_result walk_export_res;
     gx_walk_export_discover(spec, local_queries, n_local_queries,
                             num_pool, supply_mask, search_mode,
-                            send_set, &walk_export_res);
+                            send_set, &walk_export_res, 1);
+    /* GIZMO_GHOST_DISCOVERY_VERIFY: the whole discovery again on the host walks (its own envelope exchange, so
+       collective on every rank), into a second set compared with the first peer by peer.  The verify runs when
+       either walk ran on the device on some rank; the summary is printed on rank 0. */
+    if(gx_ghost_discovery_verify_on() && walk_export_res.status == GX_WALK_EXPORT_OK) {
+        int dev_local = gx_disc_device_sender | (gx_disc_device_receiver << 1), dev_any = 0;
+        MPI_Allreduce(&dev_local, &dev_any, 1, MPI_INT, MPI_BOR, MPI_COMM_WORLD);
+        if(dev_any) {
+            /* the reference run must not overwrite the diagnostics of the run it checks */
+            double saved_t[GX_DISC_T_N]; memcpy(saved_t, gx_disc_t, sizeof(saved_t));
+            double saved_recv[3]; memcpy(saved_recv, gx_recv_diag_seconds, sizeof(saved_recv));
+            const int saved_dev[2] = {gx_disc_device_sender, gx_disc_device_receiver};
+            const long saved_env[2] = {gx_disc_envelopes[0], gx_disc_envelopes[1]};
+            static struct ghost_send_set ref = {NULL, 0, 0, NULL, NULL, 0, NULL, 0, 0, -1, -1, 0, NULL, 0};
+            /* the main set is finished, so the shared pool marker is clear for the reference */
+            struct gx_walk_export_result ref_res;
+            gx_walk_export_discover(spec, local_queries, n_local_queries, num_pool, supply_mask, search_mode,
+                                    &ref, &ref_res, 0);
+            long v[4] = {1, 0, 0, 0};
+            if(ref_res.status == GX_WALK_EXPORT_OK) {gx_send_set_compare(send_set, &ref, v);}
+            else {v[1] = v[2] = 1;}
+            if(ref.slots) {gx_send_set_abandon(&ref);}
+            memcpy(gx_disc_t, saved_t, sizeof(saved_t)); memcpy(gx_recv_diag_seconds, saved_recv, sizeof(saved_recv));
+            gx_disc_device_sender = saved_dev[0]; gx_disc_device_receiver = saved_dev[1];
+            gx_disc_envelopes[0] = saved_env[0]; gx_disc_envelopes[1] = saved_env[1];
+            long vs[4] = {0, 0, 0, 0};
+            MPI_Reduce(v, vs, 4, MPI_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+            int nd[2] = {gx_disc_device_sender, gx_disc_device_receiver}, nds[2] = {0, 0};
+            MPI_Reduce(nd, nds, 2, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+            if(ThisTask == 0) {
+                printf("Ghost discovery verify (%s): device sender on %d, receiver on %d of %d ranks; send set compared with the "
+                       "host discovery's on %ld ranks: %ld slots, %ld differ (%ld peer runs differ)\n",
+                       spec->caller_name ? spec->caller_name : "?", nds[0], nds[1], NTask, vs[0], vs[3], vs[2], vs[1]);
+                fflush(stdout);
+            }
+        }
+    }
     if(walk_export_res.status != GX_WALK_EXPORT_OK) {
         if(ThisTask == 0) {
             printf("[ghost_exchange call=%d caller=%s: walk-export producer status %d, no send set built]\n",
@@ -1878,19 +1935,22 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
     gx_disc_mark(GX_DISC_T_SENDLIST);
     if(gx_ghost_discovery_diag_on()) {   /* rank-uniform: same environment everywhere */
-        double mine[12], most[12];
+        double mine[13], most[13];
         for(int k = 1; k < GX_DISC_T_N; k++) {mine[k - 1] = timediff(gx_disc_t[k - 1], gx_disc_t[k]);}
         mine[8] = timediff(gx_disc_t[GX_DISC_T_START], gx_disc_t[GX_DISC_T_SENDLIST]);
         for(int k = 0; k < 3; k++) {mine[9 + k] = gx_recv_diag_seconds[k];}
-        MPI_Reduce(mine, most, 12, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-        int ndev = gx_disc_device_receiver, ndev_all = 0;
-        MPI_Reduce(&ndev, &ndev_all, 1, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
+        mine[12] = gx_disc_device_sender ? gx_send_diag_seconds[0] : 0;
+        MPI_Reduce(mine, most, 13, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+        int ndev[2] = {gx_disc_device_sender, gx_disc_device_receiver}, ndev_all[2] = {0, 0};
+        MPI_Reduce(ndev, ndev_all, 2, MPI_INT, MPI_SUM, 0, MPI_COMM_WORLD);
         if(ThisTask == 0) {
-            static const char *name[12] = {"queries", "pool", "skew", "sender", "exchange", "receiver", "agree", "sendlist",
-                                           "total", "recv_stage", "recv_device", "recv_accept"};
-            printf("Ghost discovery diag (%s, %d sends, receiver on the device on %d/%d ranks): rank 0 / max s:",
-                   spec->caller_name ? spec->caller_name : "?", total_send, ndev_all, NTask);
-            for(int k = 0; k < 12; k++) {printf(" %s %.4f/%.4f", name[k], mine[k], most[k]);}
+            static const char *name[13] = {"queries", "pool", "skew", "sender", "exchange", "receiver", "agree", "sendlist",
+                                           "total", "recv_stage", "recv_device", "recv_accept", "send_device"};
+            printf("Ghost discovery diag (%s, %d sends, sender/receiver on the device on %d/%d of %d ranks; rank 0 %d queries, "
+                   "%lld records, %ld/%ld envelopes out/in): rank 0 / max s:",
+                   spec->caller_name ? spec->caller_name : "?", total_send, ndev_all[0], ndev_all[1], NTask, n_local_queries,
+                   gx_disc_device_sender ? gx_send_diag_records : -1LL, gx_disc_envelopes[0], gx_disc_envelopes[1]);
+            for(int k = 0; k < 13; k++) {printf(" %s %.4f/%.4f", name[k], mine[k], most[k]);}
             printf("\n"); fflush(stdout);
         }
     }

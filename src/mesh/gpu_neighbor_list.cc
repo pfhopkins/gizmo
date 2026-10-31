@@ -2746,6 +2746,27 @@ struct gx_recv_leaf_t {
  *
  * Candidates past `cap` are counted but not written, so the caller can re-run the
  * row against a buffer sized to the true count. */
+/* The reach a symmetric node opens on: the larger of the query's reach and the node's band (a node past the
+ * staged range opens on any overlap), plus a rounding allowance at the scale of every magnitude in the test,
+ * so the device opens at least what the host walk opens. */
+KOKKOS_INLINE_FUNCTION
+double gx_discovery_node_reach(const double *band, int n_band, int kn, double reach, double qx, double qy, double qz,
+                               double cx, double cy, double cz, double len)
+{
+    double r = reach;
+    if(band) {
+        const double b = (kn >= 0 && kn < n_band) ? band[kn] : 1.0e300;
+        if(b > r) {r = b;}
+    }
+    double m = fabs(len);
+    if(fabs(qx) > m) {m = fabs(qx);}
+    if(fabs(qy) > m) {m = fabs(qy);}
+    if(fabs(qz) > m) {m = fabs(qz);}
+    if(r > m) {m = r;}
+    const double c[3] = {cx, cy, cz};
+    return r + motion_envelope_test_slack(c, c, m);
+}
+
 /* Symmetric: a pair is accepted on the larger of the query's reach and the neighbour's, so the leaf
  * test takes the larger of the two, and a node opens on the larger of the query's reach and the band
  * of neighbour reaches below it (`band[kn]`, the host walker's per-type band over the supply types,
@@ -2766,14 +2787,7 @@ struct GxRecvCandidatesT {
     double node_reach(int kn, double reach, double qx, double qy, double qz,
                       double cx, double cy, double cz, double len) const
     {
-        const double b = (kn >= 0 && kn < n_band) ? band[kn] : 1.0e300;
-        const double r = (b > reach) ? b : reach;
-        double m = fabs(len);
-        if(fabs(qx) > m) {m = fabs(qx);}
-        if(fabs(qy) > m) {m = fabs(qy);}
-        if(fabs(qz) > m) {m = fabs(qz);}
-        const double c[3] = {cx, cy, cz};
-        return r + motion_envelope_test_slack(c, c, (r > m) ? r : m);
+        return gx_discovery_node_reach(band, n_band, kn, reach, qx, qy, qz, cx, cy, cz, len);
     }
 
     KOKKOS_INLINE_FUNCTION
@@ -2860,14 +2874,8 @@ static int gx_recv_walk_one(const struct gx_export_envelope_t &env,
 static const long GX_RECV_CHUNK  = 1L << 20;   /* envelopes per count/fill pass */
 static const long GX_RECV_PAIR_CAP = 1L << 26; /* candidate pairs per emission pass (256 MB of ints) */
 static const int  GX_RECV_PINNED_SLOT = 6;     /* gizmo_ghost_pinned_buffer slot of the candidates' host copy */
+static const int  GX_SEND_PINNED_SLOT = 7;     /* ... and of the sender walk's records */
 
-/* Exhaustion is reported by returning NULL, so the caller's NULL check decides
-   what to do. */
-template <class T>
-static T *gx_recv_alloc(const char *label, size_t count)
-{
-    return (T *) gizmo_gpu_alloc_device(count * sizeof(T), label);
-}
 
 
 /* Describe this rank's tree to the device walk, or say why it cannot be
@@ -3684,6 +3692,214 @@ int gx_device_fused_walk_prepare(struct GxDeviceTreeView *out, const char *calle
     return 0;
 }
 
+/* ---- Shared by the device halves of request-driven discovery ---------------------------------------------
+ *
+ * Whether a device walk may read the node geometry now.  The host walk drifts each stale node as it reaches it,
+ * under a lock, which a kernel cannot do, so the nodes have to be current before a device walk runs.  With
+ * self-gravity disabled nothing else would ever sweep them, so the sweep is performed here when nothing else has
+ * (rank-local, the same work the host walk would do node by node).  The one state it cannot repair is a host lazy
+ * drift that already advanced nodes to this time without their mirrors (a sweep skips current nodes): then the
+ * host answers.  A tree BUILT after such a drift never reaches that branch: the build rewrites every node and
+ * mirror, and force_drift_node returns early on a node that is already current.  With gravity on, gravity owns
+ * the sweep and the host answers. */
+static int gx_discovery_nodes_walkable(void)
+{
+    if(gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {return 1;}
+    if(force_host_lazy_drift_ti() == All.Ti_Current) {return 0;}
+#ifdef SELFGRAVITY_OFF
+    return (gpu_force_drift_nodes(All.Ti_Current) == 0) ? 1 : 0;
+#else
+    return 0;
+#endif
+}
+
+/* The node reach of a symmetric walk (mode_b_node_symmetric_radius): per local node [tree_base, tree_base +
+ * Numnodestree), the largest band over the supply types, times the walk's j-side scale.  Staged once per
+ * discovery call (both walks of a call read the same bands; nothing between them changes a band), in a
+ * grow-only device buffer.  The geometry must already be walkable (above), so the host walk would drift none
+ * of these nodes and reads exactly these bands. */
+static double *g_gx_band_d = NULL;
+static long    g_gx_band_cap = 0;
+static int     g_gx_band_valid = 0, g_gx_band_n = 0;
+static unsigned int g_gx_band_mask = 0;
+static double  g_gx_band_scale = 0;
+static std::vector<double> g_gx_band_h;
+void gx_discovery_begin_call(void) {g_gx_band_valid = 0;}
+static const double *gx_discovery_node_band(unsigned int supply_mask, double scale, int *n_band)
+{
+    const int tree_base = All.TreeNodeIndexBase, n = Numnodestree;
+    *n_band = 0;
+    if(n <= 0) {return NULL;}
+    if(g_gx_band_valid && g_gx_band_mask == supply_mask && g_gx_band_scale == scale && g_gx_band_n == n) {*n_band = n; return g_gx_band_d;}
+    g_gx_band_valid = 0;
+    if((long)n > g_gx_band_cap) {
+        if(g_gx_band_d) {Kokkos::fence("gx_band_regrow"); gizmo_gpu_free_device(g_gx_band_d);}
+        const long want = (long)n + n / 8;
+        g_gx_band_d = (double *) gizmo_gpu_alloc_device((size_t)want * sizeof(double), "gx_discovery_band");
+        g_gx_band_cap = g_gx_band_d ? want : 0;
+        if(!g_gx_band_d) {return NULL;}
+    }
+    try {if(g_gx_band_h.size() < (size_t)n) {g_gx_band_h.resize((size_t)n);}} catch(const std::bad_alloc &) {return NULL;}
+    double *bh = g_gx_band_h.data();
+#pragma omp parallel for schedule(static)
+    for(int kn = 0; kn < n; kn++) {
+        double rmax = 0.0;
+        for(int t = 0; t < 6; t++) {
+            if(!(supply_mask & (1u << t))) {continue;}
+            const double v = (double)Extnodes[tree_base + kn].hmax_per_type[t];
+            if(v > rmax) {rmax = v;}
+        }
+        bh[kn] = rmax * scale;
+    }
+    Kokkos::deep_copy(Kokkos::View<double*, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(g_gx_band_d, (size_t)n),
+                      Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(bh, (size_t)n));
+    g_gx_band_valid = 1; g_gx_band_mask = supply_mask; g_gx_band_scale = scale; g_gx_band_n = n;
+    *n_band = n;
+    return g_gx_band_d;
+}
+
+/* ---- The sender half on the device ----------------------------------------------------------------------
+ *
+ * The host sender walk (mode_b_walk_and_export with no candidate sink) descends the top-level tree from the
+ * root and, at every top leaf another rank owns that it opens, records (owner, that leaf's node) and steps to the
+ * sibling; a top leaf this rank owns it steps past.  That is Mode D's export rule (mode_d_export.h,
+ * ModeDExportTopology), with the symmetric opener added: a node opens on the larger of the query's reach and
+ * the node's band.  A pseudo-particle of another rank is recorded unconditionally (the host re-tests it against
+ * the top leaf's box; recording it is a superset).  Count, scan, fill: each query's records land in its own
+ * slice in walk order. */
+struct GxSenderExport {
+    static constexpr bool has_node_hook = true;
+    static constexpr bool has_node_reach = true;
+    GxTopLeafMapView map;
+    int this_task;
+    const double *band;   /* symmetric only, else null */
+    int n_band;
+    int *out;             /* (peer, node) pairs; null when counting */
+    int cap, n;
+
+    KOKKOS_INLINE_FUNCTION GxNodeDecision node_decision(int kn) const
+    {
+        const int leaf = (kn >= 0 && kn < map.span) ? map.leaf_of_node[kn] : -1;
+        if(leaf < 0) {return GxNodeDecision{GxNodeAction::Descend, -1};}
+        if(map.domain_task[leaf] != this_task) {return GxNodeDecision{GxNodeAction::RecordAndSibling, leaf};}
+        return GxNodeDecision{GxNodeAction::Sibling, leaf};
+    }
+    KOKKOS_INLINE_FUNCTION GxNodeDecision pseudo_decision(int leaf) const
+    {
+        if(leaf >= 0 && leaf < map.n_topleaves && map.domain_task[leaf] != this_task) {return GxNodeDecision{GxNodeAction::RecordAndSibling, leaf};}
+        return GxNodeDecision{GxNodeAction::Descend, -1};
+    }
+    KOKKOS_INLINE_FUNCTION void record(int leaf)
+    {
+        if(n < cap) {out[2 * n] = map.domain_task[leaf]; out[2 * n + 1] = map.domain_node_index[leaf];}
+        n++;
+    }
+    KOKKOS_INLINE_FUNCTION void visit(int, double, double, double, double) {}   /* never below a top leaf */
+    KOKKOS_INLINE_FUNCTION double node_reach(int kn, double reach, double qx, double qy, double qz,
+                                             double cx, double cy, double cz, double len) const
+    {
+        return gx_discovery_node_reach(band, n_band, kn, reach, qx, qy, qz, cx, cy, cz, len);
+    }
+};
+
+double gx_send_diag_seconds[2] = {0, 0};
+long long gx_send_diag_records = 0;
+
+int gx_device_sender_walk(const struct gx_query_t *queries, int n, unsigned int supply_mask, int search_mode,
+                          double walker_j_reach_scale, const int64_t **offsets_out, const int **records_out)
+{
+    GIZMO_GPU_ENSURE_ALL_FRESH();
+    gx_send_diag_seconds[0] = gx_send_diag_seconds[1] = 0; gx_send_diag_records = 0;
+    const int symmetric = (search_mode != NGB_SEARCH_ONEWAY);
+    if(symmetric && search_mode != NGB_SEARCH_SYMMETRIC) {return GX_RECEIVER_DECLINED;}
+    if(n <= 0) {return GX_RECEIVER_DECLINED;}
+    double t0 = my_second();
+    struct GxDeviceTreeView tree;
+    if(gx_device_tree_view_build(&tree, ghost_get_num_local(), "gx_device_sender_walk") != 0) {return GX_RECEIVER_DECLINED;}
+    if(Numnodestree <= 0 || tree.node_base >= tree.pseudo_start) {return GX_RECEIVER_DECLINED;}
+    if(!gx_discovery_nodes_walkable()) {return GX_RECEIVER_DECLINED;}
+    GxTopLeafMapView map;
+    if(gx_top_leaf_map_acquire(&tree, &map) != GX_TOP_LEAF_MAP_OK) {return GX_RECEIVER_DECLINED;}
+    int n_band = 0;
+    const double *band = NULL;
+    if(symmetric && !(band = gx_discovery_node_band(supply_mask, walker_j_reach_scale, &n_band))) {return GX_RECEIVER_DECLINED;}
+
+    using DevSp = GIZMO_KOKKOS_DEVICE_SPACE;
+    struct gx_query_t *q_d = (struct gx_query_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_QUERIES, (size_t)n * sizeof(struct gx_query_t), "gx_send_queries");
+    int64_t *off_d = (int64_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_QOFF, ((size_t)n + 1) * sizeof(int64_t), "gx_send_offsets");
+    int *flag_d = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_FLAG, 2 * sizeof(int), "gx_send_flag");
+    if(!q_d || !off_d || !flag_d) {
+        gizmo_gpu_pool_give(GIZMO_POOL_GX_QUERIES, q_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_QOFF, off_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_FLAG, flag_d);
+        return GX_RECEIVER_DECLINED;
+    }
+    Kokkos::deep_copy(Kokkos::View<struct gx_query_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(q_d, (size_t)n),
+                      Kokkos::View<const struct gx_query_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(queries, (size_t)n));
+    Kokkos::parallel_for("gx_send_flag_clear", 2, KOKKOS_LAMBDA(int k) {flag_d[k] = 0;});
+
+    GxSenderExport proto;
+    proto.map = map; proto.this_task = ThisTask; proto.band = band; proto.n_band = n_band;
+    proto.out = nullptr; proto.cap = 0; proto.n = 0;
+    Kokkos::parallel_for("gx_send_count", n, KOKKOS_LAMBDA(int k) {
+        GxSenderExport pol = proto;
+        const struct gx_query_t &qq = q_d[k];
+        gx_device_tree_walk_from_root(qq.pos[0], qq.pos[1], qq.pos[2], qq.h, tree, pol, flag_d, 0u);
+        off_d[k] = pol.n;
+    });
+    int64_t total = 0;
+    Kokkos::parallel_scan("gx_send_scan", n + 1, KOKKOS_LAMBDA(int k, int64_t &update, const bool final) {
+        const int64_t v = (k < n) ? off_d[k] : 0;
+        if(final) {off_d[k] = update;}
+        update += v;
+    }, total);
+    gizmo_gpu_check_last_error("gx_send_count", n);
+    int status = GX_RECEIVER_COMPLETED;
+    int *rec_d = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_RECORDS, (size_t)(2 * total + 2) * sizeof(int), "gx_send_records");
+    const size_t host_bytes = ((size_t)n + 1) * sizeof(int64_t) + (size_t)(2 * total + 2) * sizeof(int);
+    char *host = (char *) gizmo_ghost_pinned_buffer(GX_SEND_PINNED_SLOT, host_bytes);
+    if(!rec_d || !host || total < 0 || total > INT_MAX / 2) {
+        status = GX_RECEIVER_DECLINED;
+    } else {
+        Kokkos::parallel_for("gx_send_fill", n, KOKKOS_LAMBDA(int k) {
+            const int expected = (int)(off_d[k + 1] - off_d[k]);
+            if(expected <= 0) {return;}
+            GxSenderExport pol = proto;
+            pol.out = rec_d + 2 * off_d[k]; pol.cap = expected;
+            const struct gx_query_t &qq = q_d[k];
+            gx_device_tree_walk_from_root(qq.pos[0], qq.pos[1], qq.pos[2], qq.h, tree, pol, flag_d, 0u);
+            if(pol.n != expected) {Kokkos::atomic_store(&flag_d[1], 1);}   /* the same walk over the same inputs records what it counted */
+        });
+        gizmo_gpu_check_last_error("gx_send_fill", n);
+        int64_t *off_h = (int64_t *) host;
+        int *rec_h = (int *) (host + ((size_t)n + 1) * sizeof(int64_t));
+        Kokkos::deep_copy(Kokkos::View<int64_t*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(off_h, (size_t)n + 1),
+                          Kokkos::View<int64_t*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(off_d, (size_t)n + 1));
+        if(total > 0) {
+            Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(rec_h, (size_t)(2 * total)),
+                              Kokkos::View<int*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(rec_d, (size_t)(2 * total)));
+        }
+        int flags[2] = {0, 0};
+        Kokkos::deep_copy(Kokkos::View<int*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(flags, 2),
+                          Kokkos::View<int*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(flag_d, 2));
+        if(flags[0] || flags[1]) {
+            /* the host walk stops the run on a malformed tree; the device walk reports it, and so does this */
+            printf("gx_device_sender_walk: task %d met a malformed tree (%d) or a fill that disagreed with its count (%d)\n",
+                   ThisTask, flags[0], flags[1]);
+            fflush(stdout);
+            endrun(90001027);
+            status = GX_RECEIVER_FAILED;
+        }
+        *offsets_out = off_h; *records_out = rec_h;
+        gx_send_diag_records = total;
+    }
+    Kokkos::fence("gx_send_done");
+    gizmo_gpu_pool_give(GIZMO_POOL_GX_RECORDS, rec_d);
+    gizmo_gpu_pool_give(GIZMO_POOL_GX_QUERIES, q_d);
+    gizmo_gpu_pool_give(GIZMO_POOL_GX_QOFF, off_d);
+    gizmo_gpu_pool_give(GIZMO_POOL_GX_FLAG, flag_d);
+    gx_send_diag_seconds[0] = timediff(t0, my_second());
+    return status;
+}
+
 double gx_recv_diag_seconds[3] = {0, 0, 0};
 
 int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n_env,
@@ -3732,43 +3948,8 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     const int foreign_base  = tree_view.foreign_base;
     const int pseudo_start  = tree_view.pseudo_start;
 
-    /* The traversal reads node geometry, which drifts, so the nodes have to be
-     * current before it runs -- the host walk achieves that by drifting each
-     * stale node as it reaches it, under a lock, which a kernel cannot do.
-     *
-     * Requiring some earlier caller to have swept them is not enough: the sweep
-     * lives on the gravity path, so with self-gravity disabled nothing would
-     * ever perform it and this traversal could never run at all, on problems
-     * whose tree and mirror are perfectly valid.  Perform the sweep here when
-     * nothing else has.  It is the same work the host walk would do node by
-     * node, done once for the whole tree, and it is rank-local.
-     *
-     * The one case it cannot repair is a host lazy drift that has already
-     * advanced nodes to this time: the sweep skips nodes that are already
-     * current and so would leave their mirrors behind. Then, and only then, the
-     * host answers. */
-    if(!gpu_gravity_tree_nodes_current_at(All.Ti_Current)) {
-        /* The geometry is current by neither route -- no sweep certified it and
-         * this tree was not built at this time.  A host lazy drift at this time
-         * advanced nodes without their mirrors, and a sweep skips already-current
-         * nodes, so that state is unrepairable here and the host answers.
-         * A tree BUILT after such a drift never reaches this branch: the build
-         * rewrites every node and every mirror, and no later host walk can re-arm
-         * the latch at this time because force_drift_node returns early on a node
-         * that is already current. */
-        if(force_host_lazy_drift_ti() == All.Ti_Current) {return GX_RECEIVER_DECLINED;}
-#ifdef SELFGRAVITY_OFF
-        /* No gravity walk exists to sweep the nodes in this build, so without
-         * this the traversal could never run at all, however valid the tree and
-         * its mirror are. */
-        if(gpu_force_drift_nodes(All.Ti_Current) != 0) {return GX_RECEIVER_DECLINED;}
-#else
-        /* Gravity owns the sweep. Sweeping here instead would drift the whole
-         * tree eagerly where the walks drift only what they touch, so leave the
-         * geometry alone and let the host answer. */
-        return GX_RECEIVER_DECLINED;
-#endif
-    }
+    /* The traversal reads node geometry, which drifts (gx_discovery_nodes_walkable). */
+    if(!gx_discovery_nodes_walkable()) {return GX_RECEIVER_DECLINED;}
 
     using DevSp = GIZMO_KOKKOS_DEVICE_SPACE;
 
@@ -3788,10 +3969,10 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     std::vector<int>     counts_h;
     std::vector<int64_t> offsets_h;
     std::vector<struct gx_candidate_row> rows_h;
-    std::vector<double>  band_h;
-    const int n_band = symmetric ? Numnodestree : 0;   /* the local nodes [tree_base, tree_base + Numnodestree) */
+    int n_band = 0;
+    const double *band_v = NULL;
+    if(symmetric && !(band_v = gx_discovery_node_band(supply_mask, walker_j_reach_scale, &n_band))) {return GX_RECEIVER_DECLINED;}
     try {
-        band_h.resize((size_t)(n_band > 0 ? n_band : 1));
         leaf_h.resize((size_t)num_local);
         counts_h.resize((size_t)chunk_cap);
         offsets_h.resize((size_t)chunk_cap + 1);
@@ -3803,23 +3984,25 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         return GX_RECEIVER_DECLINED;
     }
 
-    struct gx_recv_leaf_t *leaf_d = gx_recv_alloc<struct gx_recv_leaf_t>("gx_recv_leaf", (size_t)num_local);
-    struct gx_export_envelope_t *env_d = gx_recv_alloc<struct gx_export_envelope_t>("gx_recv_env", (size_t)chunk_cap);
-    int     *counts_d  = gx_recv_alloc<int>("gx_recv_counts",  (size_t)chunk_cap);
-    int64_t *offsets_d = gx_recv_alloc<int64_t>("gx_recv_offsets", (size_t)chunk_cap + 1);
-    int     *anomaly_d = gx_recv_alloc<int>("gx_recv_anomaly", 1);
-    double  *band_d    = symmetric ? gx_recv_alloc<double>("gx_recv_band", (size_t)(n_band > 0 ? n_band : 1)) : NULL;
+    /* grow-only per-site buffers (gizmo_gpu_pool_take): a per-call allocation and free costs driver calls that
+       wait on the device */
+    struct gx_recv_leaf_t *leaf_d = (struct gx_recv_leaf_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_LEAF, (size_t)num_local * sizeof(struct gx_recv_leaf_t), "gx_recv_leaf");
+    struct gx_export_envelope_t *env_d = (struct gx_export_envelope_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_ENV, (size_t)chunk_cap * sizeof(struct gx_export_envelope_t), "gx_recv_env");
+    int     *counts_d  = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_COUNTS, (size_t)chunk_cap * sizeof(int), "gx_recv_counts");
+    int64_t *offsets_d = (int64_t *) gizmo_gpu_pool_take(GIZMO_POOL_GX_OFFSETS, ((size_t)chunk_cap + 1) * sizeof(int64_t), "gx_recv_offsets");
+    int     *anomaly_d = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_FLAG, 2 * sizeof(int), "gx_recv_anomaly");
+    auto give_back = [&](void) {
+        Kokkos::fence("gx_recv_done");
+        gizmo_gpu_pool_give(GIZMO_POOL_GX_LEAF, leaf_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_ENV, env_d);
+        gizmo_gpu_pool_give(GIZMO_POOL_GX_COUNTS, counts_d); gizmo_gpu_pool_give(GIZMO_POOL_GX_OFFSETS, offsets_d);
+        gizmo_gpu_pool_give(GIZMO_POOL_GX_FLAG, anomaly_d);
+    };
 
-    if(!leaf_d || !env_d || !counts_d || !offsets_d || !anomaly_d || (symmetric && !band_d)) {
+    if(!leaf_d || !env_d || !counts_d || !offsets_d || !anomaly_d) {
         printf("gx_device_receiver_walk: task %d could not reserve device buffers for %d local leaves; answering on the host\n",
                ThisTask, num_local);
         fflush(stdout);
-        if(leaf_d)    {Kokkos::kokkos_free<DevSp>(leaf_d);}
-        if(env_d)     {Kokkos::kokkos_free<DevSp>(env_d);}
-        if(counts_d)  {Kokkos::kokkos_free<DevSp>(counts_d);}
-        if(offsets_d) {Kokkos::kokkos_free<DevSp>(offsets_d);}
-        if(anomaly_d) {Kokkos::kokkos_free<DevSp>(anomaly_d);}
-        if(band_d)    {Kokkos::kokkos_free<DevSp>(band_d);}
+        give_back();
         return GX_RECEIVER_DECLINED;
     }
 
@@ -3880,23 +4063,6 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             ld(leaf_d, (size_t)num_local);
         Kokkos::deep_copy(ld, lh);
     }
-    if(symmetric && n_band > 0) {
-        /* The host walker's node reach (mode_b_node_symmetric_radius): the largest band over the supply types,
-           times the walk's j-side scale.  The geometry was certified current above, so the host walk would
-           drift none of these nodes and reads exactly these bands. */
-#pragma omp parallel for schedule(static)
-        for(int kn = 0; kn < n_band; kn++) {
-            double rmax = 0.0;
-            for(int t = 0; t < 6; t++) {
-                if(!(supply_mask & (1u << t))) {continue;}
-                const double v = (double)Extnodes[tree_base + kn].hmax_per_type[t];
-                if(v > rmax) {rmax = v;}
-            }
-            band_h[(size_t)kn] = rmax * walker_j_reach_scale;
-        }
-        Kokkos::deep_copy(Kokkos::View<double*, DevSp, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(band_d, (size_t)n_band),
-                          Kokkos::View<double*, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>>(band_h.data(), (size_t)n_band));
-    }
     gx_recv_diag_seconds[0] = timediff(t_diag, my_second());
     t_diag = my_second();
 
@@ -3914,7 +4080,6 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
     const unsigned int   *node_bitflags = tree_view.node_bitflags;
     const int            *nextnode_aux  = tree_view.nextnode_aux;
     const int type_mask_trusted_v = TypePresenceMaskTrusted;   /* read on the host, captured by value */
-    const double *band_v = band_d;
 
     /* One walk of envelope b of the chunk: count only (out == nullptr, cap 0), or write its candidates to out. */
     auto walk_one = [=] KOKKOS_FUNCTION (const struct gx_export_envelope_t &env, int *out, int cap) -> int {
@@ -3967,7 +4132,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         /* The emission buffer: grown to this chunk's pairs, capped; never below one whole row. */
         const long pair_cap_want = (batch_total < GX_RECV_PAIR_CAP) ? (long)batch_total : GX_RECV_PAIR_CAP;
         const long pair_cap = (pair_cap_want > (long)num_local) ? pair_cap_want : (long)num_local;
-        int *pairs_d = gx_recv_alloc<int>("gx_recv_pairs", (size_t)pair_cap);
+        int *pairs_d = (int *) gizmo_gpu_pool_take(GIZMO_POOL_GX_PAIRS, (size_t)pair_cap * sizeof(int), "gx_recv_pairs");
         int *pairs_h = (int *) gizmo_ghost_pinned_buffer(GX_RECV_PINNED_SLOT, (size_t)pair_cap * sizeof(int));
         if(!pairs_d || !pairs_h) {
             /* candidates may already be in the send set from an earlier chunk, so this cannot decline */
@@ -3975,7 +4140,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             fflush(stdout);
             gizmo_request_controlled_stop(7740, "gx_device_receiver_walk: candidate buffer allocation failed",
                                           __FILE__, __LINE__, __FUNCTION__);
-            if(pairs_d) {Kokkos::kokkos_free<DevSp>(pairs_d);}
+            gizmo_gpu_pool_give(GIZMO_POOL_GX_PAIRS, pairs_d);
             status = GX_RECEIVER_FAILED; break;
         }
 
@@ -4042,7 +4207,8 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
             gx_recv_diag_seconds[2] += timediff(t_acc, my_second());
             r0 = r1;
         }
-        Kokkos::kokkos_free<DevSp>(pairs_d);
+        Kokkos::fence("gx_recv_pairs_done");
+        gizmo_gpu_pool_give(GIZMO_POOL_GX_PAIRS, pairs_d);
     }
 
     gx_recv_diag_seconds[1] = timediff(t_diag, my_second()) - gx_recv_diag_seconds[2];
@@ -4053,12 +4219,7 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
         Kokkos::deep_copy(ah, ad);
     }
 
-    Kokkos::kokkos_free<DevSp>(leaf_d);
-    Kokkos::kokkos_free<DevSp>(env_d);
-    Kokkos::kokkos_free<DevSp>(counts_d);
-    Kokkos::kokkos_free<DevSp>(offsets_d);
-    Kokkos::kokkos_free<DevSp>(anomaly_d);
-    if(band_d) {Kokkos::kokkos_free<DevSp>(band_d);}
+    give_back();
 
     /* The host walk stops the run on this state, so reaching it here means the
      * same thing.  Falling back would only hide a malformed tree: the host walk

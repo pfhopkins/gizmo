@@ -62,6 +62,15 @@ struct gx_export_envelope_t {
     int    _pad;
 };
 
+/* One query of the requesting rank as the sender walk reads it: search centre and reach (h already times the
+ * spec's safety factor).  Shared for the same reason as the envelope: the device sender walk reads it too. */
+struct gx_query_t {
+    double pos[3];
+    double h;
+    int    type;       /* for caller diagnostics; predicate uses h directly */
+    int    _pad;
+};
+
 /* Lives here, in a header that pulls in no Kokkos, rather than beside the device
  * traversal that consumes it.  It is plain data -- pointers and index bounds --
  * and the runner declares one as a member, so the header carrying it is included

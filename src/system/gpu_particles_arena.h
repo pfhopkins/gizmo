@@ -194,7 +194,7 @@ void *gizmo_treehost_device_scratch(int slot, size_t bytes);
  *     there first); src_CellP may be NULL.  0 on success; 1 on a failed copy, after which the caller copies on
  *     the host.
  *   _pinned_buffer: grow-only page-locked scratch of the ghost transport (slots 0/1 receive P/CellP, 2/3 send
- *     P/CellP, 4/5 send/receive trimmed records, 6 discovery candidates); never zeroed; NULL when the memory cannot be had.
+ *     P/CellP, 4/5 send/receive trimmed records, 6/7 discovery candidates/sender records); never zeroed; NULL when the memory cannot be had.
  *   _zero_wakeup / _gather_wakeup: P[j].wakeup over the ghost range, set to 0 / copied into dst[0,n), on the device. */
 int gizmo_ghostdev_enabled(void);
 void gizmo_ghostdev_set_live(int base, int n);
@@ -365,7 +365,17 @@ enum gizmo_gpu_pool_site {
     GIZMO_POOL_MODEA_ACTIVES,     /* run_mode_a: staged ActiveData */
     GIZMO_POOL_SIDX_RAISE,        /* sidx_raise_members: staged raise records */
     GIZMO_POOL_SIDX_SCRATCH,      /* the index build's working blocks, one site per block: 16 sites from here */
-    GIZMO_POOL_NSITES = GIZMO_POOL_SIDX_SCRATCH + 16
+    GIZMO_POOL_GX_LEAF = GIZMO_POOL_SIDX_SCRATCH + 16,   /* ghost discovery (gpu_neighbor_list.cc): receiver leaf records */
+    GIZMO_POOL_GX_ENV,            /* receiver envelopes */
+    GIZMO_POOL_GX_COUNTS,         /* receiver candidates per envelope */
+    GIZMO_POOL_GX_OFFSETS,        /* receiver candidate offsets */
+    GIZMO_POOL_GX_PAIRS,          /* receiver candidates */
+    GIZMO_POOL_GX_BAND,           /* node bands of a symmetric walk */
+    GIZMO_POOL_GX_QUERIES,        /* sender queries */
+    GIZMO_POOL_GX_QOFF,           /* sender record offsets per query */
+    GIZMO_POOL_GX_RECORDS,        /* sender records */
+    GIZMO_POOL_GX_FLAG,           /* the walks' anomaly flag */
+    GIZMO_POOL_NSITES
 };
 void *gizmo_gpu_pool_take(int site, size_t bytes, const char *label);
 void  gizmo_gpu_pool_give(int site, void *p);

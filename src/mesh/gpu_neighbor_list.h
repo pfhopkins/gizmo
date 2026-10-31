@@ -378,6 +378,21 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
    compaction, copies) and in the host accept. */
 extern double gx_recv_diag_seconds[3];
 
+/* Device traversal of this rank's queries over the top-level tree (the sender half of request-driven ghost
+   discovery): for query k, the (peer, top-leaf node) pairs the host sender walk would export to, in walk order --
+   records[2 r], records[2 r + 1] for r in [offsets[k], offsets[k + 1]).  Both arrays are page-locked host memory,
+   valid until the next call.  A superset of the host walk's exports (rounding allowance on every opening test),
+   never fewer.  Returns GX_RECEIVER_COMPLETED, GX_RECEIVER_DECLINED (nothing done; the host walk must answer:
+   geometry not walkable, no top-leaf map, allocation) or GX_RECEIVER_FAILED (malformed tree; a stop is requested).
+   Rank-local, no collectives. */
+int gx_device_sender_walk(const struct gx_query_t *queries, int n, unsigned int supply_mask, int search_mode,
+                          double walker_j_reach_scale, const int64_t **offsets_out, const int **records_out);
+extern double gx_send_diag_seconds[2];
+extern long long gx_send_diag_records;
+/* Called at the start of each discovery: the node bands staged for a symmetric walk are kept for both walks of
+   one discovery and no longer. */
+void gx_discovery_begin_call(void);
+
 /* Describe this rank's tree to the device walk, or say why it cannot be
    described.  Returns 0 with *out filled, 1 with *out untouched and a one-shot
    line naming `caller`.  Every user of the device traversal asks the same two
