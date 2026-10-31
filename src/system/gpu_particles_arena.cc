@@ -212,6 +212,7 @@ extern "C" int gizmo_particles_owned_kept_on_device(void) {return owned_kept_on_
 extern "C" void gizmo_particles_prefetch_ghosts_to_host(int n_owned, const char *site)
 {
     if(!particles_prefetch_enabled() || !owned_kept_on_device_ || n_owned < 0 || n_owned >= NumPart || !P) {return;}
+    if(ghostdev_range_live()) {return;}   /* a device-resident ghost range stays on the device */
 #if defined(KOKKOS_ENABLE_CUDA)
     const size_t bytes_p = (size_t) (NumPart - n_owned) * sizeof(struct particle_data);
     const int c_end = (NumPart < All.MaxPartGas) ? NumPart : All.MaxPartGas;
