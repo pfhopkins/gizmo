@@ -304,6 +304,9 @@ void set_turb_ampl(void)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;
             PRINT_STATUS(" ..updating fields tracked for following injected energy and dissipation");
+#if defined(GPU_PCIE_OPTIMIZATIONS)
+            gizmo_particles_prefetch_to_host("set_turb_ampl");   /* a host sweep of every cell, possibly right after a device pass */
+#endif
             for(i=0; i < NumPart; i++)
             {
                 if(P[i].Type == 0)

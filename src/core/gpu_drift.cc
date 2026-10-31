@@ -144,6 +144,12 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
 #endif
     if(!tested_on_device)
     {
+#if defined(GPU_PCIE_OPTIMIZATIONS)
+    /* Device passes on the steps since the last bulk move were too small to move the particles in bulk, and under
+       device-preferred placement the pages they touched stayed on the device: bring those back in one move before
+       this test and the host drift read most of the particles (pages already on the host cost the move nothing). */
+    if((long long) n_idx * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("drift");}
+#endif
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(n_idx >= 16)
 #endif
