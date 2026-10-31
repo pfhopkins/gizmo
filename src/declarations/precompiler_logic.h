@@ -1832,3 +1832,8 @@
 #endif
 #define EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
 #endif
+
+/* last, after every block that can switch on an equation of state (GRAIN_FLUID_PROMOTION turns on EOS_TILLOTSON above) */
+#if defined(HYDRO_KERNEL_SURFACE_VOLCORR) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS))
+#define KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE /* cells carry a CompositionType: the surface correction stands down at material interfaces (mesh/kernel.h) */
+#endif

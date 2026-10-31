@@ -484,7 +484,15 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
             for (int k1 = 0; k1 < 3; ++k1) closure_asymm += face_in[k1] * face_in[k1];
             const double particle_inverse_volume = NumNgb_eff / (VOLUME_NORM_COEFF_FOR_NDIMS * pow(h, (double)NUMDIMS));
             closure_asymm = sqrt(closure_asymm) / (h * particle_inverse_volume);
-            CellP[i].FaceClosureError = (MyFloat)DMIN(DMAX(KERNEL_SURFACE_VOLCORR_OFFSET + KERNEL_SURFACE_VOLCORR_SLOPE * closure_asymm, KERNEL_SURFACE_VOLCORR_FLOOR), 1.0);
+            double surface_volume_factor = DMIN(DMAX(KERNEL_SURFACE_VOLCORR_OFFSET + KERNEL_SURFACE_VOLCORR_SLOPE * closure_asymm, KERNEL_SURFACE_VOLCORR_FLOOR), 1.0);
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+            if (accum.KernelVolume_Foreign > 0 && accum.KernelVolume > 0) { /* another material fills part of the kernel: an interface, not empty space */
+                /* less its largest single contribution: one stray cell of another material (debris off a free surface) is not an interface */
+                const double foreign_share = ((double)accum.KernelVolume_Foreign - (double)accum.KernelVolume_ForeignMax) / (double)accum.KernelVolume;
+                surface_volume_factor = 1.0 - DMAX(0.0, 1.0 - foreign_share / KERNEL_SURFACE_VOLCORR_FOREIGN_SHARE_OFF) * (1.0 - surface_volume_factor);
+            }
+#endif
+            CellP[i].FaceClosureError = (MyFloat)surface_volume_factor;
 #else
             CellP[i].FaceClosureError = (MyFloat)(dimless_face_leak / (2.0 * (double)NUMDIMS * pow(dx_i, (double)(NUMDIMS - 1))));
 #endif

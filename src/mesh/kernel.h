@@ -228,6 +228,15 @@
 #define KERNEL_SURFACE_VOLCORR_OFFSET  (1.0259)
 #define KERNEL_SURFACE_VOLCORR_FLOOR   (0.344301)
 #endif
+/* The imbalance it reads is that of the neighbour COUNT, so it cannot tell empty space from a neighbouring material
+   whose cells are spaced more widely (equal-mass cells across a density jump): the dense side of every material
+   interface reads as a partial free surface. With materials, the correction is therefore scaled back by the share of
+   the kernel volume another material fills (volumes min(h_i,h_j)^NUMDIMS, kernel-weighted, less the largest single
+   contribution so one stray cell does not count), linearly from the full correction at a share of zero to no correction
+   at this share and above. A single-material body is unchanged. */
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE /* defined in precompiler_logic.h, so every unit sees the same density accumulators */
+#define KERNEL_SURFACE_VOLCORR_FOREIGN_SHARE_OFF (0.02)
+#endif
 #endif
 
 

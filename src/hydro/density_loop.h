@@ -176,6 +176,12 @@ struct DensityAccumData {
     Vec3<MyDouble>             GradH_numer;
     MyDouble                   GradH_denom;
 #endif
+
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+    MyDouble                   KernelVolume;          /* sum_j wk min(h_j,h_i)^NUMDIMS over the neighbours (j != i) */
+    MyDouble                   KernelVolume_Foreign;  /* the same over neighbours of another CompositionType */
+    MyDouble                   KernelVolume_ForeignMax; /* the largest single such contribution (MAX-merged) */
+#endif
 };
 
 /* ============================================================================
@@ -231,6 +237,9 @@ struct DensityActiveState {
     int                Type;
 #ifdef HYDRO_MULTIFLUID
     unsigned char      FluidType;  /* packed P[i].FluidType — for same_lagrangian_fluid_id() */
+#endif
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+    int                CompositionType;  /* CellP[i].CompositionType (gas i) — which neighbours are another material */
 #endif
 };
 
@@ -400,6 +409,11 @@ struct DensitySpec {
         local.NV_T_face_weights[0] += peer.NV_T_face_weights[0];
         local.NV_T_face_weights[1] += peer.NV_T_face_weights[1];
         local.NV_T_face_weights[2] += peer.NV_T_face_weights[2];
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+        local.KernelVolume         += peer.KernelVolume;
+        local.KernelVolume_Foreign += peer.KernelVolume_Foreign;
+        if (peer.KernelVolume_ForeignMax > local.KernelVolume_ForeignMax) local.KernelVolume_ForeignMax = peer.KernelVolume_ForeignMax; /* MAX, not ADD */
+#endif
 
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
         local.ParticleVel[0] += peer.ParticleVel[0];
@@ -970,6 +984,11 @@ struct DensitySpec {
         accum.NV_T_face_weights[0] = 0;
         accum.NV_T_face_weights[1] = 0;
         accum.NV_T_face_weights[2] = 0;
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+        accum.KernelVolume = 0;
+        accum.KernelVolume_Foreign = 0;
+        accum.KernelVolume_ForeignMax = 0;   /* MAX-reduction sentinel (contributions are >= 0) */
+#endif
 #if defined(HYDRO_MESHLESS_FINITE_VOLUME) && ((HYDRO_FIX_MESH_MOTION==5)||(HYDRO_FIX_MESH_MOTION==6))
         accum.ParticleVel[0] = 0; accum.ParticleVel[1] = 0; accum.ParticleVel[2] = 0;
 #endif
@@ -1079,6 +1098,10 @@ struct DensitySpec {
 
 #ifdef HYDRO_MULTIFLUID
         a.FluidType = ctx.P[i].FluidType;
+#endif
+
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+        a.CompositionType = i_is_gas ? ctx.CellP[i].CompositionType : -1;
 #endif
 
         (void)active_slot;
@@ -1244,6 +1267,17 @@ struct DensitySpec {
                 accum.NV_T_face_weights[0] += wk * dp[0];
                 accum.NV_T_face_weights[1] += wk * dp[1];
                 accum.NV_T_face_weights[2] += wk * dp[2];
+#ifdef KERNEL_SURFACE_VOLCORR_MATERIAL_AWARE
+                {
+                    const double h_j = DMIN((double)Pj.KernelRadius, h); /* capped at i's own: one sparse cell (debris off a free surface) counts no more than a neighbour of i's spacing */
+                    double vol_j = h_j; for (int kd = 1; kd < NUMDIMS; ++kd) vol_j *= h_j;
+                    accum.KernelVolume += wk * vol_j;
+                    if (CellPj->CompositionType != i_active.CompositionType) {
+                        accum.KernelVolume_Foreign += wk * vol_j;
+                        if (wk * vol_j > accum.KernelVolume_ForeignMax) accum.KernelVolume_ForeignMax = wk * vol_j;
+                    }
+                }
+#endif
 #ifdef HYDRO_PARTITION_UNITY_IMPROVE_FD
                 accum.GradH_numer[0] += (dwk / r) * dp[0];
                 accum.GradH_numer[1] += (dwk / r) * dp[1];
