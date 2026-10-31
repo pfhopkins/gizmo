@@ -28,6 +28,7 @@
 #include "../core/proto.h"
 #include "../core/timestep_functions.h"
 #include "gpu_particles_arena.h"
+#include "gpu_shadow_stage.h"   /* the Mode B tail's cell records */
 #include "../mesh/gpu_neighbor_list.h"
 #include "../mesh/ghost_writeback.h"   /* ghost_get_num_ghosts */
 
@@ -98,6 +99,16 @@ static int treehost_armed_ = 0;   /* between gizmo_treehost_begin and _disarm */
 static int treehost_span_  = 0;   /* P left on the device by the tree build, density pass not reached yet */
 static int treehost_cells_ = 0;   /* within the span: the cells were moved to the device too */
 
+/* Device-resident density-finalize span (contract in gpu_particles_arena.h). */
+static int densfin_armed_ = 0;   /* between gizmo_densfin_arm and the pass's to-host site */
+static int densfin_span_  = 0;   /* the pass left the particles on the device; staged consumers until gizmo_densfin_close */
+static int densfin_hostP_valid_ = 0, densfin_hostP_n_ = 0, densfin_behind_ = -1;
+static struct particle_data *densfin_hostP_ = NULL;
+static size_t densfin_hostP_bytes_ = 0;
+static struct gas_cell_data *densfin_hostC_ = NULL;   /* the Mode B tail's cell records (gizmo_densfin_host_tail) */
+static size_t densfin_hostC_bytes_ = 0;
+static struct gas_cell_data *densfin_hostC_buffer(void);
+
 /* The ghost range is device-resident (gizmo_ghostdev_set_live) and is still the live pool's. */
 static int ghostdev_range_live(void)
 {
@@ -109,6 +120,7 @@ static void particles_prefetch(int to_device, const char *site, int with_cells =
     (void) site;
     if(!particles_prefetch_enabled()) {return;}
     owned_kept_on_device_ = 0;
+    densfin_span_ = 0; densfin_hostP_valid_ = 0;
     if(!to_device || (with_cells && with_particles)) {treehost_span_ = 0; treehost_cells_ = 0;}   /* P goes to the host, or both arrays end up on the device */
 #if defined(KOKKOS_ENABLE_CUDA)
     /* A to-host move leaves a device-resident ghost range on the device. */
@@ -726,6 +738,183 @@ extern "C" void gizmo_treehost_end(const char *site)
 {
     if(!treehost_span_) {return;}
     particles_prefetch(0, site, treehost_cells_ ? 1 : 0);   /* ends the span */
+}
+
+extern "C" int gizmo_densfin_enabled(void)
+{
+#if defined(GIZMO_GPU_DENSFIN_STAGE_SUPPORTED) && defined(KOKKOS_ENABLE_CUDA)
+    static int enabled = -1;
+    if(enabled < 0) {
+        const char *env = getenv("GIZMO_GPU_DENSFIN_STAGE");
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
+        if(ThisTask == 0 && particles_prefetch_enabled()) {printf("Particle storage: density finalize on staged copies, particles kept on the device (GIZMO_GPU_DENSFIN_STAGE) is %s.\n", enabled ? "on" : "off"); fflush(stdout);}
+    }
+    return enabled && particles_prefetch_enabled();
+#else
+    return 0;
+#endif
+}
+extern "C" int gizmo_densfin_arm(long long n_active)
+{
+    densfin_armed_ = 0;
+#if defined(GIZMO_GPU_DENSFIN_STAGE_SUPPORTED) && defined(KOKKOS_ENABLE_CUDA)
+    int mine = (gizmo_densfin_enabled() && NumPart > 0 && All.TotN_gas > 0 && n_active * 8 >= (long long) NumPart) ? 1 : 0;
+    /* every rank arms or none: an armed pass's iterations take another route (gizmo_densfin_armed) */
+    if(NTask > 1) {MPI_Allreduce(MPI_IN_PLACE, &mine, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);}
+    densfin_armed_ = mine;
+#else
+    (void) n_active;
+#endif
+    return densfin_armed_;
+}
+extern "C" void gizmo_densfin_disarm(void) {densfin_armed_ = 0;}
+extern "C" int gizmo_densfin_take(const char *site)
+{
+    if(!densfin_armed_) {return 0;}
+    densfin_armed_ = 0;
+    if(!gizmo_particles_keep_owned_on_device(site)) {return 0;}
+    densfin_span_ = 1; densfin_hostP_valid_ = 0; densfin_behind_ = -1;
+    return 1;
+}
+extern "C" int gizmo_densfin_armed(void) {return densfin_armed_;}
+extern "C" int gizmo_densfin_host_tail(const char *site, struct particle_data **P_copy, struct gas_cell_data **CellP_copy)
+{
+    *P_copy = NULL; *CellP_copy = NULL;
+#if defined(GIZMO_GPU_DENSFIN_STAGE_SUPPORTED) && defined(KOKKOS_ENABLE_CUDA)
+    if(!densfin_armed_ || prefetch_side_ != 1 || !densfin_hostC_buffer()) {return 0;}
+    {   /* nothing behind the current time on this rank: the tail's walkers then drift (write) nothing */
+        const struct particle_data *Pd = P;
+        const integertime t_now = All.Ti_Current;
+        long long behind = 0;
+        Kokkos::parallel_reduce("densfin_tail_count_behind", NumPart, KOKKOS_LAMBDA(int i, long long &c) {if(Pd[i].Ti_current != t_now) {c++;}}, behind);
+        Kokkos::fence("densfin_tail_count_behind");
+        if(behind > 0) {return 0;}
+    }
+    if(!gizmo_densfin_take(site)) {return 0;}
+    densfin_behind_ = 0;
+    const struct particle_data *hp = gizmo_densfin_host_P();
+    if(!hp) {gizmo_densfin_abandon(site); return 0;}
+    static std::vector<int> identity;
+    if((int) identity.size() < N_gas) {const int k0 = (int) identity.size(); identity.resize((size_t) N_gas); for(int k = k0; k < N_gas; k++) {identity[(size_t) k] = k;}}
+    const ShadowField cells[] = {SHADOW_C(VelPred), SHADOW_C(ConditionNumber)};
+    if(gizmo_shadow_gather(identity.data(), N_gas, cells, 2, NULL, densfin_hostC_, gizmo_stage_verify_level() > 0, site)) {gizmo_densfin_abandon(site); return 0;}
+    *P_copy = (struct particle_data *) hp; *CellP_copy = densfin_hostC_;
+    return 1;
+#else
+    (void) site;
+    return 0;
+#endif
+}
+extern "C" int gizmo_densfin_span_active(void) {return densfin_span_ && owned_kept_on_device_;}
+#if defined(KOKKOS_ENABLE_CUDA)
+static cudaStream_t densfin_copy_stream_ = 0;
+static cudaEvent_t  densfin_copy_event_ = 0;
+static int densfin_copy_pending_ = 0;
+static double densfin_copy_t0_ = 0;
+static struct particle_data *densfin_hostP_buffer(void)
+{
+    const size_t bytes = (size_t) (NumPart > 0 ? NumPart : 1) * sizeof(struct particle_data);
+    if(bytes > densfin_hostP_bytes_) {
+        if(densfin_hostP_) {gizmo_gpu_free_pinned_host(densfin_hostP_);}
+        const size_t want = bytes + bytes / 8;
+        densfin_hostP_ = (struct particle_data *) gizmo_gpu_alloc_pinned_host(want, "densfin_host_P");
+        densfin_hostP_bytes_ = densfin_hostP_ ? want : 0;
+    }
+    return densfin_hostP_;
+}
+#endif
+static struct gas_cell_data *densfin_hostC_buffer(void)
+{
+    const size_t bytes = (size_t) (N_gas > 0 ? N_gas : 1) * sizeof(struct gas_cell_data);
+    if(bytes > densfin_hostC_bytes_) {
+        free(densfin_hostC_);
+        const size_t want = bytes + bytes / 8;
+        void *p = NULL;
+        if(posix_memalign(&p, 64, want) != 0) {p = NULL;}
+        densfin_hostC_ = (struct gas_cell_data *) p;
+        densfin_hostC_bytes_ = p ? want : 0;
+    }
+    return densfin_hostC_;
+}
+extern "C" void gizmo_densfin_reserve_host_P(void)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    if(densfin_hostP_buffer()) {memset((void *) densfin_hostP_, 0, densfin_hostP_bytes_);}   /* allocated and touched now */
+    if(densfin_hostC_buffer()) {memset((void *) densfin_hostC_, 0, densfin_hostC_bytes_);}
+#endif
+}
+extern "C" void gizmo_densfin_host_P_begin(void)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    if(!gizmo_densfin_span_active() || densfin_copy_pending_ || !densfin_hostP_buffer()) {return;}
+    if(densfin_hostP_valid_ && densfin_hostP_n_ == NumPart) {return;}   /* taken by the Mode B tail; P unchanged since */
+    if(!densfin_copy_stream_) {
+        if(cudaStreamCreateWithFlags(&densfin_copy_stream_, cudaStreamNonBlocking) != cudaSuccess ||
+           cudaEventCreateWithFlags(&densfin_copy_event_, cudaEventDisableTiming) != cudaSuccess) {(void) cudaGetLastError(); densfin_copy_stream_ = 0; return;}
+    }
+    densfin_hostP_valid_ = 0;
+    Kokkos::fence("gizmo_densfin_host_P_begin");   /* after the pass's writes to P */
+    densfin_copy_t0_ = my_second();
+    if(cudaMemcpyAsync(densfin_hostP_, P, (size_t) NumPart * sizeof(struct particle_data), cudaMemcpyDefault, densfin_copy_stream_) != cudaSuccess ||
+       cudaEventRecord(densfin_copy_event_, densfin_copy_stream_) != cudaSuccess) {(void) cudaGetLastError(); return;}
+    densfin_copy_pending_ = 1; densfin_hostP_n_ = NumPart;
+#endif
+}
+extern "C" struct particle_data *gizmo_densfin_host_P_wait(void)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    if(!densfin_copy_pending_) {return (gizmo_densfin_span_active() && densfin_hostP_valid_ && densfin_hostP_n_ == NumPart) ? densfin_hostP_ : NULL;}
+    densfin_copy_pending_ = 0;
+    if(cudaEventSynchronize(densfin_copy_event_) != cudaSuccess) {(void) cudaGetLastError(); return NULL;}
+    prefetch_seconds_ += timediff(densfin_copy_t0_, my_second());
+    prefetch_bytes_host_ += (double) densfin_hostP_n_ * (double) sizeof(struct particle_data);
+    prefetch_calls_++;
+    if(!gizmo_densfin_span_active() || densfin_hostP_n_ != NumPart) {return NULL;}
+    densfin_hostP_valid_ = 1;
+    return densfin_hostP_;
+#else
+    return NULL;
+#endif
+}
+extern "C" const struct particle_data *gizmo_densfin_host_P(void)
+{
+    if(!gizmo_densfin_span_active()) {return NULL;}
+    if(densfin_copy_pending_) {(void) gizmo_densfin_host_P_wait();}
+    if(densfin_hostP_valid_ && densfin_hostP_n_ == NumPart) {return densfin_hostP_;}
+    densfin_hostP_valid_ = 0;
+#if defined(KOKKOS_ENABLE_CUDA)
+    if(!densfin_hostP_buffer()) {return NULL;}
+    const double t0 = my_second();
+    Kokkos::fence("gizmo_densfin_host_P");   /* after the finalize's writes to P */
+    if(cudaMemcpy(densfin_hostP_, P, (size_t) NumPart * sizeof(struct particle_data), cudaMemcpyDefault) != cudaSuccess) {(void) cudaGetLastError(); return NULL;}
+    prefetch_seconds_ += timediff(t0, my_second());
+    prefetch_bytes_host_ += (double) NumPart * (double) sizeof(struct particle_data);
+    prefetch_calls_++;
+    densfin_hostP_valid_ = 1; densfin_hostP_n_ = NumPart;
+    return densfin_hostP_;
+#else
+    return NULL;
+#endif
+}
+extern "C" const struct particle_data *gizmo_densfin_host_P_for_walk(void)
+{
+    const struct particle_data *h = gizmo_densfin_host_P();
+    if(!h) {return NULL;}
+    if(densfin_behind_ < 0) {   /* once per span: how many particles are behind the current time */
+        const struct particle_data *Pd = P;
+        const integertime t_now = All.Ti_Current;
+        long long behind = 0;
+        Kokkos::parallel_reduce("densfin_count_behind", NumPart, KOKKOS_LAMBDA(int i, long long &c) {if(Pd[i].Ti_current != t_now) {c++;}}, behind);
+        Kokkos::fence("densfin_count_behind");
+        densfin_behind_ = (behind > 0) ? 1 : 0;
+    }
+    return densfin_behind_ ? NULL : h;
+}
+extern "C" void gizmo_densfin_close(void) {densfin_span_ = 0; densfin_hostP_valid_ = 0;}
+extern "C" void gizmo_densfin_abandon(const char *site)
+{
+    if(!gizmo_densfin_span_active()) {densfin_span_ = 0; return;}
+    particles_prefetch(0, site);   /* ends the span */
 }
 
 static void *treehost_scratch_[4] = {NULL, NULL, NULL, NULL};

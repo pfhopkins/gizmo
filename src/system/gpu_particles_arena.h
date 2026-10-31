@@ -182,6 +182,55 @@ void gizmo_particles_count_active_gas_on_device(const int *idx, int n, long long
 /* Grow-only device scratch for the span's kernels in other translation units: `slot` 0..3 are independent buffers. */
 void *gizmo_treehost_device_scratch(int slot, size_t bytes);
 
+/* Device-resident density finalize (GIZMO_GPU_DENSFIN_STAGE).  On a step whose density pass runs on the device over
+ * most of the particles, the pass used to end with a bulk move of P and CellP to the host for the host phases that
+ * follow it (the density finalize, force_update_hmax, the corridor's active list and ghost import), and the
+ * corridor's neighbour-index build moved the rank's own particles back.  With the span the particles stay on the
+ * device: the finalize runs on staged copies of the fields it reads and writes (system/gpu_shadow_stage.h), the
+ * phases after it read a host copy of the particle records (_host_P), and the ghost import certifies and packs its
+ * send list on the device.
+ *  _arm(n_active): asked by density() before its pass, on every rank (collective); arms every rank (returns 1) when
+ *     GIZMO_GPU_DENSFIN_STAGE is not 0 in the environment, the configuration's host phases in that interval have
+ *     staged forms (GIZMO_GPU_DENSFIN_STAGE_SUPPORTED), and on every rank bulk prefetching is on and n_active is at
+ *     least 1/8 of the particles.  _disarm(): after the pass, whether or not it took the particles.
+ *  _enabled(): this run stages (environment, configuration, bulk prefetching); _reserve_host_P(): allocates the
+ *     host copy's buffer now (startup), so that the first big step does not pay for pinning it.
+ *  _armed(): between _arm and _take.
+ *  _host_tail(site, &P_copy, &CellP_copy): an armed pass about to finish on Mode B (whose host walkers read the
+ *     particles and the cells of their neighbours): when no particle on this rank is behind the current time it
+ *     takes the particles as _take does, and returns 1 with host copies for the walkers: the whole particle records
+ *     (_host_P) and full-size cell records holding the fields the density tail reads (VelPred, ConditionNumber; the
+ *     rest unspecified, a signalling-NaN pattern under GIZMO_STAGE_VERIFY).  The caller points the call's views and
+ *     the globals at them for the tail and back after it.  0 (nothing taken) otherwise: move the particles.
+ *  _take(site): at the pass's bulk move to the host; when armed and the particles are on the device it keeps them
+ *     there (gizmo_particles_keep_owned_on_device), opens the span and returns 1: the caller skips the move.
+ *  _span_active(): the span is open and the particles are still where it left them (any bulk move ends it).
+ *  _host_P(): a host copy of the whole particle records P[0, NumPart) as they stand on the device, taken at the
+ *     first call in the span (one device-to-host copy of P, no change of residency); NULL when the span is not open
+ *     or the copy failed (read P then).  Read-only: writes go to P.
+ *  _host_P_begin(): starts that copy now, asynchronously, unless a Mode B tail already took it (the finalize, which
+ *     writes P only through its staged copies, runs meanwhile); _host_P_wait() completes it and returns it writable,
+ *     for the finalize to apply its particle writes to it as the device receives them; NULL when there is no copy.
+ *  _host_P_for_walk(): the same, but only when no particle is behind the current time, so that a walk reading it
+ *     in place of P (the ghost import's discovery) finds nothing to drift and writes nothing; NULL otherwise.
+ *  _close(): the corridor's last consumer is done; the particles stay kept on the device for the passes after it.
+ *  _abandon(site): a consumer that cannot take a staged form: the particles go back to the host in bulk.
+ * Placement only: a host touch missed while the span lasts costs page faults, never a wrong value. */
+int  gizmo_densfin_enabled(void);
+void gizmo_densfin_reserve_host_P(void);
+int  gizmo_densfin_arm(long long n_active);
+int  gizmo_densfin_take(const char *site);
+int  gizmo_densfin_host_tail(const char *site, struct particle_data **P_copy, struct gas_cell_data **CellP_copy);
+int  gizmo_densfin_armed(void);
+void gizmo_densfin_disarm(void);
+int  gizmo_densfin_span_active(void);
+const struct particle_data *gizmo_densfin_host_P(void);
+void gizmo_densfin_host_P_begin(void);
+struct particle_data *gizmo_densfin_host_P_wait(void);
+const struct particle_data *gizmo_densfin_host_P_for_walk(void);
+void gizmo_densfin_close(void);
+void gizmo_densfin_abandon(const char *site);
+
 /* Imported ghosts kept on the device.  The hydro corridor's ghost pool can be delivered straight from the MPI
  * receive (page-locked) to the device, and kept there until the pool is cleaned up, instead of being written on
  * the host and moved across with every bulk prefetch of the corridor's device passes.
@@ -407,6 +456,24 @@ int gpu_particles_arena_valid(void);
     && !defined(RT_SOURCE_INJECTION) && !defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) && !defined(DM_DISPERSION_LOOP_ACTIVE) \
     && !defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE) && !defined(MAGNETIC) && !defined(TRANSPORT_SUBCYCLE)
 #define GIZMO_GPU_TREEHOST_SUPPORTED 1
+#endif
+
+/* The configurations whose host phases between the density pass and the corridor's index build have staged forms
+ * (gizmo_densfin_*): the tree-to-density span's, with a density finalize and equation of state that read and write
+ * exactly the fields listed in hydro/density_loop.cc (no cooling or chemistry, no tabulated or general EOS, none of
+ * the optional volume, gradient-matrix and viscosity-switch blocks) and an hmax update that reads no AGS or dilation
+ * field.  Elsewhere the span is compiled out and the bulk moves stay. */
+#if defined(GIZMO_GPU_TREEHOST_SUPPORTED) && !defined(COOLING) && !defined(EOS_GENERAL) && !defined(EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS) \
+    && !defined(GIZMO_TRACK_ELECTRON_STATE) && !defined(MHD_BATTERY_MECHANISMS) && !defined(EOS_SUBSTELLAR_ISM) && !defined(GALSF_EFFECTIVE_EQS) \
+    && !defined(EOS_HELMHOLTZ) && !defined(EOS_TILLOTSON) && !defined(EOS_ANEOS) && !defined(EOS_MHD_CORE_BAROTROPIC) \
+    && !defined(EOS_GMC_BAROTROPIC) && !defined(COSMIC_RAY_FLUID) && !defined(COSMIC_RAY_SUBGRID_LEBRON) && !defined(RT_RADPRESSURE_IN_HYDRO) \
+    && !defined(EOS_TRUELOVE_PRESSURE) && !defined(TRUELOVE_CRITERION_PRESSURE) && !defined(HYDRO_GENERATE_TARGET_MESH) \
+    && !defined(HYDRO_MULTIFLUID_DM) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(TWO_TEMPERATURE_PLASMA) \
+    && !defined(HYDRO_PARTITION_UNITY_IMPROVE_FD) && !defined(HYDRO_KERNEL_SURFACE_VOLCORR) && !defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) \
+    && !defined(HYDRO_VOLUME_CORRECTIONS) && !defined(SPHAV_CD10_VISCOSITY_SWITCH) && !defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) \
+    && !defined(SINK_WIND_SPAWN_SET_BFIELD_POLTOR) && !defined(HYDRO_SPH) && !defined(HYDRO_PRESSURE_SPH) && !defined(HYDRO_MESHLESS_FINITE_VOLUME) \
+    && !defined(USE_TIMESTEP_DILATION_FOR_ZOOMS) && !defined(ADAPTIVE_GRAVSOFT_FORALL) && !defined(MHD_MODIFIED_GRADIENT) && !defined(TURB_DIFF_DYNAMIC)
+#define GIZMO_GPU_DENSFIN_STAGE_SUPPORTED 1
 #endif
 
 

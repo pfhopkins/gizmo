@@ -139,7 +139,7 @@ int sfc_pool_member(const struct particle_data *p, int type_bitmask)
 
 /* The supply pool: the members of P[0..num_total), in P[] order.  Returns num_pool and, when
  * pool_indices_out is non-NULL, a mymalloc'd index array the caller owns. */
-int build_sfc_supply_pool(struct particle_data *P, int num_total,
+int build_sfc_supply_pool(const struct particle_data *P, int num_total,
                           int type_bitmask, int **pool_indices_out);
 
 #endif /* SFC_TILES_H */

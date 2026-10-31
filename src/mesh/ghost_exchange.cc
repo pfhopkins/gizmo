@@ -1626,6 +1626,12 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
         const long block = 16384;
         const long nblocks = (n_act + block - 1) / block;
         const int threaded = gizmo_pcie_opt() && nblocks > 1;
+        /* While the density pass left the particles on the device they are read from its host copy of the records. */
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+        const struct particle_data *Pa = gizmo_densfin_host_P();
+#else
+        const struct particle_data *Pa = NULL;
+#endif
         std::vector<int> qstart((size_t) nblocks + 1, 0), qbad_block((size_t) (nblocks > 0 ? nblocks : 1), -1);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(threaded)
@@ -1636,8 +1642,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             for(long kk = b * block; kk < k1; kk++) {
                 int i = ActiveParticleList[kk];
                 if(i < 0 || i >= NumPart) continue;
-                if(P[i].Mass <= 0) continue;
-                if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
+                const struct particle_data &pp = Pa ? Pa[i] : P[i];
+                if(pp.Mass <= 0) continue;
+                if(!ghost_type_passes((int)pp.Type, request_mask)) continue;
                 n++;
             }
             qstart[(size_t) b + 1] = n;
@@ -1655,14 +1662,15 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             for(long kk = b * block; kk < k1; kk++) {
                 int i = ActiveParticleList[kk];
                 if(i < 0 || i >= NumPart) continue;
-                if(P[i].Mass <= 0) continue;
-                if(!ghost_type_passes((int)P[i].Type, request_mask)) continue;
-                local_queries[q].pos[0] = P[i].Pos[0];
-                local_queries[q].pos[1] = P[i].Pos[1];
-                local_queries[q].pos[2] = P[i].Pos[2];
-                double h = (double)P[i].KernelRadius;
+                const struct particle_data &pp = Pa ? Pa[i] : P[i];
+                if(pp.Mass <= 0) continue;
+                if(!ghost_type_passes((int)pp.Type, request_mask)) continue;
+                local_queries[q].pos[0] = pp.Pos[0];
+                local_queries[q].pos[1] = pp.Pos[1];
+                local_queries[q].pos[2] = pp.Pos[2];
+                double h = (double)pp.KernelRadius;
                 local_queries[q].h    = h * safety_factor;
-                local_queries[q].type = (int)P[i].Type;
+                local_queries[q].type = (int)pp.Type;
                 local_queries[q]._pad = 0;
                 if(qbad_block[(size_t) b] < 0 &&
                    (gx_query_nonfinite(local_queries[q].pos[0]) || gx_query_nonfinite(local_queries[q].pos[1]) ||
@@ -1743,7 +1751,12 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
          * malloc-backed cache buffers so it can outlive this function frame
          * without violating mymalloc LIFO ordering. */
         int *tmp_pool = NULL;
-        int tmp_num_pool = build_sfc_supply_pool(P, NumPart, (int)desired_pool_mask, &tmp_pool);
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+        const struct particle_data *P_pool = gizmo_densfin_host_P();   /* the particles on the device: their host copy */
+#else
+        const struct particle_data *P_pool = NULL;
+#endif
+        int tmp_num_pool = build_sfc_supply_pool(P_pool ? P_pool : P, NumPart, (int)desired_pool_mask, &tmp_pool);
 
         /* Allocate persistent cache buffers + copy. */
         size_t sz_pool = (size_t)(tmp_num_pool > 0 ? tmp_num_pool : 1) * sizeof(int);
@@ -1827,6 +1840,16 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
      * stop. */
     struct ghost_send_set *send_set = &g_send_set;
     struct gx_walk_export_result walk_export_res;
+    /* While the density pass left the particles on the device, the discovery walks read its host copy of the records
+     * in their place, provided no particle is behind the current time (then the walks' accept drifts nothing and
+     * writes nothing); otherwise the particles come back to the host first. */
+    struct particle_data *const P_storage = P;
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+    if(gizmo_densfin_span_active()) {
+        const struct particle_data *P_walk = gizmo_densfin_host_P_for_walk();
+        if(P_walk) {P = (struct particle_data *) P_walk;} else {gizmo_densfin_abandon("ghost_exchange_discover");}
+    }
+#endif
     gx_walk_export_discover(spec, local_queries, n_local_queries,
                             num_pool, supply_mask, search_mode,
                             send_set, &walk_export_res, 1);
@@ -1866,6 +1889,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
             }
         }
     }
+    P = P_storage;
     if(walk_export_res.status != GX_WALK_EXPORT_OK) {
         if(ThisTask == 0) {
             printf("[ghost_exchange call=%d caller=%s: walk-export producer status %d, no send set built]\n",
@@ -1965,8 +1989,16 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     send_set->capacity = send_set->used = 0;
     for(int off = 0; off < total_send; off++) {send_home_idx[off] = h_pool[send_home_idx[off]];}
     /* Advance the exported particles before copying them, so nothing goes on the
-     * wire behind the time its receiver will read it at. */
-    const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
+     * wire behind the time its receiver will read it at.  With the owners' particles kept on the device
+     * (gizmo_particles_owned_kept_on_device) the send list is certified and packed there, as the refresh does; a
+     * send list with anything behind the current time is drifted on the host as always, after the particles are
+     * brought back. */
+    int pack_on_device = gizmo_particles_owned_kept_on_device();
+    if(pack_on_device && gizmo_particles_count_not_at_time(send_home_idx, total_send, All.Ti_Current) > 0) {
+        gizmo_particles_prefetch_to_host("ghost_exchange_certify");
+        pack_on_device = 0;
+    }
+    const int send_list_current = pack_on_device ? 0 : gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
     gx_disc_mark(GX_DISC_T_SENDLIST);
     if(gx_ghost_discovery_diag_on()) {   /* rank-uniform: same environment everywhere */
         double mine[17], most[17];
@@ -1993,10 +2025,10 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     }
 
     /* === Step 6: pack and Alltoallv particles + cells, then home_idx === */
-    if(gizmo_particles_back_to_host_wanted(total_send)) {gizmo_particles_prefetch_to_host("ghost_exchange_pack");}   /* the receiver walk ran on the device */
+    if(!pack_on_device && gizmo_particles_back_to_host_wanted(total_send)) {gizmo_particles_prefetch_to_host("ghost_exchange_pack");}   /* the receiver walk ran on the device */
     const int delivered = gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
                                                                 &P[NumPart], &CellP[NumPart], recv_count, recv_disp,
-                                                                0, deliver_to_device ? NumPart : -1);
+                                                                pack_on_device, deliver_to_device ? NumPart : -1);
 
     /* Update counts now so home_idx receive can land at &P[NumPart_before_ghost+...] */
     NumGhostParticles = total_recv;

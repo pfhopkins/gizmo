@@ -7206,6 +7206,11 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         }
     }
 
+    /* A density pass armed for a staged finalize that finishes on Mode B walks host copies of the particle records
+     * (gizmo_densfin_host_tail): the storage it points the call's views at for the tail, restored after the loop. */
+    struct particle_data *tail_saved_P = nullptr;
+    struct gas_cell_data *tail_saved_CellP = nullptr;
+    bool tail_on_copies = false;
     for (drv.iter_index = 0; drv.iter_index < Spec::max_iters; drv.iter_index++) {
         if(!nlr_args_view_is_live(args)) {
             if(ThisTask == 0) {
@@ -7407,7 +7412,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             bool presolved    = false;
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
                 if (gizmo_pcie_opt() && nlr_modeb_use_omp(n_compacted, nlr_modeb_omp_nthreads())) {
-                    if(gizmo_particles_back_to_host_wanted(n_compacted)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* most of the particles: move them in bulk */
+                    if(!tail_on_copies && gizmo_particles_back_to_host_wanted(n_compacted)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* most of the particles: move them in bulk (not while a tail walks host copies) */
                     if (after_iter_results.size() < (size_t) n_compacted) {after_iter_results.resize((size_t) n_compacted);}
                     IterResult *res = after_iter_results.data();
 #ifdef _OPENMP
@@ -7558,7 +7563,16 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
             nlr_mode_b_switched_on<Spec>()) {
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}   /* Mode B reads the host's copy */
-            if(gizmo_particles_back_to_host_wanted(args.num_active)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* Mode B walks them on the host */
+            /* A pass armed for a staged finalize keeps the particles on the device and walks host copies of them, when
+             * nothing is behind the current time (the tail then writes no particle); otherwise they move in bulk. */
+            struct particle_data *copy_P = nullptr;
+            struct gas_cell_data *copy_CellP = nullptr;
+            if(gizmo_densfin_host_tail(Spec::loop_name, &copy_P, &copy_CellP)) {
+                tail_saved_P = P; tail_saved_CellP = CellP; tail_on_copies = true;
+                P = copy_P; CellP = copy_CellP;
+                args.P = copy_P; args.CellP = copy_CellP;
+                drv.ctx.P = copy_P; drv.ctx.CellP = copy_CellP;
+            } else if(gizmo_particles_back_to_host_wanted(args.num_active)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* Mode B walks them on the host */
             mode_d_lease.release();
             drv.mode_d_lease = nullptr;
             path = DispatchPath::ModeB_HostWalker;
@@ -7569,13 +7583,19 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         }
     }
 
+    if(tail_on_copies) {   /* the Mode B tail is over: the call's views and the globals back on the storage */
+        P = tail_saved_P; CellP = tail_saved_CellP;
+        args.P = tail_saved_P; args.CellP = tail_saved_CellP;
+        drv.ctx.P = tail_saved_P; drv.ctx.CellP = tail_saved_CellP;
+    }
     /* A call that iterated on the device to its end: every result written back from the device's copy. */
     if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
         if(drv.mode_d_lease && !drv.mode_d_lease->stopped) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}
     }
     /* With more than one rank the iteration ran on the device to its end (after_iter included), so the
        host after_iter path above never moved the particles back; the finalize that follows sweeps them. */
-    if(drv.mode_d_lease && gizmo_particles_back_to_host_wanted(args.num_active)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}
+    /* (A density pass armed by density() keeps them on the device instead, for its staged finalize: gizmo_densfin_take.) */
+    if(drv.mode_d_lease && gizmo_particles_back_to_host_wanted(args.num_active) && !gizmo_densfin_take(Spec::loop_name)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}
 
     /* ===== Max-iter exceeded check (matches legacy density / ags_density endrun(1155)) ===== */
     if (drv.iter_index >= Spec::max_iters && drv.global_active_total > 0) {

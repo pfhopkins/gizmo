@@ -17,7 +17,7 @@
 #include "sfc_tiles.h"
 
 
-int build_sfc_supply_pool(struct particle_data *P, int num_total,
+int build_sfc_supply_pool(const struct particle_data *P, int num_total,
                           int type_bitmask, int **pool_indices_out)
 {
     /* Ordered compaction in fixed index blocks: count each block's members, place each block at the prefix

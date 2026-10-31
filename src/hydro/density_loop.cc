@@ -21,6 +21,7 @@
 #include "../mesh/kernel.h"               /* MUST precede density_loop.h */
 #include "../mesh/ghost_symlist_lifecycle.h" /* gizmo_ghost_safety_factor + hydro_density_redo (post-finalize downstream refresh) */
 #include "../system/gpu_particles_arena.h"   /* gpu_particles_arena_invalidate — pre-runner prepass mirrors legacy density.cc:183 */
+#include "../system/gpu_shadow_stage.h"      /* the staged finalize */
 #include "density_loop.h"
 #include "../mesh/gpu_neighbor_list.h"      /* gizmo_mark_kernel_radius_dirty_indices */
 
@@ -350,23 +351,13 @@ IterResult DensitySpec::after_iter(const AfterIterContext<DensitySpec>& ctx,
  * Degenerate empty-active-gas cases are guarded locally where normalization
  * would otherwise divide by zero.
  * ==================================================================== */
-void density_finalize_post_runner(const std::vector<int>& active_list_concat,
-                                  DensitySpec::Aux& aux,
-                                  const struct global_data_all_processes* host_all)
+/* One active's finalize.  Called with the particle storage itself (P, CellP, particle index) or with full-size
+ * shadow records indexed by row (the staged path below): the parameters shadow the globals, so the body is the loop
+ * body it always was, word for word, and both paths run this one compiled copy. */
+static void __attribute__((noinline)) density_finalize_one(struct particle_data *P, struct gas_cell_data *CellP, const int i,
+                                                           const DensitySpec::AccumData& accum, const double h,
+                                                           const struct global_data_all_processes* host_all)
 {
-    const int N = (int)active_list_concat.size();
-
-    /* Parallel-for: legacy uses #pragma omp parallel for schedule(dynamic)
-     * around density.cc:629-795. Preserved here. */
-#ifdef _OPENMP
-    #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
-#endif
-    for (int slot = 0; slot < N; ++slot) {
-        const int i = active_list_concat[slot];
-
-        const DensitySpec::AccumData& accum = aux.per_active_final_accum[slot];
-        const double h = aux.per_active_final_h[slot];
-
         /* ---- (1) Per-active normalization (legacy density.cc:253-268;
          * lifted out of the iter loop to honor the no-P/CellP-write
          * contract in after_iter). Writes P[i] freely here. ---- */
@@ -767,7 +758,168 @@ void density_finalize_post_runner(const std::vector<int>& active_list_concat,
             }
         }
 #endif
-    } // for slot
+}
+
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+/* What density_finalize_one reads and writes of an active in the configurations the staged path admits (every row a
+ * gas cell, checked below).  Read: Type, Mass, and the equation of state's inputs.  Written for every row: the
+ * normalized neighbour sums, the cell's density, gradient matrix, face weights, smoothed velocity, condition number,
+ * closure error, the refinement flag, and the equation of state's outputs; the latter are written only for rows with
+ * positive mass, so when some row has none they are staged in too (that row keeps its stored values).  GIZMO_STAGE_VERIFY checks both lists
+ * against the finalize run on whole copies of the records. */
+#if defined(EOS_ENFORCE_ADIABAT)
+#define DENSFIN_ADIABAT_FIELDS , SHADOW_C(InternalEnergy), SHADOW_C(InternalEnergyPred)
+#if defined(TURB_DRIVING)
+#define DENSFIN_EGYDISS_FIELDS , SHADOW_C(EgyDiss)
+#endif
+#endif
+#ifndef DENSFIN_ADIABAT_FIELDS
+#define DENSFIN_ADIABAT_FIELDS
+#endif
+#ifndef DENSFIN_EGYDISS_FIELDS
+#define DENSFIN_EGYDISS_FIELDS
+#endif
+#if defined(TURB_DRIVING)
+#define DENSFIN_SMOOTHEDVEL_FIELDS , SHADOW_C(SmoothedVel)
+#else
+#define DENSFIN_SMOOTHEDVEL_FIELDS
+#endif
+static const ShadowField densfin_read_fields[] = {
+    SHADOW_P(Type), SHADOW_P(Mass), SHADOW_C(InternalEnergyPred)
+#if defined(EOS_ENFORCE_ADIABAT)
+    , SHADOW_C(InternalEnergy)
+#endif
+    DENSFIN_EGYDISS_FIELDS
+};
+/* the equation of state's outputs that are not also read: staged in only when some row has no mass */
+static const ShadowField densfin_massless_fields[] = {
+    SHADOW_C(Gamma), SHADOW_C(MeanMolecularWeight), SHADOW_C(Temperature), SHADOW_C(Pressure)
+};
+static const ShadowField densfin_written_fields[] = {
+    SHADOW_P(KernelRadius), SHADOW_P(NumNgb), SHADOW_P(DrkernNgbFactor), SHADOW_P(Particle_DivVel),
+    SHADOW_C(Density), SHADOW_C(NV_T), SHADOW_C(NV_T_face_weights), SHADOW_C(ConditionNumber), SHADOW_C(FaceClosureError),
+    SHADOW_C(recent_refinement_flag), SHADOW_C(Gamma), SHADOW_C(MeanMolecularWeight), SHADOW_C(Temperature), SHADOW_C(Pressure)
+    DENSFIN_SMOOTHEDVEL_FIELDS DENSFIN_ADIABAT_FIELDS DENSFIN_EGYDISS_FIELDS
+};
+
+/* The finalize while the density pass left the particles on the device (gizmo_densfin_take): the read fields of
+ * every active are staged into host shadows, density_finalize_one runs on the shadows, and the written fields go back
+ * to the device.  Returns false, having written nothing, when it cannot run (staging buffers, or a row that is not a
+ * gas cell); the caller then moves the particles to the host and finalizes there. */
+static bool density_finalize_staged(const std::vector<int>& active_list_concat, DensitySpec::Aux& aux,
+                                    const struct global_data_all_processes* host_all)
+{
+    const int N = (int)active_list_concat.size();
+    const int *idx = active_list_concat.data();
+    const int n_read = (int)(sizeof(densfin_read_fields) / sizeof(densfin_read_fields[0]));
+    const int n_written = (int)(sizeof(densfin_written_fields) / sizeof(densfin_written_fields[0]));
+    const int n_massless = (int)(sizeof(densfin_massless_fields) / sizeof(densfin_massless_fields[0]));
+    static int calls = 0;
+    calls++;
+    const int verify = gizmo_stage_verify_level() >= calls;
+    struct particle_data *Psh = NULL; struct gas_cell_data *Csh = NULL;
+    if(gizmo_shadow_records(0, N, 1, &Psh, &Csh)) {return false;}
+    /* GIZMO_STAGE_VERIFY: whole copies of the rows first (they share the staging buffers) */
+    struct particle_data *Pf = NULL, *Pb = NULL; struct gas_cell_data *Cf = NULL, *Cb = NULL;
+    const int have_copy = verify && !gizmo_shadow_verify_full_copy(idx, N, 1, &Pf, &Cf, &Pb, &Cb);
+    struct ShadowStage st;
+    if(gizmo_shadow_stage_in(&st, idx, N, densfin_read_fields, n_read, "density_finalize")) {return false;}
+    /* every row a gas cell (the lists' premise), and whether every row has mass (else the EOS outputs are read too):
+       Type and Mass are the first two fields of each staged record */
+    int all_gas = 1, all_massive = 1;
+    for(int k = 0; k < N; k++) {
+        const char *rec = st.h_in + (size_t) k * (size_t) st.in.rec_bytes;
+        short int type; MyDouble mass;
+        memcpy(&type, rec + st.in.rec_off[0], sizeof(type)); memcpy(&mass, rec + st.in.rec_off[1], sizeof(mass));
+        if(idx[k] < 0 || idx[k] >= N_gas || type != 0) {all_gas = 0; break;}
+        if(!(mass > 0)) {all_massive = 0;}
+    }
+    if(!all_gas) {return false;}
+    if(!all_massive) {
+        /* rare: every row unpacked first, the EOS outputs staged in on top, then the plain loop */
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (int k = 0; k < N; ++k) {gizmo_shadow_unpack_row(&st, k, Psh, Csh, verify);}
+        if(gizmo_shadow_gather(idx, N, densfin_massless_fields, n_massless, Psh, Csh, 0, "density_finalize")) {return false;}
+        if(gizmo_shadow_stage_out_begin(&st, densfin_written_fields, n_written)) {return false;}
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
+#endif
+        for (int slot = 0; slot < N; ++slot) {
+            density_finalize_one(Psh, Csh, slot, aux.per_active_final_accum[slot], aux.per_active_final_h[slot], host_all);
+            gizmo_shadow_pack_row(&st, slot, Psh, Csh);
+        }
+    } else {
+        if(gizmo_shadow_stage_out_begin(&st, densfin_written_fields, n_written)) {return false;}
+        gizmo_densfin_host_P_begin();   /* the consumers' host copy of P, taken while the host works (patched below) */
+        /* each row staged in, finalized and packed for the way back while it is in cache */
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
+#endif
+        for (int slot = 0; slot < N; ++slot) {
+            gizmo_shadow_unpack_row(&st, slot, Psh, Csh, verify);
+            density_finalize_one(Psh, Csh, slot, aux.per_active_final_accum[slot], aux.per_active_final_h[slot], host_all);
+            gizmo_shadow_pack_row(&st, slot, Psh, Csh);
+        }
+    }
+    /* the host copy of P was taken before the finalize: it takes the finalize's particle fields, as the device will */
+    struct particle_data *hostP = gizmo_densfin_host_P_wait();
+    if(hostP) {
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for(int k = 0; k < N; k++) {
+            for(int s = 0; s < n_written; s++) {
+                const ShadowField &f = densfin_written_fields[s];
+                if(!f.cell) {memcpy((char *) &hostP[idx[k]] + f.offset, (const char *) &Psh[k] + f.offset, (size_t) f.bytes);}
+            }
+        }
+    }
+    if(have_copy) {
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
+#endif
+        for (int slot = 0; slot < N; ++slot) {
+            density_finalize_one(Pf, Cf, slot, aux.per_active_final_accum[slot], aux.per_active_final_h[slot], host_all);
+        }
+        gizmo_shadow_verify_compare("density_finalize", calls, idx, N, densfin_written_fields, n_written, Psh, Csh, Pf, Cf, Pb, Cb);
+    }
+    if(gizmo_shadow_stage_out_end(&st, "density_finalize")) {
+        /* no device buffer for the way back: written on the host (correct, only slower) */
+        for(int k = 0; k < N; k++) {
+            for(int s = 0; s < n_written; s++) {
+                const ShadowField &f = densfin_written_fields[s];
+                char *dst = f.cell ? (char *) &CellP[idx[k]] : (char *) &P[idx[k]];
+                const char *src = f.cell ? (const char *) &Csh[k] : (const char *) &Psh[k];
+                memcpy(dst + f.offset, src + f.offset, (size_t) f.bytes);
+            }
+        }
+    }
+    return true;
+}
+#endif
+
+void density_finalize_post_runner(const std::vector<int>& active_list_concat,
+                                  DensitySpec::Aux& aux,
+                                  const struct global_data_all_processes* host_all)
+{
+    const int N = (int)active_list_concat.size();
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+    if(gizmo_densfin_span_active()) {
+        if(density_finalize_staged(active_list_concat, aux, host_all)) {return;}
+        gizmo_densfin_abandon("density_finalize");   /* the particles back to the host for the host finalize below */
+    }
+#endif
+
+    /* Parallel-for: legacy uses #pragma omp parallel for schedule(dynamic)
+     * around density.cc:629-795. Preserved here. */
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, gizmo_omp_particle_chunk())
+#endif
+    for (int slot = 0; slot < N; ++slot) {
+        density_finalize_one(P, CellP, active_list_concat[slot], aux.per_active_final_accum[slot], aux.per_active_final_h[slot], host_all);
+    }
 }
 
 /* ====================================================================
@@ -826,6 +978,20 @@ void density(void)
      *         pre-density pool instead, which only works when that pool was
      *         itself broad.) */
     const double gsl_safety = gizmo_ghost_safety_factor();
+
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+    /* the staged finalize's grow-only buffers, allocated at the first call (startup) with room for every particle */
+    static int densfin_reserved = 0;
+    if(!densfin_reserved) {
+        densfin_reserved = 1;
+        if(gizmo_densfin_enabled()) {
+            const int n_res = NumPart + NumPart / 8 + 1;
+            gizmo_shadow_stage_reserve(n_res, densfin_read_fields, (int)(sizeof(densfin_read_fields) / sizeof(densfin_read_fields[0])),
+                                       densfin_written_fields, (int)(sizeof(densfin_written_fields) / sizeof(densfin_written_fields[0])), 0, 1);
+            gizmo_densfin_reserve_host_P();
+        }
+    }
+#endif
 
     /* (2) Build active list. */
     std::vector<int> active_list_concat;
@@ -906,7 +1072,14 @@ void density(void)
     args.subgroups           = subgroups.data();
     args.ghost_safety_factor = gsl_safety;
     args.initial_radii       = prepped_on_device ? active_radii.data() : nullptr;
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+    /* the pass may leave the particles on the device for a staged finalize, when the step's Mode A corridor follows */
+    if(gizmo_hydro_corridor_get_mode() == GizmoHydroCorridorMode::MODE_A) {gizmo_densfin_arm((long long) active_list_concat.size());}
+#endif
     run_neighbor_loop_iterative<DensitySpec>(args);
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+    gizmo_densfin_disarm();   /* a pass that never reached its to-host move leaves nothing armed for a later one */
+#endif
     gizmo_treehost_end("density");   /* a pass that did not take the particles on the device: back to the host for the finalize */
 
     /* (6) Post-runner finalize: per-active normalization + NV_T inversion

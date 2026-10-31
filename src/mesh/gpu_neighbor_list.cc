@@ -1941,6 +1941,15 @@ const double *gizmo_symlist_raw_radii(const int *rows, int n)
     return symlist_kept_raw_radii.data();
 }
 void gizmo_symlist_raw_radii_forget(void) {symlist_kept_rows = NULL; symlist_kept_nrows = -1;}
+static std::vector<double> symlist_staged_radii;
+static const int *symlist_staged_rows = NULL;
+static int symlist_staged_nrows = -1;
+double *gizmo_symlist_staged_radii(const int *rows, int n)
+{
+    symlist_staged_radii.resize((size_t) (n > 0 ? n : 1));
+    symlist_staged_rows = rows; symlist_staged_nrows = n;
+    return symlist_staged_radii.data();
+}
 
 void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
                         int *active_indices_host, int num_active,
@@ -2157,7 +2166,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const int presorted = (P_shared == P) && (type_bitmask == 1) && sidx_particles_still_ordered(owned_end, t_now);
         /* The rebuild reads every owned particle's P and CellP on the device: move them in bulk rather than by
            device faults (this also lets the query setup below run on the device). */
-        if(P_shared == P && (long long) owned_end * 8 >= (long long) NumPart) {gizmo_particles_prefetch_owned_to_device(owned_end, "sidx_build");}   /* not the ghosts: their index records are packed on the host (from the import's host copy when they live on the device) */
+        if(P_shared == P && (long long) owned_end * 8 >= (long long) NumPart && !gizmo_particles_owned_kept_on_device()) {gizmo_particles_prefetch_owned_to_device(owned_end, "sidx_build");}   /* not the ghosts: their index records are packed on the host (from the import's host copy when they live on the device); nothing to move while kept on the device */
         if(sidx_build_segment_now(src, maintained, presorted, radius_policy, caller_label, own, &report)) {
             ngl_leave_csr_empty(gnl, num_active);
             return;
@@ -2589,13 +2598,19 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
      * RADIUS SEMANTICS: pass EXPLICIT raw per-active radii (P[i].KernelRadius)
      * so search_radius_factor multiplies the RAW kernel radius, as the runner
      * Spec path does with its explicit fac*raw radii. */
-    std::vector<double> symlist_raw_radii((num_active > 0) ? (size_t)num_active : 1);
+    std::vector<double> symlist_raw_radii;
+    if(symlist_staged_rows == active_indices && symlist_staged_nrows == num_active && P_shared == P) {
+        symlist_raw_radii.swap(symlist_staged_radii);   /* read from the staged copies (gizmo_symlist_staged_radii) */
+    } else {
+        symlist_raw_radii.resize((num_active > 0) ? (size_t)num_active : 1);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(gizmo_pcie_opt() && num_active >= 4096)
 #endif
-    for(int aa = 0; aa < num_active; aa++) {
-        symlist_raw_radii[aa] = (double) P_shared[active_indices[aa]].KernelRadius;
+        for(int aa = 0; aa < num_active; aa++) {
+            symlist_raw_radii[aa] = (double) P_shared[active_indices[aa]].KernelRadius;
+        }
     }
+    symlist_staged_rows = NULL; symlist_staged_nrows = -1;
     gpu_neighbor_list_t gpu_nl;
     symlist_device_consumer_follows = (keep_device != NULL);
     gpu_ngb_list_build(P_shared, num_total, active_indices, num_active,

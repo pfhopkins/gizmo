@@ -18,6 +18,7 @@
 #include "ghost_writeback.h"
 #include "../hydro/hydro_corridor.h"   /* gizmo_hydro_corridor_import_gas_ghosts */
 #include "gpu_neighbor_list.h"           /* gpu_build_symmetric_neighbor_list, gizmo_sym_neighbor_list_device */
+#include "../system/gpu_particles_arena.h" /* gizmo_densfin_host_P */
 
 /* Forward declaration of the out-of-line host All accessor (defined in
  * core/predict.cc). Retained as a stylistic intent-tag for host-snapshot
@@ -250,6 +251,7 @@ static inline void gizmo_hydro_density_import_ghosts_fresh_no_drift(double safet
 static inline void gizmo_gradients_prep_symlist(double safety, double search_fac, bool is_mode_b, int keep_for_substeps,
                                                 gpu_neighbor_list_t *keep_device)   /* the list's device copy, for device consumers; or NULL */
 {
+    if(is_mode_b) {gizmo_densfin_abandon("corridor_mode_b");}   /* the request-driven walkers read the particles on the host */
     /* active-index allocation (persists across gradients + hydro; used by the
        request-driven Mode B walkers as their active list) */
     {   /* ordered compaction over fixed blocks of the active list (count, prefix, fill): the list keeps
@@ -258,6 +260,14 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
         const long block = 16384;
         const long nblocks = (n_act + block - 1) / block;
         const int threaded = gizmo_pcie_opt() && nblocks > 1;
+        /* While the density pass left the particles on the device they are read from its host copy of the records,
+           and the rows' raw radii for the list build below are taken from it as well. */
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+        const struct particle_data *Pa = gizmo_densfin_host_P();
+#else
+        const struct particle_data *Pa = NULL;
+#endif
+        const struct particle_data *Pr = Pa ? Pa : P;
         std::vector<int> astart((size_t) nblocks + 1, 0);
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(threaded)
@@ -265,7 +275,7 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
         for(long b = 0; b < nblocks; b++) {
             const long k1 = (b + 1) * block < n_act ? (b + 1) * block : n_act;
             int n = 0;
-            for(long kk = b * block; kk < k1; kk++) {const int ii = ActiveParticleList[kk]; if(P[ii].Type == 0 && P[ii].Mass > 0) n++;}
+            for(long kk = b * block; kk < k1; kk++) {const int ii = ActiveParticleList[kk]; if(Pr[ii].Type == 0 && Pr[ii].Mass > 0) n++;}
             astart[(size_t) b + 1] = n;
         }
         for(long b = 0; b < nblocks; b++) {astart[(size_t) b + 1] += astart[(size_t) b];}
@@ -273,13 +283,17 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
         gizmo_sym_active_indices_on_heap = 0;
         gizmo_sym_active_indices = (int *) mymalloc("sym_active",
             (gizmo_sym_num_active > 0 ? gizmo_sym_num_active : 1) * sizeof(int));
+        double *staged_radii = Pa ? gizmo_symlist_staged_radii(gizmo_sym_active_indices, gizmo_sym_num_active) : NULL;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(threaded)
 #endif
         for(long b = 0; b < nblocks; b++) {
             const long k1 = (b + 1) * block < n_act ? (b + 1) * block : n_act;
             int aa = astart[(size_t) b];
-            for(long kk = b * block; kk < k1; kk++) {const int ii = ActiveParticleList[kk]; if(P[ii].Type == 0 && P[ii].Mass > 0) gizmo_sym_active_indices[aa++] = ii;}
+            for(long kk = b * block; kk < k1; kk++) {
+                const int ii = ActiveParticleList[kk];
+                if(Pr[ii].Type == 0 && Pr[ii].Mass > 0) {if(staged_radii) {staged_radii[aa] = (double) Pr[ii].KernelRadius;} gizmo_sym_active_indices[aa++] = ii;}
+            }
         }
     }
 

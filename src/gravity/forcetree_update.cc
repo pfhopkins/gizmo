@@ -13,6 +13,7 @@
 #include "force_node_drift_sync.h"
 #include "gpu_gravity_tree.h"        /* SoA mirror: vmax coherence for widen-on-open */
 #include "gravtree_moment_kernel.h"   /* the shared node-motion arithmetic */
+#include "../system/gpu_particles_arena.h"   /* gizmo_densfin_host_P */
 
 /* GPU replacement for force_update_tree. */
 extern "C" void gpu_force_update_tree(void);
@@ -738,9 +739,17 @@ void force_update_hmax(void)
    * so non-gas particles must reach this update path in every build, not only
    * ADAPTIVE_GRAVSOFT_FORALL ones. Scalar Extnodes[no].hmax retains its legacy
    * semantics; it is only grown for the AGS-tracked path below. */
+  /* While the density pass left the particles on the device (gizmo_densfin_*) they are read from its host copy of
+   * the records (the same bytes) instead of being moved back. */
+#ifdef GIZMO_GPU_DENSFIN_STAGE_SUPPORTED
+  const struct particle_data *Pa = gizmo_densfin_host_P();
+#else
+  const struct particle_data *Pa = NULL;
+#endif
+  const struct particle_data *Pr = Pa ? Pa : P;
   for (int i : ActiveParticleList)
   {
-    if(P[i].Mass > 0)
+    if(Pr[i].Mass > 0)
       {
         no = Father[i];
         while(no >= 0)
@@ -756,16 +765,16 @@ void force_update_hmax(void)
   for (int idx = 0; idx < (int)ActiveParticleList.size(); idx++)
   {
     int i = ActiveParticleList[idx];
-    if(P[i].Mass > 0)
+    if(Pr[i].Mass > 0)
       {
         int no = Father[i];
-        double divVel = particle_radius_growth_rate(i, P);
+        double divVel = particle_radius_growth_rate(i, Pr);
 
         /* Mode B per-type band: conservative across every leaf-policy-selectable
          * source. Helper covers KernelRadius / ForceSoftening / AGS_KernelRadius
          * (when defined) uniformly per type. */
-        int per_type_band = (int)P[i].Type;
-        double per_type_htmp = force_hmax_per_type_particle_radius(i);
+        int per_type_band = (int)Pr[i].Type;
+        double per_type_htmp = force_hmax_per_type_particle_radius_of(Pr[i]);
 
         /* Scalar `hmax` eligibility (legacy semantics): non-AGS-FORALL builds → gas only;
          * AGS-FORALL builds → any Mass>0 type.  Non-eligible particles still update
@@ -776,19 +785,19 @@ void force_update_hmax(void)
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
         const int scalar_eligible = 1;
 #else
-        const int scalar_eligible = (P[i].Type == 0);
+        const int scalar_eligible = (Pr[i].Type == 0);
 #endif
-        const int divv_eligible = particle_radius_drifts_with_divergence_P(i, P);
+        const int divv_eligible = particle_radius_drifts_with_divergence_P(i, Pr);
 
         while(no >= 0)
         {
             /* Scalar `hmax` source: legacy gas-KR or AGS-KR per ADAPTIVE_GRAVSOFT_FORALL. */
 #if defined(ADAPTIVE_GRAVSOFT_FORALL)
-            double kernrad_temp = P[i].AGS_KernelRadius;
-            if(P[i].Type == 0) {kernrad_temp = P[i].KernelRadius;}
+            double kernrad_temp = Pr[i].AGS_KernelRadius;
+            if(Pr[i].Type == 0) {kernrad_temp = Pr[i].KernelRadius;}
             double htmp = DMIN(kernrad_temp, All.MaxKernelRadius);
 #else
-            double htmp = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0.0;
+            double htmp = (Pr[i].Type == 0) ? DMIN(Pr[i].KernelRadius, All.MaxKernelRadius) : 0.0;
 #endif
             int per_type_grew = 0;
             if(per_type_htmp > Extnodes[no].hmax_per_type[per_type_band]) {

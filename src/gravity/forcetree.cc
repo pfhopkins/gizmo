@@ -274,9 +274,10 @@ void gizmo_get_ewald_tables(const MyFloat **fcorrx_out, const MyFloat **fcorry_o
  * across all types).  Capping at All.MaxKernelRadius applies to kernel radii
  * only; ForceSoftening is uncapped so the band dominates the leaf-policy reach
  * even when FS > All.MaxKernelRadius. */
-double force_hmax_per_type_particle_radius(int i)
+double force_hmax_per_type_particle_radius(int i) {return force_hmax_per_type_particle_radius_of(P[i]);}
+double force_hmax_per_type_particle_radius_of(const struct particle_data &p)
 {
-    return nlr_particle_symmetric_radius_capped(P[i],
+    return nlr_particle_symmetric_radius_capped(p,
                                                 MODE_B_RADIUS_ALL_SOURCES,
                                                 (double)All.MaxKernelRadius);
 }

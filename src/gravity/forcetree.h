@@ -150,6 +150,7 @@ int    force_tree_remembered_foreign_slots(void);   /* this rank's gravity-tree 
  * over-opening here is correct (extra candidates filter at leaf). Capped at
  * All.MaxKernelRadius to match the legacy band semantics. */
 double force_hmax_per_type_particle_radius(int i);
+double force_hmax_per_type_particle_radius_of(const struct particle_data &p);   /* the same for a record (a staged copy) */
 
 /* Monotonic gravity-tree freshness generations.  treebuild_generation bumps on
  * every successful force_treebuild (topology + Father[] + node structure changed);

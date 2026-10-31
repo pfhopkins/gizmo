@@ -279,6 +279,10 @@ void gpu_build_symmetric_neighbor_list(struct particle_data *P_host, int num_tot
    built with keep_device, when `rows`/`n` are that list's rows; NULL otherwise.  For host code that must not
    touch the particles while gizmo_particles_owned_kept_on_device() holds.  _forget drops it (corridor end). */
 const double *gizmo_symlist_raw_radii(const int *rows, int n);
+/* The rows' raw radii read from staged copies instead of the particles (gizmo_densfin_actives): a buffer of n doubles
+   for the caller to fill, which the next gpu_build_symmetric_neighbor_list over exactly these rows takes in place of
+   reading KernelRadius. */
+double *gizmo_symlist_staged_radii(const int *rows, int n);
 void gizmo_symlist_raw_radii_forget(void);
 /* The device-resident twin of gizmo_sym_neighbor_list: the same rows and pairs, built and freed with it. */
 extern gpu_neighbor_list_t gizmo_sym_neighbor_list_device;

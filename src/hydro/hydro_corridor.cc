@@ -224,6 +224,7 @@ void gizmo_hydro_corridor_begin(void)
     g_corridor_keep_for_substeps = transport_subcycle_keep_wanted();
 #endif
     gizmo_gradients_prep_symlist(gsl_safety, gsl_safety, false, g_corridor_keep_for_substeps, &gizmo_sym_neighbor_list_device);
+    gizmo_densfin_close();   /* the staged copies' last reader: the particles stay kept on the device for the passes after */
 
     /* Publish the corridor's view ONLY when the runner's caller-owned-pool
      * contract can be satisfied: at NTask>1 that requires a LIVE ghost pool
