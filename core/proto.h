@@ -889,6 +889,23 @@ MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct part
 MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+/* electron-source terms that do not depend on the electron fraction being iterated in find_abundances_and_rates:
+   evaluated once per call (simple_chem_prepare) and read back inside the fixed-point loop */
+struct simple_chem_consts {
+    MyFloat ne_prefac, G0_sqrtT;                       /* grain_charge_psi: ne = ne_prefac*x_e; psi = G0_sqrtT/ne + 50 */
+    MyFloat kgr_prefac, kgr_C1, kgr_C2, kgr_C3_powT, kgr_psi_exp; /* alpha_recomb_grain for C+ with its T-only factors folded in */
+    MyFloat ion_rate_C, k_rr_dr, k_cplus_H2_nH2, nHcgs, ZC_fac; /* f_Cplus pieces */
+    MyFloat xe_alkali, xe_molions;                     /* T-only electron sources */
+};
+void simple_chem_prepare(int i, MyFloat temp, MyFloat shieldfac, struct simple_chem_consts *c, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_Cplus_hoisted(int i, MyFloat x_elec, const struct simple_chem_consts *c);
+#ifdef COOLING_ITERATION_COUNTERS
+#define COOL_ITER_NCOUNTERS 8
+extern long long CoolIterCount[COOL_ITER_NCOUNTERS]; /* 0 cells cooled, 1 CoolingRateFromU evals, 2 convert_u_to_temp calls, 3 its iterations, 4 find_abundances calls, 5 n_e iterations, 6 rt_ir_lambdadust calls, 7 dust_dE_cooling evals */
+#define COOL_ITER_COUNT(k) {_Pragma("omp atomic") CoolIterCount[k]++;}
+#else
+#define COOL_ITER_COUNT(k) {}
+#endif
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);

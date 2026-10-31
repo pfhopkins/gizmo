@@ -177,6 +177,10 @@ double hydrogen_molecule_gamma(double temp) {
     } else if (temp > 1e5) {
         return 9. / 7; // all DOF excited
     }
+    /* gamma_eos_value() asks for this at the same cached cell temperature many times per cooling update (equation of
+       state, PdV limiter, every gas-phase IR opacity evaluation): remember the last answer per thread */
+    static thread_local double temp_last = -1., gamma_last = 0.;
+    if (temp == temp_last) { return gamma_last; }
 
     double zrot[3], zvib[3];
     hydrogen_molecule_zrot_mixture(temp, zrot);
@@ -184,7 +188,8 @@ double hydrogen_molecule_gamma(double temp) {
     double cv = 1.5;               // translation
     cv += zrot[2] / BOLTZMANN_CGS; // rotation
     cv += zvib[2] / BOLTZMANN_CGS; // vibration
-    return (cv + 1) / cv;
+    temp_last = temp; gamma_last = (cv + 1) / cv;
+    return gamma_last;
 }
 
 #endif // EOS_SUBSTELLAR_ISM

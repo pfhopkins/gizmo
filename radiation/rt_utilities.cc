@@ -1421,6 +1421,7 @@ Returns
 dE - net dust heating (=0 for dust in equilibrium)
 */
 double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoint_1, double* Tdust_fixedpoint_2, struct particle_data *pp, struct gas_cell_data *cell){
+    COOL_ITER_COUNT(7);
     double dt = get_particle_timestep_in_physical(i, pp);
 #ifdef TRANSPORT_SUBCYCLE_COOLING
     dt *= All.Transport_Subcycle_dt_fraction; /* cooling is called N times per hydro step, each with dt/N — projections here must match */
@@ -1486,6 +1487,7 @@ double dust_dE_cooling(int i, double Tgas, double Tdust, double* Tdust_fixedpoin
 double rt_ir_lambdadust(int i, double T, struct particle_data *pp, struct gas_cell_data *cell){
     double Tdust, T_lower, T_upper, dE, dE1, dE2, dE_lower, dE_upper, dE_guess, dTdust_tol=1e-6;
     double Tdust_fixedpoint_1, Tdust_fixedpoint_2, dummy;
+    COOL_ITER_COUNT(6);
     auto dE_of_dTdust = [&](double dTdust) {return dust_dE_cooling(i, T, T+dTdust, &Tdust_fixedpoint_1, &Tdust_fixedpoint_2, pp, cell);}; // solved in Tdust-T: LambdaDust ~ (T-Tdust) needs the difference resolved, not just Tdust
     if((All.Time==0 )|| (!isfinite(cell[i].Dust_Temperature))) {Tdust=T;} else {Tdust = DMIN(MAX_DUST_TEMP, cell[i].Dust_Temperature);}
 #ifdef RT_DIAG_IR_DOUBLE_COUNT
