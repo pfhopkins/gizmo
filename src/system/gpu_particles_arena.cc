@@ -574,6 +574,64 @@ extern "C" int gizmo_ghost_range_scatter_records(int base, int n, const void *re
     return 0;
 }
 
+extern "C" int gizmo_particles_gather_send_segments(const int *idx, int n, void *dst, int rec_bytes, int nseg,
+                                                    const int *cell, const int *obj_off, const int *rec_off, const int *words)
+{
+    if(n <= 0) {return 0;}
+    typedef unsigned int W;
+    const size_t idx_bytes = ((size_t) n * sizeof(int) + 255) & ~(size_t) 255;
+    const size_t rec_total = (size_t) n * (size_t) rec_bytes;
+    char *base = (nseg <= 8 && rec_bytes % (int) sizeof(W) == 0) ? (char *) kept_scratch(idx_bytes + rec_total) : NULL;
+    if(!base) {   /* no scratch: pack on the host (correct, only slower) */
+        for(int k = 0; k < n; k++) {
+            char *rec = (char *) dst + (size_t) k * rec_bytes;
+            memset(rec, 0, (size_t) rec_bytes);
+            const int j = idx[k];
+            if(j < 0) {continue;}
+            const int gas = (P[j].Type == 0 && j < N_gas);
+            for(int s = 0; s < nseg; s++) {
+                if(cell[s] && !gas) {continue;}
+                const char *obj = cell[s] ? (const char *) &CellP[j] : (const char *) &P[j];
+                memcpy(rec + rec_off[s], obj + obj_off[s], (size_t) words[s] * sizeof(W));
+            }
+        }
+        return 1;
+    }
+    int *d_idx = (int *) base;
+    W *d_rec = (W *) (base + idx_bytes);
+    {
+        Kokkos::View<const int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(idx, (size_t) n);
+        Kokkos::View<int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_idx, (size_t) n);
+        Kokkos::deep_copy(d, h);
+    }
+    struct GhostScatterSegments seg = {};
+    seg.n = nseg;
+    for(int s = 0; s < nseg; s++) {seg.cell[s] = cell[s]; seg.obj_off[s] = obj_off[s] / (int) sizeof(W); seg.rec_off[s] = rec_off[s] / (int) sizeof(W); seg.words[s] = words[s];}
+    const W *Pw = (const W *) P;
+    const W *Cw = (const W *) CellP;
+    const struct particle_data *Pd = P;
+    const int ngas = N_gas;
+    const int wp = (int) (sizeof(struct particle_data) / sizeof(W)), wc = (int) (sizeof(struct gas_cell_data) / sizeof(W));
+    const int wr = rec_bytes / (int) sizeof(W);
+    Kokkos::parallel_for("gizmo_gather_send_segments", n, KOKKOS_LAMBDA(int k) {
+        W *rec = d_rec + (size_t) k * wr;
+        for(int w = 0; w < wr; w++) {rec[w] = 0;}
+        const int j = d_idx[k];
+        if(j < 0) {return;}
+        const int gas = (Pd[j].Type == 0 && j < ngas);
+        for(int s = 0; s < seg.n; s++) {
+            if(seg.cell[s] && !gas) {continue;}
+            const W *obj = seg.cell[s] ? (Cw + (size_t) j * wc) : (Pw + (size_t) j * wp);
+            for(int w = 0; w < seg.words[s]; w++) {rec[seg.rec_off[s] + w] = obj[seg.obj_off[s] + w];}
+        }
+    });
+    Kokkos::fence("gizmo_gather_send_segments");
+    Kokkos::View<char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h((char *) dst, rec_total);
+    Kokkos::View<const char *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d((const char *) d_rec, rec_total);
+    Kokkos::deep_copy(h, d);
+    return 0;
+}
+
 extern "C" void gizmo_ghost_range_gather_records(int base, int n, void *records, int rec_bytes, int nseg,
                                                  const int *cell, const int *obj_off, const int *rec_off, const int *bytes)
 {

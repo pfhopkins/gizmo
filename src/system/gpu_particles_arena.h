@@ -203,6 +203,12 @@ int gizmo_ghost_range_copy_to_device(int base, int n, const struct particle_data
 void *gizmo_ghost_pinned_buffer(int slot, size_t bytes);
 void gizmo_ghost_range_zero_wakeup_on_device(int base, int n);
 void gizmo_ghost_range_gather_wakeup(int base, int n, int *dst);
+/* The trimmed ghost-export pack on the device, for owners kept there: record k (rec_bytes, zeroed first) holds
+ * segment s (words[s] 4-byte words) of P[idx[k]] (cell[s] == 0) or, for gas below N_gas, of CellP[idx[k]], from byte
+ * obj_off[s] to rec_off[s]; idx[k] < 0 leaves it zero.  Copied into dst (host memory).  At most 8 segments.  0 on the
+ * device; 1 when it packed on the host instead (correct, slower). */
+int gizmo_particles_gather_send_segments(const int *idx, int n, void *dst, int rec_bytes, int nseg,
+                                         const int *cell, const int *obj_off, const int *rec_off, const int *words);
 /* The reverse for a few fields: segment s of P (cell[s] == 0) or CellP[base + g], bytes[s] bytes from byte obj_off[s],
  * into record g of records (rec_bytes each, host memory) at rec_off[s], read on the device.  At most 8 segments. */
 void gizmo_ghost_range_gather_records(int base, int n, void *records, int rec_bytes, int nseg,

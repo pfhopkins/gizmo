@@ -2126,21 +2126,22 @@ static const struct gx_trim_layout &gx_trim_layout_get(void)
 int ghost_refresh_values_trimmed(void)
 {
 #if defined(GHOSTDEV_AUDITED_CONFIG)
-    static int enabled = -1, verify = -1;
+    static int enabled = -1, verify = -1, force_device_pack = -1;
     if(enabled < 0) {
         const char *env = getenv("GIZMO_GHOST_TRIM");
         enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
         env = getenv("GIZMO_GHOST_TRIM_VERIFY");
         verify = (env && env[0] && atoi(env) != 0) ? 1 : 0;
+        env = getenv("GIZMO_GHOST_TRIM_DEVICE_PACK");   /* test knob: gather on the device even with the owners on the host */
+        force_device_pack = (env && env[0] && atoi(env) != 0) ? 1 : 0;
     }
     if(!enabled || NTask <= 1 || !gizmo_ghostdev_enabled()) {return 0;}   /* rank-uniform */
     const struct gx_trim_layout &L = gx_trim_layout_get();
     const int R = L.rec_bytes;
     const int ns = ghost_send_home_count, nr = NumGhostParticles;
-    /* Every rank's pool lives on the device, no owner record was drifted since its import, it is current, and the owners
-       are on the host for the pack (otherwise the full refresh, which can gather on the device). */
+    /* Every rank's pool lives on the device, no owner record was drifted since its import, and it is current. */
     int ok = gizmo_ghostdev_live() && !ghost_owner_written_since_import() && ghost_pool_current_ti() == All.Ti_Current &&
-             !gizmo_particles_owned_kept_on_device() && ghost_send_home_idx && ghost_wb_send_count && ghost_wb_send_disp &&
+             ghost_send_home_idx && ghost_wb_send_count && ghost_wb_send_disp &&
              ghost_wb_recv_count && ghost_wb_recv_disp && NumPart == NumPart_before_ghost + NumGhostParticles;
     if(ok) {
         long long send_tot = 0, recv_tot = 0;
@@ -2161,10 +2162,14 @@ int ghost_refresh_values_trimmed(void)
         vP = new struct particle_data[nr > 0 ? nr : 1];
         vC = new struct gas_cell_data[nr > 0 ? nr : 1];
         (void) gx_pack_and_forward_particle_exchange(ghost_send_home_idx, ghost_wb_send_count, ghost_wb_send_disp, vP, vC,
-                                                     ghost_wb_recv_count, ghost_wb_recv_disp);
+                                                     ghost_wb_recv_count, ghost_wb_recv_disp, gizmo_particles_owned_kept_on_device());
     }
 
-    /* Pack: the listed words of P[j], and of CellP[j] for gas below N_gas (zeros otherwise, as gx_pack_send_slot sends). */
+    /* Pack: the listed words of P[j], and of CellP[j] for gas below N_gas (zeros otherwise, as gx_pack_send_slot sends);
+       gathered on the device when the owners are kept there. */
+    if(gizmo_particles_owned_kept_on_device() || force_device_pack) {
+        gizmo_particles_gather_send_segments(ghost_send_home_idx, ns, sbuf, R, L.n, L.cell, L.obj_off, L.rec_off, L.words);
+    } else {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(ns >= 4096)
 #endif
@@ -2179,6 +2184,7 @@ int ghost_refresh_values_trimmed(void)
             const char *obj = L.cell[s] ? (const char *) &CellP[j] : (const char *) &P[j];
             memcpy(rec + L.rec_off[s], obj + L.obj_off[s], (size_t) L.words[s] * sizeof(unsigned int));
         }
+    }
     }
     gizmo_mpi_alltoallv_typed(sbuf, ghost_wb_send_count, ghost_wb_send_disp, rbuf, ghost_wb_recv_count, ghost_wb_recv_disp,
                               (size_t) R, MPI_COMM_WORLD);
