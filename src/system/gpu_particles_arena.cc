@@ -291,7 +291,7 @@ extern "C" int gizmo_particles_mirror_fill(int n_part, struct particle_data **P_
     static int enabled = -1;
     if(enabled < 0) {
         const char *env = getenv("GIZMO_UVM_MIRROR");
-        enabled = (env && env[0]) ? (atoi(env) != 0) : 0;
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
         if(ThisTask == 0 && particles_prefetch_enabled()) {printf("Particle storage: device copy for passes that do not write the particles is %s.\n", enabled ? "on" : "off"); fflush(stdout);}
     }
     /* Only from host-resident storage: an explicit host-to-device copy reads managed pages in place (a
