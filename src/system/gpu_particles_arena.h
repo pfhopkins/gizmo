@@ -127,6 +127,13 @@ int gizmo_particles_owned_kept_on_device(void);
  * gathered on the device and copied into the host buffers dst_P[0,n) / dst_CellP[0,n). */
 long long gizmo_particles_count_not_at_time(const int *idx, int n, long long t_now);   /* t_now: an integertime */
 void gizmo_particles_gather_send_records(const int *idx, int n, struct particle_data *dst_P, struct gas_cell_data *dst_CellP);
+/* A device-only copy of the live particle storage for a device pass that writes none of it except P[].wakeup
+ * and (MFV) CellP[].dMass, which _mirror_copy_back_writes returns to the storage afterwards: the host keeps its
+ * pages, so no to-host move follows the pass.  _mirror_fill copies P[0,n_part) and the cells over the range a
+ * bulk prefetch would cover and returns the device pointers, or returns 0 (use the storage itself) when the
+ * mirror is off (GIZMO_UVM_MIRROR unset or 0), prefetching is off, or the buffer cannot be had. */
+int gizmo_particles_mirror_fill(int n_part, struct particle_data **P_dev, struct gas_cell_data **CellP_dev, const char *site);
+void gizmo_particles_mirror_copy_back_writes(void);
 /* Seconds and bytes spent in the prefetches so far (for the run's timing report). */
 void gizmo_particles_prefetch_stats(double *seconds, double *bytes_to_device, double *bytes_to_host, long long *calls);
 

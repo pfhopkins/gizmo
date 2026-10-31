@@ -524,10 +524,11 @@ static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
  * and their order cannot change the result. Every other Spec writes back serially in active order. */
 template <typename Spec>
 static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int first, int n,
-                                        const typename Spec::AccumData *accums)
+                                        const typename Spec::AccumData *accums,
+                                        bool mirrored = false)   /* the kernels read a device copy (gizmo_particles_mirror_fill) */
 {
     if((long long) n * 8 >= (long long) NumPart) {   /* a sweep of most of the particles and of the kernel's results: move them in bulk */
-        gizmo_particles_prefetch_to_host(Spec::loop_name);
+        if(!mirrored) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* with a device copy the host kept its pages */
         gizmo_managed_prefetch_to_host(accums, (size_t) n * sizeof(typename Spec::AccumData), Spec::loop_name);
     }
     if constexpr (nlr_spec_writeback_writes_only_own_particle_v<Spec>) {
@@ -2327,12 +2328,22 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
      * caller is responsible for the args.CellP=NULL-when-no-gas decision;
      * runner does not read All.TotN_gas. */
     GIZMO_GPU_ENSURE_ALL_FRESH();
-    if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
+    /* The hydro pass writes no particle field on the device except P[j].wakeup and (MFV) CellP[j].dMass: its
+       kernels may read a device copy, returned field by field below, so the host keeps its pages. */
+    bool mirrored = false;
+    struct particle_data *P_mirror = nullptr;
+    struct gas_cell_data *CellP_mirror = nullptr;
+    if constexpr (std::is_same<Spec, HydroForceSpec>::value) {
+        if((long long) args.num_active * 8 >= (long long) NumPart && args.P == P && args.CellP == CellP) {
+            mirrored = gizmo_particles_mirror_fill(args.num_total, &P_mirror, &CellP_mirror, Spec::loop_name);
+        }
+    }
+    if(!mirrored && (long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_device(Spec::loop_name);}   /* a sweep of most of the particles: move them in bulk */
     gpu_particles_arena_set_site(Spec::loop_name);
     gpu_particles_arena_acquire(args.num_total, args.P, args.CellP);
-    struct particle_data *P_gpu    = gpu_particles_arena_P();
+    struct particle_data *P_gpu    = mirrored ? P_mirror : gpu_particles_arena_P();
     struct gas_cell_data *CellP_gpu = (args.CellP != nullptr)
-                                        ? gpu_particles_arena_CellP() : nullptr;
+                                        ? (mirrored ? CellP_mirror : gpu_particles_arena_CellP()) : nullptr;
 
     /* NGL build using pre-arena radii. SIDX cache resolved from spec.
      * Caller-built list (args.external_csr non-null): stage it into gnl shape
@@ -2547,8 +2558,9 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
          * host reads d_accums[0,n) directly. */
 
         /* (4) host writeback for [c0, c0+n) before the next chunk reuses arrays. */
-        nlr_apply_active_writebacks<Spec>(args, c0, n, d_accums);
+        nlr_apply_active_writebacks<Spec>(args, c0, n, d_accums, mirrored);
     }
+    if(mirrored) {gizmo_particles_mirror_copy_back_writes();}   /* before the ghost writeback reads the ghosts' wakeup */
 
 
     /* Cleanup. The list holds no index memory, so the cached index stays for

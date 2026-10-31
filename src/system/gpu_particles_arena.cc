@@ -280,6 +280,98 @@ extern "C" void gizmo_particles_gather_send_records(const int *idx, int n, struc
     Kokkos::deep_copy(hc, dc);
 }
 
+static char *mirror_buf_ = NULL;
+static size_t mirror_cap_ = 0, mirror_off_c_ = 0;
+static int mirror_n_part_ = 0, mirror_n_cells_ = 0;
+
+extern "C" int gizmo_particles_mirror_fill(int n_part, struct particle_data **P_dev, struct gas_cell_data **CellP_dev, const char *site)
+{
+    static int enabled = -1;
+    if(enabled < 0) {
+        const char *env = getenv("GIZMO_UVM_MIRROR");
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 0;
+        if(ThisTask == 0 && particles_prefetch_enabled()) {printf("Particle storage: device copy for passes that do not write the particles is %s.\n", enabled ? "on" : "off"); fflush(stdout);}
+    }
+    /* Only from host-resident storage: an explicit host-to-device copy reads managed pages in place (a
+       cudaMemcpyDefault copy migrates them to the device, one fault at a time). */
+    if(!enabled || !particles_prefetch_enabled() || n_part <= 0 || !P) {return 0;}
+    if(prefetch_side_ != 2 || owned_kept_on_device_) {return 0;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    const int n_cells = (ghost_get_num_ghosts() > 0) ? ((n_part < All.MaxPartGas) ? n_part : All.MaxPartGas) : ((N_gas < n_part) ? N_gas : n_part);
+    const size_t bytes_p = (size_t) n_part * sizeof(struct particle_data);
+    const size_t bytes_c = (CellP && n_cells > 0) ? (size_t) n_cells * sizeof(struct gas_cell_data) : 0;
+    const size_t off_c = (bytes_p + 255) & ~(size_t) 255;
+    if(off_c + bytes_c > mirror_cap_) {
+        if(mirror_buf_) {gizmo_gpu_free_device(mirror_buf_);}
+        mirror_cap_ = (off_c + bytes_c) + (off_c + bytes_c) / 4;
+        mirror_buf_ = (char *) gizmo_gpu_alloc_device(mirror_cap_, "particle_mirror");
+        if(!mirror_buf_) {mirror_cap_ = 0; return 0;}
+    }
+    const double t0 = my_second();
+    Kokkos::fence("gizmo_particles_mirror_fill");
+    cudaMemcpyAsync(mirror_buf_, P, bytes_p, cudaMemcpyHostToDevice, 0);
+    if(bytes_c) {cudaMemcpyAsync(mirror_buf_ + off_c, CellP, bytes_c, cudaMemcpyHostToDevice, 0);}
+    cudaError_t rc = cudaStreamSynchronize(0);
+    if(rc != cudaSuccess) {(void) cudaGetLastError(); if(ThisTask == 0) {printf("Particle storage: device copy failed at %s (%s).\n", site, cudaGetErrorString(rc)); fflush(stdout);} return 0;}
+    prefetch_seconds_ += timediff(t0, my_second());
+    prefetch_bytes_dev_ += (double) (bytes_p + bytes_c);
+    prefetch_calls_++;
+    mirror_off_c_ = off_c; mirror_n_part_ = n_part; mirror_n_cells_ = bytes_c ? n_cells : 0;
+    *P_dev = (struct particle_data *) mirror_buf_;
+    *CellP_dev = bytes_c ? (struct gas_cell_data *) (mirror_buf_ + off_c) : NULL;
+    return 1;
+#else
+    (void) P_dev; (void) CellP_dev; (void) site;
+    return 0;
+#endif
+}
+
+extern "C" void gizmo_particles_mirror_copy_back_writes(void)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    const int n = mirror_n_part_;
+    if(n <= 0 || !mirror_buf_) {return;}
+    std::vector<int> w((size_t) n);
+    int *d_w = (int *) kept_scratch((size_t) n * sizeof(int));
+    const struct particle_data *Pm = (const struct particle_data *) mirror_buf_;
+    if(d_w) {
+        Kokkos::parallel_for("gizmo_mirror_wakeup", n, KOKKOS_LAMBDA(int j) {d_w[j] = Pm[j].wakeup;});
+        Kokkos::fence("gizmo_mirror_wakeup");
+        Kokkos::View<int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(w.data(), (size_t) n);
+        Kokkos::View<const int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_w, (size_t) n);
+        Kokkos::deep_copy(h, d);
+    } else {
+        for(int j = 0; j < n; j++) {cudaMemcpy(&w[(size_t) j], &Pm[j].wakeup, sizeof(int), cudaMemcpyDeviceToHost);}
+    }
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n >= 65536)
+#endif
+    for(int j = 0; j < n; j++) {P[j].wakeup = w[(size_t) j];}
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    const int nc = mirror_n_cells_;
+    if(nc > 0) {
+        std::vector<MyDouble> dm((size_t) nc);
+        MyDouble *d_m = (MyDouble *) kept_scratch((size_t) nc * sizeof(MyDouble));
+        const struct gas_cell_data *Cm = (const struct gas_cell_data *) (mirror_buf_ + mirror_off_c_);
+        if(d_m) {
+            Kokkos::parallel_for("gizmo_mirror_dmass", nc, KOKKOS_LAMBDA(int j) {d_m[j] = Cm[j].dMass;});
+            Kokkos::fence("gizmo_mirror_dmass");
+            Kokkos::View<MyDouble *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(dm.data(), (size_t) nc);
+            Kokkos::View<const MyDouble *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_m, (size_t) nc);
+            Kokkos::deep_copy(h, d);
+        } else {
+            for(int j = 0; j < nc; j++) {cudaMemcpy(&dm[(size_t) j], &Cm[j].dMass, sizeof(MyDouble), cudaMemcpyDeviceToHost);}
+        }
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(nc >= 65536)
+#endif
+        for(int j = 0; j < nc; j++) {CellP[j].dMass = dm[(size_t) j];}
+    }
+#endif
+    mirror_n_part_ = 0; mirror_n_cells_ = 0;
+#endif
+}
+
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
