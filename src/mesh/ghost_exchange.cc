@@ -1833,6 +1833,35 @@ static inline void ghost_refresh_make_device_visible(int ghost_base, int ghost_c
     (void)ghost_base; (void)ghost_count;
 }
 
+static int g_ghost_owner_written = 1;   /* nothing is known about the owners until an import clears it */
+void ghost_note_owner_write(void) {__atomic_store_n(&g_ghost_owner_written, 1, __ATOMIC_RELAXED);}
+void ghost_owner_writes_reset(void) {__atomic_store_n(&g_ghost_owner_written, 0, __ATOMIC_RELAXED);}
+int ghost_owner_written_since_import(void) {return __atomic_load_n(&g_ghost_owner_written, __ATOMIC_RELAXED);}
+
+long long ghost_refresh_verify_unchanged(void)
+{
+    if(NTask <= 1) {return 0;}
+    int ok = (NumPart_before_ghost >= 0 && ghost_send_home_idx && ghost_wb_send_count && ghost_wb_send_disp &&
+              ghost_wb_recv_count && ghost_wb_recv_disp && NumPart == NumPart_before_ghost + NumGhostParticles) ? 1 : 0, all_ok = 0;
+    MPI_Allreduce(&ok, &all_ok, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+    if(!all_ok) {return -1;}
+    const int ng = NumGhostParticles;
+    struct particle_data *sP = new struct particle_data[ng > 0 ? ng : 1];
+    struct gas_cell_data *sC = new struct gas_cell_data[ng > 0 ? ng : 1];
+    gx_pack_and_forward_particle_exchange(ghost_send_home_idx, ghost_wb_send_count, ghost_wb_send_disp, sP, sC,
+                                          ghost_wb_recv_count, ghost_wb_recv_disp, gizmo_particles_owned_kept_on_device());
+    long long n_diff = 0;
+    for(int g = 0; g < ng; g++) {
+        const int j = NumPart_before_ghost + g;
+        const int c_diff = (All.TotN_gas > 0) && memcmp(&sC[g], &CellP[j], sizeof(struct gas_cell_data)) != 0;
+        if(memcmp(&sP[g], &P[j], sizeof(struct particle_data)) != 0 || c_diff) {n_diff++;}
+    }
+    delete[] sC; delete[] sP;
+    long long all_diff = 0;
+    MPI_Allreduce(&n_diff, &all_diff, 1, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+    return all_diff;
+}
+
 int ghost_refresh_values(void)
 {
     /* Fail-closed guards (production callers fall back to full cleanup+reimport).

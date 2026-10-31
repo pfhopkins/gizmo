@@ -274,7 +274,28 @@ bool gizmo_hydro_corridor_csr_arrays(const int **rows, int *n_rows, const int64_
     return true;
 }
 
-void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
+/* Whether this rank's exported records are byte-identical to what the live pool received at the import: nothing
+ * wrote an owner record since (ghost_owner_written_since_import: the drifts raise it) and the import certified
+ * the pool current at this time. The phases that may run between the import and the gradients and write owner
+ * records without a drift are compiled out of the claim: cellcorrections (HYDRO_VOLUME_CORRECTIONS) and the
+ * dynamic-diffusion filter (TURB_DIFF_DYNAMIC). GIZMO_GHOST_REFRESH_SKIP=0 turns the skip off. */
+static int corridor_owner_side_clean(void)
+{
+#if defined(HYDRO_VOLUME_CORRECTIONS) || defined(TURB_DIFF_DYNAMIC)
+    return 0;
+#else
+    static int enabled = -1;
+    if(enabled < 0) {const char *env = getenv("GIZMO_GHOST_REFRESH_SKIP"); enabled = (env && env[0]) ? (atoi(env) != 0) : 1;}
+    return enabled && !ghost_owner_written_since_import() && ghost_pool_current_ti() == All.Ti_Current;
+#endif
+}
+
+static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean);
+
+void gizmo_hydro_corridor_refresh_ghost_values(const char *stage) {corridor_refresh_impl(stage, 0);}
+void gizmo_hydro_corridor_refresh_ghost_values_unless_owner_clean(const char *stage) {corridor_refresh_impl(stage, 1);}
+
+static void corridor_refresh_impl(const char *stage, int skip_when_owner_clean)
 {
     /* No-op unless the corridor owns a published Mode-A view this step —
      * Mode B / fallback paths keep their own refresh semantics. At NTask==1
@@ -292,8 +313,23 @@ void gizmo_hydro_corridor_refresh_ghost_values(const char *stage)
      * (epoch match; see g_corridor_pool_epoch). Any other state — pool torn
      * down by an intervening loop's own ghost lifecycle, epoch mismatch, or
      * a refresh-guard failure — falls CLOSED to the full path below. */
-    int same_pool = (ghost_pool_is_live() && ghost_provenance_epoch() == g_corridor_pool_epoch) ? 1 : 0;
-    MPI_Allreduce(MPI_IN_PLACE, &same_pool, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);   /* both paths are collective */
+    /* One reduction answers both questions: is the live pool the published one, and (when the caller allows the
+       skip) are every rank's owners unchanged since it was imported -- then the refresh would rewrite every ghost
+       slot with the bytes it already holds, and is skipped. GIZMO_GHOST_REFRESH_VERIFY=1 performs it into scratch
+       and reports any slot that would have changed. */
+    int pool_state[2] = {(ghost_pool_is_live() && ghost_provenance_epoch() == g_corridor_pool_epoch) ? 1 : 0,
+                         (skip_when_owner_clean && corridor_owner_side_clean()) ? 1 : 0};
+    MPI_Allreduce(MPI_IN_PLACE, pool_state, 2, MPI_INT, MPI_MIN, MPI_COMM_WORLD);   /* both paths are collective */
+    const int same_pool = pool_state[0];
+    if(same_pool && pool_state[1]) {
+        static int verify = -1;
+        if(verify < 0) {const char *env = getenv("GIZMO_GHOST_REFRESH_VERIFY"); verify = (env && env[0] && atoi(env) != 0) ? 1 : 0;}
+        if(verify) {
+            const long long n_diff = ghost_refresh_verify_unchanged();
+            if(ThisTask == 0) {printf("Ghost refresh %s skipped (owners unchanged since the import); verify: %lld ghost slots differ\n", stage, n_diff); fflush(stdout);}
+        }
+        return;
+    }
     if(same_pool) {
         int refresh_rc = ghost_refresh_values();
         if(refresh_rc == GHOST_REFRESH_OK) {

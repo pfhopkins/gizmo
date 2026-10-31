@@ -301,6 +301,7 @@ void drift_particle(int i, integertime time1)
     struct DriftKickTableView tables = drift_kick_table_view(DriftTable, GravKickTable,
             DriftTable_logTimeBegin, DriftTable_logTimeMax, All.Timebase_interval, All.ComovingIntegrationOn);
     struct EosTableView eos_tables = eos_tables_view();
+    if(P[i].Ti_current != time1) {ghost_note_owner_write();}   /* the ghosts of this particle no longer match it */
     drift_particle_impl(i, time1, P, CellP, &tables, &eos_tables);
     /* A particle drifted outside the domain extent would get a wrong Peano key from any tree build or
        repartition that reuses this domain; ask for a full decomposition, which re-measures the extent. */

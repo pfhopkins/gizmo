@@ -166,6 +166,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
         memmove(out_drifted, needs_drift.data(), (size_t) n_need * sizeof(int));
     }
     if(n_need <= 0) {return drift_batch_status_();}
+    ghost_note_owner_write();   /* the ghosts of these particles no longer match them */
 
     /* Tiny-N and everything below the offload threshold stays exactly as it was. So does a drift
        that finds the particles moved in bulk to the host (a GPU whose managed memory is not

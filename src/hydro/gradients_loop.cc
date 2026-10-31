@@ -561,7 +561,7 @@ void hydro_gradient_calc(void)
     const GizmoHydroCorridorMode   corridor_mode = gizmo_hydro_corridor_get_mode();
     const bool corridor_built_csr = (gizmo_hydro_corridor_external_csr() != nullptr);
     if(corridor_built_csr) {
-        gizmo_hydro_corridor_refresh_ghost_values("pre_gradients");
+        gizmo_hydro_corridor_refresh_ghost_values_unless_owner_clean("pre_gradients");
     } else if(corridor_mode == GizmoHydroCorridorMode::MODE_A
               && gizmo_sym_any_active_global) {
         printf("FATAL: hydro_gradient_calc in Mode A with active gas but no published corridor CSR on task %d.\n", ThisTask);

@@ -171,6 +171,8 @@ void gizmo_hydro_corridor_begin(void);
  * `stage` is a short diagnostic label ("pre_gradients", "mhd_cg_iter",
  * "pre_hydro_force"). */
 void gizmo_hydro_corridor_refresh_ghost_values(const char *stage);
+/* The same, skipped (collectively) when no rank's owner records changed since the import (the pre-gradients refresh). */
+void gizmo_hydro_corridor_refresh_ghost_values_unless_owner_clean(const char *stage);
 
 /* Accessor for downstream corridor consumers. Returns a non-null pointer
  * iff gizmo_hydro_corridor_begin populated a usable Mode-A CSR for this

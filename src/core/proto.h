@@ -886,6 +886,16 @@ enum ghost_refresh_status {
     GHOST_REFRESH_FAIL_ON_PEER          /* this rank could refresh, another could not */
 };
 int ghost_refresh_values(void);
+/* Whether an owner-side particle record may have changed since the last ghost import packed it: raised by the
+ * drifts (drift_particle, drift_particles_batch) and cleared when an import completes.  Read by the corridor's
+ * pre-gradients refresh, which is skipped when no rank's owners changed (the ghosts already hold the bytes it
+ * would send). */
+void ghost_note_owner_write(void);
+void ghost_owner_writes_reset(void);
+int ghost_owner_written_since_import(void);
+/* Collective check for a skipped refresh: re-packs the exported records into scratch and counts the ghost
+ * slots whose bytes differ from the live pool (summed over ranks; -1 when the pool cannot be checked). */
+long long ghost_refresh_verify_unchanged(void);
 /* Set the live ghost pool aside (NumPart back to local, provenance held privately), restore it
  * (same slot layout, new provenance epoch, values to be refreshed by the caller), or drop it.
  * Restore is local and returns 0 when the layout it needs is not there; callers decide

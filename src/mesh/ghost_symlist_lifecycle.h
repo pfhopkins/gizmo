@@ -293,6 +293,7 @@ static inline void gizmo_gradients_prep_symlist(double safety, double search_fac
         ghost_exchange_cleanup();
         const double t_gi_symm = my_second();
         gizmo_hydro_corridor_import_gas_ghosts(safety); /* active gas, or all gas on an MG step */
+        ghost_owner_writes_reset();   /* the pool now holds every exported record as its owner has it */
         /* Corridor SYMMETRIC import. Charged to its own import sub-row: leaving it
          * in the caller's residual hid it in misc_hydro, which is where the
          * `ghost import` row lost most of its meaning.  The charge starts after the
@@ -331,6 +332,7 @@ static inline void gizmo_gradients_refresh_symlist(double safety, double search_
         ghost_exchange_cleanup();
         const double t_gi_symm = my_second();
         gizmo_hydro_corridor_import_gas_ghosts(safety); /* active gas, or all gas on an MG step */
+        ghost_owner_writes_reset();   /* the pool now holds every exported record as its owner has it */
         cpu_charge_child(CPU_GHOSTIMPORT_SYMM, timediff(t_gi_symm, my_second()));
         gpu_build_symmetric_neighbor_list(P, NumPart, gizmo_sym_active_indices, gizmo_sym_num_active, &gizmo_sym_neighbor_list, search_fac,
                                           keep_for_substeps, keep_device);
