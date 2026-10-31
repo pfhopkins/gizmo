@@ -312,8 +312,8 @@ void hydro_accumulate_neighbor(
        relevant #ifdef so callers invoke unconditionally (no-op when disabled). */
     double face_density_for_diffusion = 0;
 #if defined(TURB_DIFFUSION) && !defined(HYDRO_SPH)
-    /* the reconstructed face densities of the two sides, averaged: the same value from either side of the pair */
-    face_density_for_diffusion = 0.5 * (Riemann_vec.L.rho + Riemann_vec.R.rho);
+    /* the reconstructed face densities of the two sides, averaged: the same value from either side of the pair. the face states are comoving; the diffusion weight is physical, as in the SPH branch */
+    face_density_for_diffusion = 0.5 * (Riemann_vec.L.rho + Riemann_vec.R.rho) * All.cf_a3inv;
 #endif
 #if defined(TWO_TEMPERATURE_PLASMA) && (TWO_TEMPERATURE_PLASMA & 4) && defined(CONDUCTION)
     /* 2-T plasma bit 2: capture the conduction-only contribution to Fluxes.p
