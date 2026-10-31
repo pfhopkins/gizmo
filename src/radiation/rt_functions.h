@@ -1301,7 +1301,8 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     for(kf=0;kf<N_RT_FREQ_BINS;kf++)
     {
         int k,k_om; double rho=cell[i].Density*All.cf_a3inv, ceff=C_LIGHT_CODE_REDUCED, ctrue=C_LIGHT_CODE, teq_inv=cell[i].Rad_Kappa[kf]*rho*ceff, f_a=rt_absorb_frac_albedo(i,kf, pp, cell), f_s=1.-f_a, b_dot_n[N_RT_INTENSITY_BINS]={0}, beta_2=0.; Vec3<double> beta;
-        int n_iter = 1 + (int)(DMIN(DMAX(4. , dt_entr*teq_inv), 1000.)); // number of iterations to subcycle everything below //
+        if(mode==0) {beta=pp[i].Vel/(All.cf_atime*ctrue);} else {beta=cell[i].VelPred/(All.cf_atime*ctrue);} // gas velocity at the start, to size the subcycle
+        int n_iter = 1 + (int)(DMIN(30.*dt_entr*teq_inv*sqrt(beta.norm_sq()), 19.)); // scattering below is integrated exactly; only the work, boost and beaming terms are explicit, each changing the bins by ~3*tau*|beta| per pass (kept ~<10%), and their updates stay positive-definite if that bound is hit //
         double dt=dt_entr/n_iter, tau=dt*teq_inv, i0[N_RT_INTENSITY_BINS]={0}, inv_n_om=1./N_RT_INTENSITY_BINS, J, b_dot_H, b2_dot_K; int i_iter; // i0 = DOMEGA*I is the energy in each angle bin, so angle-means (J, H, K) in these units are sums over bins divided by N
         for(i_iter=0; i_iter<n_iter; i_iter++)
         {
