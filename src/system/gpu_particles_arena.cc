@@ -812,10 +812,10 @@ extern "C" int gizmo_densfin_host_tail(const char *site, struct particle_data **
 #endif
 }
 extern "C" int gizmo_densfin_span_active(void) {return densfin_span_ && owned_kept_on_device_;}
+static int densfin_copy_pending_ = 0;   /* read by gizmo_densfin_host_P in every build */
 #if defined(KOKKOS_ENABLE_CUDA)
 static cudaStream_t densfin_copy_stream_ = 0;
 static cudaEvent_t  densfin_copy_event_ = 0;
-static int densfin_copy_pending_ = 0;
 static double densfin_copy_t0_ = 0;
 static struct particle_data *densfin_hostP_buffer(void)
 {
