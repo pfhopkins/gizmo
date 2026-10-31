@@ -777,7 +777,7 @@ struct SidxScratch {
          * inside the allocator; what it already holds is given back on the way out. */
         if(kStageOnHost && !gizmo_alloc_fits_this_rank(gizmo_mymalloc_rounded_size(bytes), 1)) {throw SidxAllocationRefused(bytes, SIDX_MEM_ARENA);}
         if(kStageOnHost) {p = mymalloc(label, bytes);}
-        else if(!(p = gizmo_gpu_alloc_device(bytes, label))) {throw SidxAllocationRefused(bytes, SIDX_MEM_DEVICE);}
+        else if(!(p = gizmo_gpu_pool_take(GIZMO_POOL_SIDX_SCRATCH + n, bytes, label))) {throw SidxAllocationRefused(bytes, SIDX_MEM_DEVICE);}
         held[n++] = p;
         return p;
     }
@@ -786,7 +786,7 @@ struct SidxScratch {
         if(!kStageOnHost && n > m) {Kokkos::fence();}   /* no kernel may still read what is given back (sidx_segment_free) */
         while(n > m) {
             void *p = held[--n];
-            if(kStageOnHost) {myfree(p);} else {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(p);}
+            if(kStageOnHost) {myfree(p);} else {gizmo_gpu_pool_give(GIZMO_POOL_SIDX_SCRATCH + n, p);}
         }
     }
     ~SidxScratch() {release_to(0);}
@@ -1611,7 +1611,7 @@ static int sidx_raise_members(gpu_spatial_index_t *idx, const int *list, int n, 
     const int chunk = (n < SIDX_RAISE_CHUNK) ? n : SIDX_RAISE_CHUNK;
     std::vector<SidxRaiseRecord> rec;
     try {rec.resize((size_t)chunk);} catch(const std::bad_alloc &) {seg->rebuild_needed = 1; return 2;}
-    SidxRaiseRecord *d_rec = (SidxRaiseRecord *) ngl_alloc_device((size_t) chunk * sizeof(SidxRaiseRecord), "sidx_raise_records");
+    SidxRaiseRecord *d_rec = (SidxRaiseRecord *) gizmo_gpu_pool_take(GIZMO_POOL_SIDX_RAISE, (size_t) chunk * sizeof(SidxRaiseRecord), "sidx_raise_records");
     if(!d_rec) {seg->rebuild_needed = 1; return 2;}
     sfc_tile_t *tiles = seg->d_tiles;
     tile_bvh_node_t *bvh = seg->d_bvh;
@@ -1657,7 +1657,7 @@ static int sidx_raise_members(gpu_spatial_index_t *idx, const int *list, int n, 
             r.j = j;
         }
         if(fault) {
-            Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_rec);
+            gizmo_gpu_pool_give(GIZMO_POOL_SIDX_RAISE, d_rec);
             seg->rebuild_needed = 1;
             gizmo_request_controlled_stop(7740, "a particle kept in the neighbour index has a velocity that is not finite, "
                                           "so no search can bound where it is", __FILE__, __LINE__, __FUNCTION__);
@@ -1698,7 +1698,7 @@ static int sidx_raise_members(gpu_spatial_index_t *idx, const int *list, int n, 
         Kokkos::fence();
         gizmo_gpu_check_last_error("sidx_raise_members", nk);
     }
-    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_rec);
+    gizmo_gpu_pool_give(GIZMO_POOL_SIDX_RAISE, d_rec);
     if(!walk_paths) {sidx_widen_all_levels(seg);}
     if(refit) {
         /* a band that fell makes a tile's size floor smaller, so its looseness is taken again */
@@ -1768,8 +1768,8 @@ static void ngl_build_leave_empty(gpu_neighbor_list_t *gnl, int num_active,
                                   int *d_scratch, int *d_counts,
                                   const char *what, size_t bytes)
 {
-    if(d_counts)     {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);}
-    if(d_scratch)    {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);}
+    gizmo_gpu_pool_give(GIZMO_POOL_NGL_COUNTS, d_counts);
+    gizmo_gpu_pool_give(GIZMO_POOL_NGL_SCRATCH, d_scratch);
     if(d_source_pos) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_source_pos);}
     if(d_radii)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(d_radii);}
     ngl_leave_csr_empty(gnl, num_active);
@@ -2306,10 +2306,10 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
      * gas-per-rank), wrapping to negative int → ~UINT64_MAX after promotion to size_t. */
     size_t na_safe = (size_t)((num_active > 0) ? num_active : 1);
     size_t scratch_bytes = na_safe * (size_t)NGL_SCRATCH_STRIDE * sizeof(int);
-    int *d_scratch = (int *) ngl_alloc_device(scratch_bytes, "ngl_pairs_scratch");
+    int *d_scratch = (int *) gizmo_gpu_pool_take(GIZMO_POOL_NGL_SCRATCH, scratch_bytes, "ngl_pairs_scratch");
     if(!d_scratch) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, NULL, NULL, "the neighbour-walk scratchpad", scratch_bytes); return;}
     size_t counts_bytes = na_safe * sizeof(int);
-    int *d_counts  = (int *) ngl_alloc_device(counts_bytes, "ngl_pairs_counts");
+    int *d_counts  = (int *) gizmo_gpu_pool_take(GIZMO_POOL_NGL_COUNTS, counts_bytes, "ngl_pairs_counts");
     if(!d_counts) {ngl_build_leave_empty(gnl, num_active, d_radii, d_source_pos, d_scratch, NULL, "the per-active neighbour counts", counts_bytes); return;}
 
     /* Drain any prior async GPU work before the passes below. */
@@ -2416,8 +2416,8 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
     }
 
     /* Free temporaries.  The staged query radii and positions are kept for the trim below. */
-    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_scratch);
-    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(d_counts);
+    gizmo_gpu_pool_give(GIZMO_POOL_NGL_SCRATCH, d_scratch);
+    gizmo_gpu_pool_give(GIZMO_POOL_NGL_COUNTS, d_counts);
     /* The owned-index build (and the query setup, when it ran on the device) read every owned particle's P and
        CellP on the device; the host phases that follow (trim, ghost refresh, gradients zero loop) sweep them.
        The hydro corridor's list is followed by the gradients pass on the device: when no host trim or drift

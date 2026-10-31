@@ -2892,6 +2892,7 @@ void gizmo_kokkos_finalize(void)
     gx_motion_target_release();
     gpu_node_dirty_release();
     gpu_topology_build_release();
+    gizmo_gpu_pool_release();
     Kokkos::finalize();
 }
 /* Best-effort drain of in-flight device work. Used by the reviewed hard-abort

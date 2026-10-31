@@ -274,6 +274,24 @@ void *gpu_particles_uvm_alloc(size_t nbytes, const char *label, size_t particle_
  * the old and the new buffer at once and roll back cleanly. NULL is a no-op. */
 void gpu_particles_uvm_free(void *ptr);
 
+/* Grow-only device buffers for per-call transients, one per site, kept until gizmo_gpu_pool_release (at
+ * finalize). A device allocation made and freed on every call of a hot path costs driver calls that can wait
+ * on the device (0.1-1 ms each measured on PCIe H100 under MPS). _take returns at least `bytes` of device
+ * memory for the site (contents unspecified, not zeroed) or NULL; _give returns it, and callers give a buffer
+ * back only after fencing the kernels that use it. A site already taken (a nested call), an unknown site, or
+ * GIZMO_GPU_POOL_VIEWS=0 in the environment gets an ordinary allocation that _give frees, as before. */
+enum gizmo_gpu_pool_site {
+    GIZMO_POOL_NGL_SCRATCH = 0,   /* gpu_ngb_list_build: per-active neighbour scratchpad */
+    GIZMO_POOL_NGL_COUNTS,        /* gpu_ngb_list_build: per-active neighbour counts */
+    GIZMO_POOL_MODEA_ACTIVES,     /* run_mode_a: staged ActiveData */
+    GIZMO_POOL_SIDX_RAISE,        /* sidx_raise_members: staged raise records */
+    GIZMO_POOL_SIDX_SCRATCH,      /* the index build's working blocks, one site per block: 16 sites from here */
+    GIZMO_POOL_NSITES = GIZMO_POOL_SIDX_SCRATCH + 16
+};
+void *gizmo_gpu_pool_take(int site, size_t bytes, const char *label);
+void  gizmo_gpu_pool_give(int site, void *p);
+void  gizmo_gpu_pool_release(void);
+
 /* Accessors. Return NULL / 0 when arena is not currently held. */
 struct particle_data *gpu_particles_arena_P(void);
 struct gas_cell_data *gpu_particles_arena_CellP(void);

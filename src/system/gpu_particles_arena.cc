@@ -878,6 +878,79 @@ extern "C" void gizmo_gpu_free_device(void *ptr)
     if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(ptr);}
 }
 
+/* ---- grow-only per-site device buffers (contract in gpu_particles_arena.h) ---- */
+struct gizmo_gpu_pool_slot {void *p; size_t bytes; int busy;};
+static struct gizmo_gpu_pool_slot gpu_pool_[GIZMO_POOL_NSITES];
+
+static int gpu_pool_enabled(void)
+{
+    static int on = -1;
+    if(on < 0) {
+        on = 1;
+        const char *env = getenv("GIZMO_GPU_POOL_VIEWS");
+        if(env && env[0]) {on = (atoi(env) != 0);}
+        if(ThisTask == 0) {printf("[GPU] per-call device buffers kept between calls: %s\n", on ? "on" : "off"); fflush(stdout);}
+    }
+    return on;
+}
+
+/* Outside the stream-ordered pool on CUDA: a buffer held for the whole run would count against the pool's
+   release threshold (cooling.cc) and shrink what it keeps cached for the transients that still come and go.
+   Measured at 256^3 24x4: with the hydro mirror's run-long buffer in the pool, the neighbour-build row rose by
+   ~35 ms/step while its scratch was a per-call allocation, and not once the scratch came from here. These
+   buffers are not in the Kokkos memory ledger. */
+static void *gpu_pool_alloc_raw(size_t bytes, const char *label)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    (void) label;
+    void *p = NULL;
+    if(cudaMalloc(&p, bytes) != cudaSuccess) {(void) cudaGetLastError(); return NULL;}
+    return p;
+#else
+    return gizmo_gpu_alloc_device(bytes, label);
+#endif
+}
+
+static void gpu_pool_free_raw(void *p)
+{
+    if(!p) {return;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    Kokkos::fence("gizmo_gpu_pool_free");   /* no kernel may still read it */
+    if(cudaFree(p) != cudaSuccess) {(void) cudaGetLastError();}
+#else
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(p);
+#endif
+}
+
+extern "C" void *gizmo_gpu_pool_take(int site, size_t bytes, const char *label)
+{
+    if(bytes == 0) {bytes = 1;}
+    if(site < 0 || site >= GIZMO_POOL_NSITES || !gpu_pool_enabled() || gpu_pool_[site].busy) {return gizmo_gpu_alloc_device(bytes, label);}
+    struct gizmo_gpu_pool_slot *s = &gpu_pool_[site];
+    if(s->bytes < bytes) {
+        gpu_pool_free_raw(s->p);
+        s->p = NULL; s->bytes = 0;
+        size_t want = bytes + bytes / 16;   /* headroom: a count that creeps up should not regrow every call */
+        if(!(s->p = gpu_pool_alloc_raw(want, label))) {want = bytes; s->p = gpu_pool_alloc_raw(want, label);}
+        if(!s->p) {return gizmo_gpu_alloc_device(bytes, label);}   /* let the ordinary allocator decide (NULL on exhaustion) */
+        s->bytes = want;
+    }
+    s->busy = 1;
+    return s->p;
+}
+
+extern "C" void gizmo_gpu_pool_give(int site, void *p)
+{
+    if(!p) {return;}
+    if(site >= 0 && site < GIZMO_POOL_NSITES && gpu_pool_[site].busy && gpu_pool_[site].p == p) {gpu_pool_[site].busy = 0; return;}
+    Kokkos::kokkos_free<GIZMO_KOKKOS_DEVICE_SPACE>(p);
+}
+
+extern "C" void gizmo_gpu_pool_release(void)
+{
+    for(int k = 0; k < GIZMO_POOL_NSITES; k++) {gpu_pool_free_raw(gpu_pool_[k].p); gpu_pool_[k].p = NULL; gpu_pool_[k].bytes = 0; gpu_pool_[k].busy = 0;}
+}
+
 extern "C" void gizmo_gpu_copy_to_device(void *dst_device, const void *src_host, size_t nbytes)
 {
     if(nbytes == 0) {return;}
