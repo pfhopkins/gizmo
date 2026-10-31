@@ -2835,6 +2835,20 @@ void gizmo_kokkos_initialize(int argc, char *argv[]) {
      cudaError_t _e = cudaDeviceSetLimit(cudaLimitStackSize, stack_size);
      if(_e != cudaSuccess) {printf("[GPU] WARNING: cudaDeviceSetLimit(stack,%zu) failed: %s\n", stack_size, cudaGetErrorString(_e)); fflush(stdout);}
      else {printf("[GPU] CUDA thread stack size set to %zu bytes\n", stack_size); fflush(stdout);}}
+    /* Kokkos allocates device views with cudaMallocAsync from the default pool, whose release threshold of 0 hands
+       freed memory back to the driver at every synchronization, so the next allocation is a driver call again. Keep up to GIZMO_GPU_POOL_RELEASE_MB (default 2048; 0 = leave the driver default) cached per rank.
+       Capped, not unlimited: several ranks share each GPU. */
+    {long pool_mb = 2048; const char *e = getenv("GIZMO_GPU_POOL_RELEASE_MB"); if(e) {pool_mb = atol(e);}
+     int dev = 0, pools_ok = 0;
+     if(pool_mb > 0 && cudaGetDevice(&dev) == cudaSuccess &&
+        cudaDeviceGetAttribute(&pools_ok, cudaDevAttrMemoryPoolsSupported, dev) == cudaSuccess && pools_ok) {
+         cudaMemPool_t pool; unsigned long long thr = (unsigned long long) pool_mb << 20; /* attribute is a uint64 */
+         cudaError_t _p = cudaDeviceGetDefaultMemPool(&pool, dev);
+         if(_p == cudaSuccess) {_p = cudaMemPoolSetAttribute(pool, cudaMemPoolAttrReleaseThreshold, &thr);}
+         if(_p != cudaSuccess) {printf("[GPU] WARNING: setting mempool release threshold (%ld MB) failed: %s\n", pool_mb, cudaGetErrorString(_p)); fflush(stdout);}
+         else if(ThisTask == 0) {printf("[GPU] default mempool release threshold set to %ld MB\n", pool_mb); fflush(stdout);}}
+     else if(ThisTask == 0) {printf("[GPU] default mempool release threshold left at the driver default\n"); fflush(stdout);}
+     cudaGetLastError();} /* clear any failure above, so the next post-kernel check does not report it */
 #elif defined(__HIPCC__)
     {size_t stack_size = 65536;
      hipError_t _e = hipDeviceSetLimit(hipLimitStackSize, stack_size);
