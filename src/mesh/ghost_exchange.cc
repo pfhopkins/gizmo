@@ -1292,6 +1292,8 @@ static void gx_walk_export_discover(
      * unchanged (order-independent bitmap); only per-peer envelope ORDER differs (D6: FP-reorder only). */
     std::vector<std::vector<struct gx_export_envelope_t>> send(NTask);
     int sender_done_on_device = 0;
+    struct gx_export_envelope_t *dev_sendbuf = NULL;   /* the device path's envelopes, already in send order */
+    std::vector<long> dev_sc;                          /* ... and how many go to each peer */
 #ifdef _OPENMP
     int nthr = omp_get_max_threads();
 #else
@@ -1300,53 +1302,72 @@ static void gx_walk_export_discover(
     if(nthr < 1) nthr = 1;
     if(device_walks && n_local_queries > 0) {
         /* The device records, per query in walk order, the (peer, node) pairs this walk would export; the
-         * envelopes are cut here exactly as below (peers ascending, nodes in walk order, NODELISTLENGTH per
-         * envelope).  Blocks of queries per thread in query order, merged in block order: each peer's
-         * envelopes come out in query order. */
+         * envelopes are cut here as below (peers ascending, nodes in walk order, GX_ENVELOPE_NODES per
+         * envelope), straight into the send buffer. */
         const int64_t *rec_off = NULL; const int *rec = NULL;
         const int dev = gx_device_sender_walk(local_queries, n_local_queries, supply_mask, search_mode,
                                               walker_j_reach_scale, &rec_off, &rec);
         if(dev == GX_RECEIVER_COMPLETED) {
-            std::vector<std::vector<std::vector<struct gx_export_envelope_t>>> tsend(nthr);
-            for(int th = 0; th < nthr; th++) tsend[th].assign(NTask, std::vector<struct gx_export_envelope_t>{});
-#ifdef _OPENMP
-#pragma omp parallel for schedule(static)
-#endif
-            for(int qi = 0; qi < n_local_queries; qi++) {
-                const int64_t r0 = rec_off[qi], r1 = rec_off[qi + 1];
-                if(r1 <= r0) continue;
-#ifdef _OPENMP
-                const int tid = omp_get_thread_num();
-#else
-                const int tid = 0;
-#endif
-                int last = -1;
-                while(1) {   /* the next peer above `last`: a query reaches few peers */
-                    int t = INT_MAX;
-                    for(int64_t r = r0; r < r1; r++) {const int p = rec[2 * r]; if(p > last && p < t) t = p;}
-                    if(t == INT_MAX) break;
-                    last = t;
-                    if(t == ThisTask || t < 0 || t >= NTask) continue;
-                    struct gx_export_envelope_t e;
-                    e.pos[0] = local_queries[qi].pos[0];
-                    e.pos[1] = local_queries[qi].pos[1];
-                    e.pos[2] = local_queries[qi].pos[2];
-                    e.h = local_queries[qi].h;
-                    e._pad = 0;
-                    e.n_nodes = 0;
-                    for(int64_t r = r0; r < r1; r++) {
-                        if(rec[2 * r] != t) continue;
-                        e.nodes[e.n_nodes++] = rec[2 * r + 1];
-                        if(e.n_nodes == NODELISTLENGTH) {tsend[tid][t].push_back(e); e.n_nodes = 0;}
+            /* Two passes over fixed blocks of queries: count each block's envelopes per peer, place them (peer
+             * major, then block, so each peer's envelopes stay in query order), then cut them in place in the
+             * send buffer.  The same peer-by-peer loop serves both passes. */
+            const int nblk = 4 * nthr;
+            std::vector<long> blk_off((size_t)nblk * NTask, 0);
+            auto cut_block = [&](int blk, struct gx_export_envelope_t *out) {
+                const long q0 = (long)n_local_queries * blk / nblk, q1 = (long)n_local_queries * (blk + 1) / nblk;
+                long *cursor = &blk_off[(size_t)blk * NTask];
+                for(long qi = q0; qi < q1; qi++) {
+                    const int64_t r0 = rec_off[qi], r1 = rec_off[qi + 1];
+                    int last = -1;
+                    while(r1 > r0) {   /* the next peer above `last`: a query reaches few peers */
+                        int t = INT_MAX;
+                        for(int64_t r = r0; r < r1; r++) {const int p = rec[2 * r]; if(p > last && p < t) t = p;}
+                        if(t == INT_MAX) break;
+                        last = t;
+                        if(t == ThisTask || t < 0 || t >= NTask) continue;
+                        if(!out) {   /* count */
+                            long nn = 0;
+                            for(int64_t r = r0; r < r1; r++) {if(rec[2 * r] == t) nn++;}
+                            cursor[t] += (nn + GX_ENVELOPE_NODES - 1) / GX_ENVELOPE_NODES;
+                            continue;
+                        }
+                        struct gx_export_envelope_t e;
+                        e.pos[0] = local_queries[qi].pos[0];
+                        e.pos[1] = local_queries[qi].pos[1];
+                        e.pos[2] = local_queries[qi].pos[2];
+                        e.h = local_queries[qi].h;
+                        e.n_nodes = 0;
+                        for(int64_t r = r0; r < r1; r++) {
+                            if(rec[2 * r] != t) continue;
+                            e.nodes[e.n_nodes++] = rec[2 * r + 1];
+                            if(e.n_nodes == GX_ENVELOPE_NODES) {out[cursor[t]++] = e; e.n_nodes = 0;}
+                        }
+                        if(e.n_nodes > 0) {for(int k = e.n_nodes; k < GX_ENVELOPE_NODES; k++) {e.nodes[k] = -1;} out[cursor[t]++] = e;}
                     }
-                    if(e.n_nodes > 0) {tsend[tid][t].push_back(e);}
+                }
+            };
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static, 1)
+#endif
+            for(int blk = 0; blk < nblk; blk++) {cut_block(blk, NULL);}
+            long total = 0;
+            dev_sc.assign((size_t)NTask, 0);
+            for(int t = 0; t < NTask; t++) {
+                for(int blk = 0; blk < nblk; blk++) {
+                    const long c = blk_off[(size_t)blk * NTask + t];
+                    blk_off[(size_t)blk * NTask + t] = total;
+                    total += c;
+                    dev_sc[(size_t)t] += c;
                 }
             }
-            for(int th = 0; th < nthr; th++) {
-                for(int t = 0; t < NTask; t++)
-                    send[t].insert(send[t].end(), tsend[th][t].begin(), tsend[th][t].end());
+            dev_sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(total > 0 ? total : 1) * sizeof(struct gx_export_envelope_t));
+            if(dev_sendbuf) {   /* else the host walk answers: nothing collective has happened yet */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static, 1)
+#endif
+                for(int blk = 0; blk < nblk; blk++) {cut_block(blk, dev_sendbuf);}
+                sender_done_on_device = 1;
             }
-            sender_done_on_device = 1;
         }
         /* FAILED has requested a stop (malformed tree); the host walk below would meet the same tree */
     }
@@ -1374,15 +1395,14 @@ static void gx_walk_export_discover(
                 if(t == ThisTask) continue;
                 long nn = (long)sink.nodes_per_peer[t].size();
                 const std::vector<int> &nl = sink.nodes_per_peer[t];
-                for(long base = 0; base < nn; base += NODELISTLENGTH) {
+                for(long base = 0; base < nn; base += GX_ENVELOPE_NODES) {
                     struct gx_export_envelope_t e;
                     e.pos[0] = local_queries[qi].pos[0];
                     e.pos[1] = local_queries[qi].pos[1];
                     e.pos[2] = local_queries[qi].pos[2];
                     e.h = local_queries[qi].h;
-                    e.n_nodes = (int)((nn - base < NODELISTLENGTH) ? (nn - base) : NODELISTLENGTH);
+                    e.n_nodes = (int)((nn - base < GX_ENVELOPE_NODES) ? (nn - base) : GX_ENVELOPE_NODES);
                     for(int k = 0; k < e.n_nodes; k++) e.nodes[k] = nl[base + k];
-                    e._pad = 0;
                     tsend[tid][t].push_back(e);
                 }
             }
@@ -1405,12 +1425,12 @@ static void gx_walk_export_discover(
         /* index-array alloc failure is per-rank; make it collective before the Alltoall. */
         int a_ok_local = 0, a_ok_all = 0;
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        free(sc); free(sd); free(rc); free(rd);
+        free(sc); free(sd); free(rc); free(rd); free(dev_sendbuf);
         if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return;
     } else {
         int a_ok_local = 1, a_ok_all = 0;
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
+        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); free(dev_sendbuf); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     }
     /* Per-peer counts are bounded by this rank's query set, but the prefix sums and
      * totals are not: the typed Alltoallv below consumes int displacements, so a value
@@ -1422,7 +1442,7 @@ static void gx_walk_export_discover(
     long tot_s = 0, tot_r = 0;
     int env_range_ok = 1;
     for(int t = 0; t < NTask; t++) {
-        long n = (long)send[t].size();
+        long n = dev_sendbuf ? dev_sc[(size_t)t] : (long)send[t].size();
         if(n > INT_MAX) { env_range_ok = 0; n = 0; }
         sc[t] = (int)n;
     }
@@ -1443,12 +1463,14 @@ static void gx_walk_export_discover(
                        spec->caller_name ? spec->caller_name : "?");
                 fflush(stdout);
             }
-            free(sc); free(sd); free(rc); free(rd);
+            free(sc); free(sd); free(rc); free(rd); free(dev_sendbuf);
             if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE;
             return;
         }
     }
-    struct gx_export_envelope_t *sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
+    struct gx_export_envelope_t *sendbuf = dev_sendbuf ? dev_sendbuf
+        : (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
+    dev_sendbuf = NULL;   /* owned by sendbuf from here */
     /* Received into page-locked memory when the device receiver walk may read them (a faster copy up). */
     const int recv_pinned = device_walks;
     struct gx_export_envelope_t *recv = recv_pinned
@@ -1459,7 +1481,7 @@ static void gx_walk_export_discover(
     MPI_Allreduce(&buf_ok_local, &buf_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
     if(!buf_ok_all) { free(sendbuf); if(!recv_pinned) {free(recv);} free(sc); free(sd); free(rc); free(rd);
                       if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
-    for(int t = 0; t < NTask; t++)
+    for(int t = 0; t < NTask && sender_done_on_device == 0; t++)
         if(sc[t] > 0) memcpy(sendbuf + sd[t], send[t].data(), (size_t)sc[t] * sizeof(struct gx_export_envelope_t));
     gizmo_mpi_alltoallv_typed(sendbuf, sc, sd, recv, rc, rd,
                               sizeof(struct gx_export_envelope_t), MPI_COMM_WORLD);
