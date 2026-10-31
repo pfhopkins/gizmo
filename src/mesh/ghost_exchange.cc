@@ -30,6 +30,7 @@
 #include <math.h>
 #include <limits.h>
 #include <stdint.h>
+#include <sys/resource.h>
 #include <vector>
 #include <algorithm>
 #include "../declarations/allvars.h"
@@ -119,6 +120,54 @@ static int *ghost_wb_send_disp = NULL;      /* [NTask] displacement for what eac
 static int *ghost_send_home_idx = NULL;     /* [ghost_send_home_count] exported local indices, send order */
 static int  ghost_send_home_count = 0;      /* == total_send at last import */
 static unsigned long long g_ghost_provenance_epoch = 0; /* import counter (see above) */
+
+/* The hydro corridor's pool goes to the device (gizmo_ghostdev_enabled): requested for the next import only. */
+static int g_next_import_to_device = 0;
+void ghost_exchange_next_import_to_device(void) {g_next_import_to_device = 1;}
+
+/* The page-locked receive buffer of the last device-delivered import or refresh, while it still equals the ghost
+   range (ghost_host_copy_view): stamped with the provenance epoch it was delivered under. */
+static const struct particle_data *g_ghost_copy_P = NULL;
+static const struct gas_cell_data *g_ghost_copy_CellP = NULL;
+static int g_ghost_copy_base = -1, g_ghost_copy_count = 0;
+static unsigned long long g_ghost_copy_epoch = 0;
+static int g_ghost_copy_valid = 0;
+void ghost_host_copy_invalidate(void) {g_ghost_copy_valid = 0;}
+
+/* GIZMO_GHOSTDEV_DIAG=1: rank 0 reports the page faults it took while each pool was live (a ghost range kept on the
+   device and read on the host shows up as tens of thousands of major faults) and the bytes copied to the device. */
+static int gx_ghostdev_diag_on(void)
+{
+    static int on = -1;
+    if(on < 0) {const char *env = getenv("GIZMO_GHOSTDEV_DIAG"); on = (env && env[0] && atoi(env) != 0) ? 1 : 0;}
+    return on && ThisTask == 0;
+}
+static long g_diag_majflt0 = -1, g_diag_minflt0 = 0;
+static void gx_ghostdev_diag_begin(void)
+{
+    if(!gx_ghostdev_diag_on()) {return;}
+    struct rusage ru; getrusage(RUSAGE_SELF, &ru);
+    g_diag_majflt0 = ru.ru_majflt; g_diag_minflt0 = ru.ru_minflt;
+}
+static void gx_ghostdev_diag_end(int num_ghosts)
+{
+    if(!gx_ghostdev_diag_on() || g_diag_majflt0 < 0) {return;}
+    struct rusage ru; getrusage(RUSAGE_SELF, &ru);
+    double sec = 0, bytes = 0; long long calls = 0;
+    gizmo_ghostdev_stats(&sec, &bytes, &calls);
+    printf("ghostdev diag: pool of %d ghosts (on device %d): rank 0 faults while live major %ld minor %ld; ghost copies so far %.3f GB, %.3f s, %lld calls\n",
+           num_ghosts, gizmo_ghostdev_live(), ru.ru_majflt - g_diag_majflt0, ru.ru_minflt - g_diag_minflt0, bytes / 1e9, sec, calls);
+    fflush(stdout);
+    g_diag_majflt0 = -1;
+}
+int ghost_host_copy_view(int base, int count, const struct particle_data **p, const struct gas_cell_data **cells)
+{
+    if(!g_ghost_copy_valid || g_ghost_copy_epoch != g_ghost_provenance_epoch || g_ghost_copy_base != base ||
+       g_ghost_copy_count != count || base != NumPart_before_ghost || count != NumGhostParticles) {return 0;}
+    *p = g_ghost_copy_P;
+    *cells = g_ghost_copy_CellP;
+    return 1;
+}
 
 /* Persistent supply-pool cache for the request-driven ghost exchange.  Within
  * a step the local pool [0..NumPart_local) is stable across the several
@@ -731,12 +780,17 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
    is called, so each rank already knows what it will receive in each round and no
    further count exchange is needed. Slices land at their final offsets, so the
    delivered pool is identical to what a single round produced. */
-static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
-                                                  const int *send_count, const int *send_disp,
-                                                  struct particle_data *dst_P,
-                                                  struct gas_cell_data *dst_CellP,
-                                                  const int *recv_count, const int *recv_disp,
-                                                  int pack_on_device = 0)   /* gather the send slots on the device (gizmo_particles_gather_send_records) */
+/* How gx_pack_and_forward_particle_exchange delivered the slots. */
+enum {GX_DELIVERED_HOST = 0,          /* received through host staging (or in place) and copied in on the host */
+      GX_DELIVERED_PINNED_HOST = 1,   /* received into the page-locked buffers, copied in on the host (device copy failed) */
+      GX_DELIVERED_DEVICE = 2};       /* received into the page-locked buffers and copied to the device */
+static int gx_pack_and_forward_particle_exchange(const int *send_home_idx,
+                                                 const int *send_count, const int *send_disp,
+                                                 struct particle_data *dst_P,
+                                                 struct gas_cell_data *dst_CellP,
+                                                 const int *recv_count, const int *recv_disp,
+                                                 int pack_on_device = 0,   /* gather the send slots on the device (gizmo_particles_gather_send_records) */
+                                                 int device_base = -1)     /* >= 0: dst is P/CellP[device_base...], delivered on the device */
 {
     const size_t slot_bytes = sizeof(struct particle_data) + sizeof(struct gas_cell_data);
     /* Where the particle storage is CUDA managed memory, MPI does not write it directly: each round is received
@@ -744,6 +798,21 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
        received in place, as it always was. */
     const int recv_staged = gizmo_particle_storage_needs_staged_mpi_receive();
     const int recv_cellp = recv_staged && (All.TotN_gas > 0);
+    /* Delivered on the device: every round lands at its final offset in page-locked buffers covering the whole
+       delivery, which then go to the device in one copy per array (and stay behind as its host copy).  A rank
+       that cannot have the buffers takes the staged route; the MPI calls are the same either way. */
+    long long total_recv_slots = 0;
+    for(int t = 0; t < NTask; t++) {total_recv_slots += recv_count[t];}
+    struct particle_data *dev_recv_P = NULL;
+    struct gas_cell_data *dev_recv_CellP = NULL;
+    int to_device = recv_staged && device_base >= 0 && dst_P == P + device_base && (!recv_cellp || dst_CellP == CellP + device_base);
+    if(to_device) {
+        dev_recv_P = (struct particle_data *) gizmo_ghost_pinned_buffer(0, (size_t) (total_recv_slots + 1) * sizeof(struct particle_data));
+        if(recv_cellp) {dev_recv_CellP = (struct gas_cell_data *) gizmo_ghost_pinned_buffer(1, (size_t) (total_recv_slots + 1) * sizeof(struct gas_cell_data));}
+        if(!dev_recv_P || (recv_cellp && !dev_recv_CellP)) {to_device = 0;}
+    }
+    /* A device gather lands in page-locked send buffers where those can be had (a faster copy from the device). */
+    const int send_pinned = pack_on_device && gizmo_ghostdev_enabled();
     const int staging_blocks = 2 + (recv_staged ? 1 : 0) + (recv_cellp ? 1 : 0) + 4 + (recv_staged ? 1 : 0);
 
     /* How many slots per peer a round may carry. Sized from the room this rank has
@@ -842,7 +911,7 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
             "ghost_exchange: not enough working memory to carry one round of the exported particles",
             __FILE__, __LINE__, __FUNCTION__);
         gizmo_exit_bad_stop_if_requested("ghost_exchange:forward_round");
-        return;
+        return GX_DELIVERED_HOST;
     }
 
     /* Say how the exchange was split, on a change of round count or once the load
@@ -894,10 +963,17 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
         }
 
         const size_t staging_slots = (size_t) (staged > 0 ? staged : 1);
-        struct particle_data *send_P = (struct particle_data *) mymalloc("gx_fwd_sP",
-            staging_slots * sizeof(struct particle_data));
-        struct gas_cell_data *send_CellP = (struct gas_cell_data *) mymalloc("gx_fwd_sC",
-            staging_slots * sizeof(struct gas_cell_data));
+        struct particle_data *send_P = NULL;
+        struct gas_cell_data *send_CellP = NULL;
+        if(send_pinned) {
+            send_P = (struct particle_data *) gizmo_ghost_pinned_buffer(2, staging_slots * sizeof(struct particle_data));
+            send_CellP = (struct gas_cell_data *) gizmo_ghost_pinned_buffer(3, staging_slots * sizeof(struct gas_cell_data));
+        }
+        const int send_from_arena = !send_P || !send_CellP;
+        if(send_from_arena) {
+            send_P = (struct particle_data *) mymalloc("gx_fwd_sP", staging_slots * sizeof(struct particle_data));
+            send_CellP = (struct gas_cell_data *) mymalloc("gx_fwd_sC", staging_slots * sizeof(struct gas_cell_data));
+        }
 
         if(pack_on_device) {
             /* The same slots in the same order, gathered where the particles are. */
@@ -949,6 +1025,15 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
                                           dst_CellP, round_recv_count, round_recv_disp,
                                           sizeof(struct gas_cell_data), MPI_COMM_WORLD);
             }
+        } else if(to_device) {
+            gizmo_mpi_alltoallv_typed(send_P, round_send_count, round_send_disp,
+                                      dev_recv_P, round_recv_count, round_recv_disp,
+                                      sizeof(struct particle_data), MPI_COMM_WORLD);
+            if(recv_cellp) {
+                gizmo_mpi_alltoallv_typed(send_CellP, round_send_count, round_send_disp,
+                                          dev_recv_CellP, round_recv_count, round_recv_disp,
+                                          sizeof(struct gas_cell_data), MPI_COMM_WORLD);
+            }
         } else {
             /* The round lands packed in host staging, one run per peer, and each run is copied to the slots
                its peer's run occupies in the delivered pool. */
@@ -985,8 +1070,10 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
             myfree(recv_P);
         }
 
-        myfree(send_CellP);
-        myfree(send_P);
+        if(send_from_arena) {
+            myfree(send_CellP);
+            myfree(send_P);
+        }
     }
 
     if(staged_disp) {myfree(staged_disp);}
@@ -994,6 +1081,31 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
     myfree(round_recv_count);
     myfree(round_send_disp);
     myfree(round_send_count);
+
+    if(!to_device) {return GX_DELIVERED_HOST;}
+    const int n = (int) total_recv_slots;
+    if(gizmo_ghost_range_copy_to_device(device_base, n, dev_recv_P, dev_recv_CellP) == 0) {return GX_DELIVERED_DEVICE;}
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n >= 4096)
+#endif
+    for(int k = 0; k < n; k++) {
+        dst_P[k] = dev_recv_P[k];
+        if(recv_cellp) {dst_CellP[k] = dev_recv_CellP[k];}
+    }
+    return GX_DELIVERED_PINNED_HOST;
+}
+
+/* After a delivery into the ghost range: the page-locked buffers are its host copy, under the current epoch, when the
+   delivery went through them. */
+static void gx_ghost_copy_stamp(int delivered, int base, int count)
+{
+    g_ghost_copy_valid = (delivered != GX_DELIVERED_HOST);
+    if(!g_ghost_copy_valid) {return;}
+    g_ghost_copy_P = (const struct particle_data *) gizmo_ghost_pinned_buffer(0, 0);
+    g_ghost_copy_CellP = (All.TotN_gas > 0) ? (const struct gas_cell_data *) gizmo_ghost_pinned_buffer(1, 0) : NULL;
+    g_ghost_copy_base = base;
+    g_ghost_copy_count = count;
+    g_ghost_copy_epoch = g_ghost_provenance_epoch;
 }
 
 struct gx_query_t {
@@ -1303,6 +1415,8 @@ static inline int gx_query_nonfinite(double v) {
 
 static ghost_exchange_result ghost_exchange_request_driven_impl(const struct ghost_exchange_spec_t *spec)
 {
+    const int deliver_to_device = g_next_import_to_device && gizmo_ghostdev_enabled();
+    g_next_import_to_device = 0;   /* a request covers this import only */
     if(NTask <= 1) return GHOST_EXCHANGE_COMPLETED;
     const double safety_factor = spec->safety_factor;
     const unsigned int request_mask = spec->request_type_mask;
@@ -1659,8 +1773,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
 
     /* === Step 6: pack and Alltoallv particles + cells, then home_idx === */
     if(gizmo_particles_back_to_host_wanted(total_send)) {gizmo_particles_prefetch_to_host("ghost_exchange_pack");}   /* the receiver walk ran on the device */
-    gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
-                                          &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
+    const int delivered = gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
+                                                                &P[NumPart], &CellP[NumPart], recv_count, recv_disp,
+                                                                0, deliver_to_device ? NumPart : -1);
 
     /* Update counts now so home_idx receive can land at &P[NumPart_before_ghost+...] */
     NumGhostParticles = total_recv;
@@ -1700,6 +1815,9 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     ghost_send_home_count = total_send;
     send_home_idx         = NULL;
     g_ghost_provenance_epoch++;
+    gx_ghost_copy_stamp(delivered, NumPart_before_ghost, total_recv);
+    if(delivered == GX_DELIVERED_DEVICE) {gizmo_ghostdev_set_live(NumPart_before_ghost, total_recv);}
+    gx_ghostdev_diag_begin();
 
     double t_ghost_total = timediff(t_ghost_start, my_second());
 
@@ -1786,6 +1904,7 @@ void ghost_exchange_hydro_oneway(double safety_factor)
 void ghost_exchange_cleanup(void)
 {
     if(NumPart_before_ghost < 0) return;
+    gx_ghostdev_diag_end(NumGhostParticles);
     /* Ghost slots are about to leave scope (NumPart shrinks back to local): the
      * neighbour indexes built over them go first (gpu_sidx_ghost_pool_cleanup). */
     gpu_sidx_ghost_pool_cleanup();
@@ -1795,6 +1914,8 @@ void ghost_exchange_cleanup(void)
     NumGhostParticles = 0;
     NumPart_before_ghost = -1;
     g_ghost_pool_current_ti = -1;   /* the pool the stamp described is gone */
+    gizmo_ghostdev_set_live(-1, 0);
+    g_ghost_copy_valid = 0;
     /* Free ghost provenance map */
     if(ghost_home_rank_map)  { free(ghost_home_rank_map);  ghost_home_rank_map = NULL; }
     if(ghost_home_index_map) { free(ghost_home_index_map); ghost_home_index_map = NULL; }
@@ -1835,6 +1956,8 @@ int ghost_pool_park(void)
     ghost_send_home_idx = NULL; ghost_send_home_count = 0;
     NumPart = NumPart_before_ghost; N_gas = N_gas_before_ghost;
     NumGhostParticles = 0; NumPart_before_ghost = -1; g_ghost_pool_current_ti = -1;
+    gizmo_ghostdev_set_live(-1, 0);
+    g_ghost_copy_valid = 0;
     return 1;
 }
 
@@ -1897,11 +2020,14 @@ long long ghost_refresh_verify_unchanged(void)
     struct gas_cell_data *sC = new struct gas_cell_data[ng > 0 ? ng : 1];
     gx_pack_and_forward_particle_exchange(ghost_send_home_idx, ghost_wb_send_count, ghost_wb_send_disp, sP, sC,
                                           ghost_wb_recv_count, ghost_wb_recv_disp, gizmo_particles_owned_kept_on_device());
+    /* Against the ghost range's host copy where one is current (the range itself may live on the device). */
+    const struct particle_data *gP = &P[NumPart_before_ghost];
+    const struct gas_cell_data *gC = (All.TotN_gas > 0) ? &CellP[NumPart_before_ghost] : NULL;
+    (void) ghost_host_copy_view(NumPart_before_ghost, ng, &gP, &gC);
     long long n_diff = 0;
     for(int g = 0; g < ng; g++) {
-        const int j = NumPart_before_ghost + g;
-        const int c_diff = (All.TotN_gas > 0) && memcmp(&sC[g], &CellP[j], sizeof(struct gas_cell_data)) != 0;
-        if(memcmp(&sP[g], &P[j], sizeof(struct particle_data)) != 0 || c_diff) {n_diff++;}
+        const int c_diff = (All.TotN_gas > 0) && memcmp(&sC[g], &gC[g], sizeof(struct gas_cell_data)) != 0;
+        if(memcmp(&sP[g], &gP[g], sizeof(struct particle_data)) != 0 || c_diff) {n_diff++;}
     }
     delete[] sC; delete[] sP;
     long long all_diff = 0;
@@ -1950,10 +2076,14 @@ int ghost_refresh_values(void)
     /* Replay ONLY the forward transport, overwriting the EXISTING ghost slots at
        [NumPart_before_ghost, NumPart). Slots land at identical offsets by
        construction, so ghost_home_rank/index maps + any built CSR stay valid. */
-    gx_pack_and_forward_particle_exchange(ghost_send_home_idx,
-                                          ghost_wb_send_count, ghost_wb_send_disp,
-                                          &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
-                                          ghost_wb_recv_count, ghost_wb_recv_disp, pack_on_device);
+    /* A pool kept on the device is refreshed there. */
+    const int on_device = gizmo_ghostdev_live();
+    const int delivered = gx_pack_and_forward_particle_exchange(ghost_send_home_idx,
+                                                                ghost_wb_send_count, ghost_wb_send_disp,
+                                                                &P[NumPart_before_ghost], &CellP[NumPart_before_ghost],
+                                                                ghost_wb_recv_count, ghost_wb_recv_disp, pack_on_device,
+                                                                on_device ? NumPart_before_ghost : -1);
+    gx_ghost_copy_stamp(delivered, NumPart_before_ghost, NumGhostParticles);
     /* The refresh re-packed at the current time, so the pool is current to it --
        re-stamp, or the guarantee would lag the pool it describes. Withheld when the
        advance did not complete, for the same reason the import path withholds it. */

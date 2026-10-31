@@ -91,25 +91,35 @@ static int particles_prefetch_enabled(void)
 }
 
 static int owned_kept_on_device_ = 0;   /* see gizmo_particles_keep_owned_on_device */
+static int ghostdev_base_ = -1, ghostdev_count_ = 0;   /* see gizmo_ghostdev_set_live */
 
 /* Device-resident tree-to-density span (contract in gpu_particles_arena.h). */
 static int treehost_armed_ = 0;   /* between gizmo_treehost_begin and _disarm */
 static int treehost_span_  = 0;   /* P left on the device by the tree build, density pass not reached yet */
 static int treehost_cells_ = 0;   /* within the span: the cells were moved to the device too */
 
-static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1, int with_particles = 1)
+/* The ghost range is device-resident (gizmo_ghostdev_set_live) and is still the live pool's. */
+static int ghostdev_range_live(void)
+{
+    return ghostdev_count_ > 0 && ghost_get_num_ghosts() == ghostdev_count_ && ghost_get_num_local() == ghostdev_base_;
+}
+
+static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1, int with_particles = 1, int all_slots = 0)
 {
     (void) site;
     if(!particles_prefetch_enabled()) {return;}
     owned_kept_on_device_ = 0;
     if(!to_device || (with_cells && with_particles)) {treehost_span_ = 0; treehost_cells_ = 0;}   /* P goes to the host, or both arrays end up on the device */
 #if defined(KOKKOS_ENABLE_CUDA)
+    /* A to-host move leaves a device-resident ghost range on the device unless the host is about to sweep every slot. */
+    const int keep_ghosts = !to_device && n_owned < 0 && !all_slots && ghostdev_range_live();
+    const int n_live = keep_ghosts ? ghostdev_base_ : NumPart;
     /* n_owned >= 0: only the rank's own particles [0, n_owned) and their cells, leaving imported ghosts where they are. */
-    const int n_part = (n_owned >= 0 && n_owned < NumPart) ? n_owned : NumPart;
+    const int n_part = (n_owned >= 0 && n_owned < NumPart) ? n_owned : n_live;
     const size_t bytes_p = (with_particles && P && n_part > 0) ? (size_t) n_part * sizeof(struct particle_data) : 0;
     /* Imported ghosts sit at the end of [0, NumPart) in both arrays, past N_gas: cover them while the
        corridor holds any (unused cell slots between N_gas and the ghosts only cost the copy). */
-    const int n_cells = (n_owned >= 0) ? ((n_part < N_gas) ? n_part : N_gas)
+    const int n_cells = (n_owned >= 0 || keep_ghosts) ? ((n_part < N_gas) ? n_part : N_gas)
                       : (ghost_get_num_ghosts() > 0) ? ((NumPart < All.MaxPartGas) ? NumPart : All.MaxPartGas) : N_gas;
     const size_t bytes_c = (with_cells && CellP && n_cells > 0) ? (size_t) n_cells * sizeof(struct gas_cell_data) : 0;
     if(bytes_p + bytes_c == 0) {return;}
@@ -328,7 +338,7 @@ extern "C" int gizmo_particles_mirror_fill(int n_part, struct particle_data **P_
     /* Only from host-resident storage: an explicit host-to-device copy reads managed pages in place (a
        cudaMemcpyDefault copy migrates them to the device, one fault at a time). */
     if(!enabled || !particles_prefetch_enabled() || n_part <= 0 || !P) {return 0;}
-    if(prefetch_side_ != 2 || owned_kept_on_device_) {return 0;}
+    if(prefetch_side_ != 2 || owned_kept_on_device_ || ghostdev_range_live()) {return 0;}   /* the copy reads host-resident storage only */
 #if defined(KOKKOS_ENABLE_CUDA)
     const int n_cells = (ghost_get_num_ghosts() > 0) ? ((n_part < All.MaxPartGas) ? n_part : All.MaxPartGas) : ((N_gas < n_part) ? N_gas : n_part);
     const size_t bytes_p = (size_t) n_part * sizeof(struct particle_data);
@@ -405,6 +415,121 @@ extern "C" void gizmo_particles_mirror_copy_back_writes(void)
 #endif
 }
 
+/* ---- imported ghosts kept on the device (contract in gpu_particles_arena.h) ---- */
+
+#include "gpu_ghostdev_config.h"
+#if defined(GHOSTDEV_COMPILED) && defined(KOKKOS_ENABLE_CUDA)
+#define GHOSTDEV_BUILT 1
+#if defined(GHOSTDEV_AUDITED_CONFIG)
+#define GHOSTDEV_DEFAULT_ON 1
+#else
+#define GHOSTDEV_DEFAULT_ON 0
+#endif
+#endif
+
+static double ghostdev_seconds_ = 0, ghostdev_bytes_ = 0;
+static long long ghostdev_calls_ = 0;
+
+extern "C" int gizmo_ghostdev_enabled(void)
+{
+    static int enabled = -1;
+    if(enabled < 0) {
+        enabled = 0;
+#if defined(GHOSTDEV_BUILT)
+        enabled = GHOSTDEV_DEFAULT_ON;
+        const char *env = getenv("GIZMO_GPU_GHOSTDEV");
+        if(env && env[0]) {enabled = (atoi(env) != 0);}
+        enabled = enabled && particles_prefetch_enabled() && NTask > 1;
+        if(ThisTask == 0 && particles_prefetch_enabled()) {printf("Particle storage: imported hydro ghosts delivered to and kept on the device: %s.\n", enabled ? "on" : "off"); fflush(stdout);}
+#endif
+    }
+    return enabled;
+}
+
+extern "C" void gizmo_ghostdev_set_live(int base, int n)
+{
+    if(n > 0) {ghostdev_base_ = base; ghostdev_count_ = n;}
+    else {ghostdev_base_ = -1; ghostdev_count_ = 0;}
+}
+extern "C" int gizmo_ghostdev_live(void) {return ghostdev_range_live();}
+
+extern "C" int gizmo_ghost_range_copy_to_device(int base, int n, const struct particle_data *src_P, const struct gas_cell_data *src_CellP)
+{
+    if(n <= 0) {return 0;}
+#if defined(KOKKOS_ENABLE_CUDA)
+    int dev = 0;
+    if(cudaGetDevice(&dev) != cudaSuccess) {(void) cudaGetLastError(); return 1;}
+    const size_t bytes_p = (size_t) n * sizeof(struct particle_data);
+    const size_t bytes_c = (src_CellP && CellP) ? (size_t) n * sizeof(struct gas_cell_data) : 0;
+    const double t0 = my_second();
+    Kokkos::fence("gizmo_ghost_range_copy_to_device");   /* nothing still reads the slots being overwritten */
+    /* A copy into host-resident managed pages migrates them a fault at a time; resident ones make this a no-op. The
+       range shares its first page with the last owned record: synchronized below before anything else touches it. */
+    cudaMemPrefetchAsync(P + base, bytes_p, dev, 0);
+    if(bytes_c) {cudaMemPrefetchAsync(CellP + base, bytes_c, dev, 0);}
+    cudaMemcpyAsync(P + base, src_P, bytes_p, cudaMemcpyHostToDevice, 0);
+    if(bytes_c) {cudaMemcpyAsync(CellP + base, src_CellP, bytes_c, cudaMemcpyHostToDevice, 0);}
+    const cudaError_t rc = cudaStreamSynchronize(0);
+    if(rc != cudaSuccess) {
+        (void) cudaGetLastError();
+        printf("Particle storage: ghost copy to the device failed on task %d (%s); copied on the host.\n", ThisTask, cudaGetErrorString(rc));
+        fflush(stdout);
+        return 1;
+    }
+    ghostdev_seconds_ += timediff(t0, my_second());
+    ghostdev_bytes_ += (double) (bytes_p + bytes_c);
+    ghostdev_calls_++;
+    return 0;
+#else
+    (void) base; (void) src_P; (void) src_CellP;
+    return 1;
+#endif
+}
+
+extern "C" void gizmo_ghostdev_stats(double *seconds, double *bytes, long long *calls)
+{
+    if(seconds) {*seconds = ghostdev_seconds_;}
+    if(bytes) {*bytes = ghostdev_bytes_;}
+    if(calls) {*calls = ghostdev_calls_;}
+}
+
+static void *ghost_pinned_[4] = {NULL, NULL, NULL, NULL};
+static size_t ghost_pinned_bytes_[4] = {0, 0, 0, 0};
+extern "C" void *gizmo_ghost_pinned_buffer(int slot, size_t bytes)
+{
+    static const char *labels[4] = {"ghost_recv_P_pinned", "ghost_recv_CellP_pinned", "ghost_send_P_pinned", "ghost_send_CellP_pinned"};
+    if(slot < 0 || slot > 3) {return NULL;}
+    if(bytes == 0) {bytes = 1;}
+    if(bytes > ghost_pinned_bytes_[slot]) {
+        if(ghost_pinned_[slot]) {gizmo_gpu_free_pinned_host(ghost_pinned_[slot]);}
+        const size_t want = bytes + bytes / 4;
+        ghost_pinned_[slot] = gizmo_gpu_alloc_pinned_host(want, labels[slot]);
+        ghost_pinned_bytes_[slot] = ghost_pinned_[slot] ? want : 0;
+    }
+    return ghost_pinned_[slot];
+}
+
+extern "C" void gizmo_ghost_range_zero_wakeup_on_device(int base, int n)
+{
+    if(n <= 0) {return;}
+    struct particle_data *Pd = P;
+    Kokkos::parallel_for("gizmo_ghost_zero_wakeup", Kokkos::RangePolicy<>(base, base + n), KOKKOS_LAMBDA(int j) {Pd[j].wakeup = 0;});
+    Kokkos::fence("gizmo_ghost_zero_wakeup");
+}
+
+extern "C" void gizmo_ghost_range_gather_wakeup(int base, int n, int *dst)
+{
+    if(n <= 0) {return;}
+    int *d_w = (int *) kept_scratch((size_t) n * sizeof(int));
+    if(!d_w) {for(int g = 0; g < n; g++) {dst[g] = P[base + g].wakeup;} return;}   /* no scratch: read on the host (correct, only slower) */
+    const struct particle_data *Pd = P;
+    Kokkos::parallel_for("gizmo_ghost_gather_wakeup", n, KOKKOS_LAMBDA(int g) {d_w[g] = Pd[base + g].wakeup;});
+    Kokkos::fence("gizmo_ghost_gather_wakeup");
+    Kokkos::View<int *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h(dst, (size_t) n);
+    Kokkos::View<const int *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_w, (size_t) n);
+    Kokkos::deep_copy(h, d);
+}
+
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
 extern "C" int gizmo_particles_back_to_host_wanted(long long n)
 {
@@ -416,6 +541,7 @@ extern "C" int gizmo_particles_back_to_host_wanted(long long n)
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
 extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}
+extern "C" void gizmo_particles_prefetch_to_host_all(const char *site) {particles_prefetch(0, site, 1, -1, 1, 1);}
 extern "C" void gizmo_particles_prefetch_owned_to_device(int n_owned, const char *site) {particles_prefetch(1, site, 1, n_owned);}
 extern "C" void gizmo_particles_prefetch_P_to_host(const char *site) {particles_prefetch(0, site, 0);}
 extern "C" int gizmo_treehost_begin(long long n_active)

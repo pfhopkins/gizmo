@@ -817,16 +817,27 @@ struct SidxGhostRecords {
             signed char *h_type = (signed char *) stage.take(type_bytes, "ngl_sidx_ghost_stage_types");
             signed char *h_state = (signed char *) stage.take(state_bytes, "ngl_sidx_ghost_stage_states");
             const double growth = kernel_radius_drift_max_growth_factor(), kernel_floor = All.MinKernelRadius;
+            /* Read from the import's host copy of the range when one is current (byte-identical; the range itself
+               may live on the device, where reading it here would fault every page back). */
+            struct particle_data *rp = src.P;
+            const struct gas_cell_data *rc = src.cells;
+            int r0 = src.base;
+            {
+                const struct particle_data *cp; const struct gas_cell_data *cc;
+                if(src.P == P && ghost_host_copy_view(src.base, src.count, &cp, &cc) && (cc || !src.cells)) {
+                    rp = const_cast<struct particle_data *>(cp); rc = src.cells ? cc : NULL; r0 = 0;
+                }
+            }
 #pragma omp parallel for
             for(size_t o = 0; o < n; o++) {
                 double *x = &h_row[o * SIDX_ROW_WIDTH];
                 for(int k = 0; k < SIDX_ROW_WIDTH; k++) {x[k] = 0.0;}
                 h_type[o] = (signed char)-1; h_state[o] = (signed char)SIDX_RECORD_REFUSED;
-                const int j = src.base + (int)o;
-                if((int)o >= count || !sfc_pool_member(&src.P[j], src.type_bitmask)) {continue;}
-                h_type[o] = (signed char)src.P[j].Type;
+                const int j = r0 + (int)o;
+                if((int)o >= count || !sfc_pool_member(&rp[j], src.type_bitmask)) {continue;}
+                h_type[o] = (signed char)rp[j].Type;
                 struct SidxMember m;
-                if(sidx_describe_member(j, src.P, src.cells, policy, ti_ref, tables, growth, kernel_floor, 1, m)) {continue;}
+                if(sidx_describe_member(j, rp, rc, policy, ti_ref, tables, growth, kernel_floor, 1, m)) {continue;}
                 x[0] = m.center[0]; x[1] = m.center[1]; x[2] = m.center[2]; x[3] = m.r; x[4] = m.r_drifted;
                 h_state[o] = (signed char)(m.current ? SIDX_RECORD_CURRENT : SIDX_RECORD_NOT_CURRENT);
             }
@@ -2145,7 +2156,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
         const int presorted = (P_shared == P) && (type_bitmask == 1) && sidx_particles_still_ordered(owned_end, t_now);
         /* The rebuild reads every owned particle's P and CellP on the device: move them in bulk rather than by
            device faults (this also lets the query setup below run on the device). */
-        if(P_shared == P && (long long) owned_end * 8 >= (long long) NumPart) {gizmo_particles_prefetch_owned_to_device(owned_end, "sidx_build");}   /* not the ghosts: their index records are packed on the host */
+        if(P_shared == P && (long long) owned_end * 8 >= (long long) NumPart) {gizmo_particles_prefetch_owned_to_device(owned_end, "sidx_build");}   /* not the ghosts: their index records are packed on the host (from the import's host copy when they live on the device) */
         if(sidx_build_segment_now(src, maintained, presorted, radius_policy, caller_label, own, &report)) {
             ngl_leave_csr_empty(gnl, num_active);
             return;

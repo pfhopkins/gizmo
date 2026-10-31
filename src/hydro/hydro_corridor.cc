@@ -120,6 +120,7 @@ static void drift_local_gas_to_current_time(void)
 
 void gizmo_hydro_corridor_import_gas_ghosts(double safety)
 {
+    ghost_exchange_next_import_to_device();   /* the corridor's pool may live on the device (gizmo_ghostdev_enabled) */
     if(!g_mg_needs_all_gas) {ghost_exchange_hydro(safety); return;}
     drift_local_gas_to_current_time();
     std::vector<double> query_pos, query_h;

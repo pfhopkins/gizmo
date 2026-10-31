@@ -121,6 +121,18 @@ struct ghost_writeback_bundle {
 void ghost_writeback_begin_bundle(const struct ghost_writeback_bundle *bundle);
 void ghost_writeback_end_bundle  (const struct ghost_writeback_bundle *bundle);
 
+/* end_bundle with each callback's change test and pack answered by the caller (`c` is the callback's position in
+ * the bundle), for ghost values read somewhere other than the host's P/CellP -- e.g. gathered from a ghost range
+ * kept on the device.  The caller stands in for the snapshot too: begin_bundle is not called.  Exchange, apply and
+ * cleanup are the bundle's own, so the MPI calls are those of end_bundle. */
+struct ghost_writeback_reader {
+    int  (*delta_for_ghost)(void *ud, int c, int g, int num_local);
+    void (*pack_delta)(void *ud, int c, int g, int num_local, void *out_delta);
+    void *ud;
+};
+void ghost_writeback_end_bundle_read_by(const struct ghost_writeback_bundle *bundle,
+                                        const struct ghost_writeback_reader *reader);
+
 /* Per-physics compatibility wrappers retired:
  *   - ghost_writeback_{zero_,}hydro      — hydro corridor commit 8b retired
  *     these; hydro_force_loop reverse-communicates via the bundle scaffold.

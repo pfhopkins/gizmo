@@ -75,7 +75,34 @@ void ghost_writeback_begin_bundle(const struct ghost_writeback_bundle *bundle)
     gpu_particles_arena_invalidate();
 }
 
+static void ghost_writeback_end_bundle_impl(const struct ghost_writeback_bundle *bundle,
+                                            const struct ghost_writeback_reader *reader);
+
 void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
+{
+    ghost_writeback_end_bundle_impl(bundle, NULL);
+}
+
+void ghost_writeback_end_bundle_read_by(const struct ghost_writeback_bundle *bundle,
+                                        const struct ghost_writeback_reader *reader)
+{
+    ghost_writeback_end_bundle_impl(bundle, reader);
+}
+
+/* Callback c's change test and pack for ghost g: the callback's own, or the reader's. */
+static inline int gwb_delta_for_ghost(const struct ghost_writeback_reader *rd, const ghost_writeback_callback *cb,
+                                      int c, int g, int num_local)
+{
+    return rd ? rd->delta_for_ghost(rd->ud, c, g, num_local) : cb->delta_for_ghost(cb->ctx, g, num_local);
+}
+static inline void gwb_pack_delta(const struct ghost_writeback_reader *rd, const ghost_writeback_callback *cb,
+                                  int c, int g, int num_local, void *out)
+{
+    if (rd) {rd->pack_delta(rd->ud, c, g, num_local, out);} else {cb->pack_delta(cb->ctx, g, num_local, out);}
+}
+
+static void ghost_writeback_end_bundle_impl(const struct ghost_writeback_bundle *bundle,
+                                            const struct ghost_writeback_reader *reader)
 {
     if (!bundle || bundle->n_callbacks == 0) return;  /* strict no-op */
 
@@ -111,7 +138,7 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
         int t = home_rank[g];
         for (int c = 0; c < N; c++) {
             const ghost_writeback_callback *cb = bundle->callbacks[c];
-            if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
+            if (gwb_delta_for_ghost(reader, cb, c, g, num_local)) {
                 send_count[c * NTask + t]++;
             }
         }
@@ -164,13 +191,13 @@ void ghost_writeback_end_bundle(const struct ghost_writeback_bundle *bundle)
         int t = home_rank[g];
         for (int c = 0; c < N; c++) {
             const ghost_writeback_callback *cb = bundle->callbacks[c];
-            if (cb->delta_for_ghost(cb->ctx, g, num_local)) {
+            if (gwb_delta_for_ghost(reader, cb, c, g, num_local)) {
                 const size_t ds = cb->delta_size;
                 int p = pack_progress[c * NTask + t]++;
                 size_t offset = (size_t)send_byte_disp[t]
                               + (size_t)cb_off[c * NTask + t]
                               + (size_t)p * ds;
-                cb->pack_delta(cb->ctx, g, num_local, send_buf + offset);
+                gwb_pack_delta(reader, cb, c, g, num_local, send_buf + offset);
             }
         }
     }

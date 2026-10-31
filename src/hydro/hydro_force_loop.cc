@@ -29,6 +29,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
+#include <vector>
 #include <Kokkos_Core.hpp>
 
 #include "../declarations/gpu_all_mirror.h"  /* MUST precede allvars.h: installs device-pass `#define All AllDeviceMirror` redirect before cell_data.h is parsed */
@@ -186,11 +187,39 @@ void HydroForceSpec::cleanup_device_context(const neighbor_loop_args& /*args*/,
 
 /* ghost_write_detector_begin/end: runner default (loop_name = "hydro_force"). */
 
+#if !defined(HYDRO_MESHLESS_FINITE_VOLUME)
+/* With the ghost range kept on the device (gizmo_ghostdev_live), the bundle's one field, the wakeup maximum, is
+ * zeroed there and read back from there: the snapshot it is compared against is zero by construction, so the
+ * change test is wakeup > 0 and the record is the one ParticleMaxOp packs. */
+namespace {
+using HydroWakeupOp = gw_detail::ParticleMaxOp<decltype(particle_data::wakeup), &particle_data::wakeup>;
+std::vector<int> g_ghost_wakeup;        /* the ghosts' wakeup after the pass */
+int g_ghost_wakeup_on_device = 0;       /* ghost_writeback_begin took the device route */
+int hydro_ghost_wakeup_delta(void *, int, int g, int) {return (g_ghost_wakeup[(size_t) g] > 0) ? 1 : 0;}
+void hydro_ghost_wakeup_pack(void *, int, int g, int, void *out)
+{
+    HydroWakeupOp::Delta *d = static_cast<HydroWakeupOp::Delta *>(out);
+    d->home_index = ghost_get_home_index()[g];
+    d->value      = g_ghost_wakeup[(size_t) g];
+}
+}
+#endif
+
 void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
                                             const NeighborLoopPlan& /*plan*/)
 {
     int num_ghosts = ghost_get_num_ghosts();
     int num_local  = ghost_get_num_local();
+    ghost_host_copy_invalidate();   /* the ghosts' wakeup is written below and by the pass */
+#if !defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    const struct ghost_writeback_bundle *bundle = hydro_force_ghost_writeback_bundle_ptr();
+    g_ghost_wakeup_on_device = (num_ghosts > 0) && gizmo_ghostdev_live() &&
+                               bundle->n_callbacks == 1 && bundle->callbacks[0] == &HydroWakeupOp::callback;
+    if(g_ghost_wakeup_on_device) {
+        gizmo_ghost_range_zero_wakeup_on_device(num_local, num_ghosts);
+        return;
+    }
+#endif
     if(num_ghosts > 0) {
         for(int g = 0; g < num_ghosts; g++) {
             int j = num_local + g;
@@ -207,6 +236,17 @@ void HydroForceSpec::ghost_writeback_begin(const neighbor_loop_args& /*args*/,
 void HydroForceSpec::ghost_writeback_end(const neighbor_loop_args& /*args*/,
                                           const NeighborLoopPlan& /*plan*/)
 {
+#if !defined(HYDRO_MESHLESS_FINITE_VOLUME)
+    if(g_ghost_wakeup_on_device) {
+        g_ghost_wakeup_on_device = 0;
+        const int num_ghosts = ghost_get_num_ghosts();
+        g_ghost_wakeup.resize((size_t) (num_ghosts > 0 ? num_ghosts : 1));
+        gizmo_ghost_range_gather_wakeup(ghost_get_num_local(), num_ghosts, g_ghost_wakeup.data());
+        const struct ghost_writeback_reader reader = {hydro_ghost_wakeup_delta, hydro_ghost_wakeup_pack, NULL};
+        ghost_writeback_end_bundle_read_by(hydro_force_ghost_writeback_bundle_ptr(), &reader);
+        return;
+    }
+#endif
     ghost_writeback_end_bundle(hydro_force_ghost_writeback_bundle_ptr());
 }
 

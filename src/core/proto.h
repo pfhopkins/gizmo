@@ -896,6 +896,13 @@ int ghost_owner_written_since_import(void);
 /* Collective check for a skipped refresh: re-packs the exported records into scratch and counts the ghost
  * slots whose bytes differ from the live pool (summed over ranks; -1 when the pool cannot be checked). */
 long long ghost_refresh_verify_unchanged(void);
+/* The next import is the hydro corridor's pool: delivered to the device and kept there where gizmo_ghostdev_enabled(). */
+void ghost_exchange_next_import_to_device(void);
+/* The page-locked receive buffer of a device-delivered import or refresh holds the same bytes as the live ghost range
+ * P/CellP[base, base+count) until something writes that range.  Returns 1 and the copy (cells NULL without gas) when it
+ * covers exactly that range and still matches it, else 0.  _invalidate: a writer of the ghost range says so. */
+int ghost_host_copy_view(int base, int count, const struct particle_data **p, const struct gas_cell_data **cells);
+void ghost_host_copy_invalidate(void);
 /* Set the live ghost pool aside (NumPart back to local, provenance held privately), restore it
  * (same slot layout, new provenance epoch, values to be refreshed by the caller), or drop it.
  * Restore is local and returns 0 when the layout it needs is not there; callers decide

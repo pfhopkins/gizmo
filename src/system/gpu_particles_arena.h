@@ -182,6 +182,31 @@ void gizmo_particles_count_active_gas_on_device(const int *idx, int n, long long
 /* Grow-only device scratch for the span's kernels in other translation units: `slot` 0..3 are independent buffers. */
 void *gizmo_treehost_device_scratch(int slot, size_t bytes);
 
+/* Imported ghosts kept on the device.  The hydro corridor's ghost pool can be delivered straight from the MPI
+ * receive (page-locked) to the device, and kept there until the pool is cleaned up, instead of being written on
+ * the host and moved across with every bulk prefetch of the corridor's device passes.
+ *   _enabled: whether this run does so (rank-uniform: build + environment).  Compiled where the hydro pass's ghost
+ *     writeback is the wakeup maximum alone; on by default only for the corridor configurations audited for host
+ *     reads of the ghost range, GIZMO_GPU_GHOSTDEV=0/1 in the environment overrides either way.
+ *   _set_live(base, n): the ghost range [base, base+n) now lives on the device; n <= 0 clears it.  While it is set,
+ *     bulk to-host prefetches leave that range where it is (gizmo_particles_prefetch_to_host_all takes it too).
+ *   _copy_to_device: n records from the host into P/CellP[base, base+n), on the device (destination prefetched
+ *     there first); src_CellP may be NULL.  0 on success; 1 on a failed copy, after which the caller copies on
+ *     the host.
+ *   _pinned_buffer: grow-only page-locked scratch of the ghost transport (slots 0/1 receive P/CellP, 2/3 send
+ *     P/CellP); never zeroed; NULL when the memory cannot be had.
+ *   _zero_wakeup / _gather_wakeup: P[j].wakeup over the ghost range, set to 0 / copied into dst[0,n), on the device. */
+int gizmo_ghostdev_enabled(void);
+void gizmo_ghostdev_set_live(int base, int n);
+int gizmo_ghostdev_live(void);
+int gizmo_ghost_range_copy_to_device(int base, int n, const struct particle_data *src_P, const struct gas_cell_data *src_CellP);
+void *gizmo_ghost_pinned_buffer(int slot, size_t bytes);
+void gizmo_ghost_range_zero_wakeup_on_device(int base, int n);
+void gizmo_ghost_range_gather_wakeup(int base, int n, int *dst);
+void gizmo_particles_prefetch_to_host_all(const char *site);
+/* Seconds and bytes of the ghost copies to the device so far. */
+void gizmo_ghostdev_stats(double *seconds, double *bytes, long long *calls);
+
 /* DIAGNOSTIC: tag the upcoming acquire with a short descriptive string so
  * that GIZMO_GPU_ARENA_DEBUG mismatch messages identify the call site. */
 void gpu_particles_arena_set_site(const char *site);
