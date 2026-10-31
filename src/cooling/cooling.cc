@@ -715,7 +715,11 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
                         cell[i].Rad_E_gamma[k] += de_rad; /* energy gained by gas is lost here (or vice versa if dust is acting as a net coolant) */
                         cell[i].Rad_E_gamma_Pred[k] = cell[i].Rad_E_gamma[k]; /* updated drifted */
 #if defined(RT_EVOLVE_INTENSITIES)
-                        int k_tmp; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA; cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/RT_INTENSITY_BINS_DOMEGA;}
+                        { /* emission is isotropic: each of the N bins gets de_rad/N of energy. absorption takes the same fraction from every bin, keeping them positive and the angular shape intact */
+                            int k_tmp; double e_bins=0; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {e_bins += RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity[k][k_tmp];}
+                            double f_keep = (e_bins > 0) ? DMAX(e_bins+de_rad, 0)/e_bins : 1;
+                            for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {if(de_rad > 0) {cell[i].Rad_Intensity[k][k_tmp] += de_rad/(4.*M_PI); cell[i].Rad_Intensity_Pred[k][k_tmp] += de_rad/(4.*M_PI);} else {cell[i].Rad_Intensity[k][k_tmp] *= f_keep; cell[i].Rad_Intensity_Pred[k][k_tmp] *= f_keep;}}
+                        }
 #endif
                         int kv; // add leading-order relativistic corrections here, accounting for gas motion in the addition/subtraction to the flux
 #if defined(RT_EVOLVE_FLUX)

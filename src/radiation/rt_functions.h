@@ -1014,6 +1014,9 @@ void rt_apply_boundary_conditions(int i, struct particle_data *pp, struct gas_ce
         for(k = 0; k < N_RT_FREQ_BINS; k++)
         {
             cell[i].Rad_E_gamma[k] = urad[k] * cell[i].Mass/(cell[i].Density * All.cf_a3inv);
+#ifdef RT_EVOLVE_INTENSITIES
+            {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {cell[i].Rad_Intensity[k][k_q] = cell[i].Rad_Intensity_Pred[k][k_q] = cell[i].Rad_E_gamma[k]/(4.*M_PI);}} // isotropic background field
+#endif
 #ifdef RT_EVOLVE_FLUX
             for(k_dir = 0; k_dir < 3; k_dir++){cell[i].Rad_Flux[k][k_dir] = 0;}
 #endif
@@ -1082,20 +1085,23 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #if defined(RT_EVOLVE_INTENSITIES)
             if(mode==0) {e0 = RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity[kf][k_angle];} else {e0 = RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity_Pred[kf][k_angle];}
             dt_e_gamma_band = RT_INTENSITY_BINS_DOMEGA*cell[i].Dt_Rad_Intensity[kf][k_angle];
+            double f_angle = 1./N_RT_INTENSITY_BINS; // share of the band's isotropic (cell-total) sources that goes into this angle bin
 #else
             if(mode==0) {e0 = cell[i].Rad_E_gamma[kf];} else {e0 = cell[i].Rad_E_gamma_Pred[kf];}
             dt_e_gamma_band = cell[i].Dt_Rad_E_gamma[kf];
+            double f_angle = 1;
 #endif
 #ifdef RT_COMOVING
             double ET_dotdot_GradVcom = cell[i].ET[kf].double_contract(cell[i].Gradients.Velocity);
             double VolP_dotdot_GradV = e0 * ET_dotdot_GradVcom * All.cf_a2inv; // convert to physical units and multiply by radiation energy density to get into appropriate units
             dt_e_gamma_band += (C_LIGHT_CODE_REDUCED/C_LIGHT_CODE) * (-VolP_dotdot_GradV); // account for RSOL term here as usual
 #endif
-            total_de_dt = cell[i].Rad_Je[kf] + dt_e_gamma_band;
+            total_de_dt = f_angle*cell[i].Rad_Je[kf] + dt_e_gamma_band;
 
 #ifdef RT_INFRARED
             if(kf == RT_FREQ_BIN_INFRARED)
             {
+#if !defined(RT_EVOLVE_INTENSITIES) /* needs the temperature-weighted advected flux Dt_Rad_E_gamma_T_weighted_IR, which only the energy-moment transport computes */
                 if((mode==0) && (dt_e_gamma_band!=0) && (dt_entr>0)) // only update temperatures on kick operations //
                 {
                     // advected radiation changes temperature of radiation field, before absorption //
@@ -1111,6 +1117,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     cell[i].Radiation_Temperature = DMAX(cell[i].Radiation_Temperature, DMAX(T_min, MIN_REAL_NUMBER)); // numerator above can go negative in extreme dynamic-range regimes; floor before use below to avoid log10(negative)=NaN propagating into the opacity table lookup
                     a0_abs = -rt_absorption_rate(i,kf, pp, cell); // update absorption rate using the new radiation temperature //
                 }
+#endif
                 double total_absorption_rate = E_abs_tot_toIR + fabs(a0_abs)*e0; // add the summed absorption and equate to dust emission //
 #ifdef COOLING
                 /* the dust temperature is stiffly coupled to the gas and radiation temperatures, so it is advanced
@@ -1122,7 +1129,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                 double Tdust_eff = cell[i].Dust_Temperature, Trad_eff = cell[i].Radiation_Temperature;
                 double kappa_gas = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,-1,-1, pp, cell), kappa_total = rt_kappa_adaptive_IR_band(i,Tdust_eff,Trad_eff,0,0, pp, cell);
                 IRBand_opacity_fraction_from_gas_absorption = kappa_gas / (kappa_total + MIN_REAL_NUMBER); /* gas absorption opacity only, relative to total opacity (all sources+scattering) */
-                total_de_dt = E_abs_tot_toIR + cell[i].Rad_Je[kf] + dt_e_gamma_band;
+                total_de_dt = f_angle*(E_abs_tot_toIR + cell[i].Rad_Je[kf]) + dt_e_gamma_band;
                 if((mode==0) && (Tdust_eff <= MAX_DUST_TEMP)) // only update temperatures on kick operations and Tdust is meaningful //
                 {
                     /* dust absorption and re-emission brings T_rad towards T_dust: */
@@ -1216,7 +1223,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             // isotropically re-emit the donated radiation into the target bin[s] //
 #if defined(RT_EVOLVE_INTENSITIES)
             // this is the leading-order (isotropic) emission-absorption step, i.e. the psi_a * (j_e - I) term in the intensity equation. solved by the methods above to deal generically with stiff emission-absorption problems, re-used below if needed //
-            if(donation_target_bin >= 0) {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {if(mode==0) {cell[i].Rad_Intensity[donation_target_bin][k_q] += de_abs/RT_INTENSITY_BINS_DOMEGA;} else {cell[i].Rad_Intensity_Pred[donation_target_bin][k_q] += de_abs/RT_INTENSITY_BINS_DOMEGA;}}}
+            if(donation_target_bin >= 0) {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {if(mode==0) {cell[i].Rad_Intensity[donation_target_bin][k_q] += de_abs/(4.*M_PI);} else {cell[i].Rad_Intensity_Pred[donation_target_bin][k_q] += de_abs/(4.*M_PI);}}} // isotropic: each of the N bins gets de_abs/N of energy
             if(ef < 0) {ef=0;}
             if(mode==0) {cell[i].Rad_Intensity[kf][k_angle] = ef/RT_INTENSITY_BINS_DOMEGA;} else {cell[i].Rad_Intensity_Pred[kf][k_angle] = ef/RT_INTENSITY_BINS_DOMEGA;}
 #else
@@ -1274,8 +1281,8 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     for(kf=0;kf<N_RT_FREQ_BINS;kf++)
     {
         int k,k_om; double rho=cell[i].Density*All.cf_a3inv, ceff=C_LIGHT_CODE_REDUCED, ctrue=C_LIGHT_CODE, teq_inv=cell[i].Rad_Kappa[kf]*rho*ceff, f_a=rt_absorb_frac_albedo(i,kf, pp, cell), f_s=1.-f_a, b_dot_n[N_RT_INTENSITY_BINS]={0}, beta_2=0.; Vec3<double> beta;
-        int n_iter = 1 + (int)(DMIN(DMAX(4. , dt_entr/teq_inv), 1000.)); // number of iterations to subcycle everything below //
-        double dt=dt_entr/n_iter, tau=dt*teq_inv, i0[N_RT_INTENSITY_BINS]={0}, invfourpi=1./(4.*M_PI), J, b_dot_H, b2_dot_K; int i_iter;
+        int n_iter = 1 + (int)(DMIN(DMAX(4. , dt_entr*teq_inv), 1000.)); // number of iterations to subcycle everything below //
+        double dt=dt_entr/n_iter, tau=dt*teq_inv, i0[N_RT_INTENSITY_BINS]={0}, inv_n_om=1./N_RT_INTENSITY_BINS, J, b_dot_H, b2_dot_K; int i_iter; // i0 = DOMEGA*I is the energy in each angle bin, so angle-means (J, H, K) in these units are sums over bins divided by N
         for(i_iter=0; i_iter<n_iter; i_iter++)
         {
             double egy_0=0, egy_f=0; Vec3<double> flux_0={}, flux_f={}; // compute total change over sub-cycle, to update gas properties
@@ -1285,19 +1292,19 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {b_dot_n[k_om]=0; for(k=0;k<3;k++) {b_dot_n[k_om]+=All.Rad_Intensity_Direction[k_om][k]*beta[k];}}
             beta_2 = beta.norm_sq();
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {egy_0+=i0[k_om]; for(k=0;k<3;k++) {flux_0[k]+=All.Rad_Intensity_Direction[k_om][k]*i0[k_om];}}
-            J=0,b_dot_H=0,b2_dot_K=0; for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {J+=i0[k_om]*invfourpi; b_dot_H+=b_dot_n[k_om]*i0[k_om]*invfourpi; b2_dot_K+=b_dot_n[k_om]*b_dot_n[k_om]*i0[k_om]*invfourpi;}
+            J=0,b_dot_H=0,b2_dot_K=0; for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {J+=i0[k_om]*inv_n_om; b_dot_H+=b_dot_n[k_om]*i0[k_om]*inv_n_om; b2_dot_K+=b_dot_n[k_om]*b_dot_n[k_om]*i0[k_om]*inv_n_om;}
 
             // isotropic terms that change total energy in bin (part of the 'work term' for the photon momentum): this includes the beta.beta*(J+K) and beta.H terms
             double work = (1. * (f_s-f_a)*(beta_2*J + b2_dot_K) - 2.*f_s*b_dot_H) * tau; // will be shared isotropically.
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if((work>0) || (i0[k_om]<=0)) {i0[k_om]+=work;} else {i0[k_om]/=(1-work/i0[k_om]);}} // gaurantees linearized sum is still correct, and symmetric with positive changes, but can't get negative energies. shared isotropically.
 
             // isotropic scattering term [scattering * (J - I) term in the intensity equation] [recall, our general update for the 'energy term' for absorption and emission above already took care of the psi_a*(j_em - I) term in the intensity equation
-            J=0; for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {J+=i0[k_om]*invfourpi;} // prepare to calculate isotropic scattering term
+            J=0; for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {J+=i0[k_om]*inv_n_om;} // prepare to calculate isotropic scattering term
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {i0[k_om] = J + (i0[k_om]-J)*exp(-f_s*tau);} // isotropic scattering conserving total energy over step
 
             // flux 'boost' and 'beaming' terms (go as n.beta). note we replace je -> je-I + I, and use the fact that we have solved already for the time-integral of (psi_a*(je-I)*dt) = de_emission_minus_absorption_saved, which can be re-used here, in average form <psi_a*(je-I)> = dE/dt --> just make sure the units are correct! because we're working in dimensionless units below, we should divide by tau, to be working in the same delta-units here: these are the 3 n.beta * [ psi_a*(j_em-J_nu)*(creduced/c)^2 + (psi_a+psi_s)*J_nu) ] in the intensity equation
             double fboost[N_RT_INTENSITY_BINS], fboost_avg=0, fboost_avg_p=0, fboost_avg_m=0; // calculate flux 'boost' terms
-            for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {fboost[k_om] = 3.*b_dot_n[k_om] * ((de_emission_minus_absorption_saved[kf][k_om]/tau) + ((f_a+f_s)*J)); fboost_avg += fboost[k_om]/N_RT_INTENSITY_BINS;} // pre-calculate to get mean value, will divide out
+            for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {fboost[k_om] = 3.*b_dot_n[k_om] * (((tau > 0) ? de_emission_minus_absorption_saved[kf][k_om]/(n_iter*tau) : 0) + ((f_a+f_s)*J)); fboost_avg += fboost[k_om]/N_RT_INTENSITY_BINS;} // pre-calculate to get mean value, will divide out
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {work=(fboost[k_om]-fboost_avg)*tau; if((work>0) || (i0[k_om]<=0)) {fboost[k_om]=work; fboost_avg_p+=fboost[k_om];} else {fboost[k_om]=work/(1.-work/i0[k_om]); fboost_avg_m+=fboost[k_om];}} // zero total energy change at linear order ensured by subtracting out sum here; non-linearization ensures i0 cannot be negative, but does allow second-order dt work term to appear, that's ok for now
             if(fboost_avg_p>0 && fboost_avg_m<0) {double fc=-fboost_avg_m/fboost_avg_p; fboost_avg_m=(1.+fc)/(1.+fc*fc); fboost_avg_p=fc*fboost_avg_m;} else {fboost_avg_m=fboost_avg_p=0;} // // these re-weight to gaurantee the non-linear sum is identically zero while preserving positive-definite behavior
             for(k_om=0;k_om<N_RT_INTENSITY_BINS;k_om++) {if(fboost[k_om]>0) {i0[k_om]+=fboost_avg_p*fboost[k_om];} else {i0[k_om]+=fboost_avg_m*fboost[k_om];}} // alright done!
