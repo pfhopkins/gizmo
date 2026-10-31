@@ -1167,6 +1167,14 @@
 #define SELFGRAVITY_OFF // safely define SELFGRAVITY_OFF in this case, otherwise we act like there is gravity except in the final setting of accelerations
 #endif
 
+/* a particle whose tree walk is skipped keeps the acceleration the gravity call finalized (tree, analytic, direct terms) and
+   advances it with the jerk. Forces added to GravAccel after the gravity call (drag and grain radiation under the drag flag, quantum pressure) must
+   then not ride along on the kept value, so it is kept apart in GravAccel_Retained. Any new force added to GravAccel after
+   gravity must join this list. */
+#if defined(ADAPTIVE_TREEFORCE_UPDATE) && !defined(SELFGRAVITY_OFF) && !defined(RT_SELFGRAVITY_OFF) && (defined(DO_FLUID_ALTSPECIES_DRAG_CALCULATION) || defined(DM_FUZZY))
+#define GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+#endif
+
 /* turn on outputs appropriately */
 #ifdef RADTRANSFER
 #if !defined(OUTPUT_EDDINGTON_TENSOR) && !defined(IO_SUPPRESS_OUTPUT_EDDINGTON_TENSOR)

@@ -32,6 +32,9 @@ extern ALIGN(32) struct particle_data
     MyFloat Particle_DivVel;        /*!< velocity divergence of neighbors (for predict step) */
     
     Vec3<MyDouble> GravAccel;       /*!< particle acceleration due to gravity */
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+    Vec3<MyDouble> GravAccel_Retained; /*!< GravAccel as the gravity call finalized it, before forces added after gravity: what a skipped walk advances (precompiler_logic.h) */
+#endif
 #ifdef PMGRID
     Vec3<MyFloat> GravPM;           /*!< particle acceleration due to long-range PM gravity force */
 #endif

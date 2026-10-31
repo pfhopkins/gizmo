@@ -1018,6 +1018,9 @@ int merge_particles_ij(int i, int j)
         P[j].Pos = P[i].Pos + dp * wt_j; // center-of-mass conserving //
         P[j].Vel = P[j].Vel * wt_j + P[i].Vel * wt_i; // momentum-conserving //
         P[j].GravAccel = P[j].GravAccel * wt_j + P[i].GravAccel * wt_i; // force-conserving //
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        P[j].GravAccel_Retained = P[j].GravAccel_Retained * wt_j + P[i].GravAccel_Retained * wt_i;
+#endif
 #ifdef PMGRID
         P[j].GravPM = P[j].GravPM * wt_j + P[i].GravPM * wt_i; // force-conserving //
 #endif
@@ -1156,6 +1159,9 @@ int merge_particles_ij(int i, int j)
     P[j].Vel = P[j].Vel * wt_j + P[i].Vel * wt_i; // momentum-conserving //
     CellP[j].VelPred = CellP[j].VelPred * wt_j + CellP[i].VelPred * wt_i; // momentum-conserving //
     P[j].GravAccel = P[j].GravAccel * wt_j + P[i].GravAccel * wt_i; // force-conserving //
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+    P[j].GravAccel_Retained = P[j].GravAccel_Retained * wt_j + P[i].GravAccel_Retained * wt_i;
+#endif
 #ifdef PMGRID
     P[j].GravPM = P[j].GravPM * wt_j + P[i].GravPM * wt_i; // force-conserving //
 #endif

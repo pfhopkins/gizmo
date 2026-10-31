@@ -223,6 +223,9 @@ void init(void)
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {
         P[i].GravAccel = {};
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        P[i].GravAccel_Retained = {};
+#endif
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}

@@ -600,7 +600,11 @@ gravity_walk_attempt:
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i, P);
         if(!gravity_treeforce_candidate_frozen(ii)) { // the one decision this call froze before any walk ran, the same one the walk dispatchers used
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+            P[i].GravAccel_Retained += P[i].GravJerk * (dt * All.cf_a2inv); P[i].GravAccel = P[i].GravAccel_Retained; // the kept gravity, without the forces added after the last gravity call
+#else
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
+#endif
             P[i].time_since_last_treeforce += dt;
             continue;
         } else {
@@ -759,6 +763,16 @@ gravity_walk_attempt:
 
 
     add_analytic_gravitational_forces(); /* add analytic terms, which -CAN- be enabled even if self-gravity is not */
+
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+    /* the acceleration is now final for every particle this call rebuilt (the analytic terms' own test): keep it for the skipped walks
+       that follow. A Hermite-only call rebuilds without rerunning the forces added after gravity, so those are missing from the Hermite
+       corrector for any type that both feels one and is Hermite-integrated */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static)
+#endif
+    for(int ii = 0; ii < (int)ActiveParticleList.size(); ii++) {int i = ActiveParticleList[ii]; if(analytic_gravity_adds_to(i, ii)) {P[i].GravAccel_Retained = P[i].GravAccel;}}
+#endif
 
 
     /* Now the force computation is finished: gather timing and diagnostic information */
