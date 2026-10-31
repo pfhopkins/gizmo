@@ -131,15 +131,15 @@ void viscosity_compute_pair(
 
     for(int k_v=0; k_v<3; k_v++)
     {
+        double b_hll_eff = 1, dv_visc = 0, thold_ptot_hll = 0.03;
 #ifdef MAGNETIC
-        double b_hll_eff = DMAX(DMIN(1., 3.*bhat_dot_gradvhat*bhat_dot_gradvhat), 0.01);
-        double dv_visc = 3. * (B_interface[k_v]*Bi_proj - kernel.dp[k_v]/3.) * bhat_dot_gradvhat_direct * a_inv;
-        double thold_ptot_hll = 0.1 * exp(-2. * grad_v_mag * kernel.r / (1.e-30 + fabs(kernel.dv[k_v])));
-#else
-        double b_hll_eff = 1;
-        double dv_visc = cmag_dir[k_v] * rinv * rinv / (All.cf_atime * DMAX(eta, zeta));
-        double thold_ptot_hll = 0.03;
+        if(do_non_mhd == 0) { /* anisotropic (Braginskii) limiter; with no field at the interface the isotropic one below applies, as for the flux */
+            b_hll_eff = DMAX(DMIN(1., 3.*bhat_dot_gradvhat*bhat_dot_gradvhat), 0.01);
+            dv_visc = 3. * (B_interface[k_v]*Bi_proj - kernel.dp[k_v]/3.) * bhat_dot_gradvhat_direct * a_inv;
+            thold_ptot_hll = 0.1 * exp(-2. * grad_v_mag * kernel.r / (1.e-30 + fabs(kernel.dv[k_v])));
+        } else
 #endif
+        {dv_visc = cmag_dir[k_v] * rinv * rinv / (All.cf_atime * DMAX(eta, zeta));}
         double hll_tmp = rho_ij * hll_correction_fn(dv_visc, -dv_visc, rho_ij, viscous_wt_physical,
                                                     v_hll, Face_Area_Norm, kernel.r, All.cf_atime);
         double fluxlimiter_absnorm = -DMAX(eta, zeta) * sqrt(b_hll_eff) * Face_Area_Norm * dv_visc * rinv * a_inv;
