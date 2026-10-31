@@ -2423,7 +2423,7 @@ void gpu_ngb_list_build(struct particle_data *P_shared, int num_total,
        The hydro corridor's list is followed by the gradients pass on the device: when no host trim or drift
        runs below, the particles stay there (gizmo_particles_keep_owned_on_device) and the corridor reads them
        through the device helpers until that pass. */
-    if(P_shared == P && (long long) num_active * 8 >= (long long) NumPart) {
+    if(P_shared == P && gizmo_particles_back_to_host_wanted(num_active)) {
         const int keep = symlist_device_consumer_follows && pool_current && own_frame.exact &&
                          gizmo_particles_keep_owned_on_device("gpu_ngb_list_build");
         if(!keep) {gizmo_particles_prefetch_to_host("gpu_ngb_list_build");}

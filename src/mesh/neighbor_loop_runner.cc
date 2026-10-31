@@ -527,7 +527,7 @@ static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int firs
                                         const typename Spec::AccumData *accums,
                                         bool mirrored = false)   /* the kernels read a device copy (gizmo_particles_mirror_fill) */
 {
-    if((long long) n * 8 >= (long long) NumPart) {   /* a sweep of most of the particles and of the kernel's results: move them in bulk */
+    if(gizmo_particles_back_to_host_wanted(n)) {   /* a sweep of most of the particles and of the kernel's results: move them in bulk */
         if(!mirrored) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* with a device copy the host kept its pages */
         gizmo_managed_prefetch_to_host(accums, (size_t) n * sizeof(typename Spec::AccumData), Spec::loop_name);
     }
@@ -7394,7 +7394,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
             bool presolved    = false;
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {
                 if (gizmo_pcie_opt() && nlr_modeb_use_omp(n_compacted, nlr_modeb_omp_nthreads())) {
-                    if((long long) n_compacted * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* most of the particles: move them in bulk */
+                    if(gizmo_particles_back_to_host_wanted(n_compacted)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* most of the particles: move them in bulk */
                     if (after_iter_results.size() < (size_t) n_compacted) {after_iter_results.resize((size_t) n_compacted);}
                     IterResult *res = after_iter_results.data();
 #ifdef _OPENMP
@@ -7545,7 +7545,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
         if (path == DispatchPath::ModeD_DeviceFused && !nlr_mode_d_feeds_device(busiest_rank_actives) &&
             nlr_mode_b_switched_on<Spec>()) {
             if constexpr (nlr_mode_d_iterates_on_device_v<Spec>) {nlr_mode_d_iteration_end<Spec>(drv, device_written);}   /* Mode B reads the host's copy */
-            if((long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* Mode B walks them on the host */
+            if(gizmo_particles_back_to_host_wanted(args.num_active)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}   /* Mode B walks them on the host */
             mode_d_lease.release();
             drv.mode_d_lease = nullptr;
             path = DispatchPath::ModeB_HostWalker;
@@ -7562,7 +7562,7 @@ void run_neighbor_loop_iterative(const neighbor_loop_args_iterative& args_in)
     }
     /* With more than one rank the iteration ran on the device to its end (after_iter included), so the
        host after_iter path above never moved the particles back; the finalize that follows sweeps them. */
-    if(drv.mode_d_lease && (long long) args.num_active * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host(Spec::loop_name);}
+    if(drv.mode_d_lease && gizmo_particles_back_to_host_wanted(args.num_active)) {gizmo_particles_prefetch_to_host(Spec::loop_name);}
 
     /* ===== Max-iter exceeded check (matches legacy density / ags_density endrun(1155)) ===== */
     if (drv.iter_index >= Spec::max_iters && drv.global_active_total > 0) {

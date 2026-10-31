@@ -105,6 +105,11 @@ void gizmo_particles_prefetch_P_to_host(const char *site);
 /* Where the last bulk prefetch sent the particle storage: 1 the device, 2 the host, 0 none yet or
  * prefetching off. A hint for code that can run either side, to run where the particles are. */
 int gizmo_particles_prefetch_side(void);
+/* Whether a host phase about to touch n particles right after a device pass should move the arrays back in bulk
+ * first: for a sweep of most of them, and after any smaller device pass since the last such move, which then
+ * carries only the pages that pass pulled over (the host would otherwise fault them back one at a time).
+ * GIZMO_UVM_TOHOST_ALWAYS=0 in the environment keeps only the first case, for a same-binary comparison. */
+int gizmo_particles_back_to_host_wanted(long long n);
 /* The same bulk move for one other managed buffer about to be swept on the host (e.g. a kernel's
  * per-active results read back by a host writeback). Same conditions and no-op cases as above. */
 void gizmo_managed_prefetch_to_host(const void *ptr, size_t bytes, const char *site);

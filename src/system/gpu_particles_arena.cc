@@ -69,6 +69,7 @@ static int    prefetch_enabled_ = -1;   /* -1: not decided yet */
 static int    prefetch_side_    = 0;    /* where the last bulk prefetch went: 1 device, 2 host */
 static double prefetch_seconds_ = 0, prefetch_bytes_dev_ = 0, prefetch_bytes_host_ = 0;
 static long long prefetch_calls_ = 0;
+static uint64_t tohost_arena_counter_ = 0;   /* g_gpu_arena_acquire_counter at the last bulk move of P and CellP to the host */
 #if defined(KOKKOS_ENABLE_CUDA)
 static int cuda_managed_memory_is_host_coherent(void);
 #endif
@@ -119,6 +120,7 @@ static void particles_prefetch(int to_device, const char *site, int with_cells =
     cudaError_t rc = cudaStreamSynchronize(0);
     if(rc != cudaSuccess) {(void) cudaGetLastError(); prefetch_enabled_ = 0; if(ThisTask == 0) {printf("Particle storage: bulk prefetch failed at %s (%s); switched off.\n", site, cudaGetErrorString(rc)); fflush(stdout);}}
     prefetch_side_ = prefetch_enabled_ ? (to_device ? 1 : 2) : 0;
+    if(!to_device && with_cells && n_owned < 0) {tohost_arena_counter_ = g_gpu_arena_acquire_counter;}
     prefetch_seconds_ += timediff(t0, my_second());
     if(to_device) {prefetch_bytes_dev_ += (double) (bytes_p + bytes_c);} else {prefetch_bytes_host_ += (double) (bytes_p + bytes_c);}
     prefetch_calls_++;
@@ -373,6 +375,13 @@ extern "C" void gizmo_particles_mirror_copy_back_writes(void)
 }
 
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
+extern "C" int gizmo_particles_back_to_host_wanted(long long n)
+{
+    if(n * 8 >= (long long) NumPart) {return 1;}
+    static int always = -1;
+    if(always < 0) {const char *env = getenv("GIZMO_UVM_TOHOST_ALWAYS"); always = (env && env[0]) ? (atoi(env) != 0) : 1;}
+    return always && g_gpu_arena_acquire_counter != tohost_arena_counter_;
+}
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
 extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}

@@ -1611,7 +1611,7 @@ static ghost_exchange_result ghost_exchange_request_driven_impl(const struct gho
     const int send_list_current = gx_certify_send_list_current(send_home_idx, total_send, All.Ti_Current);
 
     /* === Step 6: pack and Alltoallv particles + cells, then home_idx === */
-    if((long long) total_send * 8 >= (long long) NumPart) {gizmo_particles_prefetch_to_host("ghost_exchange_pack");}   /* the receiver walk ran on the device */
+    if(gizmo_particles_back_to_host_wanted(total_send)) {gizmo_particles_prefetch_to_host("ghost_exchange_pack");}   /* the receiver walk ran on the device */
     gx_pack_and_forward_particle_exchange(send_home_idx, send_count, send_disp,
                                           &P[NumPart], &CellP[NumPart], recv_count, recv_disp);
 
