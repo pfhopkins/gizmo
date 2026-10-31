@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <vector>
+#include <cstddef>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include "../declarations/gizmo_rng.h"
@@ -17,6 +19,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
+#include "../mesh/ghost_writeback.h"   /* ghost_get_num_ghosts */
 
 /* This file contains the routines for driven turbulence/stirring; use for things
  like idealized turbulence tests, large-eddy simulations, and the like */
@@ -304,10 +307,15 @@ void set_turb_ampl(void)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;
             PRINT_STATUS(" ..updating fields tracked for following injected energy and dissipation");
+            /* Runs inside the hydro pass's final operations, so a live ghost pool is part of [0, NumPart). One kept on
+               the device (gizmo_ghostdev_live) is summed from values read there, after the rank's own cells and in the
+               same order; its slots are discarded before anything reads them again, so their resets are not written. */
+            const int n_dev = gizmo_ghostdev_live() ? ghost_get_num_ghosts() : 0;
+            const int n_host = NumPart - n_dev;
 #if defined(GPU_PCIE_OPTIMIZATIONS)
-            gizmo_particles_prefetch_to_host_all("set_turb_ampl");   /* a host sweep of every slot (imported ghosts too), possibly right after a device pass */
+            gizmo_particles_prefetch_to_host("set_turb_ampl");   /* a host sweep of every cell, possibly right after a device pass */
 #endif
-            for(i=0; i < NumPart; i++)
+            for(i=0; i < n_host; i++)
             {
                 if(P[i].Type == 0)
                 {
@@ -322,6 +330,21 @@ void set_turb_ampl(void)
                     } else {
                         CellP[i].DuDt_diss = CellP[i].EgyDiss = CellP[i].DuDt_drive = CellP[i].EgyDrive = 0;
                     }
+                }
+            }
+            if(n_dev > 0) {
+                struct ghost_turb_rec {double mass, diss, drive; short int type; char pad[6];};
+                static struct particle_data p0; static struct gas_cell_data c0;
+                const int cell[4] = {0, 0, 1, 1};
+                const int obj_off[4] = {(int) ((const char *) &p0.Type - (const char *) &p0), (int) ((const char *) &p0.Mass - (const char *) &p0),
+                                        (int) ((const char *) &c0.EgyDiss - (const char *) &c0), (int) ((const char *) &c0.EgyDrive - (const char *) &c0)};
+                const int rec_off[4] = {(int) offsetof(ghost_turb_rec, type), (int) offsetof(ghost_turb_rec, mass),
+                                        (int) offsetof(ghost_turb_rec, diss), (int) offsetof(ghost_turb_rec, drive)};
+                const int bytes[4] = {(int) sizeof(p0.Type), (int) sizeof(p0.Mass), (int) sizeof(c0.EgyDiss), (int) sizeof(c0.EgyDrive)};
+                std::vector<ghost_turb_rec> g_rec((size_t) n_dev);
+                gizmo_ghost_range_gather_records(n_host, n_dev, g_rec.data(), (int) sizeof(ghost_turb_rec), 4, cell, obj_off, rec_off, bytes);
+                for(int g = 0; g < n_dev; g++) {
+                    if(g_rec[(size_t) g].type == 0 && g_rec[(size_t) g].mass > 0) {e_diss_sum += g_rec[(size_t) g].diss; e_drive_sum += g_rec[(size_t) g].drive;}
                 }
             }
             MPI_Allreduce(&e_diss_sum, &glob_diss_sum, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);

@@ -189,7 +189,7 @@ void *gizmo_treehost_device_scratch(int slot, size_t bytes);
  *     writeback is the wakeup maximum alone; on by default only for the corridor configurations audited for host
  *     reads of the ghost range, GIZMO_GPU_GHOSTDEV=0/1 in the environment overrides either way.
  *   _set_live(base, n): the ghost range [base, base+n) now lives on the device; n <= 0 clears it.  While it is set,
- *     bulk to-host prefetches leave that range where it is (gizmo_particles_prefetch_to_host_all takes it too).
+ *     bulk to-host prefetches leave that range where it is.
  *   _copy_to_device: n records from the host into P/CellP[base, base+n), on the device (destination prefetched
  *     there first); src_CellP may be NULL.  0 on success; 1 on a failed copy, after which the caller copies on
  *     the host.
@@ -203,7 +203,10 @@ int gizmo_ghost_range_copy_to_device(int base, int n, const struct particle_data
 void *gizmo_ghost_pinned_buffer(int slot, size_t bytes);
 void gizmo_ghost_range_zero_wakeup_on_device(int base, int n);
 void gizmo_ghost_range_gather_wakeup(int base, int n, int *dst);
-void gizmo_particles_prefetch_to_host_all(const char *site);
+/* The reverse for a few fields: segment s of P (cell[s] == 0) or CellP[base + g], bytes[s] bytes from byte obj_off[s],
+ * into record g of records (rec_bytes each, host memory) at rec_off[s], read on the device.  At most 8 segments. */
+void gizmo_ghost_range_gather_records(int base, int n, void *records, int rec_bytes, int nseg,
+                                      const int *cell, const int *obj_off, const int *rec_off, const int *bytes);
 /* n packed records of rec_bytes each (host memory) into P/CellP[base, base+n), on the device: segment s of a record,
  * words[s] 4-byte words at rec_off[s], lands at byte obj_off[s] of the slot's P (cell[s] == 0) or CellP record.  At
  * most 8 segments.  0 on the device; 1 when it fell back to the host (correct, slower). */

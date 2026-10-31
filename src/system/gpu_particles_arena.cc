@@ -104,15 +104,15 @@ static int ghostdev_range_live(void)
     return ghostdev_count_ > 0 && ghost_get_num_ghosts() == ghostdev_count_ && ghost_get_num_local() == ghostdev_base_;
 }
 
-static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1, int with_particles = 1, int all_slots = 0)
+static void particles_prefetch(int to_device, const char *site, int with_cells = 1, int n_owned = -1, int with_particles = 1)
 {
     (void) site;
     if(!particles_prefetch_enabled()) {return;}
     owned_kept_on_device_ = 0;
     if(!to_device || (with_cells && with_particles)) {treehost_span_ = 0; treehost_cells_ = 0;}   /* P goes to the host, or both arrays end up on the device */
 #if defined(KOKKOS_ENABLE_CUDA)
-    /* A to-host move leaves a device-resident ghost range on the device unless the host is about to sweep every slot. */
-    const int keep_ghosts = !to_device && n_owned < 0 && !all_slots && ghostdev_range_live();
+    /* A to-host move leaves a device-resident ghost range on the device. */
+    const int keep_ghosts = !to_device && n_owned < 0 && ghostdev_range_live();
     const int n_live = keep_ghosts ? ghostdev_base_ : NumPart;
     /* n_owned >= 0: only the rank's own particles [0, n_owned) and their cells, leaving imported ghosts where they are. */
     const int n_part = (n_owned >= 0 && n_owned < NumPart) ? n_owned : n_live;
@@ -574,6 +574,42 @@ extern "C" int gizmo_ghost_range_scatter_records(int base, int n, const void *re
     return 0;
 }
 
+extern "C" void gizmo_ghost_range_gather_records(int base, int n, void *records, int rec_bytes, int nseg,
+                                                 const int *cell, const int *obj_off, const int *rec_off, const int *bytes)
+{
+    if(n <= 0 || nseg <= 0) {return;}
+    const size_t total = (size_t) n * (size_t) rec_bytes;
+    char *d_rec = (nseg <= 8) ? (char *) kept_scratch(total) : NULL;
+    if(!d_rec) {   /* no scratch: read on the host (correct, only slower) */
+        for(int g = 0; g < n; g++) {
+            char *rec = (char *) records + (size_t) g * rec_bytes;
+            for(int s = 0; s < nseg; s++) {
+                const char *obj = cell[s] ? (const char *) &CellP[base + g] : (const char *) &P[base + g];
+                memcpy(rec + rec_off[s], obj + obj_off[s], (size_t) bytes[s]);
+            }
+        }
+        return;
+    }
+    struct GhostScatterSegments seg = {};   /* words[] holds bytes here */
+    seg.n = nseg;
+    for(int s = 0; s < nseg; s++) {seg.cell[s] = cell[s]; seg.obj_off[s] = obj_off[s]; seg.rec_off[s] = rec_off[s]; seg.words[s] = bytes[s];}
+    const char *Pb = (const char *) (P + base);
+    const char *Cb = CellP ? (const char *) (CellP + base) : NULL;
+    const size_t sp = sizeof(struct particle_data), sc = sizeof(struct gas_cell_data);
+    const int rb = rec_bytes;
+    Kokkos::parallel_for("gizmo_ghost_gather_records", n, KOKKOS_LAMBDA(int g) {
+        char *rec = d_rec + (size_t) g * rb;
+        for(int s = 0; s < seg.n; s++) {
+            const char *obj = seg.cell[s] ? (Cb + (size_t) g * sc) : (Pb + (size_t) g * sp);
+            for(int b = 0; b < seg.words[s]; b++) {rec[seg.rec_off[s] + b] = obj[seg.obj_off[s] + b];}
+        }
+    });
+    Kokkos::fence("gizmo_ghost_gather_records");
+    Kokkos::View<char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h((char *) records, total);
+    Kokkos::View<const char *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d(d_rec, total);
+    Kokkos::deep_copy(h, d);
+}
+
 extern "C" int gizmo_particles_prefetch_side(void) {return prefetch_side_;}
 extern "C" int gizmo_particles_back_to_host_wanted(long long n)
 {
@@ -585,7 +621,6 @@ extern "C" int gizmo_particles_back_to_host_wanted(long long n)
 extern "C" void gizmo_particles_prefetch_to_device(const char *site) {particles_prefetch(1, site);}
 extern "C" void gizmo_particles_prefetch_P_to_device(const char *site) {particles_prefetch(1, site, 0);}
 extern "C" void gizmo_particles_prefetch_to_host(const char *site) {particles_prefetch(0, site);}
-extern "C" void gizmo_particles_prefetch_to_host_all(const char *site) {particles_prefetch(0, site, 1, -1, 1, 1);}
 extern "C" void gizmo_particles_prefetch_owned_to_device(int n_owned, const char *site) {particles_prefetch(1, site, 1, n_owned);}
 extern "C" void gizmo_particles_prefetch_P_to_host(const char *site) {particles_prefetch(0, site, 0);}
 extern "C" int gizmo_treehost_begin(long long n_active)
