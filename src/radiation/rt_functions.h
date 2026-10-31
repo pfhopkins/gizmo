@@ -1041,6 +1041,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 {
 #if defined(RT_EVOLVE_ENERGY) || defined(RT_EVOLVE_INTENSITIES)
     int kf, k_tmp; double total_erad_emission_minus_absorption = 0;
+#if defined(RT_EVOLVE_INTENSITIES) && defined(RT_RAD_PRESSURE_FORCES)
+    Vec3<double> p_absorbed = {}; // momentum of the photons absorbed below, summed over bands and angle bins
+#endif
 #if defined(RT_EVOLVE_INTENSITIES)
     for(kf=0;kf<N_RT_FREQ_BINS;kf++) {cell[i].Rad_E_gamma[kf]=0; for(k_tmp=0;k_tmp<N_RT_INTENSITY_BINS;k_tmp++) {cell[i].Rad_E_gamma[kf]+=RT_INTENSITY_BINS_DOMEGA*cell[i].Rad_Intensity[kf][k_tmp];}}
     double de_emission_minus_absorption_saved[N_RT_FREQ_BINS][N_RT_INTENSITY_BINS]; // save this for use below
@@ -1180,7 +1183,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             double de_emission_minus_absorption = (ef - DMAX(0, (e0 + dt_e_gamma_band * dt_entr * slabfac))); // total change, relative to what we would get with just advection (positive = net energy increase in the gas)
             if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
 
-#if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX) && !defined(RT_RADPRESSURE_IN_HYDRO)
+#if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX) && !defined(RT_RADPRESSURE_IN_HYDRO) && !defined(RT_EVOLVE_INTENSITIES) /* with intensities the absorbed momentum is taken directly from the angle bins */
             // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
             {
                 double radacc[3]={0}, rmag=0, vel_i[3], L_particle = pp[i].Get_Particle_Size()*All.cf_atime; // particle effective size/slab thickness
@@ -1230,6 +1233,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                 ef = e0 + total_de_dt * dt_entr; // previous version: assumes all self-absorption is re-emitted
 #endif
             } /* donor bin is yourself in the IR - just need to decide what to do with the photons */
+#endif
+#if defined(RT_EVOLVE_INTENSITIES) && defined(RT_RAD_PRESSURE_FORCES)
+            if(dt_entr > 0) {double de_left_bin = DMAX(0, e0 + total_de_dt * dt_entr - ef); int kx; for(kx=0;kx<3;kx++) {p_absorbed[kx] += All.Rad_Intensity_Direction[k_angle][kx] * de_left_bin;}} // the energy absorbed out of this bin and not put back into it gives the gas its momentum along the bin direction
 #endif
             // isotropically re-emit the donated radiation into the target bin[s] //
 #if defined(RT_EVOLVE_INTENSITIES)
@@ -1288,6 +1294,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
     } // loop over frequencies
 
 #if defined(RT_EVOLVE_INTENSITIES)
+#if defined(RT_RAD_PRESSURE_FORCES)
+    if(cell[i].Mass > 0) {Vec3<double> dv_abs = p_absorbed * (All.cf_atime / (C_LIGHT_CODE_REDUCED * cell[i].Mass)); if(mode==0) {pp[i].Vel += dv_abs; pp[i].dp += dv_abs*cell[i].Mass;} else {cell[i].VelPred += dv_abs;}} // absorption momentum [physical -> code velocity]; the scattering, boost and work terms below deliver theirs from the flux change
+#endif
     if(dt_entr > 0) { // none of this is worth doing if we don't have a finite timestep here
     for(kf=0;kf<N_RT_FREQ_BINS;kf++)
     {
