@@ -1185,6 +1185,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             double de_abs = e0 + total_de_dt * dt_entr - ef; // energy removed by absorption alone
             double de_emission_minus_absorption = (ef - DMAX(0, (e0 + dt_e_gamma_band * dt_entr * slabfac))); // total change, relative to what we would get with just advection (positive = net energy increase in the gas)
             if((dt_entr <= 0) || (de_abs <= 0)) {de_abs = 0;}
+#if !defined(RT_EVOLVE_INTENSITIES)
+            double de_work_rad = 0; // radiation energy change from the work done by the radiation force below, kept apart from absorption and re-emission and applied in the final write
+#endif
 
 #if defined(RT_RAD_PRESSURE_FORCES) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && !defined(RT_EVOLVE_FLUX) && !defined(RT_RADPRESSURE_IN_HYDRO) && !defined(RT_EVOLVE_INTENSITIES) /* with intensities the absorbed momentum is taken directly from the angle bins */
             // for OTVET/FLD methods, need to apply radiation pressure term here so can limit this b/c just based on a gradient which is not flux-limited [as in hydro operators] //
@@ -1216,11 +1219,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
                     }
                     double d_egy_rad = (2.*f_kappa_abs-1.)*work_band , d_egy_int = -2.*f_kappa_abs*work_band * (C_LIGHT_CODE/C_LIGHT_CODE_REDUCED); // correct for rsol factor above which reduced vel_i by rsol; -only- add back this term for gas
                     if(mode==0) {cell[i].InternalEnergy += d_egy_int/cell[i].Mass;} else {cell[i].InternalEnergyPred += d_egy_int/cell[i].Mass;} // work_band is a total energy, InternalEnergy is specific
-#if defined(RT_EVOLVE_INTENSITIES)
-                    {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) {if(mode==0) {cell[i].Rad_Intensity[kf][k_q]+=d_egy_rad/RT_INTENSITY_BINS_DOMEGA;} else {cell[i].Rad_Intensity_Pred[kf][k_q]+=d_egy_rad/RT_INTENSITY_BINS_DOMEGA;}}}
-#else
-                    if(mode==0) {cell[i].Rad_E_gamma[kf]+=d_egy_rad;} else {cell[i].Rad_E_gamma_Pred[kf]+=d_egy_rad;}
-#endif
+                    de_work_rad = d_egy_rad; // written to the band below: added to the band here it was overwritten by the final write
                 }
             }
 #endif
@@ -1258,7 +1257,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(donation_target_bin >= 0) {if(mode==0) {cell[i].Rad_E_gamma[donation_target_bin] += de_abs;} else {cell[i].Rad_E_gamma_Pred[donation_target_bin] += de_abs;}}
             if(ef < 0) {ef=0;}
 
-            if(mode==0) {cell[i].Rad_E_gamma[kf] = ef;} else {cell[i].Rad_E_gamma_Pred[kf] = ef;}
+            if(mode==0) {cell[i].Rad_E_gamma[kf] = DMAX(ef + de_work_rad, 0);} else {cell[i].Rad_E_gamma_Pred[kf] = DMAX(ef + de_work_rad, 0);}
 #endif
 
 #if defined(RT_EVOLVE_FLUX)
