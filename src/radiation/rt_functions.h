@@ -1081,6 +1081,9 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
         }
 #endif
 #if defined(RT_EVOLVE_INTENSITIES)
+#ifdef RT_INFRARED
+        double de_IR_reemit = 0; // IR re-emitted by dust over the angle loop below
+#endif
         int k_angle; for(k_angle=0;k_angle<N_RT_INTENSITY_BINS;k_angle++)
 #endif
         {
@@ -1226,15 +1229,19 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #ifdef RT_INFRARED
             if((donation_target_bin == RT_FREQ_BIN_INFRARED) && (kf != RT_FREQ_BIN_INFRARED)) {E_abs_tot_toIR += de_abs/(MIN_REAL_NUMBER + dt_entr); donation_target_bin = -1;} /* the IR solve re-emits this through E_abs_tot_toIR, so it is not also deposited directly below. donor bin is yourself in the IR - some self-absorption is re-emitted, but this is handled explicitly below, so don't need to include it in sum here */
             if(kf==RT_FREQ_BIN_INFRARED) {
+                double de_reemit = e0 + total_de_dt * dt_entr - ef; // previous version: assumes all self-absorption is re-emitted
 #ifdef COOLING
-                ef += de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption); /* update: assume a fraction de_abs * IRBand_opacity_fraction_from_gas_absorption is absorbed by the gas, which will not be instantly re-emitted here, but later in the cooling subroutines */
+                de_reemit = de_abs*(1.-IRBand_opacity_fraction_from_gas_absorption); /* update: assume a fraction de_abs * IRBand_opacity_fraction_from_gas_absorption is absorbed by the gas, which will not be instantly re-emitted here, but later in the cooling subroutines */
 #ifdef COOLING_OPERATOR_SPLIT
                 if(mode==0) {cell[i].InternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / cell[i].Mass;} /* split cooling never consumes DtInternalEnergy, and the thermal kick has already used it, so the gas is heated here directly */
 #else
                 if(mode==0) {cell[i].DtInternalEnergy += (de_abs * IRBand_opacity_fraction_from_gas_absorption) / ((MIN_REAL_NUMBER + dt_entr) * cell[i].Mass);} /* this fraction absorbed by gas goes into a heating rate which can be balanced implicitly in the cooling function later */
 #endif
+#endif
+#if defined(RT_EVOLVE_INTENSITIES)
+                de_IR_reemit += de_reemit; /* dust re-emission is isotropic, so it goes into every angle bin after the angle loop, not back into this one */
 #else
-                ef = e0 + total_de_dt * dt_entr; // previous version: assumes all self-absorption is re-emitted
+                ef += de_reemit;
 #endif
             } /* donor bin is yourself in the IR - just need to decide what to do with the photons */
 #endif
@@ -1295,6 +1302,11 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             de_emission_minus_absorption_saved[kf][k_angle] = de_emission_minus_absorption; // save this for use below; indexed by BAND (kf), matching the read below
 #endif
         } // clause for radiation angle [needed for evolving intensities]
+#if defined(RT_EVOLVE_INTENSITIES) && defined(RT_INFRARED)
+        if(de_IR_reemit > 0) {int k_q; for(k_q=0;k_q<N_RT_INTENSITY_BINS;k_q++) { // isotropic re-emission: each of the N bins gets de_IR_reemit/N of energy, which is emission in the boost term below
+            if(mode==0) {cell[i].Rad_Intensity[kf][k_q] += de_IR_reemit/(4.*M_PI);} else {cell[i].Rad_Intensity_Pred[kf][k_q] += de_IR_reemit/(4.*M_PI);}
+            de_emission_minus_absorption_saved[kf][k_q] += de_IR_reemit/N_RT_INTENSITY_BINS;}}
+#endif
     } // loop over frequencies
 
 #if defined(RT_EVOLVE_INTENSITIES)
