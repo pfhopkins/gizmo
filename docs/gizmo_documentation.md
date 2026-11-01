@@ -2291,7 +2291,6 @@ Grackle is an alternative chemical network using external libraries for solving 
 ## ---- GRACKLE: alternative chemical network 
 #COOL_GRACKLE                   # enable Grackle: cooling+chemistry package
 #COOL_GRACKLE_CHEMISTRY=1       # choose Grackle cooling chemistry
-#COOL_GRACKLE_APIVERSION=1      # set the version of the grackle api
 ##---------------------------------------
 ```
 
@@ -3773,9 +3772,9 @@ These parameters control the sub-grid models for super-massive black hole partic
 ### _Grackle Cooling Module_ 
 
     %-------------- Grackle UVB file (COOL_GRACKLE on)
-    GrackleDataFile		     CloudyData_UVB=HM2012.h5
+    GrackleDataFile		     CloudyData_UVB=HM2012_shielded.h5
 
-**GrackleDataFile**: If the COOL_GRACKLE cooling modules are enabled, the user needs to specify the relevant data file for the pre-compiled UV background files used by Grackle. Additional flags may be needed for more advanced Grackle options.
+**GrackleDataFile**: If the COOL_GRACKLE cooling modules are enabled, the user needs to specify the relevant data file for the pre-compiled UV background files used by Grackle. GIZMO enables Grackle's approximate self-shielding from the UV background, which needs one of the tables carrying the shielding cross sections (the `*_shielded.h5` files distributed with Grackle); the run stops at start-up otherwise. COOL_GRACKLE requires Grackle 3 or later, built with Grackle's CMake build: point `GRACKLE_PATH` (in your SYSTYPE block, the environment or on the make line) at its install prefix, or put its `grackle.pc` on `PKG_CONFIG_PATH`. Additional flags may be needed for more advanced Grackle options.
 
 <a name="params-optional-chimes"></a>
 ### _CHIMES Chemistry Network_ 

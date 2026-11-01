@@ -10,9 +10,12 @@
 #include <grackle.h>
 #define ENDRUNVAL 91234
 
-#ifndef COOL_GRACKLE_APIVERSION
-#define COOL_GRACKLE_APIVERSION 1 /* define the version of the API being used here. there were a number of large changes to the grackle api around version 2.2 or so of grackle, which require completely different calls below */
-#endif
+/* Interface to Grackle 3 (its local API). The run-time parameters and the rate tables live in this file's own chemistry_data and
+   chemistry_data_storage: InitGrackle sets them once and Grackle's solvers only read them afterwards, so the host cooling threads
+   share them. Each call builds its own one-cell field data, and its own copy of the units carrying the current scale factor. */
+static chemistry_data GrackleChemistry;
+static chemistry_data_storage GrackleRates;
+
 //
 // 'mode' -- tells the routine what to do
 //
@@ -25,21 +28,13 @@
 double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode)
 {
     gr_float returnval = 0.0;
-    
-    // Set grid dimension and size.
-    // grid_start and grid_end are used to ignore ghost zones.
-    int field_size = 1;
-    int grid_rank = 3;
-    int grid_dimension[3], grid_start[3], grid_end[3];
-    int i;
-    for (i = 0;i < 3;i++) {
-        grid_dimension[i] = 1; // the active dimension not including ghost zones.
-        grid_start[i]     = 0;
-        grid_end[i]       = 0;
-    }
-    grid_dimension[0] = field_size;
-    grid_end[0]       = field_size - 1;
-    
+    code_units units = All.GrackleUnits; units.a_value = All.cf_atime; /* the current scale factor sets the UV-background redshift */
+
+    int grid_dimension[3] = {1,1,1}, grid_start[3] = {0,0,0}, grid_end[3] = {0,0,0}; /* one cell, no ghost zones */
+    grackle_field_data fields;
+    gr_initialize_field_data(&fields);
+    fields.grid_rank = 3; fields.grid_dimension = grid_dimension; fields.grid_start = grid_start; fields.grid_end = grid_end;
+
     gr_float density, metal_density, energy, velx, vely, velz;
     gr_float cooling_time, temperature, pressure, gamma;
     velx          = CellP[target].VelPred[0];
@@ -52,8 +47,9 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 #else
     metal_density = density * 0.02;
 #endif
-    gamma         = CellP[target].gamma_eos_value();
-    
+    fields.density = &density; fields.internal_energy = &energy; fields.metal_density = &metal_density;
+    fields.x_velocity = &velx; fields.y_velocity = &vely; fields.z_velocity = &velz;
+
 #if (COOL_GRACKLE_CHEMISTRY >  0) // non-tabular
     gr_float ne_density;
     gr_float HI_density, HII_density, HM_density;
@@ -61,62 +57,74 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     gr_float H2I_density, H2II_density;
     gr_float DI_density, DII_density, HDI_density;
     gr_float tiny = 1.0e-20;
-    
+
     // Atomic
     ne_density    = density * ne_guess;
-    
+
     HI_density    = density * CellP[target].grHI;  //initialized with HYDROGEN_MASSFRAC
     HII_density   = density * CellP[target].grHII;
     HM_density    = density * CellP[target].grHM;
-    
+
     HeI_density   = density * CellP[target].grHeI;
     HeII_density  = density * CellP[target].grHeII;
     HeIII_density = density * CellP[target].grHeIII;
-    
+
     H2I_density  = density * tiny;
     H2II_density = density * tiny;
     DI_density   = density * tiny;
     DII_density  = density * tiny;
     HDI_density  = density * tiny;
-    
+
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
     H2I_density  = density * CellP[target].grH2I;
     H2II_density = density * CellP[target].grH2II;
+    /* H2 self-shielding length: the Sobolev-type column of the in-code networks over the density, both proper (Grackle's
+       grid-cell option cannot describe a particle) */
+    gr_float H2_shielding_length = evaluate_NH_from_GradRho(CellP[target].Gradients.Density, P[target].KernelRadius, CellP[target].Density, P[target].NumNgb, 1, target, P) / density;
+    fields.H2_self_shielding_length = &H2_shielding_length;
 #endif
-    
+
 #if (COOL_GRACKLE_CHEMISTRY >= 3) // Atomic+(H2+H2I+H2II)+(DI+DII+HD)
     DI_density   = density * CellP[target].grDI;
     DII_density  = density * CellP[target].grDII;
     HDI_density  = density * CellP[target].grHDI;
 #endif
-    
+    fields.e_density = &ne_density;
+    fields.HI_density = &HI_density; fields.HII_density = &HII_density; fields.HM_density = &HM_density;
+    fields.HeI_density = &HeI_density; fields.HeII_density = &HeII_density; fields.HeIII_density = &HeIII_density;
+    fields.H2I_density = &H2I_density; fields.H2II_density = &H2II_density;
+    fields.DI_density = &DI_density; fields.DII_density = &DII_density; fields.HDI_density = &HDI_density;
+#endif // non-tabular
+
+    int status = GR_FAIL;
     switch(mode) {
-        case 0:  //solve chemistry & update values
-            if(solve_chemistry(&All.GrackleUnits,
-                               All.cf_atime, dt,
-                               grid_rank, grid_dimension,
-                               grid_start, grid_end,
-                               &density, &energy,
-                               &velx, &vely, &velz,
-                               &HI_density, &HII_density, &HM_density,
-                               &HeI_density, &HeII_density, &HeIII_density,
-                               &H2I_density, &H2II_density,
-                               &DI_density, &DII_density, &HDI_density,
-                               &ne_density, &metal_density) == 0) {
-                fprintf(stderr, "Error in solve_chemistry.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            
+        case 0: status = local_solve_chemistry(&GrackleChemistry, &GrackleRates, &units, &fields, dt); break; //solve chemistry & update values
+        case 1: status = local_calculate_cooling_time(&GrackleChemistry, &GrackleRates, &units, &fields, &cooling_time); break;
+        case 2: status = local_calculate_temperature(&GrackleChemistry, &GrackleRates, &units, &fields, &temperature); break;
+        case 3: status = local_calculate_pressure(&GrackleChemistry, &GrackleRates, &units, &fields, &pressure); break;
+#if (COOL_GRACKLE_CHEMISTRY >  0)
+        case 4: status = local_calculate_gamma(&GrackleChemistry, &GrackleRates, &units, &fields, &gamma); break;
+#endif
+    }
+    if(status != GR_SUCCESS)
+    {
+        fprintf(stderr, "Error in Grackle (CallGrackle mode %d, target %d).\n", mode, target);
+        endrun(ENDRUNVAL);
+        /* Soft stop: the grackle call failed, so its output vars are
+         * unchanged/uninitialized. Return a safe sentinel rather than
+         * writing failed chemistry back to CellP or returning garbage;
+         * drains at the next cooling-phase poll. */
+        return (mode == 0) ? u_old : 0.0;
+    }
+
+    switch(mode) {
+        case 0:
+#if (COOL_GRACKLE_CHEMISTRY >  0)
             // Assign variables back
             CellP[target].grHI    = HI_density    / density;
             CellP[target].grHII   = HII_density   / density;
             CellP[target].grHM    = HM_density    / density;
-            
+
             CellP[target].grHeI   = HeI_density   / density;
             CellP[target].grHeII  = HeII_density  / density;
             CellP[target].grHeIII = HeIII_density / density;
@@ -137,126 +145,18 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             CellP[target].MeanMolecularWeight = mu_from_species;
             CellP[target].Temperature = mu_from_species * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy;
             }
-            
+
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
             CellP[target].grH2I   = H2I_density   / density;
             CellP[target].grH2II  = H2II_density  / density;
 #endif
-            
+
 #if (COOL_GRACKLE_CHEMISTRY >= 3) // Atomic+(H2+H2I+H2II)+(DI+DII+HD)
             CellP[target].grDI    = DI_density    / density;
             CellP[target].grDII   = DII_density   / density;
             CellP[target].grHDI   = HDI_density   / density;
 #endif
-            returnval = energy;
-            break;
-            
-        case 1:  //cooling time
-            if(calculate_cooling_time(&All.GrackleUnits, All.cf_atime,
-                                      grid_rank, grid_dimension,
-                                      grid_start, grid_end,
-                                      &density, &energy,
-                                      &velx, &vely, &velz,
-                                      &HI_density, &HII_density, &HM_density,
-                                      &HeI_density, &HeII_density, &HeIII_density,
-                                      &H2I_density, &H2II_density,
-                                      &DI_density, &DII_density, &HDI_density,
-                                      &ne_density, &metal_density,
-                                      &cooling_time) == 0) {
-                fprintf(stderr, "Error in calculate_cooling_time.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = cooling_time;
-            break;
-        case 2:  //calculate temperature
-            if(calculate_temperature(&All.GrackleUnits, All.cf_atime,
-                                     grid_rank, grid_dimension,
-                                     grid_start, grid_end,
-                                     &density, &energy,
-                                     &HI_density, &HII_density, &HM_density,
-                                     &HeI_density, &HeII_density, &HeIII_density,
-                                     &H2I_density, &H2II_density,
-                                     &DI_density, &DII_density, &HDI_density,
-                                     &ne_density, &metal_density,
-                                     &temperature) == 0) {
-                fprintf(stderr, "Error in calculate_temperature.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = temperature;
-            break;
-        case 3:  //calculate pressure
-            if(calculate_pressure(&All.GrackleUnits, All.cf_atime,
-                                  grid_rank, grid_dimension,
-                                  grid_start, grid_end,
-                                  &density, &energy,
-                                  &HI_density, &HII_density, &HM_density,
-                                  &HeI_density, &HeII_density, &HeIII_density,
-                                  &H2I_density, &H2II_density,
-                                  &DI_density, &DII_density, &HDI_density,
-                                  &ne_density, &metal_density,
-                                  &pressure) == 0) {
-                fprintf(stderr, "Error in calculate_temperature.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = pressure;
-            break;
-        case 4:  //calculate gamma
-            if(calculate_gamma(&All.GrackleUnits, All.cf_atime,
-                               grid_rank, grid_dimension,
-                               grid_start, grid_end,
-                               &density, &energy,
-                               &HI_density, &HII_density, &HM_density,
-                               &HeI_density, &HeII_density, &HeIII_density,
-                               &H2I_density, &H2II_density,
-                               &DI_density, &DII_density, &HDI_density,
-                               &ne_density, &metal_density,
-                               &gamma) == 0) {
-                fprintf(stderr, "Error in calculate_gamma.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = gamma;
-            break;
-    } //end switch
-    
 #else // tabular
-    
-    switch(mode){
-        case 0:  //solve chemistry & update values (table)
-            if(solve_chemistry_table(&All.GrackleUnits,
-                                     All.cf_atime, dt,
-                                     grid_rank, grid_dimension,
-                                     grid_start, grid_end,
-                                     &density, &energy,
-                                     &velx, &vely, &velz,
-                                     &metal_density) == 0){
-                fprintf(stderr, "Error in solve_chemistry_table.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
             /* PLACEHOLDER, NOT A THERMOCHEMISTRY SOLVE. The tabular tables solve their own
                chemistry and hand back no species, so there is no free electron or neutral
                fraction here to save. What other modules read is therefore a documented guess:
@@ -279,66 +179,15 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             if(target >= 0) {CellP[target].HII = f_ion_guess;}
 #endif
             }
+#endif // COOL_GRACKLE_CHEMISTRY
             returnval = energy;
             break;
-        case 1:  //cooling time (table)
-            if(calculate_cooling_time_table(&All.GrackleUnits,
-                                            All.cf_atime,
-                                            grid_rank, grid_dimension,
-                                            grid_start, grid_end,
-                                            &density, &energy,
-                                            &velx, &vely, &velz,
-                                            &metal_density,
-                                            &cooling_time) == 0){
-                fprintf(stderr, "Error in calculate_cooling_time.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = cooling_time;
-            break;
-        case 2:  //calculate temperature (table)
-            if(calculate_temperature_table(&All.GrackleUnits,
-                                           All.cf_atime,
-                                           grid_rank, grid_dimension,
-                                           grid_start, grid_end,
-                                           &density, &energy,
-                                           &metal_density,
-                                           &temperature) == 0){
-                fprintf(stderr, "Error in calculate_temperature.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = temperature;
-            break;
-        case 3:  //calculate pressure (table)
-            if(calculate_pressure_table(&All.GrackleUnits,
-                                        All.cf_atime,
-                                        grid_rank, grid_dimension,
-                                        grid_start, grid_end,
-                                        &density, &energy,
-                                        &pressure) == 0){
-                fprintf(stderr, "Error in calculate_pressure.\n");
-                endrun(ENDRUNVAL);
-                /* Soft stop: the grackle call failed, so its output vars are
-                 * unchanged/uninitialized. Return a safe sentinel rather than
-                 * writing failed chemistry back to CellP or returning garbage;
-                 * drains at the next cooling-phase poll. */
-                return (mode == 0) ? u_old : 0.0;
-            }
-            returnval = pressure;
-            break;
+        case 1: returnval = cooling_time; break;
+        case 2: returnval = temperature; break;
+        case 3: returnval = pressure; break;
+        case 4: returnval = gamma; break;
     } //end switch
-    
-#endif // COOL_GRACKLE_CHEMISTRY
-    
+
     return returnval;
 }
 
@@ -348,10 +197,17 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 //Initialize Grackle
 void InitGrackle(void)
 {
+    grackle_version version = get_grackle_version();
+    if(atoi(version.version) < 3)
+    {
+        if(ThisTask == 0) {printf("COOL_GRACKLE needs Grackle 3 or later; the linked library is version %s.\n", version.version);}
+        endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:version"); return;
+    }
+    if(gr_check_consistency() != GR_SUCCESS) {fprintf(stderr, "Error in gr_check_consistency: grackle.h does not match the linked Grackle library.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:consistency"); return;}
     grackle_verbose = 0;
     // Enable output
     if(ThisTask == 0) grackle_verbose = 1;
-    
+
     // First, set up the units system.
     // These are conversions from code units to cgs.
     All.GrackleUnits.comoving_coordinates = 0; //All.ComovingIntegrationOn; // 1 if cosmological sim, 0 if not
@@ -360,17 +216,14 @@ void InitGrackle(void)
     All.GrackleUnits.time_units           = UNIT_TIME_IN_CGS;
     All.GrackleUnits.velocity_units       = UNIT_VEL_IN_CGS;
     All.GrackleUnits.a_units              = 1.0; // units for the expansion factor
-    
+    // Set initial expansion factor (for internal units).
+    // Set expansion factor to 1 for non-cosmological simulation.
+    All.GrackleUnits.a_value              = 1.0; if(All.ComovingIntegrationOn) {All.GrackleUnits.a_value = All.TimeBegin;}
+
     // Second, create a chemistry object for parameters and rate data.
-#if (COOL_GRACKLE_APIVERSION < 2)
-    if (set_default_chemistry_parameters() == 0) {fprintf(stderr, "Error in set_default_chemistry_parameters.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:set_default_params"); return;}
-#else
-    chemistry_data *my_grackle_data;
-    my_grackle_data = new chemistry_data;
-    if (set_default_chemistry_parameters(my_grackle_data) == 0) {fprintf(stderr, "Error in set_default_chemistry_parameters.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:set_default_params"); return;}
-#endif
+    if(local_initialize_chemistry_parameters(&GrackleChemistry) != GR_SUCCESS) {fprintf(stderr, "Error in local_initialize_chemistry_parameters.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:set_default_params"); return;}
     // Third, set parameter values for chemistry & cooling
-    int three_body_rate=0, metal_cooling=0, h2_on_dust=0, photoelectric_heating=0, cmb_temperature_floor=1, UVbackground=1, Compton_xray_heating=1, cie_cooling=0, h2_optical_depth_approximation=0, LWbackground_intensity=0, LWbackground_sawtooth_suppression=0, use_grackle=1, with_radiative_cooling=1, primordial_chemistry=0, dust_chemistry=0, H2_self_shielding=1, self_shielding_method=3; double photoelectric_heating_rate=8.5e-26, Gamma_touse=5./3.; dust_chemistry=0;
+    int three_body_rate=0, metal_cooling=0, h2_on_dust=0, photoelectric_heating=0, cmb_temperature_floor=1, UVbackground=1, Compton_xray_heating=1, cie_cooling=0, h2_optical_depth_approximation=0, LWbackground_intensity=0, LWbackground_sawtooth_suppression=0, use_grackle=1, with_radiative_cooling=1, primordial_chemistry=0, dust_chemistry=0, H2_self_shielding=0, self_shielding_method=3; double photoelectric_heating_rate=8.5e-26, Gamma_touse=5./3.; dust_chemistry=0;
 
     /* optional flags:: */
     three_body_rate = 0; /* Flag to control which three-body H2 formation rate is used.
@@ -383,8 +236,7 @@ void InitGrackle(void)
     h2_optical_depth_approximation = 0; // Flag to enable H2 cooling attenuation from Ripamonti & Abel (2004). Default: 0
     LWbackground_intensity = 0; // Rad_Intensity of a constant Lyman-Werner H2 photo-dissociating radiation field, in units of 10-21 erg s-1 cm-2 Hz-1 sr-1. Default: 0.
     LWbackground_sawtooth_suppression = 0; // Flag to enable suppression of Lyman-Werner flux due to Lyman-series absorption (giving a sawtooth pattern), taken from Haiman & Abel, & Rees (2000). Default: 0.
-    H2_self_shielding=1; // Switch to enable approximate H2 self-shielding from both the UV background dissociation rate and the H2 dissociation rate using local Sobolev approximation (see user guide for details)
-    self_shielding_method=3; // Switch to enable approximate self-shielding from the UV background (see user guide for details)
+    self_shielding_method=3; // Switch to enable approximate self-shielding from the UV background (see user guide for details); needs a table carrying the shielding cross sections (Grackle's *_shielded.h5 tables)
 #ifdef METALS
     metal_cooling = 1; // Flag to enable metal cooling using the Cloudy tables. If enabled, the cooling table to be used must be specified with the grackle_data_file parameter. Default: 0.
     dust_chemistry = 1; // Flag to control additional dust cooling and chemistry processes. Default: 0 (no dust). 1: adds the following processes: photo-electric heating, electron recombination on dust, H2 formation on dust.
@@ -403,60 +255,36 @@ void InitGrackle(void)
 #ifdef COOL_GRACKLE_CHEMISTRY
     primordial_chemistry = COOL_GRACKLE_CHEMISTRY;
 #endif
+    if(primordial_chemistry >= 2) {H2_self_shielding = 2;} // H2 self-shielding from both the UV background dissociation rate and the H2 dissociation rate, over the Sobolev-type length CallGrackle supplies
 
+    GrackleChemistry.grackle_data_file = All.GrackleDataFile; // Path to the data file containing the metal cooling and UV background tables
+    GrackleChemistry.three_body_rate = three_body_rate;
+    GrackleChemistry.metal_cooling = metal_cooling;
+    GrackleChemistry.h2_on_dust = h2_on_dust;
+    GrackleChemistry.photoelectric_heating = photoelectric_heating;
+    GrackleChemistry.photoelectric_heating_rate = photoelectric_heating_rate;
+    GrackleChemistry.cmb_temperature_floor = cmb_temperature_floor;
+    GrackleChemistry.UVbackground = UVbackground;
+    GrackleChemistry.Compton_xray_heating = Compton_xray_heating;
+    GrackleChemistry.cie_cooling = cie_cooling;
+    GrackleChemistry.h2_optical_depth_approximation = h2_optical_depth_approximation;
+    GrackleChemistry.LWbackground_intensity = LWbackground_intensity;
+    GrackleChemistry.LWbackground_sawtooth_suppression = LWbackground_sawtooth_suppression;
+    GrackleChemistry.use_grackle = use_grackle;
+    GrackleChemistry.with_radiative_cooling = with_radiative_cooling;
+    GrackleChemistry.Gamma = Gamma_touse;
+    GrackleChemistry.primordial_chemistry = primordial_chemistry;
+    GrackleChemistry.dust_chemistry = dust_chemistry;
+    GrackleChemistry.H2_self_shielding = H2_self_shielding;
+    GrackleChemistry.self_shielding_method = self_shielding_method;
 
-#if (COOL_GRACKLE_APIVERSION < 2)
-    grackle_data.grackle_data_file = All.GrackleDataFile; // Path to the data file containing the metal cooling and UV background tables
-    grackle_data.three_body_rate = three_body_rate;
-    grackle_data.metal_cooling = metal_cooling;
-    grackle_data.h2_on_dust = h2_on_dust;
-    grackle_data.photoelectric_heating = photoelectric_heating;
-    grackle_data.photoelectric_heating_rate = photoelectric_heating_rate;
-    grackle_data.cmb_temperature_floor = cmb_temperature_floor;
-    grackle_data.UVbackground = UVbackground;
-    grackle_data.Compton_xray_heating = Compton_xray_heating;
-    grackle_data.cie_cooling = cie_cooling;
-    grackle_data.h2_optical_depth_approximation = h2_optical_depth_approximation;
-    grackle_data.LWbackground_intensity = LWbackground_intensity;
-    grackle_data.LWbackground_sawtooth_suppression = LWbackground_sawtooth_suppression;
-    grackle_data.use_grackle = use_grackle;
-    grackle_data.with_radiative_cooling = with_radiative_cooling;
-    grackle_data.Gamma = Gamma_touse;
-    grackle_data.primordial_chemistry = primordial_chemistry;
-#else
-    grackle_data->grackle_data_file = All.GrackleDataFile; // Path to the data file containing the metal cooling and UV background tables
-    grackle_data->three_body_rate = three_body_rate;
-    grackle_data->metal_cooling = metal_cooling;
-    grackle_data->h2_on_dust = h2_on_dust;
-    grackle_data->photoelectric_heating = photoelectric_heating;
-    grackle_data->photoelectric_heating_rate = photoelectric_heating_rate;
-    grackle_data->cmb_temperature_floor = cmb_temperature_floor;
-    grackle_data->UVbackground = UVbackground;
-    grackle_data->Compton_xray_heating = Compton_xray_heating;
-    grackle_data->cie_cooling = cie_cooling;
-    grackle_data->h2_optical_depth_approximation = h2_optical_depth_approximation;
-    grackle_data->LWbackground_intensity = LWbackground_intensity;
-    grackle_data->LWbackground_sawtooth_suppression = LWbackground_sawtooth_suppression;
-    grackle_data->use_grackle = use_grackle;
-    grackle_data->with_radiative_cooling = with_radiative_cooling;
-    grackle_data->Gamma = Gamma_touse;
-    grackle_data->primordial_chemistry = primordial_chemistry;
-    grackle_data->dust_chemistry = dust_chemistry;
-    grackle_data->H2_self_shielding = H2_self_shielding;
-    grackle_data->self_shielding_method = self_shielding_method;
-#endif
-    
-    // Set initial expansion factor (for internal units).
-    // Set expansion factor to 1 for non-cosmological simulation.
-    double a_value = 1.0; if(All.ComovingIntegrationOn) {a_value = All.TimeBegin;}
-    
     // Finally, initialize the chemistry object.
-#if (COOL_GRACKLE_APIVERSION < 2)
-    if (initialize_chemistry_data(&All.GrackleUnits, a_value) == 0) {fprintf(stderr, "Error in initialize_chemistry_data.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:init_chem_data"); return;}
-#else
-    if (initialize_chemistry_data(&All.GrackleUnits) == 0) {fprintf(stderr, "Error in initialize_chemistry_data.\n"); endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:init_chem_data"); return;}
-#endif
-    if(ThisTask == 0) {printf("Grackle Initialized\n");}
+    if(local_initialize_chemistry_data(&GrackleChemistry, &GrackleRates, &All.GrackleUnits) != GR_SUCCESS)
+    {
+        fprintf(stderr, "Error in local_initialize_chemistry_data with GrackleDataFile=%s (the UV-background self-shielding needs one of Grackle's *_shielded.h5 tables).\n", All.GrackleDataFile);
+        endrun(ENDRUNVAL); gizmo_exit_bad_stop_if_requested("grackle:init_chem_data"); return;
+    }
+    if(ThisTask == 0) {printf("Grackle Initialized: version %s, primordial_chemistry=%d, gr_float of %d bytes\n", version.version, primordial_chemistry, (int)sizeof(gr_float));}
 }
 
 #endif  //COOL_GRACKLE
