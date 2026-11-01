@@ -31,6 +31,10 @@
 #define GIZMO_HYDRO_TAILS_DEVICE 0
 #endif
 
+#ifdef MHD_NON_IDEAL_EVOLVED_FLUX
+#include "nonideal_mhd_functions.h"   /* nonideal_mhd_flux_update_driftkick, called by hydro_preloop_cell */
+#endif
+
 /* The shared bodies are host+device functions only where the device TU instantiates them; everywhere else
  * they are the plain host code they were. */
 #if GIZMO_HYDRO_TAILS_DEVICE && defined(__CUDACC__)
