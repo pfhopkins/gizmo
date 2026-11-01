@@ -818,7 +818,7 @@ int split_particle_i(int i, int n_particles_split, double r_near)
         }
 #endif
 #ifdef WAKEUP  /* TO: rather conservative. But we want to update Density and KernelRadius after the particle masses were changed */
-        P[i].wakeup = -2; P[j].wakeup = -2; NeedToWakeupParticles_local = 1; /* -2 = split; only the sign is semantic, the value is for attribution.
+        P[i].wakeup = -2; P[j].wakeup = -2; NeedToWakeupParticles_local = 1; wakeup_list_note(i); wakeup_list_note(j); /* -2 = split; only the sign is semantic, the value is for attribution.
             NB the daughter needs no ActiveParticleList push: the timebin splice below puts it on the
             parent's cadence, so force_update_hmax covers it from the next step; within the remainder of
             THIS step its own leaf is covered by the child-kernel hmax bump in force_add_element_to_tree */
@@ -952,7 +952,7 @@ int merge_particles_ij(int i, int j)
     if(P[i].TimeBin < P[j].TimeBin)
     {
 #ifdef WAKEUP
-        P[j].wakeup = -1; NeedToWakeupParticles_local = 1;
+        P[j].wakeup = -1; NeedToWakeupParticles_local = 1; wakeup_list_note(j);
 #endif
     }
     double dm_i=0,dm_j=0,de_i=0,de_j=0,dm_ij,de_ij;
@@ -1411,6 +1411,7 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
     MPI_Allreduce(&count_sink_elim, &tot_sink_elim, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
 
     if(count_elim) {flag = 1;}
+    if(flag) {wakeup_list_invalidate();} /* slots moved */
 
     if(ThisTask == 0) {if(tot_elim > 0) {printf("Rearrange: Eliminated %d/%d gas/star particles and merged away %d sink particles.\n", tot_gaselim, tot_elim - tot_gaselim - tot_sink_elim, tot_sink_elim);}}
 

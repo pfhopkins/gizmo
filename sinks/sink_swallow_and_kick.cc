@@ -1056,7 +1056,7 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
 #ifdef WAKEUP /* note - you basically MUST have this flag on for this routine to work at all -- */
         P[j].dt_step = GET_INTEGERTIME_FROM_TIMEBIN(bin);
         P[j].wakeup = -3; /* -3 = newly spawned cell; only the sign is semantic */
-        NeedToWakeupParticles_local = 1;
+        NeedToWakeupParticles_local = 1; wakeup_list_note(j);
 #endif
         /* this is a giant pile of variables to zero out. dont need everything here because we cloned a valid particle, but handy anyways */
         P[j].Particle_DivVel = 0; CellP[j].DtInternalEnergy = 0; CellP[j].HydroAccel = {}; P[j].GravAccel = {};

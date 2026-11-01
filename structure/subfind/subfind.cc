@@ -334,6 +334,7 @@ void subfind(int num)
 
   t0 = my_second();
   qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_GrNr_DM_Density);
+  wakeup_list_invalidate();
   t1 = my_second();
   if(ThisTask == 0)
     printf("sort of local particles()() took %g sec\n", timediff(t0, t1));
@@ -381,6 +382,7 @@ void subfind(int num)
   /* bringing back particles in original positions, such that gas particles are aligned */
   t0 = my_second();
   qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_origindex);
+  wakeup_list_invalidate();
   t1 = my_second();
   if(ThisTask == 0)
     printf("unsorting of local particles()() took %g sec\n", timediff(t0, t1));

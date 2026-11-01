@@ -29,6 +29,7 @@
                 P[j].wakeup=-1;
                 #pragma omp atomic write
                 NeedToWakeupParticles_local = 1;
+                wakeup_list_note(j);
             }}
 #endif
             Vec3<double> kick; calculate_interact_kick(kernel.dv, kick, m_si, rng_key, rng_ctr_direction);

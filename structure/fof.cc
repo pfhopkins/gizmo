@@ -2585,6 +2585,7 @@ void read_fof(int num)
     P[i].SubNr = i;
 
   qsort(P, NumPart, sizeof(struct particle_data), io_compare_P_ID);
+  wakeup_list_invalidate();
   qsort(ID_list, Nids, sizeof(fof_id_list), fof_compare_ID_list_ID);
 
   for(i = 0; i < NumPart; i++)
@@ -2659,6 +2660,7 @@ void read_fof(int num)
 
   /* restore peano-hilbert order */
   qsort(P, NumPart, sizeof(struct particle_data), fof_compare_P_SubNr);
+  wakeup_list_invalidate();
   subfind(num);
   endrun(0);
 
