@@ -1877,6 +1877,7 @@ void IonizeParamsFunction(void)
 #endif // !(CHIMES)
 
 
+#if !defined(CHIMES) /* the in-code network's tables; CHIMES reads its own */
 /* Check for required cooling data files and provide them from defaults if missing */
 static bool file_exists(const char *path) {FILE *f = fopen(path, "r"); if(f) {fclose(f); return true;} return false;}
 
@@ -1901,6 +1902,7 @@ static void ensure_cooling_tables_exist(void) {
     }
     MPI_Barrier(MPI_COMM_WORLD);
 }
+#endif /* !CHIMES */
 
 
 void InitCool(void)
