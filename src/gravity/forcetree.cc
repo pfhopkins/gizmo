@@ -716,19 +716,25 @@ let_build_attempt:
        under a top node owned by another task is detached and then appears in NO rank's tree:
        absent from every multipole moment, contributing to no force, and otherwise silent. The
        test is on the count rather than the mass because node masses are MyFloat, so one particle
-       lost in a million falls below the accumulated summation error. Warn rather than abort, so a
-       false positive cannot kill a long run. Group finding builds over subsets, whose root
-       legitimately holds fewer, hence the veto reduced above. */
+       lost in a million falls below the accumulated summation error. A failure stops the run: the
+       forces after it are wrong, and the count is exact, so there is no false positive to tolerate.
+       Every rank holds the same root count (the top-leaf counts are exchanged), so every rank
+       requests the stop. Group finding builds over subsets, whose root legitimately holds fewer,
+       hence the veto reduced above. */
     if(!not_whole_tree_any)
     {
         long long in_tree = (long long) Nodes[All.TreeNodeIndexBase].N_part;
-        if(in_tree != (long long) All.TotNumPart && ThisTask == 0)
+        if(in_tree != (long long) All.TotNumPart)
         {
-            printf("WARNING: tree integrity check failed: root node holds %lld particles, expected %lld. "
-                   "Particles missing from the tree contribute to no rank's multipole moments, so the "
-                   "forces on everything else are wrong by their mass.\n",
-                   in_tree, (long long) All.TotNumPart);
-            fflush(stdout);
+            if(ThisTask == 0)
+            {
+                printf("STOP: tree integrity check failed: root node holds %lld particles, expected %lld. "
+                       "Particles missing from the tree contribute to no rank's multipole moments, so the "
+                       "forces on everything else are wrong by their mass. Stopping.\n",
+                       in_tree, (long long) All.TotNumPart);
+                fflush(stdout);
+            }
+            endrun(90000102);
         }
     }
 
