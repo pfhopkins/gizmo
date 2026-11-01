@@ -619,9 +619,15 @@ void add_turb_accel()
 void do_turb_driving_step_first_half(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for (int i : ActiveParticleList)
+    /* Each active writes only its own EgyDrive, so the loop runs on several threads with the same result. */
+    const int n_act = (int) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n_act >= 4096)
+#endif
+    for(int k_act = 0; k_act < n_act; k_act++)
     {
+        const int i = act[k_act]; integertime ti_step, tstart, tend; double dt_gravkick;
         ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
         if(P[i].Type == 0)
@@ -640,9 +646,15 @@ void do_turb_driving_step_first_half(void)
 void do_turb_driving_step_second_half(void)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for (int i : ActiveParticleList)
+    /* Each active writes only its own EgyDrive, so the loop runs on several threads with the same result. */
+    const int n_act = (int) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(n_act >= 4096)
+#endif
+    for(int k_act = 0; k_act < n_act; k_act++)
     {
+        const int i = act[k_act]; integertime ti_step, tstart, tend; double dt_gravkick;
         ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
         dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
         if(P[i].Type == 0)
