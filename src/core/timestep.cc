@@ -650,7 +650,11 @@ integertime get_timestep(int p,		/*!< particle index */
         {
             csnd = 0.5 * CellP[p].MaxSignalVel ;
             double L_particle = P[p].Get_Particle_Size();
-            dt_courant = All.CourantFac * (L_particle*All.cf_atime) / csnd;
+            double courant_fac = All.CourantFac;
+#ifdef EOS_ELASTIC
+            courant_fac = DMIN(courant_fac, ELASTIC_IMPEDANCE_COURANT_MAX); /* the solids' explicit face impedance dissipation is unstable above ~0.27 (constants.h) */
+#endif
+            dt_courant = courant_fac * (L_particle*All.cf_atime) / csnd;
 #if defined(SINK_WIND_SPAWN) && !defined(SINK_RIAF_SUBEDDINGTON_MODEL)
             if(P[p].ID == All.SpawnedWindCellID) {dt_courant *= 0.5;} // be more careful if this is a spawned-in gas cell
 #endif
