@@ -176,16 +176,14 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                that is a different network from the one the tables just solved, so its answer
                would not describe this gas. Use a chemistry mode if you need real abundances. */
             {
-            double f_ion_guess = 0;
-            if(T_solved > 1000.) {f_ion_guess = exp(-15000./T_solved);}
             CellP[target].Gamma = gamma_solved;
             CellP[target].MeanMolecularWeight = mu_solved;
             CellP[target].Temperature = T_solved;
+#ifndef RT_CHEM_PHOTOION /* with it, the radiation chemistry evolves the hydrogen ionization and the electrons, which the tables do not: they stay its */
+            double f_ion_guess = 0;
+            if(T_solved > 1000.) {f_ion_guess = exp(-15000./T_solved);}
             CellP[target].Ne = f_ion_guess;
             CellP[target].HI = DMAX(0, 1. - f_ion_guess);
-#ifdef RT_CHEM_PHOTOION
-            /* helium is not available from the tables at all, so it is left as it stands */
-            if(target >= 0) {CellP[target].HII = f_ion_guess;}
 #endif
             }
 #endif // COOL_GRACKLE_CHEMISTRY
@@ -286,6 +284,8 @@ void InitGrackle(void)
     GrackleChemistry.dust_chemistry = dust_chemistry;
     GrackleChemistry.H2_self_shielding = H2_self_shielding;
     GrackleChemistry.self_shielding_method = self_shielding_method;
+    /* the hydrogen mass fraction the species are reckoned in is the code's; the tabular mode must keep its tables' own, so it is left to grackle there */
+    if(primordial_chemistry > 0) {GrackleChemistry.HydrogenFractionByMass = HYDROGEN_MASSFRAC;}
 
     // Finally, initialize the chemistry object.
     if(local_initialize_chemistry_data(&GrackleChemistry, &GrackleRates, &All.GrackleUnits) != GR_SUCCESS)
