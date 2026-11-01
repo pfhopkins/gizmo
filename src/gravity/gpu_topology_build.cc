@@ -42,15 +42,16 @@ static int *g_topleaf_count       = NULL;  /* [NTopleaves]         */
 static int  g_npart_cap           = 0;
 static int  g_topleaf_cap         = 0;
 
-/* Every counter that device threads update with atomics lives in DEVICE memory, never in SharedSpace.
- * A managed page need not be device-resident when a kernel runs -- the host touches these pages
- * between kernels -- and where the platform reports cudaDevAttrHostNativeAtomicSupported == 0 (PCIe
- * H100s among them) device atomics on a page that is not device-resident lose updates.  They do so
- * silently: the bucket scatter handed two particles one slot, leaving one in two top-leaf ranges and
- * one in none (pfhopkins/gizmo#83), and a prefetch to the device is only a hint the driver may undo.
- * Plain loads and stores are unaffected, so arrays that are only written or read stay in SharedSpace.
- * Still on SharedSpace here: error flags (a lost increment only under-counts a reported error) and the
- * node-length maximum in gpu_topology_grow_retained_paths, which is not yet moved. */
+/* The build's counters and cursors that device threads update with atomics live in DEVICE memory.
+ * In SharedSpace they lost increments on PCIe H100s running several ranks per GPU under MPS
+ * (pfhopkins/gizmo#83): these are small buffers on pages the host also reads and writes during every
+ * build, and the bucket scatter handed two particles one slot, leaving one in two top-leaf ranges and
+ * one in none.  Prefetching the cursors to the device removed the loss, but a prefetch is only a hint
+ * the driver may undo; why the driver left those pages off the device was not established.
+ * Arrays that are only written or read stay in SharedSpace, as do the error flags (a lost increment
+ * only under-counts a reported error) and the node-length maximum in
+ * gpu_topology_grow_retained_paths, where a check against a device-memory copy of every update found
+ * none lost. */
 static int *g_topleaf_count_dev   = NULL;  /* [NTopleaves] bucket counts, accumulated here, then copied */
 static int *g_topleaf_cursor_dev  = NULL;  /* [NTopleaves] scatter cursors */
 static int  g_topleaf_dev_cap     = 0;
