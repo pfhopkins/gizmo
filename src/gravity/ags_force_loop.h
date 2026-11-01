@@ -165,6 +165,10 @@ struct AgsForceLocalIn {
 #if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 7)
     double Composition[GRAIN_NUM_SPECIES];
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    MyIDType coag_token;     /* this grain's claim token (gizmo_claim_token), formed on its owner */
+    int      coag_blocked;   /* consume pass: this grain is itself claimed, so it absorbs nothing */
+#endif
 };
 
 /* Per-pair kernel-scratch struct (same shape as legacy ags_force_kernel_t in
@@ -240,6 +244,9 @@ struct AgsForceOut {
     double Grain_DeltaCoag_CompositionMass[GRAIN_NUM_SPECIES];
     double Grain_DeltaErosionFrac;
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    int    Grain_CoagClaims;      /* claims this grain made; nonzero puts it in the consume pass */
+#endif
 };
 
 /* Per-call cosmology / globals captured once from All.* on the host by
@@ -249,6 +256,10 @@ struct AgsForceCallScalars {
     NlrCommonScalars common;                 /* cf_atime, cf_a2inv, cf_hubble_a, ... */
     int              TimeBinActive[TIMEBINS];/* SIDM/CBE wakeup tests */
     uint64_t         rng_salt;               /* = AGS_FORCE_RNG_SALT (compile-time) */
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    int              this_task;              /* owner rank, for the claim token */
+    int              coag_consume;           /* 1 = the coagulation consume pass: no other pair physics */
+#endif
 };
 
 /* Active-particle state. `h_search` is the search radius handed in by the
@@ -303,6 +314,11 @@ static void ags_force_pair_kernel_body(const AgsForceActiveState& active,
     const AgsForceLocalIn& local       = active.local;
 
     if(!(Pj.Mass > 0) || !(Pj.AGS_KernelRadius > 0)) return;
+
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+    /* The coagulation consume pass repeats no pair physics: it only resolves claims. */
+    if(scalars.coag_consume) { grain_evolution_consume_claimed(local, Pj, accum); return; }
+#endif
 
     AgsForceKernel kernel;
     kernel.h_i = local.AGS_KernelRadius;
@@ -625,6 +641,13 @@ struct AgsForceSpec {
         for(int gs = 0; gs < GRAIN_NUM_SPECIES; gs++)
             L.Composition[gs] = (double)dctx.P[i].Composition[gs];
 #endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+        /* Read once per pass, before any pair of it runs (Mode A stages every active before its kernel; Mode B
+           builds its own actives before the drift and receives peers' frozen; this symmetric loop never runs Mode D), so
+           an absorber that loses its own claim mid-pass still counts as claimed. */
+        L.coag_token   = gizmo_claim_token(scalars.this_task, i);
+        L.coag_blocked = (dctx.P[i].Grain_CoagClaim != 0) ? 1 : 0;
+#endif
         return a;
     }
 
@@ -734,6 +757,9 @@ struct AgsForceSpec {
         ACCUM_ADD_ARRAY(Grain_DeltaCoag_CompositionMass, GRAIN_NUM_SPECIES)
         /* Multiplicative — peer factor composes with local factor. */
         ACCUM_MUL(Grain_DeltaErosionFrac)
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+        ACCUM_ADD(Grain_CoagClaims)
 #endif
 
 #undef ACCUM_ADD

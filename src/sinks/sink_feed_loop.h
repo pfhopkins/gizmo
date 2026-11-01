@@ -91,7 +91,7 @@ struct SinkFeedLocalIn {
     MyFloat Mdot;
     MyFloat Dt;
     MyIDType ID;
-    MyIDType claim_token;   /* sink ownership for the claim protocol; see gizmo_sink_claim_token */
+    MyIDType claim_token;   /* sink ownership for the claim protocol; see gizmo_claim_token */
     uint64_t rng_key;       /* the sink's event key (gizmo_rng_particle_event_key), for the stochastic draws */
 #ifdef SINK_GRAVCAPTURE_GAS
     MyFloat mass_to_swallow_edd;

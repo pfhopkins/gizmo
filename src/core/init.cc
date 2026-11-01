@@ -223,6 +223,12 @@ void init(void)
     for(i = 0; i < NumPart; i++)	/*  start-up initialization */
     {
         P[i].GravAccel = {};
+#ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
+        P[i].GravAccel_Retained = {};
+#endif
+#if defined(GRAIN_EVOLUTION) && (GRAIN_EVOLUTION & 1)
+        P[i].Grain_CoagClaim = 0;   /* no claim is open outside a force pass, so every start begins with none */
+#endif
 
 #ifdef COMPUTE_TIDAL_TENSOR_IN_GRAVTREE /* init tidal tensor for first output (not used for calculation) */
         for(j=0;j<3;j++) {int kt; for(kt=0;kt<3;kt++) {P[i].tidal_tensorps[j][kt]=0;}}
@@ -1289,6 +1295,7 @@ void check_omega(void)
 void setup_smoothinglengths(void)
 {
     int i, no, p;
+    long long n_radius_estimated = 0; /* gas on a snapshot start whose file gave no usable kernel radius */
     if((RestartFlag == 0)||(RestartFlag==2)) // best for stability if we re-calc KernelRadius for snapshot restarts //
     {
 #if defined(DO_DENSITY_AROUND_NONGAS_PARTICLES) || defined(GRAIN_FLUID)
@@ -1306,9 +1313,11 @@ void setup_smoothinglengths(void)
                     no = p;
                 }
 
-                if((RestartFlag == 0)||(P[i].Type != 0)) // if Restartflag==2, use the saved KernelRadius of the gas as initial guess //
+                const int saved_radius_usable = (P[i].KernelRadius > 0) && isfinite(P[i].KernelRadius);
+                if((RestartFlag == 0)||(P[i].Type != 0)||(!saved_radius_usable)) // if Restartflag==2, use the saved KernelRadius of the gas as initial guess, when the file had one //
                 {
 #ifndef INPUT_READ_KERNELRADIUS
+                    if((RestartFlag == 2) && (P[i].Type == 0)) {n_radius_estimated++;}
 #if NUMDIMS == 3
                     P[i].KernelRadius = pow(3.0 / (4 * M_PI) * All.DesNumNgb * P[i].Mass / Nodes[no].u.d.mass, 0.333333) * Nodes[no].len;
 #endif
@@ -1344,8 +1353,13 @@ void setup_smoothinglengths(void)
                     }
 #endif
 #endif // INPUT_READ_KERNELRADIUS
-                } // closes if((RestartFlag == 0)||(P[i].Type != 0))
+                } // closes if((RestartFlag == 0)||(P[i].Type != 0)||(!saved_radius_usable))
             }
+    }
+    if(RestartFlag == 2)
+    {
+        sumup_longs(1, &n_radius_estimated, &n_radius_estimated);
+        if((ThisTask == 0) && (n_radius_estimated > 0)) {printf("Snapshot start: %lld gas cells had no usable kernel radius in the file; estimated from the tree as for a fresh start.\n", n_radius_estimated);}
     }
     if((RestartFlag==0 || RestartFlag==2) && All.ComovingIntegrationOn) {for(i=0;i<N_gas;i++) {P[i].KernelRadius *= pow(All.OmegaMatter/All.OmegaBaryon,1./NUMDIMS);}} /* correct (crudely) for baryon fraction, used in the estimate above for KernelRadius */
 

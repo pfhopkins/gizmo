@@ -20,6 +20,7 @@
  * Operations available:
  *   GHOST_WRITEBACK_PARTICLE_MIN(field)         home P[j].field = min(home, ghost)
  *   GHOST_WRITEBACK_PARTICLE_MAX(field)         home P[j].field = max(home, ghost)
+ *   GHOST_WRITEBACK_PARTICLE_MUL(field)         snapshot-ratio multiplicative on P[j].field (home *= ghost/snap)
  *   GHOST_WRITEBACK_GAS_ADD(field)              snapshot-diff additive on CellP[j].field
  *   GHOST_WRITEBACK_PARTICLE_ADD(field)         snapshot-diff additive on P[j].field
  *   GHOST_WRITEBACK_PARTICLE_ADD_ARRAY(f, N)    snapshot-diff additive on P[j].field[N]
@@ -144,7 +145,7 @@ const ghost_writeback_callback ParticleMinOp<FieldT, MemPtr>::callback = {
  * larger of (home, ghost) per delta record. Used by sink_feed for P[j].SwallowID: when two sinks on
  * different ranks claim the same cell, the larger claim token wins.
  *
- * What that field holds is a TRANSIENT OWNERSHIP KEY, not an identity -- see gizmo_sink_claim_token.
+ * What that field holds is a TRANSIENT OWNERSHIP KEY, not an identity -- see gizmo_claim_token.
  * It is exact and unique for a given particle layout, which is the property the claim protocol needs
  * (the swallow pass matches it for equality against the sink that wrote it), and it is nonzero, so 0
  * still means unclaimed.
@@ -235,6 +236,81 @@ const ghost_writeback_callback ParticleMaxOp<FieldT, MemPtr>::callback = {
     & ParticleMaxOp<FieldT, MemPtr>::apply_fn,
     & ParticleMaxOp<FieldT, MemPtr>::cleanup_fn,
     & ParticleMaxOp<FieldT, MemPtr>::s_ctx,
+};
+
+/* ParticleMulOp — snapshot-ratio multiplicative reverse-comm for a scalar field on particle_data whose
+ * kernel updates are products (each event multiplies the field by a factor). Snapshot pre-kernel; pack
+ * the ratio post/snapshot for a ghost whose value changed; home multiplies by it, so the factors from
+ * every rank compose. A ghost whose snapshot is not positive sends nothing: there is no factor to recover
+ * from a zero. Used by grain fragmentation and shattering for P[j].Grain_Size. */
+template <typename FieldT, FieldT particle_data::*MemPtr>
+struct ParticleMulOp {
+    static_assert(std::is_floating_point<FieldT>::value,
+                  "GHOST_WRITEBACK_PARTICLE_MUL requires a floating-point scalar field");
+
+    struct Ctx {
+        FieldT *snap;
+        int     num_ghosts;
+    };
+    static Ctx s_ctx;
+
+    struct Delta {
+        int    home_index;
+        double factor;
+    };
+
+    static void snapshot_fn(void *vctx, int num_ghosts, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        c->num_ghosts = num_ghosts;
+        if (num_ghosts <= 0) { c->snap = nullptr; return; }
+        c->snap = (FieldT*) malloc(num_ghosts * sizeof(FieldT));
+        for (int g = 0; g < num_ghosts; g++) {
+            c->snap[g] = P[num_local + g].*MemPtr;
+        }
+    }
+
+    static int delta_for_ghost_fn(void *vctx, int g, int num_local) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (!c->snap) return 0;
+        return (c->snap[g] > 0 && P[num_local + g].*MemPtr != c->snap[g]) ? 1 : 0;
+    }
+
+    static void pack_fn(void *vctx, int g, int num_local, void *out_delta) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        Delta *d = static_cast<Delta*>(out_delta);
+        int *home_index = ghost_get_home_index();
+        d->home_index = home_index[g];
+        d->factor     = (double)(P[num_local + g].*MemPtr) / (double)c->snap[g];
+    }
+
+    static void apply_fn(void *vctx, const void *in_delta) {
+        (void)vctx;
+        const Delta *d = static_cast<const Delta*>(in_delta);
+        P[d->home_index].*MemPtr = (FieldT)((double)(P[d->home_index].*MemPtr) * d->factor);
+    }
+
+    static void cleanup_fn(void *vctx) {
+        Ctx *c = static_cast<Ctx*>(vctx);
+        if (c->snap) { free(c->snap); c->snap = nullptr; }
+        c->num_ghosts = 0;
+    }
+
+    static const ghost_writeback_callback callback;
+};
+
+template <typename FieldT, FieldT particle_data::*MemPtr>
+typename ParticleMulOp<FieldT, MemPtr>::Ctx
+ParticleMulOp<FieldT, MemPtr>::s_ctx{nullptr, 0};
+
+template <typename FieldT, FieldT particle_data::*MemPtr>
+const ghost_writeback_callback ParticleMulOp<FieldT, MemPtr>::callback = {
+    sizeof(typename ParticleMulOp<FieldT, MemPtr>::Delta),
+    & ParticleMulOp<FieldT, MemPtr>::snapshot_fn,
+    & ParticleMulOp<FieldT, MemPtr>::delta_for_ghost_fn,
+    & ParticleMulOp<FieldT, MemPtr>::pack_fn,
+    & ParticleMulOp<FieldT, MemPtr>::apply_fn,
+    & ParticleMulOp<FieldT, MemPtr>::cleanup_fn,
+    & ParticleMulOp<FieldT, MemPtr>::s_ctx,
 };
 
 /* GasAddOp — snapshot-diff additive reverse-comm for any arithmetic field
@@ -1024,6 +1100,11 @@ template <typename T> struct vec3_elem<Vec3<T>> { using type = T; };
 
 #define GHOST_WRITEBACK_PARTICLE_MAX(field)                                   \
     & ::gw_detail::ParticleMaxOp<                                             \
+        decltype(particle_data::field), &particle_data::field                 \
+      >::callback,
+
+#define GHOST_WRITEBACK_PARTICLE_MUL(field)                                   \
+    & ::gw_detail::ParticleMulOp<                                             \
         decltype(particle_data::field), &particle_data::field                 \
       >::callback,
 

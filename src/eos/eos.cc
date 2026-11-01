@@ -259,7 +259,7 @@ void calculate_and_assign_conduction_and_viscosity_coefficients(int i, struct pa
     double du_conduction=0; for(k=0;k<3;k++) {du_conduction += cell[i].Gradients.InternalEnergy[k] * cell[i].Gradients.InternalEnergy[k];}
     double temp_scale_length = u_int / sqrt(du_conduction) * All.cf_atime;
     /* also the Whistler instability limits the heat flux at high-beta; Komarov et al., arXiv:1711.11462 (2017) */
-    cell[i].Kappa_Conduction /= (1 + (4.2 + 1./(3.*beta_i)) * electron_free_path / temp_scale_length); /* should be in physical units */
+    cell[i].Kappa_Conduction /= (1 + (4.2 + 1./(3.*DMAX(beta_i, MIN_REAL_NUMBER))) * electron_free_path / temp_scale_length); /* should be in physical units. beta_i=0 (no field) with a flat internal energy would otherwise give inf*0 */
 #ifdef DIFFUSION_OPTIMIZERS
     cell[i].Kappa_Conduction = DMIN(cell[i].Kappa_Conduction , 42.85 * rho * vf_lim * DMIN(20.*pp[i].Get_Particle_Size()*All.cf_atime , temp_scale_length));
 #endif

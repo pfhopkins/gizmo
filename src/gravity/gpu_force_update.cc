@@ -24,11 +24,8 @@
  * force_finish_kick_nodes reads without copies.  The global DomainList pointer
  * is temporarily redirected to the UVM buffer for the duration of the call.
  *
- * P[i].dp zeroing: the GPU kernel zeros Pp[i].dp (the arena copy).  On UVM
- * systems Pp==P so this is sufficient.  On non-UVM systems (e.g., Mac CPU
- * Kokkos where SharedSpace != P memory) the kernel zero does not propagate to
- * P[].  A host loop after Kokkos::fence() explicitly zeros P[i].dp for all
- * active particles; this is a no-op on UVM and the necessary fix on non-UVM.
+ * P[i].dp zeroing: the kick kernel zeros Pp[i].dp for every active particle
+ * it walks.  The arena is P itself on every build, so no host pass follows.
  *
  * Written by Phil Hopkins (phopkins@caltech.edu) for GIZMO.
  */
@@ -311,7 +308,7 @@ extern "C" void gpu_force_update_tree(void)
             KOKKOS_LAMBDA(const int idx) {
                 const int i = active_dev[idx];
 
-                /* Read and zero P[i].dp (arena copy) — host zero below handles non-UVM. */
+                /* Read and zero P[i].dp (the arena is P itself on every build). */
                 Vec3<MyDouble> dp = Pp[i].dp;
                 Pp[i].dp = Vec3<MyDouble>{};
 
@@ -404,13 +401,6 @@ extern "C" void gpu_force_update_tree(void)
             printf("Task=%d gpu_force_update_tree: a node on a kick chain was not current at the kick time; its kick would be folded over the wrong interval\n", ThisTask);
             fflush(stdout);
             endrun(929705);
-        }
-
-        /* Zero P[i].dp on the host.  On UVM systems Pp==P so the kernel zero above
-         * already did this; on non-UVM (Mac CPU Kokkos) the arena is a separate
-         * SharedSpace buffer and this host loop is the authoritative zero. */
-        for(int idx = 0; idx < num_active; idx++) {
-            P[ActiveParticleList[idx]].dp = {};
         }
 
         /* The kernel clamps its writes to the DomainList slice, so a count past

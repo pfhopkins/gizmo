@@ -427,8 +427,10 @@ int eligible_for_hermite(int i, struct particle_data *pp)
 #if defined(GRAIN_FLUID)
     if((1 << pp[i].Type) & (GRAIN_PTYPES)) {return 0;} // not compatible with these flags for these types
 #endif
+#if defined(GALSF) /* the formation time only exists, and new particles are only spawned, with GALSF */
+    if(pp[i].StellarAge >=DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
+#endif
 #if defined(SINK_PARTICLES) || defined(GALSF)
-    if(pp[i].StellarAge >= DMAX(All.Time - 2*(get_particle_timestep_in_physical(i, pp)*All.cf_hubble_a), 0)) {return 0;} // if we were literally born yesterday then let things settle down a bit with the less-accurate, but more-robust regular integration
     if(pp[i].AccretedThisTimestep) {return 0;}
 #endif
 #if (SINGLE_STAR_TIMESTEPPING > 0)

@@ -40,7 +40,7 @@ static void sink_feed_fill_local(int i, struct SinkFeedLocalIn *loc)
     loc->Mass         = P[i].Mass;
     loc->Sink_Mass    = P[i].Sink_Mass;
     loc->ID           = P[i].ID;
-    loc->claim_token  = gizmo_sink_claim_token(ThisTask, i);
+    loc->claim_token  = gizmo_claim_token(ThisTask, i);
     loc->rng_key      = gizmo_rng_particle_event_key(P[i]);
     loc->Density      = P[i].DensityAroundParticle;
     loc->Mdot         = P[i].Sink_Mdot;

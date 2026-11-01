@@ -55,7 +55,7 @@ def _reads_temperature_block(log):
     return any(("reading block" in ln) and ("(Temperature)" in ln) for ln in log.splitlines())
 
 
-def _build_and_run_local(num_mpi_ranks, num_omp_threads, extra_config_flags):
+def _build_and_run_local(num_mpi_ranks, num_omp_threads, extra_config_flags, **ic_kwargs):
     """build_and_run_test() minus download_test_files(): our IC is generated, not fetched."""
     clean_test_outputs(TEST_NAME, extra_config_flags)
     build_gizmo_for_test(TEST_NAME, num_omp_threads, extra_config_flags)
@@ -64,7 +64,7 @@ def _build_and_run_local(num_mpi_ranks, num_omp_threads, extra_config_flags):
     try:
         chdir(TEST_DIR)
         try:
-            make_binary_ic(f"{TEST_NAME}_ics", ngas=N_GAS)
+            make_binary_ic(f"{TEST_NAME}_ics", ngas=N_GAS, **ic_kwargs)
             # The INPUT_READ_TEMPERATURE arm asserts that the run FAILS with the
             # end-of-file signature -- that failure is the measurement. Opt out of the
             # harness exit check so it does not fire before those assertions run.
@@ -130,3 +130,36 @@ def test_read_ic_binary(num_mpi_ranks, num_omp_threads, extra_config_flags):
             "Temperature missing from snapshot output despite OUTPUT_TEMPERATURE: the input-side "
             "fix must not disable output of the field"
         )
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (min(default_mpi_ranks(), 2),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+@pytest.mark.parametrize(
+    "id_dtype, id_offset",
+    [("uint32", 0), ("uint64", 2**33)],
+    ids=["ids_32bit", "ids_64bit"],
+)
+def test_read_ic_binary_ids(num_mpi_ranks, num_omp_threads, id_dtype, id_offset):
+    """ParticleIDs from a binary IC must arrive intact, whichever width the file stores them at.
+
+    Legacy GADGET-2 binary ICs carry 32-bit IDs; MUSIC files and GIZMO's own binary snapshots carry
+    64-bit ones. Reading 4-byte IDs but unpacking them at sizeof(MyIDType) fuses neighbouring pairs
+    into huge values and fills the rest from stale buffer contents, silently (issue #79). The 64-bit
+    case offsets the IDs past 2^32 so a truncating reader cannot pass it.
+    """
+    import h5py
+    import numpy as np
+
+    _build_and_run_local(num_mpi_ranks, num_omp_threads, (), id_dtype=np.dtype(id_dtype), id_offset=id_offset)
+    snaps = sorted(glob.glob(variant_output_dir(TEST_NAME) + "/snapshot_*.hdf5"))
+    assert snaps, f"GIZMO produced no snapshots from a binary IC with {id_dtype} IDs; see {TEST_DIR}/test_{TEST_NAME}.out"
+
+    with h5py.File(snaps[0], "r") as F:
+        ids = np.sort(F["PartType0/ParticleIDs"][:].astype(np.uint64))
+    expected = np.arange(1, N_GAS + 1, dtype=np.uint64) + np.uint64(id_offset)
+    n_bad = int(np.count_nonzero(ids != expected))
+    assert n_bad == 0, (
+        f"{n_bad}/{N_GAS} ParticleIDs differ from the IC's {id_dtype} IDs; "
+        f"min/max read {ids.min()}/{ids.max()}, expected {expected[0]}/{expected[-1]}, "
+        f"{N_GAS - np.unique(ids).size} duplicates"
+    )

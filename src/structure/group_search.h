@@ -13,11 +13,15 @@ struct group_search_import_pool_t
   std::vector<int> ghost_home_task;
   std::vector<int> ghost_home_index;
   std::vector<MyIDType> ghost_label_id;
-  std::vector<MyIDType> ghost_label_task;
+  std::vector<MyIDType> ghost_label_owner;
 };
 
+/* the (task, local index) of a particle in one 64-bit key: a unique name for it within one group search */
+inline MyIDType group_search_owner_key(int task, int index) {return ((MyIDType)(uint32_t)task << 32) | (MyIDType)(uint32_t)index;}
+inline int group_search_owner_task(MyIDType owner) {return (int)(owner >> 32);}
+
 void group_search_import_particles(int source_type_mask, int import_type_mask, double search_radius,
-                                   const MyIDType *label_id, const MyIDType *label_task,
+                                   const MyIDType *label_id, const MyIDType *label_owner,
                                    group_search_import_pool_t &pool, int group_filter = -1,
                                    bool import_cells = false);
 

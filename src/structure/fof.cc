@@ -62,7 +62,7 @@ static struct fofdata_out
 static struct fof_particle_list
 {
   MyIDType MinID;
-  MyIDType MinIDTask;
+  MyIDType MinIDOwner;   /* the routing task is group_search_owner_task(MinIDOwner) */
   int Pindex;
 }
  *FOF_PList;
@@ -81,6 +81,7 @@ static int MyFOF_SECONDARY_LINK_TYPES;
 static int MyFOF_GROUP_MIN_SIZE;
 
 static MyIDType *Head, *Len, *Next, *Tail, *MinID, *MinIDTask;
+static MyIDType *MinIDOwner;   /* per-particle label owner, alongside MinID (group_search_owner_key) */
 static char *NonlocalFlag;
 
 
@@ -90,8 +91,8 @@ static float *fof_nearest_rkern;
 
 struct fof_label_t
 {
-  MyIDType id;
-  MyIDType task;
+  MyIDType MinID;
+  MyIDType MinIDOwner;   /* task and local index of the particle carrying MinID: IDs can repeat, so MinID alone does not name a group */
 };
 
 struct fof_remote_edge_t
@@ -105,15 +106,19 @@ struct fof_label_update_t
 {
   int index;
   MyIDType id;
-  MyIDType task;
+  MyIDType owner;
 };
 
-static inline int fof_label_less(const fof_label_t &a, const fof_label_t &b)
+/* the one ordering of groups everywhere below: by minimum particle ID, then by the owner of that particle,
+   since split and spawned particles keep their parent's ID and two groups can share a minimum ID */
+template<class A, class B> static inline int fof_key_cmp(const A &a, const B &b)
 {
-  if(a.id < b.id) return 1;
-  if(a.id > b.id) return 0;
-  return a.task < b.task;
+  if(a.MinID != b.MinID) {return (a.MinID < b.MinID) ? -1 : +1;}
+  if(a.MinIDOwner != b.MinIDOwner) {return (a.MinIDOwner < b.MinIDOwner) ? -1 : +1;}
+  return 0;
 }
+
+static inline int fof_label_less(const fof_label_t &a, const fof_label_t &b) {return fof_key_cmp(a, b) < 0;}
 
 static int fof_dsu_find(std::vector<int> &parent, int x)
 {
@@ -185,8 +190,8 @@ static void fof_find_groups_modern(void)
       int i = primary_indices[a];
       local_to_primary[i] = a;
       parent[a] = a;
-      root_label[a].id = P[i].ID;
-      root_label[a].task = ThisTask;
+      root_label[a].MinID = P[i].ID;
+      root_label[a].MinIDOwner = group_search_owner_key(ThisTask, i);
     }
 
   group_search_import_pool_t import_pool;
@@ -250,8 +255,8 @@ static void fof_find_groups_modern(void)
           int root = fof_dsu_find(parent, a);
           int off = cursor[edge.remote_task]++;
           send_updates[off].index = edge.remote_index;
-          send_updates[off].id = root_label[root].id;
-          send_updates[off].task = root_label[root].task;
+          send_updates[off].id = root_label[root].MinID;
+          send_updates[off].owner = root_label[root].MinIDOwner;
         }
 
       std::vector<fof_label_update_t> recv_updates;
@@ -265,7 +270,7 @@ static void fof_find_groups_modern(void)
           int a = local_to_primary[idx];
           if(a < 0) continue;
           int root = fof_dsu_find(parent, a);
-          fof_label_t incoming = {recv_updates[u].id, recv_updates[u].task};
+          fof_label_t incoming = {recv_updates[u].id, recv_updates[u].owner};
           if(fof_label_less(incoming, root_label[root]))
             {
               root_label[root] = incoming;
@@ -290,8 +295,9 @@ static void fof_find_groups_modern(void)
     {
       int i = primary_indices[a];
       int root = fof_dsu_find(parent, a);
-      MinID[i] = root_label[root].id;
-      MinIDTask[i] = root_label[root].task;
+      MinID[i] = root_label[root].MinID;
+      MinIDOwner[i] = root_label[root].MinIDOwner;
+      MinIDTask[i] = group_search_owner_task(MinIDOwner[i]);
       Head[i] = i;
     }
 }
@@ -312,7 +318,7 @@ static void fof_find_nearest_dmparticle_modern(void)
 
   group_search_import_pool_t import_pool;
   group_search_import_particles(MyFOF_SECONDARY_LINK_TYPES, MyFOF_PRIMARY_LINK_TYPES, 4.0 * LinkL,
-                                MinID, MinIDTask, import_pool);
+                                MinID, MinIDOwner, import_pool);
 
   std::vector<double> nearest_dist2(secondary_indices.size(), MAX_REAL_NUMBER);
   std::vector<unsigned char> done(secondary_indices.size(), 0);
@@ -366,13 +372,15 @@ static void fof_find_nearest_dmparticle_modern(void)
                   if(best_j < NumPart)
                     {
                       MinID[i] = MinID[best_j];
+                      MinIDOwner[i] = MinIDOwner[best_j];
                       MinIDTask[i] = MinIDTask[best_j];
                     }
                   else
                     {
                       int g = best_j - NumPart;
                       MinID[i] = import_pool.ghost_label_id[g];
-                      MinIDTask[i] = import_pool.ghost_label_task[g];
+                      MinIDOwner[i] = import_pool.ghost_label_owner[g];
+                      MinIDTask[i] = group_search_owner_task(MinIDOwner[i]);
                     }
                   Head[i] = i;
                 }
@@ -490,6 +498,8 @@ void fof_fof(int num)
   Next = (MyIDType *) mymalloc("Next", NumPart * sizeof(MyIDType));
   Tail = (MyIDType *) mymalloc("Tail", NumPart * sizeof(MyIDType));
 
+  MinIDOwner = (MyIDType *) mymalloc("MinIDOwner", NumPart * sizeof(MyIDType));
+
   CPU_Step[CPU_FOF] += measure_time();
 
   if(ThisTask == 0)
@@ -504,6 +514,7 @@ void fof_fof(int num)
       Next[i] = -1;
       MinID[i] = P[i].ID;
       MinIDTask[i] = ThisTask;
+      MinIDOwner[i] = group_search_owner_key(ThisTask, i);
     }
 
 
@@ -548,15 +559,18 @@ void fof_fof(int num)
 				   before the run drains at the caller phase poll. NOT a meaningful clamp --
 				   the run is already stopping via the flag. */
 	  Tail[i] = ThisTask;
+	  MinIDOwner[i] = group_search_owner_key(ThisTask, i);
 	}
     }
 
   for(i = 0; i < NumPart; i++)
     {
       FOF_PList[i].MinID = Next[i];
-      FOF_PList[i].MinIDTask = Tail[i];
+      FOF_PList[i].MinIDOwner = MinIDOwner[i];   /* Head[i] == i: the labels above are already per particle, and MinIDOwner is not overlaid by FOF_PList */
       FOF_PList[i].Pindex = i;
     }
+
+  myfree(MinIDOwner);
 
   
   myfree(Tail);
@@ -618,7 +632,7 @@ void fof_fof(int num)
   for(i = 0, start = 0; i < NgroupsExt; i++)
     {
       int bad_match = 0;
-      while(FOF_PList[start].MinID < FOF_GList[i].MinID)
+      while(fof_key_cmp(FOF_PList[start], FOF_GList[i]) < 0)
 	{
 	  start++;
 	  if(start >= NumPart)
@@ -626,16 +640,17 @@ void fof_fof(int num)
 	}
       if(bad_match) continue;
 
-      if(FOF_PList[start].MinID != FOF_GList[i].MinID)
-	{ endrun(123); continue; }	/* group MinID mismatch: soft bad-stop, skip this group */
+      if(fof_key_cmp(FOF_PList[start], FOF_GList[i]) != 0)
+	{ endrun(123); continue; }	/* group key mismatch: soft bad-stop, skip this group */
 
       for(lenloc = 0; start + lenloc < NumPart;)
-	if(FOF_PList[start + lenloc].MinID == FOF_GList[i].MinID)
+	if(fof_key_cmp(FOF_PList[start + lenloc], FOF_GList[i]) == 0)
 	  lenloc++;
 	else
 	  break;
 
       Group[i].MinID = FOF_GList[i].MinID;
+      Group[i].MinIDOwner = FOF_GList[i].MinIDOwner;
       Group[i].MinIDTask = FOF_GList[i].MinIDTask;
 
       fof_compute_group_properties(i, start, lenloc);
@@ -704,7 +719,8 @@ void fof_compile_catalogue(void)
   for(i = 0; i < NumPart; i++)
     {
       FOF_GList[i].MinID = FOF_PList[i].MinID;
-      FOF_GList[i].MinIDTask = FOF_PList[i].MinIDTask;
+      FOF_GList[i].MinIDOwner = FOF_PList[i].MinIDOwner;
+      FOF_GList[i].MinIDTask = group_search_owner_task(FOF_PList[i].MinIDOwner);
       if(FOF_GList[i].MinIDTask == (MyIDType)ThisTask)
 	{
 	  FOF_GList[i].LocCount = 1;
@@ -731,7 +747,7 @@ void fof_compile_catalogue(void)
 	}
     }
 
-  /* eliminate duplicates in FOF_GList with respect to MinID */
+  /* eliminate duplicates in FOF_GList with respect to the group key */
 
   if(NumPart)
     NgroupsExt = 1;
@@ -740,7 +756,7 @@ void fof_compile_catalogue(void)
 
   for(i = 1, start = 0; i < NumPart; i++)
     {
-      if(FOF_GList[i].MinID == FOF_GList[start].MinID)
+      if(fof_key_cmp(FOF_GList[i], FOF_GList[start]) == 0)
 	{
 	  FOF_GList[start].LocCount += FOF_GList[i].LocCount;
 	  FOF_GList[start].ExtCount += FOF_GList[i].ExtCount;
@@ -814,7 +830,7 @@ void fof_compile_catalogue(void)
   for(i = 0, start = 0; i < nimport; i++)
     {
       int bad_match = 0;
-      while(FOF_GList[start].MinID < get_FOF_GList[i].MinID)
+      while(fof_key_cmp(FOF_GList[start], get_FOF_GList[i]) < 0)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
@@ -838,7 +854,7 @@ void fof_compile_catalogue(void)
   for(i = 0, start = 0; i < nimport; i++)
     {
       int bad_match = 0;
-      while(FOF_GList[start].MinID < get_FOF_GList[i].MinID)
+      while(fof_key_cmp(FOF_GList[start], get_FOF_GList[i]) < 0)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
@@ -1049,7 +1065,7 @@ void fof_exchange_group_data(void)
   for(i = 0, start = 0; i < nimport; i++)
     {
       int bad_match = 0;
-      while(Group[start].MinID < get_Group[i].MinID)
+      while(fof_key_cmp(Group[start], get_Group[i]) < 0)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
@@ -1190,7 +1206,7 @@ void fof_save_groups(int num)
   for(i = 0, start = 0; i < Ngroups; i++)
     {
       int bad_match = 0;
-      while(FOF_GList[start].MinID < Group[i].MinID)
+      while(fof_key_cmp(FOF_GList[start], Group[i]) < 0)
 	{
 	  start++;
 	  if(start >= NgroupsExt)
@@ -1236,7 +1252,7 @@ void fof_save_groups(int num)
   for(i = 0, start = 0, Nids = 0; i < NgroupsExt; i++)
     {
       int bad_match = 0;
-      while(FOF_PList[start].MinID < FOF_GList[i].MinID)
+      while(fof_key_cmp(FOF_PList[start], FOF_GList[i]) < 0)
 	{
 	  start++;
 	  if(start >= NumPart)
@@ -1244,11 +1260,11 @@ void fof_save_groups(int num)
 	}
       if(bad_match) continue;
 
-      if(FOF_PList[start].MinID != FOF_GList[i].MinID)
-	{ endrun(1313); continue; }	/* group MinID mismatch: soft bad-stop, skip this group */
+      if(fof_key_cmp(FOF_PList[start], FOF_GList[i]) != 0)
+	{ endrun(1313); continue; }	/* group key mismatch: soft bad-stop, skip this group */
 
       for(lenloc = 0; start + lenloc < NumPart;)
-	if(FOF_PList[start + lenloc].MinID == FOF_GList[i].MinID)
+	if(fof_key_cmp(FOF_PList[start + lenloc], FOF_GList[i]) == 0)
 	  {
 	    ID_list[Nids].GrNr = FOF_GList[i].GrNr;
 	    ID_list[Nids].ID = P[FOF_PList[start + lenloc].Pindex].ID;
@@ -1605,14 +1621,13 @@ void fof_make_sink_particles(void)
 struct group_mass_MinID
 {
   unsigned long long MinID;
+  unsigned long long MinIDOwner;
   double mass;
 };
 
 int compare_group_mass_ID(const void *a, const void *b)
 {
-  if(((struct group_mass_MinID *) a)->MinID < (((struct group_mass_MinID *) b)->MinID)) {return -1;}
-  if(((struct group_mass_MinID *) a)->MinID > (((struct group_mass_MinID *) b)->MinID)) {return +1;}
-  return 0;
+  return fof_key_cmp(*(const struct group_mass_MinID *) a, *(const struct group_mass_MinID *) b);
 }
 
 void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].HostHaloMass for fluid cells */
@@ -1644,19 +1659,21 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
     (struct group_mass_MinID *) mymalloc("required_groups", NgroupsExt * sizeof(struct group_mass_MinID));
 
   MPI_Datatype mpi_groups_mass_MinID;
-  MPI_Datatype used_types[2] = { MPI_UNSIGNED_LONG_LONG, MPI_DOUBLE };
-  int used_blocklen[2] = { 1, 1 };
-  MPI_Aint disp[2], cur_addr, start_addr;
+  MPI_Datatype used_types[3] = { MPI_UNSIGNED_LONG_LONG, MPI_UNSIGNED_LONG_LONG, MPI_DOUBLE };
+  int used_blocklen[3] = { 1, 1, 1 };
+  MPI_Aint disp[3], cur_addr, start_addr;
   MPI_Get_address(&required_groups[0], &start_addr);
   MPI_Get_address(&required_groups[0].MinID, &cur_addr);
   disp[0] = cur_addr - start_addr;
-  MPI_Get_address(&required_groups[0].mass, &cur_addr);
+  MPI_Get_address(&required_groups[0].MinIDOwner, &cur_addr);
   disp[1] = cur_addr - start_addr;
-  MPI_Type_create_struct(2, used_blocklen, disp, used_types, &mpi_groups_mass_MinID);
+  MPI_Get_address(&required_groups[0].mass, &cur_addr);
+  disp[2] = cur_addr - start_addr;
+  MPI_Type_create_struct(3, used_blocklen, disp, used_types, &mpi_groups_mass_MinID);
   MPI_Type_commit(&mpi_groups_mass_MinID);	/* defines an MPI datatpye containing group mass and group MinID */
 
   for(i = 0; i < NgroupsExt; i++)
-    required_groups[i].MinID = FOF_GList[i].MinID;
+    {required_groups[i].MinID = FOF_GList[i].MinID; required_groups[i].MinIDOwner = FOF_GList[i].MinIDOwner;}
 
   groups_to_export =
     (struct group_mass_MinID *) mymalloc("groups_to_export", nimport * sizeof(struct group_mass_MinID));
@@ -1672,7 +1689,7 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
 
       while(i < Recv_count[j] && k < Ngroups)
 	{
-	  if(groups_to_export[start].MinID == Group[k].MinID)
+	  if(fof_key_cmp(groups_to_export[start], Group[k]) == 0)
 	    {
 	      groups_to_export[start].mass = Group[k].Mass;
 	      i++;
@@ -1705,7 +1722,7 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
   for(i = 0, start = 0; i < NgroupsExt; i++)
     {
       int bad_group = 0;
-      while(FOF_PList[start].MinID < required_groups[i].MinID)
+      while(fof_key_cmp(FOF_PList[start], required_groups[i]) < 0)
 	{
 	  start++;
 	  if(start >= NumPart)
@@ -1717,7 +1734,7 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
 	}
       if(bad_group) break;   /* halting: exit the group loop (no collective inside) rather than re-enter the while with start==NumPart (OOB) */
 
-      if(FOF_PList[start].MinID != required_groups[i].MinID)
+      if(fof_key_cmp(FOF_PList[start], required_groups[i]) != 0)
 	{  /* group not found: skip before the per-cell HostHaloMass writes */
 	  printf("fof_assign_HostHaloMass: FOF_PList[start].MinID != required (i=%d start=%d task=%d)\n", i, start, ThisTask); fflush(stdout);
 	  endrun(90001018);
@@ -1725,7 +1742,7 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
 	}
 
       for(lenloc = 0; start + lenloc < NumPart;)
-	if(FOF_PList[start + lenloc].MinID == required_groups[i].MinID)
+	if(fof_key_cmp(FOF_PList[start + lenloc], required_groups[i]) == 0)
 	  {
 	    if(P[FOF_PList[start + lenloc].Pindex].Type == 0)
 	      CellP[FOF_PList[start + lenloc].Pindex].HostHaloMass = required_groups[i].mass;
@@ -1753,16 +1770,12 @@ void fof_assign_HostHaloMass(void)	/* assigns mass of host FoF group to CellP[].
 
 int fof_compare_FOF_PList_MinID(const void *a, const void *b)
 {
-  if(((struct fof_particle_list *) a)->MinID < ((struct fof_particle_list *) b)->MinID) {return -1;}
-  if(((struct fof_particle_list *) a)->MinID > ((struct fof_particle_list *) b)->MinID) {return +1;}
-  return 0;
+  return fof_key_cmp(*(const struct fof_particle_list *) a, *(const struct fof_particle_list *) b);
 }
 
 int fof_compare_FOF_GList_MinID(const void *a, const void *b)
 {
-  if(((fof_group_list *) a)->MinID < ((fof_group_list *) b)->MinID) {return -1;}
-  if(((fof_group_list *) a)->MinID > ((fof_group_list *) b)->MinID) {return +1;}
-  return 0;
+  return fof_key_cmp(*(const fof_group_list *) a, *(const fof_group_list *) b);
 }
 
 int fof_compare_FOF_GList_MinIDTask(const void *a, const void *b)
@@ -1776,17 +1789,14 @@ int fof_compare_FOF_GList_MinIDTask_MinID(const void *a, const void *b)
 {
   if(((fof_group_list *) a)->MinIDTask < ((fof_group_list *) b)->MinIDTask) {return -1;}
   if(((fof_group_list *) a)->MinIDTask > ((fof_group_list *) b)->MinIDTask) {return +1;}
-  if(((fof_group_list *) a)->MinID < ((fof_group_list *) b)->MinID) {return -1;}
-  if(((fof_group_list *) a)->MinID > ((fof_group_list *) b)->MinID) {return +1;}
-  return 0;
+  return fof_key_cmp(*(const fof_group_list *) a, *(const fof_group_list *) b);
 }
 
 int fof_compare_FOF_GList_LocCountTaskDiffMinID(const void *a, const void *b)
 {
   if(((fof_group_list *) a)->LocCount > ((fof_group_list *) b)->LocCount) {return -1;}
   if(((fof_group_list *) a)->LocCount < ((fof_group_list *) b)->LocCount) {return +1;}
-  if(((fof_group_list *) a)->MinID < ((fof_group_list *) b)->MinID) {return -1;}
-  if(((fof_group_list *) a)->MinID > ((fof_group_list *) b)->MinID) {return +1;}
+  {int c = fof_key_cmp(*(const fof_group_list *) a, *(const fof_group_list *) b); if(c) {return c;}}
   if((((fof_group_list *) a)->ExtCount - ((fof_group_list *) a)->MinIDTask) <
      (((fof_group_list *) b)->ExtCount - ((fof_group_list *) b)->MinIDTask)) {return -1;}
   if((((fof_group_list *) a)->ExtCount - ((fof_group_list *) a)->MinIDTask) >
@@ -1798,16 +1808,12 @@ int fof_compare_FOF_GList_ExtCountMinID(const void *a, const void *b)
 {
   if(((fof_group_list *) a)->ExtCount < ((fof_group_list *) b)->ExtCount) {return -1;}
   if(((fof_group_list *) a)->ExtCount > ((fof_group_list *) b)->ExtCount) {return +1;}
-  if(((fof_group_list *) a)->MinID < ((fof_group_list *) b)->MinID) {return -1;}
-  if(((fof_group_list *) a)->MinID > ((fof_group_list *) b)->MinID) {return +1;}
-  return 0;
+  return fof_key_cmp(*(const fof_group_list *) a, *(const fof_group_list *) b);
 }
 
 int fof_compare_Group_MinID(const void *a, const void *b)
 {
-  if(((group_properties *) a)->MinID < ((group_properties *) b)->MinID) {return -1;}
-  if(((group_properties *) a)->MinID > ((group_properties *) b)->MinID) {return +1;}
-  return 0;
+  return fof_key_cmp(*(const group_properties *) a, *(const group_properties *) b);
 }
 
 int fof_compare_Group_GrNr(const void *a, const void *b)
@@ -1828,10 +1834,7 @@ int fof_compare_Group_MinIDTask_MinID(const void *a, const void *b)
 {
   if(((group_properties *) a)->MinIDTask < ((group_properties *) b)->MinIDTask) {return -1;}
   if(((group_properties *) a)->MinIDTask > ((group_properties *) b)->MinIDTask) {return +1;}
-  if(((group_properties *) a)->MinID < ((group_properties *) b)->MinID) {return -1;}
-  if(((group_properties *) a)->MinID > ((group_properties *) b)->MinID) {return +1;}
-
-  return 0;
+  return fof_key_cmp(*(const group_properties *) a, *(const group_properties *) b);
 }
 
 
