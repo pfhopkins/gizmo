@@ -1074,21 +1074,34 @@ void force_exchange_pseudodata(void)
 #endif
         }
 
-    /* share the pseudo-particle data accross CPUs */
+    /* share the pseudo-particle data accross CPUs: one Allgatherv of each rank's segments packed
+       back to back, instead of one per segment (byte copies only, so the result is unchanged) */
     recvcounts = (int *) mymalloc("recvcounts", sizeof(int) * NTask);
     recvoffset = (int *) mymalloc("recvoffset", sizeof(int) * NTask);
-    
-    for(m = 0; m < DomainSegmentsPerTask; m++)
+    size_t node_bytes = sizeof(struct DomainNODE);
+    int ntot = 0;
+    for(recvTask = 0; recvTask < NTask; recvTask++)
     {
-        for(recvTask = 0; recvTask < NTask; recvTask++)
-        {
-            recvcounts[recvTask] =
-            (DomainEndList[recvTask * DomainSegmentsPerTask + m] - DomainStartList[recvTask * DomainSegmentsPerTask + m] +
-             1) * sizeof(struct DomainNODE);
-            recvoffset[recvTask] = DomainStartList[recvTask * DomainSegmentsPerTask + m] * sizeof(struct DomainNODE);
-        }
-        MPI_Allgatherv(MPI_IN_PLACE, recvcounts[ThisTask], MPI_BYTE, &DomainMoment[0], recvcounts, recvoffset, MPI_BYTE, MPI_COMM_WORLD);
+        int n = 0;
+        for(m = 0; m < DomainSegmentsPerTask; m++) {n += DomainEndList[recvTask * DomainSegmentsPerTask + m] - DomainStartList[recvTask * DomainSegmentsPerTask + m] + 1;}
+        recvcounts[recvTask] = n * node_bytes;
+        recvoffset[recvTask] = ntot * node_bytes;
+        ntot += n;
     }
+    char *packed = (char *) mymalloc("DomainMomentPacked", IMAX(ntot, 1) * node_bytes);
+    for(m = 0, i = recvoffset[ThisTask]; m < DomainSegmentsPerTask; m++)
+    {
+        int first = DomainStartList[ThisTask * DomainSegmentsPerTask + m], n = DomainEndList[ThisTask * DomainSegmentsPerTask + m] - first + 1;
+        if(n > 0) {memcpy(packed + i, &DomainMoment[first], n * node_bytes); i += n * node_bytes;}
+    }
+    MPI_Allgatherv(MPI_IN_PLACE, recvcounts[ThisTask], MPI_BYTE, packed, recvcounts, recvoffset, MPI_BYTE, MPI_COMM_WORLD);
+    for(ta = 0; ta < NTask; ta++)
+        for(m = 0, i = recvoffset[ta]; m < DomainSegmentsPerTask; m++)
+        {
+            int first = DomainStartList[ta * DomainSegmentsPerTask + m], n = DomainEndList[ta * DomainSegmentsPerTask + m] - first + 1;
+            if(n > 0) {memcpy(&DomainMoment[first], packed + i, n * node_bytes); i += n * node_bytes;}
+        }
+    myfree(packed);
     
     myfree(recvoffset);
     myfree(recvcounts);
