@@ -724,20 +724,19 @@ void star_formation_parent_routine(void)
     
     
     
+    {   /* every count this pass changed, in one reduction */
+        long long local[3] = {stars_spawned, stars_converted, num_sink_formed}, total[3];
+        MPI_Allreduce(local, total, 3, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+        tot_spawned = total[0]; tot_converted = total[1]; tot_sink_formed = (int) total[2];
+    }
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    MPI_Allreduce(&num_sink_formed, &tot_sink_formed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if( (ThisTask==0) && (tot_sink_formed > 0) )
     {
         printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
     } // if(tot_sink_formed > 0)
     All.TotSinks += tot_sink_formed;   /* on every rank, so every rank's copy of the total agrees */
 #endif
-    
-    {
-        long long local[2] = {stars_spawned, stars_converted}, total[2];
-        MPI_Allreduce(local, total, 2, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
-        tot_spawned = total[0]; tot_converted = total[1];
-    }
+
     if(tot_spawned > 0 || tot_converted > 0)
     {
         if(ThisTask==0) printf("SFR: spawned %lld stars, converted %lld gas particles into stars\n", tot_spawned, tot_converted);
@@ -754,9 +753,9 @@ void star_formation_parent_routine(void)
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin)
 #endif
     {
-        MPI_Allreduce(&sfrrate, &totsfrrate, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
-        MPI_Reduce(&sum_sm, &total_sm, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        MPI_Reduce(&sum_mass_stars, &total_sum_mass_stars, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        double local_log[3] = {sum_sm, sfrrate, sum_mass_stars}, total_log[3] = {0};   /* read only by rank 0's log line */
+        MPI_Reduce(local_log, total_log, 3, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        total_sm = total_log[0]; totsfrrate = total_log[1]; total_sum_mass_stars = total_log[2];
         if(ThisTask == 0)
         {
             if(All.TimeStep > 0) {rate = total_sm / (All.TimeStep / (All.cf_atime*All.cf_hubble_a));} else {rate = 0;}
