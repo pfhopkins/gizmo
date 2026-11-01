@@ -117,6 +117,23 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
         return (mode == 0) ? u_old : 0.0;
     }
 
+    /* after a solve, the temperature and adiabatic index of the new state from grackle itself, cached below with the mean molecular
+       weight of the same (u, T, gamma) under the relation the cache owns (gas_temperature_from_u), so every reader agrees with grackle */
+    gr_float T_solved = 0, gamma_solved = GrackleChemistry.Gamma;
+    if(mode == 0)
+    {
+        if(local_calculate_temperature(&GrackleChemistry, &GrackleRates, &units, &fields, &T_solved) != GR_SUCCESS) {status = GR_FAIL;}
+#if (COOL_GRACKLE_CHEMISTRY >  0)
+        if(local_calculate_gamma(&GrackleChemistry, &GrackleRates, &units, &fields, &gamma_solved) != GR_SUCCESS) {status = GR_FAIL;}
+#endif
+        if(status != GR_SUCCESS)
+        {
+            fprintf(stderr, "Error in Grackle (temperature/gamma of the solved state, target %d).\n", target);
+            endrun(ENDRUNVAL); return u_old; /* soft stop, as above */
+        }
+    }
+    const double mu_solved = (energy > 0 && gamma_solved > 1) ? T_solved / ((gamma_solved - 1.) * U_TO_TEMP_UNITS * energy) : MEAN_MOLECULAR_WEIGHT_DEFAULT;
+
     switch(mode) {
         case 0:
 #if (COOL_GRACKLE_CHEMISTRY >  0)
@@ -132,19 +149,13 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             /* save the state other modules read back, from the species grackle just solved. the
                gr* fields above are fractions of the TOTAL density; the electron and neutral
                fractions the rest of the code uses are per hydrogen nucleus, hence the 1/X_H. the
-               temperature follows from the energy and the mean molecular weight those fractions
-               imply -- no chemical network is consulted, since grackle has already done that work */
-            {
-            double y_helium = (1.-HYDROGEN_MASSFRAC) / (4.*HYDROGEN_MASSFRAC);
-            double x_elec = (ne_density / density) / HYDROGEN_MASSFRAC;
-            double x_HI   = (HI_density / density) / HYDROGEN_MASSFRAC;
-            double mu_from_species = (1. + 4.*y_helium) / (1. + y_helium + x_elec);
-            CellP[target].Ne = x_elec;
-            CellP[target].HI = DMAX(0, DMIN(1, x_HI));
-            CellP[target].Gamma = GAMMA_DEFAULT; /* grackle is called with this index; keep the cached pair consistent with it */
-            CellP[target].MeanMolecularWeight = mu_from_species;
-            CellP[target].Temperature = mu_from_species * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy;
-            }
+               temperature, adiabatic index and mean molecular weight are grackle's own (above), which
+               count every species it tracks, molecules included -- no chemical network is consulted */
+            CellP[target].Ne = (ne_density / density) / HYDROGEN_MASSFRAC;
+            CellP[target].HI = DMAX(0, DMIN(1, (HI_density / density) / HYDROGEN_MASSFRAC));
+            CellP[target].Gamma = gamma_solved;
+            CellP[target].MeanMolecularWeight = mu_solved;
+            CellP[target].Temperature = T_solved;
 
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
             CellP[target].grH2I   = H2I_density   / density;
@@ -157,21 +168,19 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
             CellP[target].grHDI   = HDI_density   / density;
 #endif
 #else // tabular
-            /* PLACEHOLDER, NOT A THERMOCHEMISTRY SOLVE. The tabular tables solve their own
-               chemistry and hand back no species, so there is no free electron or neutral
-               fraction here to save. What other modules read is therefore a documented guess:
-               an ionized-gas temperature straight from the energy, and a simple collisional
-               ionization fraction. This deliberately does NOT call the chemical network in
-               cooling.cc -- that is a different network from the one the tables just solved,
-               so its answer would not describe this gas. Use a chemistry mode if you need
-               real abundances. */
+            /* The temperature, adiabatic index and mean molecular weight are grackle's (above): its
+               tables carry the mean molecular weight of the gas they solved. They hand back no
+               species, though, so the free electron and neutral fractions other modules read are
+               a documented guess -- a simple collisional ionization fraction at grackle's
+               temperature. This deliberately does NOT call the chemical network in cooling.cc --
+               that is a different network from the one the tables just solved, so its answer
+               would not describe this gas. Use a chemistry mode if you need real abundances. */
             {
-            double f_ion_guess = 0; double temp = temperature_from_u_nongas(energy); /* only to decide whether the gas is warm enough to ionize */
-            if(temp > 1000.) {f_ion_guess = exp(-15000./temp);}
-            double mu_guess = 1./(0.80125 + f_ion_guess);
-            CellP[target].Gamma = GAMMA_DEFAULT;
-            CellP[target].MeanMolecularWeight = mu_guess;
-            CellP[target].Temperature = mu_guess * (GAMMA_DEFAULT-1.) * U_TO_TEMP_UNITS * energy; /* from the weight stored above, so the pair agrees */
+            double f_ion_guess = 0;
+            if(T_solved > 1000.) {f_ion_guess = exp(-15000./T_solved);}
+            CellP[target].Gamma = gamma_solved;
+            CellP[target].MeanMolecularWeight = mu_solved;
+            CellP[target].Temperature = T_solved;
             CellP[target].Ne = f_ion_guess;
             CellP[target].HI = DMAX(0, 1. - f_ion_guess);
 #ifdef RT_CHEM_PHOTOION
