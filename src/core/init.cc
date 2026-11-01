@@ -1097,9 +1097,14 @@ void init(void)
             CellP[i].grH2II  = 1.0e-20;
 #endif
 #if (COOL_GRACKLE_CHEMISTRY >= 3)
-            CellP[i].grDI    = 2.0 * 3.4e-5;
+            CellP[i].grDI    = 2.0 * 3.4e-5 * HYDROGEN_MASSFRAC; /* grackle's D/H of 2*3.4e-5 is by mass, so the D mass fraction carries X_H */
             CellP[i].grDII   = 1.0e-20;
             CellP[i].grHDI   = 1.0e-20;
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 1)
+            /* the electrons and neutral hydrogen of those species, per hydrogen nucleus (charge balance), replacing the ionized default above */
+            CellP[i].Ne = (CellP[i].grHII + CellP[i].grHeII/4. + CellP[i].grHeIII/2.) / HYDROGEN_MASSFRAC;
+            CellP[i].HI = DMAX(0, DMIN(1, CellP[i].grHI / HYDROGEN_MASSFRAC));
 #endif
         }
 #endif
