@@ -230,7 +230,16 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
    when they appear in call expressions within other KOKKOS_FUNCTION bodies in this TU.
    nvcc may issue advisory warning #20040 (consistent redeclaration) but this is harmless. */
-KOKKOS_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+/* CHIMES and Grackle solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
+   entry points that reach the library are compiled for the host only; every other build keeps them device-callable. */
+#if defined(CHIMES) || defined(COOL_GRACKLE)
+#define COOLING_SOLVE_IN_HOST_LIBRARY
+#define COOLING_SOLVE_FUNCTION
+#else
+#define COOLING_SOLVE_FUNCTION KOKKOS_FUNCTION
+#endif
+COOLING_SOLVE_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
+COOLING_SOLVE_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -377,7 +386,7 @@ void cooling_parent_routine(void)
      * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
      * than N_active × struct_size, further reducing UVM pressure.
      */
-#if !defined(CHIMES)
+#if !defined(COOLING_SOLVE_IN_HOST_LIBRARY)
   if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device cooling reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_COOL_BATCH_SIZE = 32768;
@@ -554,7 +563,7 @@ void cooling_parent_routine(void)
    conditional blocks — unlike OpenMP 'declare target' on NVC++ 24.7. */
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
-KOKKOS_FUNCTION
+COOLING_SOLVE_FUNCTION
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef HYDRO_MULTIFLUID_DM
@@ -824,7 +833,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
-KOKKOS_FUNCTION
+COOLING_SOLVE_FUNCTION
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double u, du; u=0; du=0;
