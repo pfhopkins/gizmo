@@ -48,6 +48,12 @@
 #ifndef  MULTIPLEDOMAINS
 #define  MULTIPLEDOMAINS     8
 #endif
+/* With DOMAIN_TARGET_PARTICLES_PER_SEGMENT set, MULTIPLEDOMAINS is only the upper bound: each full decomposition gives
+   every rank round(particles per rank / DOMAIN_TARGET_PARTICLES_PER_SEGMENT) Peano segments, at least
+   DOMAIN_MIN_SEGMENTS_PER_TASK. Without it, every rank gets exactly MULTIPLEDOMAINS. */
+#if defined(DOMAIN_TARGET_PARTICLES_PER_SEGMENT) && !defined(DOMAIN_MIN_SEGMENTS_PER_TASK)
+#define  DOMAIN_MIN_SEGMENTS_PER_TASK   8
+#endif
 
 #ifndef  TOPNODEFACTOR
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM

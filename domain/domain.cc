@@ -122,6 +122,7 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
+#define DOMAIN_SWAP_REFINEMENT_BUDGET 2.0e7 /*!< cap on (swap attempts x ranks) in the assignment's swap refinement */
 
 /*! Raise the particle capacity to what the coming epoch is expected to need, at the one point in a step
  *  where it may move: the tree has just been freed and will be rebuilt from the new value, and the active
@@ -330,6 +331,21 @@ void domain_init_timebin_costs(void)
     }
 }
 #endif /* DOMAIN_TIMEBINS == 1 */
+
+/*! Peano segments per rank for a decomposition of totpart particles: MULTIPLEDOMAINS, or, with
+ *  DOMAIN_TARGET_PARTICLES_PER_SEGMENT, chosen from the particle load and bounded by MULTIPLEDOMAINS (constants.h).
+ *  More segments let the assignment spread dense regions over more ranks; each costs top-tree refinement, one
+ *  pseudo-particle Allgatherv per tree build, and swap-refinement work, which dominate when segments are small. */
+static int domain_segments_per_task(long long totpart)
+{
+#ifdef DOMAIN_TARGET_PARTICLES_PER_SEGMENT
+    int n = (int) ((double) totpart / ((double) NTask * (double) DOMAIN_TARGET_PARTICLES_PER_SEGMENT) + 0.5);
+    n = IMAX(n, IMIN(DOMAIN_MIN_SEGMENTS_PER_TASK, MULTIPLEDOMAINS));
+    return IMIN(n, MULTIPLEDOMAINS);
+#else
+    return MULTIPLEDOMAINS;
+#endif
+}
 
 /*! This is the main routine for the domain decomposition.  It acts as a driver routine that allocates various temporary buffers, maps the
  *  particles back onto the periodic box if needed, and then does the domain decomposition, and a final Peano-Hilbert order of all particles as a tuning measure. */
@@ -610,7 +626,7 @@ void domain_Decomposition_light(int UseAllTimeBins)
     TreeDiscardImminent = 0;
     TreeOpsCount[TREEOPS_DECOMP_LIGHT]++;
 
-    int multipledomains = MULTIPLEDOMAINS;
+    int multipledomains = DomainSegmentsPerTask; /* the standing top tree was refined for this count */
 
     /* recompute keys for particles that may have drifted across cell boundaries */
     Key = PersistentKey; /* reuse persistent key storage directly */
@@ -782,7 +798,7 @@ void domain_free(void)
 }
 
 static struct topnode_data *save_TopNodes;
-static int *save_DomainStartList, *save_DomainEndList;
+static int *save_DomainStartList, *save_DomainEndList, save_DomainSegmentsPerTask;
 
 void domain_free_trick(void)
 {
@@ -791,6 +807,7 @@ void domain_free_trick(void)
       save_TopNodes = TopNodes;
       save_DomainEndList = DomainEndList;
       save_DomainStartList = DomainStartList;
+      save_DomainSegmentsPerTask = DomainSegmentsPerTask;
       domain_allocated_flag = 0;
     }
   else
@@ -803,6 +820,7 @@ void domain_allocate_trick(void)
   TopNodes = save_TopNodes;
   DomainEndList = save_DomainEndList;
   DomainStartList = save_DomainStartList;
+  DomainSegmentsPerTask = save_DomainSegmentsPerTask;
 }
 
 
@@ -919,7 +937,7 @@ int domain_decompose(void)
 {
     int i, no, status;
     long long sumtogo, sumload, sumloadgas;
-    int maxload, maxloadgas, multipledomains = MULTIPLEDOMAINS;
+    int maxload, maxloadgas, multipledomains;
     double sumwork, maxwork, sumworkgas, maxworkgas;
 
     for(i = 0; i < 6; i++) {NtypeLocal[i] = 0;}
@@ -947,6 +965,11 @@ int domain_decompose(void)
     sumup_large_ints(6, NtypeLocal, Ntype);
 
     for(i = 0, totpartcount = 0; i < 6; i++) {totpartcount += Ntype[i];}
+
+    multipledomains = domain_segments_per_task(totpartcount); /* before the top tree: its leaf limits scale with it */
+    if(multipledomains != DomainSegmentsPerTask && ThisTask == 0)
+        {printf("Domain segments per rank: %d -> %d (%lld particles over %d ranks)\n", DomainSegmentsPerTask, multipledomains, totpartcount, NTask);}
+    DomainSegmentsPerTask = multipledomains;
 
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
@@ -1847,7 +1870,12 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
   {
       int nswaps_accepted = 0;
       int n_segments = multipledomains * NTask;
-      int max_iterations = 200 * n_segments; /* scale attempts with problem size */
+      /* Attempts scale with the segment count, and each one evaluates the max over all ranks (replicated on every
+         rank), so the cost grows as segments x ranks^2: ~1 ns per attempt per rank on Zen 4, i.e. 0.1 s per
+         decomposition at 96 ranks x 64 segments and 1 s at 768 x 8. The cap holds it near 20 ms; on M2e4 at 48
+         ranks the search accepted 2-8 swaps out of 6e5 attempts. */
+      int max_iterations = 200 * n_segments;
+      if((double) max_iterations * NTask > DOMAIN_SWAP_REFINEMENT_BUDGET) {max_iterations = (int) (DOMAIN_SWAP_REFINEMENT_BUDGET / NTask);}
       unsigned int seed = 42 + NTask; /* deterministic seed for reproducibility */
 
       /* compute current max imbalance */
@@ -2487,7 +2515,7 @@ int domain_determineTopTree(void)
   struct local_topnode_data *topNodes_import, *topNodes_temp;
   double costlimit, countlimit;
   MPI_Status status;
-  int multipledomains = MULTIPLEDOMAINS;
+  int multipledomains = DomainSegmentsPerTask;
 
   mp = (struct peano_hilbert_data *) mymalloc("mp", sizeof(struct peano_hilbert_data) * NumPart);
 
