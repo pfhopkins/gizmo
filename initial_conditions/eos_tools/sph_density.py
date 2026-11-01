@@ -38,15 +38,25 @@ def _W_cubic(q):
     return _CUBIC_SPLINE_NORM_3D * out
 
 
-def estimate_sph_density(coords, masses, des_num_ngb=32, n_candidates=None, rtol=1e-8):
+def estimate_sph_density(coords, masses, des_num_ngb=32, n_candidates=None, rtol=1e-8, block=200000):
     """GIZMO's meshless kernel density at each particle (cubic spline). Returns rho [g/cm^3] and h.
 
     For each particle the n_candidates nearest neighbours (default 4 DesNumNgb, enough for a free-surface
     particle whose kernel is half empty) bound the search; h is bisected on the monotone weighted neighbour
-    number until it matches DesNumNgb to rtol."""
+    number until it matches DesNumNgb to rtol. Particles are processed in blocks of `block`, so the memory
+    is bounded (the neighbour distances of one block) whatever the particle number."""
     coords = np.asarray(coords, float); masses = np.asarray(masses, float); n = len(coords)
     k = min(n, int(n_candidates if n_candidates else 4 * des_num_ngb))
-    d, _ = cKDTree(coords).query(coords, k=k)
+    tree = cKDTree(coords)
+    rho, h = np.empty(n), np.empty(n)
+    for i0 in range(0, n, block):
+        s = slice(i0, min(n, i0 + block))
+        rho[s], h[s] = _kernel_density_block(tree.query(coords[s], k=k)[0], masses[s], des_num_ngb, k, rtol)
+    return rho, h
+
+
+def _kernel_density_block(d, masses, des_num_ngb, k, rtol):
+    """estimate_sph_density for one block of particles, given their sorted neighbour distances d"""
     def n_ngb(h):
         return (4.0 * np.pi / 3.0) * (_W_cubic(d / h[:, None]).sum(1))
     lo = np.maximum(d[:, 1], 1e-300); hi = d[:, -1].copy()
@@ -74,7 +84,26 @@ def _material_branch_profile(r, prof, zone_of_particle, key):
     return out
 
 
-def calibrate_u(coords, masses, comp, rho, prof, zones, verbose=True):
+def _calibrate_u_table_block(tbl, s, rho, P_hse, T_prof, u, T, noroot):
+    """calibrate_u for the particles s of one tabulated material: writes u[s], T[s] and noroot[s]"""
+    lT = tbl.logT
+    D = tbl.pressure_v(np.repeat(rho[s], lT.size), np.tile(10 ** lT, s.size)).reshape(s.size, lT.size) - P_hse[s, None]
+    i_rho, _ = tbl._locate_v(tbl.logrho, np.log10(rho[s]))
+    valid = lT[None, :] >= tbl.logT_floor(i_rho)[:, None]                      # rows inside the valid region
+    sc = (np.signbit(D[:, :-1]) != np.signbit(D[:, 1:])) & valid[:, :-1]       # brackets [lT_j, lT_j+1]
+    dist = np.abs(0.5 * (lT[:-1] + lT[1:])[None, :] - np.log10(T_prof[s])[:, None])
+    dist = np.where(sc, dist, np.inf); jb = np.argmin(dist, 1); ok = np.isfinite(dist[np.arange(s.size), jb])
+    lo, hi = lT[jb].copy(), lT[jb + 1].copy()
+    if (~ok).any():  # no reachable target: the closest valid pressure on the axis
+        jbest = np.argmin(np.where(valid[~ok], np.abs(D[~ok]), np.inf), 1); lo[~ok] = hi[~ok] = lT[jbest]
+    for _ in range(60):
+        mid = 0.5 * (lo + hi)
+        same = np.signbit(tbl.pressure_v(rho[s], 10 ** mid) - P_hse[s]) == np.signbit(tbl.pressure_v(rho[s], 10 ** lo) - P_hse[s])
+        lo = np.where(same & ok, mid, lo); hi = np.where(~same & ok, mid, hi)
+    T[s] = 10 ** (0.5 * (lo + hi)); u[s] = tbl.internal_energy_v(rho[s], T[s]); noroot[s] = ~ok
+
+
+def calibrate_u(coords, masses, comp, rho, prof, zones, verbose=True, block=50000):
     """u per particle so that EOS(rho_i, u_i) = P_HSE(r_i) at the given densities (GIZMO's).
 
     Tabulated (SESAME) materials: P(rho_i, T) - P_HSE is scanned on the table's own T axis, within its valid
@@ -93,22 +122,9 @@ def calibrate_u(coords, masses, comp, rho, prof, zones, verbose=True):
         s = np.where(zone_of == iz)[0]
         if s.size == 0: continue
         mat = z.material
-        if mat.kind == "sesame":
-            tbl = mat._backend; lT = tbl.logT
-            D = tbl.pressure_v(np.repeat(rho[s], lT.size), np.tile(10 ** lT, s.size)).reshape(s.size, lT.size) - P_hse[s, None]
-            i_rho, _ = tbl._locate_v(tbl.logrho, np.log10(rho[s]))
-            valid = lT[None, :] >= tbl.logT_floor(i_rho)[:, None]                      # rows inside the valid region
-            sc = (np.signbit(D[:, :-1]) != np.signbit(D[:, 1:])) & valid[:, :-1]       # brackets [lT_j, lT_j+1]
-            dist = np.abs(0.5 * (lT[:-1] + lT[1:])[None, :] - np.log10(T_prof[s])[:, None])
-            dist = np.where(sc, dist, np.inf); jb = np.argmin(dist, 1); ok = np.isfinite(dist[np.arange(s.size), jb])
-            lo, hi = lT[jb].copy(), lT[jb + 1].copy()
-            if (~ok).any():  # no reachable target: the closest valid pressure on the axis
-                jbest = np.argmin(np.where(valid[~ok], np.abs(D[~ok]), np.inf), 1); lo[~ok] = hi[~ok] = lT[jbest]
-            for _ in range(60):
-                mid = 0.5 * (lo + hi)
-                same = np.signbit(tbl.pressure_v(rho[s], 10 ** mid) - P_hse[s]) == np.signbit(tbl.pressure_v(rho[s], 10 ** lo) - P_hse[s])
-                lo = np.where(same & ok, mid, lo); hi = np.where(~same & ok, mid, hi)
-            T[s] = 10 ** (0.5 * (lo + hi)); u[s] = tbl.internal_energy_v(rho[s], T[s]); noroot[s] = ~ok
+        if mat.kind == "sesame":   # in blocks: the scan holds one (particles x table T axis) array per block
+            for i0 in range(0, s.size, block):
+                _calibrate_u_table_block(mat._backend, s[i0:i0 + block], rho, P_hse, T_prof, u, T, noroot)
         else:
             for i in s:
                 llo, lhi = 0.0, 16.0   # log10 u [erg/g]
