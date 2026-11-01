@@ -401,9 +401,7 @@ void star_formation_parent_routine(void)
     int i, bin, flag, stars_spawned, stars_converted, number_of_stars_generated;
     long long tot_spawned, tot_converted;   /* summed over ranks */
     unsigned int bits; double dtime, mass_of_star, p, prob, rate_in_msunperyear, sfrrate, totsfrrate, sum_sm, total_sm, sm=0, rate, sum_mass_stars, total_sum_mass_stars;
-#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    int num_sink_formed=0, tot_sink_formed=0;
-#endif
+    int num_sink_formed=0, tot_sink_formed=0;   /* zero in builds that cannot form sinks; counted with the stars below */
     for(bin = 0; bin < TIMEBINS; bin++) {if(TimeBinActive[bin]) {TimeBinSfr[bin] = 0;}}
     stars_spawned = stars_converted = 0; sum_sm = sum_mass_stars = 0;
     for(bits = 0; GALSF_GENERATIONS > (1 << bits); bits++);
