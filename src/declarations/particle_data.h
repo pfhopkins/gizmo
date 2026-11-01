@@ -172,6 +172,11 @@ extern ALIGN(32) struct particle_data
      * affect only the ice species). Sum is 1 by construction; refractory subset
      * is composition[0..GRAIN_NUM_REFRACTORY_SPECIES-1], ice subset is the remainder. */
     MyFloat Composition[GRAIN_NUM_SPECIES];
+#if (GRAIN_EVOLUTION & 1)
+    /* Claim token (gizmo_claim_token) of the grain that will absorb this one in the current
+     * adaptive-softening force pass, which writes it and clears it again; 0 at all other times. */
+    MyIDType Grain_CoagClaim;
+#endif
 #if (GRAIN_EVOLUTION & (32|64))
     /* Kernel-weighted local gas-phase volatile mass fractions, populated by the
      * density loop (mirrors Gas_Temperature). Read by the condensation/

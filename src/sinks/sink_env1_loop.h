@@ -76,7 +76,7 @@ struct SinkEnv1ActiveState {
     Vec3<double>  pos;                  /* P[i].Pos */
     Vec3<double>  vel;                  /* P[i].Vel */
     MyIDType      id;                   /* P[i].ID — physics identity, not a self-skip */
-    MyIDType      claim_token;          /* sink ownership token; see gizmo_sink_claim_token */
+    MyIDType      claim_token;          /* sink ownership token; see gizmo_claim_token */
     double        h_search;             /* per-active radius */
     double        ags_h;                /* AGS_KernelRadius if defined, else sink_radius_grav */
 #if defined(SINK_GRAVCAPTURE_GAS) || (SINK_GRAVACCRETION == 8)
@@ -413,7 +413,7 @@ struct SinkEnv1Spec {
         /* The rank comes from the per-call scalar, not from the global: this body is compiled into
          * the device kernel, where a host global has no value.  populate_call_scalars runs on the
          * rank whose local particles this call loads, so the scalar IS that owner's rank. */
-        active.claim_token = gizmo_sink_claim_token(scalars.owner_task, i);
+        active.claim_token = gizmo_claim_token(scalars.owner_task, i);
         active.h_search = h_search;
 #if (ADAPTIVE_GRAVSOFT_FORALL & 32)
         active.ags_h    = (double)ctx.P[i].AGS_KernelRadius;

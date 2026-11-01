@@ -6,8 +6,11 @@
  *       grain_evolution_resolve_pairwise(...)
  *           - called from inside the GRAIN_COLLISIONS pair kernel after a
  *             scatter is resolved, picks coag/frag/shat branch by |dv|, mass
- *             ratio and species thresholds, mutates Mass+Grain_Size+Composition
- *             on both super-particles atomically.
+ *             ratio and species thresholds. Frag/shat shrink both grains at
+ *             once; coag only claims the neighbour for absorption.
+ *       grain_evolution_consume_claimed(...)
+ *           - the second adaptive-softening force pass: an absorber takes the
+ *             neighbours whose claim it won, and clears those claims.
  *
  *   local operators (bits 3|4|5|6 = THERM_SPUT|NTHERM_SPUT|COND|SUBL):
  *       grain_evolution_local_step(...)
@@ -64,14 +67,17 @@ int grain_evolution_composition_index_to_outcome_kind(int s)
 /* Pairwise outcome resolver: decides COAG / FRAG / SHAT based on |dv| vs
  * per-species thresholds, given that a collision has fired (the SIDM
  * scatter prob-gate already handled "did a collision happen"). Mutates
- * the local-side accumulators on out (gathered to P[ii] in the host
- * post-pass in gravity/ags_rkern.cc) and atomically mutates P[j].
+ * the local-side accumulators on out (applied to P[i] by
+ * AgsForceSpec::apply_active_writeback); frag/shat shrink P[j].Grain_Size
+ * atomically, coag only writes a claim on P[j].
  *
- * Per-pair routing: SIDM dedup ensures only the lower-ID side processes
- * each pair (sidm_core_flux_functions.h:62), so "local" is the actor.
- * COAG outcome convention: local always absorbs j (mass-conservative;
- * statistical bias toward lower-ID-as-absorber is harmless for stochastic
- * coagulation). FRAG/SHAT: both local and j shrink; symmetric.
+ * Per-pair routing: the SIDM pair dedup has exactly one side of each pair
+ * evaluate it (sidm_core_flux_functions.h), so "local" is the actor.
+ * COAG outcome convention: local claims j for absorption (atomic max of its
+ * claim token; one winner per j across all ranks once the claims are merged
+ * home). The mass moves in the second pass (grain_evolution_consume_claimed),
+ * so no grain is absorbed twice and none both absorbs and is absorbed.
+ * FRAG/SHAT: both local and j shrink; symmetric.
  *
  * Thresholds: v_coag from grain_outcomes_v_coag_dominik(); v_shat from
  * grain_outcomes_elastic_props(). Uses silicate elastic props as the
@@ -101,24 +107,12 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
     if(All.GrainEvolution_VelThreshFrag > 0) { v_stick = DMIN(All.GrainEvolution_VelThreshFrag * UNIT_VEL_IN_CGS, v_shat); }
 
 #if (GRAIN_EVOLUTION & 1)
-    /* Bit 0 COAG: low-velocity collision -> stick. Local absorbs j fully.
-     * Mass conservation between the pair: M_local += M_j, M_j -> 0.
-     * Composition mixing: per-species mass accumulator on out so the
-     * host-side post-pass can do the mass-fraction renormalization with
-     * full multi-source visibility (multiple j-neighbors of the same i
-     * may all be absorbed in one step). */
+    /* Bit 0 COAG: low-velocity collision -> stick. Local claims j; the largest
+     * claim token wins j (MAX-merged home across ranks), and the winner absorbs
+     * it in the consume pass. Counting the claim keeps local in that pass. */
     if(dv_mag < v_stick) {
-        double M_j = (double)P[j].Mass;
-        if(M_j <= 0) { return; }
-        out.Grain_DeltaCoagMass += M_j;
-        for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
-            out.Grain_DeltaCoag_CompositionMass[s] += M_j * (double)P[j].Composition[s];
-        }
-        /* Atomically zero out j -- it is now fully absorbed. The grain
-         * super-particle persists in the array but is inert
-         * (Mass = 0 short-circuits all GRAIN_FLUID code paths). */
-        Kokkos::atomic_store(&P[j].Mass,       (MyDouble)0.0);
-        Kokkos::atomic_store(&P[j].Grain_Size, (MyFloat)0.0);
+        Kokkos::atomic_max(&P[j].Grain_CoagClaim, local.coag_token);
+        out.Grain_CoagClaims += 1;
         return;
     }
 #endif
@@ -192,6 +186,36 @@ void grain_evolution_resolve_pairwise(const LocalT &local, int j, struct particl
 #endif
     (void)dv_mag; (void)ep; (void)v_stick; (void)v_shat;
 }
+
+#if (GRAIN_EVOLUTION & 1)
+/* Consume pass of coagulation: the absorber `local` visits every neighbour, and
+ * acts only on those whose merged claim names it. If local was itself claimed
+ * (local.coag_blocked, read before any pair of this pass runs) it absorbs
+ * nothing, so no grain both absorbs and is absorbed; its targets survive. The
+ * claim is cleared either way, which is what returns every claim to 0 by the
+ * end of the force pass. Composition mixing: per-species mass accumulator on
+ * out so the host-side post-pass renormalizes with every absorbed neighbour. */
+template <typename LocalT, typename OutT>
+KOKKOS_INLINE_FUNCTION
+void grain_evolution_consume_claimed(const LocalT &local, struct particle_data &Pj, OutT &out)
+{
+    if(Kokkos::atomic_load(&Pj.Grain_CoagClaim) != local.coag_token) { return; }
+    if(!local.coag_blocked) {
+        double M_j = (double)Pj.Mass;
+        if(M_j > 0) {
+            out.Grain_DeltaCoagMass += M_j;
+            for(int s = 0; s < GRAIN_NUM_SPECIES; s++) {
+                out.Grain_DeltaCoag_CompositionMass[s] += M_j * (double)Pj.Composition[s];
+            }
+            /* j is now fully absorbed: the super-particle persists in the array
+             * but is inert (Mass = 0 short-circuits all GRAIN_FLUID code paths). */
+            Kokkos::atomic_store(&Pj.Mass,       (MyDouble)0.0);
+            Kokkos::atomic_store(&Pj.Grain_Size, (MyFloat)0.0);
+        }
+    }
+    Kokkos::atomic_store(&Pj.Grain_CoagClaim, (MyIDType)0);
+}
+#endif
 #endif
 
 #if (GRAIN_EVOLUTION & (8|16))
