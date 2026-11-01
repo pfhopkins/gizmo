@@ -59,7 +59,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     gr_float tiny = 1.0e-20;
 
     // Atomic
-    ne_density    = density * ne_guess;
+    ne_density    = density * HYDROGEN_MASSFRAC * ne_guess; /* grackle's electron density is n_e*m_H; ne_guess is per hydrogen nucleus, as read back below */
 
     HI_density    = density * CellP[target].grHI;  //initialized with HYDROGEN_MASSFRAC
     HII_density   = density * CellP[target].grHII;

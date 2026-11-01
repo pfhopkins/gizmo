@@ -855,13 +855,16 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         double r=u/u_old; if(r>1) {r=1/r;} if(fabs(r-1)>1.e-4) {r=(r-1)/log(r);} r=DMAX(0,DMIN(r,1));
         du *= 0.5*r; if(du<-0.5*u) {du=-0.5*u;} u+=du;
     }
-#else
-    /* with full operator splitting we just call grackle normally. note this is usually fine,
-     but can lead to artificial noise at high densities and low temperatures, especially if something
-     like artificial pressure (but not temperature) floors are used such that the temperature gets
+    else
+#endif
+    {
+    /* with full operator splitting (or when the kick has already applied this step's hydro work) we just call grackle
+     normally. note this is usually fine, but can lead to artificial noise at high densities and low temperatures, especially
+     if something like artificial pressure (but not temperature) floors are used such that the temperature gets
      'contaminated' by the pressure terms */
     u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
-#endif
+    }
+    if(ne_eval) {*ne_eval = cell[target].Ne;} /* the electron abundance grackle just solved, which CallGrackle saved; the caller stores what comes back here */
     return DMAX(u,All.MinEgySpec);
 #endif
 
