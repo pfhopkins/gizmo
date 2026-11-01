@@ -137,10 +137,8 @@ void refresh_old_acceleration_for_tree_opening(void)
 void gravity_tree(void)
 {
     /* initialize variables */
-    long long n_exported = 0; int i, j, maxnumnodes, iter; i = 0; j = 0; iter = 0; maxnumnodes=0;
-    double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timetree, timewait, timecomm;
-    double timecommsumm1 = 0, timecommsumm2 = 0, timewait1 = 0, timewait2 = 0, sum_costtotal, ewaldtot;
-    double maxt, sumt, maxt1, sumt1, maxt2, sumt2, sumcommall, sumwaitall, plb, plb_max;
+    int i, j, iter; i = 0; j = 0; iter = 0;
+    double t0, t1, timeall = 0, timetree1 = 0, timetree2 = 0, timewait2 = 0;
     CPU_Step[CPU_MISC] += measure_time();
 
     /* set new softening lengths */
@@ -780,43 +778,23 @@ gravity_walk_attempt:
 
     /* Now the force computation is finished: gather timing and diagnostic information */
     t1 = my_second(); cpu_chain_sync(t1); timeall = cpu_minus_children(timediff(t0, t1), child0_span);
-    timetree = timetree1 + timetree2; timewait = timewait1 + timewait2; timecomm = timecommsumm1 + timecommsumm2;
-    MPI_Reduce(&timetree, &sumt, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree, &maxt, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree1, &sumt1, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree1, &maxt1, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree2, &sumt2, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timetree2, &maxt2, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timewait, &sumwaitall, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&timecomm, &sumcommall, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    /* The interaction total the walks recorded into GravWork rides the same reduction as Costtotal, for
-     * the consistency check below, so it adds no collective to the call. */
-    double sum_costtotal_new = 0;
-    {
-        double costtotal_pair[2] = {Costtotal, 0}, sum_costtotal_pair[2] = {0, 0};
-#ifndef SELFGRAVITY_OFF
-        for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {costtotal_pair[1] += (double) P[ActiveParticleList[ii]].GravWork - (double) grav_work_at_call_start[ii];}
-#endif
-        MPI_Reduce(costtotal_pair, sum_costtotal_pair, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-        sum_costtotal = sum_costtotal_pair[0]; sum_costtotal_new = sum_costtotal_pair[1];
-    }
-    MPI_Reduce(&Ewaldcount, &ewaldtot, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    sumup_longs(1, &n_exported, &n_exported);
-    sumup_longs(1, &N_nodesinlist, &N_nodesinlist);
     All.TotNumOfForces += GlobNumForceUpdate;
-    plb = (NumPart / ((double) All.TotNumPart)) * NTask;
-    MPI_Reduce(&plb, &plb_max, 1, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    /* The span from the end of the build to t1 is the force walk.  Only the
+     * wait is separately measured inside it, so the walk row is the rest of the
+     * span; charging the remainder to `misc` instead reported the whole walk as
+     * unattributed. */
+    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
+    CPU_Step[CPU_TREEWAIT2] += timewait2;
+#ifdef OUTPUT_ADDITIONAL_RUNINFO
+    /* Everything below feeds only rank 0's timings report, so it is reduced to rank 0, only in builds that
+     * write the report, and in one reduction per operation and type. */
     /* Packets the device engine gave up on this call, by reason, summed over ranks and also taken
      * at its worst rank: a budget cliff is a property of the rank with the divergent subtree, and
-     * a sum over ranks alone would average it away.  Collective, so it sits with the other
-     * reductions rather than inside the rank-0 report below. */
-    /* The two stamped recorders' fail-safe totals ride in the same two reductions rather than
-     * adding their own: the node claims answered before each device walk, and the touched set of
-     * the Mode-D fused walk.  Each exists so that a permanent silent revert -- to sweeping every
-     * node, or to drifting every particle -- is visible rather than indistinguishable from the
-     * optimisation working, and nothing read either of them; but observability may not charge the
-     * path it is watching, and this call already carries collectives.  Three extra words on an
-     * existing reduction is free; two more reductions per gravity call would not be. */
+     * a sum over ranks alone would average it away. */
+    /* The two stamped recorders' fail-safe totals: the node claims answered before each device walk,
+     * and the touched set of the Mode-D fused walk.  Each exists so that a permanent silent revert --
+     * to sweeping every node, or to drifting every particle -- is visible rather than
+     * indistinguishable from the optimisation working. */
     /* Scoped, not #define: a macro here would be translation-unit-wide despite sitting in a
        function. */
     constexpr int recorder_slots = 3;
@@ -827,9 +805,12 @@ gravity_walk_attempt:
        unreadable rather than negative. */
     constexpr int mode_slots     = 4;   /* flat, packet, cooperative, flat walk that could not run as teams */
     constexpr int report_slots   = GRAV_PACKET_FAIL_REASON_SLOTS + recorder_slots + mode_slots;
-    long long packet_fail[report_slots] = {0};
-    long long packet_fail_sum[report_slots] = {0};
-    long long packet_fail_max[report_slots] = {0};
+    /* the integer report: packet counts, then the export and node-list counts (summed) and the tree's node count (maximum) */
+    constexpr int slot_exported = report_slots, slot_nodesinlist = report_slots + 1, slot_numnodes = report_slots + 2;
+    constexpr int int_slots = report_slots + 3;
+    long long packet_fail[int_slots] = {0};
+    long long packet_fail_sum[int_slots] = {0};
+    long long packet_fail_max[int_slots] = {0};
     gpu_gravtree_packet_failures(packet_fail, GRAV_PACKET_FAIL_REASON_SLOTS);
     packet_fail[GRAV_PACKET_FAIL_REASON_SLOTS + 0] = gpu_node_dirty_unsafe_events();
     packet_fail[GRAV_PACKET_FAIL_REASON_SLOTS + 1] = gx_touched_set_refused_epochs();
@@ -842,21 +823,30 @@ gravity_walk_attempt:
         else if(ps_local.mode == GRAV_PACKET_MODE_COOPERATIVE) {packet_fail[mode_base + 2] = 1;}
         if(ps_local.mode == GRAV_PACKET_MODE_FLAT && ps_local.team == 0 && ps_local.team_max >= 0) {packet_fail[mode_base + 3] = 1;}
     }
-    MPI_Reduce(packet_fail, packet_fail_sum, report_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(packet_fail, packet_fail_max, report_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&Numnodestree, &maxnumnodes, 1, MPI_INT, MPI_MAX, 0, MPI_COMM_WORLD);
-    /* The span from the end of the build to here is the force walk.  Only the
-     * wait is separately measured inside it, so the walk row is the rest of the
-     * span; charging the remainder to `misc` instead reported the whole walk as
-     * unattributed.  The send/recv and second-walk timers this routine used to
-     * split out have no writer any more and are not charged. */
-    CPU_Step[CPU_TREEWALK1] += timeall - timewait2;
-    CPU_Step[CPU_TREEWAIT2] += timewait2;
-#ifdef OUTPUT_ADDITIONAL_RUNINFO
+    packet_fail[slot_exported] = 0;   /* no export round-trip remains to count */
+    packet_fail[slot_nodesinlist] = N_nodesinlist;
+    packet_fail[slot_numnodes] = Numnodestree;
+    MPI_Reduce(packet_fail, packet_fail_sum, int_slots, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(packet_fail, packet_fail_max, int_slots, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+    const long long n_exported = packet_fail_sum[slot_exported], nodesinlist_tot = packet_fail_sum[slot_nodesinlist];
+    const int maxnumnodes = (int) packet_fail_max[slot_numnodes];
+    /* The real-valued report, one sum and one maximum. The interaction total the walks recorded into GravWork
+     * is summed beside Costtotal for the consistency check below. */
+    double gravwork_new = 0;
+#ifndef SELFGRAVITY_OFF
+    for(size_t ii = 0; ii < ActiveParticleList.size(); ii++) {gravwork_new += (double) P[ActiveParticleList[ii]].GravWork - (double) grav_work_at_call_start[ii];}
+#endif
+    const double timetree = timetree1 + timetree2, plb = (NumPart / ((double) All.TotNumPart)) * NTask;
+    double sum_local[6] = {timetree, timetree1, timetree2, Costtotal, gravwork_new, Ewaldcount}, sum_tot[6] = {0};
+    double max_local[4] = {timetree, timetree1, timetree2, plb}, max_tot[4] = {0};
+    MPI_Reduce(sum_local, sum_tot, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(max_local, max_tot, 4, MPI_DOUBLE, MPI_MAX, 0, MPI_COMM_WORLD);
+    const double sumt = sum_tot[0], sumt1 = sum_tot[1], sumt2 = sum_tot[2], sum_costtotal = sum_tot[3], sum_costtotal_new = sum_tot[4], ewaldtot = sum_tot[5];
+    const double maxt = max_tot[0], maxt1 = max_tot[1], maxt2 = max_tot[2], plb_max = max_tot[3];
     if(ThisTask == 0)
     {
         fprintf(FdTimings, "Step= %lld  t= %.16g  dt= %.16g \n",(long long) All.NumCurrentTiStep, All.Time, All.TimeStep);
-        fprintf(FdTimings, "Nf= %d%09d  total-Nf= %d%09d  ex-frac= %g (%g) iter= %d\n", (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000), (int) (All.TotNumOfForces / 1000000000), (int) (All.TotNumOfForces % 1000000000), n_exported / ((double) GlobNumForceUpdate), N_nodesinlist / ((double) n_exported + 1.0e-10), iter); /* note: on Linux, the 8-byte integer could be printed with the format identifier "%qd", but doesn't work on AIX */
+        fprintf(FdTimings, "Nf= %d%09d  total-Nf= %d%09d  ex-frac= %g (%g) iter= %d\n", (int) (GlobNumForceUpdate / 1000000000), (int) (GlobNumForceUpdate % 1000000000), (int) (All.TotNumOfForces / 1000000000), (int) (All.TotNumOfForces % 1000000000), n_exported / ((double) GlobNumForceUpdate), nodesinlist_tot / ((double) n_exported + 1.0e-10), iter); /* note: on Linux, the 8-byte integer could be printed with the format identifier "%qd", but doesn't work on AIX */
         fprintf(FdTimings, "work-load balance: %g (%g %g) rel1to2=%g   max=%g avg=%g\n", maxt / (1.0e-6 + sumt / NTask), maxt1 / (1.0e-6 + sumt1 / NTask), maxt2 / (1.0e-6 + sumt2 / NTask), sumt1 / (1.0e-6 + sumt1 + sumt2), maxt, sumt / NTask);
         fprintf(FdTimings, "particle-load balance: %g\n", plb_max);
         fprintf(FdTimings, "max. nodes: %d, filled: %g\n", maxnumnodes, maxnumnodes / ((double) MaxNodes));
