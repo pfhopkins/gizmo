@@ -1226,6 +1226,9 @@ int merge_particles_ij(int i, int j)
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     CellP[j].MaxKineticEnergyNgb = DMAX(CellP[j].MaxKineticEnergyNgb,CellP[i].MaxKineticEnergyNgb); /* for the entropy/energy switch condition */
 #endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    if(CellP[i].ElasticImpedanceNeighbour) {CellP[j].ElasticImpedanceNeighbour = 1;} /* the merged cell covers both volumes: keep the timestep cap if either was beside a solid */
+#endif
 
     // below, we need to take care of additional physics //
 #if defined(RADTRANSFER)

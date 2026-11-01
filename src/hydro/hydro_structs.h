@@ -238,6 +238,9 @@ struct hydro_data_out
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyFloat MaxKineticEnergyNgb;
 #endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    signed char ElasticImpedanceNeighbour; /*!< 1 if any of the cell's pairs is within the scope of the elastic face impedance dissipation */
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
     MyDouble DtMass;
     MyDouble dMass;

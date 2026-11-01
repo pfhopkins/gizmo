@@ -186,6 +186,9 @@ extern struct gas_cell_data
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     MyDouble MaxKineticEnergyNgb;   /*!< maximum kinetic energy (with respect to neighbors): use for entropy 'switch' */
 #endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    signed char ElasticImpedanceNeighbour; /*!< 1 if the last hydro force evaluation found a pair within the scope of the elastic face impedance dissipation (a gas cell next to a solid): its timestep is then capped like a solid's */
+#endif
     
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     MyFloat Dyield[NUM_METAL_SPECIES];

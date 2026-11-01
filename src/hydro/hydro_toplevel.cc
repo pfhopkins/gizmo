@@ -473,6 +473,9 @@ void hydro_force_initial_operations_preloop(void)
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
             CellP[i].DtMass = 0; CellP[i].dMass = 0; CellP[i].GravWorkTerm = {};
 #endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+            CellP[i].ElasticImpedanceNeighbour = 0; /* set again by this force evaluation; an inactive cell keeps its value */
+#endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
             for(k=0;k<NUM_METAL_SPECIES;k++) {CellP[i].Dyield[k] = 0;}
 #endif

@@ -230,10 +230,10 @@
 #define  RECENT_YIELD_MEMORY_SOUND_CROSSINGS    10.0 /*!< elastic solids: the recent-yield memory decays on this many sound-crossing times of the cell's kernel radius */
 #define  ELASTIC_IMPEDANCE_COURANT_MAX  0.2 /*!< elastic solids: largest hydro Courant factor (timestep.cc). The face impedance dissipation (solids/elastic_stress_tensor_force_functions.h)
                                               is explicit, and on periodic uniform solids it overshoots, growing an odd-even velocity mode, from dt c/L ~0.27-0.30 (cubic spline, 32 neighbours)
-                                              and 0.30-0.35 (Wendland C2, 64-125), ordered or disordered, in 2D and 3D: below the default CourantFac of 0.4. 0.2 leaves a margin of 1.35-1.5
-                                              in every case measured (an empirical bound: the operator alone, by a Gershgorin bound, would allow ~0.4). It applies to every cell of an
-                                              EOS_ELASTIC build, since the dissipation also acts on strengthless materials, and so also to the gas of a gas+solid build (only gas next to
-                                              solids needs it: a deliberate over-scope, for simplicity) */
+                                              and 0.30-0.35 (Wendland C2, 64-125; and SPH, cubic spline, 32), ordered or disordered, in 2D and 3D: below the default CourantFac of 0.4. 0.2 leaves a margin of 1.35-1.5
+                                              in every case measured (an empirical bound: the operator alone, by a Gershgorin bound, would allow ~0.4). It applies to every cell the
+                                              dissipation acts on: every cell of an EOS_ELASTIC build (strengthless materials included), but in a gas+solid build only the solids and the
+                                              gas next to them (cell_data.h ElasticImpedanceNeighbour) */
 #endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */

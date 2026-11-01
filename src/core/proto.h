@@ -263,6 +263,11 @@ GIZMO_GPU_FUNCTION static inline double molecular_weight_estimator_for_gas_aroun
     return 1. / DMAX(0.1, 0.80125 + f_i - 0.37 * f_mol);
 #endif
 }
+/* the squared thermal sound speed of the gas around a grain, from its carried temperature and ionized fraction */
+GIZMO_GPU_FUNCTION static inline double gas_soundspeed2_around_grain(double gas_temperature, double f_ion)
+{
+    return GAMMA_DEFAULT * gas_temperature / (molecular_weight_estimator_for_gas_around_grain(gas_temperature, f_ion) * U_TO_TEMP_UNITS);
+}
 
 static inline double c_light_code_reduced(int k_freq, struct particle_data *pp, struct gas_cell_data *cell) {
 #if defined(RT_FLUXLIMITER)

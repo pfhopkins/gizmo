@@ -608,8 +608,7 @@ integertime get_timestep(int p,		/*!< particle index */
     {
         /* a grain has no cell of its own, so the surrounding gas temperature and ionized fraction are carried onto
            it and the composition estimated from them */
-        csnd = GAMMA_DEFAULT * P[p].Gas_Temperature
-               / (molecular_weight_estimator_for_gas_around_grain(P[p].Gas_Temperature, P[p].Gas_fion) * U_TO_TEMP_UNITS);
+        csnd = gas_soundspeed2_around_grain(P[p].Gas_Temperature, P[p].Gas_fion);
         csnd += (P[p].Gas_Velocity - P[p].Vel).norm_sq();
 #if defined(DO_FLUID_DRAG_CALCULATION_WITHBFIELDS)
         csnd += P[p].Gas_B.norm_sq() / (2.0 * P[p].Gas_Density + MIN_REAL_NUMBER);
@@ -652,6 +651,9 @@ integertime get_timestep(int p,		/*!< particle index */
             double L_particle = P[p].Get_Particle_Size();
             double courant_fac = All.CourantFac;
 #ifdef EOS_ELASTIC
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+            if(solid_material_is_elastic(CellP[p].CompositionType) || CellP[p].ElasticImpedanceNeighbour) /* in a gas+solid build, only solids and the gas next to them carry the dissipation */
+#endif
             courant_fac = DMIN(courant_fac, ELASTIC_IMPEDANCE_COURANT_MAX); /* the solids' explicit face impedance dissipation is unstable above ~0.27 (constants.h) */
 #endif
             dt_courant = courant_fac * (L_particle*All.cf_atime) / csnd;

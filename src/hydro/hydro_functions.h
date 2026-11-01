@@ -298,9 +298,14 @@ void hydro_accumulate_neighbor(
 #endif
 
     /* ---- Physics sub-modules ---- */
-    elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, face_velocity_jump, rinv,
+    int in_impedance_scope = elastic_stress_tensor_force_compute_pair(local, P[j], CellP[j], VelPred_j, kernel, face_velocity_jump, rinv,
                                              Face_Area_Vec, Face_Area_Norm,
                                              tensile_correction_factor, dt_hydrostep, Fluxes);
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    if(in_impedance_scope) {out.ElasticImpedanceNeighbour = 1;} /* a gas cell with a solid neighbour: its timestep is capped like a solid's (timestep.cc) */
+#else
+    (void)in_impedance_scope;
+#endif
     Vec3<double> bflux_from_nonideal_effects = {};
     /* nonideal_mhd_compute_pair handles classical non-ideal MHD only
        (Ohmic / Hall / ambipolar). Battery sources are now applied as

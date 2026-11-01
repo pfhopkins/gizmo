@@ -1,7 +1,8 @@
 /* elastic_stress_tensor_force_functions.h -- per-pair elastic-stress force for
  * solids. Replaces the fragment solids/elastic_stress_tensor_force.h.
  *
- * Body guarded by EOS_ELASTIC. Pure i-accumulation into Fluxes.v / Fluxes.p.
+ * Body guarded by EOS_ELASTIC. Pure i-accumulation into Fluxes.v / Fluxes.p. Returns 1 if the pair is within the
+ * scope of the face impedance dissipation below (whether or not it puts a force on the pair this time), else 0.
  *
  * Requires allvars.h, kernel.h, hydro_structs.h, hydro_pair_types.h, and
  * system/eigen_symmetric.h (for the GPU-callable eigen_symmetric() routine).
@@ -16,7 +17,7 @@
 #include "../system/eigen_symmetric.h"
 
 KOKKOS_INLINE_FUNCTION
-void elastic_stress_tensor_force_compute_pair(
+int elastic_stress_tensor_force_compute_pair(
     const struct hydro_data_in &local,
     const struct particle_data &Pj,
     const struct gas_cell_data &CPj,
@@ -33,8 +34,8 @@ void elastic_stress_tensor_force_compute_pair(
 #ifdef EOS_ELASTIC
     (void)dt_hydrostep;  /* not used by this force */
 
-    if(!((local.Mass>0) && (Pj.Mass>0))) { return; }
-    if(!solid_material_is_elastic(local.CompositionType) && !solid_material_is_elastic(CPj.CompositionType)) { return; } /* gas-gas face of a gas+solid build */
+    if(!((local.Mass>0) && (Pj.Mass>0))) { return 0; }
+    if(!solid_material_is_elastic(local.CompositionType) && !solid_material_is_elastic(CPj.CompositionType)) { return 0; } /* gas-gas face of a gas+solid build */
 
     double FNormT = Face_Area_Norm;
     double FVec[3] = {Face_Area_Vec[0], Face_Area_Vec[1], Face_Area_Vec[2]};
@@ -151,6 +152,9 @@ void elastic_stress_tensor_force_compute_pair(
 
     for(int k=0; k<3; k++) { Fluxes.v[k] += cmag[k]; }
     Fluxes.p += cmag_E;
+    return 1;
+#else
+    return 0;
 #endif /* EOS_ELASTIC */
 }
 

@@ -322,6 +322,9 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
     if(CellP[i].MaxKineticEnergyNgb < out->MaxKineticEnergyNgb) { CellP[i].MaxKineticEnergyNgb = out->MaxKineticEnergyNgb; }
 #endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    if(out->ElasticImpedanceNeighbour) { CellP[i].ElasticImpedanceNeighbour = 1; }
+#endif
 #if defined(TURB_DIFF_METALS) || (defined(METALS) && defined(HYDRO_MESHLESS_FINITE_VOLUME))
     for(k = 0; k < NUM_METAL_SPECIES; k++) { CellP[i].Dyield[k] += out->Dyield[k]; }
 #endif

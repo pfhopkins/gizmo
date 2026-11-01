@@ -46,7 +46,6 @@ static inline void grain_promotion_init_cellp(int i)
     CellP[i].CompositionType = ct;
 
     double rho0   = All.Tillotson_EOS_params[ct][3];
-    double A_mod  = All.Tillotson_EOS_params[ct][4];
     double u_s    = All.Tillotson_EOS_params[ct][6];
 
     CellP[i].Density               = rho0;
@@ -56,9 +55,8 @@ static inline void grain_promotion_init_cellp(int i)
 #endif
     CellP[i].InternalEnergy        = 0.01 * u_s;
     CellP[i].InternalEnergyPred    = 0.01 * u_s;
-    CellP[i].Pressure              = 0.0;
-    CellP[i].SoundSpeed            = (rho0 > 0.0) ? sqrt(A_mod / rho0) : 0.0;
     CellP[i].DtInternalEnergy      = 0.0;
+    CellP[i].HydroAccel            = {};  /* no hydro force yet: its first half-step kick comes before its first force evaluation */
 
     CellP[i].Elastic_Stress_Tensor      = {};
     CellP[i].Elastic_Stress_Tensor_Pred = {};

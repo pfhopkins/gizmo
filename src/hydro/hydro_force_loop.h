@@ -516,6 +516,9 @@ struct HydroForceSpec
 #ifdef ENERGY_ENTROPY_SWITCH_IS_ACTIVE
         MERGE_MAX(MaxKineticEnergyNgb);
 #endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+        MERGE_MAX(ElasticImpedanceNeighbour);
+#endif
 #ifdef HYDRO_MESHLESS_FINITE_VOLUME
         MERGE_ADD(DtMass);
         MERGE_ADD(dMass);
