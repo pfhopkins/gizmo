@@ -1164,6 +1164,7 @@ integertime get_timestep(int p,		/*!< particle index */
         if(dt_accr > 0 && dt_accr < dt) {dt = dt_accr;}
 
         double dt_ngbs = 4.1 * get_physical_timestep_from_timebin(P[p].Sink_TimeBinGasNeighbor, p, P); /* standard wakeup-type threshold: use this by default here, unless dynamical interaction important (e.g. back-rx term from oscillation of sink c-o-m, which is important for single-sink sims */
+        if(dt_ngbs > 0) {dt_ngbs = DMAX(dt_ngbs, All.MinSizeTimestep);} /* neighbours on steps below the floor only exist while a snapshot restart ramps everything up from its smallest step (IO_GRADUAL_SNAPSHOT_RESTART); that ramp, not this limiter, holds the sink's step down then */
         if(dt > dt_ngbs && dt_ngbs > 0) {dt = 1.01 * dt_ngbs; }
 
 #if defined(SINGLE_STAR_TIMESTEPPING)
