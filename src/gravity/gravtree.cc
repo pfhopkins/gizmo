@@ -17,6 +17,8 @@
 #include "../mesh/kernel.h"
 #include "../declarations/gpu_rng.h"
 #include "./analytic_gravity.h"
+#include "gpu_topology_finalize.h"   /* gpu_tree_alloc_bytes: the Hermite ghost table is SharedSpace */
+#include <vector>
 
 /*! Host-vs-device routing for the gravity walk, keyed on the RANK-LOCAL count of active
  *  gravity candidates. With few candidates the host walk is the cheaper route; with many
@@ -134,6 +136,61 @@ void refresh_old_acceleration_for_tree_opening(void)
 
 
 
+#ifdef HERMITE_INTEGRATION
+struct hermite_ghost_entry *HermiteGhostTab = NULL;
+int NHermiteGhost = 0;
+
+static int hermite_ghost_cmp(const void *a, const void *b)
+{
+    const MyIDType ia = ((const struct hermite_ghost_entry *) a)->id, ib = ((const struct hermite_ghost_entry *) b)->id;
+    return (ia > ib) - (ia < ib);
+}
+
+/* Gather every rank's Hermite-type particles at the state a local walk would read them in this pass
+ * (see hermite_ghost_entry). Only on a Hermite pass with more than one rank: a single rank has no
+ * foreign leaves. */
+static void hermite_ghost_table_build(void)
+{
+    HermiteGhostTab = NULL; NHermiteGhost = 0;
+    if(!HermiteOnlyFlag || NTask <= 1) {return;}
+    const struct DriftKickTableView tables = drift_kick_table_view_host();
+    std::vector<struct hermite_ghost_entry> mine;
+    for(int i = 0; i < NumPart; i++)
+    {
+        if(!((1 << P[i].Type) & HERMITE_INTEGRATION) || P[i].Mass <= 0) {continue;}
+        struct hermite_ghost_entry e; e.id = P[i].ID;
+        Vec3<double> pos = P[i].Pos, vel = P[i].Vel;
+        if(P[i].Ti_current < All.Ti_Current)
+        {
+            struct particle_motion_prediction motion(P, CellP, i);
+            predict_particle_motion(motion, All.Ti_Current, &tables);
+            pos = motion.pos_; vel = motion.vel_;
+        }
+        if(hermite_source_needs_prediction(i, P, HermiteWalk)) {hermite_predict_source_state(i, P, HermiteWalk, &HermiteWalkTables, pos, vel);}
+        e.pos = pos; e.vel = vel;
+        mine.push_back(e);
+    }
+    const int esz = (int) sizeof(struct hermite_ghost_entry);
+    int n_local = (int) mine.size();
+    std::vector<int> counts(NTask), displs(NTask);
+    MPI_Allgather(&n_local, 1, MPI_INT, counts.data(), 1, MPI_INT, MPI_COMM_WORLD);
+    int n_tot = 0;
+    for(int t = 0; t < NTask; t++) {displs[t] = n_tot * esz; n_tot += counts[t]; counts[t] *= esz;}
+    if(n_tot == 0) {return;}
+    HermiteGhostTab = (struct hermite_ghost_entry *) gpu_tree_alloc_bytes((size_t) n_tot * esz, "hermite_ghost_table");
+    if(!HermiteGhostTab) {endrun(90000099);}
+    MPI_Allgatherv(mine.data(), n_local * esz, MPI_BYTE, HermiteGhostTab, counts.data(), displs.data(), MPI_BYTE, MPI_COMM_WORLD);
+    qsort(HermiteGhostTab, n_tot, esz, hermite_ghost_cmp);
+    NHermiteGhost = n_tot;
+}
+
+static void hermite_ghost_table_free(void)
+{
+    if(HermiteGhostTab) {gpu_tree_free_bytes(HermiteGhostTab);}
+    HermiteGhostTab = NULL; NHermiteGhost = 0;
+}
+#endif
+
 void gravity_tree(void)
 {
     /* initialize variables */
@@ -162,6 +219,7 @@ void gravity_tree(void)
        pass, since the predictor returns immediately when HermiteOnlyFlag is 0. */
     HermiteWalk = hermite_walk_state_snapshot();
     if(HermiteOnlyFlag) {HermiteWalkTables = drift_kick_table_view_host();}
+    hermite_ghost_table_build();
 #endif
 
     /* construct tree if needed */
@@ -890,6 +948,9 @@ gravity_walk_attempt:
          * whichever path each target took. A larger value means the two no longer measure the same thing. */
         if(sum_costtotal>0) {PRINT_STATUS(" ..relative error in the total number of tree-gravity interactions = %g", (sum_costtotal - sum_costtotal_new) / sum_costtotal);}
     }
+#endif
+#ifdef HERMITE_INTEGRATION
+    hermite_ghost_table_free();
 #endif
     CPU_Step[CPU_TREEMISC] += measure_time();
 }
