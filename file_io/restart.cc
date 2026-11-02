@@ -426,11 +426,29 @@ void restart(int modus)
     }
 
 
+  if(modus != 0)
+    {
+      /* every rank chose above, from its own file, whether to load the stored tree; the files of one run agree */
+      int nmulti_min, nmulti_max;
+      MPI_Allreduce(&nmulti, &nmulti_min, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+      MPI_Allreduce(&nmulti, &nmulti_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+      if(nmulti_min != nmulti_max)
+        {
+          if(ThisTask == 0) {printf("Restart files disagree on domain segments per rank (%d to %d): they are not from one run. Stopping.\n", nmulti_min, nmulti_max);}
+          endrun(7872);
+        }
+    }
+
   if(modus != 0 && (nmulti < 1 || nmulti > MULTIPLEDOMAINS))	/* in this case we must force a domain decomposition */
     {
         if(ThisTask == 0) {printf("Doing extra domain decomposition because the stored layout does not fit MULTIPLEDOMAINS\n"); fflush(stdout);}
 
       domain_Decomposition(0, 0, 0);
+      /* The decomposition only allocates the tree, but the resumed run walks it before anything offers a
+         rebuild (the Hermite predictor pass): build it here, as a loaded layout would have provided it. */
+      force_treebuild(NumPart, NULL);
+      TreeReconstructFlag = 0;
+      TreeMomentsStaleFlag = 0;
     }
 }
 
