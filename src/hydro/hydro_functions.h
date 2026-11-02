@@ -436,8 +436,24 @@ void hydro_accumulate_neighbor(
     /* Signal velocity for timestepping. This is an i-side accumulation and
      * MUST stay here, updated on every pair, ABOVE the j-side writes below.
      * It was once placed among them behind a gate that could skip them, which
-     * left out.MaxSignalVel stuck at the kernel.sound_i seed. */
-    if(kernel.vsig > out.MaxSignalVel) {out.MaxSignalVel = kernel.vsig;}
+     * left out.MaxSignalVel stuck at the kernel.sound_i seed.
+     * With unequal wave speeds (sound speeds, or with MAGNETIC the fast
+     * magnetosonic speeds along the pair) the fastest characteristic of the
+     * pair is the larger one, so this signal uses 2 max(c_i,c_j) in place of
+     * c_i + c_j (approach term unchanged). It sets the timestep, the wakeup
+     * test and everything else read from MaxSignalVel (divergence-cleaning
+     * and cosmic-ray transport speeds); kernel.vsig, used by the Riemann
+     * solver and dissipation, is not changed. MFM with GALSF keeps its
+     * contact-wave estimate as is. */
+    double vsig_timestep = kernel.vsig;
+#if !(defined(HYDRO_MESHLESS_FINITE_MASS) && defined(GALSF))
+#ifdef MAGNETIC
+    vsig_timestep += fabs(magneticspeed_i - magneticspeed_j);
+#else
+    vsig_timestep += fabs(kernel.sound_i - kernel.sound_j);
+#endif
+#endif
+    if(vsig_timestep > out.MaxSignalVel) {out.MaxSignalVel = vsig_timestep;}
 
     /* ---- J-particle writes (Kokkos atomics for thread safety) ---- */
 
@@ -466,7 +482,7 @@ void hydro_accumulate_neighbor(
        flag it for wakeup. Uses Kokkos atomics for thread safety. */
     if(TimeBinActive_arr && !(TimeBinActive_arr[P[j].TimeBin]))
     {
-        if(kernel.vsig > WAKEUP * CellP[j].MaxSignalVel) {
+        if(vsig_timestep > WAKEUP * CellP[j].MaxSignalVel) {
             int wakeup_val = wakeup_flag_from_timebin(local.TimeBin);
             HYDRO_ATOMIC_MAX(&P[j].wakeup, wakeup_val);
             if(NeedToWakeup_flag) HYDRO_ATOMIC_STORE(NeedToWakeup_flag, 1);

@@ -45,11 +45,11 @@ void grain_promotion_parent_routine(void)
 
         P[i].Type = 0;
         set_eos_pressure(i, P, CellP); /* pressure and sound speed (with the deviatoric stiffness) of the promoted material */
-        {   /* its first timestep is chosen before its first hydro force sets this: bound the pair signal speed (c_i + c_j, plus three
-               times the approach speed) against its own material at rest and against the surrounding gas it carries */
+        {   /* its first timestep is chosen before its first hydro force sets this: bound the pair timestep signal speed (2 max(c_i,c_j),
+               plus three times the approach speed) against the surrounding gas it carries (which includes its own material at rest) */
             double c_promoted = CellP[i].effective_soundspeed(), c_gas = sqrt(gas_soundspeed2_around_grain(P[i].Gas_Temperature, P[i].Gas_fion));
             double v_rel = sqrt((P[i].Gas_Velocity - P[i].Vel).norm_sq());
-            CellP[i].MaxSignalVel = DMAX(2. * c_promoted, c_promoted + c_gas + 3. * v_rel);
+            CellP[i].MaxSignalVel = 2. * DMAX(c_promoted, c_gas) + 3. * v_rel;
         }
         CellP[i].HydroWorkEstimate = 0; CellP[i].MinHydroWorkBin = -1;   /* a new cell; its gravity work history is kept */
         force_tree_note_type_presence(i);  /* the element's type is final here, so tell the standing
