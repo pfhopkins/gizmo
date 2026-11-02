@@ -2237,6 +2237,125 @@ struct NlrModeATeamPairKernel {
     }
 };
 
+#if defined(KOKKOS_ENABLE_CUDA)
+/* The 64-lane TeamRowReduce kernel above, computed by ONE warp per row, bit for bit.
+ *
+ * On CUDA a 64-lane team reduces as follows (Kokkos 4.4, cuda_intra_block_reduction with
+ * blockDim = (1, 64)): lane y accumulates rows y, y+64, y+128, ... from zero_accum; each warp
+ * folds its lanes with the shfl_down tree (shift 1, 2, 4, 8, 16; lane y joins lane y+shift
+ * when y+shift < 64); the result is W0 (lanes 0-31) joined with W1 (lanes 32-63). This kernel
+ * runs both halves on one warp: lane t is first virtual lane t, then virtual lane 32+t, with the
+ * same trees, the same join conditions and the same final merge_accum(W0, W1). A row of at
+ * most 32 neighbours leaves every lane of the upper half at zero_accum, so its tree is
+ * zero_accum exactly; it is not computed, but still merged, so a -0.0 sum becomes +0.0 as before.
+ *
+ * At DesNumNgb 32 a row holds ~28 neighbours, so the 64-lane team carried one idle warp per row
+ * through the whole reduction. Valid only where nlr_mode_a_team_width resolves to 64.
+ * Several rows per team (one per warp); the warps never synchronise with each other. */
+template <typename Spec, typename DeviceCtx>
+struct NlrModeAWarpPairKernel {
+    using ActiveData   = typename Spec::ActiveData;
+    using AccumData    = typename Spec::AccumData;
+    using ScatterData  = typename Spec::ScatterData;
+    using NeighborData = typename Spec::NeighborData;
+    using TeamMember   = typename Kokkos::TeamPolicy<>::member_type;
+
+    DeviceCtx      ctx;
+    ActiveData    *d_actives;
+    AccumData     *d_accums;
+    const int64_t *offsets;
+    const int     *neighbors;
+    const int     *active_set;   /* nullptr on the single-pass site */
+    const int     *csr_lookup;   /* used only when active_set != nullptr */
+    int            chunk_base;   /* used only when active_set == nullptr */
+    int            n_rows;       /* rows in this launch; the last team may hold fewer */
+    int            rows_per_team;
+    typename Spec::CallScalars cs;
+    struct GxMotionTargetSet   motion_targets;
+
+    /* Virtual lane v of the 64-lane team: its strided sum over the row. */
+    KOKKOS_INLINE_FUNCTION void lane_sum(AccumData& acc, const ActiveData& a, int64_t start,
+                                         int row_len, int v) const {
+        Spec::zero_accum(acc);
+        for(int nn = v; nn < row_len; nn += 64) {
+            ScatterData     s{};
+            IdentitySidecar id{};
+            if constexpr (nlr_spec_writes_neighbour_motion_v<Spec>) {gx_motion_target_mark(motion_targets, neighbors[start + nn]);}
+            NeighborData    nb = Spec::load_neighbor(ctx, neighbors[start + nn], id, a);
+            Spec::pair_kernel(a, nb, acc, s, cs);
+        }
+    }
+
+    /* One warp's shfl_down tree; lane 0 ends with the warp's value. vbase is 0 for the lower
+     * half and 32 for the upper half, giving the original join condition y + shift < 64. */
+    KOKKOS_INLINE_FUNCTION void warp_tree(AccumData& acc, int lane, int vbase) const {
+        KOKKOS_IF_ON_DEVICE((
+            for(int shift = 1; shift < 32; shift *= 2) {
+                const AccumData tmp = Kokkos::shfl_down(acc, shift, 32u);
+                if(vbase + lane + shift < 64) {Spec::merge_accum(acc, tmp);}
+            }
+        ))
+        KOKKOS_IF_ON_HOST(((void) acc; (void) lane; (void) vbase;))
+    }
+
+    KOKKOS_INLINE_FUNCTION void operator()(const TeamMember& team) const {
+        const int t   = team.team_rank() & 31;
+        const int k   = team.league_rank() * rows_per_team + (team.team_rank() >> 5);
+        if(k >= n_rows) { return; }   /* whole warp */
+        const int row = (active_set != nullptr) ? csr_lookup[active_set[k]] : chunk_base + k;
+        const ActiveData& a = d_actives[k];
+        const int64_t start = offsets[row], end = offsets[row + 1];
+        const int row_len = (end > start) ? (int)(end - start) : 0;
+        if(row_len == 0) {
+            if(t == 0) { Spec::zero_accum(d_accums[k]); }
+            return;
+        }
+
+        AccumData acc;
+        lane_sum(acc, a, start, row_len, t);
+        warp_tree(acc, t, 0);
+        if(row_len <= 32) {
+            if(t == 0) {
+                AccumData w1;
+                Spec::zero_accum(w1);
+                Spec::merge_accum(acc, w1);
+                d_accums[k] = acc;
+            }
+            return;
+        }
+        if(t == 0) { d_accums[k] = acc; }   /* W0, parked while the upper half runs */
+        lane_sum(acc, a, start, row_len, 32 + t);
+        warp_tree(acc, t, 32);
+        if(t == 0) {
+            AccumData w0 = d_accums[k];
+            Spec::merge_accum(w0, acc);
+            d_accums[k] = w0;
+        }
+    }
+};
+
+/* Rows per team for NlrModeAWarpPairKernel, or 0 to keep the 64-lane team kernel.
+ * GIZMO_GPU_PAIR_WARP=0 restores the team kernel; =1, 2, 4 or 8 sets the rows per team (default 4). */
+static int nlr_pair_warp_rows()
+{
+    static int rows = -1;
+    if(rows < 0) {
+        rows = 4;
+        const char *env = getenv("GIZMO_GPU_PAIR_WARP");
+        if(env && env[0]) {
+            const int v = atoi(env);
+            rows = (v == 1 || v == 2 || v == 4 || v == 8) ? v : 0;
+        }
+        if(ThisTask == 0) {
+            if(rows) {printf("Neighbour loops: 64-lane pair rows on one warp each, %d rows per team (GIZMO_GPU_PAIR_WARP).\n", rows);}
+            else     {printf("Neighbour loops: 64-lane pair rows on 64-lane teams (GIZMO_GPU_PAIR_WARP=0).\n");}
+            fflush(stdout);
+        }
+    }
+    return rows;
+}
+#endif
+
 /* Lanes per row for a TeamRowReduce Spec, or 1 to select the flat kernel.
  *
  * Keyed only on structural properties -- execution space, the Spec's assignment
@@ -2496,6 +2615,22 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
         TeamKernel probe{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, 0, cs};
         team_width = nlr_mode_a_team_width<Spec>(probe);
     }
+    /* Rows per team of the one-warp-per-row form of a 64-lane team, 0 for the team kernel itself. */
+    int warp_rows = 0;
+#if defined(KOKKOS_ENABLE_CUDA)
+    if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
+        if(team_width == 64) {
+            static const int resolved = [&]() {
+                int r = nlr_pair_warp_rows();
+                NlrModeAWarpPairKernel<Spec, DeviceCtx> wprobe{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, 0, 0, 1, cs};
+                const int hw = (r > 0) ? gizmo_gpu_team_size_max(wprobe) : 0;
+                while(r > 0 && 32 * r > hw) {r >>= 1;}
+                return r;
+            }();
+            warp_rows = resolved;
+        }
+    }
+#endif
 
     /* A Spec with a device writeback decides once, for every chunk, whether it takes it (the trait's contract). */
     bool device_writeback = false;
@@ -2548,7 +2683,13 @@ static void run_mode_a(const neighbor_loop_args& args, const double *radii)
             };
 
             if constexpr (nlr_mode_a_pair_policy<Spec>() == ModeAPairAssignment::TeamRowReduce) {
-                if(team_width > 1) {
+                if(warp_rows > 0) {
+#if defined(KOKKOS_ENABLE_CUDA)
+                    NlrModeAWarpPairKernel<Spec, DeviceCtx> fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr,
+                                                               c0, n, warp_rows, cs, motion_targets};
+                    gizmo_gpu_team_kernel_launch(Spec::loop_name, (n + warp_rows - 1) / warp_rows, 32 * warp_rows, fn);
+#endif
+                } else if(team_width > 1) {
                     TeamKernel fn{ctx, d_actives, d_accums, offsets, neighbors, nullptr, nullptr, c0, cs, motion_targets};
                     gizmo_gpu_team_kernel_launch(Spec::loop_name, n, team_width, fn);
                 } else {
