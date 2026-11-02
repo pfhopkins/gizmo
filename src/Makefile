@@ -931,18 +931,19 @@ comma := ,
 #   flags, including the Fortran/HDF5 dependencies of a static libgrackle.a. grackle.pc is looked up as
 #   $(GRACKLE_PATH)/lib{,64}/pkgconfig/grackle.pc, GRACKLE_PATH = Grackle's CMAKE_INSTALL_PREFIX set in your SYSTYPE block, the
 #   environment or on the make line; otherwise on PKG_CONFIG_PATH. Without a grackle.pc it falls back to -lgrackle from GRACKLE_PATH.
+#   The include and library directories under GRACKLE_PATH (lib or lib64) are added either way, the library with an rpath: Grackle
+#   3.4's grackle.pc names ${prefix}/lib even where its build installed into lib64 and gives no rpath, and pkg-config gives nothing
+#   at all when it cannot resolve the hdf5 package grackle.pc requires (e.g. Cray's HDF5 module ships no matching hdf5.pc).
 ifeq (COOL_GRACKLE,$(findstring COOL_GRACKLE,$(CONFIGVARS)))
 GRACKLE_PC := $(if $(GRACKLE_PATH),$(firstword $(wildcard $(GRACKLE_PATH)/lib/pkgconfig/grackle.pc $(GRACKLE_PATH)/lib64/pkgconfig/grackle.pc)))
+GRACKLE_LIBDIR := $(if $(GRACKLE_PATH),$(patsubst %/,%,$(dir $(firstword $(wildcard $(GRACKLE_PATH)/lib/libgrackle.* $(GRACKLE_PATH)/lib64/libgrackle.*)))))
 ifeq ($(GRACKLE_PC),)
 GRACKLE_PC := $(shell pkg-config --exists grackle 2>/dev/null && echo grackle)
 endif
-ifneq ($(GRACKLE_PC),)
-GRACKLEINCL = $(shell pkg-config --cflags $(GRACKLE_PC))
-GRACKLELIBS = $(shell pkg-config --libs $(GRACKLE_PC))
-else
-GRACKLEINCL = $(if $(GRACKLE_PATH),-I$(GRACKLE_PATH)/include)
-GRACKLELIBS = $(if $(GRACKLE_PATH),-L$(GRACKLE_PATH)/lib -Wl$(comma)-rpath$(comma)$(GRACKLE_PATH)/lib) -lgrackle
-endif
+GRACKLE_PC_CFLAGS := $(if $(GRACKLE_PC),$(shell pkg-config --cflags $(GRACKLE_PC) 2>/dev/null))
+GRACKLE_PC_LIBS := $(if $(GRACKLE_PC),$(shell pkg-config --libs $(GRACKLE_PC) 2>/dev/null))
+GRACKLEINCL = $(if $(GRACKLE_PATH),-I$(GRACKLE_PATH)/include) $(GRACKLE_PC_CFLAGS)
+GRACKLELIBS = $(if $(GRACKLE_LIBDIR),-L$(GRACKLE_LIBDIR) -Wl$(comma)-rpath$(comma)$(GRACKLE_LIBDIR)) $(if $(GRACKLE_PC_LIBS),$(GRACKLE_PC_LIBS),-lgrackle)
 else
 GRACKLEINCL =
 GRACKLELIBS =
