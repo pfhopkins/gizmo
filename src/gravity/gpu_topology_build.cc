@@ -16,7 +16,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <vector>
+
 #include <Kokkos_Core.hpp>
+#include <Kokkos_Sort.hpp>
 
 #include "../declarations/gpu_all_mirror.h"
 #include "../declarations/allvars.h"
@@ -262,6 +265,117 @@ static int topo_acquire_(int npart, const struct unbind_data *mp, const char *si
     return 0;
 }
 
+/* The original per-range sort: one Morton sort per top-leaf range, each a gather, a merge sort and a scatter
+ * with its own allocations and fences (~9 launches and ~6 synchronizations per range, ~170 ranges per rank). */
+static int topo_sort_ranges_one_by_one(int ntl)
+{
+    for(int t = 0; t < ntl; t++) {
+        int start = g_topleaf_start[t];
+        int count = g_topleaf_count[t];
+        if(count > 1) {
+            int rc2 = gpu_morton_sort_indices(count, g_sorted_idx + start);
+            if(rc2) {return rc2;}
+        }
+    }
+    return 0;
+}
+
+/* GIZMO_K1_SEGSORT: 0 restores the per-range loop (same-binary comparison); default on. */
+static int topo_segsort_enabled(void)
+{
+    static int enabled = -1;
+    if(enabled < 0) {
+        const char *env = getenv("GIZMO_K1_SEGSORT");
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
+        if(ThisTask == 0) {printf("Tree build: top-leaf ranges Morton-sorted in one pass: %s.\n", enabled ? "on" : "off"); fflush(stdout);}
+    }
+    return enabled;
+}
+/* GIZMO_K1_SORT_VERIFY=1: every build sorts both ways and compares the orders (keeps the one-pass one). */
+static int topo_segsort_verify_wanted(void)
+{
+    static int wanted = -1;
+    if(wanted < 0) {const char *env = getenv("GIZMO_K1_SORT_VERIFY"); wanted = (env && env[0]) ? (atoi(env) != 0) : 0;}
+    return wanted;
+}
+
+/* Sort key of the one-pass sort: the range, then the Morton key, then the position in the bucketed order. */
+struct TopoRangeKey {
+    Morton128 m;
+    int range;
+    int pos;
+};
+struct TopoRangeKeyLess {
+    KOKKOS_INLINE_FUNCTION bool operator()(const TopoRangeKey &a, const TopoRangeKey &b) const {
+        if(a.range != b.range) {return a.range < b.range;}
+        if(a.m < b.m) {return true;}
+        if(b.m < a.m) {return false;}
+        return a.pos < b.pos;
+    }
+};
+static TopoRangeKey *g_rangesort_keys = NULL;   /* device, [g_rangesort_cap], grow-only */
+static int          *g_rangesort_vals = NULL;
+static int           g_rangesort_cap  = 0;
+
+/* All top-leaf ranges sorted at once.  The ranges are contiguous and in increasing leaf order, so sorting the
+ * whole bucketed order by (range, key) keeps every element inside its range and orders each range by key; the
+ * position as the last key makes ties keep their bucketed order, which is what the per-range merge sort (stable)
+ * does with them.  The result is therefore the per-range order exactly (GIZMO_K1_SORT_VERIFY checks it).  The
+ * range of a position is the last leaf whose start does not exceed it, so empty ranges are skipped.  A position
+ * whose index is outside the key array takes key zero, as in gpu_morton_sort_indices. */
+static int topo_sort_ranges_one_pass(int ntl, int total)
+{
+    if(total <= 1 || ntl <= 0) {return 0;}
+    if(g_rangesort_cap < total) {
+        gizmo_gpu_free_device(g_rangesort_keys);
+        gizmo_gpu_free_device(g_rangesort_vals);
+        g_rangesort_keys = (TopoRangeKey *) gizmo_gpu_alloc_device((size_t) total * sizeof(TopoRangeKey), "treescratch_build_rangesort_keys");
+        g_rangesort_vals = (int *) gizmo_gpu_alloc_device((size_t) total * sizeof(int), "treescratch_build_rangesort_vals");
+        if(!g_rangesort_keys || !g_rangesort_vals) {
+            printf("gpu_topology_build: range-sort scratch alloc failed (n=%d)\n", total);
+            gizmo_gpu_free_device(g_rangesort_keys); gizmo_gpu_free_device(g_rangesort_vals);
+            g_rangesort_keys = NULL; g_rangesort_vals = NULL; g_rangesort_cap = 0;
+            return 1;
+        }
+        g_rangesort_cap = total;
+    }
+    using ExSpace  = Kokkos::DefaultExecutionSpace;
+    using MemSpace = ExSpace::memory_space;
+    using UM = Kokkos::MemoryTraits<Kokkos::Unmanaged>;
+    Kokkos::View<TopoRangeKey*, MemSpace, UM> keys(g_rangesort_keys, total);
+    Kokkos::View<int*, MemSpace, UM> vals(g_rangesort_vals, total);
+    const Morton128 *mk = gpu_morton_keys();
+    const int keys_cap = gpu_morton_keys_capacity();
+    const int *tsta = g_topleaf_start;
+    int *sidx = g_sorted_idx;
+    Kokkos::parallel_for("topo_rangesort_gather", Kokkos::RangePolicy<ExSpace>(0, total), KOKKOS_LAMBDA(int j) {
+        int lo = 0, hi = ntl - 1;   /* last t in [0, ntl) with tsta[t] <= j */
+        while(lo < hi) {
+            const int mid = lo + (hi - lo + 1) / 2;
+            if(tsta[mid] <= j) {lo = mid;} else {hi = mid - 1;}
+        }
+        const int idx = sidx[j];
+        TopoRangeKey k;
+        if(idx >= 0 && idx < keys_cap) {k.m = mk[idx];} else {k.m.hi = 0; k.m.lo = 0;}
+        k.range = lo;
+        k.pos = j;
+        keys(j) = k;
+        vals(j) = idx;
+    });
+    try {
+        Kokkos::Experimental::sort_by_key(ExSpace(), keys, vals, TopoRangeKeyLess{});
+    } catch(const std::bad_alloc &) {
+        printf("gpu_topology_build: range-sort working space refused (n=%d)\n", total);
+        return 1;
+    }
+    Kokkos::parallel_for("topo_rangesort_scatter", Kokkos::RangePolicy<ExSpace>(0, total), KOKKOS_LAMBDA(int j) {
+        sidx[j] = vals(j);
+    });
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("topo_rangesort", total);
+    return 0;
+}
+
 }  /* anonymous namespace */
 
 extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data *mp)
@@ -470,19 +584,26 @@ extern "C" int gpu_topology_build_data_path(int npart, const struct unbind_data 
     Kokkos::fence();
     gizmo_gpu_check_last_error("topo_scatter", npart);
 
-    /* Kernel 4 (per-topleaf sort): host loop over topleaves, dispatching
-     * one Morton sort per range.  NTopleaves is typically O(100); each
-     * sort is small.  Future optimization: parallel team-policy sort,
-     * but correctness-first here. */
-    for(int t = 0; t < ntl; t++) {
-        int start = g_topleaf_start[t];
-        int count = g_topleaf_count[t];
-        if(count > 1) {
-            int rc2 = gpu_morton_sort_indices(count, g_sorted_idx + start);
-            if(rc2) {return rc2;}
-        }
+    /* Kernel 4: Morton order within each top-leaf range. */
+    const int verify = topo_segsort_verify_wanted();
+    if(!topo_segsort_enabled() && !verify) {return topo_sort_ranges_one_by_one(ntl);}
+    const int total = tsta[ntl];
+    std::vector<int> before, one_pass;
+    if(verify) {before.assign(sidx, sidx + total);}
+    int rc2 = topo_sort_ranges_one_pass(ntl, total);
+    if(rc2 || !verify) {return rc2;}
+    one_pass.assign(sidx, sidx + total);
+    memcpy(sidx, before.data(), (size_t) total * sizeof(int));
+    rc2 = topo_sort_ranges_one_by_one(ntl);
+    if(rc2) {return rc2;}
+    long ndiff = 0;
+    for(int j = 0; j < total; j++) {if(sidx[j] != one_pass[(size_t) j]) {ndiff++;}}
+    memcpy(sidx, one_pass.data(), (size_t) total * sizeof(int));   /* the run continues on the one-pass order */
+    if(ndiff || ThisTask == 0) {
+        printf("GIZMO_K1_SORT_VERIFY: task %d, %d particles in %d top-leaf ranges: %ld positions differ\n",
+               ThisTask, total, ntl, ndiff);
+        fflush(stdout);
     }
-
     return 0;
 }
 
