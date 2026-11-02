@@ -187,6 +187,10 @@ extern struct gas_cell_data
     MyDouble MaxKineticEnergyNgb;   /*!< maximum kinetic energy (with respect to neighbors): use for entropy 'switch' */
 #endif
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    signed char SolidBesideGas;      /*!< 1 if the last gradient pass found this solid cell with gas neighbours: its volume then follows */
+    MyFloat SolidVelocityDivergence; /*!< the velocity divergence of its solid neighbours (gradients_loop.cc), not the kernel's */
+#endif
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
     signed char ElasticImpedanceNeighbour; /*!< 1 if the last hydro force evaluation found a pair within the scope of the elastic face impedance dissipation (a gas cell next to a solid): its timestep is then capped like a solid's */
 #endif
     

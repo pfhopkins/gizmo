@@ -103,11 +103,11 @@ struct GasGraddata_in_
     Vec3<MyDouble> Pos;
     MyFloat Mass;
     MyFloat KernelRadius;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    int CompositionType; /* gas or solid: the constrained-gradient face construction and a solid's own velocity gradient need it */
+#endif
 #ifdef MHD_CONSTRAINED_GRADIENT
     MyDouble ConditionNumber;
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
-    int CompositionType; /* the face construction tells gas pairs from solid pairs */
-#endif
     SymmetricTensor2<MyDouble> NV_T;
     MyFloat BGrad[3][3];
 #ifdef MHD_MODIFIED_GRADIENT
@@ -161,6 +161,11 @@ struct GasGraddata_out_
     struct Quantities_for_Gradients Maxima;
     struct Quantities_for_Gradients Minima;
     MyFloat MaxDistance;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    MyDouble SolidVelocityDifferences[3][3]; /* a solid's sums over its solid neighbours: the velocity-gradient numerator, */
+    MyDouble SolidSeparationMoments[3][3];   /* the separation moment matrix of the same least-squares fit, */
+    MyDouble GasNeighbours;                  /* and the number of its gas neighbours */
+#endif
 #ifdef TURB_DIFF_DYNAMIC
     Vec3<MyDouble> Velocity_hat;
 #endif
@@ -578,12 +583,23 @@ void gradient_accumulate_neighbor(struct GasGraddata_in_ *local, struct GasGradd
     if(kernel->r < kernel->h_i)
     {
         double wk_for_grad = gradient_pair_weight(kernel, sph_gradients_flag_i, P[j].Mass);
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+        /* a solid's velocity gradient from its own material, for its stress rate (gradients_loop.cc) */
+        volatile int solid_target = solid_material_is_elastic(local->CompositionType); /* volatile: runtime gates in device code */
+        volatile int solid_neighbour = solid_material_is_elastic(CellP[j].CompositionType);
+        if(solid_target && !solid_neighbour) {out->GasNeighbours += 1;}
+#endif
         for(int k=0;k<3;k++)
         {
             double wk_xyz_i = -wk_for_grad * kernel->dp[k];
             out->Gradients[k].Density += wk_xyz_i * d_rho;
             out->Gradients[k].Pressure += wk_xyz_i * dp_pres;
             out->Gradients[k].Velocity += wk_xyz_i * dv;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+            if(solid_target && solid_neighbour) {
+                for(int k2=0;k2<3;k2++) {out->SolidVelocityDifferences[k2][k] += wk_xyz_i * dv[k2]; out->SolidSeparationMoments[k][k2] += wk_for_grad * kernel->dp[k] * kernel->dp[k2];}
+            }
+#endif
 #ifdef TURB_DIFF_DYNAMIC
             {Vec3<MyDouble> dv_bar2 = CellP[j].Velocity_bar - local->GQuant.Velocity_bar;
              NGB_SHEARBOX_BOUNDARY_VELCORR_(local->Pos, P[j].Pos, dv_bar2, -1);

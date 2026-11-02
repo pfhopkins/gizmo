@@ -69,6 +69,11 @@ struct temporary_data_topass
     struct Quantities_for_Gradients Maxima;
     struct Quantities_for_Gradients Minima;
     MyFloat MaxDistance;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+    MyDouble SolidVelocityDifferences[3][3];
+    MyDouble SolidSeparationMoments[3][3];
+    MyDouble GasNeighbours;
+#endif
 #if defined(KERNEL_CRK_FACES)
     MyDouble m0;
     MyDouble m1[3];
@@ -349,11 +354,11 @@ struct GradientsSpec
         local.DelayTime = kc[i].DelayTime;
 #endif
 #endif
-#ifdef MHD_CONSTRAINED_GRADIENT
-        local.ConditionNumber = kc[i].ConditionNumber;
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
         local.CompositionType = kc[i].CompositionType;
 #endif
+#ifdef MHD_CONSTRAINED_GRADIENT
+        local.ConditionNumber = kc[i].ConditionNumber;
         local.NV_T            = kc[i].NV_T;
         for(int k = 0; k < 3; k++) {
             for(int k2 = 0; k2 < 3; k2++) {
@@ -444,6 +449,10 @@ struct GradientsSpec
 #define MERGE_MAX(field)  do { if(src.field > dst.field) dst.field = src.field; } while(0)
 #define MERGE_MIN(field)  do { if(src.field < dst.field) dst.field = src.field; } while(0)
 
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+        for(int k = 0; k < 3; k++) { for(int k2 = 0; k2 < 3; k2++) { MERGE_ADD(SolidVelocityDifferences[k][k2]); MERGE_ADD(SolidSeparationMoments[k][k2]); } }
+        MERGE_ADD(GasNeighbours);
+#endif
         /* Gradients[k].* — additive for every quantity in Quantities_for_Gradients. */
         for(int k = 0; k < 3; k++) {
             MERGE_ADD(Gradients[k].Density);

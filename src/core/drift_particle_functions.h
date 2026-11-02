@@ -172,7 +172,11 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
             pp[i].Mass = mfv_drifted_mass(pp[i].Mass, cell[i].DtMass, cell[i].MassTrue, dt_entr); cell[i].Mass = pp[i].Mass;
 #endif
             
-            cell[i].Density *= exp(-divv_fac);
+            double divv_fac_density = divv_fac; /* the predicted density follows the volume's divergence */
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && !defined(HYDRO_SPH)
+            if(cell[i].SolidBesideGas) {divv_fac_density = kernel_radius_drift_log_change(cell[i].SolidVelocityDivergence * dt_drift);} /* a solid beside gas: its own material's (kicks.cc) */
+#endif
+            cell[i].Density *= exp(-divv_fac_density);
             double etmp = cell[i].InternalEnergyPred + cell[i].DtInternalEnergy * dt_entr;
             double u_floor = 0; /* the lowest energy the material's equation of state is valid at (0: none), at the predicted density */
 #ifdef EOS_ANEOS

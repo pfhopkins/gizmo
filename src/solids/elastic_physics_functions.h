@@ -37,13 +37,36 @@
    guard and does not pull in Kokkos. */
 #include "damage_porosity_functions.h"
 
+/* time derivative of the deviatoric stress tensor from a velocity gradient (Hooke's law with the Jaumann rotation) */
+KOKKOS_INLINE_FUNCTION
+void elastic_stress_rate_P(int i, const double dv0[3][3], struct gas_cell_data *cell)
+{
+    int j,k,l,NDim=NUMDIMS;
+    double R[3][3], S[3][3], dS=0;
+    if(!solid_material_is_elastic(cell[i].CompositionType)) {return;} /* the gas of a gas+solid build carries no deviatoric stress */
+    double mu = solid_material_of(cell[i].CompositionType).ShearModulus;
+    for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S[j][k] = cell[i].Elastic_Stress_Tensor_Pred[j][k];}}
+    for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {R[j][k] = 0.5*(dv0[j][k] - dv0[k][j]);}}
+    double trace_vel=0; for(j=0;j<NDim;j++) {trace_vel += dv0[j][j];}
+    for(j=0;j<NDim;j++) // velocity index
+    {
+        for(k=0;k<NDim;k++) // gradient index
+        {
+            dS = mu * (dv0[j][k] + dv0[k][j]); // symmetric strain component
+            if(k==j) {dS -= 2.*mu*trace_vel/NDim;} // trace component
+            for(l=0;l<NDim;l++) {dS += R[j][l]*S[l][k] - S[j][l]*R[l][k];} // Jaumann rotation W.S - S.W, with R = W = (dv_j/dx_k - dv_k/dx_j)/2: the stress turns with the material
+            cell[i].Dt_Elastic_Stress_Tensor[j][k] = dS; // save it to variable
+        }
+    }
+}
+
 /* routine to update the deviatoric stress tensor */
 KOKKOS_INLINE_FUNCTION
 void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
                                      struct particle_data *pp, struct gas_cell_data *cell)
 {
-    int j,k,l,NDim=NUMDIMS;
-    double dv0[3][3], R[3][3], S[3][3], S_new[3][3], dS=0, mu, Y0, J2=0, I1=0;
+    int j,k,NDim=NUMDIMS;
+    double dv0[3][3], S_new[3][3], mu, Y0, J2=0, I1=0;
     if(!solid_material_is_elastic(cell[i].CompositionType)) {return;} /* the gas of a gas+solid build carries no deviatoric stress */
     const struct solid_material &material = solid_material_of(cell[i].CompositionType);
     mu = material.ShearModulus; Y0 = material.YieldStrength;
@@ -143,19 +166,7 @@ void elastic_body_update_driftkick_P(int i, double dt_entr, int mode,
 
         // ok all below is for mode = 2, which is the actual calculation of the time derivative of the stress tensor
         for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {dv0[j][k] = cell[i].Gradients.Velocity[j][k];}}
-        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {S[j][k] = cell[i].Elastic_Stress_Tensor_Pred[j][k];}}
-        for(j=0;j<NDim;j++) {for(k=0;k<NDim;k++) {R[j][k] = 0.5*(dv0[j][k] - dv0[k][j]);}}
-        double trace_vel=0; for(j=0;j<NDim;j++) {trace_vel += dv0[j][j];}
-        for(j=0;j<NDim;j++) // velocity index
-        {
-            for(k=0;k<NDim;k++) // gradient index
-            {
-                dS = mu * (dv0[j][k] + dv0[k][j]); // symmetric strain component
-                if(k==j) {dS -= 2.*mu*trace_vel/NDim;} // trace component
-                for(l=0;l<NDim;l++) {dS += R[j][l]*S[l][k] - S[j][l]*R[l][k];} // Jaumann rotation W.S - S.W, with R = W = (dv_j/dx_k - dv_k/dx_j)/2: the stress turns with the material
-                cell[i].Dt_Elastic_Stress_Tensor[j][k] = dS; // save it to variable
-            }
-        }
+        elastic_stress_rate_P(i, dv0, cell);
 
     }
 

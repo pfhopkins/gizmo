@@ -269,4 +269,8 @@ void elastic_body_update_driftkick(int i, double dt_entr, int mode)
 {
     elastic_body_update_driftkick_P(i, dt_entr, mode, P, CellP);
 }
+void elastic_stress_rate(int i, const double velocity_gradient[3][3])
+{
+    elastic_stress_rate_P(i, velocity_gradient, CellP);
+}
 #endif

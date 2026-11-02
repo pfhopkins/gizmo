@@ -699,6 +699,7 @@ GIZMO_GPU_FUNCTION double return_CRbin_kinetic_energy_in_GeV_binvalsNRR(int k_CR
 #endif
 #ifdef EOS_ELASTIC
 void elastic_body_update_driftkick(int i, double dt_entr, int mode);
+void elastic_stress_rate(int i, const double velocity_gradient[3][3]);
 #endif
 #if defined(EOS_ELASTIC) || defined(EOS_TILLOTSON) || defined(EOS_ANEOS)
 GIZMO_GPU_FUNCTION double get_negative_pressure_tensilecorrfac(double r, double h_i, double h_j);

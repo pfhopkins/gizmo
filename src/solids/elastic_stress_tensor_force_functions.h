@@ -55,8 +55,17 @@ int elastic_stress_tensor_force_compute_pair(
     double wt_t = (rho_i*cT_i + rho_j*cT_j > 0) ? rho_i*cT_i * rho_j*cT_j / (rho_i*cT_i + rho_j*cT_j) * FNormT : 0; /* shear impedance; zero if neither side has strength */
     double wt_rt = (wt_r - wt_t) * kernel.vdotr2 * rinv*rinv * All.cf_atime*All.cf_atime;
 
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+    volatile int gas_solid_face = (solid_material_is_elastic(local.CompositionType) != solid_material_is_elastic(CPj.CompositionType)); /* a face between a solid and the gas; volatile: a runtime gate in device code */
+#endif
     for(int ij_switch=0; ij_switch<2; ij_switch++) {
         double nvt[NUMDIMS*NUMDIMS] = {0}, norm_m = 0, wtfac = 0;
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        double side_force[3] = {0, 0, 0};
+        double *force_sum = gas_solid_face ? side_force : cmag; /* a gas-solid face transforms this side's force below */
+#else
+        double *force_sum = cmag;
+#endif
         if(ij_switch == 0) { wtfac = wt_i; } else { wtfac = wt_j; }
         if(!solid_material_is_elastic(ij_switch == 0 ? local.CompositionType : CPj.CompositionType)) { continue; } /* gas side: no deviatoric stress */
 #if defined(EOS_DAMAGE_POROSITY) && ((EOS_DAMAGE_POROSITY) & 1)
@@ -78,7 +87,7 @@ int elastic_stress_tensor_force_compute_pair(
             for(int j_v=0; j_v<NUMDIMS; j_v++) {
                 double S_dot_A = 0;
                 for(int k_v=0; k_v<NUMDIMS; k_v++) { S_dot_A += nvt[NUMDIMS*j_v + k_v] * FVec[k_v]; }
-                cmag[j_v] += wtfac * S_dot_A * All.cf_a2inv;
+                force_sum[j_v] += wtfac * S_dot_A * All.cf_a2inv;
             }
 #else
             /* tensile correction acts on the positive principal stresses only, so this path needs the eigenpairs */
@@ -93,11 +102,23 @@ int elastic_stress_tensor_force_compute_pair(
                 double prefac = wtfac * eigenval_k * (A_dot_v * All.cf_a2inv);
                 if(eigenval_k > 0) { prefac *= 1. - tensile_correction_factor; }
                 if(!isnan(eigenval_k)) {
-                    for(int j_v=0; j_v<NUMDIMS; j_v++) { cmag[j_v] += prefac * eigenvec_k[j_v]; }
+                    for(int j_v=0; j_v<NUMDIMS; j_v++) { force_sum[j_v] += prefac * eigenvec_k[j_v]; }
                 }
             }
 #endif
         }
+#ifdef EOS_TYPES_DEFAULTGAS_AND_SOLIDS
+        if(gas_solid_face) {
+            /* the traction at a solid-gas interface is the acoustic interface state: its normal part is weighted by the two
+               longitudinal impedances, Z_gas/(Z_gas+Z_solid) of the solid's stress rather than one half, and its tangential part by
+               the two shear impedances, zero for the gas (an inviscid gas carries no shear traction) */
+            double z_i = rho_i*local.SoundSpeed, z_j = rho_j*CPj.effective_soundspeed(); /* local.SoundSpeed is the effective sound speed */
+            double z_solid = (ij_switch == 0) ? z_i : z_j, z_gas = (ij_switch == 0) ? z_j : z_i;
+            double A2 = FVec[0]*FVec[0] + FVec[1]*FVec[1] + FVec[2]*FVec[2];
+            double f_normal = (A2 > 0 && z_solid + z_gas > 0) ? 2. * z_gas / (z_solid + z_gas) * (side_force[0]*FVec[0] + side_force[1]*FVec[1] + side_force[2]*FVec[2]) / A2 : 0;
+            for(int k=0; k<3; k++) { cmag[k] += f_normal * FVec[k]; }
+        }
+#endif
     }
 #ifdef HYDRO_SPH
     /* SPH: the impedance operator on the raw velocity difference, plus zero-energy-mode (hourglass) control on the part of it the
