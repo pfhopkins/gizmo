@@ -660,9 +660,11 @@ void calculate_non_standard_physics(void)
     }
 #endif
 #if defined(RT_CHEM_PHOTOION) && (!defined(COOLING) || (defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0)))
-    rt_update_chemistry(); /* the ionization states, when no cooling chemistry evolves them (none, or grackle's tables). under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps */
+#if !(defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING))
+    rt_update_chemistry(); /* the ionization states, when no cooling chemistry evolves them (none, or grackle's tables). with subcycled cooling it runs in the sub-steps instead, below */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(Flag_FullStep) {rt_write_chemistry_stats();}
+#endif
 #endif
 #endif
     gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
@@ -699,6 +701,9 @@ void calculate_non_standard_physics(void)
                 CellP[idx].Dt_Transport_Subcycle_Saved = CellP[idx].DtInternalEnergy;
         }
 #endif
+#if defined(RT_CHEM_PHOTOION) && defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0)
+        rt_update_chemistry(); /* grackle's tables do not evolve the ionization states: advance them with each sub-step's radiation, over that sub-step, before grackle cools with them */
+#endif
         cooling_parent_routine();
 #ifndef COOLING_OPERATOR_SPLIT
         for(int idx : ActiveParticleList) {
@@ -725,6 +730,9 @@ void calculate_non_standard_physics(void)
         if(P[idx].Type == 0 && P[idx].Mass > 0 && CellP[idx].CoolingIsOperatorSplitThisTimestep==0)
             CellP[idx].DtInternalEnergy = 0;
     }
+#endif
+#if defined(RT_CHEM_PHOTOION) && defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0) && defined(TRANSPORT_SUBCYCLE_COOLING) && defined(OUTPUT_ADDITIONAL_RUNINFO)
+    if(Flag_FullStep) {rt_write_chemistry_stats();} /* after the sub-steps that advanced the ionization states */
 #endif
 #endif
 
