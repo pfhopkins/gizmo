@@ -122,7 +122,7 @@ static peanokey *PersistentKey = NULL; /*!< persistent Peano-Hilbert keys surviv
 static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array */
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
-#define DOMAIN_SWAP_REFINEMENT_BUDGET 2.0e7 /*!< cap on (swap attempts x ranks) in the assignment's swap refinement */
+#define DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS 32000000 /*!< bound on swap attempts in the assignment's swap refinement (binds above 160000 segments) */
 
 /*! Raise the particle capacity to what the coming epoch is expected to need, at the one point in a step
  *  where it may move: the tree has just been freed and will be rebuilt from the new value, and the active
@@ -1870,45 +1870,44 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
   {
       int nswaps_accepted = 0;
       int n_segments = multipledomains * NTask;
-      /* Attempts scale with the segment count, and each one evaluates the max over all ranks (replicated on every
-         rank), so the cost grows as segments x ranks^2: ~1 ns per attempt per rank on Zen 4, i.e. 0.1 s per
-         decomposition at 96 ranks x 64 segments and 1 s at 768 x 8. The cap holds it near 20 ms; on M2e4 at 48
-         ranks the search accepted 2-8 swaps out of 6e5 attempts. */
-      int max_iterations = 200 * n_segments;
-      if((double) max_iterations * NTask > DOMAIN_SWAP_REFINEMENT_BUDGET) {max_iterations = (int) (DOMAIN_SWAP_REFINEMENT_BUDGET / NTask);}
+      /* 200 attempts per segment, bounded in total. The O(NTask) evaluation runs only for attempts that could be
+         accepted (below), so the cost is O(attempts) plus O(NTask) per attempt touching the max rank. Bounding
+         attempts x NTask instead starves the search at large NTask: attempts touching the max rank fall as 1/NTask^2. */
+      int max_iterations = (n_segments > DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS / 200) ? DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS : 200 * n_segments;
       unsigned int seed = 42 + NTask; /* deterministic seed for reproducibility */
 
-      /* compute current max imbalance */
-      auto compute_max_imbalance = [&]() -> double {
-          double max_frac_work = 0, max_frac_load = 0, max_frac_gas = 0, max_frac_gasload = 0;
+      /* max over ranks and metrics; *argmax gets a rank holding it (-1 if every value is 0) */
+      auto compute_max_imbalance = [&](int *argmax) -> double {
+          double result = 0;
+          *argmax = -1;
           for(int t = 0; t < NTask; t++) {
-              double fw = tasklist[t].work / (tot_work + 1.0e-30);
+              double v = tasklist[t].work / (tot_work + 1.0e-30);
               double fl = tasklist[t].load / (tot_load + 1.0e-30);
               double fg = tasklist[t].load_activegas / (tot_loadactivegas + 1.0e-30);
               double fgl = tasklist[t].load_gas / (tot_loadgas + 1.0e-30);
-              if(fw > max_frac_work) max_frac_work = fw;
-              if(fl > max_frac_load) max_frac_load = fl;
-              if(fg > max_frac_gas) max_frac_gas = fg;
-              if(fgl > max_frac_gasload) max_frac_gasload = fgl;
-          }
-          double result = max_frac_work;
-          if(max_frac_load > result) result = max_frac_load;
-          if(max_frac_gas > result) result = max_frac_gas;
-          if(max_frac_gasload > result) result = max_frac_gasload;
+              if(fl > v) v = fl;
+              if(fg > v) v = fg;
+              if(fgl > v) v = fgl;
 #if (DOMAIN_TIMEBINS == 1)
-          for(int t = 0; t < NTask; t++) {
               for(int k = 0; k < NumTimeBinsToBeBalanced; k++) {
                   double bg = tasklist[t].bin_GravCost[k] / (tot_binGravCost[k] + 1.0e-30);
                   double bh = tasklist[t].bin_HydroCost[k] / (tot_binHydroCost[k] + 1.0e-30);
-                  if(bg > result) result = bg;
-                  if(bh > result) result = bh;
+                  if(bg > v) v = bg;
+                  if(bh > v) v = bh;
               }
-          }
 #endif
+              if(v > result) {result = v; *argmax = t;}
+          }
           return result;
       };
 
-      double current_imbalance = compute_max_imbalance();
+      /* Only a swap that moves a segment of max_task can lower the max. max_task_value is its exact current value: the
+         trial and revert run for every attempt (so tasklist rounds as without the skip), and it is re-measured after
+         each evaluated rejection, since add-then-subtract is not exact. While max_task_value >= current_imbalance, any
+         other swap would be rejected, so its evaluation is skipped and the same swaps are chosen bit for bit. */
+      int max_task;
+      double current_imbalance = compute_max_imbalance(&max_task);
+      double max_task_value = current_imbalance;
 
       for(int iter = 0; iter < max_iterations; iter++)
       {
@@ -1937,13 +1936,15 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
           }
 #endif
 
-          double new_imbalance = compute_max_imbalance();
+          int evaluated = (t1 == max_task || t2 == max_task || max_task_value < current_imbalance), new_max_task = max_task;
+          double new_imbalance = evaluated ? compute_max_imbalance(&new_max_task) : current_imbalance;
 
           if(new_imbalance < current_imbalance) {
               /* accept swap */
               domainAssign[s1].task = t2;
               domainAssign[s2].task = t1;
-              current_imbalance = new_imbalance;
+              current_imbalance = max_task_value = new_imbalance;
+              max_task = new_max_task;
               nswaps_accepted++;
           } else {
               /* revert */
@@ -1963,6 +1964,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
                   tasklist[t2].bin_HydroCost[k] -= domainAssign[s1].bin_HydroCost[k] - domainAssign[s2].bin_HydroCost[k];
               }
 #endif
+              if(evaluated) {max_task_value = compute_max_imbalance(&max_task);}
           }
       }
       if(ThisTask == 0 && nswaps_accepted > 0) {
