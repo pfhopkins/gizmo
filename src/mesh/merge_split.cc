@@ -988,6 +988,9 @@ int merge_particles_ij(int i, int j)
     double wt_j = P[j].Mass / mtot;
     
     if(((P[i].Type==0)||(P[j].Type==0)) && (P[j].Type!=P[i].Type)) {printf("WARNING: code is trying to merge a gas cell with a non-gas particle. I dont know how to do this. Exiting the merge subroutine."); fflush(stdout); return 0;}
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+    if((P[i].Type==0) && (CellP[i].CompositionType != CellP[j].CompositionType)) {printf("WARNING: code is trying to merge cells of two different materials (CompositionType %d and %d). Exiting the merge subroutine.\n", (int)CellP[i].CompositionType, (int)CellP[j].CompositionType); fflush(stdout); return 0;}
+#endif
 
     int swap_ids = 0; if(P[i].Mass > P[j].Mass) {swap_ids = 1;} /* retain the IDs of the more massive progenitor */
 #ifdef SINK_WIND_SPAWN
