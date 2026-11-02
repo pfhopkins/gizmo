@@ -1312,8 +1312,8 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
             if(dt_entr > 0) {double de_left_bin = DMAX(0, e0 + total_de_dt * dt_entr - ef); int kx; for(kx=0;kx<3;kx++) {p_absorbed[kx] += All.Rad_Intensity_Direction[k_angle][kx] * de_left_bin;}} // the energy absorbed out of this bin and not put back into it gives the gas its momentum along the bin direction
 #endif
             // isotropically re-emit the donated radiation into the target bin[s] //
-#ifdef RT_DIAG_IR_LEDGER
-            if((mode==0) && (dt_entr>0)) {
+#ifdef RT_DIAG_IR_LEDGER /* dt_entr < 0 is a wake-up completion kick undoing part of an opening half-kick: tally it too */
+            if((mode==0) && (dt_entr!=0)) {
                 rt_diag_add(RT_DIAG_ABSORBED, kf, de_abs); if(donation_target_bin >= 0) {rt_diag_add(RT_DIAG_DONATED_IN, donation_target_bin, de_abs);}
                 rt_diag_add(RT_DIAG_KICK_SOURCE, kf, (cell[i].Rad_Je[kf] + dt_e_gamma_band) * dt_entr);
 #ifdef COOLING
@@ -1383,7 +1383,7 @@ void rt_update_driftkick(int i, double dt_entr, int mode, struct particle_data *
 #endif
     } // loop over frequencies
 #ifdef RT_DIAG_IR_LEDGER
-    if((mode==0) && (dt_entr>0)) {rt_diag_ir_add_donated(E_abs_tot_toIR*dt_entr);}
+    if((mode==0) && (dt_entr!=0)) {rt_diag_ir_add_donated(E_abs_tot_toIR*dt_entr);}
 #endif
 
 #if defined(RT_EVOLVE_INTENSITIES)
