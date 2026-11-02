@@ -2450,7 +2450,7 @@ If you use any of these, please cite the relevant methods papers where these mod
 
 **RT\_CHEM\_PHOTOION**: Follows RT for H and He photo-ionizing energies (912 Angstrom through 0.5 keV). If set =1, then this is a single band (all ionizing radiation is lumped together, energies 13.6-500 eV). If set =2, then a four-band H+He set is followed, with bands 13.6-24.6, 24.6-54.4, 54.4-70, and 70-500 eV. This allows independent bands for Helium-ionizing and doubly-ionizing photons, and very hard photons. If the standard COOLING modules are turned on, these will directly enter the cooling and ionization state calculations, and full non-equilibrium ionization states for H and He will be evolved. With Grackle chemistry (`COOL_GRACKLE` with `COOL_GRACKLE_CHEMISTRY>=1`), the same photo-ionization and photo-heating rates are passed to Grackle, which then evolves the ionization states (with `RT_LYMAN_WERNER` and `COOL_GRACKLE_CHEMISTRY>=2`, the Lyman-Werner band also photo-dissociates Grackle's H2).
 
-**RT\_LYMAN\_WERNER**: Follow RT for Lyman-Werner band (H2-dissociating) flux. Sources and opacities are implemented, but self-consistent chemistry linking this to the H2 fraction is not yet fully-developed. Partial implementation in standard cooling; this physics can easily be linked to the Grackle cooling libraries as well (development encouraged as needed on a problem-by-problem basis).
+**RT\_LYMAN\_WERNER**: Follow RT for Lyman-Werner band (H2-dissociating) flux. Sources and opacities are implemented, but self-consistent chemistry linking this to the H2 fraction is not yet fully-developed. Partial implementation in standard cooling. With Grackle molecular chemistry (`COOL_GRACKLE` with `COOL_GRACKLE_CHEMISTRY>=2` and `RT_CHEM_PHOTOION`), the band photo-dissociates Grackle's H2 through Grackle's own conversion of the band intensity to a dissociation rate.
 
 **RT\_PHOTOELECTRIC**: Follow RT for a photo-electric heating band (far-UV from 8-13.6eV). If the standard COOLING modules are turned on, this will directly enter the cooling module calculations for the photo-electric heating rate (using the local dust properties and photo-electric band photon densities).  
 
@@ -2781,7 +2781,7 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
 # --------------------
 # ----- Radiation-Hydrodynamics Special Options for Test Problems + Disabled or Other Special Features
-#RT_DISABLE_UV_BACKGROUND               # disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
+#RT_DISABLE_UV_BACKGROUND               # disable external UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
 #RT_SEPARATELY_TRACK_LUMPOS             # keep luminosity vs. mass positions separate in tree. not compatible with Tree-PM mode, but it can be slightly more accurate and useful for debugging in tree-only mode with LEBRON or OTVET algorithms.
 #RT_HYDROGEN_GAS_ONLY                   # sets hydrogen fraction to 1.0 (used for certain idealized chemistry calculations)
 #RT_TIMESTEP_LIMIT_RECOMBINATION        # limit timesteps to the explicit recombination time when transporting ionizing photons. note our chemistry solvers are all implicit and can handle larger timesteps, but no gaurantee of transport accuracy for much larger steps since opacities depend on ionization states.
@@ -2939,7 +2939,7 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 <a name="config-debug-radiation"></a>
 ### _Radiation-Hydrodynamics Special Options for Test Problems_ 
 
-**RT\_DISABLE\_UV\_BACKGROUND**: Disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly). With Grackle (`COOL_GRACKLE`) this also turns off Grackle's UV background (its photo-ionization and photo-heating rates and the background heating in its tables) and its UV self-shielding; Compton X-ray heating and explicit radiation are unaffected.
+**RT\_DISABLE\_UV\_BACKGROUND**: Disable external UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly). With Grackle (`COOL_GRACKLE`) this also turns off Grackle's UV background (its photo-ionization and photo-heating rates and the background heating in its tables) and its UV self-shielding; Compton X-ray heating and explicit radiation are unaffected.
 
 **RT\_SEPARATELY\_TRACK\_LUMPOS**: Keep luminosity vs. mass positions separate in tree. not compatible with Tree-PM mode, but it can be slightly more accurate and useful for debugging in tree-only mode with LEBRON or OTVET algorithms.
 

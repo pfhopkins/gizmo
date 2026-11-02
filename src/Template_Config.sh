@@ -633,7 +633,7 @@
 #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
 # --------------------
 # ----- Radiation-Hydrodynamics Special Options for Test Problems + Disabled or Other Special Features
-#RT_DISABLE_UV_BACKGROUND          # disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
+#RT_DISABLE_UV_BACKGROUND          # disable external UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
 #RT_SEPARATELY_TRACK_LUMPOS        # keep luminosity vs. mass positions separate in tree. not compatible with Tree-PM mode, but it can be slightly more accurate and useful for testing in tree-only mode with LEBRON or OTVET algorithms.
 #RT_HYDROGEN_GAS_ONLY              # sets hydrogen fraction to 1.0 (used for certain idealized chemistry calculations)
 #RT_TIMESTEP_LIMIT_RECOMBINATION   # limit timesteps to the explicit recombination time when transporting ionizing photons. note our chemistry solvers are all implicit and can handle larger timesteps, but no gaurantee of transport accuracy for much larger steps since opacities depend on ionization states.
