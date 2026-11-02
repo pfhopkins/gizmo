@@ -59,7 +59,10 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     gr_float tiny = 1.0e-20;
 
     // Atomic
-    ne_density    = density * HYDROGEN_MASSFRAC * ne_guess; /* grackle's electron density is n_e*m_H; ne_guess is per hydrogen nucleus, as read back below */
+    /* grackle's species carry the hydrogen of the metal-free mass only (its consistency step rescales them to X_H*(density -
+       metal density)), so every quantity per hydrogen nucleus, in or out, is taken against this */
+    gr_float hydrogen_nuclei_density = HYDROGEN_MASSFRAC * (density - metal_density);
+    ne_density    = hydrogen_nuclei_density * ne_guess; /* grackle's electron density is n_e*m_H; ne_guess is per hydrogen nucleus, as read back below */
 
     HI_density    = density * CellP[target].grHI;  //initialized with HYDROGEN_MASSFRAC
     HII_density   = density * CellP[target].grHII;
@@ -148,11 +151,11 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 
             /* save the state other modules read back, from the species grackle just solved. the
                gr* fields above are fractions of the TOTAL density; the electron and neutral
-               fractions the rest of the code uses are per hydrogen nucleus, hence the 1/X_H. the
+               fractions the rest of the code uses are per hydrogen nucleus, of the hydrogen grackle holds. the
                temperature, adiabatic index and mean molecular weight are grackle's own (above), which
                count every species it tracks, molecules included -- no chemical network is consulted */
-            CellP[target].Ne = (ne_density / density) / HYDROGEN_MASSFRAC;
-            CellP[target].HI = DMAX(0, DMIN(1, (HI_density / density) / HYDROGEN_MASSFRAC));
+            CellP[target].Ne = ne_density / hydrogen_nuclei_density;
+            CellP[target].HI = DMAX(0, DMIN(1, HI_density / hydrogen_nuclei_density));
             CellP[target].Gamma = gamma_solved;
             CellP[target].MeanMolecularWeight = mu_solved;
             CellP[target].Temperature = T_solved;
