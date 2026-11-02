@@ -47,6 +47,35 @@ static void grackle_rt_photo_rates(int target, double ionization[3], double heat
 }
 #endif
 
+/* the metal mass fraction grackle is given: grackle's species carry the hydrogen of the metal-free mass only (its consistency step
+   rescales them to X_H*(density - metal density)), so this also sets what every quantity per hydrogen nucleus is taken against */
+static double grackle_metal_mass_fraction(int target)
+{
+#ifdef METALS
+    return P[target].Metallicity[0];
+#else
+    return 0.02;
+#endif
+}
+
+#if (COOL_GRACKLE_CHEMISTRY > 0)
+/* fill the shared cache from the species grackle holds for the cell -- at start-up, from the IC or snapshot, before grackle has solved
+   it. the electron and neutral fractions (and the ionized one, with the radiation chemistry) are the cell's own start-up values */
+void grackle_cache_species_state(int target)
+{
+    double density = CellP[target].Density, hydrogen_nuclei_density = HYDROGEN_MASSFRAC * (density - density * grackle_metal_mass_fraction(target)), molecular_mass_fraction = 0;
+#if defined(RT_CHEM_PHOTOION)
+    double ionized_hydrogen = CellP[target].HII;
+#else
+    double ionized_hydrogen = DMAX(0, DMIN(1, density * CellP[target].grHII / hydrogen_nuclei_density));
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+    molecular_mass_fraction = DMAX(0, DMIN(1, (density * CellP[target].grH2I + density * CellP[target].grH2II) / hydrogen_nuclei_density));
+#endif
+    CellP[target].store_solved_chemistry(CellP[target].InternalEnergy, CellP[target].MeanMolecularWeight, CellP[target].Gamma, CellP[target].Ne, CellP[target].HI, ionized_hydrogen, molecular_mass_fraction);
+}
+#endif
+
 double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode)
 {
     gr_float returnval = 0.0;
@@ -64,11 +93,7 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     velz          = CellP[target].VelPred[2];
     density       = rho;
     energy        = u_old;
-#ifdef METALS
-    metal_density = density * P[target].Metallicity[0];
-#else
-    metal_density = density * 0.02;
-#endif
+    metal_density = density * grackle_metal_mass_fraction(target);
     fields.density = &density; fields.internal_energy = &energy; fields.metal_density = &metal_density;
     fields.x_velocity = &velx; fields.y_velocity = &vely; fields.z_velocity = &velz;
 
@@ -81,8 +106,6 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     gr_float tiny = 1.0e-20;
 
     // Atomic
-    /* grackle's species carry the hydrogen of the metal-free mass only (its consistency step rescales them to X_H*(density -
-       metal density)), so every quantity per hydrogen nucleus, in or out, is taken against this */
     gr_float hydrogen_nuclei_density = HYDROGEN_MASSFRAC * (density - metal_density);
     ne_density    = hydrogen_nuclei_density * ne_guess; /* grackle's electron density is n_e*m_H; ne_guess is per hydrogen nucleus, as read back below */
 
@@ -217,23 +240,19 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 
             /* save the state other modules read back, from the species grackle just solved. the
                gr* fields above are fractions of the TOTAL density; the electron and neutral
-               fractions the rest of the code uses are per hydrogen nucleus, of the hydrogen grackle holds. the
+               fractions the rest of the code uses are per hydrogen nucleus, of the hydrogen grackle holds, and the
+               molecular fraction is the fraction of that hydrogen's mass in H2, as for every other network. the
                temperature, adiabatic index and mean molecular weight are grackle's own (above), which
                count every species it tracks, molecules included -- no chemical network is consulted */
-            CellP[target].Ne = ne_density / hydrogen_nuclei_density;
-            CellP[target].HI = DMAX(0, DMIN(1, HI_density / hydrogen_nuclei_density));
+            CellP[target].store_solved_chemistry(energy, mu_solved, gamma_solved, ne_density / hydrogen_nuclei_density, DMAX(0, DMIN(1, HI_density / hydrogen_nuclei_density)),
+                                                 DMAX(0, DMIN(1, HII_density / hydrogen_nuclei_density)), DMAX(0, DMIN(1, (H2I_density + H2II_density) / hydrogen_nuclei_density)));
 #if defined(RT_CHEM_PHOTOION)
-            /* the radiation's opacities read these, in the default network's normalization: number per hydrogen nucleus */
-            CellP[target].HII = DMAX(0, DMIN(1, HII_density / hydrogen_nuclei_density));
 #if defined(RT_CHEM_PHOTOION_HE)
             CellP[target].HeI = DMAX(0, (HeI_density / 4.) / hydrogen_nuclei_density);
             CellP[target].HeII = DMAX(0, (HeII_density / 4.) / hydrogen_nuclei_density);
             CellP[target].HeIII = DMAX(0, (HeIII_density / 4.) / hydrogen_nuclei_density);
 #endif
 #endif
-            CellP[target].Gamma = gamma_solved;
-            CellP[target].MeanMolecularWeight = mu_solved;
-            CellP[target].Temperature = T_solved;
 
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Atomic+(H2+H2I+H2II)
             CellP[target].grH2I   = H2I_density   / density;

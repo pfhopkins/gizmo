@@ -1143,7 +1143,7 @@ int merge_particles_ij(int i, int j)
 #if (defined(COOLING) && !defined(CHIMES)) || (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION))
     CellP[j].HI = wt_j*CellP[j].HI + wt_i*CellP[i].HI;
 #endif
-#if defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)
+#if (defined(RADTRANSFER) && defined(RT_CHEM_PHOTOION)) || (defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES) && !defined(CHIMES))
     /* the ionization states are a partition of the same nuclei as the neutral fraction above, so they
        have to mix with it or the merged cell holds fractions that no longer sum correctly */
     CellP[j].HII = wt_j*CellP[j].HII + wt_i*CellP[i].HII;

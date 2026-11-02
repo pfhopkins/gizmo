@@ -228,6 +228,14 @@
 #if defined(COOL_GRACKLE) && !defined(COOLING)
 #define COOLING
 #endif
+/* a chemistry library that tracks species hands each cell's result to the shared cache (store_solved_chemistry in cell_data.h), which is
+   where every other module reads it: the species fractions, and for molecular networks the H2 fraction. A new library defines these two */
+#if defined(CHIMES) || (defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 1))
+#define EXTERNAL_CHEMISTRY_REPORTS_SPECIES
+#endif
+#if defined(CHIMES) || (defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2))
+#define EXTERNAL_CHEMISTRY_REPORTS_H2
+#endif
 #if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2)
 #define EOS_CHEMISTRY_PROVIDES_GAMMA /* the chemistry library evolves the molecules and stores the adiabatic index of the state it solved, and the equation of state uses it */
 #endif

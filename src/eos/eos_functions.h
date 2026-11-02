@@ -67,11 +67,7 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
 #endif
 
     /* if tracking chemistry explicitly, return the explicitly-evolved H2 fraction */
-#if (COOL_GRACKLE_CHEMISTRY >= 2) // Use GRACKLE explicitly-tracked H2 [using the molecular network if this is valid]
-    return DMIN(1,DMAX(0, cell[i].grH2I + cell[i].grH2II)); // include both states of H2 tracked
-#endif
-
-#if defined(COOL_MOLECFRAC_NONEQM) || defined(CHIMES) // our simple 1-species network, or CHIMES, evolves the H2 fraction explicitly and leaves it in the cell
+#if defined(COOL_MOLECFRAC_NONEQM) || defined(EXTERNAL_CHEMISTRY_REPORTS_H2) // our simple 1-species network, or an external chemistry library, evolves the H2 fraction explicitly and leaves it in the cell
     return DMIN(1, DMAX(0, cell[i].MolecularMassFraction));
 #endif
 
@@ -276,7 +272,7 @@ KOKKOS_INLINE_FUNCTION double yhelium(int target, struct particle_data *pp)
 /* return mean molecular weight, appropriate for the approximations of the user-selected chemical network[s] */
 KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
-#if defined(CHIMES)
+#if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
     if(target >= 0) { return cell[target].MeanMolecularWeight; } else { return 0.59; } /* as the chemistry last solved it */
 #elif defined(COOLING)
     double X=HYDROGEN_MASSFRAC, Y=1.-X, Z=0, fmol=0;
@@ -337,7 +333,7 @@ KOKKOS_INLINE_FUNCTION
 double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef COOLING
-#ifdef CHIMES
+#if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
   return (double) cell[i].HII;
 #else
     double ne = cell[i].Ne, nh0 = cell[i].HI; // saved by the cooling solver; no need to re-solve the chemistry to answer this
@@ -411,7 +407,7 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
     }
 #endif
     *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI;
-#if defined(CHIMES)
+#if defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
     *nHp_guess = cell[target].HII; /* a species of its own there: with molecules, 1 - HI is not it */
 #else
     *nHp_guess = DMAX(0, 1. - *nH0_guess);

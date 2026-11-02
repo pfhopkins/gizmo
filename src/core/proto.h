@@ -1172,6 +1172,9 @@ void chimes_compute_depletions(double nH, double T, int thread_id);
 #endif
 #else
 #endif
+#if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY > 0)
+void grackle_cache_species_state(int target);
+#endif
 void cooling_parent_routine(void);
 #ifdef NUCLEAR_NETWORK
 void nuclear_parent_routine(void);
