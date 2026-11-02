@@ -5,6 +5,9 @@
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 #include "./cooling.h"
+#if defined(RT_CHEM_PHOTOION)
+#include "../radiation/rt_functions.h" /* the ionizing photon density per band, shared with the default network */
+#endif
 
 #ifdef COOL_GRACKLE
 #include <grackle.h>
@@ -97,6 +100,45 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
     fields.HeI_density = &HeI_density; fields.HeII_density = &HeII_density; fields.HeIII_density = &HeIII_density;
     fields.H2I_density = &H2I_density; fields.H2II_density = &H2II_density;
     fields.DI_density = &DI_density; fields.DII_density = &DII_density; fields.HDI_density = &HDI_density;
+
+#if defined(RT_CHEM_PHOTOION)
+    /* the ionizing radiation the code transports, given to grackle exactly as the default network uses it: per
+       ionizing band, a photo-ionization rate sigma*c*n_gamma and a photo-heating rate G*sigma*c*n_gamma per absorber.
+       grackle's own heating input is per neutral hydrogen atom, so the helium photo-heating goes in as a volumetric
+       rate. every field is supplied (zero where nothing feeds it): grackle reads them all once radiation is on */
+    gr_float rt_ionization_HI = 0, rt_ionization_HeI = 0, rt_ionization_HeII = 0, rt_heating_per_HI = 0, rt_H2_dissociation = 0, rt_heating_helium_volumetric = 0;
+    {
+        double c_light = C_LIGHT_CGS / UNIT_LENGTH_IN_CGS; /* times a cross section [code length^2] and a photon density [code length^-3]: per second */
+        double heating_per_HeI = 0, heating_per_HeII = 0;
+        for(int k = 0; k < N_RT_FREQ_BINS; k++)
+        {
+            if(!RT_BAND_IS_IONIZING(k)) {continue;}
+            double photon_flux = c_light * rt_ionizing_band_photon_number_density(target, k, CellP);
+            if(All.rt_ion_G_HI[k] > 0) {rt_ionization_HI += All.rt_ion_sigma_HI[k] * photon_flux; rt_heating_per_HI += All.rt_ion_G_HI[k] * All.rt_ion_sigma_HI[k] * photon_flux;}
+            if(All.rt_ion_G_HeI[k] > 0) {rt_ionization_HeI += All.rt_ion_sigma_HeI[k] * photon_flux; heating_per_HeI += All.rt_ion_G_HeI[k] * All.rt_ion_sigma_HeI[k] * photon_flux;}
+            if(All.rt_ion_G_HeII[k] > 0) {rt_ionization_HeII += All.rt_ion_sigma_HeII[k] * photon_flux; heating_per_HeII += All.rt_ion_G_HeII[k] * All.rt_ion_sigma_HeII[k] * photon_flux;}
+        }
+        rt_ionization_HI *= UNIT_TIME_IN_CGS; rt_ionization_HeI *= UNIT_TIME_IN_CGS; rt_ionization_HeII *= UNIT_TIME_IN_CGS; /* grackle wants them per its time unit */
+        rt_heating_per_HI *= UNIT_ENERGY_IN_CGS; /* erg/s per neutral hydrogen atom */
+#if defined(RT_CHEM_PHOTOION_HE)
+        double helium_atoms_per_gram_of_species = density * UNIT_DENSITY_IN_CGS / (4. * PROTONMASS_CGS); /* times a helium mass fraction: number density */
+        rt_heating_helium_volumetric = UNIT_ENERGY_IN_CGS * helium_atoms_per_gram_of_species * (CellP[target].grHeI * heating_per_HeI + CellP[target].grHeII * heating_per_HeII); /* erg/s/cm^3 */
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 2) && defined(RT_LYMAN_WERNER)
+        /* H2 photo-dissociation by the transported Lyman-Werner band (11.2-13.6 eV), through grackle's own conversion of a
+           mean intensity J21 [1e-21 erg/s/cm^2/Hz/sr] to a dissociation rate, 1.38e-12 J21 per second */
+        double u_LW = CellP[target].Rad_E_gamma[RT_FREQ_BIN_LYMAN_WERNER] * (CellP[target].Density*All.cf_a3inv/CellP[target].Mass) * UNIT_PRESSURE_IN_CGS; /* erg/cm^3 */
+        double delta_nu_LW = (13.6 - 11.2) * ELECTRONVOLT_IN_ERGS / PLANCK_CGS; /* Hz */
+        double J21 = (u_LW / delta_nu_LW) * C_LIGHT_CGS / (4. * M_PI) / 1.e-21;
+        rt_H2_dissociation = 1.38e-12 * DMAX(J21, 0) * UNIT_TIME_IN_CGS;
+#endif
+    }
+    fields.RT_HI_ionization_rate = &rt_ionization_HI; fields.RT_HeI_ionization_rate = &rt_ionization_HeI; fields.RT_HeII_ionization_rate = &rt_ionization_HeII;
+    fields.RT_heating_rate = &rt_heating_per_HI; fields.RT_H2_dissociation_rate = &rt_H2_dissociation;
+#if defined(RT_CHEM_PHOTOION_HE)
+    fields.volumetric_heating_rate = &rt_heating_helium_volumetric;
+#endif
+#endif
 #endif // non-tabular
 
     int status = GR_FAIL;
@@ -156,6 +198,15 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
                count every species it tracks, molecules included -- no chemical network is consulted */
             CellP[target].Ne = ne_density / hydrogen_nuclei_density;
             CellP[target].HI = DMAX(0, DMIN(1, HI_density / hydrogen_nuclei_density));
+#if defined(RT_CHEM_PHOTOION)
+            /* the radiation's opacities read these, in the default network's normalization: number per hydrogen nucleus */
+            CellP[target].HII = DMAX(0, DMIN(1, HII_density / hydrogen_nuclei_density));
+#if defined(RT_CHEM_PHOTOION_HE)
+            CellP[target].HeI = DMAX(0, (HeI_density / 4.) / hydrogen_nuclei_density);
+            CellP[target].HeII = DMAX(0, (HeII_density / 4.) / hydrogen_nuclei_density);
+            CellP[target].HeIII = DMAX(0, (HeIII_density / 4.) / hydrogen_nuclei_density);
+#endif
+#endif
             CellP[target].Gamma = gamma_solved;
             CellP[target].MeanMolecularWeight = mu_solved;
             CellP[target].Temperature = T_solved;
@@ -292,6 +343,14 @@ void InitGrackle(void)
     GrackleChemistry.self_shielding_method = self_shielding_method;
     /* the hydrogen mass fraction the species are reckoned in is the code's; the tabular mode must keep its tables' own, so it is left to grackle there */
     if(primordial_chemistry > 0) {GrackleChemistry.HydrogenFractionByMass = HYDROGEN_MASSFRAC;}
+#if defined(RT_CHEM_PHOTOION)
+    /* the transported ionizing radiation drives grackle's photo-ionization and photo-heating (CallGrackle supplies the rates);
+       the helium photo-heating goes in through grackle's volumetric heating input */
+    if(primordial_chemistry > 0) {GrackleChemistry.use_radiative_transfer = 1;}
+#if defined(RT_CHEM_PHOTOION_HE)
+    if(primordial_chemistry > 0) {GrackleChemistry.use_volumetric_heating_rate = 1;}
+#endif
+#endif
 
     // Finally, initialize the chemistry object.
     if(local_initialize_chemistry_data(&GrackleChemistry, &GrackleRates, &All.GrackleUnits) != GR_SUCCESS)

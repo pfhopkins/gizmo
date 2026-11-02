@@ -244,6 +244,7 @@
 #define  SECONDS_PER_YEAR   (3.155e7)
 #define  HUBBLE_H100_CGS    (3.2407789e-18)    /* in h/sec */
 #define  ELECTRONVOLT_IN_ERGS (1.60217733e-12)
+#define  PLANCK_CGS         (6.6260755e-27)
 #define HABING_FLUX_CGS      (1.6e-3)
 #define DRAINE_FLUX_CGS      (1.7 * HABING_FLUX_CGS)
 
