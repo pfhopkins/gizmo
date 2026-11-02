@@ -747,6 +747,9 @@ void init(void)
         /* the cached composition is not carried in snapshots, so seed it on any start that does not
            restore the cell wholesale. it is refreshed at the first equation-of-state call regardless */
         if(RestartFlag != 1) {CellP[i].Gamma = GAMMA_DEFAULT; CellP[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT;}
+#if defined(COOLING) && defined(CHIMES)
+        if(RestartFlag != 1 && P[i].Type == 0) {CellP[i].Ne = 0; CellP[i].HI = 1; CellP[i].HII = 0; CellP[i].MolecularMassFraction = 0;} /* neutral and atomic until the abundances are in place; begrun fills the cache from them */
+#endif
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
         /* Anchor whatever temperature this run starts from to the energy it belongs to. A binary restart
            keeps the stored pair untouched; anything else has just loaded or seeded Temperature, and the

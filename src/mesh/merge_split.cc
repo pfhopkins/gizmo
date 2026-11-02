@@ -1265,7 +1265,8 @@ int merge_particles_ij(int i, int j)
     wt_h_i = 1.0;
     wt_h_j = 1.0;
 #endif
-    for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[j].abundances[k] = (ChimesFloat) ((ChimesGasVars[j].abundances[k] * wt_j * wt_h_j) + (ChimesGasVars[i].abundances[k] * wt_i * wt_h_i));}
+    /* abundances are per hydrogen nucleus, so the parents mix by their hydrogen mass and the sum is divided by the merged hydrogen mass */
+    for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[j].abundances[k] = (ChimesFloat) (((ChimesGasVars[j].abundances[k] * wt_j * wt_h_j) + (ChimesGasVars[i].abundances[k] * wt_i * wt_h_i)) / ((wt_j * wt_h_j) + (wt_i * wt_h_i)));}
 #endif // CHIMES
 #ifdef METALS
     for(k=0;k<NUM_METAL_SPECIES;k++) {P[j].Metallicity[k] = wt_j*P[j].Metallicity[k] + wt_i*P[i].Metallicity[k];} /* metal-mass conserving (includes nuclear species) */
@@ -1285,6 +1286,12 @@ int merge_particles_ij(int i, int j)
     }
 #endif
 #endif
+#endif
+#ifdef CHIMES
+#if defined(METALS) && defined(COOL_METAL_LINES_BY_SPECIES)
+    chimes_update_element_abundances(j, P, CellP); /* the merged metallicity sets the element abundances the chemistry, and its mean molecular weight, use */
+#endif
+    chimes_cache_solved_state(j, CellP[j].InternalEnergy, CellP); /* the merged cell's chemistry, from the abundances and elements just mixed, at the energy it now holds */
 #endif
 #if defined(SINK_THERMALFEEDBACK)
     CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* pending energy (not specific): the survivor keeps both */

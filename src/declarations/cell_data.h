@@ -241,15 +241,16 @@ extern struct gas_cell_data
 #if !defined(COOLING_OPERATOR_SPLIT)
     int CoolingIsOperatorSplitThisTimestep; /* flag to tell us if cooling is operator split or not on a given timestep */
 #endif
-#ifndef CHIMES
     MyFloat Ne;  /*!< electron fraction, expressed as local electron number density normalized to the hydrogen number density. Gives indirectly ionization state and mean molecular weight. */
     MyFloat HI;  /*!< neutral hydrogen fraction (neutral H nuclei per H nucleus), saved by the cooling solver so other modules can read it instead of re-solving the chemistry */
+#if defined(CHIMES) && !defined(RT_CHEM_PHOTOION)
+    MyFloat HII;  /*!< ionized hydrogen fraction (ionized H nuclei per H nucleus), saved by a chemistry library that tracks it as a species (with RT_CHEM_PHOTOION the radiation module declares it) */
+#endif
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
     MyFloat u_anchor;  /*!< the internal energy Temperature was last computed at. The u->T read is
                             anchored: T(u) = Temperature + (Gamma-1)*mu*U_TO_TEMP*(u - u_anchor), so
                             the cached pair is exact at the anchor and tangent for the excursion since.
                             Every writer of Temperature must write this beside it. */
-#endif
 #endif
 #endif
 #ifdef GALSF
@@ -319,7 +320,7 @@ extern struct gas_cell_data
     MyFloat Kappa_Conduction;                   /*!< conduction coefficient */
 #endif
     
-#if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM)
+#if defined(OUTPUT_MOLECULAR_FRACTION) || defined(COOL_MOLECFRAC_NONEQM) || defined(CHIMES)
     MyFloat MolecularMassFraction;              /*!< holder for molecular mass fraction for sims where we evaluate it on-the-fly and wish to save it [different from detailed chemistry modules] */
 #if defined(COOL_MOLECFRAC_NONEQM)
     MyFloat MolecularMassFraction_perNeutralH;  /*! molecular mass fraction -of-the-neutral-gas-, which we retain as a separate variable since we have a hybrid model here using implicit updates for the ionization fraction */
@@ -408,7 +409,7 @@ extern struct gas_cell_data
 #endif
 #endif
 #ifdef RT_CHEM_PHOTOION
-#if !defined(COOLING) || defined(CHIMES)
+#if !defined(COOLING)
     MyFloat HI;                  /* HI fraction [declared above with Ne when the cooling module owns it] */
 #endif
     MyFloat HII;                 /* HII fraction */
@@ -585,6 +586,19 @@ extern struct gas_cell_data
     GIZMO_GPU_FUNCTION inline double gas_temperature_from_u(double u) const {
         return (Gamma - 1.) * MeanMolecularWeight * U_TO_TEMP_UNITS * u;
     }
+#if defined(COOLING) && defined(CHIMES)
+    /*!< the one way a chemistry library hands what it solved to the rest of the code. Everything else reads these back from
+         the cell and never from the library, so the library's own storage can stay on the host. The fractions are per
+         hydrogen nucleus and the molecular one is the fraction of the hydrogen mass in H2. The mean molecular weight and
+         adiabatic index are those of the state at specific energy u, and the temperature follows from them by the relation
+         above, so gas_temperature_from_u() reads the three back as a set. */
+    GIZMO_GPU_FUNCTION inline void store_solved_chemistry(double u, double mean_molecular_weight, double gamma,
+                                                          double electrons, double neutral_hydrogen, double ionized_hydrogen, double molecular_mass_fraction)
+    {
+        MeanMolecularWeight = mean_molecular_weight; Gamma = gamma; Temperature = gas_temperature_from_u(u);
+        Ne = electrons; HI = neutral_hydrogen; HII = ionized_hydrogen; MolecularMassFraction = molecular_mass_fraction;
+    }
+#endif
 
     /*!< the temperature of THIS cell at energy u, which is what callers almost always want. Where the
          cached pair is anchored this measures from it, so the result is exact at the anchor and correct

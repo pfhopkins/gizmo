@@ -635,6 +635,15 @@ void begrun(void)
 #ifdef RADTRANSFER
     rt_set_simple_inits(RestartFlag);
 #endif
+#if defined(COOLING) && defined(CHIMES)
+    if(RestartFlag != 1) /* the abundances are in place now (from the IC file or the equilibrium start): fill what is derived from them. a restart restores it with the cells. this runs after rt_set_simple_inits, which resets the radiation chemistry's ionization states */
+    {
+        for(int ig = 0; ig < N_gas; ig++)
+        {
+            chimes_cache_solved_state(ig, CellP[ig].InternalEnergy, CellP); /* the chemistry the rest of the code reads from the cell */
+        }
+    }
+#endif
 
 
   if(All.ComovingIntegrationOn) {init_drift_table();}

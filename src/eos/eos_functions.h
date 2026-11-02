@@ -67,15 +67,11 @@ KOKKOS_INLINE_FUNCTION double Get_Gas_Molecular_Mass_Fraction(int i, double temp
 #endif
 
     /* if tracking chemistry explicitly, return the explicitly-evolved H2 fraction */
-#ifdef CHIMES // use the CHIMES molecular network for H2
-    return DMIN(1,DMAX(0, ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_H2]] * 2.0)); // factor 2 converts to mass fraction in molecular gas, as desired
-#endif
-
 #if (COOL_GRACKLE_CHEMISTRY >= 2) // Use GRACKLE explicitly-tracked H2 [using the molecular network if this is valid]
     return DMIN(1,DMAX(0, cell[i].grH2I + cell[i].grH2II)); // include both states of H2 tracked
 #endif
 
-#if defined(COOL_MOLECFRAC_NONEQM) // use our simple 1-species network for explicitly-evolved H2 fraction
+#if defined(COOL_MOLECFRAC_NONEQM) || defined(CHIMES) // our simple 1-species network, or CHIMES, evolves the H2 fraction explicitly and leaves it in the cell
     return DMIN(1, DMAX(0, cell[i].MolecularMassFraction));
 #endif
 
@@ -281,7 +277,7 @@ KOKKOS_INLINE_FUNCTION double yhelium(int target, struct particle_data *pp)
 KOKKOS_INLINE_FUNCTION double Get_Gas_Mean_Molecular_Weight_mu(double T_guess, double rho, double *xH0, double *ne_guess, double urad_from_uvb_in_G0, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #if defined(CHIMES)
-    if(target >= 0) { return calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars); } else { return 0.59; }
+    if(target >= 0) { return cell[target].MeanMolecularWeight; } else { return 0.59; } /* as the chemistry last solved it */
 #elif defined(COOLING)
     double X=HYDROGEN_MASSFRAC, Y=1.-X, Z=0, fmol=0;
 #ifdef METALS
@@ -342,7 +338,7 @@ double Get_Gas_Ionized_Fraction(int i, struct particle_data *pp, struct gas_cell
 {
 #ifdef COOLING
 #ifdef CHIMES
-  return (double) ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
+  return (double) cell[i].HII;
 #else
     double ne = cell[i].Ne, nh0 = cell[i].HI; // saved by the cooling solver; no need to re-solve the chemistry to answer this
     double f_ion = DMIN(DMAX(DMAX(1-nh0, ne/1.2), 1.e-8), 1.); // account for different measures above (assuming primordial composition)
@@ -392,7 +388,7 @@ KOKKOS_INLINE_FUNCTION double return_user_desired_target_pressure(int i, struct 
 #endif
 
 
-#if defined(COOLING) && !defined(CHIMES)
+#if defined(COOLING)
 /* ================================================================
    ThermalProperties — get temperature and ionization state from u
    ================================================================ */
@@ -414,27 +410,22 @@ double ThermalProperties(double u, double rho, int target, double *mu_guess, dou
                * u * (UNIT_ENERGY_IN_CGS / UNIT_MASS_IN_CGS);
     }
 #endif
+    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI;
 #if defined(CHIMES)
-    /* Unreachable: the enclosing guard is !defined(CHIMES), so under CHIMES this
-       function does not exist at all. Kept because it records what the CHIMES
-       state would be read from, and it is inert either way -- CHIMES needs
-       SUNDIALS, which does not build for the device. */
-    int i = target; *ne_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_elec]]; *nH0_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HI]];
-    *nHp_guess = ChimesGasVars[i].abundances[ChimesGlobalVars.speciesIndices[sp_HII]];
-    double temp = ChimesGasVars[target].temperature;
+    *nHp_guess = cell[target].HII; /* a species of its own there: with molecules, 1 - HI is not it */
 #else
-    *ne_guess = cell[target].Ne; *nH0_guess = cell[target].HI; *nHp_guess = DMAX(0, 1. - *nH0_guess);
+    *nHp_guess = DMAX(0, 1. - *nH0_guess);
+#endif
     double temp = cell[target].gas_temperature_at_u(u);
-#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
+#if (GALSF_FB_FIRE_STELLAREVOLUTION <= 2) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES) && !defined(CHIMES_HII_REGIONS)
     /* gas inside an HII region is held ionized by the local source, which the saved state
        only picks up once the cell next cools */
     if(cell[target].DelayTimeHII > 0) {*ne_guess = 1.0 + 2.0*yhelium(target, pp); *nH0_guess = 0; *nHp_guess = 1;}
 #endif
-#endif
     *mu_guess = cell[target].MeanMolecularWeight;
     return temp;
 }
-#endif /* COOLING && !CHIMES */
+#endif /* COOLING */
 
 
 /* ==========================================================================

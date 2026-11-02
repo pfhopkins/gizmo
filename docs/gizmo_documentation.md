@@ -2337,7 +2337,7 @@ The CHIMES modules in this code have many additional options, only some of the m
 
 **CHIMES\_SOBOLEV\_SHIELDING**: This allows for self-shielding terms for the different species, using the build-in simple Sobolev-type estimator for a shielding length in GIZMO. This sets $L_{\rm shield} = f_{SL}\,(\Delta x  + \rho / |\nabla \rho|)$ where $\Delta x$ is the local inter-cell separation, and $f_{SL}$ is the `Shielding_length_factor` described in the CHIMES documentation. 
 
-**CHIMES\_HII\_REGIONS**: Disables shielding withing HII region (requires FIRE modules for radiation transport/coupling: uses `GALSF_FB_FIRE_RT_HIIHEATING`, and citations follow those modules; can be ported to other HII region approximators, but not necessary if explicit ionizing RHD is used). 
+**CHIMES\_HII\_REGIONS**: Disables shielding withing HII region (requires FIRE modules for radiation transport/coupling: uses `GALSF_FB_FIRE_RT_HIIHEATING`, and citations follow those modules; can be ported to other HII region approximators, but not necessary if explicit ionizing RHD is used). With CHIMES, FIRE's HII-region heating (including what `FIRE_PHYSICS_DEFAULTS=3` switches on) must be used through this flag: the default HII-region model assumes the composition of the in-code network, which CHIMES does not carry, and is not supported with it. 
 
 **CHIMES\_STELLAR\_FLUXES**: Tracks stellar fluxes in different age bins through the luminosity tree, using the LEBRON method from FIRE, and couples these to the CHIMES chemistry routines. Note that this should be used instead of FIRE's standard UV heating routine, if those options are desired with CHIMES.
 

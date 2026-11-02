@@ -593,11 +593,14 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         double uion=HIIRegion_Temp/(MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
-            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
+            cell[i].DelayTimeHII = 0;
+#ifndef CHIMES /* the energy rescaling below holds the temperature through a change of composition that CHIMES carries in its own abundances */
+            cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
             cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
             cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and the molecular weight above were rescaled together precisely to hold the temperature fixed, so the anchor has to move with them, or the cached pair would report the change this branch exists to avoid */
+#endif
 #endif
             }
 #endif
@@ -883,7 +886,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     chimes_update_turbulent_abundances(target, 1, pp, cell); 
 #endif 
 
-    return DMAX(u, All.MinEgySpec);
+    u = DMAX(u, All.MinEgySpec);
+    chimes_cache_solved_state(target, u, cell); /* the rest of the code reads the chemistry from the cell, at the energy the cell will hold */
+    return u;
 
 #else // CHIMES
 
@@ -1110,6 +1115,16 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
   return u * (cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
+}
+
+/* This function hands the chemistry CHIMES holds for a cell to the cell's shared cache (store_solved_chemistry), which is what
+ * the rest of the code reads. u_code is the specific energy the abundances belong to. */
+void chimes_cache_solved_state(int target, double u_code, struct gas_cell_data *cell)
+{
+  const ChimesFloat *abundance = ChimesGasVars[target].abundances; const int *species = ChimesGlobalVars.speciesIndices;
+  cell[target].store_solved_chemistry(u_code, (double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars), cell[target].gamma_eos_value(),
+                                      abundance[species[sp_elec]], abundance[species[sp_HI]], abundance[species[sp_HII]],
+                                      DMIN(1, DMAX(0, 2. * abundance[species[sp_H2]]))); /* factor 2: the mass fraction of the hydrogen that is in H2 */
 }
 // CHIMES
 #elif  defined(EOS_SUBSTELLAR_ISM)
