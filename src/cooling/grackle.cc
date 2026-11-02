@@ -28,6 +28,25 @@ static chemistry_data_storage GrackleRates;
 //     3 == calculate and return pressure
 //     4 == calculate and return gamma (only valid when COOL_GRACKLE_CHEMISTRY>0)
 //
+#if defined(RT_CHEM_PHOTOION)
+/* the transported ionizing radiation as the default network uses it: per ionizing band, a photo-ionization rate sigma*c*n_gamma
+   [1/s] and a photo-heating rate G*sigma*c*n_gamma [erg/s] per absorber, for HI, HeI and HeII (in that order) */
+static void grackle_rt_photo_rates(int target, double ionization[3], double heating[3])
+{
+    double c_light = C_LIGHT_CGS / UNIT_LENGTH_IN_CGS; /* times a cross section [code length^2] and a photon density [code length^-3]: per second */
+    for(int s = 0; s < 3; s++) {ionization[s] = heating[s] = 0;}
+    for(int k = 0; k < N_RT_FREQ_BINS; k++)
+    {
+        if(!RT_BAND_IS_IONIZING(k)) {continue;}
+        double photon_flux = c_light * rt_ionizing_band_photon_number_density(target, k, CellP);
+        if(All.rt_ion_G_HI[k] > 0) {ionization[0] += All.rt_ion_sigma_HI[k] * photon_flux; heating[0] += All.rt_ion_G_HI[k] * All.rt_ion_sigma_HI[k] * photon_flux;}
+        if(All.rt_ion_G_HeI[k] > 0) {ionization[1] += All.rt_ion_sigma_HeI[k] * photon_flux; heating[1] += All.rt_ion_G_HeI[k] * All.rt_ion_sigma_HeI[k] * photon_flux;}
+        if(All.rt_ion_G_HeII[k] > 0) {ionization[2] += All.rt_ion_sigma_HeII[k] * photon_flux; heating[2] += All.rt_ion_G_HeII[k] * All.rt_ion_sigma_HeII[k] * photon_flux;}
+    }
+    for(int s = 0; s < 3; s++) {heating[s] *= UNIT_ENERGY_IN_CGS;}
+}
+#endif
+
 double CallGrackle(double u_old, double rho, double dt, double ne_guess, int target, int mode)
 {
     gr_float returnval = 0.0;
@@ -108,21 +127,12 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
        rate. every field is supplied (zero where nothing feeds it): grackle reads them all once radiation is on */
     gr_float rt_ionization_HI = 0, rt_ionization_HeI = 0, rt_ionization_HeII = 0, rt_heating_per_HI = 0, rt_H2_dissociation = 0, rt_heating_helium_volumetric = 0;
     {
-        double c_light = C_LIGHT_CGS / UNIT_LENGTH_IN_CGS; /* times a cross section [code length^2] and a photon density [code length^-3]: per second */
-        double heating_per_HeI = 0, heating_per_HeII = 0;
-        for(int k = 0; k < N_RT_FREQ_BINS; k++)
-        {
-            if(!RT_BAND_IS_IONIZING(k)) {continue;}
-            double photon_flux = c_light * rt_ionizing_band_photon_number_density(target, k, CellP);
-            if(All.rt_ion_G_HI[k] > 0) {rt_ionization_HI += All.rt_ion_sigma_HI[k] * photon_flux; rt_heating_per_HI += All.rt_ion_G_HI[k] * All.rt_ion_sigma_HI[k] * photon_flux;}
-            if(All.rt_ion_G_HeI[k] > 0) {rt_ionization_HeI += All.rt_ion_sigma_HeI[k] * photon_flux; heating_per_HeI += All.rt_ion_G_HeI[k] * All.rt_ion_sigma_HeI[k] * photon_flux;}
-            if(All.rt_ion_G_HeII[k] > 0) {rt_ionization_HeII += All.rt_ion_sigma_HeII[k] * photon_flux; heating_per_HeII += All.rt_ion_G_HeII[k] * All.rt_ion_sigma_HeII[k] * photon_flux;}
-        }
-        rt_ionization_HI *= UNIT_TIME_IN_CGS; rt_ionization_HeI *= UNIT_TIME_IN_CGS; rt_ionization_HeII *= UNIT_TIME_IN_CGS; /* grackle wants them per its time unit */
-        rt_heating_per_HI *= UNIT_ENERGY_IN_CGS; /* erg/s per neutral hydrogen atom */
+        double ionization[3], heating[3]; grackle_rt_photo_rates(target, ionization, heating);
+        rt_ionization_HI = ionization[0] * UNIT_TIME_IN_CGS; rt_ionization_HeI = ionization[1] * UNIT_TIME_IN_CGS; rt_ionization_HeII = ionization[2] * UNIT_TIME_IN_CGS; /* grackle wants them per its time unit */
+        rt_heating_per_HI = heating[0]; /* erg/s per neutral hydrogen atom */
 #if defined(RT_CHEM_PHOTOION_HE)
         double helium_atoms_per_gram_of_species = density * UNIT_DENSITY_IN_CGS / (4. * PROTONMASS_CGS); /* times a helium mass fraction: number density */
-        rt_heating_helium_volumetric = UNIT_ENERGY_IN_CGS * helium_atoms_per_gram_of_species * (CellP[target].grHeI * heating_per_HeI + CellP[target].grHeII * heating_per_HeII); /* erg/s/cm^3 */
+        rt_heating_helium_volumetric = helium_atoms_per_gram_of_species * (CellP[target].grHeI * heating[1] + CellP[target].grHeII * heating[2]); /* erg/s/cm^3 */
 #endif
 #if (COOL_GRACKLE_CHEMISTRY >= 2) && defined(RT_LYMAN_WERNER)
         /* H2 photo-dissociation by the transported Lyman-Werner band (11.2-13.6 eV), through grackle's own conversion of a
@@ -140,6 +150,20 @@ double CallGrackle(double u_old, double rho, double dt, double ne_guess, int tar
 #endif
 #endif
 #endif // non-tabular
+#if defined(RT_CHEM_PHOTOION) && !(COOL_GRACKLE_CHEMISTRY > 0)
+    /* the tables carry no species, so the radiation chemistry evolves the ionization states (rt_update_chemistry); the
+       photo-heating of those absorbers reaches grackle as a volumetric heating rate */
+    gr_float rt_heating_volumetric = 0;
+    {
+        double ionization[3], heating[3]; grackle_rt_photo_rates(target, ionization, heating);
+        double hydrogen_nuclei_cgs = HYDROGEN_MASSFRAC * density * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS; /* the species there are per hydrogen nucleus */
+        rt_heating_volumetric = hydrogen_nuclei_cgs * CellP[target].HI * heating[0];
+#if defined(RT_CHEM_PHOTOION_HE)
+        rt_heating_volumetric += hydrogen_nuclei_cgs * (CellP[target].HeI * heating[1] + CellP[target].HeII * heating[2]);
+#endif
+    }
+    fields.volumetric_heating_rate = &rt_heating_volumetric;
+#endif
 
     int status = GR_FAIL;
     switch(mode) {
@@ -350,6 +374,7 @@ void InitGrackle(void)
 #if defined(RT_CHEM_PHOTOION_HE)
     if(primordial_chemistry > 0) {GrackleChemistry.use_volumetric_heating_rate = 1;}
 #endif
+    if(primordial_chemistry == 0) {GrackleChemistry.use_volumetric_heating_rate = 1;} /* tabular: all the photo-heating goes in this way */
 #endif
 
     // Finally, initialize the chemistry object.

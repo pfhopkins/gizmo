@@ -659,8 +659,8 @@ void calculate_non_standard_physics(void)
 #endif
     }
 #endif
-#if defined(RT_CHEM_PHOTOION) && !defined(COOLING)
-    rt_update_chemistry(); /* chemistry update (under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps) */
+#if defined(RT_CHEM_PHOTOION) && (!defined(COOLING) || (defined(COOL_GRACKLE) && !(COOL_GRACKLE_CHEMISTRY > 0)))
+    rt_update_chemistry(); /* the ionization states, when no cooling chemistry evolves them (none, or grackle's tables). under TRANSPORT_SUBCYCLE_COOLING, cooling handles it on subsequent sub-steps */
 #ifdef OUTPUT_ADDITIONAL_RUNINFO
     if(Flag_FullStep) {rt_write_chemistry_stats();}
 #endif
