@@ -2547,7 +2547,7 @@ void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cel
 #ifdef COOL_METAL_LINES_BY_SPECIES
   double H_mass_fraction = 1.0 - (pp[target].Metallicity[0] + pp[target].Metallicity[1]);
 #else
-  double H_mass_fraction = XH;
+  double H_mass_fraction = HYDROGEN_MASSFRAC;
 #endif
 
   ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, pp, cell);
