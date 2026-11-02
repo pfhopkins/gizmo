@@ -584,6 +584,9 @@ void merge_and_split_particles(void)
 #ifdef HYDRO_MULTIFLUID
                     if (do_allow_merger && !same_lagrangian_fluid_id(P[i].FluidType, P[j].FluidType)) {do_allow_merger = 0;}
 #endif
+#if defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)
+                    if (do_allow_merger && (P[i].Type == 0) && (CellP[i].CompositionType != CellP[j].CompositionType)) {do_allow_merger = 0;} /* never merge two materials (gas into a solid, iron into rock) */
+#endif
                     if (do_allow_merger) {threshold_val=m_eff; target_for_merger=j;}
                 }
                 if (target_for_merger >= 0) {
@@ -1228,6 +1231,15 @@ int merge_particles_ij(int i, int j)
 #endif
 #if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
     if(CellP[i].ElasticImpedanceNeighbour) {CellP[j].ElasticImpedanceNeighbour = 1;} /* the merged cell covers both volumes: keep the timestep cap if either was beside a solid */
+#endif
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
+    if(CellP[i].SolidBesideGas && !CellP[j].SolidBesideGas) {CellP[j].SolidBesideGas = 1; CellP[j].SolidVelocityDivergence = CellP[i].SolidVelocityDivergence;} /* and keep its own integrated volume until its next gradient pass */
+#endif
+#ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
+    {   /* the merged cell's integrated density: the two masses over the two integrated volumes (a cell beside gas never relaxes it back) */
+        double rho_explicit_i = CellP[i].Density_ExplicitInt, rho_explicit_j = CellP[j].Density_ExplicitInt;
+        if(rho_explicit_i > 0 && rho_explicit_j > 0) {CellP[j].Density = CellP[j].Density_ExplicitInt = (mass_before_merger_i + mass_before_merger_j) / (mass_before_merger_i/rho_explicit_i + mass_before_merger_j/rho_explicit_j);}
+    }
 #endif
 
     // below, we need to take care of additional physics //
