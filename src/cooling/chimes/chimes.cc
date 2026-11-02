@@ -290,8 +290,8 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
     {
       if (data.species[j].include_species == 1)
 	{
-	  data.species[i].creation_rate = 0.0f;
-	  data.species[i].destruction_rate = 0.0f;
+	  data.species[j].creation_rate = 0.0f;
+	  data.species[j].destruction_rate = 0.0f;
 	  indices[i] = j; 
 	  i++; 
 	}
