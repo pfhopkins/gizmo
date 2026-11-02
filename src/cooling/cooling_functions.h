@@ -205,10 +205,7 @@ double find_abundances_and_rates_impl(double logT, double rho, int target, doubl
             {
                 if(RT_BAND_IS_IONIZING(k))
                 {
-                    double n_gamma_tot = cell[target].rt_photon_number_density(k);
-#ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
-#endif
+                    double n_gamma_tot = rt_ionizing_band_photon_number_density(target, k, cell);
                     double c_ne_time_n_photons_vol = c_light_ne * n_gamma_tot;
                     double cross_section_ion, dummy, thold=1.0e20;
 #ifdef GALSF
