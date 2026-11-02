@@ -203,7 +203,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     double dE=0; dE = wk * local.Luminosity[k]; int kv; kv=0;
                     Vec3<double> dfluxes = {};
 
-#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY) /* the only accumulation into Rad_Je: the preloop's per-step zeroing is compiled out exactly when this is (and gas cells are not sources); add a writer under discrete injection and that #if must change too */
                     #pragma omp atomic
                     CellP[j].Rad_Je[k] += dE; // inject photons as a source term, terms like fluxes, intensities, etc, will all be calculated later
 #endif
