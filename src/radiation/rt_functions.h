@@ -508,7 +508,7 @@ double rt_ionizing_band_photon_number_density(int i, int k, struct gas_cell_data
 {
     double n_gamma = cell[i].rt_photon_number_density(k);
 #ifdef RT_INFRARED
-    n_gamma += rt_irband_egydensity_in_band(i,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[i].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+    n_gamma += rt_irband_egydensity_in_band(i,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[k],cell[i].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
 #endif
     return n_gamma;
 }
