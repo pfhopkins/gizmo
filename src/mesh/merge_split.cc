@@ -27,7 +27,12 @@
 #include "../system/gpu_particles_arena.h"
 
 #include <vector>
+#include <set>
+#include <array>
 #include "../mesh/gpu_neighbor_list.h"
+#include "../core/predict_functions.h" /* box_wrap_position_to_primary_image */
+
+static Vec3<double> merged_position(int i, int j);
 #include "../mesh/ghost_writeback.h"
 #include "../gravity/gpu_pseudo_update.h" /* gpu_set_soa_nextnode / gpu_set_soa_sibling: keep SoA node thread coherent with the rearrange pointer fixups */
 #include "../gravity/forcetree.h"         /* force_tree_swap_attachment_slots: the standing tree's attachment record */
@@ -469,6 +474,12 @@ void merge_and_split_particles(void)
         }
         const int *gnl_neighbors = gnl_neighbors_host.empty() ? NULL : gnl_neighbors_host.data();
 
+        /* merged positions claimed so far in this pass (primary-box image, exact coordinates): two merges of equal masses on a regular
+           lattice can share a centre of mass (e.g. across the two diagonals of a lattice square) and would leave two cells at one point.
+           The later proposal, in list order, waits for the next pass, where its partner and result may differ. This only sees the
+           merges of this rank; two ranks can still, rarely, produce the same point across a domain boundary. A merge that would
+           land exactly on a cell that is already there (e.g. two cells two lattice spacings apart) waits too. */
+        std::set<std::array<double,3>> merged_positions_this_pass;
         for (int aa = 0; aa < num_src; aa++) {
             i = ms_src_idx[aa];
             /* A particle already claimed as somebody's merge target must not also
@@ -590,6 +601,17 @@ void merge_and_split_particles(void)
                     if (do_allow_merger) {threshold_val=m_eff; target_for_merger=j;}
                 }
                 if (target_for_merger >= 0) {
+                    Vec3<MyDouble> pos_merged = merged_position(i, target_for_merger);
+                    box_wrap_position_to_primary_image(pos_merged);
+                    int lands_on_a_cell = 0; /* a cell already at that point lies within i's kernel, so in its neighbour list */
+                    for (int64_t nn = nl_start; nn < nl_end && !lands_on_a_cell; nn++) {
+                        int k = gnl_neighbors[nn];
+                        if ((k < 0) || (k >= local_count) || (k == i) || (k == target_for_merger) || !(P[k].Mass > 0)) continue;
+                        Vec3<double> dk = P[k].Pos - pos_merged; nearest_xyz(dk,-1);
+                        if (dk.norm_sq() == 0) {lands_on_a_cell = 1;}
+                    }
+                    if (lands_on_a_cell) {continue;}
+                    if (!merged_positions_this_pass.insert({(double)pos_merged[0], (double)pos_merged[1], (double)pos_merged[2]}).second) {continue;}
                     Ptmp[i].flag = 1; Ptmp[target_for_merger].flag = 3; Ptmp[i].target_index = target_for_merger;
                     ms_flagged.push_back(i);
                     ms_split_nearest_distance.push_back(0); /* kept aligned with ms_flagged; read only for splits */
@@ -970,6 +992,16 @@ int split_particle_i(int i, int n_particles_split, double r_near)
     all conserved quantities are appropriately dealt with. This also requires some care, to be
     done appropriately, but is a little bit less sensitive and more well-defined compared to
     particle splitting */
+/* where merging i into j puts the survivor: their centre of mass, measured from i across the nearest periodic image (the box wrap
+   after the merge pass then folds it into the primary box) */
+static Vec3<double> merged_position(int i, int j)
+{
+    double wt_j = P[j].Mass / (P[j].Mass + P[i].Mass);
+    Vec3<double> dp = P[j].Pos - P[i].Pos;
+    nearest_xyz(dp,-1);
+    return P[i].Pos + dp * wt_j;
+}
+
 int merge_particles_ij(int i, int j)
 {
     int k;
@@ -1017,11 +1049,9 @@ int merge_particles_ij(int i, int j)
     // block for merging non-gas particles (much simpler, assume collisionless)
     if((P[i].Type>0)&&(P[j].Type>0))
     {
-        Vec3<double> dp = P[j].Pos - P[i].Pos;
-        nearest_xyz(dp,-1);
         Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
         Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
-        P[j].Pos = P[i].Pos + dp * wt_j; // center-of-mass conserving //
+        P[j].Pos = merged_position(i, j); // center-of-mass conserving //
         P[j].Vel = P[j].Vel * wt_j + P[i].Vel * wt_i; // momentum-conserving //
         P[j].GravAccel = P[j].GravAccel * wt_j + P[i].GravAccel * wt_i; // force-conserving //
 #ifdef GRAVACCEL_RETAINED_ON_SKIPPED_WALK
@@ -1098,9 +1128,7 @@ int merge_particles_ij(int i, int j)
     egy_old += mtot * (wt_j*CellP[j].InternalEnergy + wt_i*CellP[i].InternalEnergy); // internal energy //
     /* for periodic boxes, we need to (arbitrarily) pick one position as our coordinate center. we pick i. then everything defined in
         position differences relative to i. the final position will be appropriately box-wrapped after these operations are completed */
-    Vec3<double> dp = P[j].Pos - P[i].Pos;
-    nearest_xyz(dp,-1);
-    Vec3<double> pos_new = P[i].Pos + dp * wt_j;
+    Vec3<double> pos_new = merged_position(i, j);
 
     egy_old += mtot*wt_j * 0.5 * P[j].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (j) //
     egy_old += mtot*wt_i * 0.5 * P[i].Vel.norm_sq() * All.cf_a2inv; // kinetic energy (i) //
