@@ -94,7 +94,7 @@ void local_slopelimiter(double *grad, double valmax, double valmin, double alim,
     }
 }
 
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
 /* Velocity gradient of a solid from its solid neighbours only: the least-squares fit (the same pair weights as the ordinary gradient)
  * with a regularised inverse of the separation moments, 1/lambda -> lambda/(lambda^2 + (0.01 lambda_max)^2): a direction keeps
  * 1/(1 + (0.01 lambda_max/lambda)^2) of its least-squares weight, so one sampled below ~0.01 lambda_max fades out (a plain inverse would
@@ -214,7 +214,7 @@ void GradientsSpec::apply_active_writeback(const neighbor_loop_args& args,
     {
         int j, k;
         MAX_ADD(passer[i].MaxDistance, out->MaxDistance, 0);
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
         for(j = 0; j < 3; j++) { for(k = 0; k < 3; k++) { passer[i].SolidVelocityDifferences[j][k] += out->SolidVelocityDifferences[j][k]; passer[i].SolidSeparationMoments[j][k] += out->SolidSeparationMoments[j][k]; } }
         passer[i].GasNeighbours += out->GasNeighbours;
 #endif
@@ -1014,7 +1014,7 @@ void hydro_gradient_calc(void)
         }
 #endif /* RADTRANSFER */
 
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
         /* a solid beside gas deforms with its own material, not with the gas flowing past it: its stress rate and the velocity
            divergence that evolves its volume use the velocity gradient of its solid neighbours (the hydro gradient, for its
            reconstruction, and the kernel divergence, for its kernel radius, keep every neighbour) */
@@ -1024,10 +1024,14 @@ void hydro_gradient_calc(void)
             solid_neighbour_velocity_gradient(passer_base[i], velocity_gradient);
             for(k = 0; k < NUMDIMS; k++) { divergence += velocity_gradient[k][k]; }
             CellP[i].SolidVelocityDivergence = divergence;
+#ifdef EOS_ELASTIC
             elastic_stress_rate(i, velocity_gradient);
-        } else
 #endif
-#if defined(EOS_ELASTIC)
+        }
+#ifdef EOS_ELASTIC
+        else {elastic_body_update_driftkick(i, 1., 2);}
+#endif
+#elif defined(EOS_ELASTIC)
         elastic_body_update_driftkick(i, 1., 2);
 #endif
 

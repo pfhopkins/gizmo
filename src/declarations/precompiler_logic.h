@@ -1499,6 +1499,15 @@
 #endif
 #endif // GRAIN_FLUID_PROMOTION
 
+/* gas+solid builds: a solid cell beside gas deforms with its own material (hydro/gradients_loop.cc). Its stress rate (EOS_ELASTIC)
+   and, where cell volumes are integrated (MFM), its volume use the velocity gradient of its solid neighbours, while gas keeps its kernel density */
+#if defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && (defined(EOS_TILLOTSON) || defined(EOS_ELASTIC) || defined(EOS_ANEOS)) && defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && defined(HYDRO_MESHLESS_FINITE_MASS) && !defined(HYDRO_SPH)
+#define SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
+#endif
+#if defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && (defined(EOS_ELASTIC) || defined(SOLID_VOLUME_FROM_SOLID_NEIGHBOURS))
+#define SOLID_OWN_VELOCITY_GRADIENT
+#endif
+
 
 
 /* block for metals and other passive scalars, should stay in this order. like the RHD, probably a more elegant way to do this with functions, but designed here to use compiler logic instead */

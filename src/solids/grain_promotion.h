@@ -62,8 +62,9 @@ static inline void grain_promotion_init_cellp(int i)
     CellP[i].Elastic_Stress_Tensor_Pred = {};
     CellP[i].Dt_Elastic_Stress_Tensor   = {};
     CellP[i].RecentYieldMemory          = 0;
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS)
+#ifdef SOLID_OWN_VELOCITY_GRADIENT
     CellP[i].SolidBesideGas             = 0; /* set by its first gradient pass */
+    CellP[i].SolidVelocityDivergence    = 0;
 #endif
 
 #ifdef EOS_DAMAGE_POROSITY

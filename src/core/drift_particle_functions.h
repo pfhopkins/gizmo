@@ -173,7 +173,7 @@ void drift_particle_impl(int i, integertime time1, struct particle_data *pp,
 #endif
             
             double divv_fac_density = divv_fac; /* the predicted density follows the volume's divergence */
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && !defined(HYDRO_SPH)
+#ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
             if(cell[i].SolidBesideGas) {divv_fac_density = kernel_radius_drift_log_change(cell[i].SolidVelocityDivergence * dt_drift);} /* a solid beside gas: its own material's (kicks.cc) */
 #endif
             cell[i].Density *= exp(-divv_fac_density);

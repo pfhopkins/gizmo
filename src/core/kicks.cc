@@ -389,12 +389,12 @@ void do_the_kick(int i, integertime tstart, integertime tend, integertime tcurre
             
 #ifdef HYDRO_EXPLICITLY_INTEGRATE_VOLUME
             double divergence_for_volume = P[i].Particle_DivVel;
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && !defined(HYDRO_SPH)
+#ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
             if(CellP[i].SolidBesideGas) {divergence_for_volume = CellP[i].SolidVelocityDivergence;} /* a solid beside gas: its own material's divergence */
 #endif
             CellP[i].Density_ExplicitInt *= exp(-DMIN(1.5,DMAX(-1.5,divergence_for_volume*All.cf_a2inv * dt_hydrokick))); /*!< explicitly integrated volume/density variable to be used if integrating the SPH-like form of the continuity directly */
             int relax_to_kernel_density = (CellP[i].KernelDensityForVolumeRelaxation > 0 && isfinite(CellP[i].KernelDensityForVolumeRelaxation));
-#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_EXPLICITLY_INTEGRATE_VOLUME) && !defined(HYDRO_SPH)
+#ifdef SOLID_VOLUME_FROM_SOLID_NEIGHBOURS
             if(CellP[i].SolidBesideGas) {relax_to_kernel_density = 0;} /* its kernel density counts the gas around it: it keeps its own integrated volume */
 #endif
             if(relax_to_kernel_density) {double drho2 = CellP[i].Gradients.Density.norm_sq(); /* the evolved density evolves back to the explicit density on a relaxation time of order the sound-crossing or tension wave-crossing time across the density gradient length */
