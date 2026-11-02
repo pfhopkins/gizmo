@@ -284,6 +284,34 @@ extern "C" long long gizmo_particles_count_not_at_time(const int *idx, int n, in
     return count;
 }
 
+/* GIZMO_K1_GATHER: 0 restores the one-thread-per-record send packs (same-binary comparison); default on (device backends). */
+static int k1_gather_coalesced(void)
+{
+    static int enabled = -1;
+    if(enabled < 0) {
+        const char *env = getenv("GIZMO_K1_GATHER");
+        enabled = (env && env[0]) ? (atoi(env) != 0) : 1;
+        if(std::is_same<Kokkos::DefaultExecutionSpace::memory_space, Kokkos::HostSpace>::value) {enabled = 0;}   /* a warp per record is a device idiom */
+        if(ThisTask == 0) {printf("Ghost send packs on the device copy one word per thread: %s.\n", enabled ? "on" : "off"); fflush(stdout);}
+    }
+    return enabled;
+}
+/* GIZMO_K1_GATHER_VERIFY=1: every pack is also made the per-record way and the two compared word for word. */
+static int k1_gather_verify_wanted(void)
+{
+    static int wanted = -1;
+    if(wanted < 0) {const char *env = getenv("GIZMO_K1_GATHER_VERIFY"); wanted = (env && env[0]) ? (atoi(env) != 0) : 0;}
+    return wanted;
+}
+static void k1_gather_verify_report(const char *what, const unsigned int *a, const unsigned int *b, long long nw)
+{
+    long long ndiff = 0;
+    Kokkos::parallel_reduce("k1_gather_verify", Kokkos::RangePolicy<Kokkos::IndexType<long long>>(0, nw),
+                            KOKKOS_LAMBDA(long long i, long long &c) {if(a[i] != b[i]) {c++;}}, ndiff);
+    Kokkos::fence("k1_gather_verify");
+    if(ndiff || ThisTask == 0) {printf("GIZMO_K1_GATHER_VERIFY: task %d, %s, %lld words: %lld differ\n", ThisTask, what, nw, ndiff); fflush(stdout);}
+}
+
 /* Copies whole records as words; padding included, which a host struct copy may leave alone (never read). */
 template <typename W>
 KOKKOS_INLINE_FUNCTION void kept_copy_words(W *dst, const W *src, int nw) {for(int w = 0; w < nw; w++) {dst[w] = src[w];}}
@@ -321,15 +349,40 @@ extern "C" void gizmo_particles_gather_send_records(const int *idx, int n, struc
     const W *Cw = (const W *) CellP;
     const struct particle_data *Pd = P;
     const int ngas = N_gas;
-    Kokkos::parallel_for("gizmo_gather_send_records", n, KOKKOS_LAMBDA(int k) {
-        const int j = d_idx[k];
-        W *op = d_p + (size_t) k * wp;
-        W *oc = d_c + (size_t) k * wc;
-        if(j < 0) {kept_zero_words(op, wp); kept_zero_words(oc, wc); return;}
-        kept_copy_words(op, Pw + (size_t) j * wp, wp);
-        if(Pd[j].Type == 0 && j < ngas) {kept_copy_words(oc, Cw + (size_t) j * wc, wc);} else {kept_zero_words(oc, wc);}
-    });
+    const int verify = k1_gather_verify_wanted();
+    W *d_ref = verify ? (W *) gizmo_gpu_alloc_device(p_bytes + c_bytes, "k1_gather_verify") : NULL;
+    if(!k1_gather_coalesced() || d_ref) {
+        W *rp = d_ref ? d_ref : d_p, *rc = d_ref ? d_ref + (size_t) n * wp : d_c;
+        Kokkos::parallel_for("gizmo_gather_send_records", n, KOKKOS_LAMBDA(int k) {
+            const int j = d_idx[k];
+            W *op = rp + (size_t) k * wp;
+            W *oc = rc + (size_t) k * wc;
+            if(j < 0) {kept_zero_words(op, wp); kept_zero_words(oc, wc); return;}
+            kept_copy_words(op, Pw + (size_t) j * wp, wp);
+            if(Pd[j].Type == 0 && j < ngas) {kept_copy_words(oc, Cw + (size_t) j * wc, wc);} else {kept_zero_words(oc, wc);}
+        });
+    }
+    if(k1_gather_coalesced() || d_ref) {
+        /* one warp per record, one word per lane, so a warp reads and writes consecutive words */
+        using Team = Kokkos::TeamPolicy<>::member_type;
+        Kokkos::parallel_for("gizmo_gather_send_records_words", Kokkos::TeamPolicy<>(n, 32), KOKKOS_LAMBDA(const Team &t) {
+            const int k = t.league_rank();
+            const int j = d_idx[k];
+            const int cell = (j >= 0 && Pd[j].Type == 0 && j < ngas);
+            Kokkos::parallel_for(Kokkos::TeamThreadRange(t, wp), [&](int w) {
+                d_p[(size_t) k * wp + w] = (j < 0) ? 0u : Pw[(size_t) j * wp + w];
+            });
+            Kokkos::parallel_for(Kokkos::TeamThreadRange(t, wc), [&](int w) {
+                d_c[(size_t) k * wc + w] = cell ? Cw[(size_t) j * wc + w] : 0u;
+            });
+        });
+    }
     Kokkos::fence("gizmo_gather_send_records");
+    if(d_ref) {
+        k1_gather_verify_report("gather_send_records", d_p, d_ref, (long long) n * wp);
+        k1_gather_verify_report("gather_send_records(cells)", d_c, d_ref + (size_t) n * wp, (long long) n * wc);
+        gizmo_gpu_free_device(d_ref);
+    }
     Kokkos::View<W *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> hp((W *) dst_P, (size_t) n * wp), hc((W *) dst_CellP, (size_t) n * wc);
     Kokkos::View<const W *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> dp(d_p, (size_t) n * wp), dc(d_c, (size_t) n * wc);
     Kokkos::deep_copy(hp, dp);
@@ -629,19 +682,49 @@ extern "C" int gizmo_particles_gather_send_segments(const int *idx, int n, void 
     const int ngas = N_gas;
     const int wp = (int) (sizeof(struct particle_data) / sizeof(W)), wc = (int) (sizeof(struct gas_cell_data) / sizeof(W));
     const int wr = rec_bytes / (int) sizeof(W);
-    Kokkos::parallel_for("gizmo_gather_send_segments", n, KOKKOS_LAMBDA(int k) {
-        W *rec = d_rec + (size_t) k * wr;
-        for(int w = 0; w < wr; w++) {rec[w] = 0;}
-        const int j = d_idx[k];
-        if(j < 0) {return;}
-        const int gas = (Pd[j].Type == 0 && j < ngas);
-        for(int s = 0; s < seg.n; s++) {
-            if(seg.cell[s] && !gas) {continue;}
-            const W *obj = seg.cell[s] ? (Cw + (size_t) j * wc) : (Pw + (size_t) j * wp);
-            for(int w = 0; w < seg.words[s]; w++) {rec[seg.rec_off[s] + w] = obj[seg.obj_off[s] + w];}
-        }
-    });
+    const int verify = k1_gather_verify_wanted();
+    W *d_ref = verify ? (W *) gizmo_gpu_alloc_device(rec_total, "k1_gather_verify") : NULL;
+    if(!k1_gather_coalesced() || d_ref) {
+        W *out = d_ref ? d_ref : d_rec;
+        Kokkos::parallel_for("gizmo_gather_send_segments", n, KOKKOS_LAMBDA(int k) {
+            W *rec = out + (size_t) k * wr;
+            for(int w = 0; w < wr; w++) {rec[w] = 0;}
+            const int j = d_idx[k];
+            if(j < 0) {return;}
+            const int gas = (Pd[j].Type == 0 && j < ngas);
+            for(int s = 0; s < seg.n; s++) {
+                if(seg.cell[s] && !gas) {continue;}
+                const W *obj = seg.cell[s] ? (Cw + (size_t) j * wc) : (Pw + (size_t) j * wp);
+                for(int w = 0; w < seg.words[s]; w++) {rec[seg.rec_off[s] + w] = obj[seg.obj_off[s] + w];}
+            }
+        });
+    }
+    if(k1_gather_coalesced() || d_ref) {
+        /* one warp per record, one word per lane; a word takes the last segment that covers it and applies (as the
+         * per-record loop's later writes overwrite earlier ones), zero if none */
+        using Team = Kokkos::TeamPolicy<>::member_type;
+        Kokkos::parallel_for("gizmo_gather_send_segments_words", Kokkos::TeamPolicy<>(n, 32), KOKKOS_LAMBDA(const Team &t) {
+            const int k = t.league_rank();
+            const int j = d_idx[k];
+            const int gas = (j >= 0 && Pd[j].Type == 0 && j < ngas);
+            Kokkos::parallel_for(Kokkos::TeamThreadRange(t, wr), [&](int w) {
+                W v = 0;
+                if(j >= 0) {
+                    for(int s = 0; s < seg.n; s++) {
+                        const int o = w - seg.rec_off[s];
+                        if(o < 0 || o >= seg.words[s] || (seg.cell[s] && !gas)) {continue;}
+                        v = seg.cell[s] ? Cw[(size_t) j * wc + seg.obj_off[s] + o] : Pw[(size_t) j * wp + seg.obj_off[s] + o];
+                    }
+                }
+                d_rec[(size_t) k * wr + w] = v;
+            });
+        });
+    }
     Kokkos::fence("gizmo_gather_send_segments");
+    if(d_ref) {
+        k1_gather_verify_report("gather_send_segments", d_rec, d_ref, (long long) n * wr);
+        gizmo_gpu_free_device(d_ref);
+    }
     Kokkos::View<char *, Kokkos::HostSpace, Kokkos::MemoryTraits<Kokkos::Unmanaged>> h((char *) dst, rec_total);
     Kokkos::View<const char *, GIZMO_KOKKOS_DEVICE_SPACE, Kokkos::MemoryTraits<Kokkos::Unmanaged>> d((const char *) d_rec, rec_total);
     Kokkos::deep_copy(h, d);
