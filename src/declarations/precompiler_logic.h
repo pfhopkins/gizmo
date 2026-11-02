@@ -274,7 +274,9 @@
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define OUTPUT_MOLECULAR_FRACTION
+#if !defined(CHIMES) /* the net cooling rate it writes is a query of the in-code network, which CHIMES replaces */
 #define OUTPUT_COOLRATE
+#endif
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
 #define RT_USE_GRAVTREE_SAVE_RAD_FLUX  /* LEBRON-style gravtree flux save; mutex with explicit RT solvers (same reasoning as the GALSF_FB_FIRE_RT_* / SINK_*_HEATING blocks) */
 #endif
