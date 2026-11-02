@@ -228,6 +228,9 @@
 #if defined(COOL_GRACKLE) && !defined(COOLING)
 #define COOLING
 #endif
+#if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2)
+#define EOS_CHEMISTRY_PROVIDES_GAMMA /* the chemistry library evolves the molecules and stores the adiabatic index of the state it solved, and the equation of state uses it */
+#endif
 
 
 
@@ -267,7 +270,7 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS == 3)
-#if !defined(CHIMES) /* CHIMES evolves its own chemistry and does not carry the electron fraction this model reads */
+#if !defined(CHIMES) && !defined(COOL_GRACKLE) /* CHIMES and Grackle replace the default network this model belongs to: its molecules would not match the composition they cache */
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define OUTPUT_MOLECULAR_FRACTION
@@ -591,7 +594,7 @@
 #endif
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
-#if !defined(CHIMES) /* not compatible with CHIMES, which evolves its own chemistry */
+#if !defined(CHIMES) && !defined(COOL_GRACKLE) /* not compatible with CHIMES or Grackle, which replace the default network this model belongs to */
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define EOS_SUBSTELLAR_ISM
@@ -949,13 +952,13 @@
 
 
 #if defined(COOL_MOLECFRAC)
-#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES)
+#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES) && !defined(COOL_GRACKLE)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)
 #endif
 #endif
 
 
-#if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM)
+#if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM) || defined(EOS_CHEMISTRY_PROVIDES_GAMMA)
 #define EOS_GAMMA_VARIABLE
 #endif
 
