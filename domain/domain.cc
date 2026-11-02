@@ -1875,6 +1875,13 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
          attempts x NTask instead starves the search at large NTask: attempts touching the max rank fall as 1/NTask^2. */
       int max_iterations = (n_segments > DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS / 200) ? DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS : 200 * n_segments;
       unsigned int seed = 42 + NTask; /* deterministic seed for reproducibility */
+      /* uniform segment index: one LCG step gives 16 bits, which reach only 65536 segments, so larger counts take a
+         second step for 32 bits; at or below 65536 the draw sequence is unchanged */
+      auto draw_segment = [&]() -> int {
+          seed = seed * 1103515245 + 12345; unsigned int r = seed >> 16;
+          if(n_segments > 65536) {seed = seed * 1103515245 + 12345; r = (r << 16) | (seed >> 16);}
+          return (int) (r % (unsigned int) n_segments);
+      };
 
       /* max over ranks and metrics; *argmax gets a rank holding it (-1 if every value is 0) */
       auto compute_max_imbalance = [&](int *argmax) -> double {
@@ -1912,8 +1919,7 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       for(int iter = 0; iter < max_iterations; iter++)
       {
           /* pick two random segments assigned to different tasks */
-          seed = seed * 1103515245 + 12345; int s1 = (seed >> 16) % n_segments;
-          seed = seed * 1103515245 + 12345; int s2 = (seed >> 16) % n_segments;
+          int s1 = draw_segment(), s2 = draw_segment();
           if(s1 == s2) continue;
           int t1 = domainAssign[s1].task, t2 = domainAssign[s2].task;
           if(t1 == t2) continue;
