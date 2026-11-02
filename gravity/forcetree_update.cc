@@ -385,8 +385,8 @@ static std::vector<int> MotionTopPending;            /* top-level nodes raised s
 static int MotionTopGen = 1;
 static int MotionBoundTreeLive = 0;
 
-/*! Called at every tree build (live=1) and teardown (live=0): a build sets every bound afresh and
- *  renumbers the nodes, so anything pending from the old tree is void. */
+/*! Called at every tree build or restart-file tree load (live=1) and teardown (live=0): a build sets
+ *  every bound afresh and renumbers the nodes, so anything pending from the old tree is void. */
 void force_motion_bounds_reset(int tree_live)
 {
     MotionBoundTreeLive = tree_live;

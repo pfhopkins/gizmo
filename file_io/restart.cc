@@ -407,6 +407,9 @@ void restart(int modus)
 		  int i;
 		  for(i = 0; i < Numnodestree; i++) {Extnodes_base[i].Flag = 0;}
 		  GlobFlag = 0;
+		  /* The loaded tree stands in for a build: arm the motion-bound raises and size their
+		     bookkeeping to it, or every raise outside the kick is dropped until the next build. */
+		  force_motion_bounds_reset(1);
 		}
 	    }
 
