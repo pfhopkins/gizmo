@@ -2939,7 +2939,7 @@ These are miscellaneous flags for de-bugging and special purpose behaviors. If y
 <a name="config-debug-radiation"></a>
 ### _Radiation-Hydrodynamics Special Options for Test Problems_ 
 
-**RT\_DISABLE\_UV\_BACKGROUND**: Disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly).
+**RT\_DISABLE\_UV\_BACKGROUND**: Disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly). With Grackle (`COOL_GRACKLE`) this also turns off Grackle's UV background (its photo-ionization and photo-heating rates and the background heating in its tables) and its UV self-shielding; Compton X-ray heating and explicit radiation are unaffected.
 
 **RT\_SEPARATELY\_TRACK\_LUMPOS**: Keep luminosity vs. mass positions separate in tree. not compatible with Tree-PM mode, but it can be slightly more accurate and useful for debugging in tree-only mode with LEBRON or OTVET algorithms.
 

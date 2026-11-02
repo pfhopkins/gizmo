@@ -244,6 +244,9 @@ void InitGrackle(void)
     LWbackground_intensity = 0; // Rad_Intensity of a constant Lyman-Werner H2 photo-dissociating radiation field, in units of 10-21 erg s-1 cm-2 Hz-1 sr-1. Default: 0.
     LWbackground_sawtooth_suppression = 0; // Flag to enable suppression of Lyman-Werner flux due to Lyman-series absorption (giving a sawtooth pattern), taken from Haiman & Abel, & Rees (2000). Default: 0.
     self_shielding_method=3; // Switch to enable approximate self-shielding from the UV background (see user guide for details); needs a table carrying the shielding cross sections (Grackle's *_shielded.h5 tables)
+#ifdef RT_DISABLE_UV_BACKGROUND
+    UVbackground = 0; self_shielding_method = 0; // the UV background is off for the whole code, so Grackle has none either, and nothing to shield it from
+#endif
 #ifdef METALS
     metal_cooling = 1; // Flag to enable metal cooling using the Cloudy tables. If enabled, the cooling table to be used must be specified with the grackle_data_file parameter. Default: 0.
     dust_chemistry = 1; // Flag to control additional dust cooling and chemistry processes. Default: 0 (no dust). 1: adds the following processes: photo-electric heating, electron recombination on dust, H2 formation on dust.
