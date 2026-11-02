@@ -355,7 +355,7 @@ struct HydroForceSpec
         }
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
-        for(int k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) { local.ChimesNIons[k] = kc[i].ChimesNIons[k]; }
+        for(int k = 0; k < All.ChimesNumSpecies; k++) { local.ChimesNIons[k] = kc[i].ChimesNIons[k]; }
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
         for(int k = 0; k < N_RT_FREQ_BINS; k++) { local.Gradients.Rad_E_gamma_ET[k] = kc[i].Gradients.Rad_E_gamma_ET[k]; }
@@ -525,7 +525,7 @@ struct HydroForceSpec
         for(int k = 0; k < NUM_METAL_SPECIES; k++) { dst.Dyield[k] += src.Dyield[k]; }
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
-        for(int k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) { dst.ChimesIonsYield[k] += src.ChimesIonsYield[k]; }
+        for(int k = 0; k < All.ChimesNumSpecies; k++) { dst.ChimesIonsYield[k] += src.ChimesIonsYield[k]; }
 #endif
 #if defined(RT_SOLVER_EXPLICIT)
 #if defined(RT_EVOLVE_ENERGY)

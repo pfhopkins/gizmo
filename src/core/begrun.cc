@@ -641,6 +641,9 @@ void begrun(void)
         for(int ig = 0; ig < N_gas; ig++)
         {
             chimes_cache_solved_state(ig, CellP[ig].InternalEnergy, CellP); /* the chemistry the rest of the code reads from the cell */
+#ifdef CHIMES_TURB_DIFF_IONS
+            chimes_update_turbulent_abundances(ig, 1, P, CellP); /* the abundance-times-mass the turbulent ion diffusion carries */
+#endif
         }
     }
 #endif

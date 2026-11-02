@@ -1983,6 +1983,7 @@ void InitCool(void)
 
     // Initialise the CHIMES module.
     init_chimes(&ChimesGlobalVars);
+    All.ChimesNumSpecies = ChimesGlobalVars.totalNumberOfSpecies;
 
 #ifdef CHIMES_METAL_DEPLETION
     chimes_init_depletion_data();

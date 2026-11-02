@@ -136,6 +136,7 @@ struct global_data_all_processes
 #endif
 #ifdef CHIMES
   int ChimesThermEvolOn;        /*!< Flag to determine whether to evolve the temperature in CHIMES. */
+  int ChimesNumSpecies;         /*!< Number of CHIMES species tracked in each cell: the value of ChimesGlobalVars.totalNumberOfSpecies, which sits in host memory, for code that runs on the device. */
 #ifdef CHIMES_STELLAR_FLUXES
   double Chimes_f_esc_ion;
   double Chimes_f_esc_G0;
