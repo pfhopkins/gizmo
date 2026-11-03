@@ -2085,11 +2085,28 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
       std::vector<int> order(nseg);
       for(n = 0; n < nseg; n++) {order[n] = n;}
       std::sort(order.begin(), order.end(), [&](int a, int b) {return (domainAssign[a].keep_count > domainAssign[b].keep_count) || (domainAssign[a].keep_count == domainAssign[b].keep_count && domainAssign[a].start < domainAssign[b].start);});
+      /* Segments next to each other in Peano order with the same majority holder are usually one region that
+         was split; keeping all of them would concentrate that region on one rank, and the cost model's errors
+         are correlated within a region. Only the largest holding of each such run is kept in place. */
+      std::vector<int> by_start(nseg), run_keep(nseg, 1);
+      for(n = 0; n < nseg; n++) {by_start[n] = n;}
+      std::sort(by_start.begin(), by_start.end(), [&](int a, int b) {return domainAssign[a].start < domainAssign[b].start;});
+      for(int i = 0; i < nseg;)
+      {
+          int j = i + 1, best = by_start[i];
+          while(j < nseg && domainAssign[by_start[j]].keep_rank == domainAssign[by_start[i]].keep_rank && domainAssign[by_start[i]].keep_rank >= 0)
+          {
+              if(domainAssign[by_start[j]].keep_count > domainAssign[best].keep_count) {best = by_start[j];}
+              j++;
+          }
+          for(int k = i; k < j; k++) {if(by_start[k] != best) {run_keep[by_start[k]] = 0;}}
+          i = j;
+      }
       int n_kept = 0;
       for(int s : order)
       {
           int t = domainAssign[s].keep_rank;
-          if(domainAssign[s].keep_count <= 0 || t < 0 || cnt[t] >= multipledomains) {continue;}
+          if(!run_keep[s] || domainAssign[s].keep_count <= 0 || t < 0 || cnt[t] >= multipledomains) {continue;}
           if(value_with(t, s, -1) > m_fresh) {continue;}
           task[s] = t; place(s, t, 1); n_kept++;
       }
