@@ -117,6 +117,15 @@ void gravity_tree(void)
     ewald_max = 1; /* the tree-code will need to iterate to perform the periodic boundary condition corrections */
 #endif
 
+#ifdef HERMITE_INTEGRATION
+    /* The predictor (HermiteOnlyFlag=1) and corrector (=2) passes walk only the Hermite-eligible
+       particles, i.e. the sinks. On a big step they run after the main pass with the same TakeLevel,
+       so letting them through the block below re-zeroes P[].GravCost[TakeLevel] and replaces the
+       whole step's measured work with the sinks' walk cost -- which is then what the next domain
+       decomposition balances on. Measure in the main pass only; leave the level table alone. */
+    if(HermiteOnlyFlag) {TakeLevel = -1;}
+    else
+#endif
     if(GlobNumForceUpdate > All.TreeDomainUpdateFrequency * All.TotNumPart)
     { /* we have a fresh tree and would like to measure gravity cost */
         /* find the closest level */

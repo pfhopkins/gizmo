@@ -391,6 +391,16 @@
 
 /* set default options for STARFORGE module packages */
 #ifdef SINGLE_STAR_STARFORGE_DEFAULTS /* bunch of options -NOT- strictly required here, but this is a temporary convenience block */
+#if !defined(MULTIPLEDOMAINS)
+#define MULTIPLEDOMAINS 64 /* upper bound on Peano segments per rank; the count follows the particle load (constants.h) */
+#if !defined(DOMAIN_TARGET_PARTICLES_PER_SEGMENT)
+#define DOMAIN_TARGET_PARTICLES_PER_SEGMENT 8000 /* M2e4 stress case (23.8M cells) at 48 ranks: 8 segments per rank (62k particles
+                              each) left ~7x max/mean hydro compute on medium/big steps; 32 (15.5k) measured 0.83x wall, 64 (7.7k) a
+                              further 0.96x, 128 (3.9k) flat. A fixed 64 cost +30% wall on shu1977 (16k particles per rank, 8 ranks:
+                              top-tree build, domain and walk overheads), which this rule gives the floor of 8. Rule: 48 ranks -> 62,
+                              96 ranks -> 31 on M2e4. */
+#endif
+#endif
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
 #if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(IO_NO_GRADUAL_SNAPSHOT_RESTART) /* opt-out: restart from a snapshot at physical timesteps, no ramp */
