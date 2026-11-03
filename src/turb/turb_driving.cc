@@ -17,6 +17,7 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
+#include "../mesh/ghost_writeback.h"
 
 /* This file contains the routines for driven turbulence/stirring; use for things
  like idealized turbulence tests, large-eddy simulations, and the like */
@@ -304,7 +305,8 @@ void set_turb_ampl(void)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;
             PRINT_STATUS(" ..updating fields tracked for following injected energy and dissipation");
-            for(i=0; i < NumPart; i++)
+            const int num_local = ghost_get_num_local(); /* this can run while imported ghosts are live past the local cells: they copy their owners' accumulators */
+            for(i=0; i < num_local; i++)
             {
                 if(P[i].Type == 0)
                 {
