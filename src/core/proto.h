@@ -576,6 +576,7 @@ extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, 
 /* 1 when the particle storage is CUDA managed memory, which MPI must not receive into directly: such receives go
    through host staging (MPI_Sendrecv_into_particle_storage, the ghost transport).  0 on HIP and host builds. */
 extern "C" int gizmo_particle_storage_needs_staged_mpi_receive(void);
+extern "C" int gizmo_particle_storage_device_reads_in_place(void);   /* 1 if device kernels can work on scattered particle records in place (coherent memory or device-preferred storage) */
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
    no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
    (current-at-print is misleading: force_treeallocate resets it before a stop ledger).
