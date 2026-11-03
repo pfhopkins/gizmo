@@ -963,7 +963,7 @@ void hydro_final_operations_and_cleanup(void)
     
 #ifdef TURB_DRIVING
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE // if this is enabled, we only update as frequently as the driving phases are recomputed, as set by TurbDrive_TimeBetweenTurbUpdates. To avoid large errors, must be set by-hand to be << lambda_min / V where V is the typical turbulent velocity and lambda_min is the smallest driven wavelength.
-    if(new_turbforce_needed_this_timestep()){add_turb_accel();}
+    if(turb_force_evaluation_needed_this_timestep()){add_turb_accel();}
 #else    
     add_turb_accel(); // update turbulent driving fields and TurbAccel fields at same time as update HydroAccel, here
 #endif    

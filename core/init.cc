@@ -70,6 +70,7 @@ void init(void)
     }
 
 
+    char icfname[MAX_PATH_BUFFERSIZE_TOUSE];
     switch (All.ICFormat)
     {
         case 1:
@@ -78,13 +79,11 @@ void init(void)
         case 4:
             if(RestartFlag >= 2 && RestartSnapNum >= 0)
             {
-                char fname[MAX_PATH_BUFFERSIZE_TOUSE];
-                if(All.NumFilesPerSnapshot > 1) {snprintf(fname, MAX_PATH_BUFFERSIZE_TOUSE, "%s/snapdir_%03d/%s_%03d", All.OutputDir, RestartSnapNum, All.SnapshotFileBase, RestartSnapNum);}
-                    else {snprintf(fname, MAX_PATH_BUFFERSIZE_TOUSE, "%s%s_%03d", All.OutputDir, All.SnapshotFileBase, RestartSnapNum);}
-                read_ic(fname);
-
+                if(All.NumFilesPerSnapshot > 1) {snprintf(icfname, MAX_PATH_BUFFERSIZE_TOUSE, "%s/snapdir_%03d/%s_%03d", All.OutputDir, RestartSnapNum, All.SnapshotFileBase, RestartSnapNum);}
+                    else {snprintf(icfname, MAX_PATH_BUFFERSIZE_TOUSE, "%s%s_%03d", All.OutputDir, All.SnapshotFileBase, RestartSnapNum);}
             }
-            else {read_ic(All.InitCondFile);}
+            else {snprintf(icfname, MAX_PATH_BUFFERSIZE_TOUSE, "%s", All.InitCondFile);}
+            read_ic(icfname);
             break;
 
         default:
@@ -115,6 +114,10 @@ void init(void)
         All.Timebase_interval = (All.TimeMax - All.TimeBegin) / TIMEBASE;
         a3 = atime = a2_fac = 1;
     }
+
+#ifdef TURB_DRIVING
+    if(RestartFlag == 2 && All.ICFormat == 3) {read_turb_driving_state_hdf5(icfname);} /* needs the timeline set above */
+#endif
 
     set_softenings();
 

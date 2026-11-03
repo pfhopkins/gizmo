@@ -8,7 +8,9 @@ internal field unit is sqrt(4 pi P_unit), in which the magnetic pressure is B^2/
 """
 
 import glob
+import os
 import re
+import shutil
 from os import path
 
 import h5py
@@ -19,7 +21,7 @@ matplotlib.use("Agg")
 from matplotlib import pyplot as plt
 from matplotlib import ticker
 
-from gizmo.test import build_and_run_test, default_mpi_ranks, variant_output_dir, variant_suffix
+from gizmo.test import build_and_run_test, build_gizmo_for_test, default_mpi_ranks, run_test, variant_output_dir, variant_suffix
 from gizmo.units import UNIT_LENGTH_IN_CM, UNIT_MASS_IN_G, UNIT_VELOCITY_IN_CM_PER_S
 
 GAMMA = 1.001
@@ -168,3 +170,63 @@ def run_and_check(test_name, variant, aperture=None, lazy=False, max_ranks=8):
     assert abs(mach[settled].mean() / MACH_TARGET - 1) < MAX_MEAN_ERROR
     assert np.abs(err).max() < MAX_SETTLED_DEVIATION
     assert mach.max() / MACH_TARGET - 1 < MAX_OVERSHOOT
+
+
+# Snapshot restart (RestartFlag 2) mid-stirring, against the same run uninterrupted. Snapshots are 1 apart, so
+# snapshot N is at t = N.
+T_RESTART = 4
+T_END = 8
+MAX_RESTART_MACH_ERROR = 0.02  # first snapshot after the restart; restoring nothing gives 19% in turbsphere hydro
+MAX_RESTART_INJECTED_ERROR = 0.05  # cumulative injected energy at the first snapshot after the restart
+MAX_RESTART_GAIN_ERROR = 1e-4  # first driving update, which sees the same state in both runs; 6-digit log
+
+
+def run_restart_and_check(test_name, variant, aperture=None, lazy=False, max_ranks=8):
+    """The driving state is carried through a snapshot restart: the restarted run continues the same driving
+    realization, update schedule and controller state as the uninterrupted run."""
+    flags = VARIANTS[variant] + ((LAZY_FLAG,) if lazy else ())
+    build_gizmo_for_test(test_name, extra_config_flags=flags)
+    params = {**(LAZY_PARAMS if lazy else {}), "TimeMax": T_END}
+    ranks = default_mpi_ranks(max_ranks=max_ranks)
+    tag = variant + ("_lazy" if lazy else "")  # not variant_suffix: InitCondFile must fit GIZMO's parameter string
+    ref, rst = f"output_restart_ref_{tag}", f"output_restart_{tag}"
+    cwd = os.getcwd()
+    os.chdir(f"test/{test_name}")
+    try:
+        for d in (ref, rst):
+            shutil.rmtree(d, ignore_errors=True)
+            os.makedirs(d)
+        run_test(test_name, ranks, param_overrides={**params, "OutputDir": ref})
+        shutil.copy(f"test_{test_name}.out", f"{ref}/gizmo.out")
+        run_test(test_name, ranks, param_overrides={**params, "OutputDir": rst, "InitCondFile": f"{ref}/snapshot_{T_RESTART:03d}"},
+                 restart_flag=2)
+        shutil.copy(f"test_{test_name}.out", f"{rst}/gizmo.out")
+    finally:
+        os.chdir(cwd)
+    ref, rst = f"test/{test_name}/{ref}", f"test/{test_name}/{rst}"
+
+    # controller: the first update after the restart, made before anything has moved, agrees. Later updates fire on
+    # step boundaries, which differ once the restart has rebuilt the timestep hierarchy.
+    log_ref, log_rst = controller_log(f"{ref}/gizmo.out"), controller_log(f"{rst}/gizmo.out")
+    log_ref = log_ref[:, log_ref[0] >= T_RESTART - 1e-6]
+    dt_first = log_rst[0, 0] - log_ref[0, 0] if log_rst.size else np.inf
+    gain_err = log_rst[2, 0] / log_ref[2, 0] - 1 if log_rst.size else np.inf
+
+    snap = f"snapshot_{T_RESTART + 1:03d}.hdf5"
+    mach_ref, mach_rst = snapshot_stats(f"{ref}/{snap}", aperture)[1], snapshot_stats(f"{rst}/{snap}", aperture)[1]
+    mach_err = mach_rst / mach_ref - 1
+    with h5py.File(f"{ref}/{snap}") as a, h5py.File(f"{rst}/{snap}") as b:
+        inj_err = b["TurbulentDriving"].attrs["CumulativeInjectedEnergy"] / a["TurbulentDriving"].attrs["CumulativeInjectedEnergy"] - 1
+    print(f"{test_name} {variant}{' lazy' if lazy else ''} restart at t = {T_RESTART}: first update {dt_first:+.3g} late, gain error {gain_err:+.2e}; "
+          f"at t = {T_RESTART + 1}, Mach {mach_rst:.4f} vs {mach_ref:.4f} uninterrupted ({mach_err:+.2e}), "
+          f"cumulative injected energy {inj_err:+.2e}")
+    assert abs(dt_first) < 1e-4, "first driving update after the restart moved"
+    assert abs(gain_err) < MAX_RESTART_GAIN_ERROR, "controller state not carried through the restart"
+    assert abs(mach_err) < MAX_RESTART_MACH_ERROR
+    assert abs(inj_err) < MAX_RESTART_INJECTED_ERROR, "cumulative injected energy not carried through the restart"
+
+    # the Ornstein-Uhlenbeck sequence depends only on the random-number stream and the update count: bit-identical
+    final = f"snapshot_{T_END:03d}.hdf5"
+    with h5py.File(f"{ref}/{final}") as a, h5py.File(f"{rst}/{final}") as b:
+        for k in ("ModeCoefficients", "RandomNumberGeneratorState"):
+            assert np.array_equal(a["TurbulentDriving"][k][:], b["TurbulentDriving"][k][:]), f"TurbulentDriving/{k} diverged"
