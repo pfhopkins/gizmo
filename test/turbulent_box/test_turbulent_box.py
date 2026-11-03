@@ -35,6 +35,13 @@ def test_turbulent_box(variant, lazy):
     common.run_and_check(TEST_NAME, variant, lazy=lazy)
 
 
+@pytest.mark.parametrize("lazy", (False, True), ids=("full", "lazy"))
+@pytest.mark.parametrize("variant", common.VARIANTS)
+def test_turbulent_box_snapshot_restart(variant, lazy):
+    _ensure_ic()
+    common.run_restart_and_check(TEST_NAME, variant, lazy=lazy)
+
+
 LEDGER_FLAGS = ("OUTPUT_ADDITIONAL_RUNINFO",)  # writes turb.txt
 MAX_LEDGER_RESIDUAL = 0.05  # of the energy injected over the settled window
 

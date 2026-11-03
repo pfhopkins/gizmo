@@ -104,6 +104,9 @@ void savepositions(int num)
     {
         if(ThisTask == 0)
             printf("\nwriting snapshot file #%d... \n", num);
+#ifdef TURB_DRIVING
+        turb_driving_reduce_pending_energies(); /* collective, so here rather than in the per-file writes */
+#endif
 
         if(!(CommBuffer = mymalloc("CommBuffer", bytes = comm_buffer_bytes())))
         {
@@ -4420,6 +4423,9 @@ void write_file(char *fname, int writeTask, int lastTask)
             }
 
             write_header_attributes_in_hdf5(hdf5_headergrp, ntot_type);
+#ifdef TURB_DRIVING
+            if(ThisTask == 0) {write_turb_driving_state_hdf5(hdf5_file);} /* identical on every task, so one file carries it */
+#endif
 
         }
         else
