@@ -171,22 +171,34 @@ void hydro_core_meshless_compute_pair(
     rho_j *= Vj_inv_corr; P_j *= Vj_inv_corr;
 #endif
 
+    int scalar_recon_mode = recon_mode;
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_MESHLESS_FINITE_MASS)
+    /* a face between the gas and a solid that carries shear: neither side's gradients extrapolate meaningfully into the other
+       material, so the Riemann problem takes the cell-centred hydrodynamic states (magnetic fields are still reconstructed); the
+       velocity is still reconstructed first, for the jump the elastic impedance dissipation acts on */
+    int solid_i = solid_material_is_elastic(local.CompositionType), solid_j = solid_material_is_elastic(CellP[j].CompositionType);
+    volatile int gas_solid_interface = (solid_i != solid_j) && (solid_material_of(solid_i ? local.CompositionType : CellP[j].CompositionType).ShearModulus > 0); /* volatile: a runtime gate in device code */
+    if(gas_solid_interface) {scalar_recon_mode = 0;}
+#endif
     reconstruct_face_states(rho_i, local.Gradients.Density, rho_j, CellP[j].Gradients.Density,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.rho, &Riemann_vec.R.rho, scalar_recon_mode);
     reconstruct_face_states(P_i, local.Gradients.Pressure, P_j, CellP[j].Gradients.Pressure,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.p, &Riemann_vec.R.p, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.p, &Riemann_vec.R.p, scalar_recon_mode);
 #ifdef EOS_GENERAL
     reconstruct_face_states(local.InternalEnergyPred, local.Gradients.InternalEnergy,
                             CellP[j].InternalEnergyPred, CellP[j].Gradients.InternalEnergy,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.u, &Riemann_vec.R.u, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.u, &Riemann_vec.R.u, scalar_recon_mode);
     reconstruct_face_states(kernel.sound_i, local.Gradients.SoundSpeed, kernel.sound_j, CellP[j].Gradients.SoundSpeed,
-                            distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, recon_mode);
+                            distance_from_i, distance_from_j, &Riemann_vec.L.cs, &Riemann_vec.R.cs, scalar_recon_mode);
 #endif
     for(k=0; k<3; k++) { /* reconstruct the velocity relative to the face: the limiter keeps a value's sign, and a velocity's sign depends on the frame */
         reconstruct_face_states(local.Vel[k] - v_frame[k], local.Gradients.Velocity[k], VelPred_j[k] - v_frame[k], CellP[j].Gradients.Velocity[k],
                                 distance_from_i, distance_from_j, &Riemann_vec.L.v[k], &Riemann_vec.R.v[k], recon_mode);
     }
     face_velocity_jump = Riemann_vec.R.v - Riemann_vec.L.v; /* the reconstructed jump (i minus j), before any fallback below resets the states */
+#if defined(EOS_ELASTIC) && defined(EOS_TYPES_DEFAULTGAS_AND_SOLIDS) && defined(HYDRO_MESHLESS_FINITE_MASS)
+    if(gas_solid_interface) {Riemann_vec.R.v = local.Vel - v_frame; Riemann_vec.L.v = VelPred_j - v_frame;} /* cell-centred, like the scalars above */
+#endif
 #ifdef MAGNETIC
     int slim_mode = 1;
 #ifdef MHD_CONSTRAINED_GRADIENT
