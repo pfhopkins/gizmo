@@ -77,24 +77,20 @@ class TillotsonEOS:
                    + b * p0 / (u_u0eta2 ** 2 * eta * eta)
                    * (2.0 * alpha * z * u_u0eta2 * eta + (Pe / (u0 * rho) - 2.0 * u / u0)) * exp_az2)
 
-        if u <= u_s:
-            press, c2_rho = Pc, c2c_rho
-        elif u >= u_sp:
-            press, c2_rho = Pe, c2e_rho
-        else:
-            press = (Pe * (u - u_s) + Pc * (u_sp - u)) / (u_sp - u_s)
-            c2_rho = (c2e_rho * (u - u_s) + c2c_rho * (u_sp - u)) / (u_sp - u_s)
-
-        if c2_rho <= 0:
-            c2_rho = press_min
+        # compressed / expanded / blended branch by u (elementwise, so rho and u may be arrays)
+        press = np.where(u <= u_s, Pc, np.where(u >= u_sp, Pe, (Pe * (u - u_s) + Pc * (u_sp - u)) / (u_sp - u_s)))
+        c2_rho = np.where(u <= u_s, c2c_rho, np.where(u >= u_sp, c2e_rho, (c2e_rho * (u - u_s) + c2c_rho * (u_sp - u)) / (u_sp - u_s)))
+        c2_rho = np.where(c2_rho <= 0, press_min, c2_rho)
         cs2 = c2_rho / rho  # this is c² = (1/rho) * c²_rho per the C++ definition
+        if np.ndim(press) == 0:
+            return float(press), float(cs2)
         return press, cs2
 
     def pressure(self, rho, u):
         return self.pressure_cs2(rho, u)[0]
 
     def soundspeed(self, rho, u):
-        return np.sqrt(max(self.pressure_cs2(rho, u)[1], 0.0))
+        return np.sqrt(np.maximum(self.pressure_cs2(rho, u)[1], 0.0))
 
     def rho_from_Pu(self, P, u, rho_lo=None, rho_hi=None, tol=1e-10, maxit=120):
         """Invert P(rho, u) at fixed u via bisection on the compressive branch.
