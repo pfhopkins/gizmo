@@ -951,6 +951,23 @@ int domain_decompose(void)
     MPI_Allreduce(&gravcost, &totgravcost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
     MPI_Allreduce(&gascost, &totgascost, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
 
+    { /* What this decomposition balances on. Unconditional printf: PRINT_STATUS is silent on
+         sub-steps, and that is where half the decompositions of a deep hierarchy happen. */
+        double loc[2] = {0, 0}, glob[2];
+        for(i = 0; i < NumPart; i++) {double g = P[i].GravCost[TakeLevel]; loc[0] += g; if(g > 0) {loc[1] += 1;}}
+        MPI_Reduce(loc, glob, 2, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+        if(ThisTask == 0)
+        {
+            printf("Domain cost: active_bin=%d TakeLevel=%d (bin %d) UseAll=%d  sum(GravCost)=%g over %.0f of %lld particles  totgravcost=%g totgascost=%g\n",
+                   All.HighestActiveTimeBin, TakeLevel, All.LevelToTimeBin[TakeLevel], UseAllParticles,
+                   glob[0], glob[1], (long long) totpartcount, totgravcost, totgascost);
+            fflush(stdout);
+        }
+        /* Expected on a healthy big-step measurement: sum(GravCost) >> 0.1*N and most particles
+           costed. sum(GravCost) ~ 0, or a few-percent subset costed, means the decomposition is
+           count-balanced (or sink-skewed), not work-balanced. */
+    }
+
 #if (DOMAIN_TIMEBINS == 1)
     domain_init_timebin_costs(); /* compute per-timebin normalization before tree building / cost accumulation */
 #endif
