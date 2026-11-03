@@ -274,6 +274,8 @@ int MPI_Check_Sendrecv(void *sendbuf, int sendcount, MPI_Datatype sendtype,
                        int dest, int sendtag, void *recvbufreal, int recvcount,
                        MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm, MPI_Status * status);
 
+void mpi_exchange_with_partners(int ngrp_lo, int ngrp_hi, int tag, char *sbuf, const int *scount, const int *soff, size_t ssize,
+                                char *rbuf, const int *rcount, const int *roff, size_t rsize);
 int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype sendtype,
                              int dest, int sendtag, void *recvbuf0, size_t recvcount,
                              MPI_Datatype recvtype, int source, int recvtag, MPI_Comm comm,
