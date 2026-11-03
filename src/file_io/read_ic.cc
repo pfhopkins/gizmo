@@ -845,10 +845,21 @@ void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type)
 
         case IO_CHIMES_ABUNDANCES:
 #if defined(CHIMES) && !defined(CHIMES_INITIALISE_IN_EQM)
+            {
+            long n_without_abundances = 0; /* a file without this block reads as zeros: those cells have no chemical state to start from */
             for (n = 0; n < pc; n++)
             {
     	        allocate_gas_abundances_memory(&(ChimesGasVars[offset + n]), &ChimesGlobalVars);
-	            for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[offset + n].abundances[k] = (ChimesFloat) (*fp++);}
+                double abundance_total = 0;
+	            for (k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {ChimesGasVars[offset + n].abundances[k] = (ChimesFloat) (*fp++); abundance_total += ChimesGasVars[offset + n].abundances[k];}
+                if(!(abundance_total > 0)) {n_without_abundances++;}
+            }
+            if(n_without_abundances > 0)
+            {
+                printf("Task %d: %ld gas cells have no CHIMES abundances in the initial-conditions file (no ChimesAbundances block; with CHIMES_REDUCED_OUTPUT, "
+                       "only every N_chimes_full_output_freq-th snapshot carries it). Supply them, or start from equilibrium with CHIMES_INITIALISE_IN_EQM.\n", ThisTask, n_without_abundances);
+                endrun(1894);
+            }
             }
 #endif
             break;

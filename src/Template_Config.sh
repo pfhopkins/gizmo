@@ -404,8 +404,8 @@
 ## ----------------------------------------------------------------------------------------------------
 #CHIMES                         # top-level switch to enable CHIMES. Requires COOLING above. Also, requires COOL_METAL_LINES_BY_SPECIES to include metals.
 #CHIMES_SOBOLEV_SHIELDING       # enables local self-shielding for different species, using a Sobolev-like length scale
-#CHIMES_HII_REGIONS             # disables shielding withing HII region (requires FIRE modules for radiation transport/coupling: uses GALSF_FB_FIRE_RT_HIIHEATING, and citations follow those modules)
-#CHIMES_STELLAR_FLUXES          # couple UV fluxes from the luminosity tree to CHIMES (requires FIRE modules for radiation transport/coupling: citations follow those modules)
+#CHIMES_HII_REGIONS             # disables shielding withing HII region (switches on GALSF_FB_FIRE_RT_HIIHEATING and CHIMES_STELLAR_FLUXES; on automatically with CHIMES + GALSF_FB_FIRE_RT_HIIHEATING; citations follow those modules)
+#CHIMES_STELLAR_FLUXES          # couple UV fluxes from the luminosity tree to CHIMES (switches on FIRE's long-range radiation, GALSF_FB_FIRE_RT_LONGRANGE, which provides it: citations follow those modules)
 #CHIMES_TURB_DIFF_IONS          # turbulent diffusions of CHIMES abundances. Requires TURB_DIFF_METALS and TURB_DIFF_METALS_LOWORDER (see modules for metal diffusion above: use/citation policy follows those)
 #CHIMES_METAL_DEPLETION         # uses density-dependent metal depletion factors (Jenkins 2009, De Cia et al. 2016) to obtain gas-phase abundances for chemical network
 ## ------------ CHIMES de-bugging and special behaviors ------------------------------------------------------------------------
