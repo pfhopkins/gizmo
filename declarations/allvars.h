@@ -225,6 +225,9 @@ extern int TreeReconstructFlag; /*!< the standing tree is CONDEMNED: its storage
     TreeMomentsStaleFlag below (moments re-derivation on intact topology -- strictly cheaper).
     Serialized in restartfiles. */
 extern int TreeMomentsStaleFlag; /*!< flag to refresh tree node moments without a full tree rebuild, e.g. after star formation or sink mass changes */
+#ifdef TREE_REFRESH_INCREMENTAL
+extern int TreeMomentsDirtyFlag; /*!< some node is marked (force_mark_moments_dirty): the next refresh may re-derive only the marked chains, unless TreeMomentsStaleFlag asks for all */
+#endif
 extern int DomainReconstructFlag; /*!< a full domain decomposition (particle ownership/balance) is owed.
     Consumed ONLY by the step-start ladder in run.cc; cleared by the decomposition itself, which
     self-raises TreeReconstructFlag for the tree half. Physics events that merely condemn the tree

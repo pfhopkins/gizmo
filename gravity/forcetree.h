@@ -27,9 +27,14 @@
 #define BITFLAG_MULTIPLEPARTICLES          7
 #define BITFLAG_NODEHASBEENKICKED          8
 #define BITFLAG_INSIDE_LINKINGLENGTH       9
+#define BITFLAG_MOMENTS_DIRTY              10 /* TREE_REFRESH_INCREMENTAL: this node's moments must be re-derived at the next refresh */
 
 void force_update_tree(void);
 void force_refresh_node_moments(void);
+void force_refresh_moments_if_stale(void);
+#ifdef TREE_REFRESH_INCREMENTAL
+void force_mark_moments_dirty(int i);
+#endif
 void force_validate_tree_links(const char *tag);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
