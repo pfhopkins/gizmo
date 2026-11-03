@@ -17,6 +17,10 @@ import numpy as np
 import pytest
 
 
+# Reference solution, published next to the ICs. gmc_cooling_exact.hdf5 was made while the shipped TREECOOL's comment
+# header silently disabled the UV background (and with it the tabulated metal-line cooling); this one has both.
+BENCHMARK = "gmc_cooling_exact_uvb.hdf5"
+
 def compute_test_statistic(f, save_reference_solution=False, plot=False):
     """Returns the test statistic to be compared with the reference solution. Optionally, saves the input snapshot data as the reference solution."""
 
@@ -31,7 +35,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
 
     if save_reference_solution:
         # this option will save the current test solution as the reference solution
-        with h5py.File("test/gmc_cooling/gmc_cooling_exact.hdf5", "w") as F:
+        with h5py.File(f"test/gmc_cooling/{BENCHMARK}", "w") as F:
             F.create_dataset("PartType0/Metallicity", data=Z)
             F.create_dataset("PartType0/Density", data=rho)
             F.create_dataset("PartType0/Temperature", data=T)
@@ -40,7 +44,7 @@ def compute_test_statistic(f, save_reference_solution=False, plot=False):
         nH_plot_bins = np.logspace(np.log10(nH.min()+1e-30), np.log10(nH.max()), 30)
         centers = np.sqrt(nH_plot_bins[1:] * nH_plot_bins[:-1])
 
-        with h5py.File("test/gmc_cooling/gmc_cooling_exact.hdf5", "r") as F:
+        with h5py.File(f"test/gmc_cooling/{BENCHMARK}", "r") as F:
             nH_ref = F["PartType0/Density"][:] * rho_to_nH
             T_ref = F["PartType0/Temperature"][:]
         q_ref = [binned_statistic(nH_ref, T_ref, lambda x: np.percentile(x, q), nH_plot_bins)[0] for q in (16, 50, 84)]
@@ -74,7 +78,7 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads, extra_config_flags):
     test_name = "gmc_cooling"
 
     get_cooling_tables(f"test/{test_name}")
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags, exact_files=(BENCHMARK,))
 
     final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
@@ -84,7 +88,7 @@ def test_gmc_cooling(num_mpi_ranks, num_omp_threads, extra_config_flags):
 
     output_dir = variant_output_dir(test_name, extra_config_flags)
     test_stats = compute_test_statistic(f"{output_dir}/snapshot_010.hdf5", plot=True)
-    benchmark_stats = compute_test_statistic("test/gmc_cooling/gmc_cooling_exact.hdf5")
+    benchmark_stats = compute_test_statistic(f"test/gmc_cooling/{BENCHMARK}")
     assert test_stats == pytest.approx(benchmark_stats, rel=0.1)
 
 
