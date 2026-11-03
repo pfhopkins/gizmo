@@ -69,7 +69,7 @@ static const int GPU_DRIFT_BATCH_SIZE = 32768;
 static void drift_particles_host_(const int *idx, int n_idx, integertime time1)
 {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 256) if(n_idx >= 16)
+#pragma omp parallel for schedule(dynamic, 256) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_idx))
 #endif
     for(int k = 0; k < n_idx; k++) {drift_particle(idx[k], time1);}
 }
@@ -119,7 +119,7 @@ int drift_particles_batch(const int *idx, int n_idx, integertime time1,
        Ti_current out of the particle array is a strided pass over the whole of it, which is a large part
        of what running the drift in bulk is meant to remove. */
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(n_idx >= 16)
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_idx))
 #endif
     for(int k = 0; k < n_idx; k++)
     {

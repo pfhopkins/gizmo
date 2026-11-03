@@ -452,7 +452,7 @@ void hydro_gradient_calc(void)
      * below must ship the scaled value. Done in either corridor mode, never
      * inside the refresh (whose fallback can rebuild and repeat). */
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(n_active_list >= 16)
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_active_list))
 #endif
     for(int idx = 0; idx < n_active_list; idx++) {
         const int i = ActiveParticleList[idx];
@@ -501,7 +501,7 @@ void hydro_gradient_calc(void)
     double smoothInv = 1.0 / All.TurbDynamicDiffSmoothing;
 #endif
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(n_active_list >= 16)
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_active_list))
 #endif
     for(int idx = 0; idx < n_active_list; idx++) {
         const int i = ActiveParticleList[idx];
@@ -596,7 +596,7 @@ void hydro_gradient_calc(void)
         /* (5a) Zero per-iter passer fields (mirrors gradients.cc:637-646). */
         if(grad_iter > 0) {
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(n_active_list >= 16)
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_active_list))
 #endif
             for(int idx = 0; idx < n_active_list; idx++) {
                 const int i = ActiveParticleList[idx];
@@ -652,7 +652,7 @@ void hydro_gradient_calc(void)
          * hydro/gradients.cc:689-829. */
 #ifdef MHD_CONSTRAINED_GRADIENT
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 64) if(n_active_list >= 16)
+#pragma omp parallel for schedule(dynamic, 64) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_active_list))
 #endif
         for(int idx = 0; idx < n_active_list; idx++) {
             const int i = ActiveParticleList[idx];

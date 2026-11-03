@@ -179,7 +179,7 @@ void sink_properties_loop(void) /* Note, normalize_temp_info_struct is now done 
 {
     int i, n; double dt;
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) private(n, dt) if(N_active_loc_Sink >= 16)
+#pragma omp parallel for schedule(dynamic) private(n, dt) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, N_active_loc_Sink))
 #endif
     for(i=0; i<N_active_loc_Sink; i++)
     {

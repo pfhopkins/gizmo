@@ -488,32 +488,13 @@ static gpu_spatial_index_t* nlr_resolve_sidx_cache(SidxCacheKind k,
 
 /* Mode-B discovery-walk OpenMP threading. The self/receiver walks write into
  * disjoint per-item output slots, so they parallelize over the item index with
- * no shared writes. Threading engages only above a structural work threshold
- * (never a caller name); below it the serial code runs verbatim (tiny-N steps
- * pay nothing). Chunk sizes are separate constants because received-query work
- * variance differs from self-active variance. */
-static constexpr int MODEB_OMP_MIN_PER_THREAD = 4;    /* work >= max(64, 4*nthreads) to thread */
+ * no shared writes. Threading engages only from the shared host-thread count for
+ * neighbour-loop work (gizmo_host_threads_take, never a caller name); below it the
+ * serial code runs verbatim (tiny-N steps pay nothing). Chunk sizes are separate
+ * constants because received-query work variance differs from self-active variance. */
 static constexpr int MODEB_OMP_CHUNK_ACTIVE   = 16;   /* schedule(dynamic) chunk for self-active loops */
 static constexpr int MODEB_OMP_CHUNK_RECV     = 16;   /* schedule(dynamic) chunk for received-query loop */
 
-static inline int nlr_modeb_omp_nthreads(void)
-{
-#ifdef _OPENMP
-    return omp_get_max_threads();
-#else
-    return 1;
-#endif
-}
-
-/* Structural gate: thread iff more than one thread AND enough work to amortize.
- * Reads NOTHING tree- or drift-related; safe to call on any step. */
-static inline bool nlr_modeb_use_omp(long long n_items, int nthreads)
-{
-    if(nthreads <= 1) return false;
-    const long long floor_work = (long long)MODEB_OMP_MIN_PER_THREAD * nthreads;
-    const long long thresh = (floor_work > 64) ? floor_work : 64;
-    return n_items >= thresh;
-}
 
 /* Host writeback of n evaluated actives, slots [first, first+n), from accums[0..n). A Spec whose
  * writeback touches only its own particle (nlr_spec_writeback_writes_only_own_particle) runs it on
@@ -524,7 +505,7 @@ static void nlr_apply_active_writebacks(const neighbor_loop_args& args, int firs
                                         const typename Spec::AccumData *accums)
 {
     if constexpr (nlr_spec_writeback_writes_only_own_particle_v<Spec>) {
-        const bool threaded = nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads());
+        const bool threaded = gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, n);
         (void) threaded;
 #ifdef _OPENMP
 #pragma omp parallel for schedule(static) if(threaded)
@@ -582,7 +563,7 @@ static inline void nlr_walk_for_sources(const char *tag, int n, F &&body)
         gizmo_gpu_kernel_launch(tag, n, std::forward<F>(body));
         return;
     }
-    if(nlr_modeb_use_omp(n, nlr_modeb_omp_nthreads())) {
+    if(gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, n)) {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_ACTIVE)
 #endif
@@ -636,9 +617,8 @@ static void collect_candidates_pre_drift(const neighbor_loop_args& args,
     }
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
     /* Thread the tree walk above the work threshold; below it stays serial. */
-    const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
-                         nlr_modeb_use_omp(N, nthreads);
+                         gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, N);
     if(use_omp) {
         /* Each thread mutates only its own per_active_cands[aa] (outer vector
          * pre-sized; no shared push) and its own drift counter (diagnostic
@@ -717,9 +697,8 @@ static void collect_candidates_for_remote_queries(
     const double jscale = nlr_spec_symmetric_j_radius_scale<Spec>();
     /* Thread the received-query tree walk above the work threshold; brute
      * below-threshold stays serial (byte-identical). */
-    const int nthreads = nlr_modeb_omp_nthreads();
     const bool use_omp = (backend == DispatchPath::ModeB_HostWalker) &&
-                         nlr_modeb_use_omp(K, nthreads);
+                         gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, K);
     if(use_omp) {
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic, MODEB_OMP_CHUNK_RECV)
@@ -875,11 +854,10 @@ static void evaluate_pairs_post_drift(const DeviceCtx& ctx,
                       "BitwiseReadonly eval tier requires uses_ghost_writeback==false "
                       "(no j-side ghost scatter)");
     }
-    const int  eval_nthreads = nlr_modeb_omp_nthreads();
     const bool eval_use_omp  =
         (eval_policy == EvalOMPPolicy::AllowProduction) &&
         (nlr_spec_modeb_eval_omp<Spec>() != ModeBEvalOMP::SerialOnly) &&
-        nlr_modeb_use_omp((long long)N, eval_nthreads);
+        gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, (long long)N);
 
     if(eval_use_omp) {
 #ifdef _OPENMP
@@ -1280,7 +1258,7 @@ static void mode_b_remote_evaluate_into_buffer(
     std::vector<FusedExportRec> csr_recs;
     std::vector<int> csr_nodes;
 
-    const int modeb_nthreads = nlr_modeb_omp_nthreads();
+    const int modeb_nthreads = gizmo_host_thread_count();
 
     /* Stage 3: collect SELF candidates PRE-DRIFT. For targeted specs this is the
      * FUSED legacy-mode==0 walk — candidates + export CSR in ONE traversal, keyed
@@ -1308,7 +1286,7 @@ static void mode_b_remote_evaluate_into_buffer(
              * validation pass whose speed was irrelevant; a walk without them
              * is now the production path that exports to peers, and it has the
              * most actives of any of them. */
-            const bool use_omp_self = nlr_modeb_use_omp(N, modeb_nthreads);
+            const bool use_omp_self = gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, N);
             if(use_omp_self) {
                 struct AaMeta { int tid; int rec_off; int n_recs; int node_off; int n_nodes; };
                 std::vector<AaMeta> meta(N);
@@ -6716,7 +6694,7 @@ static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsig
         mode_d_copy_async_to_host(copy_space, b + off_scratch, dev_scratch + s0, (size_t) m * sizeof(IterScratch));
     };
     const int n_seg = (n_all + seg_slots - 1) / seg_slots;
-    const int nthreads = nlr_modeb_omp_nthreads();
+    const int nthreads = gizmo_host_thread_count();
     issue(0);
     copy_space.fence("mode_d_iteration_end_segment");
     for(int seg = 0; seg < n_seg; seg++) {
@@ -6737,7 +6715,7 @@ static void nlr_mode_d_iteration_end(NlrIterDriver<Spec>& drv, std::vector<unsig
             neighbor_loop_args sub = drv.args;
             sub.active_list = drv.args.subgroups[sg].active_indices; sub.num_active = n_here;
 #ifdef _OPENMP
-            #pragma omp parallel for schedule(static) num_threads(nthreads) if(nlr_modeb_use_omp(hi - lo, nthreads))
+            #pragma omp parallel for schedule(static) num_threads(nthreads) if(gizmo_host_threads_take(HOST_THREAD_NEIGHBOUR_WORK, hi - lo))
 #endif
             for(int slot = lo; slot < hi; slot++) {
                 const int k = slot - s0, sl = slot - base;
