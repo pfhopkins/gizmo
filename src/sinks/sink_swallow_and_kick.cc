@@ -943,6 +943,22 @@ int sink_spawn_particle_wind_shell( int i, int dummy_cell_i_to_clone, int num_al
         CellP[j].InternalEnergyPred = CellP[j].InternalEnergy;
         CellP[j].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_DEFAULT; CellP[j].Gamma = GAMMA_DEFAULT; /* the ionized ideal gas assumed when the energy above was set from a desired temperature */
         CellP[j].Temperature = CellP[j].gas_temperature_from_u(CellP[j].InternalEnergy);
+#ifdef CHIMES
+        /* the new cell's own CHIMES state, as a split makes one: the clone's solver settings, arrays of its own (never the clone's), and
+           abundances for new material in the state every cell of the run starts in (InitIonState), with this cell's elements; its next
+           cooling step evolves them */
+        ChimesGasVars[j] = ChimesGasVars[dummy_cell_i_to_clone];
+        allocate_gas_abundances_memory(&(ChimesGasVars[j]), &ChimesGlobalVars);
+#ifdef COOL_METAL_LINES_BY_SPECIES
+        chimes_update_element_abundances(j, P, CellP);
+#endif
+        ChimesGasVars[j].InitIonState = ChimesInitIonState;
+        initialise_gas_abundances(&(ChimesGasVars[j]), &ChimesGlobalVars);
+        chimes_cache_solved_state(j, CellP[j].InternalEnergy, CellP);
+#ifdef CHIMES_TURB_DIFF_IONS
+        chimes_update_turbulent_abundances(j, 1, P, CellP); /* the abundance-times-mass of this cell, not the clone's */
+#endif
+#endif
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
         CellP[j].u_anchor = CellP[j].InternalEnergy;
 #endif
