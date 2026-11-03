@@ -59,7 +59,7 @@ void restart(int modus)
     double save_PartAllocFactor;
     int nprocgroup, primaryTask, groupTask;
     struct global_data_all_processes all_task0;
-    int nmulti = MULTIPLEDOMAINS, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
+    int nmulti = DomainSegmentsPerTask, regular_restarts_are_valid = 1, backup_restarts_are_valid = 1;
     
 
 #ifdef CHIMES 
@@ -350,11 +350,12 @@ void restart(int modus)
 	  in(&nmulti, modus);
         in(&NTopleaves, modus);
         in(&NTopnodes, modus);
-	  if(modus != 0 && nmulti != MULTIPLEDOMAINS)
+	  /* nmulti is the segments-per-rank count the stored layout was built with; this build can hold any count up to MULTIPLEDOMAINS */
+	  if(modus != 0 && (nmulti < 1 || nmulti > MULTIPLEDOMAINS))
 	    {
 	      if(ThisTask == 0)
 		printf
-		  ("Looks like you changed MULTIPLEDOMAINS from %d to %d.\nWe will need to discard tree stored in restart files and construct a new one.\n",
+		  ("Restart files hold %d domain segments per rank, more than this build's MULTIPLEDOMAINS=%d.\nWe will need to discard tree stored in restart files and construct a new one.\n",
 		   nmulti, (int) MULTIPLEDOMAINS);
 
 	      /* In this case we must do a new domain decomposition! */
@@ -364,6 +365,7 @@ void restart(int modus)
 
 	      if(modus)		/* read */
 		{
+		  DomainSegmentsPerTask = nmulti;
 		  domain_allocate();
 		  force_treeallocate((int) (All.TreeAllocFactor * All.MaxPart) + NTopnodes, All.MaxPart);
 		}
@@ -386,8 +388,8 @@ void restart(int modus)
 	      byten(Nextnode, NumPart * sizeof(int), modus);
 	      byten(Nextnode + All.MaxPart, NTopnodes * sizeof(int), modus);
 
-	      byten(DomainStartList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
-	      byten(DomainEndList, NTask * MULTIPLEDOMAINS * sizeof(int), modus);
+	      byten(DomainStartList, NTask * DomainSegmentsPerTask * sizeof(int), modus);
+	      byten(DomainEndList, NTask * DomainSegmentsPerTask * sizeof(int), modus);
 	      byten(TopNodes, NTopnodes * sizeof(struct topnode_data), modus);
 	      byten(DomainTask, NTopnodes * sizeof(int), modus);
 	      byten(DomainNodeIndex, NTopleaves * sizeof(int), modus);
@@ -424,11 +426,29 @@ void restart(int modus)
     }
 
 
-  if(modus != 0 && nmulti != MULTIPLEDOMAINS)	/* in this case we must force a domain decomposition */
+  if(modus != 0)
     {
-        if(ThisTask == 0) {printf("Doing extra domain decomposition because you changed MULTIPLEDOMAINS\n"); fflush(stdout);}
+      /* every rank chose above, from its own file, whether to load the stored tree; the files of one run agree */
+      int nmulti_min, nmulti_max;
+      MPI_Allreduce(&nmulti, &nmulti_min, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
+      MPI_Allreduce(&nmulti, &nmulti_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+      if(nmulti_min != nmulti_max)
+        {
+          if(ThisTask == 0) {printf("Restart files disagree on domain segments per rank (%d to %d): they are not from one run. Stopping.\n", nmulti_min, nmulti_max);}
+          endrun(7872);
+        }
+    }
+
+  if(modus != 0 && (nmulti < 1 || nmulti > MULTIPLEDOMAINS))	/* in this case we must force a domain decomposition */
+    {
+        if(ThisTask == 0) {printf("Doing extra domain decomposition because the stored layout does not fit MULTIPLEDOMAINS\n"); fflush(stdout);}
 
       domain_Decomposition(0, 0, 0);
+      /* The decomposition only allocates the tree, but the resumed run walks it before anything offers a
+         rebuild (the Hermite predictor pass): build it here, as a loaded layout would have provided it. */
+      force_treebuild(NumPart, NULL);
+      TreeReconstructFlag = 0;
+      TreeMomentsStaleFlag = 0;
     }
 }
 

@@ -265,6 +265,7 @@ extern std::vector<int> Ngblist;		/*!< Buffer to hold indices of neighbours retr
 extern double *R2ngblist;
 extern double DomainCorner[3], DomainCenter[3], DomainLen, DomainFac;
 extern int *DomainStartList, *DomainEndList;
+extern int DomainSegmentsPerTask;  /*!< Peano segments per rank in the current decomposition (<= MULTIPLEDOMAINS, which sizes DomainStartList/EndList) */
 extern double *DomainWork;
 extern int *DomainCount;
 extern int *DomainCountGas;
