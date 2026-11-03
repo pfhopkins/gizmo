@@ -1292,14 +1292,16 @@ int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count)
  * thread count.  Each kind of loop scales it by how much work one item is:
  *   Neighbour-loop work (host walks, evaluations, writebacks): the anchor itself.
  *   Per-particle loops: a quarter of it, since one element's update costs several times a neighbour-loop item's bookkeeping.
- * At 16 or fewer threads these give 64 and 16, the values the code used before they were collected here; they are inherited
- * defaults, not measured crossovers. */
+ *   Bookkeeping (a few operations or a copy per item): 64 times it, since such an item repays almost none of the start.
+ * At 16 or fewer threads these give 64, 16 and 4096: the first two are the values the code used before they were collected here,
+ * the last a starting value for loops that do almost nothing per item; none is a measured crossover. */
 static const int HOST_THREAD_DEFAULT_FLOOR = 64, HOST_THREAD_DEFAULT_PER_THREAD = 4;
-struct HostThreadRule {const char *what; int per;};   /* the count is the anchor / per, rounded up */
+struct HostThreadRule {const char *what; int times, per;};   /* the count is the anchor * times / per, rounded up */
 static constexpr HostThreadRule host_thread_rules[HOST_THREAD_NUM_SITES] =   /* in the order of enum GizmoHostThreadSite */
 {
-    {"per-particle loops",       4},
-    {"neighbour-loop host work", 1},
+    {"per-particle loops",       1, 4},
+    {"neighbour-loop host work", 1, 1},
+    {"bookkeeping loops",       64, 1},
 };
 static_assert(host_thread_rules[HOST_THREAD_NUM_SITES - 1].what != nullptr, "a count of GizmoHostThreadSite has no row");
 
@@ -1318,7 +1320,7 @@ static long long host_thread_resolve(int site, int nthreads)
                                      HOST_THREAD_DEFAULT_PER_THREAD * (long long) nthreads : HOST_THREAD_DEFAULT_FLOOR;
     const long long anchor = (All.HostThreadMinCount >= 0) ? All.HostThreadMinCount : default_anchor;
     const long long per = host_thread_rules[site].per;
-    return (anchor + per - 1) / per;   /* rounded up, so only an anchor of 0 threads every loop that has work */
+    return (anchor * host_thread_rules[site].times + per - 1) / per;   /* rounded up, so only an anchor of 0 threads every loop that has work */
 }
 
 int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count)
@@ -1355,8 +1357,10 @@ void gizmo_gpu_offload_report(void)
     for(int site = 0; site < HOST_THREAD_NUM_SITES; site++)
     {
         const HostThreadRule &rule = host_thread_rules[site];
-        char ratio[24] = "";
-        if(rule.per != 1) {snprintf(ratio, sizeof(ratio), " / %d", rule.per);}
+        char ratio[32] = "";
+        if(rule.times != 1 && rule.per != 1) {snprintf(ratio, sizeof(ratio), " x %d / %d", rule.times, rule.per);}
+        else if(rule.per != 1) {snprintf(ratio, sizeof(ratio), " / %d", rule.per);}
+        else if(rule.times != 1) {snprintf(ratio, sizeof(ratio), " x %d", rule.times);}
         printf("   %-46s %10lld   (from %s%s)\n", rule.what, host_thread_resolve(site, nthreads),
                (All.HostThreadMinCount >= 0) ? "HostThreadMinCount" : "default HostThreadMinCount = max(64, 4 x threads)", ratio);
     }

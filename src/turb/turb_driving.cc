@@ -509,7 +509,7 @@ void add_turb_accel()
         {
             std::vector<double> pos_host(3 * n), field_host(3 * n);
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, N_active))
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, N_active))
 #endif
             for(int j = 0; j < N_active; j++)
             {
@@ -525,7 +525,7 @@ void add_turb_accel()
             gizmo_gpu_copy_to_host(field_host.data(), field_dev, 3 * n * sizeof(double));
             gizmo_gpu_free_device(pos_dev); gizmo_gpu_free_device(field_dev);
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, N_active))
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, N_active))
 #endif
             for(int j = 0; j < N_active; j++)
             {
@@ -553,17 +553,26 @@ void add_turb_accel()
 }
 
 
-/* routine to integrate the turbulent driving forces, specifically the 'TurbAccel' variables that need to be drifted and kicked: note that we actually do drifting and kicking in the normal routines, this is just to integrate the dissipation rates etc used for our tracking */
-void do_turb_driving_step_first_half(void)
+/* The energy the driving puts into each active cell over one half of its step, kicked from the step's beginning to its
+ * midpoint (first half) or from the midpoint to its end.  Each active writes only its own EgyDrive, so the loop runs on
+ * several threads with the same result once there are enough of them. */
+static void turb_driving_energy_half_kick(int second_half)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for (int i : ActiveParticleList)
+    const int n_act = (int) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n_act))
+#endif
+    for(int k_act = 0; k_act < n_act; k_act++)
     {
-        ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
-        dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
+        const int i = act[k_act];
         if(P[i].Type == 0)
         {
+            const integertime ti_step = P[i].integertime_step();
+            const integertime tstart = second_half ? P[i].Ti_begstep + ti_step / 2 : P[i].Ti_begstep;   /* beginning or midpoint of step */
+            const integertime tend   = second_half ? P[i].Ti_begstep + ti_step     : P[i].Ti_begstep + ti_step / 2;   /* midpoint or end */
+            const double dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
             double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
             Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
             double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
@@ -572,27 +581,8 @@ void do_turb_driving_step_first_half(void)
     }
     CPU_Step[CPU_DRIFT] += measure_time();
 }
-
-
-/* routine to integrate the turbulent driving forces, specifically the 'TurbAccel' variables that need to be drifted and kicked: note that we actually do drifting and kicking in the normal routines, this is just to integrate the dissipation rates etc used for our tracking */
-void do_turb_driving_step_second_half(void)
-{
-    CPU_Step[CPU_MISC] += measure_time();
-    int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for (int i : ActiveParticleList)
-    {
-        ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
-        dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
-        if(P[i].Type == 0)
-        {
-            double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
-            Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
-            double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
-            CellP[i].EgyDrive += ekin1 - ekin0;
-        }
-    }
-    CPU_Step[CPU_DRIFT] += measure_time();
-}
+void do_turb_driving_step_first_half(void) {turb_driving_energy_half_kick(0);}
+void do_turb_driving_step_second_half(void) {turb_driving_energy_half_kick(1);}
 
 
 /* routine to record and optionally write to output files various statistics of driven turbulence here (most relevant to idealized sims with a hard-coded adiabatic EOS */

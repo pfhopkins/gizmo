@@ -501,6 +501,7 @@ enum GizmoHostThreadSite
 {
     HOST_THREAD_PARTICLE_LOOP = 0,    /* one element per item: drift, the gradient and corridor passes over active gas, subcycled transport, sink properties */
     HOST_THREAD_NEIGHBOUR_WORK,       /* neighbour-loop walks, evaluations and writebacks run on the host */
+    HOST_THREAD_BOOKKEEPING,          /* a few arithmetic operations or a copy per item: the turbulence energy tracking and compact staging */
     HOST_THREAD_NUM_SITES
 };
 int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count);   /* 1 if a loop over `count` items should run on all OpenMP threads */
