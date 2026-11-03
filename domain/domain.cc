@@ -5,6 +5,7 @@
 #include <math.h>
 #include <algorithm>
 #include <vector>
+#include <limits.h>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -1389,6 +1390,38 @@ void domain_exchange(void)
     {offset_recv[i] = offset_recv[i - 1] + count_recv[i - 1];}
 
 
+#ifndef CHIMES
+  { /* every message of the exchange posted at once, then one wait: a chain of blocking pairwise exchanges
+       serializes on the slowest partner of each round. Placement is the same as the loop below. */
+    std::vector<MPI_Request> req; req.reserve(10 * NTask);
+    auto post = [&](bool is_send, char *buf, size_t bytes, int peer, int tag) {
+        for(size_t done = 0; done < bytes;)
+        {
+            int piece = (int) ((bytes - done < (size_t) INT_MAX) ? (bytes - done) : (size_t) INT_MAX);
+            req.emplace_back();
+            if(is_send) {MPI_Isend(buf + done, piece, MPI_BYTE, peer, tag, MPI_COMM_WORLD, &req.back());}
+            else {MPI_Irecv(buf + done, piece, MPI_BYTE, peer, tag, MPI_COMM_WORLD, &req.back());}
+            done += piece;
+        }
+    };
+    for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
+    {
+        target = ThisTask ^ ngrp;
+        if(target >= NTask) {continue;}
+        post(false, (char *) (P + offset_recv_gas[target]), count_recv_gas[target] * sizeof(struct particle_data), target, TAG_PDATA_GAS);
+        post(false, (char *) (CellP + offset_recv_gas[target]), count_recv_gas[target] * sizeof(struct gas_cell_data), target, TAG_GASDATA);
+        post(false, (char *) (Key + offset_recv_gas[target]), count_recv_gas[target] * sizeof(peanokey), target, TAG_KEY_GAS);
+        post(false, (char *) (P + offset_recv[target]), count_recv[target] * sizeof(struct particle_data), target, TAG_PDATA);
+        post(false, (char *) (Key + offset_recv[target]), count_recv[target] * sizeof(peanokey), target, TAG_KEY);
+        post(true, (char *) (partBuf + offset_gas[target]), count_gas[target] * sizeof(struct particle_data), target, TAG_PDATA_GAS);
+        post(true, (char *) (gasBuf + offset_gas[target]), count_gas[target] * sizeof(struct gas_cell_data), target, TAG_GASDATA);
+        post(true, (char *) (keyBuf + offset_gas[target]), count_gas[target] * sizeof(peanokey), target, TAG_KEY_GAS);
+        post(true, (char *) (partBuf + offset[target]), count[target] * sizeof(struct particle_data), target, TAG_PDATA);
+        post(true, (char *) (keyBuf + offset[target]), count[target] * sizeof(peanokey), target, TAG_KEY);
+    }
+    if(!req.empty()) {MPI_Waitall((int) req.size(), req.data(), MPI_STATUSES_IGNORE);}
+  }
+#else
   for(ngrp = 1; ngrp < (1 << PTask); ngrp++)
     {
       target = ThisTask ^ ngrp;
@@ -1449,6 +1482,7 @@ void domain_exchange(void)
 	    }
 	}
     }
+#endif
 
 #ifdef CHIMES 
   /* Loop through received gas cells and read in abundances from the buffer. */ 
