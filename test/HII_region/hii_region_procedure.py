@@ -340,13 +340,14 @@ def make_ifront_evolution_plot(all_evo, test_dir):
 # --------------------------------------------------------------------------------------
 # Build + run + check driver
 # --------------------------------------------------------------------------------------
-def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_config_flags=()):
+def run_variant(test_name, test_dir, num_mpi_ranks, num_omp_threads, extra_config_flags=(), param_overrides=None):
     """Build+run one variant, validate the final snapshot, compute profiles, assert the
     HII-region temperature, and emit the per-snapshot T(r) plot plus the I-front-position-
     vs-time plot for this variant. Returns (profiles, label, ifront_evolution), where
     ifront_evolution is the (times, radii) tuple from compute_ifront_evolution."""
     prepare_inputs(test_dir, test_name)
-    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, extra_config_flags,
+                       param_overrides=param_overrides)
     final_snap = get_final_snapshot(test_name, extra_config_flags)
     assert_final_time(final_snap, test_name)
     with h5py.File(final_snap, "r") as F:

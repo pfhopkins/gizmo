@@ -16,6 +16,11 @@ import hii_region_procedure as hii  # noqa: E402
 TEST_NAME = "HII_region_subcycle"
 TEST_DIR = Path(__file__).parent
 
+# The baseline is the reference the subcycled variants must match, so it runs at a timestep
+# converged in the I-front radius at TimeMax (halving MaxSizeTimestep below 0.003125 changes it
+# by < 1%). The subcycled variants keep the long step they exist to take.
+BASELINE_PARAM_OVERRIDES = {"MaxSizeTimestep": 0.003125}
+
 _baseline = {}
 _all_profiles = {}
 _all_ifront = {}
@@ -33,7 +38,9 @@ _all_ifront = {}
     ids=["baseline", "subcycle_rt", "subcycle_rt_cooling"],
 )
 def test_HII_region_subcycle(num_mpi_ranks, num_omp_threads, extra_config_flags):
-    profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags)
+    overrides = None if extra_config_flags else BASELINE_PARAM_OVERRIDES
+    profiles, label, evo = hii.run_variant(TEST_NAME, TEST_DIR, num_mpi_ranks, num_omp_threads, extra_config_flags,
+                                           param_overrides=overrides)
     hii.assert_hii_temperature(profiles)
 
     _all_profiles[label] = profiles
