@@ -350,14 +350,18 @@ void set_turb_ampl(void)
  * spanned by the modes is walked in order with those factors carried as running products, so the sum needs six sines and
  * cosines per position instead of two per mode, and no storage per position.  start/mode list, lattice point by lattice point
  * (x slowest), the modes sitting there: more than one mode can share a point (the generator emits sign variants that
- * coincide when an index is zero), and each keeps its own amplitude and phases.  The pointers are host or device memory to
- * match the side that evaluates. */
+ * coincide when an index is zero), and each keeps its own amplitude and phases.  The walk visits every point of the box the
+ * modes span, so where that box holds many more points than there are modes (a thin shell of large wavenumbers) the direct
+ * sum over the modes is used instead, chosen once for the run and the same on every route.  The pointers are host or device
+ * memory to match the side that evaluates. */
 struct TurbModeLattice
 {
+    int use_lattice;            /* 1: walk the lattice; 0: the direct sum over the modes */
+    int nmodes;
     int lo[3], n[3];            /* lowest integer index and number of indices spanned, per axis */
     double k1[3];               /* 2 pi / box length, per axis */
     const int *start, *mode;    /* the modes at lattice point p are mode[start[p] .. start[p+1]-1] */
-    const double *aka, *akb, *ampl;
+    const double *kvec, *aka, *akb, *ampl;
 };
 
 /* The driving field at one position: the sum over the Fourier modes, scaled by the solenoidal weight.  Device-callable;
@@ -366,6 +370,19 @@ KOKKOS_INLINE_FUNCTION
 void turb_accel_at_position(double x, double y, double z, const struct TurbModeLattice &lat, double fac_sol, double f[3])
 {
     double fx = 0, fy = 0, fz = 0;
+    if(!lat.use_lattice)
+    {
+        for(int m = 0; m < lat.nmodes; m++)
+        {
+            const double kdotx = lat.kvec[3*m+0]*x + lat.kvec[3*m+1]*y + lat.kvec[3*m+2]*z;
+            const double amp = lat.ampl[m], realt = cos(kdotx), imagt = sin(kdotx);
+            fx += amp*(lat.aka[3*m+0]*realt - lat.akb[3*m+0]*imagt);
+            fy += amp*(lat.aka[3*m+1]*realt - lat.akb[3*m+1]*imagt);
+            fz += amp*(lat.aka[3*m+2]*realt - lat.akb[3*m+2]*imagt);
+        }
+        f[0] = fx * fac_sol; f[1] = fy * fac_sol; f[2] = fz * fac_sol;
+        return;
+    }
     const double px = lat.k1[0]*x, py = lat.k1[1]*y, pz = lat.k1[2]*z;   /* phase of one step along each axis */
     const double sxr = cos(px), sxi = sin(px), syr = cos(py), syi = sin(py), szr = cos(pz), szi = sin(pz);
     double cxr = cos(lat.lo[0]*px), cxi = sin(lat.lo[0]*px);
@@ -435,7 +452,11 @@ void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cel
 
 /* The lattice index of the modes, built once from StMode (which does not change after start-up or a restart reload): each
  * mode's integer indices, its axis range, and the modes listed lattice point by lattice point in mode order. */
-static int turb_lattice_built = 0, turb_lattice_lo[3], turb_lattice_n[3];
+/* The lattice walk is used while the box of lattice points the modes span holds at most this many points per mode: each
+ * point costs a complex multiply where each mode of the direct sum costs a sine and a cosine.  A starting value, to be
+ * priced, not a measured crossover. */
+#define TURB_LATTICE_MAX_POINTS_PER_MODE 8
+static int turb_lattice_built = 0, turb_lattice_use = 0, turb_lattice_lo[3], turb_lattice_n[3];
 static double turb_lattice_k1[3];
 static std::vector<int> turb_lattice_start, turb_lattice_mode;
 static void turb_mode_lattice_build(void)
@@ -460,7 +481,13 @@ static void turb_mode_lattice_build(void)
         }
     }
     for(int d = 0; d < 3; d++) {turb_lattice_n[d] = (StNModes > 0) ? hi[d] - turb_lattice_lo[d] + 1 : 0;}
-    const size_t npoints = (size_t) turb_lattice_n[0] * turb_lattice_n[1] * turb_lattice_n[2];
+    const long long npoints_ll = (long long) turb_lattice_n[0] * turb_lattice_n[1] * turb_lattice_n[2];   /* each extent < 2^31 / 2 */
+    turb_lattice_use = (StNModes > 0 && npoints_ll <= (long long) TURB_LATTICE_MAX_POINTS_PER_MODE * StNModes) ? 1 : 0;
+    PRINT_STATUS("Turbulent driving: %d modes span %lld lattice points; the field is summed %s", StNModes, npoints_ll,
+                 turb_lattice_use ? "over the lattice" : "directly over the modes");
+    turb_lattice_built = 1;
+    if(!turb_lattice_use) {return;}
+    const size_t npoints = (size_t) npoints_ll;
     turb_lattice_start.assign(npoints + 1, 0);
     turb_lattice_mode.assign((size_t) StNModes, 0);
     std::vector<size_t> point((size_t) StNModes);
@@ -472,7 +499,6 @@ static void turb_mode_lattice_build(void)
     for(size_t p = 0; p < npoints; p++) {turb_lattice_start[p + 1] += turb_lattice_start[p];}
     std::vector<int> fill(turb_lattice_start.begin(), turb_lattice_start.end() - 1);
     for(int m = 0; m < StNModes; m++) {turb_lattice_mode[fill[point[m]]++] = m;}
-    turb_lattice_built = 1;
 }
 
 /* The lattice view over host memory, for the host loops. */
@@ -480,47 +506,50 @@ static struct TurbModeLattice turb_mode_lattice_host(void)
 {
     turb_mode_lattice_build();
     struct TurbModeLattice lat;
+    lat.use_lattice = turb_lattice_use; lat.nmodes = StNModes;
     for(int d = 0; d < 3; d++) {lat.lo[d] = turb_lattice_lo[d]; lat.n[d] = turb_lattice_n[d]; lat.k1[d] = turb_lattice_k1[d];}
     lat.start = turb_lattice_start.data(); lat.mode = turb_lattice_mode.data();
-    lat.aka = StAka; lat.akb = StAkb; lat.ampl = StAmpl;
+    lat.kvec = StMode; lat.aka = StAka; lat.akb = StAkb; lat.ampl = StAmpl;
     return lat;
 }
 
 /* The device routes below take their per-call buffers (index list, compact positions and fields) for the call and free
  * them after it, as the particle staging does: the allocation costs little across a run, and holding them would keep
  * memory on every rank that only the turbulence update uses.  Only the mode tables stay on the device -- the lattice index,
- * copied once, and the amplitudes and phases (7 doubles per mode), copied again on the first device call after the phases
+ * copied once when the lattice is walked, and the wavevectors, amplitudes and phases (10 doubles per mode), copied again on the first device call after the phases
  * change; the restart reload and the start-up normalisation both precede the first call -- so host-only and tiny steps
- * never touch device memory for them.  Returns the lattice view over device memory, or one with a null start on failure. */
+ * never touch device memory for them.  Returns the view over device memory, or one with a null ampl on failure. */
 static int *turb_lattice_dev = NULL;
 static struct TurbModeLattice turb_mode_lattice_on_device(void)
 {
     struct TurbModeLattice lat = turb_mode_lattice_host();
     const size_t n = (size_t) StNModes, nstart = turb_lattice_start.size();
-    if(!turb_lattice_dev)
+    lat.ampl = NULL;
+    if(turb_lattice_use && !turb_lattice_dev)
     {
         turb_lattice_dev = (int *) gizmo_gpu_alloc_device((nstart + n) * sizeof(int), "turb_driving_mode_lattice");
-        if(!turb_lattice_dev) {lat.start = NULL; return lat;}
+        if(!turb_lattice_dev) {return lat;}
         gizmo_gpu_copy_to_device(turb_lattice_dev, turb_lattice_start.data(), nstart * sizeof(int));
         gizmo_gpu_copy_to_device(turb_lattice_dev + nstart, turb_lattice_mode.data(), n * sizeof(int));
     }
     if(!turb_modes_dev)
     {
-        turb_modes_dev = (double *) gizmo_gpu_alloc_device(7 * n * sizeof(double), "turb_driving_modes");
-        if(!turb_modes_dev) {lat.start = NULL; return lat;}
+        turb_modes_dev = (double *) gizmo_gpu_alloc_device(10 * n * sizeof(double), "turb_driving_modes");
+        if(!turb_modes_dev) {return lat;}
         turb_modes_dev_current = 0;
     }
     if(!turb_modes_dev_current)
     {
-        std::vector<double> table(7 * n);
+        std::vector<double> table(10 * n);
         memcpy(table.data(),         StAka,  3 * n * sizeof(double));
         memcpy(table.data() + 3 * n, StAkb,  3 * n * sizeof(double));
-        memcpy(table.data() + 6 * n, StAmpl,     n * sizeof(double));
-        gizmo_gpu_copy_to_device(turb_modes_dev, table.data(), 7 * n * sizeof(double));
+        memcpy(table.data() + 6 * n, StMode, 3 * n * sizeof(double));
+        memcpy(table.data() + 9 * n, StAmpl,     n * sizeof(double));
+        gizmo_gpu_copy_to_device(turb_modes_dev, table.data(), 10 * n * sizeof(double));
         turb_modes_dev_current = 1;
     }
-    lat.start = turb_lattice_dev; lat.mode = turb_lattice_dev + nstart;
-    lat.aka = turb_modes_dev; lat.akb = turb_modes_dev + 3 * n; lat.ampl = turb_modes_dev + 6 * n;
+    lat.start = turb_lattice_use ? turb_lattice_dev : NULL; lat.mode = turb_lattice_use ? turb_lattice_dev + nstart : NULL;
+    lat.aka = turb_modes_dev; lat.akb = turb_modes_dev + 3 * n; lat.kvec = turb_modes_dev + 6 * n; lat.ampl = turb_modes_dev + 9 * n;
     return lat;
 }
 
@@ -574,7 +603,7 @@ void add_turb_accel()
         const int in_place = gizmo_particle_storage_device_reads_in_place();
         const size_t n = (size_t) N_active;
         const struct TurbModeLattice lat = turb_mode_lattice_on_device();
-        const double *modes = (lat.start != NULL) ? lat.aka : NULL;   /* null when the device tables could not be had */
+        const double *modes = lat.ampl;   /* null when the device tables could not be had */
         int *index_dev = NULL; double *pos_dev = NULL, *field_dev = NULL;
         if(modes) {
             if(in_place) {index_dev = (int *) gizmo_gpu_alloc_device(n * sizeof(int), "turb_driving_index");}
@@ -589,7 +618,7 @@ void add_turb_accel()
             char msg[256];
             snprintf(msg, sizeof(msg), "turbulent driving: could not get device memory for %d driving modes and %d gas cells (%.1f MB); "
                      "no driving acceleration is applied", StNModes, N_active,
-                     (double)(7 * (size_t) StNModes * sizeof(double) + (in_place ? n * sizeof(int) : 6 * n * sizeof(double))) / (1024.0 * 1024.0));
+                     (double)(10 * (size_t) StNModes * sizeof(double) + (in_place ? n * sizeof(int) : 6 * n * sizeof(double))) / (1024.0 * 1024.0));
             gizmo_request_controlled_stop(7715, msg, __FILE__, __LINE__, __FUNCTION__);
             return;
         }
