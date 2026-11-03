@@ -23,7 +23,7 @@
  *   5) norm  : divide mass-weighted sums by mass (or fall back to node
  *              centre if mass==0); set/clear BITFLAG_MULTIPLEPARTICLES.
  *
- * After the kernels finish, gpu_moment_writeback_to_aos copies the SoA
+ * After the kernels finish, gpu_moment_writeback_to_aos (one more kernel) copies the SoA
  * back into Nodes[]/Extnodes[] (mechanical inverse of seed_node_), so
  * the CPU pseudo path (force_exchange_pseudodata +
  * force_treeupdate_pseudos) reads identical AoS values.
@@ -1040,112 +1040,120 @@ extern "C" void gpu_moment_refresh_release(void)
 }
 
 /* =================================================================== */
-/* Bulk SoA → Nodes[]/Extnodes[] AoS write-back.  Runs on host         */
-/* (host-side mutation of the AoS arrays so the CPU pseudo path picks  */
-/* up the new moments).  SharedSpace pages may need a Kokkos::fence    */
-/* before this; callers are responsible.                                */
+/* Bulk SoA → Nodes[]/Extnodes[] AoS write-back, so the CPU pseudo     */
+/* path and the host readers of the node records pick up the new       */
+/* moments.  One kernel over the local nodes (threaded on the host in  */
+/* builds without a GPU).  Callers fence the SoA writes before this.   */
 /* =================================================================== */
-extern "C" void gpu_moment_writeback_to_aos(int n)
+/* One node of the SoA -> AoS write-back: copies and casts only.  nodes/extnodes are the unshifted arrays
+ * (Nodes_base, Extnodes_base), so k is both the SoA and the array index. */
+KOKKOS_INLINE_FUNCTION static void mr_writeback_node_(const struct gpu_gravity_tree_soa_t &soa, struct NODE *nodes,
+                                                      struct extNODE *extnodes, int k)
 {
-    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
-    if(!soa) {return;}
-    int tree_base = All.TreeNodeIndexBase;
-
-    for(int k = 0; k < n; k++) {
-        int no = tree_base + k;
-        /* The host stamped every node current before this refresh (forcetree.cc, the reset
-         * that mirrors the build's moment pass), and the kernel above just recomputed vmax.
-         * The device walk widens a node's stored length from the time that length describes,
-         * using vmax; so the length and its time go to the mirror together with the new
-         * moments, or the mirror is left pairing a fresh vmax and an old time with whatever
-         * length it last saw, and a walk on it can open too little. */
-        soa->len[k] = Nodes[no].len;
-        if(soa->node_ti) {soa->node_ti[k] = Nodes[no].Ti_current;}
-        Nodes[no].u.d.mass     = (MyFloat) soa->mass[k];
-        Nodes[no].u.d.s        = Vec3<MyFloat>{(MyFloat) soa->s[k][0],
-                                                (MyFloat) soa->s[k][1],
-                                                (MyFloat) soa->s[k][2]};
-        Nodes[no].u.d.bitflags = soa->bitflags[k];
-        Nodes[no].N_part       = soa->N_part[k];
-        Nodes[no].maxsoft      = (MyFloat) soa->maxsoft[k];
-        /* Ti_current: matches CPU step-1 reset, but we only
-         * touch them in the same way force_refresh_node_moments did
-         * before our dispatch was wired in. They are reset on the host
-         * before this routine is called (see forcetree.cc step 1). */
-        Extnodes[no].vs       = Vec3<MyFloat>{(MyFloat) soa->node_vs[k][0],
-                                               (MyFloat) soa->node_vs[k][1],
-                                               (MyFloat) soa->node_vs[k][2]};
-        Extnodes[no].hmax     = (MyFloat) soa->hmax[k];
-        Extnodes[no].vmax     = (MyFloat) soa->vmax[k];
-        Extnodes[no].divVmax  = (MyFloat) soa->divVmax[k];
+    /* The host stamped every node current before this refresh (forcetree.cc, the reset
+     * that mirrors the build's moment pass), and the kernel above just recomputed vmax.
+     * The device walk widens a node's stored length from the time that length describes,
+     * using vmax; so the length and its time go to the mirror together with the new
+     * moments, or the mirror is left pairing a fresh vmax and an old time with whatever
+     * length it last saw, and a walk on it can open too little. */
+    soa.len[k] = nodes[k].len;
+    if(soa.node_ti) {soa.node_ti[k] = nodes[k].Ti_current;}
+    nodes[k].u.d.mass     = (MyFloat) soa.mass[k];
+    nodes[k].u.d.s        = Vec3<MyFloat>{(MyFloat) soa.s[k][0],
+                                            (MyFloat) soa.s[k][1],
+                                            (MyFloat) soa.s[k][2]};
+    nodes[k].u.d.bitflags = soa.bitflags[k];
+    nodes[k].N_part       = soa.N_part[k];
+    nodes[k].maxsoft      = (MyFloat) soa.maxsoft[k];
+    /* Ti_current: matches CPU step-1 reset, but we only
+     * touch them in the same way force_refresh_node_moments did
+     * before our dispatch was wired in. They are reset on the host
+     * before this routine is called (see forcetree.cc step 1). */
+    extnodes[k].vs       = Vec3<MyFloat>{(MyFloat) soa.node_vs[k][0],
+                                           (MyFloat) soa.node_vs[k][1],
+                                           (MyFloat) soa.node_vs[k][2]};
+    extnodes[k].hmax     = (MyFloat) soa.hmax[k];
+    extnodes[k].vmax     = (MyFloat) soa.vmax[k];
+    extnodes[k].divVmax  = (MyFloat) soa.divVmax[k];
 #ifdef GRAVTREE_CALCULATE_GAS_MASS_IN_NODE
-        Nodes[no].gasmass     = (MyFloat) soa->gasmass[k];
+    nodes[k].gasmass     = (MyFloat) soa.gasmass[k];
 #endif
 #ifdef RT_USE_GRAVTREE
-        for(int b = 0; b < N_RT_FREQ_BINS; b++) {
-            Nodes[no].stellar_lum[b] = (MyFloat) soa->stellar_lum[(long)k * N_RT_FREQ_BINS + b];
-        }
+    for(int b = 0; b < N_RT_FREQ_BINS; b++) {
+        nodes[k].stellar_lum[b] = (MyFloat) soa.stellar_lum[(long)k * N_RT_FREQ_BINS + b];
+    }
 #ifdef CHIMES_STELLAR_FLUXES
-        for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
-            Nodes[no].chimes_stellar_lum_G0 [b] = soa->chimes_stellar_lum_G0 [(long)k * CHIMES_LOCAL_UV_NBINS + b];
-            Nodes[no].chimes_stellar_lum_ion[b] = soa->chimes_stellar_lum_ion[(long)k * CHIMES_LOCAL_UV_NBINS + b];
-        }
+    for(int b = 0; b < CHIMES_LOCAL_UV_NBINS; b++) {
+        nodes[k].chimes_stellar_lum_G0 [b] = soa.chimes_stellar_lum_G0 [(long)k * CHIMES_LOCAL_UV_NBINS + b];
+        nodes[k].chimes_stellar_lum_ion[b] = soa.chimes_stellar_lum_ion[(long)k * CHIMES_LOCAL_UV_NBINS + b];
+    }
 #endif
 #endif
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        Nodes[no].rt_source_lum_s   = Vec3<MyFloat>{(MyFloat) soa->rt_source_lum_s [k][0],
-                                                     (MyFloat) soa->rt_source_lum_s [k][1],
-                                                     (MyFloat) soa->rt_source_lum_s [k][2]};
-        Extnodes[no].rt_source_lum_vs = Vec3<MyFloat>{(MyFloat) soa->rt_source_lum_vs[k][0],
-                                                       (MyFloat) soa->rt_source_lum_vs[k][1],
-                                                       (MyFloat) soa->rt_source_lum_vs[k][2]};
+    nodes[k].rt_source_lum_s   = Vec3<MyFloat>{(MyFloat) soa.rt_source_lum_s [k][0],
+                                                 (MyFloat) soa.rt_source_lum_s [k][1],
+                                                 (MyFloat) soa.rt_source_lum_s [k][2]};
+    extnodes[k].rt_source_lum_vs = Vec3<MyFloat>{(MyFloat) soa.rt_source_lum_vs[k][0],
+                                                   (MyFloat) soa.rt_source_lum_vs[k][1],
+                                                   (MyFloat) soa.rt_source_lum_vs[k][2]};
 #endif
 #ifdef SINK_PHOTONMOMENTUM
-        Nodes[no].sink_lum      = (MyFloat) soa->sink_lum[k];
-        Nodes[no].sink_lum_grad = Vec3<MyFloat>{(MyFloat) soa->sink_lum_grad[k][0],
-                                                 (MyFloat) soa->sink_lum_grad[k][1],
-                                                 (MyFloat) soa->sink_lum_grad[k][2]};
+    nodes[k].sink_lum      = (MyFloat) soa.sink_lum[k];
+    nodes[k].sink_lum_grad = Vec3<MyFloat>{(MyFloat) soa.sink_lum_grad[k][0],
+                                             (MyFloat) soa.sink_lum_grad[k][1],
+                                             (MyFloat) soa.sink_lum_grad[k][2]};
 #endif
 #ifdef COSMIC_RAY_SUBGRID_LEBRON
-        Nodes[no].cr_injection = (MyFloat) soa->cr_injection[k];
+    nodes[k].cr_injection = (MyFloat) soa.cr_injection[k];
 #endif
 #ifdef SINK_CALC_DISTANCES
-        Nodes[no].sink_mass = (MyFloat) soa->sink_mass[k];
-        Nodes[no].sink_pos  = Vec3<MyFloat>{(MyFloat) soa->sink_pos[k][0],
-                                             (MyFloat) soa->sink_pos[k][1],
-                                             (MyFloat) soa->sink_pos[k][2]};
+    nodes[k].sink_mass = (MyFloat) soa.sink_mass[k];
+    nodes[k].sink_pos  = Vec3<MyFloat>{(MyFloat) soa.sink_pos[k][0],
+                                         (MyFloat) soa.sink_pos[k][1],
+                                         (MyFloat) soa.sink_pos[k][2]};
 #if defined(SINK_NODE_MOTION_TRACKED)
-        Nodes[no].sink_vel  = Vec3<MyFloat>{(MyFloat) soa->sink_vel[k][0],
-                                             (MyFloat) soa->sink_vel[k][1],
-                                             (MyFloat) soa->sink_vel[k][2]};
+    nodes[k].sink_vel  = Vec3<MyFloat>{(MyFloat) soa.sink_vel[k][0],
+                                         (MyFloat) soa.sink_vel[k][1],
+                                         (MyFloat) soa.sink_vel[k][2]};
 #endif
 #if defined(SPECIAL_POINT_MOTION)
-        Nodes[no].sink_acc  = Vec3<MyFloat>{(MyFloat) soa->sink_acc[k][0],
-                                             (MyFloat) soa->sink_acc[k][1],
-                                             (MyFloat) soa->sink_acc[k][2]};
+    nodes[k].sink_acc  = Vec3<MyFloat>{(MyFloat) soa.sink_acc[k][0],
+                                         (MyFloat) soa.sink_acc[k][1],
+                                         (MyFloat) soa.sink_acc[k][2]};
 #endif
 #if defined(SINK_NODE_MOTION_TRACKED)
-        Nodes[no].N_SINK    = soa->N_SINK[k];
+    nodes[k].N_SINK    = soa.N_SINK[k];
 #endif
 #if defined(SINGLE_STAR_TIMESTEPPING) && defined(SINGLE_STAR_FB_TIMESTEPLIMIT)
-        Nodes[no].MaxFeedbackVel = (MyFloat) soa->MaxFeedbackVel[k];
+    nodes[k].MaxFeedbackVel = (MyFloat) soa.MaxFeedbackVel[k];
 #endif
 #endif
 #ifdef ADAPTIVE_GRAVSOFT_FROM_TIDAL_CRITERION
-        for(int kk = 0; kk < 6; kk++) {
-            Nodes[no].tidal_tensorps_prevstep.data[kk] = (MyFloat) soa->tidal_tensorps[(long)k * 6 + kk];
-        }
+    for(int kk = 0; kk < 6; kk++) {
+        nodes[k].tidal_tensorps_prevstep.data[kk] = (MyFloat) soa.tidal_tensorps[(long)k * 6 + kk];
+    }
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-        Nodes[no].mass_dm = (MyFloat) soa->mass_dm[k];
-        Nodes[no].s_dm    = Vec3<MyFloat>{(MyFloat) soa->s_dm[k][0],
-                                            (MyFloat) soa->s_dm[k][1],
-                                            (MyFloat) soa->s_dm[k][2]};
-        Extnodes[no].vs_dm = Vec3<MyFloat>{(MyFloat) soa->vs_dm[k][0],
-                                            (MyFloat) soa->vs_dm[k][1],
-                                            (MyFloat) soa->vs_dm[k][2]};
+    nodes[k].mass_dm = (MyFloat) soa.mass_dm[k];
+    nodes[k].s_dm    = Vec3<MyFloat>{(MyFloat) soa.s_dm[k][0],
+                                        (MyFloat) soa.s_dm[k][1],
+                                        (MyFloat) soa.s_dm[k][2]};
+    extnodes[k].vs_dm = Vec3<MyFloat>{(MyFloat) soa.vs_dm[k][0],
+                                        (MyFloat) soa.vs_dm[k][1],
+                                        (MyFloat) soa.vs_dm[k][2]};
 #endif
-    }
+}
+
+extern "C" void gpu_moment_writeback_to_aos(int n)
+{
+    struct gpu_gravity_tree_soa_t *soa = gpu_gravity_tree_soa();
+    if(!soa || n <= 0) {return;}
+    const struct gpu_gravity_tree_soa_t soa_v = *soa;
+    struct NODE *nodes = Nodes_base;
+    struct extNODE *extnodes = Extnodes_base;
+    Kokkos::parallel_for("moment_writeback_to_aos", n, KOKKOS_LAMBDA(int k) {mr_writeback_node_(soa_v, nodes, extnodes, k);});
+    Kokkos::fence();
+    gizmo_gpu_check_last_error("moment_writeback_to_aos", n);
 }
 
 
