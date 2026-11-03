@@ -676,6 +676,12 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:after_rt_nonflux"); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
+#if defined(TRANSPORT_SUBCYCLE) && defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
+    /* inject -> cool -> transport, as without subcycling: cooling sets the ionization state, so it must see
+       the photons just injected before the sub-step kicks absorb them at the (still neutral) gas opacity */
+    cooling_parent_routine();
+    gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
+#endif
 #ifdef TRANSPORT_SUBCYCLE
     /* Build the topology the subcycle consumes (active list + gas ghost pool +
        shared symmetric CSR) — AFTER sink accretion / wind spawning / rearrange
@@ -684,11 +690,7 @@ void calculate_non_standard_physics(void)
     transport_subcycle_prepare_topology();
     for(int transport_sub = 0; transport_sub < All.Transport_Subcycle_N; transport_sub++) {
     gizmo_exit_bad_stop_if_requested("run:transport_subcycle_substep");
-    /* --- recompute transport fluxes every sub-step and apply kick --- */
-    transport_subcycle_exchange_fluxes(transport_sub);
-    transport_subcycle_kick();
-#endif
-
+    /* cooling over this sub-step before its transport kick (inject -> cool -> transport, per sub-step) */
 #if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
     /* save DtInternalEnergy before cooling (it gets overwritten with CGS-converted value inside cooling).
        Restore the original code-units value before each sub-step so the CGS conversion isn't applied twice. */
@@ -712,6 +714,11 @@ void calculate_non_standard_physics(void)
     }
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
+    /* --- recompute transport fluxes every sub-step and apply kick --- */
+    transport_subcycle_exchange_fluxes(transport_sub);
+    transport_subcycle_kick();
+#endif
+
 
 #ifdef TRANSPORT_SUBCYCLE
     } /* end transport subcycle loop */
@@ -736,7 +743,7 @@ void calculate_non_standard_physics(void)
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time();
 #endif
 
-#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
+#if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
     gizmo_exit_bad_stop_if_requested("run:after_cooling_sfr"); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
 #endif
