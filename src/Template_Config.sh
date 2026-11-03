@@ -394,14 +394,13 @@
 # ---- GRACKLE: alternative chemical network using external libraries for solving thermochemistry+cooling. These treat molecular hydrogen, in particular, in more detail than our default networks, and are more accurate for 'primordial' (e.g. 1st-star) gas. But they have less-accurate treatment of
 # ----            effects such as dust-gas coupling and radiative feedback (Compton and photo-electric and local ionization heating) and high-optical-depth effects, so are usually less accurate for low-redshift, metal-rich star formation or planet formation simulations.
 ## ----------------------------------------------------------------------------------------------------
-#COOL_GRACKLE                   # enable Grackle: cooling+chemistry package (requires COOLING above; https://grackle.readthedocs.org/en/latest ); see Grackle code for their required citations
+#COOL_GRACKLE                   # enable Grackle: cooling+chemistry package (requires COOLING above, and Grackle 3 or later built with its CMake build, found through GRACKLE_PATH or pkg-config; https://grackle.readthedocs.org/en/latest ); see Grackle code for their required citations
 #COOL_GRACKLE_CHEMISTRY=1       # choose Grackle cooling chemistry: (0)=tabular, (1)=Atomic, (2)=(1)+H2+H2I+H2II, (3)=(2)+DI+DII+HD. Modules with dust and/or metal-line cooling require METALS also
-#COOL_GRACKLE_APIVERSION=1      # set the version of the grackle api: =1 (default) is compatible with versions of grackle below 2.2. After 2.2 significant changes to the grackle api were made which require different input formats, which require setting this to =2 or larger. note newest grackle apis may not yet be compatible with the hooks here!
 ## ----------------------------------------------------------------------------------------------------
 # ---- CHIMES: alternative non-equilibrium chemical (ion+atomic+molecular) network, developed by Alex Richings. The core methods are laid out in 2014MNRAS.440.3349R, 2014MNRAS.442.2780R. These should be cited in any paper that uses the modules below.
 # ----   Per permission from Alex Richings, the CHIMES modules are now public. However recall that Alex Richings is the lead developer of CHIMES, please contact Alex or Joop Schaye, or Ben Oppenheimer to obtain the relevant permissions to port beyond GIZMO or questions about CHIMES
 # ----   This implementation of CHIMES has additional hooks to use the various gizmo radiation fields if desired. The modules solve a large molecular and ion network, so can trace predictive chemistry for species in dense ISM gas in much greater detail than the other modules above (at additional CPU cost)
-# ----   DEPENDENCY: CHIMES links the SUNDIALS/CVODE ODE solver and uses its pre-6.0 API (context-free CVodeCreate/N_VNew_Serial + the 'realtype' type), so it requires SUNDIALS in the 2.7-5.x range. SUNDIALS 6.x made a SUNContext argument mandatory and 7.x removed 'realtype', so 6.0+ will not compile the current CHIMES sources without source-level updates. Set CHIMESINCL/CHIMESLIBS in the Makefile to a supported SUNDIALS install.
+# ----   DEPENDENCY: CHIMES links the SUNDIALS/CVODE ODE solver and needs SUNDIALS 6.0 or newer (its SUNContext API). Set CHIMESINCL/CHIMESLIBS in the Makefile to that install (SUNDIALS 7.x also needs -lsundials_core).
 ## ----------------------------------------------------------------------------------------------------
 #CHIMES                         # top-level switch to enable CHIMES. Requires COOLING above. Also, requires COOL_METAL_LINES_BY_SPECIES to include metals.
 #CHIMES_SOBOLEV_SHIELDING       # enables local self-shielding for different species, using a Sobolev-like length scale
@@ -634,7 +633,7 @@
 #MHD_CONSERVE_B_ON_REFINEMENT      # redefine B after density step after a refinement/de-refinement operation so as to exactly conserve "B" between the steps, as compared to conserving the code "VB" between the steps [the default conserved integrated quantity]
 # --------------------
 # ----- Radiation-Hydrodynamics Special Options for Test Problems + Disabled or Other Special Features
-#RT_DISABLE_UV_BACKGROUND          # disable extenal UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
+#RT_DISABLE_UV_BACKGROUND          # disable external UV background in cooling functions (to isolate pure effects of local RT, or if simulating the background directly)
 #RT_SEPARATELY_TRACK_LUMPOS        # keep luminosity vs. mass positions separate in tree. not compatible with Tree-PM mode, but it can be slightly more accurate and useful for testing in tree-only mode with LEBRON or OTVET algorithms.
 #RT_HYDROGEN_GAS_ONLY              # sets hydrogen fraction to 1.0 (used for certain idealized chemistry calculations)
 #RT_TIMESTEP_LIMIT_RECOMBINATION   # limit timesteps to the explicit recombination time when transporting ionizing photons. note our chemistry solvers are all implicit and can handle larger timesteps, but no gaurantee of transport accuracy for much larger steps since opacities depend on ionization states.

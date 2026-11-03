@@ -230,7 +230,16 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
    KOKKOS_FUNCTION marks them __device__ __host__ so nvcc recognizes them as device-callable
    when they appear in call expressions within other KOKKOS_FUNCTION bodies in this TU.
    nvcc may issue advisory warning #20040 (consistent redeclaration) but this is harmless. */
-KOKKOS_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+/* CHIMES and Grackle solve the cooling in host-only external libraries. Their builds cool on the host loop alone, and the
+   entry points that reach the library are compiled for the host only; every other build keeps them device-callable. */
+#if defined(CHIMES) || defined(COOL_GRACKLE)
+#define COOLING_SOLVE_IN_HOST_LIBRARY
+#define COOLING_SOLVE_FUNCTION
+#else
+#define COOLING_SOLVE_FUNCTION KOKKOS_FUNCTION
+#endif
+COOLING_SOLVE_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
+COOLING_SOLVE_FUNCTION double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRateFromU(double u, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 KOKKOS_FUNCTION double CoolingRate(double logT, double rho, double n_elec_guess, double *n_elec_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -377,7 +386,7 @@ void cooling_parent_routine(void)
      * The compact arrays are also kept small (GPU_COOL_BATCH_SIZE × struct_size) rather
      * than N_active × struct_size, further reducing UVM pressure.
      */
-#if !defined(CHIMES)
+#if !defined(COOLING_SOLVE_IN_HOST_LIBRARY)
   if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
     GIZMO_GPU_ENSURE_ALL_FRESH(); /* device cooling reads All mirrors; tiny-N CPU path reads host All directly */
     static const int GPU_COOL_BATCH_SIZE = 32768;
@@ -554,7 +563,7 @@ void cooling_parent_routine(void)
    conditional blocks — unlike OpenMP 'declare target' on NVC++ 24.7. */
 
 /* subroutine which actually sends the particle data to the cooling routine and updates the entropies */
-KOKKOS_FUNCTION
+COOLING_SOLVE_FUNCTION
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell)
 {
 #ifdef HYDRO_MULTIFLUID_DM
@@ -584,11 +593,14 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
         double uion=HIIRegion_Temp/(MEAN_MOLECULAR_WEIGHT_IONIZED*(GAMMA_DEFAULT-1.)*U_TO_TEMP_UNITS); if(cell[i].DelayTimeHII>0) {if(uold<uion) {uold=uion;}} /* u_old should be >= ionized temp if used here [unless using newer model] */
 #else
         if(cell[i].DelayTimeHII < 0) { // this cell re-combined at the end of the previous timestep and has not been re-ionized yet, so we need to recombine it correctly given our sub-grid model (at fixed T not fixed U)
-            cell[i].DelayTimeHII = 0; cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
+            cell[i].DelayTimeHII = 0;
+#ifndef CHIMES /* the energy rescaling below holds the temperature through a change of composition that CHIMES carries in its own abundances */
+            cell[i].InternalEnergy *= MEAN_MOLECULAR_WEIGHT_IONIZED/MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].MeanMolecularWeight = MEAN_MOLECULAR_WEIGHT_ATOMIC; cell[i].Ne = DMIN(cell[i].Ne , 0.01); // assume efficient recombination here, at fixed temperature, and reset conserved quantities
             cell[i].InternalEnergyPred = cell[i].InternalEnergy;
             cell[i].HI = DMAX(0, DMIN(1, 1. - cell[i].Ne / 1.2)); // keep the neutral fraction consistent with the recombined electron fraction. the temperature is unchanged here by construction
 #ifdef EOS_ANCHOR_INTERNALENERGY_IN_DRIFTS
             cell[i].u_anchor = cell[i].InternalEnergy; /* the energy and the molecular weight above were rescaled together precisely to hold the temperature fixed, so the anchor has to move with them, or the cached pair would report the change this branch exists to avoid */
+#endif
 #endif
             }
 #endif
@@ -824,7 +836,7 @@ void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cel
 /* returns new internal energy per unit mass.
  * Arguments are passed in code units, density is proper density.
  */
-KOKKOS_FUNCTION
+COOLING_SOLVE_FUNCTION
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
     double u, du; u=0; du=0;
@@ -846,13 +858,16 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
         double r=u/u_old; if(r>1) {r=1/r;} if(fabs(r-1)>1.e-4) {r=(r-1)/log(r);} r=DMAX(0,DMIN(r,1));
         du *= 0.5*r; if(du<-0.5*u) {du=-0.5*u;} u+=du;
     }
-#else
-    /* with full operator splitting we just call grackle normally. note this is usually fine,
-     but can lead to artificial noise at high densities and low temperatures, especially if something
-     like artificial pressure (but not temperature) floors are used such that the temperature gets
+    else
+#endif
+    {
+    /* with full operator splitting (or when the kick has already applied this step's hydro work) we just call grackle
+     normally. note this is usually fine, but can lead to artificial noise at high densities and low temperatures, especially
+     if something like artificial pressure (but not temperature) floors are used such that the temperature gets
      'contaminated' by the pressure terms */
     u = CallGrackle(u_old, rho, dt, ne_guess, target, 0);
-#endif
+    }
+    if(ne_eval) {*ne_eval = cell[target].Ne;} /* the electron abundance grackle just solved, which CallGrackle saved; the caller stores what comes back here */
     return DMAX(u,All.MinEgySpec);
 #endif
 
@@ -871,7 +886,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     chimes_update_turbulent_abundances(target, 1, pp, cell); 
 #endif 
 
-    return DMAX(u, All.MinEgySpec);
+    u = DMAX(u, All.MinEgySpec);
+    chimes_cache_solved_state(target, u, cell); /* the rest of the code reads the chemistry from the cell, at the energy the cell will hold */
+    return u;
 
 #else // CHIMES
 
@@ -1098,6 +1115,16 @@ double DoInstabilityCooling(double m_old, double u, double rho, double dt, doubl
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell)
 {
   return u * (cell[target].gamma_eos_value()-1) * PROTONMASS_CGS * ((double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars)) / BOLTZMANN_CGS;
+}
+
+/* This function hands the chemistry CHIMES holds for a cell to the cell's shared cache (store_solved_chemistry), which is what
+ * the rest of the code reads. u_code is the specific energy the abundances belong to. */
+void chimes_cache_solved_state(int target, double u_code, struct gas_cell_data *cell)
+{
+  const ChimesFloat *abundance = ChimesGasVars[target].abundances; const int *species = ChimesGlobalVars.speciesIndices;
+  cell[target].store_solved_chemistry(u_code, (double) calculate_mean_molecular_weight(&(ChimesGasVars[target]), &ChimesGlobalVars), cell[target].gamma_eos_value(),
+                                      abundance[species[sp_elec]], abundance[species[sp_HI]], abundance[species[sp_HII]],
+                                      DMIN(1, DMAX(0, 2. * abundance[species[sp_H2]]))); /* factor 2: the mass fraction of the hydrogen that is in H2 */
 }
 // CHIMES
 #elif  defined(EOS_SUBSTELLAR_ISM)
@@ -1334,10 +1361,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             {
                 if(RT_BAND_IS_IONIZING(k))
                 {
-                    double n_gamma_tot = cell[target].rt_photon_number_density(k);
-#ifdef RT_INFRARED
-                    n_gamma_tot += rt_irband_egydensity_in_band(target,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[RT_FREQ_BIN_H0],cell[target].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
-#endif
+                    double n_gamma_tot = rt_ionizing_band_photon_number_density(target, k, cell);
                     double c_nH_time_n_photons_vol = c_light_nH * n_gamma_tot; // gives photon flux
                     double cross_section_ion, kappa_ion, dummy;
                     if(All.rt_ion_G_HI[k] > 0)
@@ -1877,6 +1901,7 @@ void IonizeParamsFunction(void)
 #endif // !(CHIMES)
 
 
+#if !defined(CHIMES) /* the in-code network's tables; CHIMES reads its own */
 /* Check for required cooling data files and provide them from defaults if missing */
 static bool file_exists(const char *path) {FILE *f = fopen(path, "r"); if(f) {fclose(f); return true;} return false;}
 
@@ -1901,6 +1926,7 @@ static void ensure_cooling_tables_exist(void) {
     }
     MPI_Barrier(MPI_COMM_WORLD);
 }
+#endif /* !CHIMES */
 
 
 void InitCool(void)
@@ -1957,6 +1983,7 @@ void InitCool(void)
 
     // Initialise the CHIMES module.
     init_chimes(&ChimesGlobalVars);
+    All.ChimesNumSpecies = ChimesGlobalVars.totalNumberOfSpecies;
 
 #ifdef CHIMES_METAL_DEPLETION
     chimes_init_depletion_data();
@@ -2536,7 +2563,7 @@ void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cel
 #ifdef COOL_METAL_LINES_BY_SPECIES
   double H_mass_fraction = 1.0 - (pp[target].Metallicity[0] + pp[target].Metallicity[1]);
 #else
-  double H_mass_fraction = XH;
+  double H_mass_fraction = HYDROGEN_MASSFRAC;
 #endif
 
   ChimesGasVars[target].temperature = (ChimesFloat) chimes_convert_u_to_temp(u_old_cgs, rho_cgs, target, pp, cell);

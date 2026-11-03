@@ -43,6 +43,9 @@ void rt_update_chemistry_for_particle(int i, struct particle_data *pp, struct ga
 {
     if(pp[i].Type != 0) return;
     double dtime = get_particle_timestep_in_physical(i, pp);
+#if defined(TRANSPORT_SUBCYCLE_COOLING) && defined(COOLING)
+    dtime *= All.Transport_Subcycle_dt_fraction; /* called N times in the subcycle loop, each with dt/N, as cooling is */
+#endif
     if(dtime <= 0 || cell[i].Mass <= 0) return;
 
     double fac = UNIT_TIME_IN_CGS / (UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS*UNIT_LENGTH_IN_CGS);

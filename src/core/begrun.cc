@@ -635,6 +635,22 @@ void begrun(void)
 #ifdef RADTRANSFER
     rt_set_simple_inits(RestartFlag);
 #endif
+#if defined(COOLING) && defined(EXTERNAL_CHEMISTRY_REPORTS_SPECIES)
+    if(RestartFlag != 1) /* the external chemistry's species are in place now (from the IC file or snapshot, or CHIMES's equilibrium start): fill the cache the rest of the code reads from the cell. a restart restores it with the cells. this runs after rt_set_simple_inits, which resets the radiation chemistry's ionization states */
+    {
+        for(int ig = 0; ig < N_gas; ig++)
+        {
+#if defined(CHIMES)
+            chimes_cache_solved_state(ig, CellP[ig].InternalEnergy, CellP);
+#ifdef CHIMES_TURB_DIFF_IONS
+            chimes_update_turbulent_abundances(ig, 1, P, CellP); /* the abundance-times-mass the turbulent ion diffusion carries */
+#endif
+#elif defined(COOL_GRACKLE)
+            grackle_cache_species_state(ig);
+#endif
+        }
+    }
+#endif
 
 
   if(All.ComovingIntegrationOn) {init_drift_table();}

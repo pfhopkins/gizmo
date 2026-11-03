@@ -329,7 +329,7 @@ void HydroForceSpec::apply_active_writeback(const neighbor_loop_args& /*args*/,
     for(k = 0; k < NUM_METAL_SPECIES; k++) { CellP[i].Dyield[k] += out->Dyield[k]; }
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
-    for(k = 0; k < ChimesGlobalVars.totalNumberOfSpecies; k++) {
+    for(k = 0; k < All.ChimesNumSpecies; k++) {
         CellP[i].ChimesNIons[k] = DMAX(CellP[i].ChimesNIons[k] + out->ChimesIonsYield[k],
                                        0.5 * CellP[i].ChimesNIons[k]);
     }

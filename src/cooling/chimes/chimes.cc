@@ -133,17 +133,13 @@ void chimes_print_gas_vars(FILE *log_file, struct gasVariables *myGasVars, struc
  * @param msg The error message. 
  * @param eh_data Pointer to the user data. 
  */ 
-void chimes_err_handler_fn(int error_code, const char *module, const char *function, char *msg, void *eh_data)
+static void chimes_report_cvode_error(int error_code, const char *function, const char *msg, struct UserData *user_data)
 {
-  struct UserData *user_data;
-
-  user_data = (struct UserData *) eh_data;
-
   if (user_data->myGlobalVars->chimes_debug != 0)
     {
       if (!((user_data->myGasVars->temp_floor_mode == 1) && ((error_code == CV_RHSFUNC_FAIL) || (error_code == CV_LSETUP_FAIL))))
 	{
-	  cvErrHandler(error_code, module, function, msg, user_data->cvode_mem);
+	  fprintf(stderr, "[CVODE ERROR] %s (code %d): %s\n", function, error_code, msg);
 
 	  if (user_data->myGlobalVars->chimes_debug == 2)
 	    {
@@ -156,6 +152,21 @@ void chimes_err_handler_fn(int error_code, const char *module, const char *funct
   return;
 }
 
+/* the handler in the form each SUNDIALS major version calls it */
+#if (SUNDIALS_VERSION_MAJOR >= 7)
+/* CVODE 7 reports its own failures with their CV_* return code as the SUNErrCode (cvProcessError hands error_code to SUNHandleErrWithMsg),
+   and the SUNDIALS core codes lie in [-10000,-1000], so the comparison against CV_RHSFUNC_FAIL and CV_LSETUP_FAIL above still means what it did */
+void chimes_err_handler_fn(int line, const char *function, const char *file, const char *msg, SUNErrCode error_code, void *eh_data, SUNContext sun_context)
+{
+  chimes_report_cvode_error((int) error_code, function, msg, (struct UserData *) eh_data);
+}
+#else
+void chimes_err_handler_fn(int error_code, const char *module, const char *function, char *msg, void *eh_data)
+{
+  chimes_report_cvode_error(error_code, function, msg, (struct UserData *) eh_data);
+}
+#endif
+
 /** 
  * @brief Evolves the CHIMES network. 
  * 
@@ -167,7 +178,7 @@ void chimes_err_handler_fn(int error_code, const char *module, const char *funct
  */ 
 void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGlobalVars)
 {
-  realtype reltol, abstol_scalar, t;
+  sunrealtype reltol, abstol_scalar, t;
   N_Vector abstol_vector, y;
   void *cvode_mem;
 
@@ -279,8 +290,8 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
     {
       if (data.species[j].include_species == 1)
 	{
-	  data.species[i].creation_rate = 0.0f;
-	  data.species[i].destruction_rate = 0.0f;
+	  data.species[j].creation_rate = 0.0f;
+	  data.species[j].destruction_rate = 0.0f;
 	  indices[i] = j; 
 	  i++; 
 	}
@@ -349,24 +360,38 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
        * Use implicit solver.               *
        **************************************/ 
       
+      /* SUNDIALS (>= 6) attaches every solver object to a context. This
+       * solve creates its own and frees it with its objects, so concurrent
+       * solves never share one. */
+      SUNContext sun_context;
+#if (SUNDIALS_VERSION_MAJOR >= 7)
+      if (SUNContext_Create(SUN_COMM_NULL, &sun_context) != 0)
+#else
+      if (SUNContext_Create(NULL, &sun_context) != 0)
+#endif
+	{
+	  printf("CHIMES ERROR: could not create a SUNDIALS context.\n");
+	  chimes_exit();
+	}
+
       /* Create a serial vector of length network_size
        * for the initial conditions. */
       if (myGasVars->ThermEvolOn == 0)
 	{
-	  y = N_VNew_Serial(data.network_size);
-	  abstol_vector = N_VNew_Serial(data.network_size);
+	  y = N_VNew_Serial(data.network_size, sun_context);
+	  abstol_vector = N_VNew_Serial(data.network_size, sun_context);
 	}
       else
 	{
-	  y = N_VNew_Serial(data.network_size + 1);
+	  y = N_VNew_Serial(data.network_size + 1, sun_context);
 	  internal_energy = myGasVars->temperature * 1.5f * calculate_total_number_density(myGasVars->abundances, myGasVars->nH_tot, myGlobalVars) * BOLTZMANNCGS;
-	  NV_Ith_S(y, data.network_size) = (realtype) internal_energy;
-	  abstol_vector = N_VNew_Serial(data.network_size + 1);
+	  NV_Ith_S(y, data.network_size) = (sunrealtype) internal_energy;
+	  abstol_vector = N_VNew_Serial(data.network_size + 1, sun_context);
 
 	  /* For the integration of the thermal energy,
 	   * set the absolute tolerance to the minimum 
 	   * float value. */ 
-	  NV_Ith_S(abstol_vector, data.network_size) = (realtype) CHIMES_FLT_MIN;
+	  NV_Ith_S(abstol_vector, data.network_size) = (sunrealtype) CHIMES_FLT_MIN;
 	}
       
       i = 0;
@@ -374,12 +399,12 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
 	{
 	  if (species[j].include_species == 1)
 	    {  
-	      NV_Ith_S(y, i) = (realtype) myGasVars->abundances[j];
+	      NV_Ith_S(y, i) = (sunrealtype) myGasVars->abundances[j];
 
 	      if (myGlobalVars->scale_metal_tolerances == 1) 
-		NV_Ith_S(abstol_vector, i) = (realtype) (myGlobalVars->absoluteTolerance * species[j].element_abundance); 
+		NV_Ith_S(abstol_vector, i) = (sunrealtype) (myGlobalVars->absoluteTolerance * species[j].element_abundance);
 	      else if (myGasVars->ThermEvolOn == 1)
-		NV_Ith_S(abstol_vector, i) = (realtype) myGlobalVars->absoluteTolerance;
+		NV_Ith_S(abstol_vector, i) = (sunrealtype) myGlobalVars->absoluteTolerance;
 
 	      i++;
 	    }
@@ -387,14 +412,14 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
 
       /* Set up the solver */
       /* Set the tolerances*/
-      reltol = (realtype) myGlobalVars->relativeTolerance;
-      abstol_scalar = (realtype) myGlobalVars->absoluteTolerance;
+      reltol = (sunrealtype) myGlobalVars->relativeTolerance;
+      abstol_scalar = (sunrealtype) myGlobalVars->absoluteTolerance;
     
       /* Use CVodeCreate to create the solver 
        * memory and specify the Backward Differentiation
        * Formula. Note that CVODE now uses Newton iteration
        * iteration by default, so no need to specify this. */
-      cvode_mem = CVodeCreate(CV_BDF);
+      cvode_mem = CVodeCreate(CV_BDF, sun_context);
       data.cvode_mem = cvode_mem;
 
       /* Set the user data for CVode */
@@ -405,7 +430,12 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
       CVodeSetMaxNumSteps(cvode_mem, MAXSTEPS);
 
       /* Set the error handler function. */ 
+#if (SUNDIALS_VERSION_MAJOR >= 7)
+      SUNContext_ClearErrHandlers(sun_context); /* ours decides what is printed */
+      SUNContext_PushErrHandler(sun_context, chimes_err_handler_fn, &data);
+#else
       CVodeSetErrHandlerFn(cvode_mem, chimes_err_handler_fn, &data); 
+#endif
 
       /* Use CVodeInit to initialise the integrator 
        * memory and specify the right hand side 
@@ -426,14 +456,14 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
       SUNMatrix A_sun; 
 
       if (myGasVars->ThermEvolOn == 0)
-	A_sun = SUNDenseMatrix(data.network_size, data.network_size);
+	A_sun = SUNDenseMatrix(data.network_size, data.network_size, sun_context);
       else 
-	A_sun = SUNDenseMatrix(data.network_size + 1, data.network_size + 1);
+	A_sun = SUNDenseMatrix(data.network_size + 1, data.network_size + 1, sun_context);
 
       /* Create a denst SUNLinearSolver object 
        * to use in CVode. */ 
       SUNLinearSolver LS_sun; 
-      LS_sun = SUNLinSol_Dense(y, A_sun);
+      LS_sun = SUNLinSol_Dense(y, A_sun, sun_context);
 
       /* Attach the matrix and linear 
        * solver to CVode. */ 
@@ -444,7 +474,7 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
       CVodeSetMaxConvFails(cvode_mem, 5000);
 
       /* Call CVode() to integrate the chemistry. */ 
-      CVode(cvode_mem, (realtype) myGasVars->hydro_timestep, y, &t, CV_NORMAL);
+      CVode(cvode_mem, (sunrealtype) myGasVars->hydro_timestep, y, &t, CV_NORMAL);
 
       /* Write the output abundances to the gas cell 
        * Note that species not included in the reduced
@@ -470,6 +500,7 @@ void chimes_network(struct gasVariables *myGasVars, struct globalVariables *myGl
       N_VDestroy_Serial(y);
       N_VDestroy_Serial(abstol_vector);
       CVodeFree(&cvode_mem);
+      SUNContext_Free(&sun_context);
 
       free_current_rates_memory(&chimes_current_rates, myGlobalVars); 
 

@@ -1164,6 +1164,7 @@ GIZMO_GPU_FUNCTION double cr_get_source_shieldfac(int i, struct particle_data *p
 #ifdef CHIMES
 double chimes_convert_u_to_temp(double u, double rho, int target, struct particle_data *pp, struct gas_cell_data *cell);
 void chimes_update_gas_vars(int target, struct particle_data *pp, struct gas_cell_data *cell);
+void chimes_cache_solved_state(int target, double u_code, struct gas_cell_data *cell);
 void chimes_gizmo_exit(void);
 #ifdef COOL_METAL_LINES_BY_SPECIES
 void chimes_update_element_abundances(int i, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1176,6 +1177,9 @@ void chimes_init_depletion_data(void);
 void chimes_compute_depletions(double nH, double T, int thread_id);
 #endif
 #else
+#endif
+#if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY > 0)
+void grackle_cache_species_state(int target);
 #endif
 void cooling_parent_routine(void);
 #ifdef NUCLEAR_NETWORK
@@ -1214,7 +1218,6 @@ int gravity_incomplete_import_example(char *buf, int buflen);
 void gravity_clear_incomplete_import(void);
 void hydro_force(void);
 void init(void);
-GIZMO_GPU_FUNCTION void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 GIZMO_GPU_FUNCTION double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);

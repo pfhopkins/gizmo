@@ -228,6 +228,17 @@
 #if defined(COOL_GRACKLE) && !defined(COOLING)
 #define COOLING
 #endif
+/* a chemistry library that tracks species hands each cell's result to the shared cache (store_solved_chemistry in cell_data.h), which is
+   where every other module reads it: the species fractions, and for molecular networks the H2 fraction. A new library defines these two */
+#if defined(CHIMES) || (defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 1))
+#define EXTERNAL_CHEMISTRY_REPORTS_SPECIES
+#endif
+#if defined(CHIMES) || (defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2))
+#define EXTERNAL_CHEMISTRY_REPORTS_H2
+#endif
+#if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY >= 2)
+#define EOS_CHEMISTRY_PROVIDES_GAMMA /* the chemistry library evolves the molecules and stores the adiabatic index of the state it solved, and the equation of state uses it */
+#endif
 
 
 
@@ -267,11 +278,13 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS == 3)
-#if !defined(CHIMES) /* CHIMES evolves its own chemistry and does not carry the electron fraction this model reads */
+#if !defined(CHIMES) && !defined(COOL_GRACKLE) /* CHIMES and Grackle replace the default network this model belongs to: its molecules would not match the composition they cache */
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define OUTPUT_MOLECULAR_FRACTION
+#if !defined(CHIMES) /* the net cooling rate it writes is a query of the in-code network, which CHIMES replaces */
 #define OUTPUT_COOLRATE
+#endif
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
 #define RT_USE_GRAVTREE_SAVE_RAD_FLUX  /* LEBRON-style gravtree flux save; mutex with explicit RT solvers (same reasoning as the GALSF_FB_FIRE_RT_* / SINK_*_HEATING blocks) */
 #endif
@@ -591,7 +604,7 @@
 #endif
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
-#if !defined(CHIMES) /* not compatible with CHIMES, which evolves its own chemistry */
+#if !defined(CHIMES) && !defined(COOL_GRACKLE) /* not compatible with CHIMES or Grackle, which replace the default network this model belongs to */
 #define COOL_MOLECFRAC_NONEQM
 #endif
 #define EOS_SUBSTELLAR_ISM
@@ -949,13 +962,13 @@
 
 
 #if defined(COOL_MOLECFRAC)
-#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES)
+#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES) && !defined(COOL_GRACKLE)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)
 #endif
 #endif
 
 
-#if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM)
+#if defined(EOS_SUBSTELLAR_ISM) || defined(COOL_MOLECFRAC_NONEQM) || defined(EOS_CHEMISTRY_PROVIDES_GAMMA)
 #define EOS_GAMMA_VARIABLE
 #endif
 
@@ -1649,6 +1662,12 @@
 
 #if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
 #define GALSF_FB_FIRE_RT_HIIHEATING // must be on, this module uses the same code
+#endif
+#if defined(CHIMES) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES_HII_REGIONS)
+#define CHIMES_HII_REGIONS // with CHIMES, the HII-region heating acts through CHIMES (the default model assumes the in-code network's composition). it needs the long-range stellar fluxes, so only with FIRE's long-range radiation
+#endif
+#if defined(CHIMES_HII_REGIONS) && !defined(CHIMES_STELLAR_FLUXES)
+#define CHIMES_STELLAR_FLUXES // the HII regions pass CHIMES the stellar fluxes in its age bins
 #endif
 #ifdef CHIMES_STELLAR_FLUXES /* The following defines the stellar age bins that we will use to define the UV spectra from stars used in CHIMES. */
 #define CHIMES_LOCAL_UV_NBINS 8

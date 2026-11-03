@@ -55,7 +55,7 @@ void chimes_turb_diff_ions_compute_pair(
     double rho_ij = 0.5 * (rho_i + rho_j);
     const double dt_fraction_i = (dt_pair > 0) ? dt_i / dt_pair : 0; /* cell i receives the amount for its own step */
 
-    for(int k_species=0; k_species<ChimesGlobalVars.totalNumberOfSpecies; k_species++)
+    for(int k_species=0; k_species<All.ChimesNumSpecies; k_species++)
     {
         double local_abundance_times_mass = local.ChimesNIons[k_species];
         double external_abundance_times_mass = CPj.ChimesNIons[k_species];

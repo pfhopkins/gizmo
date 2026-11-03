@@ -320,7 +320,7 @@ void hydro_evaluate_gpu(struct particle_data *P_host, struct gas_cell_data *Cell
             for(int ki=0;ki<ismdc_n;ki++) {local.Metallicity[ISMDUSTCHEM_SPECIES_OFFSET_IN_METALLICITY+ki] = ismdc[aa*ismdc_n+ki];}
 #endif
 #ifdef CHIMES_TURB_DIFF_IONS
-            for(int k=0;k<ChimesGlobalVars.totalNumberOfSpecies;k++) {local.ChimesNIons[k] = kc[ii].ChimesNIons[k];}
+            for(int k=0;k<All.ChimesNumSpecies;k++) {local.ChimesNIons[k] = kc[ii].ChimesNIons[k];}
 #endif
 #if defined(RT_SOLVER_EXPLICIT) && defined(RT_COMPGRAD_EDDINGTON_TENSOR) && (N_RT_FREQ_BINS > 0)
             for(int k=0;k<N_RT_FREQ_BINS;k++) {local.Gradients.Rad_E_gamma_ET[k] = kc[ii].Gradients.Rad_E_gamma_ET[k];}

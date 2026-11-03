@@ -5,7 +5,7 @@
  *
  * Contains: dust_planck_mean_opacity, blackbody_lum_frac,
  *   rt_kappa_adaptive_IR_band, dust_dEdt, rt_eqm_dust_temp,
- *   rt_irband_egydensity_in_band.
+ *   rt_irband_egydensity_in_band, rt_ionizing_band_photon_number_density.
  *
  * Include order: after allvars.h and proto.h (for struct types, All, and
  * forward declarations of gas_dust_heating_coeff, ThermalProperties, etc.).
@@ -497,6 +497,20 @@ double rt_irband_egydensity_in_band(int i, double E_lower, double E_upper, struc
 #else
     return 0;
 #endif
+}
+
+/* photons in band k available to photo-ionize: the band's own, plus (with RT_INFRARED) the part of the
+   adaptive infrared band's blackbody that falls inside band k, counted at that band's mean photon energy.
+   every consumer of the ionizing photon density (the chemistry rates, the photo-heating, an external
+   chemistry library) reads it here, so they all see the same photons */
+KOKKOS_INLINE_FUNCTION
+double rt_ionizing_band_photon_number_density(int i, int k, struct gas_cell_data *cell)
+{
+    double n_gamma = cell[i].rt_photon_number_density(k);
+#ifdef RT_INFRARED
+    n_gamma += rt_irband_egydensity_in_band(i,All.RHD_bins_nu_min_ev[k],All.RHD_bins_nu_max_ev[k], cell) / (DMAX(All.rt_nu_eff_eV[k],cell[i].Radiation_Temperature/2959.81)*ELECTRONVOLT_IN_ERGS/UNIT_ENERGY_IN_CGS);
+#endif
+    return n_gamma;
 }
 
 

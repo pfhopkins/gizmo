@@ -484,7 +484,7 @@ void check_constraint_equations(struct gasVariables *myGasVars, struct globalVar
  * @param ydot Vector containing the time derivatives of the variables. 
  * @param user_data The #UserData struct containing the input data. 
  */
-int f(realtype t, N_Vector y, N_Vector ydot, void *user_data)
+int f(sunrealtype t, N_Vector y, N_Vector ydot, void *user_data)
 {
   int i, j;		
   struct UserData *data;
@@ -546,17 +546,17 @@ int f(realtype t, N_Vector y, N_Vector ydot, void *user_data)
   
   /* Now set the output ydot vector for the chemical abundances */
   for (i = 0; i < data->network_size; i++)
-    NV_Ith_S(ydot, i) = (realtype) (data->species[indices[i]].creation_rate - data->species[indices[i]].destruction_rate);
+    NV_Ith_S(ydot, i) = (sunrealtype) (data->species[indices[i]].creation_rate - data->species[indices[i]].destruction_rate);
 		
   // Finally, if Thermal Evolution is switched on, calculate the cooling rate 
   if (data->myGasVars->ThermEvolOn == 1)
     {
       if (data->myGasVars->temperature > data->myGasVars->TempFloor)
-	NV_Ith_S(ydot, data->network_size) = (realtype) -calculate_total_cooling_rate(data->myGasVars, data->myGlobalVars, *data, 0);		/* Note that network_size is the number of chemcial species, hence No. of eqns = network_size + 1 when ThermEvol is on */
+	NV_Ith_S(ydot, data->network_size) = (sunrealtype) -calculate_total_cooling_rate(data->myGasVars, data->myGlobalVars, *data, 0);		/* Note that network_size is the number of chemcial species, hence No. of eqns = network_size + 1 when ThermEvol is on */
       else
 	{
 	  if (data->myGasVars->temp_floor_mode == 0) 
-	    NV_Ith_S(ydot, data->network_size) = (realtype) chimes_max(-calculate_total_cooling_rate(data->myGasVars, data->myGlobalVars, *data, 0), 0.0f);  /* Once T falls below T_floor, set T_dot >= 0 */
+	    NV_Ith_S(ydot, data->network_size) = (sunrealtype) chimes_max(-calculate_total_cooling_rate(data->myGasVars, data->myGlobalVars, *data, 0), 0.0f);  /* Once T falls below T_floor, set T_dot >= 0 */
 	  else {return -1;}
 	}
     }
