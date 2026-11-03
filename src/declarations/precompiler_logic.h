@@ -1031,6 +1031,19 @@
 
 
 
+#if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
+#define GALSF_FB_FIRE_RT_HIIHEATING // must be on, this module uses the same code
+#endif
+#if defined(CHIMES) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && !defined(CHIMES_HII_REGIONS)
+#define CHIMES_HII_REGIONS // with CHIMES, the HII-region heating acts through CHIMES (the default model assumes the in-code network's composition)
+#endif
+#if defined(CHIMES_HII_REGIONS) && !defined(CHIMES_STELLAR_FLUXES)
+#define CHIMES_STELLAR_FLUXES // the HII regions pass CHIMES the stellar fluxes in its age bins
+#endif
+#if defined(CHIMES_STELLAR_FLUXES) && !defined(GALSF_FB_FIRE_RT_LONGRANGE)
+#define GALSF_FB_FIRE_RT_LONGRANGE // the stellar fluxes CHIMES reads come from FIRE's long-range radiation (its luminosity tree and bands)
+#endif
+
 /* ----- giant block of options for RHD modules ------ */
 
 /* options for FIRE RT method */
@@ -1660,15 +1673,6 @@
 #endif
 
 
-#if defined(CHIMES_HII_REGIONS) && !defined(GALSF_FB_FIRE_RT_HIIHEATING)
-#define GALSF_FB_FIRE_RT_HIIHEATING // must be on, this module uses the same code
-#endif
-#if defined(CHIMES) && defined(GALSF_FB_FIRE_RT_HIIHEATING) && defined(GALSF_FB_FIRE_RT_LONGRANGE) && !defined(CHIMES_HII_REGIONS)
-#define CHIMES_HII_REGIONS // with CHIMES, the HII-region heating acts through CHIMES (the default model assumes the in-code network's composition). it needs the long-range stellar fluxes, so only with FIRE's long-range radiation
-#endif
-#if defined(CHIMES_HII_REGIONS) && !defined(CHIMES_STELLAR_FLUXES)
-#define CHIMES_STELLAR_FLUXES // the HII regions pass CHIMES the stellar fluxes in its age bins
-#endif
 #ifdef CHIMES_STELLAR_FLUXES /* The following defines the stellar age bins that we will use to define the UV spectra from stars used in CHIMES. */
 #define CHIMES_LOCAL_UV_NBINS 8
 #define CHIMES_LOCAL_UV_AGE_LOW 0.0

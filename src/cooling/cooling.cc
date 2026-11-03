@@ -546,12 +546,6 @@ void cooling_parent_routine(void)
 #endif
     }
   } /* end CPU/GPU path selection */
-
-
-#ifdef CHIMES /* CHIMES records some extra timing information here owing to large possible imbalances */
-  CPU_Step[CPU_COOLINGSFR] += measure_time(); MPI_Barrier(MPI_COMM_WORLD);
-  CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); PRINT_STATUS("CHIMES chemistry and cooling finished");
-#endif
 }
 
 
