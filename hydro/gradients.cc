@@ -660,7 +660,7 @@ void hydro_gradient_calc(void)
 
         // now we actually begin the main gradient loop //
         NextParticle = 0;	/* begin with this index into ActiveParticleList */
-        memset(ProcessedFlag, 0, All.MaxPart * sizeof(unsigned char));
+        for(int i_pf : ActiveParticleList) {ProcessedFlag[i_pf] = 0;} /* only active indices are read; see code_block_xchange_perform_ops.h */
         BufferCollisionFlag = 0; /* set to zero before operations begin */
         do
         {

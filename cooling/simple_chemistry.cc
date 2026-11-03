@@ -132,6 +132,42 @@ MyFloat return_electron_fraction_from_Cplus(int i, MyFloat temp, MyFloat x_elec,
     return x_Cplus;
 }
 
+/* Everything in f_Cplus / alpha_recomb_grain / grain_charge_psi that does not depend on x_elec, plus the two electron
+   sources that depend on T only. Each expression is the one the per-iteration functions above evaluate, kept in the
+   same operation order, so a call of return_electron_fraction_from_Cplus_hoisted equals return_electron_fraction_from_Cplus
+   bit for bit (absent fast-math reassociation); it just stops redoing the T-only work on every n_e iteration. */
+void simple_chem_prepare(int i, MyFloat temp, MyFloat shieldfac, struct simple_chem_consts *c, struct particle_data *pp, struct gas_cell_data *cell)
+{
+    c->ne_prefac = cell[i].Density * All.cf_a3inv * HYDROGEN_MASSFRAC * UNIT_DENSITY_IN_CGS / PROTONMASS_CGS; /* as grain_charge_psi */
+    c->G0_sqrtT = get_FUV_G0(i, shieldfac, 0, pp, cell) * sqrt(temp);
+    const MyFloat C[7] = {45.58, 6.089E-3, 1.128, 4.331E2, 4.845E-2, 0.8120, 1.333E-4}; /* the C+ row of the table in alpha_recomb_grain */
+    c->kgr_prefac = pp[i].Metallicity[0] / All.SolarAbundances[0] * 1e-14 * C[0];
+    c->kgr_C1 = C[1]; c->kgr_C2 = C[2];
+    c->kgr_C3_powT = C[3] * pow(temp, C[4]);
+    c->kgr_psi_exp = -C[5] - C[6] * log(temp);
+    c->ion_rate_C = total_ionization_rate_C(i, shieldfac, pp, cell);
+    MyFloat alpha = sqrt(temp / 6.67e-3), beta = sqrt(temp / 1.943e6), gamma = 0.7849 + 0.1597 * exp(-49550 / temp);
+    MyFloat k_rr = 2.995e-9 / (alpha * pow(1 + alpha, 1. - gamma) * pow(1 + beta, 1 + gamma));
+    MyFloat k_dr = pow(temp, -1.5) * (6.346e-9 * exp(-12.17 / temp) + 9.793e-9 * exp(-73.8 / temp) + 1.634e-6 * exp(-15230 / temp));
+    c->k_rr_dr = k_rr + k_dr;
+    MyFloat k_cplus_H2 = 2.31e-13 * pow(temp, -1.3) * exp(-23 / temp);
+    c->nHcgs = cell[i].nHcgs();
+    c->k_cplus_H2_nH2 = k_cplus_H2 * (0.5 * c->nHcgs * cell[i].MolecularMassFraction);
+    c->ZC_fac = pp[i].Metallicity[2]/All.SolarAbundances[2] * 1.6e-4;
+    c->xe_alkali = return_electron_fraction_from_alkali(i, temp, pp, cell);
+    c->xe_molions = return_electron_fraction_from_molecular_ions(i, temp, pp, cell);
+}
+
+MyFloat return_electron_fraction_from_Cplus_hoisted(int i, MyFloat x_elec, const struct simple_chem_consts *c)
+{
+    MyFloat ne_psi = c->ne_prefac * x_elec;
+    MyFloat psi = c->G0_sqrtT / ne_psi + 50;
+    MyFloat k_gr = c->kgr_prefac / (1 + c->kgr_C1 * pow(psi, c->kgr_C2) * (1 + c->kgr_C3_powT * pow(psi, c->kgr_psi_exp)));
+    MyFloat ne = c->nHcgs * x_elec;
+    MyFloat f = c->ion_rate_C / (c->ion_rate_C + k_gr * c->nHcgs + c->k_rr_dr * ne + c->k_cplus_H2_nH2);
+    return c->ZC_fac * f;
+}
+
 /* Contribution of O+ to electrons - essentially always negligible in ISM conditions but included for completeness */
 MyFloat return_electron_fraction_from_Oplus(int i, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell){
     MyFloat x_Oplus = pp[i].Metallicity[4]/All.SolarAbundances[4] * 3.2e-4 * f_Oplus(nHp); // Assumes gas-phase O abundance 3.2e-4 (Savage & Sembach 1996)

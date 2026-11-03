@@ -474,6 +474,7 @@ int hydro_force_evaluate(int target, int mode, int *exportflag, int *exportnodec
                         P[j].wakeup = (short int)(local.TimeBin + 1);
                         #pragma omp atomic write
                         NeedToWakeupParticles_local = 1;
+                        wakeup_list_note(j);
                     }
                 }
 #endif

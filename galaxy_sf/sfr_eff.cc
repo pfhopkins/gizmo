@@ -700,8 +700,18 @@ void star_formation_parent_routine(void)
     
     
     
+    { /* the three per-step counts in one collective: integer sums, so the totals are unchanged */
+        int sf_counts[3] = {stars_spawned, stars_converted, 0}, sf_counts_tot[3] = {0, 0, 0};
 #if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    MPI_Allreduce(&num_sink_formed, &tot_sink_formed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        sf_counts[2] = num_sink_formed;
+#endif
+        MPI_Allreduce(sf_counts, sf_counts_tot, 3, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        tot_spawned = sf_counts_tot[0]; tot_converted = sf_counts_tot[1];
+#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
+        tot_sink_formed = sf_counts_tot[2];
+#endif
+    }
+#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
     if( (ThisTask==0) && (tot_sink_formed > 0) )
     {
         printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
@@ -710,8 +720,6 @@ void star_formation_parent_routine(void)
     if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
 #endif
     
-    MPI_Allreduce(&stars_spawned, &tot_spawned, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&stars_converted, &tot_converted, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
     if(tot_spawned > 0 || tot_converted > 0)
     {
         if(ThisTask==0) printf("SFR: spawned %d stars, converted %d gas particles into stars\n", tot_spawned, tot_converted);

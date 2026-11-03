@@ -30,6 +30,7 @@ static int *Id;
 void peano_hilbert_order(void)
 {
   int i; PRINT_STATUS("Begin Peano-Hilbert order...");
+  wakeup_list_invalidate();
     
   if(N_gas)
     {

@@ -1334,6 +1334,29 @@ int get_timestep_bin(integertime ti_step)
 
 
 
+/* Pending-wakeup index list, so process_wake_ups visits the particles that can carry a request instead of reading
+   P[].wakeup for all NumPart (a strided pass over the particle array, on most steps of a deep hierarchy because the
+   gate stays open while any request is pending). While valid: every i < WakeupListNumPart with P[i].wakeup != 0 is in
+   WakeupList, and particles appended since are checked as the range [WakeupListNumPart, NumPart). Entries may be stale
+   or repeated. Anything that moves particles to other indices invalidates the list; the next pass scans every
+   particle and rebuilds it. */
+static std::vector<int> WakeupList;
+static int WakeupListValid = 0, WakeupListNumPart = 0;
+
+/*! record that P[i].wakeup was just set; call wherever a request is raised on an existing particle */
+void wakeup_list_note(int i)
+{
+    if(!WakeupListValid) {return;}
+#ifdef _OPENMP
+#pragma omp critical(wakeup_list)
+#endif
+    {WakeupList.push_back(i);}
+}
+
+/*! particles changed indices (exchange, reorder, compaction): the next pass falls back to a full scan */
+void wakeup_list_invalidate(void) {WakeupListValid = 0; WakeupList.clear();}
+
+
 #ifdef WAKEUP
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
 /*! Tallies the residual left by the wakeup kick-reversal below, which un-does part of an
@@ -1417,13 +1440,38 @@ void process_wake_ups(void)
             NeedToWakeupParticles = 1;  /* report and carry on, so the audit run stays on the correct trajectory */
         }
     }
+    if(WakeupListValid) /* likewise for the pending list: it must hold every request below WakeupListNumPart */
+    {
+        std::vector<int> s(WakeupList); std::sort(s.begin(), s.end());
+        int missed = 0, mi = -1;
+        for(i = 0; i < IMIN(NumPart, WakeupListNumPart); i++) {if(P[i].wakeup && !std::binary_search(s.begin(), s.end(), i)) {missed++; if(mi < 0) {mi = i;}}}
+        if(missed) {
+            printf("WAKEUP-LIST-AUDIT step=%d task=%d: %d pending requests missing from the list (first i=%d type=%d wakeup=%d)\n",
+                (int)All.NumCurrentTiStep, ThisTask, missed, mi, P[mi].Type, (int)P[mi].wakeup); fflush(stdout);
+            wakeup_list_invalidate();  /* report and carry on with a full scan */
+        }
+    }
 #endif
     if(NeedToWakeupParticles)
     {
-	for(i = 0; i < NumPart; i++)
+	/* Candidates in ascending index order, as the full scan visits them (the timebin splices below depend on it). */
+	const int use_list = WakeupListValid && (NumPart >= WakeupListNumPart);
+	std::vector<int> cand;
+	if(use_list)
 	{
-	    if(!P[i].wakeup) {continue;}
+	    cand.swap(WakeupList);
+	    for(i = WakeupListNumPart; i < NumPart; i++) {cand.push_back(i);}
+	    std::sort(cand.begin(), cand.end());
+	    cand.erase(std::unique(cand.begin(), cand.end()), cand.end());
+	}
+	WakeupList.clear();
+	const int ncand = use_list ? (int) cand.size() : NumPart;
+	for(int c = 0; c < ncand; c++)
+	{
+	    i = use_list ? cand[c] : c;
+	    if(i >= NumPart || !P[i].wakeup) {continue;}
 	    still_pending = 1; /* still set, serviced or not; nothing below clears it */
+	    WakeupList.push_back(i);
 #if !defined(AGS_KERNELRADIUS_CALCULATION_IS_ACTIVE)
 	    if(P[i].Type != 0) {continue;} // only gas particles can be awakened
 #endif
@@ -1570,6 +1618,7 @@ void process_wake_ups(void)
        until it next goes active and hydro_toplevel clears it, which can be several steps later --
        so an unconditional clear here would strand every request that outlives one pass. */
     NeedToWakeupParticles_local = still_pending;
+    WakeupListValid = 1; WakeupListNumPart = NumPart; /* WakeupList now holds exactly the pending requests */
     }
     NeedToWakeupParticles = 0;
 }

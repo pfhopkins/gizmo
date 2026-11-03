@@ -56,6 +56,10 @@ struct Chimes_depletion_data_structure *ChimesDepletionData;
 
 
 
+#ifdef COOLING_ITERATION_COUNTERS
+long long CoolIterCount[COOL_ITER_NCOUNTERS] = {0};
+#endif
+
 /* forward declarations for functions used before their definitions (needed because pp/cell params changed signatures) */
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double DoInstabilityCooling(double m_old, double u, double rho, double dt, double fac, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -494,7 +498,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
     ratefact = nHcgs * nHcgs / rho;
     u = u_upper = u_lower =  u_old; /* initialize values */
-    auto du_residual = [&](double du) {return du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt;}; // solved for the change in u, so the tolerance is relative to the change
+    COOL_ITER_COUNT(0);
+    double u_last_evaluated = -1; /* energy the rate function was last evaluated at (the cell carries that evaluation's side effects) */
+    auto du_residual = [&](double du) {COOL_ITER_COUNT(1); u_last_evaluated = u_old+du; return du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt;}; // solved for the change in u, so the tolerance is relative to the change
     double du_net = du_residual(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
 
     /* bracketing */
@@ -528,7 +534,13 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
             u = DMAX(u_min,u);
         } else {u = All.MinEgySpec;}
     }
-    CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell); /* evaluate at converged u to ensure ne_eval and other side-effects are consistent with the final answer */
+#ifdef COOLING_SKIP_REDUNDANT_FINAL_EVAL
+    /* the root finder returns an evaluated point; when it is the point evaluated last, ne_eval and the cell's rate
+       side effects (dust temperature, band emission) already belong to this u. Re-evaluating only re-runs the dust
+       solve from its own answer: identical to within the solvers' tolerances, not bit-identical. */
+    if(u != u_last_evaluated)
+#endif
+    {COOL_ITER_COUNT(1); CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell);} /* evaluate at converged u to ensure ne_eval and other side-effects are consistent with the final answer */
 
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
     cell[target].Ne = *ne_eval;
@@ -729,7 +741,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
     const double tolerance = 1e-4;
     double dummy;
     int iter = 0, bisection = 0;
+    COOL_ITER_COUNT(2);
     do {
+        COOL_ITER_COUNT(3);
         u_from_temp = convert_temp_to_u(temp, rho, target, &cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell);
 	du_old = du;
 	du = u_from_temp - u;
@@ -917,10 +931,27 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     }
 #endif
 
+#ifdef COOL_LOW_TEMPERATURES
+    /* electron sources from metals/dust/CRs: all of their inputs except the iterate itself are fixed for this call,
+       so evaluate them here once rather than on every pass of the loop below */
+    double T_lin_loop = pow(10.,logT), xe_heavy_full = 0, xe_heavy_ionized = 0;
+#ifdef SIMPLE_STEADYSTATE_CHEMISTRY
+    struct simple_chem_consts chem_c;
+#endif
+    if(target >= 0)
+    {
+        xe_heavy_full = return_electron_fraction_from_heavy_ions(target, T_lin_loop, rho, 0., pp, cell);    /* branch taken for n_elec <= 0.01 */
+        xe_heavy_ionized = return_electron_fraction_from_heavy_ions(target, T_lin_loop, rho, 1., pp, cell); /* branch taken for n_elec >  0.01 */
+#ifdef SIMPLE_STEADYSTATE_CHEMISTRY
+        simple_chem_prepare(target, T_lin_loop, shieldfac, &chem_c, pp, cell);
+#endif
+    }
+#endif
+    COOL_ITER_COUNT(4);
     /* evaluate number densities iteratively (cf KWH eqns 33-38) in units of nH */
     do
     {
-        niter++;
+        niter++; COOL_ITER_COUNT(5);
         
         aHp = flow * AlphaHp[j] + fhi * AlphaHp[jp];
         aHep = flow * AlphaHep[j] + fhi * AlphaHep[jp];
@@ -1043,15 +1074,26 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         neold = n_elec;
         n_elec = nHp + nHep + 2 * nHepp;	/* eqn (38) */
 #ifdef COOL_LOW_TEMPERATURES
-	    double temp = pow(10.,logT);
-        n_elec += return_electron_fraction_from_heavy_ions(target, temp, rho, n_elec, pp, cell);
+        if(target >= 0)
+        {
+            n_elec += (n_elec > 0.01) ? xe_heavy_ionized : xe_heavy_full;
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
-        n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
-	    n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);        
-        n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
-	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
-#endif        
-#endif       
+            n_elec += chem_c.xe_alkali;
+            n_elec += return_electron_fraction_from_Cplus_hoisted(target, neold, &chem_c);
+            n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
+            n_elec += chem_c.xe_molions;
+#endif
+        } else { /* no cell: the original per-iteration calls */
+            double temp = T_lin_loop;
+            n_elec += return_electron_fraction_from_heavy_ions(target, temp, rho, n_elec, pp, cell);
+#ifdef SIMPLE_STEADYSTATE_CHEMISTRY
+            n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
+            n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);
+            n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
+            n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
+#endif
+        }
+#endif
 	
 	// keep track of these bounds in case we need to switch to bisection
 	if(n_elec > neold) {ne_lower = DMAX(neold, ne_lower);}

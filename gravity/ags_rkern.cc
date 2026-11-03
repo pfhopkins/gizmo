@@ -212,6 +212,7 @@ int ags_density_evaluate(int target, int mode, int *exportflag, int *exportnodec
                                 P[j].wakeup = -1;
                                 #pragma omp atomic write
                                 NeedToWakeupParticles_local = 1;
+                                wakeup_list_note(j);
                         }
 #endif
                         out.Particle_DivVel -= kernel.dwk * dot(kernel.dp, kernel.dv) / kernel.r;

@@ -170,6 +170,7 @@ void subfind_process_group_collectively(int num)
     
     for(i = 0; i < NumPart; i++) {P[i].origindex = i;}
     qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_GrNrGrNr);
+    wakeup_list_invalidate();
     /* now we have the particles of the group at the beginning, but fluid cells are not aligned.  They can however be accessed via CellP[P[i].origindex] */
     for(i = 0, NumPartGroup = 0; i < NumPart; i++) {if(P[i].GrNr == GrNr) {NumPartGroup++;}}
     
@@ -392,6 +393,7 @@ void subfind_process_group_collectively(int num)
             fflush(stdout);
         }
         qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_submark);    /* groups particles of the same canidate together */
+        wakeup_list_invalidate();
         MPI_Barrier(MPI_COMM_WORLD);
         t0 = my_second();
         subfind_unbind_independent_ones(count_cand);
@@ -411,6 +413,7 @@ void subfind_process_group_collectively(int num)
         
         /* reestablish the original order */
         qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_GrNrGrNr);
+        wakeup_list_invalidate();
         /* now mark the bound particles */
         for(i = 0; i < NumPartGroup; i++) {if(P[i].submark >= 0 && P[i].submark < nsubs) {Tail[i] = P[i].submark;}} /* we use this to flag bound parts of substructures */
         for(i = 0; i < count_cand; i++) {if(candidates[i].parent == 0) {candidates[i].parent = -1;}}
@@ -654,6 +657,7 @@ void subfind_process_group_collectively(int num)
     domain_free();
     domain_allocate_trick();
     qsort(P, NumPart, sizeof(struct particle_data), subfind_compare_P_origindex);    /* reorder them such that the gas particles match again */
+    wakeup_list_invalidate();
     for(i = 0; i < NumPart; i++) {if(P[i].origindex != i) {endrun(7777);}}
 }
 

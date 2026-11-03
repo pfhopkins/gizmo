@@ -547,13 +547,14 @@ void calculate_non_standard_physics(void)
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    CPU_Step[CPU_COOLINGSFR] += measure_time(); /* this rank's own cooling work */
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); /* wait for the slowest rank: cooling-loop imbalance, booked separately */
 #endif
 
 
 #ifdef GALSF /* star/sink particle formation */
-    star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine) //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLINGSFR] += measure_time(); // finish time calc for SFR+cooling
+    star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine); books its own work to CPU_COOLINGSFR //
+    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); /* arrival spread only */
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
@@ -1089,6 +1090,34 @@ void write_cpu_log(void)
 
     CPUThisRun += CPU_Step[0];
 
+    /* Per-step timing log, opt-in with GIZMO_STEP_LOG=1: one line per step on rank 0 with the active
+       count, the top active bin, and the rank-average and rank-max of every CPU_* part (indices as
+       in constants.h). cpu.txt only prints at global syncs, which hides how the cost is distributed
+       over the timestep hierarchy; this is the raw material for that question. */
+    if(ThisTask == 0)
+    {
+        static FILE *fd_steps = NULL; static int steplog_checked = 0;
+        if(!steplog_checked)
+        {
+            steplog_checked = 1;
+            const char *e = getenv("GIZMO_STEP_LOG");
+            if(e && atoi(e) > 0)
+            {
+                char buf[DEFAULT_PATH_BUFFERSIZE_TOUSE]; snprintf(buf, DEFAULT_PATH_BUFFERSIZE_TOUSE, "%ssteps.txt", All.OutputDir);
+                fd_steps = fopen(buf, RestartFlag == 1 ? "a" : "w");
+                if(fd_steps) {fprintf(fd_steps, "# step time nactive top_active_bin top_occupied_bin wall_max wall_avg then avg[1..%d] then max[1..%d]\n", CPU_PARTS-1, CPU_PARTS-1);}
+            }
+        }
+        if(fd_steps)
+        {
+            fprintf(fd_steps, "%lld %.10g %lld %d %d %.6g %.6g", (long long) All.NumCurrentTiStep, All.Time, (long long) GlobNumForceUpdate, All.HighestActiveTimeBin, All.HighestOccupiedTimeBin, max_CPU_Step[0], avg_CPU_Step[0]);
+            for(i = 1; i < CPU_PARTS; i++) {fprintf(fd_steps, " %.4g", avg_CPU_Step[i]);}
+            for(i = 1; i < CPU_PARTS; i++) {fprintf(fd_steps, " %.4g", max_CPU_Step[i]);}
+            fprintf(fd_steps, "\n");
+            if(All.NumCurrentTiStep % 50 == 0) {fflush(fd_steps);}
+        }
+    }
+
     for(i = 0; i < CPU_PARTS; i++) {CPU_Step[i] = 0;}
     if(ThisTask == 0)
     {
@@ -1098,10 +1127,23 @@ void write_cpu_log(void)
 #ifndef OUTPUT_ADDITIONAL_RUNINFO
     if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) // only do the actual -print- operation on global timesteps
 #endif
+  {
+#if defined(COOLING) && defined(COOLING_ITERATION_COUNTERS)
+    /* evaluation counts since the last print: rank-summed (work) and rank-max (imbalance), then reset */
+    long long cool_cnt_sum[COOL_ITER_NCOUNTERS], cool_cnt_max[COOL_ITER_NCOUNTERS];
+    MPI_Reduce(CoolIterCount, cool_cnt_sum, COOL_ITER_NCOUNTERS, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    MPI_Reduce(CoolIterCount, cool_cnt_max, COOL_ITER_NCOUNTERS, MPI_LONG_LONG, MPI_MAX, 0, MPI_COMM_WORLD);
+    for(i = 0; i < COOL_ITER_NCOUNTERS; i++) {CoolIterCount[i] = 0;}
+#endif
   if(ThisTask == 0)
     {
       fprintf(FdCPU, "Step %lld, Time: %.16g, CPUs: %d\n",(long long) All.NumCurrentTiStep, All.Time, NTask);
       fprintf(FdCPU, "Nactive=%lld, Imbal(Max/Mean)=%g \n", (long long) GlobNumForceUpdate, (max_CPU_Step[0]/(MIN_REAL_NUMBER + avg_CPU_Step[0])-1.)*NTask+1.);
+#if defined(COOLING) && defined(COOLING_ITERATION_COUNTERS)
+      fprintf(FdCPU, "CoolIter(sum/max over ranks): cells=%lld/%lld rate_evals=%lld/%lld u2T_calls=%lld/%lld u2T_iters=%lld/%lld fabr_calls=%lld/%lld ne_iters=%lld/%lld dustsolves=%lld/%lld dust_dE_evals=%lld/%lld\n",
+              cool_cnt_sum[0], cool_cnt_max[0], cool_cnt_sum[1], cool_cnt_max[1], cool_cnt_sum[2], cool_cnt_max[2], cool_cnt_sum[3], cool_cnt_max[3],
+              cool_cnt_sum[4], cool_cnt_max[4], cool_cnt_sum[5], cool_cnt_max[5], cool_cnt_sum[6], cool_cnt_max[6], cool_cnt_sum[7], cool_cnt_max[7]);
+#endif
       fprintf(FdCPU, "TreeOps: build=%lld refresh=%lld decomp=%lld light=%lld defer=%lld escalate=%lld rearrange=%lld condemned_walk=%lld swap_s=%.2f rearr_s=%.2f swaps=%lld\n", TreeOpsCount[TREEOPS_BUILD], TreeOpsCount[TREEOPS_REFRESH], TreeOpsCount[TREEOPS_DECOMP], TreeOpsCount[TREEOPS_DECOMP_LIGHT], TreeOpsCount[TREEOPS_DEFER], TreeOpsCount[TREEOPS_ESCALATE], TreeOpsCount[TREEOPS_REARRANGE], TreeOpsCount[TREEOPS_CONDEMNED_WALK], maint_max[0], maint_max[1], (long long) maint_max[2]);
 #ifdef TREE_INTEGRITY_AUDITS
       fprintf(FdCPU, "TreeGeoAudit: audits=%lld box_excess_audits=%lld worst_excess=%.3g len %.3g h\n", (long long) geo_max[0], (long long) geo_max[1], geo_max[2], geo_max[3]);
@@ -1158,8 +1200,8 @@ void write_cpu_log(void)
 #ifdef COOLING
 	      "cooling+chem  %10.2f  %5.1f%%\n"
 #endif
-#ifdef CHIMES
-	      " coolchmimbal %10.2f  %5.1f%%\n"
+#ifdef COOLING
+	      " coolsfrimbal %10.2f  %5.1f%%\n"
 #endif
 #ifdef SINK_PARTICLES
 	      "sinks         %10.2f  %5.1f%%\n"
@@ -1241,7 +1283,7 @@ void write_cpu_log(void)
 #ifdef COOLING
     All.CPU_Sum[CPU_COOLINGSFR], (All.CPU_Sum[CPU_COOLINGSFR]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
-#ifdef CHIMES
+#ifdef COOLING
     All.CPU_Sum[CPU_COOLSFRIMBAL], (All.CPU_Sum[CPU_COOLSFRIMBAL]) / All.CPU_Sum[CPU_ALL] * 100,
 #endif
 #ifdef SINK_PARTICLES
@@ -1267,6 +1309,7 @@ void write_cpu_log(void)
     fprintf(FdCPU, "\n");
     fflush(FdCPU);
     }
+  } /* print-condition scope (counters) */
 }
 
 
