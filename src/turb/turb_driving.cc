@@ -481,10 +481,16 @@ static void turb_mode_lattice_build(void)
         }
     }
     for(int d = 0; d < 3; d++) {turb_lattice_n[d] = (StNModes > 0) ? hi[d] - turb_lattice_lo[d] + 1 : 0;}
-    const long long npoints_ll = (long long) turb_lattice_n[0] * turb_lattice_n[1] * turb_lattice_n[2];   /* each extent < 2^31 / 2 */
-    turb_lattice_use = (StNModes > 0 && npoints_ll <= (long long) TURB_LATTICE_MAX_POINTS_PER_MODE * StNModes) ? 1 : 0;
-    PRINT_STATUS("Turbulent driving: %d modes span %lld lattice points; the field is summed %s", StNModes, npoints_ll,
-                 turb_lattice_use ? "over the lattice" : "directly over the modes");
+    /* The box's point count, multiplied up only while it stays within the limit, so it cannot overflow. */
+    const long long max_points = (long long) TURB_LATTICE_MAX_POINTS_PER_MODE * StNModes;
+    long long npoints_ll = (StNModes > 0) ? 1 : 0;
+    for(int d = 0; d < 3 && npoints_ll > 0; d++) {
+        if(npoints_ll > max_points / turb_lattice_n[d]) {npoints_ll = -1; break;}   /* more points than the limit allows */
+        npoints_ll *= turb_lattice_n[d];
+    }
+    turb_lattice_use = (npoints_ll > 0 && npoints_ll <= max_points) ? 1 : 0;
+    if(turb_lattice_use) {PRINT_STATUS("Turbulent driving: %d modes span %lld lattice points; the field is summed over the lattice", StNModes, npoints_ll);}
+    else {PRINT_STATUS("Turbulent driving: %d modes span more than %lld lattice points; the field is summed directly over the modes", StNModes, max_points);}
     turb_lattice_built = 1;
     if(!turb_lattice_use) {return;}
     const size_t npoints = (size_t) npoints_ll;
