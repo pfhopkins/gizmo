@@ -1164,6 +1164,16 @@ int merge_particles_ij(int i, int j)
     CellP[j].grDI = wt_j*CellP[j].grDI + wt_i*CellP[i].grDI; CellP[j].grDII = wt_j*CellP[j].grDII + wt_i*CellP[i].grDII; CellP[j].grHDI = wt_j*CellP[j].grHDI + wt_i*CellP[i].grHDI;
 #endif
 #endif
+#if defined(COOL_MOLECFRAC_NONEQM)
+    /* the H2 mass is conserved (the fraction of the hydrogen mass in H2 mixes by mass), and the fraction of the neutral gas the network
+       evolves follows from it by the relation the network uses, MolecularMassFraction = (1 - Ne/1.25) * MolecularMassFraction_perNeutralH,
+       at the merged Ne; a merged cell cannot hold more H2 than neutral gas */
+    {
+        double f_neutral = DMIN(1, DMAX(0, 1. - CellP[j].Ne/1.25)), f_H2 = wt_j*CellP[j].MolecularMassFraction + wt_i*CellP[i].MolecularMassFraction;
+        CellP[j].MolecularMassFraction_perNeutralH = (f_neutral > 0) ? DMIN(1, f_H2 / f_neutral) : 0;
+        CellP[j].MolecularMassFraction = f_neutral * CellP[j].MolecularMassFraction_perNeutralH;
+    }
+#endif
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
     Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
     P[j].Pos = pos_new; // center-of-mass conserving //
