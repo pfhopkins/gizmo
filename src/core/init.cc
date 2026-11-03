@@ -1181,16 +1181,15 @@ void init(void)
         double mpi_mass_tot; long mpi_Ngas; long Ngas_l = (long) N_gas;
         MPI_Allreduce(&mass_tot, &mpi_mass_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
         MPI_Allreduce(&Ngas_l, &mpi_Ngas, 1, MPI_LONG, MPI_SUM, MPI_COMM_WORLD);
-        if(mpi_Ngas > 0) /* a gas-free run has no mean gas mass: keep the sink masses assigned above instead of a 0/0 */
-        {
-            All.MeanGasParticleMass = mpi_mass_tot/( (double)mpi_Ngas );
-#ifdef SINGLE_STAR_SINK_DYNAMICS
-            if(RestartFlag==0){
-                for(i=0; i<NumPart; i++){
-                    if(P[i].Type==5){P[i].Sink_Formation_Mass = All.MeanGasParticleMass;} // will behave as if this sink formed from a gas cell with the average mass
-                }
-            }
+        /* A gas-free run has no gas-cell mass: 0, not 0/0. Its sinks then carry Sink_Formation_Mass = 0, which keeps the
+           sink-merger mass ceiling (10x that value) closed instead of letting equal-mass stars merge. */
+        All.MeanGasParticleMass = (mpi_Ngas > 0) ? mpi_mass_tot/( (double)mpi_Ngas ) : 0;
 #endif
+#ifdef SINGLE_STAR_SINK_DYNAMICS
+        if(RestartFlag==0){
+            for(i=0; i<NumPart; i++){
+                if(P[i].Type==5){P[i].Sink_Formation_Mass = All.MeanGasParticleMass;} // will behave as if this sink formed from a gas cell with the average mass
+            }
         }
 #endif
     }
