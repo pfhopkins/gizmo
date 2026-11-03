@@ -572,7 +572,7 @@ static void turb_driving_energy_half_kick(int second_half)
             const integertime ti_step = P[i].integertime_step();
             const integertime tstart = second_half ? P[i].Ti_begstep + ti_step / 2 : P[i].Ti_begstep;   /* beginning or midpoint of step */
             const integertime tend   = second_half ? P[i].Ti_begstep + ti_step     : P[i].Ti_begstep + ti_step / 2;   /* midpoint or end */
-            const double dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
+            const double dt_gravkick = get_gravkick_factor(tstart, tend, i, 0);   /* the same factor the kick applies TurbAccel with (kicks.cc), dilation included */
             double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
             Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
             double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
