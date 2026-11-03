@@ -139,21 +139,10 @@ be copy-pasted and can be generically optimized in a single place */
             DATAGET_NAME = (struct INPUT_STRUCT_NAME *) mymalloc("DATAGET_NAME", Nimport * sizeof(struct INPUT_STRUCT_NAME));
             DATARESULT_NAME = (struct OUTPUT_STRUCT_NAME *) mymalloc("DATARESULT_NAME", Nimport * sizeof(struct OUTPUT_STRUCT_NAME));
 
-            tstart = my_second(); Nimport = 0; /* reset because this will be cycled below to calculate the recieve offsets (Recv_offset) */
-            for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* exchange particle data */
-            {
-                recvTask = ThisTask ^ ngrp;
-                if(recvTask < NTask)
-                {
-                    if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) /* get the particles */
-                    {
-                        MPI_Sendrecv(&DATAIN_NAME[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct INPUT_STRUCT_NAME), MPI_BYTE, recvTask, TAG_MPI_GENERIC_COM_BUFFER_A,
-                                     &DATAGET_NAME[Nimport], Recv_count[recvTask] * sizeof(struct INPUT_STRUCT_NAME), MPI_BYTE, recvTask, TAG_MPI_GENERIC_COM_BUFFER_A,
-                                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        Nimport += Recv_count[recvTask];
-                    }
-                }
-            }
+            tstart = my_second(); /* exchange particle data with all partners at once; imports land packed in partner order */
+            mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_MPI_GENERIC_COM_BUFFER_A,
+                                       (char *) DATAIN_NAME, Send_count, Send_offset, sizeof(struct INPUT_STRUCT_NAME),
+                                       (char *) DATAGET_NAME, Recv_count, NULL, sizeof(struct INPUT_STRUCT_NAME));
             tend = my_second(); timecomm += timediff(tstart, tend);
 
             /* now do the particles that were sent to us */
@@ -173,21 +162,10 @@ be copy-pasted and can be generically optimized in a single place */
             MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
             tend = my_second(); timewait += timediff(tstart, tend);
 
-            tstart = my_second(); Nimport = 0;
-            for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
-            {
-                recvTask = ThisTask ^ ngrp;
-                if(recvTask < NTask)
-                {
-                    if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
-                    {
-                        MPI_Sendrecv(&DATARESULT_NAME[Nimport], Recv_count[recvTask] * sizeof(struct OUTPUT_STRUCT_NAME), MPI_BYTE, recvTask, TAG_MPI_GENERIC_COM_BUFFER_B,
-                                     &DATAOUT_NAME[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct OUTPUT_STRUCT_NAME), MPI_BYTE, recvTask, TAG_MPI_GENERIC_COM_BUFFER_B,
-                                     MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                        Nimport += Recv_count[recvTask];
-                    }
-                }
-            }
+            tstart = my_second(); /* send the results for imported elements back to their host tasks */
+            mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_MPI_GENERIC_COM_BUFFER_B,
+                                       (char *) DATARESULT_NAME, Recv_count, NULL, sizeof(struct OUTPUT_STRUCT_NAME),
+                                       (char *) DATAOUT_NAME, Send_count, Send_offset, sizeof(struct OUTPUT_STRUCT_NAME));
             tend = my_second(); timecomm += timediff(tstart, tend);
             myfree(DATARESULT_NAME); myfree(DATAGET_NAME); /* free the structures used to send data back to tasks, its sent */
 

@@ -12,6 +12,7 @@
 #include <mpi.h>
 #include <string.h>
 #include <limits.h>
+#include <vector>
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
 
@@ -185,3 +186,36 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
     return 0;
 }
 
+
+
+/*! Point-to-point exchange with every partner at once, in place of a loop of blocking MPI_Sendrecv over
+ *  ngrp in [ngrp_lo, ngrp_hi) with partner ThisTask^ngrp. To rank r it sends scount[r] items of ssize bytes
+ *  starting at item soff[r] of sbuf, and receives rcount[r] items of rsize bytes at item roff[r] of rbuf.
+ *  A NULL soff/roff means the items are packed in partner order, as the blocking loop's running offset
+ *  placed them, so buffers are laid out exactly as before. Messages above INT_MAX bytes go in pieces, which
+ *  MPI's per-pair ordering keeps in sequence. */
+void mpi_exchange_with_partners(int ngrp_lo, int ngrp_hi, int tag,
+                                char *sbuf, const int *scount, const int *soff, size_t ssize,
+                                char *rbuf, const int *rcount, const int *roff, size_t rsize)
+{
+    std::vector<MPI_Request> req; req.reserve(4 * NTask);
+    size_t s_seq = 0, r_seq = 0;
+    for(int ngrp = ngrp_lo; ngrp < ngrp_hi; ngrp++)
+    {
+        int r = ThisTask ^ ngrp;
+        if(r >= NTask) {continue;}
+        size_t s_at = soff ? (size_t) soff[r] : s_seq, r_at = roff ? (size_t) roff[r] : r_seq;
+        s_seq += scount[r]; r_seq += rcount[r];
+        for(size_t done = 0, n = (size_t) rcount[r] * rsize; done < n;)
+        {
+            int piece = (int) ((n - done < (size_t) INT_MAX) ? (n - done) : (size_t) INT_MAX);
+            req.emplace_back(); MPI_Irecv(rbuf + r_at * rsize + done, piece, MPI_BYTE, r, tag, MPI_COMM_WORLD, &req.back()); done += piece;
+        }
+        for(size_t done = 0, n = (size_t) scount[r] * ssize; done < n;)
+        {
+            int piece = (int) ((n - done < (size_t) INT_MAX) ? (n - done) : (size_t) INT_MAX);
+            req.emplace_back(); MPI_Isend(sbuf + s_at * ssize + done, piece, MPI_BYTE, r, tag, MPI_COMM_WORLD, &req.back()); done += piece;
+        }
+    }
+    if(!req.empty()) {MPI_Waitall((int) req.size(), req.data(), MPI_STATUSES_IGNORE);}
+}

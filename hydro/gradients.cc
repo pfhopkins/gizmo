@@ -783,21 +783,10 @@ void hydro_gradient_calc(void)
                 }
 
 
-                tstart = my_second(); Nimport = 0; /* reset because this will be cycled below to calculate the recieve offsets (Recv_offset) */
-                for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* exchange particle data */
-                {
-                    recvTask = ThisTask ^ ngrp;
-                    if(recvTask < NTask)
-                    {
-                        if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0) /* get the particles */
-                        {
-                            MPI_Sendrecv(&GasGradDataIn[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct GasGraddata_in), MPI_BYTE, recvTask, TAG_GRADLOOP_A,
-                                         &GasGradDataGet[Nimport], Recv_count[recvTask] * sizeof(struct GasGraddata_in), MPI_BYTE, recvTask, TAG_GRADLOOP_A,
-                                         MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                            Nimport += Recv_count[recvTask];
-                        }
-                    }
-                }
+                tstart = my_second(); /* exchange particle data with all partners at once; imports land packed in partner order */
+                mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_GRADLOOP_A,
+                                           (char *) GasGradDataIn, Send_count, Send_offset, sizeof(struct GasGraddata_in),
+                                           (char *) GasGradDataGet, Recv_count, NULL, sizeof(struct GasGraddata_in));
                 tend = my_second(); timecommsumm1 += timediff(tstart, tend);
 
 
@@ -819,27 +808,16 @@ void hydro_gradient_calc(void)
                 MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
                 tend = my_second(); timewait2 += timediff(tstart, tend);
 
-                tstart = my_second(); Nimport = 0;
-                for(ngrp = ngrp_initial; ngrp < ngrp_initial + N_chunks_for_import; ngrp++) /* send the results for imported elements back to their host tasks */
+                tstart = my_second(); /* send the results for imported elements back to their host tasks */
+                if(gradient_iteration==0)
                 {
-                    recvTask = ThisTask ^ ngrp;
-                    if(recvTask < NTask)
-                    {
-                        if(Send_count[recvTask] > 0 || Recv_count[recvTask] > 0)
-                        {
-                            if(gradient_iteration==0) /* send the results */
-                            {
-                                MPI_Sendrecv(&GasGradDataResult[Nimport], Recv_count[recvTask] * sizeof(struct GasGraddata_out), MPI_BYTE, recvTask, TAG_GRADLOOP_B,
-                                             &GasGradDataOut[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct GasGraddata_out), MPI_BYTE, recvTask, TAG_GRADLOOP_B,
-                                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                            } else {
-                                MPI_Sendrecv(&GasGradDataResult_iter[Nimport], Recv_count[recvTask] * sizeof(struct GasGraddata_out_iter), MPI_BYTE, recvTask, TAG_GRADLOOP_C,
-                                             &GasGradDataOut_iter[Send_offset[recvTask]], Send_count[recvTask] * sizeof(struct GasGraddata_out_iter), MPI_BYTE, recvTask, TAG_GRADLOOP_C,
-                                             MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-                            }
-                            Nimport += Recv_count[recvTask];
-                        }
-                    }
+                    mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_GRADLOOP_B,
+                                               (char *) GasGradDataResult, Recv_count, NULL, sizeof(struct GasGraddata_out),
+                                               (char *) GasGradDataOut, Send_count, Send_offset, sizeof(struct GasGraddata_out));
+                } else {
+                    mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_GRADLOOP_C,
+                                               (char *) GasGradDataResult_iter, Recv_count, NULL, sizeof(struct GasGraddata_out_iter),
+                                               (char *) GasGradDataOut_iter, Send_count, Send_offset, sizeof(struct GasGraddata_out_iter));
                 }
                 tend = my_second(); timecommsumm2 += timediff(tstart, tend);
                 if(gradient_iteration==0) {myfree(GasGradDataResult);} else {myfree(GasGradDataResult_iter);} /* free the structures used to send data back to tasks, its sent */
