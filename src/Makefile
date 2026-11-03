@@ -720,11 +720,9 @@ HDF5LIB  = -L$(HDF5_BASE)/lib -Xlinker -R -Xlinker $(HDF5_BASE)/lib -lhdf5 -lz
 endif
 
 #----------------------------
-# Rusty AMD Genoa -- 96 cores/node. Run: --constraint=genoa.
-# Ported from starforge_dev_integration (1e0d05fc). Differs from "RUSTY" above in ways that
-# matter for this tree: CXX is set (the Kokkos sources are C++ and the generic block leaves it
-# at the make default), FC is set, GSL paths are given explicitly, znver4 replaces -march=native,
-# and OPT_EXTRA is honoured so callers can add e.g. -flto without editing the Makefile.
+# Rusty AMD Genoa nodes (--constraint=genoa), Kokkos OpenMP backend. Select with
+# `export SYSTYPE=RUSTY_GENOA` or a ~/.gizmo file. Unlike "RUSTY" above, this sets CXX/FC and the
+# Kokkos and GSL paths, which the Kokkos translation units need even in a CPU-only build.
 ifeq ($(SYSTYPE),"RUSTY_GENOA")
 CC       =   mpicc
 CXX      =   mpicxx -std=c++20
@@ -732,37 +730,14 @@ ifeq (SOFTDOUBLEDOUBLE,$(findstring SOFTDOUBLEDOUBLE,$(OPT)))
 CC       =   mpicxx
 endif
 FC       =   mpifort
-## -O2, NO -ffast-math, NO -march=znver4 -- deliberately conservative, matching every Kokkos
-## systype this branch is actually validated on (Vista, Vista_CPU, Frontier, Frontera_Kokkos are
-## all plain -O2). The first version of this block copied -O3 -ffast-math -march=znver4 from the
-## RUSTY_GENOA block on starforge_dev_integration, which was wrong to import here:
-##   * -ffast-math is the documented cause of position->key divergence between translation units
-##     in this codebase (it let domain.cc contract the mapping to fma() while forcetree.cc emitted
-##     a call, so the two disagreed about which top node owns a particle). On starforge_dev that
-##     is safe only because 0614e00a routes every caller through one noinline domain_peano_key().
-##     THAT CONSOLIDATION IS NOT PORTED HERE YET -- domain_double_to_int is still duplicated across
-##     six files (domain.cc, proto.h, peano.cc, gpu_morton.cc/.h, gpu_morton_functions.h), so
-##     turning on fast-math is enabling exactly the optimization that makes the duplication bite.
-##   * -march=znver4 also permits FP contraction under GCC's default -ffp-contract=fast, which can
-##     reach the mantissa bits the key extraction reads.
-## Revisit once the host-side key consolidation lands and a run at high rank count with clustered
-## ICs is clean; OPT_EXTRA is there for experiments in the meantime.
+## plain -O2 like the other Kokkos CPU systypes; no -ffast-math or -march (see the position->key
+## contract in declarations/typedefs.h). OPT_EXTRA adds flags without editing this file.
 OPTIMIZE =  -O2 -funroll-loops -g -Wall $(OPT_EXTRA)
-## Kokkos OpenMP backend needs -fopenmp regardless of the OPENMP Config flag, because the
-## GPU_OBJS translation units below are Kokkos even in a CPU-only build.
-OPTIMIZE += -fopenmp   # remember --cpu-bind=none on srun when oversubscribing threads
-## Kokkos. There is no kokkos module on Rusty as of 2026-08 -- `module keyword kokkos` returns
-## only trilinos, and trilinos/mpi-16.0.0 ships the Tpetra/Sacado adapter headers
-## (KokkosCompat_*, Kokkos_DynRankView_Fad) WITHOUT Kokkos_Core.hpp or libkokkoscore. So point
-## KOKKOS_PATH at a local build; scripts/build_kokkos_rusty.sh makes one. Override on the make
-## command line or in the environment if you have your own.
-## Resolution order: make command line > environment > default. This cannot be a plain "?=":
-## line ~83 above does an unconditional "KOKKOS_PATH =", which both clobbers the environment
-## value and leaves the variable *defined but empty*, so "?=" would never fire. The $(shell echo)
-## recovers the environment value that assignment discarded. This matters because the test
-## harness builds with a bare "make clean && make -j8" (test/harness/gizmo/test.py), passing
-## nothing on the command line -- without a self-contained default every pytest build fails at
-## "Kokkos_Core.hpp: No such file or directory" even though a manual build works.
+OPTIMIZE += -fopenmp   # the Kokkos OpenMP backend needs it whether or not OPENMP is set
+## There is no Kokkos module on Rusty; scripts/build_kokkos_rusty.sh builds one into the default
+## below. KOKKOS_PATH resolves make command line > environment > $(HOME)/opt/kokkos-openmp. A plain
+## "?=" cannot do this: the unconditional "KOKKOS_PATH =" near the top of this file overrides the
+## environment and leaves the variable defined but empty, and the test harness runs a bare `make`.
 ifeq ($(strip $(KOKKOS_PATH)),)
 KOKKOS_PATH := $(shell echo $$KOKKOS_PATH)
 endif

@@ -29,23 +29,26 @@ echo "=== $(gcc --version | head -1);  $(cmake --version | head -1)"
 SRC=$(mktemp -d)
 trap 'rm -rf "$SRC"' EXIT
 
-# Fetch with curl, NOT git clone. The global git config here carries
+# KOKKOS_SRC: an unpacked Kokkos source tree, for nodes without outbound https.
+# Otherwise fetch with curl, NOT git clone: a global git config with
 #   url.git@github.com:.insteadof https://github.com/
-# so git silently rewrites any GitHub https URL to ssh, which has no key inside a batch job
-# ("Permission denied (publickey)"). curl is not subject to git's URL rewriting, and a release
-# tarball is smaller and faster than a clone anyway.
-TARBALL="https://github.com/kokkos/kokkos/archive/refs/tags/${KOKKOS_VER}.tar.gz"
-echo "=== fetching $TARBALL"
-if ! curl -fsSL "$TARBALL" -o "$SRC/kokkos.tar.gz"; then
-    echo "FATAL: could not download Kokkos $KOKKOS_VER."
-    echo "       If this node has no outbound https, fetch the tarball on a login node and untar it to"
-    echo "       a directory, then re-run:  $0 $PREFIX  with KOKKOS_SRC=<that dir> set."
-    exit 1
+# rewrites GitHub https URLs to ssh, which has no key inside a batch job.
+if [ -n "${KOKKOS_SRC:-}" ]; then
+    KSRC="$KOKKOS_SRC"
+else
+    TARBALL="https://github.com/kokkos/kokkos/archive/refs/tags/${KOKKOS_VER}.tar.gz"
+    echo "=== fetching $TARBALL"
+    if ! curl -fsSL "$TARBALL" -o "$SRC/kokkos.tar.gz"; then
+        echo "FATAL: could not download Kokkos $KOKKOS_VER. Without outbound https, fetch and unpack"
+        echo "       the tarball elsewhere and re-run with KOKKOS_SRC=<unpacked dir>."
+        exit 1
+    fi
+    KSRC="$SRC/kokkos"
+    mkdir -p "$KSRC"
+    tar -xzf "$SRC/kokkos.tar.gz" -C "$KSRC" --strip-components=1
 fi
-mkdir -p "$SRC/kokkos"
-tar -xzf "$SRC/kokkos.tar.gz" -C "$SRC/kokkos" --strip-components=1
 
-cmake -S "$SRC/kokkos" -B "$SRC/build" \
+cmake -S "$KSRC" -B "$SRC/build" \
       -DCMAKE_INSTALL_PREFIX="$PREFIX" \
       -DCMAKE_BUILD_TYPE=Release \
       -DCMAKE_CXX_STANDARD=20 \
@@ -54,11 +57,11 @@ cmake -S "$SRC/kokkos" -B "$SRC/build" \
       -DKokkos_ENABLE_OPENMP=ON \
       -DKokkos_ENABLE_SERIAL=ON \
       -DKokkos_ARCH_ZEN4=ON
-# Cap parallelism: this is often run on a shared login node, where -j$(nproc) is antisocial.
+# Capped: this often runs on a shared login node.
 cmake --build "$SRC/build" -j "${KOKKOS_BUILD_JOBS:-16}"
 cmake --install "$SRC/build"
 
 echo "=== installed:"
 ls "$PREFIX/include/Kokkos_Core.hpp"
 ls "$PREFIX"/lib64/libkokkoscore.* 2>/dev/null || ls "$PREFIX"/lib/libkokkoscore.*
-echo "=== now build GIZMO with:  make KOKKOS_PATH=$PREFIX"
+echo "=== build GIZMO with SYSTYPE=RUSTY_GENOA (add KOKKOS_PATH=$PREFIX if not the default prefix)"
