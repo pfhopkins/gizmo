@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 #include <algorithm>
+#include <vector>
 
 #include "../declarations/allvars.h"
 #include "../core/proto.h"
@@ -123,6 +124,17 @@ static int PersistentKeySize = 0;     /*!< allocated size of PersistentKey array
 static int LightRepartitionCount = 0; /*!< number of consecutive lightweight repartitions since last full decomposition */
 #define MAX_LIGHT_REPARTITIONS 20     /*!< force a full domain decomposition after this many consecutive lightweight ones, to adapt top tree to changed particle distribution */
 #define DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS 32000000 /*!< bound on swap attempts in the assignment's swap refinement (binds above 160000 segments) */
+#if defined(DOMAIN_KEEP_OWNERS) && defined(DOMAIN_TIMEBINS) && (DOMAIN_TIMEBINS == 1)
+#undef DOMAIN_KEEP_OWNERS /* the owner-preserving pass balances the four aggregate quantities only, not per-bin costs */
+#endif
+#ifdef DOMAIN_KEEP_OWNERS
+#ifndef DOMAIN_KEEP_OWNERS_SLACK
+#define DOMAIN_KEEP_OWNERS_SLACK 0 /*!< allowed relative excess of the kept assignment's max imbalance over the fresh one's */
+#endif
+/* each fresh segment's current majority holder (rank, local count), indexed like DomainStartList after the split */
+static std::vector<int> KeepOwnerRank, KeepOwnerCount;
+static void domain_keep_owner_census(int nseg);
+#endif
 
 /*! Raise the particle capacity to what the coming epoch is expected to need, at the one point in a step
  *  where it may move: the tree has just been freed and will be rebuilt from the new value, and the active
@@ -933,6 +945,30 @@ void domain_update_adaptive_weights(void)
  *  respect the maximum allowed memory-imbalance given by the value of
  *  PartAllocFactor.
  */
+#ifdef DOMAIN_KEEP_OWNERS
+/*! For each segment of the fresh split (DomainStartList/DomainEndList, nseg entries), find the rank holding most
+ *  of its particles right now, and how many: one leaf lookup per local particle and one MAXLOC reduction. */
+static void domain_keep_owner_census(int nseg)
+{
+    std::vector<int> leaf_seg(NTopleaves, -1);
+    for(int s = 0; s < nseg; s++) {for(int leaf = DomainStartList[s]; leaf <= DomainEndList[s]; leaf++) {leaf_seg[leaf] = s;}}
+    struct int_pair {int count, rank;}; /* MPI_2INT layout */
+    int_pair *loc = (int_pair *) mymalloc("keep_census_loc", nseg * sizeof(int_pair)), *glob = (int_pair *) mymalloc("keep_census_glob", nseg * sizeof(int_pair));
+    for(int s = 0; s < nseg; s++) {loc[s].count = 0; loc[s].rank = ThisTask;}
+    for(int i = 0; i < NumPart; i++)
+    {
+#ifdef SUBFIND
+        if(GrNr >= 0 && P[i].GrNr != GrNr) {continue;}
+#endif
+        int s = leaf_seg[domain_toptree_leaf(Key[i], topNodes)]; if(s >= 0) {loc[s].count++;}
+    }
+    MPI_Allreduce(loc, glob, nseg, MPI_2INT, MPI_MAXLOC, MPI_COMM_WORLD);
+    KeepOwnerRank.resize(nseg); KeepOwnerCount.resize(nseg);
+    for(int s = 0; s < nseg; s++) {KeepOwnerRank[s] = (glob[s].count > 0) ? glob[s].rank : -1; KeepOwnerCount[s] = glob[s].count;}
+    myfree(glob); myfree(loc);
+}
+#endif
+
 int domain_decompose(void)
 {
     int i, no, status;
@@ -1004,6 +1040,9 @@ int domain_decompose(void)
 
     /* find the split of the domain grid */
     domain_findSplit_work_balanced(multipledomains * NTask, NTopleaves);
+#ifdef DOMAIN_KEEP_OWNERS
+    domain_keep_owner_census(multipledomains * NTask);
+#endif
     domain_assign_load_or_work_balanced(1,multipledomains);
 
     status = domain_check_memory_bound(multipledomains);
@@ -1527,6 +1566,9 @@ void domain_findSplit_work_balanced(int ncpu, int ndomain)
 static struct domain_segments_data
 {
   int task, start, end;
+#ifdef DOMAIN_KEEP_OWNERS
+  int keep_rank, keep_count; /* majority holder of this segment's particles before the exchange, and how many it holds */
+#endif
   double work;
   double load;
   double load_activegas;
@@ -1627,6 +1669,9 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
     {
       domainAssign[n].start = DomainStartList[n];
       domainAssign[n].end = DomainEndList[n];
+#ifdef DOMAIN_KEEP_OWNERS
+      domainAssign[n].keep_rank = KeepOwnerRank[n]; domainAssign[n].keep_count = KeepOwnerCount[n];
+#endif
       domainAssign[n].work = 0;
       domainAssign[n].load = 0;
       domainAssign[n].load_activegas = 0;
@@ -1977,6 +2022,83 @@ void domain_assign_load_or_work_balanced(int mode, int multipledomains)
           PRINT_STATUS(" ..domain iterative refinement: %d swaps accepted out of %d attempts", nswaps_accepted, max_iterations);
       }
   }
+
+#ifdef DOMAIN_KEEP_OWNERS
+  /* Owner-preserving alternative. The fresh deal above has no memory of where particles sit, so nearly every
+     particle changes rank at every decomposition, and across nodes that exchange dominates the decomposition.
+     Rebuild the assignment from each segment's current majority holder, fill the rest greedily, swap-refine, and
+     keep it only if its max imbalance is no worse than the fresh deal's and it moves fewer particles. Every rank
+     computes the same answer from the same reduced inputs. */
+  if(mode == 1 && multipledomains * NTask > 1)
+  {
+      double t_keep = my_second();
+      const int nseg = multipledomains * NTask;
+      const double tot[4] = {tot_work + 1.0e-30, tot_load + 1.0e-30, tot_loadactivegas + 1.0e-30, tot_loadgas + 1.0e-30};
+      auto seg_q = [&](int s, int q) -> double {return q == 0 ? domainAssign[s].work : (q == 1 ? domainAssign[s].load : (q == 2 ? domainAssign[s].load_activegas : domainAssign[s].load_gas));};
+      auto moved = [&](int s, int t) -> double {return domainAssign[s].load - ((t == domainAssign[s].keep_rank) ? domainAssign[s].keep_count : 0);};
+      std::vector<double> held((size_t) NTask * 4, 0.0), vt(NTask, 0.0);
+      std::vector<int> cnt(NTask, 0), fresh_task(nseg), task(nseg, -1);
+      auto value_of = [&](const double *h) -> double {double v = 0; for(int q = 0; q < 4; q++) {v = DMAX(v, h[q] / tot[q]);} return v;};
+      auto value_with = [&](int t, int s_add, int s_rem) -> double {
+          double h[4]; for(int q = 0; q < 4; q++) {h[q] = held[(size_t) t * 4 + q] + (s_add >= 0 ? seg_q(s_add, q) : 0) - (s_rem >= 0 ? seg_q(s_rem, q) : 0);}
+          return value_of(h);};
+      auto place = [&](int s, int t, double sign) {for(int q = 0; q < 4; q++) {held[(size_t) t * 4 + q] += sign * seg_q(s, q);} cnt[t] += (sign > 0) ? 1 : -1; vt[t] = value_of(&held[(size_t) t * 4]);};
+      double m_fresh = 0, moved_fresh = 0;
+      for(n = 0; n < nseg; n++) {fresh_task[n] = domainAssign[n].task; place(n, fresh_task[n], 1); moved_fresh += moved(n, fresh_task[n]);}
+      for(ta = 0; ta < NTask; ta++) {m_fresh = DMAX(m_fresh, vt[ta]);}
+      std::fill(held.begin(), held.end(), 0.0); std::fill(vt.begin(), vt.end(), 0.0); std::fill(cnt.begin(), cnt.end(), 0);
+      /* 1. majority holders first, largest holdings first, while the holder has a free slot and stays under the fresh max */
+      std::vector<int> order(nseg);
+      for(n = 0; n < nseg; n++) {order[n] = n;}
+      std::sort(order.begin(), order.end(), [&](int a, int b) {return (domainAssign[a].keep_count > domainAssign[b].keep_count) || (domainAssign[a].keep_count == domainAssign[b].keep_count && domainAssign[a].start < domainAssign[b].start);});
+      int n_kept = 0;
+      for(int s : order)
+      {
+          int t = domainAssign[s].keep_rank;
+          if(domainAssign[s].keep_count <= 0 || t < 0 || cnt[t] >= multipledomains) {continue;}
+          if(value_with(t, s, -1) > m_fresh) {continue;}
+          task[s] = t; place(s, t, 1); n_kept++;
+      }
+      /* 2. the rest, heaviest first (domainAssign is in normalized-load order), each to the open rank it raises least */
+      for(n = 0; n < nseg; n++)
+      {
+          if(task[n] >= 0) {continue;}
+          int best = -1; double best_v = 0;
+          for(ta = 0; ta < NTask; ta++) {if(cnt[ta] < multipledomains) {double v = value_with(ta, n, -1); if(best < 0 || v < best_v) {best = ta; best_v = v;}}}
+          task[n] = best; place(n, best, 1);
+      }
+      /* 3. swap refinement: trade a segment of the most-loaded rank for one elsewhere while both end below the max */
+      std::vector<std::vector<int>> segs_of(NTask);
+      for(n = 0; n < nseg; n++) {segs_of[task[n]].push_back(n);}
+      int t_max = 0; for(ta = 1; ta < NTask; ta++) {if(vt[ta] > vt[t_max]) {t_max = ta;}}
+      unsigned int seed = 4242 + NTask; int n_swaps = 0;
+      auto rnd = [&](unsigned int m) -> unsigned int {seed = seed * 1103515245 + 12345; unsigned int r = seed >> 16; seed = seed * 1103515245 + 12345; r = (r << 16) | (seed >> 16); return r % m;};
+      long max_attempts = DMIN(200.0 * nseg, (double) DOMAIN_SWAP_REFINEMENT_MAX_ATTEMPTS);
+      for(long it = 0; it < max_attempts && vt[t_max] > m_fresh * (1 + DOMAIN_KEEP_OWNERS_SLACK); it++)
+      {
+          std::vector<int> &mine = segs_of[t_max];
+          int i1 = rnd(mine.size()), s1 = mine[i1], s2 = rnd(nseg), t2 = task[s2];
+          if(t2 == t_max) {continue;}
+          double v1 = value_with(t_max, s2, s1), v2 = value_with(t2, s1, s2);
+          if(v1 >= vt[t_max] || v2 >= vt[t_max]) {continue;}
+          place(s1, t_max, -1); place(s2, t2, -1); place(s1, t2, 1); place(s2, t_max, 1);
+          task[s1] = t2; task[s2] = t_max; mine[i1] = s2;
+          std::vector<int> &other = segs_of[t2]; for(size_t k = 0; k < other.size(); k++) {if(other[k] == s2) {other[k] = s1; break;}}
+          n_swaps++; t_max = 0; for(ta = 1; ta < NTask; ta++) {if(vt[ta] > vt[t_max]) {t_max = ta;}}
+      }
+      double moved_kept = 0; for(n = 0; n < nseg; n++) {moved_kept += moved(n, task[n]);}
+      int ok = (vt[t_max] <= m_fresh * (1 + DOMAIN_KEEP_OWNERS_SLACK) * (1 + 1.0e-12)) && (moved_kept < moved_fresh);
+      for(ta = 0; ta < NTask; ta++) {if(cnt[ta] != multipledomains) {ok = 0;}}
+      if(ok) {for(n = 0; n < nseg; n++) {domainAssign[n].task = task[n];}}
+      if(ThisTask == 0)
+      {
+          printf("Domain keep-owners: %s  moved %.4f (fresh %.4f) of %.0f  max imbalance %.5f (fresh %.5f)  kept %d of %d segments, %d swaps, %.3f s\n",
+                 ok ? "installed" : "fresh stands", moved_kept / (tot_load + 1.0e-30), moved_fresh / (tot_load + 1.0e-30), tot_load,
+                 vt[t_max] * NTask, m_fresh * NTask, n_kept, nseg, n_swaps, timediff(t_keep, my_second()));
+          fflush(stdout);
+      }
+  }
+#endif
 
   qsort(domainAssign, multipledomains * NTask, sizeof(struct domain_segments_data), domain_sort_task);
 
