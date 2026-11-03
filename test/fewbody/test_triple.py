@@ -47,6 +47,7 @@ from gizmo.test import (
     variant_suffix,
     clean_test_outputs,
     variant_output_dir,
+    assert_dry_sink_run,
 )
 
 # This problem shares a directory with the rest of its family; TEST_NAME is that
@@ -227,6 +228,7 @@ def test_triple(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
     snaps = sorted(glob.glob(outdir + "/snapshot_*.hdf5"),
                    key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
     assert len(snaps) >= 64, f"only {len(snaps)} snapshots -- the run died early"
+    assert_dry_sink_run(f"{TEST_DIR}/test_{TEST_NAME}.out", snaps)
 
     t, de, dr, a_in = _trajectory(snaps)
     assert np.all(np.diff(t) >= 0), "snapshot times are not monotonic -- file ordering is wrong"

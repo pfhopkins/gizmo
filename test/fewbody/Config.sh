@@ -33,3 +33,6 @@ DEVELOPER_MODE
 # mixed state that floor is partly sampling rather than integration error; these datasets remove
 # the ambiguity.
 IO_HERMITE_SYNC
+# Collisional and gas-free: mergers are opted out explicitly, and with no gas to act on the sink
+# neighbour loops are skipped (the tests check the log for it).
+DISABLE_SINK_MERGERS

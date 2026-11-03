@@ -58,6 +58,7 @@ from gizmo.test import (
     variant_output_dir,
     parse_params,
     run_test,
+    assert_dry_sink_run,
 )
 
 # This problem shares a directory with the rest of its family; TEST_NAME is that
@@ -378,6 +379,7 @@ def test_binary(num_mpi_ranks, num_omp_threads, extra_config_flags, request):
                    key=lambda f: int(re.search(r"snapshot_(\d+)", f).group(1)))
     if len(snaps) < 64:
         raise RuntimeError(f"GIZMO produced only {len(snaps)} snapshots in {outdir}")
+    assert_dry_sink_run(f"{TEST_DIR}/test_{TEST_NAME}.out", snaps)   # before the order sweep overwrites the log
 
     t, a, ecc, drift, sep, energy, synced = _trajectory(snaps)
     assert np.all(np.diff(t) >= 0), (
