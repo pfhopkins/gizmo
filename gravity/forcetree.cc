@@ -4120,9 +4120,12 @@ void force_refresh_node_moments(void)
 
     /* Step 3: propagate node moments bottom-up. Children have higher indices than parents,
        so iterating in reverse order processes children before parents. At this stage s, vs,
-       sink_pos, sink_vel, etc. are stored as mass-weighted sums (not yet normalized). */
+       sink_pos, sink_vel, etc. are stored as mass-weighted sums (not yet normalized).
+       Top-level nodes do not propagate: their fathers are internal top-level nodes, whose moments
+       force_treeupdate_pseudos rebuilds below from their daughters. */
     for(no = All.MaxPart + Numnodestree - 1; no >= All.MaxPart; no--)
     {
+        if(Nodes[no].u.d.bitflags & (1 << BITFLAG_TOPLEVEL)) {continue;}
         int father = Nodes[no].u.d.father;
         if(father < All.MaxPart || father >= All.MaxPart + Numnodestree) {continue;} /* root or invalid */
 
@@ -4178,9 +4181,13 @@ void force_refresh_node_moments(void)
 #endif
     }
 
-    /* Step 4: normalize mass-weighted sums to get actual COM, velocities, etc. */
+    /* Step 4: normalize mass-weighted sums to get actual COM, velocities, etc. Skipped where step 5
+       overwrites everything this writes: internal top-level nodes (force_treeupdate_pseudos) and
+       top-level leaves of other ranks (force_exchange_pseudodata). */
     for(no = All.MaxPart; no < All.MaxPart + Numnodestree; no++)
     {
+        unsigned int bf = Nodes[no].u.d.bitflags;
+        if((bf & (1 << BITFLAG_INTERNAL_TOPLEVEL)) || ((bf & (1 << BITFLAG_TOPLEVEL)) && !(bf & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT)))) {continue;}
         MyFloat mass = Nodes[no].u.d.mass;
         if(mass > 0) {
             Nodes[no].u.d.s /= mass;
