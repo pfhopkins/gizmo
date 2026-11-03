@@ -485,7 +485,7 @@ void hydro_force_initial_operations_preloop(void)
 #if defined(RT_SOLVER_EXPLICIT)
 #if defined(RT_EVOLVE_ENERGY)
             for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma[k] = 0;}
-#ifdef TRANSPORT_SUBCYCLE
+#if defined(TRANSPORT_SUBCYCLE) && defined(RT_RAD_PRESSURE_FORCES) /* the work array exists only with radiation pressure */
             for(k=0;k<N_RT_FREQ_BINS;k++) {CellP[i].Dt_Rad_E_gamma_Work[k] = 0;}
 #endif
 #endif
