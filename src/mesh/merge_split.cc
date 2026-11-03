@@ -1153,6 +1153,17 @@ int merge_particles_ij(int i, int j)
     CellP[j].HeIII = wt_j*CellP[j].HeIII + wt_i*CellP[i].HeIII;
 #endif
 #endif
+#if defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY > 0)
+    /* grackle's species are fractions of the total mass, so they mix by mass */
+    CellP[j].grHI = wt_j*CellP[j].grHI + wt_i*CellP[i].grHI; CellP[j].grHII = wt_j*CellP[j].grHII + wt_i*CellP[i].grHII; CellP[j].grHM = wt_j*CellP[j].grHM + wt_i*CellP[i].grHM;
+    CellP[j].grHeI = wt_j*CellP[j].grHeI + wt_i*CellP[i].grHeI; CellP[j].grHeII = wt_j*CellP[j].grHeII + wt_i*CellP[i].grHeII; CellP[j].grHeIII = wt_j*CellP[j].grHeIII + wt_i*CellP[i].grHeIII;
+#if (COOL_GRACKLE_CHEMISTRY >= 2)
+    CellP[j].grH2I = wt_j*CellP[j].grH2I + wt_i*CellP[i].grH2I; CellP[j].grH2II = wt_j*CellP[j].grH2II + wt_i*CellP[i].grH2II;
+#endif
+#if (COOL_GRACKLE_CHEMISTRY >= 3)
+    CellP[j].grDI = wt_j*CellP[j].grDI + wt_i*CellP[i].grDI; CellP[j].grDII = wt_j*CellP[j].grDII + wt_i*CellP[i].grDII; CellP[j].grHDI = wt_j*CellP[j].grHDI + wt_i*CellP[i].grHDI;
+#endif
+#endif
     Vec3<double> p_old_i = P[i].Vel * P[i].Mass;
     Vec3<double> p_old_j = P[j].Vel * P[j].Mass;
     P[j].Pos = pos_new; // center-of-mass conserving //
@@ -1292,6 +1303,8 @@ int merge_particles_ij(int i, int j)
     chimes_update_element_abundances(j, P, CellP); /* the merged metallicity sets the element abundances the chemistry, and its mean molecular weight, use */
 #endif
     chimes_cache_solved_state(j, CellP[j].InternalEnergy, CellP); /* the merged cell's chemistry, from the abundances and elements just mixed, at the energy it now holds */
+#elif defined(COOL_GRACKLE) && (COOL_GRACKLE_CHEMISTRY > 0)
+    grackle_cache_species_state(j); /* the merged cell's cached species, from grackle's species and the metallicity just mixed */
 #endif
 #if defined(SINK_THERMALFEEDBACK)
     CellP[j].Injected_Sink_Energy += CellP[i].Injected_Sink_Energy; /* pending energy (not specific): the survivor keeps both */
