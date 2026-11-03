@@ -892,7 +892,11 @@ void sink_final_operations(void)
                 P[n].Sink_Mass = DMAX(0, m_relic); // zero out mass if nothing is left-over
             }
             if(P[n].Sink_Mass <= m_relic) {
+#ifdef TREE_REFRESH_INCREMENTAL
+                TreeMomentsDirtyFlag = 1; /* sinks are re-derived at every refresh */
+#else
                 TreeMomentsStaleFlag = 1; /* sink mass changed: refresh moments, tree structure maintained by MAINTAIN_TREE_IN_REARRANGE */
+#endif
                 Max_Unspawned_MassUnits_fromSink = DMAX(2, Max_Unspawned_MassUnits_fromSink); // a high enough number to ensure that we do spawn winds
             }
 #ifdef SINGLE_STAR_FB_JETS

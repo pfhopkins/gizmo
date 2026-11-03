@@ -1429,6 +1429,9 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
         if(P[i].Mass <= 0 || !isfinite(P[i].Mass))
         {
             P[i].Mass = 0; if(P[i].Type==0) {CellP[i].Mass = P[i].Mass;} /* CellP only exists for gas */
+#ifdef TREE_REFRESH_INCREMENTAL
+            if(repair_walk_links) {force_mark_moments_dirty(i);} /* its ancestors lose its mass at the next refresh */
+#endif
             TimeBinCount[P[i].TimeBin]--;
             if(TimeBinActive[P[i].TimeBin]) {NumForceUpdate--;}
 
@@ -1498,7 +1501,11 @@ void rearrange_particle_sequence(int tree_rebuilt_before_next_walk)
            contributions are still in every ancestor moment. Re-derive them before the next force
            evaluation -- tot_elim is Allreduce'd above, so this is rank-uniform. Safety net: this fires
            even if the site that zeroed the mass forgot to raise the moments flag itself. */
+#ifdef TREE_REFRESH_INCREMENTAL
+        if(tot_elim > 0) {TreeMomentsDirtyFlag = 1;} /* the eliminated particles' ancestors were marked above */
+#else
         if(tot_elim > 0) {TreeMomentsStaleFlag = 1;}
+#endif
         if(flag) {TreeWalkValidatePending = 1;} /* rank-local note: this rank's threading was edited; the next tree consumer validates it (tier-0) */
         if(flag || count_elim) {TreeAuditMomentsPending = 1;} /* the next refresh audits moments un-strided: post-mutation is exactly when a wrong Father shows as a moment mismatch */
 #ifdef TREE_INTEGRITY_AUDITS

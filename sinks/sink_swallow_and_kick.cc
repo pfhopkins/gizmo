@@ -537,7 +537,11 @@ void sink_swallow_and_kick_loop(void)
     NtotSwallowedThisStep = Ntot_gas_swallowed + Ntot_star_swallowed + Ntot_dm_swallowed + Ntot_sink_swallowed;
     /* a swallowed particle's mass (and its momentum bookkeeping) must leave the node moments before
        the next force evaluation; the victims themselves are eliminated by the cleanup rearrange */
+#ifdef TREE_REFRESH_INCREMENTAL
+    if(NtotSwallowedThisStep > 0) {TreeMomentsDirtyFlag = 1;} /* victims are marked when eliminated, sinks at every refresh */
+#else
     if(NtotSwallowedThisStep > 0) {TreeMomentsStaleFlag = 1;}
+#endif
     if((ThisTask == 0)&&(Ntot_gas_swallowed+Ntot_star_swallowed+Ntot_dm_swallowed+Ntot_sink_swallowed>0))
     {
         printf("Accretion done: swallowed %d gas, %d star, %d dm, and %d sink particles\n",
@@ -607,7 +611,11 @@ void spawn_sink_wind_feedback(void)
     if(MPI_n_particles_split>0) {
 #ifdef MAINTAIN_TREE_IN_REARRANGE
         All.NumForcesSinceLastDomainDecomp +=  0.0001 * All.TreeDomainUpdateFrequency * All.TotNumPart; /* nudge the next tree rebuild slightly closer per spawn EVENT (~1e4 events to force one alone); the insertion counter is the primary guard, this ages the tree a little per event on top */
+#ifdef TREE_REFRESH_INCREMENTAL
+        TreeMomentsDirtyFlag = 1; /* spawned cells are marked on insertion, sinks at every refresh */
+#else
         TreeMomentsStaleFlag = 1; /* the spawned cells' mass and the debited sink mass enter the node moments at the next refresh; rank-uniform (inside the reduced MPI_n_particles_split>0 gate) */
+#endif
 #else
         TreeReconstructFlag = 1; // otherwise just wipe and rebuild the tree next chance you get - more expensive but more accurate
 #endif
