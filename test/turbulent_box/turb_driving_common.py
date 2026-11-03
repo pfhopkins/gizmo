@@ -34,10 +34,11 @@ MAX_OVERSHOOT = 0.1  # max Mach/target - 1 over the whole run, including spin-up
 
 # MHD with constrained gradients at the level STARFORGE runs use (SINGLE_STAR_STARFORGE_DEFAULTS turns it on)
 VARIANTS = {"hydro": (), "mhd": ("MAGNETIC", "MHD_CONSTRAINED_GRADIENT=1")}
-# Lazy force: TurbAccel is recomputed only on driving updates, the way STARFORGE stirring runs use it,
-# with the update cadence they use, t_cross/10 (t_cross = TurbDrive_MaxWavelength / v_rms = T_EDDY)
+# Lazy force: TurbAccel is recomputed only on driving updates, the way STARFORGE stirring runs use it. Updates every
+# t_cross/20 (t_cross = TurbDrive_MaxWavelength / v_rms = T_EDDY): at t_cross/10, the stirring-run cadence, the loop
+# gain lags one update during spin-up and the peak overshoots the target by 13-21%.
 LAZY_FLAG = "TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE"
-LAZY_PARAMS = {"TurbDrive_TimeBetweenTurbUpdates": 0.1 * T_EDDY}
+LAZY_PARAMS = {"TurbDrive_TimeBetweenTurbUpdates": 0.05 * T_EDDY}
 
 UNIT_PRESSURE_IN_CGS = UNIT_MASS_IN_G * UNIT_VELOCITY_IN_CM_PER_S**2 / UNIT_LENGTH_IN_CM**3
 UNIT_B_IN_GAUSS = np.sqrt(4 * np.pi * UNIT_PRESSURE_IN_CGS)  # GIZMO's internal field unit
