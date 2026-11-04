@@ -1746,14 +1746,29 @@ static double eH0[TABLESIZE], eHe[TABLESIZE], eHep[TABLESIZE]; // upgrade from f
 static int nheattab;		/* length of table */
 
 
+/* Blank lines and lines starting with '#' are skipped; any other line must be exactly 7 numbers. Every rank reads the
+   file itself, so an unusable table requests the same controlled stop on every rank; begrun drains it after InitCool. */
 void ReadIonizeParams(const char *fname)
 {
-    int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456); return;}
+    int i, nrows=0, lineno=0; FILE *fdcool; char line[1024], msg[MAX_PATH_BUFFERSIZE_TOUSE], extra;
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456); return;}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
+    msg[0] = '\0';
+    while(fgets(line, sizeof(line), fdcool))
+    {
+        lineno++;
+        char *p = line + strspn(line, " \t\r\n");
+        if(*p == '\0' || *p == '#') {continue;}
+        p[strcspn(p, "\r\n")] = '\0';
+        if(nrows >= TABLESIZE-1) {snprintf(msg, sizeof(msg), "ionization table `%s' has more than %d data rows (line %d); raise TABLESIZE in cooling.cc", fname, TABLESIZE-1, lineno); break;}
+        if(sscanf(p, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[nrows], &gH0[nrows], &gHe[nrows], &gHep[nrows], &eH0[nrows], &eHe[nrows], &eHep[nrows], &extra) != 7)
+            {snprintf(msg, sizeof(msg), "ionization table `%s' line %d is not blank, a '#' comment, or 7 numbers: \"%.200s\"", fname, lineno, p); break;}
+        nrows++;
+    }
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
+    if(!msg[0] && nheattab <= 0) {snprintf(msg, sizeof(msg), "ionization table `%s' has no rows with a non-zero HI photoionization rate (%d data rows read), so the run would have no UV background", fname, nrows);}
+    if(msg[0]) {nheattab = 0; gizmo_request_controlled_stop(456, msg, __FILE__, __LINE__, __FUNCTION__); return;}
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
 }
 
