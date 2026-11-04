@@ -150,3 +150,11 @@ def test_no_mass_gain_at_death(built):
         assert m <= m0[i] * (1 + 1e-12), f"star {i} grew from {m0[i]} to {m} at death"
     M0, M1 = a["M"] + sum(m0.values()), b["M"] + sum(b["stars"].values())
     assert abs(M1 - M0) <= 1e-12 * M0
+
+
+def test_cold_ejecta(built):
+    """1e7 K gas, where the ejecta mass x ambient u is 2 % of the explosion energy: the ejecta carry no ambient u, so the gas
+    gains the three explosions (20, 150 and 320 Msun; the failed SN gives none) and no more"""
+    ic, snap, _ = run("hot", built, ic_args={"T": 1.0e7})
+    dE = (totals(snap)["E"] - totals(ic)["E"]) * E_UNIT
+    assert abs(dE / 3.0e51 - 1) < 1e-3, dE / 3.0e51
