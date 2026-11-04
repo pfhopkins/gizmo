@@ -1668,6 +1668,17 @@
 #define OUTPUT_MOLECULAR_FRACTION // useful since we track dense molecular fraction
 #endif
 
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+#if !defined(SGCHEM) || (GALSF_ISMDUSTCHEM_MODEL & 12) || defined(GALSF_ISMDUSTCHEM_GRAINSIZEEVO)
+#error "GALSF_ISMDUSTCHEM_HU_MODEL needs SGCHEM and GALSF_ISMDUSTCHEM_MODEL=(1) or (1+2), without GALSF_ISMDUSTCHEM_GRAINSIZEEVO"
+#endif
+#ifndef GALSF_ISMDUSTCHEM_HU_SIZE_BINS
+#define GALSF_ISMDUSTCHEM_HU_SIZE_BINS 1
+#endif
+#ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
+#define GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION (16) /* FeMgSiO4 */
+#endif
+#endif
 #ifndef GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION
 #define GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION (1) /* default: olivine-pyroxene mix; the module reads this as a plain integer, so it must always be defined when GALSF_ISMDUSTCHEM_MODEL is active */
 #endif

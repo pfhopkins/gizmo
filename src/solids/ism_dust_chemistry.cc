@@ -92,6 +92,7 @@ void Initialize_ISMDustChem_Global_Variables()
     All.ISMDustChem_SilicateNumberOfAtomsTable[1] = 1.06;
     All.ISMDustChem_SilicateNumberOfAtomsTable[2] = 1.;
     All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0.571;
+    if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 16) {All.ISMDustChem_SilicateNumberOfAtomsTable[0] = 4.; All.ISMDustChem_SilicateNumberOfAtomsTable[1] = 1.; All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 1.;} // FeMgSiO4 (Hu et al.)
     if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 2) {All.ISMDustChem_SilicateNumberOfAtomsTable[0] += 2;} // add 2 more O atoms for silicates to account for excess O depletions with no known carrier
     if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 4) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] += 1;} // add extra Fe to better match Fe depletions
     if (GALSF_ISMDUSTCHEM_SILICATE_COMPOSITION & 8) {All.ISMDustChem_SilicateNumberOfAtomsTable[3] = 0;} // remove all Fe from silicates (use with separate metallic iron species)

@@ -35,6 +35,7 @@
  * under GALSF_ISMDUSTCHEM_GRAINSIZEEVO. */
 #include "../declarations/gpu_rng.h"   /* gizmo_gpu_rand_double */
 #include "grain_collisional_outcomes.h"
+#include "ism_dust_hu.h"
 
 #if defined(GALSF_ISMDUSTCHEM_MODEL)
 
@@ -254,6 +255,10 @@ void ISMDustChem_get_species_key_elem(int spec_indx, double *dust_metallicity, i
 KOKKOS_INLINE_FUNCTION
 void update_dust_processes(int i, double dtime_gyr, struct particle_data *pp, struct gas_cell_data *cell)
 {
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+    update_dust_processes_hu(i, dtime_gyr, pp, cell);
+    return;
+#endif
     int k; double ne=1, nh0=0, nhp=0, temp, mu_meanwt=1, rho=cell[i].Density*All.cf_a3inv, u0=cell[i].InternalEnergyPred;
     temp = ThermalProperties(u0, rho, i, &mu_meanwt, &ne, &nh0, &nhp, pp, cell);
     rho*=UNIT_DENSITY_IN_CGS;

@@ -452,6 +452,10 @@ struct global_data_all_processes
   double IMFSampleMinMass;           /*!< lower end of the sampled IMF [Msun] (0.08 = full IMF) */
   int SingleStarsRNGRealisation;     /*!< folded into the keys of the IMF draws: another value gives another realisation */
 #endif
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+  double DustGrowthTimescaleGyr;     /*!< dust growth time at n=1, T=100 K, solar metallicity [Gyr] */
+  double DustGrowthCoulombFactor;    /*!< Coulomb enhancement of growth (1 = none) */
+#endif
 #ifdef GALSF_SINGLE_STARS_SF_CRITERION
   double FacSfThreshMJ;              /*!< SF only where the Jeans mass is below FacSfThreshMJ x DesNumNgb x cell mass */
   double SFCooldownFreeFallFraction; /*!< after a birth the parent cell forms no star for this fraction of its free-fall time */
