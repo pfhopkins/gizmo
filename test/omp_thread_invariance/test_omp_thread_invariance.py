@@ -127,6 +127,7 @@ def test_omp_thread_invariance(scheme):
 
 DECOMP_RANKS = 2
 N_DECOMPOSITIONS = 5  # correct code agrees for ~10; a race in the cost sums shows in the first, at startup
+DECOMP_TIMEMAX = 0.28  # long enough for 8 decompositions at 2 ranks (6 at 0.25): margin over N_DECOMPOSITIONS
 
 
 DECOMP_LINES = ("Balance:", "Domain adaptive weights:")
@@ -162,7 +163,7 @@ def test_omp_domain_decomposition():
         for nt in (1, nthreads):
             d = f"output_decomp_{nt}threads"
             shutil.rmtree(d, ignore_errors=True)
-            run_test(TEST_NAME, DECOMP_RANKS, nt, param_overrides={"OutputDir": d, "TimeMax": 0.02, "TimeBetSnapshot": 0.02},
+            run_test(TEST_NAME, DECOMP_RANKS, nt, param_overrides={"OutputDir": d, "TimeMax": DECOMP_TIMEMAX, "TimeBetSnapshot": DECOMP_TIMEMAX},
                      restart_flag=2)
             shutil.copyfile(f"test_{TEST_NAME}.out", f"{d}/test_{TEST_NAME}.out")
             logs[nt] = _decompositions(f"{d}/test_{TEST_NAME}.out", N_DECOMPOSITIONS)
