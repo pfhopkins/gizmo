@@ -35,9 +35,9 @@ MNRAS 517, 2639), two failure modes that the warm lattice problems cannot see:
 | problem | IC | checks |
 |---|---|---|
 | cold_shear | equilibrium shear on a jittered lattice (5% rms displacement), M = 30, 100 at 16^3 and 24^3, 4 orbits | rms velocity noise about the equilibrium (in c_s) not growing in the last orbit (< 1.2x the previous one); noise converging at least first order from 16^3 to 24^3 (**xfail**) |
-| cold_epicycle | uniform epicycle, c_s = 1e-3, v_r0 = 0.1 c_s, dt = 0.077 (MaxSizeTimestep, not Courant); gas for 100 epicycles, collisionless particles for 10 | epicycle energy E = v_r^2 + 2 eta^2/(2-q) (exactly conserved) within 1e-2 at the end (**xfail**, both) |
+| cold_epicycle | uniform epicycle, c_s = 1e-3, v_r0 = 0.1 c_s, dt = 0.077 (MaxSizeTimestep, not Courant); gas for 100 epicycles, collisionless particles for 10 | epicycle energy E = v_r^2 + 2 eta^2/(2-q) (exactly conserved) within 1e-2 at the end (measured: -4.3e-3 gas, -3.3e-5 collisionless) |
 
-Known failures, marked `xfail(strict=True)` so a fix shows up as XPASS:
+Known failure, marked `xfail(strict=True)` so a fix shows up as XPASS:
 
 - **Shear noise does not converge.** On irregular particles the noise saturates within ~1.5 orbits and stays flat
   (bounded), uniformly through the box, at a level set by the shear Mach number across a particle spacing,
@@ -45,15 +45,12 @@ Known failures, marked `xfail(strict=True)` so a fix shows up as XPASS:
   (rms drho/rho ~ 0.2 at M = 100). It falls more slowly than first order with resolution (0.51 -> 0.37 at M = 30,
   0.87 -> 0.79 at M = 100 from 16^3 to 24^3). At M = 10 it appears late: quiet (~0.02 c_s) for ~2.5 orbits at 16^3
   (~4 at 24^3), then grows with e-folding ~3.7/Omega to 0.21 (0.15) c_s.
-- **Epicycle energy grows exponentially.** `GravAccel_ShearingSheet` evaluates the Coriolis term with `VelPred`, which
-  the drift has predicted as v_n + dt a_n; the kicks then give v_{n+1} = v_n + dt/2 [F(v_n) + F(v_n + dt F(v_n))],
-  Heun's method, whose amplification factor exceeds 1 for a rotation. A model of this exact update reproduces GIZMO's
-  growth rate, d ln E/dt = 2.0 Omega^4 dt^3 (9.39e-4 measured vs 9.38e-4 predicted at dt = 0.077; 1.15e-4 vs
-  1.14e-4 at dt = 0.038): +80% and +7% over 100 epicycles. Non-gas particles use `P[i].Vel`, the half-kicked velocity
-  of the previous step: forward Euler, with E growing ~1e6-fold in 10 epicycles at dt = 0.06. Integrating the
-  Coriolis and tidal terms exactly in the kick at fixed position (a rotation of (v_r, eta) at 2 Omega), as in the
-  symplectic epicycle integrator of Rein & Tremaine (2011), keeps |dE/E| < 1.5e-3 over 100 epicycles at dt = 0.077
-  in the same model.
+
+The cold epicycle guards the Coriolis integration. It used to be explicit, evaluated with `VelPred` for gas (Heun's
+method: E grew +80% over 100 epicycles, d ln E/dt = 2.0 Omega^4 dt^3) and with the previous half-kicked `P[i].Vel`
+otherwise (forward Euler: ~1e6-fold in 10 epicycles). It is now a Boris step over each particle's timestep, taken
+after all other accelerations are known and applied through the regular kicks; this is the 2x2 implicit-midpoint
+solve, which conserves |v| exactly under the rotation.
 
 Velocities in intermediate snapshots are half-kicked (written mid-step), which shifts the epicycle phase by
 ~kappa dt/2; the frequency and amplitudes are fitted, and only the synchronised final snapshot is compared directly.

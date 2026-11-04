@@ -557,6 +557,9 @@ void gravity_tree(void)
 #ifdef ADAPTIVE_TREEFORCE_UPDATE
         double dt = get_particle_timestep_in_physical(i);
         if(treeforce_skip_flag[ii]) { // use cached decision from BEFORE tree walk to avoid mismatch if tree walk modified quantities that needs_new_treeforce depends on
+#ifdef BOX_SHEARING
+            P[i].GravAccel -= P[i].ShearCoriolisAccel; /* velocity-dependent: recomputed every step, never extrapolated */
+#endif
             P[i].GravAccel += P[i].GravJerk * (dt * All.cf_a2inv); // a^-1 from converting velocity term in the jerk to physical; a^-3 from the 1/r^3; a^2 from converting the physical dt * j increment to GravAccel back to the units for GravAccel; result is a^-2; note that Ewald and PMGRID terms are neglected from the jerk at present
             P[i].time_since_last_treeforce += dt;
             continue;

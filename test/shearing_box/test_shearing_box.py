@@ -290,9 +290,6 @@ def epicycle_energy(s, q):
     return np.mean(s["v"][:, 0]) ** 2 + 2 * np.mean(eta(s, q)) ** 2 / (2 - q)
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Coriolis term uses the Euler-predicted VelPred (v_n + dt a_n): the velocity update is Heun's method, not symplectic; "
-    "epicycle energy grows as exp(2.0 (Omega dt)^3 Omega t), +80% over 100 epicycles at dt = 0.077"))
 def test_cold_epicycle_energy(runs):
     q, out = cold_runs(runs)
     snaps = load_snapshots(*out["cold_epicycle"])
@@ -304,9 +301,6 @@ def test_cold_epicycle_energy(runs):
     assert abs(E[-1] / E0 - 1) < TOL_EPI_ENERGY, f"gas epicycle energy drifted by {E[-1] / E0 - 1:.3e} over 100 epicycles"
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "Coriolis term for non-gas particles uses P[i].Vel, which at force time is the half-kicked velocity of the previous "
-    "step: the velocity update is forward Euler, and the epicycle energy grows by ~1e6 in 10 epicycles at dt = 0.06"))
 def test_cold_epicycle_energy_collisionless(runs):
     q, out = cold_runs(runs)
     snaps = load_snapshots(*out["cold_epicycle_collisionless"], ptype=1)

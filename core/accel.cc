@@ -129,6 +129,48 @@ void compute_hydro_densities_and_forces(void)
 
 
 
+#ifdef BOX_SHEARING
+/* Shearing-sheet Coriolis force. Evaluated explicitly, a velocity-dependent force makes KDK epicycles grow secularly; instead,
+   as for the grain Lorentz force, take a Boris step over the particle's timestep: half kick from all other accelerations,
+   norm-preserving rotation, half kick. The rotation's velocity change, divided by dt, is added to GravAccel as an effective
+   acceleration that the regular half-kicks apply. Boris is only stable if every other acceleration enters it, so this must
+   run after all of them are final. Not comoving: velocities and accelerations are physical. */
+static void shearing_sheet_coriolis_boris(void)
+{
+    const int ph = BOX_SHEARING_PHI_COORDINATE;
+    for(int i : ActiveParticleList)
+    {
+        double dt = get_particle_timestep_in_physical(i);
+        if(dt <= 0) /* no timestep assigned yet (initial force evaluation): the dt -> 0 limit, explicit Coriolis */
+        {
+            P[i].ShearCoriolisAccel = {};
+            P[i].ShearCoriolisAccel[0] = 2.*BOX_SHEARING_OMEGA_BOX_CENTER * P[i].Vel[ph];
+            P[i].ShearCoriolisAccel[ph] = -2.*BOX_SHEARING_OMEGA_BOX_CENTER * P[i].Vel[0];
+            P[i].GravAccel += P[i].ShearCoriolisAccel;
+            continue;
+        }
+        Vec3<double> acc = P[i].GravAccel;
+        if(P[i].Type == 0)
+        {
+            acc += CellP[i].HydroAccel;
+#ifdef TURB_DRIVING
+            acc += CellP[i].TurbAccel;
+#endif
+#ifdef RT_RAD_PRESSURE_OUTPUT
+            acc += CellP[i].Rad_Accel;
+#endif
+        }
+        Vec3<double> vm = P[i].Vel + acc * (0.5*dt), vp = vm;
+        double t = BOX_SHEARING_OMEGA_BOX_CENTER * dt, s = 2.*t / (1. + t*t); /* rotation rate 2*Omega: half-angle tangent Omega*dt */
+        double vt_x = vm[0] + t*vm[ph], vt_ph = vm[ph] - t*vm[0];
+        vp[0] += s*vt_ph; vp[ph] -= s*vt_x;
+        P[i].ShearCoriolisAccel = (vp - vm) * (1./dt);
+        P[i].GravAccel += P[i].ShearCoriolisAccel;
+    }
+}
+#endif
+
+
 void compute_additional_forces_for_all_particles(void)
 {
 #if defined(DM_FUZZY) || defined(CBE_INTEGRATOR_WITHGRADIENTS)
@@ -139,6 +181,9 @@ void compute_additional_forces_for_all_particles(void)
 #endif
 #ifdef GRAIN_FLUID
     apply_grain_dragforce(); /* if we are solving a coupled set of grains via aerodynamic drag, this is where their acceleration should be calculated */
+#endif
+#ifdef BOX_SHEARING
+    shearing_sheet_coriolis_boris(); /* last: needs every other acceleration */
 #endif
 }
 
