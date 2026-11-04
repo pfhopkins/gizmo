@@ -480,7 +480,7 @@ extern struct gas_cell_data
     MyFloat Temp;                         /*!< gas temperature from the chemistry [K] */
 #endif
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
-    TREECOL_PIXEL_STORAGE_T TreeColColumn[TREECOL_PIXELS_NSPECIES][GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel dust-weighted gas, H2, CO columns from the gravity walk [code mass/length^2]; read with TREECOL_PIXELS_COLUMN */
+    TREECOL_PIXEL_STORAGE_T TreeColColumn[TREECOL_PIXELS_NCOLUMNS][GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel dust-weighted gas, H2, CO columns from the gravity walk [code mass/length^2]; read with TREECOL_PIXELS_COLUMN */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     TREECOL_PIXEL_STORAGE_T TreeColEgyUV[GALSF_RESOLVEDISM_TREECOL_PIXELS]; /*!< per-pixel unattenuated stellar 6-13.6 eV energy density [erg/cm^3]; read with TREECOL_PIXELS_EGY_UV */
     float TreeColEgyLW, TreeColEgyNUV, TreeColEgyOPT, TreeColEgy68; /*!< totals: 11.2-13.6 (per-pixel floored), 3.444-6, 0.4133-3.444, 6-8 eV [erg/cm^3] */

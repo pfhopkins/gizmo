@@ -42,6 +42,17 @@ int single_star_band_luminosities_cgs(int i, double *L, double *L_bol)
 }
 #endif
 
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+/* ionising energy [erg/s] and photon rate [1/s] of a shining star from the tables at its current age */
+static void single_star_ionizing_rates(int i, double *L_ion, double *Q)
+{
+    int s = single_star_slot(P[i].StarIdx);
+    double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
+    double la = log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.));
+    *L_ion = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, la)); *Q = single_star_band_lum_cgs(stellar_log_Q_ion(logM, logZ, la));
+}
+#endif
+
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 /* as rt_get_source_luminosity: fills lum[] [code units], returns 1 for a shining star (pp is P here) */
 int single_star_rt_band_luminosities(int i, int mode, double *lum, struct particle_data *pp)
@@ -54,6 +65,11 @@ int single_star_rt_band_luminosities(int i, int mode, double *lum, struct partic
     lum[RT_FREQ_BIN_GENERIC_USER_FREQ] = L[SINGLE_STAR_BAND_68] / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_NUV] = L[SINGLE_STAR_BAND_NUV] / UNIT_LUM_IN_CGS;
     lum[RT_FREQ_BIN_OPTICAL_NIR] = L[SINGLE_STAR_BAND_OPT] / UNIT_LUM_IN_CGS;
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+    double L_ion, Q; single_star_ionizing_rates(i, &L_ion, &Q);
+    lum[RT_FREQ_BIN_ION_ENERGY] = L_ion / UNIT_LUM_IN_CGS;
+    lum[RT_FREQ_BIN_ION_PHOTONS] = Q * 13.6 * ELECTRONVOLT_IN_ERGS / UNIT_LUM_IN_CGS;
+#endif
     return 1;
 }
 #endif

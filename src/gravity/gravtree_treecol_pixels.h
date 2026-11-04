@@ -14,17 +14,22 @@
 #define TREECOL_PIXELS_DUST 0
 #define TREECOL_PIXELS_H2   1
 #define TREECOL_PIXELS_CO   2
+#define TREECOL_PIXELS_HI   3 /* ionising-photon absorbers: H atoms + 1.34 per H2, the mean sigma_H2/sigma_HI per molecule (at <hnu> 18.6 eV) */
+#define TREECOL_SHELLS_H2_PER_HI 1.34
 
 /* a particle's species masses [code units]; zero for non-gas. H nuclei per mass as the chemistry, 1/((1+4 ABHE) m_p) */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_species_masses(const struct particle_data *pp, const struct gas_cell_data *cell, int i, double *m)
 {
-    m[TREECOL_PIXELS_DUST] = m[TREECOL_PIXELS_H2] = m[TREECOL_PIXELS_CO] = 0;
+    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {m[s] = 0;}
     if(pp[i].Type != 0) {return;}
     double dgr = (cell[i].Temp > 1.0e5) ? 0 : fmax(sgchem_dust_to_gas_ratio(pp[i].Metallicity[0]), 0.); /* hot gas: grains sputtered */
     m[TREECOL_PIXELS_DUST] = dgr * pp[i].Mass;
     double m_H = pp[i].Mass / (1.0 + 4.0 * ABHE);
     m[TREECOL_PIXELS_H2] = 2.0 * cell[i].TracAbund[IH2] * m_H;
     m[TREECOL_PIXELS_CO] = 28.0 * cell[i].TracAbund[ICO] * m_H;
+#ifdef TREECOL_SHELLS_ION_N
+    m[TREECOL_PIXELS_HI] = (fmax(0., 1.0 - cell[i].TracAbund[IHP] - 2.0 * cell[i].TracAbund[IH2]) + TREECOL_SHELLS_H2_PER_HI * cell[i].TracAbund[IH2]) * HYDROGEN_MASSFRAC * pp[i].Mass;
+#endif
 }
 
 
@@ -129,7 +134,7 @@ KOKKOS_INLINE_FUNCTION Vec3<double> treecol_radp_pixel_centre(int ip)
 
 /* per-target sums during the walk: species columns and band fluxes per pixel, three band totals */
 struct treecol_pixels_sums_t {
-    double col[TREECOL_PIXELS_NSPECIES][TREECOL_PIXELS_N]; /* [code mass / code length^2] */
+    double col[TREECOL_PIXELS_NCOLUMNS][TREECOL_PIXELS_N]; /* [code mass / code length^2] */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     double uv[TREECOL_PIXELS_N], lw[TREECOL_PIXELS_N];    /* 6-13.6 (PE + 6-8) and 11.2-13.6 eV [erg/s / code length^2] */
     double nuv, opt, f68;                                  /* 3.444-6, 0.4133-3.444, 6-8 eV, totals */
@@ -144,7 +149,7 @@ struct treecol_pixels_sums_t {
 
 KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
 {
-    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.col[s][k] = 0;}}
+    for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.col[s][k] = 0;}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.uv[k] = a.lw[k] = 0;}
     a.nuv = a.opt = a.f68 = 0;
@@ -160,7 +165,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
 /* combine two partial sums (lane partials, in the engine's fixed fold order) */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_add(treecol_pixels_sums_t &a, const treecol_pixels_sums_t &b)
 {
-    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.col[s][k] += b.col[s][k];}}
+    for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.col[s][k] += b.col[s][k];}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     for(int k = 0; k < TREECOL_PIXELS_N; k++) {a.uv[k] += b.uv[k]; a.lw[k] += b.lw[k];}
     a.nuv += b.nuv; a.opt += b.opt; a.f68 += b.f68;
@@ -195,7 +200,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
     if(All.TreeColShieldingLength <= 0 || r < All.TreeColShieldingLength / All.cf_atime)
     {
         const double w = 1.0 / ((4.0 * M_PI / TREECOL_PIXELS_N) * r * r); /* unsoftened, as stella_dev */
-        for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {a.col[s][ip] += w * species[s];}
+        for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {a.col[s][ip] += w * species[s];}
 #ifdef TREECOL_SHELLS_N
         a.sh[TREECOL_SHELL_DUST][ip * TREECOL_SHELLS_NSHELL + treecol_shell_of(r * r)] += w * species[TREECOL_PIXELS_DUST];
 #endif
@@ -283,7 +288,7 @@ KOKKOS_INLINE_FUNCTION void treecol_shells_sweep(const treecol_pixels_sums_t &a,
    0.1 x the 6-13.6 eV background floor 0.324e-2 SGChemBackgroundG0 / N (stella_dev), then summed */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, const treecol_pixels_sums_t &a)
 {
-    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColColumn[s][k] = treecol_pixel_store(a.col[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN);}}
+    for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColColumn[s][k] = treecol_pixel_store(a.col[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN);}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     const double u = All.cf_a2inv / (4.0 * M_PI * C_LIGHT_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* flux [erg/s / code length^2] to energy density */
     const double lw_floor = 0.1 * 0.324e-2 * All.SGChemBackgroundG0 / TREECOL_PIXELS_N * HABING_EGY_DENSITY_6_13P6EV_CGS;
@@ -305,7 +310,7 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, c
 /* device walk: the cell outputs from the device particle mirror back to the host cell */
 static inline void treecol_pixels_copy_cell(struct gas_cell_data &d, const struct gas_cell_data &c)
 {
-    for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {d.TreeColColumn[s][k] = c.TreeColColumn[s][k];}}
+    for(int s = 0; s < TREECOL_PIXELS_NCOLUMNS; s++) {for(int k = 0; k < TREECOL_PIXELS_N; k++) {d.TreeColColumn[s][k] = c.TreeColColumn[s][k];}}
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     for(int k = 0; k < TREECOL_PIXELS_N; k++) {d.TreeColEgyUV[k] = c.TreeColEgyUV[k];}
     d.TreeColEgyLW = c.TreeColEgyLW; d.TreeColEgyNUV = c.TreeColEgyNUV; d.TreeColEgyOPT = c.TreeColEgyOPT; d.TreeColEgy68 = c.TreeColEgy68;
