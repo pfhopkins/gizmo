@@ -19,6 +19,18 @@ Each q is built once and runs three problems:
                the compressible linear equations integrated here, and checked for conservation of the linearised
                potential vorticity i(kx eta - ky v_r) - (2-q) Omega delta.
 
+For q = 3/2 only, cold gas (target: local-disc boxes with shear Mach M = q Omega L / c_s ~ 30-100; cf. Zier &
+Springel 2022, MNRAS 517, 2639):
+
+  cold_shear   the equilibrium shear flow on a jittered lattice (5% rms displacements), M = 30 and 100, at 16^3 and
+               24^3, for 4 orbits. A lattice cancels the truncation errors of the shear flow; irregular particles do
+               not. The velocity noise about the equilibrium (in units of c_s) must stay bounded after the initial
+               transient, and must converge with resolution.
+  cold_epicycle  a uniform epicycle with c_s = 1e-3, vr0 = 0.1 c_s, so the timestep is set by MaxSizeTimestep rather
+               than the Courant condition. The epicycle energy E = v_r^2 + 2 eta^2 / (2-q) is conserved exactly; a
+               symplectic second-order integration keeps its error bounded at O((kappa dt)^2). Gas over 100 epicycles,
+               and collisionless particles over 10.
+
 Velocities in intermediate snapshots are half-kicked (written mid-step); the synchronised final snapshot is used where
 that matters.
 """
@@ -58,51 +70,77 @@ TOL_EPI_AMP = 5e-3
 # Shearing wave, ~14 particles per wavelength: <=3.6% measured (5.7-7.2% at 24^3, ~12% at 16^3: second order).
 TOL_WAVE = 0.08
 
+COLD_MACH, COLD_N, COLD_JITTER, COLD_ORBITS = (30, 100), (16, 24), 0.05, 4
+# After the ~1.5-orbit transient the noise must not keep growing: last orbit vs the one before.
+TOL_COLD_GROWTH = 1.2
+# A consistent method must converge on a smooth flow; require at least first order between 16^3 and 24^3.
+COLD_CONVERGENCE_RATIO = 16 / 24
+EPI_COLD_CS, EPI_COLD_MAXDT = 1e-3, 0.1
+# A symplectic integrator keeps |dE/E| ~ (kappa dt)^2 bounded (1.5e-3 at this dt for the symplectic epicycle
+# integrator of Rein & Tremaine 2011); a non-symplectic one drifts without bound.
+TOL_EPI_ENERGY = 1e-2
+
 
 def kappa(q):
     return np.sqrt(2 * (2 - q))
 
 
-def case_params(q, mode):
-    if mode == "shearing_wave":  # stop just after the swing, at kx = +ky/4
-        t_max = (2.25 * 2 * np.pi / KY) / q
-        return dict(N=N_WAVE, dv=DV, kx0=KX0, ky=KY), t_max, t_max / 12
-    return dict(N=N_UNIFORM, vr0=VR0 if mode == "epicycle" else 0.0), T_UNIFORM, 0.5
+def cases(q):
+    """(tag, IC kwargs, TimeMax, snapshot interval, MaxSizeTimestep or None) for every run of this q."""
+    t_wave = (2.25 * 2 * np.pi / KY) / q  # stop just after the swing, at kx = +ky/4
+    c = [("equilibrium", dict(N=N_UNIFORM), T_UNIFORM, 0.5, None),
+         ("epicycle", dict(N=N_UNIFORM, vr0=VR0), T_UNIFORM, 0.5, None),
+         ("shearing_wave", dict(N=N_WAVE, dv=DV, kx0=KX0, ky=KY), t_wave, t_wave / 12, None)]
+    if q != 1.5:
+        return c
+    for M in COLD_MACH:
+        for N in COLD_N:
+            c.append((f"cold_shear_M{M}_N{N}", dict(N=N, cs=q / M, jitter=COLD_JITTER), COLD_ORBITS * 2 * np.pi, 0.5,
+                      EPI_COLD_MAXDT))
+    t_epi = 2 * np.pi / kappa(q)
+    vr0 = 0.1 * EPI_COLD_CS
+    c.append(("cold_epicycle", dict(N=8, cs=EPI_COLD_CS, vr0=vr0), 100 * t_epi, t_epi, EPI_COLD_MAXDT))
+    c.append(("cold_epicycle_collisionless", dict(N=8, cs=EPI_COLD_CS, vr0=vr0, n_collisionless=4), 10 * t_epi,
+              t_epi / 4, EPI_COLD_MAXDT))
+    return c
 
 
 @pytest.fixture(scope="module", params=[1.5, 1.0], ids=["q1.5", "q1"])
 def runs(request):
-    """Builds for one q and runs the three problems; returns q and {mode: (output dir, TimeMax)}."""
+    """Builds for one q and runs its problems; returns q and {case: (output dir, TimeMax)}."""
     q = request.param
     build_gizmo_for_test(TEST_NAME, 0, (f"BOX_SHEARING_Q=({q!r})",))
     out = {}
     cwd = os.getcwd()
     os.chdir(TEST_DIR)
     try:
-        for mode in ("equilibrium", "epicycle", "shearing_wave"):
-            tag = f"{mode}_q{q}"
-            ic_kwargs, t_max, dt_snap = case_params(q, mode)
+        for case, ic_kwargs, t_max, dt_snap, max_dt in cases(q):
+            tag = f"{case}_q{q}"
             make_shearing_box_ics(f"{tag}_ics.hdf5", q, **ic_kwargs)
             outdir = f"output_{tag}"
             if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
                 shutil.rmtree(outdir, ignore_errors=True)
-            run_test(TEST_NAME, NUM_MPI_RANKS, 0, param_overrides={
-                "InitCondFile": f"{tag}_ics", "OutputDir": outdir, "TimeMax": f"{t_max:.12g}",
-                "TimeBetSnapshot": f"{dt_snap:.12g}"})
-            out[mode] = (str(TEST_DIR / outdir), t_max)
+            overrides = {"InitCondFile": f"{tag}_ics", "OutputDir": outdir, "TimeMax": f"{t_max:.12g}",
+                         "TimeBetSnapshot": f"{dt_snap:.12g}"}
+            if max_dt:
+                overrides["MaxSizeTimestep"] = f"{max_dt:.12g}"
+            run_test(TEST_NAME, NUM_MPI_RANKS, 0, param_overrides=overrides)
+            out[case] = (str(TEST_DIR / outdir), t_max)
     finally:
         os.chdir(cwd)
     return q, out
 
 
-def load_snapshots(outdir, t_max):
+def load_snapshots(outdir, t_max, ptype=0):
     snaps = []
     for s in sorted(glob.glob(f"{outdir}/snapshot_*.hdf5")):
         with h5py.File(s, "r") as f:
-            p = f["PartType0"]
+            p = f[f"PartType{ptype}"]
             o = np.argsort(p["ParticleIDs"][:])
             snaps.append(dict(t=float(f["Header"].attrs["Time"]), x=p["Coordinates"][:][o].astype(float),
-                              v=p["Velocities"][:][o].astype(float), rho=p["Density"][:][o].astype(float)))
+                              v=p["Velocities"][:][o].astype(float)))
+            if ptype == 0:
+                snaps[-1]["rho"] = p["Density"][:][o].astype(float)
     assert snaps, f"no snapshots in {outdir}"
     assert abs(snaps[-1]["t"] / t_max - 1) < 1e-6, f"{outdir}: last snapshot at t={snaps[-1]['t']}, not {t_max}"
     return snaps
@@ -204,3 +242,74 @@ def test_shearing_wave(runs):
     err = np.abs(pv / pv[0] - 1).max()
     print(f"q={q} shearing wave: potential vorticity change {err:.3f}")
     assert err < TOL_WAVE, f"q={q}: linear potential vorticity not conserved: max relative change {err:.3f}"
+
+
+def cold_runs(runs):
+    q, out = runs
+    if "cold_epicycle" not in out:
+        pytest.skip("cold-gas cases run for q = 3/2 only")
+    return q, out
+
+
+def cold_shear_noise(q, out, M, N):
+    """Times (orbits), rms |v - v_eq| / c_s and rms drho/rho for one cold_shear run."""
+    rows = []
+    for s in load_snapshots(*out[f"cold_shear_M{M}_N{N}"]):
+        dv = np.c_[s["v"][:, 0], eta(s, q), s["v"][:, 2]]
+        rows.append((s["t"] / (2 * np.pi), np.sqrt(np.mean(np.sum(dv**2, axis=1))) * M / q, np.std(s["rho"]) / np.mean(s["rho"])))
+    return np.array(rows).T
+
+
+def late_noise(t, a):
+    return a[t > COLD_ORBITS - 1].mean()
+
+
+def test_cold_shear_bounded(runs):
+    q, out = cold_runs(runs)
+    for M in COLD_MACH:
+        for N in COLD_N:
+            t, dv, drho = cold_shear_noise(q, out, M, N)
+            prev = dv[(t > COLD_ORBITS - 2) & (t <= COLD_ORBITS - 1)].mean()
+            print(f"cold shear M={M} N={N}: last-orbit rms dv = {late_noise(t, dv):.3f} c_s (previous orbit {prev:.3f}), "
+                  f"rms drho/rho = {late_noise(t, drho):.3f}")
+            assert late_noise(t, dv) < TOL_COLD_GROWTH * prev, f"M={M}, N={N}: velocity noise still growing: {prev:.3f} -> {late_noise(t, dv):.3f} c_s"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "MFM shear noise on irregular particles is set by the shear Mach number across a particle spacing, q Omega dx / c_s: "
+    "saturated rms dv = 0.51 -> 0.37 c_s (M=30) and 0.87 -> 0.79 c_s (M=100) from 16^3 to 24^3, slower than first order"))
+def test_cold_shear_converges(runs):
+    q, out = cold_runs(runs)
+    for M in COLD_MACH:
+        lo, hi = (late_noise(*cold_shear_noise(q, out, M, N)[:2]) for N in COLD_N)
+        print(f"cold shear M={M}: rms dv {lo:.3f} -> {hi:.3f} c_s, ratio {hi / lo:.2f} (first order: {COLD_CONVERGENCE_RATIO:.2f})")
+        assert hi / lo < COLD_CONVERGENCE_RATIO, f"M={M}: velocity noise does not converge: {lo:.3f} -> {hi:.3f} c_s from N={COLD_N[0]} to {COLD_N[1]}"
+
+
+def epicycle_energy(s, q):
+    return np.mean(s["v"][:, 0]) ** 2 + 2 * np.mean(eta(s, q)) ** 2 / (2 - q)
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Coriolis term uses the Euler-predicted VelPred (v_n + dt a_n): the velocity update is Heun's method, not symplectic; "
+    "epicycle energy grows as exp(2.0 (Omega dt)^3 Omega t), +80% over 100 epicycles at dt = 0.077"))
+def test_cold_epicycle_energy(runs):
+    q, out = cold_runs(runs)
+    snaps = load_snapshots(*out["cold_epicycle"])
+    E = np.array([epicycle_energy(s, q) for s in snaps])
+    E0 = (0.1 * EPI_COLD_CS) ** 2
+    t = np.array([s["t"] for s in snaps])
+    rate = np.polyfit(t, np.log(E / E0), 1)[0]
+    print(f"cold epicycle (gas): E(T)/E0 - 1 = {E[-1] / E0 - 1:.3e}, d ln E / dt = {rate:.3e}")
+    assert abs(E[-1] / E0 - 1) < TOL_EPI_ENERGY, f"gas epicycle energy drifted by {E[-1] / E0 - 1:.3e} over 100 epicycles"
+
+
+@pytest.mark.xfail(strict=True, reason=(
+    "Coriolis term for non-gas particles uses P[i].Vel, which at force time is the half-kicked velocity of the previous "
+    "step: the velocity update is forward Euler, and the epicycle energy grows by ~1e6 in 10 epicycles at dt = 0.06"))
+def test_cold_epicycle_energy_collisionless(runs):
+    q, out = cold_runs(runs)
+    snaps = load_snapshots(*out["cold_epicycle_collisionless"], ptype=1)
+    E = epicycle_energy(snaps[-1], q) / (0.1 * EPI_COLD_CS) ** 2
+    print(f"cold epicycle (collisionless): E(T)/E0 - 1 = {E - 1:.3e}")
+    assert abs(E - 1) < TOL_EPI_ENERGY, f"collisionless epicycle energy drifted by {E - 1:.3e} over 10 epicycles"

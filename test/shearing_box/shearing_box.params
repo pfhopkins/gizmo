@@ -18,3 +18,15 @@ MaxSizeTimestep                    0.05
 ErrTolTheta                        0.7
 ResubmitOn                         0
 ResubmitCommand                    none
+SofteningGas                       0.01
+SofteningGasMaxPhys                0.01
+Softening_Type1                    0.01
+Softening_Type1_MaxPhysLimit       0.01
+Softening_Type2                    0.01
+Softening_Type2_MaxPhysLimit       0.01
+Softening_Type3                    0.01
+Softening_Type3_MaxPhysLimit       0.01
+Softening_Type4                    0.01
+Softening_Type4_MaxPhysLimit       0.01
+Softening_Type5                    0.01
+Softening_Type5_MaxPhysLimit       0.01
