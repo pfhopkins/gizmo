@@ -248,25 +248,18 @@ void gravity_tree(void)
             for(j = 0; j < NTask; j++) {Send_count[j] = 0;}
             for(j = 0; j < Nexport; j++) {Send_count[DataIndexTable[j].Task]++;}
             mysort_dataindex(DataIndexTable, Nexport, sizeof(struct data_index), data_index_compare); /* construct export count tables */
-            /* One Alltoall carries, per destination, the export count plus three rank-wide words: the done flag
-               (NextParticle is final here; nothing below moves it before the old ndone test), the total export
-               count and the arena bytes left once the two export buffers below are taken. Every rank derives the
-               same ndone and the same bound on every rank's import from the gathered words, so the trailing ndone
-               Allreduce is gone and the import-memory Allreduce runs only when that bound fails. */
+            /* One handshake carries the export counts plus three rank-wide words: the done flag (NextParticle is
+               final here; nothing below moves it before the old ndone test), the total export count and the arena
+               bytes left once the two export buffers below are taken. Every rank derives the same ndone and the
+               same bound on every rank's import, so there is no ndone Allreduce and the import-memory Allreduce
+               runs only when that bound fails. */
             if(NextParticle >= (int)ActiveParticleList.size()) {ndone_flag = 1;} else {ndone_flag = 0;}
-            long long *xch_send = (long long *) mymalloc("xch_send", 4 * NTask * sizeof(long long));
-            long long *xch_recv = (long long *) mymalloc("xch_recv", 4 * NTask * sizeof(long long));
-            {
-                long long free_after = (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576; /* 1 MB slack covers mymalloc's alignment rounding */
-                for(j = 0; j < NTask; j++) {xch_send[4*j] = Send_count[j]; xch_send[4*j+1] = ndone_flag; xch_send[4*j+2] = Nexport; xch_send[4*j+3] = free_after;}
-            }
+            long long xch_in[3] = {ndone_flag, Nexport, (long long) FreeBytes - (long long) Nexport * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) - 1048576}, xch_out[3]; /* 1 MB slack covers mymalloc's alignment rounding */
             tstart = my_second();
-            MPI_Alltoall(xch_send, 4, MPI_LONG_LONG, xch_recv, 4, MPI_LONG_LONG, MPI_COMM_WORLD); /* broadcast import/export counts (+ done flag, export total, free bytes) */
+            mpi_sparse_counts(Send_count, Recv_count, xch_in, xch_out); /* import counts, plus done flags, export total and free bytes reduced */
             tend = my_second(); timewait1 += timediff(tstart, tend);
-            long long xch_export_total = 0, xch_free_min = xch_recv[3];
-            for(j = 0, ndone = 0; j < NTask; j++) {Recv_count[j] = (int) xch_recv[4*j]; ndone += (int) xch_recv[4*j+1]; xch_export_total += xch_recv[4*j+2]; if(xch_recv[4*j+3] < xch_free_min) {xch_free_min = xch_recv[4*j+3];}}
+            ndone = (int) xch_out[0]; long long xch_export_total = xch_out[1], xch_free_min = xch_out[2];
             int xch_import_fits_everywhere = (xch_export_total * (long long) (sizeof(struct gravdata_in) + sizeof(struct gravdata_out)) + 16384 <= xch_free_min); /* every rank's Nimport <= the global export total: identical inputs on every rank, identical answer */
-            myfree(xch_recv); myfree(xch_send);
 
             for(j = 0, Send_offset[0] = 0; j < NTask; j++) {if(j > 0) {Send_offset[j] = Send_offset[j - 1] + Send_count[j - 1];}} /* calculate export table offsets */
             GravDataIn = (struct gravdata_in *) mymalloc("GravDataIn", Nexport * sizeof(struct gravdata_in));

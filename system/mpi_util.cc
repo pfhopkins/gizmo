@@ -188,6 +188,49 @@ int MPI_Sizelimited_Sendrecv(void *sendbuf0, size_t sendcount, MPI_Datatype send
 
 
 
+/* element 0, 1: sum; element 2: min */
+static void mpi_sparse_counts_op(void *in, void *inout, int *len, MPI_Datatype *dt)
+{
+    long long *a = (long long *) in, *b = (long long *) inout;
+    for(int k = 0; k + 2 < *len; k += 3) {b[k] += a[k]; b[k+1] += a[k+1]; if(a[k+2] < b[k+2]) {b[k+2] = a[k+2];}}
+}
+
+/*! The neighbour loops' per-pass handshake without an Alltoall. Each rank learns recv_count[r] = what rank r
+ *  sends it (send_count[] on r), and flags_out = {sum, sum, min} over ranks of flags_in. The counts travel only
+ *  between ranks that exchange something: synchronous sends to the nonzero destinations, then a nonblocking
+ *  barrier entered once they are matched, receiving whatever arrives until the barrier completes (the NBX
+ *  pattern; Hoefler, Siebert & Lumsdaine 2010). The reduction runs alongside. Results are identical to an
+ *  Alltoall of the counts plus an Allreduce of the flags; the cost is one barrier rather than an all-pairs exchange
+ *  when few ranks export. Consecutive calls alternate tags: a rank can only start call k+1 after every rank has
+ *  entered call k's barrier, so a message of call k+1 is never taken for one of call k. */
+void mpi_sparse_counts(const int *send_count, int *recv_count, const long long flags_in[3], long long flags_out[3])
+{
+    static MPI_Op op = MPI_OP_NULL; static int parity = 0;
+    if(op == MPI_OP_NULL) {MPI_Op_create(mpi_sparse_counts_op, 1, &op);}
+    int tag = parity ? TAG_SPARSE_COUNTS_B : TAG_SPARSE_COUNTS_A; parity ^= 1;
+    MPI_Request red; long long fin[3] = {flags_in[0], flags_in[1], flags_in[2]};
+    MPI_Iallreduce(fin, flags_out, 3, MPI_LONG_LONG, op, MPI_COMM_WORLD, &red);
+    for(int r = 0; r < NTask; r++) {recv_count[r] = 0;}
+    recv_count[ThisTask] = send_count[ThisTask];
+    std::vector<MPI_Request> sreq;
+    for(int r = 0; r < NTask; r++) {if(r != ThisTask && send_count[r] > 0) {sreq.emplace_back(); MPI_Issend(&send_count[r], 1, MPI_INT, r, tag, MPI_COMM_WORLD, &sreq.back());}}
+    MPI_Request bar = MPI_REQUEST_NULL; int in_barrier = 0;
+    while(1)
+    {
+        int flag; MPI_Status st;
+        MPI_Iprobe(MPI_ANY_SOURCE, tag, MPI_COMM_WORLD, &flag, &st);
+        if(flag) {MPI_Recv(&recv_count[st.MPI_SOURCE], 1, MPI_INT, st.MPI_SOURCE, tag, MPI_COMM_WORLD, MPI_STATUS_IGNORE); continue;}
+        if(!in_barrier)
+        {
+            int sent = 1; if(!sreq.empty()) {MPI_Testall((int) sreq.size(), sreq.data(), &sent, MPI_STATUSES_IGNORE);}
+            if(sent) {MPI_Ibarrier(MPI_COMM_WORLD, &bar); in_barrier = 1;}
+        }
+        else {int done; MPI_Test(&bar, &done, MPI_STATUS_IGNORE); if(done) {break;}}
+    }
+    MPI_Wait(&red, MPI_STATUS_IGNORE);
+}
+
+
 /*! Point-to-point exchange with every partner at once, in place of a loop of blocking MPI_Sendrecv over
  *  ngrp in [ngrp_lo, ngrp_hi) with partner ThisTask^ngrp. To rank r it sends scount[r] items of ssize bytes
  *  starting at item soff[r] of sbuf, and receives rcount[r] items of rsize bytes at item roff[r] of rbuf.
