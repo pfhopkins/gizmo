@@ -4500,6 +4500,8 @@ The following test problems are available in the `test/` directory of the source
 <a name="tests-additional-other"></a>
 ### Other Tests
 
+**3D Shearing Box** (`test/shearing_box`): Checks the shear-periodic boundaries of the 3D shearing box (`BOX_SHEARING=3`) for q = 3/2 and q = 1: the equilibrium shear flow on a lattice (exact to round-off), a uniform epicyclic oscillation carried across the radial boundary (frequency kappa^2 = 2(2-q) Omega^2), and a linear swing-amplified vortical shearing wave (Johnson & Gammie 2005) against the integrated linear equations, including conservation of its potential vorticity. Uses `HYDRO_MESHLESS_FINITE_MASS`, `BOX_SHEARING=3`, `SELFGRAVITY_OFF`.
+
 **Ring Collision** (`test/ring_collision`): Collision of two elastic/solid rings using the Tillotson EOS and elastic stress tensor. Tests `EOS_TILLOTSON`, `EOS_ELASTIC`.
 
 **Compile Suite** (`test/compile_suite`): Not a physics test; systematically compiles GIZMO with many different combinations of Config flags to check for compilation errors and flag incompatibilities.
