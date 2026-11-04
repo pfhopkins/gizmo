@@ -669,7 +669,13 @@ void domain_Decomposition_light(int UseAllTimeBins)
         double wt_0 = domain_particle_costfactor(i);
         double wt_mult = domain_particle_cost_multiplier(i);
         particle_costfactor[i] = (float)wt_0;
-        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0);
+        double wt_freq = 1;
+#ifdef DOMAIN_FREQ_WEIGHT
+        /* weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT:
+           the short-timestep set is otherwise costed like any cell and lands on one or two ranks */
+        {int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;} if(db > 0) {wt_freq = (double) (1 << db);}}
+#endif
+        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0 * wt_freq);
         gravcost += particle_total_cost[i];
         if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_0;}}
     }
@@ -994,7 +1000,13 @@ int domain_decompose(void)
         double wt_0 = domain_particle_costfactor(i);
         double wt_mult = domain_particle_cost_multiplier(i);
         particle_costfactor[i] = (float)wt_0;
-        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0);
+        double wt_freq = 1;
+#ifdef DOMAIN_FREQ_WEIGHT
+        /* weight by how often the particle is active, relative to the top occupied bin, capped at 2^DOMAIN_FREQ_WEIGHT:
+           the short-timestep set is otherwise costed like any cell and lands on one or two ranks */
+        {int db = All.HighestOccupiedTimeBin - P[i].TimeBin; if(db > DOMAIN_FREQ_WEIGHT) {db = DOMAIN_FREQ_WEIGHT;} if(db > 0) {wt_freq = (double) (1 << db);}}
+#endif
+        particle_total_cost[i] = (float)((1 + wt_mult) * wt_0 * wt_freq);
         gravcost += particle_total_cost[i];
         if(P[i].Type == 0) {if(TimeBinActive[P[i].TimeBin] || UseAllParticles) {gascost += wt_0;}}
     }
