@@ -597,7 +597,11 @@ static void mechanical_fb_pair_kernel(
      * convention encoding: wakeup_val = source.TimeBin + 1. */
     Kokkos::atomic_max(&gd->max_source_wakeup, wakeup_flag_from_timebin(local.TimeBin));
     Kokkos::atomic_add(&gd->m_injected, Mass_j - Mass_j_0);
+#if defined(GALSF_SINGLE_STARS_FROM_IMF) && defined(GALSF_SINGLE_STARS_EVOLUTION_TABLES)
+    Kokkos::atomic_add(&gd->TE_injected, Mass_j * (InternalEnergy_j - InternalEnergy_j_0)); /* cold ejecta: the added mass carries no ambient u */
+#else
     Kokkos::atomic_add(&gd->TE_injected, Mass_j * InternalEnergy_j - Mass_j_0 * InternalEnergy_j_0);
+#endif
     Kokkos::atomic_add(&gd->KE_injected, KE_final - KE_initial);
 #ifdef METALS
     for(int k = 0; k < NUM_METAL_SPECIES; k++) {
