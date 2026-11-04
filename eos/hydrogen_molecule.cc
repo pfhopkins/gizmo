@@ -28,6 +28,9 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
     molecule, and the heat capacity per molecule at constant volume.
     */
 
+    /* the u <-> T inversions of a cooling update ask for the same temperature repeatedly: remember the last answer per thread */
+    static thread_local double temp_last = -1., result_last[3] = {0, 0, 0};
+    if(temp == temp_last) {result[0] = result_last[0]; result[1] = result_last[1]; result[2] = result_last[2]; return;}
     const double EPSILON = 2.220446049250313e-16;
     const double THETA_ROT = 85.4;  // in K
     const double ortho_frac = 0.75; // 3:1 mixture
@@ -75,6 +78,7 @@ void hydrogen_molecule_zrot_mixture(double temp, double result[3]) {
     result[1] = BOLTZMANN_CGS * temp * (para_frac * dz_para / z_para + ortho_frac * dz_ortho / z_ortho); // mean energy per molecule
     result[2] = BOLTZMANN_CGS * (ortho_frac * (2 * dz_ortho + d2z_ortho - dz_ortho * dz_ortho / z_ortho) / z_ortho +
                                  para_frac * (2 * dz_para + d2z_para - dz_para * dz_para / z_para) / z_para); // heat capacity
+    temp_last = temp; result_last[0] = result[0]; result_last[1] = result[1]; result_last[2] = result[2];
 }
 
 void hydrogen_molecule_zvib(double temp, double result[3]) {
