@@ -29,7 +29,7 @@ double jaco_u_to_T(double u, const SolveVars *sv, const Params *pr);
  */
 
 
-void write_header_attributes_in_hdf5(hid_t handle);
+void write_header_attributes_in_hdf5(hid_t handle, const long long *npart_this_file);
 void read_header_attributes_in_hdf5(char *fname);
 void write_parameters_attributes_in_hdf5(hid_t handle);
 void write_units_attributes_in_hdf5(hid_t handle);
@@ -48,7 +48,11 @@ void get_core_set(void);
 void init_turb(void);
 void set_turb_ampl(void);
 int new_turbforce_needed_this_timestep(void);
+int turb_force_evaluation_needed_this_timestep(void);
 void add_turb_accel(void);
+void turb_driving_reduce_pending_energies(void);
+void write_turb_driving_state_hdf5(hid_t file);
+void read_turb_driving_state_hdf5(const char *fname);
 void log_turb_temp(void);
 uint64_t particle_event_rng_key(int i);
 double particle_random_number(int i, uint64_t site_salt, uint64_t event, uint64_t draw_index);
@@ -243,6 +247,23 @@ void tillotson_eos_init(void);
 #ifdef EOS_ANEOS
 #include "../eos/aneos.h"
 #endif
+/* the positivity catch on a specific internal energy update u_old -> u_new: the energy halves when the update would take it
+   below half; and where the material has a lowest valid energy u_floor > 0, the result is never below that (0: no bound) */
+static inline double internal_energy_positivity_catch(double u_old, double u_new, double u_floor)
+{
+    double u = (u_new < 0.5*u_old) ? 0.5*u_old : u_new;
+    return (u_floor > 0 && u < u_floor) ? u_floor : u;
+}
+/* the lowest specific internal energy [code units] at which a cell's material has a valid equation of state at density rho
+   [code units]: for an ANEOS table material, the energy at the table's lowest valid temperature there; 0 (no bound) otherwise */
+static inline double lowest_valid_internal_energy(int composition_type, double rho)
+{
+#ifdef EOS_ANEOS
+    return aneos_min_specific_energy(composition_type, rho * UNIT_DENSITY_IN_CGS) / UNIT_SPECEGY_IN_CGS;
+#else
+    (void)composition_type; (void)rho; return 0;
+#endif
+}
 
 #ifdef SPECIAL_POINT_WEIGHTED_MOTION
 double weight_function_for_weighted_motion_smoothing(double r, int mode);
@@ -333,6 +354,7 @@ int io_compare_P_ID(const void *a, const void *b);
 int io_compare_P_GrNr_SubNr(const void *a, const void *b);
 void drift_particle(int i, integertime time1);
 double drift_divv_factor(int i, double dt_drift);
+double particle_motion_speed_bound(int i);
 void put_symbol(double t0, double t1, char c);
 void write_cpu_log(void);
 int get_timestep_bin(integertime ti_step);
@@ -530,7 +552,8 @@ void get_dataset_name(enum iofields blocknr, char *buf);
 int blockpresent(enum iofields blocknr);
 void fill_write_buffer(enum iofields blocknr, int *pindex, int pc, int type);
 void empty_read_buffer(enum iofields blocknr, int offset, int pc, int type);
-long get_particles_in_block(enum iofields blocknr, int *typelist);
+long long get_particles_in_block(enum iofields blocknr, int *typelist, const long long *npart_file);
+int binary_snapshot_file_fits(const long long *counts, int filenr);
 int get_bytes_per_blockelement(enum iofields blocknr, int mode);
 void read_file(char *fname, int readTask, int lastTask);
 void get_Tab_IO_Label(enum iofields blocknr, char *label);
@@ -571,6 +594,7 @@ void cellcorrections_final_operations_and_cleanup(void);
 #endif
 
 size_t sizemax(size_t a, size_t b);
+size_t comm_buffer_bytes(void);
 
 void reconstruct_timebins(void);
 void init_peano_map(void);
@@ -593,6 +617,8 @@ void find_dt_displacement_constraint(double hfac);
 #ifdef WAKEUP
 void process_wake_ups(void);
 #endif
+void wakeup_list_note(int i);
+void wakeup_list_invalidate(void);
 void set_units_sfr(void);
 void gravity_forcetest(void);
 void allocate_commbuffers(void);
@@ -803,6 +829,7 @@ void selfshield_local_incident_uv_flux(void);
 
 #ifdef GALSF_FB_MECHANICAL
 void determine_where_SNe_occur(void);
+int addFB_evaluate_active_check(int i, int fb_loop_iteration);
 void mechanical_fb_calc(int fb_loop_iteration);
 void mechanical_fb_calc_toplevel(void);
 void verify_and_assign_local_mechfb_integrals(void);
@@ -1014,6 +1041,7 @@ void hydro_force(void);
 void init(void);
 void do_the_cooling_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell);
 double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
+double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
 double get_equilibrium_dust_temperature_estimate(int i, double shielding_factor_for_exgalbg, double T, struct particle_data *pp, struct gas_cell_data *cell);
 double gas_dust_heating_coeff(int i, double T, double Tdust, struct particle_data *pp, struct gas_cell_data *cell);
 double rt_eqm_dust_temp(int i, double T, double dust_absorption_rate, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1024,6 +1052,23 @@ MyFloat return_electron_fraction_from_Oplus(int target, MyFloat nHp, struct part
 MyFloat return_electron_fraction_from_molecular_ions(int target, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat return_electron_fraction_from_alkali(int i, MyFloat temp, struct particle_data *pp, struct gas_cell_data *cell);
 MyFloat get_FUV_G0(int i, MyFloat shieldfac, int mode, struct particle_data *pp, struct gas_cell_data *cell);
+/* electron-source terms that do not depend on the electron fraction being iterated in find_abundances_and_rates:
+   evaluated once per call (simple_chem_prepare) and read back inside the fixed-point loop */
+struct simple_chem_consts {
+    MyFloat ne_prefac, G0_sqrtT;                       /* grain_charge_psi: ne = ne_prefac*x_e; psi = G0_sqrtT/ne + 50 */
+    MyFloat kgr_prefac, kgr_C1, kgr_C2, kgr_C3_powT, kgr_psi_exp; /* alpha_recomb_grain for C+ with its T-only factors folded in */
+    MyFloat ion_rate_C, k_rr_dr, k_cplus_H2_nH2, nHcgs, ZC_fac; /* f_Cplus pieces */
+    MyFloat xe_alkali, xe_molions;                     /* T-only electron sources */
+};
+void simple_chem_prepare(int i, MyFloat temp, MyFloat shieldfac, struct simple_chem_consts *c, struct particle_data *pp, struct gas_cell_data *cell);
+MyFloat return_electron_fraction_from_Cplus_hoisted(int i, MyFloat x_elec, const struct simple_chem_consts *c);
+#ifdef COOLING_ITERATION_COUNTERS
+#define COOL_ITER_NCOUNTERS 8
+extern long long CoolIterCount[COOL_ITER_NCOUNTERS]; /* 0 cells cooled, 1 CoolingRateFromU evals, 2 convert_u_to_temp calls, 3 its iterations, 4 find_abundances calls, 5 n_e iterations, 6 rt_ir_lambdadust calls, 7 dust_dE_cooling evals */
+#define COOL_ITER_COUNT(k) {_Pragma("omp atomic") CoolIterCount[k]++;}
+#else
+#define COOL_ITER_COUNT(k) {}
+#endif
 MyFloat f_Cplus(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, struct particle_data *pp, struct gas_cell_data *cell); 
 MyFloat f_Oplus(MyFloat nHp);
 MyFloat f_CO(int i, MyFloat temp, MyFloat x_elec, MyFloat shieldfac, MyFloat nHp, struct particle_data *pp, struct gas_cell_data *cell);
@@ -1052,11 +1097,13 @@ void prepare_decouple(void);
 void read_ic(char *fname);
 int read_outputlist(char *fname);
 void read_parameter_file(char *fname);
-void rearrange_particle_sequence(void);
+void rearrange_particle_sequence(int tree_rebuilt_before_next_walk = 0);
 void swap_treewalk_pointers(int i, int j);
 void force_validate_tree_links(const char *tag);
 void force_tree_check_walkable(const char *tag);
 int domain_any_local_particle_escaped(void);
+int domain_particle_outside_extent(int i);
+int domain_extent_outgrown(void);
 #ifdef TREE_INTEGRITY_AUDITS
 void force_tree_full_audit(int audit_moments, const char *tag);
 #endif
@@ -1071,7 +1118,7 @@ double my_second(void);
 void set_softenings(void);
 void set_units(void);
 void setup_smoothinglengths(void);
-void apply_special_boundary_conditions(int i, double mass_for_dp, int mode);
+void apply_special_boundary_conditions(int i, double mass_for_dp, int mode, integertime ti_target);
 
 void minimum_large_ints(int n, long long *src, long long *res);
 void sumup_large_ints(int n, int *src, long long *res);
@@ -1316,6 +1363,7 @@ void dm_fuzzy_reconstruct_and_slopelimit(double *u_R, double du_R[3], double *u_
 #ifdef SINGLE_STAR_TIMESTEPPING
 void kepler_timestep(int i, double dt, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
 void odeint_super_timestep(int i, double dt_super, Vec3<double>& kick_dv, Vec3<double>& drift_dx, int mode);
+double binary_relative_speed_bound(int i);
 double gravfac(double r, double mass);
 double gravfac2(double r, double mass);
 void grav_accel_jerk(double mass, Vec3<double>& dx, Vec3<double>& dv, Vec3<double>& accel, Vec3<double>& jerk);

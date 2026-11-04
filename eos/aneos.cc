@@ -79,6 +79,13 @@ static double aneos_logT_floor(const struct aneos_table *tbl, struct aneos_axis_
     return tbl->logT[(k1 > k) ? k1 : k];
 }
 
+/* The specific internal energy at that lowest valid temperature, at the located density [erg/g]: the lowest energy the
+   equation of state is valid for there */
+static double aneos_energy_at_logT_floor(const struct aneos_table *tbl, struct aneos_axis_location r)
+{
+    return pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, aneos_logT_floor(tbl, r))));
+}
+
 
 /* ---- Table I/O ---- */
 
@@ -319,6 +326,18 @@ int aneos_lookup_rhoT(int mat_index,
 }
 
 
+double aneos_min_specific_energy(int mat_index, double rho_cgs)
+{
+    if(mat_index < 0 || mat_index >= ANEOS_MAX_MATERIALS) return 0;
+    const struct aneos_table *tbl = &ANEOS_Tables[mat_index];
+    if(!tbl->loaded) return 0;
+    double lr = log10(rho_cgs > 0 ? rho_cgs : 1e-30);
+    if(lr < tbl->logrho_min) lr = tbl->logrho_min;
+    if(lr > tbl->logrho_max) lr = tbl->logrho_max;
+    return aneos_energy_at_logT_floor(tbl, aneos_locate_rho(tbl, lr));
+}
+
+
 /* ---- Temperature inversion: solve u_table(rho, T) = u_target for T ---- */
 
 int aneos_compute(int mat_index,
@@ -366,7 +385,7 @@ int aneos_compute(int mat_index,
     if(lT > lT_hi) lT = lT_hi;
 
     /* Check bracket: evaluate u at the endpoints */
-    double u_lo = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_lo)));
+    double u_lo = aneos_energy_at_logT_floor(tbl, r);
     double u_hi = pow(10.0, aneos_interp(tbl, tbl->log_energy, r, aneos_locate_T(tbl, lT_hi)));
 
     /* If u_target is outside the valid range, clamp: below it, every quantity is that of the state at the lower edge */

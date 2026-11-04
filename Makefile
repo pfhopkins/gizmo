@@ -1224,7 +1224,7 @@ stella_tables:
 	@./scripts/get_stella_tables.sh $(STELLA_TABLES_PREFIX)
 
 # every object depends on compile_time_info.cc, so an edit to precompiler_logic.h rebuilds them all
-compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h
+compile_time_info.cc: $(CONFIG) declarations/precompiler_logic.h Template_Config.sh file_io/prepare-config.perl
 	$(PERL) file_io/prepare-config.perl $(CONFIG)
 
 clean:

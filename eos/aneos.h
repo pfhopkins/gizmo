@@ -87,6 +87,10 @@ int aneos_lookup_rhoT(int mat_index,
                       double *entropy_cgs, double *cs_cgs,
                       int *phase_out);
 
+/* The specific internal energy [erg/g] at the lowest valid temperature row of the table at density rho_cgs (clamped to
+   the table, as aneos_compute clamps it): the lowest energy the material's EOS is valid for there. 0 if not loaded. */
+double aneos_min_specific_energy(int mat_index, double rho_cgs);
+
 /* A position on one table axis: the lower knot of the enclosing interval and the
    fractional position inside it, t = (x - x_i) / (x_{i+1} - x_i). */
 struct aneos_axis_location {

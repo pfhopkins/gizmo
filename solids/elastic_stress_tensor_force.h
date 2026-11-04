@@ -33,19 +33,28 @@
             if(ij_switch==0) {nvt[NUMDIMS*k_v + j_v] = local.Elastic_Stress_Tensor[k_v][j_v];} else {nvt[NUMDIMS*k_v + j_v] = CellP[j].Elastic_Stress_Tensor_Pred[k_v][j_v];}
             norm_m += nvt[NUMDIMS*k_v + j_v]*nvt[NUMDIMS*k_v + j_v];}} // initialize auxiliary array to store for feeding to GSL eigen routine
             if(norm_m > MIN_REAL_NUMBER) {
+#if defined(HYDRO_MESHLESS_FINITE_VOLUME) || defined(HYDRO_MESHLESS_FINITE_MASS)
+                /* no tensile correction: the sum over principal axes of lambda_k v_k (A.v_k) is exactly S.A */
+                for(j_v=0;j_v<NUMDIMS;j_v++) {
+                    double S_dot_A = 0; for(k_v=0;k_v<NUMDIMS;k_v++) {S_dot_A += nvt[NUMDIMS*j_v + k_v] * FVec[k_v];}
+                    cmag[j_v] += wtfac * S_dot_A * All.cf_a2inv;
+                }
+#else
+                /* the tensile correction acts on the positive principal stresses only, so this path needs the eigenpairs */
                 gsl_matrix_view M = gsl_matrix_view_array(nvt,NUMDIMS,NUMDIMS); gsl_vector *eigvals = gsl_vector_alloc(NUMDIMS); gsl_matrix *eigvecs = gsl_matrix_alloc(NUMDIMS,NUMDIMS);
                 gsl_eigen_symmv_workspace *v = gsl_eigen_symmv_alloc(NUMDIMS); gsl_eigen_symmv(&M.matrix, eigvals, eigvecs, v);
                 double eigenval_k=0, eigenvec_k[NUMDIMS]={0}, A_dot_v=0, prefac=0;
                 for(k_v=0;k_v<NUMDIMS;k_v++) {eigenval_k = gsl_vector_get(eigvals, k_v); A_dot_v = 0;
                     for(j_v=0;j_v<NUMDIMS;j_v++) {eigenvec_k[j_v] = gsl_matrix_get(eigvecs, j_v, k_v); A_dot_v += FVec[j_v]*eigenvec_k[j_v];}
                     prefac = wtfac * eigenval_k * (A_dot_v*All.cf_a2inv); 
-#if !defined(HYDRO_MESHLESS_FINITE_VOLUME) && !defined(HYDRO_MESHLESS_FINITE_MASS)
                     if(eigenval_k > 0) {prefac *= 1. - tensile_correction_factor;} /* for SPH, we want to apply the tensile correction to all positive eigenvalues */
-#endif
                     if(!isnan(eigenval_k)) {for(j_v=0;j_v<NUMDIMS;j_v++) {cmag[j_v] += prefac * eigenvec_k[j_v];}} // evaluate S.Face = S.[sum of eigenvalues times projection on Face onto each eigenvector]
                 }
-                gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs);} // free memory
+                gsl_eigen_symmv_free(v); gsl_vector_free(eigvals); gsl_matrix_free(eigvecs); // free memory
+#endif
+            }
         }
+#ifdef HYDRO_SPH
         for(j_v=0;j_v<3;j_v++) {cmag[j_v] -= wt_rt * kernel.dp[j_v]*All.cf_atime + wt_t * kernel.dv[j_v]/All.cf_atime;} // HLL-type fluxes
 
         /* zero-energy mode (hourglass) control: damp velocity residuals not captured by the local velocity gradient.
@@ -65,6 +74,29 @@
                 cmag[j_v] -= cT_hg * dv_err;
             }
         }
+#else
+        /* meshless methods: the impedance operator (longitudinal impedance wt_r along the separation, shear impedance wt_t across it) acts
+            on the velocity jump left between the two limited face reconstructions, which vanishes for a resolved field, so resolved shear and
+            expanding motion are not damped by it. The longitudinal part of an approaching pair acts on the full velocity difference instead
+            (with the Hubble flow, as in the SPH form): the isotropic Riemann solve does not carry the deviatoric stress, and without this a
+            compressive front in a solid overshoots. The pairwise work F.dv is kept dissipative and no larger than that of the operator on the
+            full difference (the force is zeroed or scaled, never redirected). Acting on the unresolved jump, the same term controls
+            zero-energy (hourglass) modes, so there is no separate hourglass term here. */
+        {
+            double l_dot_r = (kernel.vdotr2 < 0) ? kernel.vdotr2 * rinv*rinv : dot(face_velocity_jump, kernel.dp) * rinv*rinv;
+            double t_dot_r = dot(face_velocity_jump, kernel.dp) * rinv*rinv;
+            double f_res[3], f_raw[3], work_res = 0, work_raw = 0;
+            for(j_v=0;j_v<3;j_v++) {
+                double jl_par = l_dot_r * kernel.dp[j_v], jt_perp = face_velocity_jump[j_v] - t_dot_r * kernel.dp[j_v]; /* longitudinal and shear parts */
+                f_res[j_v] = -((wt_r - wt_t) * jl_par * All.cf_atime*All.cf_atime*All.cf_atime + wt_t * (jl_par + jt_perp) / All.cf_atime);
+                f_raw[j_v] = -(wt_rt * kernel.dp[j_v] * All.cf_atime + wt_t * kernel.dv[j_v] / All.cf_atime);
+                work_res += f_res[j_v] * kernel.dv[j_v]; work_raw += f_raw[j_v] * kernel.dv[j_v];
+            }
+            double lim = 1;
+            if(work_res >= 0 || work_raw >= 0) {lim = 0;} else if(work_res < work_raw) {lim = work_raw / work_res;}
+            for(j_v=0;j_v<3;j_v++) {cmag[j_v] += lim * f_res[j_v];}
+        }
+#endif
 
         /* // below limiter doesn't actually appear necessary in our tests, thus far; worth more detailed testing the future //
         if(kernel.vdotr2 < 0) // check if particles are approaching

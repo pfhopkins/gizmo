@@ -29,6 +29,7 @@ double* StMode; // k vectors
 int StNModes; // total number of modes
 integertime StTPrev; // time of last update (to determine when next will be)
 gsl_rng* StRng; // random number generator key
+static int StForceRefreshPending = 0; // set when the driving state is restored from a snapshot, whose cells carry no TurbAccel
 
 
 /* routine to initialize the different modes and their relative amplitudes and other global variables needed for the turbulence driving routines */
@@ -352,6 +353,12 @@ int new_turbforce_needed_this_timestep(void)
     if(delta >= Dt_Update){return 1;} else {return 0;}
 }
 
+/* Check whether TurbAccel must be re-evaluated this timestep, when it is only evaluated on driving updates */
+int turb_force_evaluation_needed_this_timestep(void)
+{
+    return new_turbforce_needed_this_timestep() || StForceRefreshPending;
+}
+
 /* parent routine to initialize and update turbulent driving fields and to track different variables used for analyzing power spectra of dissipation, etc. */
 void set_turb_ampl(void)
 {
@@ -498,7 +505,136 @@ void add_turb_accel()
     for(int i : ActiveParticleList) {if(P[i].Type == 0) {cells.push_back(i);}}
 #endif
     st_evaluate_driving_force(cells, fac_sol);
+    StForceRefreshPending = 0;
     PRINT_STATUS("Finished turbulence driving (acceleration) computation");
+}
+
+
+/* The driving state, written to snapshots so that a restart from one (RestartFlag 2) continues the same driving
+   realization: the Ornstein-Uhlenbeck coefficients of each mode, the random-number stream that advances them, the
+   update schedule, and the gain controller. The mode set itself is rebuilt from the parameters, and is stored only
+   to check it is unchanged. */
+static void st_write_hdf5_scalar(hid_t loc, const char *name, hid_t type, const void *value)
+{
+    hid_t space = H5Screate(H5S_SCALAR), attr = H5Acreate(loc, name, type, space, H5P_DEFAULT);
+    H5Awrite(attr, type, value); H5Aclose(attr); H5Sclose(space);
+}
+
+static void st_write_hdf5_array(hid_t loc, const char *name, hid_t type, const void *data, int rank, const hsize_t *dims)
+{
+    hid_t space = H5Screate_simple(rank, dims, NULL), dset = H5Dcreate(loc, name, type, space, H5P_DEFAULT);
+    H5Dwrite(dset, type, H5S_ALL, H5S_ALL, H5P_DEFAULT, data); H5Dclose(dset); H5Sclose(space);
+}
+
+/* scalars of the driving state, in the order they are broadcast on reading */
+#ifdef TURB_DRIVING_TARGET_SIGMA
+#define ST_NUM_STATE_SCALARS 8
+#else
+#define ST_NUM_STATE_SCALARS 3
+#endif
+static const char *st_state_scalar_names[] = {"TimeSinceLastFieldUpdate", "CumulativeInjectedEnergy", "CumulativeDissipatedEnergy",
+    "DrivingGain", "GainControllerIntegralTerm", "GainControllerDerivativeTerm", "GainControllerLastError", "GainControllerStarted"};
+
+/* energy the cells have accumulated since the last field update, which the cumulative totals take in only at the
+   next update; folded into the totals written to snapshots, which do not carry the per-cell sums */
+static double StPendingInjectedEnergy = 0, StPendingDissipatedEnergy = 0;
+
+void turb_driving_reduce_pending_energies(void)
+{
+    double local[2] = {0, 0}, glob[2];
+    for(int i = 0; i < NumPart; i++) {if(P[i].Type == 0 && P[i].Mass > 0) {local[0] += CellP[i].EgyDrive; local[1] += CellP[i].EgyDiss;}}
+    MPI_Allreduce(local, glob, 2, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD);
+    StPendingInjectedEnergy = glob[0]; StPendingDissipatedEnergy = glob[1];
+}
+
+static void st_get_state_scalars(double *s)
+{
+    s[0] = (All.Ti_Current - StTPrev) * unit_integertime_in_physical(-1);
+    s[1] = All.TurbInjectedEnergy + StPendingInjectedEnergy; s[2] = All.TurbDissipatedEnergy + StPendingDissipatedEnergy;
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    s[3] = All.TurbDriving_DrivingNormFactor; s[4] = All.TurbDriving_PID_Integral; s[5] = All.TurbDriving_PID_Derivative;
+    s[6] = All.TurbDriving_PID_LastError; s[7] = All.TurbDriving_PID_Started;
+#endif
+}
+
+static void st_set_state_scalars(const double *s)
+{
+    StTPrev = All.Ti_Current - (integertime) ceil(s[0] / unit_integertime_in_physical(-1)); /* rounded up, or an update due on the first step is missed */
+    All.TurbInjectedEnergy = s[1]; All.TurbDissipatedEnergy = s[2];
+#ifdef TURB_DRIVING_TARGET_SIGMA
+    All.TurbDriving_DrivingNormFactor = s[3]; All.TurbDriving_PID_Integral = s[4]; All.TurbDriving_PID_Derivative = s[5];
+    All.TurbDriving_PID_LastError = s[6]; All.TurbDriving_PID_Started = (int) s[7];
+#endif
+}
+
+void write_turb_driving_state_hdf5(hid_t file)
+{
+    hid_t grp = H5Gcreate(file, "/TurbulentDriving", 0);
+    st_write_hdf5_scalar(grp, "RandomNumberSeed", H5T_NATIVE_INT, &All.TurbDriving_Global_DrivingRandomNumberKey);
+    st_write_hdf5_scalar(grp, "NumberOfModes", H5T_NATIVE_INT, &StNModes);
+    double s[ST_NUM_STATE_SCALARS]; st_get_state_scalars(s);
+    for(int k = 0; k < ST_NUM_STATE_SCALARS; k++) {st_write_hdf5_scalar(grp, st_state_scalar_names[k], H5T_NATIVE_DOUBLE, &s[k]);}
+    hsize_t dims[2] = {(hsize_t) StNModes, 3};
+    st_write_hdf5_array(grp, "ModeWavevectors", H5T_NATIVE_DOUBLE, StMode, 2, dims);
+    dims[1] = 6; /* real and imaginary parts of the three vector components */
+    st_write_hdf5_array(grp, "ModeCoefficients", H5T_NATIVE_DOUBLE, StOUPhases, 2, dims);
+    hsize_t nbytes = gsl_rng_size(StRng);
+    st_write_hdf5_array(grp, "RandomNumberGeneratorState", H5T_NATIVE_UCHAR, gsl_rng_state(StRng), 1, &nbytes);
+    H5Gclose(grp);
+}
+
+/* restore the driving state from the snapshot fname (without the .hdf5 or .0.hdf5 suffix) if it carries one for the
+   same seed and mode set; otherwise keep the fresh realization init_turb() set up. Call once the timeline is set. */
+void read_turb_driving_state_hdf5(const char *fname)
+{
+    int status = 0; const char *why = "snapshot carries no driving state";
+    double s[ST_NUM_STATE_SCALARS]; std::vector<double> ou(6*StNModes); std::vector<unsigned char> rng(gsl_rng_size(StRng));
+    if(ThisTask == 0)
+    {
+        char buf[MAX_PATH_BUFFERSIZE_TOUSE]; hid_t file = -1;
+        H5E_auto_t old_func; void *old_data; H5Eget_auto(&old_func, &old_data); H5Eset_auto(NULL, NULL);
+        snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%s.hdf5", fname); file = H5Fopen(buf, H5F_ACC_RDONLY, H5P_DEFAULT);
+        if(file < 0) {snprintf(buf, MAX_PATH_BUFFERSIZE_TOUSE, "%s.0.hdf5", fname); file = H5Fopen(buf, H5F_ACC_RDONLY, H5P_DEFAULT);}
+        hid_t grp = (file >= 0) ? H5Gopen(file, "/TurbulentDriving") : -1;
+        if(grp >= 0)
+        {
+            int seed = -1, nmodes = -1; hid_t a, d;
+            a = H5Aopen_name(grp, "RandomNumberSeed"); H5Aread(a, H5T_NATIVE_INT, &seed); H5Aclose(a);
+            a = H5Aopen_name(grp, "NumberOfModes"); H5Aread(a, H5T_NATIVE_INT, &nmodes); H5Aclose(a);
+            d = H5Dopen(grp, "RandomNumberGeneratorState"); hid_t ds = H5Dget_space(d); hssize_t nbytes = H5Sget_simple_extent_npoints(ds); H5Sclose(ds);
+            if(seed != All.TurbDriving_Global_DrivingRandomNumberKey) {why = "driving seed differs from the snapshot's";}
+            else if(nmodes != StNModes) {why = "driving modes differ from the snapshot's";}
+            else if(nbytes != (hssize_t) rng.size()) {why = "random-number generator differs from the snapshot's";}
+            else
+            {
+                std::vector<double> kvec(3*StNModes); status = 1;
+                hid_t dk = H5Dopen(grp, "ModeWavevectors"); H5Dread(dk, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, kvec.data()); H5Dclose(dk);
+                for(int m = 0; m < 3*StNModes; m++) {if(fabs(kvec[m] - StMode[m]) > 1.e-10 * (fabs(StMode[m]) + 1.)) {status = 0; why = "driving modes differ from the snapshot's"; break;}}
+                if(status)
+                {
+                    H5Dread(d, H5T_NATIVE_UCHAR, H5S_ALL, H5S_ALL, H5P_DEFAULT, rng.data());
+                    hid_t dou = H5Dopen(grp, "ModeCoefficients"); H5Dread(dou, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL, H5P_DEFAULT, ou.data()); H5Dclose(dou);
+                    st_get_state_scalars(s); /* defaults for anything the snapshot lacks, e.g. the controller when written without it */
+                    for(int k = 0; k < ST_NUM_STATE_SCALARS; k++)
+                        {if(H5Aexists(grp, st_state_scalar_names[k]) > 0) {a = H5Aopen_name(grp, st_state_scalar_names[k]); H5Aread(a, H5T_NATIVE_DOUBLE, &s[k]); H5Aclose(a);}}
+                }
+            }
+            H5Dclose(d); H5Gclose(grp);
+        }
+        if(file >= 0) {H5Fclose(file);}
+        H5Eset_auto(old_func, old_data);
+    }
+    MPI_Bcast(&status, 1, MPI_INT, 0, MPI_COMM_WORLD);
+    if(!status) {if(ThisTask == 0) {printf("TURB_DRIVING: %s; starting a new driving realization\n", why);} return;}
+    MPI_Bcast(s, ST_NUM_STATE_SCALARS, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(ou.data(), (int) ou.size(), MPI_DOUBLE, 0, MPI_COMM_WORLD);
+    MPI_Bcast(rng.data(), (int) rng.size(), MPI_BYTE, 0, MPI_COMM_WORLD);
+    memcpy(gsl_rng_state(StRng), rng.data(), rng.size());
+    memcpy(StOUPhases, ou.data(), ou.size() * sizeof(double));
+    st_turbdrive_calc_phases();
+    st_set_state_scalars(s);
+    StForceRefreshPending = 1;
+    if(ThisTask == 0) {printf("TURB_DRIVING: restored the driving state from the snapshot (last field update %g before it)\n", s[0]);}
 }
 
 

@@ -160,6 +160,24 @@ void hermite_step(double mass, Vec3<double>& dx, Vec3<double>& dv, double dt){
     dx = old_dx + 0.5*(dv + old_dv) * dt + (dt2/12) * (old_accel - accel);
 }
 
+/* The fastest the relative motion of binary member i and its companion can become, from the separation
+   and relative velocity it carries. odeint_super_timestep integrates the softened two-body problem, which
+   conserves the relative energy and angular momentum; from those, without assuming a bound orbit:
+     - the softened potential is nowhere deeper than the point-mass one, so v^2 <= dv^2 + 2 G M / r;
+     - angular momentum keeps the pair outside r_* = (-GM + sqrt(G^2 M^2 + dv^2 h^2)) / dv^2, where that
+       cap is all tangential;
+     - the softened potential is finite at zero separation, so v^2 <= dv^2 + 2 |phi(0)| (head-on case).
+   The 5% margin covers the integrator's energy error (percent level over 1e5 orbits). */
+double binary_relative_speed_bound(int i)
+{
+    double GM = All.G * (P[i].Mass + P[i].comp_Mass), dv2 = P[i].comp_dv.norm_sq(), h2 = cross(P[i].comp_dx, P[i].comp_dv).norm_sq();
+    double inv_rstar = (h2 > 0) ? (sqrt(GM*GM + dv2*h2) + GM) / h2 : MAX_REAL_NUMBER; /* 1/r_*, rationalised to stay finite as dv -> 0 */
+    double h_inv = 1. / SinkParticle_GravityKernelRadius, inv_r_soft = -kernel_gravity(0, h_inv, h_inv*h_inv*h_inv, -1); /* |phi(0)| / GM */
+    if(inv_r_soft < inv_rstar) {inv_rstar = inv_r_soft;}
+    return 1.05 * sqrt(dv2 + 2. * GM * inv_rstar);
+}
+
+
 /*
 Advances the binary by timestep dt
 mode 0 - Just fill out the particle's kick and drift for the timestep, without doing the update

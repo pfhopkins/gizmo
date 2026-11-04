@@ -48,6 +48,12 @@
 #ifndef  MULTIPLEDOMAINS
 #define  MULTIPLEDOMAINS     8
 #endif
+/* With DOMAIN_TARGET_PARTICLES_PER_SEGMENT set, MULTIPLEDOMAINS is only the upper bound: each full decomposition gives
+   every rank round(particles per rank / DOMAIN_TARGET_PARTICLES_PER_SEGMENT) Peano segments, at least
+   DOMAIN_MIN_SEGMENTS_PER_TASK. Without it, every rank gets exactly MULTIPLEDOMAINS. */
+#if defined(DOMAIN_TARGET_PARTICLES_PER_SEGMENT) && !defined(DOMAIN_MIN_SEGMENTS_PER_TASK)
+#define  DOMAIN_MIN_SEGMENTS_PER_TASK   8
+#endif
 
 #ifndef  TOPNODEFACTOR
 #ifdef SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM
@@ -83,7 +89,7 @@
 #define  HYDROGEN_MASSFRAC 0.7065 /*!< evolved ISM, matches net 5/17 ABHE=0.1 */
 #elif defined(SGCHEM)
 #define  HYDROGEN_MASSFRAC 0.7065 /*!< SGCHEM default (any other net): matches ABHE=0.1 */
-#elif !defined(RT_HYDROGEN_GAS_ONLY) || defined(RT_CHEM_PHOTOION_HE)
+#elif !(defined(RT_HYDROGEN_GAS_ONLY) || (defined(CHIMES_HYDROGEN_ONLY) && !defined(METALS))) || defined(RT_CHEM_PHOTOION_HE)
 #define  HYDROGEN_MASSFRAC 0.76 /*!< mass fraction of hydrogen, relevant only for radiative cooling */
 #else
 #define  HYDROGEN_MASSFRAC 1.0  /*!< mass fraction of hydrogen, relevant only for radiative cooling */
@@ -97,6 +103,10 @@
 #define  CONDITION_NUMBER_DANGER  1.0e7 /*!< condition number above which we will not trust matrix-based gradients */
 #else
 #define  CONDITION_NUMBER_DANGER  1.0e3 /*!< condition number above which we will not trust matrix-based gradients */
+#endif
+#ifdef EOS_ELASTIC
+#define  CONDITION_NUMBER_FACE_BLEND_START  20.0 /*!< elastic solids: above this condition number (the larger of a pair) the meshless face starts to blend toward the kernel-gradient face */
+#define  CONDITION_NUMBER_FACE_BLEND_FULL   50.0 /*!< elastic solids: condition number at which that face is the kernel-gradient face alone */
 #endif
 
 /* ... often used physical constants (cgs units). note many of these are defined to better precision with different units in e.g. the GSL package, these are purely for user convenience */

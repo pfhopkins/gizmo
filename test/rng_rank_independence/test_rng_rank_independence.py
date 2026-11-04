@@ -1,11 +1,11 @@
 """Keyed random draws (declarations/gpu_rng.h): stochastic outcomes depend on the particles, not on the decomposition.
 
-One small IC (gas, pre-existing stars, sinks) is run on 1, 2 and 4 ranks and on 1 or 2 OpenMP threads. The draws at
-initialization (stellar ages, sink spins) must agree bit for bit, and the runtime draws must pick nearly the same gas
-cells to form stars over a few steps (the sink accretion draws run every step too, so a shared or per-rank stream
-shifts every later draw). With one random stream per rank all of these change with the rank count. Also checked:
-draws from different call sites are uncorrelated, and duplicate IDs (a snapshot reused as an IC) or missing IDs
-(ASSIGN_NEW_IDS) do not collapse every particle onto one draw.
+One small IC (gas, pre-existing stars, sinks; no self-gravity) is run on 1, 2 and 4 ranks and on 1 or 2 OpenMP
+threads. The draws at initialization (stellar ages, sink spins) must agree bit for bit, and the runtime draws must pick
+the same gas cells to form stars (the sink accretion draws run every step too, so a shared or per-rank stream shifts
+every later draw). With one random stream per rank all of these change with the rank count. Also checked: draws from
+different call sites are uncorrelated, and duplicate IDs (a snapshot reused as an IC) or missing IDs (ASSIGN_NEW_IDS)
+do not collapse every particle onto one draw.
 """
 
 import os
@@ -143,19 +143,22 @@ def test_initial_draws_independent_of_ranks_and_threads(runs):
 
 
 def test_runtime_draws_independent_of_ranks_and_threads(runs):
-    """Which gas cells form stars over the run, on any rank or thread count. The tree force depends on the
-    decomposition, so states drift apart and a particle's single-precision position (part of its key) eventually
-    flips; the sets must still nearly coincide. With a per-rank stream the overlap is chance (~2%)."""
-    for snap, min_common in ((1, 0.95), (2, 0.85)):
+    """Which gas cells form stars over the run, on any rank or thread count. Self-gravity is off (Config.sh), so the
+    trajectories do not depend on the decomposition and every draw sees the same key: the sets must be identical.
+    With a per-rank stream the overlap is chance (~2%)."""
+    final = 2
+    for snap in (1, final):
         ref = load("np1", snap)
         formed = ref[4]["ParticleIDs"][ref[4]["ParticleIDs"] <= NGAS]
-        assert len(formed) >= 20, f"only {len(formed)} stars formed by snapshot {snap}: too few to test the star-formation draws"
+        if snap == final:
+            assert len(formed) >= 20, f"only {len(formed)} stars formed by snapshot {snap}: too few to test the star-formation draws"
         for run in SAME_AS_NP1:
             d = load(run, snap)
             f = d[4]["ParticleIDs"][d[4]["ParticleIDs"] <= NGAS]
-            common = len(np.intersect1d(formed, f)) / len(np.union1d(formed, f))
-            assert common >= min_common, (f"snapshot {snap}, {run}: only {100*common:.1f}% of the cells converted to stars "
-                                          f"on either run are common to np1 and {run} ({len(formed)} vs {len(f)})")
+            common = len(np.intersect1d(formed, f)) / max(len(np.union1d(formed, f)), 1)
+            assert np.array_equal(np.sort(formed), np.sort(f)), (
+                f"snapshot {snap}, {run}: only {100*common:.1f}% of the cells converted to stars on either run are common "
+                f"to np1 and {run} ({len(formed)} vs {len(f)})")
 
 
 def test_draw_sites_are_uncorrelated(runs):

@@ -286,6 +286,7 @@ extern std::vector<int> Ngblist;		/*!< Buffer to hold indices of neighbours retr
 extern double *R2ngblist;
 extern double DomainCorner[3], DomainCenter[3], DomainLen, DomainFac;
 extern int *DomainStartList, *DomainEndList;
+extern int DomainSegmentsPerTask;  /*!< Peano segments per rank in the current decomposition (<= MULTIPLEDOMAINS, which sizes DomainStartList/EndList) */
 extern double *DomainWork;
 extern int *DomainCount;
 extern int *DomainCountGas;
@@ -1555,10 +1556,7 @@ enum iofields
   IO_ISMDUSTCHEMMOL,
   IO_MACHNUM,
   IO_DUSTCHEMGRAINBINNUMBERS,
-  IO_DUSTCHEMGRAINBINSLOPES,
   IO_DUSTCHEMGRAINBINMASS,
-  IO_DUSTCHEM_COAG_MASSRATE,
-  IO_DUSTCHEM_SHAT_MASSRATE,
   IO_SINKMASS,
   IO_SINKMASSALPHA,
   IO_SINK_ANGMOM,
@@ -1655,6 +1653,7 @@ enum iofields
   IO_grHDI,
   IO_OSTAR,
   IO_DTOSTAR,
+  IO_STAR_EFFECTIVE_SIZE,
   IO_TURB_DYNAMIC_COEFF,
   IO_TURB_DIFF_COEFF,
   IO_DYNERROR,

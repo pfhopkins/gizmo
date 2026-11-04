@@ -67,6 +67,9 @@ double CumulCRClipEnergy = 0; /* CR energy added by the transport-step cap and z
 double CumulCRShockEnergy = 0; /* CR energy injected at shocks on this rank [code energy units] */
 #endif
 #endif
+#ifdef COOLING_ITERATION_COUNTERS
+long long CoolIterCount[COOL_ITER_NCOUNTERS] = {0};
+#endif
 
 /* forward declarations for functions used before their definitions (needed because pp/cell params changed signatures) */
 double DoCooling(double u_old, double rho, double dt, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell);
@@ -688,7 +691,9 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
     double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
     ratefact = nHcgs * nHcgs / rho;
     u = u_upper = u_lower =  u_old; /* initialize values */
-    auto du_residual = [&](double du) {return du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt;}; // solved for the change in u, so the tolerance is relative to the change
+    COOL_ITER_COUNT(0);
+    double u_last_evaluated = -1; /* energy the rate function was last evaluated at (the cell carries that evaluation's side effects) */
+    auto du_residual = [&](double du) {COOL_ITER_COUNT(1); u_last_evaluated = u_old+du; return du - ratefact * CoolingRateFromU(u_old+du, rho, ne_guess, ne_eval, target, pp, cell) * dt;}; // solved for the change in u, so the tolerance is relative to the change
     double du_net = du_residual(u - u_old), du_net_upper = du_net, du_net_lower = du_net;
 
     /* bracketing */
@@ -722,7 +727,13 @@ double DoCooling(double u_old, double rho, double dt, double ne_guess, double *n
             u = DMAX(u_min,u);
         } else {u = All.MinEgySpec;}
     }
-    CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell); /* evaluate at converged u to ensure ne_eval and other side-effects are consistent with the final answer */
+#ifdef COOLING_SKIP_REDUNDANT_FINAL_EVAL
+    /* the root finder returns an evaluated point; when it is the point evaluated last, ne_eval and the cell's rate
+       side effects (dust temperature, band emission) already belong to this u. Re-evaluating only re-runs the dust
+       solve from its own answer: identical to within the solvers' tolerances, not bit-identical. */
+    if(u != u_last_evaluated)
+#endif
+    {COOL_ITER_COUNT(1); CoolingRateFromU(u, rho, ne_guess, ne_eval, target, pp, cell);} /* evaluate at converged u to ensure ne_eval and other side-effects are consistent with the final answer */
 
     double specific_energy_codeunits_toreturn = u / UNIT_SPECEGY_IN_CGS;    /* in internal units */
     cell[target].Ne = *ne_eval;
@@ -760,6 +771,23 @@ double GetCoolingTime(double u_old, double rho, double ne_guess, double *ne_eval
     double LambdaNet = CoolingRateFromU(u_old, rho, ne_guess, ne_eval, target, pp, cell);
     if(LambdaNet >= 0) {return 0;} /* net heating due to UV background */
     return u_old / (-(nHcgs * nHcgs / rho) * LambdaNet) / UNIT_TIME_IN_CGS;
+#endif
+}
+
+/* net rate of change of the specific internal energy from cooling and heating, -du/dt in code units:
+ * positive for net cooling, negative for net heating (where GetCoolingTime above returns zero).
+ * Arguments as for GetCoolingTime. */
+double GetNetCoolingRate(double u_old, double rho, double ne_guess, double *ne_eval, int target, struct particle_data *pp, struct gas_cell_data *cell)
+{
+#if defined(COOL_GRACKLE) && !defined(GALSF_EFFECTIVE_EQS)
+    double tcool = GetCoolingTime(u_old, rho, ne_guess, ne_eval, target, pp, cell); /* the Grackle interface gives only the cooling time */
+    return (tcool != 0) ? u_old / tcool : 0;
+#else
+    rho *= UNIT_DENSITY_IN_CGS;	/* convert to physical cgs units */
+    double u_cgs = u_old * UNIT_SPECEGY_IN_CGS;
+    double nHcgs = HYDROGEN_MASSFRAC * rho / PROTONMASS_CGS;	/* hydrogen number dens in cgs units */
+    double LambdaNet = CoolingRateFromU(u_cgs, rho, ne_guess, ne_eval, target, pp, cell); /* (heating - cooling) / nH^2, cgs */
+    return -(nHcgs * nHcgs / rho) * LambdaNet * UNIT_TIME_IN_CGS / UNIT_SPECEGY_IN_CGS;
 #endif
 }
 
@@ -910,7 +938,9 @@ double convert_u_to_temp(double u, double rho, int target, double *ne, double *n
     const double tolerance = 1e-4;
     double dummy;
     int iter = 0, bisection = 0;
+    COOL_ITER_COUNT(2);
     do {
+        COOL_ITER_COUNT(3);
         u_from_temp = convert_temp_to_u(temp, rho, target, &cv, ne, nH0, nHp, nHe0, nHep, nHepp, mu, pp, cell);
 	du_old = du;
 	du = u_from_temp - u;
@@ -1098,10 +1128,27 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
     }
 #endif
 
+#ifdef COOL_LOW_TEMPERATURES
+    /* electron sources from metals/dust/CRs: all of their inputs except the iterate itself are fixed for this call,
+       so evaluate them here once rather than on every pass of the loop below */
+    double T_lin_loop = pow(10.,logT), xe_heavy_full = 0, xe_heavy_ionized = 0;
+#ifdef SIMPLE_STEADYSTATE_CHEMISTRY
+    struct simple_chem_consts chem_c;
+#endif
+    if(target >= 0)
+    {
+        xe_heavy_full = return_electron_fraction_from_heavy_ions(target, T_lin_loop, rho, 0., pp, cell);    /* branch taken for n_elec <= 0.01 */
+        xe_heavy_ionized = return_electron_fraction_from_heavy_ions(target, T_lin_loop, rho, 1., pp, cell); /* branch taken for n_elec >  0.01 */
+#ifdef SIMPLE_STEADYSTATE_CHEMISTRY
+        simple_chem_prepare(target, T_lin_loop, shieldfac, &chem_c, pp, cell);
+#endif
+    }
+#endif
+    COOL_ITER_COUNT(4);
     /* evaluate number densities iteratively (cf KWH eqns 33-38) in units of nH */
     do
     {
-        niter++;
+        niter++; COOL_ITER_COUNT(5);
         
         aHp = flow * AlphaHp[j] + fhi * AlphaHp[jp];
         aHep = flow * AlphaHep[j] + fhi * AlphaHep[jp];
@@ -1224,15 +1271,26 @@ double find_abundances_and_rates(double logT, double rho, int target, double shi
         neold = n_elec;
         n_elec = nHp + nHep + 2 * nHepp;	/* eqn (38) */
 #ifdef COOL_LOW_TEMPERATURES
-	    double temp = pow(10.,logT);
-        n_elec += return_electron_fraction_from_heavy_ions(target, temp, rho, n_elec, pp, cell);
+        if(target >= 0)
+        {
+            n_elec += (n_elec > 0.01) ? xe_heavy_ionized : xe_heavy_full;
 #ifdef SIMPLE_STEADYSTATE_CHEMISTRY
-        n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
-	    n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);        
-        n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
-	    n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
-#endif        
-#endif       
+            n_elec += chem_c.xe_alkali;
+            n_elec += return_electron_fraction_from_Cplus_hoisted(target, neold, &chem_c);
+            n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
+            n_elec += chem_c.xe_molions;
+#endif
+        } else { /* no cell: the original per-iteration calls */
+            double temp = T_lin_loop;
+            n_elec += return_electron_fraction_from_heavy_ions(target, temp, rho, n_elec, pp, cell);
+#ifdef SIMPLE_STEADYSTATE_CHEMISTRY
+            n_elec += return_electron_fraction_from_alkali(target, temp, pp, cell);
+            n_elec += return_electron_fraction_from_Cplus(target, temp, neold, shieldfac, pp, cell);
+            n_elec += return_electron_fraction_from_Oplus(target, nHp, pp, cell);
+            n_elec += return_electron_fraction_from_molecular_ions(target, temp, pp, cell);
+#endif
+        }
+#endif
 	
 	// keep track of these bounds in case we need to switch to bisection
 	if(n_elec > neold) {ne_lower = DMAX(neold, ne_lower);}
@@ -1380,6 +1438,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
         LambdaCompton = evaluate_Compton_heating_cooling_rate(target,T,nHcgs,n_elec,shieldfac, cell); /* note this can have either sign: heating or cooling */
         if(LambdaCompton > 0) {Lambda += LambdaCompton;}
 
+        double metal_table_weight = 1; /* blend weight S of the tabulated metal lines in photoionized gas, set by the nebular term below */
 #if defined(RT_CHEM_PHOTOION) && defined(METALS)   /* reads Metallicity[], which only exists under METALS */
         /* nebular (photoionized forbidden-line) cooling from O+, O++, N+, S+, Ne+ : Kim, Gong, Kim & Ostriker 2023 (ApJS 264, 10), Eq. 47.
            GIZMO's tabulated metal-line cooling below assumes collisional (CIE) ionization, which under-predicts the forbidden-line cooling of
@@ -1392,7 +1451,9 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             LambdaNeb = n_elec * nHp * (pp[target].Metallicity[0] / All.SolarAbundances[0])
                 * 3.68e-23 * exp(-DMIN(3.86/T4, 100.)) / sqrt(T4) * pow(10., log10_fneb)
                 / (1. + 0.12*pow(ne_2, 0.38 - 0.12*lnT4)); /* collisional de-excitation: multi-line, T-dependent power per Kim+23 Eq.47 (not a single critical density) */
-            LambdaNeb *= 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over T_t1=2e4..T_t2=3.5e4 K, hands off to the CIE metal tables so this isn't double-counted in the transition region */
+            double neb_weight = 1. / (1. + exp(DMIN(10.*(T - 2.75e4)/1.5e4, 60.))); /* (1-S): Kim+23 sigmoid taper (a=10) over T_t1=2e4..T_t2=3.5e4 K */
+            LambdaNeb *= neb_weight;
+            metal_table_weight = 1. - neb_weight; /* S: the tabulated metal lines below take over only as the nebular fit hands off, or both would count the same forbidden lines */
             if(LambdaNeb > 0) { Lambda += LambdaNeb; }
         }
 #endif
@@ -1411,6 +1472,7 @@ double CoolingRate(double logT,  double rho, double n_elec_guess, double *n_elec
             /* (sorry, -- dont -- multiply by nH^2 here b/c that's how everything is normalized in this function) */
             LambdaMetal *= n_elec;
             /* (modified now to correct out tabulated ne so that calculated ne can be inserted; ni not used b/c it should vary species-to-species */
+            LambdaMetal *= metal_table_weight;
 #if (GALSF_FB_FIRE_STELLAREVOLUTION > 2)
             if(logT<2) {LambdaMetal *= exp(-DMIN((2.-logT)*(2.-logT)/0.1,40.));}
             if(LambdaMetal > 0) {LambdaMetal *= ((T-T_cmb_radeff)/(T+T_cmb_radeff));}
@@ -1907,14 +1969,27 @@ static double eH0[TABLESIZE], eHe[TABLESIZE], eHep[TABLESIZE]; // upgrade from f
 static int nheattab;		/* length of table */
 
 
+/* Blank lines and lines starting with '#' are skipped; any other line must be exactly 7 numbers. Every rank reads the
+   file itself, and the checks abort the whole job (terminate -> MPI_Abort), so a bad table cannot leave ranks waiting. */
 void ReadIonizeParams(const char *fname)
 {
-    int i; FILE *fdcool;
-    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory, and that any leading comments (e.g. lines preceded by ##) are deleted from the file.\n", fname); endrun(456);}
+    int i, nrows=0, lineno=0; FILE *fdcool; char line[1024], msg[MAX_PATH_BUFFERSIZE_TOUSE], extra;
+    if(!(fdcool = fopen(fname, "r"))) {printf(" Cannot read ionization table in file `%s'. Make sure the correct TREECOOL file is placed in the code run-time directory.\n", fname); endrun(456);}
     for(i=0; i<TABLESIZE; i++) {inlogz[i]=100; gH0[i]=0; gHe[i]=0; gHep[i]=0; eH0[i]=0; eHe[i]=0; eHep[i]=0;}
-    for(i=0; i<TABLESIZE; i++) {if(fscanf(fdcool, "%g %lg %lg %lg %lg %lg %lg", &inlogz[i], &gH0[i], &gHe[i], &gHep[i], &eH0[i], &eHe[i], &eHep[i]) == EOF) {break;}}
+    while(fgets(line, sizeof(line), fdcool))
+    {
+        lineno++;
+        char *p = line + strspn(line, " \t\r\n");
+        if(*p == '\0' || *p == '#') {continue;}
+        p[strcspn(p, "\r\n")] = '\0';
+        if(nrows >= TABLESIZE-1) {snprintf(msg, sizeof(msg), "ionization table `%s' has more than %d data rows (line %d); raise TABLESIZE in cooling.cc", fname, TABLESIZE-1, lineno); terminate(msg);}
+        if(sscanf(p, "%g %lg %lg %lg %lg %lg %lg %c", &inlogz[nrows], &gH0[nrows], &gHe[nrows], &gHep[nrows], &eH0[nrows], &eHe[nrows], &eHep[nrows], &extra) != 7)
+            {snprintf(msg, sizeof(msg), "ionization table `%s' line %d is not blank, a '#' comment, or 7 numbers: \"%.200s\"", fname, lineno, p); terminate(msg);}
+        nrows++;
+    }
     fclose(fdcool);
     for(i=0, nheattab=0; i<TABLESIZE; i++) {if(gH0[i] != 0.0) {nheattab++;} else {break;}} /*  nheattab is the number of entries in the table */
+    if(nheattab <= 0) {snprintf(msg, sizeof(msg), "ionization table `%s' has no rows with a non-zero HI photoionization rate (%d data rows read), so the run would have no UV background", fname, nrows); terminate(msg);}
     if(ThisTask == 0) printf(" ..read ionization table [TREECOOL] with %d non-zero UVB entries in file `%s'. Make sure to cite the authors from which the UV background was compiled! (See user guide for the correct references).\n", nheattab, fname);
 }
 

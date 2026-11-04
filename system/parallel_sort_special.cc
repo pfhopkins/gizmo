@@ -144,6 +144,7 @@ void parallel_sort_special_P_GrNr_ID(void)
 
 
   qsort(P, NumPart, sizeof(struct particle_data), io_compare_P_GrNr_ID);
+  wakeup_list_invalidate();
 
 
   myfree(Aux);

@@ -32,3 +32,9 @@ def _ensure_ic():
 def test_turbsphere(variant):
     _ensure_ic()
     common.run_and_check(TEST_NAME, variant, aperture=APERTURE)
+
+
+@pytest.mark.parametrize("variant", common.VARIANTS)
+def test_turbsphere_snapshot_restart(variant):
+    _ensure_ic()
+    common.run_restart_and_check(TEST_NAME, variant, aperture=APERTURE)

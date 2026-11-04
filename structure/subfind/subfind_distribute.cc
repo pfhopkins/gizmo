@@ -180,6 +180,7 @@ void subfind_distribute_particles(int mode)
 	}
     }
   NumPart += nimport;
+  wakeup_list_invalidate();
 
   myfree(partBuf);
 }
@@ -377,6 +378,7 @@ void subfind_exchange(void)
     }
 
   NumPart += count_get;
+  wakeup_list_invalidate();
   if(NumPart > All.MaxPart)
     {
       printf("Task=%d NumPart=%d All.MaxPart=%d\n", ThisTask, NumPart, All.MaxPart);

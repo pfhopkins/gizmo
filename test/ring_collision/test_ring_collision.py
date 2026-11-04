@@ -68,3 +68,35 @@ def test_ring_collision(num_mpi_ranks, num_omp_threads):
     assert x_spread_f > 0.5 * x_spread0, (
         "Rings appear to have collapsed rather than bouncing"
     )
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(),))
+@pytest.mark.parametrize("num_omp_threads", (default_omp_threads(),))
+def test_ring_collision_restitution(num_mpi_ranks, num_omp_threads):
+    """By t=200 the rings have bounced apart. Their coefficient of restitution (relative centre-of-mass velocity after /
+    before) measures the energy the elastic face dissipation takes from the collision: acting on the raw velocity
+    difference, it damped every resolved gradient and the rings came apart at 0.53 of their approach speed (0.66 when
+    it acts on the jump between the reconstructed face states)."""
+    test_name = "ring_collision"
+    time_max = 200
+    build_and_run_test(test_name, num_mpi_ranks, num_omp_threads, param_overrides={"TimeMax": time_max})
+    snaps = sorted(glob.glob(f"test/{test_name}/output/snapshot_*.hdf5"))
+    assert_final_time(snaps[-1], test_name, time_max=time_max)
+
+    def ring_velocities(snap, left_ids):
+        with h5py.File(snap, "r") as F:
+            ids = F["PartType0/ParticleIDs"][:]
+            m = F["PartType0/Masses"][:]
+            v = F["PartType0/Velocities"][:, 0]
+        left = np.isin(ids, left_ids)
+        return (m[left] * v[left]).sum() / m[left].sum(), (m[~left] * v[~left]).sum() / m[~left].sum()
+
+    with h5py.File(snaps[0], "r") as F:
+        ids0 = F["PartType0/ParticleIDs"][:]
+        x0 = F["PartType0/Coordinates"][:, 0]
+    left_ids = ids0[x0 < np.median(x0)]
+    vl0, vr0 = ring_velocities(snaps[0], left_ids)
+    vl, vr = ring_velocities(snaps[-1], left_ids)
+    restitution = (vr - vl) / (vl0 - vr0)
+    print(f"restitution {restitution:.4f} (relative velocity {vr0 - vl0:+.5f} -> {vr - vl:+.5f})")
+    assert restitution > 0.6, f"restitution {restitution:.3f}"

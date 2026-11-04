@@ -1015,21 +1015,10 @@ void star_formation_parent_routine(void)
     
     
     
-#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
-    MPI_Allreduce(&num_sink_formed, &tot_sink_formed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    if( (ThisTask==0) && (tot_sink_formed > 0) )
-    {
-        printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
-        All.TotSinks += tot_sink_formed;
-    } // if(tot_sink_formed > 0)
-    if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
-#endif
-    
-    int sf_counts[3] = {stars_spawned, stars_converted, 0}; /* one reduction: spawned, converted, GHOSDT sums changed */
 #ifdef GHOSDT_G0_CR
     /* GHOSDT (Hu+21): FactorG0 = [M(type-4 stars younger than 30 Myr) / 30 Myr] / [Mgas0 / 4 Gyr] */
     static double m_young_last = 0, m_young_tot = 0; static int m_young_have = 0;
-    double m_young = 0;
+    double m_young = 0; int ghosdt_changed = 0;
     {
 #define GHOSDT_ADD_YOUNG(j) {if(P[j].Type == 4 && evaluate_time_since_t_initial_in_Gyr(P[j].StellarAge) < 0.03) {m_young += P[j].Mass;}}
         if(Stars_converted == stars_converted) { /* non-gas in the gas block = this call's conversions: same index order as a full scan */
@@ -1038,13 +1027,35 @@ void star_formation_parent_routine(void)
             for(i = N_gas; i < NumPart; i++) GHOSDT_ADD_YOUNG(i)
         } else {for(i = 0; i < NumPart; i++) GHOSDT_ADD_YOUNG(i)}
 #undef GHOSDT_ADD_YOUNG
-        sf_counts[2] = (!m_young_have || memcmp(&m_young, &m_young_last, sizeof(double)) != 0);
+        ghosdt_changed = (!m_young_have || memcmp(&m_young, &m_young_last, sizeof(double)) != 0);
     }
 #endif
-    MPI_Allreduce(MPI_IN_PLACE, sf_counts, 3, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    tot_spawned = sf_counts[0]; tot_converted = sf_counts[1];
+    int ghosdt_changed_tot = 0; (void)ghosdt_changed_tot;
+    { /* the per-step counts in one collective: integer sums, so the totals are unchanged */
+        int sf_counts[4] = {stars_spawned, stars_converted, 0, 0}, sf_counts_tot[4] = {0, 0, 0, 0}; /* last: GHOSDT sums changed */
 #ifdef GHOSDT_G0_CR
-    if(sf_counts[2]) {MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); m_young_last = m_young; m_young_have = 1;} /* unchanged local sums give the same total */
+        sf_counts[3] = ghosdt_changed;
+#endif
+#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
+        sf_counts[2] = num_sink_formed;
+#endif
+        MPI_Allreduce(sf_counts, sf_counts_tot, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+        tot_spawned = sf_counts_tot[0]; tot_converted = sf_counts_tot[1]; ghosdt_changed_tot = sf_counts_tot[3];
+#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
+        tot_sink_formed = sf_counts_tot[2];
+#endif
+    }
+#if defined(SINK_SEED_FROM_LOCALGAS) || defined(SINGLE_STAR_SINK_DYNAMICS)
+    if( (ThisTask==0) && (tot_sink_formed > 0) )
+    {
+        printf("Sink formation: %d gas particles converted into sinks\n",tot_sink_formed);
+    } // if(tot_sink_formed > 0)
+    All.TotSinks += tot_sink_formed;   /* on every rank, so every rank's copy of the total agrees */
+    if(tot_sink_formed > 0) {TreeMomentsStaleFlag = 1;} /* type change moves this cell between the type-conditioned node moments (gasmass -> sink_mass etc.); rank-uniform via the reduce above */
+#endif
+    
+#ifdef GHOSDT_G0_CR
+    if(ghosdt_changed_tot) {MPI_Allreduce(&m_young, &m_young_tot, 1, MPI_DOUBLE, MPI_SUM, MPI_COMM_WORLD); m_young_last = m_young; m_young_have = 1;} /* unchanged local sums give the same total */
     All.FactorG0 = (m_young_tot / 0.03) / (All.Mgas0 / 4.0);
     if(ThisTask == 0) {printf("GHOSDT: Time=%.17g Mgas0=%.17g M_young=%.17g FactorG0=%.17g\n", All.Time, All.Mgas0, m_young_tot, All.FactorG0);}
 #endif

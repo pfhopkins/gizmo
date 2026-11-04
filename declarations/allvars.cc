@@ -203,6 +203,7 @@ double *R2ngblist;
 
 double DomainCorner[3], DomainCenter[3], DomainLen, DomainFac;
 int *DomainStartList, *DomainEndList;
+int DomainSegmentsPerTask = MULTIPLEDOMAINS;
 
 
 

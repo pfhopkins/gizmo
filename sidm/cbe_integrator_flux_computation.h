@@ -150,6 +150,7 @@
             P[j].wakeup = -1;
             #pragma omp atomic write
             NeedToWakeupParticles_local = 1;
+            wakeup_list_note(j);
         }}
 #endif
     } // v_wt_sum > 0

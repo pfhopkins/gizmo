@@ -107,6 +107,9 @@ Q_ILIEV = 5e48  # ionizing photons/s
 SOURCE_MASS = 1.0  # Msun
 SOURCE_PARAMS = {"IonizingLuminosityPerSolarMass_cgs": "1e38", "star_Teff": "1e5"}
 U_BANDS_EV_SOURCE = (0.0, 20.0, 20.0, 20.0, 30.0)  # ionizing band empty at the start
+# RT_SOURCES left at its default, which makes every type (gas included) a radiation source type
+ALL_SOURCES = tuple(f for f in PLAIN_RT if not f.startswith("RT_SOURCES"))
+DES_NUM_NGB, MAX_NUM_NGB_DEVIATION = 32, 32 / 640  # rt_closed_box.params and its 3D default
 STARFORGE = ("SINGLE_STAR_STARFORGE_DEFAULTS", "SINGLE_STAR_FB_RAD", "COOLING", "RT_ISRF_BACKGROUND=0")
 MOLECULAR = STARFORGE + ("EOS_GAMMA_PROBE",)
 T_MOLECULAR = 300.0  # K
@@ -114,7 +117,7 @@ TOL_GAMMA_PROBE = 1e-12
 # G ~ 0: the star binds no gas, so it cannot accrete; the critical density keeps sink formation off
 STARFORGE_PARAMS = {"GravityConstantInternal": "1e-100", "CritPhysDensity": "1e30"}
 STAR_MASS = 30.0
-VARIANTS = {PLAIN_RT: "bare", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", ILIEV: "iliev", STARFORGE: "starforge",
+VARIANTS = {PLAIN_RT: "bare", ALL_SOURCES: "allsources", PLAIN_COOLING: "cooling", POINT_SOURCE: "source", ILIEV: "iliev", STARFORGE: "starforge",
             MOLECULAR: "molecular"}
 CHANNELS = ("absorbed", "donated_in", "ir_gas_share", "cooling_to_band", "injected", "kick_source")
 BANDS = ("photoelectric", "NUV", "optical-NIR", "IR")
@@ -450,3 +453,20 @@ def test_rt_closed_box(flags, n_h, star, num_mpi_ranks):
     run(flags, n_h, star, num_mpi_ranks)
     (check_molecular if is_molecular(flags) else check_starforge if is_starforge(flags) else check_source if is_source(flags)
      else check_bare)(flags, n_h, star)
+
+
+@pytest.mark.parametrize("num_mpi_ranks", (default_mpi_ranks(max_ranks=8),))
+def test_rt_closed_box_gas_kernel(num_mpi_ranks):
+    """A gas cell sizes its kernel to DesNumNgb +- MaxNumNgbDeviation whatever RT_SOURCES says: the looser tolerance and the
+    neighbour floor of 64 the density loop gives radiation sources are for the non-gas source types only"""
+    n_h = 1e3
+    run(ALL_SOURCES, n_h, False, num_mpi_ranks)
+    with h5py.File(sorted(glob(f"{output_dir(ALL_SOURCES, n_h, False)}/snapshot_*.hdf5"))[-1], "r") as F:
+        g = F["PartType0"]
+        h, rho, m = (g[k][:].astype(np.float64) for k in ("KernelMaxRadius", "Density", "Masses"))
+    n_ngb = 4 * np.pi / 3 * h**3 * rho / m
+    dev = np.abs(n_ngb - DES_NUM_NGB)
+    print(f"\ngas neighbour number: median {np.median(n_ngb):.3f}, range [{n_ngb.min():.3f}, {n_ngb.max():.3f}]; "
+          f"{(dev > 1.01 * MAX_NUM_NGB_DEVIATION).mean():.2%} of cells outside {DES_NUM_NGB} +- {MAX_NUM_NGB_DEVIATION}")
+    assert dev.max() < 1.01 * MAX_NUM_NGB_DEVIATION, \
+        f"gas kernels hold {n_ngb.min():.2f}-{n_ngb.max():.2f} neighbours, target {DES_NUM_NGB} +- {MAX_NUM_NGB_DEVIATION}"

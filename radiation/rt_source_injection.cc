@@ -139,6 +139,7 @@ int rt_sourceinjection_active_check(int i)
 void rt_source_injection_initial_operations_preloop(void);
 void rt_source_injection_initial_operations_preloop(void)
 {
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY) || (RT_SOURCES & 1)
     /* first, we do a loop over the gas particles themselves. these are trivial -- they don't need to share any information,
      they just determine their own source functions. so we don't need to do any loops. and we can zero everything before the loop below.
      The zeroing is needed whether or not gas cells are sources: continuous (non-discrete) injection adds to Rad_Je. */
@@ -153,6 +154,11 @@ void rt_source_injection_initial_operations_preloop(void)
             for(k=0;k<N_RT_FREQ_BINS;k++) if(active_check) {CellP[j].Rad_Je[k]=lum[k];}
         }
     }
+#else
+    /* Discrete injection deposits straight into Rad_E_gamma and gas cells are not sources, so nothing in this build
+       ever writes Rad_Je: it keeps the zero rt_set_simple_inits gave it (new cells are cloned from existing ones).
+       The all-cell zeroing sweep is dead work on every step, and it is O(N) under a deep timestep hierarchy. */
+#endif
 }
 
 
@@ -234,7 +240,7 @@ int rt_sourceinjection_evaluate(int target, int mode, int *exportflag, int *expo
                     double dE=0; dE = wk * local.Luminosity[k]; int kv; kv=0;
                     Vec3<double> dfluxes = {};
 
-#if !defined(RT_INJECT_PHOTONS_DISCRETELY)
+#if !defined(RT_INJECT_PHOTONS_DISCRETELY) /* the only accumulation into Rad_Je: the preloop's per-step zeroing is compiled out exactly when this is (and gas cells are not sources); add a writer under discrete injection and that #if must change too */
                     #pragma omp atomic
                     CellP[j].Rad_Je[k] += dE; // inject photons as a source term, terms like fluxes, intensities, etc, will all be calculated later
 #endif
@@ -381,12 +387,25 @@ void rt_source_injection(void)
 {
     PRINT_STATUS(" ..injecting radiation onto grid for RHD steps");
     rt_source_injection_initial_operations_preloop(); /* operations before the main loop */
+    /* Rank-uniform early-out. The generic loop below pays an Alltoall + Barrier + two Allreduces per iteration and an
+       O(MaxPart) memset even when no rank has an active source, which is the common case deep in the timestep
+       hierarchy. Every rank must take the same branch (a source's neighbours can live on other ranks), so the local
+       flag is reduced; the check is the loop's own CONDITIONFUNCTION, so the active set is unchanged. */
+    int any_source_local = 0, any_source_global = 0;
+    for(int i : ActiveParticleList) {if(rt_sourceinjection_active_check(i)) {any_source_local = 1; break;}}
+    MPI_Allreduce(&any_source_local, &any_source_global, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+    if(any_source_global)
+    {
     #include "../system/code_block_xchange_perform_ops_malloc.h" /* this calls the large block of code which contains the memory allocations for the MPI/OPENMP/Pthreads parallelization block which must appear below */
     #include "../system/code_block_xchange_perform_ops.h" /* this calls the large block of code which actually contains all the loops, MPI/OPENMP/Pthreads parallelization */
     #include "../system/code_block_xchange_perform_ops_demalloc.h" /* this de-allocates the memory for the MPI/OPENMP/Pthreads parallelization block which must appear above */
+    }
     force_raise_noted_motion_bounds(); /* kicked cells: raise the bounds above them before the next node drift */
 #ifdef RT_REINJECT_ACCRETED_PHOTONS
-    {int n_tmp; for(n_tmp=0; n_tmp<NumPart; n_tmp++) {if(P[n_tmp].Type==5) {P[n_tmp].Sink_accreted_photon_energy = 0;}}} /* reset after all injection (local+remote) is complete */
+    /* reset after all injection (local+remote) is complete. Only a sink active this step can hold a non-zero value:
+       accretion credits it through SinkTempInfo (active sinks only) and it is cleared at the end of every active
+       step, so the active list is the whole set and the all-particle sweep is not needed. */
+    for(int i : ActiveParticleList) {if(P[i].Type==5) {P[i].Sink_accreted_photon_energy = 0;}}
 #endif
     CPU_Step[CPU_RTNONFLUXOPS] += measure_time(); /* collect timings and reset clock for next timing */
 }

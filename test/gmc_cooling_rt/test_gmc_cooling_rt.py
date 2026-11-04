@@ -60,9 +60,10 @@ def _load_gmc_data(f):
         }
 
 
-# Reference from the cold neutral start (InitGasTemp 100) with the RT/microphysics fixes and the arithmetic
-# face-normal field under constrained gradients; versioned so older checkouts keep their reference.
-BENCHMARK = "gmc_cooling_rt_exact_coldstart_facemean.hdf5"
+# Reference from the cold neutral start (InitGasTemp 100) with the RT/microphysics fixes, the arithmetic
+# face-normal field under constrained gradients, and the wake-up kick for woken MFM cells (e26d1178);
+# versioned so older checkouts keep their reference.
+BENCHMARK = "gmc_cooling_rt_exact_coldstart_facemean_wakekick.hdf5"
 
 
 def _render_combined_gmc_plots(test_dir):

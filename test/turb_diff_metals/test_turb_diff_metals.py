@@ -95,6 +95,19 @@ def max_timebins(outdir):
     return best
 
 
+def pending_when_written(outdir, snapnum):
+    """Exchange still pending when snapshot snapnum was written, from the last budget line before it in the log. A
+    snapshot written at the start of a step precedes that step's drain; the end-of-run one follows it."""
+    pending = 0.0
+    with open(f"{outdir}/gizmo.out") as f:
+        for line in f:
+            if line.startswith("TURB_DIFF_METALS_BUDGET"):
+                pending = float(line.split("pending=")[1])
+            elif line.startswith(f"writing snapshot file #{snapnum}..."):
+                return pending
+    raise AssertionError(f"snapshot {snapnum} write not found in {outdir}/gizmo.out")
+
+
 def assert_conserved(MZ0, budget, outdir, min_timebins=2):
     """The checks every case shares."""
     total = budget[:, 1] + budget[:, 2]
@@ -106,8 +119,11 @@ def assert_conserved(MZ0, budget, outdir, min_timebins=2):
     # the test only means something if the cross-timebin exchange actually happened
     assert max_timebins(outdir) >= min_timebins, f"fewer than {min_timebins} timebins occupied: no cross-timebin exchange tested"
     assert np.abs(budget[:, 2]).max() > 1e-6 * RTOL_CONSERVATION * MZ0, "no exchange was ever pending: cross-timebin path not exercised"
-    MZ_final, Zmin = metal_mass(snapshots(outdir)[-1])
-    assert abs(MZ_final - MZ0) / MZ0 < RTOL_CONSERVATION, f"final synchronized snapshot: sum(M*Z) off by {abs(MZ_final - MZ0) / MZ0:.2e}"
+    final = snapshots(outdir)[-1]
+    MZ_final, Zmin = metal_mass(final)
+    pending = pending_when_written(outdir, int(final[-8:-5]))
+    assert abs(MZ_final + pending - MZ0) / MZ0 < RTOL_CONSERVATION, (
+        f"final snapshot: sum(M*Z) + pending off by {abs(MZ_final + pending - MZ0) / MZ0:.2e}")
     assert Zmin >= 0, "negative metallicity"
 
 
@@ -125,8 +141,9 @@ def test_turb_diff_metals_openmp():
 
 
 def test_turb_diff_metals_deep_hierarchy():
-    """10^4 temperature contrast: a deeper timestep hierarchy (at least 5 occupied timebins), where a timestep-mismatched exchange is worst."""
-    MZ0, budget, outdir = run_case("deep", ic_kwargs=dict(T_cold=1e3, T_hot=1e7), param_overrides={"TimeMax": 0.02})
+    """10^6 temperature contrast on a 32^3 lattice: a deeper timestep hierarchy (at least 5 occupied timebins), where a
+    timestep-mismatched exchange is worst."""
+    MZ0, budget, outdir = run_case("deep", ic_kwargs=dict(T_cold=1e2, T_hot=1e8, n_side=32), param_overrides={"TimeMax": 0.02})
     assert_conserved(MZ0, budget, outdir, min_timebins=5)
 
 
@@ -234,3 +251,13 @@ def test_turb_diff_metals_comoving_matches_physical():
     print(f"comoving/physical: cold-side gain {gain_com / gain_phys:.4f}, hot-side loss {loss_com / loss_phys:.4f}")
     for name, com, phys in [("gained by the cold side", gain_com, gain_phys), ("lost by the hot side", loss_com, loss_phys)]:
         assert abs(com / phys - 1) < 0.1, f"metal {name} in the comoving run is {com / phys:.3f}x that in the physical run"
+
+
+def test_turb_diff_metals_dynamic_fac_below_one_refused():
+    """TURB_DIFF_DYNAMIC's first gradient pass searches TurbDynamicDiffFac x the kernel radius, so a factor below 1 would
+    drop ordinary gradient neighbours: the run must refuse to start"""
+    with pytest.raises(RuntimeError):
+        run_case("dynamic_fac_below_one", extra_config_flags=("TURB_DIFF_DYNAMIC",), exact=False,
+                 param_overrides={"TurbDynamicDiffFac": "0.5", "TurbDynamicDiffSmoothing": "0.8", "TurbDynamicDiffMax": "1"})
+    out = open(f"{TEST_DIR}/test_{TEST_NAME}.out", errors="replace").read()
+    assert "TurbDynamicDiffFac must be >= 1" in out

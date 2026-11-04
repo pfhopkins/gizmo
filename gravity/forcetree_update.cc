@@ -47,7 +47,7 @@ void force_update_tree(void)
     /* Phase 1: drift all ancestor nodes to Ti_Current (serial — force_drift_node has complex read-modify-write) */
     for (int i : ActiveParticleList)
     {
-        MyFloat vmax_i = 0; for(int k = 0; k < 3; k++) {vmax_i = DMAX(vmax_i, fabs(P[i].Vel[k]));}
+        MyFloat vmax_i = particle_motion_speed_bound(i);
         int no = Father[i];
         while(no >= 0)
         {
@@ -80,7 +80,7 @@ void force_update_tree(void)
 
 void force_kick_node(int i, Vec3<MyDouble>& dp)
 {
-  int j, no; MyFloat v, vmax;
+  int j, no; MyFloat vmax;
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
     Vec3<MyDouble> rt_source_lum_dp;
     {double lum[N_RT_FREQ_BINS]; int active_check = rt_get_source_luminosity(i,-1,lum, P, CellP); rt_source_lum_dp = active_check ? dp : Vec3<MyDouble>{};}
@@ -96,9 +96,7 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 #endif
 #endif
 
-  for(j = 0, vmax = 0; j < 3; j++)
-    if((v = fabs(P[i].Vel[j])) > vmax)
-      vmax = v;
+  vmax = particle_motion_speed_bound(i);
 
   no = Father[i];
 
@@ -391,8 +389,8 @@ static std::vector<int> MotionTopPending;            /* top-level nodes raised s
 static int MotionTopGen = 1;
 static int MotionBoundTreeLive = 0;
 
-/*! Called at every tree build (live=1) and teardown (live=0): a build sets every bound afresh and
- *  renumbers the nodes, so anything pending from the old tree is void. */
+/*! Called at every tree build or restart-file tree load (live=1) and teardown (live=0): a build sets
+ *  every bound afresh and renumbers the nodes, so anything pending from the old tree is void. */
 void force_motion_bounds_reset(int tree_live)
 {
     MotionBoundTreeLive = tree_live;
@@ -423,7 +421,7 @@ static void force_raise_chain_bounds(int no, MyFloat vmax, MyFloat hmax, int lis
 void force_raise_motion_bound(int i)
 {
     if(!MotionBoundTreeLive || i < 0 || i >= All.MaxPart) {return;}
-    MyFloat vmax = 0; int k; for(k = 0; k < 3; k++) {vmax = DMAX(vmax, fabs(P[i].Vel[k]));}
+    MyFloat vmax = particle_motion_speed_bound(i);
     MyFloat hmax = (P[i].Type == 0) ? DMIN(P[i].KernelRadius, All.MaxKernelRadius) : 0;
     force_raise_chain_bounds(Father[i], vmax, hmax, 1); /* a particle inserted since the build has no node above it; the range check in there covers that */
 }
@@ -478,11 +476,31 @@ void force_flush_motion_bounds(void)
 }
 
 
+/*! Node no's kernel bound hmax grown over a drift of dt. Its members may each have been drifted several
+ *  times within that one interval, each drift capping only its own change (drift_divv_factor), so the
+ *  product of their factors can exceed one capped factor over the whole interval: the node's growth by
+ *  its largest member divergence divVmax (a maximum taken from zero, so it never shrinks the bound) is
+ *  therefore uncapped. No drift takes a kernel past MaxKernelRadius, so max(hmax, MaxKernelRadius) is
+ *  still a bound and keeps it finite. */
+static double force_node_hmax_drift(int no, double dt)
+{
+    double hmax = Extnodes[no].hmax, x = Extnodes[no].divVmax * dt;
+    if(!(hmax >= 0) || !(x >= 0))
+    {
+        printf("Task=%d node %d: kernel bound cannot be drifted (hmax=%g divVmax=%g dt=%g)\n", ThisTask, no, hmax, (double) Extnodes[no].divVmax, dt);
+        fflush(stdout); endrun(90000103);
+    }
+    if(hmax <= 0) {return hmax;}
+    double ceiling = DMAX(hmax, All.MaxKernelRadius), grown = hmax * exp(x / NUMDIMS);
+    return (grown < ceiling) ? grown : ceiling;
+}
+
+
 void force_drift_node(int no, integertime time1)
 {
   int j;
   integertime time0;
-  double dt_drift, dt_drift_hmax, fac;
+  double dt_drift, dt_widen, fac;
 
   if(time1 == Nodes[no].Ti_current)
     return;
@@ -532,11 +550,15 @@ void force_drift_node(int no, integertime time1)
       Nodes[no].u.d.bitflags &= (~(1 << BITFLAG_NODEHASBEENKICKED));
     }
 
-    dt_drift = dt_drift_hmax = get_drift_factor(Nodes[no].Ti_current, time1, no, 1);
+    dt_drift = get_drift_factor(Nodes[no].Ti_current, time1, no, 1);
+    /* The bounds widen on the undilated clock: vmax carries each member's own dilation, so the node's
+       dilated clock, right for its centre of mass, would under-grow them for a member less dilated than
+       the node. The same interval when no dilation is active. */
+    dt_widen = get_drift_factor(Nodes[no].Ti_current, time1, -1, 0);
     
 
     Nodes[no].u.d.s += Extnodes[no].vs * dt_drift;
-  Nodes[no].len += 2 * Extnodes[no].vmax * dt_drift;
+  Nodes[no].len += 2 * Extnodes[no].vmax * dt_widen;
 
 #ifdef DM_SCALARFIELD_SCREENING
     Nodes[no].s_dm += Extnodes[no].vs_dm * dt_drift;
@@ -551,7 +573,7 @@ void force_drift_node(int no, integertime time1)
     Nodes[no].rt_source_lum_s += Extnodes[no].rt_source_lum_vs * dt_drift;
 #endif
 
-    if(Extnodes[no].hmax > 0) {Extnodes[no].hmax *= exp(DMAX(-1.,DMIN(1.,Extnodes[no].divVmax * dt_drift_hmax / NUMDIMS)));}
+    Extnodes[no].hmax = force_node_hmax_drift(no, dt_widen);
     Nodes[no].Ti_current = time1;
 }
 

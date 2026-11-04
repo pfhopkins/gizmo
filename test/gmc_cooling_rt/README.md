@@ -4,7 +4,7 @@ This test initializes a $$2\times10^4 M_\odot$$ giant molecular cloud at $1M_\od
 
 This is a benchmark test. Failing this test does not necessarily imply that there is a problem, but rather indicates that something has changed that should be noted.
 
-The reference is `gmc_cooling_rt_exact_coldstart_facemean.hdf5`, fetched from the test-file mirror: cold start, RT/microphysics fixes, and the arithmetic face-normal magnetic field under constrained gradients, which moves the urad_FUV statistic by ~30% and xe by ~20%. Older checkouts use `gmc_cooling_rt_exact_coldstart.hdf5` (before the face-normal change) or `gmc_cooling_rt_exact.hdf5` (before the RT/microphysics fixes).
+The reference is `gmc_cooling_rt_exact_coldstart_facemean_wakekick.hdf5`, fetched from the test-file mirror: cold start, RT/microphysics fixes, the arithmetic face-normal magnetic field under constrained gradients, and the wake-up kick for woken MFM cells (PR #68), which moves the urad_FUV statistic by ~12-15% in the lowest-density bins and ~5% elsewhere. Older checkouts use `gmc_cooling_rt_exact_coldstart_facemean.hdf5` (before the wake-up kick), `gmc_cooling_rt_exact_coldstart.hdf5` (before the face-normal change) or `gmc_cooling_rt_exact.hdf5` (before the RT/microphysics fixes).
 
 Compile-time flags used for this setup:
 ```

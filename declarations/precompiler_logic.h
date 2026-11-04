@@ -153,6 +153,9 @@
 #if defined(GRAIN_COLLISIONS)
 #define DM_SIDM 8 /* use the SIDM module to handle scattering of otherwise-collisionless particles against each other -- set to Particle Type=3 here */
 #endif
+#if defined(PIC_MHD) && !defined(PIC_SPEEDOFLIGHT_REDUCTION)
+#define PIC_SPEEDOFLIGHT_REDUCTION (1) /* default: no reduction of the speed of light for MHD-PIC */
+#endif
 #if defined(PIC_MHD)
 #define PIC_MHD_NEW_RSOL_METHOD /* prefer new method for dealing with RSOL, should make simulations easier if done correctly */
 #ifdef GRAIN_FLUID
@@ -229,7 +232,9 @@
 #endif
 
 #if (FIRE_PHYSICS_DEFAULTS == 3)
+#if !defined(CHIMES) /* CHIMES evolves its own chemistry and does not carry the electron fraction this model reads */
 #define COOL_MOLECFRAC_NONEQM
+#endif
 #define OUTPUT_MOLECULAR_FRACTION
 #define OUTPUT_COOLRATE
 #if !(defined(RT_OTVET) || defined(RT_FLUXLIMITEDDIFFUSION) || defined(RT_M1) || defined(RT_LOCALRAYGRID))
@@ -240,6 +245,9 @@
 #define ADAPTIVE_GRAVSOFT_MAX_SOFT_HARD_LIMIT (0.1/UNIT_LENGTH_IN_KPC)
 #define GALSF_SFR_IMF_SAMPLING /* use the IMF-sampling discrete number of O-star scheme, no penalty at low mass-res */
 #define FIRE_SNE_ENERGY_METAL_DEPENDENCE_EXPERIMENT (1) /* ramp the SNe rate and massive stellar feedback fraction of total mass (essentially L/M) at low metallicities, leaves no dwarf stars below [Z/H]<-7 or so ramping down to -5 */
+#if !defined(ADAPTIVE_TREEFORCE_UPDATE)
+#define ADAPTIVE_TREEFORCE_UPDATE (0.0625) /* re-walk the tree for a particle's gravity only once per this fraction of its dynamical time, extrapolating with the jerk in between */
+#endif
 #endif // defaults = 3
 
 #if defined(FIRE_MHD)
@@ -446,9 +454,19 @@
 
 /* set default options for STARFORGE module packages */
 #ifdef SINGLE_STAR_STARFORGE_DEFAULTS /* bunch of options -NOT- strictly required here, but this is a temporary convenience block */
+#if !defined(MULTIPLEDOMAINS)
+#define MULTIPLEDOMAINS 64 /* upper bound on Peano segments per rank; the count follows the particle load (constants.h) */
+#if !defined(DOMAIN_TARGET_PARTICLES_PER_SEGMENT)
+#define DOMAIN_TARGET_PARTICLES_PER_SEGMENT 8000 /* M2e4 stress case (23.8M cells) at 48 ranks: 8 segments per rank (62k particles
+                              each) left ~7x max/mean hydro compute on medium/big steps; 32 (15.5k) measured 0.83x wall, 64 (7.7k) a
+                              further 0.96x, 128 (3.9k) flat. A fixed 64 cost +30% wall on shu1977 (16k particles per rank, 8 ranks:
+                              top-tree build, domain and walk overheads), which this rule gives the floor of 8. Rule: 48 ranks -> 62,
+                              96 ranks -> 31 on M2e4. */
+#endif
+#endif
 #define INPUT_POSITIONS_IN_DOUBLE
 #define OUTPUT_POTENTIAL
-#ifndef SINGLE_STAR_AND_SSP_HYBRID_MODEL
+#if !defined(SINGLE_STAR_AND_SSP_HYBRID_MODEL) && !defined(IO_NO_GRADUAL_SNAPSHOT_RESTART) /* opt-out: restart from a snapshot at physical timesteps, no ramp */
 #define IO_GRADUAL_SNAPSHOT_RESTART
 #endif
 #ifndef IO_SINKS_ONLY_SNAPSHOT_FREQUENCY
@@ -460,7 +478,9 @@
 #endif
 #define ADAPTIVE_GRAVSOFT_FORGAS
 #define GRAVITY_ACCURATE_FEWBODY_INTEGRATION
-#define SINGLE_STAR_TIMESTEPPING 0
+#ifndef SINGLE_STAR_TIMESTEPPING
+#define SINGLE_STAR_TIMESTEPPING 0 /* a run may set 1 or 2 in Config.sh to super-timestep hard binaries */
+#endif
 #define SINGLE_STAR_ACCRETION 12
 #define SINGLE_STAR_SINK_FORMATION (0+1+2+4+8+16+32+64+2048) // 0=density threshold, 1=virial criterion, 2=convergent flow, 4=local extremum, 8=no sink in kernel, 16=not falling into sink, 32=hill (tidal) criterion, 64=Jeans criterion, 128=converging flow along all principle axes, 256=self-shielding/molecular, 512=multi-free-fall (smooth dependence on virial), 1024=numerical escape if too dense, 2048=virial is time-averaged
 #ifndef SINGLE_STAR_DIRECT_GRAVITY_RADIUS
@@ -518,7 +538,9 @@
 #endif
 #ifdef COOLING
 #define SIMPLE_STEADYSTATE_CHEMISTRY
+#if !defined(CHIMES) /* not compatible with CHIMES, which evolves its own chemistry */
 #define COOL_MOLECFRAC_NONEQM
+#endif
 #define EOS_SUBSTELLAR_ISM
 #define OUTPUT_MOLECULAR_FRACTION
 #if defined(MAGNETIC) && !defined(CONDUCTION) && !defined(VISCOSITY) // if we have cooling and magnetic fields, enable conduction + viscosity
@@ -737,7 +759,7 @@
 #endif
 
 
-#ifdef ADAPTIVE_TREEFORCE_UPDATE // instead of going into the tree every timestep, only update gravity with a frequency set by this fraction of dynamical timescale (default for gas only)
+#ifdef ADAPTIVE_TREEFORCE_UPDATE // instead of going into the tree every timestep, only update gravity with a frequency set by this fraction of dynamical timescale (every type; exemptions in needs_new_treeforce)
 #ifndef TIDAL_TIMESTEP_CRITERION
 #define TIDAL_TIMESTEP_CRITERION // need this to estimate the dynamical time
 #endif
@@ -830,7 +852,7 @@
 
 
 #if defined(COOL_MOLECFRAC)
-#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM)
+#if (COOL_MOLECFRAC == 6) && !defined(COOL_MOLECFRAC_NONEQM) && !defined(CHIMES)
 #define COOL_MOLECFRAC_NONEQM // estimate molecular fractions for thermochemistry+cooling with explicitly-evolved non-equilibirum H2 formation+destruction with clumping and self-shielding (Hopkins et al arXiv:2203.00040)
 #endif
 #endif
@@ -1352,7 +1374,7 @@
 #endif
 
 #ifdef STARFORGE_FEEDBACK_TRACERS
-#define NUM_STARFORGE_FEEDBACK_TRACERS (STARFORGE_FEEDBACK_TRACERS)
+#define NUM_STARFORGE_FEEDBACK_TRACERS ((STARFORGE_FEEDBACK_TRACERS) > 3 ? (STARFORGE_FEEDBACK_TRACERS) : 3) /* the writers fill one field per channel (0=jets, 1=winds, 2=SNe), so at least 3 */
 #else
 #define NUM_STARFORGE_FEEDBACK_TRACERS 0
 #endif
@@ -1382,6 +1404,8 @@
 #else
 #define NUM_METAL_SPECIES (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES+NUM_AGE_TRACERS+NUM_STARFORGE_FEEDBACK_TRACERS)
 #endif
+#define AGE_TRACER_OFFSET (1+NUM_LIVE_SPECIES_FOR_COOLTABLES+NUM_RPROCESS_SPECIES) /* first enrichment-age-tracer slot in Metallicity[] */
+#define STARFORGE_FEEDBACK_TRACER_OFFSET (AGE_TRACER_OFFSET+NUM_AGE_TRACERS) /* first feedback-tracer slot in Metallicity[] */
 #endif // METALS //
 
 
