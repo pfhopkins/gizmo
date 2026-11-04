@@ -461,7 +461,7 @@
 #OPENMP                         # top-level switch for explicit OpenMP implementation (can turn on here, or enable in Makefile for your machine)
 #MULTIPLEDOMAINS=16             # Multi-Domain option for the top-tree level (alters load-balancing)
 #DOMAIN_TARGET_PARTICLES_PER_SEGMENT=8000 # choose segments per rank from particles per rank at each decomposition, MULTIPLEDOMAINS = upper bound, DOMAIN_MIN_SEGMENTS_PER_TASK (default 8) = floor (default under SINGLE_STAR_STARFORGE_DEFAULTS unless MULTIPLEDOMAINS is set)
-#DOMAIN_KEEP_OWNERS            # assign domain segments preferring the rank that already holds their particles, if no less balanced than the fresh assignment (cuts the decomposition exchange; changes layout)
+#DOMAIN_KEEP_OWNERS            # assign domain segments preferring the rank that already holds their particles, if no less balanced than the fresh assignment (cuts the decomposition exchange; changes layout; default under SINGLE_STAR_STARFORGE_DEFAULTS, opt out with DOMAIN_KEEP_OWNERS_OFF)
 #TREE_REFRESH_INCREMENTAL      # moments refresh re-derives only the nodes above changed particles and sinks, and exchanges only changed top-level leaves (cost no longer grows with the total particle count; changes results slightly: untouched nodes keep their drifted moments)
 #DOMAIN_TIMEBINS=0              # Domain timebin cost weighting: 0=frequency-weighted costs, 1=full per-timebin balancing (Gadget-4 scheme). Omit for unweighted.
 ####################################################################################################
