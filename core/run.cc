@@ -633,10 +633,18 @@ void find_next_sync_point_and_drift(void)
 
   All.NumCurrentTiStep++;	/* we are now moving to the next sync point */
 
-  /* find the next kick time */
+  /* find the next kick time. One reduction of the global bin occupancy gives it, and below the active count and
+     the highest active and occupied bins: each is a min/sum/max over bins, so global counts give what separate
+     per-quantity reductions gave. */
+  long long bincount_glob[TIMEBINS];
+  {
+    long long bincount_loc[TIMEBINS];
+    for(n = 0; n < TIMEBINS; n++) {bincount_loc[n] = TimeBinCount[n];}
+    MPI_Allreduce(bincount_loc, bincount_glob, TIMEBINS, MPI_LONG_LONG, MPI_SUM, MPI_COMM_WORLD);
+  }
   for(n = 0, ti_next_kick = TIMEBASE, highest_occupied_bin = 0; n < TIMEBINS; n++)
     {
-      if(TimeBinCount[n])
+      if(bincount_glob[n])
 	{
 	  if(n > 0)
 	    {
@@ -655,7 +663,7 @@ void find_next_sync_point_and_drift(void)
 	}
     }
 
-  MPI_Allreduce(&ti_next_kick, &ti_next_kick_global, 1, MPI_TYPE_TIME, MPI_MIN, MPI_COMM_WORLD);
+  ti_next_kick_global = ti_next_kick;
 
 #ifdef SINK_TRIGGERED_FINE_OUTPUT
   if(!FineOutputActive && fine_output_sink_exists())
@@ -730,24 +738,24 @@ void find_next_sync_point_and_drift(void)
   All.TimeStep = All.Time - timeold;
 
   /* mark the bins that will be active */
-  for(n = 1, TimeBinActive[0] = 1, NumForceUpdate = TimeBinCount[0], highest_active_bin = 0; n < TIMEBINS; n++)
+  for(n = 1, TimeBinActive[0] = 1, NumForceUpdate = TimeBinCount[0], GlobNumForceUpdate = bincount_glob[0], highest_active_bin = 0; n < TIMEBINS; n++)
     {
       dt_bin = GET_INTEGERTIME_FROM_TIMEBIN(n);
       if((ti_next_kick_global % dt_bin) == 0)
 	{
 	  TimeBinActive[n] = 1;
 	  NumForceUpdate += TimeBinCount[n];
-	  if(TimeBinCount[n])
+	  GlobNumForceUpdate += bincount_glob[n];
+	  if(bincount_glob[n])
 	    highest_active_bin = n;
 	}
       else
 	TimeBinActive[n] = 0;
     }
 
-  sumup_large_ints(1, &NumForceUpdate, &GlobNumForceUpdate);
   All.NumForcesSinceLastDomainDecomp += GlobNumForceUpdate;
-  MPI_Allreduce(&highest_active_bin, &All.HighestActiveTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
-  MPI_Allreduce(&highest_occupied_bin, &All.HighestOccupiedTimeBin, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+  All.HighestActiveTimeBin = highest_active_bin;
+  All.HighestOccupiedTimeBin = highest_occupied_bin;
 
   if(GlobNumForceUpdate == All.TotNumPart)
     {
@@ -931,14 +939,20 @@ void output_log_messages(void)
   double weight, corr_weight; /* 2^(bins below the highest occupied): beyond an int after 31 bins */
   double sum, avg_CPU_TimeBin[TIMEBINS], frac_CPU_TimeBin[TIMEBINS];
 
-  sumup_large_ints(TIMEBINS, TimeBinCount, tot_count);
-  sumup_large_ints(TIMEBINS, TimeBinCountGas, tot_count_gas);
-
 #if defined(IO_SUPPRESS_TIMEBIN_STDOUT)
-    if((ThisTask == 0) && (All.HighestActiveTimeBin>=(TIMEBINS-IO_SUPPRESS_TIMEBIN_STDOUT)))
+  int print_timebins = (All.HighestActiveTimeBin>=(TIMEBINS-IO_SUPPRESS_TIMEBIN_STDOUT)); /* identical on every rank */
 #else
-    if(ThisTask == 0)
+  int print_timebins = 1;
 #endif
+  if(!print_timebins) {output_extra_log_messages(); return;} /* the bin census below only feeds rank 0's print */
+  {
+    long long cnt_loc[2*TIMEBINS], cnt_glob[2*TIMEBINS];
+    for(i = 0; i < TIMEBINS; i++) {cnt_loc[i] = TimeBinCount[i]; cnt_loc[TIMEBINS+i] = TimeBinCountGas[i];}
+    MPI_Reduce(cnt_loc, cnt_glob, 2*TIMEBINS, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);
+    if(ThisTask == 0) {for(i = 0; i < TIMEBINS; i++) {tot_count[i] = cnt_glob[i]; tot_count_gas[i] = cnt_glob[TIMEBINS+i];}}
+  }
+
+    if(ThisTask == 0)
     {
         if(All.ComovingIntegrationOn)
         {
