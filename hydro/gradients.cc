@@ -644,8 +644,14 @@ void hydro_gradient_calc(void)
 
     /* prepare to do the requisite number of sweeps over the particle distribution */
     int gradient_iteration;
+#ifdef NGB_PAIR_CACHE
+    ngb_pair_cache_begin_record(); /* the first pass records its local pair searches; later passes and hydro_force() replay them */
+#endif
     for(gradient_iteration = 0; gradient_iteration < NUMBER_OF_GRADIENT_ITERATIONS; gradient_iteration++)
     {
+#ifdef NGB_PAIR_CACHE
+        if(gradient_iteration > 0) {ngb_pair_cache_begin_replay();}
+#endif
         // need to zero things used in the iteration (anything appearing in out2particle_GasGrad_iter)
         for (int i : ActiveParticleList)
             if(P[i].Type==0)

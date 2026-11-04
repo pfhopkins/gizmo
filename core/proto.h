@@ -546,6 +546,11 @@ void set_injection_accel(void);
 
 int density_isactive(int n);
 int GasGrad_isactive(int i, struct particle_data *pp, struct gas_cell_data *cell);
+#ifdef NGB_PAIR_CACHE
+void ngb_pair_cache_begin_record(void);
+void ngb_pair_cache_begin_replay(void);
+void ngb_pair_cache_free(void);
+#endif
 
 #ifdef HYDRO_VOLUME_CORRECTIONS
 void cellcorrections_calc(void);
