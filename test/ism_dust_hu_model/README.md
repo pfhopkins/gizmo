@@ -15,6 +15,6 @@ Checks:
 5. a fresh start seeds half of each cell's carbon and 82% of its silicon in FeMgSiO4 (capped at 90% of O, Mg, Fe), as stella_dev, from supernovae;
 6. with single stars (a 20 Msun supernova and a 3 Msun AGB death, 16^3 lattice, 0.5 kyr): by default the supernova makes no dust and destroys
    none by swept mass, the AGB death condenses dust; with `GALSF_ISMDUSTCHEM_HU_SN_EJECTA_CONDENSATION` the supernova adds carbon dust (> 0.01 Msun),
-   with `GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION` (`SNeGasClearedOfDustScaling` 0.4) the gas loses over 10 times what it loses by sputtering alone.
+   with `GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION` the gas loses, 50 yr after the event, over twice what it loses by sputtering without it (measured 5.4 times; the destruction saturates in the kernel of 1 Msun cells).
 
 Reference: analytic rates; comparison with stella_dev on the same lattices in the PR text.

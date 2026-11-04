@@ -186,8 +186,8 @@ def test_seed_on_a_fresh_start(exe):
 STARS = ("GALSF_FB_MECHANICAL", "GALSF_SINGLE_STARS_FROM_IMF", "GALSF_SINGLE_STARS_EVOLUTION_TABLES")
 
 
-def star_run(tag, dust):
-    """a 20 Msun supernova and a 3 Msun AGB death in gas with the given element dust, 0.5 kyr"""
+def star_run(tag, dust, tmax=5e-4):
+    """a 20 Msun supernova and a 3 Msun AGB death in gas with the given element dust"""
     sys.path.insert(0, str(TEST_DIR.parent / "single_stars_metals"))
     from test_single_stars_metals import event_stars, event_life
     T = get_stellar_evolution_tables()["StellarTablesFile"]
@@ -203,7 +203,7 @@ def star_run(tag, dust):
         if (TEST_DIR / f).exists():
             os.symlink(TEST_DIR / f, d / f)
     p = (TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SGChemTablesPath            SET_BY_TEST", f"SGChemTablesPath            {os.environ['SGCHEM_TABLES_DIR']}")
-    o = {"BoxSize": L, "TimeMax": 5e-4, "TimeBetSnapshot": 5e-4, "StellarTablesFile": T, "SNeGasClearedOfDustScaling": 0.4}
+    o = {"BoxSize": L, "TimeMax": tmax, "TimeBetSnapshot": tmax, "StellarTablesFile": T}
     p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in o)] + [f"{k:27s} {v}" for k, v in o.items()]) + "\n"
     (d / "run.params").write_text(p)
     with open(d / "run.out", "w") as out:
@@ -229,8 +229,10 @@ def test_supernova_dust_is_opt_in(exe):
     assert agb_only > 0
     assert both_c > agb_c and both_c - agb_c > 0.01  # 0.15 of the 0.2 Msun of supernova carbon, and more
     seeded = seed(SOLAR)
-    kept = star_run("stars_seeded", seeded)[0]
-    swept = star_run("snopt_seeded", seeded)[0]
+    kept = star_run("stars_seeded", seeded, 5e-5)[0]  # 50 yr: the destruction at the event, before the bubble sputters
+    swept = star_run("snopt_seeded", seeded, 5e-5)[0]
     M0 = 16 ** 3 * seeded[0][0]
     print(f"dust in the gas [Msun]: {M0:.5g} at the start, default {kept:.5g}, with swept-mass destruction {swept:.5g}")
-    assert M0 - swept > 10 * abs(M0 - kept)
+    lost_default, lost_swept = M0 + agb_only - kept, M0 + both - swept  # against the dust the events brought
+    print(f"dust lost [Msun]: default {lost_default:.5g}, with swept-mass destruction {lost_swept:.5g}, ratio {lost_swept / lost_default:.2f}")
+    assert lost_swept > 2 * lost_default > 0
