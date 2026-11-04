@@ -29,5 +29,6 @@ metals from `InitMetallicity`, GIZMO's element pattern) built with `SGCHEM` (net
 - `test_sgchem_ledger` (build flag `OUTPUT_MASS_METAL_ENERGY_LEDGER`, G0 = 10): `ledger.txt` has one row per snapshot
   (chemistry heating and cooling energy, cumulative). The rows close the box's thermal-energy change to 1e-6 (measured
   7e-16). The file is byte-identical with 1 and 4 threads. `test_sgchem_restart` checks that the totals survive a restart.
+- `test_sgchem_ledger_negative_total`: the exact sum of `system/ledger.cc`, built alone, returns a negative total (-2.5), not NaN.
 
 Inputs: `SUNDIALS_DIR`; the chemistry tables from `SGCHEM_TABLES_DIR`, else installed by `scripts/get_stella_tables.sh`.
