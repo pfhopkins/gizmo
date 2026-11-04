@@ -118,6 +118,9 @@ static double sgchem_cell_step(int i, double u_code, double dt_code)
     in.abundD = All.SGChemDeuteriumAbundance;
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     struct ChemFUVField fuv = sgchem_treecol_field(i, in.fac_uv); /* the stars' field from the gravity walk */
+#ifdef RT_TREECOL_STELLAR_PIXELS_PREATTENUATED
+    for(int k = 0; k < NPIX; k++) {in.pix_att[k] = (TREECOL_PIXELS_EGY_UV(CellP[i], k) < 0.324e-2 * All.SGChemBackgroundG0 / NPIX * HABING_EGY_DENSITY_6_13P6EV_CGS) ? 1. : 0.;}
+#endif
 #else
     struct ChemFUVField fuv = sgchem_uniform_field(All.SGChemG0, All.SGChemG0_LW, All.SGChemBackgroundG0); /* uniform, unattenuated */
 #endif

@@ -29,6 +29,9 @@
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
 #define GALSF_RESOLVEDISM_G0_VARIABLE   /* per-pixel FUV weights */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS
+#define RT_TREECOL_STELLAR_PIXELS_PREATTENUATED /* the walk attenuated the stars' pixels; floor pixels keep the column */
+#endif
 #endif
 
 #ifdef TEST_SGCHEM_ONEZONE_WITH_12_PIXEL_COLUMNS

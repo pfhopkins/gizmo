@@ -137,6 +137,9 @@ struct treecol_pixels_sums_t {
     double radp[4];                                        /* sigma-weighted flux: vector over pixel centres, scalar */
 #endif
 #endif
+#ifdef TREECOL_SHELLS_N
+    float sh[TREECOL_SHELLS_NFIELD][TREECOL_SHELLS_N];     /* per (pixel, shell): band L/r^2 [code units], dust column */
+#endif
 };
 
 KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
@@ -148,6 +151,9 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_zero(treecol_pixels_sums_t &a)
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
     for(int k = 0; k < 4; k++) {a.radp[k] = 0;}
 #endif
+#endif
+#ifdef TREECOL_SHELLS_N
+    for(int f = 0; f < TREECOL_SHELLS_NFIELD; f++) {for(int k = 0; k < TREECOL_SHELLS_N; k++) {a.sh[f][k] = 0;}}
 #endif
 }
 
@@ -162,7 +168,20 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_add(treecol_pixels_sums_t &a, const t
     for(int k = 0; k < 4; k++) {a.radp[k] += b.radp[k];}
 #endif
 #endif
+#ifdef TREECOL_SHELLS_N
+    for(int f = 0; f < TREECOL_SHELLS_NFIELD; f++) {for(int k = 0; k < TREECOL_SHELLS_N; k++) {a.sh[f][k] += b.sh[f][k];}}
+#endif
 }
+
+#ifdef TREECOL_SHELLS_N
+/* log-radial shell of r2: TREECOL_SHELLS_NSHELL shells over 3 dex below TreeColShieldingLength, clamped at both ends */
+KOKKOS_INLINE_FUNCTION int treecol_shell_of(double r2)
+{
+    const double sl = All.TreeColShieldingLength / All.cf_atime;
+    const int s = TREECOL_SHELLS_NSHELL - 1 + (int) floor(0.5 * log10(r2 / (sl * sl)) * (TREECOL_SHELLS_NSHELL / 3.0));
+    return (s < 0) ? 0 : ((s >= TREECOL_SHELLS_NSHELL) ? TREECOL_SHELLS_NSHELL - 1 : s);
+}
+#endif
 
 /* one accepted source (leaf or node) for a gas target: column in the pixel of its mass centre dr, inside
    TreeColShieldingLength (0 = no limit), unsoftened; band fluxes L/r_L^2 in the pixel of the light
@@ -177,16 +196,26 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_accumulate(treecol_pixels_sums_t &a, 
     {
         const double w = 1.0 / ((4.0 * M_PI / TREECOL_PIXELS_N) * r * r); /* unsoftened, as stella_dev */
         for(int s = 0; s < TREECOL_PIXELS_NSPECIES; s++) {a.col[s][ip] += w * species[s];}
+#ifdef TREECOL_SHELLS_N
+        a.sh[TREECOL_SHELL_DUST][ip * TREECOL_SHELLS_NSHELL + treecol_shell_of(r * r)] += w * species[TREECOL_PIXELS_DUST];
+#endif
     }
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     const double l_pe = lum[RT_FREQ_BIN_PHOTOELECTRIC], l_68 = lum[RT_FREQ_BIN_GENERIC_USER_FREQ], l_lw = lum[RT_FREQ_BIN_LYMAN_WERNER];
     const double l_nuv = lum[RT_FREQ_BIN_NUV], l_opt = lum[RT_FREQ_BIN_OPTICAL_NIR];
     if(l_pe + l_68 > 0 || l_lw > 0 || l_nuv > 0 || l_opt > 0)
     {
-        const double f = UNIT_LUM_IN_CGS / fmax(d_lum.norm_sq(), r_floor * r_floor);
+        const double r2_l = fmax(d_lum.norm_sq(), r_floor * r_floor), f = UNIT_LUM_IN_CGS / r2_l;
         const int il = (d_lum[0] == dr[0] && d_lum[1] == dr[1] && d_lum[2] == dr[2]) ? ip : treecol_hpx_pixel(d_lum);
+#ifdef TREECOL_SHELLS_N
+        const int is = il * TREECOL_SHELLS_NSHELL + treecol_shell_of(r2_l);
+        a.sh[TREECOL_SHELL_UV][is] += (l_pe + l_68) / r2_l; a.sh[TREECOL_SHELL_LW][is] += l_lw / r2_l;
+        a.sh[TREECOL_SHELL_NUV][is] += l_nuv / r2_l; a.sh[TREECOL_SHELL_OPT][is] += l_opt / r2_l;
+        a.f68 += l_68 * f;
+#else
         a.uv[il] += (l_pe + l_68) * f; a.lw[il] += l_lw * f;
         a.nuv += l_nuv * f; a.opt += l_opt * f; a.f68 += l_68 * f;
+#endif
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
         const double fw = treecol_radp_sigma_lum(lum) / fmax(d_lum.norm_sq(), r_floor * r_floor);
         const Vec3<double> nh = treecol_radp_pixel_centre(il);
@@ -223,6 +252,33 @@ KOKKOS_INLINE_FUNCTION double treecol_pixel_load(TREECOL_PIXEL_STORAGE_T v, doub
 #define TREECOL_PIXELS_COLUMN(c, s, k) treecol_pixel_load((c).TreeColColumn[s][k], UNIT_SURFDEN_IN_CGS, TREECOL_PIXELS_LOG16_MIN_COLUMN) /* [code] */
 #define TREECOL_PIXELS_EGY_UV(c, k) treecol_pixel_load((c).TreeColEgyUV[k], 1.0, TREECOL_PIXELS_LOG16_MIN_EGY) /* [erg/cm^3] */
 
+#ifdef TREECOL_SHELLS_N
+/* each pixel outward: shell sources behind the dust of the interior shells plus half their own; sigma per H at the solar
+   dust-to-gas ratio: 2.5 A_V (chemistry df25) for 6-13.6 eV, 2, 1.3, 0.5e-21 cm^2 for LW, NUV, optical. Fluxes [erg/s / code length^2] */
+#define TREECOL_SHELLS_SIGMA_UV (2.5 * 5.348e-22)
+#define TREECOL_SHELLS_SIGMA_LW 2.0e-21
+KOKKOS_INLINE_FUNCTION void treecol_shells_sweep(const treecol_pixels_sums_t &a, double *uv, double *lw, double &nuv, double &opt)
+{
+    const double to_nh = UNIT_SURFDEN_IN_CGS * All.cf_a2inv * HYDROGEN_MASSFRAC / PROTONMASS_CGS;
+    nuv = opt = 0;
+    for(int p = 0; p < TREECOL_PIXELS_N; p++)
+    {
+        double tau_uv = 0, tau_d = 0; uv[p] = lw[p] = 0;
+        for(int s = 0; s < TREECOL_SHELLS_NSHELL; s++)
+        {
+            const int k = p * TREECOL_SHELLS_NSHELL + s;
+            const double nh = a.sh[TREECOL_SHELL_DUST][k] * to_nh, dtau_uv = TREECOL_SHELLS_SIGMA_UV * nh, dtau_d = TREECOL_SHELLS_SIGMA_LW * nh;
+            const double t_d = tau_d + 0.5 * dtau_d;
+            uv[p] += a.sh[TREECOL_SHELL_UV][k] * UNIT_LUM_IN_CGS * exp(-(tau_uv + 0.5 * dtau_uv));
+            lw[p] += a.sh[TREECOL_SHELL_LW][k] * UNIT_LUM_IN_CGS * exp(-t_d);
+            nuv += a.sh[TREECOL_SHELL_NUV][k] * UNIT_LUM_IN_CGS * exp(-t_d * (1.3 / 2.0));
+            opt += a.sh[TREECOL_SHELL_OPT][k] * UNIT_LUM_IN_CGS * exp(-t_d * (0.5 / 2.0));
+            tau_uv += dtau_uv; tau_d += dtau_d;
+        }
+    }
+}
+#endif
+
 /* walk end: write a gas cell's columns and band energy densities [erg/cm^3]; Lyman-Werner floored per pixel at
    0.1 x the 6-13.6 eV background floor 0.324e-2 SGChemBackgroundG0 / N (stella_dev), then summed */
 KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, const treecol_pixels_sums_t &a)
@@ -231,9 +287,15 @@ KOKKOS_INLINE_FUNCTION void treecol_pixels_write_cell(struct gas_cell_data &c, c
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_STELLAR_BAND_FLUXES
     const double u = All.cf_a2inv / (4.0 * M_PI * C_LIGHT_CGS * UNIT_LENGTH_IN_CGS * UNIT_LENGTH_IN_CGS); /* flux [erg/s / code length^2] to energy density */
     const double lw_floor = 0.1 * 0.324e-2 * All.SGChemBackgroundG0 / TREECOL_PIXELS_N * HABING_EGY_DENSITY_6_13P6EV_CGS;
+#ifdef TREECOL_SHELLS_N
+    double a_uv[TREECOL_PIXELS_N], a_lw[TREECOL_PIXELS_N], a_nuv, a_opt;
+    treecol_shells_sweep(a, a_uv, a_lw, a_nuv, a_opt);
+#else
+    const double *a_uv = a.uv, *a_lw = a.lw, a_nuv = a.nuv, a_opt = a.opt;
+#endif
     double lw = 0;
-    for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColEgyUV[k] = treecol_pixel_store(a.uv[k] * u, 1.0, TREECOL_PIXELS_LOG16_MIN_EGY); lw += fmax(a.lw[k] * u, lw_floor);}
-    c.TreeColEgyLW = (float) lw; c.TreeColEgyNUV = (float) (a.nuv * u); c.TreeColEgyOPT = (float) (a.opt * u); c.TreeColEgy68 = (float) (a.f68 * u);
+    for(int k = 0; k < TREECOL_PIXELS_N; k++) {c.TreeColEgyUV[k] = treecol_pixel_store(a_uv[k] * u, 1.0, TREECOL_PIXELS_LOG16_MIN_EGY); lw += fmax(a_lw[k] * u, lw_floor);}
+    c.TreeColEgyLW = (float) lw; c.TreeColEgyNUV = (float) (a_nuv * u); c.TreeColEgyOPT = (float) (a_opt * u); c.TreeColEgy68 = (float) (a.f68 * u);
 #ifdef GALSF_FB_RADPRESSURE_ABSORPTION_FROM_TREECOL
     for(int k = 0; k < 4; k++) {c.TreeColRadpFlux[k] = (float) a.radp[k];}
 #endif
