@@ -22,6 +22,8 @@ stops) and checks them against exact values.
     dust-attenuated per (pixel, shell) in the walk: 6-13.6, 11.2-13.6, 3.444-6 and 0.4133-3.444 eV against a direct
     sweep over all particles (tree-error bars, 1 and 2 ranks).
   test_radial_shells_without_dust: without dust the sweep returns the unattenuated pixels (3e-6).
+  test_ionising_sources_and_absorbers: ionising energy and photon rate as the tables in two tree source bins, root node
+    sums, H-ionising absorber masses per cell and in the root node.
   test_radial_shells_photon_cap: thick cells: implied absorption brought back to the stars' emission (2e-3).
   test_radial_shells_host_equals_device: device walk repeats bitwise and equals the host walk to float sums (1e-5).
   test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
@@ -358,6 +360,38 @@ def test_radial_shells_without_dust(tables):
                              extra=FLOAT_STORAGE + ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
     assert plain[:, 40:52].max() > 0
     np.testing.assert_allclose(shells[:, 40:55], plain[:, 40:55], rtol=3e-6, atol=1e-30)
+
+
+SHELLS = ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",)
+ION = SHELLS + ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION=2",)
+
+
+def test_ionising_sources_and_absorbers(tables):
+    """stars carry the table's ionising energy and photon rate in two tree source bins, the root node their sums and the
+    H-ionising absorbers of all cells (H atoms + 1.34 per H2); the pixel columns keep their three species"""
+    tab = Tables(tables["StellarTablesFile"])
+    L = 20.0
+    pos, z, ab = gas_with_species(12, L)
+    rng = np.random.default_rng(13)
+    stars = []
+    for M, f in PIX_STARS:
+        lM, lZ = np.log10(M), np.log10(0.0142)
+        stars.append((M, tab._i2(tab.t_pms, lM, lZ) + f * tab._i2(tab.life, lM, lZ), rng.uniform(0.15, 0.85, 3) * L))
+    out = run(build("ion", ("GALSF_RESOLVEDISM_TREECOL_PIXELS=12",) + ION), "ion", tables, L, pos, stars, z_gas=z, tracabund=ab,
+              overrides={"TreeColShieldingLength": SHIELD})
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    assert len(bins) == 7
+    rows = load(out, "stars"); rows = rows[np.argsort(rows[:, 0])]
+    want = np.array([tab.ionising(M, 0.0142, age) for M, age, _ in stars])
+    EV = 1.60217733e-12
+    np.testing.assert_allclose(rows[:, 2:][:, bins[5]], want[:, 0], rtol=1e-10)
+    np.testing.assert_allclose(rows[:, 2:][:, bins[6]] / (13.6 * EV), want[:, 1], rtol=1e-10)
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    np.testing.assert_allclose(root[bins[5:]], rows[:, 2:][:, bins[5:]].sum(0), rtol=1e-12)
+    cells = load(out, "cells"); cells = cells[np.argsort(cells[:, 0])]
+    hi = (1 - ab[:, 1] - 2 * ab[:, 0] + 1.34 * ab[:, 0]) * 0.7065
+    np.testing.assert_allclose(cells[:, 4], hi, rtol=1e-12)
+    np.testing.assert_allclose(np.loadtxt(out / "treecol_dump_root_species_0.txt")[3], hi.sum(), rtol=1e-12)
 
 
 def test_radial_shells_photon_cap(tables):

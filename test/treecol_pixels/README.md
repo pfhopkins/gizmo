@@ -12,6 +12,7 @@ computation: `TEST_DUMP_TREECOL_PIXELS_AND_EXIT` (test only) writes the tree rad
 | `test_chemistry_inputs` | SGChem field per cell from the tree energy densities (6-13.6 eV pixels floored at 0.324e-2 SGChemBackgroundG0/12): G0, G0_LW, band-resolved G0_dust as stella_dev (1e-6) |
 | `test_radial_shells_attenuate_bands` | `GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS`: stored stellar bands attenuated by dust per (pixel, shell) in the walk, against a direct sweep over all particles (tree-error bars; 1, 2 ranks) |
 | `test_radial_shells_without_dust` | without dust the sweep returns the unattenuated pixels (3e-6, float storage) |
+| `test_ionising_sources_and_absorbers` | ionising energy and photon rate as the tables in two tree source bins (1e-10), root sums, H-ionising absorber masses per cell and in the root (1e-12) |
 | `test_radial_shells_photon_cap` | 500 Msun cells: implied absorption over all cells = 6-13.6 eV emission (2e-3) after the cap; 2 ranks |
 | `test_radial_shells_host_equals_device` | shells: device walk repeats bitwise, equals the host walk to float sums (1e-5), 1 rank x 4 threads |
 | `test_far_field_g0` | after five steps with chemistry, one star dying in between: tree 6-13.6 eV field = direct sum over current star luminosities (median 1e-2, p99 5e-2), dead star dark; 2 ranks |

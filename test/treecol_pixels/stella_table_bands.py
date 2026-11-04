@@ -13,7 +13,7 @@ class Tables:
             self.lZ, self.lM, self.la = F["log_Z"][()], F["log_M_init"][()], F["log_age_yr"][()]
             self.t_pms, self.life = F["t_PMS"][()], F["lifetime_yr"][()]
             self.t3 = {k: F[k][()].astype(np.float32).astype(np.float64)
-                       for k in ("log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_NUV", "log_L_OPT_NIR")}
+                       for k in ("log_L_FUV_total", "log_L_FUV_M1", "log_L_LW", "log_L_NUV", "log_L_OPT_NIR", "log_L_ion_tot", "log_Q_ion")}
 
     @staticmethod
     def _idx(g, v):
@@ -50,3 +50,9 @@ class Tables:
         L = {k: 10.0 ** self._i3(a, lM, lZ, la) for k, a in self.t3.items()}
         uv = L["log_L_FUV_total"]; pe = L["log_L_FUV_M1"] if uv > 0 else 0.0
         return np.array([pe, L["log_L_LW"], uv - pe, max(0.0, L["log_L_NUV"] - (uv - pe)), L["log_L_OPT_NIR"]])
+
+    def ionising(self, M, Z, age_yr):
+        """ionising energy [erg/s] and photon rate [1/s] on the main sequence"""
+        lM, lZ = np.log10(M), np.log10(max(Z, 1e-10))
+        la = np.log10(max(age_yr - self._i2(self.t_pms, lM, lZ), 100.0))
+        return 10.0 ** self._i3(self.t3["log_L_ion_tot"], lM, lZ, la), 10.0 ** self._i3(self.t3["log_Q_ion"], lM, lZ, la)
