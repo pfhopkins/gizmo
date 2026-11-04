@@ -47,18 +47,29 @@ struct neighbor_list_t {
 
 /* Fixed-size export envelope carried from a requesting rank to a supply rank:
  * one query plus the start nodes the sender's walk reached on that peer.  A
- * (query,peer) needing more than NODELISTLENGTH nodes SPLITS into multiple
+ * (query,peer) needing more than GX_ENVELOPE_NODES nodes SPLITS into multiple
  * envelopes; the receiver walks each independently and dedups through the
- * send set, so a split costs an extra envelope and nothing else.
+ * send set, so a split costs an extra envelope and nothing else.  Three slots
+ * fill the record to 48 bytes with no padding; a query typically reaches about
+ * one top leaf per peer, so wider records mostly carry empty slots.
  *
  * Lives here rather than beside the host exchange code because both the host
  * receiver walk and the device receiver traversal consume it, and the device
  * one compiles in a different translation unit. */
+#define GX_ENVELOPE_NODES 3
 struct gx_export_envelope_t {
     double pos[3];
     double h;
     int    n_nodes;
-    int    nodes[NODELISTLENGTH];
+    int    nodes[GX_ENVELOPE_NODES];
+};
+
+/* One query of the requesting rank as the sender walk reads it: search centre and reach (h already times the
+ * spec's safety factor).  Shared for the same reason as the envelope: the device sender walk reads it too. */
+struct gx_query_t {
+    double pos[3];
+    double h;
+    int    type;       /* for caller diagnostics; predicate uses h directly */
     int    _pad;
 };
 

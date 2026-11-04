@@ -724,6 +724,12 @@ int gizmo_memory_preflight(void)
     long long per_rank = arena_per_rank + particles_per_rank + tree_per_rank;
     long long node_persistent = 0;
     MPI_Allreduce(&per_rank, &node_persistent, 1, MPI_LONG_LONG, MPI_SUM, GizmoNodeComm);
+    /* Ghost discovery's page-locked working memory, at its ceiling.  It only speeds discovery up, so it is not part
+       of what the run needs: it is kept only if the node holds it beside the reserve above (below), else the
+       discovery uses ordinary memory or the host walks. */
+    long long discovery_per_rank = (long long) gx_discovery_page_locked_ceiling_bytes();
+    long long node_discovery = 0;
+    MPI_Allreduce(&discovery_per_rank, &node_discovery, 1, MPI_LONG_LONG, MPI_SUM, GizmoNodeComm);
 
     long long mem_total_kb = 0, committed_kb = 0, swaptot_kb = 0, swapfree_kb = 0;
     (void) report_comittable_memory(&mem_total_kb, &committed_kb, &swaptot_kb, &swapfree_kb);
@@ -737,6 +743,14 @@ int gizmo_memory_preflight(void)
      * configuration this reports as fitting is not one it would immediately warn about. */
     const double safe_fraction = 0.85;
     const long long node_safe = (long long)(safe_fraction * (double) node_phys);
+    if(node_persistent + node_discovery > node_safe) {
+        gx_discovery_page_locked_refuse();
+        if(ThisTask == 0) {
+            printf("MEMORY PREFLIGHT: ghost discovery keeps no page-locked staging (%.2f GB per node would not fit beside the %.1f GB reserve).\n",
+                   node_discovery / 1.0e9, node_persistent / 1.0e9);
+            fflush(stdout);
+        }
+    }
 
     if(node_persistent > node_phys)
     {

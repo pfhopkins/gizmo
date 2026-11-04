@@ -26,36 +26,13 @@
 #include "neighbor_list.h"
 #include "device_tree_walk.h"
 #include "gpu_neighbor_list.h"
+#include "device_export_topology.h"   /* ModeDExportTopology: the export rule, shared with ghost discovery's sender walk */
 
 /* One record of the export decision: query `active` sends top-level node `node` to `peer`. */
 struct ModeDExportRecord { int peer; int active; int node; };
 /* One query's records for one peer, after the sort: that peer, the envelope the run starts in, and how many records. */
 struct ModeDQueryRun { int peer; int first_envelope; int records; };
 static_assert(sizeof(ModeDQueryRun) <= sizeof(ModeDExportRecord), "a query's runs are kept in the sort's spare record buffer");
-
-/* What the export walk does at a node and at a pseudo-particle: the host export walk's rule. */
-struct ModeDExportTopology {
-    GxTopLeafMapView map{};
-    int this_task = -1;
-
-    KOKKOS_INLINE_FUNCTION GxNodeDecision node_decision(int kn) const
-    {
-        const int leaf = (kn >= 0 && kn < map.span) ? map.leaf_of_node[kn] : -1;
-        if(leaf < 0) {return GxNodeDecision{GxNodeAction::Descend, -1};}
-        /* a top leaf another rank owns: send there; one this rank owns: nothing below it can be another rank's */
-        if(map.domain_task[leaf] != this_task) {return GxNodeDecision{GxNodeAction::RecordAndSibling, leaf};}
-        return GxNodeDecision{GxNodeAction::Sibling, leaf};
-    }
-    /* A pseudo-particle stands for another rank's top leaf the import did not replace; the host sends to it when
-       the walk reaches it. */
-    KOKKOS_INLINE_FUNCTION GxNodeDecision pseudo_decision(int leaf) const
-    {
-        if(leaf >= 0 && leaf < map.n_topleaves && map.domain_task[leaf] != this_task) {
-            return GxNodeDecision{GxNodeAction::RecordAndSibling, leaf};
-        }
-        return GxNodeDecision{GxNodeAction::Descend, -1};
-    }
-};
 
 /* A query's running count: the nodes it sends, and how many times the destination changes along the walk.  A run of
  * one destination goes out in envelopes of NODELISTLENGTH nodes, so runs + floor(nodes / NODELISTLENGTH) envelopes

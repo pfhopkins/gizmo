@@ -325,6 +325,37 @@ int gx_send_set_accept_rows(struct ghost_send_set *send_set, struct gx_candidate
                             int search_mode, mode_b_radius_policy_t radius_policy,
                             double j_radius_scale, double safety_factor);
 
+/* The receiver walk's per-leaf staged record.  `type` is negative for a particle the receiver can never send --
+ * no mass, or not in the supply pool.  `pos` is where the particle is once drifted to the current time, and
+ * `half_width` how far from there it can be along any axis (particle_motion_envelope), negative when its motion
+ * cannot be bounded.  The leaf test adds its own rounding allowance (motion_envelope_test_slack), so the walk's
+ * candidates are a superset of what the exact accept keeps.  For the exact accept on the device: `hj_accept`
+ * the accept's neighbour radius, `pool` the supply-pool slot. */
+struct gx_recv_leaf_t {
+    double pos[3];
+    double half_width;
+    double reach_j;    /* symmetric search: how far the particle reaches once drifted (radius times the walk's
+                          j-side scale, as the host leaf test computes it); unused for ONEWAY */
+    double hj_accept;
+    int    type;
+    int    pool;
+    int    _pad[2];   /* the record is 64 bytes, one cache line */
+};
+
+/* The exact accept of discovery (gx_pair_accept_wrap_and_test), compiled for the host and the device in one
+ * translation unit without contraction to fused multiply-add (mesh/gx_discovery_accept.cc), so both give the
+ * same bits.  The host accept (gx_send_set_accept_rows) decides through gx_discovery_accept_host; the device
+ * receiver, when every candidate is current, through gx_discovery_accept_rows_on_device, which replaces each
+ * candidate j of rows [r0, r1) (pairs[offsets[b] - sub_base ...]) by its pool slot if accepted, else -1. */
+int  gx_discovery_accept_host(double dx0, double dy0, double dz0, double h_q, double h_j, int search_mode);
+void gx_discovery_accept_rows_on_device(const struct gx_export_envelope_t *env, const int64_t *offsets, int r0, int r1,
+                                        int64_t sub_base, int *pairs, const struct gx_recv_leaf_t *leaves, int search_mode);
+int  gx_send_set_emit(struct ghost_send_set *s, int peer, const int *slots, int n);
+/* 1 while nothing has been emitted into the set (a receiver backend may still decline), else 0. */
+int  gx_send_set_is_empty(const struct ghost_send_set *s);
+/* 1 when the set's supply map covers exactly this rank's particles (what the accept needs to emit pool slots). */
+int  gx_send_set_map_is_current(const struct ghost_send_set *s);
+
 /* What a receiver backend did with the envelopes it was handed. */
 enum {
     GX_RECEIVER_COMPLETED = 0,   /* every accepted pair is in the send set */
@@ -368,6 +399,19 @@ int gx_device_receiver_walk(const struct gx_export_envelope_t *envelopes, long n
                             double j_radius_scale, double safety_factor,
                             const int *j_to_pool, int npart_bound,
                             int num_pool, struct ghost_send_set *send_set);
+
+/* Device traversal of this rank's queries over the top-level tree (the sender half of request-driven ghost
+   discovery): for query k, the (peer, top-leaf node) pairs the host sender walk would export to, in walk order --
+   records[2 r], records[2 r + 1] for r in [offsets[k], offsets[k + 1]).  Both arrays are page-locked host memory,
+   valid until the next call.  A superset of the host walk's exports (rounding allowance on every opening test),
+   never fewer.  Returns GX_RECEIVER_COMPLETED, GX_RECEIVER_DECLINED (nothing done; the host walk must answer:
+   geometry not walkable, no top-leaf map, allocation) or GX_RECEIVER_FAILED (malformed tree; a stop is requested).
+   Rank-local, no collectives. */
+int gx_device_sender_walk(const struct gx_query_t *queries, int n, unsigned int supply_mask, int search_mode,
+                          double walker_j_reach_scale, const int64_t **offsets_out, const int **records_out);
+/* Called at the start of each discovery: the node bands staged for a symmetric walk are kept for both walks of
+   one discovery and no longer. */
+void gx_discovery_begin_call(void);
 
 /* Describe this rank's tree to the device walk, or say why it cannot be
    described.  Returns 0 with *out filled, 1 with *out untouched and a one-shot
@@ -464,6 +508,21 @@ int   gx_mode_d_staging_unavailable(void);
 char *gx_mode_d_staging_slab(int role, int which);
 /* Released once at shutdown, before Kokkos is finalized. */
 void  gx_mode_d_staging_release(void);
+/* Ghost discovery's working buffers (gx_device_sender_walk, gx_device_receiver_walk and the envelope exchange that
+ * feeds them): one per role, on the device or page-locked on the host, kept between calls and grown on demand, never
+ * zeroed.  A per-call allocation and free of each costs driver calls that wait on the device.  Labelled ngl_discovery_*
+ * for the memory report; released at shutdown.  NULL when the memory cannot be had. */
+enum gx_discovery_buffer_role {
+    GX_DISCOVERY_SEND_QUERIES = 0, GX_DISCOVERY_SEND_QUERY_OFFSETS, GX_DISCOVERY_SEND_FLAG, GX_DISCOVERY_SEND_RECORDS,
+    GX_DISCOVERY_RECV_LEAVES, GX_DISCOVERY_RECV_ENVELOPES, GX_DISCOVERY_RECV_COUNTS, GX_DISCOVERY_RECV_OFFSETS,
+    GX_DISCOVERY_RECV_SCRATCH, GX_DISCOVERY_RECV_FLAG, GX_DISCOVERY_RECV_PAIRS, GX_DISCOVERY_NODE_BAND,
+    GX_DISCOVERY_DEVICE_ROLES,   /* the roles above are device memory, those below page-locked host memory */
+    GX_DISCOVERY_HOST_SEND_RECORDS = GX_DISCOVERY_DEVICE_ROLES, GX_DISCOVERY_HOST_RECV_LEAVES, GX_DISCOVERY_HOST_RECV_ENVELOPES,
+    GX_DISCOVERY_HOST_RECV_OFFSETS, GX_DISCOVERY_HOST_RECV_PAIRS,
+    GX_DISCOVERY_ROLES
+};
+void *gx_discovery_buffer(enum gx_discovery_buffer_role role, size_t bytes);
+void  gx_discovery_buffers_release(void);
 /* The evaluation buffers of a Mode D exchange that each carry a completion event (made with the staging): this rank's own
    queries, and each of the two received batches. */
 static constexpr int MODE_D_EVAL_EVENTS = 3;

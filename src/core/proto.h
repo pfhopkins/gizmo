@@ -586,6 +586,10 @@ extern "C" int gizmo_particle_storage_device_reads_in_place(void);   /* 1 if dev
 void gizmo_tree_mem_breakdown(double *local_mb, double *foreign_cap_mb, double *aux_mb,
                               long long *foreign_alloc_nodes, long long *foreign_used_hw_nodes,
                               long long *foreign_floor_nodes, long long *foreign_ceiling_nodes);
+/* Ghost discovery's page-locked working memory (mesh/gpu_neighbor_list.cc): the most a rank keeps, and the startup
+   ruling that it keeps none (the discovery then uses ordinary memory or the host walks). */
+size_t gx_discovery_page_locked_ceiling_bytes(void);
+void   gx_discovery_page_locked_refuse(void);
 extern "C" size_t gpu_gravity_tree_bytes_per_node(void);   /* per-node size of the GPU node mirror, counting only the always-present fields, for the startup projection (which runs before a tree exists) */
 
 void parallel_sort_special_P_GrNr_ID(void);

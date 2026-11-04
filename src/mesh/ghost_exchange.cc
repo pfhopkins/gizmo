@@ -339,6 +339,9 @@ static int gx_send_set_grow(struct ghost_send_set *s)
     return 0;
 }
 
+int gx_send_set_is_empty(const struct ghost_send_set *s) {return (s->used == 0 && s->peer < 0) ? 1 : 0;}
+int gx_send_set_map_is_current(const struct ghost_send_set *s) {return (s->j_to_pool && s->npart_bound == NumPart) ? 1 : 0;}
+
 int gx_send_set_emit(struct ghost_send_set *s, int peer, const int *slots, int n)
 {
     if(s->failed) {return 1;}
@@ -676,10 +679,11 @@ int gx_send_set_accept_rows(struct ghost_send_set *s, struct gx_candidate_row *r
             const int j = row->local_index[c];
             if(!(P[j].Mass > 0)) {continue;}
             const double hj = gx_policy_scaled_h(j, radius_policy, j_radius_scale, safety_factor);
-            if(gx_pair_accept_wrap_and_test(e->pos[0] - (double)P[j].Pos[0],
-                                            e->pos[1] - (double)P[j].Pos[1],
-                                            e->pos[2] - (double)P[j].Pos[2],
-                                            e->h, hj, search_mode)) {
+            /* the one instantiation shared with the device accept (mesh/gx_discovery_accept.cc) */
+            if(gx_discovery_accept_host(e->pos[0] - (double)P[j].Pos[0],
+                                        e->pos[1] - (double)P[j].Pos[1],
+                                        e->pos[2] - (double)P[j].Pos[2],
+                                        e->h, hj, search_mode)) {
                 row->local_index[n_accepted++] = s->j_to_pool[j];
             }
         }
@@ -957,13 +961,6 @@ static void gx_pack_and_forward_particle_exchange(const int *send_home_idx,
     myfree(round_send_count);
 }
 
-struct gx_query_t {
-    double pos[3];
-    double h;
-    int    type;       /* for caller diagnostics; predicate uses h_i directly */
-    int    _pad;
-};
-
 /* gx_export_envelope_t (the sender->supply wire record) is declared in
  * mesh/neighbor_list.h: the device receiver traversal compiles in another
  * translation unit and consumes the same records. */
@@ -1006,6 +1003,49 @@ struct gx_walk_export_result {
     int status;   /* a GX_WALK_EXPORT_* value, uniform across ranks */
 };
 
+
+
+/* The host receiver backend: the walk per received envelope (threaded, each envelope into its own candidate
+ * list), then the shared accept over the rows, peer by peer in ascending order.  Returns 1 when the set was
+ * built. */
+static int gx_host_receiver_backend(const struct ghost_exchange_spec_t *spec, const struct gx_export_envelope_t *recv,
+                                    const int *rc, const int *rd, long tot_r, unsigned int supply_mask, int search_mode,
+                                    double walker_j_reach_scale, struct ghost_send_set *send_set)
+{
+    int ok = 1;
+    std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
+#ifdef _OPENMP
+#pragma omp parallel for schedule(dynamic, 16)
+#endif
+    for(long k = 0; k < tot_r; k++) {
+        const struct gx_export_envelope_t *e = &recv[k];
+        std::vector<int> &cvk = per_recv_cands[k];
+        cvk.clear();
+        mode_b_walk_from_start_nodes(e->pos, e->h, supply_mask, search_mode,
+                                     spec->radius_policy, e->nodes, e->n_nodes,
+                                     cvk, walker_j_reach_scale);
+    }
+    /* One row per envelope that found candidates, pointing into its own candidate list, in ascending peer
+     * order.  An envelope that found nothing would add a row every pass of the accept reads and none emits
+     * from; a rank can receive many times more envelopes than it has candidates for. */
+    std::vector<struct gx_candidate_row> rows;
+    try {
+        for(int t = 0; t < NTask; t++) {
+            if(t == ThisTask) continue;
+            for(int r = 0; r < rc[t]; r++) {
+                const long k = (long)rd[t] + r;
+                std::vector<int> &cvk = per_recv_cands[k];
+                if(cvk.empty()) continue;
+                struct gx_candidate_row row = {&recv[k], t, cvk.data(), (int)cvk.size()};
+                rows.push_back(row);
+            }
+        }
+    } catch(const std::bad_alloc &) {ok = 0;}
+    if(ok && gx_send_set_accept_rows(send_set, rows.data(), (long)rows.size(), search_mode,
+                                     spec->radius_policy, spec->j_radius_scale, spec->safety_factor) != 0) {ok = 0;}
+    return ok;
+}
+
 static void gx_walk_export_discover(
     const struct ghost_exchange_spec_t *spec,
     const struct gx_query_t *local_queries, int n_local_queries,
@@ -1014,6 +1054,7 @@ static void gx_walk_export_discover(
     struct gx_walk_export_result *res)
 {
     if(res) memset(res, 0, sizeof(*res));
+    gx_discovery_begin_call();
     /* The walk searches with the SAME j-side reach the accept admits with.
      * The accept uses gx_policy_scaled_h = radius(j,policy) * j_radius_scale *
      * safety_factor, so both factors are folded here; the query side already
@@ -1035,15 +1076,89 @@ static void gx_walk_export_discover(
      * per-peer send buffers; the walker's node lazy-drift is race-safe (omp
      * critical(_modebdrift_) + release/acquire).  Merge is serial.  The routed SET is
      * unchanged (order-independent bitmap); only per-peer envelope ORDER differs (D6: FP-reorder only). */
-    const ModeBTopleafMap &map = mode_b_topleaf_map_current();
     std::vector<std::vector<struct gx_export_envelope_t>> send(NTask);
-    {
+    int sender_done_on_device = 0;
+    struct gx_export_envelope_t *dev_sendbuf = NULL;   /* the device path's envelopes, already in send order */
+    std::vector<long> dev_sc;                          /* ... and how many go to each peer */
 #ifdef _OPENMP
-        int nthr = omp_get_max_threads();
+    int nthr = omp_get_max_threads();
 #else
-        int nthr = 1;
+    int nthr = 1;
 #endif
-        if(nthr < 1) nthr = 1;
+    if(nthr < 1) nthr = 1;
+    if(n_local_queries > 0) {
+        /* The device records, per query in walk order, the (peer, node) pairs this walk would export; the
+         * envelopes are cut here as below (peers ascending, nodes in walk order, GX_ENVELOPE_NODES per
+         * envelope), straight into the send buffer. */
+        const int64_t *rec_off = NULL; const int *rec = NULL;
+        const int dev = gx_device_sender_walk(local_queries, n_local_queries, supply_mask, search_mode,
+                                              walker_j_reach_scale, &rec_off, &rec);
+        if(dev == GX_RECEIVER_COMPLETED) {
+            /* Two passes over fixed blocks of queries: count each block's envelopes per peer, place them (peer
+             * major, then block, so each peer's envelopes stay in query order), then cut them in place in the
+             * send buffer.  The same peer-by-peer loop serves both passes. */
+            const int nblk = 4 * nthr;
+            std::vector<long> blk_off((size_t)nblk * NTask, 0);
+            auto cut_block = [&](int blk, struct gx_export_envelope_t *out) {
+                const long q0 = (long)n_local_queries * blk / nblk, q1 = (long)n_local_queries * (blk + 1) / nblk;
+                long *cursor = &blk_off[(size_t)blk * NTask];
+                for(long qi = q0; qi < q1; qi++) {
+                    const int64_t r0 = rec_off[qi], r1 = rec_off[qi + 1];
+                    int last = -1;
+                    while(r1 > r0) {   /* the next peer above `last`: a query reaches few peers */
+                        int t = INT_MAX;
+                        for(int64_t r = r0; r < r1; r++) {const int p = rec[2 * r]; if(p > last && p < t) t = p;}
+                        if(t == INT_MAX) break;
+                        last = t;
+                        if(t == ThisTask || t < 0 || t >= NTask) continue;
+                        if(!out) {   /* count */
+                            long nn = 0;
+                            for(int64_t r = r0; r < r1; r++) {if(rec[2 * r] == t) nn++;}
+                            cursor[t] += (nn + GX_ENVELOPE_NODES - 1) / GX_ENVELOPE_NODES;
+                            continue;
+                        }
+                        struct gx_export_envelope_t e;
+                        e.pos[0] = local_queries[qi].pos[0];
+                        e.pos[1] = local_queries[qi].pos[1];
+                        e.pos[2] = local_queries[qi].pos[2];
+                        e.h = local_queries[qi].h;
+                        e.n_nodes = 0;
+                        for(int64_t r = r0; r < r1; r++) {
+                            if(rec[2 * r] != t) continue;
+                            e.nodes[e.n_nodes++] = rec[2 * r + 1];
+                            if(e.n_nodes == GX_ENVELOPE_NODES) {out[cursor[t]++] = e; e.n_nodes = 0;}
+                        }
+                        if(e.n_nodes > 0) {for(int k = e.n_nodes; k < GX_ENVELOPE_NODES; k++) {e.nodes[k] = -1;} out[cursor[t]++] = e;}
+                    }
+                }
+            };
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static, 1)
+#endif
+            for(int blk = 0; blk < nblk; blk++) {cut_block(blk, NULL);}
+            long total = 0;
+            dev_sc.assign((size_t)NTask, 0);
+            for(int t = 0; t < NTask; t++) {
+                for(int blk = 0; blk < nblk; blk++) {
+                    const long c = blk_off[(size_t)blk * NTask + t];
+                    blk_off[(size_t)blk * NTask + t] = total;
+                    total += c;
+                    dev_sc[(size_t)t] += c;
+                }
+            }
+            dev_sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(total > 0 ? total : 1) * sizeof(struct gx_export_envelope_t));
+            if(dev_sendbuf) {   /* else the host walk answers: nothing collective has happened yet */
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static, 1)
+#endif
+                for(int blk = 0; blk < nblk; blk++) {cut_block(blk, dev_sendbuf);}
+                sender_done_on_device = 1;
+            }
+        }
+        /* FAILED has requested a stop (malformed tree); the host walk below would meet the same tree */
+    }
+    if(!sender_done_on_device) {
+        const ModeBTopleafMap &map = mode_b_topleaf_map_current();
         std::vector<ModeBExportSink> tsink(nthr);
         for(int th = 0; th < nthr; th++) tsink[th].ensure_size(NTask);
         std::vector<std::vector<std::vector<struct gx_export_envelope_t>>> tsend(nthr);
@@ -1066,15 +1181,14 @@ static void gx_walk_export_discover(
                 if(t == ThisTask) continue;
                 long nn = (long)sink.nodes_per_peer[t].size();
                 const std::vector<int> &nl = sink.nodes_per_peer[t];
-                for(long base = 0; base < nn; base += NODELISTLENGTH) {
+                for(long base = 0; base < nn; base += GX_ENVELOPE_NODES) {
                     struct gx_export_envelope_t e;
                     e.pos[0] = local_queries[qi].pos[0];
                     e.pos[1] = local_queries[qi].pos[1];
                     e.pos[2] = local_queries[qi].pos[2];
                     e.h = local_queries[qi].h;
-                    e.n_nodes = (int)((nn - base < NODELISTLENGTH) ? (nn - base) : NODELISTLENGTH);
+                    e.n_nodes = (int)((nn - base < GX_ENVELOPE_NODES) ? (nn - base) : GX_ENVELOPE_NODES);
                     for(int k = 0; k < e.n_nodes; k++) e.nodes[k] = nl[base + k];
-                    e._pad = 0;
                     tsend[tid][t].push_back(e);
                 }
             }
@@ -1095,12 +1209,12 @@ static void gx_walk_export_discover(
         /* index-array alloc failure is per-rank; make it collective before the Alltoall. */
         int a_ok_local = 0, a_ok_all = 0;
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        free(sc); free(sd); free(rc); free(rd);
+        free(sc); free(sd); free(rc); free(rd); free(dev_sendbuf);
         if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return;
     } else {
         int a_ok_local = 1, a_ok_all = 0;
         MPI_Allreduce(&a_ok_local, &a_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
+        if(!a_ok_all) { free(sc); free(sd); free(rc); free(rd); free(dev_sendbuf); if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
     }
     /* Per-peer counts are bounded by this rank's query set, but the prefix sums and
      * totals are not: the typed Alltoallv below consumes int displacements, so a value
@@ -1112,7 +1226,7 @@ static void gx_walk_export_discover(
     long tot_s = 0, tot_r = 0;
     int env_range_ok = 1;
     for(int t = 0; t < NTask; t++) {
-        long n = (long)send[t].size();
+        long n = dev_sendbuf ? dev_sc[(size_t)t] : (long)send[t].size();
         if(n > INT_MAX) { env_range_ok = 0; n = 0; }
         sc[t] = (int)n;
     }
@@ -1133,19 +1247,26 @@ static void gx_walk_export_discover(
                        spec->caller_name ? spec->caller_name : "?");
                 fflush(stdout);
             }
-            free(sc); free(sd); free(rc); free(rd);
+            free(sc); free(sd); free(rc); free(rd); free(dev_sendbuf);
             if(res) res->status = GX_WALK_EXPORT_UNAVAILABLE;
             return;
         }
     }
-    struct gx_export_envelope_t *sendbuf = (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
-    struct gx_export_envelope_t *recv    = (struct gx_export_envelope_t *) malloc((size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t));
+    struct gx_export_envelope_t *sendbuf = dev_sendbuf ? dev_sendbuf
+        : (struct gx_export_envelope_t *) malloc((size_t)(tot_s > 0 ? tot_s : 1) * sizeof(struct gx_export_envelope_t));
+    dev_sendbuf = NULL;   /* owned by sendbuf from here */
+    /* Received into page-locked memory, a faster copy up for the device receiver walk; ordinary memory when that
+       cannot be had. */
+    const size_t recv_bytes = (size_t)(tot_r > 0 ? tot_r : 1) * sizeof(struct gx_export_envelope_t);
+    struct gx_export_envelope_t *recv = (struct gx_export_envelope_t *) gx_discovery_buffer(GX_DISCOVERY_HOST_RECV_ENVELOPES, recv_bytes);
+    const int recv_pinned = (recv != NULL);
+    if(!recv_pinned) {recv = (struct gx_export_envelope_t *) malloc(recv_bytes);}
     /* buffer alloc — collective before the Alltoallv (a NULL recv would fault the collective). */
     int buf_ok_local = (sendbuf && recv) ? 1 : 0, buf_ok_all = 0;
     MPI_Allreduce(&buf_ok_local, &buf_ok_all, 1, MPI_INT, MPI_MIN, MPI_COMM_WORLD);
-    if(!buf_ok_all) { free(sendbuf); free(recv); free(sc); free(sd); free(rc); free(rd);
+    if(!buf_ok_all) { free(sendbuf); if(!recv_pinned) {free(recv);} free(sc); free(sd); free(rc); free(rd);
                       if(res) res->status = GX_WALK_EXPORT_ALLOC_FAIL; return; }
-    for(int t = 0; t < NTask; t++)
+    for(int t = 0; t < NTask && sender_done_on_device == 0; t++)
         if(sc[t] > 0) memcpy(sendbuf + sd[t], send[t].data(), (size_t)sc[t] * sizeof(struct gx_export_envelope_t));
     gizmo_mpi_alltoallv_typed(sendbuf, sc, sd, recv, rc, rd,
                               sizeof(struct gx_export_envelope_t), MPI_COMM_WORLD);
@@ -1183,48 +1304,10 @@ static void gx_walk_export_discover(
             receiver_ok = 0;
         }
     }
-    /* Host backend.  THREADED: the WALK (dominant cost) runs per received envelope into a pre-sized
-     * per-envelope cand slot — each thread writes ONLY its own index (no shared write), walker
-     * race-safe.  The walk records what may be a neighbour once drifted; the shared accept
-     * then drifts those candidates (threaded) and accepts and emits SERIALLY (cheap), peer by
-     * peer in ascending order, which is the order the send set requires. */
     if(receiver_ok && !receiver_done_on_device) {
-        std::vector<std::vector<int>> per_recv_cands((size_t)(tot_r > 0 ? tot_r : 0));
-#ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic, 16)
-#endif
-        for(long k = 0; k < tot_r; k++) {
-            const struct gx_export_envelope_t *e = &recv[k];
-            std::vector<int> &cvk = per_recv_cands[k];
-            cvk.clear();
-            mode_b_walk_from_start_nodes(e->pos, e->h, supply_mask, search_mode,
-                                         spec->radius_policy, e->nodes, e->n_nodes,
-                                         cvk, walker_j_reach_scale);
-        }
-        /* One row per envelope that found candidates, pointing into its own candidate
-         * list, in ascending peer order.  The shared accept drifts the distinct candidates
-         * of every row together, then accepts at current positions.  An envelope that
-         * found nothing would add a row every pass of the accept reads and none emits from;
-         * a rank can receive many times more envelopes than it has candidates for. */
-        std::vector<struct gx_candidate_row> rows;
-        try {
-            for(int t = 0; t < NTask; t++) {
-                if(t == ThisTask) continue;
-                for(int r = 0; r < rc[t]; r++) {
-                    const long k = (long)rd[t] + r;
-                    std::vector<int> &cvk = per_recv_cands[k];
-                    if(cvk.empty()) continue;
-                    struct gx_candidate_row row = {&recv[k], t, cvk.data(), (int)cvk.size()};
-                    rows.push_back(row);
-                }
-            }
-        } catch(const std::bad_alloc &) {receiver_ok = 0;}
-        if(receiver_ok) {
-            if(gx_send_set_accept_rows(send_set, rows.data(), (long)rows.size(), search_mode,
-                                       spec->radius_policy, spec->j_radius_scale, spec->safety_factor) != 0) {receiver_ok = 0;}
-        }
+        receiver_ok = gx_host_receiver_backend(spec, recv, rc, rd, tot_r, supply_mask, search_mode,
+                                               walker_j_reach_scale, send_set);
     }
-    free(recv); free(rc); free(rd);
     if(receiver_ok) {
         gx_send_set_finish_peer(send_set);
         /* Every peer is finished, so every mark must be cleared again; one left set
@@ -1238,6 +1321,8 @@ static void gx_walk_export_discover(
             receiver_ok = 0;
         }
     }
+    if(!recv_pinned) {free(recv);}
+    free(rc); free(rd);
     if(!receiver_ok) {gx_send_set_abandon(send_set);}
 
     /* The send set grows as it is filled, so whether it could be built is known only

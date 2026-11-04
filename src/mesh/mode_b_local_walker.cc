@@ -168,9 +168,7 @@ static inline int sphere_aabb_overlap(const double pos[3],
  * candidates filter at the leaf); under-search is a correctness bug. */
 static constexpr double MODE_B_NODE_H_SLACK = 0.0;  /* no node-open drift slack; legacy has none (relies on force_update_hmax cadence + 0.866*len node term) */
 
-static inline double mode_b_node_symmetric_radius(int no,
-                                                  unsigned int type_mask,
-                                                  double j_reach_scale)
+double mode_b_node_symmetric_radius(int no, unsigned int type_mask, double j_reach_scale)
 {
     double rmax = 0.0;
     for(int t = 0; t < 6; t++) {
