@@ -388,6 +388,23 @@ static int managed_memory_advise(void *p, size_t nbytes, int placement, const ch
 }
 
 
+/* The placement the driver accepted for each live bulk-array buffer (P and CellP; during a capacity change the old and new
+ * buffers of each briefly coexist), keyed by its address: set when it is allocated, dropped when it is freed. */
+struct ParticleStoragePlacementRecord {const void *buffer; int placement;};
+static ParticleStoragePlacementRecord particle_storage_placements[4] = {};
+
+static void particle_storage_placement_record(const void *buffer, int placement)
+{
+    for(auto &r : particle_storage_placements) {if(r.buffer == buffer) {r.placement = placement; return;}}
+    for(auto &r : particle_storage_placements) {if(!r.buffer) {r.buffer = buffer; r.placement = placement; return;}}
+}
+
+static int particle_storage_placement_of(const void *buffer)
+{
+    for(const auto &r : particle_storage_placements) {if(buffer && r.buffer == buffer) {return r.placement;}}
+    return PARTICLE_STORAGE_PLACEMENT_NONE;   /* unknown buffer: no confirmed placement */
+}
+
 /*! Apply the placement policy to one freshly allocated buffer, before anything touches it, so
  *  that the first write already lands where the policy wants it. `particle_arena_bytes` is
  *  zero for buffers that are not one of the bulk particle record arrays, which is how
@@ -396,6 +413,7 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
 {
     if(!p || nbytes == 0 || particle_arena_bytes == 0) {return;}
     const int placement = particle_storage_placement(particle_arena_bytes);
+    particle_storage_placement_record(p, PARTICLE_STORAGE_PLACEMENT_NONE);   /* until a hint is accepted below */
     if(placement == PARTICLE_STORAGE_PLACEMENT_NONE) {return;}
     const char *where = (placement == PARTICLE_STORAGE_PLACEMENT_DEVICE) ? "device" : "host";
     const char *pref_result, *access_result;
@@ -419,6 +437,7 @@ static void particle_storage_apply_placement(void *p, size_t nbytes, size_t part
         }
         return;
     }
+    particle_storage_placement_record(p, placement);
     /* Deliberately not latched: the capacity can change while the run is going, and each
      * change reallocates and re-applies. One line per application is what shows that it did,
      * and capacity changes are rare enough to be worth a line of their own anyway. */
@@ -462,6 +481,26 @@ extern "C" int gizmo_particle_storage_needs_staged_mpi_receive(void)
 #else
     return 0;
 #endif
+}
+
+/* Whether a device kernel can read and write scattered particle records in place without moving their pages: where
+ * the host and device share coherent memory (Grace-Hopper; builds without a GPU, whose storage is host memory), or
+ * where the bulk arrays are placed device-preferred.  Host-preferred or unhinted storage on memory that is not coherent
+ * (a PCIe-attached NVIDIA GPU, an MI250X) is reached across the fabric page by page instead, so a loop that needs
+ * only a few fields of each record is cheaper staged through compact buffers.  Read from the placement the driver
+ * accepted for the current P and CellP buffers, so a Config override, the size-based default and a refused hint are all seen. */
+extern "C" int gizmo_particle_storage_device_reads_in_place(void)
+{
+#if defined(KOKKOS_ENABLE_CUDA)
+    if(cuda_managed_memory_is_host_coherent()) {return 1;}
+#elif !defined(KOKKOS_ENABLE_HIP)
+    return 1;
+#endif
+    /* Both current arrays must be confirmed device-preferred (a run without gas has no CellP); anything partial or
+       unknown counts as not, and the caller stages compactly. */
+    const int p_on_device = (particle_storage_placement_of(P) == PARTICLE_STORAGE_PLACEMENT_DEVICE);
+    const int cellp_on_device = !CellP || (particle_storage_placement_of(CellP) == PARTICLE_STORAGE_PLACEMENT_DEVICE);
+    return (p_on_device && cellp_on_device) ? 1 : 0;
 }
 
 /* Non-throwing allocation for the GPU transients, one entry point per memory space. Kokkos throws
@@ -576,7 +615,10 @@ extern "C" void gpu_particles_uvm_free(void *ptr)
     /* Paired with gpu_particles_uvm_alloc so a capacity change can allocate the replacement
        buffer before releasing the old one. Lives here, not in allocate.cc, for the same reason
        the alloc does: that TU must not include <Kokkos_Core.hpp>. */
-    if(ptr) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ptr);}
+    if(ptr) {
+        for(auto &r : particle_storage_placements) {if(r.buffer == ptr) {r.buffer = NULL; r.placement = PARTICLE_STORAGE_PLACEMENT_NONE;}}
+        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(ptr);
+    }
 }
 
 extern "C" struct particle_data *gpu_particles_arena_P(void)     {return arena_valid_ ? arena_P     : NULL;}

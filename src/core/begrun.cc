@@ -332,6 +332,7 @@ void begrun(void)
       All.GPUDriftOffloadMinCount = all.GPUDriftOffloadMinCount;
       All.GPUTreeWalkOffloadMinCount = all.GPUTreeWalkOffloadMinCount;
       All.GravityHostWalkBelowActive = all.GravityHostWalkBelowActive;
+      All.HostThreadMinCount = all.HostThreadMinCount;
       All.TreeUpdateHostBelowActive = all.TreeUpdateHostBelowActive;
       All.TreeUpdateFullSweep_ActiveFraction = all.TreeUpdateFullSweep_ActiveFraction;
       /* The rest of this block is the same kind of thing: how accurately or how often something is
@@ -1221,7 +1222,7 @@ void report_parameters_a_restart_cannot_change(const void *from_file)
  *     device drift works on them in place.  Measured on a 128-rank galaxy run at matched time, the host is ahead by ~0.3 ms
  *     per step up to ~1e3 particles in all, and the two tie from ~1e4 in all, where the busiest ranks hold ~1e3 each.  That
  *     is for a cheap equation of state; a tabulated or solid one makes the device's share grow.
- *   Tree-walk batch: a three-way choice -- fewer sources than max(64, 4*threads) run on one host core, fewer than this count
+ *   Tree-walk batch: a three-way choice -- fewer sources than the host-thread count below run on one host core, fewer than this count
  *     on the host threads, at or above it on the device.  The lower boundary is the neighbour-loop runner's own OpenMP floor,
  *     so a count at or below it leaves the threaded tier empty.  A walk is a dependent chain per source: a small batch gives
  *     the device nothing to overlap while it still pays a launch and a fence.  Device batches below this count were measured
@@ -1286,6 +1287,49 @@ int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count)
     return (count > 0 && count >= (long long) gpu_offload_resolve((int) site, nullptr)) ? 1 : 0;
 }
 
+/* The per-MPI-task counts from which a host loop runs on all OpenMP threads.  One anchor, HostThreadMinCount, sets them all;
+ * unset, it is max(64, 4 x threads): starting the threads must be repaid by a few items each, and that floor grows with the
+ * thread count.  Each kind of loop scales it by how much work one item is:
+ *   Neighbour-loop work (host walks, evaluations, writebacks): the anchor itself.
+ *   Per-particle loops: a quarter of it, since one element's update costs several times a neighbour-loop item's bookkeeping.
+ *   Bookkeeping (a few operations or a copy per item): 64 times it, since such an item repays almost none of the start.
+ * At 16 or fewer threads these give 64, 16 and 4096: the first two are the values the code used before they were collected here,
+ * the last a starting value for loops that do almost nothing per item; none is a measured crossover. */
+static const int HOST_THREAD_DEFAULT_FLOOR = 64, HOST_THREAD_DEFAULT_PER_THREAD = 4;
+struct HostThreadRule {const char *what; int times, per;};   /* the count is the anchor * times / per, rounded up */
+static constexpr HostThreadRule host_thread_rules[HOST_THREAD_NUM_SITES] =   /* in the order of enum GizmoHostThreadSite */
+{
+    {"per-particle loops",       1, 4},
+    {"neighbour-loop host work", 1, 1},
+    {"bookkeeping loops",       64, 1},
+};
+static_assert(host_thread_rules[HOST_THREAD_NUM_SITES - 1].what != nullptr, "a count of GizmoHostThreadSite has no row");
+
+int gizmo_host_thread_count(void)
+{
+#ifdef _OPENMP
+    return omp_get_max_threads();
+#else
+    return 1;
+#endif
+}
+
+static long long host_thread_resolve(int site, int nthreads)
+{
+    const long long default_anchor = (HOST_THREAD_DEFAULT_PER_THREAD * (long long) nthreads > HOST_THREAD_DEFAULT_FLOOR) ?
+                                     HOST_THREAD_DEFAULT_PER_THREAD * (long long) nthreads : HOST_THREAD_DEFAULT_FLOOR;
+    const long long anchor = (All.HostThreadMinCount >= 0) ? All.HostThreadMinCount : default_anchor;
+    const long long per = host_thread_rules[site].per;
+    return (anchor * host_thread_rules[site].times + per - 1) / per;   /* rounded up, so only an anchor of 0 threads every loop that has work */
+}
+
+int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count)
+{
+    const int nthreads = gizmo_host_thread_count();
+    if(nthreads <= 1 || count <= 0) {return 0;}
+    return (count >= host_thread_resolve((int) site, nthreads)) ? 1 : 0;
+}
+
 void gizmo_gpu_offload_report(void)
 {
     if(ThisTask != 0) {return;}
@@ -1308,6 +1352,18 @@ void gizmo_gpu_offload_report(void)
     }
     printf("   %-46s %10d   (TreeUpdateHostBelowActive, independent of the anchors; below it the dynamic tree update runs on the host)\n",
            "gravity tree update", All.TreeUpdateHostBelowActive);
+    const int nthreads = gizmo_host_thread_count();
+    printf("Host loops run on all %d OpenMP threads at or above these counts per MPI task%s:\n", nthreads, (nthreads > 1) ? "" : " (one thread: never)");
+    for(int site = 0; site < HOST_THREAD_NUM_SITES; site++)
+    {
+        const HostThreadRule &rule = host_thread_rules[site];
+        char ratio[32] = "";
+        if(rule.times != 1 && rule.per != 1) {snprintf(ratio, sizeof(ratio), " x %d / %d", rule.times, rule.per);}
+        else if(rule.per != 1) {snprintf(ratio, sizeof(ratio), " / %d", rule.per);}
+        else if(rule.times != 1) {snprintf(ratio, sizeof(ratio), " x %d", rule.times);}
+        printf("   %-46s %10lld   (from %s%s)\n", rule.what, host_thread_resolve(site, nthreads),
+               (All.HostThreadMinCount >= 0) ? "HostThreadMinCount" : "default HostThreadMinCount = max(64, 4 x threads)", ratio);
+    }
     fflush(stdout);
 }
 
@@ -1975,6 +2031,10 @@ void read_parameter_file(char *fname)
 
         strcpy(tag[nt], "GravityHostWalkBelowActive");
         addr[nt] = &All.GravityHostWalkBelowActive;
+        id[nt++] = INT;
+
+        strcpy(tag[nt], "HostThreadMinCount");
+        addr[nt] = &All.HostThreadMinCount;
         id[nt++] = INT;
 
         strcpy(tag[nt], "TreeUpdateHostBelowActive");
@@ -3024,7 +3084,8 @@ void read_parameter_file(char *fname)
                 if(strcmp("NeighborLoopModeDThresholdSum",tag[i])==0) {*((int *)addr[i])=-1; continue;} /* unset -> 0: Mode D wherever Mode B is not chosen */
                 if(strcmp("NeighborLoopModeDThresholdMax",tag[i])==0) {*((int *)addr[i])=-1; continue;}
                 if(strcmp("GPUElementOffloadMinCount",tag[i])==0 || strcmp("GPUTreeOffloadMinCount",tag[i])==0 || strcmp("GPUParticleLoopOffloadMinCount",tag[i])==0 ||
-                   strcmp("GPUDriftOffloadMinCount",tag[i])==0 || strcmp("GPUTreeWalkOffloadMinCount",tag[i])==0 || strcmp("GravityHostWalkBelowActive",tag[i])==0)
+                   strcmp("GPUDriftOffloadMinCount",tag[i])==0 || strcmp("GPUTreeWalkOffloadMinCount",tag[i])==0 || strcmp("GravityHostWalkBelowActive",tag[i])==0 ||
+                   strcmp("HostThreadMinCount",tag[i])==0)
                     {*((int *)addr[i])=-1; continue;} /* unset -> the count the anchor gives it; the startup report lists every resolved count */
                 if(strcmp("TreeUpdateFullSweep_ActiveFraction",tag[i])==0) {*((double *)addr[i])=2; printf("Tag %s (%s) not set in parameter file: defaulting to %g -- the device tree update drifts every node of the tree unless the rank-local fraction of elements it updates is below this, in which case it brings current only the nodes the update touches. \n",tag[i],alternate_tag[i],All.TreeUpdateFullSweep_ActiveFraction); continue;}
                 if(strcmp("TreeUpdateHostBelowActive",tag[i])==0) {*((int *)addr[i])=1000; printf("Tag %s (%s) not set in parameter file: defaulting to run the dynamic tree update on the host below %d RANK-LOCAL elements due a force update per step (0 would disable this and use the device path whenever it is allowed). \n",tag[i],alternate_tag[i],All.TreeUpdateHostBelowActive); continue;}
@@ -3465,6 +3526,10 @@ void read_parameter_file(char *fname)
        All.GPUDriftOffloadMinCount < -1 || All.GPUTreeWalkOffloadMinCount < -1 || All.GravityHostWalkBelowActive < -1)
     {
         if(ThisTask==0) {printf("GPUElementOffloadMinCount, GPUTreeOffloadMinCount, GPUParticleLoopOffloadMinCount, GPUDriftOffloadMinCount, GPUTreeWalkOffloadMinCount and GravityHostWalkBelowActive must be >= -1 (-1 = unset, 0 = the device whenever there is any work, positive = the rank-local count from which the work moves to the device)\n");} endrun(1);
+    }
+    if(All.HostThreadMinCount < -1)
+    {
+        if(ThisTask==0) {printf("HostThreadMinCount must be >= -1 (-1 = unset, 0 = host loops threaded whenever there is any work, positive = the rank-local count from which they run on all OpenMP threads)\n");} endrun(1);
     }
     if(All.TreeUpdateFullSweep_ActiveFraction < 0)
     {

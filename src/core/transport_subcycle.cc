@@ -270,11 +270,11 @@ void transport_subcycle_kick(void)
      * CosmicRay_Update_DriftKick) already have OMP exposure via
      * do_kick_for_extra_physics (core/kicks.cc), and the auxiliary
      * per-cell calls here (rt_eddington_update_calculation, rt_kappa)
-     * read/write only per-i state. Guard by n_act >= 16 to avoid OMP
-     * overhead on tiny active sets (matches sink_properties_loop, F2). */
+     * read/write only per-i state. Threaded only from the shared host-thread
+     * count, so tiny active sets do not pay to start the threads. */
     const int n_act = (int)ActiveParticleList.size();
 #ifdef _OPENMP
-#pragma omp parallel for schedule(dynamic) if(n_act >= 16)
+#pragma omp parallel for schedule(dynamic) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, n_act))
 #endif
     for(int _a = 0; _a < n_act; _a++) {
         int idx = ActiveParticleList[_a];

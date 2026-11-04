@@ -222,7 +222,7 @@ void gizmo_hydro_corridor_begin(void)
      * ghost safety factor); each consumer is checked against it. */
     g_corridor_query_radii.resize((size_t)gizmo_sym_num_active);
 #ifdef _OPENMP
-#pragma omp parallel for schedule(static) if(gizmo_sym_num_active >= 16)
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_PARTICLE_LOOP, gizmo_sym_num_active))
 #endif
     for(int aa = 0; aa < gizmo_sym_num_active; aa++) {
         g_corridor_query_radii[aa] = gsl_safety * (double)P[gizmo_sym_active_indices[aa]].KernelRadius;

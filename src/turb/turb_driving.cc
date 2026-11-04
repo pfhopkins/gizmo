@@ -7,6 +7,7 @@
 #include <math.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <vector>
 #include "../declarations/gizmo_rng.h"
 #include <Kokkos_Core.hpp>
 
@@ -17,6 +18,11 @@
 #include "../declarations/gpu_dispatch_templates.h"
 #include "../core/proto.h"
 #include "../system/gpu_particles_arena.h"
+#include "../mesh/ghost_writeback.h"
+
+/* The device copy of the driving amplitudes and phases (see turb_mode_lattice_on_device): stale whenever the phases change. */
+static double *turb_modes_dev = NULL;
+static int turb_modes_dev_current = 0;   /* 0 once the phases change; the next device call copies the table up */
 
 /* This file contains the routines for driven turbulence/stirring; use for things
  like idealized turbulence tests, large-eddy simulations, and the like */
@@ -264,6 +270,7 @@ double st_turbdrive_get_gaussian_random_variable(void)
 /* routine to calculate the projected phases/acceleration field variables, using the fourier-space solenoidal/compressible projection */
 void st_turbdrive_calc_phases(void)
 {
+    turb_modes_dev_current = 0;   /* the device copy of the mode table is re-copied on its next use */
     int i,j;
     for(i = 0; i < StNModes;i++)
     {
@@ -304,7 +311,8 @@ void set_turb_ampl(void)
         {
             int i; double e_diss_sum=0, e_drive_sum=0, glob_diss_sum=0, glob_drive_sum=0;
             PRINT_STATUS(" ..updating fields tracked for following injected energy and dissipation");
-            for(i=0; i < NumPart; i++)
+            const int num_local = ghost_get_num_local(); /* this can run while imported ghosts are live past the local cells: they copy their owners' accumulators */
+            for(i=0; i < num_local; i++)
             {
                 if(P[i].Type == 0)
                 {
@@ -337,41 +345,218 @@ void set_turb_ampl(void)
 }
 
 
-/* Per-particle turbulent acceleration kernel — device-callable.
- * Evaluates the Fourier-mode driving field at particle position.
- * Mode arrays (mode/aka/akb/ampl) are passed as arguments since the
- * host-side global pointers (StMode etc.) are not device-accessible. */
-KOKKOS_FUNCTION
-void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell,
-                                  const double *mode, const double *aka, const double *akb,
-                                  const double *ampl, int nmodes, double fac_sol)
+/* The driving modes as the field evaluation reads them.  Every wavevector is 2 pi (ix/Lx, iy/Ly, iz/Lz) for integers ix, iy, iz,
+ * so exp(i k.x) is the product of one complex factor per axis, each a power of exp(2 pi i x/L).  The lattice of integer triples
+ * spanned by the modes is walked in order with those factors carried as running products, so the sum needs six sines and
+ * cosines per position instead of two per mode, and no storage per position.  start/mode list, lattice point by lattice point
+ * (x slowest), the modes sitting there: more than one mode can share a point (the generator emits sign variants that
+ * coincide when an index is zero), and each keeps its own amplitude and phases.  The walk visits every point of the box the
+ * modes span, so where that box holds many more points than there are modes (a thin shell of large wavenumbers) the direct
+ * sum over the modes is used instead, chosen once for the run and the same on every route.  The pointers are host or device
+ * memory to match the side that evaluates. */
+struct TurbModeLattice
 {
-    if(pp[i].Type != 0) return;
-    double fx = 0, fy = 0, fz = 0;
-    for(int m = 0; m < nmodes; m++)
-    {
-        double kdotx = mode[3*m+0]*pp[i].Pos[0] + mode[3*m+1]*pp[i].Pos[1] + mode[3*m+2]*pp[i].Pos[2];
-        double a = ampl[m], realt = cos(kdotx), imagt = sin(kdotx);
-        fx += a*(aka[3*m+0]*realt - akb[3*m+0]*imagt);
-        fy += a*(aka[3*m+1]*realt - akb[3*m+1]*imagt);
-        fz += a*(aka[3*m+2]*realt - akb[3*m+2]*imagt);
-    }
-    fx *= fac_sol; fy *= fac_sol; fz *= fac_sol;
+    int use_lattice;            /* 1: walk the lattice; 0: the direct sum over the modes */
+    int nmodes;
+    int lo[3], n[3];            /* lowest integer index and number of indices spanned, per axis */
+    double k1[3];               /* 2 pi / box length, per axis */
+    const int *start, *mode;    /* the modes at lattice point p are mode[start[p] .. start[p+1]-1] */
+    const double *kvec, *aka, *akb, *ampl;
+};
 
-    if(pp[i].Mass > 0.)
+/* The driving field at one position: the sum over the Fourier modes, scaled by the solenoidal weight.  Device-callable;
+ * every route below evaluates the field through this one function. */
+KOKKOS_INLINE_FUNCTION
+void turb_accel_at_position(double x, double y, double z, const struct TurbModeLattice &lat, double fac_sol, double f[3])
+{
+    double fx = 0, fy = 0, fz = 0;
+    if(!lat.use_lattice)
+    {
+        for(int m = 0; m < lat.nmodes; m++)
+        {
+            const double kdotx = lat.kvec[3*m+0]*x + lat.kvec[3*m+1]*y + lat.kvec[3*m+2]*z;
+            const double amp = lat.ampl[m], realt = cos(kdotx), imagt = sin(kdotx);
+            fx += amp*(lat.aka[3*m+0]*realt - lat.akb[3*m+0]*imagt);
+            fy += amp*(lat.aka[3*m+1]*realt - lat.akb[3*m+1]*imagt);
+            fz += amp*(lat.aka[3*m+2]*realt - lat.akb[3*m+2]*imagt);
+        }
+        f[0] = fx * fac_sol; f[1] = fy * fac_sol; f[2] = fz * fac_sol;
+        return;
+    }
+    const double px = lat.k1[0]*x, py = lat.k1[1]*y, pz = lat.k1[2]*z;   /* phase of one step along each axis */
+    const double sxr = cos(px), sxi = sin(px), syr = cos(py), syi = sin(py), szr = cos(pz), szi = sin(pz);
+    double cxr = cos(lat.lo[0]*px), cxi = sin(lat.lo[0]*px);
+    const double cy0r = cos(lat.lo[1]*py), cy0i = sin(lat.lo[1]*py), cz0r = cos(lat.lo[2]*pz), cz0i = sin(lat.lo[2]*pz);
+    int p = 0;
+    for(int a = 0; a < lat.n[0]; a++)
+    {
+        double cyr = cy0r, cyi = cy0i;
+        for(int b = 0; b < lat.n[1]; b++)
+        {
+            const double cxyr = cxr*cyr - cxi*cyi, cxyi = cxr*cyi + cxi*cyr;
+            double czr = cz0r, czi = cz0i;
+            for(int c = 0; c < lat.n[2]; c++, p++)
+            {
+                const int m0 = lat.start[p], m1 = lat.start[p+1];
+                if(m1 > m0)
+                {
+                    const double realt = cxyr*czr - cxyi*czi, imagt = cxyr*czi + cxyi*czr;   /* cos and sin of k.x */
+                    for(int q = m0; q < m1; q++)
+                    {
+                        const int m = lat.mode[q];
+                        const double amp = lat.ampl[m];
+                        fx += amp*(lat.aka[3*m+0]*realt - lat.akb[3*m+0]*imagt);
+                        fy += amp*(lat.aka[3*m+1]*realt - lat.akb[3*m+1]*imagt);
+                        fz += amp*(lat.aka[3*m+2]*realt - lat.akb[3*m+2]*imagt);
+                    }
+                }
+                const double tz = czr*szr - czi*szi; czi = czr*szi + czi*szr; czr = tz;
+            }
+            const double ty = cyr*syr - cyi*syi; cyi = cyr*syi + cyi*syr; cyr = ty;
+        }
+        const double tx = cxr*sxr - cxi*sxi; cxi = cxr*sxi + cxi*sxr; cxr = tx;
+    }
+    f[0] = fx * fac_sol; f[1] = fy * fac_sol; f[2] = fz * fac_sol;
+}
+
+/* The acceleration a gas cell takes from the field at its position: none without mass, and only the run's dimensions. */
+KOKKOS_INLINE_FUNCTION
+void turb_accel_assign(struct gas_cell_data *cell, double mass, const double f[3])
+{
+    if(mass > 0.)
     {
         double acc[3];
-        acc[0] = fx; acc[1] = acc[2] = 0;
+        acc[0] = f[0]; acc[1] = acc[2] = 0;
 #if (NUMDIMS > 1)
-        acc[1] = fy;
+        acc[1] = f[1];
 #endif
 #if (NUMDIMS > 2)
-        acc[2] = fz;
+        acc[2] = f[2];
 #endif
-        cell[i].TurbAccel = {acc[0], acc[1], acc[2]};
+        cell->TurbAccel = {acc[0], acc[1], acc[2]};
     } else {
-        cell[i].TurbAccel = {};
+        cell->TurbAccel = {};
     }
+}
+
+/* Per-particle turbulent acceleration -- device-callable. */
+KOKKOS_FUNCTION
+void add_turb_accel_for_particle(int i, struct particle_data *pp, struct gas_cell_data *cell,
+                                  const struct TurbModeLattice &lat, double fac_sol)
+{
+    if(pp[i].Type != 0) return;
+    double f[3];
+    turb_accel_at_position(pp[i].Pos[0], pp[i].Pos[1], pp[i].Pos[2], lat, fac_sol, f);
+    turb_accel_assign(&cell[i], pp[i].Mass, f);
+}
+
+/* The lattice index of the modes, built once from StMode (which does not change after start-up or a restart reload): each
+ * mode's integer indices, its axis range, and the modes listed lattice point by lattice point in mode order. */
+/* The lattice walk is used while the box of lattice points the modes span holds at most this many points per mode: each
+ * point costs a complex multiply where each mode of the direct sum costs a sine and a cosine.  A starting value, to be
+ * priced, not a measured crossover. */
+#define TURB_LATTICE_MAX_POINTS_PER_MODE 8
+static int turb_lattice_built = 0, turb_lattice_use = 0, turb_lattice_lo[3], turb_lattice_n[3];
+static double turb_lattice_k1[3];
+static std::vector<int> turb_lattice_start, turb_lattice_mode;
+static void turb_mode_lattice_build(void)
+{
+    if(turb_lattice_built) {return;}
+    turb_lattice_k1[0] = 2.*M_PI / boxSize_X; turb_lattice_k1[1] = 2.*M_PI / boxSize_Y; turb_lattice_k1[2] = 2.*M_PI / boxSize_Z;
+    std::vector<int> index(3 * (size_t) StNModes);
+    int hi[3] = {0, 0, 0};
+    for(int d = 0; d < 3; d++) {turb_lattice_lo[d] = 0;}   /* both set from the first mode; stay 0 with no modes */
+    for(int m = 0; m < StNModes; m++) {
+        for(int d = 0; d < 3; d++) {
+            const double q = StMode[3*m+d] / turb_lattice_k1[d];
+            const long ik = lround(q);
+            if(fabs(q - (double) ik) > 1.e-6) {
+                char msg[200];
+                snprintf(msg, sizeof(msg), "turbulent driving: mode %d has a wavevector component %g that is not a whole multiple of 2 pi / box", m, StMode[3*m+d]);
+                gizmo_request_controlled_stop(7716, msg, __FILE__, __LINE__, __FUNCTION__);
+            }
+            index[3*m+d] = (int) ik;
+            if(m == 0 || ik < turb_lattice_lo[d]) {turb_lattice_lo[d] = (int) ik;}
+            if(m == 0 || ik > hi[d]) {hi[d] = (int) ik;}
+        }
+    }
+    for(int d = 0; d < 3; d++) {turb_lattice_n[d] = (StNModes > 0) ? hi[d] - turb_lattice_lo[d] + 1 : 0;}
+    /* The box's point count, multiplied up only while it stays within the limit, so it cannot overflow. */
+    const long long max_points = (long long) TURB_LATTICE_MAX_POINTS_PER_MODE * StNModes;
+    long long npoints_ll = (StNModes > 0) ? 1 : 0;
+    for(int d = 0; d < 3 && npoints_ll > 0; d++) {
+        if(npoints_ll > max_points / turb_lattice_n[d]) {npoints_ll = -1; break;}   /* more points than the limit allows */
+        npoints_ll *= turb_lattice_n[d];
+    }
+    turb_lattice_use = (npoints_ll > 0 && npoints_ll <= max_points) ? 1 : 0;
+    if(turb_lattice_use) {PRINT_STATUS("Turbulent driving: %d modes span %lld lattice points; the field is summed over the lattice", StNModes, npoints_ll);}
+    else {PRINT_STATUS("Turbulent driving: %d modes span more than %lld lattice points; the field is summed directly over the modes", StNModes, max_points);}
+    turb_lattice_built = 1;
+    if(!turb_lattice_use) {return;}
+    const size_t npoints = (size_t) npoints_ll;
+    turb_lattice_start.assign(npoints + 1, 0);
+    turb_lattice_mode.assign((size_t) StNModes, 0);
+    std::vector<size_t> point((size_t) StNModes);
+    for(int m = 0; m < StNModes; m++) {
+        point[m] = ((size_t)(index[3*m+0] - turb_lattice_lo[0]) * turb_lattice_n[1] + (index[3*m+1] - turb_lattice_lo[1])) * turb_lattice_n[2]
+                   + (index[3*m+2] - turb_lattice_lo[2]);
+        turb_lattice_start[point[m] + 1]++;
+    }
+    for(size_t p = 0; p < npoints; p++) {turb_lattice_start[p + 1] += turb_lattice_start[p];}
+    std::vector<int> fill(turb_lattice_start.begin(), turb_lattice_start.end() - 1);
+    for(int m = 0; m < StNModes; m++) {turb_lattice_mode[fill[point[m]]++] = m;}
+}
+
+/* The lattice view over host memory, for the host loops. */
+static struct TurbModeLattice turb_mode_lattice_host(void)
+{
+    turb_mode_lattice_build();
+    struct TurbModeLattice lat;
+    lat.use_lattice = turb_lattice_use; lat.nmodes = StNModes;
+    for(int d = 0; d < 3; d++) {lat.lo[d] = turb_lattice_lo[d]; lat.n[d] = turb_lattice_n[d]; lat.k1[d] = turb_lattice_k1[d];}
+    lat.start = turb_lattice_start.data(); lat.mode = turb_lattice_mode.data();
+    lat.kvec = StMode; lat.aka = StAka; lat.akb = StAkb; lat.ampl = StAmpl;
+    return lat;
+}
+
+/* The device routes below take their per-call buffers (index list, compact positions and fields) for the call and free
+ * them after it, as the particle staging does: the allocation costs little across a run, and holding them would keep
+ * memory on every rank that only the turbulence update uses.  Only the mode tables stay on the device -- the lattice index,
+ * copied once when the lattice is walked, and the wavevectors, amplitudes and phases (10 doubles per mode), copied again on the first device call after the phases
+ * change; the restart reload and the start-up normalisation both precede the first call -- so host-only and tiny steps
+ * never touch device memory for them.  Returns the view over device memory, or one with a null ampl on failure. */
+static int *turb_lattice_dev = NULL;
+static struct TurbModeLattice turb_mode_lattice_on_device(void)
+{
+    struct TurbModeLattice lat = turb_mode_lattice_host();
+    const size_t n = (size_t) StNModes, nstart = turb_lattice_start.size();
+    lat.ampl = NULL;
+    if(turb_lattice_use && !turb_lattice_dev)
+    {
+        turb_lattice_dev = (int *) gizmo_gpu_alloc_device((nstart + n) * sizeof(int), "turb_driving_mode_lattice");
+        if(!turb_lattice_dev) {return lat;}
+        gizmo_gpu_copy_to_device(turb_lattice_dev, turb_lattice_start.data(), nstart * sizeof(int));
+        gizmo_gpu_copy_to_device(turb_lattice_dev + nstart, turb_lattice_mode.data(), n * sizeof(int));
+    }
+    if(!turb_modes_dev)
+    {
+        turb_modes_dev = (double *) gizmo_gpu_alloc_device(10 * n * sizeof(double), "turb_driving_modes");
+        if(!turb_modes_dev) {return lat;}
+        turb_modes_dev_current = 0;
+    }
+    if(!turb_modes_dev_current)
+    {
+        std::vector<double> table(10 * n);
+        memcpy(table.data(),         StAka,  3 * n * sizeof(double));
+        memcpy(table.data() + 3 * n, StAkb,  3 * n * sizeof(double));
+        memcpy(table.data() + 6 * n, StMode, 3 * n * sizeof(double));
+        memcpy(table.data() + 9 * n, StAmpl,     n * sizeof(double));
+        gizmo_gpu_copy_to_device(turb_modes_dev, table.data(), 10 * n * sizeof(double));
+        turb_modes_dev_current = 1;
+    }
+    lat.start = turb_lattice_use ? turb_lattice_dev : NULL; lat.mode = turb_lattice_use ? turb_lattice_dev + nstart : NULL;
+    lat.aka = turb_modes_dev; lat.akb = turb_modes_dev + 3 * n; lat.kvec = turb_modes_dev + 6 * n; lat.ampl = turb_modes_dev + 9 * n;
+    return lat;
 }
 
 
@@ -398,7 +583,7 @@ void turb_accel_refresh_for_new_step(int i, integertime ti_previous_step_start)
 {
 #ifdef TURB_DRIVING_UPDATE_FORCE_ON_TURBUPDATE
     if(turb_accel_needs_update(i, ti_previous_step_start))
-        {add_turb_accel_for_particle(i, P, CellP, StMode, StAka, StAkb, StAmpl, StNModes, 2.*solenoidal_frac_total_weight_renormalization());}
+        {add_turb_accel_for_particle(i, P, CellP, turb_mode_lattice_host(), 2.*solenoidal_frac_total_weight_renormalization());}
 #endif
 }
 
@@ -417,82 +602,85 @@ void add_turb_accel()
 
     if(gizmo_gpu_offload_takes(GPU_OFFLOAD_PARTICLE_LOOP, N_active)) {
         GIZMO_GPU_ENSURE_ALL_FRESH(); /* All-mirror dispatch-boundary belt; the turb_accel kernel itself reads no All.* but keep the call at the GPU dispatch point per the All-mirror convention */
-        /* Copy mode arrays to GPU-accessible memory (read-only, small: ~few KB) */
-        const size_t mode_bytes = (size_t) StNModes * 3 * sizeof(double);
-        const size_t ampl_bytes = (size_t) StNModes * sizeof(double);
-        const size_t compact_bytes = (size_t) N_active * (sizeof(struct particle_data)
-                                                          + sizeof(struct gas_cell_data));
-        double *gpu_mode = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
-        double *gpu_aka  = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
-        double *gpu_akb  = (double *) gizmo_gpu_alloc_shared(mode_bytes, NULL);
-        double *gpu_ampl = (double *) gizmo_gpu_alloc_shared(ampl_bytes, NULL);
-        /* Gather into compact SharedSpace arrays */
-        struct particle_data *compact_P    = (struct particle_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct particle_data), NULL);
-        struct gas_cell_data *compact_Cell = (struct gas_cell_data *) gizmo_gpu_alloc_shared((size_t) N_active * sizeof(struct gas_cell_data), NULL);
-        if(!gpu_mode || !gpu_aka || !gpu_akb || !gpu_ampl || !compact_P || !compact_Cell) {
-            if(compact_Cell) {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);}
-            if(compact_P)    {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);}
-            if(gpu_ampl)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_ampl);}
-            if(gpu_akb)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_akb);}
-            if(gpu_aka)      {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_aka);}
-            if(gpu_mode)     {Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_mode);}
+        /* In place where the device reaches the particle records without moving their pages (coherent memory,
+           device-preferred storage, builds without a GPU): only the index list crosses.  Elsewhere the records sit
+           host-side across the fabric, and the field needs only a position and gives back three numbers, so those are
+           staged compactly, 48 bytes a cell, instead of having the kernel pull every cell's pages over. */
+        const int in_place = gizmo_particle_storage_device_reads_in_place();
+        const size_t n = (size_t) N_active;
+        const struct TurbModeLattice lat = turb_mode_lattice_on_device();
+        const double *modes = lat.ampl;   /* null when the device tables could not be had */
+        int *index_dev = NULL; double *pos_dev = NULL, *field_dev = NULL;
+        if(modes) {
+            if(in_place) {index_dev = (int *) gizmo_gpu_alloc_device(n * sizeof(int), "turb_driving_index");}
+            else {pos_dev   = (double *) gizmo_gpu_alloc_device(3 * n * sizeof(double), "turb_driving_positions");
+                  field_dev = (double *) gizmo_gpu_alloc_device(3 * n * sizeof(double), "turb_driving_fields");}
+        }
+        if(!modes || (in_place ? !index_dev : (!pos_dev || !field_dev))) {
+            if(index_dev) {gizmo_gpu_free_device(index_dev);}
+            if(pos_dev)   {gizmo_gpu_free_device(pos_dev);}
+            if(field_dev) {gizmo_gpu_free_device(field_dev);}
             free(turb_indices);
             char msg[256];
-            snprintf(msg, sizeof(msg),
-                     "turbulent driving: could not stage %d gas particles and %d driving "
-                     "modes (%.1f MB); no driving acceleration is applied",
-                     N_active, StNModes,
-                     (double)(3 * mode_bytes + ampl_bytes + compact_bytes) / (1024.0 * 1024.0));
+            snprintf(msg, sizeof(msg), "turbulent driving: could not get device memory for %d driving modes and %d gas cells (%.1f MB); "
+                     "no driving acceleration is applied", StNModes, N_active,
+                     (double)(10 * (size_t) StNModes * sizeof(double) + (in_place ? n * sizeof(int) : 6 * n * sizeof(double))) / (1024.0 * 1024.0));
             gizmo_request_controlled_stop(7715, msg, __FILE__, __LINE__, __FUNCTION__);
             return;
         }
-        memcpy(gpu_mode, StMode, StNModes * 3 * sizeof(double));
-        memcpy(gpu_aka,  StAka,  StNModes * 3 * sizeof(double));
-        memcpy(gpu_akb,  StAkb,  StNModes * 3 * sizeof(double));
-        memcpy(gpu_ampl, StAmpl, StNModes * sizeof(double));
-
-        for(int j = 0; j < N_active; j++)
+        const double fs = fac_sol;
+        if(in_place)
         {
-            compact_P[j]    = P[turb_indices[j]];
-            compact_Cell[j] = CellP[turb_indices[j]];
-        }
-
-        /* Dispatch to GPU */
-        {
-            struct particle_data *kp = compact_P;
-            struct gas_cell_data *kc = compact_Cell;
-            const double *km = gpu_mode, *ka = gpu_aka, *kb = gpu_akb, *kamp = gpu_ampl;
-            int nm = StNModes; double fs = fac_sol;
-            gizmo_gpu_kernel_launch("turb_accel", N_active, KOKKOS_LAMBDA(int j) {
-                add_turb_accel_for_particle(j, kp, kc, km, ka, kb, kamp, nm, fs);
+            gizmo_gpu_copy_to_device(index_dev, turb_indices, n * sizeof(int));
+            struct particle_data *kp = P;   /* captured by value: a lambda reaching for the globals would read host memory silently */
+            struct gas_cell_data *kc = CellP;
+            const int *kidx = index_dev;
+            gizmo_gpu_kernel_launch("turb_accel_inplace", N_active, KOKKOS_LAMBDA(int j) {
+                add_turb_accel_for_particle(kidx[j], kp, kc, lat, fs);
             });
+            gizmo_gpu_free_device(index_dev);
         }
-
-        /* Scatter back */
-        for(int j = 0; j < N_active; j++)
+        else
         {
-            int ii = turb_indices[j];
-            CellP[ii] = compact_Cell[j];
+            std::vector<double> pos_host(3 * n), field_host(3 * n);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, N_active))
+#endif
+            for(int j = 0; j < N_active; j++)
+            {
+                const int i = turb_indices[j];
+                pos_host[3*j+0] = P[i].Pos[0]; pos_host[3*j+1] = P[i].Pos[1]; pos_host[3*j+2] = P[i].Pos[2];
+            }
+            gizmo_gpu_copy_to_device(pos_dev, pos_host.data(), 3 * n * sizeof(double));
+            const double *kpos = pos_dev;
+            double *kfield = field_dev;
+            gizmo_gpu_kernel_launch("turb_accel_compact", N_active, KOKKOS_LAMBDA(int j) {
+                turb_accel_at_position(kpos[3*j+0], kpos[3*j+1], kpos[3*j+2], lat, fs, &kfield[3*j]);
+            });
+            gizmo_gpu_copy_to_host(field_host.data(), field_dev, 3 * n * sizeof(double));
+            gizmo_gpu_free_device(pos_dev); gizmo_gpu_free_device(field_dev);
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, N_active))
+#endif
+            for(int j = 0; j < N_active; j++)
+            {
+                const int i = turb_indices[j];
+                turb_accel_assign(&CellP[i], P[i].Mass, &field_host[3*j]);
+            }
         }
-        gpu_particles_arena_invalidate();
-
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_Cell);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(compact_P);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_ampl);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_akb);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_aka);
-        Kokkos::kokkos_free<GIZMO_KOKKOS_SHARED_SPACE>(gpu_mode);
+        gpu_particles_arena_invalidate();   /* CellP's TurbAccel written; arena stale */
 
     } else
     { /* CPU path — tiny-N: run the SSOT kernel directly over the global
          P/CellP arrays via turb_indices, no compact gather/scatter, no GPU
          mirror sync (matches the grain_drag tiny-N cleanup philosophy). */
+        const struct TurbModeLattice lat = turb_mode_lattice_host();
 #ifdef _OPENMP
 #pragma omp parallel for schedule(dynamic)
 #endif
         for(int j = 0; j < N_active; j++)
         {
-            add_turb_accel_for_particle(turb_indices[j], P, CellP, StMode, StAka, StAkb, StAmpl, StNModes, fac_sol);
+            add_turb_accel_for_particle(turb_indices[j], P, CellP, lat, fac_sol);
         }
     } /* end CPU/GPU path selection */
 
@@ -501,17 +689,26 @@ void add_turb_accel()
 }
 
 
-/* routine to integrate the turbulent driving forces, specifically the 'TurbAccel' variables that need to be drifted and kicked: note that we actually do drifting and kicking in the normal routines, this is just to integrate the dissipation rates etc used for our tracking */
-void do_turb_driving_step_first_half(void)
+/* The energy the driving puts into each active cell over one half of its step, kicked from the step's beginning to its
+ * midpoint (first half) or from the midpoint to its end.  Each active writes only its own EgyDrive, so the loop runs on
+ * several threads with the same result once there are enough of them. */
+static void turb_driving_energy_half_kick(int second_half)
 {
     CPU_Step[CPU_MISC] += measure_time();
-    int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for (int i : ActiveParticleList)
+    const int n_act = (int) ActiveParticleList.size();
+    const int *act = ActiveParticleList.data();
+#ifdef _OPENMP
+#pragma omp parallel for schedule(static) if(gizmo_host_threads_take(HOST_THREAD_BOOKKEEPING, n_act))
+#endif
+    for(int k_act = 0; k_act < n_act; k_act++)
     {
-        ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep; tend = P[i].Ti_begstep + ti_step / 2;	/* beginning / midpoint of step */
-        dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
+        const int i = act[k_act];
         if(P[i].Type == 0)
         {
+            const integertime ti_step = P[i].integertime_step();
+            const integertime tstart = second_half ? P[i].Ti_begstep + ti_step / 2 : P[i].Ti_begstep;   /* beginning or midpoint of step */
+            const integertime tend   = second_half ? P[i].Ti_begstep + ti_step     : P[i].Ti_begstep + ti_step / 2;   /* midpoint or end */
+            const double dt_gravkick = get_gravkick_factor(tstart, tend, i, 0);   /* the same factor the kick applies TurbAccel with (kicks.cc), dilation included */
             double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
             Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
             double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
@@ -520,27 +717,8 @@ void do_turb_driving_step_first_half(void)
     }
     CPU_Step[CPU_DRIFT] += measure_time();
 }
-
-
-/* routine to integrate the turbulent driving forces, specifically the 'TurbAccel' variables that need to be drifted and kicked: note that we actually do drifting and kicking in the normal routines, this is just to integrate the dissipation rates etc used for our tracking */
-void do_turb_driving_step_second_half(void)
-{
-    CPU_Step[CPU_MISC] += measure_time();
-    int i; integertime ti_step, tstart, tend; double dt_gravkick;
-    for (int i : ActiveParticleList)
-    {
-        ti_step = P[i].integertime_step(); tstart = P[i].Ti_begstep + ti_step / 2; tend = P[i].Ti_begstep + ti_step;	/* midpoint/end of step */
-        dt_gravkick = get_gravkick_factor(tstart, tend, -1, 0);
-        if(P[i].Type == 0)
-        {
-            double ekin0 = 0.5 * P[i].Mass * P[i].Vel.norm_sq();
-            Vec3<double> dvel = CellP[i].TurbAccel * dt_gravkick; Vec3<double> vtmp = P[i].Vel + dvel;
-            double ekin1 = 0.5 * P[i].Mass * vtmp.norm_sq();
-            CellP[i].EgyDrive += ekin1 - ekin0;
-        }
-    }
-    CPU_Step[CPU_DRIFT] += measure_time();
-}
+void do_turb_driving_step_first_half(void) {turb_driving_energy_half_kick(0);}
+void do_turb_driving_step_second_half(void) {turb_driving_energy_half_kick(1);}
 
 
 /* routine to record and optionally write to output files various statistics of driven turbulence here (most relevant to idealized sims with a hard-coded adiabatic EOS */

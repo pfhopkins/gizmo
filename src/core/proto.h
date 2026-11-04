@@ -494,7 +494,18 @@ enum GizmoOffloadSite
 };
 int gizmo_gpu_offload_min_count(enum GizmoOffloadSite site);
 int gizmo_gpu_offload_takes(enum GizmoOffloadSite site, long long count);   /* 1 if `count` work items go to the device: at least the site's count, and never an empty batch */
-void gizmo_gpu_offload_report(void);   /* rank 0 prints every resolved count and where it came from */
+void gizmo_gpu_offload_report(void);   /* rank 0 prints every resolved count and where it came from, the host-thread counts below included */
+/* A host loop runs on all OpenMP threads only from a per-MPI-task count of items, below which starting the threads costs more than
+ * the loop.  One anchor, HostThreadMinCount, sets the count of each kind of loop below (core/begrun.cc), scaled by how much work an item is. */
+enum GizmoHostThreadSite
+{
+    HOST_THREAD_PARTICLE_LOOP = 0,    /* one element per item: drift, the gradient and corridor passes over active gas, subcycled transport, sink properties */
+    HOST_THREAD_NEIGHBOUR_WORK,       /* neighbour-loop walks, evaluations and writebacks run on the host */
+    HOST_THREAD_BOOKKEEPING,          /* a few arithmetic operations or a copy per item: the turbulence energy tracking and compact staging */
+    HOST_THREAD_NUM_SITES
+};
+int gizmo_host_threads_take(enum GizmoHostThreadSite site, long long count);   /* 1 if a loop over `count` items should run on all OpenMP threads */
+int gizmo_host_thread_count(void);   /* the OpenMP threads a host loop would run on (1 without OpenMP) */
 void gizmo_size_memory_arena(void);   /* sets All.WorkingMemoryPoolSize from what will draw on the pool, unless the parameter file asked for a size; call once, before mymalloc_init */
 #ifdef PMGRID
 /* Arena bytes the long-range mesh will want, for startup sizing, split into what it holds for the
@@ -566,6 +577,7 @@ extern "C" void  gizmo_gpu_copy_to_host(void *dst_host, const void *src_device, 
 /* 1 when the particle storage is CUDA managed memory, which MPI must not receive into directly: such receives go
    through host staging (MPI_Sendrecv_into_particle_storage, the ghost transport).  0 on HIP and host builds. */
 extern "C" int gizmo_particle_storage_needs_staged_mpi_receive(void);
+extern "C" int gizmo_particle_storage_device_reads_in_place(void);   /* 1 if device kernels can work on scattered particle records in place (coherent memory or device-preferred storage) */
 /* Tree-array byte breakdown at the current allocation (forcetree.cc provider; zeros when
    no tree is allocated). Foreign "used" is the since-start high-water of Numforeignnodes
    (current-at-print is misleading: force_treeallocate resets it before a stop ledger).
