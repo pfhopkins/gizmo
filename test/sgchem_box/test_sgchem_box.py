@@ -338,3 +338,24 @@ def test_sgchem_floor_temperature(tables, box):
         got, want = g1["Temperature"][:], np.array([ref[int(i)][1] for i in g1["ParticleIDs"][:]])
     print(f"snapshot Temperature {got.min():.6g}-{got.max():.6g} K, chemistry {want.min():.6g}-{want.max():.6g} K")
     assert np.all(np.abs(got / want - 1) < 1e-8)
+
+
+def test_sgchem_ledger_negative_total(tmp_path):
+    """the exact sum of system/ledger.cc holds negative totals: printed as numbers, not NaN"""
+    src = open(path.join(ROOT, "src", "system", "ledger.cc")).read()
+    code = "\n".join(l for l in src.splitlines() if l.startswith(("#define LEDGER_NLIMB", "#define LEDGER_EXP0")))
+    code += "\n" + re.search(r"^struct ledger_sum \{.*?\};\n", src, re.S | re.M).group(0)
+    for f in ("ledger_normalize", "ledger_add_exact", "ledger_merge", "ledger_value"):
+        code += re.search(rf"^static \w+ {f}\(.*?^}}\n", src, re.S | re.M).group(0)
+    c = tmp_path / "ledger_value_unit.cc"
+    c.write_text("#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n" + code + """
+int main(void) {
+    struct ledger_sum s = {{0}, 0};
+    ledger_add_exact(&s, 1.5); ledger_add_exact(&s, -4.0); ledger_normalize(&s);
+    printf("%.17g\\n", ledger_value(&s));
+    return 0;
+}
+""")
+    exe = tmp_path / "ledger_value_unit"
+    subprocess.run(["g++", "-O1", str(c), "-o", str(exe), "-lm"], check=True)
+    assert float(subprocess.run([str(exe)], capture_output=True, text=True, check=True).stdout) == -2.5
