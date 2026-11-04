@@ -50,6 +50,9 @@ static void single_star_ionizing_rates(int i, double *L_ion, double *Q)
     double logM = log10(SingleStars.M_drawn[s]), logZ = log10(DMAX(SingleStars.Z_birth[s], 1e-10));
     double la = log10(DMAX(evaluate_stellar_age_Gyr(i) * 1.e9 - stellar_t_PMS(logM, logZ), 100.));
     *L_ion = single_star_band_lum_cgs(stellar_log_L_ion_tot(logM, logZ, la)); *Q = single_star_band_lum_cgs(stellar_log_Q_ion(logM, logZ, la));
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+    if(All.TestTreeRayFixedRate > 0) {*Q = All.TestTreeRayFixedRate; *L_ion = *Q * 27.2 * ELECTRONVOLT_IN_ERGS;}
+#endif
 }
 #endif
 

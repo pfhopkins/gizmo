@@ -2910,6 +2910,15 @@ void read_parameter_file(char *fname)
       strcpy(tag[nt], "TreeColShieldingLength");
       addr[nt] = &All.TreeColShieldingLength;
       id[nt++] = REAL;
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+      strcpy(tag[nt], "TestTreeRayFixedRate");
+      addr[nt] = &All.TestTreeRayFixedRate;
+      id[nt++] = REAL;
+
+      strcpy(tag[nt], "TestTreeRayNeutralTemp");
+      addr[nt] = &All.TestTreeRayNeutralTemp;
+      id[nt++] = REAL;
+#endif
 #endif
 #endif
 

@@ -152,6 +152,10 @@ struct global_data_all_processes
   double SGChemBackgroundG0;    /*!< scales the background floors (0.324e-2 x this), never the field (stella_dev G0) */
 #ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS
   double TreeColShieldingLength; /*!< pixel columns only from mass closer than this [code length, physical]; 0 = no limit */
+#ifdef TEST_TREECOL_SHELLS_PHOTOION_FIXED_RATE_TWO_TEMPERATURE_GAS
+  double TestTreeRayFixedRate;   /*!< test: every shining star emits this photon rate [1/s] */
+  double TestTreeRayNeutralTemp; /*!< test: SGChem holds gas at T(x) from this neutral temperature [K] */
+#endif
 #endif
 #endif
 

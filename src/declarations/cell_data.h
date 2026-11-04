@@ -488,6 +488,9 @@ extern struct gas_cell_data
     float TreeColRadpFlux[4];  /*!< sum over pixels of sigma_b F_b: vector along the pixel centres toward the sources, then the scalar [1e-21 cm^2 x code lum / code length^2] */
     float RadpAbsorbedLum;     /*!< luminosity this cell absorbed at its last update [code]: its share of the photon cap */
 #endif
+#ifdef GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS_PHOTOION
+    float TreeRayIonPhotonFlux, TreeRayIonEnergyFlux; /*!< attenuated ionising flux summed over pixels [1/s/cm^2, erg/s/cm^2] */
+#endif
 #endif
 #endif
     
