@@ -11,7 +11,8 @@ SOLAR = np.array([0.0142, 0.2703, 2.53e-3, 7.41e-4, 6.13e-3, 1.34e-3, 7.57e-4, 7
 STARS = [(20.0, (0.25, 0.25, 0.25)), (40.0, (0.75, 0.25, 0.75)), (150.0, (0.25, 0.75, 0.75)), (320.0, (0.75, 0.75, 0.25))]
 
 
-def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0, stars=STARS, z=0.014, n_metals=1, before_death_yr=None):
+def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0, stars=STARS, z=0.014, n_metals=1, before_death_yr=None,
+                                     star_mass_factor=1.0):
     rho = n_H * 1.6726e-24 / 0.7 * 3.0857e18 ** 3 / 1.989e33  # Msun / pc^3
     dx = (1.0 / rho) ** (1.0 / 3.0)
     L = n * dx
@@ -43,7 +44,7 @@ def make_single_stars_supernovae_ics(fname, tables_file, n=32, n_H=10.0, T=100.0
         s = F.create_group("PartType4")
         s["Coordinates"] = np.array([np.asarray(x) * L + 0.37 * dx for _, x in stars])
         s["Velocities"] = np.array([[10.0, -6.0, 3.0]] * ns); s["ParticleIDs"] = np.arange(N + 1, N + ns + 1, dtype=np.uint32)
-        s["Masses"] = np.array([m for m, _ in stars]); s["StellarFormationTime"] = -np.array(ages)
+        s["Masses"] = star_mass_factor * np.array([m for m, _ in stars]); s["StellarFormationTime"] = -np.array(ages)
         Zs = np.tile(SOLAR * z / SOLAR[0], (ns, 1)); Zs[:, 1] = SOLAR[1]
         s["Metallicity"] = Zs[:, :n_metals]; s["SingleStarDrawnMass"] = np.array([m for m, _ in stars]); s["SingleStarBirthMetallicity"] = np.full(ns, z)
     return L, dx

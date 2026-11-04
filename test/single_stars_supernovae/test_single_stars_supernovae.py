@@ -28,7 +28,7 @@ def built():
     return tables
 
 
-def run(tag, tables, ranks=2, threads=1, before_death_yr=None, overrides=None, exe="GIZMO", n_metals=1):
+def run(tag, tables, ranks=2, threads=1, before_death_yr=None, overrides=None, exe="GIZMO", n_metals=1, ic_args=None):
     import sys
     sys.path.insert(0, str(TEST_DIR))
     from make_single_stars_supernovae_ics import make_single_stars_supernovae_ics
@@ -38,7 +38,7 @@ def run(tag, tables, ranks=2, threads=1, before_death_yr=None, overrides=None, e
     (d / "output").mkdir(parents=True, exist_ok=True)
     ic = d / "output" / "snapshot_000.hdf5"
     if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
-        L, _ = make_single_stars_supernovae_ics(str(ic), tables["StellarTablesFile"], before_death_yr=before_death_yr, n_metals=n_metals)
+        L, _ = make_single_stars_supernovae_ics(str(ic), tables["StellarTablesFile"], before_death_yr=before_death_yr, n_metals=n_metals, **(ic_args or {}))
         if exe != "GIZMO":
             for f in ("TREECOOL", "spcool_tables"):
                 os.symlink(TEST_DIR / f, d / f)
@@ -133,3 +133,14 @@ def test_element_yields(built):
         expect[0] += y[2:].sum()
         expect[1:] += y[FIRE_ELEMENTS]
     assert np.all(np.abs(dZ - expect) <= 1e-9 * np.maximum(expect, 1e-3)), (dZ, expect)
+
+
+def test_no_mass_gain_at_death(built):
+    """stars already below their table remnant mass (winds took more than the table's pre-SN mass): the remnant is the star, nothing is created"""
+    ic, snap, rows = run("light", built, ic_args={"star_mass_factor": 0.3})
+    a, b = totals(ic), totals(snap)
+    m0 = {i: m for i, m in a["stars"].items()}
+    for i, m in b["stars"].items():
+        assert m <= m0[i] * (1 + 1e-12), f"star {i} grew from {m0[i]} to {m} at death"
+    M0, M1 = a["M"] + sum(m0.values()), b["M"] + sum(b["stars"].values())
+    assert abs(M1 - M0) <= 1e-12 * M0
