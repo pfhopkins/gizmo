@@ -180,154 +180,91 @@ void force_kick_node(int i, Vec3<MyDouble>& dp)
 
 void force_finish_kick_nodes(void)
 {
+  /* share the momentum-data of the pseudo-particles accross CPUs: one record per changed top-level node, all
+     fields in one Allgatherv */
+  struct kick_node_rec
+  {
+    MyDouble dp[3];
+#ifdef RT_SEPARATELY_TRACK_LUMPOS
+    MyDouble rt_source_lum_dp[3];
+#endif
+#ifdef DM_SCALARFIELD_SCREENING
+    MyDouble dp_dm[3];
+#endif
+#ifdef SINK_NODE_MOTION_TRACKED
+    MyDouble sink_dp[3];
+#endif
+    MyFloat vmax;
+    int no;
+  };
   int i, j, no, ta, totDomainNumChanged;
-  int *domainList_all;
-  int *counts, *counts_dp, *offset_list, *offset_dp, *offset_vmax;
-  MyDouble *domainDp_loc, *domainDp_all;
-
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MyDouble *domainDp_stellarlum_loc, *domainDp_stellarlum_all;
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  MyDouble *domainDp_dm_loc, *domainDp_dm_all;
-#endif
-#ifdef SINK_NODE_MOTION_TRACKED
-  MyDouble *domainDp_sink_loc, *domainDp_sink_all;
-#endif
-  MyFloat *domainVmax_loc, *domainVmax_all;
-
-  /* share the momentum-data of the pseudo-particles accross CPUs */
-
-  counts = (int *) mymalloc("counts", sizeof(int) * NTask);
-  counts_dp = (int *) mymalloc("counts_dp", sizeof(int) * NTask);
-  offset_list = (int *) mymalloc("offset_list", sizeof(int) * NTask);
-  offset_dp = (int *) mymalloc("offset_dp", sizeof(int) * NTask);
-  offset_vmax = (int *) mymalloc("offset_vmax", sizeof(int) * NTask);
-
-  domainDp_loc = (MyDouble *) mymalloc("domainDp_loc", DomainNumChanged * 3 * sizeof(MyDouble));
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    domainDp_stellarlum_loc = (MyDouble *) mymalloc("domainDp_stellarlum_loc", DomainNumChanged * 3 * sizeof(MyDouble));
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  domainDp_dm_loc = (MyDouble *) mymalloc("domainDp_dm_loc", DomainNumChanged * 3 * sizeof(MyDouble));
-#endif
-  domainVmax_loc = (MyFloat *) mymalloc("domainVmax_loc", DomainNumChanged * sizeof(MyFloat));
-#ifdef SINK_NODE_MOTION_TRACKED
-  domainDp_sink_loc = (MyDouble *) mymalloc("domainDp_sink_loc", DomainNumChanged * 3 * sizeof(MyDouble)); /* last in its group, so freed first below: keeps the stack allocator LIFO whatever else is enabled */
-#endif
-
+  int *counts = (int *) mymalloc("counts", sizeof(int) * NTask), *offsets = (int *) mymalloc("offsets", sizeof(int) * NTask);
+  struct kick_node_rec *loc = (struct kick_node_rec *) mymalloc("kick_node_loc", DomainNumChanged * sizeof(struct kick_node_rec));
+  memset(loc, 0, DomainNumChanged * sizeof(struct kick_node_rec)); /* padding bytes travel too */
   for(i = 0; i < DomainNumChanged; i++)
     {
+      no = DomainList[i]; loc[i].no = no; loc[i].vmax = Extnodes[no].vmax;
       for(j = 0; j < 3; j++)
 	{
-	  domainDp_loc[i * 3 + j] = Extnodes[DomainList[i]].dp[j];
+	  loc[i].dp[j] = Extnodes[no].dp[j];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-        domainDp_stellarlum_loc[i * 3 + j] = Extnodes[DomainList[i]].rt_source_lum_dp[j];
+	  loc[i].rt_source_lum_dp[j] = Extnodes[no].rt_source_lum_dp[j];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-	  domainDp_dm_loc[i * 3 + j] = Extnodes[DomainList[i]].dp_dm[j];
+	  loc[i].dp_dm[j] = Extnodes[no].dp_dm[j];
 #endif
 #ifdef SINK_NODE_MOTION_TRACKED
-	  domainDp_sink_loc[i * 3 + j] = Extnodes[DomainList[i]].sink_dp[j];
+	  loc[i].sink_dp[j] = Extnodes[no].sink_dp[j];
 #endif
 	}
-      domainVmax_loc[i] = Extnodes[DomainList[i]].vmax;
     }
 
   MPI_Allgather(&DomainNumChanged, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
-
-  for(ta = 0, totDomainNumChanged = 0, offset_list[0] = 0, offset_dp[0] = 0, offset_vmax[0] = 0; ta < NTask;
-      ta++)
+  for(ta = 0, totDomainNumChanged = 0; ta < NTask; ta++)
     {
+      offsets[ta] = totDomainNumChanged * (int) sizeof(struct kick_node_rec);
       totDomainNumChanged += counts[ta];
-      if(ta > 0)
-	{
-	  offset_list[ta] = offset_list[ta - 1] + counts[ta - 1];
-	  offset_dp[ta] = offset_dp[ta - 1] + counts[ta - 1] * 3 * sizeof(MyDouble);
-	  offset_vmax[ta] = offset_vmax[ta - 1] + counts[ta - 1] * sizeof(MyFloat);
-	}
+      counts[ta] *= (int) sizeof(struct kick_node_rec);
     }
 
   PRINT_STATUS(" ..exchanged kick momenta for %d top-level nodes out of %d", totDomainNumChanged, NTopleaves);
-  domainDp_all = (MyDouble *) mymalloc("domainDp_all", totDomainNumChanged * 3 * sizeof(MyDouble));
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    domainDp_stellarlum_all = (MyDouble *) mymalloc("domainDp_stellarlum_all", totDomainNumChanged * 3 * sizeof(MyDouble));
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  domainDp_dm_all =
-    (MyDouble *) mymalloc("domainDp_dm_all", totDomainNumChanged * 3 * sizeof(MyDouble));
-#endif
-  domainVmax_all = (MyFloat *) mymalloc("domainVmax_all", totDomainNumChanged * sizeof(MyFloat));
-
-  domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
-#ifdef SINK_NODE_MOTION_TRACKED
-  domainDp_sink_all = (MyDouble *) mymalloc("domainDp_sink_all", totDomainNumChanged * 3 * sizeof(MyDouble)); /* likewise last, freed first */
-#endif
-
-  MPI_Allgatherv(DomainList, DomainNumChanged, MPI_INT,
-		 domainList_all, counts, offset_list, MPI_INT, MPI_COMM_WORLD);
-
-  for(ta = 0; ta < NTask; ta++)
-    {
-      counts_dp[ta] = counts[ta] * 3 * sizeof(MyDouble);
-      counts[ta] *= sizeof(MyFloat);
-    }
-
-
-  MPI_Allgatherv(domainDp_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-		 domainDp_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
-
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    MPI_Allgatherv(domainDp_stellarlum_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-                   domainDp_stellarlum_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  MPI_Allgatherv(domainDp_dm_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-		 domainDp_dm_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD);
-#endif
-#ifdef SINK_NODE_MOTION_TRACKED
-  MPI_Allgatherv(domainDp_sink_loc, DomainNumChanged * 3 * sizeof(MyDouble), MPI_BYTE,
-		 domainDp_sink_all, counts_dp, offset_dp, MPI_BYTE, MPI_COMM_WORLD); /* same 3*MyDouble shape as dp, so it reuses counts_dp/offset_dp */
-#endif
-
-  MPI_Allgatherv(domainVmax_loc, DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
-		 domainVmax_all, counts, offset_vmax, MPI_BYTE, MPI_COMM_WORLD);
-
+  struct kick_node_rec *all = (struct kick_node_rec *) mymalloc("kick_node_all", totDomainNumChanged * sizeof(struct kick_node_rec));
+  MPI_Allgatherv(loc, DomainNumChanged * (int) sizeof(struct kick_node_rec), MPI_BYTE, all, counts, offsets, MPI_BYTE, MPI_COMM_WORLD);
 
   /* construct momentum kicks in top-level tree */
   for(i = 0; i < totDomainNumChanged; i++)
     {
-      no = domainList_all[i];
+      no = all[i].no;
 
       if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))	/* to avoid that the local one is kicked twice */
 	no = Nodes[no].u.d.father;
 
       while(no >= 0)
 	{
-	  if(Extnodes[no].vmax < domainVmax_all[i]) {Extnodes[no].vmax = domainVmax_all[i];} /* before the drift, as in force_kick_node */
+	  if(Extnodes[no].vmax < all[i].vmax) {Extnodes[no].vmax = all[i].vmax;} /* before the drift, as in force_kick_node */
 	  force_drift_node(no, All.Ti_Current);
 
-	  Extnodes[no].dp[0] += domainDp_all[3 * i + 0];
-	  Extnodes[no].dp[1] += domainDp_all[3 * i + 1];
-	  Extnodes[no].dp[2] += domainDp_all[3 * i + 2];
+	  Extnodes[no].dp[0] += all[i].dp[0];
+	  Extnodes[no].dp[1] += all[i].dp[1];
+	  Extnodes[no].dp[2] += all[i].dp[2];
 #ifdef RT_SEPARATELY_TRACK_LUMPOS
-          Extnodes[no].rt_source_lum_dp[0] += domainDp_stellarlum_all[3 * i + 0];
-          Extnodes[no].rt_source_lum_dp[1] += domainDp_stellarlum_all[3 * i + 1];
-          Extnodes[no].rt_source_lum_dp[2] += domainDp_stellarlum_all[3 * i + 2];
+          Extnodes[no].rt_source_lum_dp[0] += all[i].rt_source_lum_dp[0];
+          Extnodes[no].rt_source_lum_dp[1] += all[i].rt_source_lum_dp[1];
+          Extnodes[no].rt_source_lum_dp[2] += all[i].rt_source_lum_dp[2];
 #endif
 #ifdef DM_SCALARFIELD_SCREENING
-	  Extnodes[no].dp_dm[0] += domainDp_dm_all[3 * i + 0];
-	  Extnodes[no].dp_dm[1] += domainDp_dm_all[3 * i + 1];
-	  Extnodes[no].dp_dm[2] += domainDp_dm_all[3 * i + 2];
+	  Extnodes[no].dp_dm[0] += all[i].dp_dm[0];
+	  Extnodes[no].dp_dm[1] += all[i].dp_dm[1];
+	  Extnodes[no].dp_dm[2] += all[i].dp_dm[2];
 #endif
 #ifdef SINK_NODE_MOTION_TRACKED
-	  Extnodes[no].sink_dp[0] += domainDp_sink_all[3 * i + 0];
-	  Extnodes[no].sink_dp[1] += domainDp_sink_all[3 * i + 1];
-	  Extnodes[no].sink_dp[2] += domainDp_sink_all[3 * i + 2];
+	  Extnodes[no].sink_dp[0] += all[i].sink_dp[0];
+	  Extnodes[no].sink_dp[1] += all[i].sink_dp[1];
+	  Extnodes[no].sink_dp[2] += all[i].sink_dp[2];
 #endif
 
-	  if(Extnodes[no].vmax < domainVmax_all[i])
-	    Extnodes[no].vmax = domainVmax_all[i];
+	  if(Extnodes[no].vmax < all[i].vmax)
+	    Extnodes[no].vmax = all[i].vmax;
 
 	  Nodes[no].u.d.bitflags |= (1 << BITFLAG_NODEHASBEENKICKED);
 	  Extnodes[no].Ti_lastkicked = All.Ti_Current;
@@ -336,33 +273,9 @@ void force_finish_kick_nodes(void)
 	}
     }
 
-#ifdef SINK_NODE_MOTION_TRACKED
-  myfree(domainDp_sink_all);
-#endif
-  myfree(domainList_all);
-  myfree(domainVmax_all);
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    myfree(domainDp_stellarlum_all);
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  myfree(domainDp_dm_all);
-#endif
-  myfree(domainDp_all);
-#ifdef SINK_NODE_MOTION_TRACKED
-  myfree(domainDp_sink_loc);
-#endif
-  myfree(domainVmax_loc);
-#ifdef RT_SEPARATELY_TRACK_LUMPOS
-    myfree(domainDp_stellarlum_loc);
-#endif
-#ifdef DM_SCALARFIELD_SCREENING
-  myfree(domainDp_dm_loc);
-#endif
-  myfree(domainDp_loc);
-  myfree(offset_vmax);
-  myfree(offset_dp);
-  myfree(offset_list);
-  myfree(counts_dp);
+  myfree(all);
+  myfree(loc);
+  myfree(offsets);
   myfree(counts);
 }
 
@@ -583,10 +496,7 @@ void force_drift_node(int no, integertime time1)
 void force_update_hmax(void)
 {
   int i, no, ta, totDomainNumChanged;
-  int *domainList_all;
-  int *counts, *offset_list, *offset_hmax;
-  MyFloat *domainHmax_loc, *domainHmax_all;
-  int OffsetSIZE = 2;
+  int *counts, *offsets;
   double divVel;
 
   GlobFlag++;
@@ -703,60 +613,39 @@ void force_update_hmax(void)
   } // for (int i : ActiveParticleList)
 #endif
 
-  /* share the hmax-data of the pseudo-particles accross CPUs */
-
+  /* share the hmax-data of the pseudo-particles accross CPUs: node index and both bounds in one Allgatherv */
+  struct hmax_rec {MyFloat hmax, divVmax; int no;};
   counts = (int *) mymalloc("counts", sizeof(int) * NTask);
-  offset_list = (int *) mymalloc("offset_list", sizeof(int) * NTask);
-  offset_hmax = (int *) mymalloc("offset_hmax", sizeof(int) * NTask);
-
-  domainHmax_loc = (MyFloat *) mymalloc("domainHmax_loc", DomainNumChanged * OffsetSIZE * sizeof(MyFloat));
-
-  for(i = 0; i < DomainNumChanged; i++)
-    {
-      domainHmax_loc[OffsetSIZE * i] = Extnodes[DomainList[i]].hmax;
-      domainHmax_loc[OffsetSIZE * i + 1] = Extnodes[DomainList[i]].divVmax;
-    }
-
+  offsets = (int *) mymalloc("offsets", sizeof(int) * NTask);
+  struct hmax_rec *loc = (struct hmax_rec *) mymalloc("hmax_loc", DomainNumChanged * sizeof(struct hmax_rec));
+  memset(loc, 0, DomainNumChanged * sizeof(struct hmax_rec));
+  for(i = 0; i < DomainNumChanged; i++) {loc[i].no = DomainList[i]; loc[i].hmax = Extnodes[DomainList[i]].hmax; loc[i].divVmax = Extnodes[DomainList[i]].divVmax;}
 
   MPI_Allgather(&DomainNumChanged, 1, MPI_INT, counts, 1, MPI_INT, MPI_COMM_WORLD);
-
-  for(ta = 0, totDomainNumChanged = 0, offset_list[0] = 0, offset_hmax[0] = 0; ta < NTask; ta++)
+  for(ta = 0, totDomainNumChanged = 0; ta < NTask; ta++)
     {
+      offsets[ta] = totDomainNumChanged * (int) sizeof(struct hmax_rec);
       totDomainNumChanged += counts[ta];
-      if(ta > 0)
-	{
-	  offset_list[ta] = offset_list[ta - 1] + counts[ta - 1];
-	  offset_hmax[ta] = offset_hmax[ta - 1] + counts[ta - 1] * OffsetSIZE * sizeof(MyFloat);
-	}
+      counts[ta] *= (int) sizeof(struct hmax_rec);
     }
 
   PRINT_STATUS(" ..Hmax exchange: %d topleaves out of %d", totDomainNumChanged, NTopleaves);
-  domainHmax_all = (MyFloat *) mymalloc("domainHmax_all", totDomainNumChanged * OffsetSIZE * sizeof(MyFloat));
-  domainList_all = (int *) mymalloc("domainList_all", totDomainNumChanged * sizeof(int));
-
-  MPI_Allgatherv(DomainList, DomainNumChanged, MPI_INT,
-		 domainList_all, counts, offset_list, MPI_INT, MPI_COMM_WORLD);
-
-  for(ta = 0; ta < NTask; ta++)
-    {counts[ta] *= OffsetSIZE * sizeof(MyFloat);}
-
-  MPI_Allgatherv(domainHmax_loc, OffsetSIZE * DomainNumChanged * sizeof(MyFloat), MPI_BYTE,
-		 domainHmax_all, counts, offset_hmax, MPI_BYTE, MPI_COMM_WORLD);
-
+  struct hmax_rec *all = (struct hmax_rec *) mymalloc("hmax_all", totDomainNumChanged * sizeof(struct hmax_rec));
+  MPI_Allgatherv(loc, DomainNumChanged * (int) sizeof(struct hmax_rec), MPI_BYTE, all, counts, offsets, MPI_BYTE, MPI_COMM_WORLD);
 
   for(i = 0; i < totDomainNumChanged; i++)
     {
-        no = domainList_all[i];
+        no = all[i].no;
         if(Nodes[no].u.d.bitflags & (1 << BITFLAG_DEPENDS_ON_LOCAL_ELEMENT))    {no = Nodes[no].u.d.father;} /* to avoid that the hmax is updated twice */
         
         while(no >= 0)
         {
             force_drift_node(no, All.Ti_Current);
             
-            if(domainHmax_all[OffsetSIZE * i] > Extnodes[no].hmax || domainHmax_all[OffsetSIZE * i + 1] > Extnodes[no].divVmax)
+            if(all[i].hmax > Extnodes[no].hmax || all[i].divVmax > Extnodes[no].divVmax)
             {
-                if(domainHmax_all[OffsetSIZE * i] > Extnodes[no].hmax) {Extnodes[no].hmax = domainHmax_all[OffsetSIZE * i];}
-                if(domainHmax_all[OffsetSIZE * i + 1] > Extnodes[no].divVmax) {Extnodes[no].divVmax = domainHmax_all[OffsetSIZE * i + 1];}
+                if(all[i].hmax > Extnodes[no].hmax) {Extnodes[no].hmax = all[i].hmax;}
+                if(all[i].divVmax > Extnodes[no].divVmax) {Extnodes[no].divVmax = all[i].divVmax;}
             }
             else
             {break;}
@@ -766,11 +655,9 @@ void force_update_hmax(void)
     }
 
 
-  myfree(domainList_all);
-  myfree(domainHmax_all);
-  myfree(domainHmax_loc);
-  myfree(offset_hmax);
-  myfree(offset_list);
+  myfree(all);
+  myfree(loc);
+  myfree(offsets);
   myfree(counts);
   myfree(DomainList);
 
