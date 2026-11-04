@@ -17,5 +17,7 @@ metals from `InitMetallicity`, GIZMO's element pattern) built with `SGCHEM` (net
   the final H2, H+, CO and dust temperature equal the standalone run to 1e-8 (measured 8e-10). A snapshot restart
   (flag 2) from snapshot 1 with the datasets renamed to the old `ChemcoolTracAbund`/`ChemcoolDustTemp` reads them
   (log line) and continues as the standalone run from that state (measured 4e-10).
+- `test_sgchem_floor_temperature`: molecular gas (x(H2) = 0.49) restarted with a 60 K floor. The floor assumes atomic gas, so `u`
+  stays above the solved energy; the snapshot `Temperature` equals one standalone step from the snapshot before to 1e-8.
 
 Inputs: `SUNDIALS_DIR`; the chemistry tables from `SGCHEM_TABLES_DIR`, else installed by `scripts/get_stella_tables.sh`.
