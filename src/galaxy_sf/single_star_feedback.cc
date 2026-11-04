@@ -62,8 +62,8 @@ static void single_star_event_of(int i, int kind, struct single_star_event *ev)
     memset(ev, 0, sizeof(*ev)); ev->kind = kind;
     ev->remnant_type = stellar_remnant_type(logM, logZ);
     ev->M_trigger = SingleStars.M_at_SN_trigger[s] * UNIT_MASS_IN_SOLAR;
-    ev->M_rem = stellar_remnant_mass(logM, logZ);
-    ev->Mej = DMAX(ev->M_trigger - ev->M_rem, 0);
+    ev->M_rem = DMIN(stellar_remnant_mass(logM, logZ), ev->M_trigger); /* a star never gains mass at death */
+    ev->Mej = ev->M_trigger - ev->M_rem;
     ev->E = 1.e51;
     if(ev->remnant_type == REM_PISN) {ev->M_rem = 0; ev->Mej = ev->M_trigger;}
     if(ev->remnant_type == REM_FSN || ev->remnant_type == REM_DBH) {ev->E = 0;}
