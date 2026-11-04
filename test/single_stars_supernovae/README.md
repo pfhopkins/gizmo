@@ -23,5 +23,6 @@ Checks:
 7. FIRE metal layout (a second build with `COOLING` and `COOL_METAL_LINES_BY_SPECIES`): every metal slot of the gas gains
    exactly the table SN element ejecta scaled to the ejecta mass (1e-9); slot 0 all table metals C..Zn.
 - stars started below their table remnant mass: no star grows at death and the total mass is conserved (1e-12).
+- in 1e7 K gas the total energy still rises by the explosion energies to 1e-3: the ejecta carry no ambient `u`.
 
 Reference: the tables (classes, remnants, element ejecta) and conservation laws.
