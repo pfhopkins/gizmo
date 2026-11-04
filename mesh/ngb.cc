@@ -50,7 +50,8 @@ void ngb_treebuild(void)
 #ifdef NGB_PAIR_CACHE
 /* Cache of the local (mode 0) pair searches: the gradient loop's first pass records, for each element it searches from,
    the neighbour list and the pseudo-particles (export targets) met, in walk order; the second gradient pass and the hydro
-   loop replay them instead of walking the tree again. Nothing between those loops moves an element, changes a kernel
+   loop replay them instead of walking the tree again. Imported (mode 1) searches walk: recording them in a hash map cost
+   more than it saved. Nothing between those loops moves an element, changes a kernel
    radius or mass, or touches the tree, and every neighbour a replayed walk would visit was already drifted by the
    recording walk, so a replay returns exactly what the walk would. A replay is used only for the same element, centre
    and radius; anything else walks. Lifetime: hydro_gradient_calc() begin -> end of hydro_force(). */
@@ -64,17 +65,23 @@ static struct {
 static thread_local int ngb_pair_cache_tl_recording = 0;
 static thread_local std::vector<int> ngb_pair_cache_tl_pseudo;
 
+static std::vector<int> NgbPairCacheTargets; /* elements recorded, so clearing costs O(recorded), not O(NumPart), on deep-hierarchy steps */
+
 void ngb_pair_cache_begin_record(void)
 {
-    NgbPairCache.offset.assign(NumPart, -1); NgbPairCache.nngb.assign(NumPart, 0); NgbPairCache.npseudo.assign(NumPart, 0);
-    NgbPairCache.key.assign(4*(size_t)NumPart, 0.); NgbPairCache.data.clear(); NgbPairCache.state = 1;
+    if((int)NgbPairCache.offset.size() < NumPart) /* grown, never shrunk or re-cleared: free() resets only the entries it set */
+    {
+        NgbPairCache.offset.resize(NumPart, -1); NgbPairCache.nngb.resize(NumPart, 0); NgbPairCache.npseudo.resize(NumPart, 0); NgbPairCache.key.resize(4*(size_t)NumPart, 0.);
+    }
+    for(int t : NgbPairCacheTargets) {NgbPairCache.offset[t] = -1;} /* in case a previous record was never freed */
+    NgbPairCache.data.clear(); NgbPairCacheTargets.clear(); NgbPairCache.state = 1;
 }
 void ngb_pair_cache_begin_replay(void) {if(NgbPairCache.state) {NgbPairCache.state = 2;}}
 void ngb_pair_cache_free(void)
 {
     NgbPairCache.state = 0;
-    std::vector<long long>().swap(NgbPairCache.offset); std::vector<int>().swap(NgbPairCache.nngb); std::vector<int>().swap(NgbPairCache.npseudo);
-    std::vector<double>().swap(NgbPairCache.key); std::vector<int>().swap(NgbPairCache.data);
+    for(int t : NgbPairCacheTargets) {NgbPairCache.offset[t] = -1;}
+    NgbPairCacheTargets.clear(); NgbPairCache.data.clear(); /* capacity is kept for the next step */
 }
 
 #define NGB_PSEUDO_HOOK(no_) {if(ngb_pair_cache_tl_recording) {ngb_pair_cache_tl_pseudo.push_back(no_);}}
@@ -100,7 +107,7 @@ int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int targ
                                int mode, int *exportflag, int *exportnodecount, int *exportindex, int *ngblist)
 {
 #ifdef NGB_PAIR_CACHE
-    int use_cache = (NgbPairCache.state != 0) && (mode == 0) && (target >= 0) && (target < (int)NgbPairCache.offset.size()) && (*startnode == All.MaxPart);
+    int use_cache = (NgbPairCache.state != 0) && (mode == 0) && (target >= 0) && (target < NumPart) && (target < (int)NgbPairCache.offset.size()) && (*startnode == All.MaxPart);
     if(use_cache && NgbPairCache.state == 2)
     {
         long long off = NgbPairCache.offset[target]; const double *key = &NgbPairCache.key[4*(size_t)target];
@@ -156,7 +163,7 @@ int ngb_treefind_pairs_threads(MyDouble searchcenter[3], MyFloat rkern, int targ
                 long long off = (long long)NgbPairCache.data.size();
                 NgbPairCache.data.insert(NgbPairCache.data.end(), ngblist, ngblist + numngb);
                 NgbPairCache.data.insert(NgbPairCache.data.end(), ngb_pair_cache_tl_pseudo.begin(), ngb_pair_cache_tl_pseudo.end());
-                NgbPairCache.offset[target] = off; NgbPairCache.nngb[target] = numngb; NgbPairCache.npseudo[target] = npseudo;
+                NgbPairCache.offset[target] = off; NgbPairCache.nngb[target] = numngb; NgbPairCache.npseudo[target] = npseudo; NgbPairCacheTargets.push_back(target);
                 double *key = &NgbPairCache.key[4*(size_t)target];
                 key[0] = (double)rkern; key[1] = (double)searchcenter[0]; key[2] = (double)searchcenter[1]; key[3] = (double)searchcenter[2];
             }
