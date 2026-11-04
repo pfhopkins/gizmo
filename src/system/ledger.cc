@@ -50,9 +50,11 @@ static void ledger_merge(struct ledger_sum *into, struct ledger_sum *from)
 
 static double ledger_value(const struct ledger_sum *s) /* deterministic: a function of the (normalized) limbs only */
 {
+    struct ledger_sum c = *s; int neg = (c.limb[LEDGER_NLIMB-1] < 0); /* the top limb holds the sign: sum the magnitude, or -1 x 2^1120 overflows */
+    if(neg) {for(int i = 0; i < LEDGER_NLIMB; i++) {c.limb[i] = -c.limb[i];} ledger_normalize(&c);}
     double v = 0;
-    for(int i = LEDGER_NLIMB - 1; i >= 0; i--) {v += ldexp((double) s->limb[i], 32*i + LEDGER_EXP0);}
-    return v;
+    for(int i = LEDGER_NLIMB - 1; i >= 0; i--) {v += ldexp((double) c.limb[i], 32*i + LEDGER_EXP0);}
+    return neg ? -v : v;
 }
 
 void ledger_init(void)
