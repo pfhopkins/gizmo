@@ -370,7 +370,7 @@ void run(void)
             All.TimeLastRestartFile += report_time();
         }
 
-        report_memory_usage(&HighMark_run, "RUN");
+        if(All.HighestActiveTimeBin == All.HighestOccupiedTimeBin) {report_memory_usage(&HighMark_run, "RUN");} /* a per-rank Allgather: top-level steps only, as for the cpu log */
     }
 
 }
@@ -442,7 +442,7 @@ void calculate_non_standard_physics(void)
 #if defined(TREE_INTEGRITY_AUDITS) && defined(MAINTAIN_TREE_IN_REARRANGE)
         if(need_cleanup_rearrange) {force_tree_full_audit(0, "sink_cleanup");}
 #endif
-        MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_SINKS] += measure_time();
+        CPU_Step[CPU_SINKS] += measure_time();
     }
 #endif
 
@@ -504,7 +504,7 @@ void calculate_non_standard_physics(void)
     if(Flag_FullStep) {rt_write_chemistry_stats();}
 #endif
 #endif
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
+    CPU_Step[CPU_RTNONFLUXOPS] += measure_time();
 #endif // RADTRANSFER block
 
 #ifdef TRANSPORT_SUBCYCLE
@@ -547,14 +547,13 @@ void calculate_non_standard_physics(void)
 
 #if defined(COOLING) && !defined(TRANSPORT_SUBCYCLE_COOLING)
     cooling_parent_routine(); // top-level cooling and chemistry subroutine //
-    CPU_Step[CPU_COOLINGSFR] += measure_time(); /* this rank's own cooling work */
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); /* wait for the slowest rank: cooling-loop imbalance, booked separately */
+    CPU_Step[CPU_COOLINGSFR] += measure_time(); /* this rank's own cooling work; the wait for the slowest rank lands in the next collective */
 #endif
 
 
 #ifdef GALSF /* star/sink particle formation */
     star_formation_parent_routine(); // top-level star formation routine (because this involves common particle conversions, want to keep this at end of this subroutine); books its own work to CPU_COOLINGSFR //
-    MPI_Barrier(MPI_COMM_WORLD); CPU_Step[CPU_COOLSFRIMBAL] += measure_time(); /* arrival spread only */
+    CPU_Step[CPU_COOLSFRIMBAL] += measure_time();
 #endif
 
 #ifdef SINK_INTERACT_ON_GAS_TIMESTEP
