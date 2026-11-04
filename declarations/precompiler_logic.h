@@ -1327,6 +1327,12 @@
 #define MERGE_SPLIT_LIMIT_KINETIC_DISSIPATION // the shock-side counterpart: never merge a pair whose merge would thermalize the majority of the energy involved, which cooling then radiates away, making the merge an artificial unresolved shock. MERGE_SPLIT_ALLOW_KINETIC_DISSIPATION opts back out
 #endif
 
+/* gradient and hydro loops reuse the first gradient pass's local pair searches (mesh/ngb.cc); identical results, memory ~ 4 B per
+   neighbour of every active cell. Off where something between those loops could change a search: NGB_PAIR_CACHE_OFF opts out */
+#if !defined(NGB_PAIR_CACHE_OFF) && !defined(TURB_DIFF_DYNAMIC) && !defined(MHD_MODIFIED_GRADIENT) && !(defined(SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES) && (SINGLE_STAR_AND_SSP_NUCLEAR_ZOOM_SPECIALBOUNDARIES >= 4))
+#define NGB_PAIR_CACHE
+#endif
+
 #if defined(TURB_DIFF_METALS_EXACT_CONSERVATION) && !defined(TURB_DIFF_METALS)
 #error "TURB_DIFF_METALS_EXACT_CONSERVATION requires TURB_DIFF_METALS"
 #endif
