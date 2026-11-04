@@ -9,6 +9,7 @@ test_sgchem_cooling: the cells cool through SGChem: final energy, temperature, e
 the backend on the same inputs and timesteps, and the snapshots are identical with 1 and 4 OpenMP threads.
 """
 
+import glob
 import re
 import shutil
 import subprocess
@@ -77,7 +78,7 @@ def test_sgchem_cell_state(box):
     assert grow == 8 * (3 + 2), f"gas cell grows by {grow} B with SGCHEM network 5"
 
 
-def standalone(tables, snap0, times, start=None):
+def standalone(tables, snap0, times, start=None, over={}):
     """cell_standalone.cc built in the box build's src/ (same config), fed the cells' density and energy and the run's timesteps."""
     src = path.join(ROOT, "src")
     cc = subprocess.run("make -n -W cooling/sgchem/sgchem_cell.cc cooling/sgchem/sgchem_cell.o", shell=True, cwd=src,
@@ -95,6 +96,7 @@ def standalone(tables, snap0, times, start=None):
     subprocess.run(f"{toks[0]} {obj} cooling/sgchem/cxx/*.o {libs} -o {exe}", shell=True, cwd=src, check=True)
     p = {k: float(v) for k, v in (l.split()[:2] for l in open(path.join(HERE, f"{NAME}.params")) if l.strip() and l[0] != "%"
                                   if len(l.split()) > 1 and l.split()[1][0] in "0123456789.-")}
+    p.update(over)
     g = snap0["PartType0"]
     q = np.diff(times)[1:] / p["TimeMax"]  # no cooling at the first sync point (zero timestep); the steps are power-of-two
     dts = p["TimeMax"] * np.exp2(np.round(np.log2(q)))  # fractions of TimeMax: rebuild them exactly
@@ -207,3 +209,38 @@ def test_sgchem_startup(tables, box):
     log = open(path.join(HERE, f"test_{NAME}.out")).read()
     assert "wss_z_collis.txt has hash" in log and "scripts/get_stella_tables.sh" in log
     assert "SGCHEM: chemistry tables built" not in log
+
+
+def test_sgchem_floor_temperature(tables, box):
+    """molecular gas held at the energy floor: the floor assumes atomic gas, so u stays above the solved energy; the snapshot
+    holds the chemistry's temperature (one standalone step from the snapshot before), not u times the cached weight"""
+    rs = path.join(HERE, "output_floor")
+    shutil.rmtree(rs, ignore_errors=True)
+    makedirs(rs)
+    snap1 = path.join(rs, "snapshot_001.hdf5")
+    shutil.copy(path.join(HERE, "output", "snapshot_001.hdf5"), snap1)
+    with h5py.File(snap1, "r+") as f:
+        x = f["PartType0/SGChemTracAbund"]
+        a = x[:]
+        a[:, 0] = 0.49
+        x[...] = a
+    floor = 60.0
+    chdir(HERE)
+    try:
+        params = write_params_with_overrides(f"{NAME}.params", {"SGChemTablesPath": tables, "OutputDir": "output_floor", "MinGasTemp": floor,
+                                                                "TimeMax": 0.08, "TimeBetSnapshot": 0.004})
+        with open(path.join(rs, "test.out"), "w") as o:
+            subprocess.run(mpi_launch_command(2, default_omp_threads()) + ["./GIZMO", params, "2", "1"], stdout=o, stderr=o, check=True)
+    finally:
+        chdir(ROOT)
+    a, b = sorted(glob.glob(path.join(rs, "snapshot_*.hdf5")))[-2:]
+    with h5py.File(a) as s0, h5py.File(b) as s1:
+        g0, g1 = s0["PartType0"], s1["PartType0"]
+        ta, tb = s0["Header"].attrs["Time"], s1["Header"].attrs["Time"]
+        o0, o1 = np.argsort(g0["ParticleIDs"][:]), np.argsort(g1["ParticleIDs"][:])
+        assert np.array_equal(g0["InternalEnergy"][:][o0], g1["InternalEnergy"][:][o1])  # held at the floor
+        start = np.column_stack([g0["SGChemDustTemp"][:], g0["SGChemTracAbund"][:]])
+        ref = standalone(tables, s0, np.array([ta, ta, tb]), start, {"MinGasTemp": floor})
+        got, want = g1["Temperature"][:], np.array([ref[int(i)][1] for i in g1["ParticleIDs"][:]])
+    print(f"snapshot Temperature {got.min():.6g}-{got.max():.6g} K, chemistry {want.min():.6g}-{want.max():.6g} K")
+    assert np.all(np.abs(got / want - 1) < 1e-8)
