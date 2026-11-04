@@ -3797,6 +3797,7 @@ void readjust_timebase(double TimeMax_old, double TimeMax_new)
 	{
         P[i].Ti_begstep /= 2;
         P[i].Ti_current /= 2;
+        P[i].dt_step /= 2;
         if(P[i].TimeBin > 0)
 	    {
 	      P[i].TimeBin--;
