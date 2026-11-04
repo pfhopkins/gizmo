@@ -111,4 +111,6 @@
 
 #define TAG_MPI_GENERIC_COM_BUFFER_A 103
 #define TAG_MPI_GENERIC_COM_BUFFER_B 104
+#define TAG_SPARSE_COUNTS_A 105 /* mpi_sparse_counts alternates the two between consecutive calls */
+#define TAG_SPARSE_COUNTS_B 106
 
