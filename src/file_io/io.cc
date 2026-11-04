@@ -1591,7 +1591,11 @@ void fill_write_buffer(enum iofields blocknr, int *startindex, int pc, int type)
             for(n = 0; n < pc; pindex++)
                 if(P[pindex].Type == type)
                 {
+#ifdef SGCHEM
+                    *fp++ = (MyOutputFloat) CellP[pindex].Temp; /* the chemistry's temperature */
+#else
                     *fp++ = (MyOutputFloat) CellP[pindex].Temperature;
+#endif
                     n++;
                 }
             break;
