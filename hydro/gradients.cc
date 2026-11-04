@@ -816,9 +816,7 @@ void hydro_gradient_calc(void)
 #endif
                     GasGrad_evaluate_secondary(&mainthreadid, gradient_iteration);
                 }
-                tend = my_second(); timecomp2 += timediff(tstart, tend); tstart = my_second();
-                MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
-                tend = my_second(); timewait2 += timediff(tstart, tend);
+                tend = my_second(); timecomp2 += timediff(tstart, tend); /* no barrier: the results exchange below waits only for actual partners */
 
                 tstart = my_second(); /* send the results for imported elements back to their host tasks */
                 if(gradient_iteration==0)

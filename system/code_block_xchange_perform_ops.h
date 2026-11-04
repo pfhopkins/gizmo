@@ -151,9 +151,7 @@ be copy-pasted and can be generically optimized in a single place */
 #endif
                 SECONDARY_SUBFUN_NAME(&mainthreadid, loop_iteration);
             }
-            tend = my_second(); timecomp += timediff(tstart, tend); tstart = my_second();
-            MPI_Barrier(MPI_COMM_WORLD); /* insert MPI Barrier here - will be forced by comms below anyways but this allows for clean timing measurements */
-            tend = my_second(); timewait += timediff(tstart, tend);
+            tend = my_second(); timecomp += timediff(tstart, tend); /* no barrier: the results exchange below waits only for actual partners */
 
             tstart = my_second(); /* send the results for imported elements back to their host tasks */
             mpi_exchange_with_partners(ngrp_initial, ngrp_initial + N_chunks_for_import, TAG_MPI_GENERIC_COM_BUFFER_B,
