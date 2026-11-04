@@ -95,5 +95,25 @@ KOKKOS_INLINE_FUNCTION void update_dust_processes_hu(int i, double dtime_gyr, st
     if(iron >= 0) {cell[i].ISMDustChem_Dust_Species[iron] = Fe_free;}
 }
 
+/* fresh start: the Milky Way grain-locked fractions of the cell's own C and Si, silicate capped by O, Mg, Fe (from supernovae) */
+inline void ism_dust_hu_seed_cell(int i, const struct particle_data *pp, struct gas_cell_data *cell)
+{
+    const MyFloat *Z = pp[i].Metallicity;
+    static const int slot[4] = {4, 6, 7, 10};
+    double frac[4], sil = SGCHEM_DEPL_SI * DMAX(Z[7], 0);
+    for(int k = 0; k < 4; k++) {frac[k] = All.ISMDustChem_SilicateNumberOfAtomsTable[k] * All.ISMDustChem_AtomicMassTable[slot[k]] / All.ISMDustChem_EffectiveSilicateDustAtomicWeight;}
+    sil /= frac[2];
+    for(int k = 0; k < 4; k++) {if(k != 2) {sil = DMIN(sil, SGCHEM_DEPL_MAX * DMAX(Z[slot[k]], 0) / frac[k]);}}
+    for(int k = 0; k < NUM_ISMDUSTCHEM_ELEMENTS; k++) {cell[i].ISMDustChem_Dust_Metal[k] = 0;}
+    for(int k = 0; k < NUM_ISMDUSTCHEM_SOURCES; k++) {cell[i].ISMDustChem_Dust_Source[k] = 0;}
+    for(int k = 0; k < NUM_ISMDUSTCHEM_SPECIES; k++) {cell[i].ISMDustChem_Dust_Species[k] = 0;}
+    cell[i].ISMDustChem_Dust_Metal[2] = SGCHEM_DEPL_C * DMAX(Z[2], 0);
+    for(int k = 0; k < 4; k++) {cell[i].ISMDustChem_Dust_Metal[slot[k]] = sil * frac[k];}
+    cell[i].ISMDustChem_Dust_Metal[0] = cell[i].ISMDustChem_Dust_Metal[2] + sil;
+    cell[i].ISMDustChem_Dust_Source[2] = cell[i].ISMDustChem_Dust_Metal[0];
+    cell[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Sil_Index]] = sil;
+    cell[i].ISMDustChem_Dust_Species[All.ISMDustChem_SpeciesFieldIndexTable[All.ISMDustChem_Carb_Index]] = cell[i].ISMDustChem_Dust_Metal[2];
+}
+
 #endif
 #endif

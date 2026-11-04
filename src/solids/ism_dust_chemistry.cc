@@ -213,6 +213,9 @@ void Initialize_ISMDustChem_Particle_Variables(int i, struct particle_data *pp, 
             for (j=0;j<NUM_ISMDUSTCHEM_SOURCES;j++) {cell[i].ISMDustChem_Dust_Source[j] = 0.;}
             for (j=0;j<NUM_ISMDUSTCHEM_SPECIES;j++) {cell[i].ISMDustChem_Dust_Species[j] = 0.;}
         }
+#ifdef GALSF_ISMDUSTCHEM_HU_MODEL
+        if(RestartFlag == 0) {ism_dust_hu_seed_cell(i, pp, cell);}
+#endif
 #if (defined(RADTRANSFER) && defined(RT_INFRARED)) || (defined(OUTPUT_DUST_TEMPERATURE) && (GALSF_FB_FIRE_STELLAREVOLUTION > 2))
         cell[i].Dust_Temperature = DMIN(All.InitGasTemp,100.);
 #endif

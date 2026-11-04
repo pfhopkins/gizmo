@@ -222,6 +222,9 @@ double single_star_eventrates(int i, double dt)
    AGB deaths and slow winds (< 100 km/s) by C/O: carbon = C not in CO, else silicate 0.8 with the O not in CO */
 static void single_star_dust_yields(const struct single_star_event *ev, double *yields)
 {
+#if defined(GALSF_ISMDUSTCHEM_HU_MODEL) && !defined(GALSF_ISMDUSTCHEM_HU_SN_EJECTA_CONDENSATION)
+    if(ev->kind == SSE_SN || ev->kind == SSE_IA) {return;} /* Hu+23: no supernova dust */
+#endif
     double y[NUM_ISMDUSTCHEM_ELEMENTS], species[NUM_ISMDUSTCHEM_SPECIES] = {0}, dust[NUM_ISMDUSTCHEM_ELEMENTS] = {0}, f_sil = 0, f_c = 0, f_fe = 0, carb = -1;
     for(int k = 0; k < NUM_ISMDUSTCHEM_ELEMENTS; k++) {y[k] = yields[k];} /* FIRE slots, fractions of the ejecta */
     if(ev->kind == SSE_SN) {f_c = 0.15; f_sil = 3.5e-4; f_fe = 1.e-3;}
