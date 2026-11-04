@@ -95,12 +95,11 @@ void determine_where_SNe_occur(void)
         dtmean += dt;
     } // for (int i : ActiveParticleList) //
 
-    MPI_Reduce(&dtmean, &mpi_dtmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&rmean, &mpi_rmean, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ptotal, &mpi_ptotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&nhosttotal, &mpi_nhosttotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&ntotal, &mpi_ntotal, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
-    MPI_Reduce(&npossible, &mpi_npossible, 1, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD);
+    {
+        double sne_loc[6] = {dtmean, rmean, ptotal, nhosttotal, ntotal, npossible}, sne_tot[6];
+        MPI_Reduce(sne_loc, sne_tot, 6, MPI_DOUBLE, MPI_SUM, 0, MPI_COMM_WORLD); /* log-file statistics only */
+        mpi_dtmean = sne_tot[0]; mpi_rmean = sne_tot[1]; mpi_ptotal = sne_tot[2]; mpi_nhosttotal = sne_tot[3]; mpi_ntotal = sne_tot[4]; mpi_npossible = sne_tot[5];
+    }
 
     if(ThisTask == 0)
     {

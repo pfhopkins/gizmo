@@ -529,11 +529,9 @@ void sink_swallow_and_kick_loop(void)
     /* collect results on any swallow operations in this pass. Allreduce (not Reduce): every rank
        needs the global count -- it raises the moments flag, and it gates the cleanup rearrange in
        run.cc, both of which must be rank-uniform decisions. */
-    int Ntot_gas_swallowed=0, Ntot_star_swallowed=0, Ntot_dm_swallowed=0, Ntot_sink_swallowed=0;
-    MPI_Allreduce(&N_gas_swallowed, &Ntot_gas_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&N_sink_swallowed, &Ntot_sink_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&N_star_swallowed, &Ntot_star_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
-    MPI_Allreduce(&N_dm_swallowed, &Ntot_dm_swallowed, 1, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    int n_swallowed_loc[4] = {N_gas_swallowed, N_sink_swallowed, N_star_swallowed, N_dm_swallowed}, n_swallowed_tot[4];
+    MPI_Allreduce(n_swallowed_loc, n_swallowed_tot, 4, MPI_INT, MPI_SUM, MPI_COMM_WORLD);
+    int Ntot_gas_swallowed = n_swallowed_tot[0], Ntot_sink_swallowed = n_swallowed_tot[1], Ntot_star_swallowed = n_swallowed_tot[2], Ntot_dm_swallowed = n_swallowed_tot[3];
     NtotSwallowedThisStep = Ntot_gas_swallowed + Ntot_star_swallowed + Ntot_dm_swallowed + Ntot_sink_swallowed;
     /* a swallowed particle's mass (and its momentum bookkeeping) must leave the node moments before
        the next force evaluation; the victims themselves are eliminated by the cleanup rearrange */
