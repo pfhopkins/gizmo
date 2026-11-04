@@ -1589,7 +1589,7 @@ void process_wake_ups(void)
 	    }
 	}
 
-    sumup_large_ints(1, &n, &ntot);
+    {long long n_ll = n; ntot = 0; MPI_Reduce(&n_ll, &ntot, 1, MPI_LONG_LONG, MPI_SUM, 0, MPI_COMM_WORLD);} /* for rank 0's print only */
     if(ThisTask == 0) {if(ntot > 0) {printf("%d%09d particles activated (in wakeup check).\n", (int) (ntot / 1000000000), (int) (ntot % 1000000000));}}
 #ifdef ENERGY_BUDGET_DIAGNOSTIC
     {   /* collective, and inside the gate: every rank takes the same branch, since the gate is a
