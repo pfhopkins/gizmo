@@ -22,12 +22,14 @@ stops) and checks them against exact values.
     dust-attenuated per (pixel, shell) in the walk: 6-13.6, 11.2-13.6, 3.444-6 and 0.4133-3.444 eV against a direct
     sweep over all particles (tree-error bars, 1 and 2 ranks).
   test_radial_shells_without_dust: without dust the sweep returns the unattenuated pixels (3e-6).
+  test_radial_shells_photon_cap: thick cells: implied absorption brought back to the stars' emission (2e-3).
   test_radial_shells_host_equals_device: device walk repeats bitwise and equals the host walk to float sums (1e-5).
   test_far_field_g0: after five steps with chemistry, during which one star dies, the tree 6-13.6 eV field of every cell
     equals the direct sum over the stars' current luminosities (median |ratio - 1| <= 1e-2, p99 <= 5e-2): node
     luminosities are refreshed, the dead star is dark (2 ranks).
 """
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -337,6 +339,9 @@ def test_radial_shells_attenuate_bands(tables, ranks):
     cells, spos, bands = pixel_run(tables, ranks, tag="_shells", build_tag="shells", gas_mass=8.0,
                                    extra=("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
     pos = cells[:, -3:]; m_dust = cells[:, 1]; floor = 0.01
+    log = (TEST_DIR / f"run_pixels_np{ranks}_shells" / f"test_{TEST_NAME}.out").read_text()
+    caps = re.findall(r"photon cap engaged, f=([0-9.e+-]+)", log)
+    cells[:, 40:55] /= float(caps[-1]) if caps else 1.0  # the sweep before the global cap
     pick = np.random.default_rng(3).choice(len(pos), 150, replace=False)
     want = np.array([direct_shell_sweep(pos[i], pos, m_dust, spos, bands[:, 0] + bands[:, 2], SIGMA_UV * TO_NH, SHIELD, r_floor=floor) for i in pick])
     r = rel(cells[pick, 40:52].ravel(), want.ravel())[want.ravel() > 1e-6 * want.max()]
@@ -353,6 +358,18 @@ def test_radial_shells_without_dust(tables):
                              extra=FLOAT_STORAGE + ("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
     assert plain[:, 40:52].max() > 0
     np.testing.assert_allclose(shells[:, 40:55], plain[:, 40:55], rtol=3e-6, atol=1e-30)
+
+
+def test_radial_shells_photon_cap(tables):
+    """500 Msun cells: each is thick in itself, so the implied absorption exceeds the emission and the cap brings it back"""
+    tag = "_shells_cap"
+    cells, _, _ = pixel_run(tables, 2, tag=tag, build_tag="shells", gas_mass=500.0, extra=("GALSF_RESOLVEDISM_TREECOL_PIXELS_RADIAL_SHELLS=12",))
+    out = TEST_DIR / f"run_pixels_np2{tag}" / "output"
+    bins = np.loadtxt(out / "treecol_dump_bins_0.txt").astype(int)
+    root = np.loadtxt(out / "treecol_dump_root_lum_0.txt")
+    L_emit = root[bins[0]] + root[bins[2]]
+    absorbed = (cells[:, 40:52].sum(1) * 2.9979e10 * SIGMA_UV * cells[:, 1] * 1.989e33 * 0.7065 / 1.6726e-24).sum()
+    assert abs(absorbed / L_emit - 1) < 2e-3, absorbed / L_emit
 
 
 def test_radial_shells_host_equals_device(tables):
