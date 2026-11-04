@@ -1746,3 +1746,7 @@ void gizmo_gpu_sync_all(void);
 #ifdef KETJU_REGULARIZATION
 #include "../gravity/ketju/ketju_proto.h"
 #endif
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+void tree_node_momentum_audit(void);
+void tree_node_momentum_audit_report(void);
+#endif

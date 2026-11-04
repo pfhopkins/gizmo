@@ -221,6 +221,9 @@ void run(void)
 #ifdef TEST_KETJU_TREE_MOTION_AUDIT
             ketju_tree_audit_report();
 #endif
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+            tree_node_momentum_audit_report();
+#endif
             restart(0); /* write a restart file to allow continuation of the run for a larger value of TimeMax */
             if(All.Ti_lastoutput != All.Ti_Current) {savepositions(All.SnapshotFileCount++);} /* make a snapshot at the final time in case none has produced at this time; this will be overwritten if All.TimeMax is increased and the run is continued */
             break;
@@ -454,6 +457,12 @@ void run(void)
 
 #ifdef TEST_KETJU_TREE_MOTION_AUDIT
         if(!reconstructed_tree && !TreeMomentsStaleFlag) {ketju_tree_audit_nodes();} /* a refresh pending rewrites the nodes in this gravity call */
+#endif
+#ifdef TEST_TREE_NODE_MOMENTUM_AUDIT
+#if (TEST_TREE_NODE_MOMENTUM_AUDIT > 1)
+        if(!reconstructed_tree && (All.NumCurrentTiStep % 3 == 1)) {TreeMomentsStaleFlag = 1;} /* mode 2: a moment refresh every third step */
+#endif
+        if(!reconstructed_tree && !TreeMomentsStaleFlag) {tree_node_momentum_audit();} /* a build or refresh due rewrites the nodes in this gravity call */
 #endif
         compute_grav_accelerations();	/* compute gravitational accelerations for synchronous particles */
 #ifdef TEST_KETJU_TREE_MOTION_AUDIT
