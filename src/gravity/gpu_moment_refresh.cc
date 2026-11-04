@@ -815,7 +815,7 @@ extern "C" int gpu_moment_refresh(int active_root_node)
     if(precompute_ensure_(N) != 0) {return 1;}   /* soft bad-stop: ensure freed the pool on failure; caller (forcetree) drains at next poll */
     precompute_fill_(N);
     int *fmirror = father_mirror_ensure_(N);
-    if(!fmirror) {return 1;}   /* soft bad-stop: persistent pools kept; caller drains at next poll */
+    if(!fmirror && N > 0) {return 1;}   /* soft bad-stop: persistent pools kept; caller drains at next poll */
 
     /* ---------------- 2. device-local scratch --------------------------- */
     /* Bundled into mr_scratch_t so the per-payload helpers (zero /
