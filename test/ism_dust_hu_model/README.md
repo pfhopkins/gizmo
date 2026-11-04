@@ -12,5 +12,9 @@ Checks:
    the gas-dust accretion is booked as a dust source;
 3. the metals do not change, slot by slot (1e-12, no diffusion); dust stays inside its elements; element dust, species and sources add up;
 4. the same dust mass on 2 and 4 ranks (1e-8).
+5. a fresh start seeds half of each cell's carbon and 82% of its silicon in FeMgSiO4 (capped at 90% of O, Mg, Fe), as stella_dev, from supernovae;
+6. with single stars (a 20 Msun supernova and a 3 Msun AGB death, 16^3 lattice, 0.5 kyr): by default the supernova makes no dust and destroys
+   none by swept mass, the AGB death condenses dust; with `GALSF_ISMDUSTCHEM_HU_SN_EJECTA_CONDENSATION` the supernova adds carbon dust (> 0.01 Msun),
+   with `GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION` (`SNeGasClearedOfDustScaling` 0.4) the gas loses over 10 times what it loses by sputtering alone.
 
 Reference: analytic rates; comparison with stella_dev on the same lattices in the PR text.

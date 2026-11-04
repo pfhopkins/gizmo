@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import h5py
 import pytest
-from gizmo.test import build_gizmo_for_test, get_cooling_tables, mpi_launch_command
+from gizmo.test import build_gizmo_for_test, get_cooling_tables, get_stellar_evolution_tables, mpi_launch_command
 
 TEST_NAME = "ism_dust_hu_model"
 TEST_DIR = Path(__file__).parent
@@ -153,3 +153,84 @@ def test_one_and_four_ranks(exe):
     ref = snap(run("hot", exe, 1.0, 1e7, {"TimeMax": 0.02, "TimeBetSnapshot": 0.01})[-1])
     a = snap(run("hot_r4", exe, 1.0, 1e7, {"TimeMax": 0.02, "TimeBetSnapshot": 0.01}, ranks=4)[-1])
     assert abs(a["D"][:, 0].sum() / ref["D"][:, 0].sum() - 1) < 1e-8
+
+
+def test_seed_on_a_fresh_start(exe):
+    """a fresh start seeds half of each cell's carbon and 82% of its silicon in stoichiometric silicate (the Milky Way grain-locked
+    fractions), from supernovae"""
+    d = TEST_DIR / "run_seed"
+    if not os.environ.get("GIZMO_TEST_SKIP_BUILD_RUN"):
+        if d.exists():
+            shutil.rmtree(d)
+        (d / "output").mkdir(parents=True)
+        L = make_single_stars_metals_ics(str(d / "snapshot.hdf5"), SOLAR, n=8, n_H=1e3, T=50.0)
+        for f in ("TREECOOL", "spcool_tables"):
+            if (TEST_DIR / f).exists():
+                os.symlink(TEST_DIR / f, d / f)
+        p = (TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SGChemTablesPath            SET_BY_TEST", f"SGChemTablesPath            {os.environ['SGCHEM_TABLES_DIR']}")
+        o = {"BoxSize": L, "TimeMax": 1e-3, "TimeBetSnapshot": 1e-3}
+        p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in o)] + [f"{k:27s} {v}" for k, v in o.items()]) + "\n"
+        (d / "run.params").write_text(p)
+        with open(d / "run.out", "w") as out:
+            subprocess.run(mpi_launch_command(2) + [str(exe), "run.params", "0", "0"], cwd=d, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
+    s = snap(sorted((d / "output").glob("snapshot_*.hdf5"))[0])
+    Z = s["Z"]
+    assert Z[:, 2].min() > 0
+    sil = np.minimum(0.82 * Z[:, 7] / FRAC[2], 0.9 * np.min(Z[:, [4, 6, 10]] / FRAC[[0, 1, 3]], axis=1))
+    print(f"seed: C dust / C {s['D'][:, 2].mean() / Z[:, 2].mean():.4f}, silicate {s['S'][:, 0].mean():.5g} (expected {sil.mean():.5g})")
+    assert np.allclose(s["D"][:, 2], 0.5 * Z[:, 2], rtol=1e-6)
+    assert np.allclose(s["S"][:, 0], sil, rtol=1e-6) and np.allclose(s["S"][:, 1], 0.5 * Z[:, 2], rtol=1e-6)
+    assert np.allclose(s["D"][:, 13], 1.0)  # sources as fractions: all supernovae
+
+
+STARS = ("GALSF_FB_MECHANICAL", "GALSF_SINGLE_STARS_FROM_IMF", "GALSF_SINGLE_STARS_EVOLUTION_TABLES")
+
+
+def star_run(tag, dust):
+    """a 20 Msun supernova and a 3 Msun AGB death in gas with the given element dust, 0.5 kyr"""
+    sys.path.insert(0, str(TEST_DIR.parent / "single_stars_metals"))
+    from test_single_stars_metals import event_stars, event_life
+    T = get_stellar_evolution_tables()["StellarTablesFile"]
+    d = TEST_DIR / f"run_{tag}"
+    exe = TEST_DIR / f"GIZMO_{tag.split('_')[0]}"
+    if d.exists():
+        shutil.rmtree(d)
+    (d / "output").mkdir(parents=True)
+    stars = event_stars(T)[:2]
+    stars[1] = stars[1] + (np.log10(event_life(T, 3.0)),)
+    L = make_single_stars_metals_ics(str(d / "output" / "snapshot_000.hdf5"), SOLAR, stars, gas_fields={"DustMetallicity": dust[0], "DustSpeciesAbundance": dust[1]})
+    for f in ("TREECOOL", "spcool_tables"):
+        if (TEST_DIR / f).exists():
+            os.symlink(TEST_DIR / f, d / f)
+    p = (TEST_DIR / f"{TEST_NAME}.params").read_text().replace("SGChemTablesPath            SET_BY_TEST", f"SGChemTablesPath            {os.environ['SGCHEM_TABLES_DIR']}")
+    o = {"BoxSize": L, "TimeMax": 5e-4, "TimeBetSnapshot": 5e-4, "StellarTablesFile": T, "SNeGasClearedOfDustScaling": 0.4}
+    p = "\n".join([l for l in p.splitlines() if not (l.split() and l.split()[0] in o)] + [f"{k:27s} {v}" for k, v in o.items()]) + "\n"
+    (d / "run.params").write_text(p)
+    with open(d / "run.out", "w") as out:
+        subprocess.run(mpi_launch_command(2) + [str(exe), "run.params", "2", "0"], cwd=d, stdout=out, stderr=subprocess.STDOUT, env={**os.environ, "OMP_NUM_THREADS": "1"}, check=True)
+    rows = np.loadtxt(d / "output" / "single_star_events.txt", ndmin=2)
+    assert sorted(rows[:, 2].astype(int).tolist()) == [1, 2]
+    s = snap(sorted((d / "output").glob("snapshot_*.hdf5"))[-1])
+    return (s["m"] * s["D"][:, 0]).sum(), (s["m"] * s["S"][:, 1]).sum(), (s["m"] * s["S"][:, 0]).sum()
+
+
+def test_supernova_dust_is_opt_in(exe):
+    """by default (Hu+23) supernovae make no dust and destroy none by swept mass, AGB deaths condense dust; with
+    GALSF_ISMDUSTCHEM_HU_SN_EJECTA_CONDENSATION and GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION they do, in the model's shared loop"""
+    get_stellar_evolution_tables()
+    for tag, flags in (("stars", STARS), ("snopt", STARS + ("GALSF_ISMDUSTCHEM_HU_SN_EJECTA_CONDENSATION", "GALSF_ISMDUSTCHEM_HU_SN_SWEPT_MASS_DESTRUCTION"))):
+        build_gizmo_for_test(TEST_NAME, extra_config_flags=flags)
+        shutil.move(TEST_DIR / "GIZMO", TEST_DIR / f"GIZMO_{tag}")
+    build_gizmo_for_test(TEST_NAME)  # the other tests' binary
+    none = (np.zeros(15), np.zeros(2))
+    agb_only, agb_c, _ = star_run("stars_clean", none)
+    both, both_c, _ = star_run("snopt_clean", none)
+    print(f"dust from the events [Msun]: default {agb_only:.5g} (carbon {agb_c:.5g}), with SN condensation {both:.5g} (carbon {both_c:.5g})")
+    assert agb_only > 0
+    assert both_c > agb_c and both_c - agb_c > 0.01  # 0.15 of the 0.2 Msun of supernova carbon, and more
+    seeded = seed(SOLAR)
+    kept = star_run("stars_seeded", seeded)[0]
+    swept = star_run("snopt_seeded", seeded)[0]
+    M0 = 16 ** 3 * seeded[0][0]
+    print(f"dust in the gas [Msun]: {M0:.5g} at the start, default {kept:.5g}, with swept-mass destruction {swept:.5g}")
+    assert M0 - swept > 10 * abs(M0 - kept)
